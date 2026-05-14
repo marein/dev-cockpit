@@ -1,0 +1,37 @@
+{{define "agents_form.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="row align-items-center">
+    <div class="col">
+      <h2 class="page-title">{{.Heading}}</h2>
+    </div>
+  </div>
+</div>
+<div class="card">
+  <form method="post" action="{{.FormAction}}">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <div class="card-body">
+      {{if .IsEdit}}<input type="hidden" name="original_agent_id" value="{{.OriginalID}}">{{end}}
+      <div class="mb-3">
+        <label class="form-label required" for="agent_id">Identifier</label>
+        <input class="form-control" id="agent_id" name="agent_id" value="{{.ID}}" required maxlength="120" autocomplete="off">
+      </div>
+      <div class="mb-3">
+        <label class="form-label required" for="agent_description">Description</label>
+        <input class="form-control" id="agent_description" name="agent_description" value="{{.Description}}" required maxlength="200" autocomplete="off">
+      </div>
+      <div class="mb-0">
+        <label class="form-label required" for="agent_instructions">Instructions</label>
+        <textarea class="form-control font-monospace" id="agent_instructions" name="agent_instructions" rows="12" required>{{.Instructions}}</textarea>
+      </div>
+    </div>
+    <div class="card-footer">
+      <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+        <a class="btn btn-ghost-secondary" href="/agents">Cancel</a>
+        <button type="submit" class="btn btn-primary">{{.SubmitLabel}}</button>
+      </div>
+    </div>
+  </form>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

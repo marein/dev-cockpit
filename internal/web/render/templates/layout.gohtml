@@ -1,0 +1,182 @@
+{{define "html_head.gohtml"}}{{$appName := "Dev Cockpit"}}<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#111827">
+  <title>{{if .Title}}{{.Title}} - {{end}}{{$appName}}</title>
+  <link rel="icon" href="{{asset "/favicon.svg"}}" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="{{asset "/app-icon-180.png"}}">
+  <link rel="manifest" href="{{asset "/manifest.json"}}">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.4.0/dist/css/tabler.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.44.0/dist/tabler-icons.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+  <link rel="stylesheet" href="{{asset "/css/style.css"}}">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+</head>
+{{end}}
+
+{{define "login_start.gohtml"}}{{template "html_head.gohtml" .}}{{$appName := "Dev Cockpit"}}
+<body>
+  <div class="page page-center">
+    <div class="container container-tight py-4">
+      <div class="text-center mb-4">
+        <a href="/login" class="navbar-brand navbar-brand-autodark justify-content-center text-reset text-decoration-none" aria-label="{{$appName}}">
+          <i class="ti ti-dashboard fs-1 me-2" aria-hidden="true"></i>
+          <span>{{$appName}}</span>
+        </a>
+      </div>
+      {{if .Flash.Message}}
+      <div class="alert alert-{{if eq .Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible" role="alert">
+        <div class="d-flex">
+          <i class="ti {{if eq .Flash.Level "success"}}ti-circle-check{{else}}ti-alert-circle{{end}} me-2 fs-3"></i>
+          <div class="text-break">{{.Flash.Message}}</div>
+        </div>
+        <a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>
+      </div>
+      {{end}}
+{{end}}
+
+{{define "login_end.gohtml"}}
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="{{asset "/js/confirm-dialog.js"}}" defer></script>
+</body>
+</html>{{end}}
+
+{{define "app_start.gohtml"}}{{template "html_head.gohtml" .}}{{$appName := "Dev Cockpit"}}
+<body>
+  <div class="page">
+    <header class="navbar navbar-expand-md d-print-none d-md-none">
+      <div class="container-xl">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar-menu" aria-controls="navbar-menu" aria-expanded="false" aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="navbar-brand navbar-brand-autodark d-none-navbar-horizontal mx-auto mx-md-0 pe-0 pe-md-3">
+          <a href="/sessions" class="d-flex align-items-center gap-2 text-reset text-decoration-none" aria-label="{{$appName}}">
+            <i class="ti ti-dashboard fs-2" aria-hidden="true"></i>
+            <span>{{$appName}}</span>
+          </a>
+        </div>
+        <div class="d-md-none">
+          <span class="navbar-toggler invisible" aria-hidden="true" tabindex="-1">
+            <span class="navbar-toggler-icon"></span>
+          </span>
+        </div>
+      </div>
+    </header>
+    <header class="navbar-expand-md">
+      <div class="collapse navbar-collapse" id="navbar-menu">
+        <div class="navbar">
+          <div class="container-xl">
+            <div class="navbar-brand navbar-brand-autodark d-none d-md-flex pe-3">
+              <a href="/sessions" class="d-flex align-items-center gap-2 text-reset text-decoration-none" aria-label="{{$appName}}">
+                <i class="ti ti-dashboard fs-2" aria-hidden="true"></i>
+                <span>{{$appName}}</span>
+              </a>
+            </div>
+            <div class="row flex-column flex-md-row flex-fill align-items-center">
+              <div class="col">
+                <ul class="navbar-nav">
+                  <li class="nav-item">
+                    <a class="nav-link {{if eq .ActiveTab "sessions"}}active{{end}}" href="/sessions">
+                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-prompt"></i></span>
+                      <span class="nav-link-title">Sessions</span>
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {{if eq .ActiveTab "instructions"}}active{{end}}" href="/instructions">
+                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-file-description"></i></span>
+                      <span class="nav-link-title">Instructions</span>
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {{if eq .ActiveTab "agents"}}active{{end}}" href="/agents">
+                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-robot"></i></span>
+                      <span class="nav-link-title">Agents</span>
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {{if eq .ActiveTab "skills"}}active{{end}}" href="/skills">
+                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-tool"></i></span>
+                      <span class="nav-link-title">Skills</span>
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {{if eq .ActiveTab "projects"}}active{{end}}" href="/projects">
+                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-folder"></i></span>
+                      <span class="nav-link-title">Projects</span>
+                    </a>
+                  </li>
+                  {{if .User}}
+                  <li class="nav-item d-md-none">
+                    <hr class="my-2">
+                  </li>
+                  <li class="nav-item d-md-none">
+                    <form method="post" action="/logout">
+                      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                      <button type="submit" class="nav-link w-100 text-start">
+                        <span class="nav-link-icon"><i class="ti ti-logout"></i></span>
+                        <span class="nav-link-title">Logout</span>
+                      </button>
+                    </form>
+                  </li>
+                  {{end}}
+                </ul>
+              </div>
+              {{if .User}}
+              <div class="col-auto d-none d-md-block">
+                <form method="post" action="/logout">
+                  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                  <button type="submit" class="nav-link px-0">
+                    <i class="ti ti-logout me-1 d-md-none d-lg-inline-block"></i>
+                    <span>Logout</span>
+                  </button>
+                </form>
+              </div>
+              {{end}}
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+    <div class="page-wrapper">
+      <div class="page-body">
+        <div class="container-xl">
+          {{if .Flash.Message}}
+          <div class="alert alert-{{if eq .Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible" role="alert">
+            <div class="d-flex">
+              <i class="ti {{if eq .Flash.Level "success"}}ti-circle-check{{else}}ti-alert-circle{{end}} me-2 fs-3"></i>
+              <div>{{.Flash.Message}}</div>
+            </div>
+            <a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>
+          </div>
+          {{end}}
+{{end}}
+
+{{define "app_end.gohtml"}}
+        </div>
+      </div>
+      <footer class="footer footer-transparent d-print-none">
+        <div class="container-xl">
+          <div class="row text-start align-items-center">
+            <div class="col-12 col-lg-auto mt-3 mt-lg-0">
+              <ul class="list-inline list-inline-dots mb-0">
+                <li class="list-inline-item">
+                  © 2026 Dev Cockpit
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="{{asset "/js/confirm-dialog.js"}}" defer></script>
+</body>
+</html>{{end}}

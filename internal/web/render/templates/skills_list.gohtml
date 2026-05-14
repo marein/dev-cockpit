@@ -1,0 +1,53 @@
+{{define "skills_list.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="row align-items-center">
+    <div class="col">
+      <h2 class="page-title">Skills</h2>
+    </div>
+    <div class="col-auto ms-auto">
+      <a href="/skills/new" class="btn btn-primary">
+        <i class="ti ti-plus me-1"></i>Create
+      </a>
+    </div>
+  </div>
+</div>
+{{if .Skills}}
+<div class="card">
+  <div class="list-group list-group-flush list-group-hoverable">
+  {{range .Skills}}
+  <div class="list-group-item">
+    <div class="row g-3 align-items-start">
+      <div class="col min-w-0">
+        <div class="fw-medium text-break">{{.ID}}</div>
+        <div class="text-secondary small text-break">{{if .Description}}{{.Description}}{{else}}No description{{end}}</div>
+      </div>
+      <div class="col-12 col-sm-auto">
+        <div class="d-flex justify-content-start justify-content-sm-end gap-2 flex-wrap">
+          <a href="/skills/{{.ID}}/edit" class="btn btn-outline-primary btn-sm" aria-label="Edit skill {{.ID}}" title="Edit">
+            <i class="ti ti-pencil me-1"></i>Edit
+          </a>
+          <form method="post" action="/skills/{{.ID}}/delete" data-confirm="Delete skill &quot;{{.ID}}&quot;?" data-confirm-button="Delete">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <button type="submit" class="btn btn-outline-danger btn-sm" aria-label="Delete skill {{.ID}}" title="Delete">
+              <i class="ti ti-trash me-1"></i>Delete
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {{end}}
+  </div>
+</div>
+{{else}}
+<div class="empty">
+  <div class="empty-icon"><i class="ti ti-tool fs-1"></i></div>
+  <p class="empty-title">No skills defined</p>
+  <div class="empty-action">
+    <a href="/skills/new" class="btn btn-primary"><i class="ti ti-plus me-1"></i> Create skill</a>
+  </div>
+</div>
+{{end}}
+{{template "app_end.gohtml" .}}
+{{end}}

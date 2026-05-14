@@ -1,0 +1,93 @@
+{{define "projects_list.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="row align-items-center">
+    <div class="col">
+      <h2 class="page-title">Projects</h2>
+    </div>
+    <div class="col-auto ms-auto">
+      <a href="/projects/new" class="btn btn-primary">
+        <i class="ti ti-plus me-1"></i>Create
+      </a>
+    </div>
+  </div>
+</div>
+{{if .Projects}}
+<div class="card">
+  <div class="list-group list-group-flush list-group-hoverable">
+  {{range .Projects}}
+  <div class="list-group-item">
+    <div class="row g-3 align-items-start">
+      <div class="col min-w-0">
+        <div class="fw-medium text-break">{{.Name}}</div>
+        {{if .GitOrigin}}
+        <div class="text-secondary small text-break">
+          {{if .GitOriginURL}}
+          <a href="{{.GitOriginURL}}" target="_blank" rel="noopener" class="link-secondary text-decoration-none">{{.GitOrigin}}</a>
+          {{else}}
+          {{.GitOrigin}}
+          {{end}}
+        </div>
+        {{else if ne .Label .Name}}
+        <div class="text-secondary small text-break">{{.Label}}</div>
+        {{end}}
+        <div class="text-secondary small">{{.Size}}</div>
+        {{if or .GitRepo (gt .ActiveSessions 0) (gt .InactiveSessions 0)}}
+        <div class="mt-2 d-flex flex-column gap-2 align-items-start">
+          {{if .GitRepo}}
+          <div class="d-flex flex-wrap gap-2">
+            {{if .GitBranch}}<span class="badge badge-outline text-secondary"><i class="ti ti-git-branch me-1"></i>{{.GitBranch}}</span>{{end}}
+            {{if gt .GitAhead 0}}<span class="badge badge-outline text-secondary">+{{.GitAhead}} ahead</span>{{end}}
+            {{if gt .GitBehind 0}}<span class="badge badge-outline text-secondary">-{{.GitBehind}} behind</span>{{end}}
+            <span class="badge {{if gt .GitChanges 0}}bg-amber-lt text-amber{{else}}badge-outline text-secondary{{end}}">{{if gt .GitChanges 0}}{{.GitChanges}} {{if eq .GitChanges 1}}change{{else}}changes{{end}}{{else}}No changes{{end}}</span>
+          </div>
+          {{end}}
+          {{if or (gt .ActiveSessions 0) (gt .InactiveSessions 0)}}
+          <div class="row g-2 w-100">
+            {{if gt .ActiveSessions 0}}
+            <div class="col-6 small text-break">
+              <div class="fw-medium">Active sessions{{if gt .ActiveSessions 1}} ({{.ActiveSessions}}){{end}}</div>
+              <div class="text-secondary">{{range $index, $session := .ActiveSessionRefs}}{{if gt $index 0}}, {{end}}<a href="/sessions/{{$session.ID}}" class="link-secondary">{{$session.Name}}</a>{{end}}</div>
+            </div>
+            {{end}}
+            {{if gt .InactiveSessions 0}}
+            <div class="col-6 small text-break">
+              <div class="fw-medium">Inactive sessions{{if gt .InactiveSessions 1}} ({{.InactiveSessions}}){{end}}</div>
+              <div class="text-secondary">{{range $index, $session := .InactiveSessionRefs}}{{if gt $index 0}}, {{end}}<form method="post" action="/resumable/{{$session.ID}}/resume" class="d-inline"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" class="btn btn-link btn-sm p-0 border-0 align-baseline link-secondary">{{$session.Name}}</button></form>{{end}}</div>
+            </div>
+            {{end}}
+          </div>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+      <div class="col-12 col-sm-auto">
+        <div class="d-flex justify-content-start justify-content-sm-end gap-2 flex-wrap">
+          <a href="/sessions/new?project={{urlquery .Name}}" class="btn btn-outline-primary btn-sm">
+            <i class="ti ti-plus me-1"></i>Session
+          </a>
+          <form method="post" action="/projects/delete" data-confirm="Delete project &quot;{{.Name}}&quot;?" data-confirm-button="Delete">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="project" value="{{.Name}}">
+            <button type="submit" class="btn btn-outline-danger btn-sm" aria-label="Delete project {{.Name}}" title="Delete">
+              <i class="ti ti-trash me-1"></i>Delete
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {{end}}
+  </div>
+</div>
+{{else}}
+<div class="empty">
+  <div class="empty-icon"><i class="ti ti-folder fs-1"></i></div>
+  <p class="empty-title">No projects yet</p>
+  <div class="empty-action">
+    <a href="/projects/new" class="btn btn-primary"><i class="ti ti-plus me-1"></i> Create project</a>
+  </div>
+</div>
+{{end}}
+{{template "app_end.gohtml" .}}
+{{end}}
