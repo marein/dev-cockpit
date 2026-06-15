@@ -10,9 +10,48 @@
   border: 1px dashed #fff;
 }
 .attach-terminal .xterm, .attach-terminal .xterm * { box-sizing: content-box; }
-.attach-terminal .xterm { user-select: text !important; -webkit-user-select: text !important; }
 .attach-terminal .xterm-helper-textarea { display: none !important; pointer-events: none !important; }
 .attach-terminal .xterm-viewport { overflow-y: auto !important; }
+.attach-terminal .attach-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 10;
+  pointer-events: none;
+  background: #f9fafb;
+  mix-blend-mode: difference;
+}
+.attach-terminal .attach-selection {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  z-index: 5;
+  overflow: hidden;
+  white-space: pre;
+  color: transparent;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.attach-terminal.attach-terminal-copy-mode .attach-selection {
+  pointer-events: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+.attach-terminal .attach-selection::selection {
+  background: rgba(59, 130, 246, 0.45);
+  color: transparent;
+}
+.attach-terminal .attach-selection::-moz-selection {
+  background: rgba(59, 130, 246, 0.45);
+  color: transparent;
+}
 .attach-footer {
   position: sticky;
   bottom: 0;

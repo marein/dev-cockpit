@@ -437,8 +437,9 @@ func decodeControlData(s string) []byte {
 
 func isOctal(b byte) bool { return b >= '0' && b <= '7' }
 
-// buildSnapshot strips OSC/title noise and appends a cursor-positioning escape
-// so xterm renders the cursor where tmux reports it.
+// buildSnapshot strips OSC/title noise and positions the cursor where tmux
+// reports it. The client renders the visible cursor itself (renderer-independent
+// overlay), so this only restores the cursor's cell position from the capture.
 func buildSnapshot(rawGrid []byte, cursor []string) []byte {
 	out := stripSnapshotCursor(stripOSC(rawGrid))
 	if len(cursor) < 2 {
@@ -449,16 +450,7 @@ func buildSnapshot(rawGrid []byte, cursor []string) []byte {
 	if xErr != nil || yErr != nil {
 		return out
 	}
-	// cursor_flag reports whether the pane's program keeps the hardware cursor
-	// visible (DECTCEM). Programs that rely on it (e.g. the Copilot CLI) draw no
-	// cursor of their own, so move xterm's cursor to tmux's position and let
-	// xterm render it. Programs that draw their own cursor (e.g. Claude Code,
-	// with the hardware cursor disabled) instead get a redrawn reverse-video
-	// block here, while xterm's own cursor stays disabled.
-	if len(cursor) >= 3 && cursor[2] == "1" {
-		return append(out, []byte(fmt.Sprintf("\x1b[%d;%dH\x1b[?25h", y+1, x+1))...)
-	}
-	return append(out, []byte(fmt.Sprintf("\x1b[%d;%dH\x1b[97m\x1b[49m\x1b[7m \x1b[0m\x1b[?25l", y+1, x+1))...)
+	return append(out, []byte(fmt.Sprintf("\x1b[%d;%dH", y+1, x+1))...)
 }
 
 func stripSnapshotCursor(src []byte) []byte {
