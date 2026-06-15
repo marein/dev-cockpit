@@ -45,6 +45,21 @@
     void rendererError;
   }
 
+  // ---- Mouse reporting -------------------------------------------------------
+  // This viewport is a read-only mirror: stdin is disabled and keystrokes are
+  // sent through the controls module, so xterm has no program to report mouse
+  // events to. When a full-screen CLI enables mouse tracking (DECSET ?1000/1002/
+  // 1003 and friends, which tmux forwards because its own `mouse` option is off),
+  // xterm would start capturing mouse-down and wheel events — breaking text
+  // selection, swallowing page scroll over the terminal, and turning the cursor
+  // into a pointer. Swallow the mouse-mode set/reset sequences so the renderer
+  // never activates mouse reporting, leaving the mirror selectable and scrollable.
+  const MOUSE_MODES = new Set([1000, 1001, 1002, 1003, 1004, 1005, 1006, 1015, 1016]);
+  const isMouseModeSequence = (params) => params.length > 0
+    && params.every((param) => MOUSE_MODES.has(Array.isArray(param) ? param[0] : param));
+  term.parser.registerCsiHandler({ prefix: "?", final: "h" }, isMouseModeSequence);
+  term.parser.registerCsiHandler({ prefix: "?", final: "l" }, isMouseModeSequence);
+
   // ---- Cursor ----------------------------------------------------------------
   // The canvas renderer only paints the terminal cursor while the element is
   // focused, and this read-only viewport never is. Both supported CLIs use the
