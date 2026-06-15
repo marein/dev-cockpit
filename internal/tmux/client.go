@@ -13,7 +13,7 @@ import (
 )
 
 // RequiredTools lists external binaries tmux relies on.
-var RequiredTools = []string{"tmux", "stdbuf"}
+var RequiredTools = []string{"tmux"}
 
 // Pane is one tmux session entry as reported by `tmux list-panes`.
 type Pane struct {
@@ -66,82 +66,9 @@ func (c *Client) SetHistoryLimit(name string, historyLimit int) error {
 	return clirun.Check("tmux", "set-option", "-t", name, "history-limit", strconv.Itoa(historyLimit))
 }
 
-// StartPipe appends live pane output to logPath.
-func (c *Client) StartPipe(name, logPath string) error {
-	return clirun.Check("tmux", "pipe-pane", "-t", Target(name),
-		"stdbuf -o0 cat >> "+clirun.ShellQuote(logPath))
-}
-
-// StopPipe detaches any active pipe-pane logger.
+// StopPipe detaches any inherited pipe-pane logger (migration cleanup).
 func (c *Client) StopPipe(name string) error {
 	return clirun.Check("tmux", "pipe-pane", "-t", Target(name))
-}
-
-// CapturePane returns the current pane contents plus bounded history.
-func (c *Client) CapturePane(name string) ([]byte, error) {
-	r := clirun.Run("tmux", "capture-pane", "-p", "-e", "-t", Target(name), "-S", "0", "-E", "-")
-	if r.Err != nil {
-		if r.ExitCode != 0 {
-			msg := strings.TrimSpace(r.Stderr)
-			if msg == "" {
-				msg = "Failed to capture terminal."
-			}
-			return nil, errors.New(msg)
-		}
-		return nil, r.Err
-	}
-	out := stripSnapshotCursor(stripOSC([]byte(r.Stdout)))
-	cursor := clirun.Run("tmux", "display-message", "-p", "-t", Target(name), "#{cursor_x} #{cursor_y} #{cursor_flag}")
-	if cursor.Err != nil {
-		return out, nil
-	}
-	fields := strings.Fields(cursor.Stdout)
-	if len(fields) < 2 {
-		return out, nil
-	}
-	x, xErr := strconv.Atoi(fields[0])
-	y, yErr := strconv.Atoi(fields[1])
-	if xErr != nil || yErr != nil {
-		return out, nil
-	}
-	// cursor_flag reports whether the pane's program keeps the hardware cursor
-	// visible (DECTCEM). Programs that rely on it (e.g. the Copilot CLI) draw no
-	// cursor of their own, so move xterm's cursor to tmux's position and let xterm
-	// render it. Programs that draw their own cursor (e.g. Claude Code, with the
-	// hardware cursor disabled) instead get a redrawn reverse-video block here,
-	// while xterm's own cursor stays disabled.
-	if len(fields) >= 3 && fields[2] == "1" {
-		return append(out, []byte(fmt.Sprintf("\x1b[%d;%dH\x1b[?25h", y+1, x+1))...), nil
-	}
-	return append(out, []byte(fmt.Sprintf("\x1b[%d;%dH\x1b[97m\x1b[49m\x1b[7m \x1b[0m\x1b[?25l", y+1, x+1))...), nil
-}
-
-// PaneSize returns the current pane dimensions.
-func (c *Client) PaneSize(name string) (Size, error) {
-	r := clirun.Run("tmux", "display-message", "-p", "-t", Target(name), "#{pane_width} #{pane_height}")
-	if r.Err != nil {
-		if r.ExitCode != 0 {
-			msg := strings.TrimSpace(r.Stderr)
-			if msg == "" {
-				msg = "Failed to read terminal size."
-			}
-			return Size{}, errors.New(msg)
-		}
-		return Size{}, r.Err
-	}
-	fields := strings.Fields(r.Stdout)
-	if len(fields) != 2 {
-		return Size{}, errors.New("Failed to parse terminal size.")
-	}
-	cols, err := strconv.Atoi(fields[0])
-	if err != nil {
-		return Size{}, err
-	}
-	rows, err := strconv.Atoi(fields[1])
-	if err != nil {
-		return Size{}, err
-	}
-	return Size{Cols: cols, Rows: rows}, nil
 }
 
 // Rename changes the tmux session name.
@@ -180,12 +107,6 @@ func (c *Client) PasteLiteral(name, text string) error {
 		return err
 	}
 	return clirun.Check("tmux", "paste-buffer", "-t", Target(name), "-b", buffer, "-d", "-p", "-r")
-}
-
-// Resize sets the terminal dimensions of a session.
-func (c *Client) Resize(name string, cols, rows int) error {
-	return clirun.Check("tmux", "resize-window", "-t", name,
-		"-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows))
 }
 
 // ListPanes returns the unique first-pane entries for every session.

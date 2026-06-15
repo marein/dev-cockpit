@@ -22,7 +22,6 @@ var ErrNoActiveSession = errors.New("No active session")
 type Sessions struct {
 	cfg       config.Config
 	tmux      *tmux.Client
-	log       *tmux.StreamLog
 	provider  provider.Provider
 	projects  *project.Repository
 	snapshots *snapshotCache
@@ -33,18 +32,16 @@ type Sessions struct {
 func NewSessions(
 	cfg config.Config,
 	t *tmux.Client,
-	log *tmux.StreamLog,
 	p provider.Provider,
 	projects *project.Repository,
 ) *Sessions {
 	return &Sessions{
 		cfg:       cfg,
 		tmux:      t,
-		log:       log,
 		provider:  p,
 		projects:  projects,
 		snapshots: &snapshotCache{ttl: cfg.SnapshotCacheTTL},
-		streams:   newStreamHub(cfg, t, log),
+		streams:   newStreamHub(cfg),
 	}
 }
 
@@ -62,10 +59,7 @@ func (s *Sessions) Snapshot() Snapshot {
 // Invalidate flushes the snapshot cache.
 func (s *Sessions) Invalidate() { s.snapshots.invalidate() }
 
-// StreamLog returns the underlying stream log accessor.
-func (s *Sessions) StreamLog() *tmux.StreamLog { return s.log }
-
-// StopIdleStreams clears inherited tmux pipes when the server starts without clients.
+// StopIdleStreams clears inherited tmux pipes left by a previous process.
 func (s *Sessions) StopIdleStreams() error {
 	s.Invalidate()
 	var errs []error
@@ -73,7 +67,6 @@ func (s *Sessions) StopIdleStreams() error {
 		if err := s.tmux.StopPipe(r.TmuxSession); err != nil {
 			errs = append(errs, err)
 		}
-		s.log.Remove(r.TmuxSession)
 	}
 	return errors.Join(errs...)
 }
@@ -213,7 +206,7 @@ func (s *Sessions) DeleteResumable(rawID string) (provider.Session, error) {
 	return stored, nil
 }
 
-// Stop kills the running tmux session and removes its stream log.
+// Stop kills the running tmux session and closes its control client.
 func (s *Sessions) Stop(rawID string) (string, error) {
 	r, err := s.ResolveRunning(rawID)
 	if err != nil {
@@ -223,12 +216,11 @@ func (s *Sessions) Stop(rawID string) (string, error) {
 		return "", err
 	}
 	s.streams.clear(r.TmuxSession)
-	s.log.Remove(r.TmuxSession)
 	s.Invalidate()
 	return r.Name, nil
 }
 
-// AttachStream rotates the active stream log and returns the initial snapshot.
+// AttachStream opens the control client and returns the initial snapshot.
 func (s *Sessions) AttachStream(rawID, rawCols, rawRows string) (StreamAttachment, error) {
 	r, err := s.ResolveRunning(rawID)
 	if err != nil {
@@ -242,8 +234,20 @@ func (s *Sessions) RefreshStream(name string, generation int64) (StreamAttachmen
 	return s.streams.refresh(name, generation)
 }
 
-// DetachStream releases one browser stream and stops live logging after the last one.
+// DetachStream releases one browser stream and closes the control client after
+// the last one.
 func (s *Sessions) DetachStream(name string) { s.streams.detach(name) }
+
+// StreamDelta returns buffered output after offset. reset is true when the
+// caller fell out of the ring and must re-snapshot.
+func (s *Sessions) StreamDelta(name string, offset int64) ([]byte, int64, bool) {
+	return s.streams.delta(name, offset)
+}
+
+// Resnapshot recaptures the screen for a stream that fell out of the ring.
+func (s *Sessions) Resnapshot(name string) (StreamAttachment, bool) {
+	return s.streams.resnapshot(name)
+}
 
 // Input is one queued user action; exactly one field is non-empty.
 type Input struct {
@@ -292,7 +296,7 @@ func (s *Sessions) Resize(rawID, rawCols, rawRows string) error {
 	if err != nil {
 		return err
 	}
-	return s.tmux.Resize(r.TmuxSession, cols, rows)
+	return s.streams.resize(r.TmuxSession, cols, rows)
 }
 
 // HasSession reports whether tmux still has a session with the given name.
@@ -301,7 +305,6 @@ func (s *Sessions) HasSession(name string) bool { return s.tmux.HasSession(name)
 // --- helpers ---
 
 func (s *Sessions) configureTerminal(name string) error {
-	s.log.Remove(name)
 	return s.tmux.SetHistoryLimit(name, s.cfg.TerminalHistoryLimit)
 }
 
@@ -339,7 +342,6 @@ func (s *Sessions) promoteSessionKey(tempKey string, before []provider.Session, 
 				return tempKey
 			}
 			if err := s.tmux.Rename(tempKey, r.SessionID); err == nil {
-				_ = s.log.Rename(tempKey, r.SessionID)
 				return r.SessionID
 			}
 			return tempKey

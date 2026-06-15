@@ -38,8 +38,6 @@ func (s *Server) handleSessionStream(c *gin.Context) {
 		return
 	}
 	defer s.sessions.DetachStream(attached.Session)
-	streamLog := s.sessions.StreamLog()
-	path := attached.Path
 	offset := attached.Offset
 	generation := attached.Generation
 	if err := writeSSEvent(w, "terminal-size", sizePayload(attached.Cols, attached.Rows)); err != nil {
@@ -68,7 +66,6 @@ func (s *Server) handleSessionStream(c *gin.Context) {
 			return
 		case <-ticker.C:
 			if refreshed, ok := s.sessions.RefreshStream(attached.Session, generation); ok {
-				path = refreshed.Path
 				offset = refreshed.Offset
 				generation = refreshed.Generation
 				oscFilter.Reset()
@@ -81,10 +78,21 @@ func (s *Server) handleSessionStream(c *gin.Context) {
 				lastActivity = time.Now()
 				continue
 			}
-			delta, newOffset, err := streamLog.Delta(path, offset)
-			if err != nil {
-				_ = writeSSEvent(w, "session-error", err.Error())
-				return
+			delta, newOffset, reset := s.sessions.StreamDelta(attached.Session, offset)
+			if reset {
+				if snap, ok := s.sessions.Resnapshot(attached.Session); ok {
+					offset = snap.Offset
+					generation = snap.Generation
+					oscFilter.Reset()
+					if err := writeSSEvent(w, "terminal-size", sizePayload(snap.Cols, snap.Rows)); err != nil {
+						return
+					}
+					if err := writeSSEvent(w, "snapshot", encodeBase64(snap.Snapshot)); err != nil {
+						return
+					}
+					lastActivity = time.Now()
+				}
+				continue
 			}
 			if len(delta) > 0 {
 				offset = newOffset

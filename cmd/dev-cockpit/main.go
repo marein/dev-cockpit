@@ -116,7 +116,6 @@ func runServe(opts serveOptions) error {
 		return fmt.Errorf("invalid --auth-password-hash: %w", err)
 	}
 	tmuxClient := tmux.New()
-	streamLog := tmux.NewStreamLog(cfg.TerminalLogRoot)
 	projectRepo := project.NewRepository(cfg.ProjectsRoot, cfg.ProjectMetadataConcurrency)
 	registry := provider.NewRegistry(providercopilot.New(), providerclaude.New())
 	selectedProvider := registry.ByID(opts.providerID)
@@ -129,7 +128,7 @@ func runServe(opts serveOptions) error {
 		return fmt.Errorf("missing CLI tools: %v", missing)
 	}
 
-	sessions := session.NewSessions(cfg, tmuxClient, streamLog, selectedProvider, projectRepo)
+	sessions := session.NewSessions(cfg, tmuxClient, selectedProvider, projectRepo)
 	if err := sessions.StopIdleStreams(); err != nil {
 		log.Printf("failed to stop idle terminal stream(s): %v", err)
 	}

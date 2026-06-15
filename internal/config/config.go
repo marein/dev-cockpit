@@ -3,7 +3,6 @@ package config
 
 import (
 	"errors"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -44,7 +43,6 @@ type Config struct {
 	// Filesystem locations
 	ProjectsRoot               string
 	ProjectMetadataConcurrency int
-	TerminalLogRoot            string
 
 	// Terminal stream tuning
 	StreamFrameInterval     time.Duration
@@ -74,10 +72,7 @@ type Options struct {
 
 // Load applies sensible defaults and normalizes startup values.
 func Load(opts Options) (Config, error) {
-	home, err := filesystem.HomeDir()
-	if err != nil {
-		return Config{}, err
-	}
+	var err error
 
 	authUsername := strings.TrimSpace(opts.AuthUsername)
 	if authUsername == "" {
@@ -131,8 +126,6 @@ func Load(opts Options) (Config, error) {
 		return Config{}, errors.New("max request body size must be greater than zero")
 	}
 
-	stateRoot := filepath.Join(home, ".local", "state", "dev-cockpit")
-
 	projectsRoot, err := filesystem.ExpandHome(projectsDir)
 	if err != nil {
 		return Config{}, err
@@ -150,7 +143,6 @@ func Load(opts Options) (Config, error) {
 		AuthCookieKey:              []byte(sessionCookieKey),
 		ProjectsRoot:               projectsRoot,
 		ProjectMetadataConcurrency: opts.ProjectWorkers,
-		TerminalLogRoot:            filepath.Join(stateRoot, "tmux"),
 		StreamFrameInterval:        100 * time.Millisecond, // ~10fps
 		StreamHeartbeatInterval:    1 * time.Second,
 		TerminalHistoryLimit:       10000,
