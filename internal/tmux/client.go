@@ -34,11 +34,6 @@ type Client struct{}
 // New returns a tmux Client.
 func New() *Client { return &Client{} }
 
-// HasSession returns true when tmux knows the named session.
-func (c *Client) HasSession(name string) bool {
-	return clirun.Run("tmux", "has-session", "-t", name).Err == nil
-}
-
 // Target returns the canonical pane target for a session.
 func Target(name string) string { return name + ":0.0" }
 

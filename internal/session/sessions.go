@@ -244,6 +244,17 @@ func (s *Sessions) StreamDelta(name string, offset int64) ([]byte, int64, bool) 
 	return s.streams.delta(name, offset)
 }
 
+// StreamUpdated returns a channel closed on the next output or exit, plus
+// whether the stream is still live.
+func (s *Sessions) StreamUpdated(name string) (<-chan struct{}, bool) {
+	return s.streams.updated(name)
+}
+
+// StreamExited reports whether the underlying control client has ended.
+func (s *Sessions) StreamExited(name string) bool {
+	return s.streams.exited(name)
+}
+
 // Resnapshot recaptures the screen for a stream that fell out of the ring.
 func (s *Sessions) Resnapshot(name string) (StreamAttachment, bool) {
 	return s.streams.resnapshot(name)
@@ -298,9 +309,6 @@ func (s *Sessions) Resize(rawID, rawCols, rawRows string) error {
 	}
 	return s.streams.resize(r.TmuxSession, cols, rows)
 }
-
-// HasSession reports whether tmux still has a session with the given name.
-func (s *Sessions) HasSession(name string) bool { return s.tmux.HasSession(name) }
 
 // --- helpers ---
 

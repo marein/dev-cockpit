@@ -13,8 +13,7 @@ import (
 
 func (s *Server) handleSessionStream(c *gin.Context) {
 	id := c.Param("id")
-	running, err := s.sessions.ResolveRunning(id)
-	if err != nil {
+	if _, err := s.sessions.ResolveRunning(id); err != nil {
 		c.String(http.StatusNotFound, err.Error())
 		return
 	}
@@ -47,62 +46,84 @@ func (s *Server) handleSessionStream(c *gin.Context) {
 		return
 	}
 
-	ticker := time.NewTicker(s.cfg.StreamFrameInterval)
-	defer ticker.Stop()
 	heartbeat := time.NewTicker(s.cfg.StreamHeartbeatInterval)
 	defer heartbeat.Stop()
-	checkAlive := time.NewTicker(1 * time.Second)
-	defer checkAlive.Stop()
 
 	// One filter per connection: it carries escape-sequence state across
 	// delta reads and is reset whenever the stream restarts from a snapshot.
 	var oscFilter tmux.OSCFilter
 
 	lastActivity := time.Now()
+	var lastFrame time.Time
 	ctx := c.Request.Context()
 	for {
+		// Subscribe before reading so no wake is missed between the read below
+		// and the wait at the end of the loop.
+		updated, live := s.sessions.StreamUpdated(attached.Session)
+		if !live {
+			_ = writeSSEvent(w, "session-error", "Session has ended.")
+			return
+		}
+
+		// Another browser reset or resized this stream: resync from its snapshot.
+		if refreshed, ok := s.sessions.RefreshStream(attached.Session, generation); ok {
+			offset = refreshed.Offset
+			generation = refreshed.Generation
+			oscFilter.Reset()
+			if err := writeSSEvent(w, "terminal-size", sizePayload(refreshed.Cols, refreshed.Rows)); err != nil {
+				return
+			}
+			if err := writeSSEvent(w, "snapshot", encodeBase64(refreshed.Snapshot)); err != nil {
+				return
+			}
+			lastActivity = time.Now()
+			lastFrame = time.Now()
+			continue
+		}
+
+		delta, newOffset, reset := s.sessions.StreamDelta(attached.Session, offset)
+		if reset {
+			if snap, ok := s.sessions.Resnapshot(attached.Session); ok {
+				offset = snap.Offset
+				generation = snap.Generation
+				oscFilter.Reset()
+				if err := writeSSEvent(w, "terminal-size", sizePayload(snap.Cols, snap.Rows)); err != nil {
+					return
+				}
+				if err := writeSSEvent(w, "snapshot", encodeBase64(snap.Snapshot)); err != nil {
+					return
+				}
+				lastActivity = time.Now()
+				lastFrame = time.Now()
+			}
+			continue
+		}
+		if len(delta) > 0 {
+			offset = newOffset
+			lastActivity = time.Now()
+			if out := oscFilter.Filter(delta); len(out) > 0 {
+				if err := writeSSEvent(w, "delta", encodeBase64(out)); err != nil {
+					return
+				}
+				lastFrame = time.Now()
+			}
+		}
+
+		// The session ended: flush any final bytes, then close the stream.
+		if s.sessions.StreamExited(attached.Session) {
+			if d, n, _ := s.sessions.StreamDelta(attached.Session, offset); len(d) > 0 {
+				offset = n
+				if out := oscFilter.Filter(d); len(out) > 0 {
+					_ = writeSSEvent(w, "delta", encodeBase64(out))
+				}
+			}
+			_ = writeSSEvent(w, "session-error", "Session has ended.")
+			return
+		}
+
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if refreshed, ok := s.sessions.RefreshStream(attached.Session, generation); ok {
-				offset = refreshed.Offset
-				generation = refreshed.Generation
-				oscFilter.Reset()
-				if err := writeSSEvent(w, "terminal-size", sizePayload(refreshed.Cols, refreshed.Rows)); err != nil {
-					return
-				}
-				if err := writeSSEvent(w, "snapshot", encodeBase64(refreshed.Snapshot)); err != nil {
-					return
-				}
-				lastActivity = time.Now()
-				continue
-			}
-			delta, newOffset, reset := s.sessions.StreamDelta(attached.Session, offset)
-			if reset {
-				if snap, ok := s.sessions.Resnapshot(attached.Session); ok {
-					offset = snap.Offset
-					generation = snap.Generation
-					oscFilter.Reset()
-					if err := writeSSEvent(w, "terminal-size", sizePayload(snap.Cols, snap.Rows)); err != nil {
-						return
-					}
-					if err := writeSSEvent(w, "snapshot", encodeBase64(snap.Snapshot)); err != nil {
-						return
-					}
-					lastActivity = time.Now()
-				}
-				continue
-			}
-			if len(delta) > 0 {
-				offset = newOffset
-				lastActivity = time.Now()
-				if out := oscFilter.Filter(delta); len(out) > 0 {
-					if err := writeSSEvent(w, "delta", encodeBase64(out)); err != nil {
-						return
-					}
-				}
-			}
 		case <-heartbeat.C:
 			if time.Since(lastActivity) >= s.cfg.StreamHeartbeatInterval {
 				if err := writeSSEKeepalive(w); err != nil {
@@ -110,10 +131,17 @@ func (s *Server) handleSessionStream(c *gin.Context) {
 				}
 				lastActivity = time.Now()
 			}
-		case <-checkAlive.C:
-			if !s.sessions.HasSession(running.TmuxSession) {
-				_ = writeSSEvent(w, "session-error", "Session has ended.")
-				return
+		case <-updated:
+			// Coalesce bursts: cap the frame rate so chatty output is batched
+			// into one delta per frame instead of a flood of tiny events.
+			if wait := s.cfg.StreamMinFrameInterval - time.Since(lastFrame); wait > 0 {
+				t := time.NewTimer(wait)
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					return
+				case <-t.C:
+				}
 			}
 		}
 	}

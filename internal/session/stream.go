@@ -101,6 +101,9 @@ func (h *streamHub) attach(name, rawCols, rawRows string) (StreamAttachment, err
 	st.cols = size.Cols
 	st.rows = size.Rows
 	st.refs++
+	// Wake any already-connected handlers so they pick up the new generation
+	// (and the possibly changed size) without waiting for output.
+	st.ctl.Notify()
 	return h.attachmentLocked(name, st), nil
 }
 
@@ -147,6 +150,28 @@ func (h *streamHub) delta(name string, offset int64) ([]byte, int64, bool) {
 		return nil, offset, false
 	}
 	return ctl.Delta(offset)
+}
+
+// updated returns the wake channel for a stream and whether it is still live.
+func (h *streamHub) updated(name string) (<-chan struct{}, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.streams[name]
+	if st == nil || st.ctl == nil {
+		return nil, false
+	}
+	return st.ctl.Updated(), true
+}
+
+// exited reports whether the control client for a stream has ended.
+func (h *streamHub) exited(name string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.streams[name]
+	if st == nil || st.ctl == nil {
+		return true
+	}
+	return st.ctl.Exited()
 }
 
 // resize drives the rendered size of an actively streamed session.

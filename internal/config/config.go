@@ -45,8 +45,8 @@ type Config struct {
 	ProjectMetadataConcurrency int
 
 	// Terminal stream tuning
-	StreamFrameInterval     time.Duration
 	StreamHeartbeatInterval time.Duration
+	StreamMinFrameInterval  time.Duration
 	TerminalHistoryLimit    int
 	MinTerminalCols         int
 	MinTerminalRows         int
@@ -143,8 +143,8 @@ func Load(opts Options) (Config, error) {
 		AuthCookieKey:              []byte(sessionCookieKey),
 		ProjectsRoot:               projectsRoot,
 		ProjectMetadataConcurrency: opts.ProjectWorkers,
-		StreamFrameInterval:        100 * time.Millisecond, // ~10fps
 		StreamHeartbeatInterval:    1 * time.Second,
+		StreamMinFrameInterval:     33 * time.Millisecond, // ~30fps coalescing cap
 		TerminalHistoryLimit:       10000,
 		MinTerminalCols:            2,
 		MinTerminalRows:            30,

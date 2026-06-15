@@ -43,6 +43,10 @@ type Control struct {
 	lastOutput time.Time
 	outSeq     int64 // total bytes ever received (monotonic, ignores ring trim)
 
+	// notify is a broadcast channel: it is closed (and replaced) on every new
+	// output or on exit, so any number of waiting stream handlers wake at once.
+	notify chan struct{}
+
 	ready chan struct{}
 }
 
@@ -75,6 +79,7 @@ func StartControl(name string) (*Control, error) {
 		cmd:    cmd,
 		stdin:  stdin,
 		stderr: stderr,
+		notify: make(chan struct{}),
 		ready:  make(chan struct{}),
 	}
 	go c.read(stdout)
@@ -202,7 +207,38 @@ func (c *Control) appendOutput(line string) {
 		c.base += int64(drop)
 		c.buf = append(c.buf[:0], c.buf[drop:]...)
 	}
+	c.signalLocked()
 	c.mu.Unlock()
+}
+
+// signalLocked wakes every waiter by closing the current notify channel and
+// installing a fresh one. Callers must hold c.mu.
+func (c *Control) signalLocked() {
+	close(c.notify)
+	c.notify = make(chan struct{})
+}
+
+// Updated returns a channel that is closed on the next output or on exit.
+// Subscribe (call Updated) before reading state, then select on the result, so
+// no wake is missed between a read and the wait.
+func (c *Control) Updated() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.notify
+}
+
+// Notify wakes all waiters explicitly (e.g. after a resize changed the pane).
+func (c *Control) Notify() {
+	c.mu.Lock()
+	c.signalLocked()
+	c.mu.Unlock()
+}
+
+// Exited reports whether the control client has detached or the session ended.
+func (c *Control) Exited() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.exited
 }
 
 func (c *Control) markExited() {
@@ -214,6 +250,7 @@ func (c *Control) markExited() {
 	c.exited = true
 	pending := c.pending
 	c.pending = nil
+	c.signalLocked()
 	c.mu.Unlock()
 	for _, req := range pending {
 		req.err = errors.New("Terminal connection closed.")
