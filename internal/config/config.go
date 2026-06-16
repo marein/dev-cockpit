@@ -40,6 +40,11 @@ type Config struct {
 	AuthSessionLifetime time.Duration
 	AuthCookieKey       []byte
 
+	// Login rate limiting (per client IP)
+	LoginRateMaxAttempts int
+	LoginRateWindow      time.Duration
+	LoginRateBlock       time.Duration
+
 	// Filesystem locations
 	ProjectsRoot               string
 	ProjectMetadataConcurrency int
@@ -141,6 +146,9 @@ func Load(opts Options) (Config, error) {
 		AuthSessionCookie:          sessionCookieName,
 		AuthSessionLifetime:        time.Hour * 24 * 365,
 		AuthCookieKey:              []byte(sessionCookieKey),
+		LoginRateMaxAttempts:       3,
+		LoginRateWindow:            5 * time.Minute,
+		LoginRateBlock:             15 * time.Second,
 		ProjectsRoot:               projectsRoot,
 		ProjectMetadataConcurrency: opts.ProjectWorkers,
 		StreamHeartbeatInterval:    1 * time.Second,

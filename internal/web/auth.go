@@ -4,8 +4,11 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -39,15 +42,26 @@ func (s *Server) handleLoginGet(c *gin.Context) {
 }
 
 func (s *Server) handleLoginPost(c *gin.Context) {
+	ip := c.ClientIP()
+	if ok, retry := s.loginLimiter.allow(ip); !ok {
+		s.respondBlocked(c, retry)
+		return
+	}
+
 	var form loginForm
 	if !s.decodeForm(c, &form, "/login") {
 		return
 	}
 	form.Username = strings.TrimSpace(form.Username)
 	if form.Username != s.cfg.AuthUsername || bcrypt.CompareHashAndPassword([]byte(s.cfg.AuthPasswordHash), []byte(form.Password)) != nil {
+		if justBlocked := s.loginLimiter.fail(ip); justBlocked {
+			s.respondBlocked(c, s.cfg.LoginRateBlock)
+			return
+		}
 		s.redirectWithFlash(c, "/login", "", "Invalid username or password.")
 		return
 	}
+	s.loginLimiter.reset(ip)
 	sess := ginsessions.Default(c)
 	sess.Clear()
 	sess.Set(sessionUserKey, form.Username)
@@ -56,6 +70,13 @@ func (s *Server) handleLoginPost(c *gin.Context) {
 		return
 	}
 	c.Redirect(http.StatusSeeOther, safeRedirectPath(form.Next))
+}
+
+// respondBlocked sends the rate-limit flash and a Retry-After header.
+func (s *Server) respondBlocked(c *gin.Context, retry time.Duration) {
+	secs := int((retry + time.Second - 1) / time.Second)
+	c.Header("Retry-After", strconv.Itoa(secs))
+	s.redirectWithFlash(c, "/login", "", fmt.Sprintf("Too many failed attempts. Try again in %d seconds.", secs))
 }
 
 func (s *Server) handleLogout(c *gin.Context) {

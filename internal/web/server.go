@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-contrib/gzip"
 	ginsessions "github.com/gin-contrib/sessions"
@@ -22,12 +23,13 @@ var staticAssets embed.FS
 
 // Server wires HTTP handling against the domain services.
 type Server struct {
-	cfg      config.Config
-	provider provider.Provider
-	sessions *session.Sessions
-	projects *project.Repository
-	assets   staticAssetManifest
-	handler  http.Handler
+	cfg          config.Config
+	provider     provider.Provider
+	sessions     *session.Sessions
+	projects     *project.Repository
+	assets       staticAssetManifest
+	loginLimiter rateLimiter
+	handler      http.Handler
 }
 
 // NewServer constructs a Server.
@@ -36,7 +38,17 @@ func NewServer(cfg config.Config, selectedProvider provider.Provider, sessions *
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, provider: selectedProvider, sessions: sessions, projects: projects, assets: assets}
+	s := &Server{
+		cfg:      cfg,
+		provider: selectedProvider,
+		sessions: sessions,
+		projects: projects,
+		assets:   assets,
+		loginLimiter: newLoggingLoginLimiter(
+			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
+			cfg.LoginRateBlock, cfg.LoginRateMaxAttempts,
+		),
+	}
 	handler, err := s.newHandler()
 	if err != nil {
 		return nil, err
