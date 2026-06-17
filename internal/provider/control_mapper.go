@@ -2,7 +2,8 @@ package provider
 
 import "strings"
 
-// ControlMapper translates UI control IDs to tmux key names.
+// ControlMapper translates UI control IDs to key names (e.g. "Up", "C-c") which
+// the session agent renders into the bytes a program reads from its terminal.
 type ControlMapper interface {
 	Map(raw string) (string, bool)
 }

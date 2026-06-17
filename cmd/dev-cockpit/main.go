@@ -1,4 +1,4 @@
-// Command dev-cockpit runs the tmux-backed developer cockpit.
+// Command dev-cockpit runs the developer cockpit.
 package main
 
 import (
@@ -17,11 +17,11 @@ import (
 	providerclaude "github.com/local/dev-cockpit/internal/provider/claude"
 	providercopilot "github.com/local/dev-cockpit/internal/provider/copilot"
 	"github.com/local/dev-cockpit/internal/session"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/local/dev-cockpit/internal/term"
 	"github.com/local/dev-cockpit/internal/web"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/term"
+	xterm "golang.org/x/term"
 )
 
 type serveOptions struct {
@@ -47,7 +47,7 @@ func newRootCommand() *cobra.Command {
 			return errors.New("command required")
 		},
 	}
-	cmd.AddCommand(newServeCommand(), newHashPasswordCommand())
+	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newSessionAgentCommand(), newAttachCommand())
 	return cmd
 }
 
@@ -107,6 +107,55 @@ func newHashPasswordCommand() *cobra.Command {
 	return cmd
 }
 
+func newSessionAgentCommand() *cobra.Command {
+	var cfg term.AgentConfig
+	var env []string
+	cmd := &cobra.Command{
+		Use:    "session-agent",
+		Short:  "Run a session agent (internal; spawned by serve)",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.Env = parseEnv(env)
+			return term.RunAgent(cfg)
+		},
+	}
+	flags := cmd.Flags()
+	flags.StringVar(&cfg.Provider, "provider", "", "owning provider id")
+	flags.StringVar(&cfg.Key, "key", "", "session key")
+	flags.StringVar(&cfg.Workdir, "workdir", "", "working directory")
+	flags.StringVar(&cfg.Command, "command", "", "shell command to run in the PTY")
+	flags.StringArrayVar(&env, "env", nil, "extra environment KEY=VALUE for the program")
+	return cmd
+}
+
+func newAttachCommand() *cobra.Command {
+	providerID := config.DefaultProvider
+	cmd := &cobra.Command{
+		Use:   "attach <session-key>",
+		Short: "Attach the local terminal to a running session",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return term.Attach(providerID, args[0])
+		},
+	}
+	cmd.Flags().StringVar(&providerID, "provider", providerID, "coder provider")
+	return cmd
+}
+
+func parseEnv(pairs []string) map[string]string {
+	if len(pairs) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(pairs))
+	for _, kv := range pairs {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func runServe(opts serveOptions) error {
 	cfg, err := config.Load(opts.Options)
 	if err != nil {
@@ -115,23 +164,23 @@ func runServe(opts serveOptions) error {
 	if _, err := bcrypt.Cost([]byte(cfg.AuthPasswordHash)); err != nil {
 		return fmt.Errorf("invalid --auth-password-hash: %w", err)
 	}
-	tmuxClient := tmux.New()
 	projectRepo := project.NewRepository(cfg.ProjectsRoot, cfg.ProjectMetadataConcurrency)
 	registry := provider.NewRegistry(providercopilot.New(), providerclaude.New())
 	selectedProvider := registry.ByID(opts.providerID)
 	if selectedProvider == nil {
 		return fmt.Errorf("unknown provider %q (available: %s)", opts.providerID, strings.Join(registry.IDs(), ", "))
 	}
-	tools := append([]string{}, tmux.RequiredTools...)
-	tools = append(tools, selectedProvider.RequiredTools()...)
-	if missing := clirun.MissingTools(tools); len(missing) > 0 {
+	if missing := clirun.MissingTools(selectedProvider.RequiredTools()); len(missing) > 0 {
 		return fmt.Errorf("missing CLI tools: %v", missing)
 	}
 
-	sessions := session.NewSessions(cfg, tmuxClient, selectedProvider, projectRepo)
-	if err := sessions.StopIdleStreams(); err != nil {
-		log.Printf("failed to stop idle terminal stream(s): %v", err)
+	termClient, err := term.NewClient(selectedProvider.ID())
+	if err != nil {
+		return fmt.Errorf("failed to initialize session runtime: %w", err)
 	}
+	termClient.Reap() // drop socket/pid files left by agents that died uncleanly
+
+	sessions := session.NewSessions(cfg, termClient, selectedProvider, projectRepo)
 
 	srv, err := web.NewServer(cfg, selectedProvider, sessions, projectRepo)
 	if err != nil {
@@ -150,12 +199,12 @@ func runHashPassword(stdin *os.File, stdout, stderr io.Writer, cost int) error {
 		return fmt.Errorf("bcrypt cost must be between %d and %d", bcrypt.MinCost, bcrypt.MaxCost)
 	}
 	fd := int(stdin.Fd())
-	if !term.IsTerminal(fd) {
+	if !xterm.IsTerminal(fd) {
 		return errors.New("hash-password requires an interactive terminal")
 	}
 
 	fmt.Fprint(stderr, "Password: ")
-	password, err := term.ReadPassword(fd)
+	password, err := xterm.ReadPassword(fd)
 	fmt.Fprintln(stderr)
 	if err != nil {
 		return fmt.Errorf("read password: %w", err)

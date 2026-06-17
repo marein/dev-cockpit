@@ -10,7 +10,7 @@ import (
 	"github.com/local/dev-cockpit/internal/proctree"
 	"github.com/local/dev-cockpit/internal/provider"
 	"github.com/local/dev-cockpit/internal/sessionlabel"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/local/dev-cockpit/internal/term"
 )
 
 // snapshotCache memoises Snapshot for a short TTL to soak up bursts of
@@ -44,9 +44,9 @@ func (c *snapshotCache) invalidate() {
 	c.mu.Unlock()
 }
 
-// scanRunning correlates live tmux panes with stored resumable sessions to
-// derive the verified Running list and the leftover Inactive resumables.
-func scanRunning(panes []tmux.Pane, resumable []provider.Session, prov provider.Provider) (running []Running, inactive []provider.Session) {
+// scanRunning correlates live sessions with stored resumable sessions to derive
+// the verified Running list and the leftover Inactive resumables.
+func scanRunning(panes []term.Pane, resumable []provider.Session, prov provider.Provider) (running []Running, inactive []provider.Session) {
 	resumableByID := map[string]provider.Session{}
 	resumableByLegacyName := map[string][]provider.Session{}
 	for _, r := range resumable {
@@ -63,19 +63,19 @@ func scanRunning(panes []tmux.Pane, resumable []provider.Session, prov provider.
 		if match == nil {
 			if info, ok := paneProviderInfo(p, prov); ok {
 				running = append(running, Running{
-					Identifier:  p.Name,
-					TmuxSession: p.Name,
-					PID:         p.PID,
-					Name:        sessionlabel.DisplayName(info.name, p.Name),
-					StartedAt:   paneStartTime(p.StartedAt),
-					CWD:         info.cwd,
+					Identifier: p.Name,
+					SessionKey: p.Name,
+					PID:        p.PID,
+					Name:       sessionlabel.DisplayName(info.name, p.Name),
+					StartedAt:  paneStartTime(p.StartedAt),
+					CWD:        info.cwd,
 				})
 			}
 			continue
 		}
 		running = append(running, Running{
 			Identifier:    match.SessionID,
-			TmuxSession:   p.Name,
+			SessionKey:    p.Name,
 			PID:           p.PID,
 			Name:          sessionlabel.DisplayName(match.Name, match.SessionID),
 			StartedAt:     paneStartTime(p.StartedAt),
@@ -94,7 +94,7 @@ func scanRunning(panes []tmux.Pane, resumable []provider.Session, prov provider.
 	return running, inactive
 }
 
-func findMatchingResumable(p tmux.Pane, byID map[string]provider.Session, byLegacyName map[string][]provider.Session, prov provider.Provider) *provider.Session {
+func findMatchingResumable(p term.Pane, byID map[string]provider.Session, byLegacyName map[string][]provider.Session, prov provider.Provider) *provider.Session {
 	rootPID, err := strconv.Atoi(p.PID)
 	if err != nil {
 		return nil
@@ -119,7 +119,7 @@ type paneProviderProcess struct {
 	name string
 }
 
-func paneProviderInfo(p tmux.Pane, prov provider.Provider) (paneProviderProcess, bool) {
+func paneProviderInfo(p term.Pane, prov provider.Provider) (paneProviderProcess, bool) {
 	rootPID, err := strconv.Atoi(p.PID)
 	if err != nil {
 		return paneProviderProcess{}, false

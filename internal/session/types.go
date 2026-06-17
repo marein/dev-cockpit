@@ -6,10 +6,10 @@ import (
 	"github.com/local/dev-cockpit/internal/provider"
 )
 
-// Running is one live tmux session backed by a recognised coder process.
+// Running is one live session backed by a recognised coder process.
 type Running struct {
 	Identifier    string // stable session ID used in URLs/UI
-	TmuxSession   string // underlying tmux session name
+	SessionKey    string // underlying agent session key (socket name)
 	PID           string
 	Name          string
 	StartedAt     time.Time

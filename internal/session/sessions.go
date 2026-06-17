@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/local/dev-cockpit/internal/keys"
 	"github.com/local/dev-cockpit/internal/project"
 	"github.com/local/dev-cockpit/internal/provider"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/local/dev-cockpit/internal/term"
 )
 
 // ErrNoActiveSession marks lookups for identifiers without a live coder session.
@@ -21,27 +22,25 @@ var ErrNoActiveSession = errors.New("No active session")
 // Sessions orchestrates the session lifecycle.
 type Sessions struct {
 	cfg       config.Config
-	tmux      *tmux.Client
+	term      *term.Client
 	provider  provider.Provider
 	projects  *project.Repository
 	snapshots *snapshotCache
-	streams   *streamHub
 }
 
 // NewSessions wires up Sessions with its dependencies.
 func NewSessions(
 	cfg config.Config,
-	t *tmux.Client,
+	t *term.Client,
 	p provider.Provider,
 	projects *project.Repository,
 ) *Sessions {
 	return &Sessions{
 		cfg:       cfg,
-		tmux:      t,
+		term:      t,
 		provider:  p,
 		projects:  projects,
 		snapshots: &snapshotCache{ttl: cfg.SnapshotCacheTTL},
-		streams:   newStreamHub(cfg),
 	}
 }
 
@@ -59,20 +58,8 @@ func (s *Sessions) Snapshot() Snapshot {
 // Invalidate flushes the snapshot cache.
 func (s *Sessions) Invalidate() { s.snapshots.invalidate() }
 
-// StopIdleStreams clears inherited tmux pipes left by a previous process.
-func (s *Sessions) StopIdleStreams() error {
-	s.Invalidate()
-	var errs []error
-	for _, r := range s.Snapshot().Running {
-		if err := s.tmux.StopPipe(r.TmuxSession); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
-}
-
 func (s *Sessions) compute() Snapshot {
-	panes, _ := s.tmux.ListPanes()
+	panes, _ := s.term.Discover()
 	resumable := s.provider.SessionRepository().List()
 	running, inactive := scanRunning(panes, resumable, s.provider)
 	return Snapshot{Running: running, Inactive: inactive, Resumable: resumable}
@@ -90,10 +77,10 @@ func (s *Sessions) ResolveRunning(rawID string) (Running, error) {
 			return r, nil
 		}
 	}
-	// Distinguish "no tmux session" from "tmux session is not a coder session".
-	for _, p := range s.listPanesBestEffort() {
+	// Distinguish "no session" from "a session that is not a coder session".
+	for _, p := range s.discoverBestEffort() {
 		if p.Name == id {
-			return Running{}, errors.New("Refusing to interact with a tmux session that is not associated with a coder session.")
+			return Running{}, errors.New("Refusing to interact with a session that is not associated with a coder session.")
 		}
 	}
 	return Running{}, fmt.Errorf(`%w with identifier "%s" was found.`, ErrNoActiveSession, id)
@@ -143,16 +130,13 @@ func (s *Sessions) Start(rawName, rawProject, rawAgent string, opts StartOptions
 	if err != nil {
 		return StartResult{}, err
 	}
-	for _, p := range s.listPanesBestEffort() {
+	for _, p := range s.discoverBestEffort() {
 		if p.Name == sessionKey {
 			return StartResult{}, fmt.Errorf(`Session "%s" already exists.`, sessionKey)
 		}
 	}
 	shellCmd := s.provider.SessionRuntime().StartCommand(sessionKey, name, workdir, agentID, opts.RemoteControl, opts.AutomaticApproval)
-	if err := s.tmux.NewSession(sessionKey, workdir, shellCmd, s.providerEnv()); err != nil {
-		return StartResult{}, err
-	}
-	if err := s.configureTerminal(sessionKey); err != nil {
+	if err := s.term.Spawn(term.SpawnConfig{Key: sessionKey, Workdir: workdir, Command: shellCmd, Env: s.providerEnv()}); err != nil {
 		return StartResult{}, err
 	}
 	identifier := sessionKey
@@ -170,18 +154,15 @@ func (s *Sessions) Resume(rawID string) (provider.Session, error) {
 		return provider.Session{}, err
 	}
 	if _, err := ValidateIdentifier(stored.SessionID); err != nil {
-		return provider.Session{}, fmt.Errorf(`Session "%s" cannot be resumed: its identifier is not usable as a tmux session name.`, stored.SessionID)
+		return provider.Session{}, fmt.Errorf(`Session "%s" cannot be resumed: its identifier is not usable as a session name.`, stored.SessionID)
 	}
-	for _, p := range s.listPanesBestEffort() {
+	for _, p := range s.discoverBestEffort() {
 		if p.Name == stored.SessionID {
 			return provider.Session{}, fmt.Errorf(`Session "%s" already exists.`, stored.SessionID)
 		}
 	}
 	cmd := s.provider.SessionRuntime().ResumeCommand(stored.SessionID, stored.CWD, stored.RemoteControl, true)
-	if err := s.tmux.NewSession(stored.SessionID, stored.CWD, cmd, s.providerEnv()); err != nil {
-		return provider.Session{}, err
-	}
-	if err := s.configureTerminal(stored.SessionID); err != nil {
+	if err := s.term.Spawn(term.SpawnConfig{Key: stored.SessionID, Workdir: stored.CWD, Command: cmd, Env: s.providerEnv()}); err != nil {
 		return provider.Session{}, err
 	}
 	s.Invalidate()
@@ -206,58 +187,39 @@ func (s *Sessions) DeleteResumable(rawID string) (provider.Session, error) {
 	return stored, nil
 }
 
-// Stop kills the running tmux session and closes its control client.
+// Stop kills the running session agent.
 func (s *Sessions) Stop(rawID string) (string, error) {
 	r, err := s.ResolveRunning(rawID)
 	if err != nil {
 		return "", err
 	}
-	if err := s.tmux.Kill(r.TmuxSession); err != nil {
+	if err := s.term.Kill(r.SessionKey); err != nil {
 		return "", err
 	}
-	s.streams.clear(r.TmuxSession)
 	s.Invalidate()
 	return r.Name, nil
 }
 
-// AttachStream opens the control client and returns the initial snapshot.
-func (s *Sessions) AttachStream(rawID, rawCols, rawRows string) (StreamAttachment, error) {
+// OpenStream attaches a browser to a session and returns the live byte stream
+// together with the terminal size the program was set to.
+func (s *Sessions) OpenStream(rawID, rawCols, rawRows string) (*term.Stream, int, int, error) {
 	r, err := s.ResolveRunning(rawID)
 	if err != nil {
-		return StreamAttachment{}, err
+		return nil, 0, 0, err
 	}
-	return s.streams.attach(r.TmuxSession, rawCols, rawRows)
-}
-
-// RefreshStream returns a new snapshot when another browser reset this stream.
-func (s *Sessions) RefreshStream(name string, generation int64) (StreamAttachment, bool) {
-	return s.streams.refresh(name, generation)
-}
-
-// DetachStream releases one browser stream and closes the control client after
-// the last one.
-func (s *Sessions) DetachStream(name string) { s.streams.detach(name) }
-
-// StreamDelta returns buffered output after offset. reset is true when the
-// caller fell out of the ring and must re-snapshot.
-func (s *Sessions) StreamDelta(name string, offset int64) ([]byte, int64, bool) {
-	return s.streams.delta(name, offset)
-}
-
-// StreamUpdated returns a channel closed on the next output or exit, plus
-// whether the stream is still live.
-func (s *Sessions) StreamUpdated(name string) (<-chan struct{}, bool) {
-	return s.streams.updated(name)
-}
-
-// StreamExited reports whether the underlying control client has ended.
-func (s *Sessions) StreamExited(name string) bool {
-	return s.streams.exited(name)
-}
-
-// Resnapshot recaptures the screen for a stream that fell out of the ring.
-func (s *Sessions) Resnapshot(name string) (StreamAttachment, bool) {
-	return s.streams.resnapshot(name)
+	cols, rows := defaultStreamCols, defaultStreamRows
+	if strings.TrimSpace(rawCols) != "" || strings.TrimSpace(rawRows) != "" {
+		c, rw, derr := validateDimensions(s.cfg, rawCols, rawRows)
+		if derr != nil {
+			return nil, 0, 0, derr
+		}
+		cols, rows = c, rw
+	}
+	stream, err := s.term.OpenStream(r.SessionKey, cols, rows)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	return stream, cols, rows, nil
 }
 
 // Input is one queued user action; exactly one field is non-empty.
@@ -268,36 +230,63 @@ type Input struct {
 	Paste   string
 }
 
-// Send dispatches a batch of user inputs to a session, in order. It resolves
-// the target once and stops at the first failing item.
+// Send dispatches a batch of user inputs to a session, in order. It resolves the
+// target once and builds every frame before sending, so an unsupported control
+// fails the whole batch instead of leaving a half-applied prefix.
 func (s *Sessions) Send(rawID string, items []Input) error {
 	r, err := s.ResolveRunning(rawID)
 	if err != nil {
 		return err
 	}
+	var frames []term.InFrame
 	for _, item := range items {
-		if err := s.sendInput(r.TmuxSession, item); err != nil {
+		fs, err := s.framesFor(item)
+		if err != nil {
 			return err
 		}
+		frames = append(frames, fs...)
 	}
-	return nil
+	if len(frames) == 0 {
+		return nil
+	}
+	return s.term.Send(r.SessionKey, frames)
 }
 
-func (s *Sessions) sendInput(target string, item Input) error {
+func (s *Sessions) framesFor(item Input) ([]term.InFrame, error) {
 	switch {
 	case strings.TrimSpace(item.Control) != "":
-		return s.sendControl(target, item.Control)
+		mapped, ok := s.provider.ControlMapper().Map(item.Control)
+		if !ok {
+			return nil, fmt.Errorf(`Unsupported control input "%s".`, item.Control)
+		}
+		return []term.InFrame{term.KeyFrame(mapped)}, nil
 	case item.Text != "":
-		return s.sendText(target, item.Text)
+		var frames []term.InFrame
+		for _, ev := range keys.Decode(item.Text) {
+			if ev.Key != "" {
+				frames = append(frames, term.KeyFrame(ev.Key))
+				continue
+			}
+			frames = append(frames, term.TextFrame(ev.Text))
+		}
+		return frames, nil
 	case item.Paste != "":
-		return s.sendPaste(target, item.Paste)
+		paste := promptPayload(item.Paste)
+		if paste == "" {
+			return nil, errors.New("Input text is required.")
+		}
+		return []term.InFrame{term.PasteFrame(paste)}, nil
 	case item.Prompt != "":
-		return s.sendPrompt(target, item.Prompt)
+		prompt := promptPayload(item.Prompt)
+		if prompt == "" {
+			return nil, errors.New("Input text is required.")
+		}
+		return []term.InFrame{term.PasteFrame(prompt), term.KeyFrame("Enter")}, nil
 	}
-	return errors.New("Input is required.")
+	return nil, errors.New("Input is required.")
 }
 
-// Resize sets the tmux window size.
+// Resize sets the terminal size of a running session.
 func (s *Sessions) Resize(rawID, rawCols, rawRows string) error {
 	r, err := s.ResolveRunning(rawID)
 	if err != nil {
@@ -307,14 +296,10 @@ func (s *Sessions) Resize(rawID, rawCols, rawRows string) error {
 	if err != nil {
 		return err
 	}
-	return s.streams.resize(r.TmuxSession, cols, rows)
+	return s.term.Resize(r.SessionKey, cols, rows)
 }
 
 // --- helpers ---
-
-func (s *Sessions) configureTerminal(name string) error {
-	return s.tmux.SetHistoryLimit(name, s.cfg.TerminalHistoryLimit)
-}
 
 func (s *Sessions) providerEnv() map[string]string {
 	env := map[string]string{provider.ProviderEnvVar: s.provider.ID()}
@@ -349,7 +334,7 @@ func (s *Sessions) promoteSessionKey(tempKey string, before []provider.Session, 
 			if _, err := ValidateIdentifier(r.SessionID); err != nil {
 				return tempKey
 			}
-			if err := s.tmux.Rename(tempKey, r.SessionID); err == nil {
+			if err := s.term.Rename(tempKey, r.SessionID); err == nil {
 				return r.SessionID
 			}
 			return tempKey
@@ -361,58 +346,42 @@ func (s *Sessions) promoteSessionKey(tempKey string, before []provider.Session, 
 	}
 }
 
-func (s *Sessions) sendControl(name, raw string) error {
-	mapped, ok := s.provider.ControlMapper().Map(raw)
-	if !ok {
-		return fmt.Errorf(`Unsupported control input "%s".`, raw)
-	}
-	return s.tmux.SendKey(name, mapped)
-}
-
-func (s *Sessions) sendText(name, text string) error {
-	if text == "" {
-		return errors.New("Input text is required.")
-	}
-	for _, ev := range keys.Decode(text) {
-		if ev.Key != "" {
-			if err := s.tmux.SendKey(name, ev.Key); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := s.tmux.SendLiteral(name, ev.Text); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Sessions) sendPrompt(name, raw string) error {
-	prompt := promptPayload(raw)
-	if prompt == "" {
-		return errors.New("Input text is required.")
-	}
-	if err := s.tmux.PasteLiteral(name, prompt); err != nil {
-		return err
-	}
-	return s.tmux.SendKey(name, "Enter")
-}
-
-func (s *Sessions) sendPaste(name, raw string) error {
-	paste := promptPayload(raw)
-	if paste == "" {
-		return errors.New("Input text is required.")
-	}
-	return s.tmux.PasteLiteral(name, paste)
-}
-
 func promptPayload(raw string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(raw, "\r\n", "\n"), "\r", "\n")
 }
 
-// listPanesBestEffort returns the current panes, treating a listing failure
-// as "no panes".
-func (s *Sessions) listPanesBestEffort() []tmux.Pane {
-	panes, _ := s.tmux.ListPanes()
+// discoverBestEffort returns the current sessions, treating a listing failure as
+// "none".
+func (s *Sessions) discoverBestEffort() []term.Pane {
+	panes, _ := s.term.Discover()
 	return panes
 }
+
+func validateDimensions(cfg config.Config, rawCols, rawRows string) (int, int, error) {
+	cols, err := strconv.Atoi(strings.TrimSpace(rawCols))
+	if err != nil {
+		return 0, 0, errors.New("Terminal size must be numeric.")
+	}
+	rows, err := strconv.Atoi(strings.TrimSpace(rawRows))
+	if err != nil {
+		return 0, 0, errors.New("Terminal size must be numeric.")
+	}
+	if cols < cfg.MinTerminalCols {
+		return 0, 0, errors.New("Terminal size is too small.")
+	}
+	if rows < cfg.MinTerminalRows {
+		rows = cfg.MinTerminalRows
+	}
+	if cols > cfg.MaxTerminalCols {
+		cols = cfg.MaxTerminalCols
+	}
+	if rows > cfg.MaxTerminalRows {
+		rows = cfg.MaxTerminalRows
+	}
+	return cols, rows, nil
+}
+
+const (
+	defaultStreamCols = 80
+	defaultStreamRows = 30
+)
