@@ -8,12 +8,32 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/session"
 	"github.com/local/dev-cockpit/internal/tmux"
 )
 
+// terminalStream is the streaming surface shared by coder sessions and shells.
+type terminalStream interface {
+	Resolve(id string) error
+	AttachStream(id, cols, rows string) (session.StreamAttachment, error)
+	DetachStream(name string)
+	RefreshStream(name string, generation int64) (session.StreamAttachment, bool)
+	StreamDelta(name string, offset int64) ([]byte, int64, bool)
+	StreamUpdated(name string) (<-chan struct{}, bool)
+	StreamExited(name string) bool
+	Resnapshot(name string) (session.StreamAttachment, bool)
+}
+
 func (s *Server) handleSessionStream(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := s.sessions.ResolveRunning(id); err != nil {
+	s.streamTerminal(c, s.sessions, c.Param("id"))
+}
+
+func (s *Server) handleShellStream(c *gin.Context) {
+	s.streamTerminal(c, s.shells, c.Param("id"))
+}
+
+func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
+	if err := src.Resolve(id); err != nil {
 		c.String(http.StatusNotFound, err.Error())
 		return
 	}
@@ -31,12 +51,12 @@ func (s *Server) handleSessionStream(c *gin.Context) {
 	}
 
 	query := c.Request.URL.Query()
-	attached, err := s.sessions.AttachStream(id, query.Get("cols"), query.Get("rows"))
+	attached, err := src.AttachStream(id, query.Get("cols"), query.Get("rows"))
 	if err != nil {
 		_ = writeSSEvent(w, "session-error", err.Error())
 		return
 	}
-	defer s.sessions.DetachStream(attached.Session)
+	defer src.DetachStream(attached.Session)
 	offset := attached.Offset
 	generation := attached.Generation
 	if err := writeSSEvent(w, "terminal-size", sizePayload(attached.Cols, attached.Rows)); err != nil {
@@ -59,14 +79,14 @@ func (s *Server) handleSessionStream(c *gin.Context) {
 	for {
 		// Subscribe before reading so no wake is missed between the read below
 		// and the wait at the end of the loop.
-		updated, live := s.sessions.StreamUpdated(attached.Session)
+		updated, live := src.StreamUpdated(attached.Session)
 		if !live {
 			_ = writeSSEvent(w, "session-error", "Session has ended.")
 			return
 		}
 
 		// Another browser reset or resized this stream: resync from its snapshot.
-		if refreshed, ok := s.sessions.RefreshStream(attached.Session, generation); ok {
+		if refreshed, ok := src.RefreshStream(attached.Session, generation); ok {
 			offset = refreshed.Offset
 			generation = refreshed.Generation
 			oscFilter.Reset()
@@ -81,9 +101,9 @@ func (s *Server) handleSessionStream(c *gin.Context) {
 			continue
 		}
 
-		delta, newOffset, reset := s.sessions.StreamDelta(attached.Session, offset)
+		delta, newOffset, reset := src.StreamDelta(attached.Session, offset)
 		if reset {
-			if snap, ok := s.sessions.Resnapshot(attached.Session); ok {
+			if snap, ok := src.Resnapshot(attached.Session); ok {
 				offset = snap.Offset
 				generation = snap.Generation
 				oscFilter.Reset()
@@ -110,8 +130,8 @@ func (s *Server) handleSessionStream(c *gin.Context) {
 		}
 
 		// The session ended: flush any final bytes, then close the stream.
-		if s.sessions.StreamExited(attached.Session) {
-			if d, n, _ := s.sessions.StreamDelta(attached.Session, offset); len(d) > 0 {
+		if src.StreamExited(attached.Session) {
+			if d, n, _ := src.StreamDelta(attached.Session, offset); len(d) > 0 {
 				offset = n
 				if out := oscFilter.Filter(d); len(out) > 0 {
 					_ = writeSSEvent(w, "delta", encodeBase64(out))

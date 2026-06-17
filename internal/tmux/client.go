@@ -20,6 +20,7 @@ type Pane struct {
 	Name      string
 	PID       string
 	StartedAt string // unix epoch seconds, raw
+	ShellName string // @dc_shell_name option; non-empty marks a shell session
 }
 
 // Size is a tmux pane dimension in cells.
@@ -59,6 +60,11 @@ func sortedEnv(env map[string]string) []string {
 // SetHistoryLimit configures how much scrollback tmux keeps for snapshots.
 func (c *Client) SetHistoryLimit(name string, historyLimit int) error {
 	return clirun.Check("tmux", "set-option", "-t", name, "history-limit", strconv.Itoa(historyLimit))
+}
+
+// SetOption sets a tmux option (e.g. a user option "@name") on a session.
+func (c *Client) SetOption(name, option, value string) error {
+	return clirun.Check("tmux", "set-option", "-t", name, option, value)
 }
 
 // StopPipe detaches any inherited pipe-pane logger (migration cleanup).
@@ -107,7 +113,7 @@ func (c *Client) PasteLiteral(name, text string) error {
 // ListPanes returns the unique first-pane entries for every session.
 func (c *Client) ListPanes() ([]Pane, error) {
 	r := clirun.Run("tmux", "list-panes", "-a", "-F",
-		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}")
+		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}")
 	if r.Err != nil && r.ExitCode != 0 {
 		if isNoServerError(r.Stderr) {
 			return nil, nil
@@ -137,10 +143,10 @@ func parsePanes(out string) []Pane {
 	var panes []Pane
 	for _, raw := range strings.Split(out, "\n") {
 		parts := strings.Split(strings.TrimRight(raw, "\n"), "\t")
-		if len(parts) != 5 {
+		if len(parts) != 6 {
 			continue
 		}
-		name, pid, created, win, pane := parts[0], parts[1], parts[2], parts[3], parts[4]
+		name, pid, created, win, pane, shellName := parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
 		if win != "0" || pane != "0" || seen[name] {
 			continue
 		}
@@ -148,7 +154,7 @@ func parsePanes(out string) []Pane {
 			continue
 		}
 		seen[name] = true
-		panes = append(panes, Pane{Name: name, PID: pid, StartedAt: created})
+		panes = append(panes, Pane{Name: name, PID: pid, StartedAt: created, ShellName: shellName})
 	}
 	sort.Slice(panes, func(i, j int) bool {
 		a, b := strings.ToLower(panes[i].Name), strings.ToLower(panes[j].Name)

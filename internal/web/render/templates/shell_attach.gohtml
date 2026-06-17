@@ -1,0 +1,123 @@
+{{define "shell_attach.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="row g-2 align-items-center">
+    <div class="col min-w-0">
+      <div class="min-w-0" data-shell-rename>
+        <h2 class="page-title text-truncate mb-0" data-shell-name role="button" tabindex="0" title="Click to rename">{{.Shell.Name}}</h2>
+        <input type="text" class="form-control d-none" data-shell-name-input maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Shell name" value="{{.Shell.Name}}">
+      </div>
+    </div>
+    <div class="col-auto ms-auto">
+      <form method="post" action="/shells/{{.Shell.Identifier}}/delete" data-confirm="Delete shell &quot;{{.Shell.Name}}&quot;?" data-confirm-button="Delete">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button type="submit" class="btn btn-outline-danger" aria-label="Delete shell {{.Shell.Name}}" title="Delete">
+          <i class="ti ti-trash me-1"></i>Delete
+        </button>
+      </form>
+    </div>
+  </div>
+  <div class="row g-2 mt-2">
+    <div class="col-12">
+      <div class="d-flex justify-content-end align-items-center gap-2 flex-wrap">
+        <session-terminal-setting-select
+          setting="font-size"
+          storage-key="session-terminal-font-size"
+          default-value="14"
+          options="10,11,12,13,14,15,16,18,20,24"
+          icon="typography"
+          label="Font size"
+          title="Font size"
+        ></session-terminal-setting-select>
+        <session-terminal-setting-select
+          setting="rows"
+          storage-key="session-terminal-rows"
+          default-value="30"
+          options="30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000"
+          icon="arrows-vertical"
+          label="Rows"
+          title="Visible rows"
+        ></session-terminal-setting-select>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="attach-page min-w-0">
+  <div id="session-terminal" class="attach-terminal min-w-0 w-100 position-relative">
+    <session-scroll-zone active up-control="scroll-up" down-control="scroll-down" aria-hidden="false"></session-scroll-zone>
+  </div>
+
+  <div id="session-stream-status" class="text-secondary small" aria-live="polite">Disconnected</div>
+
+  <div class="attach-footer min-w-0">
+    <div class="attach-controls min-w-0">
+      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="escape" aria-label="Escape" title="Escape">
+        <span class="small fw-medium">Esc</span>
+      </button>
+      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="tab" aria-label="Tab" title="Tab">
+        <span class="small fw-medium">Tab</span>
+      </button>
+      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="ctrl-c" aria-label="Ctrl C" title="Ctrl + C">
+        <span class="small fw-medium">^C</span>
+      </button>
+      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-shell-ctrl aria-pressed="false" aria-label="Control modifier" title="Send next key with Ctrl">
+        <span class="small fw-medium">Ctrl</span>
+      </button>
+      <session-direction-pad></session-direction-pad>
+      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="backspace" aria-label="Backspace" title="Backspace">
+        <i class="ti ti-backspace"></i>
+      </button>
+      <div class="session-button-menu" data-session-button-menu>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-button-menu-trigger aria-haspopup="true" aria-expanded="false" aria-label="Page controls" title="Page controls">
+          <i class="ti ti-arrow-autofit-height"></i>
+        </button>
+        <div class="session-button-menu-menu" data-session-button-menu-menu>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="scroll-up" aria-label="Scroll up" title="Scroll up">
+            <span class="small fw-medium">Up</span>
+          </button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="scroll-down" aria-label="Scroll down" title="Scroll down">
+            <span class="small fw-medium">Down</span>
+          </button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="scroll-top" aria-label="Scroll to top" title="Scroll to top">
+            <span class="small fw-medium">Top</span>
+          </button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="scroll-bottom" aria-label="Scroll to bottom" title="Scroll to bottom">
+            <span class="small fw-medium">Bottom</span>
+          </button>
+        </div>
+      </div>
+      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-refresh aria-label="Refresh stream" title="Refresh stream">
+        <i class="ti ti-refresh"></i>
+      </button>
+    </div>
+
+    <div class="attach-input input-group min-w-0">
+      <input type="text" id="session-prompt" class="form-control" placeholder="Type to send keystrokes…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+      <button type="button" class="btn btn-outline-secondary" data-session-control="enter" aria-label="Enter" title="Enter">
+        <i class="ti ti-corner-down-left"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  window.__SESSION_ATTACH_CONFIG__ = {
+    streamUrl: {{.StreamURL}},
+    resizeUrl: {{.ResizeURL}},
+    inputUrl: {{.InputURL}},
+    renameUrl: {{.RenameURL}},
+    scrollHistory: true,
+    csrfToken: {{.CSRFToken}}
+  };
+</script>
+<script src="{{asset "/js/timer-repeater.js"}}"></script>
+<script src="{{asset "/js/session-direction-pad.js"}}"></script>
+<script src="{{asset "/js/session-scroll-zone.js"}}"></script>
+<script src="{{asset "/js/session-button-menu.js"}}"></script>
+<script src="{{asset "/js/session-terminal-setting-select.js"}}"></script>
+<script src="{{asset "/js/session-attach.js"}}"></script>
+<script src="{{asset "/js/session-attach-controls.js"}}"></script>
+<script src="{{asset "/js/shell-rename.js"}}"></script>
+{{template "app_end.gohtml" .}}
+{{end}}

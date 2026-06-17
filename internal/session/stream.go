@@ -28,6 +28,8 @@ type streamState struct {
 	offset     int64
 	cols       int
 	rows       int
+	scrollOff  int  // lines scrolled back into history; 0 is the live view
+	frozen     bool // showing a history frame; live deltas are paused
 }
 
 // StreamAttachment is one active browser stream against a tmux session.
@@ -100,6 +102,8 @@ func (h *streamHub) attach(name, rawCols, rawRows string) (StreamAttachment, err
 	st.offset = offset
 	st.cols = size.Cols
 	st.rows = size.Rows
+	st.frozen = false
+	st.scrollOff = 0
 	st.refs++
 	// Wake any already-connected handlers so they pick up the new generation
 	// (and the possibly changed size) without waiting for output.
@@ -142,14 +146,111 @@ func (h *streamHub) resnapshot(name string) (StreamAttachment, bool) {
 func (h *streamHub) delta(name string, offset int64) ([]byte, int64, bool) {
 	h.mu.Lock()
 	var ctl *tmux.Control
+	frozen := false
 	if st := h.streams[name]; st != nil {
 		ctl = st.ctl
+		frozen = st.frozen
 	}
 	h.mu.Unlock()
 	if ctl == nil {
 		return nil, offset, false
 	}
+	// A frozen stream is showing a history frame; withhold live deltas so the
+	// view stays put until the user scrolls back to the bottom.
+	if frozen {
+		return nil, offset, false
+	}
 	return ctl.Delta(offset)
+}
+
+// resumeLive returns a frozen history view to the live bottom. It is a no-op
+// when the stream is already live, so it is cheap to call before every keystroke.
+func (h *streamHub) resumeLive(name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.streams[name]
+	if st == nil || st.ctl == nil || !st.frozen {
+		return
+	}
+	snapshot, offset, err := st.ctl.Snapshot()
+	if err != nil {
+		return
+	}
+	st.frozen = false
+	st.scrollOff = 0
+	st.snapshot = snapshot
+	st.offset = offset
+	st.generation++
+	st.ctl.Notify()
+}
+
+// scroll moves the stream's history view by one action and republishes the
+// resulting frame to all connected browsers via a generation bump. Scrolling to
+// the bottom returns to the live view and resumes deltas.
+func (h *streamHub) scroll(name, action string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.streams[name]
+	if st == nil || st.ctl == nil {
+		return false
+	}
+	height := st.rows
+	if height <= 0 {
+		if size, err := st.ctl.PaneSize(); err == nil {
+			height = size.Rows
+		}
+	}
+	if height <= 0 {
+		height = 1
+	}
+	hist, err := st.ctl.HistorySize()
+	if err != nil {
+		return false
+	}
+	page := height - 1
+	if page < 1 {
+		page = 1
+	}
+	off := st.scrollOff
+	switch action {
+	case "up":
+		off += page
+	case "down":
+		off -= page
+	case "top":
+		off = hist
+	case "bottom":
+		off = 0
+	default:
+		return false
+	}
+	if off < 0 {
+		off = 0
+	}
+	if off > hist {
+		off = hist
+	}
+	st.scrollOff = off
+	if off == 0 {
+		snapshot, offset, err := st.ctl.Snapshot()
+		if err != nil {
+			return false
+		}
+		st.frozen = false
+		st.snapshot = snapshot
+		st.offset = offset
+	} else {
+		snapshot, offset, err := st.ctl.CaptureWindow(off, height)
+		if err != nil {
+			return false
+		}
+		st.frozen = true
+		st.snapshot = snapshot
+		st.offset = offset
+	}
+	st.generation++
+	st.ctl.Notify()
+	return true
 }
 
 // updated returns the wake channel for a stream and whether it is still live.
@@ -180,6 +281,8 @@ func (h *streamHub) resize(name string, cols, rows int) error {
 	var ctl *tmux.Control
 	if st := h.streams[name]; st != nil {
 		ctl = st.ctl
+		st.frozen = false
+		st.scrollOff = 0
 	}
 	h.mu.Unlock()
 	if ctl == nil {

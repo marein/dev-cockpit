@@ -319,6 +319,43 @@ func (c *Control) Snapshot() ([]byte, int64, error) {
 	return buildSnapshot(bytes.Join(capLines, []byte("\r\n")), cursor), offset, nil
 }
 
+// HistorySize reports how many lines of scrollback sit above the visible pane.
+func (c *Control) HistorySize() (int, error) {
+	lines, _, err := c.commandSync("display-message -p -t " + Target(c.name) + ` "#{history_size}"`)
+	if err != nil {
+		return 0, err
+	}
+	if len(lines) == 0 {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(lines[0])))
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// CaptureWindow captures height lines of the pane starting off lines back in the
+// scrollback (off 0 is the live screen), for history scrolling. It returns the
+// frame and the stream offset that immediately follows it. The frame carries no
+// cursor — a scrolled history view has none.
+func (c *Control) CaptureWindow(off, height int) ([]byte, int64, error) {
+	if height < 1 {
+		height = 1
+	}
+	start := -off
+	end := start + height - 1
+	capReq, err := c.command(fmt.Sprintf("capture-pane -p -e -t %s -S %d -E %d", Target(c.name), start, end))
+	if err != nil {
+		return nil, 0, err
+	}
+	capLines, offset, err := c.await(capReq)
+	if err != nil {
+		return nil, 0, err
+	}
+	return buildSnapshot(bytes.Join(capLines, []byte("\r\n")), nil), offset, nil
+}
+
 // Delta returns the buffered bytes after offset and the new offset. reset is
 // true when offset has fallen out of the ring and the caller must re-snapshot.
 func (c *Control) Delta(offset int64) ([]byte, int64, bool) {

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/local/dev-cockpit/internal/config"
-	"github.com/local/dev-cockpit/internal/keys"
 	"github.com/local/dev-cockpit/internal/project"
 	"github.com/local/dev-cockpit/internal/provider"
 	"github.com/local/dev-cockpit/internal/tmux"
@@ -97,6 +96,12 @@ func (s *Sessions) ResolveRunning(rawID string) (Running, error) {
 		}
 	}
 	return Running{}, fmt.Errorf(`%w with identifier "%s" was found.`, ErrNoActiveSession, id)
+}
+
+// Resolve reports whether a coder session with the given identifier is live.
+func (s *Sessions) Resolve(rawID string) error {
+	_, err := s.ResolveRunning(rawID)
+	return err
 }
 
 // ResolveResumable looks up a stored session by id.
@@ -276,25 +281,11 @@ func (s *Sessions) Send(rawID string, items []Input) error {
 		return err
 	}
 	for _, item := range items {
-		if err := s.sendInput(r.TmuxSession, item); err != nil {
+		if err := sendInput(s.tmux, s.provider.ControlMapper(), r.TmuxSession, item); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func (s *Sessions) sendInput(target string, item Input) error {
-	switch {
-	case strings.TrimSpace(item.Control) != "":
-		return s.sendControl(target, item.Control)
-	case item.Text != "":
-		return s.sendText(target, item.Text)
-	case item.Paste != "":
-		return s.sendPaste(target, item.Paste)
-	case item.Prompt != "":
-		return s.sendPrompt(target, item.Prompt)
-	}
-	return errors.New("Input is required.")
 }
 
 // Resize sets the tmux window size.
@@ -359,55 +350,6 @@ func (s *Sessions) promoteSessionKey(tempKey string, before []provider.Session, 
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-}
-
-func (s *Sessions) sendControl(name, raw string) error {
-	mapped, ok := s.provider.ControlMapper().Map(raw)
-	if !ok {
-		return fmt.Errorf(`Unsupported control input "%s".`, raw)
-	}
-	return s.tmux.SendKey(name, mapped)
-}
-
-func (s *Sessions) sendText(name, text string) error {
-	if text == "" {
-		return errors.New("Input text is required.")
-	}
-	for _, ev := range keys.Decode(text) {
-		if ev.Key != "" {
-			if err := s.tmux.SendKey(name, ev.Key); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := s.tmux.SendLiteral(name, ev.Text); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Sessions) sendPrompt(name, raw string) error {
-	prompt := promptPayload(raw)
-	if prompt == "" {
-		return errors.New("Input text is required.")
-	}
-	if err := s.tmux.PasteLiteral(name, prompt); err != nil {
-		return err
-	}
-	return s.tmux.SendKey(name, "Enter")
-}
-
-func (s *Sessions) sendPaste(name, raw string) error {
-	paste := promptPayload(raw)
-	if paste == "" {
-		return errors.New("Input text is required.")
-	}
-	return s.tmux.PasteLiteral(name, paste)
-}
-
-func promptPayload(raw string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(raw, "\r\n", "\n"), "\r", "\n")
 }
 
 // listPanesBestEffort returns the current panes, treating a listing failure

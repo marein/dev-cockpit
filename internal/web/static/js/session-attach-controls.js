@@ -2,6 +2,16 @@
   const config = window.__SESSION_ATTACH_CONFIG__ || {};
   const inputUrl = config.inputUrl;
   const csrfToken = config.csrfToken || "";
+  const scrollHistory = Boolean(config.scrollHistory);
+
+  const SCROLL_CONTROLS = {
+    "page-up": "scroll-up",
+    "page-down": "scroll-down",
+    "page-top": "scroll-top",
+    "page-bottom": "scroll-bottom",
+  };
+  const mapControl = (control) =>
+    scrollHistory && SCROLL_CONTROLS[control] ? SCROLL_CONTROLS[control] : control;
 
   const status = document.getElementById("session-stream-status");
   const input = document.getElementById("session-prompt");
@@ -10,6 +20,20 @@
   const promptModalForm = document.getElementById("session-prompt-modal-form");
   const promptModalTextarea = document.getElementById("session-prompt-modal-text");
   const controlButtons = document.querySelectorAll("[data-session-control]");
+  const ctrlToggle = document.querySelector("[data-shell-ctrl]");
+
+  let ctrlArmed = false;
+  const setCtrlArmed = (armed) => {
+    ctrlArmed = armed;
+    if (!ctrlToggle) {
+      return;
+    }
+    ctrlToggle.classList.toggle("active", armed);
+    ctrlToggle.setAttribute("aria-pressed", armed ? "true" : "false");
+  };
+  if (ctrlToggle) {
+    ctrlToggle.addEventListener("click", () => setCtrlArmed(!ctrlArmed));
+  }
 
   const keyMap = {
     ArrowUp: "arrow-up",
@@ -131,7 +155,8 @@
       const control = keyMap[event.key];
       if (control) {
         event.preventDefault();
-        void sendSessionInput({ control: event.altKey ? `alt-${control}` : control });
+        const mapped = mapControl(control);
+        void sendSessionInput({ control: event.altKey && mapped === control ? `alt-${control}` : mapped });
       }
     });
 
@@ -143,6 +168,20 @@
         return;
       }
       event.preventDefault();
+      if (ctrlArmed) {
+        const ch = event.data[0].toLowerCase();
+        setCtrlArmed(false);
+        if (/[a-z0-9]/.test(ch)) {
+          void sendSessionInput({ control: "ctrl-" + ch });
+        } else {
+          void sendSessionInput({ text: event.data[0] });
+        }
+        const rest = event.data.slice(1);
+        if (rest) {
+          void sendSessionInput({ text: rest });
+        }
+        return;
+      }
       void sendSessionInput({ text: event.data });
     });
 

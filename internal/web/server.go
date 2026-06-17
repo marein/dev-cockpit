@@ -26,6 +26,7 @@ type Server struct {
 	cfg          config.Config
 	provider     provider.Provider
 	sessions     *session.Sessions
+	shells       *session.Shells
 	projects     *project.Repository
 	assets       staticAssetManifest
 	loginLimiter rateLimiter
@@ -33,7 +34,7 @@ type Server struct {
 }
 
 // NewServer constructs a Server.
-func NewServer(cfg config.Config, selectedProvider provider.Provider, sessions *session.Sessions, projects *project.Repository) (*Server, error) {
+func NewServer(cfg config.Config, selectedProvider provider.Provider, sessions *session.Sessions, shells *session.Shells, projects *project.Repository) (*Server, error) {
 	assets, err := newStaticAssetManifest()
 	if err != nil {
 		return nil, err
@@ -42,6 +43,7 @@ func NewServer(cfg config.Config, selectedProvider provider.Provider, sessions *
 		cfg:      cfg,
 		provider: selectedProvider,
 		sessions: sessions,
+		shells:   shells,
 		projects: projects,
 		assets:   assets,
 		loginLimiter: newLoggingLoginLimiter(

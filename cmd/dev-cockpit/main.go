@@ -132,8 +132,9 @@ func runServe(opts serveOptions) error {
 	if err := sessions.StopIdleStreams(); err != nil {
 		log.Printf("failed to stop idle terminal stream(s): %v", err)
 	}
+	shells := session.NewShells(cfg, tmuxClient, projectRepo)
 
-	srv, err := web.NewServer(cfg, selectedProvider, sessions, projectRepo)
+	srv, err := web.NewServer(cfg, selectedProvider, sessions, shells, projectRepo)
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}

@@ -66,6 +66,13 @@
           <a href="/sessions/new?project={{urlquery .Name}}" class="btn btn-outline-primary btn-sm">
             <i class="ti ti-plus me-1"></i>Session
           </a>
+          <form method="post" action="/shells">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="project" value="{{.Name}}">
+            <button type="submit" class="btn btn-outline-secondary btn-sm" aria-label="Start shell in project {{.Name}}" title="Shell">
+              <i class="ti ti-terminal-2 me-1"></i>Shell
+            </button>
+          </form>
           <form method="post" action="/projects/delete" data-confirm="Delete project &quot;{{.Name}}&quot;?" data-confirm-button="Delete">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <input type="hidden" name="project" value="{{.Name}}">

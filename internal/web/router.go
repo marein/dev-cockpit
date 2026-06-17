@@ -39,6 +39,15 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/resumable/:id/resume", s.handleResumableResume)
 	auth.POST("/resumable/:id/delete", s.handleResumableDelete)
 
+	auth.GET("/shells", s.handleShellsList)
+	auth.POST("/shells", s.handleShellCreate)
+	auth.GET("/shells/:id", s.handleShellAttach)
+	auth.POST("/shells/:id/delete", s.handleShellDelete)
+	auth.POST("/shells/:id/rename", s.handleShellRename)
+	auth.POST("/shells/:id/input", s.handleShellInput)
+	auth.POST("/shells/:id/resize", s.handleShellResize)
+	auth.GET("/shells/:id/stream", s.handleShellStream)
+
 	auth.GET("/agents", s.handleAgentsList)
 	auth.GET("/agents/new", s.handleAgentNew)
 	auth.GET("/agents/:id/edit", s.handleAgentEdit)

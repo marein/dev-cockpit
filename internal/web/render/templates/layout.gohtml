@@ -90,6 +90,12 @@
                     </a>
                   </li>
                   <li class="nav-item">
+                    <a class="nav-link {{if eq .ActiveTab "shells"}}active{{end}}" href="/shells">
+                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-terminal-2"></i></span>
+                      <span class="nav-link-title">Shells</span>
+                    </a>
+                  </li>
+                  <li class="nav-item">
                     <a class="nav-link {{if eq .ActiveTab "instructions"}}active{{end}}" href="/instructions">
                       <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-file-description"></i></span>
                       <span class="nav-link-title">Instructions</span>
