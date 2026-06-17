@@ -45,6 +45,14 @@
     void rendererError;
   }
 
+  const openWebLink = (event, uri) => {
+    event.preventDefault();
+    window.open(uri, "_blank", "noopener,noreferrer");
+  };
+  if (window.WebLinksAddon && window.WebLinksAddon.WebLinksAddon) {
+    term.loadAddon(new window.WebLinksAddon.WebLinksAddon(openWebLink));
+  }
+
   // ---- Mouse reporting -------------------------------------------------------
   // This viewport is a read-only mirror: stdin is disabled and keystrokes are
   // sent through the controls module, so xterm has no program to report mouse
