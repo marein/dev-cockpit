@@ -2,6 +2,20 @@
 
 **Still work in progress.**
 
+## Install
+
+Download the archive for your platform from the [releases](https://github.com/marein/dev-cockpit/releases), then extract it:
+
+```bash
+tar -xzf dev-cockpit_*.tar.gz
+```
+
+On macOS the binary is unsigned. Clear the quarantine flag:
+
+```bash
+xattr -d com.apple.quarantine dev-cockpit
+```
+
 ## Startup
 
 All options can be seen with:
