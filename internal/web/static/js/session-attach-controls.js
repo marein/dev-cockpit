@@ -107,6 +107,9 @@
         if (event.key.toLowerCase() === "v") {
           return;
         }
+        if (event.metaKey && event.key.toLowerCase() === "c") {
+          return;
+        }
         const key = controlKeyName(event);
         if (!key) {
           return;

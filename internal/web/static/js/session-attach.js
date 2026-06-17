@@ -150,22 +150,32 @@
   term.onRender(syncSelection);
 
   // ---- Copy ------------------------------------------------------------------
-  // The canvas renderer has no selectable DOM text, so copying relies on xterm's
-  // own selection. Feed it to the clipboard on a native copy when nothing in the
-  // page DOM is selected (leaving an input-box copy untouched).
-  document.addEventListener("copy", (event) => {
+  const terminalSelection = () => {
     if (!term.hasSelection()) {
-      return;
+      return "";
     }
     const domSelection = window.getSelection ? window.getSelection().toString() : "";
     if (domSelection) {
-      return;
+      return "";
     }
-    const selection = term.getSelection();
+    return term.getSelection();
+  };
+
+  document.addEventListener("copy", (event) => {
+    const selection = terminalSelection();
     if (!selection) {
       return;
     }
     event.clipboardData?.setData("text/plain", selection);
+    event.preventDefault();
+  });
+
+  terminalElement.addEventListener("contextmenu", (event) => {
+    const selection = terminalSelection();
+    if (!selection || !navigator.clipboard) {
+      return;
+    }
+    void navigator.clipboard.writeText(selection).catch(() => {});
     event.preventDefault();
   });
 
