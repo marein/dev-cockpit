@@ -130,7 +130,7 @@
     const WHEEL_PIXELS_PER_NOTCH = 100;
     const WHEEL_LINES_PER_NOTCH = 3;
     let wheelAccum = 0;
-    let touchAccumPx = 0;
+    let lastWheelDown = null; // last wheel direction sent (for reversal priming)
 
     const sendRaw = (seq) =>
       document.dispatchEvent(new CustomEvent("session-input", { detail: { raw: seq } }));
@@ -148,35 +148,23 @@
       return { col, row };
     };
 
-    // Finger travel (px) that triggers one program-step on a touch swipe, so the
-    // swipe scrolls roughly 1:1 with the finger. Line-wise steps map to a cell
-    // height; a page step (copilot) would otherwise need a full screen of travel
-    // per page, so it is capped to stay responsive.
-    const TOUCH_PAGE_STEP_PX = 160;
-    const touchStepPx = () => {
-      const ch = cellHeight();
-      if (mouse.tracking) {
-        return ch; // claude: one line per mouse-wheel event
-      }
-      const alt = serverModes.altScreen || term.buffer.active.type === "alternate";
-      if (alt) {
-        if (config.scrollHistory) {
-          return ch; // vim/less: one line per cursor key
-        }
-        return Math.min(Math.max(1, (term.rows || 24) - 1) * ch, TOUCH_PAGE_STEP_PX); // copilot: a page
-      }
-      return 3 * ch; // shell prompt: tmux history step (scrollLineStep)
-    };
-
     const scrollStep = (down, clientX, clientY) => {
       if (mouse.tracking) {
         const { col, row } = scrollCell(clientX, clientY);
         const button = down ? 65 : 64; // SGR/legacy wheel-down / wheel-up
-        if (mouse.sgr) {
-          sendRaw("\x1b[<" + button + ";" + col + ";" + row + "M");
-        } else {
-          sendRaw("\x1b[M" + String.fromCharCode(32 + button, 32 + Math.min(col, 223), 32 + Math.min(row, 223)));
+        const seq = mouse.sgr
+          ? "\x1b[<" + button + ";" + col + ";" + row + "M"
+          : "\x1b[M" + String.fromCharCode(32 + button, 32 + Math.min(col, 223), 32 + Math.min(row, 223));
+        // Claude eats the first wheel event of a scroll interaction (it resets
+        // its scroll velocity) — both the very first after load and the first
+        // after a direction change. Prime it with one extra event in those
+        // cases; same-direction repeats need no priming. The desktop wheel hides
+        // this by emitting a burst of events per notch.
+        if (lastWheelDown !== down) {
+          sendRaw(seq); // null on load, or a flipped direction
         }
+        lastWheelDown = down;
+        sendRaw(seq);
         return;
       }
       const alt = serverModes.altScreen || term.buffer.active.type === "alternate";
@@ -221,33 +209,27 @@
       }, { capture: true, passive: false });
     }
 
-    // Mobile swipe (session-scroll-zone reports incremental finger movement):
-    // scroll proportionally, one program-step per ~step-height of finger travel,
-    // so it feels like native scrolling and matches the wheel's behaviour.
-    const cellHeight = () => {
+    // Mobile swipe (session-scroll-zone): a locked swipe repeats one per-program
+    // scroll step on a timer, exactly like a wheel notch — discrete, no momentum.
+    // Anchor the synthesized wheel at the content centre rather than the finger,
+    // so mouse-reporting programs (claude) always get it over their scrollable
+    // area like a desktop wheel — a finger near the input row would otherwise
+    // land the first reversal event on a non-scrolling cell and swallow it.
+    const contentCentre = () => {
       const screen = terminalElement.querySelector(".xterm-screen");
-      if (!screen || term.rows < 1) {
-        return 18;
+      if (!screen) {
+        return null;
       }
-      return screen.clientHeight / term.rows || 18;
+      const rect = screen.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     };
     document.addEventListener("session-scroll", (event) => {
       const detail = event.detail || {};
-      if (typeof detail.dy !== "number" || detail.dy === 0) {
-        return;
-      }
-      touchAccumPx += -detail.dy; // finger up -> scroll toward newer (down)
-      for (let guard = 0; guard < 4096; guard += 1) {
-        const stepPx = Math.max(1, touchStepPx());
-        if (touchAccumPx >= stepPx) {
-          touchAccumPx -= stepPx;
-          scrollStep(true, detail.clientX, detail.clientY);
-        } else if (touchAccumPx <= -stepPx) {
-          touchAccumPx += stepPx;
-          scrollStep(false, detail.clientX, detail.clientY);
-        } else {
-          break;
-        }
+      const centre = contentCentre() || { x: detail.clientX, y: detail.clientY };
+      if (detail.step === "down") {
+        scrollStep(true, centre.x, centre.y);
+      } else if (detail.step === "up") {
+        scrollStep(false, centre.x, centre.y);
       }
     });
   }

@@ -1,8 +1,14 @@
 (() => {
-  // Finger travel before a swipe locks into vertical-scroll mode (vs a tap or a
-  // horizontal swipe). Once locked, every move reports its incremental delta and
-  // session-attach.js turns it into proportional, per-program scroll steps.
-  const SCROLL_AXIS_LOCK_PX = 8;
+  // A vertical swipe locks to a direction after this much travel, then repeats a
+  // single per-program scroll step (the same step the wheel emits) on a timer —
+  // discrete line-wise scrolling, no proportional momentum.
+  // Repeat timing: a slow base rate that ramps faster the further the finger
+  // travels past the lock threshold (push further = scroll faster).
+  const REPEAT_INITIAL_DELAY = 350; // before the first repeat after the lock step
+  const REPEAT_DELAY_SLOW = 260;    // ms between steps just past the lock threshold
+  const REPEAT_DELAY_FAST = 55;     // ms between steps at full travel
+  const REPEAT_RAMP_PX = 80;        // extra travel beyond the lock that reaches FAST
+  const SCROLL_GESTURE_MIN_PX = 16; // travel to lock, and to flip after a reversal
   const DOUBLE_TAP_DELAY_MS = 350;
   const DOUBLE_TAP_MAX_PX = 24;
 
@@ -20,10 +26,15 @@
       this.pointerID = null;
       this.startX = 0;
       this.startY = 0;
+      this.lastX = 0;
       this.lastY = 0;
-      this.axis = null; // null until locked to "v" (scroll) or "h" (ignored)
+      this.axis = null; // null until the gesture clears the deadzone; "v" or "h"
+      this.direction = ""; // "" until locked to "up" or "down"
+      this.extremeY = 0; // furthest point reached in the current direction
+      this.turnY = 0; // where the current direction began (ramp origin)
       this.lastTap = null;
       this.pendingTap = null;
+      this.repeatTimer = null;
       this.render();
       this.zone = this.shadowRoot.querySelector(".zone");
       this.terminal = this.parentElement instanceof HTMLElement ? this.parentElement : null;
@@ -42,7 +53,8 @@
       this.pointerID = null;
       this.lastTap = null;
       this.pendingTap = null;
-      this.axis = null;
+      this.direction = "";
+      this.repeatTimer = null;
     }
 
     attributeChangedCallback(name, oldValue, newValue) {
@@ -238,6 +250,62 @@
       this.terminal?.classList.toggle("attach-terminal-copy-mode", Boolean(this.mediaQuery?.matches) && !active);
     }
 
+    // Track direction relative to the turning point: while moving one way we
+    // extend the extreme; a reversal of SCROLL_GESTURE_MIN_PX from that extreme
+    // flips immediately — no need to unwind the whole prior swipe first.
+    updateScrollDirection(y) {
+      if (this.direction === "down") {
+        if (y < this.extremeY) {
+          this.extremeY = y; // extend the upward swipe
+        } else if (y >= this.extremeY + SCROLL_GESTURE_MIN_PX) {
+          this.lockDirection("up", this.extremeY, y, REPEAT_DELAY_SLOW);
+        }
+      } else if (this.direction === "up") {
+        if (y > this.extremeY) {
+          this.extremeY = y;
+        } else if (y <= this.extremeY - SCROLL_GESTURE_MIN_PX) {
+          this.lockDirection("down", this.extremeY, y, REPEAT_DELAY_SLOW);
+        }
+      }
+    }
+
+    // (re)lock to a direction: ramp distance is measured from turnY, and the
+    // first step fires immediately so a reversal responds without delay.
+    lockDirection(direction, turnY, y, initialDelay) {
+      this.direction = direction;
+      this.turnY = turnY;
+      this.extremeY = y;
+      this.startRepeat(initialDelay);
+    }
+
+    startRepeat(initialDelay) {
+      this.stopRepeat();
+      this.fireStep(); // one step immediately on (re)lock
+      this.scheduleRepeat(initialDelay);
+    }
+
+    scheduleRepeat(delay) {
+      this.repeatTimer = window.setTimeout(() => {
+        this.fireStep();
+        this.scheduleRepeat(this.repeatDelay());
+      }, delay);
+    }
+
+    // The delay shrinks from SLOW toward FAST as the finger travels further past
+    // the lock threshold, so a longer swipe scrolls faster.
+    repeatDelay() {
+      const over = Math.max(0, Math.abs(this.lastY - this.turnY) - SCROLL_GESTURE_MIN_PX);
+      const t = Math.min(1, over / REPEAT_RAMP_PX);
+      return REPEAT_DELAY_SLOW - (REPEAT_DELAY_SLOW - REPEAT_DELAY_FAST) * t;
+    }
+
+    stopRepeat() {
+      if (this.repeatTimer !== null) {
+        window.clearTimeout(this.repeatTimer);
+        this.repeatTimer = null;
+      }
+    }
+
     isGestureEvent(event) {
       return this.isActive()
         && event.pointerType === "touch"
@@ -258,8 +326,12 @@
       this.pointerID = event.pointerId;
       this.startX = event.clientX;
       this.startY = event.clientY;
+      this.lastX = event.clientX;
       this.lastY = event.clientY;
       this.axis = null;
+      this.direction = "";
+      this.extremeY = event.clientY;
+      this.turnY = event.clientY;
       this.zone.setPointerCapture(this.pointerID);
       this.consumePointerEvent(event);
     }
@@ -269,27 +341,28 @@
         return;
       }
       this.consumePointerEvent(event);
-      if (this.axis === null) {
-        const dx = event.clientX - this.startX;
-        const dy = event.clientY - this.startY;
-        if (Math.hypot(dx, dy) < SCROLL_AXIS_LOCK_PX) {
-          return; // still within the tap/deadzone
+      const x = event.clientX;
+      const y = event.clientY;
+      this.lastX = x;
+      this.lastY = y;
+      if (this.direction === "") {
+        if (this.axis === "h") {
+          return; // committed to a horizontal swipe: not a scroll
         }
-        this.axis = Math.abs(dy) >= Math.abs(dx) ? "v" : "h";
-        this.lastY = event.clientY; // reset baseline so the lock doesn't jump
+        const dx = x - this.startX;
+        const dy = y - this.startY;
+        if (Math.hypot(dx, dy) < SCROLL_GESTURE_MIN_PX) {
+          return; // still inside the start deadzone
+        }
+        if (Math.abs(dy) < Math.abs(dx)) {
+          this.axis = "h";
+          return;
+        }
+        // Finger up (dy<0) scrolls toward newer output (down); finger down -> up.
+        this.lockDirection(dy < 0 ? "down" : "up", this.startY, y, REPEAT_INITIAL_DELAY);
+        return;
       }
-      if (this.axis !== "v") {
-        return; // horizontal swipe: not a scroll
-      }
-      const ddy = event.clientY - this.lastY;
-      this.lastY = event.clientY;
-      if (ddy !== 0) {
-        this.dispatchEvent(new CustomEvent("session-scroll", {
-          bubbles: true,
-          composed: true,
-          detail: { dy: ddy, clientX: event.clientX, clientY: event.clientY },
-        }));
-      }
+      this.updateScrollDirection(y);
     }
 
     handlePointerUp(event) {
@@ -300,15 +373,32 @@
       this.stop();
     }
 
+    fireStep(direction = this.direction) {
+      if (!direction) {
+        return;
+      }
+      // Drive one per-program scroll step (the same one the wheel emits). The
+      // consumer in session-attach.js maps it per program: one line for
+      // claude/vim/shell history, a page for copilot's pager.
+      this.dispatchEvent(new CustomEvent("session-scroll", {
+        bubbles: true,
+        composed: true,
+        detail: { step: direction, clientX: this.lastX, clientY: this.lastY },
+      }));
+    }
+
     stop() {
+      this.stopRepeat();
+      this.axis = null;
+      this.direction = "";
       if (this.pointerID !== null && this.zone?.hasPointerCapture(this.pointerID)) {
         this.zone.releasePointerCapture(this.pointerID);
       }
       this.pointerID = null;
       this.startX = 0;
       this.startY = 0;
+      this.lastX = 0;
       this.lastY = 0;
-      this.axis = null;
     }
   }
 
