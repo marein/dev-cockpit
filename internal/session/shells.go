@@ -159,10 +159,12 @@ func (s *Shells) Delete(rawID string) (string, error) {
 // shellScrollActions maps shell scroll control IDs to streamHub scroll actions.
 // These scroll the tmux history instead of being sent to the program.
 var shellScrollActions = map[string]string{
-	"scroll-up":     "up",
-	"scroll-down":   "down",
-	"scroll-top":    "top",
-	"scroll-bottom": "bottom",
+	"scroll-up":        "up",
+	"scroll-down":      "down",
+	"scroll-line-up":   "line-up",
+	"scroll-line-down": "line-down",
+	"scroll-top":       "top",
+	"scroll-bottom":    "bottom",
 }
 
 // Send dispatches a batch of user inputs to a shell, in order. Scroll controls

@@ -14,11 +14,15 @@
   const DEFAULT_ROWS = 30;
   const FOREGROUND = "#f9fafb";
 
-  // The terminal is a read-only viewport: input is sent through the controls
-  // module, so stdin stays disabled and the element never takes focus.
+  // Touch clients keep the read-only mirror: input comes from the on-screen
+  // controls and the prompt box, so stdin stays disabled and the terminal never
+  // takes focus. Pointer-precise (desktop) clients type straight into the
+  // terminal: xterm encodes every keystroke, paste and composed accent into the
+  // exact terminal byte stream, which we forward through the controls module.
+  const interactiveInput = !window.matchMedia("(pointer: coarse)").matches;
   const term = new Terminal({
     allowTransparency: true,
-    disableStdin: true,
+    disableStdin: !interactiveInput,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
     fontSize: DEFAULT_FONT_SIZE,
     scrollback: 0,
@@ -32,6 +36,37 @@
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(terminalElement);
+
+  // ---- Direct keyboard input (desktop) ---------------------------------------
+  // xterm.onData yields the terminal byte sequence the program expects for every
+  // key, modifier combo, paste and dead-key/IME accent (é, ñ, …). We post it as
+  // raw input; the server injects the bytes verbatim via `tmux send-keys -H`.
+  if (interactiveInput) {
+    // The read-only stylesheet hides xterm's helper textarea; un-hide it (via a
+    // class) so the terminal can take focus and receive keystrokes.
+    terminalElement.classList.add("attach-terminal-interactive");
+    // Ctrl/Cmd+C with a selection copies through the browser instead of sending
+    // ^C; everything else goes to the program (Ctrl+C with no selection stays
+    // SIGINT, and paste keeps flowing through xterm's own paste handling).
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type === "keydown" && (event.ctrlKey || event.metaKey)
+        && (event.key === "c" || event.key === "C") && term.hasSelection()) {
+        return false;
+      }
+      return true;
+    });
+    term.onData((data) => {
+      if (data) {
+        document.dispatchEvent(new CustomEvent("session-input", { detail: { raw: data } }));
+      }
+    });
+  }
+
+  // Terminal modes the wheel handler needs. xterm tracks them live once it sees
+  // the program's escape sequences, but those are absent from a screen snapshot,
+  // so when attaching to an already-running program the server fills these in
+  // from tmux (see the terminal-size event). We OR the two at use time.
+  const serverModes = { altScreen: false, appCursor: false };
 
   // Canvas renderer: box-drawing and block glyphs are drawn from xterm's
   // built-in customGlyphs (pixel-aligned, seamless) instead of the browser font,
@@ -54,26 +89,177 @@
   }
 
   // ---- Mouse reporting -------------------------------------------------------
-  // This viewport is a read-only mirror: stdin is disabled and keystrokes are
-  // sent through the controls module, so xterm has no program to report mouse
-  // events to. When a full-screen CLI enables mouse tracking (DECSET ?1000/1002/
-  // 1003 and friends, which tmux forwards because its own `mouse` option is off),
-  // xterm would start capturing mouse-down and wheel events — breaking text
-  // selection, swallowing page scroll over the terminal, and turning the cursor
-  // into a pointer. Swallow the mouse-mode set/reset sequences so the renderer
-  // never activates mouse reporting, leaving the mirror selectable and scrollable.
+  // When a full-screen CLI enables mouse tracking (DECSET ?1000/1002/1003 and
+  // friends, which tmux forwards because its own `mouse` option is off), xterm
+  // would start capturing mouse-down and wheel events — breaking text selection
+  // and turning the cursor into a pointer. We swallow the mouse-mode set/reset
+  // sequences so xterm never activates mouse reporting, keeping the mirror
+  // selectable. But we record the program's intent: a program that asked for
+  // mouse reporting (e.g. claude) scrolls via wheel events, so the wheel handler
+  // below synthesizes those itself instead of sending cursor keys.
   const MOUSE_MODES = new Set([1000, 1001, 1002, 1003, 1004, 1005, 1006, 1015, 1016]);
-  const isMouseModeSequence = (params) => params.length > 0
-    && params.every((param) => MOUSE_MODES.has(Array.isArray(param) ? param[0] : param));
-  term.parser.registerCsiHandler({ prefix: "?", final: "h" }, isMouseModeSequence);
-  term.parser.registerCsiHandler({ prefix: "?", final: "l" }, isMouseModeSequence);
+  const mouse = { tracking: false, sgr: false };
+  const handleMouseMode = (on) => (params) => {
+    if (!(params.length > 0
+      && params.every((param) => MOUSE_MODES.has(Array.isArray(param) ? param[0] : param)))) {
+      return false; // not purely a mouse-mode sequence; let xterm handle it
+    }
+    for (const param of params) {
+      const code = Array.isArray(param) ? param[0] : param;
+      if (code === 1000 || code === 1002 || code === 1003) {
+        mouse.tracking = on;
+      } else if (code === 1006) {
+        mouse.sgr = on;
+      }
+    }
+    return true; // swallow so xterm stays passive (selection preserved)
+  };
+  term.parser.registerCsiHandler({ prefix: "?", final: "h" }, handleMouseMode(true));
+  term.parser.registerCsiHandler({ prefix: "?", final: "l" }, handleMouseMode(false));
+
+  // ---- Scrolling (desktop wheel + mobile swipe) ------------------------------
+  // We own scrolling and reproduce, per step, exactly what the program would
+  // receive from a terminal emulator over SSH:
+  //   - mouse-reporting programs (claude): a mouse-wheel event (one line);
+  //   - other alternate-screen TUIs: a cursor key (vim/less) or PageUp/PageDown
+  //     (copilot, which uses the cursor keys for prompt history);
+  //   - a shell prompt: drive the tmux history (arrow keys would walk history).
+  // The desktop wheel and the mobile swipe both feed the same per-program step,
+  // so they scroll identically — the swipe just maps finger travel to steps.
+  {
+    const WHEEL_PIXELS_PER_NOTCH = 100;
+    const WHEEL_LINES_PER_NOTCH = 3;
+    let wheelAccum = 0;
+    let touchAccumPx = 0;
+
+    const sendRaw = (seq) =>
+      document.dispatchEvent(new CustomEvent("session-input", { detail: { raw: seq } }));
+    const sendControl = (control) =>
+      document.dispatchEvent(new CustomEvent("session-control", { detail: { control } }));
+
+    const scrollCell = (clientX, clientY) => {
+      const screen = terminalElement.querySelector(".xterm-screen");
+      if (!screen || term.cols < 1 || term.rows < 1 || typeof clientX !== "number" || typeof clientY !== "number") {
+        return { col: 1, row: 1 };
+      }
+      const rect = screen.getBoundingClientRect();
+      const col = Math.min(term.cols, Math.max(1, Math.floor((clientX - rect.left) / (rect.width / term.cols)) + 1));
+      const row = Math.min(term.rows, Math.max(1, Math.floor((clientY - rect.top) / (rect.height / term.rows)) + 1));
+      return { col, row };
+    };
+
+    // Finger travel (px) that triggers one program-step on a touch swipe, so the
+    // swipe scrolls roughly 1:1 with the finger. Line-wise steps map to a cell
+    // height; a page step (copilot) would otherwise need a full screen of travel
+    // per page, so it is capped to stay responsive.
+    const TOUCH_PAGE_STEP_PX = 160;
+    const touchStepPx = () => {
+      const ch = cellHeight();
+      if (mouse.tracking) {
+        return ch; // claude: one line per mouse-wheel event
+      }
+      const alt = serverModes.altScreen || term.buffer.active.type === "alternate";
+      if (alt) {
+        if (config.scrollHistory) {
+          return ch; // vim/less: one line per cursor key
+        }
+        return Math.min(Math.max(1, (term.rows || 24) - 1) * ch, TOUCH_PAGE_STEP_PX); // copilot: a page
+      }
+      return 3 * ch; // shell prompt: tmux history step (scrollLineStep)
+    };
+
+    const scrollStep = (down, clientX, clientY) => {
+      if (mouse.tracking) {
+        const { col, row } = scrollCell(clientX, clientY);
+        const button = down ? 65 : 64; // SGR/legacy wheel-down / wheel-up
+        if (mouse.sgr) {
+          sendRaw("\x1b[<" + button + ";" + col + ";" + row + "M");
+        } else {
+          sendRaw("\x1b[M" + String.fromCharCode(32 + button, 32 + Math.min(col, 223), 32 + Math.min(row, 223)));
+        }
+        return;
+      }
+      const alt = serverModes.altScreen || term.buffer.active.type === "alternate";
+      if (alt) {
+        if (config.scrollHistory) {
+          const app = serverModes.appCursor || Boolean(term.modes && term.modes.applicationCursorKeysMode);
+          sendRaw(down ? (app ? "\x1bOB" : "\x1b[B") : (app ? "\x1bOA" : "\x1b[A"));
+        } else {
+          sendRaw(down ? "\x1b[6~" : "\x1b[5~");
+        }
+        return;
+      }
+      if (config.scrollHistory) {
+        sendControl(down ? "scroll-line-down" : "scroll-line-up");
+      }
+    };
+
+    if (interactiveInput) {
+      terminalElement.addEventListener("wheel", (event) => {
+        if (event.ctrlKey) {
+          return; // leave pinch-zoom to the browser
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        let notches;
+        if (event.deltaMode === 1) {
+          notches = event.deltaY / WHEEL_LINES_PER_NOTCH;
+        } else if (event.deltaMode === 2) {
+          notches = event.deltaY;
+        } else {
+          notches = event.deltaY / WHEEL_PIXELS_PER_NOTCH;
+        }
+        wheelAccum += notches;
+        while (wheelAccum >= 1) {
+          wheelAccum -= 1;
+          scrollStep(true, event.clientX, event.clientY);
+        }
+        while (wheelAccum <= -1) {
+          wheelAccum += 1;
+          scrollStep(false, event.clientX, event.clientY);
+        }
+      }, { capture: true, passive: false });
+    }
+
+    // Mobile swipe (session-scroll-zone reports incremental finger movement):
+    // scroll proportionally, one program-step per ~step-height of finger travel,
+    // so it feels like native scrolling and matches the wheel's behaviour.
+    const cellHeight = () => {
+      const screen = terminalElement.querySelector(".xterm-screen");
+      if (!screen || term.rows < 1) {
+        return 18;
+      }
+      return screen.clientHeight / term.rows || 18;
+    };
+    document.addEventListener("session-scroll", (event) => {
+      const detail = event.detail || {};
+      if (typeof detail.dy !== "number" || detail.dy === 0) {
+        return;
+      }
+      touchAccumPx += -detail.dy; // finger up -> scroll toward newer (down)
+      for (let guard = 0; guard < 4096; guard += 1) {
+        const stepPx = Math.max(1, touchStepPx());
+        if (touchAccumPx >= stepPx) {
+          touchAccumPx -= stepPx;
+          scrollStep(true, detail.clientX, detail.clientY);
+        } else if (touchAccumPx <= -stepPx) {
+          touchAccumPx += stepPx;
+          scrollStep(false, detail.clientX, detail.clientY);
+        } else {
+          break;
+        }
+      }
+    });
+  }
 
   // ---- Cursor ----------------------------------------------------------------
   // The canvas renderer only paints the terminal cursor while the element is
-  // focused, and this read-only viewport never is. Both supported CLIs use the
+  // focused, which the read-only mirror never is. Both supported CLIs use the
   // hardware cursor (they never draw their own), so we render a single block
   // that mirrors xterm's cursor cell. The server positions the cursor in every
   // snapshot, and the program's own escapes keep it current in the live stream.
+  // When a desktop client focuses the terminal to type, xterm paints the real
+  // cursor and the stylesheet hides this overlay so the two never double up.
   const cursorOverlay = document.createElement("div");
   cursorOverlay.className = "attach-cursor";
   const syncCursor = () => {
@@ -297,6 +483,15 @@
       const size = JSON.parse(event.data);
       if (size.cols && size.rows && (term.cols !== size.cols || term.rows !== size.rows)) {
         term.resize(size.cols, size.rows);
+      }
+      // The program's modes from tmux (covers attaching to an already running
+      // session, where we never saw the enable sequences); xterm's own parser
+      // keeps the live state current for changes while attached.
+      if (typeof size.mouseTracking === "boolean") {
+        mouse.tracking = size.mouseTracking;
+        mouse.sgr = size.mouseSgr;
+        serverModes.altScreen = size.altScreen;
+        serverModes.appCursor = size.appCursor;
       }
     });
     source.addEventListener("snapshot", (event) => {

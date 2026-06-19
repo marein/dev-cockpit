@@ -25,6 +25,7 @@ type sessionInputItem struct {
 	Control string `json:"control"`
 	Text    string `json:"text"`
 	Paste   string `json:"paste"`
+	Raw     string `json:"raw"`
 }
 
 type sessionInputBatch struct {

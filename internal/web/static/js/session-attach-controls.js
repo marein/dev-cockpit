@@ -114,6 +114,8 @@
     const last = pendingInputs[pendingInputs.length - 1];
     if (payload.text && last && last.text) {
       last.text += payload.text;
+    } else if (payload.raw && last && last.raw) {
+      last.raw += payload.raw;
     } else {
       pendingInputs.push(payload);
     }
@@ -295,6 +297,15 @@
     const control = event.detail?.control;
     if (typeof control === "string" && control !== "") {
       void sendSessionInput({ control });
+    }
+  });
+
+  // Raw terminal bytes emitted by xterm when a desktop client types straight
+  // into the terminal (see session-attach.js).
+  document.addEventListener("session-input", (event) => {
+    const raw = event.detail?.raw;
+    if (typeof raw === "string" && raw !== "") {
+      void sendSessionInput({ raw });
     }
   });
 })();

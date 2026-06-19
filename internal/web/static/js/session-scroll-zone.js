@@ -1,8 +1,8 @@
 (() => {
-  const REPEAT_INITIAL_DELAY = 400;
-  const REPEAT_INTERVAL = 60;
-  const SCROLL_GESTURE_MIN_PX = 48;
-  const SCROLL_GESTURE_AXIS_RATIO = 1.35;
+  // Finger travel before a swipe locks into vertical-scroll mode (vs a tap or a
+  // horizontal swipe). Once locked, every move reports its incremental delta and
+  // session-attach.js turns it into proportional, per-program scroll steps.
+  const SCROLL_AXIS_LOCK_PX = 8;
   const DOUBLE_TAP_DELAY_MS = 350;
   const DOUBLE_TAP_MAX_PX = 24;
 
@@ -20,11 +20,10 @@
       this.pointerID = null;
       this.startX = 0;
       this.startY = 0;
+      this.lastY = 0;
+      this.axis = null; // null until locked to "v" (scroll) or "h" (ignored)
       this.lastTap = null;
       this.pendingTap = null;
-      this.activeControl = "";
-      this.controls = this.readControls();
-      this.repeater = window.createRepeater(() => this.fireControl(), REPEAT_INITIAL_DELAY, REPEAT_INTERVAL);
       this.render();
       this.zone = this.shadowRoot.querySelector(".zone");
       this.terminal = this.parentElement instanceof HTMLElement ? this.parentElement : null;
@@ -43,8 +42,7 @@
       this.pointerID = null;
       this.lastTap = null;
       this.pendingTap = null;
-      this.activeControl = "";
-      this.repeater = null;
+      this.axis = null;
     }
 
     attributeChangedCallback(name, oldValue, newValue) {
@@ -215,20 +213,6 @@
       }
     }
 
-    readControls() {
-      return {
-        up: this.controlAttribute("up-control", "page-up"),
-        down: this.controlAttribute("down-control", "page-down"),
-      };
-    }
-
-    controlAttribute(name, fallback) {
-      if (this.hasAttribute(name)) {
-        return (this.getAttribute(name) || "").trim();
-      }
-      return fallback;
-    }
-
     isActive() {
       return this.hasAttribute("active") && Boolean(this.mediaQuery?.matches);
     }
@@ -254,27 +238,6 @@
       this.terminal?.classList.toggle("attach-terminal-copy-mode", Boolean(this.mediaQuery?.matches) && !active);
     }
 
-    controlFromDelta(dx, dy) {
-      const absX = Math.abs(dx);
-      const absY = Math.abs(dy);
-      if (absY < SCROLL_GESTURE_MIN_PX || absY <= absX * SCROLL_GESTURE_AXIS_RATIO) {
-        return "";
-      }
-      return dy < 0 ? this.controls.down : this.controls.up;
-    }
-
-    setControl(control) {
-      if (control === this.activeControl) {
-        return;
-      }
-      this.activeControl = control;
-      if (!control) {
-        this.repeater?.stop();
-        return;
-      }
-      this.repeater?.start();
-    }
-
     isGestureEvent(event) {
       return this.isActive()
         && event.pointerType === "touch"
@@ -295,6 +258,8 @@
       this.pointerID = event.pointerId;
       this.startX = event.clientX;
       this.startY = event.clientY;
+      this.lastY = event.clientY;
+      this.axis = null;
       this.zone.setPointerCapture(this.pointerID);
       this.consumePointerEvent(event);
     }
@@ -304,44 +269,46 @@
         return;
       }
       this.consumePointerEvent(event);
-      this.setControl(this.controlFromDelta(event.clientX - this.startX, event.clientY - this.startY));
+      if (this.axis === null) {
+        const dx = event.clientX - this.startX;
+        const dy = event.clientY - this.startY;
+        if (Math.hypot(dx, dy) < SCROLL_AXIS_LOCK_PX) {
+          return; // still within the tap/deadzone
+        }
+        this.axis = Math.abs(dy) >= Math.abs(dx) ? "v" : "h";
+        this.lastY = event.clientY; // reset baseline so the lock doesn't jump
+      }
+      if (this.axis !== "v") {
+        return; // horizontal swipe: not a scroll
+      }
+      const ddy = event.clientY - this.lastY;
+      this.lastY = event.clientY;
+      if (ddy !== 0) {
+        this.dispatchEvent(new CustomEvent("session-scroll", {
+          bubbles: true,
+          composed: true,
+          detail: { dy: ddy, clientX: event.clientX, clientY: event.clientY },
+        }));
+      }
     }
 
     handlePointerUp(event) {
       if (this.pointerID !== event.pointerId) {
         return;
       }
-      const dx = event.clientX - this.startX;
-      const dy = event.clientY - this.startY;
-      const control = this.controlFromDelta(dx, dy);
       this.consumePointerEvent(event);
-      if (!this.activeControl && control) {
-        // A short flick should still trigger a single page step.
-        this.fireControl(control);
-      }
       this.stop();
     }
 
-    fireControl(control = this.activeControl) {
-      if (!control) {
-        return;
-      }
-      this.dispatchEvent(new CustomEvent("session-control", {
-        bubbles: true,
-        composed: true,
-        detail: { control },
-      }));
-    }
-
     stop() {
-      this.repeater?.stop();
-      this.activeControl = "";
       if (this.pointerID !== null && this.zone?.hasPointerCapture(this.pointerID)) {
         this.zone.releasePointerCapture(this.pointerID);
       }
       this.pointerID = null;
       this.startX = 0;
       this.startY = 0;
+      this.lastY = 0;
+      this.axis = null;
     }
   }
 

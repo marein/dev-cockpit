@@ -59,7 +59,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 	defer src.DetachStream(attached.Session)
 	offset := attached.Offset
 	generation := attached.Generation
-	if err := writeSSEvent(w, "terminal-size", sizePayload(attached.Cols, attached.Rows)); err != nil {
+	if err := writeSSEvent(w, "terminal-size", sizePayload(attached)); err != nil {
 		return
 	}
 	if err := writeSSEvent(w, "snapshot", encodeBase64(attached.Snapshot)); err != nil {
@@ -90,7 +90,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 			offset = refreshed.Offset
 			generation = refreshed.Generation
 			oscFilter.Reset()
-			if err := writeSSEvent(w, "terminal-size", sizePayload(refreshed.Cols, refreshed.Rows)); err != nil {
+			if err := writeSSEvent(w, "terminal-size", sizePayload(refreshed)); err != nil {
 				return
 			}
 			if err := writeSSEvent(w, "snapshot", encodeBase64(refreshed.Snapshot)); err != nil {
@@ -107,7 +107,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 				offset = snap.Offset
 				generation = snap.Generation
 				oscFilter.Reset()
-				if err := writeSSEvent(w, "terminal-size", sizePayload(snap.Cols, snap.Rows)); err != nil {
+				if err := writeSSEvent(w, "terminal-size", sizePayload(snap)); err != nil {
 					return
 				}
 				if err := writeSSEvent(w, "snapshot", encodeBase64(snap.Snapshot)); err != nil {
@@ -167,8 +167,13 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 	}
 }
 
-func sizePayload(cols, rows int) string {
-	return `{"cols":` + strconv.Itoa(cols) + `,"rows":` + strconv.Itoa(rows) + `}`
+func sizePayload(a session.StreamAttachment) string {
+	return `{"cols":` + strconv.Itoa(a.Cols) +
+		`,"rows":` + strconv.Itoa(a.Rows) +
+		`,"mouseTracking":` + strconv.FormatBool(a.MouseTracking) +
+		`,"mouseSgr":` + strconv.FormatBool(a.MouseSGR) +
+		`,"altScreen":` + strconv.FormatBool(a.AltScreen) +
+		`,"appCursor":` + strconv.FormatBool(a.AppCursor) + `}`
 }
 
 func writeSSERetry(w http.ResponseWriter, retry time.Duration) error {

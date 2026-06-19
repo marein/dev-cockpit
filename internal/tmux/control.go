@@ -436,6 +436,38 @@ func (c *Control) PaneSize() (Size, error) {
 	return Size{Cols: cols, Rows: rows}, nil
 }
 
+// PaneModes are terminal modes the browser needs to reproduce wheel scrolling
+// the way the program expects. They matter most when attaching to an already
+// running program, whose mode-set sequences are not part of a screen snapshot,
+// so the browser can't learn them by replaying the stream.
+type PaneModes struct {
+	MouseTracking bool // mouse reporting on (wheel -> mouse events, e.g. claude)
+	MouseSGR      bool // SGR mouse encoding (mode 1006)
+	AltScreen     bool // alternate screen active (full-screen TUI -> cursor keys)
+	AppCursor     bool // application cursor keys (DECCKM: ESC O A/B vs ESC [ A/B)
+}
+
+// Modes reads the pane's current terminal modes from tmux. The browser keeps
+// xterm's own mouse reporting disabled (to preserve text selection), so it uses
+// these to synthesize the wheel input each program expects.
+func (c *Control) Modes() PaneModes {
+	lines, _, err := c.commandSync("display-message -p -t " + Target(c.name) +
+		` "#{mouse_any_flag} #{mouse_sgr_flag} #{alternate_on} #{keypad_cursor_flag}"`)
+	if err != nil || len(lines) == 0 {
+		return PaneModes{}
+	}
+	f := strings.Fields(string(lines[0]))
+	if len(f) != 4 {
+		return PaneModes{}
+	}
+	return PaneModes{
+		MouseTracking: f[0] == "1",
+		MouseSGR:      f[1] == "1",
+		AltScreen:     f[2] == "1",
+		AppCursor:     f[3] == "1",
+	}
+}
+
 // Close detaches the control client; the tmux session itself is untouched.
 func (c *Control) Close() error {
 	c.sendMu.Lock()

@@ -11,6 +11,11 @@ import (
 	"github.com/local/dev-cockpit/internal/tmux"
 )
 
+// scrollLineStep is how many history lines one "line-up"/"line-down" scroll
+// action moves. A wheel notch maps to a single step, so this is the line-wise
+// scroll granularity (kept coarse enough not to feel jittery).
+const scrollLineStep = 3
+
 // streamHub tracks the active browser streams per tmux session and owns the
 // control-mode client backing each one. All state is guarded by mu.
 type streamHub struct {
@@ -34,12 +39,16 @@ type streamState struct {
 
 // StreamAttachment is one active browser stream against a tmux session.
 type StreamAttachment struct {
-	Session    string
-	Offset     int64
-	Generation int64
-	Snapshot   []byte
-	Cols       int
-	Rows       int
+	Session       string
+	Offset        int64
+	Generation    int64
+	Snapshot      []byte
+	Cols          int
+	Rows          int
+	MouseTracking bool // program has mouse reporting on (wheel -> mouse events)
+	MouseSGR      bool // program uses SGR mouse encoding (mode 1006)
+	AltScreen     bool // alternate screen active (wheel -> cursor keys)
+	AppCursor     bool // application cursor keys mode (DECCKM)
 }
 
 func newStreamHub(cfg config.Config) *streamHub {
@@ -217,6 +226,10 @@ func (h *streamHub) scroll(name, action string) bool {
 		off += page
 	case "down":
 		off -= page
+	case "line-up":
+		off += scrollLineStep
+	case "line-down":
+		off -= scrollLineStep
 	case "top":
 		off = hist
 	case "bottom":
@@ -326,13 +339,21 @@ func (h *streamHub) clear(name string) {
 }
 
 func (h *streamHub) attachmentLocked(name string, st *streamState) StreamAttachment {
+	var m tmux.PaneModes
+	if st.ctl != nil {
+		m = st.ctl.Modes()
+	}
 	return StreamAttachment{
-		Session:    name,
-		Offset:     st.offset,
-		Generation: st.generation,
-		Snapshot:   st.snapshot,
-		Cols:       st.cols,
-		Rows:       st.rows,
+		Session:       name,
+		Offset:        st.offset,
+		Generation:    st.generation,
+		Snapshot:      st.snapshot,
+		Cols:          st.cols,
+		Rows:          st.rows,
+		MouseTracking: m.MouseTracking,
+		MouseSGR:      m.MouseSGR,
+		AltScreen:     m.AltScreen,
+		AppCursor:     m.AppCursor,
 	}
 }
 

@@ -98,6 +98,32 @@ func (c *Client) SendLiteral(name, text string) error {
 	return clirun.Check("tmux", "send-keys", "-t", Target(name), "-l", text)
 }
 
+// sendRawChunk bounds how many byte values go into one send-keys call so a long
+// paste can't blow the argument list.
+const sendRawChunk = 256
+
+// SendRaw injects an exact byte sequence into a pane via send-keys -H (each byte
+// as a hex key code). Unlike SendKey/SendLiteral it does no interpretation, so
+// it carries whatever a browser terminal's onData emits verbatim: printable
+// UTF-8 (including composed accents), control bytes, and escape sequences.
+func (c *Client) SendRaw(name string, data []byte) error {
+	for start := 0; start < len(data); start += sendRawChunk {
+		end := start + sendRawChunk
+		if end > len(data) {
+			end = len(data)
+		}
+		args := make([]string, 0, 4+(end-start))
+		args = append(args, "send-keys", "-t", Target(name), "-H")
+		for _, b := range data[start:end] {
+			args = append(args, fmt.Sprintf("%02x", b))
+		}
+		if err := clirun.Check("tmux", args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // PasteLiteral pastes literal text through a temporary tmux buffer.
 func (c *Client) PasteLiteral(name, text string) error {
 	if text == "" {

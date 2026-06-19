@@ -271,6 +271,7 @@ type Input struct {
 	Control string
 	Text    string
 	Paste   string
+	Raw     string
 }
 
 // Send dispatches a batch of user inputs to a session, in order. It resolves
@@ -304,6 +305,11 @@ func (s *Sessions) Resize(rawID, rawCols, rawRows string) error {
 // --- helpers ---
 
 func (s *Sessions) configureTerminal(name string) error {
+	// Enable tmux's mouse option so coder TUIs that probe it at startup (claude)
+	// don't nag the user to "scroll with PgUp/PgDn" — the browser already
+	// forwards real wheel input. Cosmetic and best-effort; the option is
+	// otherwise inert in our control-mode setup (input goes via send-keys).
+	_ = s.tmux.SetOption(name, "mouse", "on")
 	return s.tmux.SetHistoryLimit(name, s.cfg.TerminalHistoryLimit)
 }
 

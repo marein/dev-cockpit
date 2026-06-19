@@ -14,6 +14,8 @@ import (
 // field of item is non-empty.
 func sendInput(t *tmux.Client, mapper provider.ControlMapper, target string, item Input) error {
 	switch {
+	case item.Raw != "":
+		return t.SendRaw(target, []byte(item.Raw))
 	case strings.TrimSpace(item.Control) != "":
 		return sendControl(t, mapper, target, item.Control)
 	case item.Text != "":

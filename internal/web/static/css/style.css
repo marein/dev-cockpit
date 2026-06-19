@@ -11,8 +11,13 @@
   border: 1px dashed #fff;
 }
 .attach-terminal .xterm, .attach-terminal .xterm * { box-sizing: content-box; }
-.attach-terminal .xterm-helper-textarea { display: none !important; pointer-events: none !important; }
+/* Read-only mirror: keep xterm's input textarea out of the way. Interactive
+   (desktop) terminals leave it in place so they can take focus and type. */
+.attach-terminal:not(.attach-terminal-interactive) .xterm-helper-textarea { display: none !important; pointer-events: none !important; }
 .attach-terminal .xterm-viewport { overflow-y: auto !important; }
+/* While the terminal is focused xterm paints the real cursor, so hide the
+   overlay block we draw for the unfocused mirror. */
+.attach-terminal .xterm.focus .attach-cursor { display: none !important; }
 .attach-terminal .attach-cursor {
   position: absolute;
   top: 0;
