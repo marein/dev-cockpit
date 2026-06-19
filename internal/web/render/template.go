@@ -52,7 +52,6 @@ type Switcher struct {
 	Sessions  []SwitchTarget
 	Shells    []SwitchTarget
 	CurrentID string
-	Count     int
 }
 
 // SwitchTarget is one jump destination in the quick-switch menu.

@@ -25,6 +25,5 @@ func (s *Server) switcher(c *gin.Context) render.Switcher {
 			URL:  "/shells/" + sh.Identifier,
 		})
 	}
-	sw.Count = len(sw.Sessions) + len(sw.Shells)
 	return sw
 }

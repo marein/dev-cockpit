@@ -1,11 +1,9 @@
 {{define "session_switcher.gohtml"}}
-{{if gt .Switcher.Count 0}}
 <div class="session-switcher dropup d-print-none">
   <button type="button" class="btn btn-icon session-switcher-toggle" data-bs-toggle="dropdown" data-bs-auto-close="true" aria-expanded="false" aria-label="Sessions and shells" title="Sessions and shells">
     <i class="ti ti-terminal-2"></i>
   </button>
   <div class="dropdown-menu dropdown-menu-end session-switcher-menu">
-    {{if .Switcher.Sessions}}
     <h6 class="dropdown-header">Sessions</h6>
     {{range .Switcher.Sessions}}
     <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.Switcher.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.Switcher.CurrentID}} aria-current="true"{{end}}>
@@ -13,9 +11,11 @@
       <span class="text-truncate">{{.Name}}</span>
     </a>
     {{end}}
-    {{end}}
-    {{if .Switcher.Shells}}
-    {{if .Switcher.Sessions}}<div class="dropdown-divider"></div>{{end}}
+    <a class="dropdown-item d-flex align-items-center gap-2" href="/sessions/new">
+      <i class="ti ti-plus flex-shrink-0"></i>
+      <span>New session</span>
+    </a>
+    <div class="dropdown-divider"></div>
     <h6 class="dropdown-header">Shells</h6>
     {{range .Switcher.Shells}}
     <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.Switcher.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.Switcher.CurrentID}} aria-current="true"{{end}}>
@@ -23,12 +23,6 @@
       <span class="text-truncate">{{.Name}}</span>
     </a>
     {{end}}
-    {{end}}
-    <div class="dropdown-divider"></div>
-    <a class="dropdown-item d-flex align-items-center gap-2" href="/sessions/new">
-      <i class="ti ti-plus flex-shrink-0"></i>
-      <span>New session</span>
-    </a>
     <form method="post" action="/shells" class="d-block">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <button type="submit" class="dropdown-item d-flex align-items-center gap-2">
@@ -38,5 +32,4 @@
     </form>
   </div>
 </div>
-{{end}}
 {{end}}
