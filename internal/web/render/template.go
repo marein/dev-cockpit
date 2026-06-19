@@ -43,4 +43,21 @@ type Page struct {
 	Flash     Flash
 	CSRFToken string
 	User      string
+	Switcher  Switcher
+}
+
+// Switcher feeds the quick-switch floating button: the live sessions and shells
+// you can jump to, plus the identifier of the one you are currently attached to.
+type Switcher struct {
+	Sessions  []SwitchTarget
+	Shells    []SwitchTarget
+	CurrentID string
+	Count     int
+}
+
+// SwitchTarget is one jump destination in the quick-switch menu.
+type SwitchTarget struct {
+	ID   string
+	Name string
+	URL  string
 }

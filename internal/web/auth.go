@@ -125,6 +125,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		Flash:     render.Flash{Message: message, Level: level},
 		CSRFToken: token,
 		User:      user,
+		Switcher:  s.switcher(c),
 	}
 }
 
