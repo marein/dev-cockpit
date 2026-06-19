@@ -25,6 +25,10 @@ func (runtime) ResumeCommand(sessionID, workdir string, remoteControl, automatic
 
 func flags(agentID string, remoteControl, automaticApproval bool) string {
 	var flags strings.Builder
+	// copilot has no key binding to scroll its transcript line-wise; that only
+	// works via mouse-wheel events, which it reads only with mouse reporting on.
+	// Default it on so the browser's synthesized wheel scrolls line-by-line.
+	flags.WriteString(" --mouse")
 	if remoteControl {
 		flags.WriteString(" --remote")
 	}
