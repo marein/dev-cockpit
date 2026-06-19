@@ -13,15 +13,37 @@ type psStrategy struct{}
 
 func newStrategy() strategy { return psStrategy{} }
 
-func (psStrategy) Descendants(rootPID int) []int {
-	out, err := exec.Command("ps", "-axo", "pid=,ppid=").Output()
-	if err != nil {
-		return []int{rootPID}
+// fill reads the whole process table in two ps calls: one for the parent links
+// and argv, one for the environment. Without /proc every per-PID query forks ps,
+// so a scan over a process tree of N descendants would otherwise spawn O(N)
+// processes; this caps the table reads at two forks total. CWD stays lazy (it
+// forks lsof) because the common ID-matched path never needs it.
+func (psStrategy) fill(t *Tree) bool {
+	children, cmdline, ok := psTable()
+	if !ok {
+		return false
 	}
-	children := map[int][]int{}
+	environ, ok := psEnviron()
+	if !ok {
+		return false
+	}
+	t.children = children
+	t.cmdline = cmdline
+	t.environ = environ
+	return true
+}
+
+// psTable returns pid->children and pid->argv from a single `ps` invocation.
+func psTable() (children map[int][]int, cmdline map[int][]string, ok bool) {
+	out, err := exec.Command("ps", "-axww", "-o", "pid=,ppid=,command=").Output()
+	if err != nil {
+		return nil, nil, false
+	}
+	children = map[int][]int{}
+	cmdline = map[int][]string{}
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) != 2 {
+		if len(fields) < 2 {
 			continue
 		}
 		pid, pidErr := strconv.Atoi(fields[0])
@@ -30,24 +52,53 @@ func (psStrategy) Descendants(rootPID int) []int {
 			continue
 		}
 		children[ppid] = append(children[ppid], pid)
-	}
-	seen := map[int]bool{}
-	var result []int
-	pending := []int{rootPID}
-	for len(pending) > 0 {
-		pid := pending[len(pending)-1]
-		pending = pending[:len(pending)-1]
-		if seen[pid] {
-			continue
+		if len(fields) > 2 {
+			cmdline[pid] = fields[2:]
 		}
-		seen[pid] = true
-		result = append(result, pid)
-		pending = append(pending, children[pid]...)
 	}
-	return result
+	return children, cmdline, true
 }
 
-func (psStrategy) Cmdline(pid int) []string {
+// psEnviron returns pid->environment from a single `ps -E` invocation.
+func psEnviron() (map[int]map[string]string, bool) {
+	out, err := exec.Command("ps", "-axwwE", "-o", "pid=,command=").Output()
+	if err != nil {
+		return nil, false
+	}
+	environ := map[int]map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		environ[pid] = parseEnviron(fields[1:])
+	}
+	return environ, true
+}
+
+func parseEnviron(tokens []string) map[string]string {
+	env := map[string]string{}
+	for _, tok := range tokens {
+		if k, v, ok := strings.Cut(tok, "="); ok && isEnvName(k) {
+			env[k] = v
+		}
+	}
+	return env
+}
+
+func (psStrategy) childrenOf(pid int) []int {
+	children, _, ok := psTable()
+	if !ok {
+		return nil
+	}
+	return children[pid]
+}
+
+func (psStrategy) cmdlineOf(pid int) []string {
 	out, err := exec.Command("ps", "-ww", "-p", strconv.Itoa(pid), "-o", "command=").Output()
 	if err != nil {
 		return nil
@@ -59,7 +110,7 @@ func (psStrategy) Cmdline(pid int) []string {
 	return strings.Fields(line)
 }
 
-func (psStrategy) CWD(pid int) string {
+func (psStrategy) cwdOf(pid int) string {
 	out, err := exec.Command("lsof", "-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-Fn").Output()
 	if err != nil {
 		return ""
@@ -75,18 +126,12 @@ func (psStrategy) CWD(pid int) string {
 	return ""
 }
 
-func (psStrategy) Environ(pid int) map[string]string {
+func (psStrategy) environOf(pid int) map[string]string {
 	out, err := exec.Command("ps", "-ww", "-E", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return nil
 	}
-	env := map[string]string{}
-	for _, tok := range strings.Fields(string(out)) {
-		if k, v, ok := strings.Cut(tok, "="); ok && isEnvName(k) {
-			env[k] = v
-		}
-	}
-	return env
+	return parseEnviron(strings.Fields(string(out)))
 }
 
 func isEnvName(s string) bool {

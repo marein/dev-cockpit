@@ -47,6 +47,9 @@ func (c *snapshotCache) invalidate() {
 // scanRunning correlates live tmux panes with stored resumable sessions to
 // derive the verified Running list and the leftover Inactive resumables.
 func scanRunning(panes []tmux.Pane, resumable []provider.Session, prov provider.Provider) (running []Running, inactive []provider.Session) {
+	// Capture the process table once for the whole scan so platforms without
+	// /proc read it in two ps calls instead of reforking ps per descendant PID.
+	tree := proctree.Capture()
 	resumableByID := map[string]provider.Session{}
 	resumableByLegacyName := map[string][]provider.Session{}
 	for _, r := range resumable {
@@ -59,9 +62,13 @@ func scanRunning(panes []tmux.Pane, resumable []provider.Session, prov provider.
 	}
 	runningIDs := map[string]bool{}
 	for _, p := range panes {
-		match := findMatchingResumable(p, resumableByID, resumableByLegacyName, prov)
+		var descendants []int
+		if rootPID, err := strconv.Atoi(p.PID); err == nil {
+			descendants = tree.Descendants(rootPID)
+		}
+		match := findMatchingResumable(descendants, p.Name, resumableByID, resumableByLegacyName, prov, tree)
 		if match == nil {
-			if info, ok := paneProviderInfo(p, prov); ok {
+			if info, ok := paneProviderInfo(descendants, prov, tree); ok {
 				running = append(running, Running{
 					Identifier:  p.Name,
 					TmuxSession: p.Name,
@@ -94,24 +101,34 @@ func scanRunning(panes []tmux.Pane, resumable []provider.Session, prov provider.
 	return running, inactive
 }
 
-func findMatchingResumable(p tmux.Pane, byID map[string]provider.Session, byLegacyName map[string][]provider.Session, prov provider.Provider) *provider.Session {
-	rootPID, err := strconv.Atoi(p.PID)
-	if err != nil {
-		return nil
-	}
-	descendants := proctree.Descendants(rootPID)
-	if direct, ok := byID[p.Name]; ok {
-		if matchesResumable(descendants, direct, prov) {
+func findMatchingResumable(descendants []int, paneName string, byID map[string]provider.Session, byLegacyName map[string][]provider.Session, prov provider.Provider, tree *proctree.Tree) *provider.Session {
+	// Modern sessions name the tmux pane after the session ID, so an exact ID
+	// hit plus a live provider process is already a unique match. Skip the
+	// working-dir comparison here: it is redundant and would cost a per-PID
+	// lsof on platforms without /proc.
+	if direct, ok := byID[paneName]; ok {
+		if hasProviderProcess(descendants, prov, tree) {
 			return &direct
 		}
 	}
-	candidates := byLegacyName[p.Name]
+	// Legacy sessions were named after the (non-unique) sanitized display name,
+	// so fall back to the working dir to disambiguate collisions.
+	candidates := byLegacyName[paneName]
 	for i := range candidates {
-		if matchesResumable(descendants, candidates[i], prov) {
+		if matchesResumable(descendants, candidates[i], prov, tree) {
 			return &candidates[i]
 		}
 	}
 	return nil
+}
+
+func hasProviderProcess(descendants []int, prov provider.Provider, tree *proctree.Tree) bool {
+	for _, pid := range descendants {
+		if provider.OwnsProcess(tree.Environ(pid), prov.ID()) {
+			return true
+		}
+	}
+	return false
 }
 
 type paneProviderProcess struct {
@@ -119,32 +136,28 @@ type paneProviderProcess struct {
 	name string
 }
 
-func paneProviderInfo(p tmux.Pane, prov provider.Provider) (paneProviderProcess, bool) {
-	rootPID, err := strconv.Atoi(p.PID)
-	if err != nil {
-		return paneProviderProcess{}, false
-	}
-	for _, pid := range proctree.Descendants(rootPID) {
-		if provider.OwnsProcess(proctree.Environ(pid), prov.ID()) {
+func paneProviderInfo(descendants []int, prov provider.Provider, tree *proctree.Tree) (paneProviderProcess, bool) {
+	for _, pid := range descendants {
+		if provider.OwnsProcess(tree.Environ(pid), prov.ID()) {
 			return paneProviderProcess{
-				cwd:  proctree.CWD(pid),
-				name: provider.RunningName(proctree.Cmdline(pid)),
+				cwd:  tree.CWD(pid),
+				name: provider.RunningName(tree.Cmdline(pid)),
 			}, true
 		}
 	}
 	return paneProviderProcess{}, false
 }
 
-func matchesResumable(descendants []int, candidate provider.Session, prov provider.Provider) bool {
+func matchesResumable(descendants []int, candidate provider.Session, prov provider.Provider, tree *proctree.Tree) bool {
 	target, err := filepath.EvalSymlinks(candidate.CWD)
 	if err != nil {
 		target = candidate.CWD
 	}
 	for _, pid := range descendants {
-		if !provider.OwnsProcess(proctree.Environ(pid), prov.ID()) {
+		if !provider.OwnsProcess(tree.Environ(pid), prov.ID()) {
 			continue
 		}
-		if proctree.CWD(pid) == target {
+		if tree.CWD(pid) == target {
 			return true
 		}
 	}

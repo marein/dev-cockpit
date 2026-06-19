@@ -277,6 +277,19 @@ func (h *streamHub) updated(name string) (<-chan struct{}, bool) {
 	return st.ctl.Updated(), true
 }
 
+// control returns the live control client backing a stream, or nil when no
+// browser is attached (or it has exited). Input uses it to send keystrokes over
+// the persistent connection instead of forking the tmux CLI per key.
+func (h *streamHub) control(name string) *tmux.Control {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.streams[name]
+	if st == nil || st.ctl == nil || st.ctl.Exited() {
+		return nil
+	}
+	return st.ctl
+}
+
 // exited reports whether the control client for a stream has ended.
 func (h *streamHub) exited(name string) bool {
 	h.mu.Lock()

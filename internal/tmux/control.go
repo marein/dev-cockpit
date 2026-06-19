@@ -379,6 +379,44 @@ func (c *Control) Resize(cols, rows int) error {
 	return err
 }
 
+// SendRaw injects an exact byte sequence over this persistent connection,
+// mirroring Client.SendRaw but with no fork per keystroke. Bytes go as hex key
+// codes (send-keys -H) so control/escape bytes pass through verbatim.
+func (c *Control) SendRaw(name string, data []byte) error {
+	for start := 0; start < len(data); start += sendRawChunk {
+		end := start + sendRawChunk
+		if end > len(data) {
+			end = len(data)
+		}
+		var b strings.Builder
+		b.WriteString("send-keys -t ")
+		b.WriteString(Target(name))
+		b.WriteString(" -H")
+		for _, by := range data[start:end] {
+			fmt.Fprintf(&b, " %02x", by)
+		}
+		if _, _, err := c.commandSync(b.String()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SendKey sends one named key (e.g. "Enter", "Up") over this connection.
+func (c *Control) SendKey(name, key string) error {
+	_, _, err := c.commandSync("send-keys -t " + Target(name) + " " + key)
+	return err
+}
+
+// SendLiteral sends literal text over this connection. It is encoded as hex
+// (like SendRaw) so command-line quoting never enters into it.
+func (c *Control) SendLiteral(name, text string) error {
+	if text == "" {
+		return nil
+	}
+	return c.SendRaw(name, []byte(text))
+}
+
 // Settle waits for the repaint a resize triggers to begin and then go quiet, so
 // a following Snapshot captures a finished frame instead of a half-drawn one.
 // Phase one waits (up to startWait) for the program to start repainting; phase

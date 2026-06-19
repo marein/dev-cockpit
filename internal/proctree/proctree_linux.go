@@ -15,32 +15,25 @@ type procStrategy struct{}
 
 func newStrategy() strategy { return procStrategy{} }
 
-func (procStrategy) Descendants(rootPID int) []int {
-	seen := map[int]bool{}
-	var result []int
-	pending := []int{rootPID}
-	for len(pending) > 0 {
-		pid := pending[len(pending)-1]
-		pending = pending[:len(pending)-1]
-		if seen[pid] {
-			continue
-		}
-		seen[pid] = true
-		result = append(result, pid)
-		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", pid, pid))
-		if err != nil {
-			continue
-		}
-		for _, f := range strings.Fields(string(data)) {
-			if c, err := strconv.Atoi(f); err == nil {
-				pending = append(pending, c)
-			}
+// fill is a no-op on Linux: /proc reads are syscall-cheap, so the Tree reads
+// them lazily and memoises per PID rather than slurping the whole table.
+func (procStrategy) fill(*Tree) bool { return false }
+
+func (procStrategy) childrenOf(pid int) []int {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", pid, pid))
+	if err != nil {
+		return nil
+	}
+	var out []int
+	for _, f := range strings.Fields(string(data)) {
+		if c, err := strconv.Atoi(f); err == nil {
+			out = append(out, c)
 		}
 	}
-	return result
+	return out
 }
 
-func (procStrategy) Cmdline(pid int) []string {
+func (procStrategy) cmdlineOf(pid int) []string {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil {
 		return nil
@@ -54,7 +47,7 @@ func (procStrategy) Cmdline(pid int) []string {
 	return out
 }
 
-func (procStrategy) CWD(pid int) string {
+func (procStrategy) cwdOf(pid int) string {
 	link, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
 	if err != nil {
 		return ""
@@ -65,7 +58,7 @@ func (procStrategy) CWD(pid int) string {
 	return link
 }
 
-func (procStrategy) Environ(pid int) map[string]string {
+func (procStrategy) environOf(pid int) map[string]string {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
 	if err != nil {
 		return nil

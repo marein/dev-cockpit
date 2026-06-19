@@ -170,21 +170,40 @@ var shellScrollActions = map[string]string{
 // Send dispatches a batch of user inputs to a shell, in order. Scroll controls
 // drive the tmux history view; everything else is forwarded to the program.
 func (s *Shells) Send(rawID string, items []Input) error {
-	sh, err := s.ResolveRunning(rawID)
+	target, sink, err := s.inputTarget(rawID)
 	if err != nil {
 		return err
 	}
 	for _, item := range items {
 		if action, ok := shellScrollActions[strings.TrimSpace(item.Control)]; ok {
-			s.streams.scroll(sh.TmuxSession, action)
+			s.streams.scroll(target, action)
 			continue
 		}
-		s.streams.resumeLive(sh.TmuxSession)
-		if err := sendInput(s.tmux, s.mapper, sh.TmuxSession, item); err != nil {
+		s.streams.resumeLive(target)
+		if err := sendInput(sink, s.mapper, target, item); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// inputTarget mirrors Sessions.inputTarget: while a browser stream is attached
+// (the normal case when typing) keystrokes go over its persistent control
+// connection, so the per-key path forks nothing and skips the pane listing.
+// With no stream attached it falls back to the forking CLI.
+func (s *Shells) inputTarget(rawID string) (string, inputTarget, error) {
+	id, err := ValidateIdentifier(rawID)
+	if err != nil {
+		return "", nil, err
+	}
+	if ctl := s.streams.control(id); ctl != nil {
+		return id, controlInput{ctl: ctl, cli: s.tmux}, nil
+	}
+	sh, err := s.ResolveRunning(id)
+	if err != nil {
+		return "", nil, err
+	}
+	return sh.TmuxSession, s.tmux, nil
 }
 
 // Resize sets the shell's rendered terminal size.

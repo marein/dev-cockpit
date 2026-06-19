@@ -277,16 +277,37 @@ type Input struct {
 // Send dispatches a batch of user inputs to a session, in order. It resolves
 // the target once and stops at the first failing item.
 func (s *Sessions) Send(rawID string, items []Input) error {
-	r, err := s.ResolveRunning(rawID)
+	target, sink, err := s.inputTarget(rawID)
 	if err != nil {
 		return err
 	}
 	for _, item := range items {
-		if err := sendInput(s.tmux, s.provider.ControlMapper(), r.TmuxSession, item); err != nil {
+		if err := sendInput(sink, s.provider.ControlMapper(), target, item); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// inputTarget resolves the tmux target and the cheapest transport for input.
+// While a browser stream is attached (the normal case when typing) keystrokes
+// go over its persistent control connection, so the per-key path forks nothing
+// and never runs the process-table snapshot. With no stream attached it falls
+// back to the forking CLI, verifying liveness via the (cached) snapshot exactly
+// as before.
+func (s *Sessions) inputTarget(rawID string) (string, inputTarget, error) {
+	id, err := ValidateIdentifier(rawID)
+	if err != nil {
+		return "", nil, err
+	}
+	if ctl := s.streams.control(id); ctl != nil {
+		return id, controlInput{ctl: ctl, cli: s.tmux}, nil
+	}
+	r, err := s.ResolveRunning(id)
+	if err != nil {
+		return "", nil, err
+	}
+	return r.TmuxSession, s.tmux, nil
 }
 
 // Resize sets the tmux window size.
