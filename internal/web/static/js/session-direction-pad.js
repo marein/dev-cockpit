@@ -1,7 +1,10 @@
 (() => {
   const REPEAT_INITIAL_DELAY = 400;
   const REPEAT_INTERVAL = 60;
-  const DIRECTION_DEAD_ZONE_RATIO = 0.45;
+  // Absolute drag distance (px) the pointer must travel from the button centre
+  // before a direction triggers. Decoupled from the small button size so the
+  // swipe needs a deliberate reach (pointer capture tracks travel past the edge).
+  const DIRECTION_DEAD_ZONE_PX = 24;
   const DIRECTION_AXIS_LOCK_RATIO = 1.5;
   const KEY_DIRECTIONS = {
     ArrowUp: "up",
@@ -100,7 +103,7 @@
       const y = clientY - rect.top - rect.height / 2;
       const absX = Math.abs(x);
       const absY = Math.abs(y);
-      const deadZone = Math.min(rect.width, rect.height) * DIRECTION_DEAD_ZONE_RATIO;
+      const deadZone = DIRECTION_DEAD_ZONE_PX;
       if (Math.hypot(x, y) < deadZone) {
         return "";
       }
