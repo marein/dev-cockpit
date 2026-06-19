@@ -243,9 +243,6 @@
   });
 
   for (const button of controlButtons) {
-    if (button.closest("[data-session-button-menu]")) {
-      continue;
-    }
     const control = button.dataset.sessionControl;
     if (!control) {
       continue;

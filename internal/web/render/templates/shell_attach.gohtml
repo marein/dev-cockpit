@@ -68,25 +68,14 @@
       <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="backspace" aria-label="Backspace" title="Backspace">
         <i class="ti ti-backspace"></i>
       </button>
-      <div class="session-button-menu" data-session-button-menu>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-button-menu-trigger aria-haspopup="true" aria-expanded="false" aria-label="Page controls" title="Page controls">
-          <i class="ti ti-arrow-autofit-height"></i>
-        </button>
-        <div class="session-button-menu-menu" data-session-button-menu-menu>
-          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="scroll-up" aria-label="Scroll up" title="Scroll up">
-            <span class="small fw-medium">Up</span>
-          </button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="scroll-down" aria-label="Scroll down" title="Scroll down">
-            <span class="small fw-medium">Down</span>
-          </button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="scroll-top" aria-label="Scroll to top" title="Scroll to top">
-            <span class="small fw-medium">Top</span>
-          </button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="scroll-bottom" aria-label="Scroll to bottom" title="Scroll to bottom">
-            <span class="small fw-medium">Bottom</span>
-          </button>
-        </div>
-      </div>
+      <session-direction-pad
+        icon="arrow-autofit-height"
+        label="Page controls"
+        title="Drag: up/down to scroll, left/right to top/bottom"
+        up-control="scroll-up"
+        down-control="scroll-down"
+        left-control="scroll-top"
+        right-control="scroll-bottom"></session-direction-pad>
       <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-refresh aria-label="Refresh stream" title="Refresh stream">
         <i class="ti ti-refresh"></i>
       </button>
@@ -114,7 +103,6 @@
 <script src="{{asset "/js/timer-repeater.js"}}"></script>
 <script src="{{asset "/js/session-direction-pad.js"}}"></script>
 <script src="{{asset "/js/session-scroll-zone.js"}}"></script>
-<script src="{{asset "/js/session-button-menu.js"}}"></script>
 <script src="{{asset "/js/session-terminal-setting-select.js"}}"></script>
 <script src="{{asset "/js/session-attach.js"}}"></script>
 <script src="{{asset "/js/session-attach-controls.js"}}"></script>

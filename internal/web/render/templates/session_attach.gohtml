@@ -65,25 +65,14 @@
       <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="backspace" aria-label="Backspace" title="Backspace">
         <i class="ti ti-backspace"></i>
       </button>
-      <div class="session-button-menu" data-session-button-menu>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-button-menu-trigger aria-haspopup="true" aria-expanded="false" aria-label="Page controls" title="Page controls">
-          <i class="ti ti-arrow-autofit-height"></i>
-        </button>
-        <div class="session-button-menu-menu" data-session-button-menu-menu>
-          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="page-up" aria-label="Page Up" title="Page Up">
-            <span class="small fw-medium">Up</span>
-          </button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="page-down" aria-label="Page Down" title="Page Down">
-            <span class="small fw-medium">Down</span>
-          </button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="page-top" aria-label="Home" title="Home">
-            <span class="small fw-medium">Home</span>
-          </button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" data-session-control="page-bottom" aria-label="End" title="End">
-            <span class="small fw-medium">End</span>
-          </button>
-        </div>
-      </div>
+      <session-direction-pad
+        icon="arrow-autofit-height"
+        label="Page controls"
+        title="Drag: up/down to page, left/right to top/bottom"
+        up-control="page-up"
+        down-control="page-down"
+        left-control="page-top"
+        right-control="page-bottom"></session-direction-pad>
       <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-refresh aria-label="Refresh stream" title="Refresh stream">
         <i class="ti ti-refresh"></i>
       </button>
@@ -147,7 +136,6 @@
 <script src="{{asset "/js/timer-repeater.js"}}"></script>
 <script src="{{asset "/js/session-direction-pad.js"}}"></script>
 <script src="{{asset "/js/session-scroll-zone.js"}}"></script>
-<script src="{{asset "/js/session-button-menu.js"}}"></script>
 <script src="{{asset "/js/session-terminal-setting-select.js"}}"></script>
 <script src="{{asset "/js/session-file-upload.js"}}"></script>
 <script src="{{asset "/js/session-attach.js"}}"></script>
