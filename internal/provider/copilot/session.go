@@ -130,7 +130,6 @@ func (r *sessionRepository) listStored() []storedSession {
 				Name:          sessionlabel.DisplayName(md.Name, id),
 				CWD:           cwd,
 				UpdatedAt:     updatedAt,
-				SizeBytes:     filesystem.PathsSizeBytes(sessionDir),
 				RemoteControl: md.RemoteSteerable,
 				TaskURL:       r.taskURL(md.TaskID),
 			},

@@ -87,7 +87,6 @@ func scanRunning(panes []tmux.Pane, resumable []provider.Session, prov provider.
 			Name:          sessionlabel.DisplayName(match.Name, match.SessionID),
 			StartedAt:     paneStartTime(p.StartedAt),
 			CWD:           match.CWD,
-			SizeBytes:     match.SizeBytes,
 			RemoteControl: match.RemoteControl,
 			TaskURL:       match.TaskURL,
 		})

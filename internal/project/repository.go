@@ -7,13 +7,11 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/local/dev-cockpit/internal/filesystem"
-	"golang.org/x/sync/errgroup"
 )
 
 // Project is one project directory.
@@ -22,14 +20,10 @@ type Project struct {
 	Root                string
 	Path                string
 	Label               string
-	Size                string
 	GitBranch           string
 	GitOrigin           string
 	GitOriginURL        string
 	GitRepo             bool
-	GitChanges          int
-	GitAhead            int
-	GitBehind           int
 	ActiveSessions      int
 	InactiveSessions    int
 	ActiveSessionRefs   []SessionRef
@@ -43,16 +37,12 @@ type SessionRef struct {
 
 // Repository wraps the on-disk projects root.
 type Repository struct {
-	Root                string
-	MetadataConcurrency int
+	Root string
 }
 
 // NewRepository creates a Repository for the given root directory.
-func NewRepository(root string, metadataConcurrency int) *Repository {
-	if metadataConcurrency <= 0 {
-		metadataConcurrency = 1
-	}
-	return &Repository{Root: root, MetadataConcurrency: metadataConcurrency}
+func NewRepository(root string) *Repository {
+	return &Repository{Root: root}
 }
 
 // EnsureRoot creates the root if missing and returns its resolved path.
@@ -142,28 +132,17 @@ func (r *Repository) List() []Project {
 	return out
 }
 
+// enrichProjects fills in lightweight git metadata. It only reads a couple of
+// files inside .git (HEAD and config) — no `git status`, no directory walk — so
+// it is cheap enough to run inline for every project on each request.
 func (r *Repository) enrichProjects(projects []Project) {
-	var g errgroup.Group
-	g.SetLimit(r.MetadataConcurrency)
 	for i := range projects {
-		i := i
-		g.Go(func() error {
-			meta := gitMetadata(projects[i].Path)
-			projects[i].GitBranch = meta.Branch
-			projects[i].GitOrigin = meta.Origin
-			projects[i].GitOriginURL = meta.OriginURL
-			projects[i].GitRepo = meta.Repo
-			projects[i].GitChanges = meta.Changes
-			projects[i].GitAhead = meta.Ahead
-			projects[i].GitBehind = meta.Behind
-			return nil
-		})
-		g.Go(func() error {
-			projects[i].Size = filesystem.PathSize(projects[i].Path)
-			return nil
-		})
+		meta := gitMetadata(projects[i].Path)
+		projects[i].GitRepo = meta.Repo
+		projects[i].GitBranch = meta.Branch
+		projects[i].GitOrigin = meta.Origin
+		projects[i].GitOriginURL = meta.OriginURL
 	}
-	_ = g.Wait()
 }
 
 // ValidatePath checks that raw is a non-symlink project directly under the root.
@@ -210,14 +189,10 @@ func (r *Repository) Find(raw string) (Project, error) {
 		Root:         root,
 		Path:         p,
 		Label:        r.Label(p),
-		Size:         filesystem.PathSize(p),
 		GitBranch:    meta.Branch,
 		GitOrigin:    meta.Origin,
 		GitOriginURL: meta.OriginURL,
 		GitRepo:      meta.Repo,
-		GitChanges:   meta.Changes,
-		GitAhead:     meta.Ahead,
-		GitBehind:    meta.Behind,
 	}, nil
 }
 
@@ -291,34 +266,56 @@ type gitInfo struct {
 	Branch    string
 	Origin    string
 	OriginURL string
-	Changes   int
-	Ahead     int
-	Behind    int
 }
 
+// gitMetadata returns only cheap, file-read git facts: whether dir is a repo,
+// its current branch (from .git/HEAD) and its origin remote (from .git/config).
+// It never shells out to git or walks the tree.
 func gitMetadata(dir string) gitInfo {
-	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+	gitPath := filepath.Join(dir, ".git")
+	if _, err := os.Stat(gitPath); err != nil {
 		return gitInfo{}
 	}
-	info := parseGitStatus(gitOutput(dir, "status", "--porcelain=v2", "--branch"))
-	if !info.Repo {
-		return gitInfo{}
+	rawOrigin := readOriginURL(gitPath)
+	return gitInfo{
+		Repo:      true,
+		Branch:    readGitBranch(gitPath),
+		Origin:    shortenGitOrigin(rawOrigin),
+		OriginURL: gitOriginURL(rawOrigin),
 	}
-	rawOrigin := readOriginURL(filepath.Join(dir, ".git"))
-	info.Origin = shortenGitOrigin(rawOrigin)
-	info.OriginURL = gitOriginURL(rawOrigin)
-	return info
 }
 
-// readOriginURL parses the "url" of [remote "origin"] from a .git/config file.
-// gitDir may also be a regular file (linked worktree); in that case we follow
-// the gitdir: pointer to the real git directory.
-func readOriginURL(gitDir string) string {
-	configPath, err := resolveGitConfigPath(gitDir)
+// readGitBranch returns the checked-out branch from .git/HEAD, or a short commit
+// hash when HEAD is detached.
+func readGitBranch(gitPath string) string {
+	gitDir, err := resolveGitDir(gitPath)
 	if err != nil {
 		return ""
 	}
-	f, err := os.Open(configPath)
+	data, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	if err != nil {
+		return ""
+	}
+	head := strings.TrimSpace(string(data))
+	if ref, ok := strings.CutPrefix(head, "ref: "); ok {
+		return strings.TrimPrefix(strings.TrimSpace(ref), "refs/heads/")
+	}
+	if len(head) > 7 { // detached HEAD: raw commit hash
+		return head[:7]
+	}
+	return head
+}
+
+// readOriginURL parses the "url" of [remote "origin"] from a .git/config file.
+// gitPath may also be a regular file (linked worktree); in that case we follow
+// the gitdir: pointer and then the worktree's commondir, since config/remotes
+// live in the shared (main) git directory, not the per-worktree one.
+func readOriginURL(gitPath string) string {
+	gitDir, err := resolveGitDir(gitPath)
+	if err != nil {
+		return ""
+	}
+	f, err := os.Open(filepath.Join(gitCommonDir(gitDir), "config"))
 	if err != nil {
 		return ""
 	}
@@ -349,89 +346,54 @@ func readOriginURL(gitDir string) string {
 	return ""
 }
 
-func resolveGitConfigPath(gitDir string) (string, error) {
-	info, err := os.Stat(gitDir)
+// resolveGitDir returns the real git directory for a .git path, following the
+// "gitdir:" pointer when .git is a file (linked worktree).
+func resolveGitDir(gitPath string) (string, error) {
+	info, err := os.Stat(gitPath)
 	if err != nil {
 		return "", err
 	}
 	if info.IsDir() {
-		return filepath.Join(gitDir, "config"), nil
+		return gitPath, nil
 	}
-	data, err := os.ReadFile(gitDir)
+	data, err := os.ReadFile(gitPath)
 	if err != nil {
 		return "", err
 	}
 	const prefix = "gitdir:"
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, prefix) {
+		target, ok := strings.CutPrefix(line, prefix)
+		if !ok {
 			continue
 		}
-		target := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		target = strings.TrimSpace(target)
 		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(gitDir), target)
+			target = filepath.Join(filepath.Dir(gitPath), target)
 		}
-		return filepath.Join(target, "config"), nil
+		return target, nil
 	}
 	return "", errors.New("no gitdir pointer")
 }
 
-func gitOutput(dir string, args ...string) string {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
+// gitCommonDir returns the shared git directory for gitDir. For a linked
+// worktree, gitDir holds only HEAD/index/etc.; the config and remotes live in
+// the main git directory pointed to by the "commondir" file. For a normal repo
+// there is no commondir file and gitDir is returned unchanged (one cheap, failed
+// file read — no extra cost worth worrying about).
+func gitCommonDir(gitDir string) string {
+	data, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
 	if err != nil {
-		return ""
+		return gitDir
 	}
-	return strings.TrimSpace(string(out))
-}
-
-func parseGitStatus(raw string) gitInfo {
-	out := gitInfo{}
-	if strings.TrimSpace(raw) == "" {
-		return out
+	common := strings.TrimSpace(string(data))
+	if common == "" {
+		return gitDir
 	}
-	out.Repo = true
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(line, "# branch.head "):
-			out.Branch = strings.TrimPrefix(line, "# branch.head ")
-		case strings.HasPrefix(line, "# branch.ab "):
-			var ahead, behind int
-			if _, err := fmt.Sscanf(strings.TrimPrefix(line, "# branch.ab "), "+%d -%d", &ahead, &behind); err == nil {
-				out.Ahead = ahead
-				out.Behind = behind
-			}
-		case strings.HasPrefix(line, "# "):
-			continue
-		default:
-			out.Changes++
-		}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(gitDir, common)
 	}
-	if out.Branch == "HEAD" || out.Branch == "(detached)" {
-		out.Branch = gitDetachedHead(raw)
-	}
-	return out
-}
-
-func gitDetachedHead(raw string) string {
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "# branch.oid ") {
-			oid := strings.TrimPrefix(line, "# branch.oid ")
-			if oid != "" && oid != "(initial)" {
-				if len(oid) > 7 {
-					return oid[:7]
-				}
-				return oid
-			}
-		}
-	}
-	return ""
+	return filepath.Clean(common)
 }
 
 func shortenGitOrigin(raw string) string {

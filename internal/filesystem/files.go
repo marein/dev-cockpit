@@ -156,7 +156,7 @@ func sessionFileFromInfo(info os.FileInfo, path string) File {
 		Name:     info.Name(),
 		Path:     path,
 		Size:     info.Size(),
-		SizeText: PathSize(path),
+		SizeText: HumanSize(info.Size()),
 		ModTime:  info.ModTime().UTC().Format("2006-01-02 15:04:05 UTC"),
 	}
 }

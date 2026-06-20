@@ -2,7 +2,6 @@ package filesystem
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,65 +33,6 @@ func ExpandHome(p string) (string, error) {
 		return filepath.Join(h, p[1:]), nil
 	}
 	return p, nil
-}
-
-func PathSize(path string) string {
-	return PathsSize(path)
-}
-
-func PathsSize(paths ...string) string {
-	return HumanSize(PathsSizeBytes(paths...))
-}
-
-// PathsSizeBytes sums the regular-file bytes under the given paths. It
-// returns a negative value when any path cannot be measured.
-func PathsSizeBytes(paths ...string) int64 {
-	if len(paths) == 0 {
-		return -1
-	}
-	var total int64
-	for _, root := range paths {
-		size, ok := walkSize(root)
-		if !ok {
-			return -1
-		}
-		total += size
-	}
-	return total
-}
-
-func walkSize(root string) (int64, bool) {
-	info, err := os.Lstat(root)
-	if err != nil {
-		return 0, false
-	}
-	if !info.IsDir() {
-		if info.Mode().IsRegular() {
-			return info.Size(), true
-		}
-		return 0, true
-	}
-	var total int64
-	err = filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-		fi, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		if fi.Mode().IsRegular() {
-			total += fi.Size()
-		}
-		return nil
-	})
-	if err != nil {
-		return 0, false
-	}
-	return total, true
 }
 
 // HumanSize formats a byte count for display; negative counts are "unknown".

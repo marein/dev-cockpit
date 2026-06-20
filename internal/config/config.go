@@ -20,7 +20,6 @@ const (
 	DefaultTrustedProxies    = "127.0.0.1/8,::1/128"
 	DefaultTLSCertFile       = ""
 	DefaultTLSKeyFile        = ""
-	DefaultProjectWorkers    = 24
 	DefaultMaxRequestBody    = 100 * 1024 * 1024
 )
 
@@ -46,8 +45,7 @@ type Config struct {
 	LoginRateBlock       time.Duration
 
 	// Filesystem locations
-	ProjectsRoot               string
-	ProjectMetadataConcurrency int
+	ProjectsRoot string
 
 	// Terminal stream tuning
 	StreamHeartbeatInterval time.Duration
@@ -71,7 +69,6 @@ type Options struct {
 	TrustedProxies     string
 	TLSCertFile        string
 	TLSKeyFile         string
-	ProjectWorkers     int
 	MaxRequestBodySize int64
 }
 
@@ -124,9 +121,6 @@ func Load(opts Options) (Config, error) {
 	if projectsDir == "" {
 		projectsDir = DefaultProjectsDir
 	}
-	if opts.ProjectWorkers <= 0 {
-		return Config{}, errors.New("project metadata workers must be greater than zero")
-	}
 	if opts.MaxRequestBodySize <= 0 {
 		return Config{}, errors.New("max request body size must be greater than zero")
 	}
@@ -136,29 +130,28 @@ func Load(opts Options) (Config, error) {
 		return Config{}, err
 	}
 	return Config{
-		HTTPAddr:                   httpAddr,
-		MaxRequestBodySize:         opts.MaxRequestBodySize,
-		TrustedProxies:             parseTrustedProxies(opts.TrustedProxies),
-		TLSCertFile:                tlsCertFile,
-		TLSKeyFile:                 tlsKeyFile,
-		AuthUsername:               authUsername,
-		AuthPasswordHash:           authPasswordHash,
-		AuthSessionCookie:          sessionCookieName,
-		AuthSessionLifetime:        time.Hour * 24 * 365,
-		AuthCookieKey:              []byte(sessionCookieKey),
-		LoginRateMaxAttempts:       3,
-		LoginRateWindow:            5 * time.Minute,
-		LoginRateBlock:             15 * time.Second,
-		ProjectsRoot:               projectsRoot,
-		ProjectMetadataConcurrency: opts.ProjectWorkers,
-		StreamHeartbeatInterval:    1 * time.Second,
-		StreamMinFrameInterval:     33 * time.Millisecond, // ~30fps coalescing cap
-		TerminalHistoryLimit:       10000,
-		MinTerminalCols:            2,
-		MinTerminalRows:            30,
-		MaxTerminalCols:            1000,
-		MaxTerminalRows:            1000,
-		SnapshotCacheTTL:           1500 * time.Millisecond,
+		HTTPAddr:                httpAddr,
+		MaxRequestBodySize:      opts.MaxRequestBodySize,
+		TrustedProxies:          parseTrustedProxies(opts.TrustedProxies),
+		TLSCertFile:             tlsCertFile,
+		TLSKeyFile:              tlsKeyFile,
+		AuthUsername:            authUsername,
+		AuthPasswordHash:        authPasswordHash,
+		AuthSessionCookie:       sessionCookieName,
+		AuthSessionLifetime:     time.Hour * 24 * 365,
+		AuthCookieKey:           []byte(sessionCookieKey),
+		LoginRateMaxAttempts:    3,
+		LoginRateWindow:         5 * time.Minute,
+		LoginRateBlock:          15 * time.Second,
+		ProjectsRoot:            projectsRoot,
+		StreamHeartbeatInterval: 1 * time.Second,
+		StreamMinFrameInterval:  33 * time.Millisecond, // ~30fps coalescing cap
+		TerminalHistoryLimit:    10000,
+		MinTerminalCols:         2,
+		MinTerminalRows:         30,
+		MaxTerminalCols:         1000,
+		MaxTerminalRows:         1000,
+		SnapshotCacheTTL:        1500 * time.Millisecond,
 	}, nil
 }
 

@@ -64,7 +64,6 @@ func newServeCommand() *cobra.Command {
 			TrustedProxies:     config.DefaultTrustedProxies,
 			TLSCertFile:        config.DefaultTLSCertFile,
 			TLSKeyFile:         config.DefaultTLSKeyFile,
-			ProjectWorkers:     config.DefaultProjectWorkers,
 			MaxRequestBodySize: config.DefaultMaxRequestBody,
 		},
 	}
@@ -88,7 +87,6 @@ func newServeCommand() *cobra.Command {
 	flags.StringVar(&opts.TrustedProxies, "trusted-proxies", opts.TrustedProxies, "comma-separated trusted proxy IPs or CIDRs")
 	flags.StringVar(&opts.TLSCertFile, "tls-cert-file", opts.TLSCertFile, "TLS certificate file for HTTPS")
 	flags.StringVar(&opts.TLSKeyFile, "tls-key-file", opts.TLSKeyFile, "TLS private key file for HTTPS")
-	flags.IntVar(&opts.ProjectWorkers, "project-metadata-workers", opts.ProjectWorkers, "maximum concurrent project metadata workers")
 	flags.Int64Var(&opts.MaxRequestBodySize, "max-request-body-size", opts.MaxRequestBodySize, "maximum request body size in bytes")
 	return cmd
 }
@@ -116,7 +114,7 @@ func runServe(opts serveOptions) error {
 		return fmt.Errorf("invalid --auth-password-hash: %w", err)
 	}
 	tmuxClient := tmux.New()
-	projectRepo := project.NewRepository(cfg.ProjectsRoot, cfg.ProjectMetadataConcurrency)
+	projectRepo := project.NewRepository(cfg.ProjectsRoot)
 	registry := provider.NewRegistry(providercopilot.New(), providerclaude.New())
 	selectedProvider := registry.ByID(opts.providerID)
 	if selectedProvider == nil {

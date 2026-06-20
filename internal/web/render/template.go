@@ -6,8 +6,6 @@ import (
 	"html/template"
 	"path/filepath"
 	"strings"
-
-	"github.com/local/dev-cockpit/internal/filesystem"
 )
 
 //go:embed templates/*.gohtml
@@ -16,9 +14,8 @@ var templatesFS embed.FS
 // HTMLTemplate returns the parsed template set used by Gin's HTML renderer.
 func HTMLTemplate(assetPath func(string) string) *template.Template {
 	funcMap := template.FuncMap{
-		"asset":   assetPath,
-		"hasURL":  func(s string) bool { return s != "" },
-		"fmtSize": filesystem.HumanSize,
+		"asset":  assetPath,
+		"hasURL": func(s string) bool { return s != "" },
 		"projectName": func(path string) string {
 			p := strings.TrimSpace(path)
 			if p == "" {

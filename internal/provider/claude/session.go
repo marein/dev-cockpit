@@ -253,17 +253,12 @@ func (r *sessionRepository) loadTranscript(path string) (storedSession, bool) {
 	}
 	sessionDir := filepath.Join(filepath.Dir(absPath), sessionID)
 	filesDir := filepath.Join(sessionDir, "files")
-	sizePaths := []string{absPath}
-	if info, err := os.Stat(filesDir); err == nil && info.IsDir() {
-		sizePaths = append(sizePaths, filesDir)
-	}
 	return storedSession{
 		Session: provider.Session{
 			SessionID:     sessionID,
 			Name:          sessionlabel.DisplayName(name, sessionID),
 			CWD:           cwd,
 			UpdatedAt:     updatedAt,
-			SizeBytes:     filesystem.PathsSizeBytes(sizePaths...),
 			RemoteControl: taskLink != "",
 			TaskURL:       taskLink,
 		},

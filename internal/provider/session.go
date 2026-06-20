@@ -15,7 +15,6 @@ type Session struct {
 	Name          string
 	CWD           string
 	UpdatedAt     time.Time
-	SizeBytes     int64 // negative when unknown
 	RemoteControl bool
 	TaskURL       string
 }

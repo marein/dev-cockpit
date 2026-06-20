@@ -14,7 +14,6 @@ type Running struct {
 	Name          string
 	StartedAt     time.Time
 	CWD           string
-	SizeBytes     int64 // negative when unknown, zero when not derivable
 	RemoteControl bool
 	TaskURL       string
 }

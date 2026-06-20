@@ -31,15 +31,11 @@
         {{else if ne .Label .Name}}
         <div class="text-secondary small text-break">{{.Label}}</div>
         {{end}}
-        <div class="text-secondary small">{{.Size}}</div>
         {{if or .GitRepo (gt .ActiveSessions 0) (gt .InactiveSessions 0)}}
         <div class="mt-2 d-flex flex-column gap-2 align-items-start">
-          {{if .GitRepo}}
+          {{if and .GitRepo .GitBranch}}
           <div class="d-flex flex-wrap gap-2">
-            {{if .GitBranch}}<span class="badge badge-outline text-secondary"><i class="ti ti-git-branch me-1"></i>{{.GitBranch}}</span>{{end}}
-            {{if gt .GitAhead 0}}<span class="badge badge-outline text-secondary">+{{.GitAhead}} ahead</span>{{end}}
-            {{if gt .GitBehind 0}}<span class="badge badge-outline text-secondary">-{{.GitBehind}} behind</span>{{end}}
-            <span class="badge {{if gt .GitChanges 0}}bg-amber-lt text-amber{{else}}badge-outline text-secondary{{end}}">{{if gt .GitChanges 0}}{{.GitChanges}} {{if eq .GitChanges 1}}change{{else}}changes{{end}}{{else}}No changes{{end}}</span>
+            <span class="badge badge-outline text-secondary"><i class="ti ti-git-branch me-1"></i>{{.GitBranch}}</span>
           </div>
           {{end}}
           {{if or (gt .ActiveSessions 0) (gt .InactiveSessions 0)}}
