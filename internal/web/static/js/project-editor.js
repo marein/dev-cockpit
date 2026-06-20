@@ -314,12 +314,10 @@ function indentString(indent) {
   return { tab: "\t", "2spaces": "  ", "4spaces": "    " }[indent] || "\t";
 }
 
-// Languages are dynamic-imported by full URL, built with ?external so their
-// @codemirror/@lezer imports stay bare and resolve through the page import map
-// to the single shared instances (otherwise instanceof checks break).
-const LANG_EXTERNAL =
-  "@codemirror/autocomplete,@codemirror/language,@codemirror/state,@codemirror/view,@lezer/common,@lezer/highlight,@lezer/lr";
-const langUrl = (pkg) => `https://esm.sh/@codemirror/${pkg}?external=${LANG_EXTERNAL}`;
+// Languages are dynamic-imported by full URL. The jsDelivr dist files keep their
+// @codemirror/@lezer imports bare, so they resolve through the page import map to
+// the single shared instances (otherwise instanceof checks break).
+const langUrl = (pkg) => `https://cdn.jsdelivr.net/npm/@codemirror/${pkg}/dist/index.js`;
 
 const LANGS = {
   js: ["lang-javascript@6.2.2", "javascript", { jsx: true }],
