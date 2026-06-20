@@ -66,6 +66,9 @@
           <a href="/sessions/new?project={{urlquery .Name}}" class="btn btn-outline-primary btn-sm">
             <i class="ti ti-plus me-1"></i>Session
           </a>
+          <a href="/projects/{{.Name}}/editor" class="btn btn-outline-secondary btn-sm" aria-label="Open editor for project {{.Name}}" title="Editor">
+            <i class="ti ti-code me-1"></i>Editor
+          </a>
           <form method="post" action="/shells">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <input type="hidden" name="project" value="{{.Name}}">

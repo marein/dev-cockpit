@@ -175,3 +175,161 @@ body:not(:has(.attach-footer)) .session-switcher {
   overflow-y: auto;
 }
 .session-switcher-menu .dropdown-item .text-truncate { min-width: 0; }
+
+/* ---- project editor --------------------------------------------------- */
+/* Tall viewports (desktop, portrait, tablet-landscape): fill the viewport down
+   to a pinned, always-visible footer; the editor scrolls internally. The fixed
+   100dvh height makes the height chain "definite", so the flex/percent heights
+   (and CodeMirror) resolve on iOS Safari instead of collapsing to 0. */
+@media (min-height: 501px) {
+  .page:has(.editor) {
+    height: 100dvh;
+  }
+  .page:has(.editor) .page-wrapper {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .page:has(.editor) .page-body {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .page:has(.editor) .page-body > .container-xl {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  .editor {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+}
+.editor {
+  margin-bottom: 0;
+}
+.editor-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-wrap: nowrap;
+}
+.editor-tree-col,
+.editor-pane-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  /* explicit height so the flex/percent height chain resolves on iOS Safari (a
+     stretch-derived height is not "definite" there and collapses the editor). */
+  height: 100%;
+}
+/* Portrait phones (narrow AND tall enough): stack the tree over the editor. */
+@media (max-width: 767.98px) and (min-height: 501px) {
+  .editor-row { flex-direction: column; }
+  .editor-tree-col { flex: 0 0 auto; height: 13rem; }
+  .editor-pane-col { flex: 1 1 auto; height: auto; }
+  .editor-tree-col.border-end { border-right: 0 !important; border-bottom: 1px solid var(--tblr-border-color); }
+}
+/* Short viewports (landscape phones, incl. narrow widths from iOS Display Zoom):
+   do NOT fill the viewport. A viewport-fill would force the editor to share the
+   short height with the full footer (same on every page) and shrink it to ~0.
+   Instead give the editor a fixed, usable height and let the PAGE scroll, so the
+   footer flows below in its standard form. Panes stay side by side. */
+@media (max-height: 500px) {
+  .page:has(.editor) .page-header { margin-bottom: 0.5rem !important; }
+  .editor { height: 22rem; margin-bottom: 1rem; }
+  .editor-row { flex-direction: row; }
+  .editor-tree-col {
+    flex: 0 0 38%;
+    width: 38%;
+    max-width: 38%;
+    height: 100%;
+    border-right: 1px solid var(--tblr-border-color) !important;
+    border-bottom: 0 !important;
+  }
+  .editor-pane-col {
+    flex: 1 1 auto;
+    width: 62%;
+    max-width: 62%;
+    height: 100%;
+  }
+}
+.editor-pane-header {
+  background: var(--tblr-bg-surface-secondary);
+  min-height: 2.5rem;
+}
+.editor-tree {
+  overflow: auto;
+  flex: 1 1 auto;
+  padding: 0.25rem 0;
+  -webkit-overflow-scrolling: touch;
+}
+.editor-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.editor-item:hover { background: var(--tblr-bg-surface-secondary); }
+.editor-item.selected { background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18)); }
+.editor-item-name { flex: 1 1 auto; min-width: 0; font-size: 0.85rem; }
+.editor-item-icon { width: 1rem; text-align: center; color: var(--tblr-secondary); flex: 0 0 auto; }
+.editor-dir .editor-item-icon { transition: transform 0.12s ease; }
+.editor-dir .editor-item-icon.editor-open { transform: rotate(90deg); }
+.editor-item-del {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--tblr-secondary);
+  padding: 0 0.35rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, color 0.1s ease;
+}
+.editor-item:hover .editor-item-del,
+.editor-item-del:focus-visible { opacity: 0.65; }
+.editor-item-del:hover { opacity: 1; color: var(--tblr-danger); }
+@media (hover: none) {
+  .editor-item-del { opacity: 0.5; }
+}
+.editor-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+/* Fill the mount via absolute insets, not height:100%. A percentage height does
+   not resolve on iOS Safari when the column height comes from flex stretch (the
+   landscape col-md case), collapsing the editor to 0 ("blank editor"). An
+   absolutely-positioned box has a definite height that CodeMirror's internal
+   percentage heights resolve against. */
+.editor-surface > .cm-editor,
+.editor-surface > .editor-textarea,
+.editor-surface > .editor-placeholder {
+  position: absolute;
+  inset: 0;
+}
+.editor-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1rem;
+}
+.editor-textarea {
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  font-size: 0.85rem;
+  white-space: pre;
+  overflow: auto;
+}
+.editor-status { min-height: 1.5rem; }
+.editor-settings-menu { min-width: 14rem; }

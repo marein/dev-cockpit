@@ -69,6 +69,13 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/projects/new", s.handleProjectNew)
 	auth.POST("/projects", s.handleProjectCreate)
 	auth.POST("/projects/delete", s.handleProjectDelete)
+	auth.GET("/projects/:name/editor", s.handleProjectEditor)
+	auth.GET("/projects/:name/editor/list", s.handleEditorList)
+	auth.GET("/projects/:name/editor/file", s.handleEditorReadFile)
+	auth.POST("/projects/:name/editor/file", s.handleEditorSaveFile)
+	auth.POST("/projects/:name/editor/create", s.handleEditorCreateFile)
+	auth.POST("/projects/:name/editor/mkdir", s.handleEditorCreateDir)
+	auth.POST("/projects/:name/editor/delete", s.handleEditorDeletePath)
 }
 
 func (s *Server) registerStaticRoutes(r *gin.Engine) {

@@ -100,7 +100,8 @@ func shouldGzip(c *gin.Context) bool {
 
 	if !strings.Contains(req.Header.Get("Accept-Encoding"), "gzip") ||
 		strings.Contains(req.Header.Get("Connection"), "Upgrade") ||
-		strings.Contains(req.Header.Get("Accept"), "text/event-stream") {
+		strings.Contains(req.Header.Get("Accept"), "text/event-stream") ||
+		strings.HasSuffix(req.URL.Path, "/download") {
 		return false
 	}
 
