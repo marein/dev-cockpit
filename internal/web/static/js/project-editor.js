@@ -27,6 +27,7 @@ async function init(root) {
   let current = null; // { path, name }
   let dirty = false;
   let selected = null; // { path, isDir } — the tree row used as the "create in" target
+  const expanded = new Set(); // dir paths kept open so a rebuild doesn't collapse the tree
 
   function setSelected(path, isDir, rowEl) {
     selected = { path, isDir };
@@ -112,23 +113,33 @@ async function init(root) {
     children.className = "editor-children";
     children.hidden = true;
     let loaded = false;
-    row.addEventListener("click", async () => {
-      setSelected(entry.path, true, row);
-      const open = children.hidden;
+
+    async function setOpen(open) {
       children.hidden = !open;
       row.querySelector(".editor-item-icon").classList.toggle("editor-open", open);
-      if (open && !loaded) {
-        children.innerHTML = `<div class="text-secondary small" style="padding-left:${(depth + 1) * 14 + 12}px">Loading…</div>`;
-        try {
-          renderEntries(children, await listDir(entry.path), depth + 1);
-          loaded = true;
-        } catch (err) {
-          children.innerHTML = `<div class="text-danger small" style="padding-left:${(depth + 1) * 14 + 12}px">${escapeHtml(err.message)}</div>`;
-        }
+      if (!open) {
+        expanded.delete(entry.path);
+        return;
       }
+      expanded.add(entry.path);
+      if (loaded) return;
+      children.innerHTML = `<div class="text-secondary small" style="padding-left:${(depth + 1) * 14 + 12}px">Loading…</div>`;
+      try {
+        renderEntries(children, await listDir(entry.path), depth + 1);
+        loaded = true;
+      } catch (err) {
+        children.innerHTML = `<div class="text-danger small" style="padding-left:${(depth + 1) * 14 + 12}px">${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    row.addEventListener("click", () => {
+      setSelected(entry.path, true, row);
+      setOpen(children.hidden);
     });
     wrap.appendChild(row);
     wrap.appendChild(children);
+    // Re-open dirs that were open before a rebuild; children restore recursively.
+    if (expanded.has(entry.path)) setOpen(true);
     return wrap;
   }
 
@@ -222,6 +233,10 @@ async function init(root) {
       if (current && (current.path === targetPath || current.path.startsWith(targetPath + "/"))) {
         clearEditor();
         current = null;
+      }
+      // Drop the deleted dir (and its descendants) from the kept-open set.
+      for (const p of [...expanded]) {
+        if (p === targetPath || p.startsWith(targetPath + "/")) expanded.delete(p);
       }
       status(`Deleted ${data.entry ? data.entry.path : targetPath}`, "ok");
       await loadTree();
