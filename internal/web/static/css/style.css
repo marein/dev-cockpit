@@ -132,6 +132,12 @@ session-file-upload {
 .session-file-upload-item[data-error="true"] [data-file-status] {
   color: var(--tblr-danger) !important;
 }
+/* The status cell must never overflow its row — truncate as a hard safety net. */
+.session-file-upload-item [data-file-status] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 @keyframes session-files-upload-icon-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }

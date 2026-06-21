@@ -65,11 +65,12 @@ func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) newHandler() (http.Handler, error) {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	r.HandleMethodNotAllowed = true
 	r.SetHTMLTemplate(render.HTMLTemplate(s.assets.assetPath))
 	if err := r.SetTrustedProxies(s.cfg.TrustedProxies); err != nil {
 		return nil, fmt.Errorf("set trusted proxies: %w", err)
 	}
-	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(gin.Logger(), gin.CustomRecovery(s.recoveryHandler))
 	r.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithMinLength(1024), gzip.WithCustomShouldCompressFn(shouldGzip)))
 
 	store := cookie.NewStore(s.cfg.AuthCookieKey)
@@ -86,8 +87,8 @@ func (s *Server) newHandler() (http.Handler, error) {
 func (s *Server) bodyLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.ContentLength > s.cfg.MaxRequestBodySize {
-			c.String(http.StatusRequestEntityTooLarge, http.StatusText(http.StatusRequestEntityTooLarge))
-			c.Abort()
+			s.renderError(c, http.StatusRequestEntityTooLarge, "File too large",
+				"The upload exceeds the maximum allowed size.")
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, s.cfg.MaxRequestBodySize)

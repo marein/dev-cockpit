@@ -273,7 +273,7 @@ func (s *Server) handleSessionResize(c *gin.Context) {
 	}
 	err := s.sessions.Resize(id, form.Cols, form.Rows)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, map[string]string{"error": userFacingError(c, err)})
 		return
 	}
 	c.Status(http.StatusNoContent)

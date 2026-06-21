@@ -1,0 +1,19 @@
+{{define "error.gohtml"}}{{template "html_head.gohtml" .}}
+<body>
+  <div class="page page-center">
+    <div class="container container-tight py-4">
+      <div class="empty">
+        <div class="empty-header">{{.Status}}</div>
+        <p class="empty-title">{{.Heading}}</p>
+        <p class="empty-subtitle text-secondary">{{.Message}}</p>
+        <div class="empty-action">
+          <a href="/" class="btn btn-primary">
+            <i class="ti ti-arrow-left me-2"></i>
+            Back to home
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>{{end}}

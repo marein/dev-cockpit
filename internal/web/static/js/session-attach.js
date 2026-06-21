@@ -5,8 +5,14 @@
   const csrfToken = config.csrfToken || "";
 
   const terminalElement = document.getElementById("session-terminal");
-  const status = document.getElementById("session-stream-status");
   const streamRefreshButtons = document.querySelectorAll("[data-session-refresh]");
+
+  // A working connection needs no chrome — the terminal output is the feedback.
+  // We only surface genuine, non-recoverable failures, through the same toast
+  // channel as the rest of the app.
+  const notify = (message) => {
+    if (window.notifyError) window.notifyError(message);
+  };
   const fontSizeSetting = document.querySelector('session-terminal-setting-select[setting="font-size"]');
   const rowsSetting = document.querySelector('session-terminal-setting-select[setting="rows"]');
 
@@ -461,6 +467,7 @@
       stream.searchParams.set("rows", String(rows));
     }
     source = new EventSource(stream);
+    let ended = false; // the server told us the session is gone; suppress the follow-up onerror
     source.addEventListener("terminal-size", (event) => {
       const size = JSON.parse(event.data);
       if (size.cols && size.rows && (term.cols !== size.cols || term.rows !== size.rows)) {
@@ -478,17 +485,23 @@
     });
     source.addEventListener("snapshot", (event) => {
       writeChunk(event.data, true);
-      status.textContent = "Connected";
     });
     source.addEventListener("delta", (event) => {
       writeChunk(event.data, false);
     });
-    source.addEventListener("session-error", () => {
-      status.textContent = "Disconnected";
+    // The server signals a gone/ended session (e.g. "Session has ended.").
+    source.addEventListener("session-error", (event) => {
+      ended = true;
       source?.close();
+      notify(event.data || "The terminal connection was lost.");
     });
     source.onerror = () => {
-      status.textContent = "Disconnected";
+      // EventSource reconnects on transient drops (readyState CONNECTING); only a
+      // permanent failure (CLOSED: session gone or auth expired) is worth a toast,
+      // and not when we already reported it via session-error.
+      if (!ended && source && source.readyState === EventSource.CLOSED) {
+        notify("Lost connection to the terminal. Use the refresh button to reconnect.");
+      }
     };
   };
 
@@ -533,9 +546,9 @@
     }
     resizeTimer = window.setTimeout(() => {
       resizeTimer = null;
-      void performResize().catch(() => {
-        status.textContent = "Disconnected";
-      });
+      // Best-effort: a failed resize means the session is gone, which the stream
+      // itself reports — no need for a second toast on every window resize.
+      void performResize().catch(() => {});
     }, 120);
   };
 
@@ -553,9 +566,7 @@
   for (const button of streamRefreshButtons) {
     button.addEventListener("click", (event) => {
       event.preventDefault();
-      void refreshStream().catch(() => {
-        status.textContent = "Disconnected";
-      });
+      void refreshStream().catch(() => notify("Could not reconnect to the terminal."));
     });
   }
 
@@ -587,9 +598,7 @@
     measureElementObserver?.disconnect();
   });
 
-  status.textContent = "Disconnected";
   syncFollowOutput();
-  void performResize().catch(() => {
-    status.textContent = "Disconnected";
-  });
+  // Initial connect; a real failure surfaces through the stream's own handlers.
+  void performResize().catch(() => {});
 })();

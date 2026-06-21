@@ -144,7 +144,9 @@
         status.textContent = "Done";
         item.dataset.done = "true";
       }).catch((error) => {
-        status.textContent = error.message || "Upload failed";
+        // Keep the per-file status short so it never overflows its cell; the
+        // full reason is surfaced as a toast (see request()).
+        status.textContent = "Failed";
         item.dataset.error = "true";
         throw error;
       }).finally(() => {
@@ -163,6 +165,25 @@
           xhr.upload.addEventListener("progress", onProgress);
         }
         xhr.addEventListener("load", () => {
+          // Middleware errors (CSRF, body limit, panic) answer XHRs with a JSON
+          // {error}; surface that as a toast instead of injecting a full page
+          // into the file list. The handler's own errors return the list
+          // fragment, which we render inline as before.
+          const type = xhr.getResponseHeader("Content-Type") || "";
+          if (type.includes("application/json")) {
+            let message = "";
+            try {
+              message = (JSON.parse(xhr.responseText) || {}).error || "";
+            } catch (_) {
+              message = "";
+            }
+            message = message || xhr.statusText || `HTTP ${xhr.status}`;
+            if (window.notifyError) {
+              window.notifyError(message);
+            }
+            reject(new Error(message));
+            return;
+          }
           if (xhr.responseText) {
             this.replaceContent(xhr.responseText);
           }

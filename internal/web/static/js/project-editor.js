@@ -45,8 +45,20 @@ async function init(root) {
   }
 
   function status(msg, kind) {
+    // Errors go to the global toast; the status line stays for transient
+    // progress/success ("Saving…", "Saved X").
+    if (kind === "error") {
+      statusEl.textContent = "";
+      statusEl.classList.remove("text-danger", "text-success");
+      if (window.notifyError) window.notifyError(msg);
+      else {
+        statusEl.textContent = msg || "";
+        statusEl.classList.add("text-danger");
+      }
+      return;
+    }
     statusEl.textContent = msg || "";
-    statusEl.classList.toggle("text-danger", kind === "error");
+    statusEl.classList.remove("text-danger");
     statusEl.classList.toggle("text-success", kind === "ok");
   }
 
@@ -61,12 +73,21 @@ async function init(root) {
 
   // ---- tree ----------------------------------------------------------------
 
+  // Reject with the server's message (JSON {error} or text body, via the shared
+  // errorText helper) whenever a response is not ok. Always call this before
+  // res.json(): error responses may be plain text (e.g. a 401 "session expired")
+  // and would otherwise throw a raw "not valid JSON" SyntaxError at the user.
+  async function ensureOk(res, fallback) {
+    if (res.ok) return;
+    throw new Error(window.errorText ? await window.errorText(res, fallback) : fallback);
+  }
+
   async function listDir(path) {
     const res = await fetch(`${base}/list?path=${encodeURIComponent(path)}`, {
       headers: { Accept: "application/json" },
     });
+    await ensureOk(res, "Failed to load files.");
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to list directory.");
     return data.entries || [];
   }
 
@@ -174,8 +195,8 @@ async function init(root) {
       const res = await fetch(`${base}/file?path=${encodeURIComponent(entry.path)}`, {
         headers: { Accept: "application/json" },
       });
+      await ensureOk(res, "Failed to open file.");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to open file.");
       current = { path: entry.path, name: entry.name };
       await editor.setValue(data.content, entry.name);
       currentEl.textContent = entry.path;
@@ -201,8 +222,7 @@ async function init(root) {
         headers: { "X-CSRF-Token": csrf, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
         body: body.toString(),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to save file.");
+      await ensureOk(res, "Failed to save file.");
       setDirty(false);
       status(`Saved ${current.path}`, "ok");
     } catch (err) {
@@ -227,8 +247,8 @@ async function init(root) {
     status("Deleting…");
     try {
       const res = await postForm(`${base}/delete`, { path: targetPath });
+      await ensureOk(res, "Failed to delete.");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to delete.");
       // Clear the editor if the open file was deleted (directly or via its folder).
       if (current && (current.path === targetPath || current.path.startsWith(targetPath + "/"))) {
         clearEditor();
@@ -253,8 +273,8 @@ async function init(root) {
     status("Creating…");
     try {
       const res = await postForm(`${base}/create`, { path });
+      await ensureOk(res, "Failed to create file.");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to create file.");
       await loadTree();
       if (data.entry) await openFile({ path: data.entry.path, name: data.entry.name });
       status(`Created ${data.entry ? data.entry.path : path}`, "ok");
@@ -271,8 +291,8 @@ async function init(root) {
     status("Creating…");
     try {
       const res = await postForm(`${base}/mkdir`, { path });
+      await ensureOk(res, "Failed to create folder.");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to create folder.");
       await loadTree();
       status(`Created ${data.entry ? data.entry.path : path}`, "ok");
     } catch (err) {
@@ -590,5 +610,8 @@ function confirmDelete(path) {
 
 const editorRoot = document.querySelector("[data-editor]");
 if (editorRoot) {
-  init(editorRoot).catch((err) => console.error("editor init failed", err));
+  init(editorRoot).catch((err) => {
+    console.error("editor init failed", err);
+    if (window.notifyError) window.notifyError("Editor failed to load. Reload the page to try again.");
+  });
 }

@@ -126,7 +126,7 @@ func (s *Server) handleShellResize(c *gin.Context) {
 		return
 	}
 	if err := s.shells.Resize(id, form.Cols, form.Rows); err != nil {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, map[string]string{"error": userFacingError(c, err)})
 		return
 	}
 	c.Status(http.StatusNoContent)

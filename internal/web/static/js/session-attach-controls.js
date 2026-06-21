@@ -13,7 +13,6 @@
   const mapControl = (control) =>
     scrollHistory && SCROLL_CONTROLS[control] ? SCROLL_CONTROLS[control] : control;
 
-  const status = document.getElementById("session-stream-status");
   const input = document.getElementById("session-prompt");
   const promptModalElement = document.getElementById("session-prompt-modal");
   const promptModalOpenButtons = document.querySelectorAll("[data-session-prompt-modal-open]");
@@ -74,7 +73,7 @@
   };
 
   const performSessionInput = async (items) => {
-    const headers = { "Content-Type": "application/json" };
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
     if (csrfToken) {
       headers["X-CSRF-Token"] = csrfToken;
     }
@@ -83,9 +82,9 @@
       headers,
       body: JSON.stringify({ items }),
     });
-    const responseText = await response.text();
     if (!response.ok) {
-      throw new Error(responseText || "Failed to send input.");
+      const fallback = "Could not send input to the terminal.";
+      throw new Error(window.errorText ? await window.errorText(response, fallback) : fallback);
     }
   };
 
@@ -101,8 +100,11 @@
         try {
           await performSessionInput(items);
         } catch (requestError) {
-          void requestError;
-          status.textContent = "Disconnected";
+          // Surface a clean message (e.g. "Your session has expired…") through
+          // the shared toast channel; dedup collapses a burst of keystrokes.
+          if (window.notifyError) {
+            window.notifyError(requestError.message);
+          }
         }
       }
     } finally {

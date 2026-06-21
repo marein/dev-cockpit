@@ -52,7 +52,10 @@
     }
     saving = true;
     try {
-      const headers = { "Content-Type": "application/x-www-form-urlencoded" };
+      const headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      };
       if (csrfToken) {
         headers["X-CSRF-Token"] = csrfToken;
       }
@@ -62,13 +65,15 @@
         body: new URLSearchParams({ name }),
       });
       if (!response.ok) {
-        throw new Error(await response.text());
+        throw new Error(await window.errorText(response, "Could not rename shell."));
       }
       const payload = await response.json().catch(() => ({}));
       applyName(payload.name || name);
     } catch (error) {
-      void error;
       input.value = label.textContent.trim();
+      if (window.notifyError) {
+        window.notifyError(error.message || "Could not rename shell.");
+      }
     } finally {
       saving = false;
       showLabel();

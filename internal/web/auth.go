@@ -22,6 +22,9 @@ const (
 	flashLevelKey   = "flash_level"
 	csrfTokenKey    = "csrf_token"
 	csrfFieldName   = "csrf_token"
+
+	saveSessionErrorMessage = "We couldn't save your session. Please try again."
+	sessionExpiredMessage   = "Your session has expired. Reload the page to sign in again."
 )
 
 type loginForm struct {
@@ -66,7 +69,7 @@ func (s *Server) handleLoginPost(c *gin.Context) {
 	sess.Clear()
 	sess.Set(sessionUserKey, form.Username)
 	if err := sess.Save(); err != nil {
-		c.String(http.StatusInternalServerError, "Internal Server Error")
+		s.renderError(c, http.StatusInternalServerError, "Something went wrong", saveSessionErrorMessage)
 		return
 	}
 	c.Redirect(http.StatusSeeOther, safeRedirectPath(form.Next))
@@ -83,7 +86,7 @@ func (s *Server) handleLogout(c *gin.Context) {
 	sess := ginsessions.Default(c)
 	sess.Clear()
 	if err := sess.Save(); err != nil {
-		c.String(http.StatusInternalServerError, "Internal Server Error")
+		s.renderError(c, http.StatusInternalServerError, "Something went wrong", saveSessionErrorMessage)
 		return
 	}
 	c.Redirect(http.StatusSeeOther, "/login")
@@ -94,13 +97,16 @@ func (s *Server) requireAuth(c *gin.Context) {
 		c.Next()
 		return
 	}
-	if c.Request.Method == http.MethodGet && acceptsHTML(c.Request) {
+	if c.Request.Method == http.MethodGet && !wantsJSON(c.Request) {
 		c.Redirect(http.StatusSeeOther, "/login?next="+c.Request.URL.EscapedPath())
 		c.Abort()
 		return
 	}
-	c.String(http.StatusUnauthorized, http.StatusText(http.StatusUnauthorized))
-	c.Abort()
+	// Programmatic callers (the editor's fetches, the upload XHR) get the same
+	// JSON {error} contract as every other error — keyed off the same wantsJSON
+	// predicate — so they can show a clean toast instead of choking on an HTML
+	// login page or a plain-text "Unauthorized" body.
+	s.renderError(c, http.StatusUnauthorized, "Session expired", sessionExpiredMessage)
 }
 
 func (s *Server) authenticated(c *gin.Context) bool {
@@ -140,15 +146,10 @@ func (s *Server) redirectWithFlash(c *gin.Context, location, message, errMsg str
 		sess.Set(flashLevelKey, "error")
 	}
 	if err := sess.Save(); err != nil {
-		c.String(http.StatusInternalServerError, "Internal Server Error")
+		s.renderError(c, http.StatusInternalServerError, "Something went wrong", saveSessionErrorMessage)
 		return
 	}
 	c.Redirect(http.StatusSeeOther, location)
-}
-
-func acceptsHTML(r *http.Request) bool {
-	accept := r.Header.Get("Accept")
-	return accept == "" || strings.Contains(accept, "text/html") || strings.Contains(accept, "*/*")
 }
 
 func safeRedirectPath(path string) string {
@@ -167,8 +168,8 @@ func (s *Server) csrfMiddleware() gin.HandlerFunc {
 				got = c.PostForm(csrfFieldName)
 			}
 			if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
-				c.String(http.StatusForbidden, "Forbidden")
-				c.Abort()
+				s.renderError(c, http.StatusForbidden, "Forbidden",
+					"Your session expired or the form is no longer valid. Reload the page and try again.")
 				return
 			}
 		}

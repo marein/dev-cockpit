@@ -53,7 +53,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 	query := c.Request.URL.Query()
 	attached, err := src.AttachStream(id, query.Get("cols"), query.Get("rows"))
 	if err != nil {
-		_ = writeSSEvent(w, "session-error", err.Error())
+		_ = writeSSEvent(w, "session-error", userFacingError(c, err))
 		return
 	}
 	defer src.DetachStream(attached.Session)

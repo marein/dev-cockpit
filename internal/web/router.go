@@ -12,6 +12,8 @@ import (
 
 // registerRoutes attaches all HTTP routes to the Gin router.
 func (s *Server) registerRoutes(r *gin.Engine) {
+	r.NoRoute(s.handleNotFound)
+	r.NoMethod(s.handleMethodNotAllowed)
 	r.GET("/health", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 	s.registerStaticRoutes(r)
 

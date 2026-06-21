@@ -22,7 +22,7 @@ type editorPathForm struct {
 func (s *Server) handleProjectEditor(c *gin.Context) {
 	p, err := s.projects.FindByName(c.Param("name"))
 	if err != nil {
-		s.redirectWithFlash(c, "/projects", "", err.Error())
+		s.redirectWithFlash(c, "/projects", "", "Project not found.")
 		return
 	}
 	c.HTML(http.StatusOK, "project_editor.gohtml", render.EditorData{
@@ -40,7 +40,7 @@ func (s *Server) handleEditorList(c *gin.Context) {
 	}
 	entries, err := filesystem.ListDir(p.Path, c.Query("path"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"path": c.Query("path"), "entries": entries})
@@ -54,7 +54,7 @@ func (s *Server) handleEditorReadFile(c *gin.Context) {
 	}
 	content, err := filesystem.ReadFileText(p.Path, c.Query("path"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"path": c.Query("path"), "content": content})
@@ -73,7 +73,7 @@ func (s *Server) handleEditorSaveFile(c *gin.Context) {
 	}
 	entry, err := filesystem.WriteFileText(p.Path, form.Path, []byte(form.Content))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"entry": entry})
@@ -92,7 +92,7 @@ func (s *Server) handleEditorCreateFile(c *gin.Context) {
 	}
 	entry, err := filesystem.CreateFile(p.Path, form.Path)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"entry": entry})
@@ -111,7 +111,7 @@ func (s *Server) handleEditorCreateDir(c *gin.Context) {
 	}
 	entry, err := filesystem.CreateDir(p.Path, form.Path)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"entry": entry})
@@ -130,7 +130,7 @@ func (s *Server) handleEditorDeletePath(c *gin.Context) {
 	}
 	entry, err := filesystem.DeleteEntry(p.Path, form.Path)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"entry": entry})
@@ -141,7 +141,7 @@ func (s *Server) handleEditorDeletePath(c *gin.Context) {
 func (s *Server) editorProject(c *gin.Context) (project.Project, bool) {
 	p, err := s.projects.FindByName(c.Param("name"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Project not found."})
 		return project.Project{}, false
 	}
 	return p, true
