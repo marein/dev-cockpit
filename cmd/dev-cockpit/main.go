@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/local/dev-cockpit/internal/clirun"
@@ -24,9 +25,43 @@ import (
 	"golang.org/x/term"
 )
 
+// version is the release tag, injected at build time via
+// -ldflags "-X main.version=...". Empty/"dev" for non-release builds.
+var version = "dev"
+
 type serveOptions struct {
 	providerID string
 	config.Options
+}
+
+// resolveVersion returns the injected release version, or for local builds
+// falls back to the VCS revision Go stamps into the binary automatically.
+func resolveVersion() string {
+	if version != "dev" {
+		return version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return version
+	}
+	var rev, suffix string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			if s.Value == "true" {
+				suffix = "-dirty"
+			}
+		}
+	}
+	if rev == "" {
+		return version
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	return "dev-" + rev + suffix
 }
 
 func main() {
@@ -40,6 +75,7 @@ func newRootCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "dev-cockpit",
 		Short:         "Manage and serve dev-cockpit",
+		Version:       resolveVersion(),
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -132,7 +168,7 @@ func runServe(opts serveOptions) error {
 	}
 	shells := session.NewShells(cfg, tmuxClient, projectRepo)
 
-	srv, err := web.NewServer(cfg, selectedProvider, sessions, shells, projectRepo)
+	srv, err := web.NewServer(cfg, selectedProvider, sessions, shells, projectRepo, resolveVersion())
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}

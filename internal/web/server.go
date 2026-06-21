@@ -28,13 +28,14 @@ type Server struct {
 	sessions     *session.Sessions
 	shells       *session.Shells
 	projects     *project.Repository
+	version      string
 	assets       staticAssetManifest
 	loginLimiter rateLimiter
 	handler      http.Handler
 }
 
 // NewServer constructs a Server.
-func NewServer(cfg config.Config, selectedProvider provider.Provider, sessions *session.Sessions, shells *session.Shells, projects *project.Repository) (*Server, error) {
+func NewServer(cfg config.Config, selectedProvider provider.Provider, sessions *session.Sessions, shells *session.Shells, projects *project.Repository, version string) (*Server, error) {
 	assets, err := newStaticAssetManifest()
 	if err != nil {
 		return nil, err
@@ -45,6 +46,7 @@ func NewServer(cfg config.Config, selectedProvider provider.Provider, sessions *
 		sessions: sessions,
 		shells:   shells,
 		projects: projects,
+		version:  version,
 		assets:   assets,
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
@@ -66,7 +68,7 @@ func (s *Server) newHandler() (http.Handler, error) {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.HandleMethodNotAllowed = true
-	r.SetHTMLTemplate(render.HTMLTemplate(s.assets.assetPath))
+	r.SetHTMLTemplate(render.HTMLTemplate(s.assets.assetPath, s.version))
 	if err := r.SetTrustedProxies(s.cfg.TrustedProxies); err != nil {
 		return nil, fmt.Errorf("set trusted proxies: %w", err)
 	}

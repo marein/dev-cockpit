@@ -30,7 +30,7 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           version="${TAG#v}"
-          go build -trimpath -ldflags="-s -w" -o dev-cockpit ./cmd/dev-cockpit
+          go build -trimpath -ldflags="-s -w -X main.version=${version}" -o dev-cockpit ./cmd/dev-cockpit
           archive="dev-cockpit_${version}_${GOOS}_${GOARCH}.tar.gz"
           tar -czf "$archive" dev-cockpit LICENSE README.md
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
