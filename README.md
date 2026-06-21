@@ -1,42 +1,116 @@
 # dev-cockpit
 
-**Still work in progress.**
+**Disclaimer**
+
+This is a personal, internal productivity tool, and it is **100% vibe coded**. The
+agent writes the code, tests every feature directly in the browser, and runs
+integration tests. From time to time I do an architecture and security review,
+but not on every change. **Run it only on machines and networks you trust.**
+
+## What it is
+
+Manage your projects from the browser, including your phone: run coding agents,
+open shells, and edit files. Each project lives under one directory; for each one
+you can start a CLI coding agent (GitHub Copilot CLI or Claude Code), open shell
+sessions, and edit files in a small built-in editor. Agents and shells run in
+tmux on the host, and the browser attaches to their terminals over a live stream.
+The terminal UIs are colorful and fully usable from the browser.
+
+The main use case is a remote dev server I drive from my phone, without SSH.
+Connections drop all the time, on a phone, on desktop, and especially over
+certain VPNs. Over SSH a dropped connection takes your session down with it. Here
+the agents and shells keep running in tmux on the host, so you just reopen the
+page and pick up where you left off. The UI is desktop friendly too.
+
+It also lets you switch between your devices seamlessly: the state is the same
+everywhere, so you can hand off from phone to laptop and back without losing your
+place.
+
+## What you can do
+
+Create projects from the UI; git repos show their branch and remote.
+
+In a project you can:
+
+- Start agent sessions and attach to them in the browser.
+- Resume earlier agent sessions from the provider's saved state.
+- Open shell sessions, rename them, run several at once.
+- Edit files in a minimal code editor (browse, create, rename, delete).
+- Upload and download files.
+
+Across the server you can also edit the provider's global config from the UI:
+custom agents, skills, and the global instructions file.
+
+One server instance serves one provider (`copilot` or `claude`). To use both, run
+two instances on different ports.
+
+## Requirements
+
+- Linux or macOS. There is no Windows release yet, but one can be added.
+- `tmux` on the host.
+- The provider's CLI installed and logged in: `copilot` or `claude`.
+
+The server checks for these on startup and refuses to start if they are missing.
+
+The UI edits the provider's config under your home directory:
+
+| Provider  | Instructions file                    | Agents dir          | Skills dir          |
+|-----------|--------------------------------------|---------------------|---------------------|
+| `copilot` | `~/.copilot/copilot-instructions.md` | `~/.copilot/agents` | `~/.copilot/skills` |
+| `claude`  | `~/.claude/CLAUDE.md`                | `~/.claude/agents`  | `~/.claude/skills`  |
+
+Only these two providers exist for now, but others can be added when needed.
 
 ## Install
 
-Download the archive for your platform from the [releases](https://github.com/marein/dev-cockpit/releases), then extract it:
+Download the archive for your platform from the
+[releases](https://github.com/marein/dev-cockpit/releases) and extract it:
 
 ```bash
 tar -xzf dev-cockpit_*.tar.gz
 ```
 
-On macOS the binary is unsigned. Clear the quarantine flag:
+The macOS binary is unsigned. You may clear the quarantine flag once:
 
 ```bash
 xattr -d com.apple.quarantine dev-cockpit
 ```
 
-## Startup
+## Run
 
-All options can be seen with:
+See all options with `./dev-cockpit serve --help`. The main ones:
 
-```bash
-./dev-cockpit --help
-```
-
-A password hash for the option `--auth-password-hash` can be generated with `./dev-cockpit hash-password`.
-
-dev-cockpit can be served the following:
-
-### HTTP
+| Flag             | Default      | Meaning                         |
+|------------------|--------------|---------------------------------|
+| `--provider`     | `copilot`    | `copilot` or `claude`           |
+| `--addr`         | `0.0.0.0:80` | listen address                  |
+| `--projects-dir` | `~/projects` | root directory of your projects |
 
 ```bash
-./dev-cockpit serve --provider copilot --addr 0.0.0.0:3000
+./dev-cockpit serve --provider copilot --addr 0.0.0.0:3000 --projects-dir ~/projects
 ```
 
-### Direct HTTPS
+The default `--addr` uses port 80, which needs root; the examples use 3000. Then
+open the server address in your browser and log in.
 
-Create a certificate first. Update `localhost` and `127.0.0.1` in `CN` and `subjectAltName` when serving a different domain or IP address.
+### Login
+
+The default login is `admin` / `password`. Change it before exposing the server.
+Generate a bcrypt hash with `./dev-cockpit hash-password`, then pass it along with
+a random cookie key:
+
+```bash
+./dev-cockpit serve --provider copilot --addr 0.0.0.0:3000 \
+  --auth-user admin \
+  --auth-password-hash '<hash>' \
+  --session-cookie-key '<random-secret>'
+```
+
+### HTTPS
+
+Serve TLS directly, or terminate it in a reverse proxy and serve plain HTTP.
+
+Create a certificate (adjust `CN`/`subjectAltName` for a real domain or IP):
 
 ```bash
 mkdir -p ~/.config/dev-cockpit/tls
@@ -45,23 +119,12 @@ openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
   -out ~/.config/dev-cockpit/tls/dev-cockpit.crt \
   -subj "/CN=localhost" \
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-```
 
-<details>
-<summary>Start dev-cockpit with HTTPS</summary>
-
-```bash
 ./dev-cockpit serve --provider copilot --addr 0.0.0.0:3000 \
   --tls-cert-file ~/.config/dev-cockpit/tls/dev-cockpit.crt \
   --tls-key-file ~/.config/dev-cockpit/tls/dev-cockpit.key
 ```
 
-</details>
-
-### HTTP via Load Balancer
-
-Run dev-cockpit with HTTP and terminate TLS in a load balancer or reverse proxy.
-
-```bash
-./dev-cockpit serve --provider copilot --addr 127.0.0.1:3000
-```
+Behind a reverse proxy that terminates TLS, drop the TLS flags, bind locally
+(e.g. `--addr 127.0.0.1:3000`), and set `--trusted-proxies` to your proxy's
+address.
