@@ -66,6 +66,7 @@
         document.dispatchEvent(new CustomEvent("session-input", { detail: { raw: data } }));
       }
     });
+    term.focus();
   }
 
   // Terminal modes the wheel handler needs. xterm tracks them live once it sees
