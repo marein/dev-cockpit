@@ -70,8 +70,7 @@ To pin a version, replace the first line with `VERSION=1.6.0`.
 
 `~/.local/bin` is user-writable, so the in-app self-update can replace the binary
 in place without `sudo`. A root-owned path like `/usr/local/bin` works for
-self-update only if dev-cockpit runs as root; otherwise the running user can't
-write there and the in-app update fails.
+self-update only if dev-cockpit runs as root.
 
 ```bash
 VERSION=$(curl -fsSL https://api.github.com/repos/marein/dev-cockpit/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')

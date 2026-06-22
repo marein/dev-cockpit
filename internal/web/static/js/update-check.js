@@ -6,21 +6,24 @@
 
   const dark = { background: "#1f2937", color: "#f8fafc" };
   const csrf = slot.dataset.csrf || "";
+  const runningVersion = slot.dataset.version || "";
   const INTERVAL = 5 * 60 * 1000;
-  const NEXT_KEY = "dcUpdateNextCheck";
+  const KEY = "dcUpdate";
   let status = null;
   let timer = null;
 
-  function lsGet(k) {
+  function loadState() {
     try {
-      return localStorage.getItem(k);
+      return JSON.parse(localStorage.getItem(KEY) || "null") || {};
     } catch (_) {
-      return null;
+      return {};
     }
   }
-  function lsSet(k, v) {
+  function saveState(patch) {
+    const s = loadState();
+    Object.assign(s, patch);
     try {
-      localStorage.setItem(k, v);
+      localStorage.setItem(KEY, JSON.stringify(s));
     } catch (_) {}
   }
 
@@ -30,7 +33,7 @@
   }
 
   function rearm() {
-    lsSet(NEXT_KEY, String(Date.now() + INTERVAL));
+    saveState({ next: Date.now() + INTERVAL });
     arm(INTERVAL);
   }
 
@@ -41,9 +44,9 @@
   }
 
   function scheduleCheck() {
-    const next = parseInt(lsGet(NEXT_KEY) || "", 10);
+    const next = loadState().next;
     const now = Date.now();
-    if (!next || isNaN(next) || next <= now || next > now + INTERVAL) {
+    if (!next || next <= now || next > now + INTERVAL) {
       doCheck(false);
     } else {
       arm(next - now);
@@ -55,10 +58,17 @@
     return fetch(url, { headers: { Accept: "application/json" }, cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((s) => {
-        if (s) render(s);
+        if (s) {
+          saveState({ status: s });
+          render(s);
+        }
         return s;
       })
       .catch(() => null);
+  }
+
+  function usable(s) {
+    return s && s.supported && s.current === runningVersion;
   }
 
   function render(s) {
@@ -228,12 +238,17 @@
   });
 
   window.addEventListener("storage", (e) => {
-    if (e.key !== NEXT_KEY) return;
-    const next = parseInt(e.newValue || "", 10);
-    const now = Date.now();
-    if (next && !isNaN(next) && next > now) arm(next - now);
+    if (e.key !== KEY) return;
+    const st = loadState();
+    if (st.next && st.next > Date.now()) arm(st.next - Date.now());
+    if (usable(st.status)) render(st.status);
   });
 
-  renderInitial();
+  const cached = loadState().status;
+  if (usable(cached)) {
+    render(cached);
+  } else {
+    renderInitial();
+  }
   scheduleCheck();
 })();
