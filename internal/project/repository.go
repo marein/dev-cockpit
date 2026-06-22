@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/local/dev-cockpit/internal/filesystem"
 )
@@ -28,9 +29,16 @@ type Project struct {
 	InactiveSessions    int
 	ActiveSessionRefs   []SessionRef
 	InactiveSessionRefs []SessionRef
+	ShellRefs           []ShellRef
 }
 
 type SessionRef struct {
+	ID   string
+	Name string
+	At   time.Time // started (active) or last updated (inactive); for date sorting
+}
+
+type ShellRef struct {
 	ID   string
 	Name string
 }
@@ -194,6 +202,30 @@ func (r *Repository) Find(raw string) (Project, error) {
 		GitOriginURL: meta.OriginURL,
 		GitRepo:      meta.Repo,
 	}, nil
+}
+
+// ProjectNameFor returns the name of the top-level project that cwd lives under,
+// or "" when cwd is outside the projects root. Unlike Find it accepts arbitrary
+// subdirectories, so a session or shell working deep inside a project still maps
+// back to it. It is cheap: it only inspects the path and reads no git metadata,
+// so it is safe to call per entry in list/switcher views.
+func (r *Repository) ProjectNameFor(cwd string) string {
+	dir := strings.TrimSpace(cwd)
+	if dir == "" {
+		return ""
+	}
+	root := r.resolvedRoot()
+	if root == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return ""
+	}
+	if i := strings.IndexRune(rel, filepath.Separator); i >= 0 {
+		return rel[:i]
+	}
+	return rel
 }
 
 // FindByName resolves a project from its directory name under the configured root.

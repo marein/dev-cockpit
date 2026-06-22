@@ -6,13 +6,8 @@ import (
 	"github.com/local/dev-cockpit/internal/session"
 )
 
-// SessionsData is the model for the sessions list page.
-type SessionsData struct {
-	Page
-	Snapshot session.Snapshot
-}
-
-// SessionNewData is the model for the new-session form.
+// SessionNewData is the model for the new-session form. Project is chosen from a
+// select (preselected to DefaultPath, e.g. the project you came from).
 type SessionNewData struct {
 	Page
 	Projects          []string
@@ -21,6 +16,7 @@ type SessionNewData struct {
 	DefaultAgent      string
 	RemoteControl     bool
 	AutomaticApproval bool
+	Return            string // where Cancel goes back to (the page you came from)
 }
 
 // SessionAttachData is the model for the attach page.
@@ -28,6 +24,7 @@ type SessionAttachData struct {
 	Page
 	Session           session.Running
 	SessionIdentifier string
+	ProjectName       string // owning project, empty when CWD is outside the projects root
 	Files             []filesystem.File
 	MaxUploadSizeMB   string
 	Error             string

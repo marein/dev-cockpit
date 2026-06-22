@@ -3,12 +3,15 @@
 <div class="page-header d-print-none mb-3">
   <div class="row align-items-center">
     <div class="col">
+      <div class="page-pretitle">
+        <a href="/projects" class="link-secondary text-decoration-none"><i class="ti ti-arrow-left me-1"></i>Projects</a>
+      </div>
       <h2 class="page-title">Start session</h2>
     </div>
   </div>
 </div>
 <div class="card">
-  <form method="post" action="/sessions">
+  <form method="post" action="/sessions/new">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <div class="card-body">
       <div class="mb-3">
@@ -47,7 +50,7 @@
     </div>
     <div class="card-footer">
       <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
-        <a class="btn btn-ghost-secondary" href="/sessions">Cancel</a>
+        <a class="btn btn-ghost-secondary" href="{{.Return}}">Cancel</a>
         <button type="submit" class="btn btn-primary">Start session</button>
       </div>
     </div>

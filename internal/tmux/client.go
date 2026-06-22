@@ -21,6 +21,7 @@ type Pane struct {
 	PID       string
 	StartedAt string // unix epoch seconds, raw
 	ShellName string // @dc_shell_name option; non-empty marks a shell session
+	Workdir   string // @dc_shell_dir option; the shell's start directory, if any
 }
 
 // Size is a tmux pane dimension in cells.
@@ -139,7 +140,7 @@ func (c *Client) PasteLiteral(name, text string) error {
 // ListPanes returns the unique first-pane entries for every session.
 func (c *Client) ListPanes() ([]Pane, error) {
 	r := clirun.Run("tmux", "list-panes", "-a", "-F",
-		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}")
+		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}\t#{@dc_shell_dir}")
 	if r.Err != nil && r.ExitCode != 0 {
 		if isNoServerError(r.Stderr) {
 			return nil, nil
@@ -169,10 +170,10 @@ func parsePanes(out string) []Pane {
 	var panes []Pane
 	for _, raw := range strings.Split(out, "\n") {
 		parts := strings.Split(strings.TrimRight(raw, "\n"), "\t")
-		if len(parts) != 6 {
+		if len(parts) != 7 {
 			continue
 		}
-		name, pid, created, win, pane, shellName := parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+		name, pid, created, win, pane, shellName, workdir := parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
 		if win != "0" || pane != "0" || seen[name] {
 			continue
 		}
@@ -180,7 +181,7 @@ func parsePanes(out string) []Pane {
 			continue
 		}
 		seen[name] = true
-		panes = append(panes, Pane{Name: name, PID: pid, StartedAt: created, ShellName: shellName})
+		panes = append(panes, Pane{Name: name, PID: pid, StartedAt: created, ShellName: shellName, Workdir: workdir})
 	}
 	sort.Slice(panes, func(i, j int) bool {
 		a, b := strings.ToLower(panes[i].Name), strings.ToLower(panes[j].Name)

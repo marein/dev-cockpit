@@ -39,9 +39,12 @@ type Page struct {
 	Title     string
 	ActiveTab string
 	Flash     Flash
-	CSRFToken string
-	User      string
-	Switcher  Switcher
+	// FlashProject, when set, anchors the flash to a project card on the projects
+	// page (rendered there instead of at the top of the page).
+	FlashProject string
+	CSRFToken    string
+	User         string
+	Switcher     Switcher
 }
 
 // Switcher feeds the quick-switch floating button: the live sessions and shells
@@ -50,11 +53,19 @@ type Switcher struct {
 	Sessions  []SwitchTarget
 	Shells    []SwitchTarget
 	CurrentID string
+	// CurrentProject is the project of the page you're on (terminal/editor), used
+	// to preselect it in the new-session / new-shell forms. Empty when there is
+	// no project context.
+	CurrentProject string
+	// CurrentPath is the path of the page being rendered, passed to the create
+	// forms as their Cancel return target.
+	CurrentPath string
 }
 
 // SwitchTarget is one jump destination in the quick-switch menu.
 type SwitchTarget struct {
-	ID   string
-	Name string
-	URL  string
+	ID      string
+	Name    string
+	URL     string
+	Project string // owning project name, shown under the target
 }

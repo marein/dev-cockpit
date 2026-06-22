@@ -3,8 +3,6 @@ package web
 import (
 	"errors"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -12,62 +10,51 @@ import (
 	"github.com/local/dev-cockpit/internal/web/render"
 )
 
-func (s *Server) handleShellsList(c *gin.Context) {
-	c.HTML(http.StatusOK, "shells_list.gohtml", render.ShellsData{
-		Page:   s.page(c, "Shells", "shells"),
-		Shells: s.shells.List(),
+func (s *Server) handleShellNew(c *gin.Context) {
+	defaultPath := s.projects.DefaultPath()
+	if name := strings.TrimSpace(c.Query("project")); name != "" {
+		if p, err := s.projects.FindByName(name); err == nil {
+			defaultPath = p.Path
+		}
+	}
+	c.HTML(http.StatusOK, "shells_new.gohtml", render.ShellNewData{
+		Page:        s.page(c, "New Shell", "projects"),
+		Projects:    s.projects.SelectablePaths(),
+		DefaultPath: defaultPath,
+		Return:      s.formReturn(c),
 	})
 }
 
 func (s *Server) handleShellCreate(c *gin.Context) {
-	workdir, name, err := s.shellTarget(c.PostForm("project"))
+	p, err := s.projects.Find(strings.TrimSpace(c.PostForm("project")))
 	if err != nil {
-		s.redirectWithFlash(c, "/shells", "", err.Error())
+		s.redirectWithFlash(c, "/shells/new", "", err.Error())
 		return
 	}
-	id, err := s.shells.Start(workdir, name)
+	id, err := s.shells.Start(p.Path, "shell")
 	if err != nil {
-		s.redirectWithFlash(c, "/shells", "", err.Error())
+		s.redirectWithFlash(c, "/shells/new", "", err.Error())
 		return
 	}
 	c.Redirect(http.StatusSeeOther, "/shells/"+id)
-}
-
-// shellTarget resolves the working directory and label for a new shell. An
-// empty project means a home-directory shell.
-func (s *Server) shellTarget(rawProject string) (workdir, name string, err error) {
-	if project := strings.TrimSpace(rawProject); project != "" {
-		p, err := s.projects.FindByName(project)
-		if err != nil {
-			return "", "", err
-		}
-		return p.Path, p.Name, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return "", "", errors.New("Home directory is not available.")
-	}
-	resolved, err := filepath.EvalSymlinks(home)
-	if err != nil {
-		resolved = home
-	}
-	return resolved, "home", nil
 }
 
 func (s *Server) handleShellAttach(c *gin.Context) {
 	id := c.Param("id")
 	shell, err := s.shells.ResolveRunning(id)
 	if err != nil {
-		s.redirectWithFlash(c, "/shells", "", err.Error())
+		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
+	projectName := s.projects.ProjectNameFor(shell.CWD)
 	c.HTML(http.StatusOK, "shell_attach.gohtml", render.ShellAttachData{
-		Page:      s.page(c, shell.Name, "shells"),
-		Shell:     shell,
-		StreamURL: "/shells/" + shell.Identifier + "/stream",
-		ResizeURL: "/shells/" + shell.Identifier + "/resize",
-		InputURL:  "/shells/" + shell.Identifier + "/input",
-		RenameURL: "/shells/" + shell.Identifier + "/rename",
+		Page:        s.page(c, shell.Name, "projects"),
+		Shell:       shell,
+		ProjectName: projectName,
+		StreamURL:   "/shells/" + shell.Identifier + "/stream",
+		ResizeURL:   "/shells/" + shell.Identifier + "/resize",
+		InputURL:    "/shells/" + shell.Identifier + "/input",
+		RenameURL:   "/shells/" + shell.Identifier + "/rename",
 	})
 }
 
@@ -85,12 +72,17 @@ func (s *Server) handleShellRename(c *gin.Context) {
 }
 
 func (s *Server) handleShellDelete(c *gin.Context) {
-	name, err := s.shells.Delete(c.Param("id"))
+	id := c.Param("id")
+	project := ""
+	if sh, err := s.shells.ResolveRunning(id); err == nil {
+		project = s.projects.ProjectNameFor(sh.CWD)
+	}
+	name, err := s.shells.Delete(id)
 	if err != nil {
-		s.redirectWithFlash(c, "/shells", "", err.Error())
+		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
-	s.redirectWithFlash(c, "/shells", "Shell \""+name+"\" deleted.", "")
+	s.redirectWithProjectFlash(c, project, "Shell \""+name+"\" deleted.", "")
 }
 
 func (s *Server) handleShellInput(c *gin.Context) {

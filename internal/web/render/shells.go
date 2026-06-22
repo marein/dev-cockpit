@@ -2,18 +2,22 @@ package render
 
 import "github.com/local/dev-cockpit/internal/session"
 
-// ShellsData is the model for the shells list page.
-type ShellsData struct {
+// ShellNewData is the model for the new-shell form. Project is chosen from a
+// select (preselected to DefaultPath, e.g. the project you came from).
+type ShellNewData struct {
 	Page
-	Shells []session.Shell
+	Projects    []string
+	DefaultPath string
+	Return      string // where Cancel goes back to (the page you came from)
 }
 
 // ShellAttachData is the model for the shell attach page.
 type ShellAttachData struct {
 	Page
-	Shell     session.Shell
-	StreamURL string
-	ResizeURL string
-	InputURL  string
-	RenameURL string
+	Shell       session.Shell
+	ProjectName string // owning project, empty for home/ungrouped shells
+	StreamURL   string
+	ResizeURL   string
+	InputURL    string
+	RenameURL   string
 }

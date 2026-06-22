@@ -4,15 +4,19 @@
   <div class="row g-2 align-items-center">
     <div class="col min-w-0">
       <div class="min-w-0">
+        {{if .ProjectName}}
+        <div class="page-pretitle">
+          <a href="/projects#project-{{.ProjectName}}" class="link-secondary text-decoration-none"><i class="ti ti-arrow-left me-1"></i>Projects</a>
+        </div>
+        {{end}}
         <h2 class="page-title text-truncate mb-0">{{.Session.Name}}</h2>
-        <div class="text-secondary small text-truncate">{{projectName .Session.CWD}}</div>
       </div>
     </div>
     <div class="col-auto ms-auto">
       <form method="post" action="/sessions/{{.Session.Identifier}}/stop" data-confirm="Stop session &quot;{{.Session.Name}}&quot;?" data-confirm-button="Stop">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button type="submit" class="btn btn-outline-danger" aria-label="Stop session {{.Session.Name}}" title="Stop">
-          <i class="ti ti-player-stop me-1"></i>Stop
+        <button type="submit" class="btn btn-outline-danger btn-icon" aria-label="Stop session {{.Session.Name}}" title="Stop">
+          <i class="ti ti-player-stop"></i>
         </button>
       </form>
     </div>

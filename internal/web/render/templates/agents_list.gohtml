@@ -1,13 +1,11 @@
 {{define "agents_list.gohtml"}}
 {{template "app_start.gohtml" .}}
 <div class="page-header d-print-none mb-3">
-  <div class="row align-items-center">
-    <div class="col">
-      <h2 class="page-title">Agents</h2>
-    </div>
-    <div class="col-auto ms-auto">
-      <a href="/agents/new" class="btn btn-primary">
-        <i class="ti ti-plus me-1"></i>Create
+  <div class="d-flex align-items-center">
+    <h2 class="page-title mb-0">Agents</h2>
+    <div class="ms-auto">
+      <a href="/agents/new" class="btn btn-primary btn-icon" aria-label="Create agent" title="Create agent">
+        <i class="ti ti-plus"></i>
       </a>
     </div>
   </div>
@@ -17,24 +15,17 @@
   <div class="list-group list-group-flush list-group-hoverable">
   {{range .Agents}}
   <div class="list-group-item">
-    <div class="row g-3 align-items-start">
+    <div class="row g-2 align-items-start">
       <div class="col min-w-0">
-        <div class="fw-medium text-break">{{.ID}}</div>
+        <a href="/agents/{{.ID}}/edit" class="text-reset text-decoration-none fw-medium text-break">{{.ID}}</a>
         <div class="text-secondary small text-break">{{if .Description}}{{.Description}}{{else}}No description{{end}}</div>
       </div>
-      <div class="col-12 col-sm-auto">
-        <div class="d-flex justify-content-start justify-content-sm-end gap-2 flex-wrap">
-          <a href="/sessions/new?agent={{urlquery .ID}}" class="btn btn-outline-primary btn-sm" aria-label="Start session with agent {{.ID}}" title="New session">
-            <i class="ti ti-plus me-1"></i>Session
-          </a>
-          <a href="/agents/{{.ID}}/edit" class="btn btn-outline-primary btn-sm" aria-label="Edit agent {{.ID}}" title="Edit">
-            <i class="ti ti-pencil me-1"></i>Edit
-          </a>
+      <div class="col-auto">
+        <div class="btn-list flex-nowrap">
+          <a href="/agents/{{.ID}}/edit" class="btn btn-sm btn-icon btn-outline-secondary" aria-label="Edit agent {{.ID}}" title="Edit"><i class="ti ti-pencil"></i></a>
           <form method="post" action="/agents/{{.ID}}/delete" data-confirm="Delete agent &quot;{{.ID}}&quot;?" data-confirm-button="Delete">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="btn btn-outline-danger btn-sm" aria-label="Delete agent {{.ID}}" title="Delete">
-              <i class="ti ti-trash me-1"></i>Delete
-            </button>
+            <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Delete agent {{.ID}}" title="Delete"><i class="ti ti-trash"></i></button>
           </form>
         </div>
       </div>

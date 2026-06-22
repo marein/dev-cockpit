@@ -16,15 +16,14 @@ sessions, and edit files in a small built-in editor. Agents and shells run in
 tmux on the host, and the browser attaches to their terminals over a live stream.
 The terminal UIs are colorful and fully usable from the browser.
 
-The main use case is a remote dev server I drive from my phone, without SSH.
-Connections drop all the time, on a phone, on desktop, and especially over
-certain VPNs. Over SSH a dropped connection takes your session down with it. Here
-the agents and shells keep running in tmux on the host, so you just reopen the
-page and pick up where you left off. The UI is desktop friendly too.
+You can reach the same sessions and shells from any device, so you can start on
+your phone and continue on your laptop. Connections drop at times, on mobile and
+over some VPNs in particular. When that happens the tmux session keeps running on
+the host, and you continue by reopening the page.
 
-It also lets you switch between your devices seamlessly: the state is the same
-everywhere, so you can hand off from phone to laptop and back without losing your
-place.
+This is the persistence tmux already gives you over SSH. dev-cockpit only puts a
+web UI in front of it, so you can use it from any device with a browser, without
+the need to install a terminal or an SSH client.
 
 ## What you can do
 
@@ -46,7 +45,7 @@ two instances on different ports.
 
 ## Requirements
 
-- Linux or macOS. There is no Windows release yet, but one can be added.
+- Linux or macOS.
 - `tmux` on the host.
 - The provider's CLI installed and logged in: `copilot` or `claude`.
 
@@ -68,6 +67,13 @@ Download the archive for your platform from the
 
 ```bash
 tar -xzf dev-cockpit_*.tar.gz
+```
+
+Move the `dev-cockpit` binary into a directory on your `PATH` (e.g.
+`/usr/local/bin`) so you can run it from anywhere:
+
+```bash
+sudo mv dev-cockpit /usr/local/bin/
 ```
 
 The macOS binary is unsigned. You may clear the quarantine flag once:

@@ -22,13 +22,12 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	browser.POST("/login", s.handleLoginPost)
 
 	auth := browser.Group("/", s.requireAuth)
-	auth.GET("/", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, "/sessions") })
+	auth.GET("/", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, "/projects") })
 	auth.POST("/logout", s.handleLogout)
 
-	auth.GET("/sessions", s.handleSessionsList)
 	auth.GET("/sessions/new", s.handleSessionNew)
+	auth.POST("/sessions/new", s.handleSessionCreate)
 	auth.GET("/sessions/:id", s.handleSessionAttach)
-	auth.POST("/sessions", s.handleSessionCreate)
 	auth.POST("/sessions/:id/stop", s.handleSessionStop)
 	auth.GET("/sessions/:id/files", s.handleSessionFiles)
 	auth.POST("/sessions/:id/files", s.handleSessionFileUpload)
@@ -41,8 +40,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/resumable/:id/resume", s.handleResumableResume)
 	auth.POST("/resumable/:id/delete", s.handleResumableDelete)
 
-	auth.GET("/shells", s.handleShellsList)
-	auth.POST("/shells", s.handleShellCreate)
+	auth.GET("/shells/new", s.handleShellNew)
+	auth.POST("/shells/new", s.handleShellCreate)
 	auth.GET("/shells/:id", s.handleShellAttach)
 	auth.POST("/shells/:id/delete", s.handleShellDelete)
 	auth.POST("/shells/:id/rename", s.handleShellRename)

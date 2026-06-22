@@ -1,3 +1,6 @@
+/* Keep anchor jumps (e.g. /projects#project-x) off the very top edge. */
+html { scroll-padding-top: 1.5rem; }
+
 .attach-page { display: flex; flex-direction: column; gap: 0.5rem; min-height: 100%; }
 .page-header > .row { min-width: 0; max-width: 100%; }
 .attach-terminal {
@@ -149,7 +152,11 @@ session-file-upload {
    the sticky input footer (z-index 10). */
 .session-switcher {
   position: fixed;
-  right: 1rem;
+  /* Sit in the right margin beside the content when it's wide enough to hold the
+     button (2.75rem + 1rem gap from the 1320px content box); otherwise fall back
+     to the viewport edge. Avoids a long mouse trip to the corner on wide screens
+     without overlapping the content. */
+  right: max(1rem, calc((100% - 1320px) / 2 - 3.75rem));
   bottom: calc(5.5rem + env(safe-area-inset-bottom));
   z-index: 20;
 }
@@ -179,8 +186,14 @@ body:not(:has(.attach-footer)) .session-switcher {
   max-width: min(22rem, 80vw);
   max-height: min(60vh, 28rem);
   overflow-y: auto;
+  overflow-x: hidden;
 }
-.session-switcher-menu .dropdown-item .text-truncate { min-width: 0; }
+/* Keep long session/shell and project names inside the menu width: bound every
+   flex link in the truncation chain so the labels ellipsize instead of forcing
+   the dropdown to grow and scroll sideways. */
+.session-switcher-menu .dropdown-item { min-width: 0; }
+.session-switcher-menu .dropdown-item > span { min-width: 0; flex: 1 1 auto; }
+.session-switcher-menu .dropdown-item .text-truncate { min-width: 0; max-width: 100%; }
 
 /* ---- project editor --------------------------------------------------- */
 /* Tall viewports (desktop, portrait, tablet-landscape): fill the viewport down
@@ -339,3 +352,32 @@ body:not(:has(.attach-footer)) .session-switcher {
 }
 .editor-status { min-height: 1.5rem; }
 .editor-settings-menu { min-width: 14rem; }
+
+/* Tabler's .btn-icon loses its square shape under .btn-sm (it collapses to the
+   glyph width and a shorter height). Pin the icon-only buttons inside list cards
+   to a square that matches the labeled small buttons' height. Scoped to .card so
+   it never touches the text-bearing .btn-sm.btn-icon terminal controls (those
+   live in .attach-footer, not a card). */
+.card .btn-sm.btn-icon {
+  flex: 0 0 auto;
+  width: 1.75rem;
+  min-width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+}
+/* A long row name must shrink and truncate, never squeeze the action buttons
+   beside it. Pin the buttons and their <form> wrappers so flex can't compress
+   them, and let the name span take all the slack. */
+.card .list-group-item > form,
+.card .btn-list > form { flex: 0 0 auto; }
+.card .list-group-item .text-truncate { min-width: 0; }
+
+/* Header action buttons are icon-only at full button size. Pin them square so
+   they don't collapse to the bare glyph width. */
+.page-header .btn.btn-icon {
+  width: 2.5rem;
+  min-width: 2.5rem;
+  height: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0;
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ const (
 	sessionUserKey  = "user"
 	flashMessageKey = "flash_message"
 	flashLevelKey   = "flash_level"
+	flashProjectKey = "flash_project"
 	csrfTokenKey    = "csrf_token"
 	csrfFieldName   = "csrf_token"
 
@@ -46,22 +48,28 @@ func (s *Server) handleLoginGet(c *gin.Context) {
 
 func (s *Server) handleLoginPost(c *gin.Context) {
 	ip := c.ClientIP()
+	// Preserve the post-login destination across failed attempts.
+	next := safeRedirectPath(c.PostForm("next"))
+	loginPath := "/login"
+	if next != "/" {
+		loginPath = "/login?next=" + url.QueryEscape(next)
+	}
 	if ok, retry := s.loginLimiter.allow(ip); !ok {
-		s.respondBlocked(c, retry)
+		s.respondBlocked(c, loginPath, retry)
 		return
 	}
 
 	var form loginForm
-	if !s.decodeForm(c, &form, "/login") {
+	if !s.decodeForm(c, &form, loginPath) {
 		return
 	}
 	form.Username = strings.TrimSpace(form.Username)
 	if form.Username != s.cfg.AuthUsername || bcrypt.CompareHashAndPassword([]byte(s.cfg.AuthPasswordHash), []byte(form.Password)) != nil {
 		if justBlocked := s.loginLimiter.fail(ip); justBlocked {
-			s.respondBlocked(c, s.cfg.LoginRateBlock)
+			s.respondBlocked(c, loginPath, s.cfg.LoginRateBlock)
 			return
 		}
-		s.redirectWithFlash(c, "/login", "", "Invalid username or password.")
+		s.redirectWithFlash(c, loginPath, "", "Invalid username or password.")
 		return
 	}
 	s.loginLimiter.reset(ip)
@@ -72,14 +80,14 @@ func (s *Server) handleLoginPost(c *gin.Context) {
 		s.renderError(c, http.StatusInternalServerError, "Something went wrong", saveSessionErrorMessage)
 		return
 	}
-	c.Redirect(http.StatusSeeOther, safeRedirectPath(form.Next))
+	c.Redirect(http.StatusSeeOther, next)
 }
 
 // respondBlocked sends the rate-limit flash and a Retry-After header.
-func (s *Server) respondBlocked(c *gin.Context, retry time.Duration) {
+func (s *Server) respondBlocked(c *gin.Context, loginPath string, retry time.Duration) {
 	secs := int((retry + time.Second - 1) / time.Second)
 	c.Header("Retry-After", strconv.Itoa(secs))
-	s.redirectWithFlash(c, "/login", "", fmt.Sprintf("Too many failed attempts. Try again in %d seconds.", secs))
+	s.redirectWithFlash(c, loginPath, "", fmt.Sprintf("Too many failed attempts. Try again in %d seconds.", secs))
 }
 
 func (s *Server) handleLogout(c *gin.Context) {
@@ -118,20 +126,23 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 	sess := ginsessions.Default(c)
 	message, _ := sess.Get(flashMessageKey).(string)
 	level, _ := sess.Get(flashLevelKey).(string)
-	if message != "" || level != "" {
+	flashProject, _ := sess.Get(flashProjectKey).(string)
+	if message != "" || level != "" || flashProject != "" {
 		sess.Delete(flashMessageKey)
 		sess.Delete(flashLevelKey)
+		sess.Delete(flashProjectKey)
 		_ = sess.Save()
 	}
 	user, _ := sess.Get(sessionUserKey).(string)
 	token := s.csrfToken(c)
 	return render.Page{
-		Title:     title,
-		ActiveTab: activeTab,
-		Flash:     render.Flash{Message: message, Level: level},
-		CSRFToken: token,
-		User:      user,
-		Switcher:  s.switcher(c),
+		Title:        title,
+		ActiveTab:    activeTab,
+		Flash:        render.Flash{Message: message, Level: level},
+		FlashProject: flashProject,
+		CSRFToken:    token,
+		User:         user,
+		Switcher:     s.switcher(c),
 	}
 }
 
@@ -152,11 +163,45 @@ func (s *Server) redirectWithFlash(c *gin.Context, location, message, errMsg str
 	c.Redirect(http.StatusSeeOther, location)
 }
 
+// redirectWithProjectFlash flashes a message anchored to a project: the projects
+// page renders it inside that project's card and scrolls there via the anchor.
+// With an empty project it degrades to a normal top-of-page flash on /projects.
+func (s *Server) redirectWithProjectFlash(c *gin.Context, project, message, errMsg string) {
+	if project == "" {
+		s.redirectWithFlash(c, "/projects", message, errMsg)
+		return
+	}
+	sess := ginsessions.Default(c)
+	switch {
+	case message != "":
+		sess.Set(flashMessageKey, message)
+		sess.Set(flashLevelKey, "success")
+	case errMsg != "":
+		sess.Set(flashMessageKey, errMsg)
+		sess.Set(flashLevelKey, "error")
+	}
+	sess.Set(flashProjectKey, project)
+	if err := sess.Save(); err != nil {
+		s.renderError(c, http.StatusInternalServerError, "Something went wrong", saveSessionErrorMessage)
+		return
+	}
+	c.Redirect(http.StatusSeeOther, "/projects#project-"+project)
+}
+
 func safeRedirectPath(path string) string {
 	if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
 		return "/"
 	}
 	return path
+}
+
+// formReturn resolves a safe in-app URL to return to from a create form's
+// Cancel, taken from the ?return query and defaulting to the projects page.
+func (s *Server) formReturn(c *gin.Context) string {
+	if r := safeRedirectPath(strings.TrimSpace(c.Query("return"))); r != "/" {
+		return r
+	}
+	return "/projects"
 }
 
 func (s *Server) csrfMiddleware() gin.HandlerFunc {

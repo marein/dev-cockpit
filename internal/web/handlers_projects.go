@@ -31,6 +31,7 @@ func (s *Server) handleProjectsList(c *gin.Context) {
 				projects[i].ActiveSessionRefs = append(projects[i].ActiveSessionRefs, project.SessionRef{
 					ID:   active.Identifier,
 					Name: active.Name,
+					At:   active.StartedAt,
 				})
 			}
 		}
@@ -40,16 +41,34 @@ func (s *Server) handleProjectsList(c *gin.Context) {
 				projects[i].InactiveSessionRefs = append(projects[i].InactiveSessionRefs, project.SessionRef{
 					ID:   inactive.SessionID,
 					Name: inactive.Name,
+					At:   inactive.UpdatedAt,
 				})
 			}
 		}
+		// Sessions sorted by date, most recent first (like the old session list).
 		sort.Slice(projects[i].ActiveSessionRefs, func(a, b int) bool {
-			return strings.ToLower(projects[i].ActiveSessionRefs[a].Name) < strings.ToLower(projects[i].ActiveSessionRefs[b].Name)
+			return projects[i].ActiveSessionRefs[a].At.After(projects[i].ActiveSessionRefs[b].At)
 		})
 		sort.Slice(projects[i].InactiveSessionRefs, func(a, b int) bool {
-			return strings.ToLower(projects[i].InactiveSessionRefs[a].Name) < strings.ToLower(projects[i].InactiveSessionRefs[b].Name)
+			return projects[i].InactiveSessionRefs[a].At.After(projects[i].InactiveSessionRefs[b].At)
 		})
 	}
+
+	shells := s.shells.List()
+	for i := range projects {
+		for j := range shells {
+			if filesystem.IsUnder(shells[j].CWD, projects[i].Path) {
+				projects[i].ShellRefs = append(projects[i].ShellRefs, project.ShellRef{
+					ID:   shells[j].Identifier,
+					Name: shells[j].Name,
+				})
+			}
+		}
+		sort.Slice(projects[i].ShellRefs, func(a, b int) bool {
+			return strings.ToLower(projects[i].ShellRefs[a].Name) < strings.ToLower(projects[i].ShellRefs[b].Name)
+		})
+	}
+
 	c.HTML(http.StatusOK, "projects_list.gohtml", render.ProjectsListData{
 		Page:     s.page(c, "Projects", "projects"),
 		Projects: projects,
@@ -70,7 +89,8 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects/new", "", err.Error())
 		return
 	}
-	s.redirectWithFlash(c, "/projects", "Project \""+filepath.Base(path)+"\" created.", "")
+	name := filepath.Base(path)
+	s.redirectWithFlash(c, "/projects#project-"+name, "Project \""+name+"\" created.", "")
 }
 
 func (s *Server) handleProjectDelete(c *gin.Context) {
@@ -83,10 +103,7 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
-	if used := s.projectInUse(p.Path); used != "" {
-		s.redirectWithFlash(c, "/projects", "", "Cannot delete project: in use by session \""+used+"\".")
-		return
-	}
+	s.purgeProjectRunners(p.Path)
 	if err := s.projects.Remove(p); err != nil {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
@@ -94,19 +111,25 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 	s.redirectWithFlash(c, "/projects", "Project \""+p.Name+"\" deleted.", "")
 }
 
-// projectInUse returns the name of an active/inactive session whose CWD lives
-// under path, or "" if none.
-func (s *Server) projectInUse(path string) string {
+// purgeProjectRunners tears down everything a project has running before the
+// project directory is removed: live sessions are stopped, every stored
+// (resumable) session under the project is deleted, and live shells are killed.
+// Best-effort — individual failures don't block project removal.
+func (s *Server) purgeProjectRunners(path string) {
 	snap := s.sessions.Snapshot()
 	for _, r := range snap.Running {
 		if filesystem.IsUnder(r.CWD, path) {
-			return r.Name
+			_, _ = s.sessions.Stop(r.Identifier)
 		}
 	}
 	for _, r := range snap.Resumable {
 		if filesystem.IsUnder(r.CWD, path) {
-			return r.Name
+			_, _ = s.sessions.DeleteResumable(r.SessionID)
 		}
 	}
-	return ""
+	for _, sh := range s.shells.List() {
+		if filesystem.IsUnder(sh.CWD, path) {
+			_, _ = s.shells.Delete(sh.Identifier)
+		}
+	}
 }

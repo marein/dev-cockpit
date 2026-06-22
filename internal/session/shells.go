@@ -18,6 +18,11 @@ import (
 // sessions. It is mutable at runtime, so shells can be renamed in place.
 const shellNameOption = "@dc_shell_name"
 
+// shellDirOption is the tmux user option that records a shell's start directory.
+// It lets the UI group shells under the project they were launched in. Coder
+// sessions and shells created before this option existed simply lack it.
+const shellDirOption = "@dc_shell_dir"
+
 // maxShellNameLength bounds a shell's display name.
 const maxShellNameLength = 120
 
@@ -28,6 +33,7 @@ type Shell struct {
 	PID         string
 	Name        string
 	StartedAt   time.Time
+	CWD         string
 }
 
 // Shells orchestrates plain shell sessions. It reuses the tmux client and the
@@ -66,6 +72,7 @@ func (s *Shells) List() []Shell {
 			PID:         p.PID,
 			Name:        name,
 			StartedAt:   paneStartTime(p.StartedAt),
+			CWD:         strings.TrimSpace(p.Workdir),
 		})
 	}
 	return out
@@ -118,6 +125,9 @@ func (s *Shells) Start(workdir, name string) (string, error) {
 		return "", err
 	}
 	if err := s.tmux.SetOption(key, shellNameOption, label); err != nil {
+		return "", err
+	}
+	if err := s.tmux.SetOption(key, shellDirOption, dir); err != nil {
 		return "", err
 	}
 	if err := s.tmux.SetHistoryLimit(key, s.cfg.TerminalHistoryLimit); err != nil {

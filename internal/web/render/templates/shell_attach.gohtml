@@ -3,6 +3,11 @@
 <div class="page-header d-print-none mb-3">
   <div class="row g-2 align-items-center">
     <div class="col min-w-0">
+      {{if .ProjectName}}
+      <div class="page-pretitle">
+        <a href="/projects#project-{{.ProjectName}}" class="link-secondary text-decoration-none"><i class="ti ti-arrow-left me-1"></i>Projects</a>
+      </div>
+      {{end}}
       <div class="min-w-0" data-shell-rename>
         <h2 class="page-title text-truncate mb-0" data-shell-name role="button" tabindex="0" title="Click to rename">{{.Shell.Name}}</h2>
         <input type="text" class="form-control d-none" data-shell-name-input maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Shell name" value="{{.Shell.Name}}">
@@ -11,8 +16,8 @@
     <div class="col-auto ms-auto">
       <form method="post" action="/shells/{{.Shell.Identifier}}/delete" data-confirm="Delete shell &quot;{{.Shell.Name}}&quot;?" data-confirm-button="Delete">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button type="submit" class="btn btn-outline-danger" aria-label="Delete shell {{.Shell.Name}}" title="Delete">
-          <i class="ti ti-trash me-1"></i>Delete
+        <button type="submit" class="btn btn-outline-danger btn-icon" aria-label="Delete shell {{.Shell.Name}}" title="Delete">
+          <i class="ti ti-trash"></i>
         </button>
       </form>
     </div>

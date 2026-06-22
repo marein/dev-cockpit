@@ -8,10 +8,13 @@
     {{range .Switcher.Sessions}}
     <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.Switcher.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.Switcher.CurrentID}} aria-current="true"{{end}}>
       <i class="ti ti-prompt flex-shrink-0"></i>
-      <span class="text-truncate">{{.Name}}</span>
+      <span class="d-flex flex-column min-w-0">
+        <span class="text-truncate">{{.Name}}</span>
+        {{if .Project}}<span class="text-secondary small text-truncate"><i class="ti ti-folder me-1"></i>{{.Project}}</span>{{end}}
+      </span>
     </a>
     {{end}}
-    <a class="dropdown-item d-flex align-items-center gap-2" href="/sessions/new">
+    <a class="dropdown-item d-flex align-items-center gap-2" href="/sessions/new?{{if .Switcher.CurrentProject}}project={{urlquery .Switcher.CurrentProject}}&amp;{{end}}return={{urlquery .Switcher.CurrentPath}}">
       <i class="ti ti-plus flex-shrink-0"></i>
       <span>New session</span>
     </a>
@@ -20,16 +23,16 @@
     {{range .Switcher.Shells}}
     <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.Switcher.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.Switcher.CurrentID}} aria-current="true"{{end}}>
       <i class="ti ti-terminal-2 flex-shrink-0"></i>
-      <span class="text-truncate">{{.Name}}</span>
+      <span class="d-flex flex-column min-w-0">
+        <span class="text-truncate">{{.Name}}</span>
+        {{if .Project}}<span class="text-secondary small text-truncate"><i class="ti ti-folder me-1"></i>{{.Project}}</span>{{end}}
+      </span>
     </a>
     {{end}}
-    <form method="post" action="/shells" class="d-block">
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <button type="submit" class="dropdown-item d-flex align-items-center gap-2">
-        <i class="ti ti-plus flex-shrink-0"></i>
-        <span>New shell</span>
-      </button>
-    </form>
+    <a class="dropdown-item d-flex align-items-center gap-2" href="/shells/new?{{if .Switcher.CurrentProject}}project={{urlquery .Switcher.CurrentProject}}&amp;{{end}}return={{urlquery .Switcher.CurrentPath}}">
+      <i class="ti ti-plus flex-shrink-0"></i>
+      <span>New shell</span>
+    </a>
   </div>
 </div>
 {{end}}

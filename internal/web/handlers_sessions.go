@@ -41,33 +41,26 @@ type sessionResizeForm struct {
 	Rows string `form:"rows" binding:"required"`
 }
 
-func (s *Server) handleSessionsList(c *gin.Context) {
-	snap := s.sessions.Snapshot()
-	c.HTML(http.StatusOK, "sessions_list.gohtml", render.SessionsData{
-		Page:     s.page(c, "Sessions", "sessions"),
-		Snapshot: snap,
-	})
-}
-
 func (s *Server) handleSessionNew(c *gin.Context) {
 	defaultPath := s.projects.DefaultPath()
-	defaultAgent := ""
-	if projectName := strings.TrimSpace(c.Query("project")); projectName != "" {
-		if p, err := s.projects.FindByName(projectName); err == nil {
+	if name := strings.TrimSpace(c.Query("project")); name != "" {
+		if p, err := s.projects.FindByName(name); err == nil {
 			defaultPath = p.Path
 		}
 	}
+	defaultAgent := ""
 	if agentID, err := s.provider.AgentRepository().ValidateSelected(c.Query("agent")); err == nil {
 		defaultAgent = agentID
 	}
 	c.HTML(http.StatusOK, "sessions_new.gohtml", render.SessionNewData{
-		Page:              s.page(c, "New Session", "sessions"),
+		Page:              s.page(c, "New Session", "projects"),
 		Projects:          s.projects.SelectablePaths(),
 		DefaultPath:       defaultPath,
 		Agents:            s.provider.AgentRepository().Options(),
 		DefaultAgent:      defaultAgent,
 		RemoteControl:     true,
 		AutomaticApproval: true,
+		Return:            s.formReturn(c),
 	})
 }
 
@@ -75,18 +68,20 @@ func (s *Server) handleSessionAttach(c *gin.Context) {
 	id := c.Param("id")
 	running, err := s.sessions.ResolveRunning(id)
 	if err != nil {
-		s.redirectWithFlash(c, "/sessions", "", err.Error())
+		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
 	files, err := s.provider.SessionRepository().ListFiles(running.Identifier)
 	if err != nil {
-		s.redirectWithFlash(c, "/sessions", "", err.Error())
+		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
+	projectName := s.projects.ProjectNameFor(running.CWD)
 	c.HTML(http.StatusOK, "session_attach.gohtml", render.SessionAttachData{
-		Page:              s.page(c, running.Name, "sessions"),
+		Page:              s.page(c, running.Name, "projects"),
 		Session:           running,
 		SessionIdentifier: running.Identifier,
+		ProjectName:       projectName,
 		Files:             files,
 		MaxUploadSizeMB:   maxRequestBodyMegabytes(s.cfg.MaxRequestBodySize),
 		StreamURL:         "/sessions/" + running.Identifier + "/stream",
@@ -118,12 +113,16 @@ func (s *Server) handleSessionCreate(c *gin.Context) {
 
 func (s *Server) handleSessionStop(c *gin.Context) {
 	id := c.Param("id")
+	project := ""
+	if running, err := s.sessions.ResolveRunning(id); err == nil {
+		project = s.projects.ProjectNameFor(running.CWD)
+	}
 	name, err := s.sessions.Stop(id)
 	if err != nil {
-		s.redirectWithFlash(c, "/sessions", "", err.Error())
+		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
-	s.redirectWithFlash(c, "/sessions", "Session \""+name+"\" stopped.", "")
+	s.redirectWithProjectFlash(c, project, "Session \""+name+"\" stopped.", "")
 }
 
 func (s *Server) handleSessionFiles(c *gin.Context) {
@@ -281,9 +280,14 @@ func (s *Server) handleSessionResize(c *gin.Context) {
 
 func (s *Server) handleResumableResume(c *gin.Context) {
 	id := c.Param("id")
+	// Already running (e.g. resumed in another tab): just go to its page.
+	if running, err := s.sessions.ResolveRunning(id); err == nil {
+		c.Redirect(http.StatusSeeOther, "/sessions/"+running.Identifier)
+		return
+	}
 	stored, err := s.sessions.Resume(id)
 	if err != nil {
-		s.redirectWithFlash(c, "/sessions", "", err.Error())
+		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
 	c.Redirect(http.StatusSeeOther, "/sessions/"+stored.SessionID)
@@ -293,8 +297,8 @@ func (s *Server) handleResumableDelete(c *gin.Context) {
 	id := c.Param("id")
 	stored, err := s.sessions.DeleteResumable(id)
 	if err != nil {
-		s.redirectWithFlash(c, "/sessions", "", err.Error())
+		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
-	s.redirectWithFlash(c, "/sessions", "Inactive session \""+stored.Name+"\" deleted.", "")
+	s.redirectWithProjectFlash(c, s.projects.ProjectNameFor(stored.CWD), "Inactive session \""+stored.Name+"\" deleted.", "")
 }
