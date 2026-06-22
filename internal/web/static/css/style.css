@@ -194,6 +194,13 @@ body:not(:has(.attach-footer)) .session-switcher {
 .session-switcher-menu .dropdown-item { min-width: 0; }
 .session-switcher-menu .dropdown-item > span { min-width: 0; flex: 1 1 auto; }
 .session-switcher-menu .dropdown-item .text-truncate { min-width: 0; max-width: 100%; }
+.session-switcher-refresh {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  pointer-events: none;
+  color: var(--tblr-secondary);
+}
 
 /* ---- project editor --------------------------------------------------- */
 /* Tall viewports (desktop, portrait, tablet-landscape): fill the viewport down

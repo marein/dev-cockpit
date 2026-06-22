@@ -1,6 +1,8 @@
 package web
 
 import (
+	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -13,7 +15,27 @@ import (
 // you are already on. Snapshot is cached and shell listing is a cheap pane scan,
 // so this is fine to build on every page render.
 func (s *Server) switcher(c *gin.Context) render.Switcher {
-	sw := render.Switcher{CurrentID: c.Param("id")}
+	return s.buildSwitcher(c.Param("id"), c.Param("name"), c.Request.URL.Path)
+}
+
+// handleSwitcher renders just the menu items so the quick-switch button can pull
+// a fresh list every time it opens, instead of showing whatever was live when the
+// page was first rendered. The page context (which entry is current, the return
+// target for the create links) is reconstructed from the path the client is on.
+func (s *Server) handleSwitcher(c *gin.Context) {
+	path := c.Query("path")
+	if path == "" {
+		path = "/"
+	}
+	id, name := switchContextFromPath(path)
+	c.HTML(http.StatusOK, "session_switcher_items.gohtml", render.Page{
+		Switcher: s.buildSwitcher(id, name, path),
+	})
+}
+
+// buildSwitcher assembles the quick-switch targets for the given page context.
+func (s *Server) buildSwitcher(currentID, nameParam, currentPath string) render.Switcher {
+	sw := render.Switcher{CurrentID: currentID}
 	for _, r := range s.sessions.Snapshot().Running {
 		sw.Sessions = append(sw.Sessions, render.SwitchTarget{
 			ID:      r.Identifier,
@@ -32,17 +54,39 @@ func (s *Server) switcher(c *gin.Context) render.Switcher {
 	}
 	sortByProject(sw.Sessions)
 	sortByProject(sw.Shells)
-	sw.CurrentProject = s.currentProject(c, sw)
-	sw.CurrentPath = c.Request.URL.Path
+	sw.CurrentProject = currentProject(nameParam, sw)
+	sw.CurrentPath = currentPath
 	return sw
 }
 
-// currentProject derives the project of the page being rendered: the :name route
-// param on project pages, otherwise the project of the live session/shell you are
-// attached to. Empty when there is no project context.
-func (s *Server) currentProject(c *gin.Context, sw render.Switcher) string {
-	if name := c.Param("name"); name != "" {
-		return name
+// switchContextFromPath recovers the route params buildSwitcher needs from a raw
+// request path, matching what Gin would have bound on a full page render.
+func switchContextFromPath(path string) (id, name string) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 2 {
+		return "", ""
+	}
+	switch parts[0] {
+	case "sessions", "shells":
+		if parts[1] != "new" {
+			id = parts[1]
+		}
+	case "projects":
+		if len(parts) >= 3 && parts[2] == "editor" {
+			if decoded, err := url.PathUnescape(parts[1]); err == nil {
+				name = decoded
+			}
+		}
+	}
+	return id, name
+}
+
+// currentProject derives the project of the page being rendered: the project
+// route param on project pages, otherwise the project of the live session/shell
+// you are attached to. Empty when there is no project context.
+func currentProject(nameParam string, sw render.Switcher) string {
+	if nameParam != "" {
+		return nameParam
 	}
 	if sw.CurrentID == "" {
 		return ""
