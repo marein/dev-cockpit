@@ -3,6 +3,7 @@ package web
 import (
 	"embed"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/local/dev-cockpit/internal/project"
 	"github.com/local/dev-cockpit/internal/provider"
 	"github.com/local/dev-cockpit/internal/session"
+	"github.com/local/dev-cockpit/internal/update"
 	"github.com/local/dev-cockpit/internal/web/render"
 )
 
@@ -29,6 +31,7 @@ type Server struct {
 	shells       *session.Shells
 	projects     *project.Repository
 	version      string
+	updater      *update.Updater
 	assets       staticAssetManifest
 	loginLimiter rateLimiter
 	handler      http.Handler
@@ -40,6 +43,11 @@ func NewServer(cfg config.Config, selectedProvider provider.Provider, sessions *
 	if err != nil {
 		return nil, err
 	}
+	updater, err := update.New(version)
+	if err != nil {
+		log.Printf("self-update disabled: %v", err)
+		updater = nil
+	}
 	s := &Server{
 		cfg:      cfg,
 		provider: selectedProvider,
@@ -47,6 +55,7 @@ func NewServer(cfg config.Config, selectedProvider provider.Provider, sessions *
 		shells:   shells,
 		projects: projects,
 		version:  version,
+		updater:  updater,
 		assets:   assets,
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),

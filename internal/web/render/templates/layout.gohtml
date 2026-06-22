@@ -66,7 +66,10 @@
           </a>
         </div>
         <div class="d-md-none">
-          <span class="navbar-toggler invisible" aria-hidden="true" tabindex="-1">
+          <a href="#" class="js-update-flag d-none text-primary lh-1" data-update-open aria-label="Update available">
+            <i class="ti ti-arrow-up-circle fs-2"></i>
+          </a>
+          <span class="navbar-toggler invisible js-update-spacer" aria-hidden="true" tabindex="-1">
             <span class="navbar-toggler-icon"></span>
           </span>
         </div>
@@ -85,6 +88,12 @@
             <div class="row flex-column flex-md-row flex-fill align-items-center">
               <div class="col">
                 <ul class="navbar-nav">
+                  <li class="nav-item js-update-flag d-none">
+                    <a class="nav-link text-primary" href="#" data-update-open>
+                      <span class="nav-link-icon"><i class="ti ti-arrow-up-circle"></i></span>
+                      <span class="nav-link-title">Update available</span>
+                    </a>
+                  </li>
                   <li class="nav-item">
                     <a class="nav-link {{if eq .ActiveTab "projects"}}active{{end}}" href="/projects">
                       <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-folder"></i></span>
@@ -162,7 +171,7 @@
         <div class="container-xl">
           <div class="row text-center align-items-center flex-row-reverse">
             <div class="col-lg-auto ms-lg-auto text-secondary">
-              Version {{appVersion}}
+              Version {{appVersion}} <span id="dc-update" data-csrf="{{.CSRFToken}}"></span>
             </div>
             <div class="col-12 col-lg-auto mt-3 mt-lg-0">
               <a href="/" class="text-secondary text-decoration-none">Dev Cockpit</a>
@@ -176,5 +185,6 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="{{asset "/js/error-notify.js"}}" defer></script>
   <script src="{{asset "/js/confirm-dialog.js"}}" defer></script>
+  <script src="{{asset "/js/update-check.js"}}" defer></script>
 </body>
 </html>{{end}}

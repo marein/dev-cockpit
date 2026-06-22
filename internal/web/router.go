@@ -66,6 +66,9 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/instructions", s.handleInstructionsEdit)
 	auth.POST("/instructions", s.handleInstructionsUpdate)
 
+	auth.GET("/update/check", s.handleUpdateCheck)
+	auth.POST("/update/apply", s.handleUpdateApply)
+
 	auth.GET("/projects", s.handleProjectsList)
 	auth.GET("/projects/new", s.handleProjectNew)
 	auth.POST("/projects", s.handleProjectCreate)

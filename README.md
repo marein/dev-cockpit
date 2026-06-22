@@ -62,6 +62,44 @@ Only these two providers exist for now, but others can be added when needed.
 
 ## Install
 
+### Quick install (curl)
+
+This resolves the latest release, downloads the archive for your platform,
+extracts the `dev-cockpit` binary into `~/.local/bin`, and makes it executable.
+To pin a version, replace the first line with `VERSION=1.6.0`.
+
+`~/.local/bin` is user-writable, so the in-app self-update can replace the binary
+in place without `sudo`. A root-owned path like `/usr/local/bin` works for
+self-update only if dev-cockpit runs as root; otherwise the running user can't
+write there and the in-app update fails.
+
+```bash
+VERSION=$(curl -fsSL https://api.github.com/repos/marein/dev-cockpit/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+
+mkdir -p ~/.local/bin
+curl -fsSL "https://github.com/marein/dev-cockpit/releases/download/${VERSION}/dev-cockpit_${VERSION}_${os}_${arch}.tar.gz" \
+  | tar -xzf - -C ~/.local/bin dev-cockpit
+chmod +x ~/.local/bin/dev-cockpit
+```
+
+Make sure `~/.local/bin` is on your `PATH` so you can run it from anywhere; add
+this to your shell's rc file (`~/.bashrc`, `~/.zshrc`, …) if needed:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+On macOS, the binary is unsigned. If Gatekeeper blocks it, clear the quarantine
+flag once:
+
+```bash
+xattr -d com.apple.quarantine ~/.local/bin/dev-cockpit
+```
+
+### Manual
+
 Download the archive for your platform from the
 [releases](https://github.com/marein/dev-cockpit/releases) and extract it:
 
@@ -69,17 +107,13 @@ Download the archive for your platform from the
 tar -xzf dev-cockpit_*.tar.gz
 ```
 
-Move the `dev-cockpit` binary into a directory on your `PATH` (e.g.
-`/usr/local/bin`) so you can run it from anywhere:
+Move the `dev-cockpit` binary into a directory on your `PATH` so you can run it
+from anywhere. Use a user-writable path like `~/.local/bin` if you want the
+in-app self-update to work; `/usr/local/bin` needs `sudo` to install, and
+self-update there only works when dev-cockpit runs as root.
 
 ```bash
-sudo mv dev-cockpit /usr/local/bin/
-```
-
-The macOS binary is unsigned. You may clear the quarantine flag once:
-
-```bash
-xattr -d com.apple.quarantine dev-cockpit
+mkdir -p ~/.local/bin && mv dev-cockpit ~/.local/bin/
 ```
 
 ## Run
