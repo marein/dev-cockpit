@@ -139,6 +139,13 @@ body:has(#session-cursor-input:focus) .attach-footer {
 session-file-upload {
   display: contents;
 }
+.session-files-refresh {
+  position: absolute;
+  top: 1.1rem;
+  right: 3.25rem;
+  z-index: 5;
+  color: var(--tblr-secondary);
+}
 .session-files-button-upload {
   display: none;
 }

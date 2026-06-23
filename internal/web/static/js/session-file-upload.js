@@ -15,8 +15,14 @@
       this.submitButton = this.modal?.querySelector('button[type="submit"]');
       this.progress = this.modal?.querySelector("[data-session-file-upload-progress]");
       this.content = this.modal?.querySelector("[data-session-files-content]");
+      this.modalContent = this.modal?.querySelector(".modal-content");
       this.activeUploads = 0;
       this.uploadRanWhileClosed = false;
+      this.refreshController = null;
+      this.refreshSpinner = document.createElement("div");
+      this.refreshSpinner.className = "session-files-refresh";
+      this.refreshSpinner.innerHTML =
+        '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
       if (!this.button || !this.modal || !this.form || !this.input || !this.progress || !this.content) {
         return;
       }
@@ -24,7 +30,10 @@
       for (const button of this.buttons) {
         button.addEventListener("click", () => this.resetButton());
       }
-      this.modal.addEventListener("show.bs.modal", () => this.resetButton());
+      this.modal.addEventListener("show.bs.modal", () => {
+        this.resetButton();
+        this.refreshFiles();
+      });
       this.modal.addEventListener("hidden.bs.modal", () => {
         this.clearStatusMessages();
         this.updateButtonState();
@@ -122,6 +131,7 @@
 
       this.activeUploads = files.length;
       this.uploadRanWhileClosed = false;
+      this.cancelRefresh();
       this.resetButton();
       this.input.disabled = true;
       if (this.submitButton) {
@@ -170,7 +180,10 @@
       }
       event.preventDefault();
       const message = form.getAttribute("data-session-confirm");
-      const sendDelete = () => this.request("POST", form.action, new FormData(form)).catch(() => {});
+      const sendDelete = () => {
+        this.cancelRefresh();
+        return this.request("POST", form.action, new FormData(form)).catch(() => {});
+      };
       if (!message) {
         sendDelete();
         return;
@@ -300,6 +313,47 @@
 
     replaceContent(html) {
       this.content.innerHTML = html;
+    }
+
+    refreshFiles() {
+      // Show the already-loaded list immediately (it is in the DOM), then fetch
+      // the current list in the background and swap it in, like the session
+      // switcher. An in-flight upload owns the content, so skip then.
+      if (this.activeUploads > 0) {
+        return;
+      }
+      this.cancelRefresh();
+      const controller = new AbortController();
+      this.refreshController = controller;
+      if (this.modalContent && this.refreshSpinner.parentElement !== this.modalContent) {
+        this.modalContent.appendChild(this.refreshSpinner);
+      }
+      fetch(this.form.action, {
+        headers: { Accept: "text/html" },
+        cache: "no-store",
+        signal: controller.signal,
+      })
+        .then((response) => (response.ok ? response.text() : Promise.reject()))
+        .then((html) => {
+          if (this.activeUploads > 0) {
+            return;
+          }
+          this.replaceContent(html);
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (this.refreshController === controller) {
+            this.refreshController = null;
+          }
+          this.refreshSpinner.remove();
+        });
+    }
+
+    cancelRefresh() {
+      if (this.refreshController) {
+        this.refreshController.abort();
+        this.refreshController = null;
+      }
     }
 
     clearStatusMessages() {
