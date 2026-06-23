@@ -59,10 +59,11 @@ type Status struct {
 }
 
 type Release struct {
-	Version string `json:"version"`
-	Name    string `json:"name"`
-	Notes   string `json:"notes"`
-	Date    string `json:"date"`
+	Version   string `json:"version"`
+	Name      string `json:"name"`
+	Notes     string `json:"notes"`
+	NotesHTML string `json:"notesHtml"`
+	Date      string `json:"date"`
 }
 
 type ghRelease struct {
@@ -112,10 +113,11 @@ func (u *Updater) Status(ctx context.Context, force bool) Status {
 	st.Releases = make([]Release, 0, len(pending))
 	for _, r := range pending {
 		st.Releases = append(st.Releases, Release{
-			Version: strings.TrimPrefix(r.TagName, "v"),
-			Name:    r.Name,
-			Notes:   r.Body,
-			Date:    r.PublishedAt,
+			Version:   strings.TrimPrefix(r.TagName, "v"),
+			Name:      r.Name,
+			Notes:     r.Body,
+			NotesHTML: renderNotes(r.Body),
+			Date:      r.PublishedAt,
 		})
 	}
 	if len(pending) > 0 {

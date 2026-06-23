@@ -140,9 +140,16 @@
       head.textContent = title;
 
       const body = document.createElement("div");
-      body.className = "small text-secondary";
-      body.style.whiteSpace = "pre-wrap";
-      body.textContent = (rel.notes || "").trim() || "No release notes.";
+      body.className = "small dc-md";
+      if (rel.notesHtml) {
+        body.innerHTML = rel.notesHtml;
+        body.querySelectorAll("a[href]").forEach((a) => {
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+        });
+      } else {
+        body.textContent = (rel.notes || "").trim() || "No release notes.";
+      }
 
       wrap.append(head, body);
     });

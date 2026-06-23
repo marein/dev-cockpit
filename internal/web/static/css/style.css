@@ -424,3 +424,44 @@ body:not(:has(.attach-footer)) .session-switcher {
   min-height: 2.5rem;
   padding: 0;
 }
+
+.dc-md {
+  margin-top: 0.4rem;
+  line-height: 1.45;
+  color: #cbd5e1;
+}
+.dc-md > :first-child { margin-top: 0 !important; }
+.dc-md h1,
+.dc-md h2,
+.dc-md h3,
+.dc-md h4,
+.dc-md h5,
+.dc-md h6 {
+  font-size: 0.95rem;
+  color: #f8fafc;
+}
+.dc-md p,
+.dc-md li { color: #cbd5e1; }
+.dc-md a { color: #93c5fd; }
+.dc-md code {
+  background: rgba(148, 163, 184, 0.2);
+  color: #e2e8f0;
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.25rem;
+}
+.dc-md pre {
+  background: rgba(15, 23, 42, 0.6);
+  color: #e2e8f0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.4rem;
+  overflow-x: auto;
+}
+.dc-md pre code {
+  background: none;
+  padding: 0;
+}
+.dc-md hr {
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.3);
+  margin: 0.75rem 0;
+}
