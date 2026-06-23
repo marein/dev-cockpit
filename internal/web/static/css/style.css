@@ -19,6 +19,10 @@ html { scroll-padding-top: 1.5rem; }
 .attach-terminal.attach-terminal-copy-mode {
   border: 1px dashed #fff;
 }
+.attach-terminal.attach-terminal-dragover {
+  border: 1px dashed var(--tblr-primary);
+  box-shadow: inset 0 0 0 9999px rgba(59, 130, 246, 0.12);
+}
 .attach-terminal .xterm, .attach-terminal .xterm * { box-sizing: content-box; }
 /* Read-only mirror: keep xterm's input textarea out of the way. Interactive
    (desktop) terminals leave it in place so they can take focus and type. */

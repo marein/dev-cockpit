@@ -4,6 +4,12 @@
       this.button = this.querySelector("[data-session-files-toggle]");
       const modalSelector = this.button?.getAttribute("data-bs-target");
       this.modal = modalSelector ? document.querySelector(modalSelector) : null;
+      // The desktop layout renders its own Files button outside this element;
+      // both open the same modal, so drive the upload indicator on every button
+      // that targets it, not just the toggle inside the component.
+      this.buttons = modalSelector
+        ? Array.from(document.querySelectorAll(`.session-files-button[data-bs-target="${modalSelector}"]`))
+        : [];
       this.form = this.modal?.querySelector("[data-session-file-upload-form]");
       this.input = this.modal?.querySelector('input[type="file"][name="files"]');
       this.submitButton = this.modal?.querySelector('button[type="submit"]');
@@ -15,7 +21,9 @@
         return;
       }
 
-      this.button.addEventListener("click", () => this.resetButton());
+      for (const button of this.buttons) {
+        button.addEventListener("click", () => this.resetButton());
+      }
       this.modal.addEventListener("show.bs.modal", () => this.resetButton());
       this.modal.addEventListener("hidden.bs.modal", () => {
         this.clearStatusMessages();
@@ -24,9 +32,85 @@
       this.form.addEventListener("submit", (event) => this.submitFiles(event));
       this.modal.addEventListener("submit", (event) => this.submitDelete(event));
       this.modal.addEventListener("click", (event) => this.copyFilePath(event));
+
+      this.setupTerminalDropZone();
     }
 
-    submitFiles(event) {
+    setupTerminalDropZone() {
+      this.terminal = document.getElementById("session-terminal");
+      if (!this.terminal) {
+        return;
+      }
+      this.dragDepth = 0;
+      this.terminal.addEventListener("dragenter", (event) => this.onDragEnter(event));
+      this.terminal.addEventListener("dragover", (event) => this.onDragOver(event));
+      this.terminal.addEventListener("dragleave", (event) => this.onDragLeave(event));
+      this.terminal.addEventListener("drop", (event) => this.onDrop(event));
+    }
+
+    isFileDrag(event) {
+      const types = event.dataTransfer ? event.dataTransfer.types : null;
+      return Boolean(types && Array.from(types).includes("Files"));
+    }
+
+    onDragEnter(event) {
+      if (!this.isFileDrag(event)) {
+        return;
+      }
+      event.preventDefault();
+      this.dragDepth += 1;
+      this.terminal.classList.add("attach-terminal-dragover");
+    }
+
+    onDragOver(event) {
+      if (!this.isFileDrag(event)) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    }
+
+    onDragLeave(event) {
+      if (!this.isFileDrag(event)) {
+        return;
+      }
+      this.dragDepth = Math.max(0, this.dragDepth - 1);
+      if (this.dragDepth === 0) {
+        this.terminal.classList.remove("attach-terminal-dragover");
+      }
+    }
+
+    onDrop(event) {
+      if (!this.isFileDrag(event)) {
+        return;
+      }
+      event.preventDefault();
+      this.dragDepth = 0;
+      this.terminal.classList.remove("attach-terminal-dragover");
+      const files = Array.from(event.dataTransfer.files || []);
+      if (files.length === 0) {
+        return;
+      }
+      this.assignFiles(files);
+      this.openModal();
+      this.submitFiles({ preventDefault() {} }, 700);
+    }
+
+    assignFiles(files) {
+      const data = new DataTransfer();
+      for (const file of files) {
+        data.items.add(file);
+      }
+      this.input.files = data.files;
+    }
+
+    openModal() {
+      if (window.bootstrap) {
+        window.bootstrap.Modal.getOrCreateInstance(this.modal).show();
+      }
+    }
+
+    submitFiles(event, startDelayMs = 0) {
       event.preventDefault();
 
       const files = Array.from(this.input.files || []);
@@ -46,7 +130,11 @@
       this.progress.hidden = false;
       this.progress.replaceChildren(...files.map((file, index) => this.progressItem(file, index)));
 
-      Promise.allSettled(files.map((file, index) => this.uploadFile(file, index))).then((results) => {
+      // Render the queued progress bars first, then start the transfer after a
+      // short beat, so a drag-and-drop upload that finishes instantly still shows
+      // the bar instead of flashing past while the modal is still opening.
+      const startUploads = () =>
+        Promise.allSettled(files.map((file, index) => this.uploadFile(file, index))).then((results) => {
         this.activeUploads = 0;
         this.input.disabled = false;
         this.input.value = "";
@@ -58,15 +146,21 @@
         if (allSucceeded) {
           this.progress.hidden = true;
           if (shouldNotify) {
-            this.button.dataset.uploadState = "done";
+            this.setUploadState("done");
           }
         } else {
           if (shouldNotify) {
-            this.button.dataset.uploadState = "error";
+            this.setUploadState("error");
           }
         }
         this.updateButtonState();
       });
+
+      if (startDelayMs > 0) {
+        window.setTimeout(startUploads, startDelayMs);
+      } else {
+        startUploads();
+      }
     }
 
     submitDelete(event) {
@@ -90,6 +184,11 @@
         reverseButtons: true,
         background: "#1f2937",
         color: "#f8fafc",
+        // Render inside the open Bootstrap modal so its focus trap treats the
+        // dialog as in scope; otherwise it pulls focus back to the modal and
+        // Enter hits the modal close button instead of confirming the delete.
+        target: this.modal,
+        heightAuto: false,
       }).then((result) => {
         if (result.isConfirmed) {
           sendDelete();
@@ -207,8 +306,18 @@
       this.content.querySelectorAll(".alert").forEach((message) => message.remove());
     }
 
+    setUploadState(state) {
+      for (const button of this.buttons) {
+        if (state) {
+          button.dataset.uploadState = state;
+        } else {
+          delete button.dataset.uploadState;
+        }
+      }
+    }
+
     resetButton() {
-      delete this.button.dataset.uploadState;
+      this.setUploadState(null);
       this.uploadRanWhileClosed = false;
     }
 
@@ -217,7 +326,7 @@
         return;
       }
       if (this.activeUploads > 0) {
-        this.button.dataset.uploadState = "running";
+        this.setUploadState("running");
         this.uploadRanWhileClosed = true;
       }
     }
