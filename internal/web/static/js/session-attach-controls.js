@@ -13,7 +13,9 @@
   const mapControl = (control) =>
     scrollHistory && SCROLL_CONTROLS[control] ? SCROLL_CONTROLS[control] : control;
 
-  const input = document.getElementById("session-prompt");
+  const inputs = ["session-prompt", "session-cursor-input"]
+    .map((id) => document.getElementById(id))
+    .filter(Boolean);
   const promptModalElement = document.getElementById("session-prompt-modal");
   const promptModalOpenButtons = document.querySelectorAll("[data-session-prompt-modal-open]");
   const promptModalForm = document.getElementById("session-prompt-modal-form");
@@ -124,7 +126,7 @@
     void pumpSessionInputs();
   };
 
-  if (input) {
+  const bindInput = (input) => {
     input.addEventListener("keydown", (event) => {
       if (event.key === "Tab" && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
@@ -204,6 +206,9 @@
       event.preventDefault();
       void sendSessionInput({ paste: pastedText });
     });
+  };
+  for (const input of inputs) {
+    bindInput(input);
   }
 
   if (promptModalElement && promptModalTextarea) {
@@ -289,6 +294,32 @@
       if (event.key === " " || event.key === "Enter") {
         repeater.stop();
       }
+    });
+  }
+
+  const pasteFromClipboard = async () => {
+    if (!navigator.clipboard?.readText) {
+      if (window.notifyError) {
+        window.notifyError("Clipboard paste is not available on this device.");
+      }
+      return;
+    }
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (error) {
+      if (window.notifyError) {
+        window.notifyError("Could not read the clipboard.");
+      }
+      return;
+    }
+    if (text) {
+      void sendSessionInput({ paste: text });
+    }
+  };
+  for (const button of document.querySelectorAll("[data-session-paste]")) {
+    button.addEventListener("click", () => {
+      void pasteFromClipboard();
     });
   }
 

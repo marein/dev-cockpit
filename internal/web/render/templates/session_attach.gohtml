@@ -64,10 +64,37 @@
         <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="shift-tab" aria-label="Shift Tab" title="Shift + Tab">
           <span class="small fw-medium">S-Tab</span>
         </button>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="ctrl-c" aria-label="Ctrl C" title="Ctrl + C">
+          <span class="small fw-medium">^C</span>
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-shell-ctrl aria-pressed="false" aria-label="Control modifier" title="Send next key with Ctrl">
+          <span class="small fw-medium">Ctrl</span>
+        </button>
         <session-direction-pad></session-direction-pad>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="enter" aria-label="Enter" title="Enter">
+          <i class="ti ti-corner-down-left"></i>
+        </button>
         <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="backspace" aria-label="Backspace" title="Backspace">
           <i class="ti ti-backspace"></i>
         </button>
+      </div>
+
+      <div class="attach-controls min-w-0">
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-copy aria-pressed="false" aria-label="Copy mode" title="Toggle copy mode">
+          <i class="ti ti-copy"></i>
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-paste aria-label="Paste" title="Paste from clipboard">
+          <i class="ti ti-clipboard"></i>
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-prompt-modal-open data-bs-toggle="modal" data-bs-target="#session-prompt-modal" aria-label="Open prompt dialog" title="Open prompt dialog">
+          <i class="ti ti-pencil"></i>
+        </button>
+        <session-file-upload>
+          <button type="button" class="btn btn-outline-secondary btn-icon btn-sm session-files-button" data-session-files-toggle data-bs-toggle="modal" data-bs-target="#session-files-modal" aria-label="Files" title="Files">
+            <i class="ti ti-files session-files-button-icon"></i>
+            <i class="ti ti-circle-arrow-up session-files-button-upload" aria-hidden="true"></i>
+          </button>
+        </session-file-upload>
         <session-direction-pad
           icon="arrow-autofit-height"
           label="Page controls"
@@ -79,22 +106,6 @@
         <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-refresh aria-label="Refresh stream" title="Refresh stream">
           <i class="ti ti-refresh"></i>
         </button>
-      </div>
-
-      <div class="attach-input input-group min-w-0">
-        <input type="text" id="session-prompt" class="form-control" placeholder="Type or paste…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
-        <button type="button" class="btn btn-outline-secondary" data-session-control="enter" aria-label="Enter" title="Enter">
-          <i class="ti ti-corner-down-left"></i>
-        </button>
-        <button type="button" class="btn btn-outline-secondary" data-session-prompt-modal-open data-bs-toggle="modal" data-bs-target="#session-prompt-modal" aria-label="Open prompt dialog" title="Open prompt dialog">
-          <i class="ti ti-pencil"></i>
-        </button>
-        <session-file-upload>
-          <button type="button" class="btn btn-outline-secondary session-files-button" data-session-files-toggle data-bs-toggle="modal" data-bs-target="#session-files-modal" aria-label="Files" title="Files">
-            <i class="ti ti-files session-files-button-icon"></i>
-            <i class="ti ti-circle-arrow-up session-files-button-upload" aria-hidden="true"></i>
-          </button>
-        </session-file-upload>
       </div>
     </div>
 

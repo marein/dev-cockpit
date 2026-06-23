@@ -326,6 +326,76 @@
   term.onCursorMove(syncCursor);
   term.onRender(syncCursor);
 
+  let onInitialSnapshot = null;
+  if (!interactiveInput) {
+    const cursorInput = document.createElement("input");
+    cursorInput.type = "text";
+    cursorInput.id = "session-cursor-input";
+    cursorInput.className = "attach-cursor-input";
+    cursorInput.setAttribute("autocomplete", "off");
+    cursorInput.setAttribute("autocorrect", "off");
+    cursorInput.setAttribute("autocapitalize", "none");
+    cursorInput.setAttribute("spellcheck", "false");
+    cursorInput.setAttribute("aria-hidden", "true");
+    cursorInput.tabIndex = -1;
+
+    const placeCursorInput = () => {
+      const screen = terminalElement.querySelector(".xterm-screen");
+      if (!screen || term.cols < 1 || term.rows < 1) {
+        return;
+      }
+      if (cursorInput.parentElement !== screen) {
+        screen.appendChild(cursorInput);
+      }
+      const cellWidth = screen.clientWidth / term.cols;
+      const cellHeight = screen.clientHeight / term.rows;
+      const footer = document.querySelector(".attach-footer");
+      cursorInput.style.width = cellWidth + "px";
+      cursorInput.style.height = cellHeight + "px";
+      cursorInput.style.left = term.buffer.active.cursorX * cellWidth + "px";
+      cursorInput.style.top = (term.buffer.active.cursorY + 2) * cellHeight + "px";
+      cursorInput.style.scrollMarginBottom = (footer ? footer.offsetHeight : 0) + "px";
+    };
+    placeCursorInput();
+    term.onRender(placeCursorInput);
+
+    let anchorScheduled = false;
+    const scheduleAnchorIntoView = () => {
+      if (anchorScheduled || document.activeElement !== cursorInput) {
+        return;
+      }
+      anchorScheduled = true;
+      window.requestAnimationFrame(() => {
+        anchorScheduled = false;
+        cursorInput.scrollIntoView({ block: "nearest", behavior: "instant" });
+      });
+    };
+    term.onCursorMove(() => {
+      placeCursorInput();
+      scheduleAnchorIntoView();
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", scheduleAnchorIntoView);
+    }
+
+    cursorInput.addEventListener("focus", () => {
+      placeCursorInput();
+      scheduleAnchorIntoView();
+    });
+
+    let initialScrolled = false;
+    onInitialSnapshot = () => {
+      if (initialScrolled) {
+        return;
+      }
+      initialScrolled = true;
+      window.requestAnimationFrame(() => {
+        placeCursorInput();
+        cursorInput.scrollIntoView({ block: "nearest", behavior: "instant" });
+      });
+    };
+  }
+
   // ---- Selection layer -------------------------------------------------------
   // The canvas renderer draws glyphs to a bitmap, so there is no selectable DOM
   // text: touch devices have nothing to long-press and never raise the native
@@ -505,11 +575,17 @@
       if (shouldFollow) {
         scrollPanelToBottom();
       }
+      if (reset) {
+        onInitialSnapshot?.();
+      }
       return;
     }
     term.write(chunk, () => {
       if (shouldFollow) {
         scrollPanelToBottom();
+      }
+      if (reset) {
+        onInitialSnapshot?.();
       }
     });
   };
