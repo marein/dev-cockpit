@@ -69,6 +69,62 @@
     term.focus();
   }
 
+  const cursorMetrics = () => {
+    const textarea = terminalElement.querySelector(".xterm-helper-textarea");
+    const textareaRect = textarea ? textarea.getBoundingClientRect() : null;
+    if (textareaRect && textareaRect.height > 0) {
+      return { top: textareaRect.top, bottom: textareaRect.bottom, cell: textareaRect.height };
+    }
+    const screen = terminalElement.querySelector(".xterm-screen");
+    if (screen && term.rows >= 1) {
+      const rect = screen.getBoundingClientRect();
+      const cell = rect.height / term.rows;
+      const top = rect.top + term.buffer.active.cursorY * cell;
+      return { top, bottom: top + cell, cell };
+    }
+    return null;
+  };
+  const visibleBand = () => {
+    let bottom = window.innerHeight;
+    const footer = document.querySelector(".attach-footer");
+    if (footer && footer.offsetHeight > 0) {
+      const position = window.getComputedStyle(footer).position;
+      if (position === "sticky" || position === "fixed") {
+        bottom = window.innerHeight - footer.offsetHeight;
+      }
+    }
+    return { top: 0, bottom };
+  };
+  const isTerminalFocused = () => Boolean(terminalElement.querySelector(".xterm.focus"));
+  const followCursor = () => {
+    const cursor = cursorMetrics();
+    if (!cursor) {
+      return;
+    }
+    const band = visibleBand();
+    const margin = cursor.cell * 2;
+    let delta = 0;
+    if (cursor.bottom + margin > band.bottom) {
+      delta = cursor.bottom + margin - band.bottom;
+    } else if (cursor.top - margin < band.top) {
+      delta = cursor.top - margin - band.top;
+    }
+    if (delta !== 0) {
+      window.scrollBy(0, delta);
+    }
+  };
+  let followScheduled = false;
+  term.onCursorMove(() => {
+    if (followScheduled || !isTerminalFocused()) {
+      return;
+    }
+    followScheduled = true;
+    window.requestAnimationFrame(() => {
+      followScheduled = false;
+      followCursor();
+    });
+  });
+
   // Terminal modes the wheel handler needs. xterm tracks them live once it sees
   // the program's escape sequences, but those are absent from a screen snapshot,
   // so when attaching to an already-running program the server fills these in
@@ -549,7 +605,11 @@
       resizeTimer = null;
       // Best-effort: a failed resize means the session is gone, which the stream
       // itself reports — no need for a second toast on every window resize.
-      void performResize().catch(() => {});
+      void performResize().catch(() => {}).finally(() => {
+        if (isTerminalFocused()) {
+          followCursor();
+        }
+      });
     }, 120);
   };
 

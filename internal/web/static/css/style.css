@@ -1,6 +1,12 @@
 /* Keep anchor jumps (e.g. /projects#project-x) off the very top edge. */
 html { scroll-padding-top: 1.5rem; }
 
+.page {
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
 .attach-page { display: flex; flex-direction: column; gap: 0.5rem; min-height: 100%; }
 .page-header > .row { min-width: 0; max-width: 100%; }
 .attach-terminal {
@@ -75,6 +81,25 @@ html { scroll-padding-top: 1.5rem; }
   background: var(--tblr-body-bg);
   box-shadow: 0 -0.5rem 1rem rgba(0, 0, 0, 0.2);
 }
+.attach-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.attach-desktop {
+  display: none;
+}
+@media not (pointer: coarse) {
+  .attach-mobile { display: none; }
+  .attach-desktop {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+}
 .attach-controls {
   display: flex;
   flex-wrap: nowrap;
@@ -89,7 +114,8 @@ html { scroll-padding-top: 1.5rem; }
 .attach-controls .btn { flex: 0 0 auto; }
 .attach-controls .btn-icon { width: 2.75rem; height: 1.875rem; }
 .attach-input .form-control,
-.attach-input .btn { min-height: 2rem; padding-top: 0.25rem; padding-bottom: 0.25rem; }
+.attach-input .btn,
+.attach-desktop .btn { min-height: 2rem; padding-top: 0.25rem; padding-bottom: 0.25rem; }
 
 session-file-upload {
   display: contents;

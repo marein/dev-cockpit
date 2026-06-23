@@ -54,40 +54,48 @@
   </div>
 
   <div class="attach-footer min-w-0">
-    <div class="attach-controls min-w-0">
-      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="escape" aria-label="Escape" title="Escape">
-        <span class="small fw-medium">Esc</span>
-      </button>
-      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="tab" aria-label="Tab" title="Tab">
-        <span class="small fw-medium">Tab</span>
-      </button>
-      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="ctrl-c" aria-label="Ctrl C" title="Ctrl + C">
-        <span class="small fw-medium">^C</span>
-      </button>
-      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-shell-ctrl aria-pressed="false" aria-label="Control modifier" title="Send next key with Ctrl">
-        <span class="small fw-medium">Ctrl</span>
-      </button>
-      <session-direction-pad></session-direction-pad>
-      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="backspace" aria-label="Backspace" title="Backspace">
-        <i class="ti ti-backspace"></i>
-      </button>
-      <session-direction-pad
-        icon="arrow-autofit-height"
-        label="Page controls"
-        title="Drag: up/down to scroll, left/right to top/bottom"
-        up-control="scroll-up"
-        down-control="scroll-down"
-        left-control="scroll-top"
-        right-control="scroll-bottom"></session-direction-pad>
-      <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-refresh aria-label="Refresh stream" title="Refresh stream">
-        <i class="ti ti-refresh"></i>
-      </button>
+    <div class="attach-mobile">
+      <div class="attach-controls min-w-0">
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="escape" aria-label="Escape" title="Escape">
+          <span class="small fw-medium">Esc</span>
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="tab" aria-label="Tab" title="Tab">
+          <span class="small fw-medium">Tab</span>
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="ctrl-c" aria-label="Ctrl C" title="Ctrl + C">
+          <span class="small fw-medium">^C</span>
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-shell-ctrl aria-pressed="false" aria-label="Control modifier" title="Send next key with Ctrl">
+          <span class="small fw-medium">Ctrl</span>
+        </button>
+        <session-direction-pad></session-direction-pad>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="backspace" aria-label="Backspace" title="Backspace">
+          <i class="ti ti-backspace"></i>
+        </button>
+        <session-direction-pad
+          icon="arrow-autofit-height"
+          label="Page controls"
+          title="Drag: up/down to scroll, left/right to top/bottom"
+          up-control="scroll-up"
+          down-control="scroll-down"
+          left-control="scroll-top"
+          right-control="scroll-bottom"></session-direction-pad>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-refresh aria-label="Refresh stream" title="Refresh stream">
+          <i class="ti ti-refresh"></i>
+        </button>
+      </div>
+
+      <div class="attach-input input-group min-w-0">
+        <input type="text" id="session-prompt" class="form-control" placeholder="Type or paste…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+        <button type="button" class="btn btn-outline-secondary" data-session-control="enter" aria-label="Enter" title="Enter">
+          <i class="ti ti-corner-down-left"></i>
+        </button>
+      </div>
     </div>
 
-    <div class="attach-input input-group min-w-0">
-      <input type="text" id="session-prompt" class="form-control" placeholder="Type to send keystrokes…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
-      <button type="button" class="btn btn-outline-secondary" data-session-control="enter" aria-label="Enter" title="Enter">
-        <i class="ti ti-corner-down-left"></i>
+    <div class="attach-desktop">
+      <button type="button" class="btn btn-outline-secondary" data-session-refresh aria-label="Refresh stream" title="Refresh stream">
+        <i class="ti ti-refresh"></i>
       </button>
     </div>
   </div>
