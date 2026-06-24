@@ -10,8 +10,14 @@
   // A working connection needs no chrome — the terminal output is the feedback.
   // We only surface genuine, non-recoverable failures, through the same toast
   // channel as the rest of the app.
-  const notify = (message) => {
+  const notifyError = (message) => {
     if (window.notifyError) window.notifyError(message);
+  };
+  const notifySuccess = (message) => {
+    if (window.notifySuccess) window.notifySuccess(message);
+  };
+  const notifyInfo = (message) => {
+    if (window.notifyInfo) window.notifyInfo(message);
   };
   const fontSizeSetting = document.querySelector('session-terminal-setting-select[setting="font-size"]');
   const rowsSetting = document.querySelector('session-terminal-setting-select[setting="rows"]');
@@ -545,6 +551,23 @@
   let followOutput = true;
   let source = null;
   let resizeTimer = null;
+  let refreshTimer = null;
+  const setRefreshing = (on) => {
+    for (const button of streamRefreshButtons) {
+      if (on) {
+        button.dataset.refreshing = "true";
+      } else {
+        delete button.dataset.refreshing;
+      }
+    }
+  };
+  const clearRefreshTimer = () => {
+    if (refreshTimer !== null) {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = null;
+    }
+    setRefreshing(false);
+  };
 
   const scrollPanelToBottom = () => {
     terminalElement.scrollTop = terminalElement.scrollHeight;
@@ -590,10 +613,11 @@
     });
   };
 
-  const connectStream = (cols, rows) => {
+  const connectStream = (cols, rows, userRefresh) => {
     if (source) {
       source.close();
     }
+    clearRefreshTimer();
     const stream = new URL(streamUrl, window.location.href);
     if (cols && rows) {
       stream.searchParams.set("cols", String(cols));
@@ -601,6 +625,32 @@
     }
     source = new EventSource(stream);
     let ended = false; // the server told us the session is gone; suppress the follow-up onerror
+    let connected = false; // a first successful open happened; later opens are reconnects
+    let lostConnection = false; // currently in a dropped/reconnecting state, toast pending recovery
+    const armReconnectTimer = (stillFailing, message) => {
+      clearRefreshTimer();
+      setRefreshing(true);
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null;
+        setRefreshing(false);
+        if (stillFailing()) {
+          notifyError(message);
+        }
+      }, 8000);
+    };
+    if (userRefresh) {
+      armReconnectTimer(() => !connected, "Refresh failed. Could not reconnect to the terminal.");
+    }
+    source.onopen = () => {
+      clearRefreshTimer();
+      if (userRefresh && !connected) {
+        notifySuccess("Terminal reconnected.");
+      } else if (lostConnection) {
+        lostConnection = false;
+        notifySuccess("Reconnected to the terminal.");
+      }
+      connected = true;
+    };
     source.addEventListener("terminal-size", (event) => {
       const size = JSON.parse(event.data);
       if (size.cols && size.rows && (term.cols !== size.cols || term.rows !== size.rows)) {
@@ -625,15 +675,28 @@
     // The server signals a gone/ended session (e.g. "Session has ended.").
     source.addEventListener("session-error", (event) => {
       ended = true;
+      clearRefreshTimer();
       source?.close();
-      notify(event.data || "The terminal connection was lost.");
+      notifyError(event.data || "The terminal connection was lost.");
     });
     source.onerror = () => {
-      // EventSource reconnects on transient drops (readyState CONNECTING); only a
-      // permanent failure (CLOSED: session gone or auth expired) is worth a toast,
-      // and not when we already reported it via session-error.
-      if (!ended && source && source.readyState === EventSource.CLOSED) {
-        notify("Lost connection to the terminal. Use the refresh button to reconnect.");
+      // Skip when the session already ended cleanly (reported via session-error).
+      if (ended || !source) {
+        return;
+      }
+      // A permanent failure (CLOSED: session gone or auth expired) won't reconnect.
+      if (source.readyState === EventSource.CLOSED) {
+        clearRefreshTimer();
+        lostConnection = false;
+        notifyError("Lost connection to the terminal. Use the refresh button to reconnect.");
+        return;
+      }
+      // CONNECTING means the browser is auto-reconnecting after an unclean drop;
+      // flag it once so onopen can confirm recovery, and onerror can't spam.
+      if (connected && !lostConnection) {
+        lostConnection = true;
+        notifyError("Connection to the terminal lost. Reconnecting…");
+        armReconnectTimer(() => lostConnection, "Could not reconnect to the terminal. Use the refresh button to retry.");
       }
     };
   };
@@ -694,7 +757,7 @@
     if (term.cols !== cols || term.rows !== rows) {
       term.resize(cols, rows);
     }
-    connectStream(cols, rows);
+    connectStream(cols, rows, true);
   };
 
   // ---- Wiring ----------------------------------------------------------------
@@ -703,7 +766,12 @@
   for (const button of streamRefreshButtons) {
     button.addEventListener("click", (event) => {
       event.preventDefault();
-      void refreshStream().catch(() => notify("Could not reconnect to the terminal."));
+      setRefreshing(true);
+      notifyInfo("Reconnecting to the terminal…");
+      void refreshStream().catch(() => {
+        setRefreshing(false);
+        notifyError("Could not reconnect to the terminal.");
+      });
     });
   }
 
