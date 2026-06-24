@@ -476,7 +476,24 @@ body:not(:has(.attach-footer)) .session-switcher {
   border-top: 1px solid rgba(148, 163, 184, 0.3);
   margin: 0.75rem 0;
 }
+[data-session-refresh][data-refreshing] {
+  color: var(--tblr-warning);
+  border-color: var(--tblr-warning);
+}
 [data-session-refresh][data-refreshing] .ti-refresh {
   display: inline-block;
   animation: session-files-upload-icon-pulse 1s ease-in-out infinite;
+}
+[data-shell-ctrl].active,
+[data-session-copy].active {
+  --tblr-btn-active-bg: var(--tblr-success);
+  --tblr-btn-active-border-color: var(--tblr-success);
+  --tblr-btn-active-color: #fff;
+}
+@media (hover: none) {
+  .attach-mobile .btn {
+    --tblr-btn-hover-color: var(--tblr-btn-color);
+    --tblr-btn-hover-bg: var(--tblr-btn-bg);
+    --tblr-btn-hover-border-color: var(--tblr-btn-border-color);
+  }
 }
