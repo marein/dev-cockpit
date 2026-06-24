@@ -146,18 +146,11 @@ session-file-upload {
   z-index: 5;
   color: var(--tblr-secondary);
 }
-.session-files-button-upload {
-  display: none;
-}
 .session-files-button[data-upload-state="running"] {
   color: var(--tblr-warning);
   border-color: var(--tblr-warning);
 }
 .session-files-button[data-upload-state="running"] .session-files-button-icon {
-  display: none;
-}
-.session-files-button[data-upload-state="running"] .session-files-button-upload {
-  display: inline-block;
   animation: session-files-upload-icon-pulse 1s ease-in-out infinite;
 }
 .session-files-button[data-upload-state="done"] {
