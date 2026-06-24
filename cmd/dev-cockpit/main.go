@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/local/dev-cockpit/internal/provider"
 	providerclaude "github.com/local/dev-cockpit/internal/provider/claude"
 	providercopilot "github.com/local/dev-cockpit/internal/provider/copilot"
+	"github.com/local/dev-cockpit/internal/recent"
 	"github.com/local/dev-cockpit/internal/session"
 	"github.com/local/dev-cockpit/internal/tmux"
 	"github.com/local/dev-cockpit/internal/web"
@@ -93,6 +95,7 @@ func newServeCommand() *cobra.Command {
 		Options: config.Options{
 			HTTPAddr:           config.DefaultHTTPAddr,
 			ProjectsDir:        config.DefaultProjectsDir,
+			StateDir:           config.DefaultStateDir,
 			AuthUsername:       config.DefaultAuthUsername,
 			AuthPasswordHash:   config.DefaultAuthPasswordHash,
 			SessionCookieName:  config.DefaultSessionCookieName,
@@ -116,6 +119,7 @@ func newServeCommand() *cobra.Command {
 	flags.StringVar(&opts.providerID, "provider", opts.providerID, "coder provider")
 	flags.StringVar(&opts.HTTPAddr, "addr", opts.HTTPAddr, "HTTP address")
 	flags.StringVar(&opts.ProjectsDir, "projects-dir", opts.ProjectsDir, "projects root directory")
+	flags.StringVar(&opts.StateDir, "state-dir", opts.StateDir, "directory for dev-cockpit state files")
 	flags.StringVar(&opts.AuthUsername, "auth-user", opts.AuthUsername, "auth username")
 	flags.StringVar(&opts.AuthPasswordHash, "auth-password-hash", opts.AuthPasswordHash, "bcrypt hash for auth password")
 	flags.StringVar(&opts.SessionCookieName, "session-cookie-name", opts.SessionCookieName, "session cookie name")
@@ -150,7 +154,7 @@ func runServe(opts serveOptions) error {
 		return fmt.Errorf("invalid --auth-password-hash: %w", err)
 	}
 	tmuxClient := tmux.New()
-	projectRepo := project.NewRepository(cfg.ProjectsRoot)
+	projectRepo := project.NewRepository(cfg.ProjectsRoot, recent.New(filepath.Join(cfg.StateDir, "recent-projects.json")))
 	registry := provider.NewRegistry(providercopilot.New(), providerclaude.New())
 	selectedProvider := registry.ByID(opts.providerID)
 	if selectedProvider == nil {

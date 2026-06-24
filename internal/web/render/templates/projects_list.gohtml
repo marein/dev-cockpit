@@ -12,12 +12,30 @@
 </div>
 {{if .Projects}}
 <div class="mb-3">
-  <div class="input-icon">
-    <span class="input-icon-addon"><i class="ti ti-search"></i></span>
-    <input type="text" class="form-control" data-project-filter placeholder="Filter projects…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" aria-label="Filter projects">
-    <span class="input-icon-addon">
-      <button type="button" class="btn-close d-none" data-project-filter-clear aria-label="Clear filter" style="pointer-events:auto;"></button>
-    </span>
+  <div class="d-flex gap-2 align-items-start">
+    <div class="input-icon flex-fill">
+      <span class="input-icon-addon"><i class="ti ti-search"></i></span>
+      <input type="text" class="form-control" data-project-filter placeholder="Filter projects…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" aria-label="Filter projects">
+      <span class="input-icon-addon">
+        <button type="button" class="btn-close d-none" data-project-filter-clear aria-label="Clear filter" style="pointer-events:auto;"></button>
+      </span>
+    </div>
+    <div class="dropdown flex-shrink-0">
+      <button type="button" class="btn dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="true" aria-expanded="false" aria-label="Sort projects" title="Sort projects" data-project-sort-toggle>
+        <i class="ti ti-arrows-sort me-1"></i><span data-project-sort-current>Name</span>
+      </button>
+      <div class="dropdown-menu dropdown-menu-end">
+        <button type="button" class="dropdown-item" data-project-sort-option="alpha">
+          <i class="ti ti-sort-ascending-letters me-2"></i>Name
+        </button>
+        <button type="button" class="dropdown-item" data-project-sort-option="active">
+          <i class="ti ti-activity me-2"></i>Active
+        </button>
+        <button type="button" class="dropdown-item" data-project-sort-option="recent">
+          <i class="ti ti-history me-2"></i>Recent
+        </button>
+      </div>
+    </div>
   </div>
   <div class="small mt-1 d-none" data-project-filter-meta>
     <span class="text-primary" data-project-filter-count></span>
@@ -27,7 +45,7 @@
 <div class="card projects-card">
   <div class="list-group list-group-flush list-group-hoverable">
   {{range .Projects}}
-  <div class="list-group-item" id="project-{{.Name}}" data-project-name="{{.Name}}">
+  <div class="list-group-item" id="project-{{.Name}}" data-project-name="{{.Name}}" data-project-active="{{if or .ActiveSessionRefs .ShellRefs}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
     {{if and (eq $.FlashProject .Name) $.Flash.Message}}
     <div class="alert alert-{{if eq $.Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible mb-3" role="alert">
       <div class="d-flex">
@@ -157,6 +175,7 @@
 </div>
 {{end}}
 <script src="{{asset "/js/project-filter.js"}}" defer></script>
+<script src="{{asset "/js/project-sort.js"}}" defer></script>
 <script src="{{asset "/js/list-collapse.js"}}" defer></script>
 {{template "app_end.gohtml" .}}
 {{end}}

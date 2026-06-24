@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/local/dev-cockpit/internal/recent"
 )
 
 // Project is one project directory.
@@ -30,6 +31,7 @@ type Project struct {
 	ActiveSessionRefs   []SessionRef
 	InactiveSessionRefs []SessionRef
 	ShellRefs           []ShellRef
+	LastUsedUnix        int64 // last time the project was opened; 0 = never
 }
 
 type SessionRef struct {
@@ -45,12 +47,21 @@ type ShellRef struct {
 
 // Repository wraps the on-disk projects root.
 type Repository struct {
-	Root string
+	Root   string
+	recent *recent.Store
 }
 
-// NewRepository creates a Repository for the given root directory.
-func NewRepository(root string) *Repository {
-	return &Repository{Root: root}
+// NewRepository creates a Repository for the given root directory. The store
+// records and supplies per-project last-used timestamps.
+func NewRepository(root string, store *recent.Store) *Repository {
+	return &Repository{Root: root, recent: store}
+}
+
+// Touch records that the named project was just opened.
+func (r *Repository) Touch(name string) {
+	if r.recent != nil {
+		r.recent.Touch(name)
+	}
 }
 
 // EnsureRoot creates the root if missing and returns its resolved path.
@@ -130,6 +141,12 @@ func (r *Repository) List() []Project {
 		}
 	}
 	r.enrichProjects(out)
+	if r.recent != nil {
+		used := r.recent.Times()
+		for i := range out {
+			out[i].LastUsedUnix = used[out[i].Name]
+		}
+	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := strings.ToLower(out[i].Name), strings.ToLower(out[j].Name)
 		if a != b {

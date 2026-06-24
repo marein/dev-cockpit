@@ -25,6 +25,7 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", "Project not found.")
 		return
 	}
+	s.projects.Touch(p.Name)
 	c.HTML(http.StatusOK, "project_editor.gohtml", render.EditorData{
 		Page:       s.page(c, "Editor - "+p.Name, "projects"),
 		Project:    p,

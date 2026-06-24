@@ -77,6 +77,7 @@ func (s *Server) handleSessionAttach(c *gin.Context) {
 		return
 	}
 	projectName := s.projects.ProjectNameFor(running.CWD)
+	s.projects.Touch(projectName)
 	c.HTML(http.StatusOK, "session_attach.gohtml", render.SessionAttachData{
 		Page:              s.page(c, running.Name, "projects"),
 		Session:           running,

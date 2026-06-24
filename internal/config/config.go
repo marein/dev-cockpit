@@ -13,6 +13,7 @@ const (
 	DefaultProvider          = "copilot"
 	DefaultHTTPAddr          = "0.0.0.0:80"
 	DefaultProjectsDir       = "~/projects"
+	DefaultStateDir          = "~/.local/state/dev-cockpit"
 	DefaultAuthUsername      = "admin"
 	DefaultAuthPasswordHash  = "$2a$10$EcwjmJDytWtfOs4anrB/gu6A0Gryb9r43SvSwqMr/Y.bPbRPFeyW."
 	DefaultSessionCookieName = "session"
@@ -46,6 +47,7 @@ type Config struct {
 
 	// Filesystem locations
 	ProjectsRoot string
+	StateDir     string
 
 	// Terminal stream tuning
 	StreamHeartbeatInterval time.Duration
@@ -62,6 +64,7 @@ type Config struct {
 type Options struct {
 	HTTPAddr           string
 	ProjectsDir        string
+	StateDir           string
 	AuthUsername       string
 	AuthPasswordHash   string
 	SessionCookieName  string
@@ -129,6 +132,15 @@ func Load(opts Options) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+
+	stateDir := strings.TrimSpace(opts.StateDir)
+	if stateDir == "" {
+		stateDir = DefaultStateDir
+	}
+	stateDir, err = filesystem.ExpandHome(stateDir)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		HTTPAddr:                httpAddr,
 		MaxRequestBodySize:      opts.MaxRequestBodySize,
@@ -144,6 +156,7 @@ func Load(opts Options) (Config, error) {
 		LoginRateWindow:         5 * time.Minute,
 		LoginRateBlock:          15 * time.Second,
 		ProjectsRoot:            projectsRoot,
+		StateDir:                stateDir,
 		StreamHeartbeatInterval: 1 * time.Second,
 		StreamMinFrameInterval:  33 * time.Millisecond, // ~30fps coalescing cap
 		TerminalHistoryLimit:    10000,
