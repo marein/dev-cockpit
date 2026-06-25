@@ -58,7 +58,11 @@ func (s *Server) handleEditorReadFile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"path": c.Query("path"), "content": content})
+	c.JSON(http.StatusOK, gin.H{
+		"path":         c.Query("path"),
+		"content":      content,
+		"editorConfig": filesystem.EditorConfigForFile(p.Path, c.Query("path")),
+	})
 }
 
 // handleEditorSaveFile writes editor content back to disk.

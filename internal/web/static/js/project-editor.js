@@ -23,6 +23,7 @@ async function init(root) {
 
   const editor = await createEditor(surfaceEl, onDirty, editorSettings);
   setupSettingsUI(root, editor, editorSettings);
+  const syncIndentControl = setupIndentControl(root, editor, editorSettings);
 
   let current = null; // { path, name }
   let dirty = false;
@@ -199,6 +200,8 @@ async function init(root) {
       const data = await res.json();
       current = { path: entry.path, name: entry.name };
       await editor.setValue(data.content, entry.name);
+      editor.applyEditorConfig(data.editorConfig);
+      syncIndentControl();
       currentEl.textContent = entry.path;
       currentEl.title = entry.path;
       deleteBtn.disabled = false;
@@ -335,6 +338,13 @@ async function init(root) {
 
 // ---- editor (CodeMirror 6 with textarea fallback) --------------------------
 
+// indentPref maps a stored "indent" setting to a style/size descriptor.
+function indentPref(value) {
+  if (value === "2spaces") return { style: "space", size: 2 };
+  if (value === "4spaces") return { style: "space", size: 4 };
+  return { style: "tab" };
+}
+
 async function createEditor(host, onChange, settings) {
   try {
     return await createCodeMirror(host, onChange, settings);
@@ -342,11 +352,6 @@ async function createEditor(host, onChange, settings) {
     console.warn("CodeMirror unavailable, using textarea", err);
     return createTextarea(host, onChange, settings);
   }
-}
-
-// indentString maps an indent setting to the literal unit CodeMirror inserts.
-function indentString(indent) {
-  return { tab: "\t", "2spaces": "  ", "4spaces": "    " }[indent] || "\t";
 }
 
 // Languages are dynamic-imported by full URL. The jsDelivr dist files keep their
@@ -409,6 +414,37 @@ async function createCodeMirror(host, onChange, settings) {
 
   const fontTheme = (px) => EditorView.theme({ "&": { fontSize: `${px}px` } });
 
+  // Indentation priority: the open file's .editorconfig wins, then the stored
+  // preference (userIndent), then the default. tab_size is the fallback tab
+  // width used wherever editorconfig leaves the width unset.
+  let userTabSize = settings.tab_size;
+  let userIndent = indentPref(settings.indent); // { style } | { style:"space", size }
+  let fileConfig = {}; // { indentStyle, indentSize, tabWidth } from editorconfig
+
+  // effectiveIndent resolves the chain above; fromConfig flags that the value
+  // is dictated by .editorconfig (so the UI shows it read-only).
+  function effectiveIndent() {
+    if (fileConfig.indentStyle === "space") {
+      return { style: "space", size: fileConfig.indentSize || fileConfig.tabWidth || userIndent.size || userTabSize, fromConfig: true };
+    }
+    if (fileConfig.indentStyle === "tab") {
+      return { style: "tab", fromConfig: true };
+    }
+    return { ...userIndent, fromConfig: false };
+  }
+
+  function reconfigureIndent() {
+    const tabWidth = fileConfig.tabWidth || userTabSize;
+    const ind = effectiveIndent();
+    const unit = ind.style === "space" ? " ".repeat(ind.size) : "\t";
+    editorView.dispatch({
+      effects: [
+        tabSizeConf.reconfigure(EditorState.tabSize.of(tabWidth)),
+        indentConf.reconfigure(indentUnit.of(unit)),
+      ],
+    });
+  }
+
   host.innerHTML = "";
   const editorView = new EditorView({
     parent: host,
@@ -420,7 +456,7 @@ async function createCodeMirror(host, onChange, settings) {
         theme.oneDark,
         langConf.of([]),
         tabSizeConf.of(EditorState.tabSize.of(settings.tab_size)),
-        indentConf.of(indentUnit.of(indentString(settings.indent))),
+        indentConf.of(indentUnit.of("\t")),
         wrapConf.of(settings.line_wrap ? EditorView.lineWrapping : []),
         fontConf.of(fontTheme(settings.font_size)),
         EditorView.updateListener.of((u) => {
@@ -434,10 +470,12 @@ async function createCodeMirror(host, onChange, settings) {
   function applySetting(key, value) {
     switch (key) {
       case "tab_size":
-        editorView.dispatch({ effects: tabSizeConf.reconfigure(EditorState.tabSize.of(value)) });
+        userTabSize = value;
+        reconfigureIndent();
         break;
       case "indent":
-        editorView.dispatch({ effects: indentConf.reconfigure(indentUnit.of(indentString(value))) });
+        userIndent = indentPref(value);
+        reconfigureIndent();
         break;
       case "line_wrap":
         editorView.dispatch({ effects: wrapConf.reconfigure(value ? EditorView.lineWrapping : []) });
@@ -481,7 +519,14 @@ async function createCodeMirror(host, onChange, settings) {
     clear() {
       editorView.dispatch({ changes: { from: 0, to: editorView.state.doc.length, insert: "" } });
       editorView.dispatch({ effects: langConf.reconfigure([]) });
+      fileConfig = {};
+      reconfigureIndent();
     },
+    applyEditorConfig(ec) {
+      fileConfig = ec || {};
+      reconfigureIndent();
+    },
+    getIndent: effectiveIndent,
     applySetting,
   };
 }
@@ -493,11 +538,29 @@ function createTextarea(host, onChange, settings) {
   ta.spellcheck = false;
   ta.addEventListener("input", onChange);
   host.appendChild(ta);
+  // The textarea cannot insert spaces on Tab, so indent here only drives the
+  // visual tab width and the dropdown readout. Priority matches CodeMirror:
+  // .editorconfig over the stored preference over the default.
+  let userIndent = indentPref(settings.indent);
+  let userTabSize = settings.tab_size;
+  let fileConfig = {};
+  const effectiveIndent = () => {
+    if (fileConfig.indentStyle === "space") {
+      return { style: "space", size: fileConfig.indentSize || fileConfig.tabWidth || userIndent.size || userTabSize, fromConfig: true };
+    }
+    if (fileConfig.indentStyle === "tab") return { style: "tab", fromConfig: true };
+    return { ...userIndent, fromConfig: false };
+  };
+  const applyTabWidth = () => {
+    ta.style.tabSize = String(fileConfig.tabWidth || userTabSize);
+  };
   const applySetting = (key, value) => {
-    if (key === "tab_size") ta.style.tabSize = String(value);
-    else if (key === "font_size") ta.style.fontSize = `${value}px`;
+    if (key === "tab_size") {
+      userTabSize = value;
+      applyTabWidth();
+    } else if (key === "font_size") ta.style.fontSize = `${value}px`;
     else if (key === "line_wrap") ta.style.whiteSpace = value ? "pre-wrap" : "pre";
-    // "indent" has no good textarea equivalent; ignored in the fallback.
+    else if (key === "indent") userIndent = indentPref(value);
   };
   applySetting("tab_size", settings.tab_size);
   applySetting("font_size", settings.font_size);
@@ -511,14 +574,21 @@ function createTextarea(host, onChange, settings) {
     },
     clear() {
       ta.value = "";
+      fileConfig = {};
     },
+    applyEditorConfig(ec) {
+      fileConfig = ec || {};
+      applyTabWidth();
+    },
+    getIndent: effectiveIndent,
     applySetting,
   };
 }
 
 // Editor settings are stored per-device in localStorage (font size, wrap and
 // indentation depend on the device/screen, so they should not follow the user
-// across machines).
+// across machines). The stored indentation is the fallback used when the open
+// file's .editorconfig does not dictate one.
 const EDITOR_SETTINGS_KEY = "dev-cockpit.editor-settings";
 
 function loadEditorSettings() {
@@ -560,6 +630,48 @@ function setupSettingsUI(root, editor, settings) {
       saveEditorSettings(settings);
     });
   });
+}
+
+// setupIndentControl wires the Indentation dropdown. It shows the effective
+// indentation (.editorconfig over the stored preference over the default). When
+// .editorconfig dictates the value the control is read-only with a hint;
+// otherwise editing it updates the stored preference. Returns a sync function
+// the caller invokes after each file open.
+function setupIndentControl(root, editor, settings) {
+  const select = root.querySelector("[data-editor-indent]");
+  if (!select) return () => {};
+  const display = root.querySelector("[data-editor-indent-display]");
+  const hint = root.querySelector("[data-editor-indent-hint]");
+  const valueOf = (ind) => (ind.style === "space" ? `${ind.size}spaces` : "tab");
+  const labelOf = (ind) => (ind.style === "space" ? `${ind.size} spaces` : "Tab");
+  function sync() {
+    const ind = editor.getIndent();
+    const val = valueOf(ind);
+    if (ind.style === "space" && !select.querySelector(`option[value="${val}"]`)) {
+      const opt = document.createElement("option");
+      opt.value = val;
+      opt.textContent = `${ind.size} spaces`;
+      select.appendChild(opt);
+    }
+    select.value = val;
+    // From .editorconfig: show a disabled text input with the value; otherwise
+    // the editable dropdown.
+    const fromConfig = !!ind.fromConfig;
+    select.hidden = fromConfig;
+    if (display) {
+      display.hidden = !fromConfig;
+      display.value = labelOf(ind);
+    }
+    if (hint) hint.hidden = !fromConfig;
+  }
+  select.addEventListener("change", () => {
+    settings.indent = select.value;
+    editor.applySetting("indent", select.value);
+    saveEditorSettings(settings);
+    sync();
+  });
+  sync();
+  return sync;
 }
 
 function escapeHtml(s) {

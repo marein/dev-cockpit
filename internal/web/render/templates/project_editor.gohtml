@@ -57,11 +57,13 @@
               </div>
               <div class="mb-2">
                 <label class="form-label small mb-1">Indentation</label>
-                <select class="form-select form-select-sm" data-editor-setting="indent">
+                <select class="form-select form-select-sm" data-editor-indent>
                   <option value="tab">Tab</option>
                   <option value="2spaces">2 spaces</option>
                   <option value="4spaces">4 spaces</option>
                 </select>
+                <input type="text" class="form-control form-control-sm" data-editor-indent-display disabled hidden>
+                <div class="form-text small mt-1" data-editor-indent-hint hidden>From .editorconfig</div>
               </div>
               <div class="mb-2">
                 <label class="form-label small mb-1">Font size</label>
