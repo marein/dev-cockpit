@@ -28,6 +28,7 @@
       icon: icon || "error",
       title: text,
       showConfirmButton: false,
+      showCloseButton: true,
       timer: timer || 6000,
       timerProgressBar: true,
       background: "#1f2937",
