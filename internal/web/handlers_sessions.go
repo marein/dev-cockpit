@@ -79,7 +79,7 @@ func (s *Server) handleSessionAttach(c *gin.Context) {
 	projectName := s.projects.ProjectNameFor(running.CWD)
 	s.projects.Touch(projectName)
 	c.HTML(http.StatusOK, "session_attach.gohtml", render.SessionAttachData{
-		Page:              s.page(c, running.Name, "projects"),
+		Page:              s.page(c, pageTitle(running.Name, projectName), "projects"),
 		Session:           running,
 		SessionIdentifier: running.Identifier,
 		ProjectName:       projectName,
@@ -226,6 +226,15 @@ func (s *Server) sessionFilesData(c *gin.Context, id, errorMessage, message stri
 		Error:             errorMessage,
 		Message:           message,
 	}, nil
+}
+
+// pageTitle composes the browser title for a terminal page as "name - project",
+// falling back to just the name when the working directory sits outside any project.
+func pageTitle(name, projectName string) string {
+	if projectName == "" {
+		return name
+	}
+	return name + " - " + projectName
 }
 
 func maxRequestBodyMegabytes(size int64) string {

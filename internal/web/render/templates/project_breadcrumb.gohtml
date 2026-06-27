@@ -1,0 +1,13 @@
+{{define "project_breadcrumb.gohtml"}}
+<div class="page-pretitle">
+  {{if .}}
+  <a href="/projects#project-{{.}}" class="link-secondary text-decoration-none">
+    <i class="ti ti-arrow-left me-1"></i>{{.}}
+  </a>
+  {{else}}
+  <a href="/projects" class="link-secondary text-decoration-none">
+    <i class="ti ti-arrow-left me-1"></i>Projects
+  </a>
+  {{end}}
+</div>
+{{end}}

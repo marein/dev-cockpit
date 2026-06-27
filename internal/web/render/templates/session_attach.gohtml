@@ -4,11 +4,7 @@
   <div class="row g-2 align-items-center">
     <div class="col min-w-0">
       <div class="min-w-0">
-        {{if .ProjectName}}
-        <div class="page-pretitle">
-          <a href="/projects#project-{{.ProjectName}}" class="link-secondary text-decoration-none"><i class="ti ti-arrow-left me-1"></i>Projects</a>
-        </div>
-        {{end}}
+        {{template "project_breadcrumb.gohtml" .ProjectName}}
         <h2 class="page-title text-truncate mb-0">{{.Session.Name}}</h2>
       </div>
     </div>

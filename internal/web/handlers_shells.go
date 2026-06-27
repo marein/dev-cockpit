@@ -49,7 +49,7 @@ func (s *Server) handleShellAttach(c *gin.Context) {
 	projectName := s.projects.ProjectNameFor(shell.CWD)
 	s.projects.Touch(projectName)
 	c.HTML(http.StatusOK, "shell_attach.gohtml", render.ShellAttachData{
-		Page:        s.page(c, shell.Name, "projects"),
+		Page:        s.page(c, pageTitle(shell.Name, projectName), "projects"),
 		Shell:       shell,
 		ProjectName: projectName,
 		StreamURL:   "/shells/" + shell.Identifier + "/stream",

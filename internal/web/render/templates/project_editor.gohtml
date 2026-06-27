@@ -3,10 +3,8 @@
 <div class="page-header d-print-none mb-3">
   <div class="row align-items-center">
     <div class="col">
-      <div class="page-pretitle">
-        <a href="/projects#project-{{.Project.Name}}" class="link-secondary text-decoration-none"><i class="ti ti-arrow-left me-1"></i>Projects</a>
-      </div>
-      <h2 class="page-title text-break">{{.Project.Name}}</h2>
+      {{template "project_breadcrumb.gohtml" .Project.Name}}
+      <h2 class="page-title text-break">Editor</h2>
     </div>
   </div>
 </div>
