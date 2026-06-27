@@ -14,7 +14,7 @@
 
   function apply(query) {
     const needle = query.trim().toLowerCase();
-    const cards = document.querySelectorAll("[data-project-name]");
+    const cards = document.querySelectorAll(".projects-card [data-project-name]");
     let visible = 0;
     cards.forEach((card) => {
       const hit = needle === "" || card.dataset.projectName.toLowerCase().includes(needle);

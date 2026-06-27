@@ -24,7 +24,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth := browser.Group("/", s.requireAuth)
 	auth.GET("/", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, "/projects") })
 	auth.POST("/logout", s.handleLogout)
-	auth.GET("/switcher", s.handleSwitcher)
+	auth.GET("/quicknav", s.handleQuickNav)
 
 	auth.GET("/sessions/new", s.handleSessionNew)
 	auth.POST("/sessions/new", s.handleSessionCreate)

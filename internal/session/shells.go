@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/local/dev-cockpit/internal/config"
@@ -36,29 +37,71 @@ type Shell struct {
 	CWD         string
 }
 
+// shellsCache memoises List for a short TTL so the repeated tmux pane scans
+// during one page render (the quick nav's Active list plus its per-project
+// browser, and the projects page) collapse to a single scan. Mirrors the session
+// snapshot cache and is invalidated on every shell mutation.
+type shellsCache struct {
+	mu      sync.Mutex
+	value   []Shell
+	ready   bool
+	expires time.Time
+	ttl     time.Duration
+}
+
+func (c *shellsCache) get() ([]Shell, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ready && time.Now().Before(c.expires) {
+		return c.value, true
+	}
+	return nil, false
+}
+
+func (c *shellsCache) put(v []Shell) {
+	c.mu.Lock()
+	c.value = v
+	c.ready = true
+	c.expires = time.Now().Add(c.ttl)
+	c.mu.Unlock()
+}
+
+func (c *shellsCache) invalidate() {
+	c.mu.Lock()
+	c.ready = false
+	c.value = nil
+	c.mu.Unlock()
+}
+
 // Shells orchestrates plain shell sessions. It reuses the tmux client and the
 // streaming machinery that back coder sessions, but carries no provider state.
 type Shells struct {
-	cfg      config.Config
-	tmux     *tmux.Client
-	projects *project.Repository
-	mapper   provider.ControlMapper
-	streams  *streamHub
+	cfg       config.Config
+	tmux      *tmux.Client
+	projects  *project.Repository
+	mapper    provider.ControlMapper
+	streams   *streamHub
+	listCache *shellsCache
 }
 
 // NewShells wires up Shells with its dependencies.
 func NewShells(cfg config.Config, t *tmux.Client, projects *project.Repository) *Shells {
 	return &Shells{
-		cfg:      cfg,
-		tmux:     t,
-		projects: projects,
-		mapper:   provider.DefaultControlMapper(),
-		streams:  newStreamHub(cfg),
+		cfg:       cfg,
+		tmux:      t,
+		projects:  projects,
+		mapper:    provider.DefaultControlMapper(),
+		streams:   newStreamHub(cfg),
+		listCache: &shellsCache{ttl: cfg.SnapshotCacheTTL},
 	}
 }
 
-// List returns every live shell session, sorted by tmux's pane order.
+// List returns every live shell session, sorted by tmux's pane order. The result
+// is cached for a short TTL; mutations invalidate it.
 func (s *Shells) List() []Shell {
+	if v, ok := s.listCache.get(); ok {
+		return v
+	}
 	panes, _ := s.tmux.ListPanes()
 	var out []Shell
 	for _, p := range panes {
@@ -75,7 +118,13 @@ func (s *Shells) List() []Shell {
 			CWD:         strings.TrimSpace(p.Workdir),
 		})
 	}
+	s.listCache.put(out)
 	return out
+}
+
+// Invalidate drops the cached shell list so the next List re-scans tmux.
+func (s *Shells) Invalidate() {
+	s.listCache.invalidate()
 }
 
 // ResolveRunning validates the identifier and returns the matching shell.
@@ -133,6 +182,7 @@ func (s *Shells) Start(workdir, name string) (string, error) {
 	if err := s.tmux.SetHistoryLimit(key, s.cfg.TerminalHistoryLimit); err != nil {
 		return "", err
 	}
+	s.Invalidate()
 	return key, nil
 }
 
@@ -150,6 +200,7 @@ func (s *Shells) Rename(rawID, rawName string) (Shell, error) {
 		return Shell{}, err
 	}
 	sh.Name = name
+	s.Invalidate()
 	return sh, nil
 }
 
@@ -163,6 +214,7 @@ func (s *Shells) Delete(rawID string) (string, error) {
 		return "", err
 	}
 	s.streams.clear(sh.TmuxSession)
+	s.Invalidate()
 	return sh.Name, nil
 }
 

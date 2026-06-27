@@ -1,0 +1,137 @@
+{{define "quicknav.gohtml"}}
+<div class="quicknav dropup d-print-none">
+  <button type="button" class="btn btn-icon quicknav-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Sessions and projects" title="Sessions and projects">
+    <i class="ti ti-layout-grid quicknav-ico-open"></i>
+    <i class="ti ti-x quicknav-ico-close"></i>
+  </button>
+  <div class="dropdown-menu dropdown-menu-end quicknav-menu" data-quicknav-url="/quicknav">
+    <div class="quicknav-list">{{template "quicknav_items.gohtml" .}}</div>
+  </div>
+</div>
+{{end}}
+
+{{define "quicknav_items.gohtml"}}
+<div data-quicknav-tabs data-quicknav-current-project="{{.QuickNav.CurrentProject}}">
+  <div class="quicknav-top">
+    <div class="quicknav-seg" role="tablist">
+      <button type="button" class="quicknav-seg-btn active" data-quicknav-tab="active"><i class="ti ti-prompt me-1"></i>Active</button>
+      <button type="button" class="quicknav-seg-btn" data-quicknav-tab="projects"><i class="ti ti-folders me-1"></i>Projects</button>
+    </div>
+    {{if .QuickNav.CurrentProject}}
+    <div class="quicknav-context d-flex align-items-center gap-2 px-3 pb-2">
+      <span class="text-truncate small fw-medium flex-fill">{{.QuickNav.CurrentProject}}</span>
+      <a href="/projects/{{.QuickNav.CurrentProject}}/editor" class="btn btn-sm btn-ghost-secondary px-2 py-1" title="Editor for {{.QuickNav.CurrentProject}}" aria-label="Open editor for current project">
+        <i class="ti ti-code"></i>
+      </a>
+      <a href="/sessions/new?project={{urlquery .QuickNav.CurrentProject}}&amp;return={{urlquery .QuickNav.CurrentPath}}" class="btn btn-sm btn-ghost-secondary px-2 py-1" title="New session in {{.QuickNav.CurrentProject}}" aria-label="New session in current project">
+        <i class="ti ti-prompt"></i><i class="ti ti-plus ms-1"></i>
+      </a>
+      {{if .QuickNav.CurrentProjectPath}}
+      <form method="post" action="/shells/new" class="d-flex">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="project" value="{{.QuickNav.CurrentProjectPath}}">
+        <button type="submit" class="btn btn-sm btn-ghost-secondary px-2 py-1" title="New shell in {{.QuickNav.CurrentProject}}" aria-label="New shell in current project">
+          <i class="ti ti-terminal-2"></i><i class="ti ti-plus ms-1"></i>
+        </button>
+      </form>
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+
+  <div data-quicknav-pane="active">
+    <h6 class="dropdown-header">Sessions</h6>
+    {{range .QuickNav.Sessions}}
+    <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
+      <span class="status-dot status-green flex-shrink-0"></span>
+      <span class="d-flex flex-column min-w-0">
+        <span class="text-truncate">{{.Name}}</span>
+        {{if .Project}}<span class="text-secondary small text-truncate"><i class="ti ti-folder me-1"></i>{{.Project}}</span>{{end}}
+      </span>
+    </a>
+    {{end}}
+    {{if not .QuickNav.Sessions}}<span class="dropdown-item-text text-secondary small">No active sessions</span>{{end}}
+    <a class="dropdown-item d-flex align-items-center gap-2" href="/sessions/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
+      <i class="ti ti-plus flex-shrink-0"></i><span>New session</span>
+    </a>
+    <div class="dropdown-divider"></div>
+    <h6 class="dropdown-header">Shells</h6>
+    {{range .QuickNav.Shells}}
+    <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
+      <span class="status-dot status-green flex-shrink-0"></span>
+      <span class="d-flex flex-column min-w-0">
+        <span class="text-truncate">{{.Name}}</span>
+        {{if .Project}}<span class="text-secondary small text-truncate"><i class="ti ti-folder me-1"></i>{{.Project}}</span>{{end}}
+      </span>
+    </a>
+    {{end}}
+    {{if not .QuickNav.Shells}}<span class="dropdown-item-text text-secondary small">No shells</span>{{end}}
+    <a class="dropdown-item d-flex align-items-center gap-2" href="/shells/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
+      <i class="ti ti-plus flex-shrink-0"></i><span>New shell</span>
+    </a>
+  </div>
+
+  <div data-quicknav-pane="projects" hidden>
+    <div data-project-browser>
+      <div data-pb-list>
+        <h6 class="dropdown-header">Projects</h6>
+        {{range .QuickNav.AllProjects}}
+        <button type="button" class="dropdown-item d-flex align-items-center gap-2 {{if eq .Name $.QuickNav.CurrentProject}}active{{end}}" data-pb-drill="{{.Name}}" data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}"{{if eq .Name $.QuickNav.CurrentProject}} aria-current="true"{{end}}>
+          <i class="ti ti-folder flex-shrink-0"></i>
+          <span class="text-truncate">{{.Name}}</span>
+          <i class="ti ti-chevron-right ms-auto flex-shrink-0"></i>
+        </button>
+        {{end}}
+        {{if not .QuickNav.AllProjects}}<span class="dropdown-item-text text-secondary small">No projects</span>{{end}}
+      </div>
+
+      {{range .QuickNav.AllProjects}}
+      <div data-pb-detail="{{.Name}}" hidden>
+        <button type="button" class="quicknav-detail-title dropdown-item d-flex align-items-center gap-2" data-pb-back>
+          <i class="ti ti-chevron-left flex-shrink-0"></i><span class="text-truncate">{{.Name}}</span>
+        </button>
+        <a class="dropdown-item d-flex align-items-center gap-2" href="{{.EditorURL}}">
+          <i class="ti ti-code flex-shrink-0"></i><span class="text-truncate">Editor</span>
+        </a>
+        <div class="dropdown-divider"></div>
+        <h6 class="dropdown-header">Sessions</h6>
+        <div data-qn-fold="{{.Name}}-sessions">
+        {{range .ActiveSessions}}
+        <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
+          <span class="status-dot status-green flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
+        </a>
+        {{end}}
+        {{range .InactiveSessions}}
+        <form method="post" action="{{.URL}}">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <button type="submit" class="dropdown-item d-flex align-items-center gap-2">
+            <span class="status-dot flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
+          </button>
+        </form>
+        {{end}}
+        </div>
+        <a class="dropdown-item d-flex align-items-center gap-2" href="{{.NewSessionURL}}">
+          <i class="ti ti-plus flex-shrink-0"></i><span>New session</span>
+        </a>
+        <div class="dropdown-divider"></div>
+        <h6 class="dropdown-header">Shells</h6>
+        <div data-qn-fold="{{.Name}}-shells">
+        {{range .Shells}}
+        <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
+          <span class="status-dot status-green flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
+        </a>
+        {{end}}
+        </div>
+        <form method="post" action="/shells/new">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="project" value="{{.Path}}">
+          <button type="submit" class="dropdown-item d-flex align-items-center gap-2">
+            <i class="ti ti-plus flex-shrink-0"></i><span>New shell</span>
+          </button>
+        </form>
+      </div>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{end}}

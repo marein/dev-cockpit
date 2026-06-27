@@ -317,8 +317,8 @@
 
     refreshFiles() {
       // Show the already-loaded list immediately (it is in the DOM), then fetch
-      // the current list in the background and swap it in, like the session
-      // switcher. An in-flight upload owns the content, so skip then.
+      // the current list in the background and swap it in, like the quick
+      // nav. An in-flight upload owns the content, so skip then.
       if (this.activeUploads > 0) {
         return;
       }

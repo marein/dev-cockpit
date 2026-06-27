@@ -21,8 +21,21 @@ type projectDeleteForm struct {
 }
 
 func (s *Server) handleProjectsList(c *gin.Context) {
-	projects := s.projects.List()
 	s.sessions.Invalidate()
+	s.shells.Invalidate()
+	c.HTML(http.StatusOK, "projects_list.gohtml", render.ProjectsListData{
+		Page:     s.page(c, "Projects", "projects"),
+		Projects: s.projectsWithRunners(),
+	})
+}
+
+// projectsWithRunners returns every project enriched with the running and
+// inactive sessions and the shells living under it. It is the single source
+// behind both the projects list page and the quick nav project browser. Sessions
+// are ordered most-recent first, shells by name. The snapshot is read as-is
+// (cached); callers that need a fresh one (the list page) Invalidate beforehand.
+func (s *Server) projectsWithRunners() []project.Project {
+	projects := s.projects.List()
 	snap := s.sessions.Snapshot()
 	for i := range projects {
 		for _, active := range snap.Running {
@@ -68,11 +81,7 @@ func (s *Server) handleProjectsList(c *gin.Context) {
 			return strings.ToLower(projects[i].ShellRefs[a].Name) < strings.ToLower(projects[i].ShellRefs[b].Name)
 		})
 	}
-
-	c.HTML(http.StatusOK, "projects_list.gohtml", render.ProjectsListData{
-		Page:     s.page(c, "Projects", "projects"),
-		Projects: projects,
-	})
+	return projects
 }
 
 func (s *Server) handleProjectNew(c *gin.Context) {

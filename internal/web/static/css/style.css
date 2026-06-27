@@ -187,10 +187,10 @@ session-file-upload {
   50% { opacity: 0.55; transform: scale(1.18); }
 }
 
-/* Quick-switch floating button: jump between live sessions and shells, or start
+/* Quick nav floating button: jump between live sessions and shells, or start
    a new one. Present on every app page; on terminal pages it is raised to clear
    the sticky input footer (z-index 10). */
-.session-switcher {
+.quicknav {
   position: fixed;
   /* Sit in the right margin beside the content when it's wide enough to hold the
      button (2.75rem + 1rem gap from the 1320px content box); otherwise fall back
@@ -200,10 +200,45 @@ session-file-upload {
   bottom: calc(5.5rem + env(safe-area-inset-bottom));
   z-index: 20;
 }
-body:not(:has(.attach-footer)) .session-switcher {
+body:not(:has(.attach-footer)) .quicknav {
   bottom: calc(1.5rem + env(safe-area-inset-bottom));
 }
-.session-switcher-toggle {
+.quicknav-top {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* Breathing room above the tabs lives here (opaque, part of the sticky header)
+     rather than in the menu's padding, where scrolled content would show through. */
+  padding-top: 0.5rem;
+  background: var(--tblr-dropdown-bg, var(--tblr-bg-surface));
+  border-bottom: 1px solid var(--tblr-border-color);
+}
+.quicknav-seg {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0 0.75rem 0.375rem;
+  padding: 0.1875rem;
+  border-radius: var(--tblr-border-radius);
+  background: rgba(255, 255, 255, 0.04);
+}
+.quicknav-seg-btn {
+  flex: 1 1 0;
+  border: 0;
+  border-radius: calc(var(--tblr-border-radius) - 1px);
+  padding: 0.3125rem 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--tblr-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+.quicknav-seg-btn:hover { color: var(--tblr-body-color); }
+.quicknav-seg-btn.active {
+  color: var(--tblr-body-color);
+  font-weight: 500;
+  background: var(--tblr-bg-surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.quicknav-toggle {
   width: 2.75rem;
   height: 2.75rem;
   border-radius: 50%;
@@ -212,34 +247,77 @@ body:not(:has(.attach-footer)) .session-switcher {
   border: 1px solid var(--tblr-border-color);
   opacity: 0.7;
   box-shadow: 0 0.25rem 0.6rem rgba(0, 0, 0, 0.3);
-  transition: opacity 0.15s ease, color 0.15s ease;
+  transition: color 0.15s ease;
 }
-.session-switcher-toggle:hover,
-.session-switcher-toggle:focus,
-.session-switcher-toggle[aria-expanded="true"] {
-  opacity: 1;
+.quicknav-toggle:hover,
+.quicknav-toggle:focus,
+.quicknav-toggle:active,
+.quicknav-toggle.show,
+.quicknav-toggle[aria-expanded="true"] {
+  background: var(--tblr-bg-surface);
+  border-color: var(--tblr-border-color);
+  opacity: 0.7;
+  box-shadow: 0 0.25rem 0.6rem rgba(0, 0, 0, 0.3);
   color: var(--tblr-body-color);
 }
-.session-switcher-toggle::after { display: none; }
-.session-switcher-menu {
+.quicknav-toggle.show,
+.quicknav-toggle[aria-expanded="true"] {
+  border-color: var(--tblr-primary);
+}
+.quicknav-toggle .quicknav-ico-close { display: none; }
+.quicknav-toggle[aria-expanded="true"] .quicknav-ico-open { display: none; }
+.quicknav-toggle[aria-expanded="true"] .quicknav-ico-close { display: inline-flex; }
+.quicknav-toggle::after { display: none; }
+.quicknav-menu {
   min-width: 13rem;
   max-width: min(22rem, 80vw);
   max-height: min(60vh, 28rem);
   overflow-y: auto;
   overflow-x: hidden;
+  /* No top padding so the sticky tab header sits flush with the menu's top edge;
+     otherwise the menu's padding strip above it lets scrolled content show through. */
+  padding-top: 0;
 }
 /* Keep long session/shell and project names inside the menu width: bound every
    flex link in the truncation chain so the labels ellipsize instead of forcing
    the dropdown to grow and scroll sideways. */
-.session-switcher-menu .dropdown-item { min-width: 0; }
-.session-switcher-menu .dropdown-item > span { min-width: 0; flex: 1 1 auto; }
-.session-switcher-menu .dropdown-item .text-truncate { min-width: 0; max-width: 100%; }
-.session-switcher-refresh {
+.quicknav-menu .dropdown-item { min-width: 0; }
+.quicknav-menu .dropdown-item > span:not(.status-dot) { min-width: 0; flex: 1 1 auto; }
+.quicknav-menu .dropdown-item .text-truncate { min-width: 0; max-width: 100%; }
+/* Even spacing for every section header (Sessions/Shells/Projects), whether it
+   follows the sticky tab header or a divider: drop the divider's own margins and
+   give all headers the same padding. */
+.quicknav-menu .dropdown-header { padding-top: 0.5rem; padding-bottom: 0.25rem; overflow: hidden; text-overflow: ellipsis; }
+/* The drilled-in project name is the detail view's title, not a section label, so
+   give it its own look (normal case, larger, body color) instead of reusing the
+   small uppercase section-header style. */
+.quicknav-detail-title { color: var(--tblr-body-color); text-transform: uppercase; }
+.quicknav-menu .dropdown-divider { margin: 0; }
+.quicknav-refresh {
   position: absolute;
-  top: 0.4rem;
-  right: 0.4rem;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  overflow: hidden;
+  z-index: 5;
   pointer-events: none;
-  color: var(--tblr-secondary);
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
+  background: rgba(var(--tblr-primary-rgb), 0.25);
+}
+.quicknav-refresh::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  background: var(--tblr-primary);
+  animation: dc-quicknav-loading 1s ease-in-out infinite;
+}
+@keyframes dc-quicknav-loading {
+  0% { left: -40%; }
+  100% { left: 100%; }
 }
 
 /* ---- project editor --------------------------------------------------- */

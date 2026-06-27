@@ -1,18 +1,18 @@
 (function () {
   "use strict";
 
-  const menu = document.querySelector(".session-switcher-menu[data-switcher-url]");
+  const menu = document.querySelector(".quicknav-menu[data-quicknav-url]");
   if (!menu) return;
 
-  const root = menu.closest(".session-switcher");
-  const toggle = root.querySelector(".session-switcher-toggle");
-  const list = menu.querySelector(".session-switcher-list");
-  const url = menu.dataset.switcherUrl;
+  const root = menu.closest(".quicknav");
+  const toggle = root.querySelector(".quicknav-toggle");
+  const list = menu.querySelector(".quicknav-list");
+  const url = menu.dataset.quicknavUrl;
 
   const spinner = document.createElement("div");
-  spinner.className = "session-switcher-refresh";
-  spinner.innerHTML =
-    '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+  spinner.className = "quicknav-refresh";
+  spinner.setAttribute("role", "status");
+  spinner.setAttribute("aria-label", "Loading");
 
   let inFlight = false;
 

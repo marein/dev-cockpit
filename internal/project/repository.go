@@ -225,7 +225,7 @@ func (r *Repository) Find(raw string) (Project, error) {
 // or "" when cwd is outside the projects root. Unlike Find it accepts arbitrary
 // subdirectories, so a session or shell working deep inside a project still maps
 // back to it. It is cheap: it only inspects the path and reads no git metadata,
-// so it is safe to call per entry in list/switcher views.
+// so it is safe to call per entry in list/quick-nav views.
 func (r *Repository) ProjectNameFor(cwd string) string {
 	dir := strings.TrimSpace(cwd)
 	if dir == "" {

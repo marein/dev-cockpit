@@ -53,6 +53,7 @@
 
 {{define "app_start.gohtml"}}{{template "html_head.gohtml" .}}{{$appName := "Dev Cockpit"}}
 <body>
+  <script defer src="{{asset "/js/project-sort-compare.js"}}"></script>
   <div class="page">
     <header class="navbar navbar-expand-md d-print-none d-md-none">
       <div class="container-xl">
@@ -90,7 +91,7 @@
                 <ul class="navbar-nav">
                   <li class="nav-item">
                     <a class="nav-link {{if eq .ActiveTab "projects"}}active{{end}}" href="/projects">
-                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-folder"></i></span>
+                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-folders"></i></span>
                       <span class="nav-link-title">Projects</span>
                     </a>
                   </li>
@@ -180,11 +181,12 @@
       </footer>
     </div>
   </div>
-  {{template "session_switcher.gohtml" .}}
+  {{template "quicknav.gohtml" .}}
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="{{asset "/js/error-notify.js"}}" defer></script>
   <script src="{{asset "/js/confirm-dialog.js"}}" defer></script>
   <script src="{{asset "/js/update-check.js"}}" defer></script>
-  <script src="{{asset "/js/session-switcher.js"}}" defer></script>
+  <script src="{{asset "/js/quicknav.js"}}" defer></script>
+  <script src="{{asset "/js/quicknav-browser.js"}}" defer></script>
 </body>
 </html>{{end}}

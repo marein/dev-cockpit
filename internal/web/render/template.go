@@ -44,26 +44,32 @@ type Page struct {
 	FlashProject string
 	CSRFToken    string
 	User         string
-	Switcher     Switcher
+	QuickNav     QuickNav
 }
 
-// Switcher feeds the quick-switch floating button: the live sessions and shells
-// you can jump to, plus the identifier of the one you are currently attached to.
-type Switcher struct {
-	Sessions  []SwitchTarget
-	Shells    []SwitchTarget
+// QuickNav feeds the quick nav floating button: the live sessions and shells you
+// can jump to, plus the identifier of the one you are currently attached to.
+type QuickNav struct {
+	Sessions  []QuickNavTarget
+	Shells    []QuickNavTarget
 	CurrentID string
 	// CurrentProject is the project of the page you're on (terminal/editor), used
 	// to preselect it in the new-session / new-shell forms. Empty when there is
 	// no project context.
 	CurrentProject string
+	// CurrentProjectPath is that project's working directory, for the direct
+	// "new shell in current project" form (which posts a path, not a name).
+	CurrentProjectPath string
 	// CurrentPath is the path of the page being rendered, passed to the create
 	// forms as their Cancel return target.
 	CurrentPath string
+	// AllProjects feeds the two-level project browser: every project (alpha
+	// sorted, like the projects page) with its editor, sessions and shells.
+	AllProjects []ProjectNav
 }
 
-// SwitchTarget is one jump destination in the quick-switch menu.
-type SwitchTarget struct {
+// QuickNavTarget is one jump destination in the quick nav menu.
+type QuickNavTarget struct {
 	ID      string
 	Name    string
 	URL     string
