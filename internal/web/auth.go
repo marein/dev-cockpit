@@ -189,7 +189,20 @@ func (s *Server) redirectWithProjectFlash(c *gin.Context, project, message, errM
 }
 
 func safeRedirectPath(path string) string {
-	if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+	if path == "" || path[0] != '/' {
+		return "/"
+	}
+	// Browsers normalise backslashes to forward slashes and strip tab/CR/LF for
+	// http(s) URLs, so /\host and /<tab>/host resolve off-site even though they
+	// are not //host. Go's url parser disagrees, so reject these byte sequences
+	// outright rather than relying on net/url to flag them.
+	for i := 0; i < len(path); i++ {
+		switch path[i] {
+		case '\\', '\t', '\n', '\r':
+			return "/"
+		}
+	}
+	if strings.HasPrefix(path, "//") {
 		return "/"
 	}
 	return path
