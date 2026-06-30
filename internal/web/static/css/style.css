@@ -568,3 +568,10 @@ body:not(:has(.attach-footer)) .quicknav {
     --tblr-btn-hover-border-color: var(--tblr-btn-border-color);
   }
 }
+
+dc-project-list { display: contents; }
+dc-quicknav { display: block; }
+dc-inline-rename { display: block; }
+dc-editor { display: block; }
+session-attach { display: block; }
+session-input { display: none; }

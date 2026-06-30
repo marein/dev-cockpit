@@ -1,10 +1,12 @@
 // Per-project code editor: lazy directory tree on the left, CodeMirror 6 editor
 // on the right. CodeMirror is loaded from a CDN; if that fails we fall back to a
 // plain <textarea> so viewing/editing still works.
+import { notifyError } from "@dc/toast";
+import { confirm as confirmDialog, promptText } from "@dc/dialog";
+import { ensureOk, postForm } from "@dc/http";
 
 async function init(root) {
   const name = root.dataset.editorName;
-  const csrf = root.dataset.editorCsrf;
   const maxKiB = root.dataset.editorMaxKib;
   const base = `/projects/${encodeURIComponent(name)}/editor`;
 
@@ -20,8 +22,9 @@ async function init(root) {
   const newFolderBtn = root.querySelector("[data-editor-new-folder]");
 
   const editorSettings = loadEditorSettings();
+  const ac = new AbortController();
 
-  const editor = await createEditor(surfaceEl, onDirty, editorSettings);
+  const editor = await createEditor(surfaceEl, onDirty, editorSettings, ac.signal);
   setupSettingsUI(root, editor, editorSettings);
   const syncIndentControl = setupIndentControl(root, editor, editorSettings);
 
@@ -51,11 +54,7 @@ async function init(root) {
     if (kind === "error") {
       statusEl.textContent = "";
       statusEl.classList.remove("text-danger", "text-success");
-      if (window.notifyError) window.notifyError(msg);
-      else {
-        statusEl.textContent = msg || "";
-        statusEl.classList.add("text-danger");
-      }
+      notifyError(msg);
       return;
     }
     statusEl.textContent = msg || "";
@@ -73,15 +72,6 @@ async function init(root) {
   }
 
   // ---- tree ----------------------------------------------------------------
-
-  // Reject with the server's message (JSON {error} or text body, via the shared
-  // errorText helper) whenever a response is not ok. Always call this before
-  // res.json(): error responses may be plain text (e.g. a 401 "session expired")
-  // and would otherwise throw a raw "not valid JSON" SyntaxError at the user.
-  async function ensureOk(res, fallback) {
-    if (res.ok) return;
-    throw new Error(window.errorText ? await window.errorText(res, fallback) : fallback);
-  }
 
   async function listDir(path) {
     const res = await fetch(`${base}/list?path=${encodeURIComponent(path)}`, {
@@ -217,14 +207,7 @@ async function init(root) {
     status("Saving…");
     saveBtn.disabled = true;
     try {
-      const body = new URLSearchParams();
-      body.set("path", current.path);
-      body.set("content", editor.getValue());
-      const res = await fetch(`${base}/file`, {
-        method: "POST",
-        headers: { "X-CSRF-Token": csrf, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-        body: body.toString(),
-      });
+      const res = await postForm(`${base}/file`, { path: current.path, content: editor.getValue() });
       await ensureOk(res, "Failed to save file.");
       setDirty(false);
       status(`Saved ${current.path}`, "ok");
@@ -237,13 +220,6 @@ async function init(root) {
   function remove() {
     if (current) deletePath(current.path);
   }
-
-  const postForm = (url, fields) =>
-    fetch(url, {
-      method: "POST",
-      headers: { "X-CSRF-Token": csrf, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-      body: new URLSearchParams(fields).toString(),
-    });
 
   async function deletePath(targetPath) {
     if (!(await confirmDelete(targetPath))) return;
@@ -314,26 +290,32 @@ async function init(root) {
 
   // ---- wiring --------------------------------------------------------------
 
-  saveBtn.addEventListener("click", save);
-  deleteBtn.addEventListener("click", remove);
-  refreshBtn.addEventListener("click", loadTree);
-  newFileBtn.addEventListener("click", createFile);
-  newFolderBtn.addEventListener("click", createFolder);
+  const signal = ac.signal;
+  saveBtn.addEventListener("click", save, { signal });
+  deleteBtn.addEventListener("click", remove, { signal });
+  refreshBtn.addEventListener("click", loadTree, { signal });
+  newFileBtn.addEventListener("click", createFile, { signal });
+  newFolderBtn.addEventListener("click", createFolder, { signal });
   document.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
       e.preventDefault();
       save();
     }
-  });
+  }, { signal });
   window.addEventListener("beforeunload", (e) => {
     if (dirty) {
       e.preventDefault();
       e.returnValue = "";
     }
-  });
+  }, { signal });
 
   status(`Files up to ${maxKiB} KiB can be edited.`);
   await loadTree();
+
+  return () => {
+    ac.abort();
+    editor.destroy();
+  };
 }
 
 // ---- editor (CodeMirror 6 with textarea fallback) --------------------------
@@ -345,9 +327,9 @@ function indentPref(value) {
   return { style: "tab" };
 }
 
-async function createEditor(host, onChange, settings) {
+async function createEditor(host, onChange, settings, signal) {
   try {
-    return await createCodeMirror(host, onChange, settings);
+    return await createCodeMirror(host, onChange, settings, signal);
   } catch (err) {
     console.warn("CodeMirror unavailable, using textarea", err);
     return createTextarea(host, onChange, settings);
@@ -392,7 +374,7 @@ const LANGS = {
   java: ["lang-java@6.0.1", "java", null],
 };
 
-async function createCodeMirror(host, onChange, settings) {
+async function createCodeMirror(host, onChange, settings, signal) {
   const [cm, state, view, commands, language, theme] = await Promise.all([
     import("codemirror"),
     import("@codemirror/state"),
@@ -503,7 +485,7 @@ async function createCodeMirror(host, onChange, settings) {
 
   // Re-measure when the viewport changes (orientation flip resizes the editor
   // box; CodeMirror must re-layout or it paints nothing for the new size).
-  window.addEventListener("resize", () => editorView.requestMeasure());
+  window.addEventListener("resize", () => editorView.requestMeasure(), { signal });
 
   return {
     async setValue(text, filename) {
@@ -528,6 +510,9 @@ async function createCodeMirror(host, onChange, settings) {
     },
     getIndent: effectiveIndent,
     applySetting,
+    destroy() {
+      editorView.destroy();
+    },
   };
 }
 
@@ -582,6 +567,7 @@ function createTextarea(host, onChange, settings) {
     },
     getIndent: effectiveIndent,
     applySetting,
+    destroy() {},
   };
 }
 
@@ -683,47 +669,39 @@ function escapeHtml(s) {
 // null when cancelled/empty.
 async function promptName(kind, dir) {
   const where = dir ? `${dir}/` : "project root";
-  const title = `New ${kind}`;
-  if (window.Swal) {
-    const r = await Swal.fire({
-      title,
-      html: `<div class="text-secondary small mb-2">in <code>${escapeHtml(where)}</code></div>`,
-      input: "text",
-      inputPlaceholder: kind === "folder" ? "folder name" : "file name",
-      showCancelButton: true,
-      confirmButtonText: "Create",
-      cancelButtonText: "Cancel",
-      reverseButtons: true,
-      background: "#1f2937",
-      color: "#f8fafc",
-      inputValidator: (v) => (v && v.trim() ? undefined : "Please enter a name."),
-    });
-    return r.isConfirmed && r.value ? r.value.trim() : null;
-  }
-  const v = prompt(`New ${kind} in ${where}`, "");
-  return v && v.trim() ? v.trim() : null;
+  return promptText({
+    title: `New ${kind}`,
+    html: `<div class="text-secondary small mb-2">in <code>${escapeHtml(where)}</code></div>`,
+    placeholder: kind === "folder" ? "folder name" : "file name",
+    confirmText: "Create",
+    validatorMessage: "Please enter a name.",
+  });
 }
 
 function confirmDelete(path) {
-  if (window.Swal) {
-    return Swal.fire({
-      title: `Delete "${path}"?`,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "Delete",
-      cancelButtonText: "Cancel",
-      reverseButtons: true,
-      background: "#1f2937",
-      color: "#f8fafc",
-    }).then((r) => r.isConfirmed);
-  }
-  return Promise.resolve(confirm(`Delete "${path}"?`));
+  return confirmDialog({ title: `Delete "${path}"?`, confirmText: "Delete" });
 }
 
-const editorRoot = document.querySelector("[data-editor]");
-if (editorRoot) {
-  init(editorRoot).catch((err) => {
-    console.error("editor init failed", err);
-    if (window.notifyError) window.notifyError("Editor failed to load. Reload the page to try again.");
-  });
+class Editor extends HTMLElement {
+  connectedCallback() {
+    if (this.inited) return;
+    this.inited = true;
+    init(this)
+      .then((teardown) => {
+        if (this.isConnected) this.teardown = teardown;
+        else teardown();
+      })
+      .catch((err) => {
+        console.error("editor init failed", err);
+        notifyError("Editor failed to load. Reload the page to try again.");
+      });
+  }
+
+  disconnectedCallback() {
+    this.teardown?.();
+    this.teardown = null;
+    this.inited = false;
+  }
 }
+
+customElements.define("dc-editor", Editor);

@@ -1,4 +1,4 @@
-window.createRepeater = (fire, initialDelay, repeatInterval) => {
+export function createRepeater(fire, initialDelay, repeatInterval) {
   let delayTimer = null;
   let repeatTimer = null;
   const stop = () => {
@@ -19,4 +19,4 @@ window.createRepeater = (fire, initialDelay, repeatInterval) => {
     }, initialDelay);
   };
   return { start, stop };
-};
+}

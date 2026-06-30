@@ -4,10 +4,10 @@
   <div class="row g-2 align-items-center">
     <div class="col min-w-0">
       {{template "project_breadcrumb.gohtml" .ProjectName}}
-      <div class="min-w-0" data-shell-rename>
-        <h2 class="page-title text-truncate mb-0" data-shell-name role="button" tabindex="0" title="Click to rename">{{.Shell.Name}}</h2>
-        <input type="text" class="form-control d-none" data-shell-name-input maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Shell name" value="{{.Shell.Name}}">
-      </div>
+      <dc-inline-rename class="min-w-0" rename-url="{{.RenameURL}}" title-suffix=" - Dev Cockpit">
+        <h2 class="page-title text-truncate mb-0" data-rename-label role="button" tabindex="0" title="Click to rename">{{.Shell.Name}}</h2>
+        <input type="text" class="form-control d-none" data-rename-input maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Shell name" value="{{.Shell.Name}}">
+      </dc-inline-rename>
     </div>
     <div class="col-auto ms-auto">
       <form method="post" action="/shells/{{.Shell.Identifier}}/delete" data-confirm="Delete shell &quot;{{.Shell.Name}}&quot;?" data-confirm-button="Delete">
@@ -45,9 +45,10 @@
 </div>
 
 <div class="attach-page min-w-0">
-  <div id="session-terminal" class="attach-terminal min-w-0 w-100 position-relative">
+  <session-attach id="session-terminal" class="attach-terminal min-w-0 w-100 position-relative"
+                  stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
     <session-scroll-zone active aria-hidden="false"></session-scroll-zone>
-  </div>
+  </session-attach>
 
   <div class="attach-footer min-w-0">
     <div class="attach-mobile">
@@ -102,22 +103,12 @@
   </div>
 </div>
 
-<script>
-  window.__SESSION_ATTACH_CONFIG__ = {
-    streamUrl: {{.StreamURL}},
-    resizeUrl: {{.ResizeURL}},
-    inputUrl: {{.InputURL}},
-    renameUrl: {{.RenameURL}},
-    scrollHistory: true,
-    csrfToken: {{.CSRFToken}}
-  };
-</script>
-<script src="{{asset "/js/timer-repeater.js"}}"></script>
-<script src="{{asset "/js/session-direction-pad.js"}}"></script>
-<script src="{{asset "/js/session-scroll-zone.js"}}"></script>
-<script src="{{asset "/js/session-terminal-setting-select.js"}}"></script>
-<script src="{{asset "/js/session-attach.js"}}"></script>
-<script src="{{asset "/js/session-attach-controls.js"}}"></script>
-<script src="{{asset "/js/shell-rename.js"}}"></script>
+<session-input input-url="{{.InputURL}}" scroll-history></session-input>
+<script type="module" src="{{asset "/js/components/session-terminal-setting-select.js"}}"></script>
+<script type="module" src="{{asset "/js/components/session-scroll-zone.js"}}"></script>
+<script type="module" src="{{asset "/js/components/session-direction-pad.js"}}"></script>
+<script type="module" src="{{asset "/js/components/session-attach.js"}}"></script>
+<script type="module" src="{{asset "/js/components/session-input.js"}}"></script>
+<script type="module" src="{{asset "/js/components/inline-rename.js"}}"></script>
 {{template "app_end.gohtml" .}}
 {{end}}

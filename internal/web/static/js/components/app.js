@@ -1,3 +1,8 @@
+import { installErrorHandler } from "@dc/toast";
+import { confirm } from "@dc/dialog";
+
+installErrorHandler();
+
 // Deletes a form's target via fetch and removes its row from the list instead of
 // reloading the page. Falls back to a normal submit on any failure.
 function ajaxDelete(form) {
@@ -8,8 +13,8 @@ function ajaxDelete(form) {
     method: "POST",
     body: new URLSearchParams(new FormData(form)),
   })
-    .then((r) => {
-      if (!r.ok) throw new Error("delete failed");
+    .then((response) => {
+      if (!response.ok) throw new Error("delete failed");
       if (row) row.remove();
       // Drop the inner list once its last real entry is gone (a collapse toggle
       // doesn't count). Leaves the section header + "New" affordance, matching an
@@ -17,7 +22,6 @@ function ajaxDelete(form) {
       if (list && list.querySelectorAll(".list-group-item:not([data-collapse-toggle])").length === 0) {
         list.remove();
       }
-      // Recompute the collapse toggle/counts for the changed card.
       if (card) document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: card } }));
     })
     .catch(() => {
@@ -36,9 +40,9 @@ function ajaxRefresh(form) {
     method: "POST",
     body: new URLSearchParams(new FormData(form)),
   })
-    .then((r) => {
-      if (!r.ok) throw new Error("submit failed");
-      return r.text();
+    .then((response) => {
+      if (!response.ok) throw new Error("submit failed");
+      return response.text();
     })
     .then((html) => {
       const fresh = card
@@ -54,7 +58,7 @@ function ajaxRefresh(form) {
     });
 }
 
-document.addEventListener("submit", (event) => {
+document.addEventListener("submit", async (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement) || !form.dataset.confirm) {
     return;
@@ -64,28 +68,21 @@ document.addEventListener("submit", (event) => {
     return;
   }
   event.preventDefault();
-  Swal.fire({
+  const confirmed = await confirm({
     title: form.dataset.confirm,
-    icon: "warning",
-    showCancelButton: true,
-    confirmButtonText: form.dataset.confirmButton || "Confirm",
-    cancelButtonText: "Cancel",
-    reverseButtons: true,
-    background: "#1f2937",
-    color: "#f8fafc",
-  }).then((result) => {
-    if (!result.isConfirmed) {
-      return;
-    }
-    if (form.dataset.ajaxDelete !== undefined) {
-      ajaxDelete(form);
-      return;
-    }
-    if (form.dataset.ajaxRefresh !== undefined) {
-      ajaxRefresh(form);
-      return;
-    }
-    form.dataset.confirmed = "true";
-    form.requestSubmit();
+    confirmText: form.dataset.confirmButton || "Confirm",
   });
+  if (!confirmed) {
+    return;
+  }
+  if (form.dataset.ajaxDelete !== undefined) {
+    ajaxDelete(form);
+    return;
+  }
+  if (form.dataset.ajaxRefresh !== undefined) {
+    ajaxRefresh(form);
+    return;
+  }
+  form.dataset.confirmed = "true";
+  form.requestSubmit();
 });

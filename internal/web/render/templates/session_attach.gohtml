@@ -44,9 +44,10 @@
 </div>
 
 <div class="attach-page min-w-0">
-  <div id="session-terminal" class="attach-terminal min-w-0 w-100 position-relative">
+  <session-attach id="session-terminal" class="attach-terminal min-w-0 w-100 position-relative"
+                  stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}">
     <session-scroll-zone active aria-hidden="false"></session-scroll-zone>
-  </div>
+  </session-attach>
 
   <div class="attach-footer min-w-0">
     <div class="attach-mobile">
@@ -147,20 +148,12 @@
   </div>
 </div>
 
-<script>
-  window.__SESSION_ATTACH_CONFIG__ = {
-    streamUrl: {{.StreamURL}},
-    resizeUrl: {{.ResizeURL}},
-    inputUrl: {{.InputURL}},
-    csrfToken: {{.CSRFToken}}
-  };
-</script>
-<script src="{{asset "/js/timer-repeater.js"}}"></script>
-<script src="{{asset "/js/session-direction-pad.js"}}"></script>
-<script src="{{asset "/js/session-scroll-zone.js"}}"></script>
-<script src="{{asset "/js/session-terminal-setting-select.js"}}"></script>
-<script src="{{asset "/js/session-file-upload.js"}}"></script>
-<script src="{{asset "/js/session-attach.js"}}"></script>
-<script src="{{asset "/js/session-attach-controls.js"}}"></script>
+<session-input input-url="{{.InputURL}}"></session-input>
+<script type="module" src="{{asset "/js/components/session-terminal-setting-select.js"}}"></script>
+<script type="module" src="{{asset "/js/components/session-scroll-zone.js"}}"></script>
+<script type="module" src="{{asset "/js/components/session-direction-pad.js"}}"></script>
+<script type="module" src="{{asset "/js/components/session-file-upload.js"}}"></script>
+<script type="module" src="{{asset "/js/components/session-attach.js"}}"></script>
+<script type="module" src="{{asset "/js/components/session-input.js"}}"></script>
 {{template "app_end.gohtml" .}}
 {{end}}

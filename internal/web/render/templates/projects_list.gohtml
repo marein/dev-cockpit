@@ -11,6 +11,7 @@
   </div>
 </div>
 {{if .Projects}}
+<dc-project-list>
 <div class="mb-3">
   <div class="d-flex gap-2 align-items-start">
     <div class="input-icon flex-fill">
@@ -99,7 +100,7 @@
         </a>
       </div>
       {{if or .ActiveSessionRefs .InactiveSessionRefs}}
-      <div class="list-group list-group-flush" data-collapse-list>
+      <dc-collapse-list class="list-group list-group-flush">
         {{range .ActiveSessionRefs}}
         <div class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
           <span class="status-dot status-green flex-shrink-0" aria-hidden="true"></span>
@@ -128,7 +129,7 @@
           </form>
         </div>
         {{end}}
-      </div>
+      </dc-collapse-list>
       {{end}}
     </div>
 
@@ -144,7 +145,7 @@
         </form>
       </div>
       {{if .ShellRefs}}
-      <div class="list-group list-group-flush" data-collapse-list>
+      <dc-collapse-list class="list-group list-group-flush">
         {{range .ShellRefs}}
         <div class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
           <span class="status-dot status-green flex-shrink-0" aria-hidden="true"></span>
@@ -156,7 +157,7 @@
           </form>
         </div>
         {{end}}
-      </div>
+      </dc-collapse-list>
       {{end}}
     </div>
   </div>
@@ -167,6 +168,7 @@
   <div class="empty-icon"><i class="ti ti-search fs-1"></i></div>
   <p class="empty-title">No projects match.</p>
 </div>
+</dc-project-list>
 {{else}}
 <div class="empty">
   <div class="empty-icon"><i class="ti ti-folder fs-1"></i></div>
@@ -176,8 +178,7 @@
   </div>
 </div>
 {{end}}
-<script src="{{asset "/js/project-filter.js"}}" defer></script>
-<script src="{{asset "/js/project-sort.js"}}" defer></script>
-<script src="{{asset "/js/list-collapse.js"}}" defer></script>
+<script type="module" src="{{asset "/js/components/project-list.js"}}"></script>
+<script type="module" src="{{asset "/js/components/collapse-list.js"}}"></script>
 {{template "app_end.gohtml" .}}
 {{end}}

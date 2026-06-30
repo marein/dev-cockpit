@@ -1,5 +1,5 @@
 {{define "quicknav.gohtml"}}
-<div class="quicknav dropup d-print-none">
+<dc-quicknav class="quicknav dropup d-print-none">
   <button type="button" class="btn btn-icon quicknav-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Sessions and projects" title="Sessions and projects">
     <i class="ti ti-layout-grid quicknav-ico-open"></i>
     <i class="ti ti-x quicknav-ico-close"></i>
@@ -7,7 +7,7 @@
   <div class="dropdown-menu dropdown-menu-end quicknav-menu" data-quicknav-url="/quicknav">
     <div class="quicknav-list">{{template "quicknav_items.gohtml" .}}</div>
   </div>
-</div>
+</dc-quicknav>
 {{end}}
 
 {{define "quicknav_items.gohtml"}}

@@ -1,8 +1,17 @@
-(() => {
-  const config = window.__SESSION_ATTACH_CONFIG__ || {};
-  const inputUrl = config.inputUrl;
-  const csrfToken = config.csrfToken || "";
-  const scrollHistory = Boolean(config.scrollHistory);
+import { createRepeater } from "@dc/repeater";
+import { notifyError } from "@dc/toast";
+import { postJSON, ensureOk } from "@dc/http";
+
+function initSessionInput(host) {
+  const inputUrl = host.getAttribute("input-url");
+  const scrollHistory = host.hasAttribute("scroll-history");
+
+  const ac = new AbortController();
+  const signal = ac.signal;
+  const repeaters = [];
+  const listen = (target, type, handler, opts) => {
+    if (target) target.addEventListener(type, handler, { ...opts, signal });
+  };
 
   const SCROLL_CONTROLS = {
     "page-up": "scroll-up",
@@ -33,7 +42,7 @@
     ctrlToggle.setAttribute("aria-pressed", armed ? "true" : "false");
   };
   if (ctrlToggle) {
-    ctrlToggle.addEventListener("click", () => setCtrlArmed(!ctrlArmed));
+    listen(ctrlToggle, "click", () => setCtrlArmed(!ctrlArmed));
   }
 
   const keyMap = {
@@ -75,19 +84,7 @@
   };
 
   const performSessionInput = async (items) => {
-    const headers = { "Content-Type": "application/json", Accept: "application/json" };
-    if (csrfToken) {
-      headers["X-CSRF-Token"] = csrfToken;
-    }
-    const response = await fetch(inputUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ items }),
-    });
-    if (!response.ok) {
-      const fallback = "Could not send input to the terminal.";
-      throw new Error(window.errorText ? await window.errorText(response, fallback) : fallback);
-    }
+    await ensureOk(await postJSON(inputUrl, { items }), "Could not send input to the terminal.");
   };
 
   const pumpSessionInputs = async () => {
@@ -104,9 +101,7 @@
         } catch (requestError) {
           // Surface a clean message (e.g. "Your session has expired…") through
           // the shared toast channel; dedup collapses a burst of keystrokes.
-          if (window.notifyError) {
-            window.notifyError(requestError.message);
-          }
+          notifyError(requestError.message);
         }
       }
     } finally {
@@ -127,7 +122,7 @@
   };
 
   const bindInput = (input) => {
-    input.addEventListener("keydown", (event) => {
+    listen(input, "keydown", (event) => {
       if (event.key === "Tab" && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         void sendSessionInput({ control: "shift-tab" });
@@ -166,7 +161,7 @@
       }
     });
 
-    input.addEventListener("beforeinput", (event) => {
+    listen(input, "beforeinput", (event) => {
       if (event.isComposing) {
         return;
       }
@@ -191,14 +186,14 @@
       void sendSessionInput({ text: event.data });
     });
 
-    input.addEventListener("compositionend", (event) => {
+    listen(input, "compositionend", (event) => {
       input.value = "";
       if (event.data) {
         void sendSessionInput({ text: event.data });
       }
     });
 
-    input.addEventListener("paste", (event) => {
+    listen(input, "paste", (event) => {
       const pastedText = event.clipboardData?.getData("text") ?? "";
       if (!pastedText) {
         return;
@@ -212,24 +207,24 @@
   }
 
   if (promptModalElement && promptModalTextarea) {
-    promptModalElement.addEventListener("shown.bs.modal", () => {
+    listen(promptModalElement, "shown.bs.modal", () => {
       promptModalTextarea.focus();
       promptModalTextarea.select();
     });
-    promptModalElement.addEventListener("hidden.bs.modal", () => {
+    listen(promptModalElement, "hidden.bs.modal", () => {
       promptModalTextarea.value = "";
     });
   }
 
   for (const button of promptModalOpenButtons) {
-    button.addEventListener("click", () => {
+    listen(button, "click", () => {
       window.setTimeout(() => {
         promptModalTextarea?.focus();
       }, 0);
     });
   }
 
-  promptModalForm?.addEventListener("submit", (event) => {
+  listen(promptModalForm, "submit", (event) => {
     event.preventDefault();
     const prompt = promptModalTextarea?.value ?? "";
     if (prompt === "") {
@@ -242,7 +237,7 @@
     }
   });
 
-  promptModalTextarea?.addEventListener("keydown", (event) => {
+  listen(promptModalTextarea, "keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
       promptModalForm?.requestSubmit();
@@ -258,7 +253,8 @@
     const fire = () => {
       void sendSessionInput({ control });
     };
-    const repeater = window.createRepeater(fire, REPEAT_INITIAL_DELAY, REPEAT_INTERVAL);
+    const repeater = createRepeater(fire, REPEAT_INITIAL_DELAY, REPEAT_INTERVAL);
+    repeaters.push(repeater);
     const start = (event) => {
       if (event.button !== undefined && event.button !== 0) {
         return;
@@ -267,12 +263,12 @@
       repeater.start();
       suppressClick = true;
     };
-    button.addEventListener("pointerdown", start);
-    button.addEventListener("pointerup", repeater.stop);
-    button.addEventListener("pointerleave", repeater.stop);
-    button.addEventListener("pointercancel", repeater.stop);
-    button.addEventListener("blur", repeater.stop);
-    button.addEventListener("click", (event) => {
+    listen(button, "pointerdown", start);
+    listen(button, "pointerup", repeater.stop);
+    listen(button, "pointerleave", repeater.stop);
+    listen(button, "pointercancel", repeater.stop);
+    listen(button, "blur", repeater.stop);
+    listen(button, "click", (event) => {
       if (suppressClick) {
         event.preventDefault();
         suppressClick = false;
@@ -280,7 +276,7 @@
       }
       fire();
     });
-    button.addEventListener("keydown", (event) => {
+    listen(button, "keydown", (event) => {
       if (event.repeat) {
         return;
       }
@@ -290,7 +286,7 @@
         suppressClick = true;
       }
     });
-    button.addEventListener("keyup", (event) => {
+    listen(button, "keyup", (event) => {
       if (event.key === " " || event.key === "Enter") {
         repeater.stop();
       }
@@ -299,18 +295,15 @@
 
   const pasteFromClipboard = async () => {
     if (!navigator.clipboard?.readText) {
-      if (window.notifyError) {
-        window.notifyError("Clipboard paste is not available on this device.");
-      }
+      notifyError("Clipboard paste is not available on this device.");
       return;
     }
     let text = "";
     try {
       text = await navigator.clipboard.readText();
     } catch (error) {
-      if (window.notifyError) {
-        window.notifyError("Could not read the clipboard.");
-      }
+      void error;
+      notifyError("Could not read the clipboard.");
       return;
     }
     if (text) {
@@ -318,12 +311,12 @@
     }
   };
   for (const button of document.querySelectorAll("[data-session-paste]")) {
-    button.addEventListener("click", () => {
+    listen(button, "click", () => {
       void pasteFromClipboard();
     });
   }
 
-  document.addEventListener("session-control", (event) => {
+  listen(document, "session-control", (event) => {
     const control = event.detail?.control;
     if (typeof control === "string" && control !== "") {
       void sendSessionInput({ control });
@@ -332,10 +325,31 @@
 
   // Raw terminal bytes emitted by xterm when a desktop client types straight
   // into the terminal (see session-attach.js).
-  document.addEventListener("session-input", (event) => {
+  listen(document, "session-input", (event) => {
     const raw = event.detail?.raw;
     if (typeof raw === "string" && raw !== "") {
       void sendSessionInput({ raw });
     }
   });
-})();
+
+  return () => {
+    ac.abort();
+    repeaters.forEach((repeater) => repeater.stop());
+  };
+}
+
+class SessionInput extends HTMLElement {
+  connectedCallback() {
+    if (this.inited) return;
+    this.inited = true;
+    this.teardown = initSessionInput(this);
+  }
+
+  disconnectedCallback() {
+    this.teardown?.();
+    this.teardown = null;
+    this.inited = false;
+  }
+}
+
+customElements.define("session-input", SessionInput);

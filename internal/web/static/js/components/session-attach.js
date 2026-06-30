@@ -1,24 +1,20 @@
-(() => {
-  const config = window.__SESSION_ATTACH_CONFIG__ || {};
-  const streamUrl = config.streamUrl;
-  const resizeUrl = config.resizeUrl;
-  const csrfToken = config.csrfToken || "";
+import { notifyError, notifySuccess, notifyInfo } from "@dc/toast";
+import { postForm } from "@dc/http";
 
-  const terminalElement = document.getElementById("session-terminal");
+function initSessionAttach(host) {
+  const streamUrl = host.getAttribute("stream-url");
+  const resizeUrl = host.getAttribute("resize-url");
+  const scrollHistory = host.hasAttribute("scroll-history");
+
+  const ac = new AbortController();
+  const signal = ac.signal;
+  const listen = (target, type, handler, opts) => {
+    if (target) target.addEventListener(type, handler, { ...opts, signal });
+  };
+
+  const terminalElement = host;
   const streamRefreshButtons = document.querySelectorAll("[data-session-refresh]");
 
-  // A working connection needs no chrome — the terminal output is the feedback.
-  // We only surface genuine, non-recoverable failures, through the same toast
-  // channel as the rest of the app.
-  const notifyError = (message) => {
-    if (window.notifyError) window.notifyError(message);
-  };
-  const notifySuccess = (message) => {
-    if (window.notifySuccess) window.notifySuccess(message);
-  };
-  const notifyInfo = (message) => {
-    if (window.notifyInfo) window.notifyInfo(message);
-  };
   const fontSizeSetting = document.querySelector('session-terminal-setting-select[setting="font-size"]');
   const rowsSetting = document.querySelector('session-terminal-setting-select[setting="rows"]');
 
@@ -238,7 +234,7 @@
       }
       const alt = serverModes.altScreen || term.buffer.active.type === "alternate";
       if (alt) {
-        if (config.scrollHistory) {
+        if (scrollHistory) {
           const app = serverModes.appCursor || Boolean(term.modes && term.modes.applicationCursorKeysMode);
           sendRaw(down ? (app ? "\x1bOB" : "\x1b[B") : (app ? "\x1bOA" : "\x1b[A"));
         } else {
@@ -246,13 +242,13 @@
         }
         return;
       }
-      if (config.scrollHistory) {
+      if (scrollHistory) {
         sendControl(down ? "scroll-line-down" : "scroll-line-up");
       }
     };
 
     if (interactiveInput) {
-      terminalElement.addEventListener("wheel", (event) => {
+      listen(terminalElement, "wheel", (event) => {
         if (event.ctrlKey) {
           return; // leave pinch-zoom to the browser
         }
@@ -292,7 +288,7 @@
       const rect = screen.getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     };
-    document.addEventListener("session-scroll", (event) => {
+    listen(document, "session-scroll", (event) => {
       const detail = event.detail || {};
       const centre = contentCentre() || { x: detail.clientX, y: detail.clientY };
       if (detail.step === "down") {
@@ -381,10 +377,10 @@
       scheduleAnchorIntoView();
     });
     if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", scheduleAnchorIntoView);
+      listen(window.visualViewport, "resize", scheduleAnchorIntoView);
     }
 
-    cursorInput.addEventListener("focus", () => {
+    listen(cursorInput, "focus", () => {
       placeCursorInput();
       scheduleAnchorIntoView();
     });
@@ -476,7 +472,7 @@
     return term.getSelection();
   };
 
-  document.addEventListener("copy", (event) => {
+  listen(document, "copy", (event) => {
     const selection = terminalSelection();
     if (!selection) {
       return;
@@ -485,7 +481,7 @@
     event.preventDefault();
   });
 
-  terminalElement.addEventListener("contextmenu", (event) => {
+  listen(terminalElement, "contextmenu", (event) => {
     const selection = terminalSelection();
     if (!selection || !navigator.clipboard) {
       return;
@@ -711,16 +707,9 @@
       connectStream(Math.max(term.cols, 2), Math.max(term.rows, 2));
       return;
     }
-    const response = await fetch(resizeUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
-      },
-      body: new URLSearchParams({
-        cols: String(Math.max(term.cols, 2)),
-        rows: String(Math.max(term.rows, 2)),
-      }),
+    const response = await postForm(resizeUrl, {
+      cols: String(Math.max(term.cols, 2)),
+      rows: String(Math.max(term.rows, 2)),
     });
     const responseText = await response.text();
     if (!response.ok) {
@@ -761,10 +750,10 @@
   };
 
   // ---- Wiring ----------------------------------------------------------------
-  terminalElement.addEventListener("scroll", syncFollowOutput);
+  listen(terminalElement, "scroll", syncFollowOutput);
 
   for (const button of streamRefreshButtons) {
-    button.addEventListener("click", (event) => {
+    listen(button, "click", (event) => {
       event.preventDefault();
       setRefreshing(true);
       notifyInfo("Reconnecting to the terminal…");
@@ -775,12 +764,12 @@
     });
   }
 
-  window.addEventListener("resize", scheduleResize);
-  fontSizeSetting?.addEventListener("session-terminal-setting-change", (event) => {
+  listen(window, "resize", scheduleResize);
+  listen(fontSizeSetting, "session-terminal-setting-change", (event) => {
     fontSizeOverride = Number(event.detail?.value) || DEFAULT_FONT_SIZE;
     scheduleResize();
   });
-  rowsSetting?.addEventListener("session-terminal-setting-change", (event) => {
+  listen(rowsSetting, "session-terminal-setting-change", (event) => {
     rowsOverride = Number(event.detail?.value) || DEFAULT_ROWS;
     scheduleResize();
   });
@@ -795,7 +784,7 @@
   measureElementObserver.observe(document.body, { childList: true });
   hostMeasureElements();
 
-  window.addEventListener("beforeunload", () => {
+  listen(window, "beforeunload", () => {
     source?.close();
     if (resizeTimer !== null) {
       window.clearTimeout(resizeTimer);
@@ -806,4 +795,29 @@
   syncFollowOutput();
   // Initial connect; a real failure surfaces through the stream's own handlers.
   void performResize().catch(() => {});
-})();
+
+  return () => {
+    ac.abort();
+    source?.close();
+    measureElementObserver?.disconnect();
+    if (resizeTimer !== null) window.clearTimeout(resizeTimer);
+    if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+    term.dispose();
+  };
+}
+
+class SessionAttach extends HTMLElement {
+  connectedCallback() {
+    if (this.inited) return;
+    this.inited = true;
+    this.teardown = initSessionAttach(this);
+  }
+
+  disconnectedCallback() {
+    this.teardown?.();
+    this.teardown = null;
+    this.inited = false;
+  }
+}
+
+customElements.define("session-attach", SessionAttach);
