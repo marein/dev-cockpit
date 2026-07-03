@@ -12,9 +12,9 @@ import (
 )
 
 // scrollLineStep is how many history lines one "line-up"/"line-down" scroll
-// action moves. A wheel notch maps to a single step, so this is the line-wise
-// scroll granularity (kept coarse enough not to feel jittery).
-const scrollLineStep = 3
+// action moves. A wheel notch maps to a single step, so one notch scrolls
+// exactly one line.
+const scrollLineStep = 1
 
 // streamHub tracks the active browser streams per tmux session and owns the
 // control-mode client backing each one. All state is guarded by mu.

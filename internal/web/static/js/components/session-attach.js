@@ -195,7 +195,6 @@ function initSessionAttach(host) {
     const WHEEL_PIXELS_PER_NOTCH = 100;
     const WHEEL_LINES_PER_NOTCH = 3;
     let wheelAccum = 0;
-    let lastWheelDown = null; // last wheel direction sent (for reversal priming)
 
     const sendRaw = (seq) =>
       document.dispatchEvent(new CustomEvent("session-input", { detail: { raw: seq } }));
@@ -220,15 +219,6 @@ function initSessionAttach(host) {
         const seq = mouse.sgr
           ? "\x1b[<" + button + ";" + col + ";" + row + "M"
           : "\x1b[M" + String.fromCharCode(32 + button, 32 + Math.min(col, 223), 32 + Math.min(row, 223));
-        // Claude eats the first wheel event of a scroll interaction (it resets
-        // its scroll velocity) — both the very first after load and the first
-        // after a direction change. Prime it with one extra event in those
-        // cases; same-direction repeats need no priming. The desktop wheel hides
-        // this by emitting a burst of events per notch.
-        if (lastWheelDown !== down) {
-          sendRaw(seq); // null on load, or a flipped direction
-        }
-        lastWheelDown = down;
         sendRaw(seq);
         return;
       }
@@ -274,8 +264,12 @@ function initSessionAttach(host) {
       }, { capture: true, passive: false });
     }
 
-    // Mobile swipe (session-scroll-zone): a locked swipe repeats one per-program
-    // scroll step on a timer, exactly like a wheel notch — discrete, no momentum.
+    // Mobile swipe (session-scroll-zone): the zone streams finger travel as
+    // pixel deltas (drag and fling alike), accumulated here and converted into
+    // per-program steps so content tracks the finger 1:1. One step moves one
+    // line of content, so a line step costs one cell height of travel; the
+    // page-per-step pager (copilot) moves a screen per step and costs half a
+    // screen of travel per page.
     // Anchor the synthesized wheel at the content centre rather than the finger,
     // so mouse-reporting programs (claude) always get it over their scrollable
     // area like a desktop wheel — a finger near the input row would otherwise
@@ -288,12 +282,34 @@ function initSessionAttach(host) {
       const rect = screen.getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     };
+    const swipeStepPx = () => {
+      const screen = terminalElement.querySelector(".xterm-screen");
+      const cell = screen && term.rows >= 1 ? screen.clientHeight / term.rows : 17;
+      const alt = serverModes.altScreen || term.buffer.active.type === "alternate";
+      if (!mouse.tracking && alt && !scrollHistory && screen) {
+        return Math.max(cell, screen.clientHeight / 2);
+      }
+      return Math.max(cell, 4);
+    };
+    let swipeAccum = 0;
     listen(document, "session-scroll", (event) => {
       const detail = event.detail || {};
+      if (detail.begin) {
+        swipeAccum = 0;
+      }
+      const dy = Number(detail.dy) || 0;
+      if (dy === 0) {
+        return;
+      }
+      swipeAccum -= dy; // finger up = toward newer output = scroll down
+      const stepPx = swipeStepPx();
       const centre = contentCentre() || { x: detail.clientX, y: detail.clientY };
-      if (detail.step === "down") {
+      while (swipeAccum >= stepPx) {
+        swipeAccum -= stepPx;
         scrollStep(true, centre.x, centre.y);
-      } else if (detail.step === "up") {
+      }
+      while (swipeAccum <= -stepPx) {
+        swipeAccum += stepPx;
         scrollStep(false, centre.x, centre.y);
       }
     });

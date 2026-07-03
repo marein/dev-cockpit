@@ -12,7 +12,8 @@ const { assert, sleep } = L;
 //   - Mobile (coarse pointer, matchMedia): read-only mirror, a hidden
 //     #session-cursor-input at the cursor cell sends text, an .attach-cursor overlay
 //     mirrors the cursor, and the .attach-mobile toolbar is the interaction surface
-//     (control buttons + auto-repeat, ctrl modifier, copy mode, paste).
+//     (control buttons + auto-repeat, ctrl modifier, copy mode, paste). Swipe
+//     scrolling on the session-scroll-zone overlay: proportional drag + fling.
 // Terminal paints to <canvas> (CanvasAddon, several stacked layers, no .xterm-rows);
 // read text from the .attach-selection mirror. Uses a throwaway shell (safe target).
 // Routes: /shells/:id, /shells/:id/input, /shells/:id/resize, /shells/:id/stream.
@@ -114,6 +115,48 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       assert(/ctrl-c/.test((await reqP).postData() || ""), "expected ctrl-c");
       assert((await ctrlBtn.getAttribute("aria-pressed")) === "false", "ctrl did not disarm");
     });
+
+    // Swipe scrolling (session-scroll-zone): finger travel streams px deltas that
+    // session-attach converts into per-program steps (here: tmux history controls,
+    // scroll-line-up/down). Synthetic PointerEvents on the shadow .zone stand in
+    // for a touch drag; a fast release starts a decaying fling that keeps posting
+    // steps after pointerup (velocity capped by the measured input round trip).
+    await run("mobile: swipe drag posts proportional history steps", async () => {
+      const reqP = mp.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST" && /scroll-line-up/.test(r.postData() || ""), { timeout: 8000 });
+      await mp.evaluate(async () => {
+        const zone = document.querySelector("session-scroll-zone").shadowRoot.querySelector(".zone");
+        const rect = zone.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        let y = rect.top + rect.height / 3;
+        const ev = (type, opts) => zone.dispatchEvent(new PointerEvent(type, Object.assign({ bubbles: true, composed: true, pointerId: 7, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, clientX: x, clientY: y }, opts)));
+        const tick = () => new Promise((resolve) => setTimeout(resolve, 16));
+        ev("pointerdown", {});
+        for (let i = 0; i < 10; i++) { y += 18; ev("pointermove", { clientY: y }); await tick(); }
+        ev("pointerup", { buttons: 0, clientY: y });
+      });
+      await reqP;
+    });
+
+    await run("mobile: fling keeps scrolling after release", async () => {
+      const posts = [];
+      const onReq = (r) => { if (/\/input$/.test(r.url()) && r.method() === "POST" && /scroll-line-down/.test(r.postData() || "")) posts.push(Date.now()); };
+      mp.on("request", onReq);
+      const released = await mp.evaluate(async () => {
+        const zone = document.querySelector("session-scroll-zone").shadowRoot.querySelector(".zone");
+        const rect = zone.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        let y = rect.top + rect.height * 0.7;
+        const ev = (type, opts) => zone.dispatchEvent(new PointerEvent(type, Object.assign({ bubbles: true, composed: true, pointerId: 8, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, clientX: x, clientY: y }, opts)));
+        const tick = () => new Promise((resolve) => setTimeout(resolve, 16));
+        ev("pointerdown", {});
+        for (let i = 0; i < 6; i++) { y -= 30; ev("pointermove", { clientY: y }); await tick(); }
+        ev("pointerup", { buttons: 0, clientY: y });
+        return Date.now();
+      });
+      await sleep(800);
+      mp.off("request", onReq);
+      assert(posts.some((t) => t > released + 120), `no scroll posts after release (${posts.length} total)`);
+    }, { soft: true });
 
     await run("mobile: copy mode toggles the selection mirror", async () => {
       const copyBtn = mp.locator("[data-session-copy]").first();

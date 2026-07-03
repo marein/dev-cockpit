@@ -33,7 +33,7 @@ it; there is no stdlib equivalent that also covers WebKit/Safari).
 | `auth.js` | login, logout, requireAuth, rate limit, session cookie attrs, open-redirect matrix |
 | `projects.js` | list, card, filter, sort, create, delete, collapse (>5) |
 | `editor.js` | tree, open, save, Ctrl+S, new file/folder, recursive delete, settings, highlighting, discard confirm, lifecycle |
-| `terminal.js` | shared attach: desktop canvas typing + mobile mirror/cursor input, controls, ctrl modifier, copy, paste, refresh, setting select |
+| `terminal.js` | shared attach: desktop canvas typing + mobile mirror/cursor input, controls, ctrl modifier, swipe scroll (drag + fling), copy, paste, refresh, setting select |
 | `shells.js` | create, attach, rename (CSRF header), scroll-history, delete |
 | `sessions.js` | new form + agent select, create/attach, prompt (desktop + mobile), files (multi upload, reference, download, delete), stop, resumable |
 | `agents.js` | list, create, edit (id move), delete, validation |

@@ -83,8 +83,14 @@ function initSessionInput(host) {
     return "";
   };
 
+  // Each successful POST reports its round trip; the swipe fling in
+  // session-scroll-zone.js caps its velocity from this measurement.
   const performSessionInput = async (items) => {
+    const started = performance.now();
     await ensureOk(await postJSON(inputUrl, { items }), "Could not send input to the terminal.");
+    document.dispatchEvent(new CustomEvent("session-input-latency", {
+      detail: { ms: performance.now() - started },
+    }));
   };
 
   const pumpSessionInputs = async () => {
