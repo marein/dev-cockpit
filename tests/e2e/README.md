@@ -43,7 +43,7 @@ it; there is no stdlib equivalent that also covers WebKit/Safari).
 | `security.js` | CSRF header path, form path, negative (wrong + empty token) |
 | `frontend.js` | custom elements upgraded, teardown, re-init guard |
 | `overflow.js` | no horizontal overflow at 320/375/768/1366 with long unbreakable names (chromium) |
-| `update.js` | complete self update: check shape, badge + link, changelog dialog, real non-destructive apply (`MODE=available`); no-update (`MODE=uptodate`) |
+| `update.js` | complete self update: check shape, daily auto modal (once per day per version via localStorage, new version prompts again), badge + link, changelog dialog, real non-destructive apply (`MODE=available`); no-update (`MODE=uptodate`) |
 | `provider-claude.js` | session create/attach/prompt against `--provider claude` (`BASE_URL` to a claude instance) |
 
 ## Instances a full run needs

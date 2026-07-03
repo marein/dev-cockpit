@@ -6,6 +6,10 @@ export function available() {
   return Boolean(window.Swal);
 }
 
+export function isVisible() {
+  return Boolean(window.Swal && window.Swal.isVisible());
+}
+
 function nativeMessage({ title, text } = {}) {
   return [title, text].filter(Boolean).join("\n\n");
 }

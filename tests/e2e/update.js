@@ -1,8 +1,8 @@
 // Complete self update coverage. Point BASE_URL at a throwaway started with
 // DEV_COCKPIT_UPDATE_API_URL. MODE=available (default) expects a stub advertising a
-// higher version with real assets, and drives check -> badge -> changelog dialog ->
-// real (non destructive) apply. MODE=uptodate expects a stub returning [] and checks
-// the no-update state. Apply re-execs into the same repackaged binary, so the
+// higher version with real assets, and drives check -> daily auto modal -> badge ->
+// changelog dialog -> real (non destructive) apply. MODE=uptodate expects a stub
+// returning [] and checks the no-update state. Apply re-execs into the same repackaged binary, so the
 // instance restarts healthy without a real version change.
 const { chromium } = require("playwright-core");
 const L = require("./lib");
@@ -54,8 +54,44 @@ async function pollHealth(ctx, timeoutMs) {
         for (let i = 0; i < 20; i++) { st = await footerState(); if (!st.badge && /up to date/i.test(st.text)) break; await sleep(400); }
         assert(!st.badge, "badge visible with no update");
         assert(/up to date/i.test(st.text), `footer link text: '${st.text}'`);
+        const open = await page.evaluate(() => Boolean(document.querySelector(".swal2-container")));
+        assert(!open, "unexpected auto modal with no update");
       });
     } else {
+      await run("update: available -> daily modal auto-opens once, not again within a day", async () => {
+        await page.evaluate(() => localStorage.removeItem("dcUpdate"));
+        await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(".swal2-title", { state: "visible", timeout: 10000 });
+        const title = await page.textContent(".swal2-title");
+        assert(/Update to/i.test(title), `auto modal title: ${title}`);
+        const st = await page.evaluate(() => JSON.parse(localStorage.getItem("dcUpdate") || "{}"));
+        assert((st.prompted || 0) > 0, "prompted timestamp not saved");
+        assert(st.promptedVersion, "promptedVersion not saved");
+        await page.click(".swal2-cancel").catch(() => page.keyboard.press("Escape"));
+        await sleep(400);
+        await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
+        await sleep(2500);
+        const reopened = await page.evaluate(() => Boolean(document.querySelector(".swal2-container")));
+        assert(!reopened, "modal reopened within a day");
+        return `title='${title}' promptedVersion=${st.promptedVersion}`;
+      });
+
+      await run("update: newer version than last prompted -> modal reopens despite daily gate", async () => {
+        await page.evaluate(() => {
+          const st = JSON.parse(localStorage.getItem("dcUpdate") || "{}");
+          st.promptedVersion = "998.0.0";
+          localStorage.setItem("dcUpdate", JSON.stringify(st));
+        });
+        await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(".swal2-title", { state: "visible", timeout: 10000 });
+        const title = await page.textContent(".swal2-title");
+        assert(/Update to/i.test(title), `modal title: ${title}`);
+        const version = await page.evaluate(() => (JSON.parse(localStorage.getItem("dcUpdate") || "{}").promptedVersion || ""));
+        assert(version && version !== "998.0.0", `promptedVersion not advanced: ${version}`);
+        await page.click(".swal2-cancel").catch(() => page.keyboard.press("Escape"));
+        await sleep(400);
+      });
+
       await run("update: higher version -> badge shown + footer 'Update to' link", async () => {
         await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
         let st = { badge: false, text: "" };
@@ -66,7 +102,11 @@ async function pollHealth(ctx, timeoutMs) {
 
       await run("update: changelog dialog shows version + notes + apply button", async () => {
         await page.locator("dc-update-check a[data-update-open]").first().click();
-        await page.waitForSelector(".swal2-title", { state: "visible", timeout: 8000 });
+        await page.waitForFunction(
+          () => /update to/i.test((document.querySelector(".swal2-title") || {}).textContent || ""),
+          null,
+          { timeout: 8000 },
+        );
         const title = await page.textContent(".swal2-title");
         assert(/Update to/i.test(title), `dialog title: ${title}`);
         const bodyText = await page.evaluate(() => (document.querySelector(".swal2-html-container") || {}).textContent || "");

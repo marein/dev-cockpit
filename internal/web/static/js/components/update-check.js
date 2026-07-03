@@ -3,6 +3,7 @@ import { errorText } from "@dc/toast";
 import { csrfHeaders } from "@dc/http";
 
 const INTERVAL = 5 * 60 * 1000;
+const PROMPT_INTERVAL = 24 * 60 * 60 * 1000;
 const KEY = "dcUpdate";
 
 // Footer update indicator and apply flow. Polls /update/check on an interval
@@ -115,6 +116,16 @@ class UpdateCheck extends HTMLElement {
     if (!status.supported) return;
     this.renderFooter(status);
     this.renderFlags(status);
+    this.maybePrompt(status);
+  }
+
+  maybePrompt(status) {
+    if (!status.available) return;
+    if (dialog.isVisible()) return;
+    const state = this.loadState();
+    if (state.promptedVersion === status.latest && Date.now() - (state.prompted || 0) < PROMPT_INTERVAL) return;
+    this.saveState({ prompted: Date.now(), promptedVersion: status.latest });
+    this.confirmUpdate(status);
   }
 
   footerLink(className, text) {
