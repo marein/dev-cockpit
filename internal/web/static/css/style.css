@@ -7,8 +7,11 @@ html { scroll-padding-top: 1.5rem; }
   padding-right: env(safe-area-inset-right);
 }
 
+.min-w-0 { min-width: 0 !important; }
+
 .attach-page { display: flex; flex-direction: column; gap: 0.5rem; min-height: 100%; }
-.page-header > .row { min-width: 0; max-width: 100%; }
+.page-header { flex-wrap: nowrap; }
+.page-header > * { min-width: 0; max-width: 100%; }
 .attach-terminal {
   flex: 1 1 auto; min-height: 16rem;
   border: 1px solid var(--tblr-border-color);

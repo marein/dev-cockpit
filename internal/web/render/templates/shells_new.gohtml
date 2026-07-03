@@ -1,14 +1,10 @@
 {{define "shells_new.gohtml"}}
 {{template "app_start.gohtml" .}}
 <div class="page-header d-print-none mb-3">
-  <div class="row align-items-center">
-    <div class="col">
-      <div class="page-pretitle">
-        <a href="/projects" class="link-secondary text-decoration-none"><i class="ti ti-arrow-left me-1"></i>Projects</a>
-      </div>
-      <h2 class="page-title">Start shell</h2>
-    </div>
+  <div class="page-pretitle">
+    <a href="/projects" class="link-secondary text-decoration-none"><i class="ti ti-arrow-left me-1"></i>Projects</a>
   </div>
+  <h2 class="page-title">Start shell</h2>
 </div>
 <div class="card">
   <form method="post" action="/shells/new">

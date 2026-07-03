@@ -15,6 +15,15 @@ test. Update this file when a convention changes.
 - **Forms:** POST action path must equal the GET path that renders it (pairs in
   `internal/web/router.go`, e.g. `/sessions/new`). Backlinks, login redirect, and
   post then redirect depend on it. New form, add both routes on one path.
+- **Page headers:** one pattern everywhere: `page-header d-print-none mb-3`,
+  inside it pretitle/breadcrumb plus `page-title`. Pages with a right side action
+  wrap both in `d-flex align-items-center gap-2` with the title block as
+  `flex-fill min-w-0` and the action as `flex-shrink-0`. No `row`/`col` in
+  headers. Tabler's `.page-header` is a wrapping flex column, so style.css clamps
+  every direct child (`min-width: 0; max-width: 100%`), otherwise long
+  unbreakable names widen the layout. Page specific controls (for example the
+  terminal font size and rows selects) belong to the content below, not into the
+  header.
 
 ## Frontend
 

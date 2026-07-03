@@ -46,12 +46,16 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
     });
 
     await run("desktop: terminal setting select persists font-size", async () => {
-      const sel = await page.$("session-terminal-setting-select select");
-      assert(sel, "no setting select");
-      const opts = await sel.$$eval("option", (os) => os.map((o) => o.value));
-      await sel.selectOption(opts.find((v) => v) || opts[0]);
+      const root = 'session-terminal-setting-select[setting="font-size"]';
+      const toggle = await page.$(`${root} .dropdown-toggle`);
+      assert(toggle, "no setting dropdown");
+      await toggle.click();
+      const item = await page.waitForSelector(`${root} .dropdown-menu.show .dropdown-item:not(.active)`, { timeout: 4000 });
+      const value = await item.evaluate((el) => el.dataset.value);
+      await item.click();
       await sleep(300);
-      assert(await page.evaluate(() => localStorage.getItem("session-terminal-font-size")) !== null, "font-size not persisted");
+      assert(await page.evaluate(() => localStorage.getItem("session-terminal-font-size")) === value, "font-size not persisted");
+      assert((await page.$eval(`${root} .dropdown-toggle span`, (el) => el.textContent)) === value, "toggle label not updated");
     });
 
     await run("desktop: refresh stream reconnects (no error)", async () => {

@@ -2,7 +2,7 @@ import { get, set } from "@dc/store";
 
 class SessionTerminalSettingSelect extends HTMLElement {
   connectedCallback() {
-    if (this.select) {
+    if (this.ac) {
       return;
     }
     this.ac = new AbortController();
@@ -10,17 +10,15 @@ class SessionTerminalSettingSelect extends HTMLElement {
     this.storageKey = (this.getAttribute("storage-key") || "").trim();
     this.options = this.readOptions();
     this.defaultValue = this.normalizeValue(this.getAttribute("default-value") || "", this.options[0] || "");
+    this.currentValue = this.restoreValue();
     this.render();
-    this.select = this.querySelector("select");
-    this.select.addEventListener("change", () => this.handleChange(), { signal: this.ac.signal });
-    const initialValue = this.restoreValue();
-    this.select.value = initialValue;
   }
 
   disconnectedCallback() {
     this.ac?.abort();
     this.ac = null;
-    this.select = null;
+    this.current = null;
+    this.items = null;
   }
 
   readOptions() {
@@ -55,47 +53,70 @@ class SessionTerminalSettingSelect extends HTMLElement {
   }
 
   render() {
-    const label = document.createElement("label");
-    label.className = "d-flex align-items-center gap-1 mb-0";
-    label.title = this.getAttribute("title") || "";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-sm dropdown-toggle";
+    button.setAttribute("data-bs-toggle", "dropdown");
+    button.setAttribute("data-bs-auto-close", "true");
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-label", this.getAttribute("label") || "");
+    button.title = this.getAttribute("title") || "";
 
     const icon = document.createElement("i");
-    icon.className = `ti ti-${(this.getAttribute("icon") || "").trim()} text-secondary`;
+    icon.className = `ti ti-${(this.getAttribute("icon") || "").trim()} me-1`;
     icon.setAttribute("aria-hidden", "true");
 
-    const select = document.createElement("select");
-    select.className = "form-select form-select-sm w-auto";
-    select.setAttribute("aria-label", this.getAttribute("label") || "");
+    this.current = document.createElement("span");
 
-    for (const value of this.options) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = value;
-      select.appendChild(option);
-    }
+    const menu = document.createElement("div");
+    menu.className = "dropdown-menu dropdown-menu-end";
+    menu.style.maxHeight = "50vh";
+    menu.style.overflowY = "auto";
 
-    label.append(icon, select);
+    this.items = this.options.map((value) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "dropdown-item";
+      item.dataset.value = value;
+      item.textContent = value;
+      item.addEventListener("click", () => this.handleSelect(value), { signal: this.ac.signal });
+      menu.appendChild(item);
+      return item;
+    });
+
+    button.append(icon, this.current);
+    this.classList.add("dropdown");
     this.style.display = "inline-flex";
     this.style.flex = "0 0 auto";
-    this.replaceChildren(label);
+    this.replaceChildren(button, menu);
+    this.updateDisplay();
   }
 
-  handleChange() {
-    const value = this.normalizeValue(this.select.value, this.defaultValue);
-    this.select.value = value;
-    this.storeValue(value);
+  updateDisplay() {
+    this.current.textContent = this.currentValue;
+    this.items.forEach((item) => item.classList.toggle("active", item.dataset.value === this.currentValue));
+  }
+
+  handleSelect(value) {
+    const normalized = this.normalizeValue(value, this.defaultValue);
+    if (normalized === this.currentValue) {
+      return;
+    }
+    this.currentValue = normalized;
+    this.storeValue(normalized);
+    this.updateDisplay();
     this.dispatchEvent(new CustomEvent("session-terminal-setting-change", {
       bubbles: true,
       composed: true,
       detail: {
         setting: this.setting,
-        value: parseInt(value, 10),
+        value: parseInt(normalized, 10),
       },
     }));
   }
 
   get value() {
-    return parseInt(this.select?.value || this.defaultValue, 10);
+    return parseInt(this.currentValue || this.defaultValue, 10);
   }
 }
 

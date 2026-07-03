@@ -1,15 +1,15 @@
 {{define "shell_attach.gohtml"}}
 {{template "app_start.gohtml" .}}
 <div class="page-header d-print-none mb-3">
-  <div class="row g-2 align-items-center">
-    <div class="col min-w-0">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
       {{template "project_breadcrumb.gohtml" .ProjectName}}
       <dc-inline-rename class="min-w-0" rename-url="{{.RenameURL}}" title-suffix=" - Dev Cockpit">
         <h2 class="page-title text-truncate mb-0" data-rename-label role="button" tabindex="0" title="Click to rename">{{.Shell.Name}}</h2>
         <input type="text" class="form-control d-none" data-rename-input maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Shell name" value="{{.Shell.Name}}">
       </dc-inline-rename>
     </div>
-    <div class="col-auto ms-auto">
+    <div class="flex-shrink-0">
       <form method="post" action="/shells/{{.Shell.Identifier}}/delete" data-confirm="Delete shell &quot;{{.Shell.Name}}&quot;?" data-confirm-button="Delete">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <button type="submit" class="btn btn-outline-danger btn-icon" aria-label="Delete shell {{.Shell.Name}}" title="Delete">
@@ -18,33 +18,29 @@
       </form>
     </div>
   </div>
-  <div class="row g-2 mt-2">
-    <div class="col-12">
-      <div class="d-flex justify-content-end align-items-center gap-2 flex-wrap">
-        <session-terminal-setting-select
-          setting="font-size"
-          storage-key="session-terminal-font-size"
-          default-value="14"
-          options="10,11,12,13,14,15,16,18,20,24"
-          icon="typography"
-          label="Font size"
-          title="Font size"
-        ></session-terminal-setting-select>
-        <session-terminal-setting-select
-          setting="rows"
-          storage-key="session-terminal-rows"
-          default-value="30"
-          options="30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000"
-          icon="arrows-vertical"
-          label="Rows"
-          title="Visible rows"
-        ></session-terminal-setting-select>
-      </div>
-    </div>
-  </div>
 </div>
 
 <div class="attach-page min-w-0">
+  <div class="d-flex justify-content-end align-items-center gap-2 flex-wrap">
+    <session-terminal-setting-select
+      setting="font-size"
+      storage-key="session-terminal-font-size"
+      default-value="14"
+      options="10,11,12,13,14,15,16,18,20,24"
+      icon="text-size"
+      label="Font size"
+      title="Font size"
+    ></session-terminal-setting-select>
+    <session-terminal-setting-select
+      setting="rows"
+      storage-key="session-terminal-rows"
+      default-value="30"
+      options="30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000"
+      icon="baseline-density-medium"
+      label="Rows"
+      title="Visible rows"
+    ></session-terminal-setting-select>
+  </div>
   <session-attach id="session-terminal" class="attach-terminal min-w-0 w-100 position-relative"
                   stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
     <session-scroll-zone active aria-hidden="false"></session-scroll-zone>

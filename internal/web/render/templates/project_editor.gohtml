@@ -1,12 +1,8 @@
 {{define "project_editor.gohtml"}}
 {{template "app_start.gohtml" .}}
 <div class="page-header d-print-none mb-3">
-  <div class="row align-items-center">
-    <div class="col">
-      {{template "project_breadcrumb.gohtml" .Project.Name}}
-      <h2 class="page-title text-break">Editor</h2>
-    </div>
-  </div>
+  {{template "project_breadcrumb.gohtml" .Project.Name}}
+  <h2 class="page-title text-break">Editor</h2>
 </div>
 
 <dc-editor class="card editor"
