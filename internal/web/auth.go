@@ -144,6 +144,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		User:         user,
 		MultiCoder:   s.multiCoder(),
 		QuickNav:     s.quicknav(c),
+		Jingle:       s.selectedJingle(),
 	}
 }
 

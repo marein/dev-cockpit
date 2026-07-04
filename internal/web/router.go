@@ -79,6 +79,14 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/instructions", s.handleInstructionsEdit)
 	auth.POST("/instructions", s.handleInstructionsUpdate)
 
+	auth.GET("/settings", s.handleSettings)
+	auth.GET("/settings/notifications", s.handleSettingsNotifications)
+	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
+
+	auth.GET("/notifications", s.handleNotificationsList)
+	auth.GET("/notifications/stream", s.handleNotificationsStream)
+	auth.POST("/notifications/read", s.handleNotificationsRead)
+
 	auth.GET("/update/check", s.handleUpdateCheck)
 	auth.POST("/update/apply", s.handleUpdateApply)
 

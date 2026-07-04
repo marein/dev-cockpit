@@ -173,7 +173,7 @@ func (s *Shells) Start(workdir, name string) (string, error) {
 			return "", fmt.Errorf(`Shell "%s" already exists.`, key)
 		}
 	}
-	if err := s.tmux.NewSession(key, dir, "exec bash -il", nil); err != nil {
+	if err := s.tmux.NewSession(key, dir, "exec bash -il", shellMarkEnv()); err != nil {
 		return "", err
 	}
 	if err := s.tmux.SetOption(key, shellNameOption, label); err != nil {

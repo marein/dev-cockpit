@@ -18,13 +18,15 @@ type ProjectNav struct {
 	// feed the project browser's client-side sort (same modes as the list page).
 	Active       bool
 	LastUsedUnix int64
+	HasNews      bool
 }
 
 // ProjectNavItem is one navigable resource. URL points at the attach page for
 // active sessions and shells, and at the resume action for inactive sessions.
 type ProjectNavItem struct {
-	ID    string
-	Name  string
-	URL   string
-	Coder string // owning coder id, shown when several coders run
+	ID      string
+	Name    string
+	URL     string
+	Coder   string // owning coder id, shown when several coders run
+	HasNews bool
 }

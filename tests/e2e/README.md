@@ -46,6 +46,7 @@ it; there is no stdlib equivalent that also covers WebKit/Safari).
 | `security.js` | CSRF header path, form path, negative (wrong + empty token) |
 | `frontend.js` | custom elements upgraded, teardown, re-init guard |
 | `overflow.js` | no horizontal overflow at 320/375/768/1366 with long unbreakable names (chromium) |
+| `notifications.js` | bell + center (dc-notifications, desktop + mobile), SSE badge/toast/title counter, blue-dot markers on projects list + quick nav, settings volume bar + jingle picker, dedupe window, visibility auto-read, live toast dismissal, shell command completion (real `sleep`, OSC 133 marks, /shells link), mark read/all; event injection needs the instance's notify dir mounted (`-v <state-dir>/notification-inbox:/inbox -e NOTIFY_DIR=/inbox`), otherwise those checks soft-skip |
 | `update.js` | complete self update: check shape, daily auto modal (once per day per version via localStorage, new version prompts again), badge + link, changelog dialog, real non-destructive apply (`MODE=available`); no-update (`MODE=uptodate`) |
 | `coder-claude.js` | coder create/attach/prompt with the claude coder picked in the form (needs the claude CLI on the host) |
 | `multi-coder.js` | coder select on new session, coder tabs on agents/skills/instructions, coder badges, quicknav labels; `MODE=single` asserts the adaptive parts stay off (only applies on hosts with a single coder CLI) |

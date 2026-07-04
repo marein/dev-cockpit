@@ -38,6 +38,7 @@ func (s *Server) handleProjectsList(c *gin.Context) {
 // (cached); callers that need a fresh one (the list page) Invalidate beforehand.
 func (s *Server) projectsWithRunners() []project.Project {
 	projects := s.projects.List()
+	news := s.notifier.UnreadTargets()
 	for i := range projects {
 		for j := range s.coders {
 			coderID := s.coders[j].ID()
@@ -46,22 +47,26 @@ func (s *Server) projectsWithRunners() []project.Project {
 				if filesystem.IsUnder(active.CWD, projects[i].Path) {
 					projects[i].ActiveCoders++
 					projects[i].ActiveCoderRefs = append(projects[i].ActiveCoderRefs, project.CoderRef{
-						ID:    active.Identifier,
-						Name:  active.Name,
-						Coder: coderID,
-						At:    active.StartedAt,
+						ID:      active.Identifier,
+						Name:    active.Name,
+						Coder:   coderID,
+						At:      active.StartedAt,
+						HasNews: news[active.Identifier],
 					})
+					projects[i].HasNews = projects[i].HasNews || news[active.Identifier]
 				}
 			}
 			for _, inactive := range snap.Inactive {
 				if filesystem.IsUnder(inactive.CWD, projects[i].Path) {
 					projects[i].InactiveCoders++
 					projects[i].InactiveCoderRefs = append(projects[i].InactiveCoderRefs, project.CoderRef{
-						ID:    inactive.SessionID,
-						Name:  inactive.Name,
-						Coder: coderID,
-						At:    inactive.UpdatedAt,
+						ID:      inactive.SessionID,
+						Name:    inactive.Name,
+						Coder:   coderID,
+						At:      inactive.UpdatedAt,
+						HasNews: news[inactive.SessionID],
 					})
+					projects[i].HasNews = projects[i].HasNews || news[inactive.SessionID]
 				}
 			}
 		}
@@ -79,9 +84,11 @@ func (s *Server) projectsWithRunners() []project.Project {
 		for j := range shells {
 			if filesystem.IsUnder(shells[j].CWD, projects[i].Path) {
 				projects[i].ShellRefs = append(projects[i].ShellRefs, project.ShellRef{
-					ID:   shells[j].Identifier,
-					Name: shells[j].Name,
+					ID:      shells[j].Identifier,
+					Name:    shells[j].Name,
+					HasNews: news[shells[j].Identifier],
 				})
+				projects[i].HasNews = projects[i].HasNews || news[shells[j].Identifier]
 			}
 		}
 		sort.Slice(projects[i].ShellRefs, func(a, b int) bool {

@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#111827">
   <meta name="csrf-token" content="{{.CSRFToken}}">
+  <meta name="dc-jingle" content="{{.Jingle}}">
   <title>{{if .Title}}{{.Title}} - {{end}}{{$appName}}</title>
   <link rel="icon" href="{{asset "/favicon.svg"}}" type="image/svg+xml">
   <link rel="apple-touch-icon" href="{{asset "/app-icon-180.png"}}">
@@ -30,6 +31,8 @@
       "@dc/toast": "{{asset "/js/dc/toast.js"}}",
       "@dc/dialog": "{{asset "/js/dc/dialog.js"}}",
       "@dc/http": "{{asset "/js/dc/http.js"}}",
+      "@dc/jingle": "{{asset "/js/dc/jingle.js"}}",
+      "@marein/js-scriptune": "https://cdn.jsdelivr.net/npm/@marein/js-scriptune@0.0.1/src/scriptune.min.js",
       "@codemirror/autocomplete": "https://cdn.jsdelivr.net/npm/@codemirror/autocomplete@6.17.0/dist/index.js",
       "@codemirror/commands": "https://cdn.jsdelivr.net/npm/@codemirror/commands@6.6.0/dist/index.js",
       "@codemirror/lang-cpp": "https://cdn.jsdelivr.net/npm/@codemirror/lang-cpp@6.0.2/dist/index.js",
@@ -121,13 +124,15 @@
             <span>{{$appName}}</span>
           </a>
         </div>
-        <div class="d-md-none">
+        <div class="d-md-none d-flex align-items-center gap-2">
           <button type="button" class="js-update-flag d-none btn btn-icon btn-outline-primary" data-update-open aria-label="Update available">
             <i class="ti ti-arrow-up-circle"></i>
           </button>
-          <span class="navbar-toggler invisible js-update-spacer" aria-hidden="true" tabindex="-1">
+          {{if .User}}<dc-notifications></dc-notifications>{{else}}
+          <span class="navbar-toggler invisible" aria-hidden="true" tabindex="-1">
             <span class="navbar-toggler-icon"></span>
           </span>
+          {{end}}
         </div>
       </div>
     </header>
@@ -168,6 +173,12 @@
                       <span class="nav-link-title">Skills</span>
                     </a>
                   </li>
+                  <li class="nav-item">
+                    <a class="nav-link {{if eq .ActiveTab "settings"}}active{{end}}" href="/settings/notifications">
+                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-settings"></i></span>
+                      <span class="nav-link-title">Settings</span>
+                    </a>
+                  </li>
                   {{if .User}}
                   <li class="nav-item d-md-none">
                     <hr class="my-2">
@@ -190,6 +201,7 @@
                   <button type="button" class="js-update-flag d-none btn btn-sm btn-outline-primary" data-update-open>
                     <i class="ti ti-arrow-up-circle me-1"></i><span class="nav-link-title">Update available</span>
                   </button>
+                  <dc-notifications></dc-notifications>
                   <form method="post" action="/logout">
                     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
                     <button type="submit" class="nav-link px-0">
@@ -240,6 +252,7 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script type="module" src="{{asset "/js/components/app.js"}}"></script>
   <script type="module" src="{{asset "/js/components/update-check.js"}}"></script>
+  <script type="module" src="{{asset "/js/components/notifications.js"}}"></script>
   <script type="module" src="{{asset "/js/components/quicknav.js"}}"></script>
 </body>
 </html>{{end}}

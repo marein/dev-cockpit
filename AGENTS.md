@@ -64,6 +64,56 @@ free floating page scripts.
   components never read or thread the token. Server rendered forms keep their
   hidden `csrf_token` field for plain and ajax form posts.
 
+## Notifications
+
+A notification means one thing: the coder or shell has news (turn finished,
+question asked, permission wanted, shell command done). Events are
+deliberately not classified further, a target holds at most one unread entry,
+and follow-up signals within 30s of a fresh unread entry are swallowed.
+Signals are coder-native, no pane-content parsing: claude sessions get
+Stop/Notification hooks injected via `--settings`, copilot sessions ring BEL
+through the CLI's global `beep` setting (enabled at startup when copilot is
+active), which a read-only control-mode bell watcher per running session
+picks up (`internal/coder/bellwatch.go`; it never resizes panes). Shells get
+OSC 133 prompt marks injected via `PS0`/`PROMPT_COMMAND`
+(`internal/shell/shellwatch.go`): every foreground command counts as news
+when the prompt returns (bare prompt redraws stay silent), and a BEL in a
+shell counts too (an rc file overwriting those variables silently turns the
+marks off). The serve process also polls one inbox per coder
+(`<state-dir>/notification-inbox/<coder>`), the generic ingestion seam: claude
+hooks drop their JSON there, and the e2e suite injects events through it.
+State persists to `<state-dir>/notifications.json` (one list like the recent
+projects store) and fans out over SSE at `/notifications/stream`; a state dir
+belongs to one serve process, a second process on the same dir would miss
+live pushes. The `dc-notifications` element owns bell, badge, center, toasts,
+and the title counter; the SSE channel is shared module state because the
+element mounts once per header breakpoint. Opening an attach page marks that
+target read. Entries always start unread; the dc-notifications client
+reconciles on every SSE event (including the initial one after a reconnect)
+and on visibilitychange: when the target's own page is open in a visible tab
+(Page Visibility API) and that target is unread, it posts a target-level
+read. The whole notification (badge, title counter, list dots, toast, jingle)
+waits out a short grace period (750ms), held per target in the client, so a
+read racing across tabs surfaces nothing at all; the read drops the held
+target before it ever shows, and a hidden tab then lets it through so sound
+reaches the user from background tabs. The
+projects list and the quick nav mark coders and shells with unread news (blue
+animated status dot on the row and on the project; blue is the notification
+color everywhere, red stays reserved for errors); the marks render
+server-side and stay fresh because the projects page renders per navigation
+and the quick nav refetches on every open. On top of that, dc-notifications
+updates opted-in DOM live over its SSE channel: `[data-notify-count]` badges
+(the quick nav toggle), `[data-notify-target]` dots and
+`[data-notify-project-dot]` (the projects page). A toast also plays a jingle
+from `@dc/jingle` (composed for `@marein/js-scriptune`, loaded via the import
+map from jsDelivr). Volume lives in scriptune's own localStorage
+key (`scriptune-master-volume`, default 100%, 0 = off, per device); the
+jingle selection is cross-device state in `<state-dir>/settings.json`
+(`internal/settings`), rendered into the `dc-jingle` meta tag on every page
+and edited on the settings page (`/settings/notifications`:
+`dc-notify-volume`, `dc-jingle-picker`). Jingle ids in `handlers_settings.go`
+and `@dc/jingle` must stay in sync.
+
 ## Build and run
 
 dev-cockpit runs on the host, not in a container. Host-specific build, run, and

@@ -38,6 +38,7 @@ func (s *Server) handleQuickNav(c *gin.Context) {
 // buildQuickNav assembles the quick nav targets for the given page context.
 func (s *Server) buildQuickNav(currentID, nameParam, currentPath string) render.QuickNav {
 	qn := render.QuickNav{CurrentID: currentID}
+	news := s.notifier.UnreadTargets()
 	for i := range s.coders {
 		coderID := s.coders[i].ID()
 		for _, r := range s.coders[i].Snapshot().Running {
@@ -47,6 +48,7 @@ func (s *Server) buildQuickNav(currentID, nameParam, currentPath string) render.
 				URL:     "/coders/" + r.Identifier,
 				Project: s.projects.ProjectNameFor(r.CWD),
 				Coder:   coderID,
+				HasNews: news[r.Identifier],
 			})
 		}
 	}
@@ -56,6 +58,7 @@ func (s *Server) buildQuickNav(currentID, nameParam, currentPath string) render.
 			Name:    sh.Name,
 			URL:     "/shells/" + sh.Identifier,
 			Project: s.projects.ProjectNameFor(sh.CWD),
+			HasNews: news[sh.Identifier],
 		})
 	}
 	sortByProject(qn.Coders)

@@ -18,7 +18,10 @@ type Coder struct {
 	controls     terminal.ControlMapper
 }
 
-func New() *Coder {
+// New builds the claude coder. notifyInbox is the directory the injected
+// Stop/Notification hooks drop their event files into; empty disables the
+// hook injection.
+func New(notifyInbox string) *Coder {
 	home, err := filesystem.HomeDir()
 	if err != nil {
 		home = "/root"
@@ -30,7 +33,7 @@ func New() *Coder {
 		sessions:     &sessionRepository{stateRoot: stateRoot},
 		skills:       coder.NewStandardSkillRepository(filepath.Join(home, ".claude", "skills")),
 		instructions: coder.NewFileGlobalInstructions(filepath.Join(home, ".claude", "CLAUDE.md")),
-		runtime:      runtime{},
+		runtime:      runtime{notifyInbox: notifyInbox},
 		controls:     controlMapper{base: terminal.DefaultControlMapper()},
 	}
 }

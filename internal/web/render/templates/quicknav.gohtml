@@ -3,6 +3,7 @@
   <button type="button" class="btn btn-icon quicknav-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Coders and projects" title="Coders and projects">
     <i class="ti ti-layout-grid quicknav-ico-open"></i>
     <i class="ti ti-x quicknav-ico-close"></i>
+    <span class="dc-notify-badge d-none" data-notify-count aria-hidden="true">0</span>
   </button>
   <div class="dropdown-menu dropdown-menu-end quicknav-menu" data-quicknav-url="/quicknav">
     <div class="quicknav-list">{{template "quicknav_items.gohtml" .}}</div>
@@ -43,7 +44,7 @@
     <h6 class="dropdown-header">Coders</h6>
     {{range .QuickNav.Coders}}
     <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-      <span class="status-dot status-green flex-shrink-0"></span>
+      <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0"></span>
       <span class="d-flex flex-column min-w-0">
         <span class="d-flex align-items-center gap-2 min-w-0">
           <span class="text-truncate flex-fill">{{.Name}}</span>
@@ -61,7 +62,7 @@
     <h6 class="dropdown-header">Shells</h6>
     {{range .QuickNav.Shells}}
     <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-      <span class="status-dot status-green flex-shrink-0"></span>
+      <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0"></span>
       <span class="d-flex flex-column min-w-0">
         <span class="text-truncate">{{.Name}}</span>
         {{if .Project}}<span class="text-secondary small text-truncate"><i class="ti ti-folder me-1"></i>{{.Project}}</span>{{end}}
@@ -82,7 +83,7 @@
         <button type="button" class="dropdown-item d-flex align-items-center gap-2 {{if eq .Name $.QuickNav.CurrentProject}}active{{end}}" data-pb-drill="{{.Name}}" data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}"{{if eq .Name $.QuickNav.CurrentProject}} aria-current="true"{{end}}>
           <i class="ti ti-folder flex-shrink-0"></i>
           <span class="text-truncate">{{.Name}}</span>
-          <i class="ti ti-chevron-right ms-auto flex-shrink-0"></i>
+          {{if .HasNews}}<span class="status-dot status-dot-animated status-blue ms-auto flex-shrink-0"></span><i class="ti ti-chevron-right flex-shrink-0"></i>{{else}}<i class="ti ti-chevron-right ms-auto flex-shrink-0"></i>{{end}}
         </button>
         {{end}}
         {{if not .QuickNav.AllProjects}}<span class="dropdown-item-text text-secondary small">No projects</span>{{end}}
@@ -101,7 +102,7 @@
         <div data-qn-fold="{{.Name}}-coders">
         {{range .ActiveCoders}}
         <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-          <span class="status-dot status-green flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
+          <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
           {{if $.MultiCoder}}<span class="text-secondary small quicknav-coder" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{end}}
         </a>
         {{end}}
@@ -109,7 +110,7 @@
         <form method="post" action="{{.URL}}">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <button type="submit" class="dropdown-item d-flex align-items-center gap-2">
-            <span class="status-dot flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
+            <span class="status-dot{{if .HasNews}} status-dot-animated status-blue{{end}} flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
             {{if $.MultiCoder}}<span class="text-secondary small quicknav-coder" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{end}}
           </button>
         </form>
@@ -123,7 +124,7 @@
         <div data-qn-fold="{{.Name}}-shells">
         {{range .Shells}}
         <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-          <span class="status-dot status-green flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
+          <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
         </a>
         {{end}}
         </div>

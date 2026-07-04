@@ -11,14 +11,17 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/local/dev-cockpit/internal/clirun"
 	"github.com/local/dev-cockpit/internal/coder"
 	coderclaude "github.com/local/dev-cockpit/internal/coder/claude"
 	codercopilot "github.com/local/dev-cockpit/internal/coder/copilot"
 	"github.com/local/dev-cockpit/internal/config"
+	"github.com/local/dev-cockpit/internal/notify"
 	"github.com/local/dev-cockpit/internal/project"
 	"github.com/local/dev-cockpit/internal/recent"
+	"github.com/local/dev-cockpit/internal/settings"
 	"github.com/local/dev-cockpit/internal/shell"
 	"github.com/local/dev-cockpit/internal/tmux"
 	"github.com/local/dev-cockpit/internal/web"
@@ -156,7 +159,7 @@ func runServe(opts serveOptions) error {
 	}
 	tmuxClient := tmux.New()
 	projectRepo := project.NewRepository(cfg.ProjectsRoot, recent.New(filepath.Join(cfg.StateDir, "recent-projects.json")))
-	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New())
+	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude")))
 	selected, err := selectProviders(registry)
 	if err != nil {
 		return err
@@ -172,7 +175,31 @@ func runServe(opts serveOptions) error {
 	}
 	shells := shell.NewShells(cfg, tmuxClient, projectRepo)
 
-	srv, err := web.NewServer(cfg, coders, shells, projectRepo, resolveVersion())
+	notifier := notify.NewService(
+		notify.StorePath(cfg.StateDir),
+		notifyResolver(coders, shells, projectRepo),
+	)
+	for _, c := range selected {
+		go notifier.RunInbox(notify.InboxDir(cfg.StateDir, c.ID()), time.Second)
+	}
+	go shells.RunCommandWatch(3*time.Second, func(shellID string) {
+		notifier.Add(shellID)
+	})
+	for _, m := range coders {
+		if m.ID() != "copilot" {
+			continue
+		}
+		if err := codercopilot.EnsureBeepSetting(); err != nil {
+			log.Printf("copilot beep setting: %v", err)
+		}
+		go m.RunBellWatch(3*time.Second, func(targetID string) {
+			notifier.Add(targetID)
+		})
+	}
+
+	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
+
+	srv, err := web.NewServer(cfg, coders, shells, projectRepo, notifier, settingsStore, resolveVersion())
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}
@@ -202,6 +229,43 @@ func selectProviders(registry *coder.Registry) ([]coder.Coder, error) {
 		return nil, fmt.Errorf("no coder CLI found (looked for: %s)", strings.Join(registry.IDs(), ", "))
 	}
 	return selected, nil
+}
+
+// notifyResolver enriches notifications with the name, project, and target
+// page at ingest time, using the cached coder snapshots and shell list so a
+// burst of events never rescans coder state.
+func notifyResolver(coders []*coder.Manager, shells *shell.Shells, projects *project.Repository) notify.Resolver {
+	return func(targetID string) notify.TargetInfo {
+		info := notify.TargetInfo{}
+		for _, m := range coders {
+			snap := m.Snapshot()
+			for _, r := range snap.Running {
+				if r.Identifier == targetID {
+					info.Name = r.Name
+					info.Project = projects.ProjectNameFor(r.CWD)
+					info.URL = "/coders/" + r.Identifier
+					return info
+				}
+			}
+			for _, stored := range snap.Resumable {
+				if stored.SessionID == targetID {
+					info.Name = stored.Name
+					info.Project = projects.ProjectNameFor(stored.CWD)
+					info.URL = "/coders/" + stored.SessionID
+					return info
+				}
+			}
+		}
+		for _, sh := range shells.List() {
+			if sh.Identifier == targetID {
+				info.Name = sh.Name
+				info.Project = projects.ProjectNameFor(sh.CWD)
+				info.URL = "/shells/" + sh.Identifier
+				return info
+			}
+		}
+		return info
+	}
 }
 
 func runHashPassword(stdin *os.File, stdout, stderr io.Writer, cost int) error {

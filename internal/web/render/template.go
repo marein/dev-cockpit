@@ -54,6 +54,9 @@ type Page struct {
 	// coder badges and selectors across the UI.
 	MultiCoder bool
 	QuickNav   QuickNav
+	// Jingle is the cross-device notification jingle selection, rendered into
+	// a meta tag so the client picks the right tune.
+	Jingle string
 }
 
 // CoderTabs feeds the coder switcher shown on coder-scoped pages. The tabs
@@ -92,4 +95,5 @@ type QuickNavTarget struct {
 	URL     string
 	Project string // owning project name, shown under the target
 	Coder   string // owning coder id, shown when several coders run
+	HasNews bool
 }

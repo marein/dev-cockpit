@@ -49,6 +49,7 @@ func (s *Server) handleShellAttach(c *gin.Context) {
 	}
 	projectName := s.projects.ProjectNameFor(sh.CWD)
 	s.projects.Touch(projectName)
+	s.notifier.MarkTargetRead(sh.Identifier)
 	c.HTML(http.StatusOK, "shell_attach.gohtml", render.ShellAttachData{
 		Page:        s.page(c, pageTitle(sh.Name, projectName), "projects"),
 		Shell:       sh,
@@ -84,6 +85,7 @@ func (s *Server) handleShellDelete(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
+	s.notifier.MarkTargetRead(id)
 	s.redirectWithProjectFlash(c, project, "Shell \""+name+"\" deleted.", "")
 }
 

@@ -32,18 +32,21 @@ type Project struct {
 	InactiveCoderRefs []CoderRef
 	ShellRefs         []ShellRef
 	LastUsedUnix      int64 // last time the project was opened; 0 = never
+	HasNews           bool  // any coder or shell below has an unread notification
 }
 
 type CoderRef struct {
-	ID    string
-	Name  string
-	Coder string    // owning coder id, for the badge when several coders run
-	At    time.Time // started (active) or last updated (inactive); for date sorting
+	ID      string
+	Name    string
+	Coder   string    // owning coder id, for the badge when several coders run
+	At      time.Time // started (active) or last updated (inactive); for date sorting
+	HasNews bool      // an unread notification points at this coder
 }
 
 type ShellRef struct {
-	ID   string
-	Name string
+	ID      string
+	Name    string
+	HasNews bool // an unread notification points at this shell
 }
 
 // Repository wraps the on-disk projects root.

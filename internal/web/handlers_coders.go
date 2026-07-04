@@ -93,6 +93,7 @@ func (s *Server) handleCoderAttach(c *gin.Context) {
 	}
 	projectName := s.projects.ProjectNameFor(running.CWD)
 	s.projects.Touch(projectName)
+	s.notifier.MarkTargetRead(running.Identifier)
 	c.HTML(http.StatusOK, "coder_attach.gohtml", render.CoderAttachData{
 		Page:            s.page(c, pageTitle(running.Name, projectName), "projects"),
 		Running:         running,
@@ -146,6 +147,7 @@ func (s *Server) handleCoderStop(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
+	s.notifier.MarkTargetRead(id)
 	s.redirectWithProjectFlash(c, project, "Coder \""+name+"\" stopped.", "")
 }
 
