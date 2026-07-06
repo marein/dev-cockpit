@@ -103,6 +103,15 @@ func (r *sessionRepository) listStored() []storedSession {
 		if err != nil || md.CWD == "" {
 			continue
 		}
+		// A copilot boot with --resume writes an extra empty session-state
+		// record it never returns to. Unnamed records without any conversation
+		// events carry nothing to resume, so they stay out of the list (they
+		// cannot be deleted here either: the resuming process holds a lock).
+		if strings.TrimSpace(md.Name) == "" {
+			if _, err := os.Stat(filepath.Join(filepath.Dir(wsFile), "events.jsonl")); err != nil {
+				continue
+			}
+		}
 		cwd, err := filesystem.ExpandHome(md.CWD)
 		if err != nil {
 			cwd = md.CWD
