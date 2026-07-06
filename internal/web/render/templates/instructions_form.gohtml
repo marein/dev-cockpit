@@ -3,9 +3,11 @@
 <div class="page-header d-print-none mb-3">
   <h2 class="page-title">Instructions</h2>
 </div>
+{{template "coder_tabs.gohtml" .CoderTabs}}
 <div class="card">
   <form method="post" action="/instructions">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="hidden" name="coder" value="{{.SelectedCoder}}">
     <div class="card-body">
       <div class="mb-0">
         <label class="form-label" for="instructions">Global instructions</label>

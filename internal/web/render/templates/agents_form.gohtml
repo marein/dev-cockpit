@@ -6,6 +6,7 @@
 <div class="card">
   <form method="post" action="{{.FormAction}}">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="hidden" name="coder" value="{{.SelectedCoder}}">
     <div class="card-body">
       {{if .IsEdit}}<input type="hidden" name="original_agent_id" value="{{.OriginalID}}">{{end}}
       <div class="mb-3">
@@ -23,7 +24,7 @@
     </div>
     <div class="card-footer">
       <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
-        <a class="btn btn-ghost-secondary" href="/agents">Cancel</a>
+        <a class="btn btn-ghost-secondary" href="/agents{{.CoderQuery}}">Cancel</a>
         <button type="submit" class="btn btn-primary">{{.SubmitLabel}}</button>
       </div>
     </div>

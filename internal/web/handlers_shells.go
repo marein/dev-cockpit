@@ -6,7 +6,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/session"
+	"github.com/local/dev-cockpit/internal/shell"
+	"github.com/local/dev-cockpit/internal/terminal"
 	"github.com/local/dev-cockpit/internal/web/render"
 )
 
@@ -41,35 +42,35 @@ func (s *Server) handleShellCreate(c *gin.Context) {
 
 func (s *Server) handleShellAttach(c *gin.Context) {
 	id := c.Param("id")
-	shell, err := s.shells.ResolveRunning(id)
+	sh, err := s.shells.ResolveRunning(id)
 	if err != nil {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
-	projectName := s.projects.ProjectNameFor(shell.CWD)
+	projectName := s.projects.ProjectNameFor(sh.CWD)
 	s.projects.Touch(projectName)
 	c.HTML(http.StatusOK, "shell_attach.gohtml", render.ShellAttachData{
-		Page:        s.page(c, pageTitle(shell.Name, projectName), "projects"),
-		Shell:       shell,
+		Page:        s.page(c, pageTitle(sh.Name, projectName), "projects"),
+		Shell:       sh,
 		ProjectName: projectName,
-		StreamURL:   "/shells/" + shell.Identifier + "/stream",
-		ResizeURL:   "/shells/" + shell.Identifier + "/resize",
-		InputURL:    "/shells/" + shell.Identifier + "/input",
-		RenameURL:   "/shells/" + shell.Identifier + "/rename",
+		StreamURL:   "/shells/" + sh.Identifier + "/stream",
+		ResizeURL:   "/shells/" + sh.Identifier + "/resize",
+		InputURL:    "/shells/" + sh.Identifier + "/input",
+		RenameURL:   "/shells/" + sh.Identifier + "/rename",
 	})
 }
 
 func (s *Server) handleShellRename(c *gin.Context) {
-	shell, err := s.shells.Rename(c.Param("id"), c.PostForm("name"))
+	sh, err := s.shells.Rename(c.Param("id"), c.PostForm("name"))
 	if err != nil {
-		if errors.Is(err, session.ErrNoActiveSession) {
+		if errors.Is(err, shell.ErrNotRunning) {
 			c.String(http.StatusGone, err.Error())
 			return
 		}
 		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, map[string]string{"name": shell.Name})
+	c.JSON(http.StatusOK, map[string]string{"name": sh.Name})
 }
 
 func (s *Server) handleShellDelete(c *gin.Context) {
@@ -88,21 +89,21 @@ func (s *Server) handleShellDelete(c *gin.Context) {
 
 func (s *Server) handleShellInput(c *gin.Context) {
 	id := c.Param("id")
-	var batch sessionInputBatch
+	var batch terminalInputBatch
 	if err := c.ShouldBindJSON(&batch); err != nil {
 		c.String(http.StatusBadRequest, "Invalid input.")
 		return
 	}
-	if len(batch.Items) > maxSessionInputItems {
+	if len(batch.Items) > maxTerminalInputItems {
 		c.String(http.StatusRequestEntityTooLarge, "Too many input items.")
 		return
 	}
-	items := make([]session.Input, len(batch.Items))
+	items := make([]terminal.Input, len(batch.Items))
 	for i, item := range batch.Items {
-		items[i] = session.Input(item)
+		items[i] = terminal.Input(item)
 	}
 	if err := s.shells.Send(id, items); err != nil {
-		if errors.Is(err, session.ErrNoActiveSession) {
+		if errors.Is(err, shell.ErrNotRunning) {
 			c.String(http.StatusGone, err.Error())
 			return
 		}
@@ -114,7 +115,7 @@ func (s *Server) handleShellInput(c *gin.Context) {
 
 func (s *Server) handleShellResize(c *gin.Context) {
 	id := c.Param("id")
-	var form sessionResizeForm
+	var form terminalResizeForm
 	if err := c.Bind(&form); err != nil {
 		return
 	}

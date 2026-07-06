@@ -48,7 +48,7 @@
 <div class="card projects-card">
   <div class="list-group list-group-flush list-group-hoverable">
   {{range .Projects}}
-  <div class="list-group-item" id="project-{{.Name}}" data-project-name="{{.Name}}" data-project-active="{{if or .ActiveSessionRefs .ShellRefs}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
+  <div class="list-group-item" id="project-{{.Name}}" data-project-name="{{.Name}}" data-project-active="{{if or .ActiveCoderRefs .ShellRefs}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
     {{if and (eq $.FlashProject .Name) $.Flash.Message}}
     <div class="alert alert-{{if eq $.Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible mb-3" role="alert">
       <div class="d-flex">
@@ -92,40 +92,42 @@
       </div>
     </div>
 
-    <div class="mt-3" id="project-{{.Name}}-sessions">
+    <div class="mt-3" id="project-{{.Name}}-coders">
       <div class="d-flex align-items-center gap-2 mb-1">
-        <span class="text-secondary text-uppercase small fw-bold">Sessions</span>
-        <a href="/sessions/new?project={{urlquery .Name}}&amp;return={{urlquery (printf "/projects#project-%s" .Name)}}" class="btn btn-sm btn-icon btn-outline-primary ms-auto" aria-label="Start session in project {{.Name}}" title="New session">
+        <span class="text-secondary text-uppercase small fw-bold">Coders</span>
+        <a href="/coders/new?project={{urlquery .Name}}&amp;return={{urlquery (printf "/projects#project-%s" .Name)}}" class="btn btn-sm btn-icon btn-outline-primary ms-auto" aria-label="Start coder in project {{.Name}}" title="New coder">
           <i class="ti ti-plus"></i>
         </a>
       </div>
-      {{if or .ActiveSessionRefs .InactiveSessionRefs}}
+      {{if or .ActiveCoderRefs .InactiveCoderRefs}}
       <dc-collapse-list class="list-group list-group-flush">
-        {{range .ActiveSessionRefs}}
+        {{range .ActiveCoderRefs}}
         <div class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
           <span class="status-dot status-green flex-shrink-0" aria-hidden="true"></span>
-          <a href="/sessions/{{.ID}}" class="text-reset text-decoration-none text-truncate flex-fill">{{.Name}}</a>
-          <a href="/sessions/{{.ID}}" class="btn btn-sm btn-icon btn-outline-primary" aria-label="Attach to session {{.Name}}" title="Attach"><i class="ti ti-plug-connected"></i></a>
-          <form method="post" action="/sessions/{{.ID}}/stop" data-confirm="Stop session &quot;{{.Name}}&quot;?" data-confirm-button="Stop" data-ajax-refresh>
+          <a href="/coders/{{.ID}}" class="text-reset text-decoration-none text-truncate flex-fill">{{.Name}}</a>
+          {{if $.MultiCoder}}<span class="text-secondary flex-shrink-0" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{end}}
+          <a href="/coders/{{.ID}}" class="btn btn-sm btn-icon btn-outline-primary" aria-label="Attach to coder {{.Name}}" title="Attach"><i class="ti ti-plug-connected"></i></a>
+          <form method="post" action="/coders/{{.ID}}/stop" data-confirm="Stop coder &quot;{{.Name}}&quot;?" data-confirm-button="Stop" data-ajax-refresh>
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Stop session {{.Name}}" title="Stop"><i class="ti ti-player-stop"></i></button>
+            <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Stop coder {{.Name}}" title="Stop"><i class="ti ti-player-stop"></i></button>
           </form>
         </div>
         {{end}}
-        {{range .InactiveSessionRefs}}
+        {{range .InactiveCoderRefs}}
         <div class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
           <span class="status-dot flex-shrink-0" aria-hidden="true"></span>
-          <form method="post" action="/resumable/{{.ID}}/resume" class="flex-fill" style="flex:1 1 auto;min-width:0;">
+          <form method="post" action="/coders/{{.ID}}/resume" class="flex-fill" style="flex:1 1 auto;min-width:0;">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="border-0 bg-transparent p-0 text-reset text-decoration-none text-truncate w-100 text-start" style="cursor:pointer;" title="Resume session {{.Name}}">{{.Name}}</button>
+            <button type="submit" class="border-0 bg-transparent p-0 text-reset text-decoration-none text-truncate w-100 text-start" style="cursor:pointer;" title="Resume coder {{.Name}}">{{.Name}}</button>
           </form>
-          <form method="post" action="/resumable/{{.ID}}/resume">
+          {{if $.MultiCoder}}<span class="text-secondary flex-shrink-0" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{end}}
+          <form method="post" action="/coders/{{.ID}}/resume">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="btn btn-sm btn-icon btn-outline-primary" aria-label="Resume session {{.Name}}" title="Resume"><i class="ti ti-player-play"></i></button>
+            <button type="submit" class="btn btn-sm btn-icon btn-outline-primary" aria-label="Resume coder {{.Name}}" title="Resume"><i class="ti ti-player-play"></i></button>
           </form>
-          <form method="post" action="/resumable/{{.ID}}/delete" data-confirm="Delete inactive session &quot;{{.Name}}&quot;?" data-confirm-button="Delete" data-ajax-delete>
+          <form method="post" action="/coders/{{.ID}}/delete" data-confirm="Delete inactive coder &quot;{{.Name}}&quot;?" data-confirm-button="Delete" data-ajax-delete>
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Delete session {{.Name}}" title="Delete"><i class="ti ti-trash"></i></button>
+            <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Delete coder {{.Name}}" title="Delete"><i class="ti ti-trash"></i></button>
           </form>
         </div>
         {{end}}

@@ -12,10 +12,10 @@ import (
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/project"
-	"github.com/local/dev-cockpit/internal/provider"
-	"github.com/local/dev-cockpit/internal/session"
+	"github.com/local/dev-cockpit/internal/shell"
 	"github.com/local/dev-cockpit/internal/update"
 	"github.com/local/dev-cockpit/internal/web/render"
 )
@@ -26,9 +26,8 @@ var staticAssets embed.FS
 // Server wires HTTP handling against the domain services.
 type Server struct {
 	cfg          config.Config
-	provider     provider.Provider
-	sessions     *session.Sessions
-	shells       *session.Shells
+	coders       []*coder.Manager
+	shells       *shell.Shells
 	projects     *project.Repository
 	version      string
 	updater      *update.Updater
@@ -37,8 +36,11 @@ type Server struct {
 	handler      http.Handler
 }
 
-// NewServer constructs a Server.
-func NewServer(cfg config.Config, selectedProvider provider.Provider, sessions *session.Sessions, shells *session.Shells, projects *project.Repository, version string) (*Server, error) {
+// NewServer constructs a Server serving the given coders.
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, projects *project.Repository, version string) (*Server, error) {
+	if len(coders) == 0 {
+		return nil, fmt.Errorf("at least one coder is required")
+	}
 	assets, err := newStaticAssetManifest()
 	if err != nil {
 		return nil, err
@@ -50,8 +52,7 @@ func NewServer(cfg config.Config, selectedProvider provider.Provider, sessions *
 	}
 	s := &Server{
 		cfg:      cfg,
-		provider: selectedProvider,
-		sessions: sessions,
+		coders:   coders,
 		shells:   shells,
 		projects: projects,
 		version:  version,
@@ -82,7 +83,11 @@ func (s *Server) newHandler() (http.Handler, error) {
 		return nil, fmt.Errorf("set trusted proxies: %w", err)
 	}
 	r.Use(gin.Logger(), gin.CustomRecovery(s.recoveryHandler))
-	r.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithMinLength(1024), gzip.WithCustomShouldCompressFn(shouldGzip)))
+	// No WithMinLength: gin-contrib/gzip (<= v1.2.6) drops its buffered prefix
+	// when a single write of minLength+ bytes arrives while the buffer is still
+	// below the threshold, truncating responses whose head is small chunks
+	// followed by one large one (e.g. the quicknav fragment with an inline SVG).
+	r.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithCustomShouldCompressFn(shouldGzip)))
 
 	store := cookie.NewStore(s.cfg.AuthCookieKey)
 	store.Options(s.sessionCookieOptions(false))

@@ -1,8 +1,8 @@
 const L = require("./lib");
 const { assert, sleep, confirmSwal } = L;
 
-// Shells: plain throwaway terminals, the safe target. Custom elements session-attach,
-// session-input, session-terminal-setting-select, dc-inline-rename. The shared
+// Shells: plain throwaway terminals, the safe target. Custom elements terminal-attach,
+// terminal-input, terminal-setting-select, dc-inline-rename. The shared
 // terminal interaction (typing, controls, copy, scroll) is in terminal.js; this
 // covers what is shell specific. Routes: GET /shells/new, POST /shells/new,
 // GET /shells/:id, POST /shells/:id/{delete,rename,input,resize}, GET .../stream.
@@ -17,11 +17,11 @@ L.runFeature("SHELLS", async ({ page, run }) => {
     await run("create shell -> attach page + dc-inline-rename upgraded", async () => {
       shellUrl = await L.createShell(page, project);
       assert(/\/shells\/[^/]+$/.test(shellUrl), `bad url ${shellUrl}`);
-      assert((await L.waitUpgraded(page, ["session-attach", "session-input", "dc-inline-rename"], 12000)).length === 0, "not upgraded");
+      assert((await L.waitUpgraded(page, ["terminal-attach", "terminal-input", "dc-inline-rename"], 12000)).length === 0, "not upgraded");
     });
 
     await run("scroll-history is set on attach + input (shell history scroll)", async () => {
-      const ok = await page.evaluate(() => document.getElementById("session-terminal")?.hasAttribute("scroll-history") && document.querySelector("session-input")?.hasAttribute("scroll-history"));
+      const ok = await page.evaluate(() => document.getElementById("terminal")?.hasAttribute("scroll-history") && document.querySelector("terminal-input")?.hasAttribute("scroll-history"));
       assert(ok, "scroll-history attribute missing");
     });
 

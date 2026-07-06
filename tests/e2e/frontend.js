@@ -35,20 +35,20 @@ L.runFeature("FRONTEND", async ({ page, run, bag }) => {
 
     await run("attach elements upgraded on a shell", async () => {
       shellUrl = await L.createShell(page, project);
-      assert((await L.waitUpgraded(page, ["session-attach", "session-input", "session-scroll-zone", "session-direction-pad", "session-terminal-setting-select"], 12000)).length === 0, "not upgraded");
-      await page.waitForSelector("#session-terminal .xterm-screen canvas", { timeout: 10000 });
+      assert((await L.waitUpgraded(page, ["terminal-attach", "terminal-input", "terminal-scroll-zone", "terminal-direction-pad", "terminal-setting-select"], 12000)).length === 0, "not upgraded");
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
     });
 
     await run("re-init guard: remove + re-insert keeps one terminal, no leak", async () => {
       await sleep(800);
-      const baseline = await page.locator("#session-terminal .xterm-screen canvas").count();
+      const baseline = await page.locator("#terminal .xterm-screen canvas").count();
       const before = bag.consoleErrors.length + bag.pageErrors.length;
-      await page.evaluate(() => { const el = document.getElementById("session-terminal"); const p = el.parentElement; el.remove(); p.appendChild(el); });
+      await page.evaluate(() => { const el = document.getElementById("terminal"); const p = el.parentElement; el.remove(); p.appendChild(el); });
       await sleep(1200);
-      assert(await page.locator("#session-terminal .xterm-screen canvas").count() === baseline, "canvas layer count changed (double setup or no re-init)");
+      assert(await page.locator("#terminal .xterm-screen canvas").count() === baseline, "canvas layer count changed (double setup or no re-init)");
       assert(bag.consoleErrors.length + bag.pageErrors.length === before, "re-insert errored");
       // functional: typing still reaches /input after the re-init
-      await page.click("#session-terminal .xterm-screen");
+      await page.click("#terminal .xterm-screen");
       const reqP = page.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
       await page.keyboard.type("echo reinit");
       await reqP;
@@ -56,7 +56,7 @@ L.runFeature("FRONTEND", async ({ page, run, bag }) => {
 
     await run("shell teardown on disconnect leaves no new errors", async () => {
       const before = bag.consoleErrors.length + bag.pageErrors.length;
-      await page.evaluate(() => { document.getElementById("session-terminal")?.remove(); document.querySelector("session-input")?.remove(); });
+      await page.evaluate(() => { document.getElementById("terminal")?.remove(); document.querySelector("terminal-input")?.remove(); });
       await sleep(700);
       assert(bag.consoleErrors.length + bag.pageErrors.length === before, "teardown errored");
     });

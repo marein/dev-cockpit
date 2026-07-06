@@ -70,7 +70,7 @@ L.runFeature("EDITOR", async ({ page, run }) => {
     await run("settings persist to localStorage", async () => {
       assert(await page.evaluate(() => { const el = document.querySelector('[data-editor-setting="font_size"]'); if (!el) return false; el.value = "18"; el.dispatchEvent(new Event("change", { bubbles: true })); return true; }), "no font_size control");
       await sleep(250);
-      assert(String((await page.evaluate(() => JSON.parse(localStorage.getItem("dev-cockpit.editor-settings") || "{}"))).font_size) === "18", "font_size not persisted");
+      assert(String((await page.evaluate(() => JSON.parse(localStorage.getItem("dc-editor-settings") || "{}"))).font_size) === "18", "font_size not persisted");
     });
 
     await run("new folder + recursive delete drops it and its descendants", async () => {

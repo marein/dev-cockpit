@@ -18,26 +18,27 @@ import (
 
 // Project is one project directory.
 type Project struct {
-	Name                string
-	Root                string
-	Path                string
-	Label               string
-	GitBranch           string
-	GitOrigin           string
-	GitOriginURL        string
-	GitRepo             bool
-	ActiveSessions      int
-	InactiveSessions    int
-	ActiveSessionRefs   []SessionRef
-	InactiveSessionRefs []SessionRef
-	ShellRefs           []ShellRef
-	LastUsedUnix        int64 // last time the project was opened; 0 = never
+	Name              string
+	Root              string
+	Path              string
+	Label             string
+	GitBranch         string
+	GitOrigin         string
+	GitOriginURL      string
+	GitRepo           bool
+	ActiveCoders      int
+	InactiveCoders    int
+	ActiveCoderRefs   []CoderRef
+	InactiveCoderRefs []CoderRef
+	ShellRefs         []ShellRef
+	LastUsedUnix      int64 // last time the project was opened; 0 = never
 }
 
-type SessionRef struct {
-	ID   string
-	Name string
-	At   time.Time // started (active) or last updated (inactive); for date sorting
+type CoderRef struct {
+	ID    string
+	Name  string
+	Coder string    // owning coder id, for the badge when several coders run
+	At    time.Time // started (active) or last updated (inactive); for date sorting
 }
 
 type ShellRef struct {

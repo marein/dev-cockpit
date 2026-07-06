@@ -13,8 +13,18 @@ test. Update this file when a convention changes.
 - **Hashed assets:** reference via the manifest, `{{ asset "/css/app.css" }}`,
   never the raw path. See `internal/web/static_assets.go`.
 - **Forms:** POST action path must equal the GET path that renders it (pairs in
-  `internal/web/router.go`, e.g. `/sessions/new`). Backlinks, login redirect, and
+  `internal/web/router.go`, e.g. `/coders/new`). Backlinks, login redirect, and
   post then redirect depend on it. New form, add both routes on one path.
+- **Coders:** one instance serves every coder whose CLI is installed
+  (`--provider` is deprecated and ignored, kept parseable for existing start
+  commands). Coder-scoped pages (agents, skills, instructions) select via
+  `?coder=` query and a hidden `coder` form field, defaulting to the first
+  active coder. UI stays adaptive: coder tabs, the new-coder coder select and
+  the coder badges render only when more than one coder is active, so
+  single-coder hosts look unchanged.
+- **v2.0.0 markers:** legacy compatibility code that may be removed once
+  breaking changes are allowed carries a `TODO(v2.0.0)` comment. Grep for it
+  when preparing a 2.0.0 release.
 - **Page headers:** one pattern everywhere: `page-header d-print-none mb-3`,
   inside it pretitle/breadcrumb plus `page-title`. Pages with a right side action
   wrap both in `d-flex align-items-center gap-2` with the title block as
@@ -47,7 +57,7 @@ free floating page scripts.
   AbortController per element and pass its signal to every addEventListener, then
   abort it on disconnect. Also close any EventSource, disconnect observers, clear
   timers, and dispose xterm (`term.dispose`) and CodeMirror (`view.destroy`). The
-  heavy islands (`session-attach`, `session-input`, `dc-editor`) run their setup
+  heavy islands (`terminal-attach`, `terminal-input`, `dc-editor`) run their setup
   in a function that returns a teardown the element stores and calls on disconnect.
 - **CSRF:** the per session token is rendered once into `<meta name="csrf-token">`;
   `@dc/http` reads it and attaches the `X-CSRF-Token` header to every POST, so

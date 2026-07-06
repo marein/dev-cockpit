@@ -22,6 +22,18 @@ type Pane struct {
 	StartedAt string // unix epoch seconds, raw
 	ShellName string // @dc_shell_name option; non-empty marks a shell session
 	Workdir   string // @dc_shell_dir option; the shell's start directory, if any
+	Coder     string // @dc_coder option; non-empty marks a coder pane and names its coder
+	CoderName string // @dc_coder_name option; the coder's display name at launch
+	CoderDir  string // @dc_coder_dir option; the coder's start directory
+}
+
+// StartTime parses the pane's raw session_created stamp; zero when invalid.
+func (p Pane) StartTime() time.Time {
+	v, err := strconv.ParseInt(strings.TrimSpace(p.StartedAt), 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(v, 0).UTC()
 }
 
 // Size is a tmux pane dimension in cells.
@@ -140,7 +152,7 @@ func (c *Client) PasteLiteral(name, text string) error {
 // ListPanes returns the unique first-pane entries for every session.
 func (c *Client) ListPanes() ([]Pane, error) {
 	r := clirun.Run("tmux", "list-panes", "-a", "-F",
-		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}\t#{@dc_shell_dir}")
+		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}\t#{@dc_shell_dir}\t#{@dc_coder}\t#{@dc_coder_name}\t#{@dc_coder_dir}")
 	if r.Err != nil && r.ExitCode != 0 {
 		if isNoServerError(r.Stderr) {
 			return nil, nil
@@ -170,10 +182,11 @@ func parsePanes(out string) []Pane {
 	var panes []Pane
 	for _, raw := range strings.Split(out, "\n") {
 		parts := strings.Split(strings.TrimRight(raw, "\n"), "\t")
-		if len(parts) != 7 {
+		if len(parts) != 10 {
 			continue
 		}
 		name, pid, created, win, pane, shellName, workdir := parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
+		coder, coderName, coderDir := parts[7], parts[8], parts[9]
 		if win != "0" || pane != "0" || seen[name] {
 			continue
 		}
@@ -181,7 +194,11 @@ func parsePanes(out string) []Pane {
 			continue
 		}
 		seen[name] = true
-		panes = append(panes, Pane{Name: name, PID: pid, StartedAt: created, ShellName: shellName, Workdir: workdir})
+		panes = append(panes, Pane{
+			Name: name, PID: pid, StartedAt: created,
+			ShellName: shellName, Workdir: workdir,
+			Coder: coder, CoderName: coderName, CoderDir: coderDir,
+		})
 	}
 	sort.Slice(panes, func(i, j int) bool {
 		a, b := strings.ToLower(panes[i].Name), strings.ToLower(panes[j].Name)

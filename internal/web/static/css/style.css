@@ -101,7 +101,7 @@ html { scroll-padding-top: 1.5rem; }
   background: var(--tblr-body-bg);
   box-shadow: 0 -0.5rem 1rem rgba(0, 0, 0, 0.2);
 }
-body:has(#session-cursor-input:focus) .attach-footer {
+body:has(#terminal-cursor-input:focus) .attach-footer {
   position: static;
 }
 .attach-mobile {
@@ -139,53 +139,53 @@ body:has(#session-cursor-input:focus) .attach-footer {
 .attach-controls .btn-icon { width: 2.75rem; height: 1.875rem; }
 .attach-desktop .btn { min-height: 2rem; padding-top: 0.25rem; padding-bottom: 0.25rem; }
 
-session-file-upload {
+coder-file-upload {
   display: contents;
 }
-.session-files-refresh {
+.coder-files-refresh {
   position: absolute;
   top: 1.1rem;
   right: 3.25rem;
   z-index: 5;
   color: var(--tblr-secondary);
 }
-.session-files-button[data-upload-state="running"] {
+.coder-files-button[data-upload-state="running"] {
   color: var(--tblr-warning);
   border-color: var(--tblr-warning);
 }
-.session-files-button[data-upload-state="running"] .session-files-button-icon {
-  animation: session-files-upload-icon-pulse 1s ease-in-out infinite;
+.coder-files-button[data-upload-state="running"] .coder-files-button-icon {
+  animation: coder-files-upload-icon-pulse 1s ease-in-out infinite;
 }
-.session-files-button[data-upload-state="done"] {
+.coder-files-button[data-upload-state="done"] {
   color: var(--tblr-success);
   border-color: var(--tblr-success);
 }
-.session-files-button[data-upload-state="error"] {
+.coder-files-button[data-upload-state="error"] {
   color: var(--tblr-danger);
   border-color: var(--tblr-danger);
 }
-.session-file-upload-progress {
+.coder-file-upload-progress {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 0.75rem;
 }
-.session-file-upload-item[data-done="true"] .progress-bar {
+.coder-file-upload-item[data-done="true"] .progress-bar {
   background-color: var(--tblr-success);
 }
-.session-file-upload-item[data-error="true"] .progress-bar {
+.coder-file-upload-item[data-error="true"] .progress-bar {
   background-color: var(--tblr-danger);
 }
-.session-file-upload-item[data-error="true"] [data-file-status] {
+.coder-file-upload-item[data-error="true"] [data-file-status] {
   color: var(--tblr-danger) !important;
 }
 /* The status cell must never overflow its row — truncate as a hard safety net. */
-.session-file-upload-item [data-file-status] {
+.coder-file-upload-item [data-file-status] {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-@keyframes session-files-upload-icon-pulse {
+@keyframes coder-files-upload-icon-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.55; transform: scale(1.18); }
 }
@@ -285,7 +285,8 @@ body:not(:has(.attach-footer)) .quicknav {
    flex link in the truncation chain so the labels ellipsize instead of forcing
    the dropdown to grow and scroll sideways. */
 .quicknav-menu .dropdown-item { min-width: 0; }
-.quicknav-menu .dropdown-item > span:not(.status-dot) { min-width: 0; flex: 1 1 auto; }
+.quicknav-menu .dropdown-item > span:not(.status-dot):not(.quicknav-coder) { min-width: 0; flex: 1 1 auto; }
+.quicknav-menu .dropdown-item > .quicknav-coder { flex: 0 0 auto; margin-left: auto; }
 .quicknav-menu .dropdown-item .text-truncate { min-width: 0; max-width: 100%; }
 /* Even spacing for every section header (Sessions/Shells/Projects), whether it
    follows the sticky tab header or a divider: drop the divider's own margins and
@@ -550,16 +551,16 @@ body:not(:has(.attach-footer)) .quicknav {
   border-top: 1px solid rgba(148, 163, 184, 0.3);
   margin: 0.75rem 0;
 }
-[data-session-refresh][data-refreshing] {
+[data-terminal-refresh][data-refreshing] {
   color: var(--tblr-warning);
   border-color: var(--tblr-warning);
 }
-[data-session-refresh][data-refreshing] .ti-refresh {
+[data-terminal-refresh][data-refreshing] .ti-refresh {
   display: inline-block;
-  animation: session-files-upload-icon-pulse 1s ease-in-out infinite;
+  animation: coder-files-upload-icon-pulse 1s ease-in-out infinite;
 }
 [data-shell-ctrl].active,
-[data-session-copy].active {
+[data-terminal-copy].active {
   --tblr-btn-active-bg: var(--tblr-success);
   --tblr-btn-active-border-color: var(--tblr-success);
   --tblr-btn-active-color: #fff;
@@ -576,5 +577,11 @@ dc-project-list { display: contents; }
 dc-quicknav { display: block; }
 dc-inline-rename { display: block; }
 dc-editor { display: block; }
-session-attach { display: block; }
-session-input { display: none; }
+terminal-attach { display: block; }
+terminal-input { display: none; }
+
+.coder-icon {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+}

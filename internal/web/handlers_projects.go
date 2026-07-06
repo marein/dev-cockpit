@@ -21,7 +21,9 @@ type projectDeleteForm struct {
 }
 
 func (s *Server) handleProjectsList(c *gin.Context) {
-	s.sessions.Invalidate()
+	for i := range s.coders {
+		s.coders[i].Invalidate()
+	}
 	s.shells.Invalidate()
 	c.HTML(http.StatusOK, "projects_list.gohtml", render.ProjectsListData{
 		Page:     s.page(c, "Projects", "projects"),
@@ -36,34 +38,39 @@ func (s *Server) handleProjectsList(c *gin.Context) {
 // (cached); callers that need a fresh one (the list page) Invalidate beforehand.
 func (s *Server) projectsWithRunners() []project.Project {
 	projects := s.projects.List()
-	snap := s.sessions.Snapshot()
 	for i := range projects {
-		for _, active := range snap.Running {
-			if filesystem.IsUnder(active.CWD, projects[i].Path) {
-				projects[i].ActiveSessions++
-				projects[i].ActiveSessionRefs = append(projects[i].ActiveSessionRefs, project.SessionRef{
-					ID:   active.Identifier,
-					Name: active.Name,
-					At:   active.StartedAt,
-				})
+		for j := range s.coders {
+			coderID := s.coders[j].ID()
+			snap := s.coders[j].Snapshot()
+			for _, active := range snap.Running {
+				if filesystem.IsUnder(active.CWD, projects[i].Path) {
+					projects[i].ActiveCoders++
+					projects[i].ActiveCoderRefs = append(projects[i].ActiveCoderRefs, project.CoderRef{
+						ID:    active.Identifier,
+						Name:  active.Name,
+						Coder: coderID,
+						At:    active.StartedAt,
+					})
+				}
 			}
-		}
-		for _, inactive := range snap.Inactive {
-			if filesystem.IsUnder(inactive.CWD, projects[i].Path) {
-				projects[i].InactiveSessions++
-				projects[i].InactiveSessionRefs = append(projects[i].InactiveSessionRefs, project.SessionRef{
-					ID:   inactive.SessionID,
-					Name: inactive.Name,
-					At:   inactive.UpdatedAt,
-				})
+			for _, inactive := range snap.Inactive {
+				if filesystem.IsUnder(inactive.CWD, projects[i].Path) {
+					projects[i].InactiveCoders++
+					projects[i].InactiveCoderRefs = append(projects[i].InactiveCoderRefs, project.CoderRef{
+						ID:    inactive.SessionID,
+						Name:  inactive.Name,
+						Coder: coderID,
+						At:    inactive.UpdatedAt,
+					})
+				}
 			}
 		}
 		// Sessions sorted by date, most recent first (like the old session list).
-		sort.Slice(projects[i].ActiveSessionRefs, func(a, b int) bool {
-			return projects[i].ActiveSessionRefs[a].At.After(projects[i].ActiveSessionRefs[b].At)
+		sort.Slice(projects[i].ActiveCoderRefs, func(a, b int) bool {
+			return projects[i].ActiveCoderRefs[a].At.After(projects[i].ActiveCoderRefs[b].At)
 		})
-		sort.Slice(projects[i].InactiveSessionRefs, func(a, b int) bool {
-			return projects[i].InactiveSessionRefs[a].At.After(projects[i].InactiveSessionRefs[b].At)
+		sort.Slice(projects[i].InactiveCoderRefs, func(a, b int) bool {
+			return projects[i].InactiveCoderRefs[a].At.After(projects[i].InactiveCoderRefs[b].At)
 		})
 	}
 
@@ -125,15 +132,18 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 // (resumable) session under the project is deleted, and live shells are killed.
 // Best-effort — individual failures don't block project removal.
 func (s *Server) purgeProjectRunners(path string) {
-	snap := s.sessions.Snapshot()
-	for _, r := range snap.Running {
-		if filesystem.IsUnder(r.CWD, path) {
-			_, _ = s.sessions.Stop(r.Identifier)
+	for i := range s.coders {
+		sessions := s.coders[i]
+		snap := sessions.Snapshot()
+		for _, r := range snap.Running {
+			if filesystem.IsUnder(r.CWD, path) {
+				_, _ = sessions.Stop(r.Identifier)
+			}
 		}
-	}
-	for _, r := range snap.Resumable {
-		if filesystem.IsUnder(r.CWD, path) {
-			_, _ = s.sessions.DeleteResumable(r.SessionID)
+		for _, r := range snap.Resumable {
+			if filesystem.IsUnder(r.CWD, path) {
+				_, _ = sessions.DeleteResumable(r.SessionID)
+			}
 		}
 	}
 	for _, sh := range s.shells.List() {

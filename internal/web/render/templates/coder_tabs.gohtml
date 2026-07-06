@@ -1,0 +1,11 @@
+{{define "coder_tabs.gohtml"}}
+{{if gt (len .Coders) 1}}
+<ul class="nav nav-pills mb-3">
+  {{range .Coders}}
+  <li class="nav-item">
+    <a class="nav-link py-1 px-3{{if eq . $.Selected}} active{{end}}" href="{{$.Base}}?coder={{.}}" title="{{coderLabel .}}" aria-label="{{coderLabel .}}">{{template "coder_icon.gohtml" .}}<span class="ms-1 d-none d-sm-inline">{{coderLabel .}}</span></a>
+  </li>
+  {{end}}
+</ul>
+{{end}}
+{{end}}

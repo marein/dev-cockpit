@@ -59,12 +59,12 @@ async function pollHealth(ctx, timeoutMs) {
       });
     } else {
       await run("update: available -> daily modal auto-opens once, not again within a day", async () => {
-        await page.evaluate(() => localStorage.removeItem("dcUpdate"));
+        await page.evaluate(() => localStorage.removeItem("dc-update"));
         await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector(".swal2-title", { state: "visible", timeout: 10000 });
         const title = await page.textContent(".swal2-title");
         assert(/Update to/i.test(title), `auto modal title: ${title}`);
-        const st = await page.evaluate(() => JSON.parse(localStorage.getItem("dcUpdate") || "{}"));
+        const st = await page.evaluate(() => JSON.parse(localStorage.getItem("dc-update") || "{}"));
         assert((st.prompted || 0) > 0, "prompted timestamp not saved");
         assert(st.promptedVersion, "promptedVersion not saved");
         await page.click(".swal2-cancel").catch(() => page.keyboard.press("Escape"));
@@ -78,15 +78,15 @@ async function pollHealth(ctx, timeoutMs) {
 
       await run("update: newer version than last prompted -> modal reopens despite daily gate", async () => {
         await page.evaluate(() => {
-          const st = JSON.parse(localStorage.getItem("dcUpdate") || "{}");
+          const st = JSON.parse(localStorage.getItem("dc-update") || "{}");
           st.promptedVersion = "998.0.0";
-          localStorage.setItem("dcUpdate", JSON.stringify(st));
+          localStorage.setItem("dc-update", JSON.stringify(st));
         });
         await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector(".swal2-title", { state: "visible", timeout: 10000 });
         const title = await page.textContent(".swal2-title");
         assert(/Update to/i.test(title), `modal title: ${title}`);
-        const version = await page.evaluate(() => (JSON.parse(localStorage.getItem("dcUpdate") || "{}").promptedVersion || ""));
+        const version = await page.evaluate(() => (JSON.parse(localStorage.getItem("dc-update") || "{}").promptedVersion || ""));
         assert(version && version !== "998.0.0", `promptedVersion not advanced: ${version}`);
         await page.click(".swal2-cancel").catch(() => page.keyboard.press("Escape"));
         await sleep(400);

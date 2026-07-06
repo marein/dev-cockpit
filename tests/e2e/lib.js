@@ -89,12 +89,13 @@ async function deleteShell(page, shellUrl) {
   await sleep(500);
 }
 
-async function createSession(page, project, name) {
-  await page.goto(`${BASE}/sessions/new?project=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
+async function createSession(page, project, name, coder) {
+  await page.goto(`${BASE}/coders/new?project=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
   const f = page.locator('form:has(select[name="agent"])').first();
   await f.locator('input[name="name"]').fill(name);
   await f.locator('select[name="project"]').selectOption(project).catch(() => {});
-  await Promise.all([page.waitForURL(/\/sessions\/[^/]+$/, { timeout: 20000 }), f.locator('button[type="submit"]').first().click()]);
+  if (coder) await f.locator('select[name="coder"]').selectOption(coder).catch(() => {});
+  await Promise.all([page.waitForURL(/\/coders\/[^/]+$/, { timeout: 20000 }), f.locator('button[type="submit"]').first().click()]);
   return page.url();
 }
 

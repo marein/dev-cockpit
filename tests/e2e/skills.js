@@ -12,13 +12,13 @@ L.runFeature("SKILLS", async ({ page, run }) => {
   await run("create -> appears -> edit moves id -> delete", async () => {
     await page.goto(`${BASE}/skills/new`, { waitUntil: "domcontentloaded" });
     await page.fill('input[name="skill_id"]', id); await page.fill('input[name="skill_description"]', "throwaway"); await page.fill('textarea[name="skill_instructions"]', "test only");
-    await Promise.all([page.waitForURL(/\/skills$/, { timeout: 10000 }), submitBtn(page, 'input[name="skill_id"]').click()]);
+    await Promise.all([page.waitForURL(/\/skills(\?coder=\w+)?$/, { timeout: 10000 }), submitBtn(page, 'input[name="skill_id"]').click()]);
     assert(await page.evaluate((i) => document.body.innerHTML.includes(i), id), "skill not listed after create");
     await page.goto(`${BASE}/skills/${encodeURIComponent(id)}/edit`, { waitUntil: "domcontentloaded" });
     assert(await page.$('input[name="original_skill_id"]'), "no original_skill_id");
     assert((await page.inputValue('input[name="skill_id"]')) === id, "edit not prefilled");
     await page.fill('input[name="skill_id"]', id2);
-    await Promise.all([page.waitForURL(/\/skills$/, { timeout: 10000 }), submitBtn(page, 'input[name="skill_id"]').click()]);
+    await Promise.all([page.waitForURL(/\/skills(\?coder=\w+)?$/, { timeout: 10000 }), submitBtn(page, 'input[name="skill_id"]').click()]);
     assert(await page.evaluate((ids) => document.body.innerHTML.includes(ids.n2) && !document.querySelector(`a[href*="${ids.n1}/edit"]`), { n1: id, n2: id2 }), "id move did not take");
     const del = await page.$(`form[action="/skills/${id2}/delete"], form[action="/skills/${encodeURIComponent(id2)}/delete"]`);
     assert(del, "no delete form");

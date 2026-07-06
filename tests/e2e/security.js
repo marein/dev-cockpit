@@ -5,7 +5,7 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // rendered once into <meta name="csrf-token">; @dc/http attaches it as the
 // X-CSRF-Token header on every JS POST, server rendered forms keep a hidden
 // csrf_token field. The server accepts either on every unsafe method. Open redirect
-// matrix lives in auth.js (?next=) and repeats for ?return= on /sessions/new.
+// matrix lives in auth.js (?next=) and repeats for ?return= on /coders/new.
 
 L.runFeature("SECURITY", async ({ page, ctx, run }) => {
   const tag = `sec-${Date.now().toString(36)}`;

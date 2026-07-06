@@ -4,6 +4,7 @@
 import { notifyError } from "@dc/toast";
 import { confirm as confirmDialog, promptText } from "@dc/dialog";
 import { ensureOk, postForm } from "@dc/http";
+import * as store from "@dc/store";
 
 async function init(root) {
   const name = root.dataset.editorName;
@@ -575,13 +576,13 @@ function createTextarea(host, onChange, settings) {
 // indentation depend on the device/screen, so they should not follow the user
 // across machines). The stored indentation is the fallback used when the open
 // file's .editorconfig does not dictate one.
-const EDITOR_SETTINGS_KEY = "dev-cockpit.editor-settings";
+const EDITOR_SETTINGS_KEY = "dc-editor-settings";
 
 function loadEditorSettings() {
   const def = { tab_size: 4, indent: "tab", line_wrap: false, font_size: 14 };
   let stored = {};
   try {
-    stored = JSON.parse(localStorage.getItem(EDITOR_SETTINGS_KEY) || "{}") || {};
+    stored = store.getJSON(EDITOR_SETTINGS_KEY, {}) || {};
   } catch {
     stored = {};
   }
@@ -595,7 +596,7 @@ function loadEditorSettings() {
 
 function saveEditorSettings(settings) {
   try {
-    localStorage.setItem(EDITOR_SETTINGS_KEY, JSON.stringify(settings));
+    store.setJSON(EDITOR_SETTINGS_KEY, settings);
   } catch (err) {
     console.warn("failed to save editor settings", err);
   }

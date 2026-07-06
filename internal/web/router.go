@@ -17,6 +17,19 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	r.GET("/health", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 	s.registerStaticRoutes(r)
 
+	// TODO(v2.0.0): drop the redirects from the pre-coder URLs. 308 keeps the
+	// method, so stale forms and bookmarks replay against the new paths; both
+	// old shapes map 1:1 (/sessions/X/... and /resumable/X/... -> /coders/X/...).
+	legacyRedirect := func(c *gin.Context) {
+		target := "/coders" + c.Param("rest")
+		if q := c.Request.URL.RawQuery; q != "" {
+			target += "?" + q
+		}
+		c.Redirect(http.StatusPermanentRedirect, target)
+	}
+	r.Any("/sessions/*rest", legacyRedirect)
+	r.Any("/resumable/*rest", legacyRedirect)
+
 	browser := r.Group("/", s.csrfMiddleware())
 	browser.GET("/login", s.handleLoginGet)
 	browser.POST("/login", s.handleLoginPost)
@@ -26,20 +39,19 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/logout", s.handleLogout)
 	auth.GET("/quicknav", s.handleQuickNav)
 
-	auth.GET("/sessions/new", s.handleSessionNew)
-	auth.POST("/sessions/new", s.handleSessionCreate)
-	auth.GET("/sessions/:id", s.handleSessionAttach)
-	auth.POST("/sessions/:id/stop", s.handleSessionStop)
-	auth.GET("/sessions/:id/files", s.handleSessionFiles)
-	auth.POST("/sessions/:id/files", s.handleSessionFileUpload)
-	auth.GET("/sessions/:id/files/download", s.handleSessionFileDownload)
-	auth.POST("/sessions/:id/files/delete", s.handleSessionFileDelete)
-	auth.POST("/sessions/:id/input", s.handleSessionInput)
-	auth.POST("/sessions/:id/resize", s.handleSessionResize)
-	auth.GET("/sessions/:id/stream", s.handleSessionStream)
-
-	auth.POST("/resumable/:id/resume", s.handleResumableResume)
-	auth.POST("/resumable/:id/delete", s.handleResumableDelete)
+	auth.GET("/coders/new", s.handleCoderNew)
+	auth.POST("/coders/new", s.handleCoderCreate)
+	auth.GET("/coders/:id", s.handleCoderAttach)
+	auth.POST("/coders/:id/stop", s.handleCoderStop)
+	auth.GET("/coders/:id/files", s.handleCoderFiles)
+	auth.POST("/coders/:id/files", s.handleCoderFileUpload)
+	auth.GET("/coders/:id/files/download", s.handleCoderFileDownload)
+	auth.POST("/coders/:id/files/delete", s.handleCoderFileDelete)
+	auth.POST("/coders/:id/input", s.handleCoderInput)
+	auth.POST("/coders/:id/resize", s.handleCoderResize)
+	auth.GET("/coders/:id/stream", s.handleCoderStream)
+	auth.POST("/coders/:id/resume", s.handleCoderResume)
+	auth.POST("/coders/:id/delete", s.handleCoderDelete)
 
 	auth.GET("/shells/new", s.handleShellNew)
 	auth.POST("/shells/new", s.handleShellCreate)

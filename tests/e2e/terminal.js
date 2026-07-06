@@ -2,18 +2,18 @@ const L = require("./lib");
 const { assert, sleep } = L;
 
 // Terminal: the shared attach interaction for sessions and shells. Both attach pages
-// run the same session-attach + session-input, so typing, controls, copy, paste,
+// run the same terminal-attach + terminal-input, so typing, controls, copy, paste,
 // scroll and refresh behave the same; the per surface files (shells.js, sessions.js)
 // cover what differs. Two divergent paths, both checked here:
 //   - Desktop (fine pointer): types straight into the xterm <canvas>; onData -> a
-//     session-input raw event -> @dc/http POST /input, output echoes back. The only
+//     terminal-input raw event -> @dc/http POST /input, output echoes back. The only
 //     on-screen control is refresh (.attach-desktop); the control/copy/paste toolbar
 //     is .attach-mobile, display:none on desktop.
 //   - Mobile (coarse pointer, matchMedia): read-only mirror, a hidden
-//     #session-cursor-input at the cursor cell sends text, an .attach-cursor overlay
+//     #terminal-cursor-input at the cursor cell sends text, an .attach-cursor overlay
 //     mirrors the cursor, and the .attach-mobile toolbar is the interaction surface
 //     (control buttons + auto-repeat, ctrl modifier, copy mode, paste). Swipe
-//     scrolling on the session-scroll-zone overlay: proportional drag + fling.
+//     scrolling on the terminal-scroll-zone overlay: proportional drag + fling.
 // Terminal paints to <canvas> (CanvasAddon, several stacked layers, no .xterm-rows);
 // read text from the .attach-selection mirror. Uses a throwaway shell (safe target).
 // Routes: /shells/:id, /shells/:id/input, /shells/:id/resize, /shells/:id/stream.
@@ -28,15 +28,15 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
 
     // ---------------- desktop (fine pointer) ----------------
     await run("desktop: attach custom elements upgraded + canvas", async () => {
-      const missing = await L.waitUpgraded(page, ["session-attach", "session-input", "session-scroll-zone", "session-direction-pad", "session-terminal-setting-select"], 12000);
+      const missing = await L.waitUpgraded(page, ["terminal-attach", "terminal-input", "terminal-scroll-zone", "terminal-direction-pad", "terminal-setting-select"], 12000);
       assert(missing.length === 0, `not upgraded: ${missing}`);
-      await page.waitForSelector("#session-terminal .xterm-screen canvas", { timeout: 10000 });
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
     });
 
     await run("desktop: canvas typing posts /input and output echoes into mirror", async () => {
       const marker = `TCP${tag.slice(-4)}`;
       await sleep(1400);
-      await page.click("#session-terminal .xterm-screen");
+      await page.click("#terminal .xterm-screen");
       const reqP = page.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
       await page.keyboard.type(`echo ${marker}`);
       await reqP;
@@ -47,7 +47,7 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
     });
 
     await run("desktop: terminal setting select persists font-size", async () => {
-      const root = 'session-terminal-setting-select[setting="font-size"]';
+      const root = 'terminal-setting-select[setting="font-size"]';
       const toggle = await page.$(`${root} .dropdown-toggle`);
       assert(toggle, "no setting dropdown");
       await toggle.click();
@@ -55,20 +55,29 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       const value = await item.evaluate((el) => el.dataset.value);
       await item.click();
       await sleep(300);
-      assert(await page.evaluate(() => localStorage.getItem("session-terminal-font-size")) === value, "font-size not persisted");
+      assert(await page.evaluate(() => localStorage.getItem("dc-terminal-font-size")) === value, "font-size not persisted");
       assert((await page.$eval(`${root} .dropdown-toggle span`, (el) => el.textContent)) === value, "toggle label not updated");
+    });
+
+    await run("desktop: legacy storage key migrates to dc- on read", async () => {
+      await page.evaluate(() => { localStorage.removeItem("dc-terminal-font-size"); localStorage.setItem("session-terminal-font-size", "18"); });
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await sleep(800);
+      const st = await page.evaluate(() => ({ fresh: localStorage.getItem("dc-terminal-font-size"), legacy: localStorage.getItem("session-terminal-font-size") }));
+      assert(st.fresh === "18" && st.legacy === null, `migration failed: ${JSON.stringify(st)}`);
+      await page.evaluate(() => localStorage.removeItem("dc-terminal-font-size"));
     });
 
     await run("desktop: refresh stream reconnects (no error)", async () => {
       const before = bag.consoleErrors.length + bag.pageErrors.length;
-      await page.click(".attach-desktop [data-session-refresh]");
+      await page.click(".attach-desktop [data-terminal-refresh]");
       await sleep(1000);
       assert(bag.consoleErrors.length + bag.pageErrors.length === before, "refresh errored");
     });
 
     await run("desktop: lifecycle teardown (remove terminal + input, no new errors)", async () => {
       const before = bag.consoleErrors.length + bag.pageErrors.length;
-      await page.evaluate(() => { document.getElementById("session-terminal")?.remove(); document.querySelector("session-input")?.remove(); });
+      await page.evaluate(() => { document.getElementById("terminal")?.remove(); document.querySelector("terminal-input")?.remove(); });
       await sleep(700);
       assert(bag.consoleErrors.length + bag.pageErrors.length === before, "teardown errored");
     });
@@ -76,20 +85,20 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
     // ---------------- mobile (coarse pointer) ----------------
     const mp = await mobilePage();
     await mp.goto(shellUrl, { waitUntil: "domcontentloaded" });
-    await mp.waitForSelector("#session-terminal .xterm-screen canvas", { timeout: 12000 });
+    await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
     await sleep(1200);
 
     await run("mobile: coarse pointer -> mirror + cursor input + mobile toolbar", async () => {
       assert(await mp.evaluate(() => matchMedia("(pointer: coarse)").matches), "pointer not coarse");
-      await mp.waitForSelector("#session-cursor-input", { timeout: 8000 });
+      await mp.waitForSelector("#terminal-cursor-input", { timeout: 8000 });
       assert(await mp.$(".attach-cursor"), "no .attach-cursor overlay");
-      assert(await mp.locator("[data-session-copy]").first().isVisible(), "mobile copy button not visible");
-      assert(await mp.locator('[data-session-control="enter"]').first().isVisible(), "control buttons not visible");
+      assert(await mp.locator("[data-terminal-copy]").first().isVisible(), "mobile copy button not visible");
+      assert(await mp.locator('[data-terminal-control="enter"]').first().isVisible(), "control buttons not visible");
     });
 
     await run("mobile: cursor-input typing sends text + mirror echoes", async () => {
       const marker = `MOB${tag.slice(-4)}`;
-      await mp.evaluate(() => document.getElementById("session-cursor-input").focus());
+      await mp.evaluate(() => document.getElementById("terminal-cursor-input").focus());
       const reqP = mp.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
       await mp.keyboard.type(`echo ${marker}`, { delay: 40 });
       await reqP;
@@ -101,7 +110,7 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
 
     await run("mobile: control button (enter) posts a control", async () => {
       const reqP = mp.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
-      await mp.locator('[data-session-control="enter"]').first().click();
+      await mp.locator('[data-terminal-control="enter"]').first().click();
       assert(/enter/.test((await reqP).postData() || ""), "control body missing enter");
     });
 
@@ -109,22 +118,22 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       const ctrlBtn = mp.locator("[data-shell-ctrl]").first();
       await ctrlBtn.click();
       assert((await ctrlBtn.getAttribute("aria-pressed")) === "true", "ctrl did not arm");
-      await mp.evaluate(() => document.getElementById("session-cursor-input").focus());
+      await mp.evaluate(() => document.getElementById("terminal-cursor-input").focus());
       const reqP = mp.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
       await mp.keyboard.type("c", { delay: 40 });
       assert(/ctrl-c/.test((await reqP).postData() || ""), "expected ctrl-c");
       assert((await ctrlBtn.getAttribute("aria-pressed")) === "false", "ctrl did not disarm");
     });
 
-    // Swipe scrolling (session-scroll-zone): finger travel streams px deltas that
-    // session-attach converts into per-program steps (here: tmux history controls,
+    // Swipe scrolling (terminal-scroll-zone): finger travel streams px deltas that
+    // terminal-attach converts into per-program steps (here: tmux history controls,
     // scroll-line-up/down). Synthetic PointerEvents on the shadow .zone stand in
     // for a touch drag; a fast release starts a decaying fling that keeps posting
     // steps after pointerup (velocity capped by the measured input round trip).
     await run("mobile: swipe drag posts proportional history steps", async () => {
       const reqP = mp.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST" && /scroll-line-up/.test(r.postData() || ""), { timeout: 8000 });
       await mp.evaluate(async () => {
-        const zone = document.querySelector("session-scroll-zone").shadowRoot.querySelector(".zone");
+        const zone = document.querySelector("terminal-scroll-zone").shadowRoot.querySelector(".zone");
         const rect = zone.getBoundingClientRect();
         const x = rect.left + rect.width / 2;
         let y = rect.top + rect.height / 3;
@@ -142,7 +151,7 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       const onReq = (r) => { if (/\/input$/.test(r.url()) && r.method() === "POST" && /scroll-line-down/.test(r.postData() || "")) posts.push(Date.now()); };
       mp.on("request", onReq);
       const released = await mp.evaluate(async () => {
-        const zone = document.querySelector("session-scroll-zone").shadowRoot.querySelector(".zone");
+        const zone = document.querySelector("terminal-scroll-zone").shadowRoot.querySelector(".zone");
         const rect = zone.getBoundingClientRect();
         const x = rect.left + rect.width / 2;
         let y = rect.top + rect.height * 0.7;
@@ -159,15 +168,15 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
     }, { soft: true });
 
     await run("mobile: copy mode toggles the selection mirror", async () => {
-      const copyBtn = mp.locator("[data-session-copy]").first();
+      const copyBtn = mp.locator("[data-terminal-copy]").first();
       await copyBtn.click();
-      await mp.waitForSelector("#session-terminal.attach-terminal-copy-mode", { timeout: 4000 });
+      await mp.waitForSelector("#terminal.attach-terminal-copy-mode", { timeout: 4000 });
       assert((await mp.evaluate(() => (document.querySelector(".attach-selection") || {}).textContent || "")).trim().length > 0, "mirror empty in copy mode");
       await copyBtn.click();
     });
 
     await run("mobile: paste without clipboard shows the fallback toast", async () => {
-      await mp.locator("[data-session-paste]").first().click();
+      await mp.locator("[data-terminal-paste]").first().click();
       await mp.waitForFunction(() => /not available|clipboard/i.test(document.body.innerText), null, { timeout: 5000 });
     }, { soft: true });
   } finally {

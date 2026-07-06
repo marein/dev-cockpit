@@ -29,21 +29,26 @@ func (s *Server) handleQuickNav(c *gin.Context) {
 	}
 	id, name := quicknavContextFromPath(path)
 	c.HTML(http.StatusOK, "quicknav_items.gohtml", render.Page{
-		QuickNav:  s.buildQuickNav(id, name, path),
-		CSRFToken: s.csrfToken(c),
+		QuickNav:   s.buildQuickNav(id, name, path),
+		CSRFToken:  s.csrfToken(c),
+		MultiCoder: s.multiCoder(),
 	})
 }
 
 // buildQuickNav assembles the quick nav targets for the given page context.
 func (s *Server) buildQuickNav(currentID, nameParam, currentPath string) render.QuickNav {
 	qn := render.QuickNav{CurrentID: currentID}
-	for _, r := range s.sessions.Snapshot().Running {
-		qn.Sessions = append(qn.Sessions, render.QuickNavTarget{
-			ID:      r.Identifier,
-			Name:    r.Name,
-			URL:     "/sessions/" + r.Identifier,
-			Project: s.projects.ProjectNameFor(r.CWD),
-		})
+	for i := range s.coders {
+		coderID := s.coders[i].ID()
+		for _, r := range s.coders[i].Snapshot().Running {
+			qn.Coders = append(qn.Coders, render.QuickNavTarget{
+				ID:      r.Identifier,
+				Name:    r.Name,
+				URL:     "/coders/" + r.Identifier,
+				Project: s.projects.ProjectNameFor(r.CWD),
+				Coder:   coderID,
+			})
+		}
 	}
 	for _, sh := range s.shells.List() {
 		qn.Shells = append(qn.Shells, render.QuickNavTarget{
@@ -53,7 +58,7 @@ func (s *Server) buildQuickNav(currentID, nameParam, currentPath string) render.
 			Project: s.projects.ProjectNameFor(sh.CWD),
 		})
 	}
-	sortByProject(qn.Sessions)
+	sortByProject(qn.Coders)
 	sortByProject(qn.Shells)
 	qn.CurrentProject = currentProject(nameParam, qn)
 	qn.CurrentPath = currentPath
@@ -75,7 +80,7 @@ func quicknavContextFromPath(path string) (id, name string) {
 		return "", ""
 	}
 	switch parts[0] {
-	case "sessions", "shells":
+	case "coders", "shells":
 		if parts[1] != "new" {
 			id = parts[1]
 		}
@@ -99,7 +104,7 @@ func currentProject(nameParam string, qn render.QuickNav) string {
 	if qn.CurrentID == "" {
 		return ""
 	}
-	for _, t := range qn.Sessions {
+	for _, t := range qn.Coders {
 		if t.ID == qn.CurrentID {
 			return t.Project
 		}

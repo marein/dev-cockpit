@@ -17,6 +17,12 @@ func HTMLTemplate(assetPath func(string) string, version string) *template.Templ
 		"asset":      assetPath,
 		"appVersion": func() string { return version },
 		"hasURL":     func(s string) bool { return s != "" },
+		"coderLabel": func(id string) string {
+			if id == "" {
+				return ""
+			}
+			return strings.ToUpper(id[:1]) + id[1:]
+		},
 		"projectName": func(path string) string {
 			p := strings.TrimSpace(path)
 			if p == "" {
@@ -44,13 +50,24 @@ type Page struct {
 	FlashProject string
 	CSRFToken    string
 	User         string
-	QuickNav     QuickNav
+	// MultiCoder is true when more than one coder is active, switching on the
+	// coder badges and selectors across the UI.
+	MultiCoder bool
+	QuickNav   QuickNav
+}
+
+// CoderTabs feeds the coder switcher shown on coder-scoped pages. The tabs
+// render only when more than one coder is active.
+type CoderTabs struct {
+	Base     string   // page path the tab links point at
+	Coders   []string // active coder ids
+	Selected string
 }
 
 // QuickNav feeds the quick nav floating button: the live sessions and shells you
 // can jump to, plus the identifier of the one you are currently attached to.
 type QuickNav struct {
-	Sessions  []QuickNavTarget
+	Coders    []QuickNavTarget
 	Shells    []QuickNavTarget
 	CurrentID string
 	// CurrentProject is the project of the page you're on (terminal/editor), used
@@ -74,4 +91,5 @@ type QuickNavTarget struct {
 	Name    string
 	URL     string
 	Project string // owning project name, shown under the target
+	Coder   string // owning coder id, shown when several coders run
 }

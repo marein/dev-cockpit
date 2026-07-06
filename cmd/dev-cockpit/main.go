@@ -13,13 +13,13 @@ import (
 	"strings"
 
 	"github.com/local/dev-cockpit/internal/clirun"
+	"github.com/local/dev-cockpit/internal/coder"
+	coderclaude "github.com/local/dev-cockpit/internal/coder/claude"
+	codercopilot "github.com/local/dev-cockpit/internal/coder/copilot"
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/project"
-	"github.com/local/dev-cockpit/internal/provider"
-	providerclaude "github.com/local/dev-cockpit/internal/provider/claude"
-	providercopilot "github.com/local/dev-cockpit/internal/provider/copilot"
 	"github.com/local/dev-cockpit/internal/recent"
-	"github.com/local/dev-cockpit/internal/session"
+	"github.com/local/dev-cockpit/internal/shell"
 	"github.com/local/dev-cockpit/internal/tmux"
 	"github.com/local/dev-cockpit/internal/web"
 	"github.com/spf13/cobra"
@@ -32,7 +32,6 @@ import (
 var version = "dev"
 
 type serveOptions struct {
-	providerID string
 	config.Options
 }
 
@@ -91,7 +90,6 @@ func newRootCommand() *cobra.Command {
 
 func newServeCommand() *cobra.Command {
 	opts := serveOptions{
-		providerID: config.DefaultProvider,
 		Options: config.Options{
 			HTTPAddr:           config.DefaultHTTPAddr,
 			ProjectsDir:        config.DefaultProjectsDir,
@@ -116,7 +114,10 @@ func newServeCommand() *cobra.Command {
 	}
 
 	flags := cmd.Flags()
-	flags.StringVar(&opts.providerID, "provider", opts.providerID, "coder provider")
+	// TODO(v2.0.0): drop the --provider flag entirely.
+	var deprecatedProvider string
+	flags.StringVar(&deprecatedProvider, "provider", "", "ignored, the server serves every installed coder")
+	_ = flags.MarkDeprecated("provider", "the server now serves every installed coder")
 	flags.StringVar(&opts.HTTPAddr, "addr", opts.HTTPAddr, "HTTP address")
 	flags.StringVar(&opts.ProjectsDir, "projects-dir", opts.ProjectsDir, "projects root directory")
 	flags.StringVar(&opts.StateDir, "state-dir", opts.StateDir, "directory for dev-cockpit state files")
@@ -155,24 +156,23 @@ func runServe(opts serveOptions) error {
 	}
 	tmuxClient := tmux.New()
 	projectRepo := project.NewRepository(cfg.ProjectsRoot, recent.New(filepath.Join(cfg.StateDir, "recent-projects.json")))
-	registry := provider.NewRegistry(providercopilot.New(), providerclaude.New())
-	selectedProvider := registry.ByID(opts.providerID)
-	if selectedProvider == nil {
-		return fmt.Errorf("unknown provider %q (available: %s)", opts.providerID, strings.Join(registry.IDs(), ", "))
-	}
-	tools := append([]string{}, tmux.RequiredTools...)
-	tools = append(tools, selectedProvider.RequiredTools()...)
-	if missing := clirun.MissingTools(tools); len(missing) > 0 {
-		return fmt.Errorf("missing CLI tools: %v", missing)
+	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New())
+	selected, err := selectProviders(registry)
+	if err != nil {
+		return err
 	}
 
-	sessions := session.NewSessions(cfg, tmuxClient, selectedProvider, projectRepo)
-	if err := sessions.StopIdleStreams(); err != nil {
-		log.Printf("failed to stop idle terminal stream(s): %v", err)
+	coders := make([]*coder.Manager, 0, len(selected))
+	for _, c := range selected {
+		manager := coder.NewManager(cfg, tmuxClient, c, projectRepo)
+		if err := manager.StopIdleStreams(); err != nil {
+			log.Printf("failed to stop idle terminal stream(s): %v", err)
+		}
+		coders = append(coders, manager)
 	}
-	shells := session.NewShells(cfg, tmuxClient, projectRepo)
+	shells := shell.NewShells(cfg, tmuxClient, projectRepo)
 
-	srv, err := web.NewServer(cfg, selectedProvider, sessions, shells, projectRepo, resolveVersion())
+	srv, err := web.NewServer(cfg, coders, shells, projectRepo, resolveVersion())
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}
@@ -182,6 +182,26 @@ func runServe(opts serveOptions) error {
 	}
 	log.Printf("listening on http://%s", cfg.HTTPAddr)
 	return http.ListenAndServe(cfg.HTTPAddr, srv.Handler())
+}
+
+// selectProviders resolves which coders this instance serves: every registered
+// coder whose CLI is installed.
+func selectProviders(registry *coder.Registry) ([]coder.Coder, error) {
+	if missing := clirun.MissingTools(tmux.RequiredTools); len(missing) > 0 {
+		return nil, fmt.Errorf("missing CLI tools: %v", missing)
+	}
+	var selected []coder.Coder
+	for _, p := range registry.All() {
+		if missing := clirun.MissingTools(p.RequiredTools()); len(missing) > 0 {
+			log.Printf("coder %s disabled, missing CLI tools: %v", p.ID(), missing)
+			continue
+		}
+		selected = append(selected, p)
+	}
+	if len(selected) == 0 {
+		return nil, fmt.Errorf("no coder CLI found (looked for: %s)", strings.Join(registry.IDs(), ", "))
+	}
+	return selected, nil
 }
 
 func runHashPassword(stdin *os.File, stdout, stderr io.Writer, cost int) error {

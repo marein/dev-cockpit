@@ -68,13 +68,13 @@ async function overflowAt(page, url) {
       await page.fill('input[name="agent_id"]', agentId);
       await page.fill('input[name="agent_description"]', LN + " " + LN);
       await page.fill('textarea[name="agent_instructions"]', LN + LN);
-      await Promise.all([page.waitForURL(/\/agents$/, { timeout: 10000 }), submitBtn(page, 'input[name="agent_id"]').click()]);
+      await Promise.all([page.waitForURL(/\/agents(\?coder=\w+)?$/, { timeout: 10000 }), submitBtn(page, 'input[name="agent_id"]').click()]);
       // skill
       await page.goto(`${L.BASE}/skills/new`, { waitUntil: "domcontentloaded" });
       await page.fill('input[name="skill_id"]', skillId);
       await page.fill('input[name="skill_description"]', LN + " " + LN);
       await page.fill('textarea[name="skill_instructions"]', LN + LN);
-      await Promise.all([page.waitForURL(/\/skills$/, { timeout: 10000 }), submitBtn(page, 'input[name="skill_id"]').click()]);
+      await Promise.all([page.waitForURL(/\/skills(\?coder=\w+)?$/, { timeout: 10000 }), submitBtn(page, 'input[name="skill_id"]').click()]);
       // editor file with a long name
       await page.goto(editorURL, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(".cm-editor", { timeout: 12000 });

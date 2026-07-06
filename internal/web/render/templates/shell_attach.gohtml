@@ -22,89 +22,89 @@
 
 <div class="attach-page min-w-0">
   <div class="d-flex justify-content-end align-items-center gap-2 flex-wrap">
-    <session-terminal-setting-select
+    <terminal-setting-select
       setting="font-size"
-      storage-key="session-terminal-font-size"
+      storage-key="dc-terminal-font-size"
       default-value="14"
       options="10,11,12,13,14,15,16,18,20,24"
       icon="text-size"
       label="Font size"
       title="Font size"
-    ></session-terminal-setting-select>
-    <session-terminal-setting-select
+    ></terminal-setting-select>
+    <terminal-setting-select
       setting="rows"
-      storage-key="session-terminal-rows"
+      storage-key="dc-terminal-rows"
       default-value="30"
       options="30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000"
       icon="baseline-density-medium"
       label="Rows"
       title="Visible rows"
-    ></session-terminal-setting-select>
+    ></terminal-setting-select>
   </div>
-  <session-attach id="session-terminal" class="attach-terminal min-w-0 w-100 position-relative"
+  <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative"
                   stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
-    <session-scroll-zone active aria-hidden="false"></session-scroll-zone>
-  </session-attach>
+    <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
+  </terminal-attach>
 
   <div class="attach-footer min-w-0">
     <div class="attach-mobile">
       <div class="attach-controls min-w-0">
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="escape" aria-label="Escape" title="Escape">
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-control="escape" aria-label="Escape" title="Escape">
           <span class="small fw-medium">Esc</span>
         </button>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="tab" aria-label="Tab" title="Tab">
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-control="tab" aria-label="Tab" title="Tab">
           <span class="small fw-medium">Tab</span>
         </button>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="ctrl-c" aria-label="Ctrl C" title="Ctrl + C">
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-control="ctrl-c" aria-label="Ctrl C" title="Ctrl + C">
           <span class="small fw-medium">^C</span>
         </button>
         <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-shell-ctrl aria-pressed="false" aria-label="Control modifier" title="Send next key with Ctrl">
           <span class="small fw-medium">Ctrl</span>
         </button>
-        <session-direction-pad></session-direction-pad>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="enter" aria-label="Enter" title="Enter">
+        <terminal-direction-pad></terminal-direction-pad>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-control="enter" aria-label="Enter" title="Enter">
           <i class="ti ti-corner-down-left"></i>
         </button>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-control="backspace" aria-label="Backspace" title="Backspace">
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-control="backspace" aria-label="Backspace" title="Backspace">
           <i class="ti ti-backspace"></i>
         </button>
       </div>
 
       <div class="attach-controls min-w-0">
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-copy aria-pressed="false" aria-label="Copy mode" title="Toggle copy mode">
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-copy aria-pressed="false" aria-label="Copy mode" title="Toggle copy mode">
           <i class="ti ti-copy"></i>
         </button>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-paste aria-label="Paste" title="Paste from clipboard">
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-paste aria-label="Paste" title="Paste from clipboard">
           <i class="ti ti-clipboard"></i>
         </button>
-        <session-direction-pad
+        <terminal-direction-pad
           icon="arrow-autofit-height"
           label="Page controls"
           title="Drag: up/down to scroll, left/right to top/bottom"
           up-control="scroll-up"
           down-control="scroll-down"
           left-control="scroll-top"
-          right-control="scroll-bottom"></session-direction-pad>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-session-refresh aria-label="Refresh stream" title="Refresh stream">
+          right-control="scroll-bottom"></terminal-direction-pad>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
           <i class="ti ti-refresh"></i>
         </button>
       </div>
     </div>
 
     <div class="attach-desktop">
-      <button type="button" class="btn btn-outline-secondary" data-session-refresh aria-label="Refresh stream" title="Refresh stream">
+      <button type="button" class="btn btn-outline-secondary" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
         <i class="ti ti-refresh"></i>
       </button>
     </div>
   </div>
 </div>
 
-<session-input input-url="{{.InputURL}}" scroll-history></session-input>
-<script type="module" src="{{asset "/js/components/session-terminal-setting-select.js"}}"></script>
-<script type="module" src="{{asset "/js/components/session-scroll-zone.js"}}"></script>
-<script type="module" src="{{asset "/js/components/session-direction-pad.js"}}"></script>
-<script type="module" src="{{asset "/js/components/session-attach.js"}}"></script>
-<script type="module" src="{{asset "/js/components/session-input.js"}}"></script>
+<terminal-input input-url="{{.InputURL}}" scroll-history></terminal-input>
+<script type="module" src="{{asset "/js/components/terminal-setting-select.js"}}"></script>
+<script type="module" src="{{asset "/js/components/terminal-scroll-zone.js"}}"></script>
+<script type="module" src="{{asset "/js/components/terminal-direction-pad.js"}}"></script>
+<script type="module" src="{{asset "/js/components/terminal-attach.js"}}"></script>
+<script type="module" src="{{asset "/js/components/terminal-input.js"}}"></script>
 <script type="module" src="{{asset "/js/components/inline-rename.js"}}"></script>
 {{template "app_end.gohtml" .}}
 {{end}}

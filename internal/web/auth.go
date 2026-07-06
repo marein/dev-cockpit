@@ -142,6 +142,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		FlashProject: flashProject,
 		CSRFToken:    token,
 		User:         user,
+		MultiCoder:   s.multiCoder(),
 		QuickNav:     s.quicknav(c),
 	}
 }

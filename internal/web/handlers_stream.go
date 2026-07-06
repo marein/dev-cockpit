@@ -8,24 +8,30 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/session"
+	"github.com/local/dev-cockpit/internal/terminal"
 	"github.com/local/dev-cockpit/internal/tmux"
 )
 
 // terminalStream is the streaming surface shared by coder sessions and shells.
 type terminalStream interface {
 	Resolve(id string) error
-	AttachStream(id, cols, rows string) (session.StreamAttachment, error)
+	AttachStream(id, cols, rows string) (terminal.Attachment, error)
 	DetachStream(name string)
-	RefreshStream(name string, generation int64) (session.StreamAttachment, bool)
+	RefreshStream(name string, generation int64) (terminal.Attachment, bool)
 	StreamDelta(name string, offset int64) ([]byte, int64, bool)
 	StreamUpdated(name string) (<-chan struct{}, bool)
 	StreamExited(name string) bool
-	Resnapshot(name string) (session.StreamAttachment, bool)
+	Resnapshot(name string) (terminal.Attachment, bool)
 }
 
-func (s *Server) handleSessionStream(c *gin.Context) {
-	s.streamTerminal(c, s.sessions, c.Param("id"))
+func (s *Server) handleCoderStream(c *gin.Context) {
+	id := c.Param("id")
+	co, _, err := s.resolveRunning(id)
+	if err != nil {
+		c.String(http.StatusNotFound, err.Error())
+		return
+	}
+	s.streamTerminal(c, co, id)
 }
 
 func (s *Server) handleShellStream(c *gin.Context) {
@@ -53,7 +59,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 	query := c.Request.URL.Query()
 	attached, err := src.AttachStream(id, query.Get("cols"), query.Get("rows"))
 	if err != nil {
-		_ = writeSSEvent(w, "session-error", userFacingError(c, err))
+		_ = writeSSEvent(w, "terminal-error", userFacingError(c, err))
 		return
 	}
 	defer src.DetachStream(attached.Session)
@@ -81,7 +87,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 		// and the wait at the end of the loop.
 		updated, live := src.StreamUpdated(attached.Session)
 		if !live {
-			_ = writeSSEvent(w, "session-error", "Session has ended.")
+			_ = writeSSEvent(w, "terminal-error", "Terminal has ended.")
 			return
 		}
 
@@ -137,7 +143,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 					_ = writeSSEvent(w, "delta", encodeBase64(out))
 				}
 			}
-			_ = writeSSEvent(w, "session-error", "Session has ended.")
+			_ = writeSSEvent(w, "terminal-error", "Terminal has ended.")
 			return
 		}
 
@@ -167,7 +173,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 	}
 }
 
-func sizePayload(a session.StreamAttachment) string {
+func sizePayload(a terminal.Attachment) string {
 	return `{"cols":` + strconv.Itoa(a.Cols) +
 		`,"rows":` + strconv.Itoa(a.Rows) +
 		`,"mouseTracking":` + strconv.FormatBool(a.MouseTracking) +

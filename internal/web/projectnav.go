@@ -18,19 +18,19 @@ func (s *Server) projectBrowser(currentPath string) []render.ProjectNav {
 	ret := url.QueryEscape(currentPath)
 	for _, p := range projects {
 		nav := render.ProjectNav{
-			Name:          p.Name,
-			Path:          p.Path,
-			EditorURL:     "/projects/" + url.PathEscape(p.Name) + "/editor",
-			NewSessionURL: "/sessions/new?project=" + url.QueryEscape(p.Name) + "&return=" + ret,
-			NewShellURL:   "/shells/new?project=" + url.QueryEscape(p.Name) + "&return=" + ret,
-			LastUsedUnix:  p.LastUsedUnix,
-			Active:        len(p.ActiveSessionRefs) > 0 || len(p.ShellRefs) > 0,
+			Name:         p.Name,
+			Path:         p.Path,
+			EditorURL:    "/projects/" + url.PathEscape(p.Name) + "/editor",
+			NewCoderURL:  "/coders/new?project=" + url.QueryEscape(p.Name) + "&return=" + ret,
+			NewShellURL:  "/shells/new?project=" + url.QueryEscape(p.Name) + "&return=" + ret,
+			LastUsedUnix: p.LastUsedUnix,
+			Active:       len(p.ActiveCoderRefs) > 0 || len(p.ShellRefs) > 0,
 		}
-		for _, r := range p.ActiveSessionRefs {
-			nav.ActiveSessions = append(nav.ActiveSessions, render.ProjectNavItem{ID: r.ID, Name: r.Name, URL: "/sessions/" + r.ID})
+		for _, r := range p.ActiveCoderRefs {
+			nav.ActiveCoders = append(nav.ActiveCoders, render.ProjectNavItem{ID: r.ID, Name: r.Name, URL: "/coders/" + r.ID, Coder: r.Coder})
 		}
-		for _, r := range p.InactiveSessionRefs {
-			nav.InactiveSessions = append(nav.InactiveSessions, render.ProjectNavItem{ID: r.ID, Name: r.Name, URL: "/resumable/" + r.ID + "/resume"})
+		for _, r := range p.InactiveCoderRefs {
+			nav.InactiveCoders = append(nav.InactiveCoders, render.ProjectNavItem{ID: r.ID, Name: r.Name, URL: "/coders/" + r.ID + "/resume", Coder: r.Coder})
 		}
 		for _, sh := range p.ShellRefs {
 			nav.Shells = append(nav.Shells, render.ProjectNavItem{ID: sh.ID, Name: sh.Name, URL: "/shells/" + sh.ID})

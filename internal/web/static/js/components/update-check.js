@@ -1,10 +1,11 @@
 import * as dialog from "@dc/dialog";
 import { errorText } from "@dc/toast";
 import { csrfHeaders } from "@dc/http";
+import { getJSON, setJSON } from "@dc/store";
 
 const INTERVAL = 5 * 60 * 1000;
 const PROMPT_INTERVAL = 24 * 60 * 60 * 1000;
-const KEY = "dcUpdate";
+const KEY = "dc-update";
 
 // Footer update indicator and apply flow. Polls /update/check on an interval
 // (shared across tabs via localStorage + the storage event), reflects the
@@ -49,22 +50,13 @@ class UpdateCheck extends HTMLElement {
   }
 
   loadState() {
-    try {
-      return JSON.parse(localStorage.getItem(KEY) || "null") || {};
-    } catch (error) {
-      void error;
-      return {};
-    }
+    return getJSON(KEY, {}) || {};
   }
 
   saveState(patch) {
     const state = this.loadState();
     Object.assign(state, patch);
-    try {
-      localStorage.setItem(KEY, JSON.stringify(state));
-    } catch (error) {
-      void error;
-    }
+    setJSON(KEY, state);
   }
 
   arm(delayMs) {

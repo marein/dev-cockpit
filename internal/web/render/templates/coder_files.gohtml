@@ -1,0 +1,72 @@
+{{define "coder_files_modal.gohtml"}}
+<div class="modal-content">
+  <div class="modal-header">
+    <h3 class="modal-title" id="coder-files-modal-title">Files</h3>
+    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+  </div>
+  <div class="modal-body">
+    <form method="post" action="/coders/{{.Identifier}}/files" enctype="multipart/form-data" class="row g-2 align-items-center" data-coder-file-upload-form>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="col-12 col-md">
+        <input class="form-control" type="file" name="files" multiple>
+      </div>
+      <div class="col-12 col-md-auto">
+        <button type="submit" class="btn btn-primary w-100">Upload files</button>
+      </div>
+    </form>
+    <div class="coder-file-upload-progress mt-3" data-coder-file-upload-progress hidden></div>
+    <div class="text-secondary small mt-2">Files are stored in the coder's session files directory.{{if .MaxUploadSizeMB}} Max upload size is {{.MaxUploadSizeMB}} MiB per request.{{end}}</div>
+    <div class="mt-3" data-coder-files-content>
+      {{template "coder_files_content.gohtml" .}}
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "coder_files_content.gohtml"}}
+{{if .Error}}
+<div class="alert alert-danger mb-3 text-break" role="alert">{{.Error}}</div>
+{{else if .Message}}
+<div class="alert alert-success mb-3 text-break" role="alert">{{.Message}}</div>
+{{end}}
+{{if .Files}}
+<div class="card">
+  <div class="list-group list-group-flush list-group-hoverable">
+    {{range .Files}}
+    <div class="list-group-item">
+      <div class="row g-3 align-items-start">
+        <div class="col min-w-0">
+          <div class="fw-medium text-break">{{.Name}}</div>
+          <div class="text-secondary small text-break">{{.SizeText}}</div>
+          <div class="text-secondary small text-break">{{.ModTime}}</div>
+        </div>
+        <div class="col-12 col-sm-auto">
+          <div class="d-flex justify-content-start justify-content-sm-end gap-2 flex-wrap">
+            <a class="btn btn-outline-secondary btn-sm" href="/coders/{{$.Identifier}}/files/download?name={{urlquery .Name}}">
+              <i class="ti ti-download me-1"></i>Download
+            </a>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-copy-file-path="{{.Path}}">
+              <i class="ti ti-copy me-1"></i>Copy path
+            </button>
+            <form method="post" action="/coders/{{$.Identifier}}/files/delete" data-coder-file-delete data-terminal-confirm="Delete file &quot;{{.Name}}&quot;?">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="name" value="{{.Name}}">
+              <button type="submit" class="btn btn-outline-danger btn-sm">
+                <i class="ti ti-trash me-1"></i>Delete
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    {{end}}
+  </div>
+</div>
+{{else}}
+<div class="card">
+  <div class="card-body">
+  <div class="text-secondary">No uploaded files.</div>
+  </div>
+</div>
+{{end}}
+{{end}}
