@@ -1,0 +1,39 @@
+{{define "coder_page_start.gohtml"}}
+{{$base := printf "/coders/%s" .Selected}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      <h2 class="page-title text-truncate mb-0">{{if .Multi}}{{coderLabel .Selected}} {{end}}{{coderLabel .Active}}</h2>
+    </div>
+  </div>
+</div>
+{{if .Multi}}
+<ul class="nav nav-pills mb-3" data-coder-nav>
+  {{range $coder := .Coders}}
+  <li class="nav-item">
+    <a class="nav-link py-1 px-3{{if eq $coder $.Selected}} active{{end}}" href="/coders/{{$coder}}/{{$.Active}}" title="{{coderLabel $coder}}" aria-label="{{coderLabel $coder}}">{{template "coder_icon.gohtml" $coder}}<span class="ms-1 d-none d-sm-inline">{{coderLabel $coder}}</span></a>
+  </li>
+  {{end}}
+</ul>
+{{end}}
+<div class="card">
+  <div class="card-header">
+    <ul class="nav nav-tabs card-header-tabs" data-coder-sections>
+      <li class="nav-item">
+        <a class="nav-link{{if eq .Active "instructions"}} active{{end}}" href="{{$base}}/instructions"><i class="ti ti-file-description me-1 d-none d-sm-inline-block"></i>Instructions</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link{{if eq .Active "agents"}} active{{end}}" href="{{$base}}/agents"><i class="ti ti-robot me-1 d-none d-sm-inline-block"></i>Agents</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link{{if eq .Active "skills"}} active{{end}}" href="{{$base}}/skills"><i class="ti ti-tool me-1 d-none d-sm-inline-block"></i>Skills</a>
+      </li>
+    </ul>
+  </div>
+  <div class="card-body">
+{{end}}
+
+{{define "coder_page_end.gohtml"}}
+  </div>
+</div>
+{{end}}

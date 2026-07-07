@@ -20,9 +20,9 @@ L.runFeature("SKILLS", async ({ page, run }) => {
     await page.fill('input[name="skill_id"]', id2);
     await Promise.all([page.waitForURL(/\/skills(\?coder=\w+)?$/, { timeout: 10000 }), submitBtn(page, 'input[name="skill_id"]').click()]);
     assert(await page.evaluate((ids) => document.body.innerHTML.includes(ids.n2) && !document.querySelector(`a[href*="${ids.n1}/edit"]`), { n1: id, n2: id2 }), "id move did not take");
-    const del = await page.$(`form[action="/skills/${id2}/delete"], form[action="/skills/${encodeURIComponent(id2)}/delete"]`);
+    const del = await page.$(`form[action$="/skills/${id2}/delete"]`);
     assert(del, "no delete form");
     await (await del.$("button, input[type=submit]")).click(); await confirmSwal(page);
-    await page.waitForFunction((i) => !document.querySelector(`form[action="/skills/${i}/delete"]`), id2, { timeout: 8000 });
+    await page.waitForFunction((i) => !document.querySelector(`form[action$="/skills/${i}/delete"]`), id2, { timeout: 8000 });
   });
 });

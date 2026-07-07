@@ -41,6 +41,44 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 
 	auth.GET("/coders/new", s.handleCoderNew)
 	auth.POST("/coders/new", s.handleCoderCreate)
+
+	// Canonical coder pages, one subtree per active coder:
+	// /coders/<coder>/{instructions,agents,skills}. Static segments win over
+	// the :id session routes below, and session identifiers are UUID-shaped,
+	// so the two namespaces cannot collide.
+	for i := range s.coders {
+		co := s.coders[i]
+		home := s.coderBase(co) + "/instructions"
+		base := auth.Group(s.coderBase(co))
+		base.GET("", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, home) })
+		base.GET("/instructions", s.handleInstructionsEdit(co))
+		base.POST("/instructions", s.handleInstructionsUpdate(co))
+		base.GET("/agents", s.handleAgentsList(co))
+		base.GET("/agents/new", s.handleAgentNew(co))
+		base.POST("/agents", s.handleAgentCreate(co))
+		base.GET("/agents/:id/edit", s.handleAgentEdit(co))
+		base.POST("/agents/:id", s.handleAgentUpdate(co))
+		base.POST("/agents/:id/delete", s.handleAgentDelete(co))
+		base.GET("/skills", s.handleSkillsList(co))
+		base.GET("/skills/new", s.handleSkillNew(co))
+		base.POST("/skills", s.handleSkillCreate(co))
+		base.GET("/skills/:id/edit", s.handleSkillEdit(co))
+		base.POST("/skills/:id", s.handleSkillUpdate(co))
+		base.POST("/skills/:id/delete", s.handleSkillDelete(co))
+	}
+
+	// TODO(v2.0.0): drop the legacy top-level coder pages, canonical is
+	// /coders/<coder>/... . 308 keeps the method, so stale forms and bookmarks
+	// replay against the canonical paths.
+	legacyCoderPaths := []string{
+		"/instructions",
+		"/agents", "/agents/new", "/agents/:id", "/agents/:id/edit", "/agents/:id/delete",
+		"/skills", "/skills/new", "/skills/:id", "/skills/:id/edit", "/skills/:id/delete",
+	}
+	for _, p := range legacyCoderPaths {
+		auth.Any(p, s.redirectLegacyCoderPath)
+	}
+
 	auth.GET("/coders/:id", s.handleCoderAttach)
 	auth.POST("/coders/:id/stop", s.handleCoderStop)
 	auth.GET("/coders/:id/files", s.handleCoderFiles)
@@ -61,23 +99,6 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/shells/:id/input", s.handleShellInput)
 	auth.POST("/shells/:id/resize", s.handleShellResize)
 	auth.GET("/shells/:id/stream", s.handleShellStream)
-
-	auth.GET("/agents", s.handleAgentsList)
-	auth.GET("/agents/new", s.handleAgentNew)
-	auth.GET("/agents/:id/edit", s.handleAgentEdit)
-	auth.POST("/agents", s.handleAgentCreate)
-	auth.POST("/agents/:id", s.handleAgentUpdate)
-	auth.POST("/agents/:id/delete", s.handleAgentDelete)
-
-	auth.GET("/skills", s.handleSkillsList)
-	auth.GET("/skills/new", s.handleSkillNew)
-	auth.GET("/skills/:id/edit", s.handleSkillEdit)
-	auth.POST("/skills", s.handleSkillCreate)
-	auth.POST("/skills/:id", s.handleSkillUpdate)
-	auth.POST("/skills/:id/delete", s.handleSkillDelete)
-
-	auth.GET("/instructions", s.handleInstructionsEdit)
-	auth.POST("/instructions", s.handleInstructionsUpdate)
 
 	auth.GET("/settings", s.handleSettings)
 	auth.GET("/settings/notifications", s.handleSettingsNotifications)

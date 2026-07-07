@@ -123,7 +123,7 @@ async function overflowAt(page, url) {
       // delete agent + skill
       for (const [base, id] of [["agents", agentId], ["skills", skillId]]) {
         await page.goto(`${L.BASE}/${base}`, { waitUntil: "domcontentloaded" }).catch(() => {});
-        const f = await page.$(`form[action="/${base}/${id}/delete"], form[action="/${base}/${encodeURIComponent(id)}/delete"]`);
+        const f = await page.$(`form[action$="/${base}/${id}/delete"]`);
         if (f) { await (await f.$("button, input[type=submit]")).click().catch(() => {}); await confirmSwal(page).catch(() => {}); await sleep(500); }
       }
       // reset instructions

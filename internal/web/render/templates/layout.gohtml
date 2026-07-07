@@ -177,21 +177,9 @@
                     </a>
                   </li>
                   <li class="nav-item">
-                    <a class="nav-link {{if eq .ActiveTab "instructions"}}active{{end}}" href="/instructions">
-                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-file-description"></i></span>
-                      <span class="nav-link-title">Instructions</span>
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {{if eq .ActiveTab "agents"}}active{{end}}" href="/agents">
-                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-robot"></i></span>
-                      <span class="nav-link-title">Agents</span>
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {{if eq .ActiveTab "skills"}}active{{end}}" href="/skills">
-                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-tool"></i></span>
-                      <span class="nav-link-title">Skills</span>
+                    <a class="nav-link {{if eq .ActiveTab "coder"}}active{{end}}" href="{{.CoderHome}}">
+                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-code-ai"></i></span>
+                      <span class="nav-link-title">Coder</span>
                     </a>
                   </li>
                   <li class="nav-item">

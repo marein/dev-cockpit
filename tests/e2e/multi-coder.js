@@ -3,10 +3,13 @@ const { assert, sleep, submitBtn, BASE, createProject, deleteProject } = L;
 
 // Multi-coder: every instance serves all installed coders (--provider is
 // deprecated and ignored). The UI adapts: /coders/new grows a coder select
-// with one agent select per coder (dc-coder-select toggles them), /agents
-// /skills /instructions get coder tabs (?coder=), and session rows show coder
-// badges. MODE=single asserts the adaptive parts stay off; it only applies on
-// a host where a single coder CLI is installed.
+// with one agent select per coder (dc-coder-select toggles them), the Coder
+// pages live at canonical /coders/<coder>/{instructions,agents,skills} URLs
+// with a horizontal coder switcher ([data-coder-nav]) above the section tabs
+// ([data-coder-sections]), and session rows show coder badges. The legacy
+// top-level paths (/agents etc., coder via ?coder=) 308-redirect to the
+// canonical URLs. MODE=single asserts the adaptive parts stay off; it only
+// applies on a host where a single coder CLI is installed.
 // Gotcha: never save /instructions here, the instance writes the real
 // per-coder files in $HOME. Only sessions created by this script are touched.
 
@@ -24,10 +27,12 @@ L.runFeature(`MULTI-CODER (${MODE})`, async ({ page, run }) => {
       assert(agents.length === 1, `expected one agent select, got ${agents.length}`);
       assert(!(await page.$eval('select[name="agent"]', (s) => s.disabled)), "agent select disabled");
     });
-    await run("no coder tabs on agents/skills/instructions", async () => {
+    await run("no coder switcher on agents/skills/instructions", async () => {
       for (const path of ["/agents", "/skills", "/instructions"]) {
         await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
-        assert(!(await page.$('.nav-pills a[href*="coder="]')), `coder tabs rendered on ${path}`);
+        assert(/\/coders\/\w+/.test(page.url()), `${path} did not land on a canonical coder URL: ${page.url()}`);
+        assert(!(await page.$("[data-coder-nav]")), `coder switcher rendered on ${path}`);
+        assert(await page.$("[data-coder-sections]"), `no section tabs on ${path}`);
       }
     });
     return;
@@ -51,34 +56,40 @@ L.runFeature(`MULTI-CODER (${MODE})`, async ({ page, run }) => {
     assert(groups.filter((g) => !g.hidden && !g.disabled).length === 1, "more than one active agent group after switch");
   });
 
-  await run("agents: coder tabs scope list and create", async () => {
+  await run("agents: coder switcher + canonical URLs scope list and create", async () => {
     const id = `tcagent-${tag.slice(-5)}`;
     await page.goto(`${BASE}/agents`, { waitUntil: "domcontentloaded" });
-    const tabs = await page.$$eval('.nav-pills a[href*="coder="]', (as) => as.map((a) => a.href));
-    assert(tabs.length === 2, `expected 2 coder tabs, got ${tabs.length}`);
-    assert(await page.$('.nav-pills a[title="Claude"] svg.coder-icon'), "no Claude icon in tabs");
+    assert(/\/coders\/\w+\/agents$/.test(page.url()), `legacy /agents did not land on a canonical URL: ${page.url()}`);
+    const pills = await page.$$eval("[data-coder-nav] a", (as) => as.map((a) => new URL(a.href).pathname));
+    assert(pills.length === 2, `expected 2 coder pills, got ${pills.length}`);
+    assert(pills.includes("/coders/claude/agents") && pills.includes("/coders/copilot/agents"), `coder pills wrong: ${pills}`);
+    assert(await page.$("[data-coder-nav] svg.coder-icon"), "no Claude icon in the coder switcher");
+    const sections = await page.$$eval("[data-coder-sections] a", (as) => as.map((a) => new URL(a.href).pathname));
+    assert(JSON.stringify(sections) === JSON.stringify(["/coders/copilot/instructions", "/coders/copilot/agents", "/coders/copilot/skills"]), `section tabs wrong: ${sections}`);
     await page.goto(`${BASE}/agents/new?coder=claude`, { waitUntil: "domcontentloaded" });
-    assert((await page.$eval('input[name="coder"]', (i) => i.value)) === "claude", "form does not carry coder");
+    assert(page.url().endsWith("/coders/claude/agents/new"), `legacy coder query did not map to canonical URL: ${page.url()}`);
     await page.fill('input[name="agent_id"]', id); await page.fill('input[name="agent_description"]', "throwaway"); await page.fill('textarea[name="agent_instructions"]', "test only");
-    await Promise.all([page.waitForURL(/\/agents\?coder=claude$/, { timeout: 10000 }), submitBtn(page, 'input[name="agent_id"]').click()]);
-    assert(await page.evaluate((i) => document.body.innerHTML.includes(i), id), "agent not listed in claude tab");
-    await page.goto(`${BASE}/agents?coder=copilot`, { waitUntil: "domcontentloaded" });
-    assert(!(await page.$(`a[href*="${id}/edit"]`)), "claude agent leaked into copilot tab");
-    await page.goto(`${BASE}/agents?coder=claude`, { waitUntil: "domcontentloaded" });
-    const del = await page.$(`form[action="/agents/${id}/delete"]`);
-    assert(del, "no delete form in claude tab");
-    assert(await del.$('input[name="coder"][value="claude"]'), "delete form does not carry coder");
+    await Promise.all([page.waitForURL(/\/coders\/claude\/agents$/, { timeout: 10000 }), submitBtn(page, 'input[name="agent_id"]').click()]);
+    assert(await page.evaluate((i) => document.body.innerHTML.includes(i), id), "agent not listed on the claude page");
+    await page.goto(`${BASE}/coders/copilot/agents`, { waitUntil: "domcontentloaded" });
+    assert(!(await page.$(`a[href*="${id}/edit"]`)), "claude agent leaked into the copilot page");
+    await page.goto(`${BASE}/coders/claude/agents`, { waitUntil: "domcontentloaded" });
+    const del = await page.$(`form[action="/coders/claude/agents/${id}/delete"]`);
+    assert(del, "no coder-scoped delete form on the claude page");
     await (await del.$("button, input[type=submit]")).click(); await L.confirmSwal(page);
-    await page.waitForFunction((i) => !document.querySelector(`form[action="/agents/${i}/delete"]`), id, { timeout: 8000 });
+    await page.waitForFunction((i) => !document.querySelector(`form[action$="/agents/${i}/delete"]`), id, { timeout: 8000 });
   });
 
-  await run("skills + instructions: coder tabs present, forms carry coder", async () => {
+  await run("skills + instructions: switcher marks coder, tabs mark section, form posts canonical", async () => {
     for (const path of ["/skills", "/instructions"]) {
       await page.goto(`${BASE}${path}?coder=copilot`, { waitUntil: "domcontentloaded" });
-      const active = await page.$eval(".nav-pills a.active", (a) => a.href);
-      assert(active.includes("coder=copilot"), `${path}: copilot tab not active`);
+      assert(page.url().endsWith(`/coders/copilot${path}`), `legacy ${path}?coder=copilot did not land on canonical URL: ${page.url()}`);
+      const pill = await page.$eval("[data-coder-nav] a.active", (a) => new URL(a.href).pathname);
+      assert(pill.startsWith("/coders/copilot/"), `${path}: copilot pill not active (${pill})`);
+      const section = await page.$eval("[data-coder-sections] a.active", (a) => new URL(a.href).pathname);
+      assert(section === `/coders/copilot${path}`, `${path}: section tab not active (${section})`);
     }
-    assert((await page.$eval('input[name="coder"]', (i) => i.value)) === "copilot", "instructions form does not carry coder");
+    assert(await page.$('form[action="/coders/copilot/instructions"]'), "instructions form does not post to the canonical path");
   });
 
   const project = `tcmulti-${tag.slice(-5)}`;

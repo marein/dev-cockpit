@@ -17,11 +17,18 @@ test. Update this file when a convention changes.
   post then redirect depend on it. New form, add both routes on one path.
 - **Coders:** one instance serves every coder whose CLI is installed
   (`--provider` is deprecated and ignored, kept parseable for existing start
-  commands). Coder-scoped pages (agents, skills, instructions) select via
-  `?coder=` query and a hidden `coder` form field, defaulting to the first
-  active coder. UI stays adaptive: coder tabs, the new-coder coder select and
-  the coder badges render only when more than one coder is active, so
-  single-coder hosts look unchanged.
+  commands). Coder-scoped pages sit under the single Coder nav item at
+  canonical URLs `/coders/<coder>/{instructions,agents,skills}` and share one
+  layout (`coder_page_start`/`coder_page_end` in `coder_nav.gohtml`): the
+  page title carries the coder label, a horizontal coder switcher sits above
+  the card, the section tabs live in the card header. The legacy top-level
+  paths (`/instructions`, `/agents`, `/skills`, coder picked via `?coder=` or
+  a hidden `coder` form field) 308-redirect to the canonical URLs, marked
+  TODO(v2.0.0). Session identifiers are UUID-shaped, so the coder subtrees
+  cannot collide with the `/coders/:id` session routes. UI stays adaptive:
+  the coder switcher, the coder label in the title, the new-coder coder
+  select and the coder badges render only when more than one coder is
+  active, so single-coder hosts look unchanged.
 - **v2.0.0 markers:** legacy compatibility code that may be removed once
   breaking changes are allowed carries a `TODO(v2.0.0)` comment. Grep for it
   when preparing a 2.0.0 release.

@@ -2,6 +2,8 @@ package web
 
 import (
 	"errors"
+	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/local/dev-cockpit/internal/coder"
@@ -44,18 +46,39 @@ func (s *Server) coderFromRequest(c *gin.Context) (*coder.Manager, error) {
 	return nil, errors.New(`Unknown coder "` + raw + `".`)
 }
 
-// coderQuery returns the query suffix that keeps a link on the given coder.
-// Empty in single-coder mode so URLs stay clean.
-func (s *Server) coderQuery(co *coder.Manager) string {
-	if !s.multiCoder() {
-		return ""
-	}
-	return "?coder=" + co.ID()
+// coderBase returns the canonical URL prefix of a coder's scoped pages.
+func (s *Server) coderBase(co *coder.Manager) string {
+	return "/coders/" + co.ID()
 }
 
-// coderTabs feeds the coder switcher on coder-scoped pages.
-func (s *Server) coderTabs(base string, co *coder.Manager) render.CoderTabs {
-	return render.CoderTabs{Base: base, Coders: s.coderIDs(), Selected: co.ID()}
+// coderTitle prefixes a section title with the coder label when several
+// coders are active, matching the page header.
+func (s *Server) coderTitle(co *coder.Manager, section string) string {
+	if !s.multiCoder() {
+		return section
+	}
+	id := co.ID()
+	return strings.ToUpper(id[:1]) + id[1:] + " " + section
+}
+
+// coderNav feeds the coder switcher and section tabs on coder-scoped pages.
+func (s *Server) coderNav(active string, co *coder.Manager) render.CoderNav {
+	return render.CoderNav{Coders: s.coderIDs(), Selected: co.ID(), Active: active, Multi: s.multiCoder()}
+}
+
+// redirectLegacyCoderPath forwards a pre-canonical coder page URL (top-level
+// /instructions, /agents, /skills, coder picked via query or form field) to
+// /coders/<coder> plus the same path. 308 keeps method and body, so stale
+// forms and bookmarks replay against the canonical route.
+// TODO(v2.0.0): drop together with the legacy routes.
+func (s *Server) redirectLegacyCoderPath(c *gin.Context) {
+	co, err := s.coderFromRequest(c)
+	if err != nil {
+		section := strings.SplitN(strings.TrimPrefix(c.Request.URL.Path, "/"), "/", 2)[0]
+		s.redirectWithFlash(c, s.coderBase(s.coders[0])+"/"+section, "", err.Error())
+		return
+	}
+	c.Redirect(http.StatusPermanentRedirect, s.coderBase(co)+c.Request.URL.Path)
 }
 
 // resolveRunning finds the coder owning the live session with the given

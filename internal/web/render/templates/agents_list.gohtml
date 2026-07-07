@@ -1,32 +1,20 @@
 {{define "agents_list.gohtml"}}
 {{template "app_start.gohtml" .}}
-<div class="page-header d-print-none mb-3">
-  <div class="d-flex align-items-center">
-    <h2 class="page-title mb-0">Agents</h2>
-    <div class="ms-auto">
-      <a href="/agents/new{{.CoderQuery}}" class="btn btn-primary btn-icon" aria-label="Create agent" title="Create agent">
-        <i class="ti ti-plus"></i>
-      </a>
-    </div>
-  </div>
-</div>
-{{template "coder_tabs.gohtml" .CoderTabs}}
+{{template "coder_page_start.gohtml" .CoderNav}}
 {{if .Agents}}
-<div class="card">
-  <div class="list-group list-group-flush list-group-hoverable">
+<div class="list-group list-group-hoverable">
   {{range .Agents}}
   <div class="list-group-item">
     <div class="row g-2 align-items-start">
       <div class="col min-w-0">
-        <a href="/agents/{{.ID}}/edit{{$.CoderQuery}}" class="text-reset text-decoration-none fw-medium text-break">{{.ID}}</a>
+        <a href="{{$.Base}}/agents/{{.ID}}/edit" class="text-reset text-decoration-none fw-medium text-break">{{.ID}}</a>
         <div class="text-secondary small text-break">{{if .Description}}{{.Description}}{{else}}No description{{end}}</div>
       </div>
       <div class="col-auto">
         <div class="btn-list flex-nowrap">
-          <a href="/agents/{{.ID}}/edit{{$.CoderQuery}}" class="btn btn-sm btn-icon btn-outline-secondary" aria-label="Edit agent {{.ID}}" title="Edit"><i class="ti ti-pencil"></i></a>
-          <form method="post" action="/agents/{{.ID}}/delete" data-confirm="Delete agent &quot;{{.ID}}&quot;?" data-confirm-button="Delete">
+          <a href="{{$.Base}}/agents/{{.ID}}/edit" class="btn btn-sm btn-icon btn-outline-secondary" aria-label="Edit agent {{.ID}}" title="Edit"><i class="ti ti-pencil"></i></a>
+          <form method="post" action="{{$.Base}}/agents/{{.ID}}/delete" data-confirm="Delete agent &quot;{{.ID}}&quot;?" data-confirm-button="Delete">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="coder" value="{{$.CoderTabs.Selected}}">
             <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Delete agent {{.ID}}" title="Delete"><i class="ti ti-trash"></i></button>
           </form>
         </div>
@@ -34,16 +22,19 @@
     </div>
   </div>
   {{end}}
-  </div>
+</div>
+<div class="d-grid gap-2 d-sm-flex justify-content-sm-end mt-3">
+  <a href="{{.Base}}/agents/new" class="btn btn-primary"><i class="ti ti-plus me-1"></i> Create agent</a>
 </div>
 {{else}}
 <div class="empty">
   <div class="empty-icon"><i class="ti ti-robot fs-1"></i></div>
   <p class="empty-title">No agents defined</p>
   <div class="empty-action">
-    <a href="/agents/new{{.CoderQuery}}" class="btn btn-primary"><i class="ti ti-plus me-1"></i> Create agent</a>
+    <a href="{{.Base}}/agents/new" class="btn btn-primary"><i class="ti ti-plus me-1"></i> Create agent</a>
   </div>
 </div>
 {{end}}
+{{template "coder_page_end.gohtml"}}
 {{template "app_end.gohtml" .}}
 {{end}}

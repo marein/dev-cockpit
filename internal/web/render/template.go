@@ -53,18 +53,23 @@ type Page struct {
 	// MultiCoder is true when more than one coder is active, switching on the
 	// coder badges and selectors across the UI.
 	MultiCoder bool
+	// CoderHome is the canonical landing URL of the coder pages (the first
+	// active coder's instructions), used by the main nav.
+	CoderHome string
 	QuickNav   QuickNav
 	// Jingle is the cross-device notification jingle selection, rendered into
 	// a meta tag so the client picks the right tune.
 	Jingle string
 }
 
-// CoderTabs feeds the coder switcher shown on coder-scoped pages. The tabs
-// render only when more than one coder is active.
-type CoderTabs struct {
-	Base     string   // page path the tab links point at
+// CoderNav feeds the coder pages layout (instructions, agents, skills): the
+// horizontal coder switcher (rendered only when more than one coder is
+// active) and the section tabs in the card header.
+type CoderNav struct {
 	Coders   []string // active coder ids
-	Selected string
+	Selected string   // coder the page is scoped to
+	Active   string   // active section: "instructions" | "agents" | "skills"
+	Multi    bool     // true when more than one coder is active
 }
 
 // QuickNav feeds the quick nav floating button: the live sessions and shells you
