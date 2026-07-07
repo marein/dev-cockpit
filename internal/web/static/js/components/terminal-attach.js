@@ -1,5 +1,6 @@
 import { notifyError, notifySuccess, notifyInfo } from "@dc/toast";
 import { postForm } from "@dc/http";
+import { get } from "@dc/store";
 
 function initTerminalAttach(host) {
   const streamUrl = host.getAttribute("stream-url");
@@ -507,8 +508,16 @@ function initTerminalAttach(host) {
   });
 
   // ---- Sizing ----------------------------------------------------------------
-  let fontSizeOverride = Number(fontSizeSetting?.value) || DEFAULT_FONT_SIZE;
-  let rowsOverride = Number(rowsSetting?.value) || DEFAULT_ROWS;
+  // Read the persisted value straight from storage: terminal-setting-select is
+  // lazy loaded and may not have upgraded yet, so its .value getter can be absent.
+  const settingValue = (el, fallback) => {
+    if (!el) return fallback;
+    return (parseInt(get(el.getAttribute("storage-key") || "", ""), 10)
+      || parseInt(el.getAttribute("default-value") || "", 10)
+      || fallback);
+  };
+  let fontSizeOverride = settingValue(fontSizeSetting, DEFAULT_FONT_SIZE);
+  let rowsOverride = settingValue(rowsSetting, DEFAULT_ROWS);
   let lastClientCols = 0;
   let lastClientRows = rowsOverride;
   let measureElementObserver = null;

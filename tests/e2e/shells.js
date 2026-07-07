@@ -16,7 +16,7 @@ L.runFeature("SHELLS", async ({ page, run }) => {
 
     await run("create shell -> attach page + dc-inline-rename upgraded", async () => {
       shellUrl = await L.createShell(page, project);
-      assert(/\/shells\/[^/]+$/.test(shellUrl), `bad url ${shellUrl}`);
+      assert(/\/shells\/(?!new)[^/]+$/.test(shellUrl), `bad url ${shellUrl}`);
       assert((await L.waitUpgraded(page, ["terminal-attach", "terminal-input", "dc-inline-rename"], 12000)).length === 0, "not upgraded");
     });
 

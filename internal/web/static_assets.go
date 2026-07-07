@@ -13,6 +13,7 @@ import (
 type staticAssetManifest struct {
 	byURL    map[string]staticAsset
 	assetURL map[string]string
+	digest   string
 }
 
 type staticAsset struct {
@@ -59,7 +60,24 @@ func newStaticAssetManifest() (staticAssetManifest, error) {
 		manifest.add("manifest.json", rewriteAssetRefs(content, manifest.assetURL))
 	}
 
+	// A build id over the whole hashed asset set. It changes on any asset change,
+	// so a long lived tab can tell its head (which pe.js never swaps) is stale.
+	manifest.digest = assetDigest(manifest.assetURL)
+
 	return manifest, nil
+}
+
+func assetDigest(assetURL map[string]string) string {
+	keys := make([]string, 0, len(assetURL))
+	for ref := range assetURL {
+		keys = append(keys, ref)
+	}
+	sort.Strings(keys)
+	h := sha256.New()
+	for _, ref := range keys {
+		h.Write([]byte(ref + "=" + assetURL[ref] + "\n"))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 func (m staticAssetManifest) add(name string, content []byte) {

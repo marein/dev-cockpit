@@ -12,9 +12,10 @@ import (
 var templatesFS embed.FS
 
 // HTMLTemplate returns the parsed template set used by Gin's HTML renderer.
-func HTMLTemplate(assetPath func(string) string, version string) *template.Template {
+func HTMLTemplate(assetPath func(string) string, version, assetBuild string) *template.Template {
 	funcMap := template.FuncMap{
 		"asset":      assetPath,
+		"assetBuild": func() string { return assetBuild },
 		"appVersion": func() string { return version },
 		"hasURL":     func(s string) bool { return s != "" },
 		"coderLabel": func(id string) string {

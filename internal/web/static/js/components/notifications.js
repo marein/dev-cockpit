@@ -274,7 +274,8 @@ class Notifications extends HTMLElement {
     this.ac = new AbortController();
     const { signal } = this.ac;
 
-    this.innerHTML = `
+    if (!this.querySelector(".dc-notify-bell")) {
+      this.innerHTML = `
       <div class="dropdown">
         <button type="button" class="btn btn-icon dc-notify-bell" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-label="Notifications">
           <i class="ti ti-bell fs-2"></i>
@@ -288,6 +289,7 @@ class Notifications extends HTMLElement {
           <div class="list-group list-group-flush dc-notify-list"></div>
         </div>
       </div>`;
+    }
 
     this.bell = this.querySelector(".dc-notify-bell");
     this.badge = this.querySelector(".dc-notify-badge");

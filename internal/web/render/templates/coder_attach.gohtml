@@ -122,7 +122,7 @@
 
 <div class="modal modal-blur fade" id="terminal-prompt-modal" tabindex="-1" aria-labelledby="terminal-prompt-modal-title" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered">
-    <form class="modal-content" id="terminal-prompt-modal-form">
+    <form class="modal-content" id="terminal-prompt-modal-form" data-no-pe>
       <div class="modal-header">
         <h3 class="modal-title" id="terminal-prompt-modal-title">Send prompt</h3>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -144,11 +144,5 @@
 </div>
 
 <terminal-input input-url="{{.InputURL}}"></terminal-input>
-<script type="module" src="{{asset "/js/components/terminal-setting-select.js"}}"></script>
-<script type="module" src="{{asset "/js/components/terminal-scroll-zone.js"}}"></script>
-<script type="module" src="{{asset "/js/components/terminal-direction-pad.js"}}"></script>
-<script type="module" src="{{asset "/js/components/coder-file-upload.js"}}"></script>
-<script type="module" src="{{asset "/js/components/terminal-attach.js"}}"></script>
-<script type="module" src="{{asset "/js/components/terminal-input.js"}}"></script>
 {{template "app_end.gohtml" .}}
 {{end}}

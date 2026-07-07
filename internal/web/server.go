@@ -84,7 +84,7 @@ func (s *Server) newHandler() (http.Handler, error) {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.HandleMethodNotAllowed = true
-	r.SetHTMLTemplate(render.HTMLTemplate(s.assets.assetPath, s.version))
+	r.SetHTMLTemplate(render.HTMLTemplate(s.assets.assetPath, s.version, s.assets.digest))
 	if err := r.SetTrustedProxies(s.cfg.TrustedProxies); err != nil {
 		return nil, fmt.Errorf("set trusted proxies: %w", err)
 	}

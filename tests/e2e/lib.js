@@ -75,7 +75,7 @@ async function createShell(page, project) {
   await page.goto(`${BASE}/shells/new`, { waitUntil: "domcontentloaded" });
   const f = page.locator('form:has(select[name="project"])').first();
   await f.locator('select[name="project"]').selectOption(project).catch(async () => { await f.locator('select[name="project"]').selectOption({ label: project }); });
-  await Promise.all([page.waitForURL(/\/shells\/[^/]+$/, { timeout: 15000 }), f.locator('button[type="submit"]').first().click()]);
+  await Promise.all([page.waitForURL(/\/shells\/(?!new)[^/]+$/, { timeout: 15000 }), f.locator('button[type="submit"]').first().click()]);
   return page.url();
 }
 
@@ -95,7 +95,7 @@ async function createSession(page, project, name, coder) {
   await f.locator('input[name="name"]').fill(name);
   await f.locator('select[name="project"]').selectOption(project).catch(() => {});
   if (coder) await f.locator('select[name="coder"]').selectOption(coder).catch(() => {});
-  await Promise.all([page.waitForURL(/\/coders\/[^/]+$/, { timeout: 20000 }), f.locator('button[type="submit"]').first().click()]);
+  await Promise.all([page.waitForURL(/\/coders\/(?!new)[^/]+$/, { timeout: 20000 }), f.locator('button[type="submit"]').first().click()]);
   return page.url();
 }
 

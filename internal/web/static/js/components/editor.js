@@ -310,6 +310,20 @@ async function init(root) {
     }
   }, { signal });
 
+  // beforeunload does not fire for a boosted navigation, so guard boosted link
+  // clicks and form submits too. Native loads (data-no-pe) stay with beforeunload.
+  const guard = (event, node) => {
+    if (dirty && node && !node.closest("[data-no-pe]") && !confirm("Discard unsaved changes?")) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest("a[href]");
+    if (a && a.host === location.host && !a.hasAttribute("target")) guard(e, a);
+  }, { capture: true, signal });
+  document.addEventListener("submit", (e) => guard(e, e.target), { capture: true, signal });
+
   status(`Files up to ${maxKiB} KiB can be edited.`);
   await loadTree();
 

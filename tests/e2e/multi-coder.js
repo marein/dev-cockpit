@@ -89,7 +89,7 @@ L.runFeature(`MULTI-CODER (${MODE})`, async ({ page, run }) => {
       await page.goto(`${BASE}/coders/new?project=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
       await page.selectOption('select[name="coder"]', "copilot");
       await page.fill('input[name="name"]', `s-${tag}`);
-      await Promise.all([page.waitForURL(/\/coders\/[^/]+$/, { timeout: 20000 }), submitBtn(page, 'input[name="name"]').click()]);
+      await Promise.all([page.waitForURL(/\/coders\/(?!new)[^/]+$/, { timeout: 20000 }), submitBtn(page, 'input[name="name"]').click()]);
       sessionUrl = page.url();
       assert(await page.$('.attach-page span[title="Copilot"] i.ti-brand-github-copilot'), "no Copilot icon on attach page");
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });

@@ -40,16 +40,27 @@ test. Update this file when a convention changes.
 All browser behavior lives in custom elements and shared ES modules, no
 free floating page scripts.
 
+- **pe.js (progressive enhancement):** `internal/web/static/js/pe.js` boosts every
+  link and form, swapping the `[data-page-content]` region, no full reloads, so the
+  audio context survives and notification sounds stay consistent. It is a verbatim
+  copy of https://github.com/marein/php-gaming-website; **do not edit it without
+  asking.** `app.js` is the glue: loading bar, lazy custom element loader (by tag
+  name via the import map, so pages carry no `<script>` tags), `pe:*` hooks,
+  `data-confirm`, and a `dc-build` head check that forces one native reload after a
+  redeploy. `data-no-pe` opts a link or form out into a native load (login, logout,
+  downloads, JS owned forms). Framework scripts and toasts sit outside the swap and
+  survive it.
 - **Shared modules:** `internal/web/static/js/dc/` (toast, dialog, http, dom,
   store, repeater, fold, project-sort). Imported by bare specifier `@dc/<name>`.
 - **Custom elements:** `internal/web/static/js/components/`, one element per
   file, registered with `customElements.define`. Each imports only from `@dc/*`,
   never from another component, so the import map stays flat.
 - **Asset hashing for modules:** the import map in `layout.gohtml` head maps
-  every `@dc/*` specifier (and the CodeMirror packages) to its hashed URL via
-  `{{asset}}`. Imports resolve through it, so module to module references stay
-  hashed. Never import a module by raw path. Load an entry module with
-  `<script type="module" src="{{asset "/js/components/x.js"}}">`.
+  every `@dc/*` specifier, each custom element tag name, and the CodeMirror
+  packages to their hashed URL via `{{asset}}`. Imports resolve through it, so
+  module to module references stay hashed, and `app.js` lazy imports a custom
+  element by its tag name. Never import a module by raw path, and add a tag to the
+  import map when you add a component.
 - **Element config:** pass data through attributes (e.g. `stream-url`,
   `input-url`), not window globals.
 - **Lifecycle:** set up in connectedCallback behind a re-init guard, tear down

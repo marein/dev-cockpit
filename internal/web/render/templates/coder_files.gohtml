@@ -5,7 +5,7 @@
     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
   </div>
   <div class="modal-body">
-    <form method="post" action="/coders/{{.Identifier}}/files" enctype="multipart/form-data" class="row g-2 align-items-center" data-coder-file-upload-form>
+    <form method="post" action="/coders/{{.Identifier}}/files" enctype="multipart/form-data" class="row g-2 align-items-center" data-coder-file-upload-form data-no-pe>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <div class="col-12 col-md">
         <input class="form-control" type="file" name="files" multiple>
@@ -42,13 +42,13 @@
         </div>
         <div class="col-12 col-sm-auto">
           <div class="d-flex justify-content-start justify-content-sm-end gap-2 flex-wrap">
-            <a class="btn btn-outline-secondary btn-sm" href="/coders/{{$.Identifier}}/files/download?name={{urlquery .Name}}">
+            <a class="btn btn-outline-secondary btn-sm" href="/coders/{{$.Identifier}}/files/download?name={{urlquery .Name}}" data-no-pe>
               <i class="ti ti-download me-1"></i>Download
             </a>
             <button type="button" class="btn btn-outline-secondary btn-sm" data-copy-file-path="{{.Path}}">
               <i class="ti ti-copy me-1"></i>Copy path
             </button>
-            <form method="post" action="/coders/{{$.Identifier}}/files/delete" data-coder-file-delete data-terminal-confirm="Delete file &quot;{{.Name}}&quot;?">
+            <form method="post" action="/coders/{{$.Identifier}}/files/delete" data-coder-file-delete data-terminal-confirm="Delete file &quot;{{.Name}}&quot;?" data-no-pe>
               <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
               <input type="hidden" name="name" value="{{.Name}}">
               <button type="submit" class="btn btn-outline-danger btn-sm">

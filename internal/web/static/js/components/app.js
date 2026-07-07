@@ -1,88 +1,83 @@
-import { installErrorHandler } from "@dc/toast";
 import { confirm } from "@dc/dialog";
+import { notifyError } from "@dc/toast";
 
-installErrorHandler();
+// The glue around pe.js: a lazy custom element loader, the loading bar and the
+// pe:* hooks. Every page is server rendered HTML, custom elements enhance it.
 
-// Deletes a form's target via fetch and removes its row from the list instead of
-// reloading the page. Falls back to a normal submit on any failure.
-function ajaxDelete(form) {
-  const row = form.closest(".list-group-item");
-  const list = row ? row.parentElement : null;
-  const card = form.closest('[id^="project-"]');
-  fetch(form.action, {
-    method: "POST",
-    body: new URLSearchParams(new FormData(form)),
-  })
-    .then((response) => {
-      if (!response.ok) throw new Error("delete failed");
-      if (row) row.remove();
-      // Drop the inner list once its last real entry is gone (a collapse toggle
-      // doesn't count). Leaves the section header + "New" affordance, matching an
-      // empty section's server render.
-      if (list && list.querySelectorAll(".list-group-item:not([data-collapse-toggle])").length === 0) {
-        list.remove();
-      }
-      if (card) document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: card } }));
-    })
-    .catch(() => {
-      form.dataset.confirmed = "true";
-      form.requestSubmit();
-    });
+const bootBuild = buildId(document);
+
+window.app = {
+  navigate: (url) => (top.location.href = url),
+  loadElements: (node) => Promise.allSettled([...node.querySelectorAll(":not(:defined)")]
+    .filter((n) => !customElements.get(n.localName))
+    .map((n) => import(n.localName))),
+  showProgress(delay) {
+    document.querySelector(".dc-page-progress")?.remove();
+    const progress = document.createElement("div");
+    progress.classList.add("dc-page-progress");
+    const timeout = setTimeout(() => document.head.after(progress), delay ?? 250);
+    return () => clearTimeout(timeout) || progress.classList.add("dc-page-progress--finish");
+  },
+  peInit() {
+    if (!window.pe) return window.addEventListener("pe:init", window.app.peInit);
+    window.app.navigate = window.pe.navigate;
+    window.pe.selectSource = window.pe.selectTarget = (d) => d.querySelector("[data-page-content]");
+  },
+};
+
+function buildId(doc) {
+  return doc.querySelector('meta[name="dc-build"]')?.getAttribute("content") || "";
 }
 
-// Submits a form via fetch, then re-renders just its project card from the
-// response (the projects page the POST redirects to). Used for actions that
-// change a row rather than remove it (stopping a session -> it becomes
-// inactive). Falls back to a normal submit on any failure.
-function ajaxRefresh(form) {
-  const card = form.closest('[id^="project-"]');
-  fetch(form.action, {
-    method: "POST",
-    body: new URLSearchParams(new FormData(form)),
-  })
-    .then((response) => {
-      if (!response.ok) throw new Error("submit failed");
-      return response.text();
-    })
-    .then((html) => {
-      const fresh = card
-        ? new DOMParser().parseFromString(html, "text/html").getElementById(card.id)
-        : null;
-      if (!fresh || !card) throw new Error("card not found");
-      card.replaceWith(fresh);
-      document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: fresh } }));
-    })
-    .catch(() => {
-      form.dataset.confirmed = "true";
-      form.requestSubmit();
-    });
+// The head is never swapped, so a redeploy leaves the tab on stale assets. Detect
+// a build id mismatch while parsing, then reload in the succeed hook, which runs
+// after pe.js pushed the response url, so a boosted form lands on its result page
+// instead of back on the form.
+function buildChanged(dom) {
+  const build = buildId(dom);
+  return Boolean(bootBuild && build && build !== bootBuild);
 }
 
+window.app.peInit();
+
+// data-no-pe opts a link or form out of boosting into a native load.
+window.addEventListener("pe:click", (e) => e.detail.a.closest("[data-no-pe]") && e.preventDefault());
+window.addEventListener("pe:submit", (e) => e.detail.form.closest("[data-no-pe]") && e.preventDefault());
+
+window.addEventListener("pe:navigate", (e) => {
+  let stale = false;
+  e.detail.parsed.push((dom) => { stale = buildChanged(dom); if (!stale) window.app.loadElements(dom.body); });
+  e.detail.succeed.push(() => { if (stale) location.reload(); });
+  e.detail.catch.push((err) => err?.name !== "AbortError" && notifyError("Could not load the page."));
+  e.detail.finally.push(window.app.showProgress(0));
+});
+
+window.addEventListener("pe:include", (e) => {
+  e.detail.parsed.push((dom) => window.app.loadElements(dom.body));
+});
+
+window.addEventListener("pe:form", (e) => {
+  const buttons = [...e.detail.form.querySelectorAll("button")];
+  buttons.forEach((b) => { b.disabled = true; b.classList.add("btn-loading"); });
+  let stale = false;
+  e.detail.parsed.push((dom) => { stale = buildChanged(dom); if (!stale) window.app.loadElements(dom.body); });
+  e.detail.succeed.push(() => { if (stale) location.reload(); });
+  e.detail.catch.push((err) => err?.name !== "AbortError" && notifyError("Could not submit."));
+  e.detail.finally.push(window.app.showProgress(0));
+  e.detail.finally.push(() => buttons.forEach((b) => { b.disabled = false; b.classList.remove("btn-loading"); }));
+});
+
+// data-confirm forms confirm first, then submit through pe.js (native when
+// opted out).
 document.addEventListener("submit", async (event) => {
   const form = event.target;
-  if (!(form instanceof HTMLFormElement) || !form.dataset.confirm) {
-    return;
-  }
-  if (form.dataset.confirmed === "true") {
-    delete form.dataset.confirmed;
-    return;
-  }
+  if (!(form instanceof HTMLFormElement) || !form.dataset.confirm) return;
   event.preventDefault();
-  const confirmed = await confirm({
-    title: form.dataset.confirm,
-    confirmText: form.dataset.confirmButton || "Confirm",
-  });
-  if (!confirmed) {
-    return;
-  }
-  if (form.dataset.ajaxDelete !== undefined) {
-    ajaxDelete(form);
-    return;
-  }
-  if (form.dataset.ajaxRefresh !== undefined) {
-    ajaxRefresh(form);
-    return;
-  }
-  form.dataset.confirmed = "true";
-  form.requestSubmit();
-});
+  event.stopImmediatePropagation();
+  const ok = await confirm({ title: form.dataset.confirm, confirmText: form.dataset.confirmButton || "Confirm" });
+  if (!ok) return;
+  if (form.closest("[data-no-pe]")) form.submit();
+  else window.pe.submit(form);
+}, true);
+
+await window.app.loadElements(document.body).finally(window.app.showProgress());

@@ -106,7 +106,7 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       await L.stopSession(page, sessionUrl); sessionUrl = null;
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(`${card} form[action^="/coders/"][action$="/resume"]`, { timeout: 8000 });
-      await Promise.all([page.waitForURL(/\/coders\/[^/]+$/, { timeout: 20000 }), page.locator(`${card} form[action$="/resume"]`).first().locator('button[type="submit"]').first().click()]);
+      await Promise.all([page.waitForURL(/\/coders\/(?!new)[^/]+$/, { timeout: 20000 }), page.locator(`${card} form[action$="/resume"]`).first().locator('button[type="submit"]').first().click()]);
       sessionUrl = page.url();
       await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });
       await L.stopSession(page, sessionUrl); sessionUrl = null;

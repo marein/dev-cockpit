@@ -42,7 +42,7 @@
   </div>
   <div class="small mt-1 d-none" data-project-filter-meta>
     <span class="text-primary" data-project-filter-count></span>
-    <a href="#" class="link-secondary text-decoration-none ms-2" data-project-filter-clear>Clear filter</a>
+    <a href="#" class="link-secondary text-decoration-none ms-2" data-project-filter-clear data-no-pe>Clear filter</a>
   </div>
 </div>
 <div class="card projects-card">
@@ -180,7 +180,5 @@
   </div>
 </div>
 {{end}}
-<script type="module" src="{{asset "/js/components/project-list.js"}}"></script>
-<script type="module" src="{{asset "/js/components/collapse-list.js"}}"></script>
 {{template "app_end.gohtml" .}}
 {{end}}

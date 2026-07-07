@@ -1,0 +1,13 @@
+{{define "notify_bell.gohtml"}}<div class="dropdown">
+  <button type="button" class="btn btn-icon dc-notify-bell" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-label="Notifications">
+    <i class="ti ti-bell fs-2"></i>
+    <span class="dc-notify-badge d-none" aria-hidden="true">0</span>
+  </button>
+  <div class="dropdown-menu dropdown-menu-end dc-notify-menu shadow">
+    <div class="d-flex align-items-center gap-2 px-3 py-2 border-bottom">
+      <span class="fw-bold">Notifications</span>
+      <button type="button" class="btn btn-link btn-sm ms-auto p-0 dc-notify-read-all">Mark all read</button>
+    </div>
+    <div class="list-group list-group-flush dc-notify-list"></div>
+  </div>
+</div>{{end}}
