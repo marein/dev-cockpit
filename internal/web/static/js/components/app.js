@@ -48,6 +48,7 @@ window.addEventListener("pe:navigate", (e) => {
   let stale = false;
   e.detail.parsed.push((dom) => { stale = buildChanged(dom); if (!stale) window.app.loadElements(dom.body); });
   e.detail.succeed.push(() => { if (stale) location.reload(); });
+  e.detail.succeed.push(() => window.dispatchEvent(new CustomEvent("dc:navigated")));
   e.detail.catch.push((err) => err?.name !== "AbortError" && notifyError("Could not load the page."));
   e.detail.finally.push(window.app.showProgress(0));
 });
@@ -62,6 +63,7 @@ window.addEventListener("pe:form", (e) => {
   let stale = false;
   e.detail.parsed.push((dom) => { stale = buildChanged(dom); if (!stale) window.app.loadElements(dom.body); });
   e.detail.succeed.push(() => { if (stale) location.reload(); });
+  e.detail.succeed.push(() => window.dispatchEvent(new CustomEvent("dc:navigated")));
   e.detail.catch.push((err) => err?.name !== "AbortError" && notifyError("Could not submit."));
   e.detail.finally.push(window.app.showProgress(0));
   e.detail.finally.push(() => buttons.forEach((b) => { b.disabled = false; b.classList.remove("btn-loading"); }));
@@ -72,6 +74,7 @@ window.addEventListener("pe:form", (e) => {
 document.addEventListener("submit", async (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement) || !form.dataset.confirm) return;
+  if (form.dataset.ajaxDelete !== undefined || form.dataset.ajaxRefresh !== undefined) return;
   event.preventDefault();
   event.stopImmediatePropagation();
   const ok = await confirm({ title: form.dataset.confirm, confirmText: form.dataset.confirmButton || "Confirm" });

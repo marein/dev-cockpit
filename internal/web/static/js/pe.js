@@ -53,7 +53,7 @@ async function navigate(url, changeHistory) {
 
         event.detail.render(document, dom);
 
-        const hash = url.split('#')[1];
+        const hash = response.peHash ?? url.split('#')[1];
         if (changeHistory) history.pushState(null, '', response.url + (hash ? '#' + hash : ''));
         scroll(hash);
         await Promise.all(event.detail.succeed.map(f => f()));
@@ -92,8 +92,8 @@ async function submit(form) {
 
         event.detail.render(document, dom);
 
-        if (response.redirected || form.method === 'get') history.pushState(null, '', response.url);
-        scroll(form.action.split('#')[1] ?? form.getAttribute('id'));
+        if (response.redirected || form.method === 'get') history.pushState(null, '', response.url + (response.peHash ? '#' + response.peHash : ''));
+        scroll(response.peHash ?? form.action.split('#')[1] ?? form.getAttribute('id'));
         await Promise.all(event.detail.succeed.map(f => f()));
     } catch (e) {
         await Promise.all(event.detail.catch.map(f => f(e)));
@@ -111,17 +111,21 @@ window.fetch = (fetch => async (resource, options = {}) => {
         window.dispatchEvent(new CustomEvent(e.name, {detail: e.detail}));
     });
 
-    return !response.headers.has('Pe-Location')
-        ? response
-        : new Proxy(await window.fetch(response.headers.get('Pe-Location'), {headers}), {
-            get: (target, prop) => {
-                if (prop === 'redirected') return true;
+    if (!response.headers.has('Pe-Location')) return response;
 
-                const value = Reflect.get(target, prop, target);
+    const location = response.headers.get('Pe-Location');
+    const peHash = location.split('#')[1];
 
-                return typeof value === 'function' ? value.bind(target) : value;
-            }
-        });
+    return new Proxy(await window.fetch(location, {headers}), {
+        get: (target, prop) => {
+            if (prop === 'redirected') return true;
+            if (prop === 'peHash') return peHash;
+
+            const value = Reflect.get(target, prop, target);
+
+            return typeof value === 'function' ? value.bind(target) : value;
+        }
+    });
 })(window.fetch);
 
 customElements.define('pe-include', class extends HTMLElement {

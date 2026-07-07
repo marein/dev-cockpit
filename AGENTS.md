@@ -42,14 +42,18 @@ free floating page scripts.
 
 - **pe.js (progressive enhancement):** `internal/web/static/js/pe.js` boosts every
   link and form, swapping the `[data-page-content]` region, no full reloads, so the
-  audio context survives and notification sounds stay consistent. It is a verbatim
-  copy of https://github.com/marein/php-gaming-website; **do not edit it without
-  asking.** `app.js` is the glue: loading bar, lazy custom element loader (by tag
+  audio context survives and notification sounds stay consistent. Based on
+  https://github.com/marein/php-gaming-website with one local change: it applies a
+  `Pe-Location` fragment to `scroll` and `pushState` (server sends `200` +
+  `Pe-Location` with the anchor on a boosted redirect). Keep edits minimal and in its
+  style; **do not restructure it without asking.** `app.js` is the glue: loading bar, lazy custom element loader (by tag
   name via the import map, so pages carry no `<script>` tags), `pe:*` hooks,
   `data-confirm`, and a `dc-build` head check that forces one native reload after a
-  redeploy. `data-no-pe` opts a link or form out into a native load (login, logout,
-  downloads, JS owned forms). Framework scripts and toasts sit outside the swap and
-  survive it.
+  redeploy. It also fires a global `dc:navigated` event after every boosted
+  navigation (in the `pe:*` succeed hook, so `location.hash` is already pushed);
+  elements that must react to the final URL listen for it. `data-no-pe` opts a link or form out
+  into a native load (login, logout, downloads, JS owned forms). Framework scripts
+  and toasts sit outside the swap and survive it.
 - **Shared modules:** `internal/web/static/js/dc/` (toast, dialog, http, dom,
   store, repeater, fold, project-sort). Imported by bare specifier `@dc/<name>`.
 - **Custom elements:** `internal/web/static/js/components/`, one element per

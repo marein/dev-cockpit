@@ -113,7 +113,7 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 		return
 	}
 	name := filepath.Base(path)
-	s.redirectWithFlash(c, "/projects#project-"+name, "Project \""+name+"\" created.", "")
+	s.redirectWithProjectFlash(c, name, "Project \""+name+"\" created.", "")
 }
 
 func (s *Server) handleProjectDelete(c *gin.Context) {

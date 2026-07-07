@@ -148,8 +148,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 	}
 }
 
-func (s *Server) redirectWithFlash(c *gin.Context, location, message, errMsg string) {
-	sess := ginsessions.Default(c)
+func setFlash(sess ginsessions.Session, message, errMsg string) {
 	switch {
 	case message != "":
 		sess.Set(flashMessageKey, message)
@@ -158,36 +157,34 @@ func (s *Server) redirectWithFlash(c *gin.Context, location, message, errMsg str
 		sess.Set(flashMessageKey, errMsg)
 		sess.Set(flashLevelKey, "error")
 	}
+}
+
+func (s *Server) finishRedirect(c *gin.Context, sess ginsessions.Session, location string) {
 	if err := sess.Save(); err != nil {
 		s.renderError(c, http.StatusInternalServerError, "Something went wrong", saveSessionErrorMessage)
+		return
+	}
+	if strings.Contains(location, "#") && c.GetHeader("Pe-Request") == "1" {
+		c.Header("Pe-Location", location)
+		c.Status(http.StatusOK)
 		return
 	}
 	c.Redirect(http.StatusSeeOther, location)
 }
 
-// redirectWithProjectFlash flashes a message anchored to a project: the projects
-// page renders it inside that project's card and scrolls there via the anchor.
-// With an empty project it degrades to a normal top-of-page flash on /projects.
+func (s *Server) redirectWithFlash(c *gin.Context, location, message, errMsg string) {
+	sess := ginsessions.Default(c)
+	setFlash(sess, message, errMsg)
+	s.finishRedirect(c, sess, location)
+}
+
 func (s *Server) redirectWithProjectFlash(c *gin.Context, project, message, errMsg string) {
 	if project == "" {
 		s.redirectWithFlash(c, "/projects", message, errMsg)
 		return
 	}
-	sess := ginsessions.Default(c)
-	switch {
-	case message != "":
-		sess.Set(flashMessageKey, message)
-		sess.Set(flashLevelKey, "success")
-	case errMsg != "":
-		sess.Set(flashMessageKey, errMsg)
-		sess.Set(flashLevelKey, "error")
-	}
-	sess.Set(flashProjectKey, project)
-	if err := sess.Save(); err != nil {
-		s.renderError(c, http.StatusInternalServerError, "Something went wrong", saveSessionErrorMessage)
-		return
-	}
-	c.Redirect(http.StatusSeeOther, "/projects#project-"+project)
+	ginsessions.Default(c).Set(flashProjectKey, project)
+	s.redirectWithFlash(c, "/projects#project-"+project, message, errMsg)
 }
 
 func safeRedirectPath(path string) string {

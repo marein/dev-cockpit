@@ -1,24 +1,77 @@
 import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
+import { confirm } from "@dc/dialog";
 
 const FILTER_KEY = "dc-project-filter";
 
-// Owns the projects page interactivity: a frontend-only name filter and the
-// sort switcher. Both persist to localStorage so they survive reloads, tabs and
-// restarts. Filtering only hides cards; sorting reorders them; the two are
-// orthogonal. The sort order is shared with the quick nav through
-// @dc/project-sort (same key and comparator).
+// Owns the projects page interactivity: a frontend-only name filter, the sort
+// switcher, and the in place Stop/Delete on the coder and shell rows. Filter and
+// sort persist to localStorage so they survive reloads, tabs and restarts.
+// Filtering only hides cards; sorting reorders them; the two are orthogonal. The
+// sort order is shared with the quick nav through @dc/project-sort (same key and
+// comparator).
 class ProjectList extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
     this.ac = new AbortController();
     this.setupSort();
     this.setupFilter();
+    this.addEventListener("submit", (event) => this.onAjaxSubmit(event), { signal: this.ac.signal });
   }
 
   disconnectedCallback() {
     this.ac?.abort();
     this.ac = null;
+  }
+
+  // Stop (data-ajax-refresh) and Delete (data-ajax-delete) act in place.
+  async onAjaxSubmit(event) {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    const isDelete = form.dataset.ajaxDelete !== undefined;
+    const isRefresh = form.dataset.ajaxRefresh !== undefined;
+    if (!isDelete && !isRefresh) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (form.dataset.confirm) {
+      const ok = await confirm({ title: form.dataset.confirm, confirmText: form.dataset.confirmButton || "Confirm" });
+      if (!ok) return;
+    }
+    if (isDelete) this.ajaxDelete(form);
+    else this.ajaxRefresh(form);
+  }
+
+  // Removes the row; drops the inner list once its last real entry is gone.
+  ajaxDelete(form) {
+    const row = form.closest(".list-group-item");
+    const list = row ? row.parentElement : null;
+    const section = form.closest('[id^="project-"]');
+    fetch(form.action, { method: "POST", body: new URLSearchParams(new FormData(form)) })
+      .then((response) => {
+        if (!response.ok) throw new Error("delete failed");
+        if (row) row.remove();
+        if (list && list.querySelectorAll(".list-group-item:not([data-collapse-toggle])").length === 0) list.remove();
+        if (section) document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: section } }));
+      })
+      .catch(() => window.pe.submit(form));
+  }
+
+  // Re-renders just the project section from the redirected /projects response.
+  ajaxRefresh(form) {
+    const section = form.closest('[id^="project-"]');
+    fetch(form.action, { method: "POST", body: new URLSearchParams(new FormData(form)) })
+      .then((response) => {
+        if (!response.ok) throw new Error("submit failed");
+        return response.text();
+      })
+      .then((html) => {
+        const fresh = section ? new DOMParser().parseFromString(html, "text/html").getElementById(section.id) : null;
+        if (!fresh || !section) throw new Error("section not found");
+        section.replaceWith(fresh);
+        window.app.loadElements(fresh);
+        document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: fresh } }));
+      })
+      .catch(() => window.pe.submit(form));
   }
 
   setupSort() {
@@ -82,17 +135,17 @@ class ProjectList extends HTMLElement {
     input.value = store.get(FILTER_KEY, "");
     apply(input.value);
 
-    // Explicit navigation to a specific project wins over a saved filter: if we
-    // landed on a #project-… anchor that the filter would hide, drop the filter so
-    // the target is visible, then scroll to it (it had no position while hidden).
-    if (location.hash.startsWith("#project-")) {
+    const revealHashTarget = () => {
+      if (!location.hash.startsWith("#project-")) return;
       const target = document.getElementById(location.hash.slice(1));
       const needle = input.value.trim().toLowerCase();
       if (target && needle && !(target.dataset.projectName || "").toLowerCase().includes(needle)) {
         set("");
         target.scrollIntoView();
       }
-    }
+    };
+    revealHashTarget();
+    window.addEventListener("dc:navigated", revealHashTarget, { signal: this.ac.signal });
 
     const signal = this.ac.signal;
     input.addEventListener("input", () => set(input.value), { signal });
