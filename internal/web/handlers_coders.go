@@ -18,7 +18,6 @@ type coderCreateForm struct {
 	Project           string             `form:"project" binding:"required"`
 	Coder             string             `form:"coder"`
 	Agent             string             `form:"agent"`
-	RemoteControl     CheckboxBool       `form:"remote_control"`
 	AutomaticApproval CheckboxBool       `form:"automatic_approval"`
 }
 
@@ -73,7 +72,6 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 		DefaultPath:       defaultPath,
 		Coders:            coders,
 		SelectedCoder:     selected.ID(),
-		RemoteControl:     true,
 		AutomaticApproval: true,
 		Return:            s.formReturn(c),
 	})
@@ -123,7 +121,6 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		form.Project,
 		form.Agent,
 		coder.StartOptions{
-			RemoteControl:     form.RemoteControl.Bool(),
 			AutomaticApproval: form.AutomaticApproval.Bool(),
 		},
 	)

@@ -10,12 +10,10 @@ import (
 )
 
 type workspaceMetadata struct {
-	ID              string
-	Name            string
-	CWD             string
-	UpdatedAt       string
-	TaskID          string
-	RemoteSteerable bool
+	ID        string
+	Name      string
+	CWD       string
+	UpdatedAt string
 }
 
 func loadWorkspace(path string) (workspaceMetadata, error) {
@@ -31,12 +29,10 @@ func loadWorkspace(path string) (workspaceMetadata, error) {
 		return workspaceMetadata{}, errors.New("empty workspace file")
 	}
 	return workspaceMetadata{
-		ID:              yamlString(raw["id"]),
-		Name:            yamlString(raw["name"]),
-		CWD:             yamlString(raw["cwd"]),
-		UpdatedAt:       yamlString(raw["updated_at"]),
-		TaskID:          yamlString(raw["mc_task_id"]),
-		RemoteSteerable: yamlBool(raw["remote_steerable"]),
+		ID:        yamlString(raw["id"]),
+		Name:      yamlString(raw["name"]),
+		CWD:       yamlString(raw["cwd"]),
+		UpdatedAt: yamlString(raw["updated_at"]),
 	}, nil
 }
 
@@ -54,15 +50,4 @@ func yamlString(v any) string {
 		return strconv.FormatBool(t)
 	}
 	return ""
-}
-
-func yamlBool(v any) bool {
-	switch t := v.(type) {
-	case bool:
-		return t
-	case string:
-		b, _ := strconv.ParseBool(strings.TrimSpace(t))
-		return b
-	}
-	return false
 }

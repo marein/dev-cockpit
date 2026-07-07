@@ -17,7 +17,6 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string) *te
 		"asset":      assetPath,
 		"assetBuild": func() string { return assetBuild },
 		"appVersion": func() string { return version },
-		"hasURL":     func(s string) bool { return s != "" },
 		"coderLabel": func(id string) string {
 			if id == "" {
 				return ""

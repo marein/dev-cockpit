@@ -21,7 +21,6 @@ type CoderNewData struct {
 	DefaultPath       string
 	Coders            []CoderChoice
 	SelectedCoder     string
-	RemoteControl     bool
 	AutomaticApproval bool
 	Return            string // where Cancel goes back to (the page you came from)
 }

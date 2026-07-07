@@ -16,15 +16,13 @@ import (
 )
 
 type transcriptEntry struct {
-	Type            string `json:"type"`
-	SessionID       string `json:"sessionId"`
-	BridgeSessionID string `json:"bridgeSessionId"`
-	SessionName     string `json:"sessionName"`
-	AgentName       string `json:"agentName"`
-	CustomTitle     string `json:"customTitle"`
-	CWD             string `json:"cwd"`
-	Timestamp       string `json:"timestamp"`
-	URL             string `json:"url"`
+	Type        string `json:"type"`
+	SessionID   string `json:"sessionId"`
+	SessionName string `json:"sessionName"`
+	AgentName   string `json:"agentName"`
+	CustomTitle string `json:"customTitle"`
+	CWD         string `json:"cwd"`
+	Timestamp   string `json:"timestamp"`
 }
 
 type sessionRepository struct {
@@ -189,7 +187,6 @@ func (r *sessionRepository) loadTranscript(path string) (storedSession, bool) {
 	namePriority := 0
 	cwd := ""
 	var updatedAt time.Time
-	taskLink := ""
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -206,9 +203,6 @@ func (r *sessionRepository) loadTranscript(path string) (storedSession, bool) {
 		}
 		if t, ok := coder.ParseTimestamp(entry.Timestamp); ok {
 			updatedAt = t
-		}
-		if v := taskURL(entry); taskLink == "" && v != "" {
-			taskLink = v
 		}
 		switch entry.Type {
 		case "custom-title":
@@ -254,26 +248,13 @@ func (r *sessionRepository) loadTranscript(path string) (storedSession, bool) {
 	filesDir := filepath.Join(sessionDir, "files")
 	return storedSession{
 		Session: coder.Session{
-			SessionID:     sessionID,
-			Name:          coder.DisplayName(name, sessionID),
-			CWD:           cwd,
-			UpdatedAt:     updatedAt,
-			RemoteControl: taskLink != "",
-			TaskURL:       taskLink,
+			SessionID: sessionID,
+			Name:      coder.DisplayName(name, sessionID),
+			CWD:       cwd,
+			UpdatedAt: updatedAt,
 		},
 		sessionFile: absPath,
 		sessionDir:  sessionDir,
 		filesDir:    filesDir,
 	}, true
-}
-
-func taskURL(entry transcriptEntry) string {
-	if url := strings.TrimSpace(entry.URL); strings.HasPrefix(url, "https://claude.ai/code/") {
-		return url
-	}
-	id := strings.TrimSpace(entry.BridgeSessionID)
-	if strings.HasPrefix(id, "cse_") {
-		return "https://claude.ai/code/session_" + strings.TrimPrefix(id, "cse_")
-	}
-	return ""
 }

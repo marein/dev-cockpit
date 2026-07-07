@@ -27,7 +27,7 @@ func New() *Coder {
 	return &Coder{
 		tools:        []string{"copilot"},
 		agents:       coder.NewStandardAgentRepository(filepath.Join(home, ".copilot", "agents"), ".agent.md"),
-		sessions:     &sessionRepository{stateRoot: stateRoot, host: "https://github.com"},
+		sessions:     &sessionRepository{stateRoot: stateRoot},
 		skills:       coder.NewStandardSkillRepository(filepath.Join(home, ".copilot", "skills")),
 		instructions: coder.NewFileGlobalInstructions(filepath.Join(home, ".copilot", "copilot-instructions.md")),
 		runtime:      runtime{},

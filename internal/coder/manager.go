@@ -167,7 +167,7 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 			return StartResult{}, fmt.Errorf(`Coder "%s" already exists.`, sessionKey)
 		}
 	}
-	shellCmd := s.coder.SessionRuntime().StartCommand(sessionKey, name, workdir, agentID, opts.RemoteControl, opts.AutomaticApproval)
+	shellCmd := s.coder.SessionRuntime().StartCommand(sessionKey, name, workdir, agentID, opts.AutomaticApproval)
 	if err := s.tmux.NewSession(sessionKey, workdir, shellCmd, s.coder.SessionRuntime().Env()); err != nil {
 		return StartResult{}, err
 	}
@@ -199,7 +199,7 @@ func (s *Manager) Resume(rawID string) (Session, error) {
 			return Session{}, fmt.Errorf(`Coder "%s" already exists.`, stored.SessionID)
 		}
 	}
-	cmd := s.coder.SessionRuntime().ResumeCommand(stored.SessionID, stored.CWD, stored.RemoteControl, true)
+	cmd := s.coder.SessionRuntime().ResumeCommand(stored.SessionID, stored.CWD, true)
 	if err := s.tmux.NewSession(stored.SessionID, stored.CWD, cmd, s.coder.SessionRuntime().Env()); err != nil {
 		return Session{}, err
 	}

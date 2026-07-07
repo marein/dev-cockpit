@@ -14,7 +14,6 @@ import (
 
 type sessionRepository struct {
 	stateRoot string
-	host      string
 }
 
 type storedSession struct {
@@ -134,12 +133,10 @@ func (r *sessionRepository) listStored() []storedSession {
 		}
 		out = append(out, storedSession{
 			Session: coder.Session{
-				SessionID:     id,
-				Name:          coder.DisplayName(md.Name, id),
-				CWD:           cwd,
-				UpdatedAt:     updatedAt,
-				RemoteControl: md.RemoteSteerable,
-				TaskURL:       r.taskURL(md.TaskID),
+				SessionID: id,
+				Name:      coder.DisplayName(md.Name, id),
+				CWD:       cwd,
+				UpdatedAt: updatedAt,
 			},
 			sessionDir: sessionDir,
 			filesDir:   filepath.Join(sessionDir, "files"),
@@ -160,14 +157,6 @@ func (r *sessionRepository) findStored(sessionID string) (storedSession, error) 
 		}
 	}
 	return storedSession{}, fmt.Errorf(`No session "%s" was found.`, id)
-}
-
-func (r *sessionRepository) taskURL(taskID string) string {
-	id := strings.TrimSpace(taskID)
-	if id == "" {
-		return ""
-	}
-	return r.host + "/copilot/tasks/" + id
 }
 
 func (r *sessionRepository) filesDir(sessionID string) (string, error) {

@@ -11,12 +11,10 @@ import (
 
 // Session is one stored coder-CLI session that can be resumed.
 type Session struct {
-	SessionID     string
-	Name          string
-	CWD           string
-	UpdatedAt     time.Time
-	RemoteControl bool
-	TaskURL       string
+	SessionID string
+	Name      string
+	CWD       string
+	UpdatedAt time.Time
 }
 
 // SessionRepository manages coder-specific persisted sessions and files.

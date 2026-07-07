@@ -58,14 +58,12 @@ func scanRunning(panes []tmux.Pane, resumable []Session, prov Coder) (running []
 			}
 			if match, ok := resumableByID[p.Name]; ok {
 				running = append(running, Running{
-					Identifier:    match.SessionID,
-					TmuxSession:   p.Name,
-					PID:           p.PID,
-					Name:          DisplayName(match.Name, match.SessionID),
-					StartedAt:     p.StartTime(),
-					CWD:           match.CWD,
-					RemoteControl: match.RemoteControl,
-					TaskURL:       match.TaskURL,
+					Identifier:  match.SessionID,
+					TmuxSession: p.Name,
+					PID:         p.PID,
+					Name:        DisplayName(match.Name, match.SessionID),
+					StartedAt:   p.StartTime(),
+					CWD:         match.CWD,
 				})
 				runningIDs[match.SessionID] = true
 				continue

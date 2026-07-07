@@ -25,7 +25,7 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
 
     await run("new session form renders fields + agent select is populated", async () => {
       await page.goto(`${BASE}/coders/new?project=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
-      const has = await page.evaluate(() => ({ name: !!document.querySelector('input[name="name"]'), project: !!document.querySelector('select[name="project"]'), agent: !!document.querySelector('select[name="agent"]'), remote: !!document.querySelector('input[name="remote_control"]'), approval: !!document.querySelector('input[name="automatic_approval"]') }));
+      const has = await page.evaluate(() => ({ name: !!document.querySelector('input[name="name"]'), project: !!document.querySelector('select[name="project"]'), agent: !!document.querySelector('select[name="agent"]'), approval: !!document.querySelector('input[name="automatic_approval"]') }));
       assert(Object.values(has).every(Boolean), `missing fields: ${JSON.stringify(has)}`);
       const agentOption = await page.evaluate((id) => [...document.querySelectorAll('select[name="agent"] option')].some((o) => o.value === id || o.textContent.includes(id)), agentId);
       assert(agentOption, "created agent not in the agent select");

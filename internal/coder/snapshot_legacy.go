@@ -99,14 +99,12 @@ func (l *legacyScanner) match(p tmux.Pane) (Running, string, bool) {
 		return Running{}, "", false
 	}
 	return Running{
-		Identifier:    match.SessionID,
-		TmuxSession:   p.Name,
-		PID:           p.PID,
-		Name:          DisplayName(match.Name, match.SessionID),
-		StartedAt:     p.StartTime(),
-		CWD:           match.CWD,
-		RemoteControl: match.RemoteControl,
-		TaskURL:       match.TaskURL,
+		Identifier:  match.SessionID,
+		TmuxSession: p.Name,
+		PID:         p.PID,
+		Name:        DisplayName(match.Name, match.SessionID),
+		StartedAt:   p.StartTime(),
+		CWD:         match.CWD,
 	}, match.SessionID, true
 }
 

@@ -16,21 +16,18 @@ func (runtime) UsesProvidedSessionID() bool { return true }
 
 func (runtime) Env() map[string]string { return map[string]string{"CLAUDE_CODE_NO_FLICKER": "1"} }
 
-func (r runtime) StartCommand(sessionID, sessionName, workdir, agentID string, remoteControl, automaticApproval bool) string {
+func (r runtime) StartCommand(sessionID, sessionName, workdir, agentID string, automaticApproval bool) string {
 	return fmt.Sprintf("cd %s && exec claude%s --session-id %s --name %s",
-		clirun.ShellQuote(workdir), r.flags(agentID, remoteControl, automaticApproval), clirun.ShellQuote(sessionID), clirun.ShellQuote(sessionName))
+		clirun.ShellQuote(workdir), r.flags(agentID, automaticApproval), clirun.ShellQuote(sessionID), clirun.ShellQuote(sessionName))
 }
 
-func (r runtime) ResumeCommand(sessionID, workdir string, remoteControl, automaticApproval bool) string {
+func (r runtime) ResumeCommand(sessionID, workdir string, automaticApproval bool) string {
 	return fmt.Sprintf("cd %s && exec claude%s --resume %s",
-		clirun.ShellQuote(workdir), r.flags("", remoteControl, automaticApproval), clirun.ShellQuote(sessionID))
+		clirun.ShellQuote(workdir), r.flags("", automaticApproval), clirun.ShellQuote(sessionID))
 }
 
-func (r runtime) flags(agentID string, remoteControl, automaticApproval bool) string {
+func (r runtime) flags(agentID string, automaticApproval bool) string {
 	var flags strings.Builder
-	if remoteControl {
-		flags.WriteString(" --remote-control")
-	}
 	if automaticApproval {
 		flags.WriteString(" --permission-mode auto")
 	}
