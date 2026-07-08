@@ -48,7 +48,7 @@
 
         <h3 class="card-title mt-5">Push channels</h3>
         <div class="text-secondary small mb-3">Delivers notifications outside the app. The server waits 2 seconds and only sends news that is still unread, so anything you are already looking at stays silent. Opening the coder or shell marks it read everywhere.</div>
-        <dc-push-settings class="d-block" vapid-key="{{.VAPIDPublicKey}}" subscribe-url="/push/subscribe" unsubscribe-url="/push/unsubscribe" test-url="/push/test">
+        <dc-push-settings class="d-block" vapid-key="{{.VAPIDPublicKey}}" subscribe-url="/push/subscribe" unsubscribe-url="/push/unsubscribe" test-url="/push/test" done-url="/settings/notifications#settings-webpush">
           <div class="mb-4" id="settings-base-url">
             {{if and (eq $.FlashProject "settings-base-url") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
             <label class="form-label">Base URL</label>

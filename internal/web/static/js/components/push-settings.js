@@ -136,7 +136,7 @@ class PushSettings extends HTMLElement {
         auth: keys.auth,
         label: deviceLabel(),
       }), "Could not register the device.");
-      window.location.reload();
+      window.app.navigate(this.getAttribute("done-url"));
     } catch (error) {
       notifyError(error?.message || "Could not enable push on this device.");
       this.setBusy(this.enableBtn, false);
@@ -152,7 +152,7 @@ class PushSettings extends HTMLElement {
       if (endpoint) {
         await ensureOk(await postForm(this.getAttribute("unsubscribe-url"), { endpoint }), "Could not remove the device.");
       }
-      window.location.reload();
+      window.app.navigate(this.getAttribute("done-url"));
     } catch (error) {
       notifyError(error?.message || "Could not disable push on this device.");
       this.setBusy(this.disableBtn, false);
