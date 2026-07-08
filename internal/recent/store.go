@@ -6,12 +6,10 @@
 package recent
 
 import (
-	"encoding/json"
-	"log"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/local/dev-cockpit/internal/statefile"
 )
 
 // Store is the file-backed last-used timestamp map. Safe for concurrent use.
@@ -52,28 +50,10 @@ func (s *Store) load() map[string]int64 {
 	if s.path == "" {
 		return m
 	}
-	if data, err := os.ReadFile(s.path); err == nil {
-		_ = json.Unmarshal(data, &m)
-	}
+	statefile.Load(s.path, &m)
 	return m
 }
 
 func (s *Store) save(m map[string]int64) {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		log.Printf("recent: create state dir: %v", err)
-		return
-	}
-	data, err := json.Marshal(m)
-	if err != nil {
-		log.Printf("recent: marshal state: %v", err)
-		return
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		log.Printf("recent: write state: %v", err)
-		return
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		log.Printf("recent: replace state: %v", err)
-	}
+	statefile.Save(s.path, 0o644, m)
 }

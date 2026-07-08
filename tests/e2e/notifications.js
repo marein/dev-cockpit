@@ -1,4 +1,5 @@
 const fs = require("fs");
+const http = require("http");
 const path = require("path");
 const L = require("./lib");
 const { assert, sleep, BASE } = L;
@@ -30,6 +31,9 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
   const project = `zztc-${tag}`;
   const coderName = `tcntf-${tag.slice(-4)}`;
   let coderUrl = null;
+  const hookHits = [];
+  let hookStub = null;
+  let hookUrl = null;
   try {
     await run("bell renders in the header and the center opens empty", async () => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
@@ -81,8 +85,8 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       assert(await page.$('input[name="jingle"][value="arpeggio"]:checked'), "default jingle not arpeggio");
       await page.check('input[name="jingle"][value="retro"]');
       await Promise.all([
-        page.waitForURL(/\/settings\/notifications$/, { timeout: 10000 }),
-        page.locator('form[action="/settings/notifications"] button[type="submit"]').click(),
+        page.waitForURL(/\/settings\/notifications(#[a-z-]+)?$/, { timeout: 10000 }),
+        page.locator('form:has(dc-jingle-picker) button[type="submit"]').click(),
       ]);
       await page.waitForSelector('input[name="jingle"][value="retro"]:checked', { state: "attached", timeout: 6000 });
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
@@ -91,9 +95,74 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       await page.goto(`${BASE}/settings/notifications`, { waitUntil: "domcontentloaded" });
       await page.check('input[name="jingle"][value="arpeggio"]');
       await Promise.all([
-        page.waitForURL(/\/settings\/notifications$/, { timeout: 10000 }),
-        page.locator('form[action="/settings/notifications"] button[type="submit"]').click(),
+        page.waitForURL(/\/settings\/notifications(#[a-z-]+)?$/, { timeout: 10000 }),
+        page.locator('form:has(dc-jingle-picker) button[type="submit"]').click(),
       ]);
+    });
+
+    await run("settings: push channels section renders web push state and the webhook form", async () => {
+      await page.goto(`${BASE}/settings/notifications`, { waitUntil: "domcontentloaded" });
+      assert((await L.waitUpgraded(page, ["dc-push-settings"], 8000)).length === 0, "dc-push-settings not upgraded");
+      const vapid = await page.getAttribute("dc-push-settings", "vapid-key");
+      assert(vapid && vapid.length > 20, "vapid key attribute missing");
+      assert(await page.$('dc-push-settings input[name="url"]'), "webhook url input missing");
+      const state = await page.evaluate(() => ({
+        enable: !document.querySelector("[data-push-enable]").classList.contains("d-none"),
+        status: !document.querySelector("[data-push-status]").classList.contains("d-none"),
+      }));
+      assert(state.enable || state.status, "neither enable button nor a status hint shown");
+    });
+
+    await run("settings: webhook registers, lists, and its test button posts to it", async () => {
+      hookStub = http.createServer((req, res) => {
+        let body = "";
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", () => {
+          hookHits.push(body);
+          res.end("ok");
+        });
+      });
+      await new Promise((resolve) => hookStub.listen(0, "127.0.0.1", resolve));
+      hookUrl = `http://127.0.0.1:${hookStub.address().port}/hook`;
+      await page.goto(`${BASE}/settings/notifications`, { waitUntil: "domcontentloaded" });
+      await page.fill('dc-push-settings input[name="url"]', hookUrl);
+      await Promise.all([
+        page.waitForURL(/\/settings\/notifications(#[a-z-]+)?$/, { timeout: 10000 }),
+        page.locator('form:has(input[name="url"]) button[type="submit"]').click(),
+      ]);
+      const row = page.locator(`dc-push-settings .list-group-item:has-text("${hookUrl}")`);
+      await row.waitFor({ state: "visible", timeout: 6000 });
+      await row.locator("[data-webhook-test]:not(.d-none)").click();
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline && !hookHits.some((h) => h.includes("Test notification"))) await sleep(250);
+      assert(hookHits.some((h) => h.includes("Test notification")), `webhook payloads: ${JSON.stringify(hookHits)}`);
+    });
+
+    await run("settings: duplicate webhook is rejected with a flash", async () => {
+      await page.fill('dc-push-settings input[name="url"]', hookUrl);
+      await Promise.all([
+        page.waitForURL(/\/settings\/notifications(#[a-z-]+)?$/, { timeout: 10000 }),
+        page.locator('form:has(input[name="url"]) button[type="submit"]').click(),
+      ]);
+      await page.waitForSelector(".alert-danger", { timeout: 6000 });
+      const rows = await page.locator(`dc-push-settings .list-group-item:has-text("${hookUrl}")`).count();
+      assert(rows === 1, `expected one webhook row, got ${rows}`);
+    });
+
+    await run("settings: base url saves and makes webhook links absolute", async () => {
+      const base = "https://cockpit.example.test:9443";
+      await page.fill('dc-push-settings input[name="base_url"]', base);
+      await Promise.all([
+        page.waitForURL(/\/settings\/notifications(#[a-z-]+)?$/, { timeout: 10000 }),
+        page.locator('form:has(input[name="base_url"]) button[type="submit"]').click(),
+      ]);
+      assert(await page.inputValue('dc-push-settings input[name="base_url"]') === base, "base url not persisted");
+      hookHits.length = 0;
+      await page.locator(`dc-push-settings .list-group-item:has-text("${hookUrl}")`).locator("[data-webhook-test]").click();
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline && hookHits.length === 0) await sleep(250);
+      const payload = hookHits[0] || "";
+      assert(payload.includes(`${base}/settings/notifications`), `payload lacks absolute link: ${payload}`);
     });
 
     if (!NOTIFY_DIR) {
@@ -238,6 +307,24 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       }
     });
 
+    await run("push channels: unread news reaches the webhook, news read within the delay stays silent", async () => {
+      await page.goto(coderUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });
+      await sleep(1500);
+      hookHits.length = 0;
+      injectCopilotDone(coderId);
+      await sleep(4500);
+      assert(!hookHits.some((h) => h.includes(coderName)), `auto-read news was pushed: ${JSON.stringify(hookHits)}`);
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await sleep(1500);
+      injectCopilotDone(coderId);
+      const deadline = Date.now() + 12000;
+      while (Date.now() < deadline && !hookHits.some((h) => h.includes(coderName))) await sleep(250);
+      assert(hookHits.some((h) => h.includes(coderName)), `no webhook hit for unread news: ${JSON.stringify(hookHits)}`);
+      const payload = hookHits.find((h) => h.includes(coderName));
+      assert(payload.includes("Something new in") && payload.includes(project), `payload: ${payload}`);
+    });
+
     await run("shell: long command completion lands as notification with /shells link", async () => {
       const shellUrl = await L.createShell(page, project);
       const shellId = new URL(shellUrl).pathname.split("/").pop();
@@ -297,6 +384,28 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       }, coderId, { timeout: 6000 });
     });
   } finally {
+    if (hookUrl) {
+      await page.goto(`${BASE}/settings/notifications`, { waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.evaluate(async (stub) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch("/settings/notifications", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-Token": token },
+          body: "form=base-url&base_url=",
+        });
+        for (const marker of document.querySelectorAll('input[name="form"][value="webhook-remove"]')) {
+          const row = marker.closest(".list-group-item");
+          if (!row || !row.textContent.includes(stub)) continue;
+          const id = marker.parentElement.querySelector('input[name="id"]').value;
+          await fetch("/settings/notifications", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-Token": token },
+            body: "form=webhook-remove&id=" + encodeURIComponent(id),
+          });
+        }
+      }, hookUrl).catch(() => {});
+    }
+    if (hookStub) hookStub.close();
     if (coderUrl) await L.stopSession(page, coderUrl).catch(() => {});
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" }).catch(() => {});
     const card = `#project-${project}`;

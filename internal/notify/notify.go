@@ -9,14 +9,10 @@
 package notify
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
-	"log"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/local/dev-cockpit/internal/statefile"
 )
 
 const maxStored = 100
@@ -98,7 +94,7 @@ func (s *Service) Add(targetID string) {
 		url = "/coders/" + targetID
 	}
 	n := Notification{
-		ID:         newID(),
+		ID:         statefile.NewID(),
 		TargetID:   targetID,
 		TargetName: name,
 		Project:    info.Project,
@@ -233,30 +229,12 @@ func (s *Service) publishLocked(ev Event) {
 
 func (s *Service) load() []Notification {
 	var list []Notification
-	if data, err := os.ReadFile(s.path); err == nil {
-		_ = json.Unmarshal(data, &list)
-	}
+	statefile.Load(s.path, &list)
 	return list
 }
 
 func (s *Service) save(list []Notification) {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		log.Printf("notify: create state dir: %v", err)
-		return
-	}
-	data, err := json.Marshal(list)
-	if err != nil {
-		log.Printf("notify: marshal state: %v", err)
-		return
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		log.Printf("notify: write state: %v", err)
-		return
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		log.Printf("notify: replace state: %v", err)
-	}
+	statefile.Save(s.path, 0o644, list)
 }
 
 func countUnread(list []Notification) int {
@@ -284,12 +262,4 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	return id
-}
-
-func newID() string {
-	var raw [8]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return hex.EncodeToString([]byte(time.Now().Format("150405.000000000")))
-	}
-	return hex.EncodeToString(raw[:])
 }

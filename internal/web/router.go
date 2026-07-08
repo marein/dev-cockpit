@@ -108,6 +108,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/notifications/stream", s.handleNotificationsStream)
 	auth.POST("/notifications/read", s.handleNotificationsRead)
 
+	auth.POST("/push/subscribe", s.handlePushSubscribe)
+	auth.POST("/push/unsubscribe", s.handlePushUnsubscribe)
+	auth.POST("/push/test", s.handlePushTest)
+
 	auth.GET("/update/check", s.handleUpdateCheck)
 	auth.POST("/update/apply", s.handleUpdateApply)
 

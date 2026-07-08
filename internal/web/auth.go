@@ -179,6 +179,15 @@ func (s *Server) redirectWithFlash(c *gin.Context, location, message, errMsg str
 	s.finishRedirect(c, sess, location)
 }
 
+// redirectWithAnchoredFlash carries the flash to the page section identified
+// by anchor: the redirect jumps there and the section renders the flash next
+// to the action; the layout suppresses the global alert whenever the anchor
+// marker is set. Same pattern as the per-project flash on the projects page.
+func (s *Server) redirectWithAnchoredFlash(c *gin.Context, path, anchor, message, errMsg string) {
+	ginsessions.Default(c).Set(flashProjectKey, anchor)
+	s.redirectWithFlash(c, path+"#"+anchor, message, errMsg)
+}
+
 func (s *Server) redirectWithProjectFlash(c *gin.Context, project, message, errMsg string) {
 	if project == "" {
 		s.redirectWithFlash(c, "/projects", message, errMsg)

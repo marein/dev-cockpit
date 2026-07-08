@@ -11,7 +11,13 @@ test. Update this file when a convention changes.
   commands. If unavoidable, ask the user first, then build a move forward
   migration that keeps the old path working.
 - **Hashed assets:** reference via the manifest, `{{ asset "/css/app.css" }}`,
-  never the raw path. See `internal/web/static_assets.go`.
+  never the raw path. See `internal/web/static_assets.go`. Static files that
+  reference other assets by raw path (manifest.json, sw.js) get those
+  references rewritten to the hashed URLs at build of the asset manifest.
+- **State files:** every JSON state file goes through `internal/statefile`
+  (read through on every call, atomic tmp+rename write, a corrupt file is
+  quarantined as `<path>.broken` instead of being silently overwritten).
+  Do not hand-roll load/save; entry ids come from `statefile.NewID`.
 - **Forms:** POST action path must equal the GET path that renders it (pairs in
   `internal/web/router.go`, e.g. `/coders/new`). Backlinks, login redirect, and
   post then redirect depend on it. New form, add both routes on one path.
@@ -135,6 +141,49 @@ jingle selection is cross-device state in `<state-dir>/settings.json`
 and edited on the settings page (`/settings/notifications`:
 `dc-notify-volume`, `dc-jingle-picker`). Jingle ids in `handlers_settings.go`
 and `@dc/jingle` must stay in sync.
+
+Push channels forward the same news off the page. `internal/push` subscribes
+to the notifier fan-out, waits 2s, and re-checks that the target is still
+unread before sending, so news auto-read on a visibly open page never rings a
+phone. Channels: Web Push to registered devices (VAPID keys in
+`<state-dir>/push-vapid.json`, generated once, rotating them invalidates every
+subscription; devices in `<state-dir>/push-subscriptions.json`; subscriptions
+the push service reports gone prune themselves) and registered webhooks
+(several, each notification POSTs one JSON payload with text, title, body,
+and url; the text field makes Slack incoming webhooks work as is).
+Per-channel configuration lives in `<state-dir>/push-channels.json`, one
+key per channel (the webhooks list, the web push subscriber contact for the
+VAPID sub claim, empty means the built-in default), so a new channel adds a
+key instead of scattering flat settings. A top-level `baseUrl` (settings
+page form) holds the public address of the cockpit; channels that leave the
+app use it to absolutize the notification link (the webhook payload url and
+a trailing link line in its text), empty keeps app relative paths, and web
+push always stays relative because the service worker resolves against its
+own origin. Webhook URLs are bearer
+credentials, so every push state file is written 0600 and channel config
+stays out of the world-readable settings store; `settings.json` keeps only
+real preferences like the jingle. All outbound push traffic (web push and
+webhooks) shares one HTTP client with a 10s timeout that never follows
+redirects and refuses link local destinations at dial time; loopback and
+LAN targets stay allowed on purpose, local webhook receivers are a normal
+setup. Every subscription records the VAPID
+public key it was created with: after a key change (the key file was lost
+or damaged and got regenerated, which is logged; a transient read error
+refuses startup instead of rotating the identity) the dead devices render
+with an "Old keys" badge plus a warning alert on the settings page and are
+skipped on delivery, the device cap counts live devices only, and the
+enable flow replaces a stale browser subscription on its own (unsubscribe,
+then retry), so a device recovers with one click. The service worker
+`static/sw.js` renders the payload and must stay registered from the stable
+un-hashed `/sw.js` path; it has no fetch handler on purpose, pe.js owns
+navigation. The `dc-push-settings` element on `/settings/notifications` does
+the browser side (permission, registration, PushManager subscribe via the JS
+routes `/push/subscribe`, `/push/unsubscribe`, `/push/test`) and only marks
+the server rendered device rows; on iPhone and iPad web push requires the app
+installed to the home screen, per origin, so a test instance needs its own
+install. The settings page now hosts several forms; they all POST to
+`/settings/notifications` and dispatch on a hidden `form` field, keeping the
+form path pairing rule intact.
 
 ## Build and run
 

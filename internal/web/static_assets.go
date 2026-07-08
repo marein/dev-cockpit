@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -50,14 +51,20 @@ func newStaticAssetManifest() (staticAssetManifest, error) {
 		byURL:    make(map[string]staticAsset),
 		assetURL: make(map[string]string),
 	}
+	// manifest.json and sw.js reference other assets by their raw paths, so
+	// they get those references rewritten to the hashed URLs after every
+	// other asset has one.
+	rewritten := []string{"manifest.json", "sw.js"}
 	for name, content := range files {
-		if name == "manifest.json" {
+		if slices.Contains(rewritten, name) {
 			continue
 		}
 		manifest.add(name, content)
 	}
-	if content, ok := files["manifest.json"]; ok {
-		manifest.add("manifest.json", rewriteAssetRefs(content, manifest.assetURL))
+	for _, name := range rewritten {
+		if content, ok := files[name]; ok {
+			manifest.add(name, rewriteAssetRefs(content, manifest.assetURL))
+		}
 	}
 
 	// A build id over the whole hashed asset set. It changes on any asset change,

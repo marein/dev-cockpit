@@ -5,11 +5,9 @@
 package settings
 
 import (
-	"encoding/json"
-	"log"
-	"os"
-	"path/filepath"
 	"sync"
+
+	"github.com/local/dev-cockpit/internal/statefile"
 )
 
 // Store is the file-backed settings map. Safe for concurrent use.
@@ -44,28 +42,10 @@ func (s *Store) Set(key, value string) {
 
 func (s *Store) load() map[string]string {
 	m := map[string]string{}
-	if data, err := os.ReadFile(s.path); err == nil {
-		_ = json.Unmarshal(data, &m)
-	}
+	statefile.Load(s.path, &m)
 	return m
 }
 
 func (s *Store) save(m map[string]string) {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		log.Printf("settings: create state dir: %v", err)
-		return
-	}
-	data, err := json.Marshal(m)
-	if err != nil {
-		log.Printf("settings: marshal state: %v", err)
-		return
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		log.Printf("settings: write state: %v", err)
-		return
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		log.Printf("settings: replace state: %v", err)
-	}
+	statefile.Save(s.path, 0o644, m)
 }

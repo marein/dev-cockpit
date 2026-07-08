@@ -20,6 +20,7 @@ import (
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/notify"
 	"github.com/local/dev-cockpit/internal/project"
+	"github.com/local/dev-cockpit/internal/push"
 	"github.com/local/dev-cockpit/internal/recent"
 	"github.com/local/dev-cockpit/internal/settings"
 	"github.com/local/dev-cockpit/internal/shell"
@@ -179,6 +180,13 @@ func runServe(opts serveOptions) error {
 		notify.StorePath(cfg.StateDir),
 		notifyResolver(coders, shells, projectRepo),
 	)
+	// The push channels subscribe before any watcher starts, so an inbox
+	// backlog ingested right after boot cannot slip past them.
+	pushService, err := push.NewService(cfg.StateDir)
+	if err != nil {
+		return fmt.Errorf("failed to initialize push channels: %w", err)
+	}
+	pushService.Start(notifier)
 	for _, c := range selected {
 		go notifier.RunInbox(notify.InboxDir(cfg.StateDir, c.ID()), time.Second)
 	}
@@ -199,7 +207,7 @@ func runServe(opts serveOptions) error {
 
 	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
 
-	srv, err := web.NewServer(cfg, coders, shells, projectRepo, notifier, settingsStore, resolveVersion())
+	srv, err := web.NewServer(cfg, coders, shells, projectRepo, notifier, settingsStore, pushService, resolveVersion())
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}
