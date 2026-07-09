@@ -1240,7 +1240,7 @@ async function init(root) {
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
       save();
-    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "p") {
+    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "o") {
       e.preventDefault();
       openQuickOpen("files");
     } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
@@ -1404,6 +1404,7 @@ async function createCodeMirror(host, hooks, settings, signal) {
   }
 
   const baseExtensions = (langExt) => [
+    keymap.of([{ key: "Ctrl-o", run: () => true }]),
     basicSetup,
     keymap.of([indentWithTab]),
     theme.oneDark,

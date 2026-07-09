@@ -41,7 +41,7 @@
         </button>
         <div class="editor-tabs" data-editor-tabs role="tablist"></div>
         <div class="editor-actions d-flex align-items-center gap-1 px-2 flex-shrink-0">
-          <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-editor-quick-open aria-label="Go to file" title="Go to file (Ctrl+P)">
+          <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-editor-quick-open aria-label="Go to file" title="Go to file (Ctrl+O)">
             <i class="ti ti-file-search"></i>
           </button>
           <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary d-none d-md-inline-flex" data-editor-find aria-label="Find in file" title="Find in file (Ctrl+F)">
@@ -137,11 +137,13 @@
             <i class="ti ti-folder me-1"></i>Browse files
           </button>
           <div class="small mt-3 editor-placeholder-keys">
-            <kbd>Ctrl</kbd>+<kbd>P</kbd> go to file
+            <kbd>Ctrl</kbd>+<kbd>O</kbd> go to file
+            <span class="mx-1">·</span>
+            <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> find in files
             <span class="mx-1">·</span>
             <kbd>Ctrl</kbd>+<kbd>S</kbd> save
             <span class="mx-1">·</span>
-            <kbd>Ctrl</kbd>+<kbd>F</kbd> find
+            <kbd>Ctrl</kbd>+<kbd>F</kbd> find in file
           </div>
         </div>
         <div class="editor-preview markdown" data-editor-preview-pane hidden></div>

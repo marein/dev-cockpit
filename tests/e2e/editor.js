@@ -114,7 +114,8 @@ L.runFeature("EDITOR", async ({ page, run, mobilePage }) => {
       await newFile(qoFile);
       await page.evaluate((s) => document.querySelector(`${s} .editor-tab-state`).click(), tabSel(qoFile));
       await page.waitForFunction((s) => !document.querySelector(s), tabSel(qoFile), { timeout: 6000 });
-      await page.click("[data-editor-quick-open]");
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+O");
       await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
       await page.fill("[data-editor-quickopen-input]", qoFile.slice(0, 8));
       await page.waitForSelector(".editor-quickopen-item", { timeout: 6000 });
