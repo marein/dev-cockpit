@@ -63,7 +63,7 @@
           <div class="mb-4" id="settings-webpush">
             {{if and (eq $.FlashProject "settings-webpush") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
             <label class="form-label">Web push</label>
-            <div class="text-secondary small mb-2">System notifications on this device, also when the app is closed. On iPhone and iPad this needs the app installed on the home screen. Each device registers itself here.</div>
+            <div class="text-secondary small mb-2">System notifications on this device, also when the app is closed. Works only when the app is served over HTTPS. On iPhone and iPad this needs the app installed on the home screen. Each device registers itself here.</div>
             {{if .StaleDevices}}
             <div class="alert alert-warning" role="alert">
               <div class="d-flex">

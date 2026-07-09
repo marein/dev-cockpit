@@ -79,9 +79,11 @@ class PushSettings extends HTMLElement {
     if (this.knownEndpoints().length > 0) this.testBtn?.classList.remove("d-none");
     if (!this.supported()) {
       const ios = /iPhone|iPod/.test(navigator.userAgent) || isIPad();
-      this.showStatus(ios
-        ? "Add the app to the home screen first (share menu), then enable push from the installed app."
-        : "This browser does not support web push.");
+      this.showStatus(window.isSecureContext === false
+        ? "Web push needs HTTPS. Open the app over https, then enable it here."
+        : ios
+          ? "Add the app to the home screen first (share menu), then enable push from the installed app."
+          : "This browser does not support web push.");
       return;
     }
     if (Notification.permission === "denied") {
