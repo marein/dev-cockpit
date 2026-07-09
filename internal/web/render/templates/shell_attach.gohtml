@@ -41,10 +41,13 @@
       title="Visible rows"
     ></terminal-setting-select>
   </div>
-  <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative"
-                  stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
-    <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
-  </terminal-attach>
+  <div class="attach-frame min-w-0 w-100">
+    {{template "terminal_tabs.gohtml" .}}
+    <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative"
+                    stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
+      <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
+    </terminal-attach>
+  </div>
 
   <div class="attach-footer min-w-0">
     <div class="attach-mobile">

@@ -72,6 +72,7 @@ class InlineRename extends HTMLElement {
     if (this.titleSuffix) {
       document.title = name + this.titleSuffix;
     }
+    document.dispatchEvent(new CustomEvent("dc-renamed", { detail: { url: this.url, name } }));
   }
 
   async save() {

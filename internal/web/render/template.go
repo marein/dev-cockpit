@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 //go:embed templates/*.gohtml
@@ -56,7 +57,7 @@ type Page struct {
 	// CoderHome is the canonical landing URL of the coder pages (the first
 	// active coder's instructions), used by the main nav.
 	CoderHome string
-	QuickNav   QuickNav
+	QuickNav  QuickNav
 	// Jingle is the cross-device notification jingle selection, rendered into
 	// a meta tag so the client picks the right tune.
 	Jingle string
@@ -101,4 +102,16 @@ type QuickNavTarget struct {
 	Project string // owning project name, shown under the target
 	Coder   string // owning coder id, shown when several coders run
 	HasNews bool
+}
+
+// TerminalTab is one entry in the attach page tab strip: a live coder or shell.
+type TerminalTab struct {
+	ID        string
+	Name      string
+	URL       string
+	Project   string // owning project name, shown under the tab name
+	Coder     string // owning coder id, empty for shells
+	Kind      string // "coder" or "shell"
+	HasNews   bool
+	StartedAt time.Time
 }

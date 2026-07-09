@@ -37,6 +37,7 @@ it; there is no stdlib equivalent that also covers WebKit/Safari).
 | `projects.js` | list, card, filter, sort, create, delete, collapse (>5) |
 | `editor.js` | tree, tabs (switch keeps dirty buffers, close confirm, reload restore), save, Ctrl+S, save all, new file/folder, rename, recursive delete (closes tabs), quick open palette, find in files (content search + jump to line), statusbar position, markdown preview, svg preview, image viewer + raw download, find panel, upload (dialog + progress), settings, highlighting, mobile drawer, lifecycle |
 | `terminal.js` | shared attach: desktop canvas typing + mobile mirror/cursor input, controls, ctrl modifier, swipe scroll (drag + fling), copy, paste, refresh, setting select |
+| `terminal-tabs.js` | desktop tab strip on the attach pages: render + active mark, newest right, click switch, pointer drag reorder + persisted order, switcher via Ctrl+Tab and double tap Ctrl/Meta (cycle via Tab/arrows, type-to-filter, empty state, Enter, Esc, click, chord cancels tap), close controls on tabs + rows (confirm; closing the current tab switches to the right neighbor), inline rename reflects in the tab (dc-renamed event), + menu with project preselect, hidden on coarse pointer |
 | `shells.js` | create, attach, rename (CSRF header), scroll-history, delete |
 | `coders.js` | new form + agent select, create/attach, prompt (desktop + mobile), files (multi upload, reference, download, delete), stop, resumable |
 | `agents.js` | list, create, edit (id move), delete, validation |

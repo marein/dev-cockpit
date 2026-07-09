@@ -1,0 +1,36 @@
+{{define "terminal_tabs.gohtml"}}
+<terminal-tabs class="d-print-none">
+  <div class="terminal-tabs-strip" data-tabs-strip role="tablist" aria-label="Active coders and shells">
+    {{range .Tabs}}
+    <a class="terminal-tab{{if eq .ID $.QuickNav.CurrentID}} active{{end}}"
+       href="{{.URL}}" role="tab" draggable="false"
+       aria-selected="{{if eq .ID $.QuickNav.CurrentID}}true{{else}}false{{end}}"
+       data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"
+       title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
+      <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0" aria-hidden="true" data-notify-target="{{.ID}}" data-notify-running></span>
+      <span class="terminal-tab-icon" data-tab-icon aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+      <span class="terminal-tab-text">
+        <span class="terminal-tab-name">{{.Name}}</span>
+        {{if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}
+      </span>
+      <span class="terminal-tab-close" data-tab-close role="button" tabindex="-1" aria-label="{{if .Coder}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if .Coder}}Stop coder{{else}}Delete shell{{end}}">
+        <i class="ti ti-x" aria-hidden="true"></i>
+      </span>
+    </a>
+    {{end}}
+  </div>
+  <div class="dropdown terminal-tabs-new">
+    <button type="button" class="terminal-tabs-new-btn" data-bs-toggle="dropdown" aria-expanded="false" aria-label="New coder or shell" title="New coder or shell">
+      <i class="ti ti-plus"></i>
+    </button>
+    <div class="dropdown-menu dropdown-menu-end">
+      <a class="dropdown-item d-flex align-items-center gap-2" href="/coders/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
+        <i class="ti ti-code-ai flex-shrink-0"></i><span>New coder</span>
+      </a>
+      <a class="dropdown-item d-flex align-items-center gap-2" href="/shells/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
+        <i class="ti ti-terminal-2 flex-shrink-0"></i><span>New shell</span>
+      </a>
+    </div>
+  </div>
+</terminal-tabs>
+{{end}}

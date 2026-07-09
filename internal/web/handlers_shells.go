@@ -54,6 +54,7 @@ func (s *Server) handleShellAttach(c *gin.Context) {
 		Page:        s.page(c, pageTitle(sh.Name, projectName), "projects"),
 		Shell:       sh,
 		ProjectName: projectName,
+		Tabs:        s.terminalTabs(),
 		StreamURL:   "/shells/" + sh.Identifier + "/stream",
 		ResizeURL:   "/shells/" + sh.Identifier + "/resize",
 		InputURL:    "/shells/" + sh.Identifier + "/input",
