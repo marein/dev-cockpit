@@ -91,6 +91,16 @@ free floating page scripts.
   `@dc/http` reads it and attaches the `X-CSRF-Token` header to every POST, so
   components never read or thread the token. Server rendered forms keep their
   hidden `csrf_token` field for plain and ajax form posts.
+- **Context keys:** the shell attach footer shows per program key buttons while
+  a known program (vim, less, htop, top, nano, emacs, plus aliases) runs in the
+  pane. tmux reports `pane_current_command` over a control mode subscription,
+  the stream forwards it as a `foreground` SSE event, `terminal-input` renders
+  the `@dc/keymap` entries into the `[data-terminal-context]` slots, prefixed
+  by a muted program name chip. Button labels show the keys themselves, like
+  the static control row, the action lives in title and aria-label. Keys
+  marked `typing` focus the mobile cursor input so the on-screen keyboard
+  opens for the follow-up text. On mobile the row sits above the static rows,
+  so those keep their position when context keys appear.
 
 ## Notifications
 

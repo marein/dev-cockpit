@@ -284,13 +284,25 @@ func (s *Shells) Resize(rawID, rawCols, rawRows string) error {
 	return s.streams.Resize(sh.TmuxSession, cols, rows)
 }
 
-// AttachStream opens the control client and returns the initial snapshot.
+// AttachStream opens the control client and returns the initial snapshot. It
+// also subscribes the stream to foreground command reporting, which feeds the
+// context controls on the attach page.
 func (s *Shells) AttachStream(rawID, rawCols, rawRows string) (terminal.Attachment, error) {
 	sh, err := s.ResolveRunning(rawID)
 	if err != nil {
 		return terminal.Attachment{}, err
 	}
-	return s.streams.Attach(sh.TmuxSession, rawCols, rawRows)
+	att, err := s.streams.Attach(sh.TmuxSession, rawCols, rawRows)
+	if err != nil {
+		return terminal.Attachment{}, err
+	}
+	s.streams.SubscribeForeground(sh.TmuxSession)
+	return att, nil
+}
+
+// StreamForeground returns the shell's current foreground command name.
+func (s *Shells) StreamForeground(name string) string {
+	return s.streams.Foreground(name)
 }
 
 // RefreshStream returns a new snapshot when another browser reset this stream.

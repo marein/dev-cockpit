@@ -75,6 +75,20 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       assert(bag.consoleErrors.length + bag.pageErrors.length === before, "refresh errored");
     });
 
+    await run("desktop: context buttons follow the foreground command", async () => {
+      const slot = ".attach-desktop [data-terminal-context]";
+      await page.click("#terminal .xterm-screen");
+      await page.keyboard.type("less /etc/hosts");
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(`${slot} button[title="Quit"]`, { timeout: 10000 });
+      const labels = await page.$$eval(`${slot} button`, (els) => els.map((el) => el.textContent.trim()));
+      assert(labels.includes("q") && labels.includes("Space"), `expected less keys, got: ${labels.join("|")}`);
+      const program = await page.$eval(`${slot} .terminal-context-name`, (el) => el.textContent.trim());
+      assert(program === "less", `expected program name less, got: ${program}`);
+      await page.click(`${slot} button[title="Quit"]`);
+      await page.waitForFunction((sel) => !document.querySelector(sel + " button"), slot, { timeout: 10000 });
+    });
+
     await run("desktop: lifecycle teardown (remove terminal + input, no new errors)", async () => {
       const before = bag.consoleErrors.length + bag.pageErrors.length;
       await page.evaluate(() => { document.getElementById("terminal")?.remove(); document.querySelector("terminal-input")?.remove(); });
@@ -123,6 +137,32 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await mp.keyboard.type("c", { delay: 40 });
       assert(/ctrl-c/.test((await reqP).postData() || ""), "expected ctrl-c");
       assert((await ctrlBtn.getAttribute("aria-pressed")) === "false", "ctrl did not disarm");
+    });
+
+    await run("mobile: arming ctrl focuses the cursor input, disarming does not", async () => {
+      await mp.evaluate(() => document.getElementById("terminal-cursor-input").blur());
+      await mp.locator("[data-shell-ctrl]").first().click();
+      assert((await mp.evaluate(() => document.activeElement && document.activeElement.id)) === "terminal-cursor-input", "cursor input not focused on arm");
+      await mp.evaluate(() => document.getElementById("terminal-cursor-input").blur());
+      await mp.locator("[data-shell-ctrl]").first().click();
+      assert((await mp.evaluate(() => document.activeElement && document.activeElement.id)) !== "terminal-cursor-input", "disarm must not refocus");
+    });
+
+    await run("mobile: context buttons render and send their sequence", async () => {
+      const slot = ".attach-mobile [data-terminal-context]";
+      await mp.evaluate(() => document.getElementById("terminal-cursor-input").focus());
+      await mp.keyboard.type("less /etc/hosts", { delay: 40 });
+      await mp.keyboard.press("Enter");
+      await mp.waitForSelector(`${slot} button[title="Quit"]`, { timeout: 10000 });
+      await mp.evaluate(() => document.getElementById("terminal-cursor-input").blur());
+      await mp.locator(`${slot} button[title="Search"]`).click();
+      assert((await mp.evaluate(() => document.activeElement && document.activeElement.id)) === "terminal-cursor-input", "search key did not focus cursor input");
+      await mp.keyboard.press("Backspace");
+      await sleep(400);
+      const reqP = mp.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
+      await mp.locator(`${slot} button[title="Quit"]`).click();
+      await reqP;
+      await mp.waitForFunction((sel) => !document.querySelector(sel + " button"), slot, { timeout: 10000 });
     });
 
     // Swipe scrolling (terminal-scroll-zone): finger travel streams px deltas that

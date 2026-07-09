@@ -39,6 +39,8 @@ type Control struct {
 	paneID  string
 	pending []*cmdReq
 	exited  bool
+	fg      string // last foreground command reported by the subscription
+	fgSub   bool   // foreground subscription is active
 
 	lastOutput time.Time
 	outSeq     int64 // total bytes ever received (monotonic, ignores ring trim)
@@ -144,6 +146,8 @@ func (c *Control) read(stdout io.Reader) {
 			c.appendOutput(line)
 		case line == "%exit" || strings.HasPrefix(line, "%exit "):
 			c.markExited()
+		case strings.HasPrefix(line, "%subscription-changed "):
+			c.handleSubscription(line)
 		case strings.HasPrefix(line, "%session-changed"):
 			c.signalReady()
 		}
@@ -483,6 +487,59 @@ type PaneModes struct {
 	MouseSGR      bool // SGR mouse encoding (mode 1006)
 	AltScreen     bool // alternate screen active (full-screen TUI -> cursor keys)
 	AppCursor     bool // application cursor keys (DECCKM: ESC O A/B vs ESC [ A/B)
+}
+
+// foregroundSubName identifies the control mode subscription that reports the
+// pane's foreground command name (see SubscribeForeground).
+const foregroundSubName = "fg"
+
+// handleSubscription stores the value of a %subscription-changed line. Only
+// the foreground subscription is expected, other names are ignored. The line
+// looks like "%subscription-changed fg $1 @1 0 %1 : vim". A change wakes the
+// waiting stream handlers so they can forward the new value.
+func (c *Control) handleSubscription(line string) {
+	meta, value, ok := strings.Cut(line[len("%subscription-changed "):], " : ")
+	if !ok {
+		return
+	}
+	name, _, _ := strings.Cut(meta, " ")
+	if name != foregroundSubName {
+		return
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.fg != value {
+		c.fg = value
+		c.signalLocked()
+	}
+	c.mu.Unlock()
+}
+
+// SubscribeForeground asks tmux to push the pane's foreground command name
+// over this control client. tmux reports the current value right after
+// subscribing and again on every change, read it with Foreground. Repeated
+// calls are no-ops.
+func (c *Control) SubscribeForeground() {
+	c.mu.Lock()
+	pane := c.paneID
+	done := c.fgSub || c.exited || pane == ""
+	c.fgSub = c.fgSub || pane != ""
+	c.mu.Unlock()
+	if done {
+		return
+	}
+	_, _, _ = c.commandSync(`refresh-client -B "` + foregroundSubName + `:` + pane + `:#{pane_current_command}"`)
+}
+
+// Foreground returns the foreground command name last reported by the
+// subscription, or an empty string before the first report.
+func (c *Control) Foreground() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fg
 }
 
 // Modes reads the pane's current terminal modes from tmux. The browser keeps

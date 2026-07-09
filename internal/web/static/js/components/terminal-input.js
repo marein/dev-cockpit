@@ -1,6 +1,7 @@
 import { createRepeater } from "@dc/repeater";
 import { notifyError } from "@dc/toast";
 import { postJSON, ensureOk } from "@dc/http";
+import { contextKeys } from "@dc/keymap";
 
 function initTerminalInput(host) {
   const inputUrl = host.getAttribute("input-url");
@@ -42,7 +43,13 @@ function initTerminalInput(host) {
     ctrlToggle.setAttribute("aria-pressed", armed ? "true" : "false");
   };
   if (ctrlToggle) {
-    listen(ctrlToggle, "click", () => setCtrlArmed(!ctrlArmed));
+    listen(ctrlToggle, "pointerdown", (event) => event.preventDefault());
+    listen(ctrlToggle, "click", () => {
+      setCtrlArmed(!ctrlArmed);
+      if (ctrlArmed) {
+        document.getElementById("terminal-cursor-input")?.focus();
+      }
+    });
   }
 
   const keyMap = {
@@ -298,6 +305,49 @@ function initTerminalInput(host) {
       }
     });
   }
+
+  const contextSlots = document.querySelectorAll("[data-terminal-context]");
+  let contextCommand = "";
+  const renderContext = (command) => {
+    if (command === contextCommand) {
+      return;
+    }
+    contextCommand = command;
+    const keys = contextKeys(command);
+    for (const slot of contextSlots) {
+      slot.replaceChildren();
+      slot.classList.toggle("d-none", keys.length === 0);
+      if (keys.length === 0) {
+        continue;
+      }
+      const name = document.createElement("span");
+      name.className = "terminal-context-name";
+      name.textContent = command.toLowerCase();
+      slot.appendChild(name);
+      for (const key of keys) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn btn-outline-secondary btn-sm";
+        button.title = key.hint;
+        button.setAttribute("aria-label", `${key.hint} (${key.label})`);
+        const label = document.createElement("span");
+        label.className = "small fw-medium";
+        label.textContent = key.label;
+        button.appendChild(label);
+        listen(button, "pointerdown", (event) => event.preventDefault());
+        listen(button, "click", () => {
+          void sendTerminalInput({ raw: key.seq });
+          if (key.typing) {
+            document.getElementById("terminal-cursor-input")?.focus();
+          }
+        });
+        slot.appendChild(button);
+      }
+    }
+  };
+  listen(document, "terminal-foreground", (event) => {
+    renderContext(String(event.detail?.command || ""));
+  });
 
   const pasteFromClipboard = async () => {
     if (!navigator.clipboard?.readText) {

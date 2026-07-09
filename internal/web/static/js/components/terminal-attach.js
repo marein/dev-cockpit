@@ -687,6 +687,9 @@ function initTerminalAttach(host) {
         serverModes.appCursor = size.appCursor;
       }
     });
+    source.addEventListener("foreground", (event) => {
+      document.dispatchEvent(new CustomEvent("terminal-foreground", { detail: { command: event.data } }));
+    });
     source.addEventListener("snapshot", (event) => {
       writeChunk(event.data, true);
     });

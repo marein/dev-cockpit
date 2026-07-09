@@ -138,6 +138,19 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
 .attach-controls .btn { flex: 0 0 auto; }
 .attach-controls .btn-icon { width: 2.75rem; height: 1.875rem; }
 .attach-desktop .btn { min-height: 2rem; padding-top: 0.25rem; padding-bottom: 0.25rem; }
+[data-terminal-context] { align-items: center; }
+[data-terminal-context] .btn { white-space: nowrap; min-width: 2.75rem; padding-left: 0.5rem; padding-right: 0.5rem; }
+[data-terminal-context] .terminal-context-name {
+  flex: 0 0 auto;
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-right: 0.25rem;
+  color: var(--tblr-secondary);
+  font-family: var(--tblr-font-monospace, monospace);
+  font-size: 0.75rem;
+}
+.attach-mobile [data-terminal-context] .btn { height: 1.875rem; padding-top: 0; padding-bottom: 0; }
 
 coder-file-upload {
   display: contents;

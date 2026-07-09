@@ -24,6 +24,13 @@ type terminalStream interface {
 	Resnapshot(name string) (terminal.Attachment, bool)
 }
 
+// foregroundStream is the optional part of a stream source that reports the
+// pane's foreground command name. Shells implement it, coder sessions do not,
+// their foreground is always the coder itself.
+type foregroundStream interface {
+	StreamForeground(name string) string
+}
+
 func (s *Server) handleCoderStream(c *gin.Context) {
 	id := c.Param("id")
 	co, _, err := s.resolveRunning(id)
@@ -72,6 +79,26 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 		return
 	}
 
+	// The foreground command feeds the context controls on the attach page.
+	// Its subscription wakes the update channel on every change, so checking
+	// once per loop pass is enough to forward changes promptly.
+	fgSrc, _ := src.(foregroundStream)
+	lastForeground := ""
+	sendForeground := func() error {
+		if fgSrc == nil {
+			return nil
+		}
+		fg := fgSrc.StreamForeground(attached.Session)
+		if fg == "" || fg == lastForeground {
+			return nil
+		}
+		lastForeground = fg
+		return writeSSEvent(w, "foreground", fg)
+	}
+	if err := sendForeground(); err != nil {
+		return
+	}
+
 	heartbeat := time.NewTicker(s.cfg.StreamHeartbeatInterval)
 	defer heartbeat.Stop()
 
@@ -88,6 +115,10 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 		updated, live := src.StreamUpdated(attached.Session)
 		if !live {
 			_ = writeSSEvent(w, "terminal-error", "Terminal has ended.")
+			return
+		}
+
+		if err := sendForeground(); err != nil {
 			return
 		}
 

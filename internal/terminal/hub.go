@@ -277,6 +277,36 @@ func (h *Hub) Updated(name string) (<-chan struct{}, bool) {
 	return st.ctl.Updated(), true
 }
 
+// SubscribeForeground turns on foreground command reporting for a streamed
+// session. Safe to call on every attach, the underlying subscription is set
+// up once per control client.
+func (h *Hub) SubscribeForeground(name string) {
+	h.mu.Lock()
+	var ctl *tmux.Control
+	if st := h.streams[name]; st != nil {
+		ctl = st.ctl
+	}
+	h.mu.Unlock()
+	if ctl != nil {
+		ctl.SubscribeForeground()
+	}
+}
+
+// Foreground returns the last reported foreground command for a stream, or
+// an empty string when nothing is attached or reported yet.
+func (h *Hub) Foreground(name string) string {
+	h.mu.Lock()
+	var ctl *tmux.Control
+	if st := h.streams[name]; st != nil {
+		ctl = st.ctl
+	}
+	h.mu.Unlock()
+	if ctl == nil {
+		return ""
+	}
+	return ctl.Foreground()
+}
+
 // control returns the live control client backing a stream, or nil when no
 // browser is attached (or it has exited). Input uses it to send keystrokes over
 // the persistent connection instead of forking the tmux CLI per key.
