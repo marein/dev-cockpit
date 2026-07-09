@@ -11,8 +11,8 @@ but not on every change. **Run it only on machines and networks you trust.**
 
 Manage your projects from the browser, including your phone: run coding agents,
 open shells, and edit files. Each project lives under one directory; for each one
-you can start a CLI coding agent (GitHub Copilot CLI or Claude Code), open shell
-sessions, and edit files in a small built-in editor. Agents and shells run in
+you can start CLI coding agents (GitHub Copilot CLI, Claude Code, or both), open
+shell sessions, and edit files in a small built-in editor. Coders and shells run in
 tmux on the host, and the browser attaches to their terminals over a live stream.
 The terminal UIs are colorful and fully usable from the browser.
 
@@ -31,34 +31,36 @@ Create projects from the UI; git repos show their branch and remote.
 
 In a project you can:
 
-- Start agent sessions and attach to them in the browser.
-- Resume earlier agent sessions from the provider's saved state.
+- Start coder sessions and attach to them in the browser.
+- Resume earlier coder sessions from their saved state.
 - Open shell sessions, rename them, run several at once.
 - Edit files in a minimal code editor (browse, create, rename, delete).
 - Upload and download files.
 
-Across the server you can also edit the provider's global config from the UI:
+Across the server you can also edit each coder's global config from the UI:
 custom agents, skills, and the global instructions file.
 
-One server instance serves one provider (`copilot` or `claude`). To use both, run
-two instances on different ports.
+One server instance serves every coder whose CLI is installed on the host, so a
+single instance drives Copilot and Claude side by side.
 
 ## Requirements
 
 - Linux or macOS.
 - `tmux` on the host.
-- The provider's CLI installed and logged in: `copilot` or `claude`.
+- At least one coder CLI installed and logged in: `copilot` or `claude`.
 
-The server checks for these on startup and refuses to start if they are missing.
+The server checks `tmux` on startup and refuses to start if it is missing, or if
+no coder CLI is found. A coder whose CLI is missing is skipped, the rest stay
+available.
 
-The UI edits the provider's config under your home directory:
+The UI edits each coder's config under your home directory:
 
-| Provider  | Instructions file                    | Agents dir          | Skills dir          |
+| Coder     | Instructions file                    | Agents dir          | Skills dir          |
 |-----------|--------------------------------------|---------------------|---------------------|
 | `copilot` | `~/.copilot/copilot-instructions.md` | `~/.copilot/agents` | `~/.copilot/skills` |
 | `claude`  | `~/.claude/CLAUDE.md`                | `~/.claude/agents`  | `~/.claude/skills`  |
 
-Only these two providers exist for now, but others can be added when needed.
+Only these two coders exist for now, but others can be added when needed.
 
 ## Install
 
@@ -121,12 +123,11 @@ See all options with `./dev-cockpit serve --help`. The main ones:
 
 | Flag             | Default      | Meaning                         |
 |------------------|--------------|---------------------------------|
-| `--provider`     | `copilot`    | `copilot` or `claude`           |
 | `--addr`         | `0.0.0.0:80` | listen address                  |
 | `--projects-dir` | `~/projects` | root directory of your projects |
 
 ```bash
-./dev-cockpit serve --provider copilot --addr 0.0.0.0:3000 --projects-dir ~/projects
+./dev-cockpit serve --addr 0.0.0.0:3000 --projects-dir ~/projects
 ```
 
 The default `--addr` uses port 80, which needs root; the examples use 3000. Then
@@ -139,7 +140,7 @@ Generate a bcrypt hash with `./dev-cockpit hash-password`, then pass it along wi
 a random cookie key:
 
 ```bash
-./dev-cockpit serve --provider copilot --addr 0.0.0.0:3000 \
+./dev-cockpit serve --addr 0.0.0.0:3000 \
   --auth-user admin \
   --auth-password-hash '<hash>' \
   --session-cookie-key '<random-secret>'
@@ -159,7 +160,7 @@ openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
   -subj "/CN=localhost" \
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 
-./dev-cockpit serve --provider copilot --addr 0.0.0.0:3000 \
+./dev-cockpit serve --addr 0.0.0.0:3000 \
   --tls-cert-file ~/.config/dev-cockpit/tls/dev-cockpit.crt \
   --tls-key-file ~/.config/dev-cockpit/tls/dev-cockpit.key
 ```
