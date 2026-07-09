@@ -35,7 +35,7 @@ it; there is no stdlib equivalent that also covers WebKit/Safari).
 | --- | --- |
 | `auth.js` | login, logout, requireAuth, rate limit, session cookie attrs, open-redirect matrix |
 | `projects.js` | list, card, filter, sort, create, delete, collapse (>5) |
-| `editor.js` | tree, open, save, Ctrl+S, new file/folder, recursive delete, settings, highlighting, discard confirm, lifecycle |
+| `editor.js` | tree, tabs (switch keeps dirty buffers, close confirm, reload restore), save, Ctrl+S, save all, new file/folder, rename, recursive delete (closes tabs), quick open palette, find in files (content search + jump to line), statusbar position, markdown preview, svg preview, image viewer + raw download, find panel, upload (dialog + progress), settings, highlighting, mobile drawer, lifecycle |
 | `terminal.js` | shared attach: desktop canvas typing + mobile mirror/cursor input, controls, ctrl modifier, swipe scroll (drag + fling), copy, paste, refresh, setting select |
 | `shells.js` | create, attach, rename (CSRF header), scroll-history, delete |
 | `coders.js` | new form + agent select, create/attach, prompt (desktop + mobile), files (multi upload, reference, download, delete), stop, resumable |

@@ -77,7 +77,7 @@ async function overflowAt(page, url) {
       await Promise.all([page.waitForURL(/\/skills(\?coder=\w+)?$/, { timeout: 10000 }), submitBtn(page, 'input[name="skill_id"]').click()]);
       // editor file with a long name
       await page.goto(editorURL, { waitUntil: "domcontentloaded" });
-      await page.waitForSelector(".cm-editor", { timeout: 12000 });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
       await page.click("[data-editor-new-file]");
       await page.fill(".swal2-input", LN + ".txt");
       await page.click(".swal2-confirm");

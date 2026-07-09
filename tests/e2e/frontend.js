@@ -14,6 +14,9 @@ L.runFeature("FRONTEND", async ({ page, run, bag }) => {
   let shellUrl = null;
   try {
     await L.createProject(page, project);
+    // dc-collapse-list renders only for a project with coders or shells, so the
+    // scratch shell must exist before the /projects check (self-contained run).
+    shellUrl = await L.createShell(page, project);
 
     await run("custom elements upgraded on /projects", async () => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
@@ -26,7 +29,7 @@ L.runFeature("FRONTEND", async ({ page, run, bag }) => {
     });
 
     await run("editor teardown on disconnect leaves no new errors", async () => {
-      await page.waitForSelector(".cm-editor", { timeout: 12000 });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
       const before = bag.consoleErrors.length + bag.pageErrors.length;
       await page.evaluate(() => document.querySelector("dc-editor").remove());
       await sleep(600);
@@ -34,7 +37,7 @@ L.runFeature("FRONTEND", async ({ page, run, bag }) => {
     });
 
     await run("attach elements upgraded on a shell", async () => {
-      shellUrl = await L.createShell(page, project);
+      await page.goto(shellUrl, { waitUntil: "domcontentloaded" });
       assert((await L.waitUpgraded(page, ["terminal-attach", "terminal-input", "terminal-scroll-zone", "terminal-direction-pad", "terminal-setting-select"], 12000)).length === 0, "not upgraded");
       await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
     });

@@ -8,8 +8,8 @@
 <dc-editor class="card editor"
      data-editor-name="{{.Project.Name}}"
      data-editor-max-kib="{{.MaxEditKiB}}">
-  <div class="row g-0 editor-row">
-    <div class="col-12 col-md-4 col-lg-3 editor-tree-col border-end">
+  <div class="editor-body">
+    <div class="editor-tree-col">
       <div class="editor-pane-header d-flex align-items-center gap-2 px-2 py-2 border-bottom">
         <i class="ti ti-folder"></i>
         <span class="text-truncate small fw-medium">{{.Project.Name}}</span>
@@ -19,6 +19,9 @@
         <button type="button" class="btn btn-sm btn-ghost-secondary p-1" data-editor-new-folder aria-label="New folder" title="New folder">
           <i class="ti ti-folder-plus"></i>
         </button>
+        <button type="button" class="btn btn-sm btn-ghost-secondary p-1" data-editor-upload aria-label="Upload files" title="Upload files">
+          <i class="ti ti-upload"></i>
+        </button>
         <button type="button" class="btn btn-sm btn-ghost-secondary p-1" data-editor-refresh aria-label="Refresh files" title="Refresh">
           <i class="ti ti-refresh"></i>
         </button>
@@ -26,16 +29,32 @@
       <div class="editor-tree" data-editor-tree role="tree">
         <div class="text-secondary small p-3">Loading…</div>
       </div>
+      <input type="file" data-editor-upload-input multiple hidden>
     </div>
 
-    <div class="col-12 col-md-8 col-lg-9 editor-pane-col">
-      <div class="editor-pane-header d-flex align-items-center gap-2 px-2 py-2 border-bottom">
-        <i class="ti ti-file-text"></i>
-        <span class="text-truncate small fw-medium flex-fill" data-editor-current>No file selected</span>
-        <span class="badge bg-orange-lt text-orange editor-dirty" data-editor-dirty hidden>unsaved</span>
-        <div class="btn-list flex-nowrap">
+    <div class="editor-splitter" data-editor-splitter></div>
+
+    <div class="editor-pane-col">
+      <div class="editor-pane-header d-flex align-items-stretch border-bottom">
+        <button type="button" class="editor-drawer-toggle" data-editor-drawer-toggle aria-label="Toggle file tree" title="Files">
+          <i class="ti ti-folder"></i>
+        </button>
+        <div class="editor-tabs" data-editor-tabs role="tablist"></div>
+        <div class="editor-actions d-flex align-items-center gap-1 px-2 flex-shrink-0">
+          <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-editor-quick-open aria-label="Go to file" title="Go to file (Ctrl+P)">
+            <i class="ti ti-file-search"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary d-none d-md-inline-flex" data-editor-find aria-label="Find in file" title="Find in file (Ctrl+F)">
+            <i class="ti ti-search"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary d-none d-md-inline-flex" data-editor-search-project aria-label="Find in files" title="Find in files (Ctrl+Shift+F)">
+            <i class="ti ti-list-search"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-editor-preview-toggle aria-label="Toggle markdown preview" title="Markdown preview" hidden>
+            <i class="ti ti-eye"></i>
+          </button>
           <div class="dropdown d-flex">
-            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-label="Editor settings" title="Editor settings">
+            <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-label="Editor settings" title="Editor settings">
               <i class="ti ti-adjustments"></i>
             </button>
             <div class="dropdown-menu dropdown-menu-end editor-settings-menu p-3">
@@ -71,21 +90,78 @@
               </label>
             </div>
           </div>
+          <div class="dropdown d-flex">
+            <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" aria-label="File actions" title="File actions">
+              <i class="ti ti-dots-vertical"></i>
+            </button>
+            <div class="dropdown-menu dropdown-menu-end">
+              <button type="button" class="dropdown-item d-md-none" data-editor-find-item disabled>
+                <i class="ti ti-search me-2"></i>Find in file
+              </button>
+              <button type="button" class="dropdown-item d-md-none" data-editor-search-project-item>
+                <i class="ti ti-list-search me-2"></i>Find in files
+              </button>
+              <button type="button" class="dropdown-item" data-editor-goto disabled>
+                <i class="ti ti-arrow-bar-to-down me-2"></i>Go to line
+              </button>
+              <div class="dropdown-divider"></div>
+              <button type="button" class="dropdown-item" data-editor-save-all disabled>
+                <i class="ti ti-device-floppy me-2"></i>Save all
+              </button>
+              <button type="button" class="dropdown-item" data-editor-copy-path disabled>
+                <i class="ti ti-copy me-2"></i>Copy path
+              </button>
+              <button type="button" class="dropdown-item" data-editor-download disabled>
+                <i class="ti ti-download me-2"></i>Download file
+              </button>
+              <button type="button" class="dropdown-item" data-editor-rename disabled>
+                <i class="ti ti-pencil me-2"></i>Rename file
+              </button>
+              <div class="dropdown-divider"></div>
+              <button type="button" class="dropdown-item text-danger" data-editor-delete disabled>
+                <i class="ti ti-trash me-2"></i>Delete file
+              </button>
+            </div>
+          </div>
           <button type="button" class="btn btn-sm btn-primary" data-editor-save disabled>
-            <i class="ti ti-device-floppy me-1"></i>Save
-          </button>
-          <button type="button" class="btn btn-sm btn-outline-danger" data-editor-delete disabled>
-            <i class="ti ti-trash"></i>
+            <i class="ti ti-device-floppy"></i><span class="d-none d-sm-inline ms-1">Save</span>
           </button>
         </div>
       </div>
       <div class="editor-surface" data-editor-surface>
-        <div class="editor-placeholder text-secondary">
-          <i class="ti ti-click fs-1 d-block mb-2"></i>
-          Select a file from the tree to view and edit it.
+        <div class="editor-placeholder text-secondary" data-editor-placeholder>
+          <i class="ti ti-files fs-1 d-block mb-2"></i>
+          <div>Select a file to view and edit it.</div>
+          <div class="small mt-1">Files up to {{.MaxEditKiB}} KiB can be edited.</div>
+          <button type="button" class="btn btn-sm btn-outline-secondary mt-3 editor-placeholder-browse" data-editor-browse>
+            <i class="ti ti-folder me-1"></i>Browse files
+          </button>
+          <div class="small mt-3 editor-placeholder-keys">
+            <kbd>Ctrl</kbd>+<kbd>P</kbd> go to file
+            <span class="mx-1">·</span>
+            <kbd>Ctrl</kbd>+<kbd>S</kbd> save
+            <span class="mx-1">·</span>
+            <kbd>Ctrl</kbd>+<kbd>F</kbd> find
+          </div>
         </div>
+        <div class="editor-preview markdown" data-editor-preview-pane hidden></div>
+        <div class="editor-viewer" data-editor-viewer hidden></div>
       </div>
-      <div class="editor-status small text-secondary px-2 py-1 border-top" data-editor-status></div>
+      <div class="editor-statusbar small d-flex align-items-center gap-2 px-2 py-1 border-top">
+        <span class="text-truncate text-secondary" data-editor-path></span>
+        <span class="text-truncate flex-fill text-secondary" data-editor-status></span>
+        <span class="text-secondary text-nowrap" data-editor-pos hidden></span>
+        <span class="text-secondary text-nowrap d-none d-sm-inline" data-editor-indent-info hidden></span>
+      </div>
+    </div>
+
+    <div class="editor-backdrop" data-editor-backdrop hidden></div>
+
+    <div class="editor-quickopen" data-editor-quickopen hidden>
+      <div class="editor-quickopen-panel">
+        <input type="text" class="form-control" placeholder="Go to file…" data-editor-quickopen-input autocomplete="off" spellcheck="false" aria-label="Go to file">
+        <div class="editor-quickopen-list" data-editor-quickopen-list role="listbox"></div>
+      </div>
     </div>
   </div>
 </dc-editor>

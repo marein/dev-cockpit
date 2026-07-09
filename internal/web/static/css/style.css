@@ -355,13 +355,24 @@ body:not(:has(.attach-footer)) .quicknav {
     min-height: 0;
   }
 }
+/* Short viewports (landscape phones, incl. narrow widths from iOS Display Zoom):
+   do NOT fill the viewport. A viewport-fill would force the editor to share the
+   short height with the full footer (same on every page) and shrink it to ~0.
+   Instead give the editor a fixed, usable height and let the PAGE scroll, so the
+   footer flows below in its standard form. */
+@media (max-height: 500px) {
+  .page:has(.editor) .page-header { margin-bottom: 0.5rem !important; }
+  .editor { height: 22rem; margin-bottom: 1rem; }
+}
 .editor {
   margin-bottom: 0;
 }
-.editor-row {
+.editor-body {
+  display: flex;
   flex: 1 1 auto;
   min-height: 0;
-  flex-wrap: nowrap;
+  position: relative;
+  --editor-tree-width: 16rem;
 }
 .editor-tree-col,
 .editor-pane-col {
@@ -373,40 +384,161 @@ body:not(:has(.attach-footer)) .quicknav {
      stretch-derived height is not "definite" there and collapses the editor). */
   height: 100%;
 }
-/* Portrait phones (narrow AND tall enough): stack the tree over the editor. */
-@media (max-width: 767.98px) and (min-height: 501px) {
-  .editor-row { flex-direction: column; }
-  .editor-tree-col { flex: 0 0 auto; height: 13rem; }
-  .editor-pane-col { flex: 1 1 auto; height: auto; }
-  .editor-tree-col.border-end { border-right: 0 !important; border-bottom: 1px solid var(--tblr-border-color); }
+.editor-tree-col {
+  flex: 0 0 auto;
+  width: var(--editor-tree-width);
+  min-width: 10rem;
+  max-width: 65%;
+  background: var(--tblr-bg-surface);
+  border-right: 1px solid var(--tblr-border-color);
 }
-/* Short viewports (landscape phones, incl. narrow widths from iOS Display Zoom):
-   do NOT fill the viewport. A viewport-fill would force the editor to share the
-   short height with the full footer (same on every page) and shrink it to ~0.
-   Instead give the editor a fixed, usable height and let the PAGE scroll, so the
-   footer flows below in its standard form. Panes stay side by side. */
-@media (max-height: 500px) {
-  .page:has(.editor) .page-header { margin-bottom: 0.5rem !important; }
-  .editor { height: 22rem; margin-bottom: 1rem; }
-  .editor-row { flex-direction: row; }
-  .editor-tree-col {
-    flex: 0 0 38%;
-    width: 38%;
-    max-width: 38%;
-    height: 100%;
-    border-right: 1px solid var(--tblr-border-color) !important;
-    border-bottom: 0 !important;
+.editor-pane-col {
+  flex: 1 1 auto;
+}
+.editor-splitter {
+  flex: 0 0 6px;
+  margin: 0 -3px;
+  z-index: 4;
+  cursor: col-resize;
+  touch-action: none;
+}
+.editor-splitter:hover,
+.editor-splitter.active {
+  background: var(--tblr-primary);
+  opacity: 0.3;
+}
+.editor-drawer-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  flex: 0 0 auto;
+  border: 0;
+  border-right: 1px solid var(--tblr-border-color);
+  background: transparent;
+  color: var(--tblr-secondary);
+  font-size: 1.05rem;
+}
+.editor-drawer-toggle:hover {
+  color: var(--tblr-body-color);
+}
+.editor-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  background: rgba(17, 24, 39, 0.55);
+}
+.editor-placeholder-browse {
+  display: none;
+}
+@media (max-width: 767.98px), (max-height: 500px) {
+  .editor-splitter {
+    display: none;
   }
-  .editor-pane-col {
-    flex: 1 1 auto;
-    width: 62%;
-    max-width: 62%;
-    height: 100%;
+  .editor-drawer-toggle {
+    display: inline-flex;
+  }
+  .editor-placeholder-browse {
+    display: inline-flex;
+  }
+  .editor-tree-col {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 14;
+    width: min(19rem, 86%);
+    min-width: 0;
+    max-width: none;
+    box-shadow: 0 0 2rem rgba(0, 0, 0, 0.4);
+    transform: translateX(-110%);
+    transition: transform 0.18s ease;
+  }
+  .editor.editor-drawer-open .editor-tree-col {
+    transform: none;
   }
 }
 .editor-pane-header {
   background: var(--tblr-bg-surface-secondary);
   min-height: 2.5rem;
+}
+.editor-tabs {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.editor-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+  max-width: 11rem;
+  padding: 0 0.4rem 0 0.75rem;
+  border: 0;
+  border-right: 1px solid var(--tblr-border-color);
+  background: transparent;
+  color: var(--tblr-secondary);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.editor-tab.active {
+  background: var(--tblr-bg-surface);
+  color: var(--tblr-body-color);
+  box-shadow: inset 0 2px 0 var(--tblr-primary);
+}
+.editor-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.editor-tab-hint {
+  font-size: 0.7rem;
+  color: var(--tblr-secondary);
+}
+.editor-tab-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: 0 0 auto;
+  border-radius: 4px;
+}
+.editor-tab-state:hover {
+  background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18));
+}
+.editor-tab-close {
+  display: inline-flex;
+  opacity: 0.55;
+}
+.editor-tab-state:hover .editor-tab-close {
+  opacity: 1;
+}
+.editor-tab-dot {
+  display: none;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--tblr-orange);
+}
+.editor-tab.dirty .editor-tab-dot {
+  display: block;
+}
+.editor-tab.dirty .editor-tab-close {
+  display: none;
+}
+@media (hover: hover) {
+  .editor-tab.dirty .editor-tab-state:hover .editor-tab-close {
+    display: inline-flex;
+  }
+  .editor-tab.dirty .editor-tab-state:hover .editor-tab-dot {
+    display: none;
+  }
 }
 .editor-tree {
   overflow: auto;
@@ -426,11 +558,38 @@ body:not(:has(.attach-footer)) .quicknav {
 }
 .editor-item:hover { background: var(--tblr-bg-surface-secondary); }
 .editor-item.selected { background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18)); }
+.editor-item.editor-drop,
+.editor-tree.editor-drop {
+  box-shadow: inset 0 0 0 2px var(--tblr-primary);
+}
+.editor-upload-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  text-align: left;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.editor-upload-item[data-done="true"] .progress-bar {
+  background-color: var(--tblr-success);
+}
+.editor-upload-item[data-error="true"] .progress-bar {
+  background-color: var(--tblr-danger);
+}
+.editor-upload-item[data-error="true"] [data-file-status] {
+  color: var(--tblr-danger) !important;
+}
+.editor-upload-item [data-file-status] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .editor-item-name { flex: 1 1 auto; min-width: 0; font-size: 0.85rem; }
 .editor-item-icon { width: 1rem; text-align: center; color: var(--tblr-secondary); flex: 0 0 auto; }
 .editor-dir .editor-item-icon { transition: transform 0.12s ease; }
 .editor-dir .editor-item-icon.editor-open { transform: rotate(90deg); }
-.editor-item-del {
+.editor-item-del,
+.editor-item-ren {
   flex: 0 0 auto;
   border: 0;
   background: transparent;
@@ -442,10 +601,14 @@ body:not(:has(.attach-footer)) .quicknav {
   transition: opacity 0.1s ease, color 0.1s ease;
 }
 .editor-item:hover .editor-item-del,
-.editor-item-del:focus-visible { opacity: 0.65; }
+.editor-item:hover .editor-item-ren,
+.editor-item-del:focus-visible,
+.editor-item-ren:focus-visible { opacity: 0.65; }
 .editor-item-del:hover { opacity: 1; color: var(--tblr-danger); }
+.editor-item-ren:hover { opacity: 1; color: var(--tblr-body-color); }
 @media (hover: none) {
-  .editor-item-del { opacity: 0.5; }
+  .editor-item-del,
+  .editor-item-ren { opacity: 0.5; }
 }
 .editor-surface {
   flex: 1 1 auto;
@@ -458,9 +621,11 @@ body:not(:has(.attach-footer)) .quicknav {
    landscape col-md case), collapsing the editor to 0 ("blank editor"). An
    absolutely-positioned box has a definite height that CodeMirror's internal
    percentage heights resolve against. */
-.editor-surface > .cm-editor,
+.editor-surface > .cm-editor.cm-editor,
 .editor-surface > .editor-textarea,
-.editor-surface > .editor-placeholder {
+.editor-surface > .editor-placeholder,
+.editor-surface > .editor-preview,
+.editor-surface > .editor-viewer {
   position: absolute;
   inset: 0;
 }
@@ -471,6 +636,56 @@ body:not(:has(.attach-footer)) .quicknav {
   justify-content: center;
   text-align: center;
   padding: 1rem;
+  z-index: 5;
+  background: var(--tblr-bg-surface);
+}
+.editor-placeholder-keys {
+  color: var(--tblr-secondary);
+}
+.editor-preview {
+  z-index: 6;
+  overflow: auto;
+  padding: 1rem 1.25rem;
+  background: var(--tblr-bg-surface);
+  -webkit-overflow-scrolling: touch;
+}
+@media (min-width: 992px) {
+  .editor-surface.editor-preview-split > .cm-editor.cm-editor {
+    right: 50%;
+  }
+  .editor-surface.editor-preview-split > .editor-preview {
+    left: 50%;
+    border-left: 1px solid var(--tblr-border-color);
+  }
+}
+.editor-preview.editor-preview-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.editor-preview.editor-preview-image img,
+.editor-viewer-image {
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  object-fit: contain;
+  background: repeating-conic-gradient(var(--tblr-bg-surface) 0% 25%, var(--tblr-bg-surface-secondary) 0% 50%) 0 0 / 16px 16px;
+  border: 1px solid var(--tblr-border-color);
+  border-radius: 4px;
+}
+.editor-viewer {
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  overflow: auto;
+  background: var(--tblr-bg-surface);
+}
+.editor-viewer[hidden] {
+  display: none;
 }
 .editor-textarea {
   resize: none;
@@ -480,8 +695,189 @@ body:not(:has(.attach-footer)) .quicknav {
   white-space: pre;
   overflow: auto;
 }
-.editor-status { min-height: 1.5rem; }
+.editor-statusbar {
+  min-height: 1.75rem;
+  font-variant-numeric: tabular-nums;
+}
 .editor-settings-menu { min-width: 14rem; }
+.editor-quickopen[hidden] {
+  display: none;
+}
+.editor-quickopen {
+  position: absolute;
+  inset: 0;
+  z-index: 16;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 0.75rem;
+  background: rgba(17, 24, 39, 0.55);
+}
+.editor-quickopen-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(36rem, 100%);
+  max-height: min(26rem, 100%);
+  background: var(--tblr-bg-surface);
+  border: 1px solid var(--tblr-border-color);
+  border-radius: 6px;
+  box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.editor-quickopen-panel .form-control {
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 1px solid var(--tblr-border-color);
+  border-radius: 0;
+  box-shadow: none;
+}
+.editor-quickopen-list {
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.editor-quickopen-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.editor-quickopen-item.active,
+.editor-quickopen-item:hover {
+  background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18));
+}
+.editor-quickopen-item .ti {
+  color: var(--tblr-secondary);
+  flex: 0 0 auto;
+}
+.editor-quickopen-name {
+  flex: 0 0 auto;
+}
+.editor-quickopen-dir {
+  color: var(--tblr-secondary);
+  font-size: 0.75rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.editor-quickopen-match {
+  display: block;
+}
+.editor-quickopen-match-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.editor-quickopen-match-text {
+  font-family: var(--tblr-font-monospace);
+  font-size: 0.75rem;
+  color: var(--tblr-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 1.55rem;
+}
+.editor-quickopen-match-text mark {
+  padding: 0 0.1em;
+  border-radius: 2px;
+  background: rgba(255, 214, 64, 0.3);
+  color: inherit;
+}
+.editor-quickopen-empty {
+  padding: 0.75rem;
+}
+/* CodeMirror renders the find/replace and goto panels itself, so Tabler's
+   button/input classes cannot be attached. Restyle the generated controls with
+   Tabler variables instead; the extra .cm-editor level outranks the oneDark
+   theme rules, which are injected later at (0,2,0). */
+.editor .cm-editor .cm-panels {
+  background: var(--tblr-bg-surface-secondary);
+  border-color: var(--tblr-border-color);
+  color: var(--tblr-body-color);
+}
+.editor .cm-editor .cm-panel.cm-search,
+.editor .cm-editor .cm-panel.cm-gotoLine {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.35rem;
+  padding: 0.4rem 2.5rem 0.4rem 0.5rem;
+  font-size: 0.8rem;
+}
+.editor .cm-editor .cm-panel.cm-search br {
+  display: none;
+}
+.editor .cm-editor .cm-panel.cm-search input[name="search"],
+.editor .cm-editor .cm-panel.cm-search input[name="replace"] {
+  flex: 1 1 11rem;
+  min-width: 8rem;
+}
+.editor .cm-editor .cm-panel .cm-textfield {
+  margin: 0;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  color: var(--tblr-body-color);
+  background: var(--tblr-bg-forms, var(--tblr-bg-surface));
+  border: 1px solid var(--tblr-border-color);
+  border-radius: 4px;
+}
+.editor .cm-editor .cm-panel .cm-textfield:focus {
+  outline: 0;
+  border-color: var(--tblr-primary);
+  box-shadow: 0 0 0 0.15rem rgba(var(--tblr-primary-rgb), 0.25);
+}
+.editor .cm-editor .cm-panel .cm-button {
+  margin: 0;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  color: var(--tblr-body-color);
+  background-image: none;
+  background-color: transparent;
+  border: 1px solid var(--tblr-border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  text-transform: capitalize;
+  transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+.editor .cm-editor .cm-panel .cm-button:hover {
+  background-color: var(--tblr-active-bg, rgba(74, 144, 226, 0.18));
+  border-color: var(--tblr-primary);
+}
+.editor .cm-editor .cm-panel label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--tblr-secondary);
+  user-select: none;
+}
+.editor .cm-editor .cm-panel input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--tblr-primary);
+}
+.editor .cm-editor .cm-panel button[name="close"] {
+  position: absolute;
+  top: 50%;
+  right: 0.5rem;
+  transform: translateY(-50%);
+  padding: 0 0.3rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--tblr-secondary);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.editor .cm-editor .cm-panel button[name="close"]:hover {
+  color: var(--tblr-body-color);
+}
 
 /* Tabler's .btn-icon loses its square shape under .btn-sm (it collapses to the
    glyph width and a shorter height). Pin the icon-only buttons inside list cards

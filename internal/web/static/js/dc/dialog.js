@@ -69,23 +69,25 @@ export async function promptText({
   title,
   html,
   placeholder,
+  value,
   confirmText = "Create",
   validatorMessage = "Please enter a value.",
 } = {}) {
   if (!window.Swal) {
-    const value = window.prompt(title || "");
-    return value && value.trim() ? value.trim() : null;
+    const answer = window.prompt(title || "", value || "");
+    return answer && answer.trim() ? answer.trim() : null;
   }
   const result = await fire({
     title,
     html,
     input: "text",
     inputPlaceholder: placeholder,
+    inputValue: value || "",
     showCancelButton: true,
     confirmButtonText: confirmText,
     cancelButtonText: "Cancel",
     reverseButtons: true,
-    inputValidator: (value) => (value && value.trim() ? undefined : validatorMessage),
+    inputValidator: (input) => (input && input.trim() ? undefined : validatorMessage),
   });
   return result.isConfirmed && result.value ? result.value.trim() : null;
 }
