@@ -44,6 +44,38 @@ window.app.peInit();
 window.addEventListener("pe:click", (e) => e.detail.a.closest("[data-no-pe]") && e.preventDefault());
 window.addEventListener("pe:submit", (e) => e.detail.form.closest("[data-no-pe]") && e.preventDefault());
 
+const isAttachPath = (path) => /^\/(coders|shells)\/(?!new$)[^/]+$/.test(path);
+let heightHoldTimer;
+const releaseHeightHold = () => {
+  clearTimeout(heightHoldTimer);
+  document.body.style.minHeight = "";
+};
+const keepScroll = (detail) => {
+  const x = window.scrollX;
+  const y = window.scrollY;
+  document.body.style.minHeight = document.documentElement.scrollHeight + "px";
+  clearTimeout(heightHoldTimer);
+  heightHoldTimer = setTimeout(releaseHeightHold, 2000);
+  detail.succeed.push(() => window.scrollTo({ left: x, top: y, behavior: "instant" }));
+};
+
+window.addEventListener("pe:navigate", (e) => {
+  if (isAttachPath(window.location.pathname) && isAttachPath(new URL(e.detail.url, window.location.origin).pathname)) {
+    keepScroll(e.detail);
+  } else {
+    releaseHeightHold();
+  }
+});
+
+window.addEventListener("pe:form", (e) => {
+  if (isAttachPath(window.location.pathname)
+    && /^\/coders\/[^/]+\/resume$/.test(new URL(e.detail.form.action, window.location.origin).pathname)) {
+    keepScroll(e.detail);
+  } else {
+    releaseHeightHold();
+  }
+});
+
 window.addEventListener("pe:navigate", (e) => {
   let stale = false;
   e.detail.parsed.push((dom) => { stale = buildChanged(dom); if (!stale) window.app.loadElements(dom.body); });

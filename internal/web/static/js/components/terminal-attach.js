@@ -88,7 +88,15 @@ function initTerminalAttach(host) {
     return null;
   };
   const visibleBand = () => {
+    let top = 0;
     let bottom = window.innerHeight;
+    const tabs = document.querySelector("terminal-tabs");
+    if (tabs && tabs.offsetHeight > 0) {
+      const position = window.getComputedStyle(tabs).position;
+      if (position === "sticky" || position === "fixed") {
+        top = tabs.offsetHeight;
+      }
+    }
     const footer = document.querySelector(".attach-footer");
     if (footer && footer.offsetHeight > 0) {
       const position = window.getComputedStyle(footer).position;
@@ -96,7 +104,7 @@ function initTerminalAttach(host) {
         bottom = window.innerHeight - footer.offsetHeight;
       }
     }
-    return { top: 0, bottom };
+    return { top, bottom };
   };
   const isTerminalFocused = () => Boolean(terminalElement.querySelector(".xterm.focus"));
   const followCursor = () => {
@@ -573,6 +581,17 @@ function initTerminalAttach(host) {
   let source = null;
   let resizeTimer = null;
   let refreshTimer = null;
+  let followSettingResize = 0;
+  const followAfterSettingSnapshot = () => {
+    if (!followSettingResize) {
+      return;
+    }
+    const fresh = Date.now() - followSettingResize <= 5000;
+    followSettingResize = 0;
+    if (fresh) {
+      followCursor();
+    }
+  };
   const setRefreshing = (on) => {
     for (const button of streamRefreshButtons) {
       if (on) {
@@ -621,6 +640,7 @@ function initTerminalAttach(host) {
       }
       if (reset) {
         onInitialSnapshot?.();
+        followAfterSettingSnapshot();
       }
       return;
     }
@@ -630,6 +650,7 @@ function initTerminalAttach(host) {
       }
       if (reset) {
         onInitialSnapshot?.();
+        followAfterSettingSnapshot();
       }
     });
   };
@@ -790,12 +811,15 @@ function initTerminalAttach(host) {
   }
 
   listen(window, "resize", scheduleResize);
-  listen(fontSizeSetting, "terminal-setting-change", (event) => {
-    fontSizeOverride = Number(event.detail?.value) || DEFAULT_FONT_SIZE;
-    scheduleResize();
-  });
-  listen(rowsSetting, "terminal-setting-change", (event) => {
-    rowsOverride = Number(event.detail?.value) || DEFAULT_ROWS;
+  listen(document, "terminal-setting-change", (event) => {
+    if (event.detail?.setting === "font-size") {
+      fontSizeOverride = Number(event.detail.value) || DEFAULT_FONT_SIZE;
+    } else if (event.detail?.setting === "rows") {
+      rowsOverride = Number(event.detail.value) || DEFAULT_ROWS;
+    } else {
+      return;
+    }
+    followSettingResize = Date.now();
     scheduleResize();
   });
 

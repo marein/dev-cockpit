@@ -10,6 +10,7 @@ type Running struct {
 	Name        string
 	StartedAt   time.Time
 	CWD         string
+	TabPos      int // tab strip position from @dc_tab_pos, 0 when unset
 }
 
 // StartOptions control how a new provider session is launched.

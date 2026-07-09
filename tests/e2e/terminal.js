@@ -46,17 +46,22 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       assert(text.includes(marker), `marker not mirrored (len ${text.length})`);
     });
 
-    await run("desktop: terminal setting select persists font-size", async () => {
-      const root = 'terminal-setting-select[setting="font-size"]';
-      const toggle = await page.$(`${root} .dropdown-toggle`);
-      assert(toggle, "no setting dropdown");
-      await toggle.click();
-      const item = await page.waitForSelector(`${root} .dropdown-menu.show .dropdown-item:not(.active)`, { timeout: 4000 });
-      const value = await item.evaluate((el) => el.dataset.value);
-      await item.click();
+    await run("desktop: the strip settings menu persists font-size, the settings row stays mobile only", async () => {
+      const rowHidden = await page.$eval(".attach-settings", (el) => getComputedStyle(el).display === "none");
+      assert(rowHidden, "old settings row still visible on desktop");
+      await page.click(".terminal-tabs-settings > button");
+      await page.waitForSelector(".terminal-tabs-settings .dropdown-menu.show", { state: "visible", timeout: 4000 });
+      const sel = '.terminal-tabs-settings terminal-setting-select[setting="font-size"] select';
+      const before = await page.$eval(sel, (el) => el.value);
+      const value = await page.$eval(sel, (el) => [...el.options].map((o) => o.value).find((v) => v !== el.value));
+      await page.selectOption(sel, value);
       await sleep(300);
       assert(await page.evaluate(() => localStorage.getItem("dc-terminal-font-size")) === value, "font-size not persisted");
-      assert((await page.$eval(`${root} .dropdown-toggle span`, (el) => el.textContent)) === value, "toggle label not updated");
+      assert((await page.locator(".terminal-tabs-settings .dropdown-menu.show").count()) === 1, "settings menu closed on select");
+      await page.selectOption(sel, before);
+      await sleep(200);
+      await page.keyboard.press("Escape");
+      await sleep(200);
     });
 
     await run("desktop: legacy storage key migrates to dc- on read", async () => {

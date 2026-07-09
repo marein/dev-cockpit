@@ -64,6 +64,7 @@ func scanRunning(panes []tmux.Pane, resumable []Session, prov Coder) (running []
 					Name:        DisplayName(match.Name, match.SessionID),
 					StartedAt:   p.StartTime(),
 					CWD:         match.CWD,
+					TabPos:      p.TabPosition(),
 				})
 				runningIDs[match.SessionID] = true
 				continue
@@ -77,6 +78,7 @@ func scanRunning(panes []tmux.Pane, resumable []Session, prov Coder) (running []
 				Name:        DisplayName(p.CoderName, p.Name),
 				StartedAt:   p.StartTime(),
 				CWD:         p.CoderDir,
+				TabPos:      p.TabPosition(),
 			})
 			continue
 		}

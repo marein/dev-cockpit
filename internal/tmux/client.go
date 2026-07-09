@@ -25,6 +25,17 @@ type Pane struct {
 	Coder     string // @dc_coder option; non-empty marks a coder pane and names its coder
 	CoderName string // @dc_coder_name option; the coder's display name at launch
 	CoderDir  string // @dc_coder_dir option; the coder's start directory
+	TabPos    string // @dc_tab_pos option; the session's tab strip position, raw
+}
+
+// TabPosition parses the pane's tab strip position; 0 when unset or invalid,
+// which sorts the session after every positioned one.
+func (p Pane) TabPosition() int {
+	v, err := strconv.Atoi(strings.TrimSpace(p.TabPos))
+	if err != nil || v < 1 {
+		return 0
+	}
+	return v
 }
 
 // StartTime parses the pane's raw session_created stamp; zero when invalid.
@@ -78,6 +89,28 @@ func (c *Client) SetHistoryLimit(name string, historyLimit int) error {
 // SetOption sets a tmux option (e.g. a user option "@name") on a session.
 func (c *Client) SetOption(name, option, value string) error {
 	return clirun.Check("tmux", "set-option", "-t", name, option, value)
+}
+
+// tabPosOption is the tmux user option that holds a session's tab strip
+// position. The order lives in tmux on purpose: it dies with the session, so
+// there is no state file to prune, and every device sees the same strip.
+const tabPosOption = "@dc_tab_pos"
+
+// SetTabPositions writes the tab strip order onto the sessions, first name is
+// position 1. All assignments ride in one tmux invocation, so a reorder costs
+// a single process spawn regardless of session count.
+func (c *Client) SetTabPositions(names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	args := make([]string, 0, len(names)*6)
+	for i, name := range names {
+		if i > 0 {
+			args = append(args, ";")
+		}
+		args = append(args, "set-option", "-t", name, tabPosOption, strconv.Itoa(i+1))
+	}
+	return clirun.Check("tmux", args...)
 }
 
 // StopPipe detaches any inherited pipe-pane logger (migration cleanup).
@@ -152,7 +185,7 @@ func (c *Client) PasteLiteral(name, text string) error {
 // ListPanes returns the unique first-pane entries for every session.
 func (c *Client) ListPanes() ([]Pane, error) {
 	r := clirun.Run("tmux", "list-panes", "-a", "-F",
-		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}\t#{@dc_shell_dir}\t#{@dc_coder}\t#{@dc_coder_name}\t#{@dc_coder_dir}")
+		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}\t#{@dc_shell_dir}\t#{@dc_coder}\t#{@dc_coder_name}\t#{@dc_coder_dir}\t#{@dc_tab_pos}")
 	if r.Err != nil && r.ExitCode != 0 {
 		if isNoServerError(r.Stderr) {
 			return nil, nil
@@ -182,11 +215,11 @@ func parsePanes(out string) []Pane {
 	var panes []Pane
 	for _, raw := range strings.Split(out, "\n") {
 		parts := strings.Split(strings.TrimRight(raw, "\n"), "\t")
-		if len(parts) != 10 {
+		if len(parts) != 11 {
 			continue
 		}
 		name, pid, created, win, pane, shellName, workdir := parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
-		coder, coderName, coderDir := parts[7], parts[8], parts[9]
+		coder, coderName, coderDir, tabPos := parts[7], parts[8], parts[9], parts[10]
 		if win != "0" || pane != "0" || seen[name] {
 			continue
 		}
@@ -198,6 +231,7 @@ func parsePanes(out string) []Pane {
 			Name: name, PID: pid, StartedAt: created,
 			ShellName: shellName, Workdir: workdir,
 			Coder: coder, CoderName: coderName, CoderDir: coderDir,
+			TabPos: tabPos,
 		})
 	}
 	sort.Slice(panes, func(i, j int) bool {

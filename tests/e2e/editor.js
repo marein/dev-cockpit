@@ -47,6 +47,27 @@ L.runFeature("EDITOR", async ({ page, run, mobilePage }) => {
       await page.waitForFunction(() => { const t = document.querySelector("[data-editor-tree]"); return t && !/Loading/.test(t.textContent); }, null, { timeout: 8000 });
     });
 
+    await run("the header back button follows the ?return target like the create forms' Cancel", async () => {
+      const backSel = '.page-header a[title="Back"]';
+      let href = await page.getAttribute(backSel, "href");
+      assert(href === "/projects", `default back href '${href}'`);
+      const ret = `/projects#project-${project}`;
+      await page.goto(`${editorURL}?return=${encodeURIComponent(ret)}`, { waitUntil: "domcontentloaded" });
+      href = await page.getAttribute(backSel, "href");
+      assert(href === ret, `back href '${href}' != '${ret}'`);
+      await page.click(backSel);
+      await page.waitForFunction((r) => window.location.pathname + window.location.hash === r, ret, { timeout: 8000 });
+      await page.waitForFunction((p) => {
+        const card = document.getElementById(`project-${p}`);
+        if (!card) return false;
+        const rect = card.getBoundingClientRect();
+        return rect.top >= 0 && rect.top < window.innerHeight;
+      }, project, { timeout: 4000 });
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+      await page.waitForFunction(() => { const t = document.querySelector("[data-editor-tree]"); return t && !/Loading/.test(t.textContent); }, null, { timeout: 8000 });
+    });
+
     await run("new file -> tree row + tab open + CodeMirror (not textarea fallback)", async () => {
       await newFile(noteFile);
       await page.waitForSelector(`.editor-file[data-path="${noteFile}"]`, { timeout: 8000 });

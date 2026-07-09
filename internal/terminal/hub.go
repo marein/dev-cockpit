@@ -301,20 +301,41 @@ func (h *Hub) Exited(name string) bool {
 	return st.ctl.Exited()
 }
 
-// resize drives the rendered size of an actively streamed session.
+// resize drives the rendered size of an actively streamed session and
+// republishes a fresh snapshot at that size. The republish matters twice: the
+// cached size feeds the terminal-size event of every later resync (a stale
+// cache would shrink the browser back), and programs that do not repaint on
+// SIGWINCH (a plain shell prompt) would otherwise leave the old, smaller frame
+// on screen until some other resync happens. Same settle-then-capture dance as
+// Attach: TUIs repaint in bursts, a silent shell just lets the wait run out.
 func (h *Hub) Resize(name string, cols, rows int) error {
 	h.mu.Lock()
-	var ctl *tmux.Control
-	if st := h.streams[name]; st != nil {
-		ctl = st.ctl
-		st.frozen = false
-		st.scrollOff = 0
-	}
-	h.mu.Unlock()
-	if ctl == nil {
+	defer h.mu.Unlock()
+	st := h.streams[name]
+	if st == nil || st.ctl == nil {
 		return nil
 	}
-	return ctl.Resize(cols, rows)
+	if err := st.ctl.Resize(cols, rows); err != nil {
+		return err
+	}
+	st.ctl.Settle(300*time.Millisecond, 200*time.Millisecond, 2500*time.Millisecond)
+	size, err := st.ctl.PaneSize()
+	if err != nil {
+		return err
+	}
+	snapshot, offset, err := st.ctl.Snapshot()
+	if err != nil {
+		return err
+	}
+	st.generation++
+	st.snapshot = snapshot
+	st.offset = offset
+	st.cols = size.Cols
+	st.rows = size.Rows
+	st.frozen = false
+	st.scrollOff = 0
+	st.ctl.Notify()
+	return nil
 }
 
 // detach releases one browser stream and closes the control client after the

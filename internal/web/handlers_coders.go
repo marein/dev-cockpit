@@ -100,6 +100,7 @@ func (s *Server) handleCoderAttach(c *gin.Context) {
 		ProjectName:     projectName,
 		Files:           files,
 		MaxUploadSizeMB: maxRequestBodyMegabytes(s.cfg.MaxRequestBodySize),
+		Tabs:            s.terminalTabs(),
 		StreamURL:       "/coders/" + running.Identifier + "/stream",
 		ResizeURL:       "/coders/" + running.Identifier + "/resize",
 		InputURL:        "/coders/" + running.Identifier + "/input",

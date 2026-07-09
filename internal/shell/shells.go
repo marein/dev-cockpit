@@ -38,6 +38,7 @@ type Shell struct {
 	Name        string
 	StartedAt   time.Time
 	CWD         string
+	TabPos      int // tab strip position from @dc_tab_pos, 0 when unset
 }
 
 // shellsCache memoises List for a short TTL so the repeated tmux pane scans
@@ -119,6 +120,7 @@ func (s *Shells) List() []Shell {
 			Name:        name,
 			StartedAt:   p.StartTime(),
 			CWD:         strings.TrimSpace(p.Workdir),
+			TabPos:      p.TabPosition(),
 		})
 	}
 	s.listCache.put(out)

@@ -21,30 +21,24 @@
 </div>
 
 <div class="attach-page min-w-0">
-  <div class="d-flex justify-content-end align-items-center gap-2 flex-wrap">
-    <terminal-setting-select
-      setting="font-size"
-      storage-key="dc-terminal-font-size"
-      default-value="14"
-      options="10,11,12,13,14,15,16,18,20,24"
-      icon="text-size"
-      label="Font size"
-      title="Font size"
-    ></terminal-setting-select>
-    <terminal-setting-select
-      setting="rows"
-      storage-key="dc-terminal-rows"
-      default-value="30"
-      options="30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000"
-      icon="baseline-density-medium"
-      label="Rows"
-      title="Visible rows"
-    ></terminal-setting-select>
+  <div class="attach-settings">
+    <span class="text-secondary me-auto" title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i></span>
+    <div class="dropdown">
+      <button type="button" class="btn btn-sm btn-icon btn-outline-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
+        <i class="ti ti-settings"></i>
+      </button>
+      <div class="dropdown-menu dropdown-menu-end terminal-settings-menu">
+        {{template "terminal_settings.gohtml"}}
+      </div>
+    </div>
   </div>
-  <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative"
-                  stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
-    <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
-  </terminal-attach>
+  <div class="attach-frame min-w-0 w-100">
+    {{template "terminal_tabs.gohtml" .}}
+    <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative"
+                    stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
+      <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
+    </terminal-attach>
+  </div>
 
   <div class="attach-footer min-w-0">
     <div class="attach-mobile">
@@ -95,6 +89,10 @@
       <button type="button" class="btn btn-outline-secondary" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
         <i class="ti ti-refresh"></i>
       </button>
+      <span class="switcher-shortcut" title="Opens the session switcher">
+        <span class="switcher-hint-browser">Switcher: <kbd>Ctrl</kbd>+<kbd>Ctrl</kbd></span>
+        <span class="switcher-hint-app">Switcher: <kbd>Ctrl</kbd>+<kbd>Tab</kbd></span>
+      </span>
     </div>
   </div>
 </div>

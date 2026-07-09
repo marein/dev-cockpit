@@ -12,13 +12,17 @@ class TerminalSettingSelect extends HTMLElement {
     this.defaultValue = this.normalizeValue(this.getAttribute("default-value") || "", this.options[0] || "");
     this.currentValue = this.restoreValue();
     this.render();
+    document.addEventListener("terminal-setting-change", (event) => {
+      if (event.target === this || event.detail?.setting !== this.setting) return;
+      this.currentValue = this.normalizeValue(String(event.detail.value));
+      this.updateDisplay();
+    }, { signal: this.ac.signal });
   }
 
   disconnectedCallback() {
     this.ac?.abort();
     this.ac = null;
-    this.current = null;
-    this.items = null;
+    this.select = null;
   }
 
   readOptions() {
@@ -53,48 +57,31 @@ class TerminalSettingSelect extends HTMLElement {
   }
 
   render() {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "btn btn-sm dropdown-toggle";
-    button.setAttribute("data-bs-toggle", "dropdown");
-    button.setAttribute("data-bs-auto-close", "true");
-    button.setAttribute("aria-expanded", "false");
-    button.setAttribute("aria-label", this.getAttribute("label") || "");
-    button.title = this.getAttribute("title") || "";
-
+    const label = document.createElement("label");
+    label.className = "dropdown-item d-flex align-items-center gap-2 terminal-setting-item";
     const icon = document.createElement("i");
-    icon.className = `ti ti-${(this.getAttribute("icon") || "").trim()} me-1`;
+    icon.className = `ti ti-${(this.getAttribute("icon") || "").trim()}`;
     icon.setAttribute("aria-hidden", "true");
-
-    this.current = document.createElement("span");
-
-    const menu = document.createElement("div");
-    menu.className = "dropdown-menu dropdown-menu-end";
-    menu.style.maxHeight = "50vh";
-    menu.style.overflowY = "auto";
-
-    this.items = this.options.map((value) => {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "dropdown-item";
-      item.dataset.value = value;
-      item.textContent = value;
-      item.addEventListener("click", () => this.handleSelect(value), { signal: this.ac.signal });
-      menu.appendChild(item);
-      return item;
-    });
-
-    button.append(icon, this.current);
-    this.classList.add("dropdown");
-    this.style.display = "inline-flex";
-    this.style.flex = "0 0 auto";
-    this.replaceChildren(button, menu);
+    const text = document.createElement("span");
+    text.className = "flex-fill";
+    text.textContent = this.getAttribute("label") || "";
+    this.select = document.createElement("select");
+    this.select.className = "form-select form-select-sm";
+    this.select.setAttribute("aria-label", this.getAttribute("label") || "");
+    for (const value of this.options) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      this.select.appendChild(option);
+    }
+    this.select.addEventListener("change", () => this.handleSelect(this.select.value), { signal: this.ac.signal });
+    label.append(icon, text, this.select);
+    this.replaceChildren(label);
     this.updateDisplay();
   }
 
   updateDisplay() {
-    this.current.textContent = this.currentValue;
-    this.items.forEach((item) => item.classList.toggle("active", item.dataset.value === this.currentValue));
+    this.select.value = this.currentValue;
   }
 
   handleSelect(value) {

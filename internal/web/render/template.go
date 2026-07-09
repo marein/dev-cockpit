@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 //go:embed templates/*.gohtml
@@ -56,7 +57,7 @@ type Page struct {
 	// CoderHome is the canonical landing URL of the coder pages (the first
 	// active coder's instructions), used by the main nav.
 	CoderHome string
-	QuickNav   QuickNav
+	QuickNav  QuickNav
 	// Jingle is the cross-device notification jingle selection, rendered into
 	// a meta tag so the client picks the right tune.
 	Jingle string
@@ -93,6 +94,17 @@ type QuickNav struct {
 	AllProjects []ProjectNav
 }
 
+// HasInactiveCoders reports whether any project carries a resumable session.
+// It switches on the resume section in the tab strip's plus menu.
+func (q QuickNav) HasInactiveCoders() bool {
+	for _, p := range q.AllProjects {
+		if len(p.InactiveCoders) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // QuickNavTarget is one jump destination in the quick nav menu.
 type QuickNavTarget struct {
 	ID      string
@@ -101,4 +113,24 @@ type QuickNavTarget struct {
 	Project string // owning project name, shown under the target
 	Coder   string // owning coder id, shown when several coders run
 	HasNews bool
+}
+
+// TerminalTabsData feeds the terminal_tabs partial when it is re-rendered as a
+// fragment for the background refresh (GET /terminal-tabs).
+type TerminalTabsData struct {
+	Page
+	Tabs []TerminalTab
+}
+
+// TerminalTab is one entry in the attach page tab strip: a live coder or shell.
+type TerminalTab struct {
+	ID        string
+	Name      string
+	URL       string
+	Project   string // owning project name, shown under the tab name
+	Coder     string // owning coder id, empty for shells
+	Kind      string // "coder" or "shell"
+	HasNews   bool
+	StartedAt time.Time
+	TabPos    int // strip position from @dc_tab_pos, 0 when unset
 }

@@ -94,6 +94,7 @@ func (l *legacyScanner) match(p tmux.Pane) (Running, string, bool) {
 				Name:        DisplayName(info.name, p.Name),
 				StartedAt:   p.StartTime(),
 				CWD:         info.cwd,
+				TabPos:      p.TabPosition(),
 			}, "", true
 		}
 		return Running{}, "", false
@@ -105,6 +106,7 @@ func (l *legacyScanner) match(p tmux.Pane) (Running, string, bool) {
 		Name:        DisplayName(match.Name, match.SessionID),
 		StartedAt:   p.StartTime(),
 		CWD:         match.CWD,
+		TabPos:      p.TabPosition(),
 	}, match.SessionID, true
 }
 

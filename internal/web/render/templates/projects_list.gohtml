@@ -36,7 +36,7 @@
           <i class="ti ti-history me-2"></i>Recent
         </button>
         <div class="dropdown-divider"></div>
-        <div class="dropdown-item-text text-secondary small">Sorts the quick nav too.</div>
+        <div class="dropdown-item-text text-secondary small">Applies to project listings across the app.</div>
       </div>
     </div>
   </div>
@@ -78,7 +78,7 @@
       </div>
       <div class="col-auto">
         <div class="btn-list flex-nowrap">
-          <a href="/projects/{{.Name}}/editor" class="btn btn-sm btn-icon btn-outline-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
+          <a href="/projects/{{.Name}}/editor?return={{urlquery (print "/projects#project-" .Name)}}" class="btn btn-sm btn-icon btn-outline-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
             <i class="ti ti-code"></i>
           </a>
           <form method="post" action="/projects/delete" data-confirm="Delete project &quot;{{.Name}}&quot;?" data-confirm-button="Delete">

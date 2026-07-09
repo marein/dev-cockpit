@@ -38,6 +38,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, "/projects") })
 	auth.POST("/logout", s.handleLogout)
 	auth.GET("/quicknav", s.handleQuickNav)
+	auth.GET("/terminal-tabs", s.handleTerminalTabsFragment)
+	auth.POST("/terminal-tabs/order", s.handleTerminalTabsOrder)
 
 	auth.GET("/coders/new", s.handleCoderNew)
 	auth.POST("/coders/new", s.handleCoderCreate)

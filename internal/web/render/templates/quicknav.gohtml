@@ -21,7 +21,7 @@
     {{if .QuickNav.CurrentProject}}
     <div class="quicknav-context d-flex align-items-center gap-2 px-3 pb-2">
       <span class="text-truncate small fw-medium flex-fill">{{.QuickNav.CurrentProject}}</span>
-      <a href="/projects/{{.QuickNav.CurrentProject}}/editor" class="btn btn-sm btn-ghost-secondary px-2 py-1" title="Editor for {{.QuickNav.CurrentProject}}" aria-label="Open editor for current project">
+      <a href="/projects/{{.QuickNav.CurrentProject}}/editor?return={{urlquery .QuickNav.CurrentPath}}" class="btn btn-sm btn-ghost-secondary px-2 py-1" title="Editor for {{.QuickNav.CurrentProject}}" aria-label="Open editor for current project">
         <i class="ti ti-code"></i>
       </a>
       <a href="/coders/new?project={{urlquery .QuickNav.CurrentProject}}&amp;return={{urlquery .QuickNav.CurrentPath}}" class="btn btn-sm btn-ghost-secondary px-2 py-1" title="New coder in {{.QuickNav.CurrentProject}}" aria-label="New coder in current project">

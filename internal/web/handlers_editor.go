@@ -42,6 +42,7 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		Page:       s.page(c, "Editor - "+p.Name, "projects"),
 		Project:    p,
 		MaxEditKiB: filesystem.MaxEditableBytes / 1024,
+		Return:     s.formReturn(c),
 	})
 }
 
