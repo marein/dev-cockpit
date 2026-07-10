@@ -10,6 +10,17 @@ test. Update this file when a convention changes.
 - **No breaking changes** to behavior, URLs, cookies, config keys, start
   commands. If unavoidable, ask the user first, then build a move forward
   migration that keeps the old path working.
+- **The update surface is the recovery path.** Two parts of it cross versions
+  on every single update and therefore never expire, no removal markers of
+  any kind, no matter which major release: the `/update/check` response
+  fields (the post restart poll always hits the new server with the old
+  page's JS, fields only ever grow), and the release artifact conventions an
+  old binary needs to pull itself forward (feed shape, asset name
+  `dev-cockpit_<version>_<os>_<arch>.tar.gz` containing a file named
+  `dev-cockpit`, `dev-cockpit_<version>_checksums.txt` with
+  `<sha256>  <asset>` lines). The empty `/update/apply` body (newest pending)
+  only serves stale tabs from before the version pin and may be dropped at a
+  major release, it carries a TODO(v2.0.0) marker.
 - **Hashed assets:** reference via the manifest, `{{ asset "/css/app.css" }}`,
   never the raw path. See `internal/web/static_assets.go`. Static files that
   reference other assets by raw path (manifest.json, sw.js) get those

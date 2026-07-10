@@ -1,22 +1,17 @@
 // Complete self update coverage. Point BASE_URL at a throwaway started with
-// DEV_COCKPIT_UPDATE_API_URL. MODE=available (default) expects a stub advertising a
-// higher version with real assets, and drives check -> daily auto modal -> badge ->
-// changelog dialog -> real (non destructive) apply. MODE=uptodate expects a stub
-// returning [] and checks the no-update state. Apply re-execs into the same repackaged binary, so the
-// instance restarts healthy without a real version change.
+// DEV_COCKPIT_UPDATE_API_URL. MODE=available (default) expects a stub advertising
+// v999.0.0 whose asset is this tree built with -X main.version=999.0.0 (see the
+// README), and drives check -> daily auto modal -> badge -> changelog dialog ->
+// version pin (superseded version -> 409 + fresh status) -> real apply through
+// the dialog, proven by current flipping to the stub version after the re-exec.
+// MODE=uptodate expects a stub returning [] and checks the no-update state plus
+// the 409 on apply. The page is parked on about:blank right after the apply is
+// on the wire (the handler runs on a background context, the disconnect does not
+// cancel it) so the restart gap does not gate the run with console noise.
 const { chromium } = require("playwright-core");
 const L = require("./lib");
 const { assert, sleep } = L;
 const MODE = process.env.MODE || "available";
-
-async function pollHealth(ctx, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try { const r = await ctx.request.get(`${L.BASE}/health`, { timeout: 3000 }); if (r.status() === 200) return true; } catch {}
-    await sleep(1000);
-  }
-  return false;
-}
 
 (async () => {
   const browser = await chromium.launch({ args: ["--no-sandbox"] });
@@ -46,6 +41,10 @@ async function pollHealth(ctx, timeoutMs) {
       badge: [...document.querySelectorAll(".js-update-flag")].some((f) => !f.classList.contains("d-none")),
       text: (document.querySelector("dc-update-check a[data-update-open]") || {}).textContent || "",
     }));
+    const csrf = () => page.evaluate(() => {
+      const m = document.querySelector('meta[name="csrf-token"]');
+      return m ? m.content : "";
+    });
 
     if (MODE === "uptodate") {
       await run("update: no update -> badge hidden + footer 'Up to date'", async () => {
@@ -56,6 +55,32 @@ async function pollHealth(ctx, timeoutMs) {
         assert(/up to date/i.test(st.text), `footer link text: '${st.text}'`);
         const open = await page.evaluate(() => Boolean(document.querySelector(".swal2-container")));
         assert(!open, "unexpected auto modal with no update");
+      });
+
+      await run("update: apply with no update -> 409 + status.available=false", async () => {
+        const token = await csrf();
+        assert(token, "no csrf token");
+        const res = await ctx.request.post(`${L.BASE}/update/apply`, {
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/json", Accept: "application/json" },
+          data: { version: "1.0.0" },
+          failOnStatusCode: false,
+        });
+        assert(res.status() === 409, `expected 409, got ${res.status()}`);
+        const j = await res.json();
+        assert(j.error, "no error text in 409 body");
+        assert(j.status && j.status.available === false, `expected available=false status: ${JSON.stringify(j)}`);
+      });
+
+      await run("update: apply with an empty body (released clients) stays supported", async () => {
+        const token = await csrf();
+        const res = await ctx.request.post(`${L.BASE}/update/apply`, {
+          headers: { "X-CSRF-Token": token, Accept: "application/json" },
+          failOnStatusCode: false,
+        });
+        assert(res.status() === 409, `expected 409, got ${res.status()}`);
+        const j = await res.json();
+        assert(/up to date/i.test(j.error || ""), `unexpected error text: ${j.error}`);
+        assert(j.status && j.status.available === false, `expected available=false status: ${JSON.stringify(j)}`);
       });
     } else {
       await run("update: available -> daily modal auto-opens once, not again within a day", async () => {
@@ -117,23 +142,49 @@ async function pollHealth(ctx, timeoutMs) {
         await sleep(400);
       });
 
-      await run("update: apply downloads, verifies, swaps, re-execs, comes back healthy", async () => {
-        const token = await page.evaluate(() => { const m = document.querySelector('meta[name="csrf-token"]'); return m ? m.content : ""; });
+      await run("update: apply pins the version, superseded request -> 409 + fresh status", async () => {
+        const token = await csrf();
         assert(token, "no csrf token");
-        // The handler answers 200 {restarting:true} then re-execs ~300ms later,
-        // which resets this connection, so tolerate a read error and prove success
-        // by the process coming back healthy. A real apply failure would be a 502.
-        let applyStatus = 0;
-        try {
-          const res = await ctx.request.post(`${L.BASE}/update/apply`, { headers: { "X-CSRF-Token": token, Accept: "application/json" }, timeout: 60000, failOnStatusCode: false });
-          applyStatus = res.status();
-        } catch (e) { applyStatus = -1; }
-        assert(applyStatus === 200 || applyStatus === -1, `apply failed with status ${applyStatus}`);
-        await sleep(1500);
-        const back = await pollHealth(ctx, 45000);
-        assert(back, `instance did not come back healthy after apply/re-exec (apply status ${applyStatus})`);
-        const chk = await ctx.request.get(`${L.BASE}/update/check`);
-        assert(chk.status() === 200, `post-restart check ${chk.status()}`);
+        const res = await ctx.request.post(`${L.BASE}/update/apply`, {
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/json", Accept: "application/json" },
+          data: { version: "1.0.0" },
+          failOnStatusCode: false,
+        });
+        assert(res.status() === 409, `expected 409, got ${res.status()}`);
+        const j = await res.json();
+        assert(j.error, "no error text in 409 body");
+        assert(j.status && j.status.available === true && j.status.latest, `no fresh status in 409 body: ${JSON.stringify(j)}`);
+        return `error='${j.error}' latest=${j.status.latest}`;
+      });
+
+      await run("update: apply through the dialog pins the version, swaps, re-execs as the new version", async () => {
+        const before = await (await ctx.request.get(`${L.BASE}/update/check?force=1`)).json();
+        assert(before.available && before.latest, `no pending update before apply: ${JSON.stringify(before)}`);
+        await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
+        await page.locator("dc-update-check a[data-update-open]").first().click();
+        await page.waitForFunction(
+          () => /update to/i.test((document.querySelector(".swal2-title") || {}).textContent || ""),
+          null,
+          { timeout: 8000 },
+        );
+        await page.click(".swal2-confirm");
+        await page.waitForFunction(
+          () => /^updating/i.test((document.querySelector(".swal2-title") || {}).textContent || ""),
+          null,
+          { timeout: 8000 },
+        );
+        await page.goto("about:blank");
+        const deadline = Date.now() + 60000;
+        let current = "";
+        while (Date.now() < deadline && current !== before.latest) {
+          try {
+            const r = await ctx.request.get(`${L.BASE}/update/check`, { timeout: 3000 });
+            if (r.status() === 200) current = (await r.json()).current;
+          } catch {}
+          await sleep(1000);
+        }
+        assert(current === before.latest, `instance did not come back as ${before.latest} (current=${current})`);
+        return `re-execed as ${current}`;
       });
     }
   } finally { /* no app resources created */ }

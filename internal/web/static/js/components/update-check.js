@@ -216,15 +216,37 @@ class UpdateCheck extends HTMLElement {
     dialog.loading({ title: "Updating…", text: "Downloading and restarting." });
     fetch("/update/apply", {
       method: "POST",
-      headers: csrfHeaders({ Accept: "application/json" }),
+      headers: csrfHeaders({ Accept: "application/json", "Content-Type": "application/json" }),
+      body: JSON.stringify({ version: status.latest }),
     })
       .then(async (response) => {
+        if (response.status === 409) {
+          await this.applyRejected(response);
+          return;
+        }
         if (!response.ok) throw new Error(await errorText(response, "Update failed."));
         this.waitForRestart(status.latest);
       })
       .catch((error) => {
         dialog.fire({ icon: "error", title: "Update failed", text: error.message });
       });
+  }
+
+  async applyRejected(response) {
+    const data = await response.json().catch(() => null);
+    const fresh = data && data.status;
+    if (!fresh || !fresh.supported) {
+      dialog.fire({ icon: "error", title: "Update failed", text: (data && data.error) || "Update failed." });
+      return;
+    }
+    this.saveState({ status: fresh });
+    this.renderFooter(fresh);
+    this.renderFlags(fresh);
+    if (fresh.available) {
+      this.confirmUpdate(fresh);
+    } else {
+      dialog.fire({ icon: "success", title: "Up to date", text: "Running version " + fresh.current + "." });
+    }
   }
 
   waitForRestart(target) {

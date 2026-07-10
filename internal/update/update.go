@@ -38,6 +38,15 @@ const defaultAPIURL = "https://api.github.com/repos/" + repo + "/releases?per_pa
 
 const apiURLEnv = "DEV_COCKPIT_UPDATE_API_URL"
 
+var (
+	// ErrUpToDate reports that no pending release exists.
+	ErrUpToDate = errors.New("already up to date")
+	// ErrSuperseded reports that the requested version is no longer the
+	// newest pending release. Callers should re-check and show the fresh
+	// release notes instead of installing something the user never saw.
+	ErrSuperseded = errors.New("a newer release is available")
+)
+
 type Updater struct {
 	current string
 	exePath string
@@ -127,16 +136,23 @@ func (u *Updater) Status(ctx context.Context, force bool) Status {
 	return st
 }
 
-func (u *Updater) Apply(ctx context.Context) error {
-	rels, err := u.releases(ctx, false)
+// Apply downloads and installs the release matching version, or the newest
+// pending release when version is empty. It refreshes the release feed first,
+// then installs exactly the resolved release, never silently something newer.
+func (u *Updater) Apply(ctx context.Context, version string) error {
+	rels, err := u.releases(ctx, true)
 	if err != nil && rels == nil {
 		return fmt.Errorf("check release: %w", err)
 	}
 	pending := u.pending(rels)
 	if len(pending) == 0 {
-		return errors.New("already up to date")
+		return ErrUpToDate
 	}
 	newest := pending[len(pending)-1]
+	if version != "" && !sameVersion(newest.TagName, version) {
+		return fmt.Errorf("version %s was requested but %s is the newest release: %w",
+			strings.TrimPrefix(version, "v"), strings.TrimPrefix(newest.TagName, "v"), ErrSuperseded)
+	}
 
 	target := "_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
 	binAsset, ok := findAsset(newest.Assets, target)
@@ -343,6 +359,11 @@ func smokeTest(path string) error {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func sameVersion(a, b string) bool {
+	av, bv := parseSemver(a), parseSemver(b)
+	return av != nil && bv != nil && compareSemver(av, bv) == 0
 }
 
 func findAsset(assets []asset, suffix string) (asset, bool) {

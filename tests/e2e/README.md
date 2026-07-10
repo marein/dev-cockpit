@@ -60,10 +60,13 @@ CLI is installed on the host. Most scripts run against the instance on `:3010`
 Extra instances:
 
 - one on `:3012` started with `DEV_COCKPIT_UPDATE_API_URL` pointing at a stub
-  returning a `v999.0.0` release whose assets are the current binary repackaged as
+  returning a `v999.0.0` release whose asset is this tree built with
+  `-ldflags "-X main.version=999.0.0"`, packaged as
   `dev-cockpit_v999.0.0_linux_amd64.tar.gz` (tar.gz with a file named `dev-cockpit`)
   plus `dev-cockpit_v999.0.0_checksums.txt` (`<sha256>  <asset name>`), for
-  `update.js MODE=available`. Apply re-execs into the same binary (non destructive).
+  `update.js MODE=available`. The apply test asserts that the instance re-execs
+  as `999.0.0`, so the version must really be baked in. Apply swaps the binary
+  in place, the instance must run its own copy, never the repo build.
 - one on `:3013` with the stub URL returning `[]`, for `update.js MODE=uptodate`.
 
 Never save `/instructions` outside the runners' own flows, the instance writes the
