@@ -46,6 +46,26 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       assert(text.includes(marker), `marker not mirrored (len ${text.length})`);
     });
 
+    await run("desktop: pixel wheel deltas (trackpad) post proportional history steps", async () => {
+      const wheelBurst = async (dy, count) => {
+        await page.evaluate(async ({ dy, count }) => {
+          const screen = document.querySelector("#terminal .xterm-screen");
+          const rect = screen.getBoundingClientRect();
+          const tick = () => new Promise((resolve) => setTimeout(resolve, 16));
+          for (let i = 0; i < count; i++) {
+            screen.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaMode: 0, deltaY: dy, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }));
+            await tick();
+          }
+        }, { dy, count });
+      };
+      const upP = page.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST" && /scroll-line-up/.test(r.postData() || ""), { timeout: 8000 });
+      await wheelBurst(-40, 6);
+      await upP;
+      const downP = page.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST" && /scroll-line-down/.test(r.postData() || ""), { timeout: 8000 });
+      await wheelBurst(40, 8);
+      await downP;
+    });
+
     await run("desktop: the strip settings menu persists font-size, the settings row stays mobile only", async () => {
       const rowHidden = await page.$eval(".attach-settings", (el) => getComputedStyle(el).display === "none");
       assert(rowHidden, "old settings row still visible on desktop");

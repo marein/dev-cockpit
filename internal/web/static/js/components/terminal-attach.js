@@ -199,11 +199,14 @@ function initTerminalAttach(host) {
   //     (copilot, which uses the cursor keys for prompt history);
   //   - a shell prompt: drive the tmux history (arrow keys would walk history).
   // The desktop wheel and the mobile swipe both feed the same per-program step,
-  // so they scroll identically — the swipe just maps finger travel to steps.
+  // so they scroll identically — pixel travel (finger or trackpad) maps to steps
+  // at the same per-program rate, legacy line and page wheel deltas step per notch.
   {
-    const WHEEL_PIXELS_PER_NOTCH = 100;
     const WHEEL_LINES_PER_NOTCH = 3;
+    const WHEEL_GESTURE_GAP_MS = 300;
     let wheelAccum = 0;
+    let wheelPixels = 0;
+    let wheelPixelsAt = 0;
 
     const sendRaw = (seq) =>
       document.dispatchEvent(new CustomEvent("terminal-input", { detail: { raw: seq } }));
@@ -246,6 +249,19 @@ function initTerminalAttach(host) {
       }
     };
 
+    // One step moves one line of content, so a line step costs one cell height
+    // of travel; the page-per-step pager (copilot) moves a screen per step and
+    // costs half a screen of travel per page.
+    const scrollStepPx = () => {
+      const screen = terminalElement.querySelector(".xterm-screen");
+      const cell = screen && term.rows >= 1 ? screen.clientHeight / term.rows : 17;
+      const alt = serverModes.altScreen || term.buffer.active.type === "alternate";
+      if (!mouse.tracking && alt && !scrollHistory && screen) {
+        return Math.max(cell, screen.clientHeight / 2);
+      }
+      return Math.max(cell, 4);
+    };
+
     if (interactiveInput) {
       listen(terminalElement, "wheel", (event) => {
         if (event.ctrlKey) {
@@ -253,15 +269,24 @@ function initTerminalAttach(host) {
         }
         event.preventDefault();
         event.stopPropagation();
-        let notches;
-        if (event.deltaMode === 1) {
-          notches = event.deltaY / WHEEL_LINES_PER_NOTCH;
-        } else if (event.deltaMode === 2) {
-          notches = event.deltaY;
-        } else {
-          notches = event.deltaY / WHEEL_PIXELS_PER_NOTCH;
+        if (event.deltaMode === 0) {
+          if (event.timeStamp - wheelPixelsAt > WHEEL_GESTURE_GAP_MS) {
+            wheelPixels = 0;
+          }
+          wheelPixelsAt = event.timeStamp;
+          wheelPixels += event.deltaY;
+          const stepPx = scrollStepPx();
+          while (wheelPixels >= stepPx) {
+            wheelPixels -= stepPx;
+            scrollStep(true, event.clientX, event.clientY);
+          }
+          while (wheelPixels <= -stepPx) {
+            wheelPixels += stepPx;
+            scrollStep(false, event.clientX, event.clientY);
+          }
+          return;
         }
-        wheelAccum += notches;
+        wheelAccum += event.deltaMode === 1 ? event.deltaY / WHEEL_LINES_PER_NOTCH : event.deltaY;
         while (wheelAccum >= 1) {
           wheelAccum -= 1;
           scrollStep(true, event.clientX, event.clientY);
@@ -275,10 +300,7 @@ function initTerminalAttach(host) {
 
     // Mobile swipe (terminal-scroll-zone): the zone streams finger travel as
     // pixel deltas (drag and fling alike), accumulated here and converted into
-    // per-program steps so content tracks the finger 1:1. One step moves one
-    // line of content, so a line step costs one cell height of travel; the
-    // page-per-step pager (copilot) moves a screen per step and costs half a
-    // screen of travel per page.
+    // per-program steps so content tracks the finger 1:1.
     // Anchor the synthesized wheel at the content centre rather than the finger,
     // so mouse-reporting programs (claude) always get it over their scrollable
     // area like a desktop wheel — a finger near the input row would otherwise
@@ -291,15 +313,6 @@ function initTerminalAttach(host) {
       const rect = screen.getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     };
-    const swipeStepPx = () => {
-      const screen = terminalElement.querySelector(".xterm-screen");
-      const cell = screen && term.rows >= 1 ? screen.clientHeight / term.rows : 17;
-      const alt = serverModes.altScreen || term.buffer.active.type === "alternate";
-      if (!mouse.tracking && alt && !scrollHistory && screen) {
-        return Math.max(cell, screen.clientHeight / 2);
-      }
-      return Math.max(cell, 4);
-    };
     let swipeAccum = 0;
     listen(document, "terminal-scroll", (event) => {
       const detail = event.detail || {};
@@ -311,7 +324,7 @@ function initTerminalAttach(host) {
         return;
       }
       swipeAccum -= dy; // finger up = toward newer output = scroll down
-      const stepPx = swipeStepPx();
+      const stepPx = scrollStepPx();
       const centre = contentCentre() || { x: detail.clientX, y: detail.clientY };
       while (swipeAccum >= stepPx) {
         swipeAccum -= stepPx;
