@@ -87,7 +87,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 		// and the wait at the end of the loop.
 		updated, live := src.StreamUpdated(attached.Session)
 		if !live {
-			_ = writeSSEvent(w, "terminal-error", "Terminal has ended.")
+			_ = writeSSEvent(w, "terminal-ended", "Terminal has ended.")
 			return
 		}
 
@@ -143,7 +143,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 					_ = writeSSEvent(w, "delta", encodeBase64(out))
 				}
 			}
-			_ = writeSSEvent(w, "terminal-error", "Terminal has ended.")
+			_ = writeSSEvent(w, "terminal-ended", "Terminal has ended.")
 			return
 		}
 

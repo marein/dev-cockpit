@@ -35,13 +35,30 @@ L.runFeature("SHELLS", async ({ page, run }) => {
       assert((await page.textContent("[data-rename-label]")).trim() === name, "rename not persisted");
     });
 
-    await run("delete shell (data-confirm) redirects + cleans up", async () => {
+    await run("delete shell (data-confirm) redirects + cleans up, no ended toast", async () => {
       await page.goto(shellUrl, { waitUntil: "domcontentloaded" });
       const delPath = new URL(shellUrl).pathname + "/delete";
       await page.click(`form[action="${delPath}"] button[type="submit"], form[action="${delPath}"] button`);
       await confirmSwal(page);
       await page.waitForURL((u) => !new RegExp(new URL(shellUrl).pathname + "$").test(u.toString()), { timeout: 10000 });
+      await sleep(800);
+      assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "error toast after user delete");
+      const toasts = (await page.locator(".swal2-toast").allTextContents()).join(" ");
+      assert(!toasts.includes("Terminal has ended"), "ended toast not suppressed on user delete");
       shellUrl = null;
+    });
+
+    await run("typing exit ends the shell with an info toast, not an error", async () => {
+      await L.createShell(page, project);
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });
+      await page.click("#terminal");
+      await page.keyboard.type("exit");
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(".swal2-toast", { timeout: 10000 });
+      const text = (await page.locator(".swal2-toast").textContent()) || "";
+      assert(text.includes("Terminal has ended"), `unexpected toast: ${text}`);
+      assert((await page.locator(".swal2-toast .swal2-info").count()) === 1, "ended toast is not info");
+      assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "ended toast rendered as error");
     });
   } finally {
     if (shellUrl) await L.deleteShell(page, shellUrl).catch(() => {});

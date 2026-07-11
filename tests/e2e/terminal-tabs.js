@@ -394,6 +394,10 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.waitForURL(new RegExp(ids[0]), { timeout: 10000 });
       await page.waitForSelector(tabSel(ids[2]), { state: "detached", timeout: 8000 });
       await page.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
+      await sleep(800);
+      assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "error toast after tab close");
+      const toasts = (await page.locator(".swal2-toast").allTextContents()).join(" ");
+      assert(!toasts.includes("Terminal has ended"), "ended toast not suppressed on tab close");
     });
 
     await run("a stopped coder is resumable from the + menu (grouped by project) and from the switcher", async () => {

@@ -637,6 +637,7 @@ class TerminalTabs extends HTMLElement {
         confirmText: kind === "coder" ? "Stop" : "Delete",
       });
       if (!ok) return;
+      window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id } }));
       const action = kind === "coder" ? `/coders/${id}/stop` : `/shells/${id}/delete`;
       const response = await postForm(action, {});
       await ensureOk(response, "Could not close the session.");

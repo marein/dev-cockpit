@@ -104,6 +104,7 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       // .first() resumes or deletes someone else's stored session.
       const card = `#project-${project}-coders`;
       await L.stopSession(page, sessionUrl); sessionUrl = null;
+      assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "error toast after user stop");
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(`${card} form[action^="/coders/"][action$="/resume"]`, { timeout: 8000 });
       await Promise.all([page.waitForURL(/\/coders\/(?!new)[^/]+$/, { timeout: 20000 }), page.locator(`${card} form[action$="/resume"]`).first().locator('button[type="submit"]').first().click()]);

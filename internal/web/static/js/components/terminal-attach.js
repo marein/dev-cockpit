@@ -668,6 +668,20 @@ function initTerminalAttach(host) {
     });
   };
 
+  const sessionPath = streamUrl.replace(/\/stream$/, "");
+  let userEndedAt = 0;
+  listen(window, "pe:form", (event) => {
+    const path = new URL(event.detail.form.action, window.location.origin).pathname;
+    if (path === sessionPath + "/stop" || path === sessionPath + "/delete") {
+      userEndedAt = Date.now();
+    }
+  });
+  listen(window, "dc:terminal-closing", (event) => {
+    if (sessionPath.endsWith("/" + event.detail.id)) {
+      userEndedAt = Date.now();
+    }
+  });
+
   const connectStream = (cols, rows, userRefresh) => {
     if (source) {
       source.close();
@@ -733,6 +747,14 @@ function initTerminalAttach(host) {
       clearRefreshTimer();
       source?.close();
       notifyError(event.data || "The terminal connection was lost.");
+    });
+    source.addEventListener("terminal-ended", (event) => {
+      ended = true;
+      clearRefreshTimer();
+      source?.close();
+      if (Date.now() - userEndedAt > 15000) {
+        notifyInfo(event.data || "Terminal has ended.");
+      }
     });
     source.onerror = () => {
       // Skip when the session already ended cleanly (reported via terminal-error).
