@@ -1362,6 +1362,9 @@ async function createCodeMirror(host, hooks, settings, signal) {
   const indentConf = new Compartment();
   const wrapConf = new Compartment();
   const fontConf = new Compartment();
+  const themeConf = new Compartment();
+  const darkScheme = window.matchMedia("(prefers-color-scheme: dark)");
+  const schemeTheme = () => (darkScheme.matches ? theme.oneDark : []);
   let langSeq = 0;
 
   const fontTheme = (px) => EditorView.theme({ "&": { fontSize: `${px}px` } });
@@ -1407,7 +1410,7 @@ async function createCodeMirror(host, hooks, settings, signal) {
     keymap.of([{ key: "Ctrl-o", run: () => true }]),
     basicSetup,
     keymap.of([indentWithTab]),
-    theme.oneDark,
+    themeConf.of(schemeTheme()),
     langConf.of(langExt),
     tabSizeConf.of(EditorState.tabSize.of(userTabSize)),
     indentConf.of(indentUnit.of("\t")),
@@ -1424,6 +1427,10 @@ async function createCodeMirror(host, hooks, settings, signal) {
     parent: host,
     state: EditorState.create({ doc: "", extensions: baseExtensions([]) }),
   });
+
+  darkScheme.addEventListener("change", () => {
+    editorView.dispatch({ effects: themeConf.reconfigure(schemeTheme()) });
+  }, { signal });
 
   function applySetting(key, value) {
     switch (key) {
@@ -1484,6 +1491,7 @@ async function createCodeMirror(host, hooks, settings, signal) {
         effects: [
           wrapConf.reconfigure(settings.line_wrap ? EditorView.lineWrapping : []),
           fontConf.reconfigure(fontTheme(settings.font_size)),
+          themeConf.reconfigure(schemeTheme()),
         ],
       });
       refreshLanguage(tab.name);

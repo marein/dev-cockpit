@@ -40,6 +40,11 @@ function buildChanged(dom) {
 
 window.app.peInit();
 
+window.matchMedia("(prefers-color-scheme:dark)").addEventListener(
+  "change",
+  (e) => document.documentElement.setAttribute("data-bs-theme", e.matches ? "dark" : "light"),
+);
+
 // data-no-pe opts a link or form out of boosting into a native load.
 window.addEventListener("pe:click", (e) => e.detail.a.closest("[data-no-pe]") && e.preventDefault());
 window.addEventListener("pe:submit", (e) => e.detail.form.closest("[data-no-pe]") && e.preventDefault());

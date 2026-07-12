@@ -57,6 +57,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 	}
 
 	query := c.Request.URL.Query()
+	s.updateTerminalTheme(query.Get("bg"), query.Get("fg"))
 	attached, err := src.AttachStream(id, query.Get("cols"), query.Get("rows"))
 	if err != nil {
 		_ = writeSSEvent(w, "terminal-error", userFacingError(c, err))

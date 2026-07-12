@@ -93,6 +93,70 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await page.evaluate(() => localStorage.removeItem("dc-terminal-font-size"));
     });
 
+    await run("desktop: theme select applies a palette to the frame, persists, posts to the server", async () => {
+      const frameBg = () => page.$eval("#terminal", (el) => getComputedStyle(el).backgroundColor);
+      await page.emulateMedia({ colorScheme: "dark" });
+      await page.click(".terminal-tabs-settings > button");
+      await page.waitForSelector(".terminal-tabs-settings .dropdown-menu.show", { state: "visible", timeout: 4000 });
+      const sel = '.terminal-tabs-settings terminal-setting-select[setting="theme"] select';
+      const postP = page.waitForRequest((r) => /\/terminal-theme$/.test(r.url()) && r.method() === "POST", { timeout: 6000 });
+      await page.selectOption(sel, "solarized-auto");
+      const post = await postP;
+      assert(/"bg":"#002b36"/.test(post.postData() || ""), `theme post body wrong: ${post.postData()}`);
+      await sleep(300);
+      assert((await frameBg()) === "rgb(0, 43, 54)", `frame not solarized dark: ${await frameBg()}`);
+      assert(await page.evaluate(() => localStorage.getItem("dc-terminal-theme")) === "solarized-auto", "theme not persisted");
+      await page.selectOption(sel, "auto");
+      await sleep(200);
+      await page.keyboard.press("Escape");
+      await page.emulateMedia({ colorScheme: null });
+      await page.evaluate(() => localStorage.removeItem("dc-terminal-theme"));
+    });
+
+    await run("desktop: auto and solarized-auto themes follow the OS scheme", async () => {
+      const frameBg = () => page.$eval("#terminal", (el) => getComputedStyle(el).backgroundColor);
+      const setTheme = async (value) => {
+        await page.click(".terminal-tabs-settings > button");
+        await page.waitForSelector(".terminal-tabs-settings .dropdown-menu.show", { state: "visible", timeout: 4000 });
+        await page.selectOption('.terminal-tabs-settings terminal-setting-select[setting="theme"] select', value);
+        await page.keyboard.press("Escape");
+        await sleep(200);
+      };
+      await setTheme("auto");
+      await page.emulateMedia({ colorScheme: "dark" });
+      await sleep(300);
+      assert((await frameBg()) === "rgb(11, 15, 25)", `auto+dark frame wrong: ${await frameBg()}`);
+      await page.emulateMedia({ colorScheme: "light" });
+      await sleep(300);
+      assert((await frameBg()) === "rgb(255, 255, 255)", `auto+light frame wrong: ${await frameBg()}`);
+      await setTheme("solarized-auto");
+      await page.emulateMedia({ colorScheme: "dark" });
+      await sleep(300);
+      assert((await frameBg()) === "rgb(0, 43, 54)", `solarized-auto+dark frame wrong: ${await frameBg()}`);
+      await page.emulateMedia({ colorScheme: "light" });
+      await sleep(300);
+      assert((await frameBg()) === "rgb(253, 246, 227)", `solarized-auto+light frame wrong: ${await frameBg()}`);
+      await page.emulateMedia({ colorScheme: null });
+      await page.evaluate(() => localStorage.removeItem("dc-terminal-theme"));
+    });
+
+    await run("desktop: theme colors ride the stream connect and the resize post", async () => {
+      // The scheme travels with every server contact, not only the dedicated
+      // /terminal-theme POST, so a reconnect or resize on a differently themed
+      // device recovers on its own.
+      const streamReqP = page.waitForRequest((r) => /\/stream\?/.test(r.url()) && /[?&]bg=%23/.test(r.url()), { timeout: 8000 });
+      await page.click(".attach-desktop [data-terminal-refresh]");
+      const streamReq = await streamReqP;
+      assert(/[?&]fg=%23/.test(streamReq.url()), `stream connect missing fg: ${streamReq.url()}`);
+      const resizeReqP = page.waitForRequest((r) => /\/resize$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
+      await page.setViewportSize({ width: 1200, height: 860 });
+      const resizeReq = await resizeReqP;
+      const body = resizeReq.postData() || "";
+      assert(/bg=%23/.test(body) && /fg=%23/.test(body), `resize post missing theme: ${body}`);
+      await page.setViewportSize({ width: 1360, height: 900 });
+      await sleep(300);
+    });
+
     await run("desktop: refresh stream reconnects (no error)", async () => {
       const before = bag.consoleErrors.length + bag.pageErrors.length;
       await page.click(".attach-desktop [data-terminal-refresh]");

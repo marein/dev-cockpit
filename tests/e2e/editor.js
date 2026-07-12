@@ -131,6 +131,30 @@ L.runFeature("EDITOR", async ({ page, run, mobilePage }) => {
       await waitDirty("main.go", false);
     });
 
+    await run("CodeMirror theme follows the OS scheme on every open tab", async () => {
+      // noteFile and main.go are both open. A stored per-tab EditorState must be
+      // re-themed on switch, not just the active one (the fix for stale tabs).
+      const cmDark = async () => page.$eval(".cm-editor", (el) => {
+        const m = getComputedStyle(el).backgroundColor.match(/[\d.]+/g).map(Number);
+        return !(m.length === 4 && m[3] === 0) && m[0] + m[1] + m[2] < 250;
+      });
+      await page.emulateMedia({ colorScheme: "dark" });
+      await sleep(400);
+      assert(await cmDark(), "active tab not dark after OS flip");
+      await page.click(tabSel(noteFile));
+      await page.waitForSelector(`${tabSel(noteFile)}.active`, { timeout: 6000 });
+      await sleep(300);
+      assert(await cmDark(), "switched tab kept the old light theme");
+      await page.emulateMedia({ colorScheme: "light" });
+      await sleep(300);
+      await page.click(tabSel("main.go"));
+      await page.waitForSelector(`${tabSel("main.go")}.active`, { timeout: 6000 });
+      await sleep(300);
+      assert(!(await cmDark()), "switched tab kept the old dark theme");
+      await page.emulateMedia({ colorScheme: null });
+      await sleep(200);
+    });
+
     await run("quick open palette opens a closed file", async () => {
       await newFile(qoFile);
       await page.evaluate((s) => document.querySelector(`${s} .editor-tab-state`).click(), tabSel(qoFile));

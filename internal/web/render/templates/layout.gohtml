@@ -1,10 +1,12 @@
 {{define "html_head.gohtml"}}{{$appName := "Dev Cockpit"}}<!doctype html>
-<html lang="en" data-bs-theme="dark">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#111827">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f9fafb">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111827">
+  <script>window.matchMedia("(prefers-color-scheme:dark)").matches && document.documentElement.setAttribute('data-bs-theme', 'dark');</script>
   <meta name="csrf-token" content="{{.CSRFToken}}">
   <meta name="dc-jingle" content="{{.Jingle}}">
   <meta name="dc-build" content="{{assetBuild}}">

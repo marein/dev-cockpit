@@ -98,6 +98,30 @@ free floating page scripts.
   timers, and dispose xterm (`term.dispose`) and CodeMirror (`view.destroy`). The
   heavy islands (`terminal-attach`, `terminal-input`, `dc-editor`) run their setup
   in a function that returns a teardown the element stores and calls on disconnect.
+- **Theming:** the color theme follows the OS, no manual toggle.
+  `layout.gohtml`'s inline head script sets `data-bs-theme` before first paint,
+  `app.js` updates it live. Custom CSS must work in both themes: use `--tblr-*`
+  variables (`rgba(var(--tblr-emphasis-color-rgb), …)` for hover/overlay tints),
+  never hardcode palette colors. The terminal screen has its own palette, picked
+  in the settings menu (`dc-terminal-theme` in localStorage, every scheme
+  follows the OS between a light and dark variant), defined in
+  `terminal-attach.js`. The tab strip follows the page theme, only the active
+  tab keeps the dark frame via a `[data-bs-theme="dark"]` override. SweetAlert
+  (`themePreset()` in `@dc/dialog`) and CodeMirror oneDark apply only while dark
+  is active.
+  The terminal colors ride every server contact — the `POST /terminal-theme`,
+  the resize POST (`bg`/`fg` fields) and the stream connect (`bg`/`fg` query) all
+  feed `updateTerminalTheme` (`internal/web/terminaltheme.go`) — so a reconnect
+  or a resize on a differently themed device recovers on its own. The server
+  mirrors the colors onto every session as the tmux pane style (tmux answers a
+  program's OSC 11 background query from it; the control mode client never does)
+  and sends claude the mode 2031 color scheme report so it switches live. The
+  report only reaches interactive claude panes (foreground `claude` on the
+  alternate screen; other programs would read it as keystrokes). New sessions
+  get the pane style on create/resume so a fresh claude detects at startup, and
+  claude sessions get `"theme": "auto"` pinned via the injected `--settings`
+  (`internal/coder/claude/runtime.go`) so detection works despite a fixed theme
+  in the user's global config.
 - **CSRF:** the per session token is rendered once into `<meta name="csrf-token">`;
   `@dc/http` reads it and attaches the `X-CSRF-Token` header to every POST, so
   components never read or thread the token. Server rendered forms keep their

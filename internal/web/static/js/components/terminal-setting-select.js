@@ -1,5 +1,10 @@
 import { get, set } from "@dc/store";
 
+function asValue(normalized) {
+  const numeric = parseInt(normalized, 10);
+  return String(numeric) === normalized ? numeric : normalized;
+}
+
 class TerminalSettingSelect extends HTMLElement {
   connectedCallback() {
     if (this.ac) {
@@ -9,7 +14,7 @@ class TerminalSettingSelect extends HTMLElement {
     this.setting = (this.getAttribute("setting") || "").trim();
     this.storageKey = (this.getAttribute("storage-key") || "").trim();
     this.options = this.readOptions();
-    this.defaultValue = this.normalizeValue(this.getAttribute("default-value") || "", this.options[0] || "");
+    this.defaultValue = this.normalizeValue(this.getAttribute("default-value") || "", this.options[0]?.value || "");
     this.currentValue = this.restoreValue();
     this.render();
     document.addEventListener("terminal-setting-change", (event) => {
@@ -28,14 +33,23 @@ class TerminalSettingSelect extends HTMLElement {
   readOptions() {
     return (this.getAttribute("options") || "")
       .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value !== "");
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== "")
+      .map((entry) => {
+        const [value, label] = entry.split(":");
+        return { value: value.trim(), label: (label || value).trim() };
+      });
   }
 
   normalizeValue(value, fallback = this.defaultValue) {
-    const normalized = String(parseInt(value, 10) || "");
-    if (this.options?.includes(normalized)) {
-      return normalized;
+    const raw = String(value ?? "").trim();
+    const values = this.options?.map((option) => option.value) || [];
+    if (values.includes(raw)) {
+      return raw;
+    }
+    const numeric = String(parseInt(raw, 10) || "");
+    if (values.includes(numeric)) {
+      return numeric;
     }
     return fallback;
   }
@@ -68,10 +82,10 @@ class TerminalSettingSelect extends HTMLElement {
     this.select = document.createElement("select");
     this.select.className = "form-select form-select-sm";
     this.select.setAttribute("aria-label", this.getAttribute("label") || "");
-    for (const value of this.options) {
+    for (const { value, label } of this.options) {
       const option = document.createElement("option");
       option.value = value;
-      option.textContent = value;
+      option.textContent = label;
       this.select.appendChild(option);
     }
     this.select.addEventListener("change", () => this.handleSelect(this.select.value), { signal: this.ac.signal });
@@ -97,13 +111,13 @@ class TerminalSettingSelect extends HTMLElement {
       composed: true,
       detail: {
         setting: this.setting,
-        value: parseInt(normalized, 10),
+        value: asValue(normalized),
       },
     }));
   }
 
   get value() {
-    return parseInt(this.currentValue || this.defaultValue, 10);
+    return asValue(this.currentValue || this.defaultValue);
   }
 }
 

@@ -38,8 +38,10 @@ type terminalInputBatch struct {
 const maxTerminalInputItems = 1024
 
 type terminalResizeForm struct {
-	Cols string `form:"cols" binding:"required"`
-	Rows string `form:"rows" binding:"required"`
+	Cols       string `form:"cols" binding:"required"`
+	Rows       string `form:"rows" binding:"required"`
+	Background string `form:"bg"`
+	Foreground string `form:"fg"`
 }
 
 func (s *Server) handleCoderNew(c *gin.Context) {
@@ -129,6 +131,7 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		s.redirectWithFlash(c, "/coders/new", "", err.Error())
 		return
 	}
+	s.styleSessionPane(res.Identifier)
 	c.Redirect(http.StatusSeeOther, "/coders/"+res.Identifier)
 }
 
@@ -330,6 +333,7 @@ func (s *Server) handleCoderResize(c *gin.Context) {
 	if err := c.Bind(&form); err != nil {
 		return
 	}
+	s.updateTerminalTheme(form.Background, form.Foreground)
 	co, err := s.coderForInput(id)
 	if err == nil {
 		err = co.Resize(id, form.Cols, form.Rows)
@@ -358,6 +362,7 @@ func (s *Server) handleCoderResume(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
+	s.styleSessionPane(stored.SessionID)
 	c.Redirect(http.StatusSeeOther, "/coders/"+stored.SessionID)
 }
 

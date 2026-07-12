@@ -91,6 +91,73 @@ func (c *Client) SetOption(name, option, value string) error {
 	return clirun.Check("tmux", "set-option", "-t", name, option, value)
 }
 
+// SetPaneStyle sets a pane's default colors (style like "bg=#111827,fg=#f9fafb").
+// tmux answers a pane program's OSC 11 background query from this style, so it
+// is how a session signals light or dark to TUIs while only the control mode
+// client is attached, which never answers such queries itself.
+func (c *Client) SetPaneStyle(name, style string) error {
+	return clirun.Check("tmux", "select-pane", "-t", Target(name), "-P", style)
+}
+
+// PaneForeground describes a session's foreground process state. AltScreen
+// separates a full screen TUI (claude's interactive mode) from plain command
+// runs like `claude -p` that share the process name.
+type PaneForeground struct {
+	Command   string
+	AltScreen bool
+}
+
+// PaneForegrounds returns every session's foreground process (first pane
+// only), from a single list-panes call.
+func (c *Client) PaneForegrounds() map[string]PaneForeground {
+	r := clirun.Run("tmux", "list-panes", "-a", "-F",
+		"#{session_name}\t#{window_index}\t#{pane_index}\t#{alternate_on}\t#{pane_current_command}")
+	if r.Err != nil {
+		return nil
+	}
+	foregrounds := map[string]PaneForeground{}
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		parts := strings.Split(line, "\t")
+		if len(parts) != 5 || parts[1] != "0" || parts[2] != "0" {
+			continue
+		}
+		foregrounds[parts[0]] = PaneForeground{Command: parts[4], AltScreen: parts[3] == "1"}
+	}
+	return foregrounds
+}
+
+// PaneTheme describes one pane's theme application for ApplyPaneThemes.
+type PaneTheme struct {
+	Name   string
+	Style  string
+	Report []byte
+}
+
+// ApplyPaneThemes styles panes and injects the optional reports in one tmux
+// invocation, so a theme change costs a single process spawn regardless of
+// session count. tmux aborts the command chain on the first error (e.g. a
+// session that just died), remaining panes keep their old style then; the
+// caller is expected to re-apply on the next occasion.
+func (c *Client) ApplyPaneThemes(themes []PaneTheme) error {
+	if len(themes) == 0 {
+		return nil
+	}
+	args := make([]string, 0, len(themes)*16)
+	for _, t := range themes {
+		if len(args) > 0 {
+			args = append(args, ";")
+		}
+		args = append(args, "select-pane", "-t", Target(t.Name), "-P", t.Style)
+		if len(t.Report) > 0 {
+			args = append(args, ";", "send-keys", "-t", Target(t.Name), "-H")
+			for _, b := range t.Report {
+				args = append(args, fmt.Sprintf("%02x", b))
+			}
+		}
+	}
+	return clirun.Check("tmux", args...)
+}
+
 // tabPosOption is the tmux user option that holds a session's tab strip
 // position. The order lives in tmux on purpose: it dies with the session, so
 // there is no state file to prune, and every device sees the same strip.

@@ -1,6 +1,481 @@
 import { notifyError, notifySuccess, notifyInfo } from "@dc/toast";
-import { postForm } from "@dc/http";
+import { postForm, postJSON } from "@dc/http";
 import { get } from "@dc/store";
+
+const TERMINAL_THEMES = {
+  dark: {
+    frame: "#0b0f19",
+    theme: {
+      background: "#111827",
+      foreground: "#f9fafb",
+      selectionBackground: "#3b82f6",
+      selectionForeground: "#f9fafb",
+    },
+  },
+  light: {
+    frame: "#ffffff",
+    theme: {
+      background: "#ffffff",
+      foreground: "#1f2937",
+      cursor: "#1f2937",
+      cursorAccent: "#ffffff",
+      selectionBackground: "#3b82f6",
+      black: "#000000",
+      red: "#990000",
+      green: "#00a600",
+      yellow: "#999900",
+      blue: "#0000b2",
+      magenta: "#b200b2",
+      cyan: "#00a6b2",
+      white: "#555555",
+      brightBlack: "#666666",
+      brightRed: "#e50000",
+      brightGreen: "#00d900",
+      brightYellow: "#e5e500",
+      brightBlue: "#0000ff",
+      brightMagenta: "#e500e5",
+      brightCyan: "#00e5e5",
+      brightWhite: "#a5a5a5",
+    },
+  },
+  "solarized-dark": {
+    frame: "#002b36",
+    theme: {
+      background: "#002b36",
+      foreground: "#839496",
+      cursor: "#839496",
+      cursorAccent: "#002b36",
+      selectionBackground: "#073642",
+      selectionForeground: "#93a1a1",
+      black: "#073642",
+      red: "#dc322f",
+      green: "#859900",
+      yellow: "#b58900",
+      blue: "#268bd2",
+      magenta: "#d33682",
+      cyan: "#2aa198",
+      white: "#eee8d5",
+      brightBlack: "#586e75",
+      brightRed: "#cb4b16",
+      brightGreen: "#859900",
+      brightYellow: "#b58900",
+      brightBlue: "#268bd2",
+      brightMagenta: "#6c71c4",
+      brightCyan: "#2aa198",
+      brightWhite: "#fdf6e3",
+    },
+  },
+  "solarized-light": {
+    frame: "#fdf6e3",
+    theme: {
+      background: "#fdf6e3",
+      foreground: "#657b83",
+      cursor: "#657b83",
+      cursorAccent: "#fdf6e3",
+      selectionBackground: "#93a1a1",
+      black: "#073642",
+      red: "#dc322f",
+      green: "#859900",
+      yellow: "#b58900",
+      blue: "#268bd2",
+      magenta: "#d33682",
+      cyan: "#2aa198",
+      white: "#586e75",
+      brightBlack: "#93a1a1",
+      brightRed: "#cb4b16",
+      brightGreen: "#859900",
+      brightYellow: "#b58900",
+      brightBlue: "#268bd2",
+      brightMagenta: "#6c71c4",
+      brightCyan: "#2aa198",
+      brightWhite: "#657b83",
+    },
+  },
+  "gruvbox-dark": {
+    frame: "#282828",
+    theme: {
+      background: "#282828",
+      foreground: "#ebdbb2",
+      cursor: "#ebdbb2",
+      cursorAccent: "#282828",
+      selectionBackground: "#504945",
+      selectionForeground: "#ebdbb2",
+      black: "#282828",
+      red: "#cc241d",
+      green: "#98971a",
+      yellow: "#d79921",
+      blue: "#458588",
+      magenta: "#b16286",
+      cyan: "#689d6a",
+      white: "#a89984",
+      brightBlack: "#928374",
+      brightRed: "#fb4934",
+      brightGreen: "#b8bb26",
+      brightYellow: "#fabd2f",
+      brightBlue: "#83a598",
+      brightMagenta: "#d3869b",
+      brightCyan: "#8ec07c",
+      brightWhite: "#ebdbb2",
+    },
+  },
+  "gruvbox-light": {
+    frame: "#fbf1c7",
+    theme: {
+      background: "#fbf1c7",
+      foreground: "#3c3836",
+      cursor: "#3c3836",
+      cursorAccent: "#fbf1c7",
+      selectionBackground: "#d5c4a1",
+      black: "#fbf1c7",
+      red: "#cc241d",
+      green: "#98971a",
+      yellow: "#d79921",
+      blue: "#458588",
+      magenta: "#b16286",
+      cyan: "#689d6a",
+      white: "#7c6f64",
+      brightBlack: "#928374",
+      brightRed: "#9d0006",
+      brightGreen: "#79740e",
+      brightYellow: "#b57614",
+      brightBlue: "#076678",
+      brightMagenta: "#8f3f71",
+      brightCyan: "#427b58",
+      brightWhite: "#3c3836",
+    },
+  },
+  "catppuccin-mocha": {
+    frame: "#1e1e2e",
+    theme: {
+      background: "#1e1e2e",
+      foreground: "#cdd6f4",
+      cursor: "#f5e0dc",
+      cursorAccent: "#1e1e2e",
+      selectionBackground: "#585b70",
+      selectionForeground: "#cdd6f4",
+      black: "#45475a",
+      red: "#f38ba8",
+      green: "#a6e3a1",
+      yellow: "#f9e2af",
+      blue: "#89b4fa",
+      magenta: "#f5c2e7",
+      cyan: "#94e2d5",
+      white: "#bac2de",
+      brightBlack: "#585b70",
+      brightRed: "#f38ba8",
+      brightGreen: "#a6e3a1",
+      brightYellow: "#f9e2af",
+      brightBlue: "#89b4fa",
+      brightMagenta: "#f5c2e7",
+      brightCyan: "#94e2d5",
+      brightWhite: "#a6adc8",
+    },
+  },
+  "catppuccin-latte": {
+    frame: "#eff1f5",
+    theme: {
+      background: "#eff1f5",
+      foreground: "#4c4f69",
+      cursor: "#dc8a78",
+      cursorAccent: "#eff1f5",
+      selectionBackground: "#acb0be",
+      black: "#5c5f77",
+      red: "#d20f39",
+      green: "#40a02b",
+      yellow: "#df8e1d",
+      blue: "#1e66f5",
+      magenta: "#ea76cb",
+      cyan: "#179299",
+      white: "#6c6f85",
+      brightBlack: "#6c6f85",
+      brightRed: "#d20f39",
+      brightGreen: "#40a02b",
+      brightYellow: "#df8e1d",
+      brightBlue: "#1e66f5",
+      brightMagenta: "#ea76cb",
+      brightCyan: "#179299",
+      brightWhite: "#4c4f69",
+    },
+  },
+  "one-dark": {
+    frame: "#282c34",
+    theme: {
+      background: "#282c34",
+      foreground: "#abb2bf",
+      cursor: "#528bff",
+      cursorAccent: "#282c34",
+      selectionBackground: "#3e4451",
+      selectionForeground: "#abb2bf",
+      black: "#282c34",
+      red: "#e06c75",
+      green: "#98c379",
+      yellow: "#e5c07b",
+      blue: "#61afef",
+      magenta: "#c678dd",
+      cyan: "#56b6c2",
+      white: "#abb2bf",
+      brightBlack: "#5c6370",
+      brightRed: "#e06c75",
+      brightGreen: "#98c379",
+      brightYellow: "#e5c07b",
+      brightBlue: "#61afef",
+      brightMagenta: "#c678dd",
+      brightCyan: "#56b6c2",
+      brightWhite: "#ffffff",
+    },
+  },
+  "one-light": {
+    frame: "#fafafa",
+    theme: {
+      background: "#fafafa",
+      foreground: "#383a42",
+      cursor: "#526fff",
+      cursorAccent: "#fafafa",
+      selectionBackground: "#e5e5e6",
+      black: "#383a42",
+      red: "#e45649",
+      green: "#50a14f",
+      yellow: "#c18401",
+      blue: "#4078f2",
+      magenta: "#a626a4",
+      cyan: "#0184bc",
+      white: "#696c77",
+      brightBlack: "#a0a1a7",
+      brightRed: "#e45649",
+      brightGreen: "#50a14f",
+      brightYellow: "#c18401",
+      brightBlue: "#4078f2",
+      brightMagenta: "#a626a4",
+      brightCyan: "#0184bc",
+      brightWhite: "#383a42",
+    },
+  },
+  "tokyonight-dark": {
+    frame: "#1a1b26",
+    theme: {
+      background: "#1a1b26",
+      foreground: "#c0caf5",
+      cursor: "#c0caf5",
+      cursorAccent: "#1a1b26",
+      selectionBackground: "#33467c",
+      selectionForeground: "#c0caf5",
+      black: "#15161e",
+      red: "#f7768e",
+      green: "#9ece6a",
+      yellow: "#e0af68",
+      blue: "#7aa2f7",
+      magenta: "#bb9af7",
+      cyan: "#7dcfff",
+      white: "#a9b1d6",
+      brightBlack: "#414868",
+      brightRed: "#f7768e",
+      brightGreen: "#9ece6a",
+      brightYellow: "#e0af68",
+      brightBlue: "#7aa2f7",
+      brightMagenta: "#bb9af7",
+      brightCyan: "#7dcfff",
+      brightWhite: "#c0caf5",
+    },
+  },
+  "tokyonight-day": {
+    frame: "#e1e2e7",
+    theme: {
+      background: "#e1e2e7",
+      foreground: "#3760bf",
+      cursor: "#3760bf",
+      cursorAccent: "#e1e2e7",
+      selectionBackground: "#b7c1e3",
+      black: "#b4b5b9",
+      red: "#f52a65",
+      green: "#587539",
+      yellow: "#8c6c3e",
+      blue: "#2e7de9",
+      magenta: "#9854f1",
+      cyan: "#007197",
+      white: "#6172b0",
+      brightBlack: "#a1a6c5",
+      brightRed: "#f52a65",
+      brightGreen: "#587539",
+      brightYellow: "#8c6c3e",
+      brightBlue: "#2e7de9",
+      brightMagenta: "#9854f1",
+      brightCyan: "#007197",
+      brightWhite: "#3760bf",
+    },
+  },
+  "everforest-dark": {
+    frame: "#2d353b",
+    theme: {
+      background: "#2d353b",
+      foreground: "#d3c6aa",
+      cursor: "#d3c6aa",
+      cursorAccent: "#2d353b",
+      selectionBackground: "#4f5b58",
+      selectionForeground: "#d3c6aa",
+      black: "#475258",
+      red: "#e67e80",
+      green: "#a7c080",
+      yellow: "#dbbc7f",
+      blue: "#7fbbb3",
+      magenta: "#d699b6",
+      cyan: "#83c092",
+      white: "#d3c6aa",
+      brightBlack: "#5c6a72",
+      brightRed: "#e67e80",
+      brightGreen: "#a7c080",
+      brightYellow: "#dbbc7f",
+      brightBlue: "#7fbbb3",
+      brightMagenta: "#d699b6",
+      brightCyan: "#83c092",
+      brightWhite: "#d3c6aa",
+    },
+  },
+  "everforest-light": {
+    frame: "#fdf6e3",
+    theme: {
+      background: "#fdf6e3",
+      foreground: "#5c6a72",
+      cursor: "#5c6a72",
+      cursorAccent: "#fdf6e3",
+      selectionBackground: "#e0dcc7",
+      black: "#5c6a72",
+      red: "#f85552",
+      green: "#8da101",
+      yellow: "#dfa000",
+      blue: "#3a94c5",
+      magenta: "#df69ba",
+      cyan: "#35a77c",
+      white: "#708089",
+      brightBlack: "#939f91",
+      brightRed: "#f85552",
+      brightGreen: "#8da101",
+      brightYellow: "#dfa000",
+      brightBlue: "#3a94c5",
+      brightMagenta: "#df69ba",
+      brightCyan: "#35a77c",
+      brightWhite: "#5c6a72",
+    },
+  },
+  "rosepine-dark": {
+    frame: "#191724",
+    theme: {
+      background: "#191724",
+      foreground: "#e0def4",
+      cursor: "#e0def4",
+      cursorAccent: "#191724",
+      selectionBackground: "#403d52",
+      selectionForeground: "#e0def4",
+      black: "#26233a",
+      red: "#eb6f92",
+      green: "#31748f",
+      yellow: "#f6c177",
+      blue: "#9ccfd8",
+      magenta: "#c4a7e7",
+      cyan: "#ebbcba",
+      white: "#e0def4",
+      brightBlack: "#6e6a86",
+      brightRed: "#eb6f92",
+      brightGreen: "#31748f",
+      brightYellow: "#f6c177",
+      brightBlue: "#9ccfd8",
+      brightMagenta: "#c4a7e7",
+      brightCyan: "#ebbcba",
+      brightWhite: "#e0def4",
+    },
+  },
+  "rosepine-dawn": {
+    frame: "#faf4ed",
+    theme: {
+      background: "#faf4ed",
+      foreground: "#575279",
+      cursor: "#575279",
+      cursorAccent: "#faf4ed",
+      selectionBackground: "#dfdad9",
+      black: "#f2e9e1",
+      red: "#b4637a",
+      green: "#286983",
+      yellow: "#ea9d34",
+      blue: "#56949f",
+      magenta: "#907aa9",
+      cyan: "#d7827e",
+      white: "#575279",
+      brightBlack: "#9893a5",
+      brightRed: "#b4637a",
+      brightGreen: "#286983",
+      brightYellow: "#ea9d34",
+      brightBlue: "#56949f",
+      brightMagenta: "#907aa9",
+      brightCyan: "#d7827e",
+      brightWhite: "#575279",
+    },
+  },
+  "ayu-dark": {
+    frame: "#0d1017",
+    theme: {
+      background: "#0d1017",
+      foreground: "#bfbdb6",
+      cursor: "#e6b450",
+      cursorAccent: "#0d1017",
+      selectionBackground: "#1b3a5b",
+      selectionForeground: "#bfbdb6",
+      black: "#131721",
+      red: "#ea6c73",
+      green: "#7fd962",
+      yellow: "#f9af4f",
+      blue: "#53bdfa",
+      magenta: "#cda1fa",
+      cyan: "#90e1c6",
+      white: "#c7c7c7",
+      brightBlack: "#686868",
+      brightRed: "#f07178",
+      brightGreen: "#aad94c",
+      brightYellow: "#ffb454",
+      brightBlue: "#59c2ff",
+      brightMagenta: "#d2a6ff",
+      brightCyan: "#95e6cb",
+      brightWhite: "#ffffff",
+    },
+  },
+  "ayu-light": {
+    frame: "#fcfcfc",
+    theme: {
+      background: "#fcfcfc",
+      foreground: "#5c6166",
+      cursor: "#ffaa33",
+      cursorAccent: "#fcfcfc",
+      selectionBackground: "#d1e4f4",
+      black: "#010101",
+      red: "#f07171",
+      green: "#86b300",
+      yellow: "#f2ae49",
+      blue: "#399ee6",
+      magenta: "#a37acc",
+      cyan: "#4cbf99",
+      white: "#5c6166",
+      brightBlack: "#8a9199",
+      brightRed: "#f07171",
+      brightGreen: "#86b300",
+      brightYellow: "#f2ae49",
+      brightBlue: "#399ee6",
+      brightMagenta: "#a37acc",
+      brightCyan: "#4cbf99",
+      brightWhite: "#5c6166",
+    },
+  },
+};
+
+// The auto families follow the OS scheme, picking a light or dark member.
+const AUTO_THEMES = {
+  auto: { light: "light", dark: "dark" },
+  "solarized-auto": { light: "solarized-light", dark: "solarized-dark" },
+  "gruvbox-auto": { light: "gruvbox-light", dark: "gruvbox-dark" },
+  "catppuccin-auto": { light: "catppuccin-latte", dark: "catppuccin-mocha" },
+  "one-auto": { light: "one-light", dark: "one-dark" },
+  "tokyonight-auto": { light: "tokyonight-day", dark: "tokyonight-dark" },
+  "everforest-auto": { light: "everforest-light", dark: "everforest-dark" },
+  "rosepine-auto": { light: "rosepine-dawn", dark: "rosepine-dark" },
+  "ayu-auto": { light: "ayu-light", dark: "ayu-dark" },
+};
 
 function initTerminalAttach(host) {
   const streamUrl = host.getAttribute("stream-url");
@@ -18,10 +493,27 @@ function initTerminalAttach(host) {
 
   const fontSizeSetting = document.querySelector('terminal-setting-select[setting="font-size"]');
   const rowsSetting = document.querySelector('terminal-setting-select[setting="rows"]');
+  const themeSetting = document.querySelector('terminal-setting-select[setting="theme"]');
 
   const DEFAULT_FONT_SIZE = 14;
   const DEFAULT_ROWS = 30;
-  const FOREGROUND = "#f9fafb";
+  const DEFAULT_THEME = "auto";
+  const darkSchemeMedia = window.matchMedia("(prefers-color-scheme: dark)");
+  let themeOverride = themeSetting
+    ? (get(themeSetting.getAttribute("storage-key") || "", "") || themeSetting.getAttribute("default-value") || DEFAULT_THEME)
+    : DEFAULT_THEME;
+  const resolveTheme = () => {
+    const auto = AUTO_THEMES[themeOverride];
+    const name = auto ? auto[darkSchemeMedia.matches ? "dark" : "light"] : themeOverride;
+    return TERMINAL_THEMES[name] || TERMINAL_THEMES.dark;
+  };
+  // The current scheme colors ride every server request (theme POST, resize
+  // POST, stream connect), so the session picks up this client's scheme on
+  // every path, not only the dedicated POST.
+  const themeColors = () => {
+    const t = resolveTheme().theme;
+    return { bg: t.background, fg: t.foreground };
+  };
 
   // Touch clients keep the read-only mirror: input comes from the on-screen
   // controls and the prompt box, so stdin stays disabled and the terminal never
@@ -35,16 +527,26 @@ function initTerminalAttach(host) {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
     fontSize: DEFAULT_FONT_SIZE,
     scrollback: 0,
-    theme: {
-      background: "#111827",
-      foreground: FOREGROUND,
-      selectionBackground: "#3b82f6",
-      selectionForeground: "#f9fafb",
-    },
+    theme: resolveTheme().theme,
   });
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(terminalElement);
+
+  const applyTheme = () => {
+    const entry = resolveTheme();
+    term.options.theme = entry.theme;
+    terminalElement.style.background = entry.frame;
+    terminalElement.style.setProperty("--dc-terminal-contrast", entry.theme.foreground);
+  };
+  // A live theme change (menu, OS flip) has no resize or stream connect to ride,
+  // so it pushes the colors itself. On mount and reconnect the stream connect
+  // carries them, so no post is needed there.
+  const pushTheme = () => {
+    const { bg, fg } = themeColors();
+    postJSON("/terminal-theme", { bg, fg }).catch(() => {});
+  };
+  applyTheme();
 
   // ---- Direct keyboard input (desktop) ---------------------------------------
   // xterm.onData yields the terminal byte sequence the program expects for every
@@ -692,6 +1194,11 @@ function initTerminalAttach(host) {
       stream.searchParams.set("cols", String(cols));
       stream.searchParams.set("rows", String(rows));
     }
+    const { bg, fg } = themeColors();
+    if (bg && fg) {
+      stream.searchParams.set("bg", bg);
+      stream.searchParams.set("fg", fg);
+    }
     source = new EventSource(stream);
     let ended = false; // the server told us the session is gone; suppress the follow-up onerror
     let connected = false; // a first successful open happened; later opens are reconnects
@@ -788,9 +1295,12 @@ function initTerminalAttach(host) {
       connectStream(Math.max(term.cols, 2), Math.max(term.rows, 2));
       return;
     }
+    const { bg, fg } = themeColors();
     const response = await postForm(resizeUrl, {
       cols: String(Math.max(term.cols, 2)),
       rows: String(Math.max(term.rows, 2)),
+      bg,
+      fg,
     });
     const responseText = await response.text();
     if (!response.ok) {
@@ -846,7 +1356,19 @@ function initTerminalAttach(host) {
   }
 
   listen(window, "resize", scheduleResize);
+  listen(darkSchemeMedia, "change", () => {
+    if (AUTO_THEMES[themeOverride]) {
+      applyTheme();
+      pushTheme();
+    }
+  });
   listen(document, "terminal-setting-change", (event) => {
+    if (event.detail?.setting === "theme") {
+      themeOverride = String(event.detail.value || DEFAULT_THEME);
+      applyTheme();
+      pushTheme();
+      return;
+    }
     if (event.detail?.setting === "font-size") {
       fontSizeOverride = Number(event.detail.value) || DEFAULT_FONT_SIZE;
     } else if (event.detail?.setting === "rows") {

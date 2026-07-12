@@ -1,3 +1,4 @@
+import { themePreset } from "@dc/dialog";
 import { getJSON, postForm } from "@dc/http";
 import { playNotification } from "@dc/jingle";
 
@@ -242,8 +243,7 @@ function toast(added) {
     showCloseButton: true,
     timer: 8000,
     timerProgressBar: true,
-    background: "#1f2937",
-    color: "#f8fafc",
+    ...themePreset(),
     didOpen: (popup) => {
       popup.style.cursor = "pointer";
       popup.addEventListener("click", (event) => {

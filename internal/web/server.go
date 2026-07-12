@@ -39,6 +39,7 @@ type Server struct {
 	updater      *update.Updater
 	assets       staticAssetManifest
 	loginLimiter rateLimiter
+	termTheme    terminalTheme
 	handler      http.Handler
 }
 

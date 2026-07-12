@@ -37,6 +37,7 @@ func (s *Server) handleShellCreate(c *gin.Context) {
 		s.redirectWithFlash(c, "/shells/new", "", err.Error())
 		return
 	}
+	s.styleSessionPane(id)
 	c.Redirect(http.StatusSeeOther, "/shells/"+id)
 }
 
@@ -122,6 +123,7 @@ func (s *Server) handleShellResize(c *gin.Context) {
 	if err := c.Bind(&form); err != nil {
 		return
 	}
+	s.updateTerminalTheme(form.Background, form.Foreground)
 	if err := s.shells.Resize(id, form.Cols, form.Rows); err != nil {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": userFacingError(c, err)})
 		return
