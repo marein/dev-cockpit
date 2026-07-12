@@ -16,6 +16,10 @@ import (
 // exactly one line.
 const scrollLineStep = 1
 
+// shrinkStepDelay separates the two steps of a row shrink, long enough that
+// the program handles them as two resizes instead of one coalesced change.
+const shrinkStepDelay = 300 * time.Millisecond
+
 // Hub tracks the active browser streams per tmux session and owns the
 // control-mode client backing each one. All state is guarded by mu.
 type Hub struct {
@@ -88,7 +92,7 @@ func (h *Hub) Attach(name, rawCols, rawRows string) (Attachment, error) {
 			return fail(err)
 		}
 		if cols != cur.Cols || rows != cur.Rows {
-			if err := st.ctl.Resize(cols, rows); err != nil {
+			if err := resizePane(st.ctl, cur, cols, rows); err != nil {
 				return fail(err)
 			}
 			// Let the program finish repainting at the new size before capturing.
@@ -315,7 +319,11 @@ func (h *Hub) Resize(name string, cols, rows int) error {
 	if st == nil || st.ctl == nil {
 		return nil
 	}
-	if err := st.ctl.Resize(cols, rows); err != nil {
+	cur, err := st.ctl.PaneSize()
+	if err != nil {
+		return err
+	}
+	if err := resizePane(st.ctl, cur, cols, rows); err != nil {
 		return err
 	}
 	st.ctl.Settle(300*time.Millisecond, 200*time.Millisecond, 2500*time.Millisecond)
@@ -336,6 +344,25 @@ func (h *Hub) Resize(name string, cols, rows int) error {
 	st.scrollOff = 0
 	st.ctl.Notify()
 	return nil
+}
+
+// resizePane drives the pane to the target size. A row shrink on an alternate
+// screen pane goes in two steps, first one row short, then the final size.
+// Full screen TUIs with their own viewport logic (claude code) keep the top
+// line anchored on a plain row shrink, the input box falls below the viewport
+// and the screen looks like a truncated transcript until the next keypress.
+// The closing one row grow makes the program anchor to the bottom again.
+// Verified against claude 2.1.207, a plain tmux resize-window shows the same,
+// so this is program behavior, not a quirk of the control client. Normal
+// screen panes resize directly, tmux reflows them through history.
+func resizePane(ctl *tmux.Control, cur tmux.Size, cols, rows int) error {
+	if rows < cur.Rows && rows > 2 && ctl.Modes().AltScreen {
+		if err := ctl.Resize(cols, rows-1); err != nil {
+			return err
+		}
+		time.Sleep(shrinkStepDelay)
+	}
+	return ctl.Resize(cols, rows)
 }
 
 // detach releases one browser stream and closes the control client after the
