@@ -2,10 +2,14 @@ import { el } from "@dc/dom";
 import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import { applyFold } from "@dc/fold";
-import { getText } from "@dc/http";
+import { ensureOk, getText, postJSON } from "@dc/http";
+import { notifyError } from "@dc/toast";
 
 const TAB_KEY = "dc-quicknav-tab";
 const FOLD_LIMIT = 5;
+const DRAG_THRESHOLD = 6;
+const EDGE_ZONE = 28;
+const EDGE_STEP = 10;
 
 // Floating quick nav: jump between live sessions/shells and browse projects. The
 // menu content is fetched fresh each time the dropdown opens (background refresh)
@@ -26,18 +30,35 @@ class QuickNav extends HTMLElement {
     this.spinner = el("div", { class: "quicknav-refresh", role: "status", "aria-label": "Loading" });
     this.inFlight = false;
     this.view = null;
+    this.drag = null;
+    this.suppressClick = false;
 
     this.ac = new AbortController();
+    const signal = this.ac.signal;
     this.addEventListener("show.bs.dropdown", () => {
       this.applyState();
       this.refresh();
-    }, { signal: this.ac.signal });
-    this.addEventListener("click", (event) => this.handleClick(event), { signal: this.ac.signal });
+    }, { signal });
+    this.addEventListener("click", (event) => this.handleClick(event), { signal });
+    // Capture so a click synthesised right after a drag, or a plain tap on the
+    // grip handle, never reaches pe.js and navigates the row.
+    this.addEventListener("click", (event) => {
+      if (!this.suppressClick && !event.target.closest("[data-qn-drag-handle]")) return;
+      this.suppressClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    }, { signal, capture: true });
+    this.list.addEventListener("dragstart", (event) => event.preventDefault(), { signal });
+    this.list.addEventListener("pointerdown", (event) => this.onPointerDown(event), { signal });
+    this.list.addEventListener("pointermove", (event) => this.onPointerMove(event), { signal });
+    this.list.addEventListener("pointerup", (event) => this.onPointerUp(event), { signal });
+    this.list.addEventListener("pointercancel", () => this.cancelDrag(), { signal });
     this.observer = new MutationObserver(() => this.applyState());
     this.observer.observe(this.list, { childList: true });
   }
 
   disconnectedCallback() {
+    this.cancelDrag();
     this.observer?.disconnect();
     this.observer = null;
     this.ac?.abort();
@@ -46,6 +67,153 @@ class QuickNav extends HTMLElement {
 
   reposition() {
     if (window.bootstrap) window.bootstrap.Dropdown.getOrCreateInstance(this.toggle).update();
+  }
+
+  activeList() {
+    return this.list.querySelector("[data-quicknav-active-list]");
+  }
+
+  dragItems() {
+    const list = this.activeList();
+    return list ? Array.from(list.querySelectorAll(".quicknav-active-item")) : [];
+  }
+
+  // Content Y measured against the scrollable menu, so edge auto-scroll keeps the
+  // math consistent while the list moves under the pointer.
+  contentY(clientY) {
+    return clientY - this.menu.getBoundingClientRect().top + this.menu.scrollTop;
+  }
+
+  // Persist the current active-list order to the same cross-device @dc_tab_pos
+  // state the tab strip writes, so a drag in either place agrees.
+  persistOrder() {
+    const ids = this.dragItems().map((item) => item.dataset.tabId);
+    postJSON("/terminal-tabs/order", { ids })
+      .then((response) => ensureOk(response, "Could not save the order."))
+      .catch((error) => notifyError(error.message));
+  }
+
+  onPointerDown(event) {
+    if (event.button !== 0 || this.drag) return;
+    const item = event.target.closest(".quicknav-active-item");
+    if (!item || !this.activeList()?.contains(item)) return;
+    // A mouse grabs the whole row; a touch would fight the list's own scroll, so
+    // it must start on the grip handle (touch-action: none) to reorder.
+    if (event.pointerType === "touch" && !event.target.closest("[data-qn-drag-handle]")) return;
+    this.suppressClick = false;
+    this.drag = {
+      item,
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      lastClientY: event.clientY,
+      active: false,
+      raf: 0,
+    };
+    try {
+      item.setPointerCapture(event.pointerId);
+    } catch (error) {
+      void error;
+    }
+  }
+
+  onPointerMove(event) {
+    const drag = this.drag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    if (!drag.active) {
+      if (!(event.buttons & 1)) {
+        this.drag = null;
+        return;
+      }
+      if (Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY) < DRAG_THRESHOLD) return;
+      this.beginDrag(event);
+    }
+    event.preventDefault();
+    drag.lastClientY = event.clientY;
+    this.updateDrag();
+  }
+
+  onPointerUp(event) {
+    const drag = this.drag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    this.drag = null;
+    if (!drag.active) return;
+    window.cancelAnimationFrame(drag.raf);
+    this.suppressClick = true;
+    this.activeList()?.classList.remove("quicknav-active-list-dragging");
+    for (const item of drag.items) item.style.transform = "";
+    drag.item.classList.remove("quicknav-active-item-dragging");
+    if (drag.toIndex !== drag.fromIndex) {
+      const others = drag.items.filter((item) => item !== drag.item);
+      this.activeList().insertBefore(drag.item, others[drag.toIndex] || null);
+      this.persistOrder();
+    }
+  }
+
+  cancelDrag() {
+    const drag = this.drag;
+    this.drag = null;
+    if (!drag || !drag.active) return;
+    window.cancelAnimationFrame(drag.raf);
+    this.activeList()?.classList.remove("quicknav-active-list-dragging");
+    for (const item of drag.items) item.style.transform = "";
+    drag.item.classList.remove("quicknav-active-item-dragging");
+  }
+
+  beginDrag(event) {
+    const drag = this.drag;
+    drag.active = true;
+    drag.items = this.dragItems();
+    drag.fromIndex = drag.items.indexOf(drag.item);
+    drag.toIndex = drag.fromIndex;
+    drag.height = drag.item.getBoundingClientRect().height;
+    const menuTop = this.menu.getBoundingClientRect().top;
+    drag.centers = drag.items.map((item) => {
+      const rect = item.getBoundingClientRect();
+      return rect.top + rect.height / 2 - menuTop + this.menu.scrollTop;
+    });
+    drag.startContentY = this.contentY(event.clientY);
+    this.activeList().classList.add("quicknav-active-list-dragging");
+    drag.item.classList.add("quicknav-active-item-dragging");
+    drag.raf = window.requestAnimationFrame(() => this.tickEdgeScroll());
+  }
+
+  updateDrag() {
+    const drag = this.drag;
+    if (!drag || !drag.active) return;
+    const dy = this.contentY(drag.lastClientY) - drag.startContentY;
+    const draggedCenter = drag.centers[drag.fromIndex] + dy;
+    let toIndex = 0;
+    for (let i = 0; i < drag.centers.length; i += 1) {
+      if (i !== drag.fromIndex && drag.centers[i] < draggedCenter) toIndex += 1;
+    }
+    drag.toIndex = toIndex;
+    drag.item.style.transform = "translateY(" + dy + "px)";
+    drag.items.forEach((item, i) => {
+      if (item === drag.item) return;
+      let shift = 0;
+      if (i > drag.fromIndex && i <= drag.toIndex) shift = -drag.height;
+      else if (i < drag.fromIndex && i >= drag.toIndex) shift = drag.height;
+      item.style.transform = shift ? "translateY(" + shift + "px)" : "";
+    });
+  }
+
+  tickEdgeScroll() {
+    const drag = this.drag;
+    if (!drag || !drag.active) return;
+    const rect = this.menu.getBoundingClientRect();
+    let delta = 0;
+    if (drag.lastClientY < rect.top + EDGE_ZONE) delta = -EDGE_STEP;
+    else if (drag.lastClientY > rect.bottom - EDGE_ZONE) delta = EDGE_STEP;
+    if (delta) {
+      const max = this.menu.scrollHeight - this.menu.clientHeight;
+      const next = Math.max(0, Math.min(this.menu.scrollTop + delta, max));
+      if (next !== this.menu.scrollTop) {
+        this.menu.scrollTop = next;
+        this.updateDrag();
+      }
+    }
+    drag.raf = window.requestAnimationFrame(() => this.tickEdgeScroll());
   }
 
   refresh() {

@@ -662,7 +662,7 @@ body:not(:has(.attach-footer)) .quicknav {
    flex link in the truncation chain so the labels ellipsize instead of forcing
    the dropdown to grow and scroll sideways. */
 .quicknav-menu .dropdown-item { min-width: 0; }
-.quicknav-menu .dropdown-item > span:not(.status-dot):not(.dc-term-icon) { min-width: 0; flex: 1 1 auto; }
+.quicknav-menu .dropdown-item > span:not(.status-dot):not(.dc-term-icon):not(.quicknav-drag-handle) { min-width: 0; flex: 1 1 auto; }
 .quicknav-menu .dropdown-item .text-truncate { min-width: 0; max-width: 100%; }
 /* Even spacing for every section header (Sessions/Shells/Projects), whether it
    follows the sticky tab header or a divider: drop the divider's own margins and
@@ -673,6 +673,30 @@ body:not(:has(.attach-footer)) .quicknav {
    small uppercase section-header style. */
 .quicknav-detail-title { color: var(--tblr-body-color); text-transform: uppercase; }
 .quicknav-menu .dropdown-divider { margin: 0; }
+/* The active list is drag reorderable, writing the same @dc_tab_pos order the
+   tab strip does. A mouse drags the whole row; on touch the row keeps scrolling
+   and the grip handle (touch-action: none) starts the drag, so the two gestures
+   never fight. */
+.quicknav-active-item { touch-action: pan-y; }
+.quicknav-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  color: var(--tblr-secondary);
+  cursor: grab;
+  opacity: 0.55;
+  touch-action: none;
+}
+.quicknav-drag-handle:hover { opacity: 1; }
+.quicknav-active-list-dragging .quicknav-active-item { transition: transform 0.12s ease; }
+.quicknav-active-list-dragging .quicknav-drag-handle,
+.quicknav-active-list-dragging .quicknav-active-item-dragging { cursor: grabbing; }
+.quicknav-active-list-dragging .quicknav-active-item-dragging {
+  position: relative;
+  z-index: 5;
+  transition: none;
+  background: var(--tblr-bg-surface-secondary);
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.35);
+}
 .quicknav-refresh {
   position: absolute;
   top: 0;

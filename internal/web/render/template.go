@@ -76,8 +76,10 @@ type CoderNav struct {
 // QuickNav feeds the quick nav floating button: the live sessions and shells you
 // can jump to, plus the identifier of the one you are currently attached to.
 type QuickNav struct {
-	Coders    []QuickNavTarget
-	Shells    []QuickNavTarget
+	// Active is the flat list of live coders and shells, ordered exactly like the
+	// attach page tab strip (same @dc_tab_pos sort), so the quick nav and the tab
+	// strip agree and a drag in either persists through POST /terminal-tabs/order.
+	Active    []TerminalTab
 	CurrentID string
 	// CurrentProject is the project of the page you're on (terminal/editor), used
 	// to preselect it in the new-session / new-shell forms. Empty when there is
@@ -103,16 +105,6 @@ func (q QuickNav) HasInactiveCoders() bool {
 		}
 	}
 	return false
-}
-
-// QuickNavTarget is one jump destination in the quick nav menu.
-type QuickNavTarget struct {
-	ID      string
-	Name    string
-	URL     string
-	Project string // owning project name, shown under the target
-	Coder   string // owning coder id, shown when several coders run
-	HasNews bool
 }
 
 // TerminalTabsData feeds the terminal_tabs partial when it is re-rendered as a

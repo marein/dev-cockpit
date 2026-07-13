@@ -43,7 +43,7 @@ it; there is no stdlib equivalent that also covers WebKit/Safari).
 | `agents.js` | list, create, edit (id move), delete, validation |
 | `skills.js` | list, create, edit (id move), delete |
 | `instructions.js` | textarea, csrf, save, empty allowed |
-| `quicknav.js` | toggle, tabs, drill/back, context bar, fold (>5) |
+| `quicknav.js` | toggle, tabs, drill/back, context bar, fold (>5), active pane as one flat list (no per-kind grouping) in the tab strip's `@dc_tab_pos` order with New coder/New shell last, mouse drag reorder (desktop) and grip-handle touch drag reorder (mobile) both persisting through POST /terminal-tabs/order and agreeing with the tab strip |
 | `security.js` | CSRF header path, form path, negative (wrong + empty token) |
 | `frontend.js` | custom elements upgraded, teardown, re-init guard |
 | `overflow.js` | no horizontal overflow at 320/375/768/1366 with long unbreakable names (chromium) |

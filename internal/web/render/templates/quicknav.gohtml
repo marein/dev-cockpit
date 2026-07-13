@@ -41,34 +41,26 @@
   </div>
 
   <div data-quicknav-pane="active">
-    <h6 class="dropdown-header">Coders</h6>
-    {{range .QuickNav.Coders}}
-    <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-      <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
-      <span class="d-flex flex-column min-w-0">
-        <span class="text-truncate">{{.Name}}</span>
-        {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
-      </span>
-    </a>
-    {{end}}
-    {{if not .QuickNav.Coders}}<span class="dropdown-item-text text-secondary small">No active coders</span>{{end}}
-    <a class="dropdown-item d-flex align-items-center gap-2" href="/coders/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
-      <i class="ti ti-plus flex-shrink-0"></i><span>New coder</span>
-    </a>
+    <div class="quicknav-active-list" data-quicknav-active-list>
+      {{range .QuickNav.Active}}
+      <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
+         data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
+        <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+        <span class="d-flex flex-column min-w-0">
+          <span class="text-truncate">{{.Name}}</span>
+          {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
+        </span>
+        <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
+      </a>
+      {{end}}
+      {{if not .QuickNav.Active}}<span class="dropdown-item-text text-secondary small">No active coders or shells</span>{{end}}
+    </div>
     <div class="dropdown-divider"></div>
-    <h6 class="dropdown-header">Shells</h6>
-    {{range .QuickNav.Shells}}
-    <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-      <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i></span>
-      <span class="d-flex flex-column min-w-0">
-        <span class="text-truncate">{{.Name}}</span>
-        {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
-      </span>
+    <a class="dropdown-item d-flex align-items-center gap-2" href="/coders/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
+      <i class="ti ti-code-ai flex-shrink-0"></i><span>New coder</span>
     </a>
-    {{end}}
-    {{if not .QuickNav.Shells}}<span class="dropdown-item-text text-secondary small">No shells</span>{{end}}
     <a class="dropdown-item d-flex align-items-center gap-2" href="/shells/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
-      <i class="ti ti-plus flex-shrink-0"></i><span>New shell</span>
+      <i class="ti ti-terminal-2 flex-shrink-0"></i><span>New shell</span>
     </a>
   </div>
 

@@ -3,7 +3,6 @@ package web
 import (
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -35,34 +34,12 @@ func (s *Server) handleQuickNav(c *gin.Context) {
 	})
 }
 
-// buildQuickNav assembles the quick nav targets for the given page context.
+// buildQuickNav assembles the quick nav targets for the given page context. The
+// active list shares terminalTabs, so the quick nav and the attach page tab
+// strip list the same coders and shells in the same @dc_tab_pos order.
 func (s *Server) buildQuickNav(currentID, nameParam, currentPath string) render.QuickNav {
 	qn := render.QuickNav{CurrentID: currentID}
-	news := s.notifier.UnreadTargets()
-	for i := range s.coders {
-		coderID := s.coders[i].ID()
-		for _, r := range s.coders[i].Snapshot().Running {
-			qn.Coders = append(qn.Coders, render.QuickNavTarget{
-				ID:      r.Identifier,
-				Name:    r.Name,
-				URL:     "/coders/" + r.Identifier,
-				Project: s.projects.ProjectNameFor(r.CWD),
-				Coder:   coderID,
-				HasNews: news[r.Identifier],
-			})
-		}
-	}
-	for _, sh := range s.shells.List() {
-		qn.Shells = append(qn.Shells, render.QuickNavTarget{
-			ID:      sh.Identifier,
-			Name:    sh.Name,
-			URL:     "/shells/" + sh.Identifier,
-			Project: s.projects.ProjectNameFor(sh.CWD),
-			HasNews: news[sh.Identifier],
-		})
-	}
-	sortByProject(qn.Coders)
-	sortByProject(qn.Shells)
+	qn.Active = s.terminalTabs()
 	qn.CurrentProject = currentProject(nameParam, qn)
 	qn.CurrentPath = currentPath
 	qn.AllProjects = s.projectBrowser(currentPath)
@@ -107,27 +84,10 @@ func currentProject(nameParam string, qn render.QuickNav) string {
 	if qn.CurrentID == "" {
 		return ""
 	}
-	for _, t := range qn.Coders {
-		if t.ID == qn.CurrentID {
-			return t.Project
-		}
-	}
-	for _, t := range qn.Shells {
+	for _, t := range qn.Active {
 		if t.ID == qn.CurrentID {
 			return t.Project
 		}
 	}
 	return ""
-}
-
-// sortByProject orders quick nav targets by project name, then by their own
-// name, both case-insensitive.
-func sortByProject(targets []render.QuickNavTarget) {
-	sort.Slice(targets, func(i, j int) bool {
-		pi, pj := strings.ToLower(targets[i].Project), strings.ToLower(targets[j].Project)
-		if pi != pj {
-			return pi < pj
-		}
-		return strings.ToLower(targets[i].Name) < strings.ToLower(targets[j].Name)
-	})
 }
