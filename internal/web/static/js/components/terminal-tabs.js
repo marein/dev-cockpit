@@ -476,7 +476,7 @@ class TerminalTabs extends HTMLElement {
     overlay.addEventListener("pointerdown", (event) => {
       if (event.target === overlay) this.closeSwitcher();
     }, { signal: this.ac.signal });
-    this.appendChild(overlay);
+    document.body.appendChild(overlay);
     const current = rows.findIndex((row) => row.classList.contains("current"));
     this.switcher = {
       overlay,

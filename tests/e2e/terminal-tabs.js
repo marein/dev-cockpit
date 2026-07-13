@@ -201,6 +201,25 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(page.url() === before, "Esc navigated away");
     });
 
+    await run("the open switcher overlays the attach footer, its buttons are not hit-testable", async () => {
+      await page.click(".attach-terminal");
+      await sleep(200);
+      await page.keyboard.press("Control");
+      await page.keyboard.press("Control");
+      await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+      const portaled = await page.$eval(".terminal-switcher", (e) => e.parentElement === document.body);
+      assert(portaled, "switcher overlay is not portaled to <body> (trapped in the sticky terminal-tabs stacking context)");
+      const box = await page.locator(".attach-desktop [data-terminal-refresh]").boundingBox();
+      assert(box, "desktop footer refresh button has no box");
+      const hit = await page.evaluate(({ x, y }) => {
+        const el = document.elementFromPoint(x, y);
+        return { switcher: !!el?.closest(".terminal-switcher"), footer: !!el?.closest(".attach-footer") };
+      }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+      assert(hit.switcher && !hit.footer, "attach footer sits above the open switcher (buttons stay clickable)");
+      await page.keyboard.press("Escape");
+      await sleep(200);
+    });
+
     await run("double tapping Ctrl opens the switcher, plain Tab cycles, Esc closes", async () => {
       await page.click(".attach-terminal");
       await sleep(200);
@@ -248,7 +267,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.click(".terminal-tabs-settings > button");
       await page.waitForSelector(".terminal-tabs-settings .dropdown-menu.show", { state: "visible", timeout: 4000 });
       const selects = await page.locator(".terminal-tabs-settings terminal-setting-select select").count();
-      assert(selects === 2, `settings menu carries ${selects} selects, expected font size and rows`);
+      assert(selects === 3, `settings menu carries ${selects} selects, expected font size, rows and theme`);
       const rowsSel = '.terminal-tabs-settings terminal-setting-select[setting="rows"] select';
       const before = await page.$eval(rowsSel, (el) => el.value);
       await page.selectOption(rowsSel, "40");
@@ -497,7 +516,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await mp.click(".attach-settings [data-bs-toggle=dropdown]");
       await mp.waitForSelector(".attach-settings .dropdown-menu.show", { state: "visible", timeout: 4000 });
       const mobileSelects = await mp.locator(".attach-settings terminal-setting-select select").count();
-      assert(mobileSelects === 2, `mobile settings menu carries ${mobileSelects} selects`);
+      assert(mobileSelects === 3, `mobile settings menu carries ${mobileSelects} selects`);
       const rowsSel = '.attach-settings terminal-setting-select[setting="rows"] select';
       const before = await mp.$eval(rowsSel, (el) => el.value);
       await mp.selectOption(rowsSel, "40");
