@@ -63,8 +63,18 @@ func New() *Client { return &Client{} }
 func Target(name string) string { return name + ":0.0" }
 
 // NewSession spawns a detached tmux session.
+//
+// It advertises truecolor to the pane. The web terminal renders 24-bit color,
+// but without this signal tmux keeps programs in their 16-color fallback, where
+// copilot draws its tab strip as ANSI black on ANSI cyan, a pair several themes
+// render with too little contrast to read. A truecolor program picks its own
+// higher contrast colors instead. This is a pane environment variable set at
+// creation, not a tmux server option; a caller's env still overrides it.
 func (c *Client) NewSession(name, workdir, shellCmd string, env map[string]string) error {
 	args := []string{"new-session", "-d", "-s", name, "-c", workdir}
+	if _, ok := env["COLORTERM"]; !ok {
+		args = append(args, "-e", "COLORTERM=truecolor")
+	}
 	for _, kv := range sortedEnv(env) {
 		args = append(args, "-e", kv)
 	}

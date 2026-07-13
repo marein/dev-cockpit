@@ -121,7 +121,16 @@ free floating page scripts.
   get the pane style on create/resume so a fresh claude detects at startup, and
   claude sessions get `"theme": "auto"` pinned via the injected `--settings`
   (`internal/coder/claude/runtime.go`) so detection works despite a fixed theme
-  in the user's global config.
+  in the user's global config. Every session is created with
+  `COLORTERM=truecolor` in its pane environment (`NewSession` in
+  `internal/tmux/client.go`), because the web terminal renders 24 bit color;
+  without it tmux keeps programs in their 16 color fallback, where copilot
+  draws its tab strip as ANSI black on ANSI cyan, unreadable in several themes.
+  It is a pane environment variable, not a tmux server option, so a program
+  only sees it on its next start, and a TUI that follows truecolor renders its
+  own colors instead of mapping through xterm.js's indexed theme palette. Known
+  trade-off, parked: on light themes copilot's truecolor scheme paints fixed
+  dark blocks behind inactive tabs and inline code.
 - **CSRF:** the per session token is rendered once into `<meta name="csrf-token">`;
   `@dc/http` reads it and attaches the `X-CSRF-Token` header to every POST, so
   components never read or thread the token. Server rendered forms keep their
