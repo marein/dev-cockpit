@@ -10,17 +10,26 @@ const { assert, sleep, BASE } = L;
 // /terminal-tabs/order on drag, read back by the pane scan, so the server
 // renders the strip fully sorted and the order dies with its sessions.
 // Unpositioned sessions (freshly started, resumed) join on the right, oldest
-// first. Tabs reorder by pointer drag. The switcher popup opens via Ctrl+Tab
-// (browsers often reserve it, so headless and PWAs only) and via double tapping
-// Ctrl or Meta within 400ms (collision free: bare modifiers never reach the
-// shell, a chord like Ctrl+C cancels the tap); cycle via Tab, Ctrl+Tab or
-// arrows, Enter or click switches, Esc closes, typing filters the list by name
-// and project through the search input, and it all
-// works while the xterm terminal has focus. Opening anchors on the active
-// tabs: the initial selection moves one step from the current session and
-// wraps within the actives (first tab + backward = last active, last tab +
-// forward = first active, never an inactive row); after opening, cycling
-// rotates over the full list including the inactive section. Every tab carries a close control
+// first. Tabs reorder by pointer drag. Ctrl+Tab switches straight to the next
+// active tab and Ctrl+Shift+Tab to the previous, rotating over the active tabs
+// only (never an inactive row) and wrapping at the ends. Each press aborts the
+// switch in flight: pe.js aborts the prior navigation and re-checks before it
+// renders, so mashing the shortcut chains through the tabs (tracked on
+// pendingIndex, independent of the still-current active tab) and lands on the
+// last target without ever painting the ones in between. While a switch is in
+// flight the tab you are heading to carries a pending highlight (the switcher's
+// blue selected-row tint, class terminal-tab-pending, scrolled into view), so
+// you see where you are landing before the page renders; it clears when the tab
+// loads (becomes active) or when a wrap brings you back to the current tab.
+// Browsers reserve
+// Ctrl+Tab, so the direct switch only reaches headless and PWAs. The switcher
+// popup opens only via double tapping Ctrl or Meta within 400ms (collision
+// free: bare modifiers never reach the shell, a chord like Ctrl+C cancels the
+// tap); the double tap anchors one step forward from the current session and
+// wraps within the actives, then cycling via Tab, Ctrl+Tab or arrows rotates
+// over the full list including the inactive section, Enter or click switches,
+// Esc closes, typing filters the list by name and project through the search
+// input, and it all works while the xterm terminal has focus. Every tab carries a close control
 // (confirm dialog, then coder stop or shell delete; closing the current session
 // switches to the right neighbor tab like Terminal.app, left as fallback,
 // projects page when the strip is empty; the page header stop button keeps its
@@ -59,8 +68,9 @@ const { assert, sleep, BASE } = L;
 // hook, which runs before the browser paints, so pe.js' scroll-to-top after the
 // swap never becomes visible and only the terminal's own cursor scrolling moves
 // the view. The switcher shortcut hint sits next to the refresh button in the
-// desktop attach footer (Ctrl+Ctrl in the browser, Ctrl+Tab in standalone/PWA
-// via display-mode media query): always visible, no strip space. The + menu
+// desktop attach footer (always Ctrl+Ctrl to open the switcher; standalone/PWA
+// also shows Ctrl+Tab to step between tabs, via a display-mode media query,
+// since browsers reserve Ctrl+Tab): always visible, no strip space. The + menu
 // also links to the current project's editor (quick nav parity). On coarse
 // pointer clients the strip stays hidden, the quick nav covers mobile. The strip
 // lists every live session on the host, so all interactions here MUST stay on
@@ -159,33 +169,74 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       }
     });
 
-    await run("Ctrl+Tab opens the switcher while the terminal is focused, cycles, Enter switches", async () => {
+    await run("Ctrl+Tab switches straight to the next active tab, Ctrl+Shift+Tab to the previous, no switcher", async () => {
+      // own block order after the drag is [ids2, ids0, ids1], contiguous in the strip.
+      await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
       await page.click(".attach-terminal");
       await sleep(200);
       await page.keyboard.down("Control");
       await page.keyboard.press("Tab");
-      await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
-      const count = await page.locator(".terminal-switcher-item").count();
-      assert(count >= 3, `switcher lists ${count} items`);
-      let selected = "";
-      for (let i = 0; i < count + 1; i++) {
-        selected = await page.$eval(".terminal-switcher-item.selected", (e) => e.dataset.switcherId);
-        if (selected === ids[1]) break;
-        await page.keyboard.press("Tab");
-        await sleep(80);
-      }
       await page.keyboard.up("Control");
-      assert(selected === ids[1], "could not cycle to the target shell");
-      await page.keyboard.press("Enter");
       await page.waitForURL(new RegExp(ids[1]), { timeout: 8000 });
-      assert((await page.locator(".terminal-switcher").count()) === 0, "switcher still open after Enter");
+      await page.waitForSelector(`${tabSel(ids[1])}.active`, { state: "attached", timeout: 8000 });
+      assert((await page.locator(".terminal-switcher").count()) === 0, "Ctrl+Tab opened the switcher instead of switching");
+      await page.click(".attach-terminal");
+      await sleep(200);
+      await page.keyboard.down("Control");
+      await page.keyboard.down("Shift");
+      await page.keyboard.press("Tab");
+      await page.keyboard.up("Shift");
+      await page.keyboard.up("Control");
+      await page.waitForURL(new RegExp(ids[0]), { timeout: 8000 });
+      await page.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
+    });
+
+    await run("mashing Ctrl+Tab chains across active tabs, aborts the intermediates, lands on the last", async () => {
+      await page.goto(shellUrls[2], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`${tabSel(ids[2])}.active`, { state: "attached", timeout: 8000 });
+      await page.click(".attach-terminal");
+      await sleep(200);
+      await page.keyboard.down("Control");
+      await page.keyboard.press("Tab"); // ids2 -> ids0
+      await page.keyboard.press("Tab"); // ids0 -> ids1, aborting the ids0 load mid flight
+      await page.keyboard.up("Control");
+      await page.waitForURL(new RegExp(ids[1]), { timeout: 8000 });
+      await page.waitForSelector(`${tabSel(ids[1])}.active`, { state: "attached", timeout: 8000 });
+      assert((await page.locator(".terminal-switcher").count()) === 0, "switcher opened during rapid Ctrl+Tab");
+    });
+
+    await run("the tab you are heading to gets a pending highlight while the switch is in flight", async () => {
+      await page.goto(`${BASE}/shells/${ids[0]}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
+      // Hold the target's attach navigation so the in-flight (pending) state is observable.
+      await page.route(`**/shells/${ids[1]}`, async (route) => { await sleep(2000); await route.continue(); });
+      try {
+        await page.click(".attach-terminal");
+        await sleep(200);
+        await page.keyboard.down("Control");
+        await page.keyboard.press("Tab"); // ids0 -> ids1, held by the route
+        await page.keyboard.up("Control");
+        const pending = await page.waitForSelector(`${tabSel(ids[1])}.terminal-tab-pending`, { state: "attached", timeout: 1500 });
+        const bg = await pending.evaluate((e) => getComputedStyle(e).backgroundColor);
+        assert(bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent", `pending tab carries no highlight background (${bg})`);
+        // The page has not switched yet: the origin tab stays active until the nav lands.
+        assert(await page.$(`${tabSel(ids[0])}.active`), "origin tab lost active before the switch landed");
+        assert(page.url().includes(ids[0]), `navigated away before the switch landed (${page.url()})`);
+        await page.waitForURL(new RegExp(ids[1]), { timeout: 8000 });
+        await page.waitForSelector(`${tabSel(ids[1])}.active`, { state: "attached", timeout: 8000 });
+        assert((await page.locator(".terminal-tab-pending").count()) === 0, "pending highlight lingered after the switch landed");
+      } finally {
+        await page.unroute(`**/shells/${ids[1]}`);
+      }
     });
 
     await run("arrow keys move the switcher selection, Esc closes without navigating", async () => {
       const before = page.url();
-      await page.keyboard.down("Control");
-      await page.keyboard.press("Tab");
-      await page.keyboard.up("Control");
+      await page.click(".attach-terminal");
+      await sleep(200);
+      await page.keyboard.press("Control");
+      await page.keyboard.press("Control");
       await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
       const first = await page.$eval(".terminal-switcher-item.selected", (e) => e.dataset.switcherId);
       await page.keyboard.press("ArrowDown");
@@ -255,9 +306,10 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
     });
 
     await run("clicking a switcher item switches to that session", async () => {
-      await page.keyboard.down("Control");
-      await page.keyboard.press("Tab");
-      await page.keyboard.up("Control");
+      await page.click(".attach-terminal");
+      await sleep(200);
+      await page.keyboard.press("Control");
+      await page.keyboard.press("Control");
       await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
       await page.click(`.terminal-switcher-item[data-switcher-id="${ids[2]}"]`);
       await page.waitForURL(new RegExp(ids[2]), { timeout: 8000 });
@@ -447,18 +499,15 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
 
       await page.click(".attach-terminal");
       await sleep(200);
-      await page.keyboard.down("Control");
-      await page.keyboard.down("Shift");
-      await page.keyboard.press("Tab");
-      await page.keyboard.up("Shift");
-      await page.keyboard.up("Control");
+      await page.keyboard.press("Control");
+      await page.keyboard.press("Control");
       await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
       await page.waitForSelector(`.terminal-switcher-item[data-switcher-resume="${coderId}"]`, { state: "attached", timeout: 4000 });
-      const backId = await page.$eval(".terminal-switcher-item.selected", (e) => e.dataset.switcherId || "");
+      const openSel = await page.$eval(".terminal-switcher-item.selected", (e) => e.dataset.switcherId || "");
       const activeIds = await page.$$eval(".terminal-switcher-item[data-switcher-id]", (els) => els.map((e) => e.dataset.switcherId));
       const currentRow = await page.$eval(".terminal-switcher-item.current", (e) => e.dataset.switcherId);
-      const expectedBack = activeIds[(activeIds.indexOf(currentRow) - 1 + activeIds.length) % activeIds.length];
-      assert(backId === expectedBack, `backward open selected '${backId}', expected the previous active tab ${expectedBack} (never an inactive row)`);
+      const expectedFwd = activeIds[(activeIds.indexOf(currentRow) + 1) % activeIds.length];
+      assert(openSel === expectedFwd, `double tap open selected '${openSel}', expected the next active tab ${expectedFwd} (never an inactive row)`);
       await page.keyboard.press("Escape");
       await sleep(300);
 

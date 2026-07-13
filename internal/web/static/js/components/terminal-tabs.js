@@ -23,6 +23,7 @@ class TerminalTabs extends HTMLElement {
     this.confirming = false;
     this.resuming = false;
     this.inFlight = false;
+    this.pendingIndex = null;
     this.tap = { pending: null, lastKey: null, lastTime: 0 };
     const signal = this.ac.signal;
 
@@ -101,13 +102,26 @@ class TerminalTabs extends HTMLElement {
     });
   }
 
-  revealActive() {
-    const active = this.strip.querySelector(".terminal-tab.active");
-    if (!active) return;
+  revealTab(tab) {
+    if (!tab) return;
     const strip = this.strip;
-    if (active.offsetLeft < strip.scrollLeft
-      || active.offsetLeft + active.offsetWidth > strip.scrollLeft + strip.clientWidth) {
-      strip.scrollLeft = active.offsetLeft - (strip.clientWidth - active.offsetWidth) / 2;
+    if (tab.offsetLeft < strip.scrollLeft
+      || tab.offsetLeft + tab.offsetWidth > strip.scrollLeft + strip.clientWidth) {
+      strip.scrollLeft = tab.offsetLeft - (strip.clientWidth - tab.offsetWidth) / 2;
+    }
+  }
+
+  revealActive() {
+    this.revealTab(this.strip.querySelector(".terminal-tab.active"));
+  }
+
+  markPending(tab) {
+    for (const other of this.strip.querySelectorAll(".terminal-tab-pending")) {
+      if (other !== tab) other.classList.remove("terminal-tab-pending");
+    }
+    if (tab) {
+      tab.classList.add("terminal-tab-pending");
+      this.revealTab(tab);
     }
   }
 
@@ -305,7 +319,7 @@ class TerminalTabs extends HTMLElement {
       event.preventDefault();
       event.stopPropagation();
       if (this.switcher) this.moveSelection(event.shiftKey ? -1 : 1);
-      else this.openSwitcher(event.shiftKey ? -1 : 1);
+      else this.switchTo(event.shiftKey ? -1 : 1);
       return;
     }
     if (!this.switcher) return;
@@ -322,6 +336,24 @@ class TerminalTabs extends HTMLElement {
     event.preventDefault();
     event.stopPropagation();
     action();
+  }
+
+  switchTo(direction) {
+    const tabs = this.tabs();
+    if (tabs.length < 2) return;
+    const active = tabs.findIndex((tab) => tab.classList.contains("active"));
+    const base = this.pendingIndex ?? (active === -1 ? 0 : active);
+    const next = (base + direction + tabs.length) % tabs.length;
+    this.pendingIndex = next;
+    const url = tabs[next].getAttribute("href");
+    if (!url || url === window.location.pathname) {
+      window.pe?.abortController?.abort();
+      this.markPending(null);
+      return;
+    }
+    this.markPending(tabs[next]);
+    if (window.app?.navigate) Promise.resolve(window.app.navigate(url)).catch(() => {});
+    else window.location.href = url;
   }
 
   switcherRow(tab) {
