@@ -154,12 +154,11 @@ func (u *Updater) Apply(ctx context.Context, version string) error {
 			strings.TrimPrefix(version, "v"), strings.TrimPrefix(newest.TagName, "v"), ErrSuperseded)
 	}
 
-	target := "_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
-	binAsset, ok := findAsset(newest.Assets, target)
+	binAsset, ok := findAsset(newest.Assets, platformAssetSuffix())
 	if !ok {
 		return fmt.Errorf("release %s has no asset for %s/%s", newest.TagName, runtime.GOOS, runtime.GOARCH)
 	}
-	sumAsset, ok := findAsset(newest.Assets, "_checksums.txt")
+	sumAsset, ok := findAsset(newest.Assets, checksumsSuffix)
 	if !ok {
 		return fmt.Errorf("release %s has no checksums file", newest.TagName)
 	}
@@ -198,7 +197,7 @@ func (u *Updater) pending(rels []ghRelease) []ghRelease {
 		if r.Draft || r.Prerelease || parseSemver(r.TagName) == nil {
 			continue
 		}
-		if isNewer(u.current, r.TagName) {
+		if isNewer(u.current, r.TagName) && assetsReady(r) {
 			out = append(out, r)
 		}
 	}
@@ -364,6 +363,27 @@ func smokeTest(path string) error {
 func sameVersion(a, b string) bool {
 	av, bv := parseSemver(a), parseSemver(b)
 	return av != nil && bv != nil && compareSemver(av, bv) == 0
+}
+
+const checksumsSuffix = "_checksums.txt"
+
+// platformAssetSuffix is the tail of the release archive name for this build's
+// os and arch, per the asset naming convention in AGENTS.md.
+func platformAssetSuffix() string {
+	return "_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
+}
+
+// assetsReady reports whether a release already carries the artifacts an update
+// needs: the platform archive and the checksums file. Right after a release is
+// published the build workflow has not uploaded these yet, so gating on them
+// keeps a half published release from showing as available and from failing an
+// apply until the assets land.
+func assetsReady(r ghRelease) bool {
+	if _, ok := findAsset(r.Assets, platformAssetSuffix()); !ok {
+		return false
+	}
+	_, ok := findAsset(r.Assets, checksumsSuffix)
+	return ok
 }
 
 func findAsset(assets []asset, suffix string) (asset, bool) {
