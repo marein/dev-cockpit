@@ -1096,6 +1096,7 @@ function initTerminalAttach(host) {
   let source = null;
   let resizeTimer = null;
   let refreshTimer = null;
+  let themePushTimer = null;
   let followSettingResize = 0;
   const followAfterSettingSnapshot = () => {
     if (!followSettingResize) {
@@ -1356,10 +1357,29 @@ function initTerminalAttach(host) {
   }
 
   listen(window, "resize", scheduleResize);
-  listen(darkSchemeMedia, "change", () => {
-    if (AUTO_THEMES[themeOverride]) {
+  // iOS reads prefers-color-scheme as dark for a moment while it backgrounds,
+  // snapshots, locks or unlocks the app. Pushing on that transient read flips
+  // claude dark until the true scheme returns. themePushTimer debounces every
+  // scheme change and every return to visibility and cancels on hide, so only a
+  // value that still holds once the page settles visible reaches the server.
+  const scheduleThemeSync = () => {
+    if (themePushTimer) window.clearTimeout(themePushTimer);
+    themePushTimer = window.setTimeout(() => {
+      themePushTimer = null;
+      if (document.visibilityState !== "visible") return;
       applyTheme();
       pushTheme();
+    }, 400);
+  };
+  listen(darkSchemeMedia, "change", () => {
+    if (AUTO_THEMES[themeOverride]) scheduleThemeSync();
+  });
+  listen(document, "visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      scheduleThemeSync();
+    } else if (themePushTimer) {
+      window.clearTimeout(themePushTimer);
+      themePushTimer = null;
     }
   });
   listen(document, "terminal-setting-change", (event) => {
@@ -1408,6 +1428,7 @@ function initTerminalAttach(host) {
     measureElementObserver?.disconnect();
     if (resizeTimer !== null) window.clearTimeout(resizeTimer);
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+    if (themePushTimer !== null) window.clearTimeout(themePushTimer);
     term.dispose();
   };
 }
