@@ -136,17 +136,14 @@ function updateCountBadges(unread) {
   });
 }
 
-// Server-rendered target lists (the projects page) opt into live news marks:
-// [data-notify-target] dots switch between their idle look and the animated
-// blue news dot, [data-notify-project-dot] shows while any target dot inside
-// the same project container has news.
+// Server-rendered target lists opt into live news marks: a [data-notify-target]
+// coder or shell icon turns blue and dances while it has news, and
+// [data-notify-project-dot] shows while any target inside the same project
+// container has news.
 function decorateNews(targetIds) {
   const ids = new Set(targetIds || []);
-  document.querySelectorAll("[data-notify-target]").forEach((dot) => {
-    const has = ids.has(dot.getAttribute("data-notify-target"));
-    dot.classList.toggle("status-dot-animated", has);
-    dot.classList.toggle("status-blue", has);
-    dot.classList.toggle("status-green", !has && dot.hasAttribute("data-notify-running"));
+  document.querySelectorAll("[data-notify-target]").forEach((icon) => {
+    icon.classList.toggle("news", ids.has(icon.getAttribute("data-notify-target")));
   });
   document.querySelectorAll("[data-notify-project-dot]").forEach((dot) => {
     const scope = dot.closest("[data-project-name]");

@@ -337,7 +337,6 @@ class TerminalTabs extends HTMLElement {
           switcherName: (tab.dataset.tabName || "") + " " + (tab.dataset.tabProject || ""),
         },
       },
-      tab.querySelector(".status-dot")?.cloneNode(true),
       tab.querySelector("[data-tab-icon]")?.cloneNode(true),
       el("span", { class: "terminal-switcher-name text-truncate" }, tab.dataset.tabName || ""),
       tab.dataset.tabProject
@@ -358,7 +357,6 @@ class TerminalTabs extends HTMLElement {
     const row = el(
       "div",
       { role: "option", class: "terminal-switcher-item terminal-switcher-item-inactive", dataset },
-      button.querySelector(".status-dot")?.cloneNode(true),
       button.querySelector("[data-resume-icon]")?.cloneNode(true),
       el("span", { class: "terminal-switcher-name text-truncate" }, button.dataset.resumeName || ""),
     );

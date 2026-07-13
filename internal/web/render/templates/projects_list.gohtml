@@ -103,9 +103,8 @@
       <dc-collapse-list class="list-group list-group-flush">
         {{range .ActiveCoderRefs}}
         <div class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
-          <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0" aria-hidden="true" data-notify-target="{{.ID}}" data-notify-running></span>
+          <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
           <a href="/coders/{{.ID}}" class="text-reset text-decoration-none text-truncate flex-fill">{{.Name}}</a>
-          {{if $.MultiCoder}}<span class="text-secondary flex-shrink-0" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{end}}
           <a href="/coders/{{.ID}}" class="btn btn-sm btn-icon btn-outline-primary" aria-label="Attach to coder {{.Name}}" title="Attach"><i class="ti ti-plug-connected"></i></a>
           <form method="post" action="/coders/{{.ID}}/stop" data-confirm="Stop coder &quot;{{.Name}}&quot;?" data-confirm-button="Stop" data-ajax-refresh>
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
@@ -115,12 +114,11 @@
         {{end}}
         {{range .InactiveCoderRefs}}
         <div class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
-          <span class="status-dot{{if .HasNews}} status-dot-animated status-blue{{end}} flex-shrink-0" aria-hidden="true" data-notify-target="{{.ID}}"></span>
+          <span class="dc-term-icon{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
           <form method="post" action="/coders/{{.ID}}/resume" class="flex-fill" style="flex:1 1 auto;min-width:0;">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="border-0 bg-transparent p-0 text-reset text-decoration-none text-truncate w-100 text-start" style="cursor:pointer;" title="Resume coder {{.Name}}">{{.Name}}</button>
           </form>
-          {{if $.MultiCoder}}<span class="text-secondary flex-shrink-0" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{end}}
           <form method="post" action="/coders/{{.ID}}/resume">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="btn btn-sm btn-icon btn-outline-primary" aria-label="Resume coder {{.Name}}" title="Resume"><i class="ti ti-player-play"></i></button>
@@ -150,7 +148,7 @@
       <dc-collapse-list class="list-group list-group-flush">
         {{range .ShellRefs}}
         <div class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
-          <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0" aria-hidden="true" data-notify-target="{{.ID}}" data-notify-running></span>
+          <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i></span>
           <a href="/shells/{{.ID}}" class="text-reset text-decoration-none text-truncate flex-fill">{{.Name}}</a>
           <a href="/shells/{{.ID}}" class="btn btn-sm btn-icon btn-outline-primary" aria-label="Attach to shell {{.Name}}" title="Attach"><i class="ti ti-plug-connected"></i></a>
           <form method="post" action="/shells/{{.ID}}/delete" data-confirm="Delete shell &quot;{{.Name}}&quot;?" data-confirm-button="Delete" data-ajax-delete>

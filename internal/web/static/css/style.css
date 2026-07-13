@@ -272,7 +272,6 @@ terminal-tabs { display: none; }
     user-select: none;
     -webkit-user-select: none;
   }
-  .terminal-tab .status-dot.status-green { display: none; }
   .terminal-tab:hover,
   .terminal-tab:focus {
     color: var(--tblr-body-color);
@@ -289,7 +288,7 @@ terminal-tabs { display: none; }
   .terminal-tab.active {
     color: var(--tblr-body-color);
     background: #fff;
-    box-shadow: inset 0 2px 0 var(--tblr-primary);
+    box-shadow: inset 0 2px 0 var(--tblr-primary), inset 0 -1px 0 var(--tblr-border-color);
   }
   [data-bs-theme="dark"] .terminal-tab.active {
     background: #0b0f19;
@@ -351,7 +350,7 @@ terminal-tabs { display: none; }
   }
   .terminal-tabs-strip-dragging .terminal-tab.active.terminal-tab-dragging {
     background: #fff;
-    box-shadow: inset 0 2px 0 var(--tblr-primary), 0 0.25rem 0.75rem rgba(0, 0, 0, 0.45);
+    box-shadow: inset 0 2px 0 var(--tblr-primary), inset 0 -1px 0 var(--tblr-border-color), 0 0.25rem 0.75rem rgba(0, 0, 0, 0.45);
   }
   [data-bs-theme="dark"] .terminal-tabs-strip-dragging .terminal-tab.active.terminal-tab-dragging {
     background: #0b0f19;
@@ -492,7 +491,6 @@ terminal-tabs { display: none; }
 .terminal-switcher-item:hover { background: rgba(var(--tblr-emphasis-color-rgb), 0.04); }
 .terminal-switcher-item.selected { background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18)); }
 .terminal-switcher-item.current { box-shadow: inset 2px 0 0 var(--tblr-primary); }
-.terminal-switcher-item .status-dot { flex: 0 0 auto; }
 .terminal-switcher-name {
   flex: 1 1 auto;
   min-width: 0;
@@ -659,8 +657,7 @@ body:not(:has(.attach-footer)) .quicknav {
    flex link in the truncation chain so the labels ellipsize instead of forcing
    the dropdown to grow and scroll sideways. */
 .quicknav-menu .dropdown-item { min-width: 0; }
-.quicknav-menu .dropdown-item > span:not(.status-dot):not(.quicknav-coder) { min-width: 0; flex: 1 1 auto; }
-.quicknav-menu .dropdown-item > .quicknav-coder { flex: 0 0 auto; margin-left: auto; }
+.quicknav-menu .dropdown-item > span:not(.status-dot):not(.dc-term-icon) { min-width: 0; flex: 1 1 auto; }
 .quicknav-menu .dropdown-item .text-truncate { min-width: 0; max-width: 100%; }
 /* Even spacing for every section header (Sessions/Shells/Projects), whether it
    follows the sticky tab header or a divider: drop the divider's own margins and
@@ -1352,6 +1349,28 @@ terminal-input { display: none; }
   width: 1em;
   height: 1em;
   vertical-align: -0.125em;
+}
+
+.dc-term-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tblr-secondary);
+}
+.dc-term-icon.running { color: var(--tblr-green); }
+.dc-term-icon.news { color: var(--tblr-blue); }
+@media (prefers-reduced-motion: no-preference) {
+  .dc-term-icon.news {
+    transform-origin: top center;
+    animation: dc-news-ring 1.8s ease-in-out infinite;
+  }
+}
+@keyframes dc-news-ring {
+  0%, 50%, 100% { transform: rotate(0); }
+  10% { transform: rotate(13deg); }
+  20% { transform: rotate(-11deg); }
+  30% { transform: rotate(7deg); }
+  40% { transform: rotate(-5deg); }
 }
 
 dc-notifications { display: block; }

@@ -44,13 +44,10 @@
     <h6 class="dropdown-header">Coders</h6>
     {{range .QuickNav.Coders}}
     <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-      <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0"></span>
+      <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
       <span class="d-flex flex-column min-w-0">
-        <span class="d-flex align-items-center gap-2 min-w-0">
-          <span class="text-truncate flex-fill">{{.Name}}</span>
-          {{if $.MultiCoder}}<span class="text-secondary small flex-shrink-0" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{end}}
-        </span>
-        {{if .Project}}<span class="text-secondary small text-truncate"><i class="ti ti-folder me-1"></i>{{.Project}}</span>{{end}}
+        <span class="text-truncate">{{.Name}}</span>
+        {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
       </span>
     </a>
     {{end}}
@@ -62,10 +59,10 @@
     <h6 class="dropdown-header">Shells</h6>
     {{range .QuickNav.Shells}}
     <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-      <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0"></span>
+      <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i></span>
       <span class="d-flex flex-column min-w-0">
         <span class="text-truncate">{{.Name}}</span>
-        {{if .Project}}<span class="text-secondary small text-truncate"><i class="ti ti-folder me-1"></i>{{.Project}}</span>{{end}}
+        {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
       </span>
     </a>
     {{end}}
@@ -102,16 +99,14 @@
         <div data-qn-fold="{{.Name}}-coders">
         {{range .ActiveCoders}}
         <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-          <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
-          {{if $.MultiCoder}}<span class="text-secondary small quicknav-coder" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{end}}
+          <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span><span class="text-truncate">{{.Name}}</span>
         </a>
         {{end}}
         {{range .InactiveCoders}}
         <form method="post" action="{{.URL}}">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <button type="submit" class="dropdown-item d-flex align-items-center gap-2">
-            <span class="status-dot{{if .HasNews}} status-dot-animated status-blue{{end}} flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
-            {{if $.MultiCoder}}<span class="text-secondary small quicknav-coder" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{end}}
+            <span class="dc-term-icon{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span><span class="text-truncate">{{.Name}}</span>
           </button>
         </form>
         {{end}}
@@ -124,7 +119,7 @@
         <div data-qn-fold="{{.Name}}-shells">
         {{range .Shells}}
         <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-          <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0"></span><span class="text-truncate">{{.Name}}</span>
+          <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i></span><span class="text-truncate">{{.Name}}</span>
         </a>
         {{end}}
         </div>

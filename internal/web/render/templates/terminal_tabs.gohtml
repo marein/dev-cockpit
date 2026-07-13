@@ -7,8 +7,7 @@
        aria-selected="{{if eq .ID $.QuickNav.CurrentID}}true{{else}}false{{end}}"
        data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
-      <span class="status-dot {{if .HasNews}}status-dot-animated status-blue{{else}}status-green{{end}} flex-shrink-0" aria-hidden="true" data-notify-target="{{.ID}}" data-notify-running></span>
-      <span class="terminal-tab-icon" data-tab-icon aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+      <span class="terminal-tab-icon dc-term-icon running{{if .HasNews}} news{{end}}" data-tab-icon data-notify-target="{{.ID}}" aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
       <span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
         {{if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}
@@ -49,8 +48,7 @@
         <button type="submit" class="dropdown-item d-flex align-items-center gap-2"
                 data-resume-id="{{.ID}}" data-resume-name="{{.Name}}" data-resume-project="{{$p.Name}}"
                 title="Resume coder {{.Name}}">
-          <span class="status-dot{{if .HasNews}} status-dot-animated status-blue{{end}} flex-shrink-0"></span>
-          <span class="terminal-tab-icon" data-resume-icon aria-hidden="true">{{template "coder_icon.gohtml" .Coder}}</span>
+          <span class="terminal-tab-icon dc-term-icon{{if .HasNews}} news{{end}}" data-resume-icon data-notify-target="{{.ID}}" aria-hidden="true">{{template "coder_icon.gohtml" .Coder}}</span>
           <span class="text-truncate">{{.Name}}</span>
         </button>
       </form>
