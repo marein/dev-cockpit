@@ -46,12 +46,15 @@ func (r runtime) flags(agentID string, automaticApproval bool) string {
 // starts, without touching the user's own settings files. It pins the theme
 // to auto so claude follows the terminal background signal (the tmux pane
 // style answers its OSC 11 query, mode 2031 reports switch it live) even
-// when the user's global config carries a fixed theme. It also wires the
-// Stop and Notification hooks: each hook streams its stdin JSON into the
-// notify inbox; the write goes to a .tmp name first so the poller only ever
-// reads complete .json files.
+// when the user's global config carries a fixed theme. It disables the agent
+// view, because the cockpit forwards keys via send-keys and tmux never
+// swallows Ctrl+B as prefix, an accidental Ctrl+B or a left arrow into the
+// agent view would turn the session into a background agent the cockpit can
+// no longer resume. It also wires the Stop and Notification hooks: each hook
+// streams its stdin JSON into the notify inbox; the write goes to a .tmp
+// name first so the poller only ever reads complete .json files.
 func (r runtime) sessionSettings() string {
-	values := map[string]any{"theme": "auto"}
+	values := map[string]any{"theme": "auto", "disableAgentView": true}
 	if r.notifyInbox != "" {
 		dir := clirun.ShellQuote(r.notifyInbox)
 		command := "d=" + dir + ` && mkdir -p "$d" && f="$d"/$(date +%s%N)-$$ && cat > "$f.tmp" && mv "$f.tmp" "$f.json"`

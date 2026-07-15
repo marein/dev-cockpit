@@ -46,6 +46,12 @@ test. Update this file when a convention changes.
   the coder switcher, the coder label in the title, the new-coder coder
   select and the coder badges render only when more than one coder is
   active, so single-coder hosts look unchanged.
+- **Claude session settings:** every claude session starts with one injected
+  `--settings` blob (`internal/coder/claude/runtime.go`): theme auto, the
+  notification hooks, and `disableAgentView`. The cockpit forwards keys via
+  send-keys, tmux never swallows Ctrl+B as prefix, so without the flag an
+  accidental Ctrl+B or a left arrow into the agent view turns the session
+  into a background agent the cockpit can no longer resume.
 - **v2.0.0 markers:** legacy compatibility code that may be removed once
   breaking changes are allowed carries a `TODO(v2.0.0)` comment. Grep for it
   when preparing a 2.0.0 release.
