@@ -109,12 +109,24 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(project2 === project, `tab project label '${project2}'`);
       const idleClean = await page.$eval(`${tabSel(ids[0])} .dc-term-icon`, (e) => !e.classList.contains("news"));
       assert(idleClean, "idle tab icon still carries the news mark");
-      const hintVisible = await page.$eval(".attach-desktop .switcher-hint-browser", (e) => getComputedStyle(e).display !== "none" && e.textContent.includes("Ctrl"));
-      assert(hintVisible, "switcher shortcut hint not visible in the desktop footer");
       const sticky = await page.$eval("terminal-tabs", (e) => getComputedStyle(e).position === "sticky");
       assert(sticky, "tab strip is not sticky");
-      const appHidden = await page.$eval(".attach-desktop .switcher-hint-app", (e) => getComputedStyle(e).display === "none");
-      assert(appHidden, "web app hint variant visible outside standalone mode");
+    });
+
+    // The shortcut description lives in a modal behind a help button in the
+    // desktop footer, so long key combos never overflow the footer row.
+    await run("the footer help button opens the keyboard shortcuts modal", async () => {
+      const help = page.locator('.attach-desktop [data-bs-target="#terminal-shortcuts-modal"]');
+      assert(await help.isVisible(), "help button not visible in the desktop footer");
+      await help.click();
+      await L.modalShown(page, "terminal-shortcuts-modal");
+      const text = await page.$eval("#terminal-shortcuts-modal", (e) => e.textContent);
+      assert(/Ctrl/.test(text) && /Fullscreen/i.test(text) && /switcher/i.test(text), `modal text incomplete: ${text.replace(/\s+/g, " ").slice(0, 120)}`);
+      const kbdCount = await page.locator("#terminal-shortcuts-modal kbd").count();
+      assert(kbdCount >= 6, `expected kbd elements in the modal, got ${kbdCount}`);
+      await page.click('#terminal-shortcuts-modal [data-bs-dismiss="modal"]');
+      await page.waitForFunction(() => !document.querySelector("#terminal-shortcuts-modal.show"), null, { timeout: 4000 });
+      await sleep(300);
     });
 
     await run("clicking a tab switches to that session (boosted navigation)", async () => {

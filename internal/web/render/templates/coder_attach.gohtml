@@ -104,13 +104,14 @@
       <button type="button" class="btn btn-outline-secondary" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
         <i class="ti ti-refresh"></i>
       </button>
-      <span class="switcher-shortcut" title="Switch tabs and open the session switcher">
-        <span class="switcher-hint-browser">Switcher: <kbd>Ctrl</kbd>+<kbd>Ctrl</kbd></span>
-        <span class="switcher-hint-app">Switch: <kbd>Ctrl</kbd>+<kbd>Tab</kbd> · Switcher: <kbd>Ctrl</kbd>+<kbd>Ctrl</kbd></span>
-      </span>
+      <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#terminal-shortcuts-modal" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">
+        <i class="ti ti-help"></i>
+      </button>
     </div>
   </div>
 </div>
+
+{{template "terminal_shortcuts_modal.gohtml"}}
 
 <div class="modal modal-blur fade" id="coder-files-modal" tabindex="-1" aria-labelledby="coder-files-modal-title" aria-hidden="true" data-coder-files-modal>
   <div class="modal-dialog modal-lg modal-dialog-centered">

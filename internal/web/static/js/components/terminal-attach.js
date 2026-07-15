@@ -1,6 +1,6 @@
 import { notifyError, notifySuccess, notifyInfo } from "@dc/toast";
 import { postForm, postJSON } from "@dc/http";
-import { get } from "@dc/store";
+import { get, set } from "@dc/store";
 
 const TERMINAL_THEMES = {
   dark: {
@@ -1045,6 +1045,30 @@ function initTerminalAttach(host) {
   let lastClientRows = rowsOverride;
   let measureElementObserver = null;
 
+  let fullscreen = interactiveInput && get("dc-terminal-fullscreen", "") === "1";
+  const fullscreenButtons = document.querySelectorAll("[data-terminal-fullscreen]");
+  const paintFullscreen = () => {
+    document.documentElement.classList.toggle("dc-terminal-fullscreen", fullscreen);
+    for (const button of fullscreenButtons) {
+      button.setAttribute("aria-pressed", fullscreen ? "true" : "false");
+      button.setAttribute("aria-label", fullscreen ? "Exit fullscreen" : "Fullscreen");
+      button.title = (fullscreen ? "Exit fullscreen" : "Fullscreen") + " (Ctrl+Shift+F)";
+      const icon = button.querySelector("i");
+      if (icon) icon.className = fullscreen ? "ti ti-minimize" : "ti ti-maximize";
+    }
+  };
+  const setFullscreen = (on) => {
+    if (!interactiveInput || fullscreen === on) {
+      return;
+    }
+    fullscreen = on;
+    set("dc-terminal-fullscreen", on ? "1" : "");
+    paintFullscreen();
+    scheduleResize();
+    term.focus();
+  };
+  paintFullscreen();
+
   // xterm appends offscreen measurement <div>s to document.body; reparent them
   // into the terminal so they inherit its font and measure cells correctly.
   const isOffscreenMeasureElement = (element) => (
@@ -1085,7 +1109,9 @@ function initTerminalAttach(host) {
     await waitForLayout();
     const dims = fitAddon.proposeDimensions();
     const cols = Math.max(2, (dims && dims.cols) ? dims.cols : lastClientCols || term.cols || 2);
-    const rows = Math.max(2, rowsOverride || lastClientRows || DEFAULT_ROWS);
+    const rows = fullscreen
+      ? Math.max(2, (dims && dims.rows) ? dims.rows : lastClientRows || DEFAULT_ROWS)
+      : Math.max(2, rowsOverride || lastClientRows || DEFAULT_ROWS);
     lastClientCols = cols;
     lastClientRows = rows;
     return { cols, rows };
@@ -1355,6 +1381,28 @@ function initTerminalAttach(host) {
     });
   }
 
+  for (const button of fullscreenButtons) {
+    listen(button, "click", (event) => {
+      event.preventDefault();
+      setFullscreen(!fullscreen);
+    });
+  }
+  if (interactiveInput) {
+    listen(document, "keydown", (event) => {
+      if ((event.key === "F" || event.key === "f") && (event.ctrlKey || event.metaKey)
+        && event.shiftKey && !event.altKey && !event.repeat) {
+        event.preventDefault();
+        event.stopPropagation();
+        setFullscreen(!fullscreen);
+      }
+    }, { capture: true });
+    listen(document, "dblclick", (event) => {
+      if (event.target.closest("[data-tabs-strip]") && !event.target.closest(".terminal-tab")) {
+        setFullscreen(!fullscreen);
+      }
+    });
+  }
+
   listen(window, "resize", scheduleResize);
   listen(darkSchemeMedia, "change", () => {
     if (AUTO_THEMES[themeOverride]) {
@@ -1408,6 +1456,7 @@ function initTerminalAttach(host) {
     measureElementObserver?.disconnect();
     if (resizeTimer !== null) window.clearTimeout(resizeTimer);
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+    document.documentElement.classList.remove("dc-terminal-fullscreen");
     term.dispose();
   };
 }

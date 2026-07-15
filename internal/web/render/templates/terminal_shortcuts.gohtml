@@ -1,0 +1,34 @@
+{{define "terminal_shortcuts_modal.gohtml"}}
+<div class="modal modal-blur fade" id="terminal-shortcuts-modal" tabindex="-1" aria-labelledby="terminal-shortcuts-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title" id="terminal-shortcuts-modal-title">Keyboard shortcuts</h3>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="terminal-shortcuts">
+          <div class="terminal-shortcuts-row">
+            <span>Next terminal</span>
+            <span class="terminal-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Tab</kbd></span>
+          </div>
+          <div class="terminal-shortcuts-row">
+            <span>Previous terminal</span>
+            <span class="terminal-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></span>
+          </div>
+          <div class="terminal-shortcuts-note">Works only in an installed web app.</div>
+          <div class="terminal-shortcuts-row">
+            <span>Session switcher</span>
+            <span class="terminal-shortcuts-keys">Double tap <kbd>Ctrl</kbd></span>
+          </div>
+          <div class="terminal-shortcuts-row">
+            <span>Fullscreen</span>
+            <span class="terminal-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></span>
+          </div>
+          <div class="terminal-shortcuts-note">A double click on free tab bar space toggles fullscreen too.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

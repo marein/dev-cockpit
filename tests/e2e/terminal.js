@@ -161,6 +161,48 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await sleep(300);
     });
 
+    // Fullscreen (desktop only): the attach page takes over the viewport, the
+    // tab strip stays on top, the control footer stays at the bottom, page
+    // chrome disappears, and rows follow the viewport height instead of the
+    // rows setting. Toggles: strip button, Ctrl+Shift+F or Cmd+Shift+F,
+    // double-click on empty strip space. Persists per device.
+    await run("desktop: fullscreen via strip button + Ctrl/Cmd+Shift+F + strip double-click, rows follow the viewport", async () => {
+      const state = () => page.evaluate(() => {
+        const footer = document.querySelector(".attach-footer");
+        const footerBox = footer.getBoundingClientRect();
+        return {
+          on: document.documentElement.classList.contains("dc-terminal-fullscreen"),
+          pagePos: getComputedStyle(document.querySelector(".attach-page")).position,
+          footerVisible: getComputedStyle(footer).display !== "none" && footerBox.height > 0,
+          footerAtBottom: Math.abs(footerBox.bottom - window.innerHeight) < 2,
+          stored: localStorage.getItem("dc-terminal-fullscreen"),
+          pressed: document.querySelector("[data-terminal-fullscreen]").getAttribute("aria-pressed"),
+          icon: document.querySelector("[data-terminal-fullscreen] i").className,
+        };
+      });
+      const resizeRows = (r) => { const m = /(?:^|&)rows=(\d+)/.exec(r.postData() || ""); return m ? Number(m[1]) : 0; };
+      const enterP = page.waitForRequest((r) => /\/resize$/.test(r.url()) && r.method() === "POST" && resizeRows(r) > 30, { timeout: 8000 });
+      await page.click("terminal-tabs [data-terminal-fullscreen]");
+      await enterP;
+      let st = await state();
+      assert(st.on && st.pagePos === "fixed" && st.footerVisible && st.footerAtBottom, `enter state wrong: ${JSON.stringify(st)}`);
+      assert(st.stored === "1" && st.pressed === "true" && /ti-minimize/.test(st.icon), `enter button state wrong: ${JSON.stringify(st)}`);
+      const exitP = page.waitForRequest((r) => /\/resize$/.test(r.url()) && r.method() === "POST" && resizeRows(r) === 30, { timeout: 8000 });
+      await page.keyboard.press("Control+Shift+F");
+      await exitP;
+      st = await state();
+      assert(!st.on && st.pagePos !== "fixed" && st.footerVisible && st.pressed === "false" && /ti-maximize/.test(st.icon), `exit state wrong: ${JSON.stringify(st)}`);
+      await page.keyboard.press("Meta+Shift+F");
+      await page.waitForFunction(() => document.documentElement.classList.contains("dc-terminal-fullscreen"), null, { timeout: 4000 });
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
+      await page.waitForFunction(() => document.documentElement.classList.contains("dc-terminal-fullscreen"), null, { timeout: 6000 });
+      const strip = await page.locator(".terminal-tabs-strip").boundingBox();
+      await page.mouse.dblclick(strip.x + strip.width - 8, strip.y + strip.height / 2);
+      await page.waitForFunction(() => !document.documentElement.classList.contains("dc-terminal-fullscreen"), null, { timeout: 4000 });
+      await page.evaluate(() => localStorage.removeItem("dc-terminal-fullscreen"));
+    });
+
     await run("desktop: refresh stream reconnects (no error)", async () => {
       const before = bag.consoleErrors.length + bag.pageErrors.length;
       await page.click(".attach-desktop [data-terminal-refresh]");
