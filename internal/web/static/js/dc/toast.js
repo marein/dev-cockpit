@@ -2,8 +2,6 @@
 // non-blocking toast (SweetAlert2 when present, console otherwise) and exposes
 // helpers modules call directly. installErrorHandler wires unhandled promise
 // rejections, where most uncaught fetch failures land, into the same channel.
-import { themePreset } from "@dc/dialog";
-
 let last = { text: "", at: 0 };
 
 function show(text, icon, timer, force) {
@@ -27,7 +25,6 @@ function show(text, icon, timer, force) {
     showCloseButton: true,
     timer: timer || 6000,
     timerProgressBar: true,
-    ...themePreset(),
   });
 }
 

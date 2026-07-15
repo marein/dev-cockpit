@@ -1,6 +1,11 @@
 /* Keep anchor jumps (e.g. /projects#project-x) off the very top edge. */
 html { scroll-padding-top: 3rem; }
 
+body {
+  --swal2-background: var(--tblr-bg-surface);
+  --swal2-color: var(--tblr-body-color);
+}
+
 .page {
   padding-top: env(safe-area-inset-top);
   padding-left: env(safe-area-inset-left);

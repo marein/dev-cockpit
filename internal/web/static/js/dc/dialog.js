@@ -1,11 +1,6 @@
-// SweetAlert2 wrappers with the app's theme preset. Falls back to native
-// confirm/prompt when SweetAlert is unavailable, so flows still work.
-const DARK = { background: "#1f2937", color: "#f8fafc" };
-
-export function themePreset() {
-  return document.documentElement.getAttribute("data-bs-theme") === "dark" ? DARK : {};
-}
-
+// SweetAlert2 wrappers. Falls back to native confirm/prompt when SweetAlert
+// is unavailable, so flows still work. Theming happens in style.css through
+// the --swal2-* custom properties, so open popups follow live theme flips.
 export function available() {
   return Boolean(window.Swal);
 }
@@ -27,7 +22,7 @@ export function fire(options = {}) {
     if (message) window.alert(message);
     return Promise.resolve({ isConfirmed: true });
   }
-  return window.Swal.fire({ ...themePreset(), ...options });
+  return window.Swal.fire(options);
 }
 
 export async function confirm({
