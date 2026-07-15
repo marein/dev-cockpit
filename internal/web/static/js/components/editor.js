@@ -4,6 +4,7 @@
 // a CDN; if that fails we fall back to a plain <textarea> so viewing/editing
 // still works.
 import { notifyError } from "@dc/toast";
+import { menuJustClosed, openMenu } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { csrfHeaders, ensureOk, getJSON, postForm } from "@dc/http";
 import * as store from "@dc/store";
@@ -33,9 +34,6 @@ async function init(root) {
   const indentInfoEl = root.querySelector("[data-editor-indent-info]");
   const saveBtn = root.querySelector("[data-editor-save]");
   const refreshBtn = root.querySelector("[data-editor-refresh]");
-  const newFileBtn = root.querySelector("[data-editor-new-file]");
-  const newFolderBtn = root.querySelector("[data-editor-new-folder]");
-  const uploadBtn = root.querySelector("[data-editor-upload]");
   const uploadInput = root.querySelector("[data-editor-upload-input]");
   const quickOpenBtn = root.querySelector("[data-editor-quick-open]");
   const searchProjectBtn = root.querySelector("[data-editor-search-project]");
@@ -160,7 +158,14 @@ async function init(root) {
       closeTab(tab.path);
     });
     btn.appendChild(stateEl);
-    btn.addEventListener("click", () => activateTab(tab.path));
+    btn.addEventListener("click", () => {
+      if (tab.path === activePath && !pointerMedia.matches && !menuJustClosed()) {
+        const rect = btn.getBoundingClientRect();
+        openTabMenu(tab.path, rect.left, rect.bottom + 4);
+        return;
+      }
+      activateTab(tab.path);
+    });
     btn.addEventListener("auxclick", (e) => {
       if (e.button === 1) {
         e.preventDefault();
@@ -274,6 +279,35 @@ async function init(root) {
       updateActionStates();
       persistTabs();
     }
+  }
+
+  async function closeMany(list) {
+    for (const tab of [...list]) {
+      await closeTab(tab.path);
+    }
+  }
+
+  function tabMenuItems(tab) {
+    const index = tabs.indexOf(tab);
+    return [
+      { label: "Close", icon: "ti-x", action: () => closeTab(tab.path) },
+      { label: "Close others", icon: "ti-square-x", disabled: tabs.length < 2, action: () => closeMany(tabs.filter((t) => t !== tab)) },
+      { label: "Close to the right", icon: "ti-arrow-bar-to-right", disabled: index === tabs.length - 1, action: () => closeMany(tabs.slice(index + 1)) },
+      { label: "Close all", icon: "ti-circle-x", action: () => closeMany(tabs) },
+      { divider: true },
+      { label: "Copy path", icon: "ti-copy", action: () => copyPath(tab.path) },
+      { label: "Download", icon: "ti-download", action: () => startDownload(tab.path) },
+      { label: "Reveal in tree", icon: "ti-list-tree", action: () => revealInTree(tab.path) },
+      { divider: true },
+      { label: "Rename", icon: "ti-pencil", action: () => renameEntry({ path: tab.path, name: tab.name, isDir: false }) },
+      { label: "Delete", icon: "ti-trash", danger: true, action: () => deletePath(tab.path) },
+    ];
+  }
+
+  function openTabMenu(path, x, y) {
+    const tab = tabByPath(path);
+    if (!tab) return;
+    openMenu({ x, y, items: tabMenuItems(tab), signal });
   }
 
   function markDirty(tab, on) {
@@ -403,29 +437,49 @@ async function init(root) {
     row.dataset.path = entry.path;
     if (entry.isDir) row.dataset.dir = "1";
     row.innerHTML = `<i class="ti ${icon} editor-item-icon"></i><span class="editor-item-name text-truncate">${escapeHtml(entry.name)}</span>`;
-    const ren = document.createElement("button");
-    ren.type = "button";
-    ren.className = "editor-item-ren";
-    ren.title = "Rename";
-    ren.setAttribute("aria-label", `Rename ${entry.name}`);
-    ren.innerHTML = `<i class="ti ti-pencil"></i>`;
-    ren.addEventListener("click", (e) => {
-      e.stopPropagation();
-      renameEntry(entry);
-    });
-    row.appendChild(ren);
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "editor-item-del";
-    del.title = "Delete";
-    del.setAttribute("aria-label", `Delete ${entry.name}`);
-    del.innerHTML = `<i class="ti ti-trash"></i>`;
-    del.addEventListener("click", (e) => {
-      e.stopPropagation();
-      deletePath(entry.path);
-    });
-    row.appendChild(del);
     return row;
+  }
+
+  function clearTreeSelection() {
+    selected = null;
+    treeEl.querySelectorAll(".editor-item.selected").forEach((el) => el.classList.remove("selected"));
+  }
+
+  function treeMenuItems(entry) {
+    const items = [
+      { label: "New file", icon: "ti-file-plus", action: () => createFile() },
+      { label: "New folder", icon: "ti-folder-plus", action: () => createFolder() },
+      { label: "Upload files", icon: "ti-upload", action: () => uploadInput.click() },
+    ];
+    if (!entry) {
+      items.push({ divider: true });
+      items.push({ label: "Refresh", icon: "ti-refresh", action: () => loadTree() });
+      return items;
+    }
+    items.push({ divider: true });
+    items.push({ label: "Copy path", icon: "ti-copy", action: () => copyPath(entry.path) });
+    if (!entry.isDir) {
+      items.push({ label: "Download", icon: "ti-download", action: () => startDownload(entry.path) });
+    }
+    items.push({ divider: true });
+    items.push({
+      label: "Rename",
+      icon: "ti-pencil",
+      action: () => renameEntry({ path: entry.path, name: baseName(entry.path), isDir: entry.isDir }),
+    });
+    items.push({ label: "Delete", icon: "ti-trash", danger: true, action: () => deletePath(entry.path) });
+    return items;
+  }
+
+  function openTreeMenu(row, x, y) {
+    if (row && row.dataset.path) {
+      setSelected(row.dataset.path, !!row.dataset.dir, row);
+      openMenu({ x, y, items: treeMenuItems({ path: row.dataset.path, isDir: !!row.dataset.dir }), signal });
+    } else {
+      clearTreeSelection();
+      openMenu({ x, y, items: treeMenuItems(null), signal });
+    }
+    return true;
   }
 
   function dirNode(entry, depth) {
@@ -634,14 +688,27 @@ async function init(root) {
     }
   }
 
-  async function copyPath() {
-    const tab = activeTab();
-    if (!tab) return;
+  async function copyPath(path) {
     try {
-      await navigator.clipboard.writeText(tab.path);
-      status(`Copied ${tab.path}`, "ok");
+      await navigator.clipboard.writeText(path);
+      status(`Copied ${path}`, "ok");
     } catch {
       status("Clipboard is not available.", "error");
+    }
+  }
+
+  async function revealInTree(path) {
+    if (mobileMedia.matches) openDrawer();
+    expandTo(parentDir(path));
+    await loadTree();
+    for (let i = 0; i < 40 && !signal.aborted; i++) {
+      const row = treeEl.querySelector(`.editor-file[data-path="${CSS.escape(path)}"]`);
+      if (row) {
+        setSelected(path, false, row);
+        row.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
 
@@ -1201,15 +1268,15 @@ async function init(root) {
     const tab = activeTab();
     if (tab) renameEntry({ path: tab.path, name: tab.name, isDir: false });
   }, { signal });
-  copyPathItem.addEventListener("click", copyPath, { signal });
+  copyPathItem.addEventListener("click", () => {
+    const tab = activeTab();
+    if (tab) copyPath(tab.path);
+  }, { signal });
   downloadItem.addEventListener("click", () => {
     const tab = activeTab();
     if (tab) startDownload(tab.path);
   }, { signal });
   refreshBtn.addEventListener("click", loadTree, { signal });
-  newFileBtn.addEventListener("click", createFile, { signal });
-  newFolderBtn.addEventListener("click", createFolder, { signal });
-  uploadBtn.addEventListener("click", () => uploadInput.click(), { signal });
   uploadInput.addEventListener("change", () => {
     uploadFiles(uploadInput.files, targetDir());
     uploadInput.value = "";
@@ -1232,6 +1299,71 @@ async function init(root) {
       e.preventDefault();
     }
   }, { passive: false, signal });
+
+  function wireRowMenus(container, rowSelector, openFor) {
+    let press = null;
+    let suppressClick = false;
+    let pressMenuAt = 0;
+    const cancelPress = () => {
+      if (!press) return;
+      clearTimeout(press.timer);
+      press = null;
+    };
+    container.addEventListener("contextmenu", (e) => {
+      const row = e.target.closest(rowSelector);
+      if (press) {
+        cancelPress();
+        suppressClick = true;
+      }
+      if (Date.now() - pressMenuAt < 600) {
+        e.preventDefault();
+        return;
+      }
+      let handled;
+      if (e.clientX || e.clientY) {
+        handled = openFor(row, e.clientX, e.clientY);
+      } else if (row) {
+        const rect = row.getBoundingClientRect();
+        handled = openFor(row, rect.left, rect.bottom + 4);
+      }
+      if (handled) e.preventDefault();
+    }, { signal });
+    container.addEventListener("pointerdown", (e) => {
+      suppressClick = false;
+      if (e.pointerType !== "touch") return;
+      const row = e.target.closest(rowSelector);
+      cancelPress();
+      press = {
+        x: e.clientX,
+        y: e.clientY,
+        timer: setTimeout(() => {
+          press = null;
+          if (openFor(row, e.clientX, e.clientY)) {
+            suppressClick = true;
+            pressMenuAt = Date.now();
+          }
+        }, 500),
+      };
+    }, { signal });
+    container.addEventListener("pointermove", (e) => {
+      if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) cancelPress();
+    }, { signal });
+    container.addEventListener("pointerup", cancelPress, { signal });
+    container.addEventListener("pointercancel", cancelPress, { signal });
+    container.addEventListener("click", (e) => {
+      if (!suppressClick) return;
+      suppressClick = false;
+      e.preventDefault();
+      e.stopPropagation();
+    }, { signal, capture: true });
+  }
+
+  wireRowMenus(tabsEl, ".editor-tab", (row, x, y) => {
+    if (!row) return false;
+    openTabMenu(row.dataset.path, x, y);
+    return true;
+  });
+  wireRowMenus(treeEl, ".editor-item", openTreeMenu);
   wireTreeDrop();
   wireSplitter();
   wireQuickOpen();

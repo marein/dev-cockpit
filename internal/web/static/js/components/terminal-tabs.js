@@ -1,4 +1,5 @@
-import { confirm } from "@dc/dialog";
+import { openMenu } from "@dc/contextmenu";
+import { confirm, promptText } from "@dc/dialog";
 import { el } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import { applyFold } from "@dc/fold";
@@ -47,6 +48,7 @@ class TerminalTabs extends HTMLElement {
     this.strip.addEventListener("pointerup", (event) => this.onPointerUp(event), { signal });
     this.strip.addEventListener("pointercancel", () => this.cancelDrag(), { signal });
     this.strip.addEventListener("click", (event) => this.onClick(event), { signal, capture: true });
+    this.strip.addEventListener("contextmenu", (event) => this.onContextMenu(event), { signal });
     document.addEventListener("keydown", (event) => this.onKeydown(event), { signal, capture: true });
     document.addEventListener("keyup", (event) => this.onKeyup(event), { signal, capture: true });
     document.addEventListener("dc-renamed", (event) => this.onRenamed(event.detail || {}), { signal });
@@ -149,6 +151,74 @@ class TerminalTabs extends HTMLElement {
     this.suppressClick = false;
     event.preventDefault();
     event.stopPropagation();
+  }
+
+  onContextMenu(event) {
+    const tab = event.target.closest(".terminal-tab");
+    if (!tab) return;
+    event.preventDefault();
+    this.cancelDrag();
+    const dataset = { ...tab.dataset };
+    const items = [];
+    if (dataset.tabKind === "shell") {
+      items.push({ label: "Rename", icon: "ti-pencil", action: () => void this.renameShell(dataset) });
+    }
+    if (tab.querySelector("[data-tab-icon].news")) {
+      items.push({ label: "Mark read", icon: "ti-eye-check", action: () => void this.markRead(dataset.tabId) });
+    }
+    if (dataset.tabProject) {
+      items.push({ divider: true });
+      items.push({
+        label: "Open project",
+        icon: "ti-folder",
+        action: () => this.navigate("/projects#project-" + dataset.tabProject),
+      });
+      items.push({
+        label: "Open editor",
+        icon: "ti-code",
+        action: () => this.navigate(
+          "/projects/" + encodeURIComponent(dataset.tabProject) + "/editor?return=" + encodeURIComponent(window.location.pathname),
+        ),
+      });
+    }
+    items.push({ divider: true });
+    items.push({
+      label: dataset.tabKind === "coder" ? "Stop coder" : "Delete shell",
+      icon: dataset.tabKind === "coder" ? "ti-player-stop" : "ti-trash",
+      danger: true,
+      action: () => void this.closeTarget(dataset),
+    });
+    openMenu({ x: event.clientX, y: event.clientY, items, signal: this.ac.signal });
+  }
+
+  async renameShell({ tabId, tabName }) {
+    if (this.confirming) return;
+    this.confirming = true;
+    try {
+      const name = await promptText({
+        title: `Rename shell "${tabName}"`,
+        value: tabName,
+        confirmText: "Rename",
+        validatorMessage: "Please enter a name.",
+      });
+      if (!name || name === tabName) return;
+      const response = await postForm(`/shells/${tabId}/rename`, { name });
+      await ensureOk(response, "Could not rename the shell.");
+    } catch (error) {
+      notifyError(error.message);
+    } finally {
+      this.confirming = false;
+      this.tryRefresh();
+    }
+  }
+
+  async markRead(id) {
+    try {
+      const response = await postForm("/notifications/read", { target: id });
+      await ensureOk(response, "Could not mark the news read.");
+    } catch (error) {
+      notifyError(error.message);
+    }
   }
 
   contentX(clientX) {

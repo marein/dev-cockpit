@@ -12,9 +12,18 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // (save), .../create, .../mkdir, .../delete, .../rename, .../upload, .../preview.
 // The toolbar buttons are wired only after init() awaits the CDN, so wait for
 // .cm-editor before driving them; kebab menu items are clicked via evaluate so the
-// bootstrap dropdown does not need to be opened first.
+// bootstrap dropdown does not need to be opened first. Tabs and tree rows carry a
+// context menu (@dc/contextmenu, body-mounted .dc-context-menu): right click on
+// fine pointers, long-press on touch, and on tabs also a tap on the already active
+// tab. Tab entries are the close variants, copy path, download, reveal in tree,
+// rename and delete. Tree entries are new file/new folder/upload (right click
+// selects the row, so they target the row's dir), copy path, download on files,
+// rename and delete; the empty tree area clears the selection and targets the
+// project root, plus a refresh entry. The menu is the only create/upload path:
+// the per-row hover pencil/trash buttons are gone and the tree header keeps just
+// the refresh button (drag-drop upload still works).
 
-L.runFeature("EDITOR", async ({ page, run, mobilePage }) => {
+L.runFeature("EDITOR", async ({ engine, page, run, mobilePage }) => {
   const tag = `edit-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   const editorURL = `${BASE}/projects/${encodeURIComponent(project)}/editor`;
@@ -25,16 +34,36 @@ L.runFeature("EDITOR", async ({ page, run, mobilePage }) => {
 
   const tabSel = (path) => `.editor-tab[data-path="${path}"]`;
   const clickItem = (sel) => page.evaluate((s) => document.querySelector(s).click(), sel);
+  // Wait out the Swal close: on WebKit the dialog restores focus to the
+  // pre-dialog element asynchronously, even past the container detach, stealing
+  // the focus the editor set on the new tab. Typing right away could then land
+  // outside the buffer (with the old toolbar button as opener it reopened the
+  // create dialog). The settle sleep outlives that restore, the caller's
+  // .cm-content click after newFile then lands on a stable focus.
+  const treeRootMenu = async () => {
+    const box = await page.locator("[data-editor-tree]").boundingBox();
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height - 12, { button: "right" });
+    await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+  };
   const newFile = async (name) => {
-    await page.click("[data-editor-new-file]");
+    await treeRootMenu();
+    await menuItem(page, "New file").click();
+    await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
     await page.fill(".swal2-input", name); await page.click(".swal2-confirm");
     await page.waitForSelector(tabSel(name), { timeout: 8000 });
+    await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+    await sleep(800);
   };
   const waitDirty = (path, on) =>
     page.waitForFunction(([sel, want]) => {
       const el = document.querySelector(sel);
       return !!el && el.classList.contains("dirty") === want;
     }, [tabSel(path), on], { timeout: 6000 });
+  const menuItem = (p, label) => p.locator(".dc-context-menu .dropdown-item", { hasText: new RegExp(`^${label}$`) });
+  const openRowMenu = async (p, sel) => {
+    await p.click(sel, { button: "right" });
+    await p.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+  };
 
   try {
     await L.createProject(page, project);
@@ -184,13 +213,18 @@ L.runFeature("EDITOR", async ({ page, run, mobilePage }) => {
     });
 
     await run("open tabs, active tab and expanded tree dirs survive a reload", async () => {
-      await page.click("[data-editor-new-folder]");
+      await treeRootMenu();
+      await menuItem(page, "New folder").click();
+      await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
       await page.fill(".swal2-input", `keep_${tag}`);
       await page.click(".swal2-confirm");
       await page.waitForSelector(`.editor-dir[data-path="keep_${tag}"]`, { timeout: 8000 });
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
       await page.click(`.editor-dir[data-path="keep_${tag}"]`);
       await sleep(300);
-      await page.click("[data-editor-new-file]");
+      await openRowMenu(page, `.editor-dir[data-path="keep_${tag}"]`);
+      await menuItem(page, "New file").click();
+      await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
       await page.fill(".swal2-input", "inside.txt");
       await page.click(".swal2-confirm");
       await page.waitForSelector(`.editor-file[data-path="keep_${tag}/inside.txt"]`, { timeout: 8000 });
@@ -221,9 +255,11 @@ L.runFeature("EDITOR", async ({ page, run, mobilePage }) => {
       await page.waitForFunction((s) => !document.querySelector(s), tabSel(qoFile), { timeout: 6000 });
     });
 
-    await run("rename from the tree updates the row and the open tab", async () => {
+    await run("rename via the tree row's context menu updates the row and the open tab", async () => {
       const renamed = `renamed_${tag}.go`;
-      await page.click(`.editor-file[data-path="main.go"] .editor-item-ren`);
+      await openRowMenu(page, '.editor-file[data-path="main.go"]');
+      await menuItem(page, "Rename").click();
+      await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
       await page.fill(".swal2-input", renamed); await page.click(".swal2-confirm");
       await page.waitForSelector(`.editor-file[data-path="${renamed}"]`, { timeout: 8000 });
       await page.waitForSelector(tabSel(renamed), { timeout: 6000 });
@@ -321,24 +357,156 @@ L.runFeature("EDITOR", async ({ page, run, mobilePage }) => {
     });
 
     await run("new folder + recursive delete drops descendants and their tabs", async () => {
-      await page.click("[data-editor-new-folder]"); await page.fill(".swal2-input", "sub"); await page.click(".swal2-confirm");
-      await page.waitForFunction(() => [...document.querySelectorAll(".editor-item-name")].some((e) => e.textContent === "sub"), null, { timeout: 8000 });
-      await page.locator(".editor-dir", { has: page.locator(".editor-item-name", { hasText: /^sub$/ }) }).first().click(); await sleep(300);
-      await page.click("[data-editor-new-file]"); await page.fill(".swal2-input", "inner.txt"); await page.click(".swal2-confirm");
+      await treeRootMenu();
+      await menuItem(page, "New folder").click();
+      await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
+      await page.fill(".swal2-input", "sub"); await page.click(".swal2-confirm");
+      await page.waitForSelector('.editor-dir[data-path="sub"]', { timeout: 8000 });
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      await page.click('.editor-dir[data-path="sub"]'); await sleep(300);
+      await openRowMenu(page, '.editor-dir[data-path="sub"]');
+      await menuItem(page, "New file").click();
+      await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
+      await page.fill(".swal2-input", "inner.txt"); await page.click(".swal2-confirm");
       await page.waitForSelector('.editor-file[data-path="sub/inner.txt"]', { timeout: 8000 });
       await page.waitForSelector(tabSel("sub/inner.txt"), { timeout: 6000 });
-      await page.locator(".editor-dir", { has: page.locator(".editor-item-name", { hasText: /^sub$/ }) }).first().locator(".editor-item-del").click();
+      await page.locator(".editor-dir", { has: page.locator(".editor-item-name", { hasText: /^sub$/ }) }).first().click({ button: "right" });
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+      await menuItem(page, "Delete").click();
       await confirmSwal(page);
       await page.waitForFunction(() => ![...document.querySelectorAll(".editor-item-name")].some((e) => e.textContent === "sub") && !document.querySelector('.editor-file[data-path="sub/inner.txt"]'), null, { timeout: 8000 });
       assert(!(await page.$(tabSel("sub/inner.txt"))), "tab of the deleted folder's file still open");
     });
 
-    await run("delete a file drops it from the tree and closes its tab", async () => {
+    await run("delete via the tree row's context menu drops it from the tree and closes its tab", async () => {
       const renamed = `renamed_${tag}.go`;
-      await page.click(`.editor-file[data-path="${renamed}"] .editor-item-del`);
+      await openRowMenu(page, `.editor-file[data-path="${renamed}"]`);
+      await menuItem(page, "Delete").click();
       await confirmSwal(page);
       await page.waitForFunction((f) => !document.querySelector(`.editor-file[data-path="${f}"]`), renamed, { timeout: 8000 });
       assert(!(await page.$(tabSel(renamed))), "tab of the deleted file still open");
+    });
+
+    await run("right click on a tab opens the context menu, Escape closes it", async () => {
+      await openRowMenu(page, tabSel(noteFile));
+      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      for (const want of ["Close", "Close others", "Close to the right", "Close all", "Copy path", "Download", "Reveal in tree", "Rename", "Delete"]) {
+        assert(labels.includes(want), `menu misses '${want}': ${labels.join(", ")}`);
+      }
+      const disabled = await page.$$eval(".dc-context-menu .dropdown-item:disabled", (els) => els.map((e) => e.textContent.trim()));
+      assert(disabled.includes("Close others") && disabled.includes("Close to the right"), `single tab must disable close-others/right: ${disabled.join(", ")}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+    });
+
+    await run("context menu Copy path copies the tab path", async () => {
+      await openRowMenu(page, tabSel(noteFile));
+      await menuItem(page, "Copy path").click();
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+      await page.waitForFunction(() => /Copied |Clipboard is not available/.test(document.querySelector("[data-editor-status]").textContent), null, { timeout: 4000 });
+      if (engine === "chromium") {
+        const text = await page.evaluate(() => navigator.clipboard.readText());
+        assert(text === noteFile, `clipboard '${text}' != '${noteFile}'`);
+      }
+    });
+
+    await run("context menu Reveal in tree expands the folder and selects the file", async () => {
+      const inside = `keep_${tag}/inside.txt`;
+      const rowVisible = () => page.$eval(`.editor-file[data-path="${inside}"]`, (e) => e.offsetParent !== null).catch(() => false);
+      if (!(await rowVisible())) {
+        await page.click(`.editor-dir[data-path="keep_${tag}"]`);
+        await page.waitForSelector(`.editor-file[data-path="${inside}"]`, { timeout: 8000 });
+      }
+      await page.click(`.editor-file[data-path="${inside}"]`);
+      await page.waitForSelector(`${tabSel(inside)}.active`, { timeout: 8000 });
+      await page.click(`.editor-dir[data-path="keep_${tag}"]`);
+      await page.waitForFunction((p) => {
+        const row = document.querySelector(`.editor-file[data-path="${p}"]`);
+        return !row || row.offsetParent === null;
+      }, inside, { timeout: 6000 });
+      await openRowMenu(page, tabSel(inside));
+      await menuItem(page, "Reveal in tree").click();
+      await page.waitForFunction((p) => {
+        const row = document.querySelector(`.editor-file[data-path="${p}"]`);
+        return !!row && row.offsetParent !== null && row.classList.contains("selected");
+      }, inside, { timeout: 8000 });
+      await openRowMenu(page, tabSel(inside));
+      await menuItem(page, "Close").click();
+      await page.waitForFunction((s) => !document.querySelector(s), tabSel(inside), { timeout: 6000 });
+    });
+
+    await run("tree context menu: dir menu creates inside the dir, file menu deletes, empty area targets the root", async () => {
+      const dirSel = `.editor-dir[data-path="keep_${tag}"]`;
+      const inmenu = `keep_${tag}/inmenu.txt`;
+      await openRowMenu(page, dirSel);
+      let labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      for (const want of ["New file", "New folder", "Upload files", "Copy path", "Rename", "Delete"]) {
+        assert(labels.includes(want), `dir menu misses '${want}': ${labels.join(", ")}`);
+      }
+      assert(!labels.includes("Download"), "dir menu offers Download");
+      assert(await page.$eval(dirSel, (e) => e.classList.contains("selected")), "right-click did not select the dir row");
+      await menuItem(page, "New file").click();
+      await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
+      await page.fill(".swal2-input", "inmenu.txt");
+      await page.click(".swal2-confirm");
+      await page.waitForSelector(tabSel(inmenu), { timeout: 8000 });
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      await sleep(800);
+      await openRowMenu(page, `.editor-file[data-path="${inmenu}"]`);
+      labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      assert(labels.includes("Download"), `file menu misses Download: ${labels.join(", ")}`);
+      await menuItem(page, "Delete").click();
+      await confirmSwal(page);
+      await page.waitForFunction((p) => !document.querySelector(`.editor-file[data-path="${p}"]`), inmenu, { timeout: 8000 });
+      assert(!(await page.$(tabSel(inmenu))), "tab of the menu-deleted file still open");
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      const box = await page.locator("[data-editor-tree]").boundingBox();
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height - 12, { button: "right" });
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+      labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      for (const want of ["New file", "New folder", "Upload files", "Refresh"]) {
+        assert(labels.includes(want), `empty-area menu misses '${want}': ${labels.join(", ")}`);
+      }
+      assert(!labels.includes("Rename"), "empty-area menu offers Rename");
+      await menuItem(page, "New file").click();
+      await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
+      await page.fill(".swal2-input", "rootmenu.txt");
+      await page.click(".swal2-confirm");
+      await page.waitForSelector(tabSel("rootmenu.txt"), { timeout: 8000 });
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      await sleep(800);
+      await openRowMenu(page, '.editor-file[data-path="rootmenu.txt"]');
+      await menuItem(page, "Delete").click();
+      await confirmSwal(page);
+      await page.waitForFunction(() => !document.querySelector('.editor-file[data-path="rootmenu.txt"]'), null, { timeout: 8000 });
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+    });
+
+    await run("Close to the right and Close others close the expected tabs", async () => {
+      await newFile(`cm1_${tag}.txt`);
+      await newFile(`cm2_${tag}.txt`);
+      await openRowMenu(page, tabSel(`cm1_${tag}.txt`));
+      await menuItem(page, "Close to the right").click();
+      await page.waitForFunction((s) => !document.querySelector(s), tabSel(`cm2_${tag}.txt`), { timeout: 6000 });
+      assert(await page.$(tabSel(noteFile)), "close-to-the-right also closed a tab on the left");
+      await openRowMenu(page, tabSel(`cm1_${tag}.txt`));
+      await menuItem(page, "Close others").click();
+      await page.waitForFunction((s) => !document.querySelector(s), tabSel(noteFile), { timeout: 6000 });
+      const open = await page.$$eval(".editor-tab", (els) => els.map((e) => e.dataset.path));
+      assert(open.length === 1 && open[0] === `cm1_${tag}.txt`, `unexpected open tabs: ${open.join(", ")}`);
+    });
+
+    await run("Close all asks to discard a dirty tab and empties the strip", async () => {
+      await page.click(".cm-content");
+      await page.keyboard.type("dirty");
+      await waitDirty(`cm1_${tag}.txt`, true);
+      await openRowMenu(page, tabSel(`cm1_${tag}.txt`));
+      await menuItem(page, "Close all").click();
+      await page.waitForSelector(".swal2-popup", { timeout: 6000 });
+      assert(/discard/i.test(await page.textContent(".swal2-popup")), "no discard wording in the close-all confirm");
+      await confirmSwal(page);
+      await page.waitForFunction(() => !document.querySelector(".editor-tab"), null, { timeout: 6000 });
+      assert(await page.$eval("[data-editor-placeholder]", (e) => !e.hidden), "placeholder hidden with no tabs open");
     });
 
     await run("mobile: tree is a drawer, auto-open without tabs, closes on open", async () => {
@@ -347,7 +515,25 @@ L.runFeature("EDITOR", async ({ page, run, mobilePage }) => {
       await mp.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
       await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 8000 });
       assert(await mp.isVisible("[data-editor-drawer-toggle]"), "drawer toggle not visible on mobile");
-      await mp.click("[data-editor-new-file]");
+      await mp.evaluate(() => {
+        const tree = document.querySelector("[data-editor-tree]");
+        const rect = tree.getBoundingClientRect();
+        tree.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true, cancelable: true, pointerId: 13, pointerType: "touch",
+          clientX: rect.left + rect.width / 2, clientY: rect.bottom - 16, buttons: 1,
+        }));
+      });
+      await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+      await mp.evaluate(() => {
+        const tree = document.querySelector("[data-editor-tree]");
+        const rect = tree.getBoundingClientRect();
+        tree.dispatchEvent(new PointerEvent("pointerup", {
+          bubbles: true, cancelable: true, pointerId: 13, pointerType: "touch",
+          clientX: rect.left + rect.width / 2, clientY: rect.bottom - 16,
+        }));
+      });
+      await menuItem(mp, "New file").click();
+      await mp.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
       await mp.fill(".swal2-input", `mob_${tag}.txt`); await mp.click(".swal2-confirm");
       await mp.waitForSelector(tabSel(`mob_${tag}.txt`), { timeout: 8000 });
       assert(await mp.$(".editor.editor-drawer-open"), "creating a file closed the drawer");
@@ -357,6 +543,70 @@ L.runFeature("EDITOR", async ({ page, run, mobilePage }) => {
       await mp.click("[data-editor-drawer-toggle]");
       await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 6000 });
       await mp.click("[data-editor-backdrop]");
+      await mp.waitForFunction(() => !document.querySelector(".editor.editor-drawer-open"), null, { timeout: 6000 });
+    });
+
+    await run("mobile: tapping the active tab and long-pressing any tab open the context menu", async () => {
+      const mp = await mobilePage();
+      await mp.waitForSelector(`${tabSel(noteFile)}.active`, { timeout: 8000 });
+      await mp.tap(`${tabSel(noteFile)} .editor-tab-name`);
+      await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+      await menuItem(mp, "Close").click();
+      await mp.waitForFunction((s) => !document.querySelector(s), tabSel(noteFile), { timeout: 6000 });
+      const mob = `mob_${tag}.txt`;
+      await mp.waitForSelector(`${tabSel(mob)}.active`, { timeout: 6000 });
+      await mp.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        const rect = el.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true, cancelable: true, pointerId: 7, pointerType: "touch",
+          clientX: rect.left + 12, clientY: rect.top + 12, buttons: 1,
+        }));
+      }, tabSel(mob));
+      await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+      await mp.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        const rect = el.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent("pointerup", {
+          bubbles: true, cancelable: true, pointerId: 7, pointerType: "touch",
+          clientX: rect.left + 12, clientY: rect.top + 12,
+        }));
+      }, tabSel(mob));
+      const labels = await mp.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      assert(labels.includes("Close all"), `long-press menu misses entries: ${labels.join(", ")}`);
+      await mp.keyboard.press("Escape");
+      await mp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+    });
+
+    await run("mobile: long-pressing a tree row opens the file actions menu", async () => {
+      const mp = await mobilePage();
+      await mp.tap("[data-editor-drawer-toggle]");
+      await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 6000 });
+      await mp.waitForSelector(`.editor-file[data-path="${noteFile}"]`, { timeout: 8000 });
+      await mp.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        const rect = el.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true, cancelable: true, pointerId: 11, pointerType: "touch",
+          clientX: rect.left + 20, clientY: rect.top + rect.height / 2, buttons: 1,
+        }));
+      }, `.editor-file[data-path="${noteFile}"]`);
+      await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+      await mp.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        const rect = el.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent("pointerup", {
+          bubbles: true, cancelable: true, pointerId: 11, pointerType: "touch",
+          clientX: rect.left + 20, clientY: rect.top + rect.height / 2,
+        }));
+      }, `.editor-file[data-path="${noteFile}"]`);
+      const labels = await mp.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      for (const want of ["New file", "Upload files", "Rename", "Delete"]) {
+        assert(labels.includes(want), `tree long-press menu misses '${want}': ${labels.join(", ")}`);
+      }
+      await mp.keyboard.press("Escape");
+      await mp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+      await mp.evaluate(() => document.querySelector("[data-editor-backdrop]").click());
       await mp.waitForFunction(() => !document.querySelector(".editor.editor-drawer-open"), null, { timeout: 6000 });
     });
 

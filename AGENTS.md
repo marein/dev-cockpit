@@ -78,8 +78,13 @@ free floating page scripts.
   elements that must react to the final URL listen for it. `data-no-pe` opts a link or form out
   into a native load (login, logout, downloads, JS owned forms). Framework scripts
   and toasts sit outside the swap and survive it.
-- **Shared modules:** `internal/web/static/js/dc/` (toast, dialog, http, dom,
-  store, repeater, fold, project-sort). Imported by bare specifier `@dc/<name>`.
+- **Shared modules:** `internal/web/static/js/dc/` (toast, dialog, contextmenu,
+  http, dom, store, repeater, fold, project-sort). Imported by bare specifier
+  `@dc/<name>`. `@dc/contextmenu` renders a body-mounted `.dc-context-menu`
+  dropdown at a point, one open menu at a time (Escape/arrow keys, outside
+  pointerdown, outside wheel/touchmove, `dc:navigated` and the caller's abort
+  signal close it; programmatic scrolls must never close it); the editor tabs,
+  the editor file tree and the terminal tab strip use it.
 - **Custom elements:** `internal/web/static/js/components/`, one element per
   file, registered with `customElements.define`. Each imports only from `@dc/*`,
   never from another component, so the import map stays flat.

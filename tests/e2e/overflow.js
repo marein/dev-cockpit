@@ -75,10 +75,16 @@ async function overflowAt(page, url) {
       await page.fill('input[name="skill_description"]', LN + " " + LN);
       await page.fill('textarea[name="skill_instructions"]', LN + LN);
       await Promise.all([page.waitForURL(/\/skills(\?coder=\w+)?$/, { timeout: 10000 }), submitBtn(page, 'input[name="skill_id"]').click()]);
-      // editor file with a long name
+      // editor file with a long name (created via the tree's context menu, the
+      // tree header only carries the refresh button)
       await page.goto(editorURL, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
-      await page.click("[data-editor-new-file]");
+      await page.waitForFunction(() => { const t = document.querySelector("[data-editor-tree]"); return t && !/Loading/.test(t.textContent); }, null, { timeout: 8000 });
+      const treeBox = await page.locator("[data-editor-tree]").boundingBox();
+      await page.mouse.click(treeBox.x + treeBox.width / 2, treeBox.y + treeBox.height - 12, { button: "right" });
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+      await page.locator(".dc-context-menu .dropdown-item", { hasText: /^New file$/ }).click();
+      await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
       await page.fill(".swal2-input", LN + ".txt");
       await page.click(".swal2-confirm");
       await page.waitForSelector(`.editor-file[data-path="${LN}.txt"]`, { timeout: 8000 });

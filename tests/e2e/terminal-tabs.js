@@ -33,7 +33,12 @@ const { assert, sleep, BASE } = L;
 // (confirm dialog, then coder stop or shell delete; closing the current session
 // switches to the right neighbor tab like Terminal.app, left as fallback,
 // projects page when the strip is empty; the page header stop button keeps its
-// own redirect+flash flow). Switcher rows deliberately carry no close control
+// own redirect+flash flow). Right click on a tab opens a context menu
+// (@dc/contextmenu, body-mounted .dc-context-menu): Rename for shells (prompt,
+// POST /shells/:id/rename, tab updates over the event stream), Mark read only
+// while the tab carries news, Open project (projects page card fragment), Open
+// editor (with ?return to the attach page), and the same stop/delete action as
+// the close control. Switcher rows deliberately carry no close control
 // and no badges; the current session's row is marked by the current class
 // (accent bar) without extra row content. The + button at the strip's end
 // opens New coder / New shell with the current project preselected, followed by
@@ -84,6 +89,8 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
   const project = `zztc-${tag}`;
   const shellUrls = [];
   let coderUrl = null;
+  let foreignProject = null;
+  let foreignShellUrl = null;
   const ownId = (url) => new URL(url).pathname.split("/").pop();
   const tabSel = (id) => `terminal-tabs .terminal-tab[data-tab-id="${id}"]`;
   const tabOrder = () => page.$$eval("terminal-tabs .terminal-tab", (els) => els.map((e) => e.dataset.tabId));
@@ -374,7 +381,12 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(JSON.stringify(ownOrder) === JSON.stringify([ids[2], ids[0], ids[1], newId]), `own order with new shell: ${ownOrder}`);
     });
 
-    await run("typing in the switcher filters the list, Enter opens the first match", async () => {
+    await run("typing in the switcher filters out a foreign-project shell, Enter opens the first match", async () => {
+      foreignProject = `zzfo-${tag.slice(-6)}`;
+      await L.createProject(page, foreignProject);
+      foreignShellUrl = await L.createShell(page, foreignProject);
+      const foreignId = ownId(foreignShellUrl);
+      await page.waitForSelector(tabSel(foreignId), { state: "attached", timeout: 8000 });
       await page.keyboard.press("Control");
       await page.keyboard.press("Control");
       await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
@@ -383,8 +395,8 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       const visible = await page.$$eval(".terminal-switcher-item:not([hidden])", (els) => els.map((e) => e.dataset.switcherId));
       assert(visible.length === 4, `filter shows ${visible.length} rows, expected the 4 own shells`);
       assert(visible.every((id) => [...ids, ownId(shellUrls[3])].includes(id)), `filter leaked foreign rows: ${visible}`);
-      const hiddenCount = await page.locator(".terminal-switcher-item[hidden]").count();
-      assert(hiddenCount > 0, "no rows were filtered out");
+      const foreignHidden = await page.$eval(`.terminal-switcher-item[data-switcher-id="${foreignId}"]`, (e) => e.hidden);
+      assert(foreignHidden, "the foreign-project row is not hidden by the filter");
       await page.keyboard.press("Enter");
       await page.waitForURL(new RegExp(visible[0]), { timeout: 8000 });
       assert((await page.locator(".terminal-switcher").count()) === 0, "switcher still open after Enter");
@@ -421,6 +433,78 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(label === newName, `tab label '${label}' after rename`);
       const title = await page.$eval(tabSel(ids[2]), (e) => e.getAttribute("title"));
       assert(title.includes(newName) && title.includes(project), `tab title '${title}' after rename`);
+    });
+
+    const menuItem = (label) => page.locator(".dc-context-menu .dropdown-item", { hasText: new RegExp(`^${label}$`) });
+    const openTabMenu = async (sel) => {
+      await page.click(sel, { button: "right" });
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+    };
+    const closeTabMenu = async () => {
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+    };
+
+    await run("right click on a shell tab opens its context menu, Escape closes it", async () => {
+      await page.goto(shellUrls[2], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(tabSel(ids[2]), { state: "attached", timeout: 8000 });
+      await openTabMenu(tabSel(ids[2]));
+      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      for (const want of ["Rename", "Open project", "Open editor", "Delete shell"]) {
+        assert(labels.includes(want), `shell menu misses '${want}': ${labels.join(", ")}`);
+      }
+      assert(!labels.includes("Stop coder"), "shell menu offers Stop coder");
+      assert(!labels.includes("Mark read"), "menu offers Mark read without news");
+      await closeTabMenu();
+    });
+
+    await run("context menu rename posts and the tab updates over the event stream", async () => {
+      const newName = `ctx-renamed-${tag}`;
+      await openTabMenu(tabSel(ids[2]));
+      await menuItem("Rename").click();
+      await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
+      await page.fill(".swal2-input", newName);
+      await page.click(".swal2-confirm");
+      await page.waitForFunction(
+        ([id, name]) => document.querySelector(`terminal-tabs .terminal-tab[data-tab-id="${id}"]`)?.dataset.tabName === name,
+        [ids[2], newName],
+        { timeout: 8000 },
+      );
+    });
+
+    await run("context menu navigates to the project card and the project editor", async () => {
+      await page.goto(shellUrls[2], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(tabSel(ids[2]), { state: "attached", timeout: 8000 });
+      const attachPath = new URL(page.url()).pathname;
+      await openTabMenu(tabSel(ids[2]));
+      await menuItem("Open project").click();
+      await page.waitForFunction((p) => window.location.pathname === "/projects" && window.location.hash === `#project-${p}`, project, { timeout: 8000 });
+      await page.waitForSelector(`#project-${project}`, { state: "attached", timeout: 8000 });
+      await page.goto(shellUrls[2], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(tabSel(ids[2]), { state: "attached", timeout: 8000 });
+      await openTabMenu(tabSel(ids[2]));
+      await menuItem("Open editor").click();
+      await page.waitForURL(new RegExp(`/projects/${project}/editor`), { timeout: 10000 });
+      assert(decodeURIComponent(page.url()).includes(`return=${attachPath}`), `editor url misses the return target: ${page.url()}`);
+      await page.waitForSelector("[data-editor-tree]", { state: "attached", timeout: 8000 });
+      await page.waitForFunction(() => {
+        const t = document.querySelector("[data-editor-tree]");
+        return t && !/Loading/.test(t.textContent);
+      }, null, { timeout: 8000 });
+      await page.goto(shellUrls[2], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(tabSel(ids[2]), { state: "attached", timeout: 8000 });
+    });
+
+    await run("context menu delete removes a shell tab in place", async () => {
+      const ghostUrl = await L.createShell(page, project);
+      const ghostId = ownId(ghostUrl);
+      await page.goto(shellUrls[2], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(tabSel(ghostId), { state: "attached", timeout: 8000 });
+      await openTabMenu(tabSel(ghostId));
+      await menuItem("Delete shell").click();
+      await L.confirmSwal(page);
+      await page.waitForSelector(tabSel(ghostId), { state: "detached", timeout: 8000 });
+      assert(page.url().includes(ids[2]), `deleting a background tab must not navigate: ${page.url()}`);
     });
 
     await run("a background session change reaches the strip, + menu and switcher live", async () => {
@@ -546,6 +630,17 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert((await page.locator(".terminal-switcher").count()) === 0, "switcher still open after resume");
     });
 
+    await run("a coder tab's context menu offers stop but no rename", async () => {
+      assert(coderUrl, "no live coder to inspect");
+      const resumedId = ownId(coderUrl);
+      await openTabMenu(tabSel(resumedId));
+      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      assert(labels.includes("Stop coder"), `coder menu misses Stop coder: ${labels.join(", ")}`);
+      assert(!labels.includes("Rename"), "coder menu offers Rename");
+      assert(!labels.includes("Delete shell"), "coder menu offers Delete shell");
+      await closeTabMenu();
+    });
+
     await run("switching tabs keeps the scroll position instead of jumping to the top", async () => {
       await page.evaluate(() => localStorage.setItem("dc-terminal-rows", "100"));
       await page.evaluate(async (id) => {
@@ -591,7 +686,9 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
     });
   } finally {
     if (coderUrl) await L.stopSession(page, coderUrl).catch(() => {});
+    if (foreignShellUrl) await L.deleteShell(page, foreignShellUrl).catch(() => {});
     for (const u of shellUrls) await L.deleteShell(page, u).catch(() => {});
+    if (foreignProject) await L.deleteProject(page, foreignProject).catch(() => {});
     await L.deleteProject(page, project).catch(() => {});
   }
 });
