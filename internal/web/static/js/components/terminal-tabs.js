@@ -568,12 +568,9 @@ class TerminalTabs extends HTMLElement {
   // this page's ?path so the active tab and the resume forms' CSRF stay right, and
   // keeps the + menu and switcher current so they need no refetch on open.
   refresh() {
-    // Hidden on a coarse pointer (mobile): the strip, + menu and switcher aren't
-    // shown there — navigation is the quick nav — so skip the fetch entirely.
-    // offsetParent is null only under display:none (a sticky element always has one
-    // when shown), so this mirrors the visible/hidden state without duplicating the
-    // pointer media query.
-    if (this.offsetParent === null) return;
+    // The strip refreshes even while hidden on a coarse pointer (mobile): it is
+    // invisible there, but terminal-swipe-nav reads its rows as the swipe
+    // targets, so the order must stay live.
     this.dirty = true;
     this.tryRefresh();
   }

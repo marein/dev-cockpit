@@ -10,13 +10,18 @@ const { assert, sleep, BASE } = L;
 // The Active pane is one flat list of every live coder and shell, no per-kind
 // grouping, sorted and drag reorderable through the same cross-device @dc_tab_pos
 // state the attach page tab strip uses (POST /terminal-tabs/order); the New coder
-// and New shell buttons sit at the end of that list.
+// and New shell buttons sit at the end of that list. On touch a swipe left on a
+// row reveals a delete action (row wrapper .quicknav-swipe-row, button
+// [data-qn-delete]) that behaves exactly like the desktop tab strip's close
+// control: confirm dialog, POST /coders/:id/stop or /shells/:id/delete, and
+// deleting the terminal you are attached to navigates to its neighbor.
 
 L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
   const tag = `qn-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   const shellUrls = [];
   let dragIds = [];
+  let dragUrls = [];
   try {
     await L.createProject(page, project);
 
@@ -35,7 +40,6 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
     });
 
     await run("active pane is one @dc_tab_pos-sorted list, drag reorders it like the tab strip, new buttons last", async () => {
-      const dragUrls = [];
       for (let i = 0; i < 3; i++) { dragUrls.push(await L.createShell(page, project)); await sleep(1100); }
       shellUrls.push(...dragUrls);
       const dids = dragUrls.map((u) => new URL(u).pathname.split("/").pop());
@@ -91,6 +95,22 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       assert(JSON.stringify(strip) === JSON.stringify([dids[2], dids[0], dids[1]]), `tab strip order ${strip} disagrees with the quick nav`);
     });
 
+    // A mouse press starts a reorder candidate on the whole row; it must not
+    // capture the pointer before the drag begins, otherwise the click retargets
+    // to the wrapper div and pe.js never sees the anchor (desktop items dead).
+    await run("desktop: clicking an item navigates to its terminal", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.click(".quicknav-toggle");
+      await page.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 });
+      await page.locator('[data-quicknav-tab="active"]:visible').first().click();
+      const sel = `[data-quicknav-active-list] .quicknav-active-item[data-tab-id="${dragIds[1]}"]`;
+      await page.waitForSelector(sel, { state: "visible", timeout: 6000 });
+      await page.$eval(".quicknav-menu.show", (m) => { m.scrollTop = m.scrollHeight; });
+      await sleep(200);
+      await page.click(sel);
+      await page.waitForURL(new RegExp(dragIds[1]), { timeout: 8000 });
+    });
+
     await run("mobile: the grip handle reorders the active list (whole-row touch still scrolls)", async () => {
       const mp = await mobilePage();
       const activeSel = (id) => `[data-quicknav-active-list] .quicknav-active-item[data-tab-id="${id}"]`;
@@ -128,6 +148,56 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       const after = await mineOrder();
       assert(JSON.stringify(after) !== JSON.stringify(before), `touch handle drag did not reorder: ${after}`);
       assert(after.indexOf(dragId) < before.indexOf(dragId), `handle-dragged row did not move up: ${after}`);
+    });
+
+    await run("mobile: swipe left reveals delete, tap closes it, delete works like the desktop tab close", async () => {
+      const mp = await mobilePage();
+      const activeSel = (id) => `[data-quicknav-active-list] .quicknav-active-item[data-tab-id="${id}"]`;
+      const rowSel = (id) => `[data-quicknav-active-list] .quicknav-swipe-row:has(.quicknav-active-item[data-tab-id="${id}"])`;
+      await mp.goto(dragUrls[0], { waitUntil: "domcontentloaded" });
+      await mp.click(".quicknav-toggle");
+      await mp.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 });
+      await mp.locator('[data-quicknav-tab="active"]:visible').first().click();
+      await mp.waitForSelector(activeSel(dragIds[0]), { state: "visible", timeout: 6000 });
+      await mp.$eval(".quicknav-menu.show", (m) => { m.scrollTop = m.scrollHeight; });
+      await sleep(300);
+      const swipeOpen = (id) => mp.evaluate(async (id) => {
+        const item = document.querySelector(`[data-quicknav-active-list] .quicknav-active-item[data-tab-id="${id}"]`);
+        const r = item.getBoundingClientRect();
+        let x = r.left + r.width * 0.35;
+        const y = r.top + r.height / 2;
+        const ev = (type, opts) => item.dispatchEvent(new PointerEvent(type, Object.assign({ bubbles: true, composed: true, pointerId: 31, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, clientX: x, clientY: y }, opts)));
+        const tick = () => new Promise((res) => setTimeout(res, 16));
+        ev("pointerdown", {}); await tick();
+        for (let i = 0; i < 8; i++) { x -= 14; ev("pointermove", { clientX: x }); await tick(); }
+        ev("pointerup", { buttons: 0, clientX: x });
+      }, id);
+      await swipeOpen(dragIds[0]);
+      await sleep(400);
+      assert(await mp.$eval(rowSel(dragIds[0]), (r) => r.classList.contains("quicknav-swipe-open")), "swipe did not reveal the delete");
+      assert(await mp.$eval(`${rowSel(dragIds[0])} [data-qn-delete]`, (b) => getComputedStyle(b).visibility === "visible"), "delete button not visible");
+      // A tap on the row while revealed only closes the reveal, no navigation.
+      // Click the row center, the left edge is clipped away while translated.
+      await mp.click(activeSel(dragIds[0]));
+      await sleep(400);
+      assert(!(await mp.$eval(rowSel(dragIds[0]), (r) => r.classList.contains("quicknav-swipe-open"))), "tap did not close the reveal");
+      assert(mp.url().includes(dragIds[0]), `tap on the revealed row navigated: ${mp.url()}`);
+      // Swipe again and delete: same confirm flow as the desktop tab close, and
+      // deleting the current terminal navigates to its neighbor (right, else left),
+      // computed from the live list order because earlier runs reorder it.
+      const order = await mp.$$eval("[data-quicknav-active-list] .quicknav-active-item", (els) => els.map((e) => e.dataset.tabId));
+      const at = order.indexOf(dragIds[0]);
+      const neighborId = order[at + 1] || order[at - 1];
+      assert(neighborId, "no neighbor row found");
+      await swipeOpen(dragIds[0]);
+      await sleep(400);
+      await mp.click(`${rowSel(dragIds[0])} [data-qn-delete]`);
+      await L.confirmSwal(mp);
+      await mp.waitForURL(new RegExp(neighborId), { timeout: 8000 });
+      await mp.click(".quicknav-toggle");
+      await mp.waitForSelector("[data-quicknav-active-list]", { state: "visible", timeout: 6000 });
+      await sleep(600);
+      assert(!(await mp.$(activeSel(dragIds[0]))), "deleted shell still listed in the quick nav");
     });
 
     await run("context bar reflects the current project on a scoped page", async () => {

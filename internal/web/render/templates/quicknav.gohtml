@@ -43,15 +43,20 @@
   <div data-quicknav-pane="active">
     <div class="quicknav-active-list" data-quicknav-active-list>
       {{range .QuickNav.Active}}
-      <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
-         data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-        <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
-        <span class="d-flex flex-column min-w-0">
-          <span class="text-truncate">{{.Name}}</span>
-          {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
-        </span>
-        <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
-      </a>
+      <div class="quicknav-swipe-row">
+        <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
+           data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
+          <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+          <span class="d-flex flex-column min-w-0">
+            <span class="text-truncate">{{.Name}}</span>
+            {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
+          </span>
+          <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
+        </a>
+        <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}}">
+          <i class="ti {{if eq .Kind "coder"}}ti-player-stop{{else}}ti-trash{{end}}" aria-hidden="true"></i>
+        </button>
+      </div>
       {{end}}
       {{if not .QuickNav.Active}}<span class="dropdown-item-text text-secondary small">No active coders or shells</span>{{end}}
     </div>

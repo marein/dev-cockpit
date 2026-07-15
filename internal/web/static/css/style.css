@@ -199,12 +199,57 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
 .attach-desktop .btn { min-height: 2rem; padding-top: 0.25rem; padding-bottom: 0.25rem; }
 
 .attach-frame {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
 }
 .attach-frame .attach-terminal { flex: 1 1 auto; }
+
+/* Swipe navigation between the open terminals, mobile only: the terminal
+   follows the finger a damped distance (clipped by the frame so nothing leaks
+   into the page) and the pill names the terminal the swipe would switch to.
+   After the commit the pill stays as the pending indicator until the new page
+   arrives, so slow connections still answer the gesture immediately. */
+terminal-swipe-nav { display: none; }
+@media (pointer: coarse) {
+  .attach-frame { overflow-x: clip; }
+  terminal-swipe-nav {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 6;
+    pointer-events: none;
+  }
+}
+/* Fixed to the viewport, not the frame: with many rows the terminal's top edge
+   can be scrolled far off screen, the pill must stay visible regardless. */
+.terminal-swipe-pill {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 4.25rem);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 80%;
+  padding: 0.375rem 0.75rem;
+  border: 1px solid var(--tblr-border-color);
+  border-radius: 2rem;
+  background: var(--tblr-bg-surface);
+  color: var(--tblr-body-color);
+  font-size: 0.875rem;
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+.terminal-swipe-pill-name { min-width: 0; }
+.terminal-swipe-pill-pending { animation: dc-swipe-pending 1s ease-in-out infinite; }
+@keyframes dc-swipe-pending {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
 
 terminal-tabs { display: none; }
 @media not (pointer: coarse) {
@@ -676,21 +721,58 @@ body:not(:has(.attach-footer)) .quicknav {
    small uppercase section-header style. */
 .quicknav-detail-title { color: var(--tblr-body-color); text-transform: uppercase; }
 .quicknav-menu .dropdown-divider { margin: 0; }
-/* The active list is drag reorderable, writing the same @dc_tab_pos order the
-   tab strip does. A mouse drags the whole row; on touch the row keeps scrolling
-   and the grip handle (touch-action: none) starts the drag, so the two gestures
-   never fight. */
-.quicknav-active-item { touch-action: pan-y; }
+/* Active rows: reorder writes the same @dc_tab_pos order the tab strip does,
+   swipe left on touch reveals the delete. Gestures never fight: a mouse drags
+   the whole row, on touch the row scrolls vertically (pan-y), swipes
+   horizontally, and only the grip handle (touch-action: none) starts a reorder.
+   The wrapper is the reorder unit and the clip box, the anchor slides over the
+   delete button underneath. */
+.quicknav-swipe-row { position: relative; overflow: hidden; }
+.quicknav-active-item {
+  position: relative;
+  z-index: 1;
+  touch-action: pan-y;
+  transition: transform 0.18s ease;
+}
+.quicknav-swipe-delete {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 4.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: var(--tblr-danger);
+  color: #fff;
+  font-size: 1.25rem;
+  visibility: hidden;
+}
+.quicknav-swiping .quicknav-swipe-delete,
+.quicknav-swipe-open .quicknav-swipe-delete { visibility: visible; }
+/* While the row slides it must cover the delete underneath, so it swaps its
+   transparent background for the menu's own. */
+.quicknav-swiping .quicknav-active-item,
+.quicknav-swipe-open .quicknav-active-item { background-color: var(--tblr-dropdown-bg, var(--tblr-bg-surface)); }
+.quicknav-swiping .quicknav-active-item { transition: none; }
+/* The grip is the touch reorder target, so give it a full height strip of
+   comfortable width at the row's right edge instead of a bare icon. */
 .quicknav-drag-handle {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  min-width: 2.75rem;
+  margin: calc(-1 * var(--tblr-dropdown-item-padding-y, 0.375rem)) calc(-1 * var(--tblr-dropdown-item-padding-x, 0.75rem)) calc(-1 * var(--tblr-dropdown-item-padding-y, 0.375rem)) 0;
   color: var(--tblr-secondary);
+  font-size: 1.125rem;
   cursor: grab;
   opacity: 0.55;
   touch-action: none;
 }
 .quicknav-drag-handle:hover { opacity: 1; }
-.quicknav-active-list-dragging .quicknav-active-item { transition: transform 0.12s ease; }
+.quicknav-active-list-dragging .quicknav-swipe-row { transition: transform 0.12s ease; }
 .quicknav-active-list-dragging .quicknav-drag-handle,
 .quicknav-active-list-dragging .quicknav-active-item-dragging { cursor: grabbing; }
 .quicknav-active-list-dragging .quicknav-active-item-dragging {

@@ -22,7 +22,7 @@
 
 <div class="attach-page min-w-0">
   <div class="attach-settings">
-    <span class="text-secondary me-auto" title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i></span>
+    <span class="dc-term-icon running me-auto" data-notify-target="{{.Shell.Identifier}}" title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i></span>
     <div class="dropdown">
       <button type="button" class="btn btn-sm btn-icon btn-outline-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
         <i class="ti ti-settings"></i>
@@ -38,6 +38,7 @@
                     stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
       <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
     </terminal-attach>
+    <terminal-swipe-nav aria-hidden="true"></terminal-swipe-nav>
   </div>
 
   <div class="attach-footer min-w-0">

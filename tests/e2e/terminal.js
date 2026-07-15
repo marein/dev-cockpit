@@ -14,6 +14,9 @@ const { assert, sleep } = L;
 //     mirrors the cursor, and the .attach-mobile toolbar is the interaction surface
 //     (control buttons + auto-repeat, ctrl modifier, copy mode, paste). Swipe
 //     scrolling on the terminal-scroll-zone overlay: proportional drag + fling.
+//     The same zone axis-locks horizontal gestures into terminal-swipe events,
+//     terminal-swipe-nav turns them into switching between the open terminals
+//     in tab order, with a target pill that doubles as the pending indicator.
 // Terminal paints to <canvas> (CanvasAddon, several stacked layers, no .xterm-rows);
 // read text from the .attach-selection mirror. Uses a throwaway shell (safe target).
 // Routes: /shells/:id, /shells/:id/input, /shells/:id/resize, /shells/:id/stream.
@@ -22,6 +25,7 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
   const tag = `term-${engine}-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   let shellUrl = null;
+  let shellUrl2 = null;
   try {
     await L.createProject(page, project);
     shellUrl = await L.createShell(page, project);
@@ -185,6 +189,9 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       assert(await mp.locator('[data-terminal-control="enter"]').first().isVisible(), "control buttons not visible");
     });
 
+    // Typing binds through delegated document listeners in terminal-input
+    // because #terminal-cursor-input is created by terminal-attach after its
+    // async setup; a node lookup at init would race it and typing would die.
     await run("mobile: cursor-input typing sends text + mirror echoes", async () => {
       const marker = `MOB${tag.slice(-4)}`;
       await mp.evaluate(() => document.getElementById("terminal-cursor-input").focus());
@@ -203,11 +210,13 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       assert(/enter/.test((await reqP).postData() || ""), "control body missing enter");
     });
 
-    await run("mobile: Ctrl modifier arms then sends ctrl-<letter>", async () => {
+    await run("mobile: Ctrl modifier arms, focuses the input (keyboard opens), sends ctrl-<letter>", async () => {
       const ctrlBtn = mp.locator("[data-shell-ctrl]").first();
       await ctrlBtn.click();
       assert((await ctrlBtn.getAttribute("aria-pressed")) === "true", "ctrl did not arm");
-      await mp.evaluate(() => document.getElementById("terminal-cursor-input").focus());
+      // Arming focuses the cursor input in the tap handler, so the on-screen
+      // keyboard comes up without an extra tap on the terminal.
+      assert(await mp.evaluate(() => document.activeElement?.id === "terminal-cursor-input"), "cursor input not focused after arming ctrl");
       const reqP = mp.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
       await mp.keyboard.type("c", { delay: 40 });
       assert(/ctrl-c/.test((await reqP).postData() || ""), "expected ctrl-c");
@@ -256,6 +265,59 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       assert(posts.some((t) => t > released + 120), `no scroll posts after release (${posts.length} total)`);
     }, { soft: true });
 
+    // Horizontal axis on the same zone: swipe left or right rotates through the
+    // open terminals in tab order, wrapping at both ends (terminal-swipe-nav).
+    // A pill names the target while the finger is down and stays as the pending
+    // indicator until the new page arrives, the terminal frame follows the
+    // finger a damped distance.
+    await run("mobile: horizontal swipe switches to the neighbor terminal with a target pill", async () => {
+      shellUrl2 = await L.createShell(mp, project);
+      const firstId = new URL(shellUrl).pathname.split("/").pop();
+      const secondId = new URL(shellUrl2).pathname.split("/").pop();
+      await mp.goto(shellUrl, { waitUntil: "domcontentloaded" });
+      await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
+      await sleep(800);
+      // Precondition: our newest shell is the right neighbor, so the swipe stays
+      // on this runner's own sessions.
+      const order = await mp.$$eval("terminal-tabs .terminal-tab", (els) => els.map((e) => e.dataset.tabId));
+      assert(order[order.indexOf(firstId) + 1] === secondId, `right neighbor is not ours: ${order}`);
+      const swipe = (dir) => mp.evaluate(async (dir) => {
+        const zone = document.querySelector("terminal-scroll-zone").shadowRoot.querySelector(".zone");
+        const rect = zone.getBoundingClientRect();
+        let x = rect.left + rect.width * (dir < 0 ? 0.8 : 0.2);
+        const y = rect.top + rect.height / 2;
+        const ev = (type, opts) => zone.dispatchEvent(new PointerEvent(type, Object.assign({ bubbles: true, composed: true, pointerId: 9, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, clientX: x, clientY: y }, opts)));
+        const tick = () => new Promise((resolve) => setTimeout(resolve, 16));
+        ev("pointerdown", {});
+        for (let i = 0; i < 10; i++) { x += dir * 12; ev("pointermove", { clientX: x }); await tick(); }
+        const pill = document.querySelector(".terminal-swipe-pill");
+        const midGesture = {
+          pill: pill ? pill.textContent.trim() : "",
+          frameMoved: Boolean(document.getElementById("terminal").style.transform),
+        };
+        ev("pointerup", { buttons: 0, clientX: x });
+        return midGesture;
+      }, dir);
+      const left = await swipe(-1);
+      assert(left.pill.length > 0, "no target pill during the swipe");
+      assert(left.frameMoved, "terminal frame did not follow the finger");
+      await mp.waitForURL(new RegExp(secondId), { timeout: 8000 });
+      await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
+      await sleep(800);
+      // And back: swipe right returns to the previous terminal.
+      await swipe(1);
+      await mp.waitForURL(new RegExp(firstId), { timeout: 8000 });
+      await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
+      await sleep(500);
+      // Wrap-around: swiping right on the leftmost tab rotates to the last one.
+      const order2 = await mp.$$eval("terminal-tabs .terminal-tab", (els) => els.map((e) => e.dataset.tabId));
+      assert(order2[0] === firstId && order2[order2.length - 1] === secondId, `strip must start and end with ours for the wrap check: ${order2}`);
+      await swipe(1);
+      await mp.waitForURL(new RegExp(secondId), { timeout: 8000 });
+      await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
+      await sleep(500);
+    });
+
     await run("mobile: copy mode toggles the selection mirror", async () => {
       const copyBtn = mp.locator("[data-terminal-copy]").first();
       await copyBtn.click();
@@ -269,6 +331,7 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await mp.waitForFunction(() => /not available|clipboard/i.test(document.body.innerText), null, { timeout: 5000 });
     }, { soft: true });
   } finally {
+    if (shellUrl2) await L.deleteShell(page, shellUrl2).catch(() => {});
     if (shellUrl) await L.deleteShell(page, shellUrl).catch(() => {});
     await L.deleteProject(page, project).catch(() => {});
   }

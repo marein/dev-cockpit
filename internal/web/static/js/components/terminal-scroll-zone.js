@@ -334,7 +334,7 @@
       this.lastX = event.clientX;
       this.lastY = event.clientY;
       this.axis = null;
-      this.samples = [{ t: event.timeStamp, y: event.clientY }];
+      this.samples = [{ t: event.timeStamp, x: event.clientX, y: event.clientY }];
       try {
         this.zone.setPointerCapture(this.pointerID);
       } catch (captureError) {
@@ -353,8 +353,9 @@
       const dy = y - this.lastY;
       this.lastX = x;
       this.lastY = y;
-      this.recordSample(event.timeStamp, y);
+      this.recordSample(event.timeStamp, x, y);
       if (this.axis === "h") {
+        this.emitSwipe("move", { dx: x - this.startX });
         return; // committed to a horizontal swipe: not a scroll
       }
       if (this.axis === null) {
@@ -365,6 +366,7 @@
         }
         if (Math.abs(totalY) < Math.abs(totalX)) {
           this.axis = "h";
+          this.emitSwipe("move", { dx: totalX, begin: true });
           return;
         }
         this.axis = "v";
@@ -381,16 +383,22 @@
         return;
       }
       this.consumePointerEvent(event);
-      const vertical = this.axis === "v";
-      const velocity = vertical ? this.releaseVelocity(event.timeStamp) : 0;
+      const axis = this.axis;
+      const velocity = axis === "v" ? this.releaseVelocity(event.timeStamp) : 0;
+      const horizontal = axis === "h"
+        ? { dx: event.clientX - this.startX, vx: this.releaseVelocityX(event.timeStamp) }
+        : null;
+      this.axis = null; // consumed here, cancelDrag must not emit a swipe cancel
       this.cancelDrag();
-      if (vertical) {
+      if (axis === "v") {
         this.maybeFling(velocity);
+      } else if (horizontal) {
+        this.emitSwipe("end", horizontal);
       }
     }
 
-    recordSample(t, y) {
-      this.samples.push({ t, y });
+    recordSample(t, x, y) {
+      this.samples.push({ t, x, y });
       while (this.samples.length > 1 && t - this.samples[0].t > VELOCITY_WINDOW_MS) {
         this.samples.shift();
       }
@@ -410,6 +418,21 @@
         return 0;
       }
       return (last.y - first.y) / span;
+    }
+
+    // Same window, horizontal axis, feeds the swipe navigation's fling commit.
+    releaseVelocityX(now) {
+      const recent = this.samples.filter((sample) => now - sample.t <= VELOCITY_WINDOW_MS);
+      if (recent.length < 2) {
+        return 0;
+      }
+      const first = recent[0];
+      const last = recent[recent.length - 1];
+      const span = last.t - first.t;
+      if (span < VELOCITY_MIN_SPAN_MS) {
+        return 0;
+      }
+      return (last.x - first.x) / span;
     }
 
     // The glide after a catch is roughly velocity times round trip, capping the
@@ -465,11 +488,26 @@
       }));
     }
 
+    // A gesture that locked to the horizontal axis is a swipe between the open
+    // terminals. The zone only reports it (phase move/end/cancel, dx is finger
+    // travel from the start, vx the release velocity), terminal-swipe-nav owns
+    // thresholds, indicator and navigation.
+    emitSwipe(phase, detail) {
+      this.dispatchEvent(new CustomEvent("terminal-swipe", {
+        bubbles: true,
+        composed: true,
+        detail: Object.assign({ phase }, detail),
+      }));
+    }
+
     // Ends the drag but keeps lastX/lastY, a fling started on release still
     // anchors its events at the lift-off point.
     cancelDrag() {
       if (this.pointerID !== null && this.zone?.hasPointerCapture(this.pointerID)) {
         this.zone.releasePointerCapture(this.pointerID);
+      }
+      if (this.axis === "h") {
+        this.emitSwipe("cancel", {});
       }
       this.pointerID = null;
       this.axis = null;

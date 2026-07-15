@@ -22,9 +22,16 @@ function initTerminalInput(host) {
   const mapControl = (control) =>
     scrollHistory && SCROLL_CONTROLS[control] ? SCROLL_CONTROLS[control] : control;
 
-  const inputs = ["terminal-prompt", "terminal-cursor-input"]
-    .map((id) => document.getElementById(id))
-    .filter(Boolean);
+  // The cursor input is created by terminal-attach after its async setup, so
+  // resolving nodes here would race it (typing then dies silently). Delegated
+  // document listeners match on the ids instead, binding to whichever input
+  // exists at the moment the user types.
+  const INPUT_IDS = new Set(["terminal-prompt", "terminal-cursor-input"]);
+  const forTerminalInputs = (handler) => (event) => {
+    if (event.target instanceof Element && INPUT_IDS.has(event.target.id)) {
+      handler(event);
+    }
+  };
   const promptModalElement = document.getElementById("terminal-prompt-modal");
   const promptModalOpenButtons = document.querySelectorAll("[data-terminal-prompt-modal-open]");
   const promptModalForm = document.getElementById("terminal-prompt-modal-form");
@@ -42,7 +49,15 @@ function initTerminalInput(host) {
     ctrlToggle.setAttribute("aria-pressed", armed ? "true" : "false");
   };
   if (ctrlToggle) {
-    listen(ctrlToggle, "click", () => setCtrlArmed(!ctrlArmed));
+    listen(ctrlToggle, "click", () => {
+      setCtrlArmed(!ctrlArmed);
+      // Arming means a letter comes next: focus the cursor input right here in
+      // the tap handler so the on-screen keyboard opens (iOS requires the focus
+      // inside the user gesture).
+      if (ctrlArmed) {
+        document.getElementById("terminal-cursor-input")?.focus();
+      }
+    });
   }
 
   const keyMap = {
@@ -127,8 +142,8 @@ function initTerminalInput(host) {
     void pumpTerminalInputs();
   };
 
-  const bindInput = (input) => {
-    listen(input, "keydown", (event) => {
+  const bindInputs = () => {
+    listen(document, "keydown", forTerminalInputs((event) => {
       if (event.key === "Tab" && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         void sendTerminalInput({ control: "shift-tab" });
@@ -165,9 +180,9 @@ function initTerminalInput(host) {
         const mapped = mapControl(control);
         void sendTerminalInput({ control: event.altKey && mapped === control ? `alt-${control}` : mapped });
       }
-    });
+    }));
 
-    listen(input, "beforeinput", (event) => {
+    listen(document, "beforeinput", forTerminalInputs((event) => {
       if (event.isComposing) {
         return;
       }
@@ -190,27 +205,25 @@ function initTerminalInput(host) {
         return;
       }
       void sendTerminalInput({ text: event.data });
-    });
+    }));
 
-    listen(input, "compositionend", (event) => {
-      input.value = "";
+    listen(document, "compositionend", forTerminalInputs((event) => {
+      event.target.value = "";
       if (event.data) {
         void sendTerminalInput({ text: event.data });
       }
-    });
+    }));
 
-    listen(input, "paste", (event) => {
+    listen(document, "paste", forTerminalInputs((event) => {
       const pastedText = event.clipboardData?.getData("text") ?? "";
       if (!pastedText) {
         return;
       }
       event.preventDefault();
       void sendTerminalInput({ paste: pastedText });
-    });
+    }));
   };
-  for (const input of inputs) {
-    bindInput(input);
-  }
+  bindInputs();
 
   if (promptModalElement && promptModalTextarea) {
     listen(promptModalElement, "shown.bs.modal", () => {

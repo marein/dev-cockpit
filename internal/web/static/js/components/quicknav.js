@@ -1,16 +1,19 @@
+import { confirm } from "@dc/dialog";
 import { el } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import { applyFold } from "@dc/fold";
-import { ensureOk, getText, postJSON } from "@dc/http";
-import { notifyError } from "@dc/toast";
+import { ensureOk, getText, postForm, postJSON } from "@dc/http";
+import { notifyError, notifySuccess } from "@dc/toast";
 
 const TAB_KEY = "dc-quicknav-tab";
 const FOLD_LIMIT = 5;
 const DRAG_THRESHOLD = 6;
 const EDGE_ZONE = 28;
 const EDGE_STEP = 10;
+const FLING_VX = 0.25;
+const SNAP_MS = 250;
 
 // Floating quick nav: jump between live sessions/shells and browse projects. The
 // menu content is fetched fresh each time the dropdown opens (background refresh)
@@ -33,6 +36,9 @@ class QuickNav extends HTMLElement {
     this.dirty = false;
     this.view = null;
     this.drag = null;
+    this.swipe = null;
+    this.openSwipe = null;
+    this.confirming = false;
     this.suppressClick = false;
     this.opened = false;
 
@@ -43,16 +49,35 @@ class QuickNav extends HTMLElement {
       this.applyState();
       this.refresh();
     }, { signal });
-    this.addEventListener("hidden.bs.dropdown", () => { this.opened = false; }, { signal });
+    // The confirm dialog opens outside the dropdown, which auto-close would read
+    // as an outside click; keep the menu open under it.
+    this.addEventListener("hide.bs.dropdown", (event) => { if (this.confirming) event.preventDefault(); }, { signal });
+    this.addEventListener("hidden.bs.dropdown", () => {
+      this.opened = false;
+      this.closeSwipe();
+    }, { signal });
     // A coder or shell started, stopped, was renamed or reordered elsewhere: pull
     // the fresh list while the menu is open. Closed, it already refetches on open.
     onServerEvent("terminals", () => { if (this.opened) this.refresh(); }, { signal });
     this.addEventListener("click", (event) => this.handleClick(event), { signal });
-    // Capture so a click synthesised right after a drag, or a plain tap on the
-    // grip handle, never reaches pe.js and navigates the row.
+    // Capture so a click synthesised right after a gesture, a tap on the grip
+    // handle, or a tap while a delete is revealed never reaches pe.js and
+    // navigates the row. The revealed-state tap just closes the reveal, except on
+    // the delete button itself.
     this.addEventListener("click", (event) => {
-      if (!this.suppressClick && !event.target.closest("[data-qn-drag-handle]")) return;
-      this.suppressClick = false;
+      if (this.suppressClick) {
+        this.suppressClick = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (this.openSwipe && !event.target.closest("[data-qn-delete]")) {
+        this.closeSwipe();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (!event.target.closest("[data-qn-drag-handle]")) return;
       event.preventDefault();
       event.stopPropagation();
     }, { signal, capture: true });
@@ -60,13 +85,17 @@ class QuickNav extends HTMLElement {
     this.list.addEventListener("pointerdown", (event) => this.onPointerDown(event), { signal });
     this.list.addEventListener("pointermove", (event) => this.onPointerMove(event), { signal });
     this.list.addEventListener("pointerup", (event) => this.onPointerUp(event), { signal });
-    this.list.addEventListener("pointercancel", () => this.cancelDrag(), { signal });
+    this.list.addEventListener("pointercancel", () => {
+      this.cancelDrag();
+      this.cancelSwipe();
+    }, { signal });
     this.observer = new MutationObserver(() => this.applyState());
     this.observer.observe(this.list, { childList: true });
   }
 
   disconnectedCallback() {
     this.cancelDrag();
+    this.cancelSwipe();
     this.observer?.disconnect();
     this.observer = null;
     this.ac?.abort();
@@ -83,7 +112,15 @@ class QuickNav extends HTMLElement {
 
   dragItems() {
     const list = this.activeList();
-    return list ? Array.from(list.querySelectorAll(".quicknav-active-item")) : [];
+    return list ? Array.from(list.querySelectorAll(".quicknav-swipe-row")) : [];
+  }
+
+  swipeAnchor(row) {
+    return row?.querySelector(".quicknav-active-item");
+  }
+
+  deleteWidth(row) {
+    return row?.querySelector("[data-qn-delete]")?.offsetWidth || 72;
   }
 
   // Content Y measured against the scrollable menu, so edge auto-scroll keeps the
@@ -95,22 +132,44 @@ class QuickNav extends HTMLElement {
   // Persist the current active-list order to the same cross-device @dc_tab_pos
   // state the tab strip writes, so a drag in either place agrees.
   persistOrder() {
-    const ids = this.dragItems().map((item) => item.dataset.tabId);
+    const ids = this.dragItems().map((row) => this.swipeAnchor(row)?.dataset.tabId).filter(Boolean);
     postJSON("/terminal-tabs/order", { ids })
       .then((response) => ensureOk(response, "Could not save the order."))
       .catch((error) => notifyError(error.message));
   }
 
   onPointerDown(event) {
-    if (event.button !== 0 || this.drag) return;
-    const item = event.target.closest(".quicknav-active-item");
-    if (!item || !this.activeList()?.contains(item)) return;
-    // A mouse grabs the whole row; a touch would fight the list's own scroll, so
-    // it must start on the grip handle (touch-action: none) to reorder.
-    if (event.pointerType === "touch" && !event.target.closest("[data-qn-drag-handle]")) return;
+    if (event.button !== 0 || this.drag || this.swipe) return;
+    const row = event.target.closest(".quicknav-swipe-row");
+    if (!row || !this.activeList()?.contains(row)) return;
+    // A new pointer invalidates a pending post-gesture suppression, a gesture
+    // that ended off-row would otherwise swallow the next tap.
     this.suppressClick = false;
+    if (event.target.closest("[data-qn-delete]")) return;
+    // A mouse grabs the whole row to reorder. On touch the row body swipes
+    // horizontally (vertical stays native scroll via pan-y) and only the grip
+    // handle reorders, so the three gestures never fight.
+    // No pointer capture yet: capturing retargets the eventual click onto the
+    // wrapper div, which hides the anchor from pe.js and kills plain clicks.
+    // The gesture captures once it actually begins.
+    if (event.pointerType === "touch" && !event.target.closest("[data-qn-drag-handle]")) {
+      this.swipe = {
+        row,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        lastX: event.clientX,
+        lastT: event.timeStamp,
+        vx: 0,
+        x: 0,
+        base: this.openSwipe === row ? -this.deleteWidth(row) : 0,
+        width: 0,
+        active: false,
+      };
+      return;
+    }
     this.drag = {
-      item,
+      item: row,
       pointerId: event.pointerId,
       startClientX: event.clientX,
       startClientY: event.clientY,
@@ -118,14 +177,14 @@ class QuickNav extends HTMLElement {
       active: false,
       raf: 0,
     };
-    try {
-      item.setPointerCapture(event.pointerId);
-    } catch (error) {
-      void error;
-    }
   }
 
   onPointerMove(event) {
+    const sw = this.swipe;
+    if (sw && event.pointerId === sw.pointerId) {
+      this.moveSwipe(event);
+      return;
+    }
     const drag = this.drag;
     if (!drag || event.pointerId !== drag.pointerId) return;
     if (!drag.active) {
@@ -141,7 +200,56 @@ class QuickNav extends HTMLElement {
     this.updateDrag();
   }
 
+  moveSwipe(event) {
+    const sw = this.swipe;
+    const dx = event.clientX - sw.startX;
+    const dy = event.clientY - sw.startY;
+    if (!sw.active) {
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      // Vertical intent belongs to the native scroll, let go of the gesture.
+      if (Math.abs(dy) > Math.abs(dx)) {
+        this.swipe = null;
+        return;
+      }
+      sw.active = true;
+      sw.width = this.deleteWidth(sw.row);
+      this.closeSwipe(sw.row);
+      sw.row.classList.add("quicknav-swiping");
+      try {
+        sw.row.setPointerCapture(event.pointerId);
+      } catch (error) {
+        void error;
+      }
+    }
+    event.preventDefault();
+    const dt = Math.max(1, event.timeStamp - sw.lastT);
+    sw.vx = (event.clientX - sw.lastX) / dt;
+    sw.lastX = event.clientX;
+    sw.lastT = event.timeStamp;
+    let x = sw.base + dx;
+    if (x > 0) x = 0;
+    // Damped overshoot past the fully revealed delete.
+    if (x < -sw.width) x = -sw.width + (x + sw.width) * 0.2;
+    sw.x = x;
+    const anchor = this.swipeAnchor(sw.row);
+    if (anchor) anchor.style.transform = "translateX(" + x + "px)";
+  }
+
   onPointerUp(event) {
+    const sw = this.swipe;
+    if (sw && event.pointerId === sw.pointerId) {
+      this.swipe = null;
+      if (sw.active) {
+        this.suppressClick = true;
+        // Snap to open or closed: a fling decides by direction, a slow release
+        // by whether the delete is at least half revealed.
+        const open = Math.abs(sw.vx) > FLING_VX ? sw.vx < 0 : sw.x < -sw.width / 2;
+        this.setSwipeOpen(sw.row, open);
+        this.unswipeAfterSnap(sw.row);
+      }
+      if (this.dirty && this.opened) this.refresh();
+      return;
+    }
     const drag = this.drag;
     if (!drag || event.pointerId !== drag.pointerId) return;
     this.drag = null;
@@ -161,6 +269,49 @@ class QuickNav extends HTMLElement {
     if (this.dirty && this.opened) this.refresh();
   }
 
+  // Keep the delete visible until the snap animation settles, then drop the
+  // swiping state so a closed row hides it again.
+  unswipeAfterSnap(row) {
+    const anchor = this.swipeAnchor(row);
+    const done = () => row.classList.remove("quicknav-swiping");
+    anchor?.addEventListener("transitionend", done, { once: true, signal: this.ac?.signal });
+    setTimeout(done, SNAP_MS);
+  }
+
+  cancelSwipe() {
+    const sw = this.swipe;
+    this.swipe = null;
+    if (!sw || !sw.active) return;
+    this.setSwipeOpen(sw.row, false);
+    this.unswipeAfterSnap(sw.row);
+  }
+
+  setSwipeOpen(row, open) {
+    const anchor = this.swipeAnchor(row);
+    if (!anchor) return;
+    if (open) {
+      row.classList.add("quicknav-swipe-open");
+      anchor.style.transform = "translateX(-" + this.deleteWidth(row) + "px)";
+      this.openSwipe = row;
+      return;
+    }
+    if (this.openSwipe === row) this.openSwipe = null;
+    anchor.style.transform = "";
+    if (!row.classList.contains("quicknav-swipe-open")) return;
+    const done = () => {
+      if (!anchor.style.transform) row.classList.remove("quicknav-swipe-open");
+    };
+    anchor.addEventListener("transitionend", done, { once: true, signal: this.ac?.signal });
+    setTimeout(done, SNAP_MS);
+  }
+
+  closeSwipe(except) {
+    const row = this.openSwipe;
+    if (!row || row === except) return;
+    if (row.isConnected) this.setSwipeOpen(row, false);
+    else this.openSwipe = null;
+  }
+
   cancelDrag() {
     const drag = this.drag;
     this.drag = null;
@@ -174,6 +325,12 @@ class QuickNav extends HTMLElement {
   beginDrag(event) {
     const drag = this.drag;
     drag.active = true;
+    try {
+      drag.item.setPointerCapture(event.pointerId);
+    } catch (error) {
+      void error;
+    }
+    this.closeSwipe();
     drag.items = this.dragItems();
     drag.fromIndex = drag.items.indexOf(drag.item);
     drag.toIndex = drag.fromIndex;
@@ -228,9 +385,10 @@ class QuickNav extends HTMLElement {
   }
 
   refresh() {
-    // Never rebuild the list under an in-flight fetch or an active row drag (that
-    // would detach the dragged node); coalesce into dirty and re-run afterward.
-    if (this.inFlight || this.drag) {
+    // Never rebuild the list under an in-flight fetch, an active gesture (that
+    // would detach the touched node) or an open confirm dialog; coalesce into
+    // dirty and re-run afterward.
+    if (this.inFlight || this.drag || this.swipe || this.confirming) {
       this.dirty = true;
       return;
     }
@@ -240,6 +398,7 @@ class QuickNav extends HTMLElement {
     // Background refresh on every open, kept silent on purpose (no toast storm).
     getText(this.url + "?path=" + encodeURIComponent(location.pathname))
       .then((html) => {
+        this.openSwipe = null;
         this.list.innerHTML = html;
         this.reposition();
       })
@@ -345,8 +504,61 @@ class QuickNav extends HTMLElement {
     root.querySelectorAll("[data-qn-fold]").forEach((group) => this.foldGroup(group));
   }
 
+  // deleteTarget stops a coder or deletes a shell from the revealed swipe action,
+  // mirroring the desktop tab strip's close control: same confirm dialog, same
+  // endpoints and toasts, and deleting the terminal you are attached to moves you
+  // to its neighbor.
+  async deleteTarget(row) {
+    if (this.confirming || !row) return;
+    const item = this.swipeAnchor(row);
+    if (!item) return;
+    const { tabId: id, tabKind: kind, tabName: name } = item.dataset;
+    const current = item.classList.contains("active");
+    const rows = this.dragItems();
+    const index = rows.indexOf(row);
+    const neighbor = rows[index + 1] || rows[index - 1] || null;
+    const neighborUrl = neighbor ? this.swipeAnchor(neighbor)?.getAttribute("href") : null;
+    this.confirming = true;
+    try {
+      const ok = await confirm({
+        title: kind === "coder" ? `Stop coder "${name}"?` : `Delete shell "${name}"?`,
+        confirmText: kind === "coder" ? "Stop" : "Delete",
+      });
+      if (!ok) {
+        this.closeSwipe();
+        return;
+      }
+      window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id } }));
+      const action = kind === "coder" ? `/coders/${id}/stop` : `/shells/${id}/delete`;
+      const response = await postForm(action, {});
+      await ensureOk(response, "Could not close the session.");
+      notifySuccess(kind === "coder" ? `Coder "${name}" stopped.` : `Shell "${name}" deleted.`);
+      if (this.openSwipe === row) this.openSwipe = null;
+      row.remove();
+      if (current) {
+        this.confirming = false;
+        if (window.bootstrap) window.bootstrap.Dropdown.getOrCreateInstance(this.toggle).hide();
+        const url = neighborUrl || response.url || "/projects";
+        if (window.app?.navigate) window.app.navigate(url);
+        else window.location.href = url;
+      }
+    } catch (error) {
+      notifyError(error.message);
+    } finally {
+      this.confirming = false;
+      if (this.dirty && this.opened) this.refresh();
+    }
+  }
+
   handleClick(event) {
     if (!this.view) this.initView();
+    const del = event.target.closest("[data-qn-delete]");
+    if (del) {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.deleteTarget(del.closest(".quicknav-swipe-row"));
+      return;
+    }
     const tab = event.target.closest("[data-quicknav-tab]");
     if (tab) {
       event.preventDefault();
