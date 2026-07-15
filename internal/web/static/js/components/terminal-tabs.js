@@ -1,5 +1,6 @@
 import { confirm } from "@dc/dialog";
 import { el } from "@dc/dom";
+import { onServerEvent } from "@dc/events";
 import { applyFold } from "@dc/fold";
 import { ensureOk, getText, postForm, postJSON } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
@@ -23,6 +24,7 @@ class TerminalTabs extends HTMLElement {
     this.confirming = false;
     this.resuming = false;
     this.inFlight = false;
+    this.dirty = false;
     this.pendingIndex = null;
     this.tap = { pending: null, lastKey: null, lastTime: 0 };
     const signal = this.ac.signal;
@@ -33,7 +35,6 @@ class TerminalTabs extends HTMLElement {
     if (resumeProjects) projectSort.sort(resumeProjects);
     this.querySelectorAll("[data-tabs-resume-fold]").forEach((group) => this.foldResume(group));
 
-    this.addEventListener("show.bs.dropdown", () => this.refresh(this.querySelector(".terminal-tabs-new-menu")), { signal });
     for (const toggle of this.querySelectorAll(".terminal-tabs-new-btn")) {
       const focus = toggle.focus.bind(toggle);
       toggle.focus = (options) => focus({ preventScroll: true, ...options });
@@ -49,6 +50,9 @@ class TerminalTabs extends HTMLElement {
     document.addEventListener("keydown", (event) => this.onKeydown(event), { signal, capture: true });
     document.addEventListener("keyup", (event) => this.onKeyup(event), { signal, capture: true });
     document.addEventListener("dc-renamed", (event) => this.onRenamed(event.detail || {}), { signal });
+    // A coder or shell started, stopped, was renamed or reordered somewhere (this
+    // device or another one): pull the fresh strip.
+    onServerEvent("terminals", () => this.refresh(), { signal });
   }
 
   onRenamed({ url, name }) {
@@ -192,19 +196,22 @@ class TerminalTabs extends HTMLElement {
     const drag = this.drag;
     if (!drag || event.pointerId !== drag.pointerId) return;
     this.drag = null;
-    if (!drag.active) return;
-    window.cancelAnimationFrame(drag.raf);
-    this.suppressClick = true;
-    this.strip.classList.remove("terminal-tabs-strip-dragging");
-    drag.tab.classList.remove("terminal-tab-dragging");
-    for (const tab of drag.tabs) {
-      tab.style.transform = "";
+    if (drag.active) {
+      window.cancelAnimationFrame(drag.raf);
+      this.suppressClick = true;
+      this.strip.classList.remove("terminal-tabs-strip-dragging");
+      drag.tab.classList.remove("terminal-tab-dragging");
+      for (const tab of drag.tabs) {
+        tab.style.transform = "";
+      }
+      if (drag.toIndex !== drag.fromIndex) {
+        const others = drag.tabs.filter((tab) => tab !== drag.tab);
+        this.strip.insertBefore(drag.tab, others[drag.toIndex] || null);
+        this.persistOrder();
+      }
     }
-    if (drag.toIndex !== drag.fromIndex) {
-      const others = drag.tabs.filter((tab) => tab !== drag.tab);
-      this.strip.insertBefore(drag.tab, others[drag.toIndex] || null);
-      this.persistOrder();
-    }
+    // Flush any event that arrived while the drag held the strip.
+    this.tryRefresh();
   }
 
   cancelDrag() {
@@ -524,7 +531,6 @@ class TerminalTabs extends HTMLElement {
     this.applyFilter();
     this.switcher.index = current === -1 ? 0 : (current + direction + rows.length) % rows.length;
     this.paintSelection();
-    this.refresh(overlay.querySelector(".terminal-switcher-panel"));
   }
 
   rebuildSwitcher() {
@@ -554,11 +560,39 @@ class TerminalTabs extends HTMLElement {
     }
   }
 
-  refresh(host) {
-    if (this.inFlight || !host || !this.dataset.tabsUrl) return;
+  // refresh marks the strip dirty and pulls the fresh strip and menu when nothing
+  // blocks it. A `terminals` event that lands during a fetch, or while a close
+  // confirm or a drag owns the strip, is coalesced into `dirty` and re-run once
+  // the fetch settles or the gesture releases (tryRefresh from closeTarget /
+  // onPointerUp / cancelDrag), so no live change is ever dropped. The pull carries
+  // this page's ?path so the active tab and the resume forms' CSRF stay right, and
+  // keeps the + menu and switcher current so they need no refetch on open.
+  refresh() {
+    // Hidden on a coarse pointer (mobile): the strip, + menu and switcher aren't
+    // shown there — navigation is the quick nav — so skip the fetch entirely.
+    // offsetParent is null only under display:none (a sticky element always has one
+    // when shown), so this mirrors the visible/hidden state without duplicating the
+    // pointer media query.
+    if (this.offsetParent === null) return;
+    this.dirty = true;
+    this.tryRefresh();
+  }
+
+  tryRefresh() {
+    if (!this.dirty || this.inFlight || this.confirming || this.drag || !this.dataset.tabsUrl) return;
+    this.dirty = false;
     this.inFlight = true;
-    const spinner = el("div", { class: "quicknav-refresh", role: "status", "aria-label": "Loading" });
-    host.appendChild(spinner);
+    // Loading bar only in the + menu or switcher while one is open: the strip
+    // refreshes constantly, a bar flashing over the tabs there just distracts.
+    const hosts = [
+      this.querySelector(".terminal-tabs-new-menu.show"),
+      this.switcher?.overlay.querySelector(".terminal-switcher-panel"),
+    ].filter(Boolean);
+    const bars = hosts.map((host) => {
+      const bar = el("div", { class: "dc-loading-bar", role: "status", "aria-label": "Refreshing" });
+      host.prepend(bar);
+      return bar;
+    });
     getText(this.dataset.tabsUrl + "?path=" + encodeURIComponent(window.location.pathname))
       .then((html) => {
         const template = document.createElement("template");
@@ -583,8 +617,9 @@ class TerminalTabs extends HTMLElement {
       })
       .catch(() => {})
       .finally(() => {
-        spinner.remove();
+        bars.forEach((bar) => bar.remove());
         this.inFlight = false;
+        this.tryRefresh();
       });
   }
 
@@ -685,6 +720,8 @@ class TerminalTabs extends HTMLElement {
       notifyError(error.message);
     } finally {
       this.confirming = false;
+      // Flush any event that arrived while the confirm dialog was open.
+      this.tryRefresh();
     }
   }
 

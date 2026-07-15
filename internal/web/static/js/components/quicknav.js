@@ -1,4 +1,5 @@
 import { el } from "@dc/dom";
+import { onServerEvent } from "@dc/events";
 import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import { applyFold } from "@dc/fold";
@@ -27,18 +28,25 @@ class QuickNav extends HTMLElement {
     this.toggle = this.querySelector(".quicknav-toggle");
     this.list = this.menu.querySelector(".quicknav-list");
     this.url = this.menu.dataset.quicknavUrl;
-    this.spinner = el("div", { class: "quicknav-refresh", role: "status", "aria-label": "Loading" });
+    this.spinner = el("div", { class: "dc-loading-bar", role: "status", "aria-label": "Loading" });
     this.inFlight = false;
+    this.dirty = false;
     this.view = null;
     this.drag = null;
     this.suppressClick = false;
+    this.opened = false;
 
     this.ac = new AbortController();
     const signal = this.ac.signal;
     this.addEventListener("show.bs.dropdown", () => {
+      this.opened = true;
       this.applyState();
       this.refresh();
     }, { signal });
+    this.addEventListener("hidden.bs.dropdown", () => { this.opened = false; }, { signal });
+    // A coder or shell started, stopped, was renamed or reordered elsewhere: pull
+    // the fresh list while the menu is open. Closed, it already refetches on open.
+    onServerEvent("terminals", () => { if (this.opened) this.refresh(); }, { signal });
     this.addEventListener("click", (event) => this.handleClick(event), { signal });
     // Capture so a click synthesised right after a drag, or a plain tap on the
     // grip handle, never reaches pe.js and navigates the row.
@@ -137,17 +145,20 @@ class QuickNav extends HTMLElement {
     const drag = this.drag;
     if (!drag || event.pointerId !== drag.pointerId) return;
     this.drag = null;
-    if (!drag.active) return;
-    window.cancelAnimationFrame(drag.raf);
-    this.suppressClick = true;
-    this.activeList()?.classList.remove("quicknav-active-list-dragging");
-    for (const item of drag.items) item.style.transform = "";
-    drag.item.classList.remove("quicknav-active-item-dragging");
-    if (drag.toIndex !== drag.fromIndex) {
-      const others = drag.items.filter((item) => item !== drag.item);
-      this.activeList().insertBefore(drag.item, others[drag.toIndex] || null);
-      this.persistOrder();
+    if (drag.active) {
+      window.cancelAnimationFrame(drag.raf);
+      this.suppressClick = true;
+      this.activeList()?.classList.remove("quicknav-active-list-dragging");
+      for (const item of drag.items) item.style.transform = "";
+      drag.item.classList.remove("quicknav-active-item-dragging");
+      if (drag.toIndex !== drag.fromIndex) {
+        const others = drag.items.filter((item) => item !== drag.item);
+        this.activeList().insertBefore(drag.item, others[drag.toIndex] || null);
+        this.persistOrder();
+      }
     }
+    // Flush any event coalesced while the drag held the list.
+    if (this.dirty && this.opened) this.refresh();
   }
 
   cancelDrag() {
@@ -217,9 +228,15 @@ class QuickNav extends HTMLElement {
   }
 
   refresh() {
-    if (this.inFlight) return;
+    // Never rebuild the list under an in-flight fetch or an active row drag (that
+    // would detach the dragged node); coalesce into dirty and re-run afterward.
+    if (this.inFlight || this.drag) {
+      this.dirty = true;
+      return;
+    }
+    this.dirty = false;
     this.inFlight = true;
-    this.menu.appendChild(this.spinner);
+    this.menu.prepend(this.spinner);
     // Background refresh on every open, kept silent on purpose (no toast storm).
     getText(this.url + "?path=" + encodeURIComponent(location.pathname))
       .then((html) => {
@@ -230,6 +247,7 @@ class QuickNav extends HTMLElement {
       .finally(() => {
         this.spinner.remove();
         this.inFlight = false;
+        if (this.dirty && this.opened) this.refresh();
       });
   }
 

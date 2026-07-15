@@ -89,6 +89,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 		updated, live := src.StreamUpdated(attached.Session)
 		if !live {
 			_ = writeSSEvent(w, "terminal-ended", "Terminal has ended.")
+			s.publishTerminals("") // ended out of band (exit/crash): drop it from every live surface
 			return
 		}
 
@@ -145,6 +146,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 				}
 			}
 			_ = writeSSEvent(w, "terminal-ended", "Terminal has ended.")
+			s.publishTerminals("") // ended out of band (exit/crash): drop it from every live surface
 			return
 		}
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/eventbus"
 	"github.com/local/dev-cockpit/internal/notify"
 )
 
@@ -39,10 +40,14 @@ func (s *Server) handleNotificationsRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"unread": unread})
 }
 
-// handleNotificationsStream pushes the unread count and freshly ingested
-// notifications over SSE. Every event carries the current unread count; a
-// new unread notification additionally rides along as "added".
-func (s *Server) handleNotificationsStream(c *gin.Context) {
+// handleEventStream is the single server to client push channel, served at /events.
+// It carries every server event, not only notifications:
+// each SSE frame is a {type, data} envelope sent under the event name "dc", which
+// the @dc/events client re-dispatches as a dc:<type> DOM event so any custom
+// element can subscribe. On connect, including every EventSource reconnect, it
+// pushes a snapshot of the current state (unread notifications plus a terminals
+// signal), so a freshly attached or a woken background page catches up in one shot.
+func (s *Server) handleEventStream(c *gin.Context) {
 	w := c.Writer
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -56,10 +61,18 @@ func (s *Server) handleNotificationsStream(c *gin.Context) {
 		return
 	}
 
-	events, cancel := s.notifier.Subscribe()
-	defer cancel()
+	notifyEvents, cancelNotify := s.notifier.Subscribe()
+	defer cancelNotify()
+	busEvents, cancelBus := s.bus.Subscribe()
+	defer cancelBus()
 
-	if err := writeNotifyEvent(w, s.notifier.UnreadEvent()); err != nil {
+	// Snapshot: current unread state plus a bare terminals signal (no project) so
+	// the tab strip and quick nav pull their fragment and the projects page
+	// reconciles all its sections, catching a page up after connect or reconnect.
+	if err := writeEnvelope(w, eventbus.Event{Type: "notifications", Data: s.notifier.UnreadEvent()}); err != nil {
+		return
+	}
+	if err := writeEnvelope(w, eventbus.Event{Type: "terminals"}); err != nil {
 		return
 	}
 
@@ -71,21 +84,39 @@ func (s *Server) handleNotificationsStream(c *gin.Context) {
 		case <-ctx.Done():
 			return
 		case <-heartbeat.C:
-			if err := writeSSEKeepalive(w); err != nil {
+			// A real "ping" event, not an SSE comment: comments keep the socket
+			// warm but fire no client event, so the @dc/events watchdog could not
+			// tell a live-but-idle stream from a silently dead one. This lets it.
+			if err := writeEnvelope(w, eventbus.Event{Type: "ping"}); err != nil {
 				return
 			}
-		case ev := <-events:
-			if err := writeNotifyEvent(w, ev); err != nil {
+		case ev := <-notifyEvents:
+			if err := writeEnvelope(w, eventbus.Event{Type: "notifications", Data: ev}); err != nil {
+				return
+			}
+		case ev := <-busEvents:
+			if err := writeEnvelope(w, ev); err != nil {
 				return
 			}
 		}
 	}
 }
 
-func writeNotifyEvent(w http.ResponseWriter, ev notify.Event) error {
+func writeEnvelope(w http.ResponseWriter, ev eventbus.Event) error {
 	data, err := json.Marshal(ev)
 	if err != nil {
 		return err
 	}
-	return writeSSEvent(w, "notifications", string(data))
+	return writeSSEvent(w, "dc", string(data))
+}
+
+// publishTerminals signals that the live coder/shell set or its order changed.
+// It names the affected project so an open projects page can pull and swap just
+// that project's two sections in place; an empty name (a reorder, or the connect
+// snapshot) means "refresh everything". Every surface reacts by pulling its own
+// per-client fragment (authenticated as that client, carrying its path), so the
+// active tab and the CSRF token stay correct and each element keeps its own state
+// (unfold, filter).
+func (s *Server) publishTerminals(projectName string) {
+	s.bus.Publish(eventbus.Event{Type: "terminals", Data: map[string]string{"project": projectName}})
 }

@@ -97,6 +97,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/shells/new", s.handleShellNew)
 	auth.POST("/shells/new", s.handleShellCreate)
 	auth.GET("/shells/:id", s.handleShellAttach)
+	auth.GET("/shells/:id/name", s.handleShellName)
 	auth.POST("/shells/:id/delete", s.handleShellDelete)
 	auth.POST("/shells/:id/rename", s.handleShellRename)
 	auth.POST("/shells/:id/input", s.handleShellInput)
@@ -108,8 +109,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
 
 	auth.GET("/notifications", s.handleNotificationsList)
-	auth.GET("/notifications/stream", s.handleNotificationsStream)
 	auth.POST("/notifications/read", s.handleNotificationsRead)
+
+	// /events is the app-wide server to client stream.
+	auth.GET("/events", s.handleEventStream)
 
 	auth.POST("/push/subscribe", s.handlePushSubscribe)
 	auth.POST("/push/unsubscribe", s.handlePushUnsubscribe)

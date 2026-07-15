@@ -6,7 +6,7 @@ const { assert, sleep, BASE } = L;
 
 // Notification center: custom element dc-notifications (one per header
 // breakpoint, shared SSE channel in the module). Routes: GET /notifications
-// (JSON list), GET /notifications/stream (SSE unread count + added events),
+// (JSON list), GET /events (SSE unread count + added events),
 // POST /notifications/read (id or all). Events are ingested server side from
 // coder signals; this test injects fake events into the copilot notification
 // inbox (the generic per-coder ingestion seam), which needs the instance's
@@ -228,7 +228,9 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
         return badge && !badge.classList.contains("d-none") && parseInt(badge.textContent, 10) >= 1;
       }, null, { timeout: 6000 });
       await page.click(".quicknav-toggle");
-      await page.waitForSelector('[data-quicknav-pane="active"] .status-dot-animated.status-blue', { state: "attached", timeout: 6000 });
+      // News shows as the ringing coder/shell icon now (dc-term-icon.news), not a
+      // separate status dot; the project-level dot above stays a status dot.
+      await page.waitForSelector(`[data-quicknav-pane="active"] [data-notify-target="${coderId}"].news`, { state: "attached", timeout: 6000 });
       await page.keyboard.press("Escape");
     });
 
@@ -352,7 +354,7 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
         }
         assert(entry, "no shell notification after 45s");
         assert(entry.url === `/shells/${shellId}`, `url: ${entry.url}`);
-        await page.waitForSelector(`#project-${project} [data-notify-target="${shellId}"].status-blue`, { state: "attached", timeout: 6000 });
+        await page.waitForSelector(`#project-${project} [data-notify-target="${shellId}"].news`, { state: "attached", timeout: 6000 });
         await page.locator(".dc-notify-bell:visible").first().click();
         await page.waitForSelector(".dc-notify-menu.show", { timeout: 6000 });
         await Promise.all([
@@ -379,8 +381,8 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       await page.locator(".dc-notify-menu.show .dc-notify-read-all").click();
       await ownEntriesRead(coderId);
       await page.waitForFunction((sid) => {
-        const dot = document.querySelector(`[data-notify-target="${sid}"]`);
-        return dot && !dot.classList.contains("status-blue");
+        const icon = document.querySelector(`[data-notify-target="${sid}"]`);
+        return icon && !icon.classList.contains("news");
       }, coderId, { timeout: 6000 });
     });
   } finally {

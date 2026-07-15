@@ -1,15 +1,20 @@
-import { postForm, ensureOk } from "@dc/http";
+import { onServerEvent } from "@dc/events";
+import { postForm, ensureOk, getText } from "@dc/http";
 import { notifyError } from "@dc/toast";
 
 // Inline rename: click the label to edit, Enter/blur saves via POST, Escape
 // cancels. Generic over the target via the rename-url attribute and an optional
-// document.title suffix kept in sync with the name.
+// document.title suffix kept in sync with the name. A rename made elsewhere (the
+// tab strip on another client) arrives as a `terminals` event; the header then
+// pulls its name from the name-url endpoint and re-applies it, so the heading and
+// the page title track the rename live without a navigation.
 class InlineRename extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
     this.ac = new AbortController();
     const signal = this.ac.signal;
     this.url = this.getAttribute("rename-url");
+    this.nameUrl = this.getAttribute("name-url");
     this.titleSuffix = this.getAttribute("title-suffix") ?? "";
     this.label = this.querySelector("[data-rename-label]");
     this.input = this.querySelector("[data-rename-input]");
@@ -18,7 +23,10 @@ class InlineRename extends HTMLElement {
     }
     this.editing = false;
     this.saving = false;
+    this.syncing = false;
+    this.syncDirty = false;
 
+    if (this.nameUrl) onServerEvent("terminals", () => this.syncName(), { signal });
     this.label.addEventListener("click", () => this.showInput(), { signal });
     this.label.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
@@ -66,13 +74,43 @@ class InlineRename extends HTMLElement {
     this.input.select();
   }
 
-  applyName(name) {
+  // setName reflects the name into the heading, the edit input and the page title.
+  setName(name) {
     this.label.textContent = name;
     this.input.value = name;
     if (this.titleSuffix) {
       document.title = name + this.titleSuffix;
     }
+  }
+
+  applyName(name) {
+    this.setName(name);
     document.dispatchEvent(new CustomEvent("dc-renamed", { detail: { url: this.url, name } }));
+  }
+
+  // syncName pulls the current name from the name-url endpoint and re-applies it when
+  // it changed. Runs on the `terminals` event, so a rename made on another client
+  // lands here too. It never fights an open edit, and coalesces overlapping events
+  // into one trailing pull.
+  async syncName() {
+    if (this.editing || this.saving) return;
+    if (this.syncing) {
+      this.syncDirty = true;
+      return;
+    }
+    this.syncDirty = false;
+    this.syncing = true;
+    try {
+      const name = (await getText(this.nameUrl)).trim();
+      if (name && !this.editing && !this.saving && name !== this.label.textContent.trim()) {
+        this.setName(name);
+      }
+    } catch (error) {
+      void error;
+    } finally {
+      this.syncing = false;
+      if (this.syncDirty) this.syncName();
+    }
   }
 
   async save() {

@@ -40,13 +40,16 @@ type CoderRef struct {
 	Name    string
 	Coder   string    // owning coder id, for the badge when several coders run
 	At      time.Time // started (active) or last updated (inactive); for date sorting
+	TabPos  int       // tab strip position from @dc_tab_pos, 0 when unset (active only)
 	HasNews bool      // an unread notification points at this coder
 }
 
 type ShellRef struct {
 	ID      string
 	Name    string
-	HasNews bool // an unread notification points at this shell
+	At      time.Time // started; tiebreak for the tab order sort
+	TabPos  int       // tab strip position from @dc_tab_pos, 0 when unset
+	HasNews bool      // an unread notification points at this shell
 }
 
 // Repository wraps the on-disk projects root.

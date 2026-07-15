@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/local/dev-cockpit/internal/tmux"
@@ -47,27 +48,34 @@ func (s *Server) terminalTabs() []render.TerminalTab {
 		})
 	}
 	sort.SliceStable(tabs, func(i, j int) bool {
-		pi, pj := tabs[i].TabPos, tabs[j].TabPos
-		if pi != pj {
-			if pi == 0 {
-				return false
-			}
-			if pj == 0 {
-				return true
-			}
-			return pi < pj
-		}
-		if !tabs[i].StartedAt.Equal(tabs[j].StartedAt) {
-			return tabs[i].StartedAt.Before(tabs[j].StartedAt)
-		}
-		return tabs[i].ID < tabs[j].ID
+		return byTabOrder(tabs[i].TabPos, tabs[j].TabPos, tabs[i].StartedAt, tabs[j].StartedAt, tabs[i].ID, tabs[j].ID)
 	})
 	return tabs
 }
 
-// handleTerminalTabsFragment re-renders the tab strip partial for the
-// background refresh when the + menu or the switcher opens, mirroring the
-// quick nav fragment endpoint: the page context is recovered from ?path.
+// byTabOrder ranks live sessions the way the tab strip does, so the projects
+// list and the quick nav agree with it: positioned sessions (@dc_tab_pos) first
+// in ascending position, unpositioned ones after, oldest first, id as the final
+// tiebreak.
+func byTabOrder(posI, posJ int, atI, atJ time.Time, idI, idJ string) bool {
+	if posI != posJ {
+		if posI == 0 {
+			return false
+		}
+		if posJ == 0 {
+			return true
+		}
+		return posI < posJ
+	}
+	if !atI.Equal(atJ) {
+		return atI.Before(atJ)
+	}
+	return idI < idJ
+}
+
+// handleTerminalTabsFragment re-renders the tab strip partial for the live
+// refresh on a terminals event, mirroring the quick nav fragment endpoint:
+// the page context is recovered from ?path.
 func (s *Server) handleTerminalTabsFragment(c *gin.Context) {
 	path := c.Query("path")
 	if path == "" {
@@ -129,5 +137,6 @@ func (s *Server) handleTerminalTabsOrder(c *gin.Context) {
 		s.coders[i].Invalidate()
 	}
 	s.shells.Invalidate()
+	s.publishTerminals("") // order changed everywhere, refresh all
 	c.Status(http.StatusNoContent)
 }

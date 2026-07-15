@@ -107,8 +107,8 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(active, "current shell tab not marked active");
       const project2 = await page.$eval(tabSel(ids[0]), (e) => e.dataset.tabProject);
       assert(project2 === project, `tab project label '${project2}'`);
-      const dotHidden = await page.$eval(`${tabSel(ids[0])} .status-dot`, (e) => getComputedStyle(e).display === "none");
-      assert(dotHidden, "idle status dot visible in a tab");
+      const idleClean = await page.$eval(`${tabSel(ids[0])} .dc-term-icon`, (e) => !e.classList.contains("news"));
+      assert(idleClean, "idle tab icon still carries the news mark");
       const hintVisible = await page.$eval(".attach-desktop .switcher-hint-browser", (e) => getComputedStyle(e).display !== "none" && e.textContent.includes("Ctrl"));
       assert(hintVisible, "switcher shortcut hint not visible in the desktop footer");
       const sticky = await page.$eval("terminal-tabs", (e) => getComputedStyle(e).position === "sticky");
@@ -411,7 +411,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(title.includes(newName) && title.includes(project), `tab title '${title}' after rename`);
     });
 
-    await run("opening the + menu and the switcher refreshes the strip in the background", async () => {
+    await run("a background session change reaches the strip, + menu and switcher live", async () => {
       await page.goto(`${BASE}/shells/new?project=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
       const projPath = await page.locator('select[name="project"]').inputValue();
       await page.goto(shellUrls[2], { waitUntil: "domcontentloaded" });
@@ -423,7 +423,10 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       }, projPath);
       const ghostId = ownId(ghostUrl);
       assert(ghostId && !ghostUrl.includes("/new"), `background shell create failed: ${ghostUrl}`);
-      assert(!(await page.$(tabSel(ghostId))), "strip shows the new shell before any refresh");
+      // The strip refreshes live over the server event stream (see live-updates.js),
+      // which also keeps the + menu and switcher current, so a shell created in the
+      // background shows up in all three without any open-time refetch.
+      await page.waitForSelector(tabSel(ghostId), { state: "attached", timeout: 8000 });
       await page.click(".terminal-tabs-new-btn");
       await page.waitForSelector(tabSel(ghostId), { state: "attached", timeout: 8000 });
       await page.keyboard.press("Escape");

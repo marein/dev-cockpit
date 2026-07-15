@@ -146,11 +146,31 @@ marks off). The serve process also polls one inbox per coder
 (`<state-dir>/notification-inbox/<coder>`), the generic ingestion seam: claude
 hooks drop their JSON there, and the e2e suite injects events through it.
 State persists to `<state-dir>/notifications.json` (one list like the recent
-projects store) and fans out over SSE at `/notifications/stream`; a state dir
-belongs to one serve process, a second process on the same dir would miss
-live pushes. The `dc-notifications` element owns bell, badge, center, toasts,
-and the title counter; the SSE channel is shared module state because the
-element mounts once per header breakpoint. Opening an attach page marks that
+projects store) and fans out over SSE at `/events`, the app-wide server to
+client event bus (`internal/eventbus`, client module `@dc/events`). Every frame
+is a `{type,data}` envelope under the SSE event name `dc`, re-dispatched on
+`document` as a `dc:<type>` CustomEvent (subscribe via `onServerEvent`). On
+every connect the server sends a snapshot (unread state plus a bare `terminals`
+signal), then a `ping` frame every 15s; the client forces a reconnect when the
+stream stays silent past 45s (interval timer plus visibilitychange), because a
+dead socket does not reliably fire an error. `Server.publishTerminals(project)`
+emits a `terminals` event on every live coder/shell change (create, stop,
+resume, delete, rename, reorder, project delete, out-of-band end); an empty
+project means "refresh everything". Surfaces react by pulling their own
+fragment (per client, so path, CSRF and element state like unfold or filter
+stay correct), coalesce bursts behind one in-flight fetch, and show a
+`.dc-loading-bar` (zero-height sticky first child: no layout shift, the line
+stays pinned to the visible top). The tab strip skips the pull while hidden
+(coarse pointer, mobile navigates via the quick nav) or during a close/drag and
+flushes after; its refresh keeps the + menu and switcher current.
+`dc-project-list` swaps only the named project's
+`[data-coders-body]`/`[data-shells-body]` and carries the `dc-collapse-list`
+unfold flag over. The shell attach header (`dc-inline-rename`) re-pulls
+`GET /shells/:id/name` into heading and page title. A state dir belongs to one
+serve process, a second process on the same dir would miss live pushes. The
+`dc-notifications` element owns bell, badge, center, toasts, and the title
+counter; unread state is module scope because the element mounts once per
+header breakpoint, while `@dc/events` owns the one connection. Opening an attach page marks that
 target read. Entries always start unread; the dc-notifications client
 reconciles on every SSE event (including the initial one after a reconnect)
 and on visibilitychange: when the target's own page is open in a visible tab

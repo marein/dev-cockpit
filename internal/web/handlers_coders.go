@@ -132,6 +132,7 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		return
 	}
 	s.styleSessionPane(res.Identifier)
+	s.publishTerminals(s.projects.ProjectNameFor(res.Workdir))
 	c.Redirect(http.StatusSeeOther, "/coders/"+res.Identifier)
 }
 
@@ -149,6 +150,7 @@ func (s *Server) handleCoderStop(c *gin.Context) {
 		return
 	}
 	s.notifier.MarkTargetRead(id)
+	s.publishTerminals(project)
 	s.redirectWithProjectFlash(c, project, "Coder \""+name+"\" stopped.", "")
 }
 
@@ -363,6 +365,7 @@ func (s *Server) handleCoderResume(c *gin.Context) {
 		return
 	}
 	s.styleSessionPane(stored.SessionID)
+	s.publishTerminals(s.projects.ProjectNameFor(stored.CWD))
 	c.Redirect(http.StatusSeeOther, "/coders/"+stored.SessionID)
 }
 
@@ -378,5 +381,6 @@ func (s *Server) handleCoderDelete(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
+	s.publishTerminals(s.projects.ProjectNameFor(stored.CWD))
 	s.redirectWithProjectFlash(c, s.projects.ProjectNameFor(stored.CWD), "Inactive coder \""+stored.Name+"\" deleted.", "")
 }

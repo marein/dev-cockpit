@@ -99,6 +99,7 @@
           <i class="ti ti-plus"></i>
         </a>
       </div>
+      <div data-coders-body>
       {{if or .ActiveCoderRefs .InactiveCoderRefs}}
       <dc-collapse-list class="list-group list-group-flush">
         {{range .ActiveCoderRefs}}
@@ -131,6 +132,7 @@
         {{end}}
       </dc-collapse-list>
       {{end}}
+      </div>
     </div>
 
     <div class="mt-3" id="project-{{.Name}}-shells">
@@ -144,6 +146,7 @@
           </button>
         </form>
       </div>
+      <div data-shells-body>
       {{if .ShellRefs}}
       <dc-collapse-list class="list-group list-group-flush">
         {{range .ShellRefs}}
@@ -159,6 +162,7 @@
         {{end}}
       </dc-collapse-list>
       {{end}}
+      </div>
     </div>
   </div>
   {{end}}

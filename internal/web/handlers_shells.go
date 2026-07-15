@@ -38,6 +38,7 @@ func (s *Server) handleShellCreate(c *gin.Context) {
 		return
 	}
 	s.styleSessionPane(id)
+	s.publishTerminals(s.projects.ProjectNameFor(p.Path))
 	c.Redirect(http.StatusSeeOther, "/shells/"+id)
 }
 
@@ -73,7 +74,20 @@ func (s *Server) handleShellRename(c *gin.Context) {
 		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
+	s.publishTerminals(s.projects.ProjectNameFor(sh.CWD))
 	c.JSON(http.StatusOK, map[string]string{"name": sh.Name})
+}
+
+// handleShellName returns just the current shell name as plain text. The attach
+// header pulls it on a terminals event to track a rename made elsewhere, instead of
+// digging its name out of the whole tab strip fragment.
+func (s *Server) handleShellName(c *gin.Context) {
+	sh, err := s.shells.ResolveRunning(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusGone, err.Error())
+		return
+	}
+	c.String(http.StatusOK, sh.Name)
 }
 
 func (s *Server) handleShellDelete(c *gin.Context) {
@@ -88,6 +102,7 @@ func (s *Server) handleShellDelete(c *gin.Context) {
 		return
 	}
 	s.notifier.MarkTargetRead(id)
+	s.publishTerminals(project)
 	s.redirectWithProjectFlash(c, project, "Shell \""+name+"\" deleted.", "")
 }
 

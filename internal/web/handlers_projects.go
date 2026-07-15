@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/local/dev-cockpit/internal/filesystem"
@@ -51,6 +50,7 @@ func (s *Server) projectsWithRunners() []project.Project {
 						Name:    active.Name,
 						Coder:   coderID,
 						At:      active.StartedAt,
+						TabPos:  active.TabPos,
 						HasNews: news[active.Identifier],
 					})
 					projects[i].HasNews = projects[i].HasNews || news[active.Identifier]
@@ -70,9 +70,12 @@ func (s *Server) projectsWithRunners() []project.Project {
 				}
 			}
 		}
-		// Sessions sorted by date, most recent first (like the old session list).
-		sort.Slice(projects[i].ActiveCoderRefs, func(a, b int) bool {
-			return projects[i].ActiveCoderRefs[a].At.After(projects[i].ActiveCoderRefs[b].At)
+		// Active coders follow the tab strip order (@dc_tab_pos), so the start
+		// page agrees with the strip and the quick nav. Inactive coders have no
+		// tab, they stay most recent first.
+		refs := projects[i].ActiveCoderRefs
+		sort.Slice(refs, func(a, b int) bool {
+			return byTabOrder(refs[a].TabPos, refs[b].TabPos, refs[a].At, refs[b].At, refs[a].ID, refs[b].ID)
 		})
 		sort.Slice(projects[i].InactiveCoderRefs, func(a, b int) bool {
 			return projects[i].InactiveCoderRefs[a].At.After(projects[i].InactiveCoderRefs[b].At)
@@ -86,13 +89,17 @@ func (s *Server) projectsWithRunners() []project.Project {
 				projects[i].ShellRefs = append(projects[i].ShellRefs, project.ShellRef{
 					ID:      shells[j].Identifier,
 					Name:    shells[j].Name,
+					At:      shells[j].StartedAt,
+					TabPos:  shells[j].TabPos,
 					HasNews: news[shells[j].Identifier],
 				})
 				projects[i].HasNews = projects[i].HasNews || news[shells[j].Identifier]
 			}
 		}
-		sort.Slice(projects[i].ShellRefs, func(a, b int) bool {
-			return strings.ToLower(projects[i].ShellRefs[a].Name) < strings.ToLower(projects[i].ShellRefs[b].Name)
+		// Shells follow the same tab strip order as the coders above.
+		refs := projects[i].ShellRefs
+		sort.Slice(refs, func(a, b int) bool {
+			return byTabOrder(refs[a].TabPos, refs[b].TabPos, refs[a].At, refs[b].At, refs[a].ID, refs[b].ID)
 		})
 	}
 	return projects
@@ -127,6 +134,7 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 		return
 	}
 	s.purgeProjectRunners(p.Path)
+	s.publishTerminals("") // the purge stopped this project's coders/shells, drop them everywhere
 	if err := s.projects.Remove(p); err != nil {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return

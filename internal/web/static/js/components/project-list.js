@@ -1,6 +1,8 @@
 import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import { confirm } from "@dc/dialog";
+import { el } from "@dc/dom";
+import { onServerEvent } from "@dc/events";
 
 const FILTER_KEY = "dc-project-filter";
 
@@ -14,9 +16,17 @@ class ProjectList extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
     this.ac = new AbortController();
+    this.inFlight = false;
+    this.dirty = false;
     this.setupSort();
     this.setupFilter();
     this.addEventListener("submit", (event) => this.onAjaxSubmit(event), { signal: this.ac.signal });
+    // A coder or shell started, stopped, was renamed or reordered somewhere: pull
+    // a fresh /projects render and swap the affected sections in place, so the
+    // start page tracks the tab strip live without disturbing unfolded lists, the
+    // filter or the scroll. A project-less event (reorder, connect snapshot)
+    // touches every project.
+    onServerEvent("terminals", (event) => this.applyTerminals(event.detail), { signal: this.ac.signal });
   }
 
   disconnectedCallback() {
@@ -54,6 +64,64 @@ class ProjectList extends HTMLElement {
         if (section) document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: section } }));
       })
       .catch(() => window.pe.submit(form));
+  }
+
+  // applyTerminals refreshes the affected project's sections, or every project when
+  // the event names none (the connect snapshot).
+  applyTerminals(detail) {
+    this.refreshProjects(detail && detail.project ? [detail.project] : null);
+  }
+
+  // refreshProjects pulls a fresh /projects render and swaps the coder and shell
+  // section bodies of the named projects in place (all of them when names is
+  // null). The fetch is this client's own, so the swapped-in forms already carry
+  // the right CSRF token, and each dc-collapse-list keeps its unfold: the old
+  // expanded flag rides onto the fresh element before it connects.
+  refreshProjects(names) {
+    // Coalesce an event that lands during an in-flight fetch: re-run once it
+    // settles (refreshing every project, a safe superset of any dropped scope).
+    if (this.inFlight) {
+      this.dirty = true;
+      return;
+    }
+    this.dirty = false;
+    this.inFlight = true;
+    const card = this.querySelector(".projects-card");
+    const bar = card && el("div", { class: "dc-loading-bar", role: "status", "aria-label": "Refreshing" });
+    if (bar) card.prepend(bar);
+    const wanted = names && new Set(names.flatMap((n) => [`project-${n}-coders`, `project-${n}-shells`]));
+    fetch("/projects", { credentials: "same-origin" })
+      .then((response) => (response.ok ? response.text() : Promise.reject(new Error("refresh failed"))))
+      .then((html) => {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        this.querySelectorAll("[data-coders-body], [data-shells-body]").forEach((body) => {
+          const section = body.closest("[id^='project-']");
+          if (!section || (wanted && !wanted.has(section.id))) return;
+          const fresh = doc.getElementById(section.id);
+          const freshBody = fresh && fresh.querySelector(body.matches("[data-coders-body]") ? "[data-coders-body]" : "[data-shells-body]");
+          if (freshBody) this.swapBody(body, freshBody.innerHTML);
+        });
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (bar) bar.remove();
+        this.inFlight = false;
+        if (this.dirty) this.refreshProjects(null);
+      });
+  }
+
+  // swapBody replaces one section body with the fresh render, carrying the current
+  // unfold state onto the new dc-collapse-list so a "Show N more" the user opened
+  // stays open.
+  swapBody(body, html) {
+    const oldList = body.querySelector("dc-collapse-list");
+    const expanded = oldList && oldList.dataset.collapseExpanded === "1";
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const freshList = template.content.querySelector("dc-collapse-list");
+    if (freshList && expanded) freshList.setAttribute("data-collapse-expanded", "1");
+    body.replaceChildren(...template.content.childNodes);
+    window.app.loadElements(body);
   }
 
   // Re-renders just the project section from the redirected /projects response.

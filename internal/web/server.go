@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/config"
+	"github.com/local/dev-cockpit/internal/eventbus"
 	"github.com/local/dev-cockpit/internal/notify"
 	"github.com/local/dev-cockpit/internal/project"
 	"github.com/local/dev-cockpit/internal/push"
@@ -33,6 +34,7 @@ type Server struct {
 	shells       *shell.Shells
 	projects     *project.Repository
 	notifier     *notify.Service
+	bus          *eventbus.Bus
 	settings     *settings.Store
 	pusher       *push.Service
 	version      string
@@ -63,6 +65,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		shells:   shells,
 		projects: projects,
 		notifier: notifier,
+		bus:      eventbus.New(),
 		settings: settingsStore,
 		pusher:   pusher,
 		version:  version,

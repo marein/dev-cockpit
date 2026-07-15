@@ -1,60 +1,35 @@
 import { themePreset } from "@dc/dialog";
+import { onServerEvent } from "@dc/events";
 import { getJSON, postForm } from "@dc/http";
 import { playNotification } from "@dc/jingle";
 
 // Notification bell + center. The element renders a bell with an unread badge
 // and a dropdown listing recent "coder finished" / "needs attention" events.
-// The header mounts one instance per breakpoint, so the SSE connection, the
-// toast, and the title counter live in a module level channel shared by all
-// instances; each element only mirrors the channel state into its own DOM.
+// The header mounts one instance per breakpoint, so the toast, the title counter
+// and the shared unread state live in a module level channel shared by all
+// instances; each element only mirrors the channel state into its own DOM. The
+// server stream itself is the app-wide one in @dc/events; the channel just
+// subscribes to its "notifications" events.
 
 const channel = {
-  es: null,
-  refs: 0,
   unread: null,
   targets: [],
   held: new Map(),
   listeners: new Set(),
-  streamUrl: "/notifications/stream",
   readUrl: "/notifications/read",
 
-  acquire(listener, streamUrl, readUrl) {
-    if (streamUrl) this.streamUrl = streamUrl;
+  addListener(listener, readUrl) {
     if (readUrl) this.readUrl = readUrl;
     this.listeners.add(listener);
-    this.refs++;
-    this.open();
     if (this.unread !== null) listener({ unread: this.unread });
   },
 
-  release(listener) {
+  removeListener(listener) {
     this.listeners.delete(listener);
-    this.refs--;
-    if (this.refs <= 0) {
-      this.refs = 0;
-      this.close();
-    }
   },
 
-  open() {
-    if (this.es) return;
-    this.es = new EventSource(this.streamUrl);
-    this.es.addEventListener("notifications", (event) => this.receive(event));
-  },
-
-  close() {
-    if (this.es) this.es.close();
-    this.es = null;
-  },
-
-  receive(event) {
-    let payload;
-    try {
-      payload = JSON.parse(event.data);
-    } catch (error) {
-      void error;
-      return;
-    }
+  receive(payload) {
+    if (!payload) return;
     this.targets = payload.targets || [];
     // A toast already on screen and the own visible page act on the real
     // server state right away, independent of the grace window below.
@@ -112,12 +87,15 @@ const channel = {
   },
 };
 
+// The app-wide stream (see @dc/events) delivers every server push; the channel
+// only handles the notification ones. It resends a notification snapshot on
+// every reconnect, so a woken background tab reconciles from here too.
+onServerEvent("notifications", (event) => channel.receive(event.detail));
+
+// On becoming visible again, re-check whether the target whose page is open
+// should mark itself read. The stream reconnect is owned by @dc/events.
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden || channel.refs <= 0) return;
-  if (!channel.es || channel.es.readyState === EventSource.CLOSED) {
-    channel.close();
-    channel.open();
-  }
+  if (document.hidden) return;
   reconcileOwnTarget(channel.targets);
 });
 
@@ -295,7 +273,7 @@ class Notifications extends HTMLElement {
     this.renderEmpty("Nothing yet.");
 
     this.listener = (state) => this.apply(state);
-    channel.acquire(this.listener, this.getAttribute("stream-url"), this.getAttribute("read-url"));
+    channel.addListener(this.listener, this.getAttribute("read-url"));
 
     this.addEventListener("show.bs.dropdown", () => this.refresh(), { signal });
 
@@ -314,7 +292,7 @@ class Notifications extends HTMLElement {
   }
 
   disconnectedCallback() {
-    channel.release(this.listener);
+    channel.removeListener(this.listener);
     this.ac?.abort();
     this.ac = null;
   }
