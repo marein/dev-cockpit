@@ -7,6 +7,7 @@ import { notifyError } from "@dc/toast";
 import { menuJustClosed, openMenu } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { csrfHeaders, ensureOk, getJSON, postForm } from "@dc/http";
+import * as projectSort from "@dc/project-sort";
 import * as store from "@dc/store";
 
 const MAX_RESTORED_TABS = 20;
@@ -14,6 +15,7 @@ const MAX_SAVED_TREE_DIRS = 200;
 const QUICK_OPEN_LIMIT = 100;
 const PREVIEW_DEBOUNCE_MS = 500;
 const TREE_WIDTH_KEY = "dc-editor-tree-width";
+const FULLSCREEN_KEY = "dc-editor-fullscreen";
 
 async function init(root) {
   const name = root.dataset.editorName;
@@ -224,6 +226,15 @@ async function init(root) {
       if (pointerMedia.matches) editor.focus();
     }
     afterActiveChanged();
+  }
+
+  function stepTab(direction) {
+    if (tabs.length < 2) return;
+    const i = tabs.findIndex((t) => t.path === activePath);
+    const next = i < 0
+      ? (direction > 0 ? 0 : tabs.length - 1)
+      : (i + direction + tabs.length) % tabs.length;
+    activateTab(tabs[next].path);
   }
 
   function showEmpty() {
@@ -1368,8 +1379,40 @@ async function init(root) {
   wireSplitter();
   wireQuickOpen();
 
+  const projectMenuEl = root.querySelector(".editor-project-menu");
+  if (projectMenuEl) projectSort.sort(projectMenuEl);
+
+  const fullscreenBtn = root.querySelector("[data-editor-fullscreen]");
+  const finePointer = !window.matchMedia("(pointer: coarse)").matches;
+  let fullscreenOn = finePointer && store.get(FULLSCREEN_KEY, "") === "1";
+  const paintFullscreen = () => {
+    document.documentElement.classList.toggle("dc-editor-fullscreen", fullscreenOn);
+    fullscreenBtn.setAttribute("aria-pressed", fullscreenOn ? "true" : "false");
+    fullscreenBtn.setAttribute("aria-label", fullscreenOn ? "Exit fullscreen" : "Fullscreen");
+    fullscreenBtn.title = (fullscreenOn ? "Exit fullscreen" : "Fullscreen") + " (Ctrl+Shift+Enter)";
+    const icon = fullscreenBtn.querySelector("i");
+    if (icon) icon.className = fullscreenOn ? "ti ti-minimize" : "ti ti-maximize";
+  };
+  const setFullscreen = (on) => {
+    if (!finePointer || fullscreenOn === on) return;
+    fullscreenOn = on;
+    store.set(FULLSCREEN_KEY, on ? "1" : "");
+    paintFullscreen();
+  };
+  paintFullscreen();
+  fullscreenBtn.addEventListener("click", () => setFullscreen(!fullscreenOn), { signal });
+  tabsEl.addEventListener("dblclick", (e) => {
+    if (!e.target.closest(".editor-tab")) setFullscreen(!fullscreenOn);
+  }, { signal });
+
   document.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
+    if (e.key === "Tab" && e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      stepTab(e.shiftKey ? -1 : 1);
+    } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key === "Enter" && quickOpenEl.hidden) {
+      e.preventDefault();
+      setFullscreen(!fullscreenOn);
+    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
       save();
     } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "o") {
@@ -1414,6 +1457,7 @@ async function init(root) {
     clearTimeout(previewTimer);
     clearTimeout(searchTimer);
     if (svgPreviewUrl) URL.revokeObjectURL(svgPreviewUrl);
+    document.documentElement.classList.remove("dc-editor-fullscreen");
     editor.destroy();
   };
 }

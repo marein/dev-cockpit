@@ -1389,7 +1389,7 @@ function initTerminalAttach(host) {
   }
   if (interactiveInput) {
     listen(document, "keydown", (event) => {
-      if ((event.key === "F" || event.key === "f") && (event.ctrlKey || event.metaKey)
+      if ((event.key === "F" || event.key === "f" || event.key === "Enter") && (event.ctrlKey || event.metaKey)
         && event.shiftKey && !event.altKey && !event.repeat) {
         event.preventDefault();
         event.stopPropagation();

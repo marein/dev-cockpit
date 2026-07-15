@@ -23,9 +23,10 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // the per-row hover pencil/trash buttons are gone and the tree header keeps just
 // the refresh button (drag-drop upload still works).
 
-L.runFeature("EDITOR", async ({ engine, page, run, mobilePage }) => {
+L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) => {
   const tag = `edit-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
+  const projectB = `zztc-a-${tag}`;
   const editorURL = `${BASE}/projects/${encodeURIComponent(project)}/editor`;
   const noteFile = `note_${tag}.md`;
   const qoFile = `qo_${tag}.txt`;
@@ -509,6 +510,65 @@ L.runFeature("EDITOR", async ({ engine, page, run, mobilePage }) => {
       assert(await page.$eval("[data-editor-placeholder]", (e) => !e.hidden), "placeholder hidden with no tabs open");
     });
 
+    await run("Ctrl+Tab and Ctrl+Shift+Tab step through the open tabs in strip order", async () => {
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      await newFile(`ct1_${tag}.txt`);
+      await newFile(`ct2_${tag}.txt`);
+      await page.waitForSelector(`${tabSel(`ct2_${tag}.txt`)}.active`, { timeout: 6000 });
+      await page.keyboard.press("Control+Tab");
+      await page.waitForSelector(`${tabSel(`ct1_${tag}.txt`)}.active`, { timeout: 6000 });
+      await page.keyboard.press("Control+Shift+Tab");
+      await page.waitForSelector(`${tabSel(`ct2_${tag}.txt`)}.active`, { timeout: 6000 });
+    });
+
+    await run("fullscreen: button toggles and persists, Ctrl+Shift+Enter and strip double-click toggle too", async () => {
+      const waitFullscreen = (want) => page.waitForFunction(
+        (w) => document.documentElement.classList.contains("dc-editor-fullscreen") === w, want, { timeout: 6000 });
+      await page.click("[data-editor-fullscreen]");
+      await waitFullscreen(true);
+      assert(await page.$eval("[data-editor-fullscreen]", (e) => e.getAttribute("aria-pressed") === "true"), "button not pressed after enabling");
+      assert(await page.$eval("[data-editor-fullscreen] i", (e) => e.className.includes("ti-minimize")), "icon did not switch to minimize");
+      assert(await page.isVisible(".editor-back"), "back button not visible in fullscreen");
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+      await waitFullscreen(true);
+      await page.keyboard.press("Control+Shift+Enter");
+      await waitFullscreen(false);
+      const box = await page.locator("[data-editor-tabs]").boundingBox();
+      await page.mouse.dblclick(box.x + box.width - 8, box.y + box.height / 2);
+      await waitFullscreen(true);
+      await page.click("[data-editor-fullscreen]");
+      await waitFullscreen(false);
+      assert(!(await page.isVisible(".editor-back")), "back button visible outside fullscreen");
+    });
+
+    await run("project switcher in the tree header switches to another project's editor", async () => {
+      await L.createProject(page, projectB);
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+      const order = () => page.$$eval(".editor-project-menu .dropdown-item", (els) => els.map((e) => e.dataset.projectName));
+      let names = await order();
+      assert(names.indexOf(projectB) >= 0 && names.indexOf(projectB) < names.indexOf(project),
+        `alpha sort order wrong: ${names.join(", ")}`);
+      await page.evaluate(() => localStorage.setItem("dc-project-sort", "recent"));
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+      names = await order();
+      assert(names.indexOf(project) >= 0 && names.indexOf(project) < names.indexOf(projectB),
+        `recent sort order wrong: ${names.join(", ")}`);
+      await page.evaluate(() => localStorage.removeItem("dc-project-sort"));
+      await page.click(".editor-project-switch");
+      await page.waitForSelector(".editor-project-menu.show", { timeout: 4000 });
+      const active = await page.$eval(".editor-project-menu .dropdown-item.active", (e) => e.textContent.trim());
+      assert(active === project, `active switcher entry is ${active}`);
+      await page.click(`.editor-project-menu .dropdown-item:has-text("${projectB}")`);
+      await page.waitForFunction((p) => decodeURIComponent(location.pathname) === `/projects/${p}/editor`, projectB, { timeout: 8000 });
+      await page.waitForFunction((p) => {
+        const el = document.querySelector(".editor-project-switch");
+        return el && el.textContent.includes(p);
+      }, projectB, { timeout: 8000 });
+    });
+
     await run("mobile: tree is a drawer, auto-open without tabs, closes on open", async () => {
       const mp = await mobilePage();
       await mp.goto(editorURL, { waitUntil: "domcontentloaded" });
@@ -610,11 +670,38 @@ L.runFeature("EDITOR", async ({ engine, page, run, mobilePage }) => {
       await mp.waitForFunction(() => !document.querySelector(".editor.editor-drawer-open"), null, { timeout: 6000 });
     });
 
+    await run("mobile: fullscreen button hidden on coarse pointers", async () => {
+      const mp = await mobilePage();
+      assert(!(await mp.isVisible("[data-editor-fullscreen]")), "fullscreen button visible on mobile");
+    });
+
+    await run("mobile landscape: the closed drawer stays fully offscreen", async () => {
+      const ctx = await browser.newContext({ ignoreHTTPSErrors: true, hasTouch: true, isMobile: true, viewport: { width: 1250, height: 390 } });
+      const lp = await ctx.newPage();
+      L.wirePage(lp, bag);
+      try {
+        await L.login(lp);
+        await lp.goto(editorURL, { waitUntil: "domcontentloaded" });
+        await lp.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+        await lp.waitForSelector(".editor.editor-drawer-open", { timeout: 8000 }).catch(() => {});
+        if (await lp.$(".editor.editor-drawer-open")) {
+          await lp.evaluate(() => document.querySelector("[data-editor-backdrop]").click());
+          await lp.waitForFunction(() => !document.querySelector(".editor.editor-drawer-open"), null, { timeout: 6000 });
+        }
+        await sleep(500);
+        const right = await lp.$eval(".editor-tree-col", (el) => el.getBoundingClientRect().right);
+        assert(right <= 0, `drawer leaks into the viewport, right edge at ${right}px`);
+      } finally {
+        await ctx.close();
+      }
+    });
+
     await run("lifecycle teardown (remove dc-editor, no new errors)", async ({} = {}) => {
       await page.evaluate(() => document.querySelector("dc-editor").remove());
       await sleep(600);
     });
   } finally {
     await L.deleteProject(page, project).catch(() => {});
+    await L.deleteProject(page, projectB).catch(() => {});
   }
 });

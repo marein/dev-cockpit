@@ -904,6 +904,22 @@ body:not(:has(.attach-footer)) .quicknav {
   .page:has(.editor) .page-header { margin-bottom: 0.5rem !important; }
   .editor { height: 22rem; margin-bottom: 1rem; }
 }
+@media not (pointer: coarse) {
+  .dc-editor-fullscreen body { overflow: hidden; }
+  .dc-editor-fullscreen .editor {
+    position: fixed;
+    inset: 0;
+    z-index: 1030;
+    height: auto;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .dc-editor-fullscreen .editor-back { display: inline-flex; }
+}
+@media (pointer: coarse) {
+  .editor [data-editor-fullscreen] { display: none; }
+}
 .editor {
   margin-bottom: 0;
 }
@@ -962,6 +978,9 @@ body:not(:has(.attach-footer)) .quicknav {
 .editor-drawer-toggle:hover {
   color: var(--tblr-body-color);
 }
+.editor-back {
+  display: none;
+}
 .editor-backdrop {
   position: absolute;
   inset: 0;
@@ -991,7 +1010,7 @@ body:not(:has(.attach-footer)) .quicknav {
     min-width: 0;
     max-width: none;
     box-shadow: 0 0 2rem rgba(0, 0, 0, 0.4);
-    transform: translateX(-110%);
+    transform: translateX(calc(-100% - 100vw));
     transition: transform 0.18s ease;
   }
   .editor.editor-drawer-open .editor-tree-col {
@@ -1001,6 +1020,20 @@ body:not(:has(.attach-footer)) .quicknav {
 .editor-pane-header {
   background: var(--tblr-bg-surface-secondary);
   min-height: 2.5rem;
+}
+.editor-project-switch {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--tblr-body-color);
+}
+.editor-project-caret {
+  font-size: 0.7rem;
+  color: var(--tblr-secondary);
+}
+.editor-project-menu {
+  max-height: 60vh;
+  overflow-y: auto;
 }
 .editor-tabs {
   display: flex;

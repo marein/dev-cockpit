@@ -20,8 +20,18 @@
   <div class="editor-body">
     <div class="editor-tree-col">
       <div class="editor-pane-header d-flex align-items-center gap-2 px-2 py-2 border-bottom">
-        <i class="ti ti-folder"></i>
-        <span class="text-truncate small fw-medium">{{.Project.Name}}</span>
+        <div class="dropdown min-w-0 flex-fill">
+          <button type="button" class="editor-project-switch d-flex align-items-center gap-2 min-w-0 w-100" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Switch project" title="Switch project">
+            <i class="ti ti-folder"></i>
+            <span class="text-truncate small fw-medium">{{.Project.Name}}</span>
+            <i class="ti ti-chevron-down editor-project-caret"></i>
+          </button>
+          <div class="dropdown-menu editor-project-menu">
+            {{range .Projects}}
+            <a class="dropdown-item{{if .Current}} active{{end}}" href="{{.URL}}" data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">{{.Name}}</a>
+            {{end}}
+          </div>
+        </div>
         <button type="button" class="btn btn-sm btn-ghost-secondary ms-auto p-1" data-editor-refresh aria-label="Refresh files" title="Refresh">
           <i class="ti ti-refresh"></i>
         </button>
@@ -123,9 +133,15 @@
               </button>
             </div>
           </div>
+          <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-editor-fullscreen aria-pressed="false" aria-label="Fullscreen" title="Fullscreen (Ctrl+Shift+Enter)">
+            <i class="ti ti-maximize"></i>
+          </button>
           <button type="button" class="btn btn-sm btn-primary" data-editor-save disabled>
             <i class="ti ti-device-floppy"></i><span class="d-none d-sm-inline ms-1">Save</span>
           </button>
+          <a class="btn btn-sm btn-icon btn-ghost-secondary editor-back" href="{{.Return}}" aria-label="Back" title="Back">
+            <i class="ti ti-arrow-left"></i>
+          </a>
         </div>
       </div>
       <div class="editor-surface" data-editor-surface>
@@ -144,6 +160,10 @@
             <kbd>Ctrl</kbd>+<kbd>S</kbd> save
             <span class="mx-1">·</span>
             <kbd>Ctrl</kbd>+<kbd>F</kbd> find in file
+            <span class="mx-1">·</span>
+            <kbd>Ctrl</kbd>+<kbd>Tab</kbd> next tab
+            <span class="mx-1">·</span>
+            <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> fullscreen
           </div>
         </div>
         <div class="editor-preview markdown" data-editor-preview-pane hidden></div>

@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -38,11 +39,24 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		return
 	}
 	s.projects.Touch(p.Name)
+	ret := s.formReturn(c)
+	list := s.projectsWithRunners()
+	switcher := make([]render.EditorProject, 0, len(list))
+	for _, q := range list {
+		switcher = append(switcher, render.EditorProject{
+			Name:         q.Name,
+			URL:          "/projects/" + url.PathEscape(q.Name) + "/editor?return=" + url.QueryEscape(ret),
+			Current:      q.Name == p.Name,
+			Active:       len(q.ActiveCoderRefs) > 0 || len(q.ShellRefs) > 0,
+			LastUsedUnix: q.LastUsedUnix,
+		})
+	}
 	c.HTML(http.StatusOK, "project_editor.gohtml", render.EditorData{
 		Page:       s.page(c, "Editor - "+p.Name, "projects"),
 		Project:    p,
 		MaxEditKiB: filesystem.MaxEditableBytes / 1024,
-		Return:     s.formReturn(c),
+		Return:     ret,
+		Projects:   switcher,
 	})
 }
 

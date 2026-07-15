@@ -166,7 +166,7 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
     // chrome disappears, and rows follow the viewport height instead of the
     // rows setting. Toggles: strip button, Ctrl+Shift+F or Cmd+Shift+F,
     // double-click on empty strip space. Persists per device.
-    await run("desktop: fullscreen via strip button + Ctrl/Cmd+Shift+F + strip double-click, rows follow the viewport", async () => {
+    await run("desktop: fullscreen via strip button + Ctrl/Cmd+Shift+F + Ctrl+Shift+Enter alias + strip double-click, rows follow the viewport", async () => {
       const state = () => page.evaluate(() => {
         const footer = document.querySelector(".attach-footer");
         const footerBox = footer.getBoundingClientRect();
@@ -199,6 +199,10 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await page.waitForFunction(() => document.documentElement.classList.contains("dc-terminal-fullscreen"), null, { timeout: 6000 });
       const strip = await page.locator(".terminal-tabs-strip").boundingBox();
       await page.mouse.dblclick(strip.x + strip.width - 8, strip.y + strip.height / 2);
+      await page.waitForFunction(() => !document.documentElement.classList.contains("dc-terminal-fullscreen"), null, { timeout: 4000 });
+      await page.keyboard.press("Control+Shift+Enter");
+      await page.waitForFunction(() => document.documentElement.classList.contains("dc-terminal-fullscreen"), null, { timeout: 4000 });
+      await page.keyboard.press("Control+Shift+Enter");
       await page.waitForFunction(() => !document.documentElement.classList.contains("dc-terminal-fullscreen"), null, { timeout: 4000 });
       await page.evaluate(() => localStorage.removeItem("dc-terminal-fullscreen"));
     });

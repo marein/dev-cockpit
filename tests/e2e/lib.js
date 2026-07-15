@@ -12,6 +12,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function isCdnNoise(t) {
   return /jsdelivr|cdn\.|CORS policy|ERR_FAILED|Failed to load resource/i.test(t);
 }
+
+// WebKit reports a same-origin request that a navigation aborted mid-flight (the
+// /events stream connect, the /update/check poll) as a page error ending in "due
+// to access control checks". That is a browser artifact of racing navigations on
+// the throwaway instance, not an app defect, so it joins the non-gating noise
+// bucket. The filter stays narrow (only these two always-on background paths) so
+// a real access control failure on an app route still gates.
+function isWebkitAbortNoise(t) {
+  return /\/(events|update\/check)\b.*due to access control checks/.test(t);
+}
 function wirePage(page, bag) {
   bag.cdnNoise = bag.cdnNoise || [];
   page.on("console", (m) => {
@@ -19,7 +29,9 @@ function wirePage(page, bag) {
     const t = m.text();
     (isCdnNoise(t) ? bag.cdnNoise : bag.consoleErrors).push(`[${page.url()}] ${t}`);
   });
-  page.on("pageerror", (e) => bag.pageErrors.push(`[${page.url()}] ${e.message}`));
+  page.on("pageerror", (e) => {
+    (isWebkitAbortNoise(e.message) ? bag.cdnNoise : bag.pageErrors).push(`[${page.url()}] ${e.message}`);
+  });
 }
 
 function submitBtn(page, hasSel) {
