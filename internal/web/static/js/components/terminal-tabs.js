@@ -12,6 +12,8 @@ const EDGE_ZONE = 32;
 const EDGE_STEP = 12;
 const TAP_WINDOW_MS = 400;
 const RESUME_FOLD_LIMIT = 3;
+const GROUP_ZONE_RATIO = 0.3;
+const GROUP_DWELL_MS = 220;
 
 class TerminalTabs extends HTMLElement {
   connectedCallback() {
@@ -84,8 +86,13 @@ class TerminalTabs extends HTMLElement {
     return Array.from(this.strip.querySelectorAll(".terminal-tab"));
   }
 
+  memberIds(tab) {
+    return (tab.dataset.tabMembers || tab.dataset.tabId || "").split(" ").filter(Boolean);
+  }
+
   persistOrder() {
-    postJSON("/terminal-tabs/order", { ids: this.tabs().map((tab) => tab.dataset.tabId) })
+    const ids = this.tabs().flatMap((tab) => this.memberIds(tab));
+    postJSON("/terminal-tabs/order", { ids })
       .then((response) => ensureOk(response, "Could not save the tab order."))
       .catch((error) => notifyError(error.message));
   }
@@ -159,12 +166,25 @@ class TerminalTabs extends HTMLElement {
     event.preventDefault();
     this.cancelDrag();
     const dataset = { ...tab.dataset };
+    const split = dataset.tabKind === "split";
     const items = [];
     if (dataset.tabKind === "shell") {
       items.push({ label: "Rename", icon: "ti-pencil", action: () => void this.renameShell(dataset) });
     }
-    if (tab.querySelector("[data-tab-icon].news")) {
-      items.push({ label: "Mark read", icon: "ti-eye-check", action: () => void this.markRead(dataset.tabId) });
+    if (split) {
+      items.push({ label: "Rename split view", icon: "ti-pencil", action: () => void this.renameSplit(dataset) });
+    }
+    let newsTargets = [...tab.querySelectorAll("[data-notify-target].news")]
+      .map((icon) => icon.getAttribute("data-notify-target")).filter(Boolean);
+    if (split && !newsTargets.length && tab.querySelector("[data-tab-icon].news")) {
+      newsTargets = this.memberIds(tab);
+    }
+    if (newsTargets.length) {
+      items.push({
+        label: "Mark read",
+        icon: "ti-eye-check",
+        action: () => newsTargets.forEach((id) => void this.markRead(id)),
+      });
     }
     if (dataset.tabProject) {
       items.push({ divider: true });
@@ -182,13 +202,121 @@ class TerminalTabs extends HTMLElement {
       });
     }
     items.push({ divider: true });
-    items.push({
-      label: dataset.tabKind === "coder" ? "Stop coder" : "Delete shell",
-      icon: dataset.tabKind === "coder" ? "ti-player-stop" : "ti-trash",
-      danger: true,
-      action: () => void this.closeTarget(dataset),
-    });
+    if (split) {
+      items.push({ label: "Ungroup split view", icon: "ti-layout-off", action: () => void this.ungroupSplit(dataset) });
+      items.push({
+        label: "Close all terminals",
+        icon: "ti-trash",
+        danger: true,
+        action: () => void this.closeSplitMembers(dataset),
+      });
+    } else {
+      items.push({
+        label: dataset.tabKind === "coder" ? "Stop coder" : "Delete shell",
+        icon: dataset.tabKind === "coder" ? "ti-player-stop" : "ti-trash",
+        danger: true,
+        action: () => void this.closeTarget(dataset),
+      });
+    }
     openMenu({ x: event.clientX, y: event.clientY, items, signal: this.ac.signal });
+  }
+
+  async groupTabs(base, added) {
+    const involved = base.classList.contains("active") || added.classList.contains("active");
+    const ids = [...this.memberIds(base), ...this.memberIds(added)];
+    try {
+      const response = await postJSON("/terminal-tabs/group", { ids });
+      await ensureOk(response, "Could not create the split view.");
+      const data = await response.json();
+      if (involved && data.url) {
+        if (data.url === window.location.pathname) {
+          if (window.app?.navigate) Promise.resolve(window.app.navigate(data.url)).catch(() => {});
+        } else {
+          this.navigate(data.url);
+        }
+      }
+    } catch (error) {
+      notifyError(error.message);
+    }
+  }
+
+  async renameSplit({ tabId, tabName }) {
+    if (this.confirming) return;
+    this.confirming = true;
+    try {
+      const name = await promptText({
+        title: `Rename split view "${tabName}"`,
+        value: tabName,
+        confirmText: "Rename",
+        allowEmpty: true,
+      });
+      if (name === null || name === tabName) return;
+      const response = await postJSON("/terminal-tabs/group/name", { group: tabId, name });
+      await ensureOk(response, "Could not rename the split view.");
+    } catch (error) {
+      notifyError(error.message);
+    } finally {
+      this.confirming = false;
+      this.tryRefresh();
+    }
+  }
+
+  async ungroupSplit({ tabId, tabName }) {
+    const tab = this.strip.querySelector(`.terminal-tab[data-tab-id="${CSS.escape(tabId)}"]`);
+    if (!tab) return;
+    const current = tab.classList.contains("active");
+    try {
+      const response = await postJSON("/terminal-tabs/ungroup", { ids: this.memberIds(tab) });
+      await ensureOk(response, "Could not ungroup the split view.");
+      const data = await response.json();
+      notifySuccess(`Split view "${tabName}" ungrouped.`);
+      if (current) this.navigate(data.url || "/projects");
+    } catch (error) {
+      notifyError(error.message);
+    } finally {
+      this.tryRefresh();
+    }
+  }
+
+  async closeSplitMembers({ tabId, tabName }) {
+    if (this.confirming) return;
+    const tab = this.strip.querySelector(`.terminal-tab[data-tab-id="${CSS.escape(tabId)}"]`);
+    if (!tab) return;
+    const ids = this.memberIds(tab);
+    const kinds = (tab.dataset.tabMemberKinds || "").split(" ").filter(Boolean);
+    const current = tab.classList.contains("active");
+    this.confirming = true;
+    try {
+      const ok = await confirm({
+        title: `Close all ${ids.length} terminals in "${tabName}"?`,
+        confirmText: "Close all",
+      });
+      if (!ok) return;
+      let failed = 0;
+      for (let i = 0; i < ids.length; i += 1) {
+        window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id: ids[i] } }));
+        const action = kinds[i] === "shell" ? `/shells/${ids[i]}/delete` : `/coders/${ids[i]}/stop`;
+        try {
+          const response = await postForm(action, {});
+          await ensureOk(response, "Could not close the session.");
+        } catch (memberError) {
+          void memberError;
+          failed += 1;
+        }
+      }
+      if (failed) notifyError(`Could not close ${failed} of ${ids.length} terminals.`);
+      else notifySuccess(`Split view "${tabName}" closed.`);
+      this.removeTab(tabId);
+      if (current) {
+        const tabs = this.tabs();
+        this.navigate(tabs[0]?.getAttribute("href") || "/projects");
+      }
+    } catch (error) {
+      notifyError(error.message);
+    } finally {
+      this.confirming = false;
+      this.tryRefresh();
+    }
   }
 
   async renameShell({ tabId, tabName }) {
@@ -273,8 +401,11 @@ class TerminalTabs extends HTMLElement {
       drag.tab.classList.remove("terminal-tab-dragging");
       for (const tab of drag.tabs) {
         tab.style.transform = "";
+        tab.classList.remove("terminal-tab-group-target");
       }
-      if (drag.toIndex !== drag.fromIndex) {
+      if (drag.groupTarget >= 0 && drag.tabs[drag.groupTarget]) {
+        void this.groupTabs(drag.tabs[drag.groupTarget], drag.tab);
+      } else if (drag.toIndex !== drag.fromIndex) {
         const others = drag.tabs.filter((tab) => tab !== drag.tab);
         this.strip.insertBefore(drag.tab, others[drag.toIndex] || null);
         this.persistOrder();
@@ -293,6 +424,7 @@ class TerminalTabs extends HTMLElement {
     drag.tab.classList.remove("terminal-tab-dragging");
     for (const tab of drag.tabs) {
       tab.style.transform = "";
+      tab.classList.remove("terminal-tab-group-target");
     }
   }
 
@@ -308,10 +440,28 @@ class TerminalTabs extends HTMLElement {
       const rect = tab.getBoundingClientRect();
       return rect.left + rect.width / 2 - stripLeft + this.strip.scrollLeft;
     });
+    drag.widths = drag.tabs.map((tab) => tab.getBoundingClientRect().width);
     drag.startContentX = this.contentX(event.clientX);
+    drag.groupTarget = -1;
+    drag.groupPending = -1;
+    drag.groupSince = 0;
     this.strip.classList.add("terminal-tabs-strip-dragging");
     drag.tab.classList.add("terminal-tab-dragging");
     drag.raf = window.requestAnimationFrame(() => this.tickEdgeScroll());
+  }
+
+  groupCandidate(drag, draggedCenter) {
+    for (let i = 0; i < drag.tabs.length; i += 1) {
+      if (i === drag.fromIndex) continue;
+      let shift = 0;
+      if (i > drag.fromIndex && i <= drag.toIndex) shift = -drag.width;
+      else if (i < drag.fromIndex && i >= drag.toIndex) shift = drag.width;
+      const visualCenter = drag.centers[i] + shift;
+      if (Math.abs(draggedCenter - visualCenter) < drag.widths[i] * GROUP_ZONE_RATIO) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   updateDrag() {
@@ -324,6 +474,20 @@ class TerminalTabs extends HTMLElement {
       if (i !== drag.fromIndex && drag.centers[i] < draggedCenter) toIndex += 1;
     }
     drag.toIndex = toIndex;
+    const candidate = this.groupCandidate(drag, draggedCenter);
+    if (candidate === -1) {
+      drag.groupPending = -1;
+      drag.groupTarget = -1;
+    } else if (candidate !== drag.groupPending) {
+      drag.groupPending = candidate;
+      drag.groupSince = Date.now();
+      drag.groupTarget = -1;
+    } else if (drag.groupTarget === -1 && Date.now() - drag.groupSince >= GROUP_DWELL_MS) {
+      drag.groupTarget = candidate;
+    }
+    drag.tabs.forEach((tab, i) => {
+      tab.classList.toggle("terminal-tab-group-target", i === drag.groupTarget);
+    });
     drag.tab.style.transform = "translateX(" + dx + "px)";
     drag.tabs.forEach((tab, i) => {
       if (tab === drag.tab) return;
@@ -348,6 +512,10 @@ class TerminalTabs extends HTMLElement {
         this.strip.scrollLeft = next;
         this.updateDrag();
       }
+    }
+    if (drag.groupPending >= 0 && drag.groupTarget === -1
+      && Date.now() - drag.groupSince >= GROUP_DWELL_MS) {
+      this.updateDrag();
     }
     drag.raf = window.requestAnimationFrame(() => this.tickEdgeScroll());
   }
@@ -660,7 +828,10 @@ class TerminalTabs extends HTMLElement {
       host.prepend(bar);
       return bar;
     });
-    getText(this.dataset.tabsUrl + "?path=" + encodeURIComponent(window.location.pathname))
+    let path = window.location.pathname;
+    const focused = document.querySelector("terminal-attach[active][split-group]");
+    if (focused) path += "?focus=" + encodeURIComponent(focused.getAttribute("terminal-id") || "");
+    getText(this.dataset.tabsUrl + "?path=" + encodeURIComponent(path))
       .then((html) => {
         const template = document.createElement("template");
         template.innerHTML = html;
@@ -762,6 +933,10 @@ class TerminalTabs extends HTMLElement {
     const kind = tabKind || tab.dataset.tabKind;
     const name = tabName || tab.dataset.tabName;
     const current = tab.classList.contains("active");
+    if (kind === "split") {
+      void this.closeSplitMembers({ tabId: id, tabName: name });
+      return;
+    }
     this.confirming = true;
     try {
       const ok = await confirm({

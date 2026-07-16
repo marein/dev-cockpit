@@ -49,7 +49,7 @@ window.matchMedia("(prefers-color-scheme:dark)").addEventListener(
 window.addEventListener("pe:click", (e) => e.detail.a.closest("[data-no-pe]") && e.preventDefault());
 window.addEventListener("pe:submit", (e) => e.detail.form.closest("[data-no-pe]") && e.preventDefault());
 
-const isAttachPath = (path) => /^\/(coders|shells)\/(?!new$)[^/]+$/.test(path);
+const isAttachPath = (path) => /^\/(coders|shells|splits)\/(?!new$)[^/]+$/.test(path);
 let heightHoldTimer;
 const releaseHeightHold = () => {
   clearTimeout(heightHoldTimer);

@@ -56,10 +56,19 @@ async function waitUpgraded(page, names, timeout = 12000) {
   return missing;
 }
 
+// WebKit applies the login form's autofocus late, which can steal focus while
+// the second fill inserts its text, leaving "passwordadmin" in the username
+// field and an empty required password (the submit then silently no-ops).
+// Filling is therefore verified and retried before submitting.
 async function login(page) {
   await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
-  await page.fill('input[name="username"]', "admin");
-  await page.fill('input[name="password"]', "password");
+  for (let i = 0; i < 5; i += 1) {
+    await page.fill('input[name="username"]', "admin");
+    await page.fill('input[name="password"]', "password");
+    const ok = await page.evaluate(() => document.querySelector('input[name="username"]').value === "admin" && document.querySelector('input[name="password"]').value === "password");
+    if (ok) break;
+    await sleep(200);
+  }
   await Promise.all([page.waitForURL(/\/projects/, { timeout: 15000 }), page.click('button[type="submit"]')]);
 }
 

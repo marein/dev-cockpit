@@ -234,6 +234,26 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       await page.keyboard.press("Escape");
     });
 
+    await run("quick nav badge and title counter survive a boosted navigation", async () => {
+      // The app-wide event stream does not reconnect on a pe.js swap, so the
+      // fresh body's badge only shows because dc-notifications re-applies the
+      // channel state on remount. The window marker proves the navigation was
+      // a boost, not a full reload (which would restore the badge anyway).
+      await page.evaluate(() => { window.__peProbe = true; });
+      await Promise.all([
+        page.waitForURL(/\/settings/, { timeout: 15000 }),
+        page.locator('a[href="/settings/general"]:visible').first().click(),
+      ]);
+      await sleep(600);
+      assert(await page.evaluate(() => window.__peProbe === true), "navigation was a full reload, probe lost");
+      await page.waitForFunction(() => {
+        const badge = document.querySelector(".quicknav-toggle [data-notify-count]");
+        return badge && !badge.classList.contains("d-none") && parseInt(badge.textContent, 10) >= 1;
+      }, null, { timeout: 4000 });
+      assert(/^\(\d+/.test(await page.title()), `title counter lost: ${await page.title()}`);
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    });
+
     // The assertions below scope to the test's own coder instead of the
     // global badge: the instance also ingests bells from real copilot
     // coders running on the host, so background activity may keep the

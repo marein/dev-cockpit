@@ -102,6 +102,29 @@ free floating page scripts.
   import map when you add a component.
 - **Element config:** pass data through attributes (e.g. `stream-url`,
   `input-url`), not window globals.
+- **Terminal islands and split view:** `terminal-attach`/`terminal-input` are
+  real multi-instance islands, paired per session via the `terminal-id`
+  attribute. Islands dispatch their input events (`terminal-input`,
+  `terminal-control`, `terminal-scroll`) on themselves with `bubbles: true`,
+  never on `document`; a transport accepts an event when the origin island
+  (`event.target.closest("terminal-attach")`) matches its id. The island
+  touched last carries the `active` attribute (exactly one per page); events
+  without an origin island (footer controls, prompt dialog, paste, direction
+  pads) go to the active island's transport only. The split view page
+  (`/splits/:id`) renders one island pair per group member; group membership
+  lives in tmux user options (`@dc_tab_group`, `@dc_tab_gpos`,
+  `@dc_tab_gname`), the strip folds members into one group tab, and the
+  restore snapshot carries the group fields additively. The control footer is
+  kind-specific and lives in shared partials (`terminal_footer_coder` /
+  `terminal_footer_shell` in `terminal_footer.gohtml`), used by the single
+  pages and rendered once per member on the split page
+  (`[data-terminal-footer=<id>]`, only the active pane's footer shows).
+  Grouped sessions live on the split page: their solo attach URLs
+  303-redirect to `/splits/<gid>?focus=<id>`. The `terminal-split` element
+  owns the pane headers (context menu, drag reorder via CSS `order` +
+  re-POSTing `/terminal-tabs/group`). The group tab's close control closes
+  every member (confirmed); ungrouping is the non-destructive context menu /
+  header / pane-remove path. Decisions and endpoints: `docs/split-view.md`.
 - **Lifecycle:** set up in connectedCallback behind a re-init guard, tear down
   everything in disconnectedCallback, nothing may outlive the element. Create one
   AbortController per element and pass its signal to every addEventListener, then

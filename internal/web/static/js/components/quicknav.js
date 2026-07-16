@@ -14,6 +14,8 @@ const EDGE_ZONE = 28;
 const EDGE_STEP = 10;
 const FLING_VX = 0.25;
 const SNAP_MS = 250;
+const GROUP_ZONE_RATIO = 0.3;
+const GROUP_DWELL_MS = 220;
 
 // Floating quick nav: jump between live sessions/shells and browse projects. The
 // menu content is fetched fresh each time the dropdown opens (background refresh)
@@ -71,7 +73,7 @@ class QuickNav extends HTMLElement {
         event.stopPropagation();
         return;
       }
-      if (this.openSwipe && !event.target.closest("[data-qn-delete]")) {
+      if (this.openSwipe && !event.target.closest("[data-qn-delete], [data-qn-ungroup], [data-qn-remove]")) {
         this.closeSwipe();
         event.preventDefault();
         event.stopPropagation();
@@ -112,7 +114,7 @@ class QuickNav extends HTMLElement {
 
   dragItems() {
     const list = this.activeList();
-    return list ? Array.from(list.querySelectorAll(".quicknav-swipe-row")) : [];
+    return list ? Array.from(list.querySelectorAll(":scope > .quicknav-swipe-row, :scope > [data-qn-block]")) : [];
   }
 
   swipeAnchor(row) {
@@ -120,7 +122,9 @@ class QuickNav extends HTMLElement {
   }
 
   deleteWidth(row) {
-    return row?.querySelector("[data-qn-delete]")?.offsetWidth || 72;
+    const buttons = row ? Array.from(row.querySelectorAll(":scope > .quicknav-swipe-delete")) : [];
+    const width = buttons.reduce((sum, button) => sum + button.offsetWidth, 0);
+    return width || 72;
   }
 
   // Content Y measured against the scrollable menu, so edge auto-scroll keeps the
@@ -130,11 +134,29 @@ class QuickNav extends HTMLElement {
   }
 
   // Persist the current active-list order to the same cross-device @dc_tab_pos
-  // state the tab strip writes, so a drag in either place agrees.
+  // state the tab strip writes, so a drag in either place agrees. Group blocks
+  // expand into their member ids like the strip does.
   persistOrder() {
-    const ids = this.dragItems().map((row) => this.swipeAnchor(row)?.dataset.tabId).filter(Boolean);
+    const ids = this.dragItems().flatMap((unit) => {
+      const anchor = this.swipeAnchor(unit);
+      if (!anchor) return [];
+      const members = (anchor.dataset.tabMembers || "").split(" ").filter(Boolean);
+      return members.length ? members : [anchor.dataset.tabId].filter(Boolean);
+    });
     postJSON("/terminal-tabs/order", { ids })
       .then((response) => ensureOk(response, "Could not save the order."))
+      .catch((error) => notifyError(error.message));
+  }
+
+  // Persist a member drag inside a group block: re-posting the member ids to
+  // the group endpoint rewrites @dc_tab_gpos, the same way the split page's
+  // pane drag does.
+  persistGroup(block) {
+    const ids = Array.from(block.querySelectorAll(":scope > [data-qn-group-member] .quicknav-active-item"))
+      .map((anchor) => anchor.dataset.tabId)
+      .filter(Boolean);
+    postJSON("/terminal-tabs/group", { ids })
+      .then((response) => ensureOk(response, "Could not save the pane order."))
       .catch((error) => notifyError(error.message));
   }
 
@@ -168,8 +190,20 @@ class QuickNav extends HTMLElement {
       };
       return;
     }
+    let item = row;
+    let container = this.activeList();
+    let members = false;
+    if (row.hasAttribute("data-qn-group-member")) {
+      item = row;
+      container = row.closest("[data-qn-block]");
+      members = true;
+    } else if (row.hasAttribute("data-qn-group")) {
+      item = row.closest("[data-qn-block]");
+    }
     this.drag = {
-      item: row,
+      item,
+      container,
+      members,
       pointerId: event.pointerId,
       startClientX: event.clientX,
       startClientY: event.clientY,
@@ -257,12 +291,18 @@ class QuickNav extends HTMLElement {
       window.cancelAnimationFrame(drag.raf);
       this.suppressClick = true;
       this.activeList()?.classList.remove("quicknav-active-list-dragging");
-      for (const item of drag.items) item.style.transform = "";
+      for (const item of drag.items) {
+        item.style.transform = "";
+        item.classList.remove("quicknav-group-target");
+      }
       drag.item.classList.remove("quicknav-active-item-dragging");
-      if (drag.toIndex !== drag.fromIndex) {
+      if (drag.groupTarget >= 0 && drag.items[drag.groupTarget]) {
+        void this.groupUnits(drag.items[drag.groupTarget], drag.item);
+      } else if (drag.toIndex !== drag.fromIndex) {
         const others = drag.items.filter((item) => item !== drag.item);
-        this.activeList().insertBefore(drag.item, others[drag.toIndex] || null);
-        this.persistOrder();
+        drag.container.insertBefore(drag.item, others[drag.toIndex] || null);
+        if (drag.members) this.persistGroup(drag.container);
+        else this.persistOrder();
       }
     }
     // Flush any event coalesced while the drag held the list.
@@ -318,8 +358,41 @@ class QuickNav extends HTMLElement {
     if (!drag || !drag.active) return;
     window.cancelAnimationFrame(drag.raf);
     this.activeList()?.classList.remove("quicknav-active-list-dragging");
-    for (const item of drag.items) item.style.transform = "";
+    for (const item of drag.items) {
+      item.style.transform = "";
+      item.classList.remove("quicknav-group-target");
+    }
     drag.item.classList.remove("quicknav-active-item-dragging");
+  }
+
+  // groupUnits merges the dragged unit into the drop target, mirroring the
+  // strip's drag-to-group: blocks expand into their members, dropping onto a
+  // group joins it, and when the open page is involved the client follows the
+  // server to the split page.
+  async groupUnits(target, dragged) {
+    const expand = (unit) => {
+      const anchor = this.swipeAnchor(unit);
+      const members = (anchor?.dataset.tabMembers || "").split(" ").filter(Boolean);
+      return members.length ? members : [anchor?.dataset.tabId].filter(Boolean);
+    };
+    const involved = Boolean(
+      target.querySelector(".quicknav-active-item.active") || dragged.querySelector(".quicknav-active-item.active"),
+    );
+    const ids = [...expand(target), ...expand(dragged)];
+    try {
+      const response = await postJSON("/terminal-tabs/group", { ids });
+      await ensureOk(response, "Could not create the split view.");
+      const data = await response.json();
+      if (involved && data.url) {
+        if (window.bootstrap) window.bootstrap.Dropdown.getOrCreateInstance(this.toggle).hide();
+        if (window.app?.navigate) Promise.resolve(window.app.navigate(data.url)).catch(() => {});
+        else window.location.href = data.url;
+        return;
+      }
+      if (this.opened) this.refresh();
+    } catch (error) {
+      notifyError(error.message);
+    }
   }
 
   beginDrag(event) {
@@ -331,10 +404,16 @@ class QuickNav extends HTMLElement {
       void error;
     }
     this.closeSwipe();
-    drag.items = this.dragItems();
+    drag.items = drag.members
+      ? Array.from(drag.container.querySelectorAll(":scope > [data-qn-group-member]"))
+      : this.dragItems();
     drag.fromIndex = drag.items.indexOf(drag.item);
     drag.toIndex = drag.fromIndex;
     drag.height = drag.item.getBoundingClientRect().height;
+    drag.heights = drag.items.map((item) => item.getBoundingClientRect().height);
+    drag.groupTarget = -1;
+    drag.groupPending = -1;
+    drag.groupSince = 0;
     const menuTop = this.menu.getBoundingClientRect().top;
     drag.centers = drag.items.map((item) => {
       const rect = item.getBoundingClientRect();
@@ -344,6 +423,21 @@ class QuickNav extends HTMLElement {
     this.activeList().classList.add("quicknav-active-list-dragging");
     drag.item.classList.add("quicknav-active-item-dragging");
     drag.raf = window.requestAnimationFrame(() => this.tickEdgeScroll());
+  }
+
+  groupCandidate(drag, draggedCenter) {
+    if (drag.members) return -1;
+    for (let i = 0; i < drag.items.length; i += 1) {
+      if (i === drag.fromIndex) continue;
+      let shift = 0;
+      if (i > drag.fromIndex && i <= drag.toIndex) shift = -drag.height;
+      else if (i < drag.fromIndex && i >= drag.toIndex) shift = drag.height;
+      const visualCenter = drag.centers[i] + shift;
+      if (Math.abs(draggedCenter - visualCenter) < drag.heights[i] * GROUP_ZONE_RATIO) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   updateDrag() {
@@ -356,6 +450,20 @@ class QuickNav extends HTMLElement {
       if (i !== drag.fromIndex && drag.centers[i] < draggedCenter) toIndex += 1;
     }
     drag.toIndex = toIndex;
+    const candidate = this.groupCandidate(drag, draggedCenter);
+    if (candidate === -1) {
+      drag.groupPending = -1;
+      drag.groupTarget = -1;
+    } else if (candidate !== drag.groupPending) {
+      drag.groupPending = candidate;
+      drag.groupSince = Date.now();
+      drag.groupTarget = -1;
+    } else if (drag.groupTarget === -1 && Date.now() - drag.groupSince >= GROUP_DWELL_MS) {
+      drag.groupTarget = candidate;
+    }
+    drag.items.forEach((item, i) => {
+      item.classList.toggle("quicknav-group-target", i === drag.groupTarget);
+    });
     drag.item.style.transform = "translateY(" + dy + "px)";
     drag.items.forEach((item, i) => {
       if (item === drag.item) return;
@@ -381,6 +489,10 @@ class QuickNav extends HTMLElement {
         this.updateDrag();
       }
     }
+    if (drag.groupPending >= 0 && drag.groupTarget === -1
+      && Date.now() - drag.groupSince >= GROUP_DWELL_MS) {
+      this.updateDrag();
+    }
     drag.raf = window.requestAnimationFrame(() => this.tickEdgeScroll());
   }
 
@@ -396,7 +508,12 @@ class QuickNav extends HTMLElement {
     this.inFlight = true;
     this.menu.prepend(this.spinner);
     // Background refresh on every open, kept silent on purpose (no toast storm).
-    getText(this.url + "?path=" + encodeURIComponent(location.pathname))
+    // On a split page the active pane rides along, so the member row marking
+    // and the project context follow the pane the user is actually on.
+    let path = location.pathname;
+    const focused = document.querySelector("terminal-attach[active][split-group]");
+    if (focused) path += "?focus=" + encodeURIComponent(focused.getAttribute("terminal-id") || "");
+    getText(this.url + "?path=" + encodeURIComponent(path))
       .then((html) => {
         this.openSwipe = null;
         this.list.innerHTML = html;
@@ -513,32 +630,62 @@ class QuickNav extends HTMLElement {
     const item = this.swipeAnchor(row);
     if (!item) return;
     const { tabId: id, tabKind: kind, tabName: name } = item.dataset;
+    const split = kind === "split";
+    const memberBlock = !split && row.hasAttribute("data-qn-group-member") ? row.closest("[data-qn-block]") : null;
+    const unit = split ? row.closest("[data-qn-block]") : (memberBlock || row);
     const current = item.classList.contains("active");
-    const rows = this.dragItems();
-    const index = rows.indexOf(row);
-    const neighbor = rows[index + 1] || rows[index - 1] || null;
-    const neighborUrl = neighbor ? this.swipeAnchor(neighbor)?.getAttribute("href") : null;
+    let neighborUrl = null;
+    if (memberBlock) {
+      neighborUrl = this.swipeAnchor(memberBlock)?.getAttribute("href") || null;
+    } else {
+      const units = this.dragItems();
+      const index = units.indexOf(unit);
+      const neighbor = units[index + 1] || units[index - 1] || null;
+      neighborUrl = neighbor ? this.swipeAnchor(neighbor)?.getAttribute("href") : null;
+    }
     this.confirming = true;
     try {
+      const memberIds = (item.dataset.tabMembers || "").split(" ").filter(Boolean);
+      const memberKinds = (item.dataset.tabMemberKinds || "").split(" ").filter(Boolean);
       const ok = await confirm({
-        title: kind === "coder" ? `Stop coder "${name}"?` : `Delete shell "${name}"?`,
-        confirmText: kind === "coder" ? "Stop" : "Delete",
+        title: split
+          ? `Close all ${memberIds.length} terminals in "${name}"?`
+          : (kind === "coder" ? `Stop coder "${name}"?` : `Delete shell "${name}"?`),
+        confirmText: split ? "Close all" : (kind === "coder" ? "Stop" : "Delete"),
       });
       if (!ok) {
         this.closeSwipe();
         return;
       }
-      window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id } }));
-      const action = kind === "coder" ? `/coders/${id}/stop` : `/shells/${id}/delete`;
-      const response = await postForm(action, {});
-      await ensureOk(response, "Could not close the session.");
-      notifySuccess(kind === "coder" ? `Coder "${name}" stopped.` : `Shell "${name}" deleted.`);
+      let response = null;
+      if (split) {
+        let failed = 0;
+        for (let i = 0; i < memberIds.length; i += 1) {
+          window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id: memberIds[i] } }));
+          const action = memberKinds[i] === "shell" ? `/shells/${memberIds[i]}/delete` : `/coders/${memberIds[i]}/stop`;
+          try {
+            response = await postForm(action, {});
+            await ensureOk(response, "Could not close the session.");
+          } catch (memberError) {
+            void memberError;
+            failed += 1;
+          }
+        }
+        if (failed) notifyError(`Could not close ${failed} of ${memberIds.length} terminals.`);
+        else notifySuccess(`Split view "${name}" closed.`);
+      } else {
+        window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id } }));
+        const action = kind === "coder" ? `/coders/${id}/stop` : `/shells/${id}/delete`;
+        response = await postForm(action, {});
+        await ensureOk(response, "Could not close the session.");
+        notifySuccess(kind === "coder" ? `Coder "${name}" stopped.` : `Shell "${name}" deleted.`);
+      }
       if (this.openSwipe === row) this.openSwipe = null;
-      row.remove();
+      unit.remove();
       if (current) {
         this.confirming = false;
         if (window.bootstrap) window.bootstrap.Dropdown.getOrCreateInstance(this.toggle).hide();
-        const url = neighborUrl || response.url || "/projects";
+        const url = neighborUrl || response?.url || "/projects";
         if (window.app?.navigate) window.app.navigate(url);
         else window.location.href = url;
       }
@@ -550,6 +697,64 @@ class QuickNav extends HTMLElement {
     }
   }
 
+  // ungroupTarget dissolves a split view from the group row's swipe action
+  // without killing any member, mirroring the strip's context menu entry.
+  async ungroupTarget(row) {
+    if (this.confirming || !row) return;
+    const item = this.swipeAnchor(row);
+    if (!item) return;
+    const ids = (item.dataset.tabMembers || "").split(" ").filter(Boolean);
+    const current = item.classList.contains("active");
+    try {
+      const response = await postJSON("/terminal-tabs/ungroup", { ids });
+      await ensureOk(response, "Could not ungroup the split view.");
+      const data = await response.json();
+      notifySuccess(`Split view "${item.dataset.tabName}" ungrouped.`);
+      this.closeSwipe();
+      if (current) {
+        if (window.bootstrap) window.bootstrap.Dropdown.getOrCreateInstance(this.toggle).hide();
+        const url = data.url || "/projects";
+        if (window.app?.navigate) window.app.navigate(url);
+        else window.location.href = url;
+      }
+    } catch (error) {
+      notifyError(error.message);
+    } finally {
+      if (this.dirty && this.opened) this.refresh();
+    }
+  }
+
+  // removeTarget takes one member out of its split view without killing it,
+  // mirroring the pane header's remove button on the split page. When the
+  // open page is the member's split, the client follows the server (back to
+  // the split while it lives, else to the survivor).
+  async removeTarget(row) {
+    if (this.confirming || !row) return;
+    const item = this.swipeAnchor(row);
+    if (!item) return;
+    const block = row.closest("[data-qn-block]");
+    const current = Boolean(block?.querySelector("[data-qn-group] .quicknav-active-item.active"));
+    try {
+      const response = await postJSON("/terminal-tabs/ungroup", { ids: [item.dataset.tabId] });
+      await ensureOk(response, "Could not change the split view.");
+      const data = await response.json();
+      notifySuccess(`"${item.dataset.tabName}" removed from the split view.`);
+      this.closeSwipe();
+      if (current) {
+        if (window.bootstrap) window.bootstrap.Dropdown.getOrCreateInstance(this.toggle).hide();
+        const url = data.url || "/projects";
+        if (window.app?.navigate) Promise.resolve(window.app.navigate(url)).catch(() => {});
+        else window.location.href = url;
+        return;
+      }
+      if (this.opened) this.refresh();
+    } catch (error) {
+      notifyError(error.message);
+    } finally {
+      if (this.dirty && this.opened) this.refresh();
+    }
+  }
+
   handleClick(event) {
     if (!this.view) this.initView();
     const del = event.target.closest("[data-qn-delete]");
@@ -557,6 +762,20 @@ class QuickNav extends HTMLElement {
       event.preventDefault();
       event.stopPropagation();
       void this.deleteTarget(del.closest(".quicknav-swipe-row"));
+      return;
+    }
+    const ungroup = event.target.closest("[data-qn-ungroup]");
+    if (ungroup) {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.ungroupTarget(ungroup.closest(".quicknav-swipe-row"));
+      return;
+    }
+    const remove = event.target.closest("[data-qn-remove]");
+    if (remove) {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.removeTarget(remove.closest(".quicknav-swipe-row"));
       return;
     }
     const tab = event.target.closest("[data-quicknav-tab]");

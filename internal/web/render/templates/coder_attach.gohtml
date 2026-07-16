@@ -31,7 +31,7 @@
   </div>
   <div class="attach-frame min-w-0 w-100">
     {{template "terminal_tabs.gohtml" .}}
-    <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative"
+    <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.Identifier}}"
                     stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}">
       <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
     </terminal-attach>
@@ -39,81 +39,13 @@
   </div>
 
   <div class="attach-footer min-w-0">
-    <div class="attach-mobile">
-      <div class="attach-controls min-w-0">
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-control="escape" aria-label="Escape" title="Escape">
-          <span class="small fw-medium">Esc</span>
-        </button>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-control="tab" aria-label="Tab" title="Tab">
-          <span class="small fw-medium">Tab</span>
-        </button>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-control="shift-tab" aria-label="Shift Tab" title="Shift + Tab">
-          <span class="small fw-medium">S-Tab</span>
-        </button>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-control="ctrl-c" aria-label="Ctrl C" title="Ctrl + C">
-          <span class="small fw-medium">^C</span>
-        </button>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-shell-ctrl aria-pressed="false" aria-label="Control modifier" title="Send next key with Ctrl">
-          <span class="small fw-medium">Ctrl</span>
-        </button>
-        <terminal-direction-pad></terminal-direction-pad>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-control="enter" aria-label="Enter" title="Enter">
-          <i class="ti ti-corner-down-left"></i>
-        </button>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-control="backspace" aria-label="Backspace" title="Backspace">
-          <i class="ti ti-backspace"></i>
-        </button>
-      </div>
-
-      <div class="attach-controls min-w-0">
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-copy aria-pressed="false" aria-label="Copy mode" title="Toggle copy mode">
-          <i class="ti ti-copy"></i>
-        </button>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-paste aria-label="Paste" title="Paste from clipboard">
-          <i class="ti ti-clipboard"></i>
-        </button>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-prompt-modal-open data-bs-toggle="modal" data-bs-target="#terminal-prompt-modal" aria-label="Open prompt dialog" title="Open prompt dialog">
-          <i class="ti ti-pencil"></i>
-        </button>
-        <coder-file-upload>
-          <button type="button" class="btn btn-outline-secondary btn-icon btn-sm coder-files-button" data-coder-files-toggle data-bs-toggle="modal" data-bs-target="#coder-files-modal" aria-label="Files" title="Files">
-            <i class="ti ti-upload coder-files-button-icon"></i>
-          </button>
-        </coder-file-upload>
-        <terminal-direction-pad
-          icon="arrow-autofit-height"
-          label="Page controls"
-          title="Drag: up/down to page, left/right to top/bottom"
-          up-control="page-up"
-          down-control="page-down"
-          left-control="page-top"
-          right-control="page-bottom"></terminal-direction-pad>
-        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
-          <i class="ti ti-refresh"></i>
-        </button>
-      </div>
-    </div>
-
-    <div class="attach-desktop">
-      <button type="button" class="btn btn-outline-secondary" data-terminal-prompt-modal-open data-bs-toggle="modal" data-bs-target="#terminal-prompt-modal" aria-label="Open prompt dialog" title="Open prompt dialog">
-        <i class="ti ti-pencil"></i>
-      </button>
-      <button type="button" class="btn btn-outline-secondary coder-files-button" data-bs-toggle="modal" data-bs-target="#coder-files-modal" aria-label="Files" title="Files">
-        <i class="ti ti-upload coder-files-button-icon"></i>
-      </button>
-      <button type="button" class="btn btn-outline-secondary" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
-        <i class="ti ti-refresh"></i>
-      </button>
-      <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#terminal-shortcuts-modal" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">
-        <i class="ti ti-help"></i>
-      </button>
-    </div>
+    {{template "terminal_footer_coder.gohtml" "#coder-files-modal"}}
   </div>
 </div>
 
 {{template "terminal_shortcuts_modal.gohtml"}}
 
-<div class="modal modal-blur fade" id="coder-files-modal" tabindex="-1" aria-labelledby="coder-files-modal-title" aria-hidden="true" data-coder-files-modal>
+<div class="modal modal-blur fade" id="coder-files-modal" tabindex="-1" aria-labelledby="coder-files-modal-title-{{.Identifier}}" aria-hidden="true" data-coder-files-modal>
   <div class="modal-dialog modal-lg modal-dialog-centered">
     {{template "coder_files_modal.gohtml" .}}
   </div>
@@ -142,6 +74,6 @@
   </div>
 </div>
 
-<terminal-input input-url="{{.InputURL}}"></terminal-input>
+<terminal-input terminal-id="{{.Identifier}}" input-url="{{.InputURL}}"></terminal-input>
 {{template "app_end.gohtml" .}}
 {{end}}

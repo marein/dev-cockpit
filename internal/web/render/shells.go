@@ -16,7 +16,7 @@ type ShellAttachData struct {
 	Page
 	Shell       shell.Shell
 	ProjectName string // owning project, empty for home/ungrouped shells
-	Tabs        []TerminalTab
+	Tabs        []StripTab
 	StreamURL   string
 	ResizeURL   string
 	InputURL    string

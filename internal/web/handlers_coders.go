@@ -86,6 +86,12 @@ func (s *Server) handleCoderAttach(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
+	// A grouped session lives on the split page; every link to its own page
+	// lands there with its pane focused.
+	if url, ok := s.splitPageURL(running.TabGroup, running.Identifier); ok {
+		c.Redirect(http.StatusSeeOther, url)
+		return
+	}
 	files, err := co.Coder().SessionRepository().ListFiles(running.Identifier)
 	if err != nil {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
@@ -102,7 +108,7 @@ func (s *Server) handleCoderAttach(c *gin.Context) {
 		ProjectName:     projectName,
 		Files:           files,
 		MaxUploadSizeMB: maxRequestBodyMegabytes(s.cfg.MaxRequestBodySize),
-		Tabs:            s.terminalTabs(),
+		Tabs:            s.stripTabs(),
 		StreamURL:       "/coders/" + running.Identifier + "/stream",
 		ResizeURL:       "/coders/" + running.Identifier + "/resize",
 		InputURL:        "/coders/" + running.Identifier + "/input",

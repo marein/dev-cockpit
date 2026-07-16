@@ -57,7 +57,10 @@ class CoderFileUpload extends HTMLElement {
   }
 
   setupTerminalDropZone() {
-    this.terminal = document.getElementById("terminal");
+    const footer = this.closest("[data-terminal-footer]");
+    this.terminal = footer
+      ? document.querySelector(`terminal-attach[terminal-id="${CSS.escape(footer.getAttribute("data-terminal-footer"))}"]`)
+      : document.getElementById("terminal");
     if (!this.terminal) {
       return;
     }

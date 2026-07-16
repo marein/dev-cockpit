@@ -58,13 +58,16 @@ func scanRunning(panes []tmux.Pane, resumable []Session, prov Coder) (running []
 			}
 			if match, ok := resumableByID[p.Name]; ok {
 				running = append(running, Running{
-					Identifier:  match.SessionID,
-					TmuxSession: p.Name,
-					PID:         p.PID,
-					Name:        DisplayName(match.Name, match.SessionID),
-					StartedAt:   p.StartTime(),
-					CWD:         match.CWD,
-					TabPos:      p.TabPosition(),
+					Identifier:   match.SessionID,
+					TmuxSession:  p.Name,
+					PID:          p.PID,
+					Name:         DisplayName(match.Name, match.SessionID),
+					StartedAt:    p.StartTime(),
+					CWD:          match.CWD,
+					TabPos:       p.TabPosition(),
+					TabGroup:     p.TabGroup,
+					TabGroupPos:  p.TabGroupPosition(),
+					TabGroupName: p.TabGName,
 				})
 				runningIDs[match.SessionID] = true
 				continue
@@ -72,13 +75,16 @@ func scanRunning(panes []tmux.Pane, resumable []Session, prov Coder) (running []
 			// No store record yet (e.g. copilot before its session file
 			// appears): fall back to the launch-time option values.
 			running = append(running, Running{
-				Identifier:  p.Name,
-				TmuxSession: p.Name,
-				PID:         p.PID,
-				Name:        DisplayName(p.CoderName, p.Name),
-				StartedAt:   p.StartTime(),
-				CWD:         p.CoderDir,
-				TabPos:      p.TabPosition(),
+				Identifier:   p.Name,
+				TmuxSession:  p.Name,
+				PID:          p.PID,
+				Name:         DisplayName(p.CoderName, p.Name),
+				StartedAt:    p.StartTime(),
+				CWD:          p.CoderDir,
+				TabPos:       p.TabPosition(),
+				TabGroup:     p.TabGroup,
+				TabGroupPos:  p.TabGroupPosition(),
+				TabGroupName: p.TabGName,
 			})
 			continue
 		}

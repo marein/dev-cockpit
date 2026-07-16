@@ -32,6 +32,9 @@ type Entry struct {
 	Name  string `json:"name"`            // display name; for coders the resumable store name wins
 	CWD   string `json:"cwd"`             // start directory
 	Pos   int    `json:"pos,omitempty"`   // @dc_tab_pos at snapshot time, 0 when unset
+	Group string `json:"group,omitempty"` // @dc_tab_group at snapshot time, empty when ungrouped
+	GPos  int    `json:"gpos,omitempty"`  // @dc_tab_gpos at snapshot time, 0 when unset
+	GName string `json:"gname,omitempty"` // @dc_tab_gname at snapshot time, may be empty
 }
 
 // snapshot is the JSON shape of the state file.
@@ -138,6 +141,7 @@ func (s *Service) replay(recorded []Entry) {
 				continue
 			}
 			s.applyTabPos(e.ID, e.Pos)
+			s.applyTabGroup(e)
 			log.Printf("terminal restore: resumed %s coder %q", e.Coder, e.Name)
 		case "shell":
 			if e.ID == "" || runningShells[e.ID] {
@@ -148,6 +152,7 @@ func (s *Service) replay(recorded []Entry) {
 				continue
 			}
 			s.applyTabPos(e.ID, e.Pos)
+			s.applyTabGroup(e)
 			s.notifier.MarkTargetRead(e.ID)
 			log.Printf("terminal restore: recreated shell %q in %s", e.Name, e.CWD)
 		}
@@ -160,6 +165,15 @@ func (s *Service) applyTabPos(session string, pos int) {
 	}
 	if err := s.tmux.SetTabPosition(session, pos); err != nil {
 		log.Printf("terminal restore: tab position for %s: %v", session, err)
+	}
+}
+
+func (s *Service) applyTabGroup(e Entry) {
+	if e.Group == "" || e.GPos < 1 {
+		return
+	}
+	if err := s.tmux.SetTabGroupEntry(e.ID, e.Group, e.GPos, e.GName); err != nil {
+		log.Printf("terminal restore: tab group for %s: %v", e.ID, err)
 	}
 }
 
@@ -190,11 +204,11 @@ func (s *Service) scan() []Entry {
 	for _, m := range s.coders {
 		coderID := m.ID()
 		for _, r := range m.Snapshot().Running {
-			entries = append(entries, Entry{Kind: "coder", Coder: coderID, ID: r.Identifier, Name: r.Name, CWD: r.CWD, Pos: r.TabPos})
+			entries = append(entries, Entry{Kind: "coder", Coder: coderID, ID: r.Identifier, Name: r.Name, CWD: r.CWD, Pos: r.TabPos, Group: r.TabGroup, GPos: r.TabGroupPos, GName: r.TabGroupName})
 		}
 	}
 	for _, sh := range s.shells.List() {
-		entries = append(entries, Entry{Kind: "shell", ID: sh.Identifier, Name: sh.Name, CWD: sh.CWD, Pos: sh.TabPos})
+		entries = append(entries, Entry{Kind: "shell", ID: sh.Identifier, Name: sh.Name, CWD: sh.CWD, Pos: sh.TabPos, Group: sh.TabGroup, GPos: sh.TabGroupPos, GName: sh.TabGroupName})
 	}
 	return entries
 }
