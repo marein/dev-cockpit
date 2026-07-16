@@ -49,6 +49,12 @@ func (s *Server) handleShellAttach(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
+	// A grouped shell lives on the split page; every link to its own page
+	// lands there with its pane focused.
+	if url, ok := s.splitPageURL(sh.TabGroup, sh.Identifier); ok {
+		c.Redirect(http.StatusSeeOther, url)
+		return
+	}
 	projectName := s.projects.ProjectNameFor(sh.CWD)
 	s.projects.Touch(projectName)
 	s.notifier.MarkTargetRead(sh.Identifier)
@@ -56,7 +62,7 @@ func (s *Server) handleShellAttach(c *gin.Context) {
 		Page:        s.page(c, pageTitle(sh.Name, projectName), "projects"),
 		Shell:       sh,
 		ProjectName: projectName,
-		Tabs:        s.terminalTabs(),
+		Tabs:        s.stripTabs(),
 		StreamURL:   "/shells/" + sh.Identifier + "/stream",
 		ResizeURL:   "/shells/" + sh.Identifier + "/resize",
 		InputURL:    "/shells/" + sh.Identifier + "/input",

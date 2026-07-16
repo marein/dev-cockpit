@@ -489,6 +489,83 @@ function initTerminalAttach(host) {
   };
 
   const terminalElement = host;
+
+  const terminalId = host.getAttribute("terminal-id") || "";
+  const splitGroup = host.getAttribute("split-group") || "";
+  if (window.matchMedia("(pointer: coarse)").matches
+    && host.closest(".attach-split-pane") && !host.hasAttribute("active")) {
+    return () => {};
+  }
+  const syncFooters = () => {
+    for (const footer of document.querySelectorAll("[data-terminal-footer]")) {
+      footer.toggleAttribute("hidden", footer.getAttribute("data-terminal-footer") !== terminalId);
+    }
+  };
+  const rememberActive = () => {
+    if (splitGroup && terminalId) {
+      set("dc-split-active-" + splitGroup, terminalId);
+    }
+  };
+  const activate = () => {
+    for (const other of document.querySelectorAll("terminal-attach[active]")) {
+      if (other !== host) other.removeAttribute("active");
+    }
+    host.setAttribute("active", "");
+    syncFooters();
+    rememberActive();
+    document.dispatchEvent(new CustomEvent("dc:terminal-activated", { detail: { id: terminalId } }));
+  };
+  const claimActive = () => {
+    if (host.hasAttribute("active")) return;
+    activate();
+  };
+  // Group ids are ephemeral UUIDs, so remembered-pane keys of dissolved
+  // groups would pile up forever. Sweep them against the groups the page
+  // knows (strip + quick nav render every live group), keys are only ever
+  // written on split pages so sweeping here catches every writer.
+  if (splitGroup) {
+    try {
+      const prefix = "dc-split-active-";
+      const live = new Set([...document.querySelectorAll(".terminal-tab-split[data-tab-id], [data-qn-block]")]
+        .map((el) => el.getAttribute("data-tab-id") || el.getAttribute("data-qn-block")));
+      live.add(splitGroup);
+      for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+        const key = window.localStorage.key(i);
+        if (key && key.startsWith(prefix) && !live.has(key.slice(prefix.length))) {
+          window.localStorage.removeItem(key);
+        }
+      }
+    } catch (error) {
+      void error;
+    }
+  }
+  const explicitFocus = document.querySelector("terminal-attach[split-focused]");
+  if (!explicitFocus && splitGroup && terminalId && get("dc-split-active-" + splitGroup, "") === terminalId) {
+    activate();
+  } else if (!document.querySelector("terminal-attach[active]")) {
+    activate();
+  } else if (explicitFocus === host) {
+    rememberActive();
+  }
+  listen(document, "dc:activate-pane", (event) => {
+    if (!terminalId || event.detail?.id !== terminalId) return;
+    claimActive();
+    if (interactiveInput) term.focus();
+    followCursor();
+  });
+  listen(host.closest(".attach-split-pane") || host, "pointerdown", (event) => {
+    const fromHead = event.target instanceof Element
+      && event.target.closest("[data-pane-head]") && !event.target.closest("[data-pane-close]");
+    const wasActive = host.hasAttribute("active");
+    claimActive();
+    if (fromHead) {
+      window.requestAnimationFrame(() => {
+        if (interactiveInput) term.focus();
+        if (!wasActive) followCursor();
+      });
+    }
+  }, { capture: true });
+  listen(host, "focusin", claimActive);
   const streamRefreshButtons = document.querySelectorAll("[data-terminal-refresh]");
 
   const fontSizeSetting = document.querySelector('terminal-setting-select[setting="font-size"]');
@@ -568,10 +645,12 @@ function initTerminalAttach(host) {
     });
     term.onData((data) => {
       if (data) {
-        document.dispatchEvent(new CustomEvent("terminal-input", { detail: { raw: data } }));
+        host.dispatchEvent(new CustomEvent("terminal-input", { bubbles: true, detail: { raw: data } }));
       }
     });
-    term.focus();
+    if (host.hasAttribute("active")) {
+      term.focus();
+    }
   }
 
   const cursorMetrics = () => {
@@ -599,11 +678,20 @@ function initTerminalAttach(host) {
         top = tabs.offsetHeight;
       }
     }
-    const footer = document.querySelector(".attach-footer");
-    if (footer && footer.offsetHeight > 0) {
-      const position = window.getComputedStyle(footer).position;
+    const head = host.closest(".attach-split-pane")?.querySelector("[data-pane-head]");
+    if (head && head.offsetHeight > 0) {
+      const position = window.getComputedStyle(head).position;
       if (position === "sticky" || position === "fixed") {
-        bottom = window.innerHeight - footer.offsetHeight;
+        top += head.offsetHeight;
+      }
+    }
+    for (const footer of document.querySelectorAll(".attach-footer")) {
+      if (footer.offsetHeight > 0) {
+        const position = window.getComputedStyle(footer).position;
+        if (position === "sticky" || position === "fixed") {
+          bottom = window.innerHeight - footer.offsetHeight;
+        }
+        break;
       }
     }
     return { top, bottom };
@@ -711,9 +799,9 @@ function initTerminalAttach(host) {
     let wheelPixelsAt = 0;
 
     const sendRaw = (seq) =>
-      document.dispatchEvent(new CustomEvent("terminal-input", { detail: { raw: seq } }));
+      host.dispatchEvent(new CustomEvent("terminal-input", { bubbles: true, detail: { raw: seq } }));
     const sendControl = (control) =>
-      document.dispatchEvent(new CustomEvent("terminal-control", { detail: { control } }));
+      host.dispatchEvent(new CustomEvent("terminal-control", { bubbles: true, detail: { control } }));
 
     const scrollCell = (clientX, clientY) => {
       const screen = terminalElement.querySelector(".xterm-screen");
@@ -817,6 +905,9 @@ function initTerminalAttach(host) {
     };
     let swipeAccum = 0;
     listen(document, "terminal-scroll", (event) => {
+      if (!(event.target instanceof Element) || !host.contains(event.target)) {
+        return;
+      }
       const detail = event.detail || {};
       if (detail.begin) {
         swipeAccum = 0;
@@ -1065,7 +1156,9 @@ function initTerminalAttach(host) {
     set("dc-terminal-fullscreen", on ? "1" : "");
     paintFullscreen();
     scheduleResize();
-    term.focus();
+    if (host.hasAttribute("active")) {
+      term.focus();
+    }
   };
   paintFullscreen();
 

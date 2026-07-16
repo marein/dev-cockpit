@@ -79,8 +79,20 @@ type QuickNav struct {
 	// Active is the flat list of live coders and shells, ordered exactly like the
 	// attach page tab strip (same @dc_tab_pos sort), so the quick nav and the tab
 	// strip agree and a drag in either persists through POST /terminal-tabs/order.
-	Active    []TerminalTab
-	CurrentID string
+	Active []TerminalTab
+	// Strip is Active folded like the tab strip: split view groups become one
+	// entry with their members, so the quick nav renders groups as blocks.
+	Strip []StripTab
+	// UnreadCount is the number of targets with unread news, rendered into
+	// the toggle badge server-side so the badge survives a boosted body swap
+	// (the app-wide event stream sends its snapshot on connect, not per
+	// navigation); the client keeps it live from there.
+	UnreadCount int
+	CurrentID   string
+	// Focus is the split member whose pane is active on the current page, so
+	// the group block can mark that member row and the project context can
+	// follow it even when the group's members span several projects.
+	Focus string
 	// CurrentProject is the project of the page you're on (terminal/editor), used
 	// to preselect it in the new-session / new-shell forms. Empty when there is
 	// no project context.
@@ -111,7 +123,7 @@ func (q QuickNav) HasInactiveCoders() bool {
 // fragment for the background refresh (GET /terminal-tabs).
 type TerminalTabsData struct {
 	Page
-	Tabs []TerminalTab
+	Tabs []StripTab
 }
 
 // TerminalTab is one entry in the attach page tab strip: a live coder or shell.
@@ -124,5 +136,63 @@ type TerminalTab struct {
 	Kind      string // "coder" or "shell"
 	HasNews   bool
 	StartedAt time.Time
-	TabPos    int // strip position from @dc_tab_pos, 0 when unset
+	TabPos    int    // strip position from @dc_tab_pos, 0 when unset
+	Group     string // split view group id from @dc_tab_group, empty when ungrouped
+	GroupPos  int    // position inside the group from @dc_tab_gpos, 0 when unset
+	GroupName string // group display name from @dc_tab_gname, may be empty
+}
+
+// StripTab is one rendered entry of the tab strip: a single session, or a
+// split view group folding several sessions into one tab. Group entries fill
+// the embedded TerminalTab with the group's values (ID is the group id, URL
+// the split page, Kind "split", HasNews the aggregate) and carry the member
+// sessions in group order.
+type StripTab struct {
+	TerminalTab
+	Members []TerminalTab
+}
+
+// MemberIDs returns the space separated session ids behind this strip entry,
+// the members for a group, the session itself otherwise. The strip client
+// posts these expanded ids when it persists the tab order.
+func (t StripTab) MemberIDs() string {
+	if len(t.Members) == 0 {
+		return t.ID
+	}
+	ids := make([]string, len(t.Members))
+	for i := range t.Members {
+		ids[i] = t.Members[i].ID
+	}
+	return strings.Join(ids, " ")
+}
+
+// IsActive reports whether this strip entry represents the current page: the
+// entry itself, or for a group one of its members, so a member's own page
+// keeps its group tab highlighted.
+func (t StripTab) IsActive(currentID string) bool {
+	if currentID == "" {
+		return false
+	}
+	if t.ID == currentID {
+		return true
+	}
+	for i := range t.Members {
+		if t.Members[i].ID == currentID {
+			return true
+		}
+	}
+	return false
+}
+
+// MemberKinds returns the space separated kinds matching MemberIDs, so the
+// strip client knows each member's stop/delete endpoint.
+func (t StripTab) MemberKinds() string {
+	if len(t.Members) == 0 {
+		return t.Kind
+	}
+	kinds := make([]string, len(t.Members))
+	for i := range t.Members {
+		kinds[i] = t.Members[i].Kind
+	}
+	return strings.Join(kinds, " ")
 }

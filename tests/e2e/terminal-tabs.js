@@ -387,9 +387,17 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       foreignShellUrl = await L.createShell(page, foreignProject);
       const foreignId = ownId(foreignShellUrl);
       await page.waitForSelector(tabSel(foreignId), { state: "attached", timeout: 8000 });
-      await page.keyboard.press("Control");
-      await page.keyboard.press("Control");
-      await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+      // The strip may still be replaying terminals events from the create;
+      // retry the double tap until the switcher actually opens.
+      let opened = null;
+      for (let attempt = 0; attempt < 3 && !opened; attempt += 1) {
+        await page.keyboard.press("Control");
+        await sleep(120);
+        await page.keyboard.press("Control");
+        opened = await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 2500 }).catch(() => null);
+        if (!opened) await sleep(600);
+      }
+      assert(opened, "switcher did not open after retries");
       await page.keyboard.type(project, { delay: 40 });
       await sleep(200);
       const visible = await page.$$eval(".terminal-switcher-item:not([hidden])", (els) => els.map((e) => e.dataset.switcherId));

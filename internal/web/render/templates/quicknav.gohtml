@@ -3,7 +3,7 @@
   <button type="button" class="btn btn-icon quicknav-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Coders and projects" title="Coders and projects">
     <i class="ti ti-layout-grid quicknav-ico-open"></i>
     <i class="ti ti-x quicknav-ico-close"></i>
-    <span class="dc-notify-badge d-none" data-notify-count aria-hidden="true">0</span>
+    <span class="dc-notify-badge{{if eq .QuickNav.UnreadCount 0}} d-none{{end}}" data-notify-count aria-hidden="true">{{if gt .QuickNav.UnreadCount 99}}99+{{else}}{{.QuickNav.UnreadCount}}{{end}}</span>
   </button>
   <div class="dropdown-menu dropdown-menu-end quicknav-menu" data-quicknav-url="/quicknav">
     <div class="quicknav-list">{{template "quicknav_items.gohtml" .}}</div>
@@ -42,7 +42,48 @@
 
   <div data-quicknav-pane="active">
     <div class="quicknav-active-list" data-quicknav-active-list>
-      {{range .QuickNav.Active}}
+      {{range .QuickNav.Strip}}
+      {{if .Members}}
+      {{$g := .}}
+      <div class="quicknav-group" data-qn-block="{{.ID}}">
+        <div class="quicknav-swipe-row" data-qn-group="{{.ID}}">
+          <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if .IsActive $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
+             data-tab-id="{{.ID}}" data-tab-kind="split" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}" data-tab-members="{{.MemberIDs}}" data-tab-member-kinds="{{.MemberKinds}}"{{if .IsActive $.QuickNav.CurrentID}} aria-current="true"{{end}}>
+            <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-targets="{{.MemberIDs}}" aria-hidden="true"><i class="ti ti-layout"></i></span>
+            <span class="d-flex flex-column min-w-0">
+              <span class="text-truncate">{{.Name}}</span>
+              <span class="text-secondary small text-truncate">{{if .Project}}{{.Project}} · {{end}}{{len .Members}} terminals</span>
+            </span>
+            <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
+          </a>
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-ungroup" data-qn-ungroup aria-label="Ungroup split view {{.Name}}" title="Ungroup split view">
+            <i class="ti ti-layout-off" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="Close all terminals in {{.Name}}" title="Close all terminals">
+            <i class="ti ti-trash" aria-hidden="true"></i>
+          </button>
+        </div>
+        {{range $g.Members}}
+        <div class="quicknav-swipe-row quicknav-group-row" data-qn-group-member="{{$g.ID}}">
+          <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if and (eq .ID $.QuickNav.Focus) (eq $g.ID $.QuickNav.CurrentID)}}active{{end}}" href="{{.URL}}" draggable="false"
+             data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"{{if and (eq .ID $.QuickNav.Focus) (eq $g.ID $.QuickNav.CurrentID)}} aria-current="true"{{end}}>
+            <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+            <span class="d-flex flex-column min-w-0">
+              <span class="text-truncate">{{.Name}}</span>
+              {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
+            </span>
+            <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
+          </a>
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-ungroup" data-qn-remove aria-label="Remove {{.Name}} from split view" title="Remove from split view">
+            <i class="ti ti-layout-off" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}}">
+            <i class="ti {{if eq .Kind "coder"}}ti-player-stop{{else}}ti-trash{{end}}" aria-hidden="true"></i>
+          </button>
+        </div>
+        {{end}}
+      </div>
+      {{else}}
       <div class="quicknav-swipe-row">
         <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
            data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
@@ -57,6 +98,7 @@
           <i class="ti {{if eq .Kind "coder"}}ti-player-stop{{else}}ti-trash{{end}}" aria-hidden="true"></i>
         </button>
       </div>
+      {{end}}
       {{end}}
       {{if not .QuickNav.Active}}<span class="dropdown-item-text text-secondary small">No active coders or shells</span>{{end}}
     </div>

@@ -146,7 +146,7 @@
       this.terminal?.addEventListener("touchmove", (event) => this.handleTerminalTouchMove(event), captureOptions);
       this.terminal?.addEventListener("touchend", (event) => this.handleTerminalTouchEnd(event), captureOptions);
       this.terminal?.addEventListener("touchcancel", () => this.handleTerminalTouchCancel(), captureOptions);
-      for (const button of document.querySelectorAll("[data-terminal-copy]")) {
+      for (const button of this.copyButtons()) {
         button.addEventListener("click", () => this.toggle(), options);
       }
       // Every input POST reports its round trip (terminal-input.js), the EWMA
@@ -296,12 +296,20 @@
       this.setActive(!this.hasAttribute("active"));
     }
 
+    copyButtons() {
+      const island = this.terminal?.getAttribute?.("terminal-id") || "";
+      return Array.from(document.querySelectorAll("[data-terminal-copy]")).filter((button) => {
+        const footer = button.closest("[data-terminal-footer]");
+        return !footer || footer.getAttribute("data-terminal-footer") === island;
+      });
+    }
+
     syncState() {
       const active = this.isActive();
       const copyMode = Boolean(this.mediaQuery?.matches) && !active;
       this.setAttribute("aria-hidden", active ? "false" : "true");
       this.terminal?.classList.toggle("attach-terminal-copy-mode", copyMode);
-      for (const button of document.querySelectorAll("[data-terminal-copy]")) {
+      for (const button of this.copyButtons()) {
         button.classList.toggle("active", copyMode);
         button.setAttribute("aria-pressed", copyMode ? "true" : "false");
       }

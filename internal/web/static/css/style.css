@@ -1,5 +1,8 @@
 /* Keep anchor jumps (e.g. /projects#project-x) off the very top edge. */
 html { scroll-padding-top: 3rem; }
+@media not (pointer: coarse) {
+  html:has(.attach-split-head) { scroll-padding-top: 6rem; }
+}
 
 body {
   --swal2-background: var(--tblr-bg-surface);
@@ -14,6 +17,12 @@ body {
 
 .min-w-0 { min-width: 0 !important; }
 
+.dc-coarse-only { display: none !important; }
+@media (pointer: coarse) {
+  .dc-coarse-only { display: flex !important; }
+  .dc-fine-only { display: none !important; }
+}
+
 .attach-page { display: flex; flex-direction: column; gap: 0.5rem; min-height: 100%; }
 .page-header { flex-wrap: nowrap; }
 .page-header > * { min-width: 0; max-width: 100%; }
@@ -23,16 +32,33 @@ body {
   border-radius: var(--tblr-border-radius);
   background: #fff;
   overflow: clip; padding: 0; cursor: text;
+  isolation: isolate;
 }
 [data-bs-theme="dark"] .attach-terminal {
   background: #0b0f19;
 }
 .attach-terminal.attach-terminal-copy-mode {
+  border-color: transparent;
+}
+.attach-terminal.attach-terminal-copy-mode::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
   border: 1px dashed var(--dc-terminal-contrast, #fff);
+  pointer-events: none;
 }
 .attach-terminal.attach-terminal-dragover {
+  border-color: transparent;
+}
+.attach-terminal.attach-terminal-dragover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
   border: 1px dashed var(--tblr-primary);
-  box-shadow: inset 0 0 0 9999px rgba(59, 130, 246, 0.12);
+  background: rgba(59, 130, 246, 0.12);
+  pointer-events: none;
 }
 .attach-terminal .xterm, .attach-terminal .xterm * { box-sizing: content-box; }
 /* Read-only mirror: keep xterm's input textarea out of the way. Interactive
@@ -112,6 +138,7 @@ body {
 [data-bs-theme="dark"] .attach-footer {
   box-shadow: 0 -0.5rem 1rem rgba(0, 0, 0, 0.2);
 }
+.attach-footer[hidden] { display: none; }
 body:has(#terminal-cursor-input:focus) .attach-footer {
   position: static;
 }
@@ -195,6 +222,7 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
 .attach-desktop .btn { min-height: 2rem; padding-top: 0.25rem; padding-bottom: 0.25rem; }
 
 .attach-frame {
+  --dc-strip-height: 2.625rem;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -202,6 +230,125 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
   min-width: 0;
 }
 .attach-frame .attach-terminal { flex: 1 1 auto; }
+
+.attach-split {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--tblr-border-color);
+  border-radius: var(--tblr-border-radius);
+  background: var(--tblr-border-color);
+  overflow: clip;
+}
+.attach-split-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  background: var(--tblr-body-bg);
+}
+.attach-split-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.375rem;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--tblr-border-color);
+  background: var(--tblr-bg-surface);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+@media not (pointer: coarse) {
+  .attach-split-head {
+    position: sticky;
+    top: var(--dc-strip-height, 2.625rem);
+    z-index: 9;
+  }
+  .dc-terminal-fullscreen .attach-split-head {
+    position: static;
+  }
+}
+@media not (pointer: coarse) {
+  .attach-split-dragging,
+  .attach-split-dragging .attach-split-head { cursor: grabbing; }
+  .attach-split-pane-dragging {
+    opacity: 0.85;
+    outline: 2px solid var(--tblr-primary);
+    outline-offset: -2px;
+  }
+}
+.attach-split-pane:has(terminal-attach[active]) .attach-split-head {
+  box-shadow: inset 0 2px 0 var(--tblr-primary);
+}
+.attach-split-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.attach-split-name {
+  min-width: 0;
+  color: var(--tblr-body-color);
+  font-weight: 500;
+}
+.attach-split-project {
+  min-width: 0;
+  font-size: 0.6875rem;
+  color: var(--tblr-secondary);
+}
+.attach-split-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tblr-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, color 0.1s ease;
+}
+.attach-split-head:hover .attach-split-remove,
+.attach-split-pane:has(terminal-attach[active]) .attach-split-remove {
+  opacity: 0.55;
+}
+.attach-split-remove:hover,
+.attach-split-remove:focus-visible {
+  opacity: 1;
+  color: var(--tblr-danger);
+  background: rgba(var(--tblr-emphasis-color-rgb), 0.06);
+}
+.attach-split .attach-terminal {
+  flex: 1 1 auto;
+  border: 0;
+  border-radius: 0;
+}
+@media (pointer: coarse) {
+  .attach-split {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .attach-split-pane:not(:has(terminal-attach[active])) { display: none; }
+  .attach-split-head { display: none; }
+  .attach-split .attach-terminal {
+    min-height: 16rem;
+    border: 1px solid var(--tblr-border-color);
+    border-radius: var(--tblr-border-radius);
+  }
+}
+
 
 @media not (pointer: coarse) {
   .dc-terminal-fullscreen body { overflow: hidden; }
@@ -226,6 +373,15 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
     border-bottom: 0;
     border-left: 0;
     min-height: 0;
+  }
+  .dc-terminal-fullscreen .attach-split {
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+  .dc-terminal-fullscreen .attach-split .attach-terminal {
+    border: 0;
   }
   .dc-terminal-fullscreen .attach-footer {
     margin-right: 0;
@@ -314,6 +470,11 @@ terminal-tabs { display: none; }
     border-top-left-radius: 0;
     border-top-right-radius: 0;
   }
+  terminal-tabs + .attach-split {
+    border-top: 0;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
   .terminal-tabs-strip {
     position: relative;
     display: flex;
@@ -373,6 +534,12 @@ terminal-tabs { display: none; }
     display: inline-flex;
     flex: 0 0 auto;
     color: var(--tblr-secondary);
+  }
+  .terminal-tabs-strip-dragging .terminal-tab-group-target {
+    border-radius: 6px;
+    background: rgba(var(--tblr-primary-rgb), 0.12);
+    box-shadow: inset 0 0 0 2px var(--tblr-primary);
+    transition: box-shadow 0.1s ease, background 0.1s ease;
   }
   .terminal-tab-text {
     display: flex;
@@ -659,7 +826,7 @@ body:not(:has(.attach-footer)) .quicknav {
 .quicknav-top {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 6;
   /* Breathing room above the tabs lives here (opaque, part of the sticky header)
      rather than in the menu's padding, where scrolled content would show through. */
   padding-top: 0.5rem;
@@ -777,6 +944,17 @@ body:not(:has(.attach-footer)) .quicknav {
 }
 .quicknav-swiping .quicknav-swipe-delete,
 .quicknav-swipe-open .quicknav-swipe-delete { visibility: visible; }
+.quicknav-swipe-ungroup {
+  right: 4.5rem;
+  background: var(--tblr-secondary);
+}
+.quicknav-group-row .quicknav-active-item { padding-left: 2rem; }
+.quicknav-active-list-dragging [data-qn-block] { transition: transform 0.12s ease; }
+.quicknav-active-list-dragging .quicknav-group-target {
+  border-radius: 6px;
+  background: rgba(var(--tblr-primary-rgb), 0.12);
+  box-shadow: inset 0 0 0 2px var(--tblr-primary);
+}
 /* While the row slides it must cover the delete underneath, so it swaps its
    transparent background for the menu's own. */
 .quicknav-swiping .quicknav-active-item,
@@ -1545,9 +1723,9 @@ terminal-input { display: none; }
   color: var(--tblr-secondary);
 }
 .dc-term-icon.running { color: var(--tblr-green); }
-.dc-term-icon.news { color: var(--tblr-blue); }
+.dc-term-icon.news, .dc-term-icon.changed { color: var(--tblr-blue); }
 @media (prefers-reduced-motion: no-preference) {
-  .dc-term-icon.news {
+  .dc-term-icon.news, .dc-term-icon.changed {
     transform-origin: top center;
     animation: dc-news-ring 1.8s ease-in-out infinite;
   }

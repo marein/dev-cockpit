@@ -40,6 +40,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/quicknav", s.handleQuickNav)
 	auth.GET("/terminal-tabs", s.handleTerminalTabsFragment)
 	auth.POST("/terminal-tabs/order", s.handleTerminalTabsOrder)
+	auth.POST("/terminal-tabs/group", s.handleTerminalTabsGroup)
+	auth.POST("/terminal-tabs/ungroup", s.handleTerminalTabsUngroup)
+	auth.POST("/terminal-tabs/group/name", s.handleTerminalTabsGroupName)
+	auth.GET("/splits/:id", s.handleSplitAttach)
 	auth.POST("/terminal-theme", s.handleTerminalTheme)
 
 	auth.GET("/coders/new", s.handleCoderNew)

@@ -5,12 +5,28 @@ import { postJSON, ensureOk } from "@dc/http";
 function initTerminalInput(host) {
   const inputUrl = host.getAttribute("input-url");
   const scrollHistory = host.hasAttribute("scroll-history");
+  const terminalId = host.getAttribute("terminal-id") || "";
 
   const ac = new AbortController();
   const signal = ac.signal;
   const repeaters = [];
   const listen = (target, type, handler, opts) => {
     if (target) target.addEventListener(type, handler, { ...opts, signal });
+  };
+
+  const isActive = () => {
+    if (document.querySelectorAll("terminal-input").length < 2) {
+      return true;
+    }
+    const active = document.querySelector("terminal-attach[active]");
+    return Boolean(active && (active.getAttribute("terminal-id") || "") === terminalId);
+  };
+  const accepts = (event) => {
+    const island = event.target instanceof Element ? event.target.closest("terminal-attach") : null;
+    if (island) {
+      return !terminalId || (island.getAttribute("terminal-id") || "") === terminalId;
+    }
+    return isActive();
   };
 
   const SCROLL_CONTROLS = {
@@ -28,7 +44,7 @@ function initTerminalInput(host) {
   // exists at the moment the user types.
   const INPUT_IDS = new Set(["terminal-prompt", "terminal-cursor-input"]);
   const forTerminalInputs = (handler) => (event) => {
-    if (event.target instanceof Element && INPUT_IDS.has(event.target.id)) {
+    if (event.target instanceof Element && INPUT_IDS.has(event.target.id) && accepts(event)) {
       handler(event);
     }
   };
@@ -50,6 +66,9 @@ function initTerminalInput(host) {
   };
   if (ctrlToggle) {
     listen(ctrlToggle, "click", () => {
+      if (!isActive()) {
+        return;
+      }
       setCtrlArmed(!ctrlArmed);
       // Arming means a letter comes next: focus the cursor input right here in
       // the tap handler so the on-screen keyboard opens (iOS requires the focus
@@ -245,6 +264,9 @@ function initTerminalInput(host) {
 
   listen(promptModalForm, "submit", (event) => {
     event.preventDefault();
+    if (!isActive()) {
+      return;
+    }
     const prompt = promptModalTextarea?.value ?? "";
     if (prompt === "") {
       promptModalTextarea?.focus();
@@ -270,6 +292,9 @@ function initTerminalInput(host) {
     }
     let suppressClick = false;
     const fire = () => {
+      if (!isActive()) {
+        return;
+      }
       void sendTerminalInput({ control });
     };
     const repeater = createRepeater(fire, REPEAT_INITIAL_DELAY, REPEAT_INTERVAL);
@@ -331,11 +356,17 @@ function initTerminalInput(host) {
   };
   for (const button of document.querySelectorAll("[data-terminal-paste]")) {
     listen(button, "click", () => {
+      if (!isActive()) {
+        return;
+      }
       void pasteFromClipboard();
     });
   }
 
   listen(document, "terminal-control", (event) => {
+    if (!accepts(event)) {
+      return;
+    }
     const control = event.detail?.control;
     if (typeof control === "string" && control !== "") {
       void sendTerminalInput({ control });
@@ -345,6 +376,9 @@ function initTerminalInput(host) {
   // Raw terminal bytes emitted by xterm when a desktop client types straight
   // into the terminal (see terminal-attach.js).
   listen(document, "terminal-input", (event) => {
+    if (!accepts(event)) {
+      return;
+    }
     const raw = event.detail?.raw;
     if (typeof raw === "string" && raw !== "") {
       void sendTerminalInput({ raw });

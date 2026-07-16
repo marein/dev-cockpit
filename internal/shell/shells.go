@@ -32,13 +32,16 @@ var ErrNotRunning = errors.New("No active shell")
 
 // Shell is one live tmux session running a plain interactive login shell.
 type Shell struct {
-	Identifier  string
-	TmuxSession string
-	PID         string
-	Name        string
-	StartedAt   time.Time
-	CWD         string
-	TabPos      int // tab strip position from @dc_tab_pos, 0 when unset
+	Identifier   string
+	TmuxSession  string
+	PID          string
+	Name         string
+	StartedAt    time.Time
+	CWD          string
+	TabPos       int    // tab strip position from @dc_tab_pos, 0 when unset
+	TabGroup     string // split view group id from @dc_tab_group, empty when ungrouped
+	TabGroupPos  int    // position inside the group from @dc_tab_gpos, 0 when unset
+	TabGroupName string // group display name from @dc_tab_gname, may be empty
 }
 
 // shellsCache memoises List for a short TTL so the repeated tmux pane scans
@@ -114,13 +117,16 @@ func (s *Shells) List() []Shell {
 			continue
 		}
 		out = append(out, Shell{
-			Identifier:  p.Name,
-			TmuxSession: p.Name,
-			PID:         p.PID,
-			Name:        name,
-			StartedAt:   p.StartTime(),
-			CWD:         strings.TrimSpace(p.Workdir),
-			TabPos:      p.TabPosition(),
+			Identifier:   p.Name,
+			TmuxSession:  p.Name,
+			PID:          p.PID,
+			Name:         name,
+			StartedAt:    p.StartTime(),
+			CWD:          strings.TrimSpace(p.Workdir),
+			TabPos:       p.TabPosition(),
+			TabGroup:     strings.TrimSpace(p.TabGroup),
+			TabGroupPos:  p.TabGroupPosition(),
+			TabGroupName: strings.TrimSpace(p.TabGName),
 		})
 	}
 	s.listCache.put(out)

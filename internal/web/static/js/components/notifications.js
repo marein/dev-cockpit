@@ -53,9 +53,10 @@ const channel = {
     const timer = setTimeout(() => {
       this.held.delete(sid);
       this.render();
-      // If the grace window elapsed with the target's own page visibly open
-      // (a slow read), surface it quietly: no toast, no jingle.
-      if (ownVisibleTarget() !== sid) toast(added);
+      // If the grace window elapsed with the target visibly on screen
+      // (a slow read, or an inactive split pane), surface it quietly:
+      // no toast, no jingle.
+      if (!shownTargets().includes(sid)) toast(added);
     }, graceDelay);
     this.held.set(sid, { timer, added });
   },
@@ -98,6 +99,17 @@ document.addEventListener("visibilitychange", () => {
   reconcileOwnTarget(channel.targets);
 });
 
+// Activating a split pane clears its device-local changed dot and reconciles
+// right away instead of waiting for the next server event.
+document.addEventListener("dc:terminal-activated", (event) => {
+  const id = event.detail && event.detail.id;
+  if (id) {
+    document.querySelectorAll(`[data-pane-head] [data-notify-target="${CSS.escape(id)}"]`)
+      .forEach((icon) => icon.classList.remove("changed"));
+  }
+  reconcileOwnTarget(channel.targets);
+});
+
 function updateTitle(unread) {
   const base = document.title.replace(/^\(\d+\+?\)\s/, "");
   document.title = unread > 0 ? `(${unread > 99 ? "99+" : unread}) ${base}` : base;
@@ -122,6 +134,10 @@ function decorateNews(targetIds) {
   document.querySelectorAll("[data-notify-target]").forEach((icon) => {
     icon.classList.toggle("news", ids.has(icon.getAttribute("data-notify-target")));
   });
+  document.querySelectorAll("[data-notify-targets]").forEach((icon) => {
+    const targets = (icon.getAttribute("data-notify-targets") || "").split(" ");
+    icon.classList.toggle("news", targets.some((id) => ids.has(id)));
+  });
   document.querySelectorAll("[data-notify-project-dot]").forEach((dot) => {
     const scope = dot.closest("[data-project-name]");
     if (!scope) return;
@@ -143,27 +159,52 @@ function openTarget(notification) {
     });
 }
 
-// ownVisibleTarget returns the coder or shell id when the current page is
-// its attach page in a visible tab, else null.
-function ownVisibleTarget() {
-  if (document.visibilityState !== "visible") return null;
+// shownTargets returns every id the page renders visibly, active or not. A
+// pane on screen counts as seen: it auto-reads (reconcileOwnTarget), so it
+// never toasts, jingles, badges or pushes — on a solo page and on a split
+// alike. What an inactive split pane keeps is the device-local changed dot
+// (markChanged) until it is activated. The pathname match stays as the
+// fallback for pages without islands.
+function shownTargets() {
+  if (document.visibilityState !== "visible") return [];
+  const shown = [...document.querySelectorAll("terminal-attach[terminal-id]")]
+    .filter((el) => el.offsetParent !== null)
+    .map((el) => el.getAttribute("terminal-id"))
+    .filter(Boolean);
+  if (shown.length) return shown;
   const match = window.location.pathname.match(/^\/(?:coders|shells)\/([^/]+)$/);
-  return match ? decodeURIComponent(match[1]) : null;
+  return match ? [decodeURIComponent(match[1])] : [];
 }
 
-// Unread news for the target whose page is visibly open is news the user is
+// Unread news for a target whose page is visibly open is news the user is
 // already looking at: mark the whole target read quietly. Runs on every
 // event including the initial one, so a page frozen in the background (a
 // locked phone) reconciles itself right after its SSE stream reconnects, and
-// again when the tab becomes visible.
+// again when the tab becomes visible. A split view page reconciles every
+// member it shows.
 let markingOwn = false;
 function reconcileOwnTarget(targets) {
-  const own = ownVisibleTarget();
-  if (!own || markingOwn || !(targets || []).includes(own)) return;
+  if (markingOwn) return;
+  const unread = targets || [];
+  const own = shownTargets().filter((id) => unread.includes(id));
+  if (!own.length) return;
+  markChanged(own);
   markingOwn = true;
-  postForm(channel.readUrl, { target: own })
-    .catch(() => {})
+  Promise.allSettled(own.map((id) => postForm(channel.readUrl, { target: id })))
     .finally(() => { markingOwn = false; });
+}
+
+// markChanged keeps the split page's orientation hint: news that is being
+// auto-read because its pane is on screen still paints the changed dot on an
+// inactive pane's head until that pane is activated. Client-side only, it
+// never counts into any badge and never pushes.
+function markChanged(ids) {
+  ids.forEach((id) => {
+    const island = document.querySelector(`terminal-attach[terminal-id="${CSS.escape(id)}"]`);
+    if (!island || island.hasAttribute("active")) return;
+    document.querySelectorAll(`[data-pane-head] [data-notify-target="${CSS.escape(id)}"]`)
+      .forEach((icon) => icon.classList.add("changed"));
+  });
 }
 
 // The whole notification (badge, title counter, list dots, toast, jingle)
@@ -272,6 +313,11 @@ class Notifications extends HTMLElement {
 
     this.listener = (state) => this.apply(state);
     channel.addListener(this.listener, this.getAttribute("read-url"));
+    // A boosted pe.js navigation swaps the body for server HTML whose badge,
+    // title counter and news dots are in their defaults, and the app-wide
+    // stream deliberately does not reconnect (no fresh snapshot). This element
+    // remounts on every swap, so re-apply the channel's known state here.
+    if (channel.unread !== null) channel.render();
 
     this.addEventListener("show.bs.dropdown", () => this.refresh(), { signal });
 

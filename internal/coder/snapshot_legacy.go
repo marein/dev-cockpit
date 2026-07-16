@@ -88,25 +88,31 @@ func (l *legacyScanner) match(p tmux.Pane) (Running, string, bool) {
 	if match == nil {
 		if info, ok := paneCoderInfo(descendants, l.prov, l.tree); ok {
 			return Running{
-				Identifier:  p.Name,
-				TmuxSession: p.Name,
-				PID:         p.PID,
-				Name:        DisplayName(info.name, p.Name),
-				StartedAt:   p.StartTime(),
-				CWD:         info.cwd,
-				TabPos:      p.TabPosition(),
+				Identifier:   p.Name,
+				TmuxSession:  p.Name,
+				PID:          p.PID,
+				Name:         DisplayName(info.name, p.Name),
+				StartedAt:    p.StartTime(),
+				CWD:          info.cwd,
+				TabPos:       p.TabPosition(),
+				TabGroup:     p.TabGroup,
+				TabGroupPos:  p.TabGroupPosition(),
+				TabGroupName: p.TabGName,
 			}, "", true
 		}
 		return Running{}, "", false
 	}
 	return Running{
-		Identifier:  match.SessionID,
-		TmuxSession: p.Name,
-		PID:         p.PID,
-		Name:        DisplayName(match.Name, match.SessionID),
-		StartedAt:   p.StartTime(),
-		CWD:         match.CWD,
-		TabPos:      p.TabPosition(),
+		Identifier:   match.SessionID,
+		TmuxSession:  p.Name,
+		PID:          p.PID,
+		Name:         DisplayName(match.Name, match.SessionID),
+		StartedAt:    p.StartTime(),
+		CWD:          match.CWD,
+		TabPos:       p.TabPosition(),
+		TabGroup:     p.TabGroup,
+		TabGroupPos:  p.TabGroupPosition(),
+		TabGroupName: p.TabGName,
 	}, match.SessionID, true
 }
 
