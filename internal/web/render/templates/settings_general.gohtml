@@ -1,0 +1,39 @@
+{{define "settings_general.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      <h2 class="page-title text-truncate mb-0">Settings</h2>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row g-0">
+    <div class="col-12 col-md-3 border-end">
+      <div class="card-body">
+        {{template "settings_nav" "general"}}
+      </div>
+    </div>
+    <div class="col-12 col-md-9">
+      <div class="card-body">
+        <h3 class="card-title">General</h3>
+        <form method="post" action="/settings/general" id="settings-terminal-restore">
+          {{if and (eq $.FlashProject "settings-terminal-restore") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <div class="mb-3">
+            <label class="form-label">Restore</label>
+            <div class="text-secondary small mb-2">On host reboot, the next start brings the working set back: coders are resumed, shells are recreated empty in their project directory, the tab order is kept.</div>
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="restore" value="on"{{if .RestoreEnabled}} checked{{end}}>
+              <span class="form-check-label">Restore terminals at startup</span>
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

@@ -22,6 +22,7 @@ import (
 	"github.com/local/dev-cockpit/internal/project"
 	"github.com/local/dev-cockpit/internal/push"
 	"github.com/local/dev-cockpit/internal/recent"
+	"github.com/local/dev-cockpit/internal/restore"
 	"github.com/local/dev-cockpit/internal/settings"
 	"github.com/local/dev-cockpit/internal/shell"
 	"github.com/local/dev-cockpit/internal/tmux"
@@ -187,6 +188,20 @@ func runServe(opts serveOptions) error {
 		return fmt.Errorf("failed to initialize push channels: %w", err)
 	}
 	pushService.Start(notifier)
+
+	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
+
+	// The startup pass runs before the watchers and the server, so restored
+	// sessions are in place when the first page renders. Off by default, the
+	// snapshot file itself is kept current regardless of the setting.
+	restorer := restore.New(
+		filepath.Join(cfg.StateDir, "terminal-restore.json"),
+		func() bool { return settingsStore.Get(restore.SettingKey) == "on" },
+		coders, shells, tmuxClient, notifier,
+	)
+	restorer.RunStartup()
+	go restorer.RunPeriodic(30 * time.Second)
+
 	for _, c := range selected {
 		go notifier.RunInbox(notify.InboxDir(cfg.StateDir, c.ID()), time.Second)
 	}
@@ -205,9 +220,7 @@ func runServe(opts serveOptions) error {
 		})
 	}
 
-	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
-
-	srv, err := web.NewServer(cfg, coders, shells, projectRepo, notifier, settingsStore, pushService, resolveVersion())
+	srv, err := web.NewServer(cfg, coders, shells, projectRepo, notifier, settingsStore, pushService, restorer, resolveVersion())
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}

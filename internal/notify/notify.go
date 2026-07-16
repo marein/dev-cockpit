@@ -175,6 +175,28 @@ func (s *Service) MarkTargetRead(targetID string) int {
 	return s.mark(func(n *Notification) bool { return n.TargetID == targetID })
 }
 
+// PruneTargets drops stored notifications whose target id is not in keep.
+// The startup terminal restore calls it for targets that stayed dead through
+// the restore pass, their entries would link nowhere forever. Returns how
+// many entries were removed.
+func (s *Service) PruneTargets(keep map[string]bool) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list := s.load()
+	kept := list[:0]
+	for _, n := range list {
+		if keep[n.TargetID] {
+			kept = append(kept, n)
+		}
+	}
+	removed := len(list) - len(kept)
+	if removed > 0 {
+		s.save(kept)
+		s.publishLocked(Event{Unread: countUnread(kept), Targets: unreadIDs(kept)})
+	}
+	return removed
+}
+
 func (s *Service) mark(match func(*Notification) bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

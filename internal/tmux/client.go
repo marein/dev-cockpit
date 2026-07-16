@@ -180,6 +180,12 @@ func (c *Client) SetTabPositions(names []string) error {
 	return clirun.Check("tmux", args...)
 }
 
+// SetTabPosition writes one session's tab strip position, used by the startup
+// terminal restore to re-apply a recorded order onto a recreated session.
+func (c *Client) SetTabPosition(name string, pos int) error {
+	return clirun.Check("tmux", "set-option", "-t", name, tabPosOption, strconv.Itoa(pos))
+}
+
 // StopPipe detaches any inherited pipe-pane logger (migration cleanup).
 func (c *Client) StopPipe(name string) error {
 	return clirun.Check("tmux", "pipe-pane", "-t", Target(name))

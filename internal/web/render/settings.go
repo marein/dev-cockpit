@@ -26,6 +26,12 @@ type PushWebhook struct {
 	URL string
 }
 
+// SettingsGeneralData feeds the general settings page.
+type SettingsGeneralData struct {
+	Page
+	RestoreEnabled bool
+}
+
 // SettingsNotificationsData feeds the notifications settings page.
 type SettingsNotificationsData struct {
 	Page

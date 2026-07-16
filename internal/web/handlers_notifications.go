@@ -116,7 +116,9 @@ func writeEnvelope(w http.ResponseWriter, ev eventbus.Event) error {
 // snapshot) means "refresh everything". Every surface reacts by pulling its own
 // per-client fragment (authenticated as that client, carrying its path), so the
 // active tab and the CSRF token stay correct and each element keeps its own state
-// (unfold, filter).
+// (unfold, filter). Every call site is also a terminal mutation, so the terminal
+// restore snapshot is rewritten here.
 func (s *Server) publishTerminals(projectName string) {
+	s.restorer.Write()
 	s.bus.Publish(eventbus.Event{Type: "terminals", Data: map[string]string{"project": projectName}})
 }

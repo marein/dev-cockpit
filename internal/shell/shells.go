@@ -154,6 +154,25 @@ func (s *Shells) Resolve(rawID string) error {
 
 // Start launches a new shell session in workdir, labelled name.
 func (s *Shells) Start(workdir, name string) (string, error) {
+	key, err := terminal.NewKey()
+	if err != nil {
+		return "", err
+	}
+	return s.start(workdir, name, key)
+}
+
+// StartWithKey launches a shell under a caller-provided session key. The
+// terminal restore uses it to bring a shell back under its recorded id, so
+// links, open tabs, and notification entries keep resolving.
+func (s *Shells) StartWithKey(workdir, name, key string) (string, error) {
+	id, err := terminal.ValidateIdentifier(key)
+	if err != nil {
+		return "", err
+	}
+	return s.start(workdir, name, id)
+}
+
+func (s *Shells) start(workdir, name, key string) (string, error) {
 	dir := strings.TrimSpace(workdir)
 	if dir == "" {
 		return "", errors.New("Shell directory is required.")
@@ -165,10 +184,6 @@ func (s *Shells) Start(workdir, name string) (string, error) {
 	label := sanitizeShellName(name)
 	if label == "" {
 		label = "shell"
-	}
-	key, err := terminal.NewKey()
-	if err != nil {
-		return "", err
 	}
 	for _, p := range s.listPanesBestEffort() {
 		if p.Name == key {

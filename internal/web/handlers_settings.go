@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/restore"
 	"github.com/local/dev-cockpit/internal/web/render"
 )
 
@@ -41,7 +42,26 @@ func (s *Server) selectedJingle() string {
 }
 
 func (s *Server) handleSettings(c *gin.Context) {
-	c.Redirect(http.StatusSeeOther, "/settings/notifications")
+	c.Redirect(http.StatusSeeOther, "/settings/general")
+}
+
+func (s *Server) handleSettingsGeneral(c *gin.Context) {
+	c.HTML(http.StatusOK, "settings_general.gohtml", render.SettingsGeneralData{
+		Page:           s.page(c, "Settings", "settings"),
+		RestoreEnabled: s.settings.Get(restore.SettingKey) == "on",
+	})
+}
+
+// handleSettingsGeneralSave stores the terminal restore switch. The value
+// is explicit ("on"/"off") instead of deleting the key, so a later default
+// flip cannot silently re-enable it for users who turned it off.
+func (s *Server) handleSettingsGeneralSave(c *gin.Context) {
+	value := "off"
+	if c.PostForm("restore") == "on" {
+		value = "on"
+	}
+	s.settings.Set(restore.SettingKey, value)
+	s.redirectWithAnchoredFlash(c, "/settings/general", "settings-terminal-restore", "Settings saved.", "")
 }
 
 func (s *Server) handleSettingsNotifications(c *gin.Context) {
