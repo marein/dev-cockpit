@@ -50,6 +50,7 @@ it; there is no stdlib equivalent that also covers WebKit/Safari).
 | `notifications.js` | bell + center (dc-notifications, desktop + mobile), SSE badge/toast/title counter, blue-dot markers on projects list + quick nav, settings volume bar + jingle picker, dedupe window, visibility auto-read, live toast dismissal, shell command completion (real `sleep`, OSC 133 marks, /shells link), mark read/all, push channels (dc-push-settings render state, webhook add + duplicate reject + per-row test button against a local stub server, unread news delivered to the webhook after the 2s re-check while auto-read news stays silent); event injection needs the instance's notify dir mounted (`-v <state-dir>/notification-inbox:/inbox -e NOTIFY_DIR=/inbox`), otherwise those checks soft-skip; the runner needs `--network host` for the webhook stub |
 | `live-updates.js` | the shared server event stream (`@dc/events` over `GET /events`): two desktop clients on one instance, a coder/shell started, renamed, reordered or stopped in one client updates the other's tab strip live, and an open quick nav refreshes; the "terminals" event carries no data, clients pull the fresh fragment |
 | `update.js` | complete self update: check shape, daily auto modal (once per day per version via localStorage, new version prompts again), badge + link, changelog dialog, real non-destructive apply (`MODE=available`); no-update (`MODE=uptodate`) |
+| `editor-intel.js` | editor intelligence: /settings/editor form pairing and defaults (mode Off/Focused/Flow, five fixed language server rows with detection badges, Ollama section with save-and-test against a stubbed Ollama), LSP completion popup fed by the fake `gopls` (kind icons, detail, server side ranking), Tab accepts the selected item into the buffer only, AI ghost text (`.cm-dc-ghost`) after the debounce with Tab accept and Escape dismiss, statusbar indicator titles (server connected, AI active, sensitive withheld, not installed), sensitive file withholding, a missing server staying quiet while editing keeps working, mode off removing every intelligence surface; needs its own instance, see below |
 | `coder-claude.js` | coder create/attach/prompt with the claude coder picked in the form (needs the claude CLI on the host) |
 | `multi-coder.js` | coder select on new session, coder sidebar + section tabs on agents/skills/instructions, coder badges, quicknav labels; `MODE=single` asserts the adaptive parts stay off (only applies on hosts with a single coder CLI) |
 
@@ -70,6 +71,14 @@ Extra instances:
   as `999.0.0`, so the version must really be baked in. Apply swaps the binary
   in place, the instance must run its own copy, never the repo build.
 - one on `:3013` with the stub URL returning `[]`, for `update.js MODE=uptodate`.
+- one for `editor-intel.js` (any free port, pass it as `BASE_URL`): its PATH must
+  start with a directory holding a `gopls` wrapper that runs
+  `tests/e2e/fake-gopls.py` (python3), no real `pyright-langserver` may be
+  reachable, `DEV_COCKPIT_OLLAMA_URL=http://127.0.0.1:3799` and the update stub
+  URL on `:3019` point at stubs the runner hosts itself (hence `--network host`).
+  The runner rewrites this instance's editor settings, so do not share it with
+  runners that assume defaults, and reset
+  `<state-dir>/editor-settings.json` between runs.
 
 Never save `/instructions` outside the runners' own flows, the instance writes the
 real per-coder files in `$HOME` (the default coder is the first installed one).

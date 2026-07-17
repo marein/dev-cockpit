@@ -8,9 +8,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/local/dev-cockpit/internal/clirun"
@@ -18,6 +20,7 @@ import (
 	coderclaude "github.com/local/dev-cockpit/internal/coder/claude"
 	codercopilot "github.com/local/dev-cockpit/internal/coder/copilot"
 	"github.com/local/dev-cockpit/internal/config"
+	"github.com/local/dev-cockpit/internal/editorintelligence"
 	"github.com/local/dev-cockpit/internal/notify"
 	"github.com/local/dev-cockpit/internal/project"
 	"github.com/local/dev-cockpit/internal/push"
@@ -220,7 +223,21 @@ func runServe(opts serveOptions) error {
 		})
 	}
 
-	srv, err := web.NewServer(cfg, coders, shells, projectRepo, notifier, settingsStore, pushService, restorer, resolveVersion())
+	// Editor intelligence owns the language server child processes. On a
+	// stop signal they are shut down along the protocol before exit; the
+	// self-update exec path needs no hook because the pipe ends close on
+	// exec and the servers exit on stdin EOF.
+	intel := editorintelligence.New(cfg.StateDir)
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-stop
+		log.Printf("received %s, shutting down", sig)
+		intel.Close()
+		os.Exit(0)
+	}()
+
+	srv, err := web.NewServer(cfg, coders, shells, projectRepo, notifier, settingsStore, pushService, restorer, intel, resolveVersion())
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}

@@ -109,6 +109,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
 	auth.POST("/settings/general", s.handleSettingsGeneralSave)
+	auth.GET("/settings/editor", s.handleSettingsEditor)
+	auth.POST("/settings/editor", s.handleSettingsEditorSave)
 
 	auth.GET("/notifications", s.handleNotificationsList)
 	auth.POST("/notifications/read", s.handleNotificationsRead)
@@ -140,6 +142,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/projects/:name/editor/search", s.handleEditorSearch)
 	auth.POST("/projects/:name/editor/upload", s.handleEditorUpload)
 	auth.POST("/projects/:name/editor/preview", s.handleEditorPreview)
+	auth.POST("/projects/:name/editor/completion", s.handleEditorCompletion)
+	auth.POST("/projects/:name/editor/completion/close", s.handleEditorCompletionClose)
 }
 
 func (s *Server) registerStaticRoutes(r *gin.Engine) {

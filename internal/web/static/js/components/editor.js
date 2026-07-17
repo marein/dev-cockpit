@@ -6,6 +6,7 @@
 import { notifyError } from "@dc/toast";
 import { menuJustClosed, openMenu } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
+import * as editorIntel from "@dc/editor-intel";
 import { csrfHeaders, ensureOk, getJSON, postForm } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
 import * as store from "@dc/store";
@@ -32,6 +33,7 @@ async function init(root) {
   const tabsEl = root.querySelector("[data-editor-tabs]");
   const pathEl = root.querySelector("[data-editor-path]");
   const statusEl = root.querySelector("[data-editor-status]");
+  const intelStatusEl = root.querySelector("[data-editor-intel-status]");
   const posEl = root.querySelector("[data-editor-pos]");
   const indentInfoEl = root.querySelector("[data-editor-indent-info]");
   const saveBtn = root.querySelector("[data-editor-save]");
@@ -64,7 +66,8 @@ async function init(root) {
   const mobileMedia = window.matchMedia("(max-width: 767.98px), (max-height: 500px)");
   const pointerMedia = window.matchMedia("(hover: hover) and (pointer: fine)");
 
-  const editor = await createEditor(surfaceEl, { onChange, onCursor }, editorSettings, signal);
+  const intel = editorIntel.createClient(base, editorIntel.parseConfig(root.dataset.editorIntel));
+  const editor = await createEditor(surfaceEl, { onChange, onCursor, onIntel: renderIntelStatus }, editorSettings, signal, intel);
   setupSettingsUI(root, editor, editorSettings);
   const syncIndentControl = setupIndentControl(root, editor, editorSettings);
 
@@ -118,6 +121,61 @@ async function init(root) {
 
   function onCursor(line, col) {
     posEl.textContent = `Ln ${line}, Col ${col}`;
+  }
+
+  const INTEL_LANGS = { go: "Go", php: "PHP", py: "Python", html: "HTML", htm: "HTML", css: "CSS", scss: "SCSS" };
+  const INTEL_LSP_TITLES = {
+    "": "language server starts with the first suggestion",
+    ok: "language server connected",
+    "not-installed": "language server is not installed on this host",
+    stale: "language server connected",
+    busy: "language server limit reached, try again in a moment",
+  };
+
+  function renderIntelStatus(busy) {
+    if (!intelStatusEl) return;
+    const tab = activeTab();
+    const ext = tab && !tab.kind ? (tab.name.split(".").pop() || "").toLowerCase() : "";
+    const lang = INTEL_LANGS[ext];
+    if (!intel || !tab || tab.kind || (!lang && intel.mode !== "lsp-ai")) {
+      intelStatusEl.hidden = true;
+      return;
+    }
+    intelStatusEl.replaceChildren();
+    const titles = [];
+    const lspStatus = intel.lspStatus(tab.path);
+    if (lang && intel.lspUsable(tab.path)) {
+      const badge = document.createElement("span");
+      badge.className = "editor-intel-lang";
+      badge.classList.toggle("ok", lspStatus === "ok");
+      badge.textContent = lang;
+      intelStatusEl.appendChild(badge);
+      titles.push(`${lang} ${INTEL_LSP_TITLES[lspStatus] || "language server currently unavailable"}`);
+    } else if (lang && lspStatus === "not-installed") {
+      const badge = document.createElement("span");
+      badge.className = "editor-intel-lang off";
+      badge.textContent = lang;
+      intelStatusEl.appendChild(badge);
+      titles.push(`${lang} ${INTEL_LSP_TITLES[lspStatus]}`);
+    }
+    if (intel.mode === "lsp-ai" && intel.aiStatus(tab.path) !== "disabled") {
+      const spark = document.createElement("i");
+      spark.className = "ti ti-sparkles editor-intel-spark";
+      const aiStatus = intel.aiStatus(tab.path);
+      if (aiStatus === "withheld") {
+        spark.classList.add("off");
+        titles.push("AI paused for this file, it looks sensitive");
+      } else if (aiStatus === "unavailable") {
+        spark.classList.add("off");
+        titles.push("Ollama is not answering right now");
+      } else {
+        titles.push("AI suggestions active, Tab accepts");
+      }
+      intelStatusEl.appendChild(spark);
+    }
+    intelStatusEl.classList.toggle("busy", !!busy);
+    intelStatusEl.title = titles.join(". ");
+    intelStatusEl.hidden = intelStatusEl.childElementCount === 0;
   }
 
   function syncIndentInfo() {
@@ -201,6 +259,7 @@ async function init(root) {
     pathEl.textContent = tab ? tab.path : "";
     pathEl.title = tab ? tab.path : "";
     posEl.hidden = !tab || !!tab.kind;
+    renderIntelStatus(false);
     renderTabs();
     updateActionStates();
     syncIndentControl();
@@ -280,6 +339,7 @@ async function init(root) {
       return;
     }
     tabs.splice(i, 1);
+    if (intel && !tab.kind) intel.closeDocument(tab.path);
     if (activePath === path) {
       activePath = null;
       const next = tabs[i] || tabs[i - 1];
@@ -333,6 +393,7 @@ async function init(root) {
   function onChange() {
     const tab = activeTab();
     if (!tab) return;
+    tab.intelDocVersion = (tab.intelDocVersion || 1) + 1;
     markDirty(tab, !editor.isClean(tab, true));
     schedulePreview(PREVIEW_DEBOUNCE_MS);
   }
@@ -377,6 +438,8 @@ async function init(root) {
       handle: await editor.createDoc(data.content, name),
       editorConfig: data.editorConfig || {},
       dirty: false,
+      intelDocVersion: 1,
+      intelSeq: 1,
     };
   }
 
@@ -1457,6 +1520,11 @@ async function init(root) {
     clearTimeout(previewTimer);
     clearTimeout(searchTimer);
     if (svgPreviewUrl) URL.revokeObjectURL(svgPreviewUrl);
+    if (intel) {
+      for (const tab of tabs) {
+        if (!tab.kind) intel.closeDocument(tab.path);
+      }
+    }
     document.documentElement.classList.remove("dc-editor-fullscreen");
     editor.destroy();
   };
@@ -1471,9 +1539,9 @@ function indentPref(value) {
   return { style: "tab" };
 }
 
-async function createEditor(host, hooks, settings, signal) {
+async function createEditor(host, hooks, settings, signal, intel) {
   try {
-    return await createCodeMirror(host, hooks, settings, signal);
+    return await createCodeMirror(host, hooks, settings, signal, intel);
   } catch (err) {
     console.warn("CodeMirror unavailable, using textarea", err);
     return createTextarea(host, hooks, settings);
@@ -1518,8 +1586,8 @@ const LANGS = {
   java: ["lang-java@6.0.1", "java", null],
 };
 
-async function createCodeMirror(host, hooks, settings, signal) {
-  const [cm, state, view, commands, language, search, theme] = await Promise.all([
+async function createCodeMirror(host, hooks, settings, signal, intel) {
+  const [cm, state, view, commands, language, search, theme, autocomplete] = await Promise.all([
     import("codemirror"),
     import("@codemirror/state"),
     import("@codemirror/view"),
@@ -1527,21 +1595,256 @@ async function createCodeMirror(host, hooks, settings, signal) {
     import("@codemirror/language"),
     import("@codemirror/search"),
     import("@codemirror/theme-one-dark"),
+    import("@codemirror/autocomplete"),
   ]);
   const { EditorView, basicSetup } = cm;
-  const { EditorState, Compartment } = state;
-  const { keymap } = view;
+  const { EditorState, Compartment, Prec, StateEffect, StateField } = state;
+  const { keymap, Decoration, WidgetType } = view;
   const { indentWithTab } = commands;
   const { indentUnit } = language;
+  const { autocompletion, completionStatus, selectedCompletion, acceptCompletion } = autocomplete;
   const langConf = new Compartment();
   const tabSizeConf = new Compartment();
   const indentConf = new Compartment();
   const wrapConf = new Compartment();
   const fontConf = new Compartment();
   const themeConf = new Compartment();
+  const lspCompletionConf = new Compartment();
+  const aiCompletionConf = new Compartment();
   const darkScheme = window.matchMedia("(prefers-color-scheme: dark)");
   const schemeTheme = () => (darkScheme.matches ? theme.oneDark : []);
   let langSeq = 0;
+
+  let currentTab = null;
+  let aiTimer = 0;
+  let aiAbort = null;
+  const lspAborts = new Set();
+
+  class GhostWidget extends WidgetType {
+    constructor(text) {
+      super();
+      this.text = text;
+    }
+    eq(other) {
+      return other.text === this.text;
+    }
+    get lineBreaks() {
+      return (this.text.match(/\n/g) || []).length;
+    }
+    toDOM() {
+      const span = document.createElement("span");
+      span.className = "cm-dc-ghost";
+      span.textContent = this.text;
+      const hint = document.createElement("span");
+      hint.className = "cm-dc-ghost-hint";
+      hint.textContent = "Tab";
+      span.appendChild(hint);
+      return span;
+    }
+    ignoreEvent() {
+      return true;
+    }
+  }
+
+  const setGhost = StateEffect.define();
+  const ghostField = StateField.define({
+    create: () => null,
+    update(value, tr) {
+      let set = false;
+      for (const e of tr.effects) {
+        if (e.is(setGhost)) {
+          value = e.value;
+          set = true;
+        }
+      }
+      if (!set && (tr.docChanged || tr.selection)) value = null;
+      if (value && completionStatus(tr.state) !== null) value = null;
+      return value;
+    },
+    provide: (f) =>
+      EditorView.decorations.from(f, (g) =>
+        g ? Decoration.set([Decoration.widget({ widget: new GhostWidget(g.text), side: 1 }).range(g.pos)]) : Decoration.none,
+      ),
+  });
+
+  function acceptGhost(v) {
+    const g = v.state.field(ghostField, false);
+    if (!g) return false;
+    v.dispatch({
+      changes: { from: g.pos, insert: g.text },
+      selection: { anchor: g.pos + g.text.length },
+      effects: setGhost.of(null),
+      userEvent: "input.complete",
+    });
+    return true;
+  }
+
+  const intelKeymap = Prec.highest(
+    keymap.of([
+      {
+        key: "Tab",
+        run: (v) => {
+          if (v.composing) return false;
+          if (selectedCompletion(v.state)) return acceptCompletion(v);
+          return acceptGhost(v);
+        },
+      },
+      {
+        key: "Escape",
+        run: (v) => {
+          if (!v.state.field(ghostField, false)) return false;
+          v.dispatch({ effects: setGhost.of(null) });
+          return true;
+        },
+      },
+    ]),
+  );
+
+  function infoNode(text) {
+    const el = document.createElement("div");
+    el.className = "editor-intel-doc";
+    el.textContent = text;
+    return el;
+  }
+
+  function intelCompletionExt(filename) {
+    if (!intel || !intel.hasLanguage(filename)) return [];
+    return autocompletion({ override: [lspSource] });
+  }
+
+  async function fetchWithNetworkRetry(payload, abort) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await intel.complete(payload, abort.signal);
+      } catch (err) {
+        if (abort.signal.aborted || attempt >= 2) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+  }
+
+  async function lspSource(context) {
+    const tab = currentTab;
+    if (!tab || tab.kind || !intel.lspUsable(tab.path)) return null;
+    if (!context.explicit && !context.matchBefore(/[\w$.]/)) return null;
+    const doc = context.state.doc;
+    const line = doc.lineAt(context.pos);
+    const abort = new AbortController();
+    if (context.addEventListener) context.addEventListener("abort", () => abort.abort());
+    lspAborts.add(abort);
+    try {
+      tab.intelSeq = (tab.intelSeq || 1) + 1;
+      const res = await fetchWithNetworkRetry(
+        {
+          path: tab.path,
+          version: tab.intelSeq,
+          content: doc.toString(),
+          position: { line: line.number - 1, character: context.pos - line.from },
+          trigger: context.explicit ? "invoked" : "automatic",
+          sources: ["lsp"],
+        },
+        abort,
+      );
+      if (!res || !res.lsp) return null;
+      if (!res.lsp.available) {
+        intel.noteLsp(tab.path, res.lsp.status || "error");
+        hooks.onIntel?.(false);
+        return null;
+      }
+      intel.noteLsp(tab.path, "ok");
+      hooks.onIntel?.(false);
+      const total = res.lsp.items.length || 1;
+      const options = res.lsp.items.map((item, i) => ({
+        label: item.label,
+        type: item.kind || undefined,
+        detail: item.detail || undefined,
+        apply: item.insert,
+        boost: ((total - i) / total) * 2 - 1,
+        info: item.doc ? () => infoNode(item.doc) : undefined,
+      }));
+      return {
+        from: Math.min(res.lsp.from, context.pos),
+        options,
+      };
+    } catch (err) {
+      if (!abort.signal.aborted) console.warn("lsp completion failed", err);
+      return null;
+    } finally {
+      lspAborts.delete(abort);
+    }
+  }
+
+  function abortIntelRequests() {
+    clearTimeout(aiTimer);
+    if (aiAbort) {
+      aiAbort.abort();
+      aiAbort = null;
+    }
+    for (const abort of [...lspAborts]) abort.abort();
+    lspAborts.clear();
+  }
+
+  function aiEligible() {
+    const tab = currentTab;
+    if (!tab || tab.kind || !intel.autoAi || !intel.aiUsable(tab.path)) return false;
+    const s = editorView.state;
+    if (completionStatus(s) !== null) return false;
+    const sel = s.selection.main;
+    if (!sel.empty) return false;
+    const line = s.doc.lineAt(sel.head);
+    return /^[\s)\]};,"'`]*$/.test(line.text.slice(sel.head - line.from));
+  }
+
+  function scheduleAI() {
+    if (!intel || intel.mode !== "lsp-ai") return;
+    clearTimeout(aiTimer);
+    if (aiAbort) {
+      aiAbort.abort();
+      aiAbort = null;
+    }
+    aiTimer = setTimeout(requestAI, intel.debounceMs);
+  }
+
+  async function requestAI() {
+    if (!aiEligible() || editorView.composing || !editorView.hasFocus) return;
+    const tab = currentTab;
+    const docVersion = tab.intelDocVersion || 1;
+    const s = editorView.state;
+    const pos = s.selection.main.head;
+    const line = s.doc.lineAt(pos);
+    const abort = new AbortController();
+    aiAbort = abort;
+    hooks.onIntel?.(true);
+    try {
+      tab.intelSeq = (tab.intelSeq || 1) + 1;
+      const res = await fetchWithNetworkRetry(
+        {
+          path: tab.path,
+          version: tab.intelSeq,
+          content: s.doc.toString(),
+          position: { line: line.number - 1, character: pos - line.from },
+          trigger: "automatic",
+          sources: ["ai"],
+        },
+        abort,
+      );
+      if (abort.signal.aborted || currentTab !== tab || (tab.intelDocVersion || 1) !== docVersion) return;
+      if (editorView.state.selection.main.head !== pos) return;
+      if (!res || !res.ai) return;
+      if (!res.ai.available) {
+        intel.noteAi(tab.path, res.ai.status || "unavailable");
+        return;
+      }
+      if (completionStatus(editorView.state) !== null) return;
+      intel.noteAi(tab.path, "ok");
+      editorView.dispatch({ effects: setGhost.of({ pos, text: res.ai.insert }) });
+    } catch (err) {
+      if (!abort.signal.aborted) console.warn("ai completion failed", err);
+    } finally {
+      if (aiAbort === abort) aiAbort = null;
+      hooks.onIntel?.(false);
+    }
+  }
 
   const fontTheme = (px) => EditorView.theme({ "&": { fontSize: `${px}px` } });
 
@@ -1582,7 +1885,7 @@ async function createCodeMirror(host, hooks, settings, signal) {
     hooks.onCursor(line.number, head - line.from + 1);
   }
 
-  const baseExtensions = (langExt) => [
+  const baseExtensions = (langExt, filename) => [
     keymap.of([{ key: "Ctrl-o", run: () => true }]),
     basicSetup,
     keymap.of([indentWithTab]),
@@ -1592,16 +1895,19 @@ async function createCodeMirror(host, hooks, settings, signal) {
     indentConf.of(indentUnit.of("\t")),
     wrapConf.of(settings.line_wrap ? EditorView.lineWrapping : []),
     fontConf.of(fontTheme(settings.font_size)),
+    lspCompletionConf.of(intelCompletionExt(filename || "")),
+    aiCompletionConf.of(intel ? [ghostField, intelKeymap] : []),
     EditorView.updateListener.of((u) => {
       if (u.docChanged) hooks.onChange();
       if (u.docChanged || u.selectionSet) reportCursor(u.state);
+      if (intel && u.docChanged) scheduleAI();
     }),
     EditorView.theme({ "&": { height: "100%" }, ".cm-scroller": { overflow: "auto" } }),
   ];
 
   const editorView = new EditorView({
     parent: host,
-    state: EditorState.create({ doc: "", extensions: baseExtensions([]) }),
+    state: EditorState.create({ doc: "", extensions: baseExtensions([], "") }),
   });
 
   darkScheme.addEventListener("change", () => {
@@ -1645,7 +1951,14 @@ async function createCodeMirror(host, hooks, settings, signal) {
   function refreshLanguage(filename) {
     const seq = ++langSeq;
     langFor(filename).then((langExt) => {
-      if (seq === langSeq) editorView.dispatch({ effects: langConf.reconfigure(langExt) });
+      if (seq === langSeq) {
+        editorView.dispatch({
+          effects: [
+            langConf.reconfigure(langExt),
+            lspCompletionConf.reconfigure(intelCompletionExt(filename)),
+          ],
+        });
+      }
     });
   }
 
@@ -1656,10 +1969,12 @@ async function createCodeMirror(host, hooks, settings, signal) {
   return {
     async createDoc(content, filename) {
       const langExt = await langFor(filename);
-      const state = EditorState.create({ doc: content, extensions: baseExtensions(langExt) });
+      const state = EditorState.create({ doc: content, extensions: baseExtensions(langExt, filename) });
       return { state, saved: state.doc };
     },
     showDoc(tab) {
+      abortIntelRequests();
+      currentTab = tab;
       editorView.setState(tab.handle.state);
       fileConfig = tab.editorConfig || {};
       reconfigureIndent();
@@ -1716,6 +2031,10 @@ async function createCodeMirror(host, hooks, settings, signal) {
     getTabWidth: () => fileConfig.tabWidth || userTabSize,
     applySetting,
     setVisible(on) {
+      if (!on) {
+        abortIntelRequests();
+        currentTab = null;
+      }
       editorView.dom.style.visibility = on ? "" : "hidden";
     },
     focus() {
@@ -1725,6 +2044,7 @@ async function createCodeMirror(host, hooks, settings, signal) {
       editorView.requestMeasure();
     },
     destroy() {
+      abortIntelRequests();
       editorView.destroy();
     },
   };

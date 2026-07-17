@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -51,12 +52,17 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 			LastUsedUnix: q.LastUsedUnix,
 		})
 	}
+	intel, err := json.Marshal(s.editorIntelConfig())
+	if err != nil {
+		intel = []byte("{}")
+	}
 	c.HTML(http.StatusOK, "project_editor.gohtml", render.EditorData{
 		Page:       s.page(c, "Editor - "+p.Name, "projects"),
 		Project:    p,
 		MaxEditKiB: filesystem.MaxEditableBytes / 1024,
 		Return:     ret,
 		Projects:   switcher,
+		Intel:      string(intel),
 	})
 }
 

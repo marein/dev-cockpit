@@ -13,6 +13,19 @@ type EditorData struct {
 	// Projects feeds the project switcher in the file tree header, one entry
 	// per selectable project linking to its editor page.
 	Projects []EditorProject
+	// Intel carries the editor intelligence client configuration, rendered
+	// as a JSON data attribute on the dc-editor element.
+	Intel string
+}
+
+// EditorIntelConfig is the client side intelligence configuration. It is
+// marshalled into EditorData.Intel. Exts lists the file extensions with a
+// language server profile, so the client never mirrors the registry.
+type EditorIntelConfig struct {
+	Mode       string   `json:"mode"`
+	AutoAI     bool     `json:"autoAi"`
+	DebounceMs int      `json:"debounceMs"`
+	Exts       []string `json:"exts"`
 }
 
 // EditorProject is one project switcher entry in the editor's tree header. The

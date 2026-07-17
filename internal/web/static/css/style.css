@@ -1256,6 +1256,74 @@ body:not(:has(.attach-footer)) .quicknav {
   min-height: 1.75rem;
   font-variant-numeric: tabular-nums;
 }
+.editor-intel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.editor-intel[hidden] {
+  display: none;
+}
+.editor-intel-lang {
+  padding: 0 0.3rem;
+  border: 1px solid var(--tblr-border-color);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  line-height: 1.2rem;
+  opacity: 0.65;
+}
+.editor-intel-lang.ok {
+  opacity: 1;
+  color: var(--tblr-green);
+  border-color: currentColor;
+}
+.editor-intel-lang.off {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+.editor-intel-spark {
+  color: var(--tblr-purple);
+}
+.editor-intel-spark.off {
+  color: inherit;
+  opacity: 0.4;
+}
+.editor-intel.busy .editor-intel-spark {
+  animation: editor-intel-pulse 1.2s ease-in-out infinite;
+}
+@keyframes editor-intel-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .editor-intel.busy .editor-intel-spark {
+    animation: none;
+  }
+}
+.cm-dc-ghost {
+  opacity: 0.5;
+  white-space: pre-wrap;
+  pointer-events: none;
+}
+.cm-dc-ghost-hint {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0 0.25rem;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-size: 0.65em;
+  vertical-align: 0.1em;
+  opacity: 0.7;
+}
+.editor-intel-doc {
+  max-width: 24rem;
+  max-height: 12rem;
+  overflow: auto;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
 .editor-settings-menu { min-width: 14rem; }
 .editor-quickopen[hidden] {
   display: none;

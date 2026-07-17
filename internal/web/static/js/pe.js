@@ -65,16 +65,17 @@ async function navigate(url, changeHistory) {
     }
 }
 
-async function submit(form) {
+async function submit(form, submitter) {
     window.pe.abortController.abort();
     const abortController = window.pe.abortController = new AbortController();
+
+    const formData = new FormData(form, submitter);
 
     const event = new CustomEvent('pe:form', {
         detail: {form, render, fetchOptions: {}, parsed: [], succeed: [], catch: [], finally: []}
     });
     window.dispatchEvent(event);
 
-    const formData = new FormData(form);
     const url = form.method === 'get' ? mergeSearchParams(form.action, formData) : form.action;
 
     try {
@@ -184,7 +185,7 @@ document.addEventListener('submit', e => {
     if (!window.dispatchEvent(new CustomEvent('pe:submit', {detail: {form: e.target}, cancelable: true}))) return;
 
     e.preventDefault();
-    submit(e.target);
+    submit(e.target, e.submitter);
 });
 
 window.dispatchEvent(new CustomEvent('pe:init'));

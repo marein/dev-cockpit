@@ -1,0 +1,121 @@
+{{define "settings_editor.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      <h2 class="page-title text-truncate mb-0">Settings</h2>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row g-0">
+    <div class="col-12 col-md-3 border-end">
+      <div class="card-body">
+        {{template "settings_nav" "editor"}}
+      </div>
+    </div>
+    <div class="col-12 col-md-9">
+      <div class="card-body">
+        <h3 class="card-title">Editor</h3>
+
+        <form method="post" action="/settings/editor" id="settings-intel-completion" class="mb-4">
+          {{if and (eq $.FlashProject "settings-intel-completion") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <input type="hidden" name="form" value="completion">
+          <div class="mb-3">
+            <label class="form-label">Completion</label>
+            <div class="text-secondary small mb-2">Code completion for the project editor. Language servers answer in the completion popup, the AI adds one dim inline continuation. Everything runs on this host, nothing leaves it.</div>
+            <label class="form-check">
+              <input class="form-check-input" type="radio" name="mode" value="off"{{if eq .Mode "off"}} checked{{end}}>
+              <span class="form-check-label">Off</span>
+              <span class="form-check-description">No completion features.</span>
+            </label>
+            <label class="form-check">
+              <input class="form-check-input" type="radio" name="mode" value="lsp"{{if eq .Mode "lsp"}} checked{{end}}>
+              <span class="form-check-label">Focused</span>
+              <span class="form-check-description">Language server completion while typing.</span>
+            </label>
+            <label class="form-check">
+              <input class="form-check-input" type="radio" name="mode" value="lsp-ai"{{if eq .Mode "lsp-ai"}} checked{{end}}>
+              <span class="form-check-label">Flow</span>
+              <span class="form-check-description">Language servers plus AI ghost text from local Ollama. Needs the AI section below.</span>
+            </label>
+          </div>
+          <div class="mb-3">
+            <label class="form-check form-switch mb-2">
+              <input class="form-check-input" type="checkbox" name="auto_ai" value="on"{{if .AutoAI}} checked{{end}}>
+              <span class="form-check-label">Suggest automatically after a short pause</span>
+            </label>
+            <label class="form-label small">Pause before a suggestion</label>
+            <select class="form-select form-select-sm w-auto" name="debounce">
+              <option value="200"{{if eq .DebounceMs 200}} selected{{end}}>200 ms</option>
+              <option value="300"{{if eq .DebounceMs 300}} selected{{end}}>300 ms</option>
+              <option value="500"{{if eq .DebounceMs 500}} selected{{end}}>500 ms</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+
+        <form method="post" action="/settings/editor" id="settings-intel-profiles" class="mb-4">
+          {{if and (eq $.FlashProject "settings-intel-profiles") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <input type="hidden" name="form" value="profiles">
+          <div class="mb-3">
+            <label class="form-label">Language servers</label>
+            <div class="text-secondary small mb-2">Fixed commands looked up on this host's PATH, one server per language. A server starts on demand for an open editor and stops again after a few idle minutes. Viewing this page starts nothing.</div>
+            <div class="list-group">
+              {{range .Profiles}}
+              <div class="list-group-item d-flex align-items-center gap-3" data-intel-profile="{{.ID}}">
+                <label class="form-check form-switch mb-0">
+                  <input class="form-check-input" type="checkbox" name="profile_{{.ID}}" value="on"{{if .Enabled}} checked{{end}}>
+                </label>
+                <div class="flex-fill min-w-0">
+                  <div>{{.Label}}</div>
+                  <div class="text-secondary small text-truncate"><code>{{.Command}}</code>{{if .Found}} · {{.Path}}{{end}}</div>
+                </div>
+                {{if .Found}}
+                <span class="badge bg-green-lt flex-shrink-0">Found</span>
+                {{else}}
+                <span class="badge bg-secondary-lt flex-shrink-0" title="The command is not on the PATH of the serve process. Install it, then reload this page.">Not found</span>
+                {{end}}
+              </div>
+              {{end}}
+            </div>
+            <div class="form-text">Capabilities today: completion. Diagnostics and navigation will use the same servers later.{{if gt .Connections 0}} Running servers right now: {{.Connections}}.{{end}}</div>
+          </div>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+
+        <form method="post" action="/settings/editor" id="settings-intel-ai">
+          {{if and (eq $.FlashProject "settings-intel-ai") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <div class="mb-3">
+            <label class="form-label">AI completion</label>
+            <div class="text-secondary small mb-2">Uses a local Ollama at <code>127.0.0.1:11434</code>. Remote providers are deliberately not configurable here.</div>
+            <label class="form-check form-switch mb-2">
+              <input class="form-check-input" type="checkbox" name="ollama_enabled" value="on"{{if .OllamaEnabled}} checked{{end}}>
+              <span class="form-check-label">Use local Ollama</span>
+            </label>
+            <label class="form-label small">Model</label>
+            <input type="text" class="form-control w-auto" name="model" value="{{.OllamaModel}}" placeholder="qwen2.5-coder:7b" autocomplete="off" spellcheck="false">
+            <div class="form-text">The model must support fill in the middle: qwen2.5-coder, codellama, deepseek-coder, starcoder2, codegemma or codestral.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">What is sent</label>
+            <div class="text-secondary small">
+              With AI enabled, a completion request sends the language, the file path inside the project and up to 8 KiB before plus 2 KiB after the cursor of the open file, nothing else. No other files, no git history, no terminal output. Files that look sensitive (for example <code>.env</code>, keys, certificates, names containing secret, credential or token) are withheld and the editor says so. Prompts and answers are never logged or stored.
+            </div>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary" name="form" value="ai">Save</button>
+            <button type="submit" class="btn btn-outline-secondary" name="form" value="ai-test">Save and test</button>
+          </div>
+        </form>
+
+      </div>
+    </div>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

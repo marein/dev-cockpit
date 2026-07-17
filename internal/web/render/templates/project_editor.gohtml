@@ -16,7 +16,8 @@
 
 <dc-editor class="card editor"
      data-editor-name="{{.Project.Name}}"
-     data-editor-max-kib="{{.MaxEditKiB}}">
+     data-editor-max-kib="{{.MaxEditKiB}}"
+     data-editor-intel="{{.Intel}}">
   <div class="editor-body">
     <div class="editor-tree-col">
       <div class="editor-pane-header d-flex align-items-center gap-2 px-2 py-2 border-bottom">
@@ -172,6 +173,7 @@
       <div class="editor-statusbar small d-flex align-items-center gap-2 px-2 py-1 border-top">
         <span class="text-truncate text-secondary" data-editor-path></span>
         <span class="text-truncate flex-fill text-secondary" data-editor-status></span>
+        <span class="editor-intel text-secondary text-nowrap" data-editor-intel-status hidden></span>
         <span class="text-secondary text-nowrap" data-editor-pos hidden></span>
         <span class="text-secondary text-nowrap d-none d-sm-inline" data-editor-indent-info hidden></span>
       </div>

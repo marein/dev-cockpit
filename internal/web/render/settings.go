@@ -32,6 +32,29 @@ type SettingsGeneralData struct {
 	RestoreEnabled bool
 }
 
+// EditorIntelProfile is one language server row on the editor settings
+// page.
+type EditorIntelProfile struct {
+	ID      string
+	Label   string
+	Command string
+	Path    string
+	Found   bool
+	Enabled bool
+}
+
+// SettingsEditorData feeds the editor settings page.
+type SettingsEditorData struct {
+	Page
+	Mode          string
+	AutoAI        bool
+	DebounceMs    int
+	Profiles      []EditorIntelProfile
+	OllamaEnabled bool
+	OllamaModel   string
+	Connections   int
+}
+
 // SettingsNotificationsData feeds the notifications settings page.
 type SettingsNotificationsData struct {
 	Page

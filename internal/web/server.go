@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/config"
+	"github.com/local/dev-cockpit/internal/editorintelligence"
 	"github.com/local/dev-cockpit/internal/eventbus"
 	"github.com/local/dev-cockpit/internal/notify"
 	"github.com/local/dev-cockpit/internal/project"
@@ -39,6 +40,7 @@ type Server struct {
 	settings     *settings.Store
 	pusher       *push.Service
 	restorer     *restore.Service
+	intel        *editorintelligence.Service
 	version      string
 	updater      *update.Updater
 	assets       staticAssetManifest
@@ -48,7 +50,7 @@ type Server struct {
 }
 
 // NewServer constructs a Server serving the given coders.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, version string) (*Server, error) {
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, intel *editorintelligence.Service, version string) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
@@ -71,6 +73,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		settings: settingsStore,
 		pusher:   pusher,
 		restorer: restorer,
+		intel:    intel,
 		version:  version,
 		updater:  updater,
 		assets:   assets,

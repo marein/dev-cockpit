@@ -55,6 +55,32 @@ test. Update this file when a convention changes.
 - **v2.0.0 markers:** legacy compatibility code that may be removed once
   breaking changes are allowed carries a `TODO(v2.0.0)` comment. Grep for it
   when preparing a 2.0.0 release.
+- **Editor intelligence:** language server completion and optional AI ghost
+  text for the project editor, design in `docs/editor-intelligence.md`,
+  implementation in `internal/editorintelligence`. Fixed server profiles only
+  (`registry.go`), resolved via PATH; a setting can never supply a command.
+  One LSP process per browser editor instance, project and language (client
+  id keys the connection), full text sync with forward only versions, idle
+  shutdown and hard limits. The browser talks JSON to
+  `POST /projects/:name/editor/completion` (+ `/close`); the `sources` field
+  picks the layer (`lsp` for the popup, `ai` for the ghost text), so their
+  timing stays decoupled. Responses carry one shared `from` word start in
+  UTF-16 units; items whose edit range starts elsewhere are dropped, never
+  guessed, and duplicates need label, insert and detail to match (one class
+  name lives in many namespaces). The client never refilters a result
+  locally while typing continues, it re-queries (server lists are prefix
+  dependent), and the request version is a per request sequence tied to the
+  sent snapshot, not the document revision. initialize announces no
+  processId: a containerized server lives in another PID namespace and
+  would exit watching a foreign PID. Files with an LSP profile complete
+  through the server only,
+  everything else keeps CodeMirror's built in sources. AI is local Ollama at
+  a fixed loopback endpoint (`DEV_COCKPIT_OLLAMA_URL` only overrides it for
+  tests), FIM capable models only, bounded context (8 KiB prefix, 2 KiB
+  suffix), sensitive paths are withheld and say so. Settings live on
+  `GET+POST /settings/editor` (modes Off/Focused/Flow), stored in
+  `<state-dir>/editor-settings.json`; a future provider token belongs in
+  `editor-secrets.json` (0600, write only). Never log prompt or source text.
 - **Page headers:** one pattern everywhere: `page-header d-print-none mb-3`,
   inside it pretitle/breadcrumb plus `page-title`. Pages with a right side action
   wrap both in `d-flex align-items-center gap-2` with the title block as
@@ -73,9 +99,13 @@ free floating page scripts.
 - **pe.js (progressive enhancement):** `internal/web/static/js/pe.js` boosts every
   link and form, swapping the `[data-page-content]` region, no full reloads, so the
   audio context survives and notification sounds stay consistent. Based on
-  https://github.com/marein/php-gaming-website with one local change: it applies a
+  https://github.com/marein/php-gaming-website with two local changes: it applies a
   `Pe-Location` fragment to `scroll` and `pushState` (server sends `200` +
-  `Pe-Location` with the anchor on a boosted redirect). Keep edits minimal and in its
+  `Pe-Location` with the anchor on a boosted redirect), and a boosted submit
+  serializes `new FormData(form, submitter)` before the `pe:form` hooks run,
+  matching the native submit: the submitter button's name/value is included
+  and the loading state (app.js disables the form's buttons in its `pe:form`
+  hook) cannot drop fields from the payload. Keep edits minimal and in its
   style; **do not restructure it without asking.** `app.js` is the glue: loading bar, lazy custom element loader (by tag
   name via the import map, so pages carry no `<script>` tags), `pe:*` hooks,
   `data-confirm`, and a `dc-build` head check that forces one native reload after a
