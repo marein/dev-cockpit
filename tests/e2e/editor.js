@@ -572,6 +572,32 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.waitForSelector(`${tabSel(`ct2_${tag}.txt`)}.active`, { timeout: 6000 });
     });
 
+    await run("mouse drag reorders the tabs and the order survives a reload", async () => {
+      const order = () => page.$$eval("[data-editor-tabs] .editor-tab", (els) => els.map((el) => el.dataset.path));
+      const before = await order();
+      assert(before.length >= 2, `need two tabs to drag: ${before}`);
+      const from = await page.locator(tabSel(before[before.length - 1])).boundingBox();
+      const to = await page.locator(tabSel(before[0])).boundingBox();
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await page.mouse.down();
+      const targetX = to.x + to.width * 0.2;
+      for (let i = 1; i <= 12; i++) {
+        await page.mouse.move(from.x + from.width / 2 + (targetX - from.x - from.width / 2) * (i / 12), from.y + from.height / 2, { steps: 2 });
+        await sleep(30);
+      }
+      await page.mouse.up();
+      await sleep(300);
+      const after = await order();
+      const expected = [before[before.length - 1], ...before.slice(0, -1)];
+      assert(JSON.stringify(after) === JSON.stringify(expected), `drag did not reorder: ${after} != ${expected}`);
+      // The drag release must not switch the active tab.
+      assert(await page.$(`${tabSel(`ct2_${tag}.txt`)}.active`), "drag changed the active tab");
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+      await page.waitForSelector("[data-editor-tabs] .editor-tab", { timeout: 8000 });
+      assert(JSON.stringify(await order()) === JSON.stringify(expected), "reordered tabs did not survive the reload");
+    });
+
     await run("fullscreen: button toggles and persists, Ctrl+Shift+Enter and strip double-click toggle too", async () => {
       const waitFullscreen = (want) => page.waitForFunction(
         (w) => document.documentElement.classList.contains("dc-editor-fullscreen") === w, want, { timeout: 6000 });

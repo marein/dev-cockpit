@@ -1369,6 +1369,129 @@ async function init(root) {
     }, { signal, capture: true });
   }
 
+  // Mouse drag reorders the tab strip like the terminal tabs: threshold, live
+  // transform preview, edge auto scroll, then the tabs array is respliced and
+  // persisted. Touch stays out, there the long press menu and the native
+  // horizontal scroll own the gestures; the order is per device state anyway.
+  function wireTabDrag() {
+    let drag = null;
+    let suppressed = false;
+    const contentX = (clientX) => clientX - tabsEl.getBoundingClientRect().left + tabsEl.scrollLeft;
+    const updateDrag = () => {
+      if (!drag || !drag.active) return;
+      const dx = contentX(drag.lastClientX) - drag.startContentX;
+      const draggedCenter = drag.centers[drag.fromIndex] + dx;
+      let toIndex = 0;
+      for (let i = 0; i < drag.centers.length; i += 1) {
+        if (i !== drag.fromIndex && drag.centers[i] < draggedCenter) toIndex += 1;
+      }
+      drag.toIndex = toIndex;
+      drag.el.style.transform = `translateX(${dx}px)`;
+      drag.els.forEach((el, i) => {
+        if (el === drag.el) return;
+        let shift = 0;
+        if (i > drag.fromIndex && i <= drag.toIndex) shift = -drag.width;
+        else if (i < drag.fromIndex && i >= drag.toIndex) shift = drag.width;
+        el.style.transform = shift ? `translateX(${shift}px)` : "";
+      });
+    };
+    const tickEdgeScroll = () => {
+      if (!drag || !drag.active) return;
+      const rect = tabsEl.getBoundingClientRect();
+      let delta = 0;
+      if (drag.lastClientX < rect.left + 32) delta = -12;
+      else if (drag.lastClientX > rect.right - 32) delta = 12;
+      if (delta) {
+        const max = tabsEl.scrollWidth - tabsEl.clientWidth;
+        const next = Math.max(0, Math.min(tabsEl.scrollLeft + delta, max));
+        if (next !== tabsEl.scrollLeft) {
+          tabsEl.scrollLeft = next;
+          updateDrag();
+        }
+      }
+      drag.raf = window.requestAnimationFrame(tickEdgeScroll);
+    };
+    const clearDrag = () => {
+      if (!drag) return;
+      if (drag.active) {
+        window.cancelAnimationFrame(drag.raf);
+        tabsEl.classList.remove("editor-tabs-dragging");
+        drag.el.classList.remove("editor-tab-dragging");
+        for (const el of drag.els) el.style.transform = "";
+      }
+      drag = null;
+    };
+    tabsEl.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || e.pointerType === "touch" || drag) return;
+      if (e.target.closest(".editor-tab-state")) return;
+      const el = e.target.closest(".editor-tab");
+      if (!el) return;
+      suppressed = false;
+      drag = {
+        el,
+        pointerId: e.pointerId,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        lastClientX: e.clientX,
+        active: false,
+        raf: 0,
+      };
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch (error) {
+        void error;
+      }
+    }, { signal });
+    tabsEl.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      if (!drag.active) {
+        if (!(e.buttons & 1)) {
+          drag = null;
+          return;
+        }
+        if (Math.hypot(e.clientX - drag.startClientX, e.clientY - drag.startClientY) < 6) return;
+        drag.active = true;
+        drag.els = Array.from(tabsEl.querySelectorAll(".editor-tab"));
+        drag.fromIndex = drag.els.indexOf(drag.el);
+        drag.toIndex = drag.fromIndex;
+        drag.width = drag.el.getBoundingClientRect().width;
+        const left = tabsEl.getBoundingClientRect().left;
+        drag.centers = drag.els.map((tab) => {
+          const rect = tab.getBoundingClientRect();
+          return rect.left + rect.width / 2 - left + tabsEl.scrollLeft;
+        });
+        drag.startContentX = contentX(e.clientX);
+        tabsEl.classList.add("editor-tabs-dragging");
+        drag.el.classList.add("editor-tab-dragging");
+        drag.raf = window.requestAnimationFrame(tickEdgeScroll);
+      }
+      e.preventDefault();
+      drag.lastClientX = e.clientX;
+      updateDrag();
+    }, { signal });
+    tabsEl.addEventListener("pointerup", (e) => {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      const done = drag;
+      clearDrag();
+      if (!done.active) return;
+      suppressed = true;
+      if (done.toIndex !== done.fromIndex) {
+        const [moved] = tabs.splice(done.fromIndex, 1);
+        tabs.splice(done.toIndex, 0, moved);
+        const others = done.els.filter((el) => el !== done.el);
+        tabsEl.insertBefore(done.el, others[done.toIndex] || null);
+        persistTabs();
+      }
+    }, { signal });
+    tabsEl.addEventListener("pointercancel", clearDrag, { signal });
+    tabsEl.addEventListener("click", (e) => {
+      if (!suppressed) return;
+      suppressed = false;
+      e.preventDefault();
+      e.stopPropagation();
+    }, { signal, capture: true });
+  }
+
   wireRowMenus(tabsEl, ".editor-tab", (row, x, y) => {
     if (!row) return false;
     openTabMenu(row.dataset.path, x, y);
@@ -1378,6 +1501,7 @@ async function init(root) {
   wireTreeDrop();
   wireSplitter();
   wireQuickOpen();
+  wireTabDrag();
 
   const projectMenuEl = root.querySelector(".editor-project-menu");
   if (projectMenuEl) projectSort.sort(projectMenuEl);
