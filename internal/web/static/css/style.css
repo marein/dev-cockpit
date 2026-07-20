@@ -1739,6 +1739,7 @@ terminal-input { display: none; }
   justify-content: center;
   color: var(--tblr-secondary);
 }
+.dc-term-icon[hidden] { display: none; }
 .dc-term-icon.running { color: var(--tblr-green); }
 .dc-term-icon.news, .dc-term-icon.changed { color: var(--tblr-blue); }
 @media (prefers-reduced-motion: no-preference) {

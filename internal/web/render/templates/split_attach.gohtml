@@ -48,6 +48,9 @@
 
 <div class="attach-page min-w-0">
   <div class="attach-settings">
+    {{range .Members}}
+    {{if .Coder}}{{if $.MultiCoder}}<span class="dc-term-icon running" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{end}}{{else}}<span class="dc-term-icon running" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i></span>{{end}}
+    {{end}}
     <div class="dropdown ms-auto">
       <button type="button" class="btn btn-sm btn-icon btn-outline-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
         <i class="ti ti-settings"></i>

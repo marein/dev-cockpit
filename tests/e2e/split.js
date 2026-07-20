@@ -17,7 +17,10 @@ const { assert, sleep, confirmSwal } = L;
 // order, names — a group change from anywhere re-renders the open split).
 // Every close control kills for real after a confirm (strip tab X, page
 // header X, pane head X); ungrouping without killing lives in the context
-// menus and the quick nav swipes. The quick nav renders groups as blocks
+// menus and the quick nav swipes. On mobile the settings row above the
+// terminal carries the active member's type badge (data-terminal-badge,
+// coder icon only with several coders, shells always), toggled with the
+// active pane by the same sync that flips the footers. The quick nav renders groups as blocks
 // (member sort, remove, group with the same dwell drag as the strip).
 // Gotchas: drag-to-group dwell must be waited out with the pointer still
 // down; the quick nav refreshes its list shortly after opening (settle
@@ -157,6 +160,10 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage }) => {
       const mp = await mobilePage();
       const headerName = (await mp.textContent(".dc-coarse-only [data-rename-label]")).trim();
       assert(headerName === "bravo", `mobile header shows: ${headerName}`);
+      const badge = await mp.$eval(`.attach-settings [data-terminal-badge="${ids[1]}"]`, (e) => ({ hidden: e.hidden, shown: e.offsetParent !== null }));
+      assert(!badge.hidden && badge.shown, "settings row badge for the active pane not visible");
+      const otherBadgesHidden = await mp.$$eval(`.attach-settings [data-terminal-badge]:not([data-terminal-badge="${ids[1]}"])`, (els) => els.every((e) => e.hidden));
+      assert(otherBadgesHidden, "inactive pane badges visible in the settings row");
       assert(!(await mp.$(".attach-split-pager")), "pager chips still rendered");
       const swipeStops = await mp.$$eval("terminal-tabs .terminal-tab-split [data-member-url]", (els) => els.map((el) => el.getAttribute("data-member-url")));
       assert(

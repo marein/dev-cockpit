@@ -500,6 +500,9 @@ function initTerminalAttach(host) {
     for (const footer of document.querySelectorAll("[data-terminal-footer]")) {
       footer.toggleAttribute("hidden", footer.getAttribute("data-terminal-footer") !== terminalId);
     }
+    for (const badge of document.querySelectorAll("[data-terminal-badge]")) {
+      badge.toggleAttribute("hidden", badge.getAttribute("data-terminal-badge") !== terminalId);
+    }
   };
   const rememberActive = () => {
     if (splitGroup && terminalId) {
