@@ -1033,6 +1033,7 @@ body:not(:has(.attach-footer)) .quicknav {
 /* Prepending the bar pushes the list-group out of :first-child, which would hand it
    back the card's inherited 1px top border and shift the whole list down. Keep the
    first-child look while the bar precedes it, so the bar adds zero layout. */
+.quicknav-menu > .dc-loading-bar { z-index: 7; }
 .projects-card > .dc-loading-bar + .list-group {
   border-top-width: 0;
   border-top-left-radius: var(--tblr-card-inner-border-radius);
