@@ -196,6 +196,23 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.waitForSelector(".editor-quickopen-item", { timeout: 6000 });
       await page.keyboard.press("Enter");
       await page.waitForSelector(`${tabSel(qoFile)}.active`, { timeout: 8000 });
+      // Double Shift opens the palette like Ctrl+O; a Shift chord must not.
+      await page.click(".cm-content");
+      await page.keyboard.press("Shift+A");
+      await page.keyboard.press("Shift");
+      await sleep(80);
+      await page.keyboard.press("Shift");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 6000 });
+      await page.click(".cm-content");
+      await page.keyboard.press("Backspace");
+      await waitDirty(qoFile, false);
+      await page.keyboard.press("Shift");
+      await sleep(600);
+      await page.keyboard.press("Shift");
+      await sleep(300);
+      assert(await page.$("[data-editor-quickopen][hidden]"), "two slow Shift taps outside the window opened the palette");
     });
 
     await run("find in files searches contents and jumps to the match", async () => {
@@ -303,6 +320,40 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.waitForSelector(".cm-panel.cm-search", { timeout: 6000 });
       await page.keyboard.press("Escape");
       await page.waitForFunction(() => !document.querySelector(".cm-panel.cm-search"), null, { timeout: 6000 });
+      // The explicit Ctrl-f binding, on this platform it doubles CodeMirror's own Mod-f.
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+f");
+      await page.waitForSelector(".cm-panel.cm-search", { timeout: 6000 });
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector(".cm-panel.cm-search"), null, { timeout: 6000 });
+    });
+
+    // On a mac CodeMirror's Mod-f is Cmd-f and Ctrl-f defaults to the emacs
+    // cursor step, the editor binds Ctrl-f to the search panel explicitly so
+    // both work. The mac platform is emulated via CDP, so chromium only.
+    await run("Ctrl+F opens the find panel on a mac platform too", async () => {
+      if (engine !== "chromium") return;
+      const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
+      try {
+        const p2 = await ctx.newPage();
+        const cdp = await ctx.newCDPSession(p2);
+        await cdp.send("Emulation.setUserAgentOverride", {
+          userAgent: await p2.evaluate(() => navigator.userAgent),
+          platform: "MacIntel",
+        });
+        await L.login(p2);
+        await p2.goto(editorURL, { waitUntil: "domcontentloaded" });
+        await p2.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+        await p2.waitForFunction(() => { const t = document.querySelector("[data-editor-tree]"); return t && !/Loading/.test(t.textContent); }, null, { timeout: 8000 });
+        assert((await p2.evaluate(() => navigator.platform)) === "MacIntel", "platform override did not stick");
+        await p2.click(`.editor-file[data-path="${noteFile}"]`);
+        await p2.waitForSelector(tabSel(noteFile), { timeout: 8000 });
+        await p2.click(".cm-content");
+        await p2.keyboard.press("Control+f");
+        await p2.waitForSelector(".cm-panel.cm-search", { timeout: 6000 });
+      } finally {
+        await ctx.close();
+      }
     });
 
     await run("upload via the file picker confirms the target dir and shows progress", async () => {

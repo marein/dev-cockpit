@@ -1405,7 +1405,30 @@ async function init(root) {
     if (!e.target.closest(".editor-tab")) setFullscreen(!fullscreenOn);
   }, { signal });
 
+  // A double tap on bare Shift opens the quick open palette like Ctrl+O. Same
+  // state machine as the terminal switcher's double Ctrl/Meta: a clean tap is
+  // keydown then keyup with no chord, the second keydown inside the window
+  // triggers, any other key resets.
+  const SHIFT_TAP_MS = 400;
+  let shiftTapPending = false;
+  let shiftTapAt = 0;
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Shift" && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (shiftTapAt && Date.now() - shiftTapAt < SHIFT_TAP_MS) {
+        shiftTapPending = false;
+        shiftTapAt = 0;
+        if (quickOpenEl.hidden) {
+          e.preventDefault();
+          openQuickOpen("files");
+        }
+        return;
+      }
+      shiftTapPending = true;
+      shiftTapAt = 0;
+      return;
+    }
+    shiftTapPending = false;
+    shiftTapAt = 0;
     if (e.key === "Tab" && e.ctrlKey && !e.altKey && !e.metaKey) {
       e.preventDefault();
       stepTab(e.shiftKey ? -1 : 1);
@@ -1425,6 +1448,10 @@ async function init(root) {
       if (!quickOpenEl.hidden) closeQuickOpen();
       else closeDrawer();
     }
+  }, { signal });
+  document.addEventListener("keyup", (e) => {
+    if (shiftTapPending && e.key === "Shift") shiftTapAt = Date.now();
+    shiftTapPending = false;
   }, { signal });
   window.addEventListener("beforeunload", (e) => {
     if (anyDirty()) {
@@ -1583,7 +1610,7 @@ async function createCodeMirror(host, hooks, settings, signal) {
   }
 
   const baseExtensions = (langExt) => [
-    keymap.of([{ key: "Ctrl-o", run: () => true }]),
+    keymap.of([{ key: "Ctrl-o", run: () => true }, { key: "Ctrl-f", run: search.openSearchPanel }]),
     basicSetup,
     keymap.of([indentWithTab]),
     themeConf.of(schemeTheme()),
