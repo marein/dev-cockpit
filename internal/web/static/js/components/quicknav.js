@@ -1,4 +1,4 @@
-import { confirm } from "@dc/dialog";
+import { confirm, promptText } from "@dc/dialog";
 import { el } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import * as store from "@dc/store";
@@ -73,7 +73,7 @@ class QuickNav extends HTMLElement {
         event.stopPropagation();
         return;
       }
-      if (this.openSwipe && !event.target.closest("[data-qn-delete], [data-qn-ungroup], [data-qn-remove]")) {
+      if (this.openSwipe && !event.target.closest("[data-qn-delete], [data-qn-ungroup], [data-qn-remove], [data-qn-rename]")) {
         this.closeSwipe();
         event.preventDefault();
         event.stopPropagation();
@@ -163,14 +163,15 @@ class QuickNav extends HTMLElement {
   onPointerDown(event) {
     if (event.button !== 0 || this.drag || this.swipe) return;
     const row = event.target.closest(".quicknav-swipe-row");
-    if (!row || !this.activeList()?.contains(row)) return;
+    if (!row) return;
     // A new pointer invalidates a pending post-gesture suppression, a gesture
     // that ended off-row would otherwise swallow the next tap.
     this.suppressClick = false;
-    if (event.target.closest("[data-qn-delete]")) return;
+    if (event.target.closest(".quicknav-swipe-delete")) return;
     // A mouse grabs the whole row to reorder. On touch the row body swipes
     // horizontally (vertical stays native scroll via pan-y) and only the grip
-    // handle reorders, so the three gestures never fight.
+    // handle reorders, so the three gestures never fight. Swipe works on every
+    // row, reorder only in the active list.
     // No pointer capture yet: capturing retargets the eventual click onto the
     // wrapper div, which hides the anchor from pe.js and kills plain clicks.
     // The gesture captures once it actually begins.
@@ -190,6 +191,7 @@ class QuickNav extends HTMLElement {
       };
       return;
     }
+    if (!this.activeList()?.contains(row)) return;
     let item = row;
     let container = this.activeList();
     let members = false;
@@ -621,10 +623,12 @@ class QuickNav extends HTMLElement {
     root.querySelectorAll("[data-qn-fold]").forEach((group) => this.foldGroup(group));
   }
 
-  // deleteTarget stops a coder or deletes a shell from the revealed swipe action,
-  // mirroring the desktop tab strip's close control: same confirm dialog, same
-  // endpoints and toasts, and deleting the terminal you are attached to moves you
-  // to its neighbor.
+  // deleteTarget stops a coder, deletes a shell or deletes an inactive coder
+  // from the revealed swipe action, mirroring the desktop tab strip's close
+  // control and the projects page: same confirm dialogs, same endpoints and
+  // toasts. Deleting the active-list terminal you are attached to moves you to
+  // its neighbor; the projects tab has no neighbor order, there the server's
+  // redirect target wins.
   async deleteTarget(row) {
     if (this.confirming || !row) return;
     const item = this.swipeAnchor(row);
@@ -640,8 +644,10 @@ class QuickNav extends HTMLElement {
     } else {
       const units = this.dragItems();
       const index = units.indexOf(unit);
-      const neighbor = units[index + 1] || units[index - 1] || null;
-      neighborUrl = neighbor ? this.swipeAnchor(neighbor)?.getAttribute("href") : null;
+      if (index >= 0) {
+        const neighbor = units[index + 1] || units[index - 1] || null;
+        neighborUrl = neighbor ? this.swipeAnchor(neighbor)?.getAttribute("href") : null;
+      }
     }
     this.confirming = true;
     try {
@@ -650,7 +656,9 @@ class QuickNav extends HTMLElement {
       const ok = await confirm({
         title: split
           ? `Close all ${memberIds.length} terminals in "${name}"?`
-          : (kind === "coder" ? `Stop coder "${name}"?` : `Delete shell "${name}"?`),
+          : kind === "coder" ? `Stop coder "${name}"?`
+            : kind === "inactive" ? `Delete inactive coder "${name}"?`
+              : `Delete shell "${name}"?`,
         confirmText: split ? "Close all" : (kind === "coder" ? "Stop" : "Delete"),
       });
       if (!ok) {
@@ -673,6 +681,10 @@ class QuickNav extends HTMLElement {
         }
         if (failed) notifyError(`Could not close ${failed} of ${memberIds.length} terminals.`);
         else notifySuccess(`Split view "${name}" closed.`);
+      } else if (kind === "inactive") {
+        response = await postForm(`/coders/${id}/delete`, {});
+        await ensureOk(response, "Could not delete the coder.");
+        notifySuccess(`Inactive coder "${name}" deleted.`);
       } else {
         window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id } }));
         const action = kind === "coder" ? `/coders/${id}/stop` : `/shells/${id}/delete`;
@@ -689,6 +701,53 @@ class QuickNav extends HTMLElement {
         if (window.app?.navigate) window.app.navigate(url);
         else window.location.href = url;
       }
+    } catch (error) {
+      notifyError(error.message);
+    } finally {
+      this.confirming = false;
+      if (this.dirty && this.opened) this.refresh();
+    }
+  }
+
+  // renameTarget renames a shell or a split view from the revealed swipe
+  // action, mirroring the tab strip's context menu entries: same prompt, same
+  // endpoints, and an emptied split view name falls back to the derived label.
+  async renameTarget(row) {
+    if (this.confirming || !row) return;
+    const item = this.swipeAnchor(row);
+    if (!item) return;
+    const { tabId: id, tabKind: kind, tabName: name } = item.dataset;
+    this.confirming = true;
+    try {
+      if (kind === "split") {
+        const next = await promptText({
+          title: `Rename split view "${name}"`,
+          value: name,
+          confirmText: "Rename",
+          allowEmpty: true,
+        });
+        if (next === null || next === name) {
+          this.closeSwipe();
+          return;
+        }
+        const response = await postJSON("/terminal-tabs/group/name", { group: id, name: next });
+        await ensureOk(response, "Could not rename the split view.");
+      } else {
+        const next = await promptText({
+          title: `Rename shell "${name}"`,
+          value: name,
+          confirmText: "Rename",
+          validatorMessage: "Please enter a name.",
+        });
+        if (!next || next === name) {
+          this.closeSwipe();
+          return;
+        }
+        const response = await postForm(`/shells/${id}/rename`, { name: next });
+        await ensureOk(response, "Could not rename the shell.");
+      }
+      this.closeSwipe();
+      if (this.opened) this.refresh();
     } catch (error) {
       notifyError(error.message);
     } finally {
@@ -762,6 +821,13 @@ class QuickNav extends HTMLElement {
       event.preventDefault();
       event.stopPropagation();
       void this.deleteTarget(del.closest(".quicknav-swipe-row"));
+      return;
+    }
+    const rename = event.target.closest("[data-qn-rename]");
+    if (rename) {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.renameTarget(rename.closest(".quicknav-swipe-row"));
       return;
     }
     const ungroup = event.target.closest("[data-qn-ungroup]");

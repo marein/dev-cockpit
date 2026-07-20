@@ -948,6 +948,11 @@ body:not(:has(.attach-footer)) .quicknav {
   right: 4.5rem;
   background: var(--tblr-secondary);
 }
+.quicknav-swipe-rename {
+  right: 4.5rem;
+  background: var(--tblr-azure, #4299e1);
+}
+.quicknav-swipe-slot3 { right: 9rem; }
 .quicknav-group-row .quicknav-active-item { padding-left: 2rem; }
 .quicknav-active-list-dragging [data-qn-block] { transition: transform 0.12s ease; }
 .quicknav-active-list-dragging .quicknav-group-target {

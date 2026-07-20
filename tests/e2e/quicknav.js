@@ -14,7 +14,12 @@ const { assert, sleep, BASE } = L;
 // row reveals a delete action (row wrapper .quicknav-swipe-row, button
 // [data-qn-delete]) that behaves exactly like the desktop tab strip's close
 // control: confirm dialog, POST /coders/:id/stop or /shells/:id/delete, and
-// deleting the terminal you are attached to navigates to its neighbor.
+// deleting the terminal you are attached to navigates to its neighbor. Shell
+// rows also reveal a rename action ([data-qn-rename], prompt dialog, POST
+// /shells/:id/rename). The Projects tab detail rows swipe too, reorder stays
+// active-list only: active coders reveal stop, inactive coders reveal delete
+// (POST /coders/:id/delete, projects page confirm wording), shells reveal
+// rename plus delete.
 
 L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
   const tag = `qn-${Date.now().toString(36)}`;
@@ -22,6 +27,25 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
   const shellUrls = [];
   let dragIds = [];
   let dragUrls = [];
+  // Synthetic touch swipe left on a row's anchor, shared by the swipe checks in
+  // both quick nav tabs. Long enough to fling past the widest action reveal.
+  const swipeRow = (pg, sel) => pg.evaluate(async (sel) => {
+    const item = document.querySelector(sel);
+    item.scrollIntoView({ block: "center" });
+    const r = item.getBoundingClientRect();
+    let x = r.left + r.width * 0.6;
+    const y = r.top + r.height / 2;
+    const ev = (type, opts) => item.dispatchEvent(new PointerEvent(type, Object.assign({ bubbles: true, composed: true, pointerId: 41, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, clientX: x, clientY: y }, opts)));
+    const tick = () => new Promise((res) => setTimeout(res, 16));
+    ev("pointerdown", {}); await tick();
+    for (let i = 0; i < 12; i++) { x -= 16; ev("pointermove", { clientX: x }); await tick(); }
+    ev("pointerup", { buttons: 0, clientX: x });
+  }, sel);
+  const fillPrompt = async (pg, value) => {
+    await pg.waitForSelector(".swal2-input", { state: "visible", timeout: 8000 });
+    await pg.fill(".swal2-input", value);
+    await L.confirmSwal(pg);
+  };
   try {
     await L.createProject(page, project);
 
@@ -198,6 +222,93 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       await mp.waitForSelector("[data-quicknav-active-list]", { state: "visible", timeout: 6000 });
       await sleep(600);
       assert(!(await mp.$(activeSel(dragIds[0]))), "deleted shell still listed in the quick nav");
+    });
+
+    await run("mobile: swipe rename on an active tab shell row", async () => {
+      const mp = await mobilePage();
+      const id = dragIds[1];
+      const itemSel = `[data-quicknav-active-list] .quicknav-active-item[data-tab-id="${id}"]`;
+      const rowSel = `[data-quicknav-active-list] .quicknav-swipe-row:has(.quicknav-active-item[data-tab-id="${id}"])`;
+      const newName = `qnren-${tag.slice(-4)}`;
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await mp.click(".quicknav-toggle");
+      await mp.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 });
+      await mp.locator('[data-quicknav-tab="active"]:visible').first().click();
+      await mp.waitForSelector(itemSel, { state: "visible", timeout: 6000 });
+      await sleep(300);
+      await swipeRow(mp, itemSel);
+      await sleep(400);
+      assert(await mp.$eval(`${rowSel} [data-qn-rename]`, (b) => getComputedStyle(b).visibility === "visible"), "rename button not revealed");
+      await mp.click(`${rowSel} [data-qn-rename]`);
+      await fillPrompt(mp, newName);
+      let renamed = false;
+      for (let i = 0; i < 15; i++) { await sleep(600); if (((await mp.$eval(itemSel, (el) => el.textContent).catch(() => "")) || "").includes(newName)) { renamed = true; break; } }
+      assert(renamed, "active tab shell row does not show the new name");
+    });
+
+    await run("mobile: projects tab shell row swipes rename and delete", async () => {
+      const mp = await mobilePage();
+      const shellUrl = await L.createShell(page, project);
+      shellUrls.push(shellUrl);
+      const id = new URL(shellUrl).pathname.split("/").pop();
+      const itemSel = `[data-pb-detail="${project}"] .quicknav-active-item[data-tab-id="${id}"]`;
+      const rowSel = `[data-pb-detail="${project}"] .quicknav-swipe-row:has(.quicknav-active-item[data-tab-id="${id}"])`;
+      const newName = `qnpr-${tag.slice(-4)}`;
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await mp.click(".quicknav-toggle");
+      await mp.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 });
+      await mp.locator('[data-quicknav-tab="projects"]:visible').first().click(); await sleep(400);
+      await mp.locator(`[data-pb-drill="${project}"]`).first().click();
+      await mp.waitForSelector(itemSel, { state: "visible", timeout: 6000 });
+      await swipeRow(mp, itemSel);
+      await sleep(400);
+      assert(await mp.$eval(`${rowSel} [data-qn-rename]`, (b) => getComputedStyle(b).visibility === "visible"), "projects tab rename not revealed");
+      assert(await mp.$eval(`${rowSel} [data-qn-delete]`, (b) => getComputedStyle(b).visibility === "visible"), "projects tab delete not revealed");
+      await mp.click(`${rowSel} [data-qn-rename]`);
+      await fillPrompt(mp, newName);
+      let renamed = false;
+      for (let i = 0; i < 15; i++) { await sleep(600); if (((await mp.$eval(itemSel, (el) => el.textContent).catch(() => "")) || "").includes(newName)) { renamed = true; break; } }
+      assert(renamed, "projects tab shell row does not show the new name");
+      assert(await mp.$eval(`[data-pb-detail="${project}"]`, (el) => !el.hidden), "drilled project view lost after the rename refresh");
+      await swipeRow(mp, itemSel);
+      await sleep(400);
+      await mp.click(`${rowSel} [data-qn-delete]`);
+      await L.confirmSwal(mp);
+      let gone = false;
+      for (let i = 0; i < 15; i++) { await sleep(600); if (!(await mp.$(itemSel))) { gone = true; break; } }
+      assert(gone, "projects tab shell still listed after the swipe delete");
+    });
+
+    await run("mobile: projects tab coder rows swipe: stop the active, delete the inactive", async () => {
+      const mp = await mobilePage();
+      const name = `qncod-${tag.slice(-4)}`;
+      await L.createSession(page, project, name);
+      const coderRow = `[data-pb-detail="${project}"] .quicknav-swipe-row:has([data-tab-kind="coder"])`;
+      const coderItem = `${coderRow} .quicknav-active-item`;
+      const inactiveRow = `[data-pb-detail="${project}"] .quicknav-swipe-row:has([data-tab-kind="inactive"])`;
+      const inactiveItem = `${inactiveRow} .quicknav-active-item`;
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await mp.click(".quicknav-toggle");
+      await mp.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 });
+      await mp.locator('[data-quicknav-tab="projects"]:visible').first().click(); await sleep(400);
+      await mp.locator(`[data-pb-drill="${project}"]`).first().click();
+      await mp.waitForSelector(coderItem, { state: "visible", timeout: 10000 });
+      await swipeRow(mp, coderItem);
+      await sleep(400);
+      assert(await mp.$eval(`${coderRow} [data-qn-delete]`, (b) => getComputedStyle(b).visibility === "visible"), "coder stop action not revealed");
+      await mp.click(`${coderRow} [data-qn-delete]`);
+      await L.confirmSwal(mp);
+      let inactive = false;
+      for (let i = 0; i < 30; i++) { await sleep(700); if (await mp.$(inactiveItem)) { inactive = true; break; } }
+      assert(inactive, "stopped coder did not appear as inactive in the projects tab");
+      assert(!(await mp.$(coderItem)), "stopped coder still listed as active");
+      await swipeRow(mp, inactiveItem);
+      await sleep(400);
+      await mp.click(`${inactiveRow} [data-qn-delete]`);
+      await L.confirmSwal(mp);
+      let gone = false;
+      for (let i = 0; i < 15; i++) { await sleep(700); if (!(await mp.$(inactiveItem))) { gone = true; break; } }
+      assert(gone, "inactive coder still listed after the swipe delete");
     });
 
     await run("context bar reflects the current project on a scoped page", async () => {

@@ -179,7 +179,9 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage }) => {
       assert(context.includes(project), `quick nav project context: ${context}`);
       assert(await mp.$(`[data-qn-block="${gid}"] [data-qn-ungroup]`), "group row misses the ungroup swipe action");
       assert(await mp.$(`[data-qn-block="${gid}"] [data-qn-group] [data-qn-delete]`), "group row misses the close swipe action");
+      assert(await mp.$(`[data-qn-block="${gid}"] [data-qn-group] [data-qn-rename]`), "group row misses the rename swipe action");
       assert(await mp.$(`[data-qn-block="${gid}"] [data-qn-group-member] [data-qn-remove]`), "member row misses the remove swipe action");
+      assert(await mp.$(`[data-qn-block="${gid}"] [data-qn-group-member] [data-qn-rename]`), "member shell row misses the rename swipe action");
       const memberProjects = await mp.$$eval(
         `[data-qn-block="${gid}"] [data-qn-group-member] .quicknav-active-item .text-secondary`,
         (els) => els.map((el) => el.textContent.trim()),

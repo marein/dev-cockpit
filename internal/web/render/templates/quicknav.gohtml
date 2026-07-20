@@ -56,6 +56,9 @@
             </span>
             <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
           </a>
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename quicknav-swipe-slot3" data-qn-rename aria-label="Rename split view {{.Name}}" title="Rename split view">
+            <i class="ti ti-pencil" aria-hidden="true"></i>
+          </button>
           <button type="button" class="quicknav-swipe-delete quicknav-swipe-ungroup" data-qn-ungroup aria-label="Ungroup split view {{.Name}}" title="Ungroup split view">
             <i class="ti ti-layout-off" aria-hidden="true"></i>
           </button>
@@ -74,6 +77,11 @@
             </span>
             <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
           </a>
+          {{if eq .Kind "shell"}}
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename quicknav-swipe-slot3" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
+            <i class="ti ti-pencil" aria-hidden="true"></i>
+          </button>
+          {{end}}
           <button type="button" class="quicknav-swipe-delete quicknav-swipe-ungroup" data-qn-remove aria-label="Remove {{.Name}} from split view" title="Remove from split view">
             <i class="ti ti-layout-off" aria-hidden="true"></i>
           </button>
@@ -94,6 +102,11 @@
           </span>
           <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
         </a>
+        {{if eq .Kind "shell"}}
+        <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
+          <i class="ti ti-pencil" aria-hidden="true"></i>
+        </button>
+        {{end}}
         <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}}">
           <i class="ti {{if eq .Kind "coder"}}ti-player-stop{{else}}ti-trash{{end}}" aria-hidden="true"></i>
         </button>
@@ -137,17 +150,29 @@
         <h6 class="dropdown-header">Coders</h6>
         <div data-qn-fold="{{.Name}}-coders">
         {{range .ActiveCoders}}
-        <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-          <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span><span class="text-truncate">{{.Name}}</span>
-        </a>
+        <div class="quicknav-swipe-row">
+          <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
+             data-tab-id="{{.ID}}" data-tab-kind="coder" data-tab-name="{{.Name}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
+            <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span><span class="text-truncate">{{.Name}}</span>
+          </a>
+          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="Stop coder {{.Name}}" title="Stop coder">
+            <i class="ti ti-player-stop" aria-hidden="true"></i>
+          </button>
+        </div>
         {{end}}
         {{range .InactiveCoders}}
-        <form method="post" action="{{.URL}}">
-          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-          <button type="submit" class="dropdown-item d-flex align-items-center gap-2">
-            <span class="dc-term-icon{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span><span class="text-truncate">{{.Name}}</span>
+        <div class="quicknav-swipe-row">
+          <form method="post" action="{{.URL}}">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <button type="submit" class="dropdown-item quicknav-active-item d-flex align-items-center gap-2"
+               data-tab-id="{{.ID}}" data-tab-kind="inactive" data-tab-name="{{.Name}}">
+              <span class="dc-term-icon{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span><span class="text-truncate">{{.Name}}</span>
+            </button>
+          </form>
+          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="Delete inactive coder {{.Name}}" title="Delete inactive coder">
+            <i class="ti ti-trash" aria-hidden="true"></i>
           </button>
-        </form>
+        </div>
         {{end}}
         </div>
         <a class="dropdown-item d-flex align-items-center gap-2" href="{{.NewCoderURL}}">
@@ -157,9 +182,18 @@
         <h6 class="dropdown-header">Shells</h6>
         <div data-qn-fold="{{.Name}}-shells">
         {{range .Shells}}
-        <a class="dropdown-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-          <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i></span><span class="text-truncate">{{.Name}}</span>
-        </a>
+        <div class="quicknav-swipe-row">
+          <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
+             data-tab-id="{{.ID}}" data-tab-kind="shell" data-tab-name="{{.Name}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
+            <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i></span><span class="text-truncate">{{.Name}}</span>
+          </a>
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
+            <i class="ti ti-pencil" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="Delete shell {{.Name}}" title="Delete shell">
+            <i class="ti ti-trash" aria-hidden="true"></i>
+          </button>
+        </div>
         {{end}}
         </div>
         <form method="post" action="/shells/new">
