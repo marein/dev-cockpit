@@ -125,6 +125,19 @@ free floating page scripts.
   re-POSTing `/terminal-tabs/group`). The group tab's close control closes
   every member (confirmed); ungrouping is the non-destructive context menu /
   header / pane-remove path. Decisions and endpoints: `docs/split-view.md`.
+- **Terminal switcher app wide:** the attach pages render the tab strip inline
+  and mark it via `Page.HasTabStrip`; every other authed page gets a hidden
+  switcher-only `terminal-tabs` instance from the layout
+  (`terminal_tabs_switcher.gohtml`, strip and plus menu only, data from
+  `QuickNav.Strip`), so the double Ctrl/Meta switcher opens on any page. The
+  hidden instance leaves direct Ctrl+Tab to the page (the editor binds it for
+  its own tabs) and pulls the `/terminal-tabs` fragment lazily when the
+  switcher opens instead of on every `terminals` event. The switcher is a
+  quick-access palette: active terminals, inactive coders, an Editors section
+  (one row per project, `ProjectNav.EditorURL`, fed by the hidden
+  `[data-tabs-editors]` list in the plus menu) and a New section (New coder /
+  New shell rows reusing the plus menu links, so the current project is
+  preselected on the create form), all filterable.
 - **Lifecycle:** set up in connectedCallback behind a re-init guard, tear down
   everything in disconnectedCallback, nothing may outlive the element. Create one
   AbortController per element and pass its signal to every addEventListener, then

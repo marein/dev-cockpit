@@ -58,11 +58,12 @@ func (s *Server) handleShellAttach(c *gin.Context) {
 	projectName := s.projects.ProjectNameFor(sh.CWD)
 	s.projects.Touch(projectName)
 	s.notifier.MarkTargetRead(sh.Identifier)
+	page := s.page(c, pageTitle(sh.Name, projectName), "projects")
+	page.HasTabStrip = true
 	c.HTML(http.StatusOK, "shell_attach.gohtml", render.ShellAttachData{
-		Page:        s.page(c, pageTitle(sh.Name, projectName), "projects"),
+		Page:        page,
 		Shell:       sh,
 		ProjectName: projectName,
-		Tabs:        s.stripTabs(),
 		StreamURL:   "/shells/" + sh.Identifier + "/stream",
 		ResizeURL:   "/shells/" + sh.Identifier + "/resize",
 		InputURL:    "/shells/" + sh.Identifier + "/input",

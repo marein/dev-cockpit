@@ -29,7 +29,22 @@ const { assert, sleep, BASE } = L;
 // wraps within the actives, then cycling via Tab, Ctrl+Tab or arrows rotates
 // over the full list including the inactive section, Enter or click switches,
 // Esc closes, typing filters the list by name and project through the search
-// input, and it all works while the xterm terminal has focus. Every tab carries a close control
+// input, and it all works while the xterm terminal has focus. The switcher is
+// app wide: every page without an inline strip (projects, editor, settings)
+// mounts the same element hidden from the layout (terminal_tabs_switcher
+// partial, strip plus menu only), so double Ctrl/Meta opens the switcher
+// anywhere. The hidden instance leaves direct Ctrl+Tab to the page (the editor
+// binds it for its own tabs) and skips the live fragment pull while its
+// switcher is closed, flushing the deferred refresh when it opens. The
+// switcher is a full quick-access palette: below the active terminals and the
+// inactive coders sit an Editors section (one row per project, sorted like the
+// resume groups through @dc/project-sort, URLs from ProjectNav.EditorURL with
+// the ?return target, fed by a hidden [data-tabs-editors] link list in the +
+// menu) and a New section (New coder / New shell rows reusing the + menu
+// links, so the current project arrives preselected on the create form). All
+// of it filters through the search input; with no sessions at all the
+// switcher still opens on the editor and New rows.
+// Every tab carries a close control
 // (confirm dialog, then coder stop or shell delete; closing the current session
 // switches to the right neighbor tab like Terminal.app, left as fallback,
 // projects page when the strip is empty; the page header stop button keeps its
@@ -354,7 +369,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
     await run("the + menu links to the editor, new coder and new shell with the current project preselected", async () => {
       await page.click(".terminal-tabs-new-btn");
       await page.waitForSelector("terminal-tabs .dropdown-menu.show", { state: "visible", timeout: 4000 });
-      const hrefs = await page.$$eval("terminal-tabs .dropdown-menu.show a", (as) => as.map((a) => a.getAttribute("href")));
+      const hrefs = await page.$$eval("terminal-tabs .dropdown-menu.show > a", (as) => as.map((a) => a.getAttribute("href")));
       assert(hrefs.length === 3, `expected 3 links, got ${hrefs.length}`);
       assert(hrefs[0].startsWith(`/projects/${project}/editor?return=`), `editor link ${hrefs[0]}`);
       assert(hrefs[1].startsWith("/coders/new?") && hrefs[1].includes(`project=${project}`), `coder link ${hrefs[1]}`);
@@ -400,9 +415,11 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(opened, "switcher did not open after retries");
       await page.keyboard.type(project, { delay: 40 });
       await sleep(200);
-      const visible = await page.$$eval(".terminal-switcher-item:not([hidden])", (els) => els.map((e) => e.dataset.switcherId));
+      const visible = await page.$$eval(".terminal-switcher-item[data-switcher-id]:not([hidden])", (els) => els.map((e) => e.dataset.switcherId));
       assert(visible.length === 4, `filter shows ${visible.length} rows, expected the 4 own shells`);
       assert(visible.every((id) => [...ids, ownId(shellUrls[3])].includes(id)), `filter leaked foreign rows: ${visible}`);
+      const editorRows = await page.$$eval('.terminal-switcher-item[data-switcher-section="editors"]:not([hidden])', (els) => els.map((e) => e.dataset.switcherUrl));
+      assert(editorRows.length === 1 && editorRows[0].startsWith(`/projects/${project}/editor`), `project filter editor rows ${JSON.stringify(editorRows)}`);
       const foreignHidden = await page.$eval(`.terminal-switcher-item[data-switcher-id="${foreignId}"]`, (e) => e.hidden);
       assert(foreignHidden, "the foreign-project row is not hidden by the filter");
       await page.keyboard.press("Enter");
@@ -623,7 +640,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
       const rowSel = `.terminal-switcher-item[data-switcher-resume="${coderId}"]`;
       await page.waitForSelector(rowSel, { state: "attached", timeout: 4000 });
-      await page.locator(".terminal-switcher-section").waitFor({ state: "visible", timeout: 2000 });
+      await page.locator('.terminal-switcher-section[data-switcher-section="inactive"]').waitFor({ state: "visible", timeout: 2000 });
       const groupLabels = await page.$$eval(".terminal-switcher-group:not([hidden])", (els) => els.map((e) => e.textContent.trim()));
       assert(groupLabels.includes(project), `switcher group labels ${JSON.stringify(groupLabels)} miss ${project}`);
       await page.keyboard.type(coderName, { delay: 40 });
@@ -668,6 +685,100 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       const after = await page.evaluate(() => window.scrollY);
       assert(after > 200, `view jumped to the top on tab switch (scrollY ${after})`);
       await page.evaluate(() => localStorage.removeItem("dc-terminal-rows"));
+    });
+
+    await run("pages without the strip mount a hidden switcher-only instance, double Ctrl works app wide", async () => {
+      await page.goto(`${BASE}/shells/new?project=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
+      const projPath = await page.locator('select[name="project"]').inputValue();
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      assert((await L.waitUpgraded(page, ["terminal-tabs"], 8000)).length === 0, "terminal-tabs not upgraded on /projects");
+      const mode = await page.$eval("terminal-tabs", (e) => ({
+        hidden: e.hasAttribute("hidden"),
+        display: getComputedStyle(e).display,
+        tabs: e.querySelectorAll(".terminal-tab").length,
+      }));
+      assert(mode.hidden && mode.display === "none", `layout instance not hidden: ${JSON.stringify(mode)}`);
+      assert(mode.tabs > 0, "hidden strip carries no tabs");
+      // Ctrl+Tab stays with the page while the switcher is closed (the editor
+      // binds it for its own tabs), the switcher-only instance must not act.
+      await page.keyboard.down("Control");
+      await page.keyboard.press("Tab");
+      await page.keyboard.up("Control");
+      await sleep(400);
+      assert(page.url().endsWith("/projects"), `Ctrl+Tab navigated away to ${page.url()}`);
+      assert((await page.locator(".terminal-switcher").count()) === 0, "Ctrl+Tab opened the switcher on /projects");
+      // A background change while the switcher is closed does not pull the
+      // fragment eagerly; opening the switcher flushes the deferred refresh.
+      const ghostUrl = await page.evaluate(async (p) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const res = await fetch("/shells/new", { method: "POST", headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" }, body: "project=" + encodeURIComponent(p) });
+        return res.url;
+      }, projPath);
+      const ghostId = ownId(ghostUrl);
+      assert(ghostId && !ghostUrl.includes("/new"), `background shell create failed: ${ghostUrl}`);
+      let opened = null;
+      for (let attempt = 0; attempt < 3 && !opened; attempt += 1) {
+        await page.keyboard.press("Control");
+        await sleep(120);
+        await page.keyboard.press("Control");
+        opened = await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 2500 }).catch(() => null);
+        if (!opened) await sleep(600);
+      }
+      assert(opened, "switcher did not open on /projects");
+      await page.waitForSelector(`.terminal-switcher-item[data-switcher-id="${ghostId}"]`, { state: "attached", timeout: 8000 });
+      await page.evaluate(async (id) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch("/shells/" + id + "/delete", { method: "POST", headers: { "X-CSRF-Token": token } });
+      }, ghostId);
+      await page.waitForSelector(`.terminal-switcher-item[data-switcher-id="${ghostId}"]`, { state: "detached", timeout: 8000 });
+      // The switcher is a full quick-access palette: editor rows for every
+      // project and New coder / New shell rows with the page's context.
+      const editorUrls = await page.$$eval('.terminal-switcher-item[data-switcher-section="editors"]', (els) => els.map((e) => e.dataset.switcherUrl));
+      assert(editorUrls.some((u) => u.startsWith(`/projects/${project}/editor`)), `editors section misses ${project}: ${JSON.stringify(editorUrls)}`);
+      const actionUrls = await page.$$eval('.terminal-switcher-item[data-switcher-section="new"]', (els) => els.map((e) => e.dataset.switcherUrl));
+      assert(actionUrls.length === 2 && actionUrls[0].startsWith("/coders/new?") && actionUrls[1].startsWith("/shells/new?"), `action rows ${JSON.stringify(actionUrls)}`);
+      assert(actionUrls.every((u) => u.includes("return=")), `action rows carry no return context: ${JSON.stringify(actionUrls)}`);
+      // Click switches to the session from the strip-less page.
+      await page.click(`.terminal-switcher-item[data-switcher-id="${ids[0]}"]`);
+      await page.waitForURL(new RegExp(ids[0]), { timeout: 8000 });
+      assert((await page.locator(".terminal-switcher").count()) === 0, "switcher still open after the switch");
+    });
+
+    await run("double Ctrl opens the switcher on the editor page too, Esc returns to editing", async () => {
+      await page.goto(`${BASE}/projects/${project}/editor`, { waitUntil: "domcontentloaded" });
+      assert((await L.waitUpgraded(page, ["terminal-tabs"], 8000)).length === 0, "terminal-tabs not upgraded on the editor page");
+      await page.keyboard.down("Control");
+      await page.keyboard.press("Tab");
+      await page.keyboard.up("Control");
+      await sleep(400);
+      assert((await page.locator(".terminal-switcher").count()) === 0, "Ctrl+Tab opened the switcher on the editor page");
+      assert(page.url().includes("/editor"), `Ctrl+Tab navigated away to ${page.url()}`);
+      await page.keyboard.press("Control");
+      await page.keyboard.press("Control");
+      await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+      await page.keyboard.press("Escape");
+      await sleep(200);
+      assert((await page.locator(".terminal-switcher").count()) === 0, "Esc did not close the switcher on the editor page");
+      assert(page.url().includes("/editor"), "closing the switcher navigated away from the editor");
+    });
+
+    await run("switcher editor rows open the project editor, the New shell row preselects the project", async () => {
+      await page.keyboard.press("Control");
+      await page.keyboard.press("Control");
+      await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+      await page.keyboard.type("editor", { delay: 30 });
+      await sleep(200);
+      const sections = await page.$$eval(".terminal-switcher-item:not([hidden])", (els) => els.map((e) => e.dataset.switcherSection));
+      assert(sections.length && sections.every((s) => s === "editors"), `filter 'editor' shows ${JSON.stringify(sections)}`);
+      await page.click(`.terminal-switcher-item[data-switcher-url^="/projects/${foreignProject}/editor"]`);
+      await page.waitForURL(new RegExp(`/projects/${foreignProject}/editor`), { timeout: 8000 });
+      await page.keyboard.press("Control");
+      await page.keyboard.press("Control");
+      await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+      await page.click('.terminal-switcher-item[data-switcher-section="new"][data-switcher-url^="/shells/new"]');
+      await page.waitForURL(/\/shells\/new/, { timeout: 8000 });
+      const selectedPath = await page.locator('select[name="project"]').inputValue();
+      assert(selectedPath.endsWith(`/${foreignProject}`), `preselected project path '${selectedPath}'`);
     });
 
     await run("the strip stays hidden on coarse pointer (mobile) clients", async () => {

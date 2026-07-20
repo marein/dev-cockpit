@@ -34,7 +34,6 @@ type CoderAttachData struct {
 	ProjectName     string // owning project, empty when CWD is outside the projects root
 	Files           []filesystem.File
 	MaxUploadSizeMB string
-	Tabs            []StripTab
 	Error           string
 	Message         string
 	StreamURL       string

@@ -100,15 +100,16 @@ func (s *Server) handleCoderAttach(c *gin.Context) {
 	projectName := s.projects.ProjectNameFor(running.CWD)
 	s.projects.Touch(projectName)
 	s.notifier.MarkTargetRead(running.Identifier)
+	page := s.page(c, pageTitle(running.Name, projectName), "projects")
+	page.HasTabStrip = true
 	c.HTML(http.StatusOK, "coder_attach.gohtml", render.CoderAttachData{
-		Page:            s.page(c, pageTitle(running.Name, projectName), "projects"),
+		Page:            page,
 		Running:         running,
 		Identifier:      running.Identifier,
 		Coder:           co.ID(),
 		ProjectName:     projectName,
 		Files:           files,
 		MaxUploadSizeMB: maxRequestBodyMegabytes(s.cfg.MaxRequestBodySize),
-		Tabs:            s.stripTabs(),
 		StreamURL:       "/coders/" + running.Identifier + "/stream",
 		ResizeURL:       "/coders/" + running.Identifier + "/resize",
 		InputURL:        "/coders/" + running.Identifier + "/input",

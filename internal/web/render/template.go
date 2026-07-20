@@ -61,6 +61,10 @@ type Page struct {
 	// Jingle is the cross-device notification jingle selection, rendered into
 	// a meta tag so the client picks the right tune.
 	Jingle string
+	// HasTabStrip marks the attach pages, which render the terminal tab strip
+	// inline. Every other page gets a hidden switcher-only terminal-tabs
+	// instance from the layout, so the double Ctrl/Meta switcher works app wide.
+	HasTabStrip bool
 }
 
 // CoderNav feeds the coder pages layout (instructions, agents, skills): the
@@ -117,13 +121,6 @@ func (q QuickNav) HasInactiveCoders() bool {
 		}
 	}
 	return false
-}
-
-// TerminalTabsData feeds the terminal_tabs partial when it is re-rendered as a
-// fragment for the background refresh (GET /terminal-tabs).
-type TerminalTabsData struct {
-	Page
-	Tabs []StripTab
 }
 
 // TerminalTab is one entry in the attach page tab strip: a live coder or shell.

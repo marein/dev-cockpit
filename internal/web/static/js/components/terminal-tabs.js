@@ -20,6 +20,7 @@ class TerminalTabs extends HTMLElement {
     if (this.ac) return;
     this.strip = this.querySelector("[data-tabs-strip]");
     if (!this.strip) return;
+    this.switcherOnly = this.hasAttribute("hidden");
     this.ac = new AbortController();
     this.drag = null;
     this.switcher = null;
@@ -36,6 +37,8 @@ class TerminalTabs extends HTMLElement {
     this.expandedResume = new Set();
     const resumeProjects = this.querySelector("[data-tabs-resume-projects]");
     if (resumeProjects) projectSort.sort(resumeProjects);
+    const editors = this.querySelector("[data-tabs-editors]");
+    if (editors) projectSort.sort(editors);
     this.querySelectorAll("[data-tabs-resume-fold]").forEach((group) => this.foldResume(group));
 
     for (const toggle of this.querySelectorAll(".terminal-tabs-new-btn")) {
@@ -561,6 +564,7 @@ class TerminalTabs extends HTMLElement {
       return;
     }
     if (event.key === "Tab" && event.ctrlKey && !event.altKey && !event.metaKey) {
+      if (this.switcherOnly && !this.switcher) return;
       event.preventDefault();
       event.stopPropagation();
       if (this.switcher) this.moveSelection(event.shiftKey ? -1 : 1);
@@ -624,11 +628,57 @@ class TerminalTabs extends HTMLElement {
     return row;
   }
 
+  editorRow(link) {
+    const project = link.dataset.editorProject || "";
+    const row = el(
+      "div",
+      {
+        role: "option",
+        class: "terminal-switcher-item",
+        dataset: {
+          switcherUrl: link.getAttribute("href") || "",
+          switcherName: project + " editor",
+          switcherSection: "editors",
+        },
+      },
+      el("span", { class: "terminal-tab-icon dc-term-icon", "aria-hidden": "true" }, el("i", { class: "ti ti-code" })),
+      el("span", { class: "terminal-switcher-name text-truncate" }, project),
+      el("span", { class: "terminal-switcher-project text-truncate" }, "Editor"),
+    );
+    row.addEventListener("click", () => this.navigate(row.dataset.switcherUrl), { signal: this.ac.signal });
+    return row;
+  }
+
+  actionRow(link) {
+    const kind = link.dataset.tabsNew;
+    const label = kind === "coder" ? "New coder" : "New shell";
+    const url = link.getAttribute("href") || "";
+    const project = new URL(url, window.location.href).searchParams.get("project") || "";
+    const row = el(
+      "div",
+      {
+        role: "option",
+        class: "terminal-switcher-item",
+        dataset: {
+          switcherUrl: url,
+          switcherName: label + " " + project,
+          switcherSection: "new",
+        },
+      },
+      el("span", { class: "terminal-tab-icon dc-term-icon", "aria-hidden": "true" }, el("i", { class: kind === "coder" ? "ti ti-code-ai" : "ti ti-terminal-2" })),
+      el("span", { class: "terminal-switcher-name text-truncate" }, label),
+      project ? el("span", { class: "terminal-switcher-project text-truncate" }, project) : null,
+    );
+    row.addEventListener("click", () => this.navigate(row.dataset.switcherUrl), { signal: this.ac.signal });
+    return row;
+  }
+
   resumeRow(button, project, folded) {
     const dataset = {
       switcherResume: button.dataset.resumeId || "",
       switcherName: (button.dataset.resumeName || "") + " " + (project || ""),
       switcherGroup: project,
+      switcherSection: "inactive",
     };
     if (folded) dataset.switcherFolded = project;
     const row = el(
@@ -647,7 +697,7 @@ class TerminalTabs extends HTMLElement {
       {
         role: "option",
         class: "terminal-switcher-item terminal-switcher-item-inactive terminal-switcher-item-toggle",
-        dataset: { switcherToggle: project, switcherGroup: project },
+        dataset: { switcherToggle: project, switcherGroup: project, switcherSection: "inactive" },
       },
       el("span", { class: "terminal-switcher-name text-truncate" }, "Show " + count + " more"),
     );
@@ -714,17 +764,29 @@ class TerminalTabs extends HTMLElement {
         inactiveNodes.push(toggle);
       }
     }
-    const section = inactiveNodes.length
-      ? el("div", { class: "terminal-switcher-section" }, "Inactive coders")
-      : null;
-    return { rows, resumeRows, inactiveNodes, section, groupLabels };
+    const editorRows = Array.from(this.querySelectorAll("[data-tabs-editors] [data-editor-project]"))
+      .map((link) => this.editorRow(link));
+    const actionRows = Array.from(this.querySelectorAll(".terminal-tabs-new-menu [data-tabs-new]"))
+      .map((link) => this.actionRow(link));
+    const sections = [];
+    const listNodes = [...rows];
+    const addSection = (key, title, nodes) => {
+      if (!nodes.length) return;
+      const node = el("div", { class: "terminal-switcher-section", dataset: { switcherSection: key } }, title);
+      sections.push({ key, node });
+      listNodes.push(node, ...nodes);
+    };
+    addSection("inactive", "Inactive coders", inactiveNodes);
+    addSection("editors", "Editors", editorRows);
+    addSection("new", "New", actionRows);
+    const cycleRows = rows.concat(resumeRows, editorRows, actionRows);
+    return { rows, cycleRows, listNodes, sections, groupLabels };
   }
 
   openSwitcher(direction) {
-    const tabs = this.tabs();
-    if (!tabs.length) return;
     this.cancelDrag();
-    const { rows, resumeRows, inactiveNodes, section, groupLabels } = this.buildSwitcherLists();
+    const { rows, cycleRows, listNodes, sections, groupLabels } = this.buildSwitcherLists();
+    if (!cycleRows.length) return;
     const input = el("input", {
       type: "text",
       class: "terminal-switcher-filter",
@@ -743,7 +805,7 @@ class TerminalTabs extends HTMLElement {
         "div",
         { class: "terminal-switcher-panel" },
         input,
-        el("div", { class: "terminal-switcher-list", role: "listbox" }, rows, section, inactiveNodes, empty),
+        el("div", { class: "terminal-switcher-list", role: "listbox" }, listNodes, empty),
         el("div", { class: "terminal-switcher-hint" }, "Type to filter, Tab or arrows to cycle, Enter to switch, Esc to close"),
       ),
     );
@@ -755,13 +817,13 @@ class TerminalTabs extends HTMLElement {
     const current = rows.findIndex((row) => row.classList.contains("current"));
     this.switcher = {
       overlay,
-      rows: rows.concat(resumeRows),
-      section,
+      rows: cycleRows,
+      sections,
       groupLabels,
       expanded: new Set(),
       input,
       empty,
-      visible: rows.concat(resumeRows),
+      visible: cycleRows.slice(),
       index: 0,
       prevFocus: document.activeElement,
     };
@@ -769,6 +831,7 @@ class TerminalTabs extends HTMLElement {
     this.applyFilter();
     this.switcher.index = current === -1 ? 0 : (current + direction + rows.length) % rows.length;
     this.paintSelection();
+    this.tryRefresh();
   }
 
   rebuildSwitcher() {
@@ -778,15 +841,15 @@ class TerminalTabs extends HTMLElement {
       if (!row) return "";
       if (row.dataset.switcherToggle) return "t:" + row.dataset.switcherToggle;
       if (row.dataset.switcherResume) return "r:" + row.dataset.switcherResume;
-      return "a:" + (row.dataset.switcherId || "");
+      return "a:" + (row.dataset.switcherId || row.dataset.switcherUrl || "");
     };
     const previous = key(sw.visible[sw.index]);
-    const { rows, resumeRows, inactiveNodes, section, groupLabels } = this.buildSwitcherLists();
+    const { cycleRows, listNodes, sections, groupLabels } = this.buildSwitcherLists();
     const list = sw.overlay.querySelector(".terminal-switcher-list");
     const scrollTop = list.scrollTop;
-    list.replaceChildren(...rows, ...(section ? [section] : []), ...inactiveNodes, sw.empty);
-    sw.rows = rows.concat(resumeRows);
-    sw.section = section;
+    list.replaceChildren(...listNodes, sw.empty);
+    sw.rows = cycleRows;
+    sw.sections = sections;
     sw.groupLabels = groupLabels;
     sw.visible = sw.rows.slice();
     this.applyFilter();
@@ -810,6 +873,7 @@ class TerminalTabs extends HTMLElement {
     // invisible there, but terminal-swipe-nav reads its rows as the swipe
     // targets, so the order must stay live.
     this.dirty = true;
+    if (this.switcherOnly && !this.switcher) return;
     this.tryRefresh();
   }
 
@@ -849,6 +913,8 @@ class TerminalTabs extends HTMLElement {
           menu.innerHTML = freshMenu.innerHTML;
           const projects = menu.querySelector("[data-tabs-resume-projects]");
           if (projects) projectSort.sort(projects);
+          const editors = menu.querySelector("[data-tabs-editors]");
+          if (editors) projectSort.sort(editors);
           menu.querySelectorAll("[data-tabs-resume-fold]").forEach((group) => this.foldResume(group));
         }
         if (this.switcher) this.rebuildSwitcher();
@@ -888,7 +954,9 @@ class TerminalTabs extends HTMLElement {
       return show;
     });
     sw.empty.hidden = sw.visible.length > 0;
-    if (sw.section) sw.section.hidden = !sw.visible.some((row) => row.dataset.switcherGroup);
+    for (const section of sw.sections) {
+      section.node.hidden = !sw.visible.some((row) => row.dataset.switcherSection === section.key);
+    }
     for (const label of sw.groupLabels) {
       label.node.hidden = !sw.visible.some((row) => row.dataset.switcherGroup === label.key);
     }

@@ -123,6 +123,7 @@ func (s *Server) handleSplitAttach(c *gin.Context) {
 	s.notifier.MarkTargetRead(focus)
 	groupName := groupLabel(members)
 	page := s.page(c, pageTitle(groupName, projectName), "projects")
+	page.HasTabStrip = true
 	rendered := make([]render.SplitMember, 0, len(members))
 	for _, m := range members {
 		base := m.URL
@@ -153,14 +154,13 @@ func (s *Server) handleSplitAttach(c *gin.Context) {
 		rendered = append(rendered, sm)
 	}
 	c.HTML(http.StatusOK, "split_attach.gohtml", render.SplitAttachData{
-		Page:        page,
-		GroupID:     gid,
-		GroupName:   groupName,
-		ProjectName: projectName,
+		Page:          page,
+		GroupID:       gid,
+		GroupName:     groupName,
+		ProjectName:   projectName,
 		Focus:         focus,
 		FocusExplicit: focusValid,
 		Members:       rendered,
-		Tabs:          s.stripTabs(),
 	})
 }
 

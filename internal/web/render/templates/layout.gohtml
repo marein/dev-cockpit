@@ -266,6 +266,7 @@
     </div>
   </div>
   {{template "quicknav.gohtml" .}}
+  {{if and .User (not .HasTabStrip)}}{{template "terminal_tabs_switcher.gohtml" .}}{{end}}
   </div>
 </body>
 </html>{{end}}

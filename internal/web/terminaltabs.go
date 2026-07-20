@@ -60,15 +60,11 @@ func (s *Server) terminalTabs() []render.TerminalTab {
 	return tabs
 }
 
-// stripTabs folds the flat session list into the strip entries: sessions
+// foldStripTabs folds the flat session list into the strip entries: sessions
 // sharing a @dc_tab_group become one group tab at the position of their best
 // placed member, everything else stays a single tab. A group with fewer than
 // two live members renders as plain tabs, its stale options are ignored. The
 // quick nav keeps using the flat list on purpose, groups are strip UI only.
-func (s *Server) stripTabs() []render.StripTab {
-	return foldStripTabs(s.terminalTabs())
-}
-
 func foldStripTabs(tabs []render.TerminalTab) []render.StripTab {
 	memberCount := map[string]int{}
 	for _, t := range tabs {
@@ -183,12 +179,9 @@ func (s *Server) handleTerminalTabsFragment(c *gin.Context) {
 		path = "/"
 	}
 	id, name, cleanPath, focus := quicknavContextFromPath(path)
-	c.HTML(http.StatusOK, "terminal_tabs.gohtml", render.TerminalTabsData{
-		Page: render.Page{
-			QuickNav:  s.buildQuickNav(id, name, cleanPath, focus),
-			CSRFToken: s.csrfToken(c),
-		},
-		Tabs: s.stripTabs(),
+	c.HTML(http.StatusOK, "terminal_tabs.gohtml", render.Page{
+		QuickNav:  s.buildQuickNav(id, name, cleanPath, focus),
+		CSRFToken: s.csrfToken(c),
 	})
 }
 

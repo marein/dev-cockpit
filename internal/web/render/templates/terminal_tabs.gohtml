@@ -1,7 +1,34 @@
 {{define "terminal_tabs.gohtml"}}
 <terminal-tabs class="d-print-none" data-tabs-url="/terminal-tabs">
+  {{template "terminal_tabs_core.gohtml" .}}
+  <div class="dropdown terminal-tabs-new terminal-tabs-settings">
+    <button type="button" class="terminal-tabs-new-btn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
+      <i class="ti ti-settings"></i>
+    </button>
+    <div class="dropdown-menu dropdown-menu-end terminal-settings-menu">
+      {{template "terminal_settings.gohtml"}}
+    </div>
+  </div>
+  <div class="terminal-tabs-new">
+    <button type="button" class="terminal-tabs-new-btn" data-terminal-fullscreen aria-pressed="false" aria-label="Fullscreen" title="Fullscreen (Ctrl+Shift+F)">
+      <i class="ti ti-maximize"></i>
+    </button>
+  </div>
+</terminal-tabs>
+{{end}}
+
+{{/* The app layout mounts this on every page without an inline tab strip: the
+     same element hidden, strip and plus menu only, so the double Ctrl/Meta
+     switcher works app wide. */}}
+{{define "terminal_tabs_switcher.gohtml"}}
+<terminal-tabs hidden data-tabs-url="/terminal-tabs">
+  {{template "terminal_tabs_core.gohtml" .}}
+</terminal-tabs>
+{{end}}
+
+{{define "terminal_tabs_core.gohtml"}}
   <div class="terminal-tabs-strip" data-tabs-strip role="tablist" aria-label="Active coders and shells">
-    {{range .Tabs}}
+    {{range .QuickNav.Strip}}
     {{if .Members}}
     <a class="terminal-tab terminal-tab-split{{if .IsActive $.QuickNav.CurrentID}} active{{end}}"
        href="{{.URL}}" role="tab" draggable="false"
@@ -46,10 +73,10 @@
         <i class="ti ti-code flex-shrink-0"></i><span>Editor</span>
       </a>
       {{end}}
-      <a class="dropdown-item d-flex align-items-center gap-2" href="/coders/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
+      <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-new="coder" href="/coders/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
         <i class="ti ti-code-ai flex-shrink-0"></i><span>New coder</span>
       </a>
-      <a class="dropdown-item d-flex align-items-center gap-2" href="/shells/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
+      <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-new="shell" href="/shells/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
         <i class="ti ti-terminal-2 flex-shrink-0"></i><span>New shell</span>
       </a>
       {{if .QuickNav.HasInactiveCoders}}
@@ -76,20 +103,13 @@
       {{end}}{{end}}
       </div>
       {{end}}
+      {{/* Data for the switcher's editor rows: one editor link per project,
+           sorted client side like the resume groups. Never shown in the menu. */}}
+      <div class="d-none" data-tabs-editors>
+        {{range $p := .QuickNav.AllProjects}}
+        <a data-editor-project="{{$p.Name}}" data-project-name="{{$p.Name}}" data-project-active="{{if $p.Active}}true{{else}}false{{end}}" data-project-used="{{$p.LastUsedUnix}}" href="{{$p.EditorURL}}" tabindex="-1"></a>
+        {{end}}
+      </div>
     </div>
   </div>
-  <div class="dropdown terminal-tabs-new terminal-tabs-settings">
-    <button type="button" class="terminal-tabs-new-btn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
-      <i class="ti ti-settings"></i>
-    </button>
-    <div class="dropdown-menu dropdown-menu-end terminal-settings-menu">
-      {{template "terminal_settings.gohtml"}}
-    </div>
-  </div>
-  <div class="terminal-tabs-new">
-    <button type="button" class="terminal-tabs-new-btn" data-terminal-fullscreen aria-pressed="false" aria-label="Fullscreen" title="Fullscreen (Ctrl+Shift+F)">
-      <i class="ti ti-maximize"></i>
-    </button>
-  </div>
-</terminal-tabs>
 {{end}}

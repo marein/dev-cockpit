@@ -434,6 +434,7 @@ terminal-swipe-nav { display: none; }
 }
 
 terminal-tabs { display: none; }
+terminal-tabs[hidden] { display: none; }
 @media not (pointer: coarse) {
   terminal-tabs {
     position: sticky;

@@ -30,5 +30,4 @@ type SplitAttachData struct {
 	Focus         string
 	FocusExplicit bool
 	Members       []SplitMember
-	Tabs          []StripTab
 }
