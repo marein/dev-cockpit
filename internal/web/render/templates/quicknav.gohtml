@@ -15,7 +15,7 @@
 <div data-quicknav-tabs data-quicknav-current-project="{{.QuickNav.CurrentProject}}">
   <div class="quicknav-top">
     <div class="quicknav-seg" role="tablist">
-      <button type="button" class="quicknav-seg-btn active" data-quicknav-tab="active"><i class="ti ti-code-ai me-1"></i>Active</button>
+      <button type="button" class="quicknav-seg-btn active" data-quicknav-tab="active"><i class="ti ti-activity me-1"></i>Active</button>
       <button type="button" class="quicknav-seg-btn" data-quicknav-tab="projects"><i class="ti ti-folders me-1"></i>Projects</button>
     </div>
     {{if .QuickNav.CurrentProject}}
@@ -25,7 +25,7 @@
         <i class="ti ti-code"></i>
       </a>
       <a href="/coders/new?project={{urlquery .QuickNav.CurrentProject}}&amp;return={{urlquery .QuickNav.CurrentPath}}" class="btn btn-sm btn-ghost-secondary px-2 py-1" title="New coder in {{.QuickNav.CurrentProject}}" aria-label="New coder in current project">
-        <i class="ti ti-code-ai"></i><i class="ti ti-plus ms-1"></i>
+        <i class="ti ti-robot"></i><i class="ti ti-plus ms-1"></i>
       </a>
       {{if .QuickNav.CurrentProjectPath}}
       <form method="post" action="/shells/new" class="d-flex">
@@ -117,7 +117,7 @@
     </div>
     <div class="dropdown-divider"></div>
     <a class="dropdown-item d-flex align-items-center gap-2" href="/coders/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
-      <i class="ti ti-code-ai flex-shrink-0"></i><span>New coder</span>
+      <i class="ti ti-robot flex-shrink-0"></i><span>New coder</span>
     </a>
     <a class="dropdown-item d-flex align-items-center gap-2" href="/shells/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
       <i class="ti ti-terminal-2 flex-shrink-0"></i><span>New shell</span>

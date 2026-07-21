@@ -665,7 +665,7 @@ class TerminalTabs extends HTMLElement {
           switcherSection: "new",
         },
       },
-      el("span", { class: "terminal-tab-icon dc-term-icon", "aria-hidden": "true" }, el("i", { class: kind === "coder" ? "ti ti-code-ai" : "ti ti-terminal-2" })),
+      el("span", { class: "terminal-tab-icon dc-term-icon", "aria-hidden": "true" }, el("i", { class: kind === "coder" ? "ti ti-robot" : "ti ti-terminal-2" })),
       el("span", { class: "terminal-switcher-name text-truncate" }, label),
       project ? el("span", { class: "terminal-switcher-project text-truncate" }, project) : null,
     );

@@ -43,9 +43,10 @@ test. Update this file when a convention changes.
   a hidden `coder` form field) 308-redirect to the canonical URLs, marked
   TODO(v2.0.0). Session identifiers are UUID-shaped, so the coder subtrees
   cannot collide with the `/coders/:id` session routes. UI stays adaptive:
-  the coder switcher, the coder label in the title, the new-coder coder
-  select and the coder badges render only when more than one coder is
-  active, so single-coder hosts look unchanged.
+  the coder switcher, the coder label in the title and the new-coder coder
+  select render only when more than one coder is active, so single-coder
+  hosts look unchanged. The coder icon badge on the attach and split pages
+  always renders (like the shell badge), it doubles as the status light.
 - **Claude session settings:** every claude session starts with one injected
   `--settings` blob (`internal/coder/claude/runtime.go`): theme auto, the
   notification hooks, and `disableAgentView`. The cockpit forwards keys via

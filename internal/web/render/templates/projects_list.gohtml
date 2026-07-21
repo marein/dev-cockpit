@@ -131,7 +131,7 @@
         {{end}}
       </span>
       <a href="/coders/new?project={{urlquery .Name}}&amp;return={{urlquery (printf "/projects#project-%s" .Name)}}" class="project-chip project-chip-new" title="Start coder in project {{.Name}}" aria-label="Start coder in project {{.Name}}">
-        <i class="ti ti-code-ai" aria-hidden="true"></i><i class="ti ti-plus" aria-hidden="true"></i>
+        <i class="ti ti-robot" aria-hidden="true"></i><i class="ti ti-plus" aria-hidden="true"></i>
       </a>
       <form method="post" action="/shells/new" class="project-chip-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">

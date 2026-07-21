@@ -913,7 +913,7 @@ body:not(:has(.attach-footer)) .quicknav {
 /* The drilled-in project name is the detail view's title, not a section label, so
    give it its own look (normal case, larger, body color) instead of reusing the
    small uppercase section-header style. */
-.quicknav-detail-title { color: var(--tblr-body-color); text-transform: uppercase; }
+.quicknav-detail-title { color: var(--tblr-body-color); text-transform: none; }
 .quicknav-menu .dropdown-divider { margin: 0; }
 /* Active rows: reorder writes the same @dc_tab_pos order the tab strip does,
    swipe left on touch reveals the delete. Gestures never fight: a mouse drags
@@ -1842,11 +1842,19 @@ terminal-input { display: none; }
   cursor: pointer;
 }
 .project-chip-more { border-style: dashed; }
+.project-chip-new {
+  color: var(--tblr-primary);
+  border-color: var(--tblr-primary);
+}
 .project-chip-new:hover,
 .project-chip-more:hover {
   color: var(--tblr-primary);
   border-color: rgba(var(--tblr-primary-rgb), 0.5);
   text-decoration: none;
+}
+.project-chip-new:hover {
+  border-color: var(--tblr-primary);
+  background: rgba(var(--tblr-primary-rgb), 0.08);
 }
 
 dc-notifications { display: block; }

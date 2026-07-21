@@ -19,7 +19,7 @@
 
 <div class="attach-page min-w-0">
   <div class="attach-settings">
-    {{if .MultiCoder}}<span class="dc-term-icon running me-auto" data-notify-target="{{.Running.Identifier}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{end}}
+    <span class="dc-term-icon running me-auto" data-notify-target="{{.Running.Identifier}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
     <div class="dropdown">
       <button type="button" class="btn btn-sm btn-icon btn-outline-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
         <i class="ti ti-settings"></i>
