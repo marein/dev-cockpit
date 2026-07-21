@@ -347,6 +347,37 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       assert(payload.includes("Something new in") && payload.includes(project), `payload: ${payload}`);
     });
 
+    await run("a visible but unfocused coder page does not auto-read, news toasts and pushes, focus reconciles", async () => {
+      // Playwright emulates focus on every page, so the away state is simulated
+      // by stubbing document.hasFocus; regaining focus is a window focus event.
+      await page.goto(coderUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });
+      await ownEntriesRead(coderId);
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      const away = await page.context().newPage();
+      try {
+        await away.addInitScript(() => { document.hasFocus = () => false; });
+        await away.goto(coderUrl, { waitUntil: "domcontentloaded" });
+        await away.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });
+        await sleep(1500);
+        hookHits.length = 0;
+        injectCopilotDone(coderId);
+        await away.waitForFunction((name) =>
+          [...document.querySelectorAll(".swal2-toast")].some((t) => t.textContent.includes(name)),
+          coderName, { timeout: 12000 });
+        const deadline = Date.now() + 12000;
+        while (Date.now() < deadline && !hookHits.some((h) => h.includes(coderName))) await sleep(250);
+        assert(hookHits.some((h) => h.includes(coderName)), `no webhook hit for the unfocused window: ${JSON.stringify(hookHits)}`);
+        await away.evaluate(() => {
+          document.hasFocus = () => true;
+          window.dispatchEvent(new Event("focus"));
+        });
+        await ownEntriesRead(coderId);
+      } finally {
+        await away.close();
+      }
+    });
+
     await run("shell: long command completion lands as notification with /shells link", async () => {
       const shellUrl = await L.createShell(page, project);
       const shellId = new URL(shellUrl).pathname.split("/").pop();

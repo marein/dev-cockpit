@@ -92,12 +92,16 @@ const channel = {
 // every reconnect, so a woken background tab reconciles from here too.
 onServerEvent("notifications", (event) => channel.receive(event.detail));
 
-// On becoming visible again, re-check whether the target whose page is open
-// should mark itself read. The stream reconnect is owned by @dc/events.
+// On becoming visible or focused again, re-check whether the target whose
+// page is open should mark itself read. Focus is the desktop comeback signal,
+// the window stays visible while the browser sits behind another app. The
+// stream reconnect is owned by @dc/events.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   reconcileOwnTarget(channel.targets);
 });
+
+window.addEventListener("focus", () => reconcileOwnTarget(channel.targets));
 
 // Activating a split pane clears its device-local changed dot and reconciles
 // right away instead of waiting for the next server event.
@@ -159,14 +163,16 @@ function openTarget(notification) {
     });
 }
 
-// shownTargets returns every id the page renders visibly, active or not. A
-// pane on screen counts as seen: it auto-reads (reconcileOwnTarget), so it
-// never toasts, jingles, badges or pushes — on a solo page and on a split
-// alike. What an inactive split pane keeps is the device-local changed dot
-// (markChanged) until it is activated. The pathname match stays as the
-// fallback for pages without islands.
+// shownTargets returns every id the page renders visibly, active or not, but
+// only while the window has focus. A pane on screen in the focused window
+// counts as seen: it auto-reads (reconcileOwnTarget), so it never toasts,
+// jingles, badges or pushes, on a solo page and on a split alike. A visible
+// but unfocused window (the browser behind another app on the desktop) counts
+// as away, its news rings and pushes. What an inactive split pane keeps is
+// the device-local changed dot (markChanged) until it is activated. The
+// pathname match stays as the fallback for pages without islands.
 function shownTargets() {
-  if (document.visibilityState !== "visible") return [];
+  if (document.visibilityState !== "visible" || !document.hasFocus()) return [];
   const shown = [...document.querySelectorAll("terminal-attach[terminal-id]")]
     .filter((el) => el.offsetParent !== null)
     .map((el) => el.getAttribute("terminal-id"))
