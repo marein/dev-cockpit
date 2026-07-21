@@ -211,10 +211,11 @@ through the CLI's global `beep` setting (enabled at startup when copilot is
 active), which a read-only control-mode bell watcher per running session
 picks up (`internal/coder/bellwatch.go`; it never resizes panes). Shells get
 OSC 133 prompt marks injected via `PS0`/`PROMPT_COMMAND`
-(`internal/shell/shellwatch.go`): every foreground command counts as news
-when the prompt returns (bare prompt redraws stay silent), and a BEL in a
-shell counts too (an rc file overwriting those variables silently turns the
-marks off). The serve process also polls one inbox per coder
+(`internal/shell/shellwatch.go`): a foreground command counts as news when
+the prompt returns and the command ran at least `minCommandDuration` (2s),
+so quick commands and bare prompt redraws stay silent, and a BEL in a shell
+counts regardless of duration (an rc file overwriting those variables
+silently turns the marks off). The serve process also polls one inbox per coder
 (`<state-dir>/notification-inbox/<coder>`), the generic ingestion seam: claude
 hooks drop their JSON there, and the e2e suite injects events through it.
 State persists to `<state-dir>/notifications.json` (one list like the recent
