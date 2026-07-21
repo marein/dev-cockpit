@@ -517,6 +517,10 @@ class QuickNav extends HTMLElement {
     if (focused) path += "?focus=" + encodeURIComponent(focused.getAttribute("terminal-id") || "");
     getText(this.url + "?path=" + encodeURIComponent(path))
       .then((html) => {
+        if (this.drag || this.swipe) {
+          this.dirty = true;
+          return;
+        }
         this.openSwipe = null;
         this.list.innerHTML = html;
         this.reposition();
