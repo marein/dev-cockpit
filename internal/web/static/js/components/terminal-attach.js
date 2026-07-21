@@ -784,6 +784,18 @@ function initTerminalAttach(host) {
   term.parser.registerCsiHandler({ prefix: "?", final: "h" }, handleMouseMode(true));
   term.parser.registerCsiHandler({ prefix: "?", final: "l" }, handleMouseMode(false));
 
+  // This terminal is a display mirror; tmux is the pane's terminal and answers
+  // every device query (CPR, DA, DSR) itself. Swallow the report-triggering
+  // queries so xterm never sends its own duplicate reply back through onData,
+  // which, arriving a round trip late after the querying program already read
+  // tmux's answer, would land as ;<n>R garbage on the shell prompt.
+  const swallowReport = () => true;
+  term.parser.registerCsiHandler({ final: "n" }, swallowReport);
+  term.parser.registerCsiHandler({ prefix: "?", final: "n" }, swallowReport);
+  term.parser.registerCsiHandler({ final: "c" }, swallowReport);
+  term.parser.registerCsiHandler({ prefix: ">", final: "c" }, swallowReport);
+  term.parser.registerCsiHandler({ prefix: "=", final: "c" }, swallowReport);
+
   // ---- Scrolling (desktop wheel + mobile swipe) ------------------------------
   // We own scrolling and reproduce, per step, exactly what the program would
   // receive from a terminal emulator over SSH:
