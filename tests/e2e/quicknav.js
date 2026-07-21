@@ -16,10 +16,12 @@ const { assert, sleep, BASE } = L;
 // control: confirm dialog, POST /coders/:id/stop or /shells/:id/delete, and
 // deleting the terminal you are attached to navigates to its neighbor. Shell
 // rows also reveal a rename action ([data-qn-rename], prompt dialog, POST
-// /shells/:id/rename). The Projects tab detail rows swipe too, reorder stays
-// active-list only: active coders reveal stop, inactive coders reveal delete
-// (POST /coders/:id/delete, projects page confirm wording), shells reveal
-// rename plus delete.
+// /shells/:id/rename). The Projects tab detail mirrors the projects page chip
+// row: no per-kind headlines, one merged list of the live coders and shells in
+// tab strip order, inactive coders after them, New coder and New shell at the
+// end. Detail rows swipe too, reorder stays active-list only: active coders
+// reveal stop, inactive coders reveal delete (POST /coders/:id/delete,
+// projects page confirm wording), shells reveal rename plus delete.
 
 L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
   const tag = `qn-${Date.now().toString(36)}`;
@@ -332,6 +334,17 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       const before = await page.locator(`[data-pb-detail="${project}"] [data-qn-fold] > *`).count();
       await fold.click(); await sleep(400);
       assert(await page.locator(`[data-pb-detail="${project}"] [data-qn-fold] > *`).count() >= before, "fold did not expand");
+    });
+
+    await run("projects tab detail is one merged list in projects-page chip order, new buttons last", async () => {
+      const detail = `[data-pb-detail="${project}"]`;
+      assert((await page.$$(`${detail} h6.dropdown-header`)).length === 0, "per-kind headlines still present");
+      assert((await page.$$(`${detail} [data-qn-fold]`)).length === 1, "expected one merged terminal group");
+      const navIds = await page.$$eval(`${detail} [data-qn-fold] [data-tab-id]`, (els) => els.map((el) => el.getAttribute("data-tab-id")));
+      const chipIds = await page.$$eval(`#project-${project} [data-chip] [data-notify-target]`, (els) => els.map((el) => el.getAttribute("data-notify-target")));
+      assert(navIds.length > 0 && navIds.join() === chipIds.join(), `detail order ${navIds.join()} != chip order ${chipIds.join()}`);
+      const tail = await page.$$eval(`${detail} .dropdown-item`, (els) => els.slice(-2).map((el) => el.textContent.trim()));
+      assert(tail[0] === "New coder" && tail[1] === "New shell", `expected New coder/New shell last, got ${tail.join(", ")}`);
     });
   } finally {
     for (const u of shellUrls) await L.deleteShell(page, u).catch(() => {});

@@ -48,121 +48,98 @@
 <div class="card projects-card">
   <div class="list-group list-group-flush list-group-hoverable">
   {{range .Projects}}
-  <div class="list-group-item" id="project-{{.Name}}" data-project-name="{{.Name}}" data-project-active="{{if or .ActiveCoderRefs .ShellRefs}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
+  <div class="list-group-item project-row" id="project-{{.Name}}" data-project-name="{{.Name}}" data-project-active="{{if or .ActiveCoderRefs .ShellRefs}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
     {{if and (eq $.FlashProject .Name) $.Flash.Message}}
-    <div class="alert alert-{{if eq $.Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible mb-3" role="alert">
+    <div class="alert alert-{{if eq $.Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible mb-2" role="alert">
       <div class="d-flex">
         <i class="ti {{if eq $.Flash.Level "success"}}ti-circle-check{{else}}ti-alert-circle{{end}} me-2 fs-3"></i>
-        <div>{{$.Flash.Message}}</div>
+        <div class="text-break min-w-0">{{$.Flash.Message}}</div>
       </div>
       <a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>
     </div>
     {{end}}
-    <div class="row g-2 align-items-start">
-      <div class="col min-w-0">
-        <div class="fw-medium text-break">{{.Name}} <span class="status-dot status-dot-animated status-blue ms-1{{if not .HasNews}} d-none{{end}}" data-notify-project-dot aria-label="Something new in this project"></span></div>
-        {{if .GitOrigin}}
-        <div class="text-secondary small text-break">
-          {{if .GitOriginURL}}
-          <a href="{{.GitOriginURL}}" target="_blank" rel="noopener" class="link-secondary text-decoration-none">{{.GitOrigin}}</a>
-          {{else}}
-          {{.GitOrigin}}
-          {{end}}
-        </div>
-        {{else if ne .Label .Name}}
-        <div class="text-secondary small text-break">{{.Label}}</div>
-        {{end}}
+    <div class="d-flex align-items-start gap-2">
+      <div class="flex-fill min-w-0 d-flex align-items-baseline flex-wrap column-gap-3 row-gap-1">
+        <span class="fw-medium text-break">{{.Name}} <span class="status-dot status-dot-animated status-blue ms-1{{if not .HasNews}} d-none{{end}}" data-notify-project-dot aria-label="Something new in this project"></span></span>
         {{if and .GitRepo .GitBranch}}
-        <div class="text-secondary small text-break"><i class="ti ti-git-branch me-1"></i>{{.GitBranch}}</div>
+        <span class="text-secondary small text-break"><i class="ti ti-git-branch" aria-hidden="true"></i> {{.GitBranch}}</span>
+        {{end}}
+        {{if .GitOrigin}}
+        {{if .GitOriginURL}}
+        <a href="{{.GitOriginURL}}" target="_blank" rel="noopener" class="link-secondary small text-decoration-none text-break">{{.GitOrigin}}</a>
+        {{else}}
+        <span class="text-secondary small text-break">{{.GitOrigin}}</span>
+        {{end}}
+        {{else if ne .Label .Name}}
+        <span class="text-secondary small text-break">{{.Label}}</span>
         {{end}}
       </div>
-      <div class="col-auto">
-        <div class="btn-list flex-nowrap">
-          <a href="/projects/{{.Name}}/editor?return={{urlquery (print "/projects#project-" .Name)}}" class="btn btn-sm btn-icon btn-outline-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
-            <i class="ti ti-code"></i>
-          </a>
-          <form method="post" action="/projects/delete" data-confirm="Delete project &quot;{{.Name}}&quot;?" data-confirm-button="Delete">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="project" value="{{.Name}}">
-            <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Delete project {{.Name}}" title="Delete">
-              <i class="ti ti-trash"></i>
-            </button>
-          </form>
-        </div>
-      </div>
-    </div>
-
-    <div class="mt-3" id="project-{{.Name}}-coders">
-      <div class="d-flex align-items-center gap-2 mb-1">
-        <span class="text-secondary text-uppercase small fw-bold">Coders</span>
-        <a href="/coders/new?project={{urlquery .Name}}&amp;return={{urlquery (printf "/projects#project-%s" .Name)}}" class="btn btn-sm btn-icon btn-outline-primary ms-auto" aria-label="Start coder in project {{.Name}}" title="New coder">
-          <i class="ti ti-plus"></i>
+      <div class="btn-list flex-nowrap flex-shrink-0">
+        <a href="/projects/{{.Name}}/editor?return={{urlquery (print "/projects#project-" .Name)}}" class="btn btn-sm btn-icon btn-ghost-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
+          <i class="ti ti-code"></i>
         </a>
-      </div>
-      <div data-coders-body>
-      {{if or .ActiveCoderRefs .InactiveCoderRefs}}
-      <dc-collapse-list class="list-group list-group-flush">
-        {{range .ActiveCoderRefs}}
-        <div class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
-          <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
-          <a href="/coders/{{.ID}}" class="text-reset text-decoration-none text-truncate flex-fill">{{.Name}}</a>
-          <a href="/coders/{{.ID}}" class="btn btn-sm btn-icon btn-outline-primary" aria-label="Attach to coder {{.Name}}" title="Attach"><i class="ti ti-plug-connected"></i></a>
-          <form method="post" action="/coders/{{.ID}}/stop" data-confirm="Stop coder &quot;{{.Name}}&quot;?" data-confirm-button="Stop" data-ajax-refresh>
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Stop coder {{.Name}}" title="Stop"><i class="ti ti-player-stop"></i></button>
-          </form>
-        </div>
-        {{end}}
-        {{range .InactiveCoderRefs}}
-        <div class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
-          <span class="dc-term-icon{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
-          <form method="post" action="/coders/{{.ID}}/resume" class="flex-fill" style="flex:1 1 auto;min-width:0;">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="border-0 bg-transparent p-0 text-reset text-decoration-none text-truncate w-100 text-start" style="cursor:pointer;" title="Resume coder {{.Name}}">{{.Name}}</button>
-          </form>
-          <form method="post" action="/coders/{{.ID}}/resume">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="btn btn-sm btn-icon btn-outline-primary" aria-label="Resume coder {{.Name}}" title="Resume"><i class="ti ti-player-play"></i></button>
-          </form>
-          <form method="post" action="/coders/{{.ID}}/delete" data-confirm="Delete inactive coder &quot;{{.Name}}&quot;?" data-confirm-button="Delete" data-ajax-delete>
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Delete coder {{.Name}}" title="Delete"><i class="ti ti-trash"></i></button>
-          </form>
-        </div>
-        {{end}}
-      </dc-collapse-list>
-      {{end}}
-      </div>
-    </div>
-
-    <div class="mt-3" id="project-{{.Name}}-shells">
-      <div class="d-flex align-items-center gap-2 mb-1">
-        <span class="text-secondary text-uppercase small fw-bold">Shells</span>
-        <form method="post" action="/shells/new" class="ms-auto">
+        <form method="post" action="/projects/delete" data-confirm="Delete project &quot;{{.Name}}&quot;?" data-confirm-button="Delete">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-          <input type="hidden" name="project" value="{{.Path}}">
-          <button type="submit" class="btn btn-sm btn-icon btn-outline-primary" aria-label="Start shell in project {{.Name}}" title="New shell">
-            <i class="ti ti-plus"></i>
+          <input type="hidden" name="project" value="{{.Name}}">
+          <button type="submit" class="btn btn-sm btn-icon btn-ghost-danger" aria-label="Delete project {{.Name}}" title="Delete">
+            <i class="ti ti-trash"></i>
           </button>
         </form>
       </div>
-      <div data-shells-body>
-      {{if .ShellRefs}}
-      <dc-collapse-list class="list-group list-group-flush">
-        {{range .ShellRefs}}
-        <div class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
-          <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i></span>
-          <a href="/shells/{{.ID}}" class="text-reset text-decoration-none text-truncate flex-fill">{{.Name}}</a>
-          <a href="/shells/{{.ID}}" class="btn btn-sm btn-icon btn-outline-primary" aria-label="Attach to shell {{.Name}}" title="Attach"><i class="ti ti-plug-connected"></i></a>
-          <form method="post" action="/shells/{{.ID}}/delete" data-confirm="Delete shell &quot;{{.Name}}&quot;?" data-confirm-button="Delete" data-ajax-delete>
+    </div>
+    <div class="project-chips mt-2" data-sessions-body>
+      <span class="project-chip-fold" data-chip-fold>
+        {{range .ActiveRefs}}
+        {{if eq .Kind "coder"}}
+        <div class="project-chip" data-chip data-chip-kind="coder">
+          <a href="/coders/{{.ID}}" class="project-chip-main" title="Attach to coder {{.Name}}" data-chip-main>
+            <span class="dc-term-icon running{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
+            <span class="project-chip-name">{{.Name}}</span>
+          </a>
+          <form method="post" action="/coders/{{.ID}}/stop" data-confirm="Stop coder &quot;{{.Name}}&quot;?" data-confirm-button="Stop" data-ajax-refresh data-chip-x>
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Delete shell {{.Name}}" title="Delete"><i class="ti ti-trash"></i></button>
+            <button type="submit" class="project-chip-x" aria-label="Stop coder {{.Name}}" title="Stop"><i class="ti ti-player-stop"></i></button>
+          </form>
+        </div>
+        {{else}}
+        <div class="project-chip" data-chip data-chip-kind="shell" data-chip-id="{{.ID}}" data-chip-name="{{.Name}}">
+          <a href="/shells/{{.ID}}" class="project-chip-main" title="Attach to shell {{.Name}}" data-chip-main>
+            <span class="dc-term-icon running{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i></span>
+            <span class="project-chip-name">{{.Name}}</span>
+          </a>
+          <form method="post" action="/shells/{{.ID}}/delete" data-confirm="Delete shell &quot;{{.Name}}&quot;?" data-confirm-button="Delete" data-ajax-refresh data-chip-x>
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <button type="submit" class="project-chip-x" aria-label="Delete shell {{.Name}}" title="Delete"><i class="ti ti-trash"></i></button>
           </form>
         </div>
         {{end}}
-      </dc-collapse-list>
-      {{end}}
-      </div>
+        {{end}}
+        {{range .InactiveCoderRefs}}
+        <div class="project-chip is-idle" data-chip data-chip-kind="coder">
+          <form method="post" action="/coders/{{.ID}}/resume" data-chip-main-form>
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <button type="submit" class="project-chip-main" title="Resume coder {{.Name}}">
+              <span class="dc-term-icon{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
+              <span class="project-chip-name">{{.Name}}</span>
+            </button>
+          </form>
+          <form method="post" action="/coders/{{.ID}}/delete" data-confirm="Delete inactive coder &quot;{{.Name}}&quot;?" data-confirm-button="Delete" data-ajax-refresh data-chip-x>
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <button type="submit" class="project-chip-x" aria-label="Delete coder {{.Name}}" title="Delete"><i class="ti ti-trash"></i></button>
+          </form>
+        </div>
+        {{end}}
+      </span>
+      <a href="/coders/new?project={{urlquery .Name}}&amp;return={{urlquery (printf "/projects#project-%s" .Name)}}" class="project-chip project-chip-new" title="Start coder in project {{.Name}}" aria-label="Start coder in project {{.Name}}">
+        <i class="ti ti-code-ai" aria-hidden="true"></i><i class="ti ti-plus" aria-hidden="true"></i>
+      </a>
+      <form method="post" action="/shells/new" class="project-chip-form">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="project" value="{{.Path}}">
+        <button type="submit" class="project-chip project-chip-new" title="Start shell in project {{.Name}}" aria-label="Start shell in project {{.Name}}">
+          <i class="ti ti-terminal-2" aria-hidden="true"></i><i class="ti ti-plus" aria-hidden="true"></i>
+        </button>
+      </form>
     </div>
   </div>
   {{end}}

@@ -136,7 +136,7 @@
 <div class="alert alert-{{if eq .Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible mb-3" role="alert">
   <div class="d-flex">
     <i class="ti {{if eq .Flash.Level "success"}}ti-circle-check{{else}}ti-alert-circle{{end}} me-2 fs-3"></i>
-    <div class="text-break">{{.Flash.Message}}</div>
+    <div class="text-break min-w-0">{{.Flash.Message}}</div>
   </div>
   <a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>
 </div>

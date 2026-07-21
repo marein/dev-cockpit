@@ -127,37 +127,37 @@ L.runFeature("LIVE-UPDATES", async ({ engine, browser, page, run, bag }) => {
     });
 
     await run("the projects page adds/removes sessions live and keeps unfold in other projects", async () => {
-      // A second project with 6 shells so its shell list folds (>5).
+      // A second project with 9 shells so its chip list folds (>8).
       const other = `zzlive2-${tag}`;
       await L.createProject(pageB, other);
       const otherShells = [];
-      for (let i = 0; i < 6; i += 1) otherShells.push(await L.createShell(pageB, other));
+      for (let i = 0; i < 9; i += 1) otherShells.push(await L.createShell(pageB, other));
       shells.push(...otherShells);
 
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-      assert((await L.waitUpgraded(page, ["dc-project-list", "dc-collapse-list"], 8000)).length === 0, "elements not upgraded");
-      // Unfold the other project's shells.
-      const otherBody = `#project-${other}-shells [data-shells-body]`;
-      const toggle = page.locator(`${otherBody} [data-collapse-toggle]`);
+      assert((await L.waitUpgraded(page, ["dc-project-list"], 8000)).length === 0, "elements not upgraded");
+      // Unfold the other project's chips.
+      const otherBody = `#project-${other} [data-sessions-body]`;
+      const toggle = page.locator(`${otherBody} [data-chips-toggle]`);
       await toggle.waitFor({ state: "visible", timeout: 6000 });
       await toggle.click();
-      const visibleRows = async (sel) => page.locator(`${sel} .list-group-item:not([data-collapse-toggle])`).count();
-      assert((await visibleRows(otherBody)) === 6, "unfold did not reveal all 6 shells");
+      const visibleChips = async (sel) => page.locator(`${sel} [data-chip]:not(.d-none)`).count();
+      assert((await visibleChips(otherBody)) === 9, "unfold did not reveal all 9 shells");
 
       // Start a shell in the FIRST project from client B: appears live here...
       const sX = await L.createShell(pageB, project);
       shells.push(sX);
       const idX = shellId(sX);
-      await page.waitForSelector(`#project-${project}-shells [data-notify-target="${idX}"]`, { timeout: 8000 });
+      await page.waitForSelector(`#project-${project} [data-notify-target="${idX}"]`, { timeout: 8000 });
       assert(page.url().endsWith("/projects"), `client A navigated away: ${page.url()}`);
       // ...and the other project's unfold survived the live update.
-      assert((await visibleRows(otherBody)) === 6, "unfolded other project refolded on a live change elsewhere");
+      assert((await visibleChips(otherBody)) === 9, "unfolded other project refolded on a live change elsewhere");
 
-      // Delete it again from client B: row disappears live, unfold still intact.
+      // Delete it again from client B: chip disappears live, unfold still intact.
       await L.deleteShell(pageB, sX);
       shells.splice(shells.indexOf(sX), 1);
-      await page.waitForSelector(`#project-${project}-shells [data-notify-target="${idX}"]`, { state: "detached", timeout: 8000 });
-      assert((await visibleRows(otherBody)) === 6, "unfold lost after a live delete elsewhere");
+      await page.waitForSelector(`#project-${project} [data-notify-target="${idX}"]`, { state: "detached", timeout: 8000 });
+      assert((await visibleChips(otherBody)) === 9, "unfold lost after a live delete elsewhere");
 
       for (const url of otherShells) await L.deleteShell(pageB, url).catch(() => {});
       await L.deleteProject(pageB, other).catch(() => {});

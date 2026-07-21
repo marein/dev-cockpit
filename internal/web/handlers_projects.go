@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/local/dev-cockpit/internal/filesystem"
@@ -46,12 +47,14 @@ func (s *Server) projectsWithRunners() []project.Project {
 				if filesystem.IsUnder(active.CWD, projects[i].Path) {
 					projects[i].ActiveCoders++
 					projects[i].ActiveCoderRefs = append(projects[i].ActiveCoderRefs, project.CoderRef{
-						ID:      active.Identifier,
-						Name:    active.Name,
-						Coder:   coderID,
-						At:      active.StartedAt,
-						TabPos:  active.TabPos,
-						HasNews: news[active.Identifier],
+						ID:       active.Identifier,
+						Name:     active.Name,
+						Coder:    coderID,
+						At:       active.StartedAt,
+						TabPos:   active.TabPos,
+						Group:    active.TabGroup,
+						GroupPos: active.TabGroupPos,
+						HasNews:  news[active.Identifier],
 					})
 					projects[i].HasNews = projects[i].HasNews || news[active.Identifier]
 				}
@@ -87,11 +90,13 @@ func (s *Server) projectsWithRunners() []project.Project {
 		for j := range shells {
 			if filesystem.IsUnder(shells[j].CWD, projects[i].Path) {
 				projects[i].ShellRefs = append(projects[i].ShellRefs, project.ShellRef{
-					ID:      shells[j].Identifier,
-					Name:    shells[j].Name,
-					At:      shells[j].StartedAt,
-					TabPos:  shells[j].TabPos,
-					HasNews: news[shells[j].Identifier],
+					ID:       shells[j].Identifier,
+					Name:     shells[j].Name,
+					At:       shells[j].StartedAt,
+					TabPos:   shells[j].TabPos,
+					Group:    shells[j].TabGroup,
+					GroupPos: shells[j].TabGroupPos,
+					HasNews:  news[shells[j].Identifier],
 				})
 				projects[i].HasNews = projects[i].HasNews || news[shells[j].Identifier]
 			}
@@ -101,8 +106,88 @@ func (s *Server) projectsWithRunners() []project.Project {
 		sort.Slice(refs, func(a, b int) bool {
 			return byTabOrder(refs[a].TabPos, refs[b].TabPos, refs[a].At, refs[b].At, refs[a].ID, refs[b].ID)
 		})
+		projects[i].ActiveRefs = mergedActiveRefs(&projects[i])
 	}
 	return projects
+}
+
+// mergedActiveRefs interleaves a project's live coders and shells into the tab
+// strip order, so the chip row on the projects page reads like the strip. Split
+// view members cluster at their group's strip position (the best placed member)
+// in @dc_tab_gpos order, mirroring foldStripTabs without folding them into one
+// entry. Group scope is this project's list; a group spanning projects clusters
+// per row.
+func mergedActiveRefs(p *project.Project) []project.TerminalRef {
+	type mref struct {
+		ref      project.TerminalRef
+		at       time.Time
+		tabPos   int
+		group    string
+		groupPos int
+	}
+	var all []mref
+	for _, r := range p.ActiveCoderRefs {
+		all = append(all, mref{
+			ref:      project.TerminalRef{ID: r.ID, Name: r.Name, Kind: "coder", Coder: r.Coder, HasNews: r.HasNews},
+			at:       r.At,
+			tabPos:   r.TabPos,
+			group:    r.Group,
+			groupPos: r.GroupPos,
+		})
+	}
+	for _, r := range p.ShellRefs {
+		all = append(all, mref{
+			ref:      project.TerminalRef{ID: r.ID, Name: r.Name, Kind: "shell", HasNews: r.HasNews},
+			at:       r.At,
+			tabPos:   r.TabPos,
+			group:    r.Group,
+			groupPos: r.GroupPos,
+		})
+	}
+	sort.SliceStable(all, func(a, b int) bool {
+		return byTabOrder(all[a].tabPos, all[b].tabPos, all[a].at, all[b].at, all[a].ref.ID, all[b].ref.ID)
+	})
+	groupCount := map[string]int{}
+	for _, r := range all {
+		if r.group != "" {
+			groupCount[r.group]++
+		}
+	}
+	out := make([]project.TerminalRef, 0, len(all))
+	done := map[string]bool{}
+	for _, r := range all {
+		if r.group == "" || groupCount[r.group] < 2 {
+			out = append(out, r.ref)
+			continue
+		}
+		if done[r.group] {
+			continue
+		}
+		done[r.group] = true
+		var members []mref
+		for _, m := range all {
+			if m.group == r.group {
+				members = append(members, m)
+			}
+		}
+		sort.SliceStable(members, func(a, b int) bool {
+			pa, pb := members[a].groupPos, members[b].groupPos
+			if pa != pb {
+				if pa == 0 {
+					return false
+				}
+				if pb == 0 {
+					return true
+				}
+				return pa < pb
+			}
+			return byTabOrder(members[a].tabPos, members[b].tabPos, members[a].at, members[b].at, members[a].ref.ID, members[b].ref.ID)
+		})
+		for _, m := range members {
+			out = append(out, m.ref)
+		}
+	}
+	return out
 }
 
 func (s *Server) handleProjectNew(c *gin.Context) {

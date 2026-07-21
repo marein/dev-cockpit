@@ -89,8 +89,31 @@ free floating page scripts.
   `@dc/<name>`. `@dc/contextmenu` renders a body-mounted `.dc-context-menu`
   dropdown at a point, one open menu at a time (Escape/arrow keys, outside
   pointerdown, outside wheel/touchmove, `dc:navigated` and the caller's abort
-  signal close it; programmatic scrolls must never close it); the editor tabs,
-  the editor file tree and the terminal tab strip use it.
+  signal close it; programmatic scrolls must never close it). Row menus (right click plus touch
+  long press) go through its `wireRowMenus(container, rowSelector, openFor)`,
+  never a hand-rolled press timer. It runs three paths because no single one
+  covers every device: `contextmenu` (the mouse, and browsers raising it on a
+  long press; iOS Safari's carries no coordinates, so a row's rect is the anchor
+  whenever `clientX`/`clientY` are 0, else the menu sits in the screen corner and
+  reads as "not opening"), touch events, and pointer events. A press is
+  cancelled only by the event family that OWNS it, and ownership needs one
+  subtlety: `pointerdown` fires before `touchstart`, so the pointer arms the
+  press first and the following `touchstart` claims it for the touch family
+  (the timer reads the owning family at fire time). Over a row holding a link
+  iOS hands the long press to its own gesture recognizer, which ends the
+  pointer stream early and, with the callout suppressed, raises no
+  `contextmenu`, so only a touch-owned press survives to open the menu.
+  iOS also ignores `draggable="false"` on links and its drag lift ends the
+  touch stream too, so the handler prevents `dragstart` on rows and
+  `touchcancel` does not kill an armed press (a real scroll delivers
+  touchmove past the movement threshold first).
+  `preventDefault` on `touchend` is what stops the lift from following the
+  link; when a cancelled stream delivers no touchend, the suppressed click
+  does.
+  A menu opened by a resting finger ignores that finger's wobble for a moment
+  (`noteTouchOpen`), otherwise its own `touchmove` closes it at once. The editor
+  tabs, the editor file tree and the projects page chips use it; the terminal
+  tab strip has its own strip gesture and calls `openMenu` directly.
 - **Custom elements:** `internal/web/static/js/components/`, one element per
   file, registered with `customElements.define`. Each imports only from `@dc/*`,
   never from another component, so the import map stays flat.
@@ -213,8 +236,8 @@ stays pinned to the visible top). The tab strip skips the pull while hidden
 (coarse pointer, mobile navigates via the quick nav) or during a close/drag and
 flushes after; its refresh keeps the + menu and switcher current.
 `dc-project-list` swaps only the named project's
-`[data-coders-body]`/`[data-shells-body]` and carries the `dc-collapse-list`
-unfold flag over. The shell attach header (`dc-inline-rename`) re-pulls
+`[data-sessions-body]` chip list and re-folds it; the unfold flag lives on
+that container, which stays in the DOM across swaps. The shell attach header (`dc-inline-rename`) re-pulls
 `GET /shells/:id/name` into heading and page title. A state dir belongs to one
 serve process, a second process on the same dir would miss live pushes. The
 `dc-notifications` element owns bell, badge, center, toasts, and the title

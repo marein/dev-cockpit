@@ -102,7 +102,7 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       // Every resume/delete selector is scoped to the scratch project card:
       // /projects lists the real projects' resumables too, and an unscoped
       // .first() resumes or deletes someone else's stored session.
-      const card = `#project-${project}-coders`;
+      const card = `#project-${project}`;
       await L.stopSession(page, sessionUrl); sessionUrl = null;
       assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "error toast after user stop");
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
@@ -121,7 +121,7 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
   } finally {
     if (sessionUrl) await L.stopSession(page, sessionUrl).catch(() => {});
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" }).catch(() => {});
-    for (let i = 0; i < 4; i++) { const d = page.locator(`#project-${project}-coders form[action^="/coders/"][action$="/delete"]`).first(); if (await d.count() === 0) break; await d.locator("button").first().click().catch(() => {}); await confirmSwal(page).catch(() => {}); await sleep(500); await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" }).catch(() => {}); }
+    for (let i = 0; i < 4; i++) { const d = page.locator(`#project-${project} form[action^="/coders/"][action$="/delete"]`).first(); if (await d.count() === 0) break; await d.locator("button").first().click().catch(() => {}); await confirmSwal(page).catch(() => {}); await sleep(500); await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" }).catch(() => {}); }
     const af = await page.$(`form[action="/agents/${agentId}/delete"], form[action="/agents/${encodeURIComponent(agentId)}/delete"]`).catch(() => null);
     if (af) { await (await af.$("button")).click().catch(() => {}); await confirmSwal(page).catch(() => {}); await sleep(400); }
     await L.deleteProject(page, project).catch(() => {});

@@ -14,13 +14,13 @@ L.runFeature("FRONTEND", async ({ page, run, bag }) => {
   let shellUrl = null;
   try {
     await L.createProject(page, project);
-    // dc-collapse-list renders only for a project with coders or shells, so the
-    // scratch shell must exist before the /projects check (self-contained run).
+    // The scratch shell exists up front so the attach steps below run against a
+    // session this runner owns (self-contained run).
     shellUrl = await L.createShell(page, project);
 
     await run("custom elements upgraded on /projects", async () => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-      assert((await L.waitUpgraded(page, ["dc-quicknav", "dc-update-check", "dc-project-list", "dc-collapse-list"], 8000)).length === 0, "not upgraded");
+      assert((await L.waitUpgraded(page, ["dc-quicknav", "dc-update-check", "dc-project-list"], 8000)).length === 0, "not upgraded");
     });
 
     await run("custom elements upgraded on the editor", async () => {

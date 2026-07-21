@@ -147,16 +147,20 @@
           <i class="ti ti-code flex-shrink-0"></i><span class="text-truncate">Editor</span>
         </a>
         <div class="dropdown-divider"></div>
-        <h6 class="dropdown-header">Coders</h6>
-        <div data-qn-fold="{{.Name}}-coders">
-        {{range .ActiveCoders}}
+        <div data-qn-fold="{{.Name}}-terminals">
+        {{range .Terminals}}
         <div class="quicknav-swipe-row">
           <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
-             data-tab-id="{{.ID}}" data-tab-kind="coder" data-tab-name="{{.Name}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-            <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span><span class="text-truncate">{{.Name}}</span>
+             data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
+            <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span><span class="text-truncate">{{.Name}}</span>
           </a>
-          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="Stop coder {{.Name}}" title="Stop coder">
-            <i class="ti ti-player-stop" aria-hidden="true"></i>
+          {{if eq .Kind "shell"}}
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
+            <i class="ti ti-pencil" aria-hidden="true"></i>
+          </button>
+          {{end}}
+          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}}">
+            <i class="ti {{if eq .Kind "coder"}}ti-player-stop{{else}}ti-trash{{end}}" aria-hidden="true"></i>
           </button>
         </div>
         {{end}}
@@ -178,24 +182,6 @@
         <a class="dropdown-item d-flex align-items-center gap-2" href="{{.NewCoderURL}}">
           <i class="ti ti-plus flex-shrink-0"></i><span>New coder</span>
         </a>
-        <div class="dropdown-divider"></div>
-        <h6 class="dropdown-header">Shells</h6>
-        <div data-qn-fold="{{.Name}}-shells">
-        {{range .Shells}}
-        <div class="quicknav-swipe-row">
-          <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
-             data-tab-id="{{.ID}}" data-tab-kind="shell" data-tab-name="{{.Name}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-            <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i></span><span class="text-truncate">{{.Name}}</span>
-          </a>
-          <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
-            <i class="ti ti-pencil" aria-hidden="true"></i>
-          </button>
-          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="Delete shell {{.Name}}" title="Delete shell">
-            <i class="ti ti-trash" aria-hidden="true"></i>
-          </button>
-        </div>
-        {{end}}
-        </div>
         <form method="post" action="/shells/new">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="project" value="{{.Path}}">

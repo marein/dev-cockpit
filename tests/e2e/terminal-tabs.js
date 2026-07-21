@@ -602,7 +602,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await L.stopSession(page, coderUrl);
       coderUrl = null;
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-      await page.waitForSelector(`#project-${project}-coders form[action^="/coders/"][action$="/resume"]`, { timeout: 8000 });
+      await page.waitForSelector(`#project-${project} form[action^="/coders/"][action$="/resume"]`, { timeout: 8000 });
 
       await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
       await page.waitForSelector(".terminal-tabs-new-btn", { state: "attached", timeout: 8000 });

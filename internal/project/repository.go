@@ -31,25 +31,40 @@ type Project struct {
 	ActiveCoderRefs   []CoderRef
 	InactiveCoderRefs []CoderRef
 	ShellRefs         []ShellRef
+	ActiveRefs        []TerminalRef // coders and shells merged in tab strip order
 	LastUsedUnix      int64 // last time the project was opened; 0 = never
 	HasNews           bool  // any coder or shell below has an unread notification
 }
 
 type CoderRef struct {
-	ID      string
-	Name    string
-	Coder   string    // owning coder id, for the badge when several coders run
-	At      time.Time // started (active) or last updated (inactive); for date sorting
-	TabPos  int       // tab strip position from @dc_tab_pos, 0 when unset (active only)
-	HasNews bool      // an unread notification points at this coder
+	ID       string
+	Name     string
+	Coder    string    // owning coder id, for the badge when several coders run
+	At       time.Time // started (active) or last updated (inactive); for date sorting
+	TabPos   int       // tab strip position from @dc_tab_pos, 0 when unset (active only)
+	Group    string    // split view group id from @dc_tab_group, empty when ungrouped
+	GroupPos int       // position inside the group from @dc_tab_gpos, 0 when unset
+	HasNews  bool      // an unread notification points at this coder
 }
 
 type ShellRef struct {
+	ID       string
+	Name     string
+	At       time.Time // started; tiebreak for the tab order sort
+	TabPos   int       // tab strip position from @dc_tab_pos, 0 when unset
+	Group    string    // split view group id from @dc_tab_group, empty when ungrouped
+	GroupPos int       // position inside the group from @dc_tab_gpos, 0 when unset
+	HasNews  bool      // an unread notification points at this shell
+}
+
+// TerminalRef is one live coder or shell of a project, merged into the tab
+// strip order for the projects page chip row.
+type TerminalRef struct {
 	ID      string
 	Name    string
-	At      time.Time // started; tiebreak for the tab order sort
-	TabPos  int       // tab strip position from @dc_tab_pos, 0 when unset
-	HasNews bool      // an unread notification points at this shell
+	Kind    string // "coder" or "shell"
+	Coder   string // owning coder id when Kind is "coder"
+	HasNews bool
 }
 
 // Repository wraps the on-disk projects root.

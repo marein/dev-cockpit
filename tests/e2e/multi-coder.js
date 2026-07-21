@@ -105,7 +105,7 @@ L.runFeature(`MULTI-CODER (${MODE})`, async ({ page, run }) => {
       assert(await page.$('.attach-page span[title="Copilot"] i.ti-brand-github-copilot'), "no Copilot icon on attach page");
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       const badge = await page.evaluate((p) => {
-        const scope = document.getElementById(`project-${p}-coders`);
+        const scope = document.getElementById(`project-${p}`);
         return scope && !!scope.querySelector('span[title="Copilot"] i.ti-brand-github-copilot');
       }, project);
       assert(badge, "no Copilot icon on the project session row");

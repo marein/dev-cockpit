@@ -4,7 +4,7 @@
 // a CDN; if that fails we fall back to a plain <textarea> so viewing/editing
 // still works.
 import { notifyError } from "@dc/toast";
-import { menuJustClosed, openMenu } from "@dc/contextmenu";
+import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { csrfHeaders, ensureOk, getJSON, postForm } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
@@ -1311,64 +1311,6 @@ async function init(root) {
     }
   }, { passive: false, signal });
 
-  function wireRowMenus(container, rowSelector, openFor) {
-    let press = null;
-    let suppressClick = false;
-    let pressMenuAt = 0;
-    const cancelPress = () => {
-      if (!press) return;
-      clearTimeout(press.timer);
-      press = null;
-    };
-    container.addEventListener("contextmenu", (e) => {
-      const row = e.target.closest(rowSelector);
-      if (press) {
-        cancelPress();
-        suppressClick = true;
-      }
-      if (Date.now() - pressMenuAt < 600) {
-        e.preventDefault();
-        return;
-      }
-      let handled;
-      if (e.clientX || e.clientY) {
-        handled = openFor(row, e.clientX, e.clientY);
-      } else if (row) {
-        const rect = row.getBoundingClientRect();
-        handled = openFor(row, rect.left, rect.bottom + 4);
-      }
-      if (handled) e.preventDefault();
-    }, { signal });
-    container.addEventListener("pointerdown", (e) => {
-      suppressClick = false;
-      if (e.pointerType !== "touch") return;
-      const row = e.target.closest(rowSelector);
-      cancelPress();
-      press = {
-        x: e.clientX,
-        y: e.clientY,
-        timer: setTimeout(() => {
-          press = null;
-          if (openFor(row, e.clientX, e.clientY)) {
-            suppressClick = true;
-            pressMenuAt = Date.now();
-          }
-        }, 500),
-      };
-    }, { signal });
-    container.addEventListener("pointermove", (e) => {
-      if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) cancelPress();
-    }, { signal });
-    container.addEventListener("pointerup", cancelPress, { signal });
-    container.addEventListener("pointercancel", cancelPress, { signal });
-    container.addEventListener("click", (e) => {
-      if (!suppressClick) return;
-      suppressClick = false;
-      e.preventDefault();
-      e.stopPropagation();
-    }, { signal, capture: true });
-  }
-
   // Mouse drag reorders the tab strip like the terminal tabs: threshold, live
   // transform preview, edge auto scroll, then the tabs array is respliced and
   // persisted. Touch stays out, there the long press menu and the native
@@ -1496,8 +1438,8 @@ async function init(root) {
     if (!row) return false;
     openTabMenu(row.dataset.path, x, y);
     return true;
-  });
-  wireRowMenus(treeEl, ".editor-item", openTreeMenu);
+  }, { signal });
+  wireRowMenus(treeEl, ".editor-item", openTreeMenu, { signal });
   wireTreeDrop();
   wireSplitter();
   wireQuickOpen();

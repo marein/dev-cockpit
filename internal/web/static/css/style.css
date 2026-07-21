@@ -1720,7 +1720,7 @@ body:not(:has(.attach-footer)) .quicknav {
   }
 }
 
-dc-project-list { display: contents; }
+dc-project-list { display: block; }
 dc-quicknav { display: block; }
 dc-inline-rename { display: block; }
 dc-editor { display: block; }
@@ -1754,6 +1754,91 @@ terminal-input { display: none; }
   20% { transform: rotate(-11deg); }
   30% { transform: rotate(7deg); }
   40% { transform: rotate(-5deg); }
+}
+
+.projects-card .list-group-item.project-row { padding: 0.65rem 0.85rem; }
+.project-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+.project-chip-fold,
+.project-chip-form { display: contents; }
+.project-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--tblr-border-color);
+  border-radius: 2rem;
+  background: var(--tblr-bg-surface);
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.project-chip:hover { border-color: rgba(var(--tblr-primary-rgb), 0.5); }
+.project-chip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0.3rem 0.25rem 0.3rem 0.65rem;
+  border: 0;
+  background: transparent;
+  color: var(--tblr-body-color);
+  text-decoration: none;
+  text-align: start;
+  cursor: pointer;
+}
+.project-chip-main:hover {
+  color: var(--tblr-body-color);
+  text-decoration: none;
+}
+.project-chip-name {
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-chip-x {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--tblr-secondary);
+  padding: 0.3rem 0.55rem 0.3rem 0.15rem;
+  cursor: pointer;
+  opacity: 0.65;
+}
+.project-chip-x:hover { color: var(--tblr-danger); opacity: 1; }
+@media (hover: hover) and (pointer: fine) {
+  .project-chip-x { opacity: 0; }
+  .project-chip:hover .project-chip-x,
+  .project-chip:focus-within .project-chip-x { opacity: 1; }
+}
+.project-chip.is-idle {
+  border-style: dashed;
+  background: transparent;
+}
+.project-chip.is-idle .project-chip-main { color: var(--tblr-secondary); }
+.project-chip-new,
+.project-chip-more {
+  gap: 0.25rem;
+  padding: 0.3rem 0.65rem;
+  background: transparent;
+  color: var(--tblr-secondary);
+  text-decoration: none;
+  cursor: pointer;
+}
+.project-chip-more { border-style: dashed; }
+.project-chip-new:hover,
+.project-chip-more:hover {
+  color: var(--tblr-primary);
+  border-color: rgba(var(--tblr-primary-rgb), 0.5);
+  text-decoration: none;
 }
 
 dc-notifications { display: block; }

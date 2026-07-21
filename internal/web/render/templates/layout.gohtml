@@ -41,7 +41,6 @@
       "dc-notifications": "{{asset "/js/components/notifications.js"}}",
       "dc-update-check": "{{asset "/js/components/update-check.js"}}",
       "dc-project-list": "{{asset "/js/components/project-list.js"}}",
-      "dc-collapse-list": "{{asset "/js/components/collapse-list.js"}}",
       "dc-coder-select": "{{asset "/js/components/coder-select.js"}}",
       "dc-inline-rename": "{{asset "/js/components/inline-rename.js"}}",
       "dc-editor": "{{asset "/js/components/editor.js"}}",
@@ -124,7 +123,7 @@
       <div class="alert alert-{{if eq .Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible" role="alert">
         <div class="d-flex">
           <i class="ti {{if eq .Flash.Level "success"}}ti-circle-check{{else}}ti-alert-circle{{end}} me-2 fs-3"></i>
-          <div class="text-break">{{.Flash.Message}}</div>
+          <div class="text-break min-w-0">{{.Flash.Message}}</div>
         </div>
         <a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>
       </div>
@@ -241,7 +240,7 @@
           <div class="alert alert-{{if eq .Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible" role="alert">
             <div class="d-flex">
               <i class="ti {{if eq .Flash.Level "success"}}ti-circle-check{{else}}ti-alert-circle{{end}} me-2 fs-3"></i>
-              <div>{{.Flash.Message}}</div>
+              <div class="text-break min-w-0">{{.Flash.Message}}</div>
             </div>
             <a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>
           </div>
