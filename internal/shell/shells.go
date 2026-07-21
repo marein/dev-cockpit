@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,12 @@ import (
 	"github.com/local/dev-cockpit/internal/terminal"
 	"github.com/local/dev-cockpit/internal/tmux"
 )
+
+// HistorySettingKey is the settings store key that switches per-shell command
+// history on (value "on"). Unset or anything else means off: shells then share
+// the login shell's default history file. It only affects newly started
+// shells, like the terminal restore setting.
+const HistorySettingKey = "shell-history"
 
 // shellNameOption is the tmux user option that holds a shell's display name. Its
 // presence marks a tmux session as a shell and tells it apart from coder
@@ -83,23 +90,29 @@ func (c *shellsCache) invalidate() {
 // Shells orchestrates plain shell sessions. It reuses the tmux client and the
 // streaming machinery that back coder sessions, but carries no provider state.
 type Shells struct {
-	cfg       config.Config
-	tmux      *tmux.Client
-	projects  *project.Repository
-	mapper    terminal.ControlMapper
-	streams   *terminal.Hub
-	listCache *shellsCache
+	cfg            config.Config
+	tmux           *tmux.Client
+	projects       *project.Repository
+	mapper         terminal.ControlMapper
+	streams        *terminal.Hub
+	listCache      *shellsCache
+	historyEnabled func() bool
 }
 
-// NewShells wires up Shells with its dependencies.
-func NewShells(cfg config.Config, t *tmux.Client, projects *project.Repository) *Shells {
+// NewShells wires up Shells with its dependencies. historyEnabled reads the
+// per-shell history setting on every call; a nil func means the feature is off.
+func NewShells(cfg config.Config, t *tmux.Client, projects *project.Repository, historyEnabled func() bool) *Shells {
+	if historyEnabled == nil {
+		historyEnabled = func() bool { return false }
+	}
 	return &Shells{
-		cfg:       cfg,
-		tmux:      t,
-		projects:  projects,
-		mapper:    terminal.DefaultControlMapper(),
-		streams:   terminal.NewHub(cfg),
-		listCache: &shellsCache{ttl: cfg.SnapshotCacheTTL},
+		cfg:            cfg,
+		tmux:           t,
+		projects:       projects,
+		mapper:         terminal.DefaultControlMapper(),
+		streams:        terminal.NewHub(cfg),
+		listCache:      &shellsCache{ttl: cfg.SnapshotCacheTTL},
+		historyEnabled: historyEnabled,
 	}
 }
 
@@ -196,7 +209,11 @@ func (s *Shells) start(workdir, name, key string) (string, error) {
 			return "", fmt.Errorf(`Shell "%s" already exists.`, key)
 		}
 	}
-	if err := s.tmux.NewSession(key, dir, "exec bash -il", shellMarkEnv()); err != nil {
+	env, err := s.shellEnv(key)
+	if err != nil {
+		return "", err
+	}
+	if err := s.tmux.NewSession(key, dir, "exec bash -il", env); err != nil {
 		return "", err
 	}
 	if err := s.tmux.SetOption(key, shellNameOption, label); err != nil {
@@ -210,6 +227,78 @@ func (s *Shells) start(workdir, name, key string) (string, error) {
 	}
 	s.Invalidate()
 	return key, nil
+}
+
+// shellEnv builds the environment injected into a new shell. Every shell gets
+// the OSC 133 prompt marks; with per-shell history on, the shell also points
+// HISTFILE at its own id-keyed file and, on every prompt, flushes it with
+// `history -a` and re-caps it by re-assigning HISTFILESIZE.
+//
+// `history -a` appends only the unwritten lines and tracks its own offset, so
+// it never duplicates, not even against the exit-time save a login shell does
+// with `histappend` on, and a tmux kill (SIGHUP, no clean exit) never drops
+// the history. `-a` alone never truncates though, so a shell that is never
+// restarted would grow the file without bound. Re-assigning HISTFILESIZE to its
+// own value truncates the file to that many lines right then, so the cap holds
+// mid-session too, not only on the startup assignment the login rc does. The
+// value is the effective HISTFILESIZE (the rc's, bash's default, or one the
+// user set live), so this respects the user's own history size.
+//
+// Keyed by id, the file survives a restore, which recreates the shell under the
+// same id. An rc that overwrites HISTFILE or PROMPT_COMMAND silently turns this
+// off, same caveat as the marks.
+func (s *Shells) shellEnv(key string) (map[string]string, error) {
+	env := shellMarkEnv()
+	if !s.historyEnabled() {
+		return env, nil
+	}
+	dir := s.historyDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	env["HISTFILE"] = filepath.Join(dir, key)
+	env["PROMPT_COMMAND"] = "history -a; HISTFILESIZE=$HISTFILESIZE; " + env["PROMPT_COMMAND"]
+	return env, nil
+}
+
+// historyDir is the directory holding the per-shell history files.
+func (s *Shells) historyDir() string {
+	return filepath.Join(s.cfg.StateDir, "shell-history")
+}
+
+// ReapHistory deletes per-shell history files that no live shell owns. Files
+// are keyed by shell id and ids are never reused, so a file without a live
+// shell is dead weight: a shell closed outside the cockpit, or a reboot without
+// restore. Restore recreates shells under their old id before the startup reap
+// runs, so a restored shell's file is kept. Runs regardless of the setting, so
+// files left over from a former on-phase clean up too. Best effort, a missing
+// directory is a no-op.
+func (s *Shells) ReapHistory() {
+	dir := s.historyDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	live := map[string]bool{}
+	for _, sh := range s.List() {
+		live[sh.Identifier] = true
+	}
+	for _, e := range entries {
+		if e.IsDir() || live[e.Name()] {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, e.Name()))
+	}
+}
+
+// RunHistoryReaper reaps orphan history files every interval. Never returns,
+// run it on a goroutine.
+func (s *Shells) RunHistoryReaper(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.ReapHistory()
+	}
 }
 
 // Rename changes a shell's display name.
@@ -240,6 +329,7 @@ func (s *Shells) Delete(rawID string) (string, error) {
 		return "", err
 	}
 	s.streams.Clear(sh.TmuxSession)
+	_ = os.Remove(filepath.Join(s.historyDir(), sh.Identifier))
 	s.Invalidate()
 	return sh.Name, nil
 }

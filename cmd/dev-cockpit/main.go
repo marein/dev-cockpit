@@ -175,7 +175,10 @@ func runServe(opts serveOptions) error {
 		}
 		coders = append(coders, manager)
 	}
-	shells := shell.NewShells(cfg, tmuxClient, projectRepo)
+	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
+	shells := shell.NewShells(cfg, tmuxClient, projectRepo, func() bool {
+		return settingsStore.Get(shell.HistorySettingKey) == "on"
+	})
 
 	notifier := notify.NewService(
 		notify.StorePath(cfg.StateDir),
@@ -189,8 +192,6 @@ func runServe(opts serveOptions) error {
 	}
 	pushService.Start(notifier)
 
-	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
-
 	// The startup pass runs before the watchers and the server, so restored
 	// sessions are in place when the first page renders. Off by default, the
 	// snapshot file itself is kept current regardless of the setting.
@@ -201,6 +202,11 @@ func runServe(opts serveOptions) error {
 	)
 	restorer.RunStartup()
 	go restorer.RunPeriodic(30 * time.Second)
+
+	// Restore has recreated its shells under their old ids by now, so the
+	// startup reap keeps them and drops only the truly orphaned history files.
+	shells.ReapHistory()
+	go shells.RunHistoryReaper(10 * time.Minute)
 
 	for _, c := range selected {
 		go notifier.RunInbox(notify.InboxDir(cfg.StateDir, c.ID()), time.Second)

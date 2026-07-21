@@ -31,6 +31,21 @@
           </div>
           <button type="submit" class="btn btn-primary">Save</button>
         </form>
+        <hr class="my-4">
+        <form method="post" action="/settings/general" id="settings-shell-history">
+          {{if and (eq $.FlashProject "settings-shell-history") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <input type="hidden" name="form" value="shell-history">
+          <div class="mb-3">
+            <label class="form-label">Shell history</label>
+            <div class="text-secondary small mb-2">Give every shell its own command history instead of sharing the login shell's file. History is kept per shell and survives a restore. Only affects newly started shells.</div>
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="history" value="on"{{if .HistoryEnabled}} checked{{end}}>
+              <span class="form-check-label">Separate history per shell</span>
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </form>
       </div>
     </div>
   </div>

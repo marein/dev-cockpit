@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/local/dev-cockpit/internal/restore"
+	"github.com/local/dev-cockpit/internal/shell"
 	"github.com/local/dev-cockpit/internal/web/render"
 )
 
@@ -49,19 +50,32 @@ func (s *Server) handleSettingsGeneral(c *gin.Context) {
 	c.HTML(http.StatusOK, "settings_general.gohtml", render.SettingsGeneralData{
 		Page:           s.page(c, "Settings", "settings"),
 		RestoreEnabled: s.settings.Get(restore.SettingKey) == "on",
+		HistoryEnabled: s.settings.Get(shell.HistorySettingKey) == "on",
 	})
 }
 
-// handleSettingsGeneralSave stores the terminal restore switch. The value
-// is explicit ("on"/"off") instead of deleting the key, so a later default
-// flip cannot silently re-enable it for users who turned it off.
+// handleSettingsGeneralSave stores one of the general settings, dispatched on
+// the hidden form field. The value is explicit ("on"/"off") instead of
+// deleting the key, so a later default flip cannot silently re-enable it for
+// users who turned it off. An empty form field stays routed to the restore
+// switch, which predates the dispatch.
 func (s *Server) handleSettingsGeneralSave(c *gin.Context) {
-	value := "off"
-	if c.PostForm("restore") == "on" {
-		value = "on"
+	switch c.PostForm("form") {
+	case "shell-history":
+		value := "off"
+		if c.PostForm("history") == "on" {
+			value = "on"
+		}
+		s.settings.Set(shell.HistorySettingKey, value)
+		s.redirectWithAnchoredFlash(c, "/settings/general", "settings-shell-history", "Settings saved.", "")
+	default:
+		value := "off"
+		if c.PostForm("restore") == "on" {
+			value = "on"
+		}
+		s.settings.Set(restore.SettingKey, value)
+		s.redirectWithAnchoredFlash(c, "/settings/general", "settings-terminal-restore", "Settings saved.", "")
 	}
-	s.settings.Set(restore.SettingKey, value)
-	s.redirectWithAnchoredFlash(c, "/settings/general", "settings-terminal-restore", "Settings saved.", "")
 }
 
 func (s *Server) handleSettingsNotifications(c *gin.Context) {

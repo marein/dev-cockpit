@@ -30,6 +30,7 @@ type PushWebhook struct {
 type SettingsGeneralData struct {
 	Page
 	RestoreEnabled bool
+	HistoryEnabled bool
 }
 
 // SettingsNotificationsData feeds the notifications settings page.
