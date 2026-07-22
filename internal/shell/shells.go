@@ -213,7 +213,7 @@ func (s *Shells) start(workdir, name, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := s.tmux.NewSession(key, dir, "exec bash -il", env); err != nil {
+	if err := s.tmux.NewSession(key, dir, "", env); err != nil {
 		return "", err
 	}
 	if err := s.tmux.SetOption(key, shellNameOption, label); err != nil {

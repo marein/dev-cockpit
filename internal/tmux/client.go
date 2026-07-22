@@ -75,13 +75,20 @@ func New() *Client { return &Client{} }
 // Target returns the canonical pane target for a session.
 func Target(name string) string { return name + ":0.0" }
 
-// NewSession spawns a detached tmux session.
+// NewSession spawns a detached tmux session. The command runs under an
+// interactive login bash so the full profile chain including ~/.bashrc
+// applies, matching a command typed into a normal shell. An empty shellCmd
+// starts the interactive bash itself.
 func (c *Client) NewSession(name, workdir, shellCmd string, env map[string]string) error {
 	args := []string{"new-session", "-d", "-s", name, "-c", workdir}
 	for _, kv := range sortedEnv(env) {
 		args = append(args, "-e", kv)
 	}
-	args = append(args, "bash", "-lc", shellCmd)
+	if shellCmd == "" {
+		args = append(args, "bash", "-il")
+	} else {
+		args = append(args, "bash", "-ilc", shellCmd)
+	}
 	return clirun.Check("tmux", args...)
 }
 
