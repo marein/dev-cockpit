@@ -116,7 +116,7 @@ class TerminalSplit extends HTMLElement {
   }
 
   onKeydown(event) {
-    if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.altKey || event.repeat) return;
+    if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.altKey) return;
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     const target = event.target;
     if (target instanceof Element

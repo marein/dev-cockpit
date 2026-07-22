@@ -26,7 +26,7 @@ const { assert, sleep, confirmSwal } = L;
 // down; the quick nav refreshes its list shortly after opening (settle
 // ~800ms before measuring); shells need a moment before bash echoes input.
 
-L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage }) => {
+L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
   const tag = `split-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   const shellUrls = [];
@@ -254,6 +254,36 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage }) => {
         ids[1],
         { timeout: 4000 },
       );
+    });
+
+    await run("holding Ctrl+Shift+Arrow keeps stepping through the panes", async () => {
+      if (engine !== "chromium") return "skipped (autoRepeat needs CDP)";
+      await page.evaluate(() => {
+        window.__paneSwitches = 0;
+        document.addEventListener("dc:activate-pane", () => { window.__paneSwitches += 1; });
+      });
+      const cdp = await page.context().newCDPSession(page);
+      const ctrlShift = 10;
+      const key = { key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39, nativeVirtualKeyCode: 39, modifiers: ctrlShift };
+      await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...key });
+      for (let i = 0; i < 4; i++) {
+        await sleep(250);
+        await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", autoRepeat: true, ...key });
+      }
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+      await cdp.detach();
+      const switches = await page.evaluate(() => window.__paneSwitches);
+      assert(switches >= 3, `held key produced only ${switches} pane switches`);
+      const active = await page.evaluate(() => document.querySelector("terminal-attach[active]")?.getAttribute("terminal-id"));
+      if (active !== ids[1]) {
+        await page.keyboard.press("Control+Shift+ArrowRight");
+        await page.waitForFunction(
+          (id) => document.querySelector("terminal-attach[active]")?.getAttribute("terminal-id") === id,
+          ids[1],
+          { timeout: 4000 },
+        );
+      }
+      return `${switches} switches while held`;
     });
 
     await run("shell panes get the shell footer: scroll pad, no prompt or files buttons", async () => {
