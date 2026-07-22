@@ -640,6 +640,12 @@ function initTerminalAttach(host) {
     // ^C; everything else goes to the program (Ctrl+C with no selection stays
     // SIGINT, and paste keeps flowing through xterm's own paste handling).
     term.attachCustomKeyEventHandler((event) => {
+      if (event.type === "keydown" && event.key === "Enter" && event.shiftKey
+        && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing) {
+        event.preventDefault();
+        host.dispatchEvent(new CustomEvent("terminal-control", { bubbles: true, detail: { control: "shift-enter" } }));
+        return false;
+      }
       if (event.type === "keydown" && (event.ctrlKey || event.metaKey)
         && (event.key === "c" || event.key === "C") && term.hasSelection()) {
         return false;

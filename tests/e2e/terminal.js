@@ -50,6 +50,20 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       assert(text.includes(marker), `marker not mirrored (len ${text.length})`);
     });
 
+    await run("desktop: Shift+Enter posts the shift-enter control, shells run the command like Enter", async () => {
+      const marker = `TSE${tag.slice(-4)}`;
+      await page.click("#terminal .xterm-screen");
+      await page.keyboard.type(`echo ${marker.slice(0, 3)}'X'${marker.slice(3)}`, { delay: 20 });
+      const reqP = page.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST" && /shift-enter/.test(r.postData() || ""), { timeout: 8000 });
+      await page.keyboard.press("Shift+Enter");
+      await reqP;
+      const executed = `${marker.slice(0, 3)}X${marker.slice(3)}`;
+      let text = "";
+      for (let i = 0; i < 12; i++) { text = await page.evaluate(() => { const m = document.querySelector(".attach-selection"); return m ? m.textContent || "" : ""; }); if (text.includes(executed)) break; await sleep(400); }
+      assert(text.includes(executed), `command did not run on Shift+Enter (len ${text.length})`);
+      assert(!text.includes("S-Enter"), "literal S-Enter text leaked into the shell");
+    });
+
     await run("desktop: pixel wheel deltas (trackpad) post proportional history steps", async () => {
       const wheelBurst = async (dy, count) => {
         await page.evaluate(async ({ dy, count }) => {

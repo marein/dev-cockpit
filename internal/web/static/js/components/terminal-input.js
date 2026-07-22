@@ -168,6 +168,11 @@ function initTerminalInput(host) {
         void sendTerminalInput({ control: "shift-tab" });
         return;
       }
+      if (event.key === "Enter" && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        void sendTerminalInput({ control: "shift-enter" });
+        return;
+      }
       if (event.ctrlKey || event.metaKey) {
         if (event.key.toLowerCase() === "v") {
           return;

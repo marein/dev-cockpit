@@ -139,6 +139,15 @@ func (c *Client) PaneForegrounds() map[string]PaneForeground {
 	return foregrounds
 }
 
+// PaneForeground returns one session's foreground process state.
+func (c *Client) PaneForeground(name string) (PaneForeground, error) {
+	fg, ok := c.PaneForegrounds()[name]
+	if !ok {
+		return PaneForeground{}, errors.New("Failed to read the pane state.")
+	}
+	return fg, nil
+}
+
 // PaneTheme describes one pane's theme application for ApplyPaneThemes.
 type PaneTheme struct {
 	Name   string

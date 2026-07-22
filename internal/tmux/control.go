@@ -506,6 +506,24 @@ func (c *Control) Modes() PaneModes {
 	}
 }
 
+// PaneForeground reports the pane's foreground process state over the control
+// connection, so per-keystroke decisions (Shift+Enter) fork nothing.
+func (c *Control) PaneForeground(name string) (PaneForeground, error) {
+	lines, _, err := c.commandSync("display-message -p -t " + Target(name) +
+		` "#{pane_current_command} #{alternate_on}"`)
+	if err != nil {
+		return PaneForeground{}, err
+	}
+	if len(lines) == 0 {
+		return PaneForeground{}, errors.New("Failed to read the pane state.")
+	}
+	fields := strings.Fields(string(lines[0]))
+	if len(fields) != 2 {
+		return PaneForeground{}, errors.New("Failed to parse the pane state.")
+	}
+	return PaneForeground{Command: fields[0], AltScreen: fields[1] == "1"}, nil
+}
+
 // Close detaches the control client; the tmux session itself is untouched.
 func (c *Control) Close() error {
 	c.sendMu.Lock()
