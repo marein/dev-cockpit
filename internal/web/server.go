@@ -12,6 +12,7 @@ import (
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/backup"
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/eventbus"
@@ -41,6 +42,7 @@ type Server struct {
 	restorer     *restore.Service
 	version      string
 	updater      *update.Updater
+	backups      *backup.Service
 	assets       staticAssetManifest
 	loginLimiter rateLimiter
 	termTheme    terminalTheme
@@ -73,6 +75,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		restorer: restorer,
 		version:  version,
 		updater:  updater,
+		backups:  backup.New(cfg.StateDir, cfg.ProjectsRoot, version),
 		assets:   assets,
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),

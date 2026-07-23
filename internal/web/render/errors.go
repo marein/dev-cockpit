@@ -8,4 +8,10 @@ type ErrorPage struct {
 	Status  int
 	Heading string
 	Message string
+
+	// CSRFToken and Jingle stay empty. html_head.gohtml evaluates both on
+	// every page, a model without the fields fails the whole error render.
+	// TestErrorPageRenders guards this contract.
+	CSRFToken string
+	Jingle    string
 }

@@ -1,0 +1,165 @@
+{{define "settings_backup.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      <h2 class="page-title text-truncate mb-0">Settings</h2>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row g-0">
+    <div class="col-12 col-md-3 border-end">
+      <div class="card-body">
+        {{template "settings_nav" "backup"}}
+      </div>
+    </div>
+    <div class="col-12 col-md-9">
+      <div class="card-header">
+        <ul class="nav nav-tabs card-header-tabs">
+          <li class="nav-item">
+            <a class="nav-link{{if eq .Tab "export"}} active{{end}}" href="/settings/backup"><i class="ti ti-database-export me-1 d-none d-sm-inline-block"></i>Export</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link{{if eq .Tab "import"}} active{{end}}" href="/settings/backup?tab=import"><i class="ti ti-database-import me-1 d-none d-sm-inline-block"></i>Import{{if .Review}}<span class="badge bg-blue-lt ms-2">{{len .Review}}</span>{{end}}</a>
+          </li>
+        </ul>
+      </div>
+      <div class="card-body">
+        {{if eq .Tab "export"}}
+        <dc-backup-busy download busy-text="Building the archive, the download starts in a moment and then runs in the browser's download list.">
+        <form method="post" action="/settings/backup/download" id="settings-backup-export" data-no-pe>
+          {{if and (eq $.FlashProject "settings-backup-export") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <div class="text-secondary small mb-3">A quick backup for setting this host up again: export, install the new machine, import there, and Dev Cockpit continues where this one stopped. It is not meant as a long term archive, importing works best into the same Dev Cockpit version that exported the file, a file from another version may only apply partially. Pick what goes into the file, sections with nothing to export are disabled. Depending on the selection the export can take a while.</div>
+          <div class="row">
+            {{range .Groups}}
+            <div class="col-12 col-lg-4 mb-2">
+              <div class="form-label">{{.Label}}</div>
+              {{range .Sections}}
+              <label class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" name="sections" value="{{.ID}}"{{if .Available}} checked{{else}} disabled{{end}}>
+                <span class="form-check-label">{{.Label}}</span>
+                <span class="form-check-description">{{if .Available}}{{.Description}}{{else}}Nothing found on this host.{{end}}</span>
+              </label>
+              {{end}}
+            </div>
+            {{end}}
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Password <span class="text-secondary">(optional)</span></label>
+            <div class="text-secondary small mb-2">The file contains private keys and tokens in plain form. With a password the whole file is encrypted, the import asks for the same password.</div>
+            <input type="password" class="form-control" name="password" autocomplete="new-password" placeholder="No encryption">
+          </div>
+          <button type="submit" class="btn btn-primary">Export</button>
+        </form>
+        </dc-backup-busy>
+        {{else}}
+        <div id="settings-backup-import">
+          {{if and (eq $.FlashProject "settings-backup-import") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+          {{if .ImportError}}<div class="alert alert-danger">{{.ImportError}}</div>{{end}}
+          {{if .Import}}
+          <div class="text-secondary small mb-3">Backup{{if .Import.Host}} from <strong>{{.Import.Host}}</strong>{{end}}{{if .Import.Created}}, created {{.Import.Created}}{{end}}{{if .Import.Version}}, version {{.Import.Version}}{{end}}. Pick what to import, existing files are overwritten.</div>
+          <dc-backup-busy busy-text="Importing, this can take a while.">
+          <form method="post" action="/settings/backup" id="backup-apply" data-confirm="Import the selected sections? Existing files are overwritten." data-confirm-button="Import">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <input type="hidden" name="form" value="apply">
+            <input type="hidden" name="token" value="{{.Import.Token}}">
+            {{range .Import.Sections}}
+            <label class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" name="sections" value="{{.ID}}"{{if .Supported}} checked{{else}} disabled{{end}}>
+              <span class="form-check-label">{{.Label}} <span class="text-secondary">({{.Files}} files, {{.Size}})</span></span>
+              <span class="form-check-description">{{if .Supported}}{{.Description}}{{else}}Not supported by this version.{{end}}</span>
+            </label>
+            {{end}}
+            <label class="form-check mt-3 mb-3">
+              <input class="form-check-input" type="checkbox" name="restart" value="on" checked>
+              <span class="form-check-label">Restart Dev Cockpit after the import</span>
+              <span class="form-check-description">The terminal snapshot, push keys and settings only fully apply on a fresh start.</span>
+            </label>
+            <div class="d-flex gap-2">
+              <button type="submit" class="btn btn-primary">Import</button>
+              <button type="submit" class="btn" form="backup-discard">Cancel</button>
+            </div>
+          </form>
+          </dc-backup-busy>
+          <form method="post" action="/settings/backup" id="backup-discard">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <input type="hidden" name="form" value="discard">
+            <input type="hidden" name="token" value="{{.Import.Token}}">
+          </form>
+          {{else}}
+          <dc-backup-busy busy-text="Uploading, a large backup can take a while.">
+          <form method="post" action="/settings/backup" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <input type="hidden" name="form" value="inspect">
+            <div class="mb-3">
+              <label class="form-label">Backup file</label>
+              <div class="text-secondary small mb-2">The import adapts to the file, only sections the file contains show up for selection. It works best with a file from this same Dev Cockpit version. A .tar is fine too, macOS unpacks the downloaded .tar.gz on its own. Uploading a large file can take a while.</div>
+              <input type="file" class="form-control" name="archive" accept=".gz,.tar.gz,.tar,.dcbackup" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Password</label>
+              <div class="text-secondary small mb-2">Only needed when the backup was exported with one.</div>
+              <input type="password" class="form-control" name="password" autocomplete="off" placeholder="Not encrypted">
+            </div>
+            <button type="submit" class="btn btn-primary">Upload and inspect</button>
+          </form>
+          </dc-backup-busy>
+          {{end}}
+        </div>
+
+        {{if .Review}}
+        <div id="settings-backup-review" class="mt-4">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <h3 class="card-title mb-0 flex-fill">Overwritten files</h3>
+            <form method="post" action="/settings/backup" class="flex-shrink-0" data-confirm="Drop every previous version and keep all imported files?" data-confirm-button="Keep all">
+              <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+              <input type="hidden" name="form" value="review-keep-all">
+              <button type="submit" class="btn btn-sm">Keep all imported</button>
+            </form>
+          </div>
+          {{if and (eq $.FlashProject "settings-backup-review") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+          <div class="text-secondary small mb-2">The import replaced these files, the previous version sits next to each as a .dc-pre-import copy. Pick a side per file, or merge text files, that resolves the entry and removes the copy.</div>
+          <div class="list-group list-group-flush">
+            {{range $i, $row := .Review}}{{if lt $i 12}}{{template "backup_review_row" $row}}{{end}}{{end}}
+          </div>
+          {{if .ReviewMoreCount}}
+          <details class="mt-1">
+            <summary class="text-secondary small">Show {{.ReviewMoreCount}} more</summary>
+            <div class="list-group list-group-flush">
+              {{range $i, $row := .Review}}{{if ge $i 12}}{{template "backup_review_row" $row}}{{end}}{{end}}
+            </div>
+          </details>
+          {{end}}
+        </div>
+        {{end}}
+        {{end}}
+      </div>
+    </div>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{define "backup_review_row"}}
+<div class="list-group-item px-0 d-flex align-items-center gap-2 flex-wrap">
+  <div class="flex-fill min-w-0"><code class="text-break">{{.Path}}</code></div>
+  <div class="d-flex gap-2 flex-shrink-0">
+    <a class="btn btn-sm" href="/settings/backup/merge?id={{.ID}}">Merge</a>
+    <form method="post" action="/settings/backup">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="form" value="review-keep">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <button type="submit" class="btn btn-sm">Keep imported</button>
+    </form>
+    <form method="post" action="/settings/backup" data-confirm="Overwrite the imported file with the previous version?{{if .Restart}} Dev Cockpit restarts afterwards.{{end}}" data-confirm-button="Restore">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="form" value="review-restore">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <button type="submit" class="btn btn-sm">Restore previous{{if .Restart}} and restart{{end}}</button>
+    </form>
+  </div>
+</div>
+{{end}}

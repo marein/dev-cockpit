@@ -56,6 +56,12 @@ test. Update this file when a convention changes.
 - **v2.0.0 markers:** legacy compatibility code that may be removed once
   breaking changes are allowed carries a `TODO(v2.0.0)` comment. Grep for it
   when preparing a 2.0.0 release.
+- **Backup archives are a compat surface.** `internal/backup` maps archive
+  paths `data/<section id>/<source name>` onto host paths through the current
+  registry, and the manifest identifies the file (`app`, `format`). Old
+  export files must keep importing: never rename or reuse existing section
+  ids or source names, only add. Unknown sections render as unsupported on
+  the import page, that is the forward path. Docs: `docs/backup.md`.
 - **Page headers:** one pattern everywhere: `page-header d-print-none mb-3`,
   inside it pretitle/breadcrumb plus `page-title`. Pages with a right side action
   wrap both in `d-flex align-items-center gap-2` with the title block as

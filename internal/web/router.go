@@ -113,6 +113,12 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
 	auth.POST("/settings/general", s.handleSettingsGeneralSave)
+	auth.GET("/settings/backup", s.handleSettingsBackup)
+	auth.POST("/settings/backup", s.handleSettingsBackupSave)
+	auth.GET("/settings/backup/download", s.handleSettingsBackupDownloadGet)
+	auth.POST("/settings/backup/download", s.handleSettingsBackupDownload)
+	auth.GET("/settings/backup/merge", s.handleSettingsBackupMerge)
+	auth.POST("/settings/backup/merge", s.handleSettingsBackupMergeSave)
 
 	auth.GET("/notifications", s.handleNotificationsList)
 	auth.POST("/notifications/read", s.handleNotificationsRead)
