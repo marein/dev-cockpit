@@ -1,0 +1,47 @@
+{{define "settings_backup_new.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      <div class="page-pretitle">Backup</div>
+      <h2 class="page-title text-truncate mb-0">Create backup</h2>
+    </div>
+    <a href="/settings/backup" class="btn flex-shrink-0">Back</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <form method="post" action="/settings/backup/new" id="backup-create">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <p class="mb-3">A quick backup for setting this host up again: export, install the new machine, import there, and Dev Cockpit continues where this one stopped. It is not meant as a long term archive, importing works best into the same Dev Cockpit version that exported the file. Sections with nothing to export are disabled, dependent sections select each other. The backup runs in the background.</p>
+      <dc-backup-sections class="d-block">
+        <div class="row">
+          {{range .Groups}}
+          <div class="col-12 col-lg-4 mb-2">
+            <div class="form-label">{{.Label}}</div>
+            {{range .Sections}}
+            <label class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" name="sections" value="{{.ID}}"{{if .Requires}} data-requires="{{.Requires}}"{{end}}{{if .Available}} checked{{else}} disabled{{end}}>
+              <span class="form-check-label">{{.Label}}</span>
+              <span class="form-check-description">{{if .Available}}{{.Description}}{{else}}Nothing found on this host.{{end}}{{if .Detail}}<span class="d-block text-break"><i class="ti ti-file-dots me-1"></i>{{.Detail}}</span>{{end}}{{if .RequiresLabels}}<span class="d-block"><i class="ti ti-link me-1"></i>Needs {{.RequiresLabels}}.</span>{{end}}</span>
+            </label>
+            {{end}}
+          </div>
+          {{end}}
+        </div>
+      </dc-backup-sections>
+      <div class="mb-3">
+        <label class="form-label">Password</label>
+        <div class="text-secondary small mb-2">The file contains private keys and tokens, so every backup is encrypted. The import asks for this password, without it the backup is unreadable.</div>
+        <input type="password" class="form-control" name="password" autocomplete="new-password" required>
+      </div>
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">Create backup</button>
+        <a href="/settings/backup" class="btn">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

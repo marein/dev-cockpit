@@ -12,6 +12,7 @@ import (
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/backup"
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/eventbus"
@@ -41,6 +42,7 @@ type Server struct {
 	restorer     *restore.Service
 	version      string
 	updater      *update.Updater
+	backups      *backup.Service
 	assets       staticAssetManifest
 	loginLimiter rateLimiter
 	termTheme    terminalTheme
@@ -48,7 +50,7 @@ type Server struct {
 }
 
 // NewServer constructs a Server serving the given coders.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, version string) (*Server, error) {
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, version string) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
@@ -73,6 +75,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		restorer: restorer,
 		version:  version,
 		updater:  updater,
+		backups:  backups,
 		assets:   assets,
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
@@ -118,6 +121,13 @@ func (s *Server) newHandler() (http.Handler, error) {
 
 func (s *Server) bodyLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// The backup import legitimately carries whole host archives (it can
+		// hold the complete projects directory), that one authenticated
+		// route runs without a request cap.
+		if c.Request.Method == http.MethodPost && c.Request.URL.Path == "/settings/backup" {
+			c.Next()
+			return
+		}
 		if c.Request.ContentLength > s.cfg.MaxRequestBodySize {
 			s.renderError(c, http.StatusRequestEntityTooLarge, "File too large",
 				"The upload exceeds the maximum allowed size.")

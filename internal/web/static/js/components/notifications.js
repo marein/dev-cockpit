@@ -257,7 +257,7 @@ function toast(added) {
     toast: true,
     position: "top-end",
     icon: "info",
-    title: `Something new in "${added.targetName}".`,
+    title: added.title || `Something new in "${added.targetName}".`,
     html: project,
     customClass: { title: "text-break" },
     showConfirmButton: false,
@@ -400,7 +400,7 @@ class Notifications extends HTMLElement {
 
     const name = document.createElement("span");
     name.className = "text-truncate";
-    name.textContent = n.targetName;
+    name.textContent = n.title || n.targetName;
     body.append(name);
     if (n.project) {
       const project = document.createElement("span");

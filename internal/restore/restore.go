@@ -194,6 +194,7 @@ func (s *Service) pruneNotifications() {
 	for _, sh := range s.shells.List() {
 		valid[sh.Identifier] = true
 	}
+	valid[notify.BackupTarget] = true
 	if removed := s.notifier.PruneTargets(valid); removed > 0 {
 		log.Printf("terminal restore: pruned %d notification(s) without a live target", removed)
 	}

@@ -47,6 +47,10 @@
       "dc-jingle-picker": "{{asset "/js/components/jingle-picker.js"}}",
       "dc-notify-volume": "{{asset "/js/components/notify-volume.js"}}",
       "dc-push-settings": "{{asset "/js/components/push-settings.js"}}",
+      "dc-backup-busy": "{{asset "/js/components/backup-busy.js"}}",
+      "dc-backup-sections": "{{asset "/js/components/backup-sections.js"}}",
+      "dc-backup-list": "{{asset "/js/components/backup-list.js"}}",
+      "dc-backup-upload": "{{asset "/js/components/backup-upload.js"}}",
       "coder-file-upload": "{{asset "/js/components/coder-file-upload.js"}}",
       "terminal-attach": "{{asset "/js/components/terminal-attach.js"}}",
       "terminal-tabs": "{{asset "/js/components/terminal-tabs.js"}}",
@@ -192,7 +196,7 @@
                   <li class="nav-item">
                     <a class="nav-link {{if eq .ActiveTab "settings"}}active{{end}}" href="/settings/general">
                       <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-settings"></i></span>
-                      <span class="nav-link-title">Settings</span>
+                      <span class="nav-link-title">Settings{{if .BackupReviewCount}} <span class="status-dot status-dot-animated status-blue ms-1" title="Backup files to resolve" aria-label="Backup files to resolve"></span>{{end}}</span>
                     </a>
                   </li>
                   {{if .User}}

@@ -136,16 +136,17 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 	user, _ := sess.Get(sessionUserKey).(string)
 	token := s.csrfToken(c)
 	return render.Page{
-		Title:        title,
-		ActiveTab:    activeTab,
-		Flash:        render.Flash{Message: message, Level: level},
-		FlashProject: flashProject,
-		CSRFToken:    token,
-		User:         user,
-		MultiCoder:   s.multiCoder(),
-		CoderHome:    s.coderBase(s.coders[0]) + "/instructions",
-		QuickNav:     s.quicknav(c),
-		Jingle:       s.selectedJingle(),
+		Title:             title,
+		ActiveTab:         activeTab,
+		Flash:             render.Flash{Message: message, Level: level},
+		FlashProject:      flashProject,
+		CSRFToken:         token,
+		User:              user,
+		MultiCoder:        s.multiCoder(),
+		CoderHome:         s.coderBase(s.coders[0]) + "/instructions",
+		QuickNav:          s.quicknav(c),
+		Jingle:            s.selectedJingle(),
+		BackupReviewCount: s.backups.PendingReviewCount(),
 	}
 }
 
@@ -186,6 +187,25 @@ func (s *Server) redirectWithFlash(c *gin.Context, location, message, errMsg str
 func (s *Server) redirectWithAnchoredFlash(c *gin.Context, path, anchor, message, errMsg string) {
 	ginsessions.Default(c).Set(flashProjectKey, anchor)
 	s.redirectWithFlash(c, path+"#"+anchor, message, errMsg)
+}
+
+// anchoredFlashResponse sets the anchored flash and either redirects (a
+// normal form post) or, for an XHR caller, returns the target as JSON so the
+// caller can navigate itself after showing upload progress. The flash sits
+// in the session either way, so the following GET renders it once.
+func (s *Server) anchoredFlashResponse(c *gin.Context, path, anchor, message, errMsg string) {
+	if !wantsJSON(c.Request) {
+		s.redirectWithAnchoredFlash(c, path, anchor, message, errMsg)
+		return
+	}
+	sess := ginsessions.Default(c)
+	sess.Set(flashProjectKey, anchor)
+	setFlash(sess, message, errMsg)
+	if err := sess.Save(); err != nil {
+		s.renderError(c, http.StatusInternalServerError, "Something went wrong", saveSessionErrorMessage)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"location": path + "#" + anchor})
 }
 
 func (s *Server) redirectWithProjectFlash(c *gin.Context, project, message, errMsg string) {

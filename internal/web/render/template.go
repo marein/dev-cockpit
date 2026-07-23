@@ -31,6 +31,14 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string) *te
 			}
 			return filepath.Base(filepath.Clean(p))
 		},
+		"dict": func(pairs ...any) map[string]any {
+			m := make(map[string]any, len(pairs)/2)
+			for i := 0; i+1 < len(pairs); i += 2 {
+				key, _ := pairs[i].(string)
+				m[key] = pairs[i+1]
+			}
+			return m
+		},
 	}
 	return template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.gohtml"))
 }
@@ -65,6 +73,10 @@ type Page struct {
 	// inline. Every other page gets a hidden switcher-only terminal-tabs
 	// instance from the layout, so the double Ctrl/Meta switcher works app wide.
 	HasTabStrip bool
+	// BackupReviewCount is the number of open backup overwrite reviews,
+	// rendered as a badge on the Settings nav so the pending resolution is
+	// visible app wide. Fresh on every navigation (whole body boost).
+	BackupReviewCount int
 }
 
 // CoderNav feeds the coder pages layout (instructions, agents, skills): the

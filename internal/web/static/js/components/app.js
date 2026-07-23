@@ -101,7 +101,7 @@ window.addEventListener("pe:form", (e) => {
   e.detail.parsed.push((dom) => { stale = buildChanged(dom); if (!stale) window.app.loadElements(dom.body); });
   e.detail.succeed.push(() => { if (stale) location.reload(); });
   e.detail.succeed.push(() => window.dispatchEvent(new CustomEvent("dc:navigated")));
-  e.detail.catch.push((err) => err?.name !== "AbortError" && notifyError("Could not submit."));
+  e.detail.catch.push((err) => err?.name !== "AbortError" && notifyError("Could not submit, the connection failed or was cut off."));
   e.detail.finally.push(window.app.showProgress(0));
   e.detail.finally.push(() => buttons.forEach((b) => { b.disabled = false; b.classList.remove("btn-loading"); }));
 });

@@ -82,8 +82,12 @@ func (s *Service) Start(n Notifier) {
 				if !n.UnreadTargets()[added.TargetID] {
 					return
 				}
+				title := added.Title
+				if title == "" {
+					title = fmt.Sprintf("Something new in %q.", added.TargetName)
+				}
 				s.deliver(Message{
-					Title: fmt.Sprintf("Something new in %q.", added.TargetName),
+					Title: title,
 					Body:  added.Project,
 					URL:   added.URL,
 					Tag:   added.TargetID,

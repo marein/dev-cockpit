@@ -23,20 +23,29 @@ const maxStored = 100
 const dedupeWindow = 30 * time.Second
 
 // Notification is one entry in the notification center: this target (a
-// coder or shell) has news. URL is the page the entry links to.
+// coder or shell) has news. URL is the page the entry links to. Title, when
+// set, replaces the generic "Something new in ..." wording everywhere the
+// entry surfaces, system targets like the backup use it for a real sentence.
 type Notification struct {
 	ID         string    `json:"id"`
 	TargetID   string    `json:"targetId"`
 	TargetName string    `json:"targetName"`
+	Title      string    `json:"title,omitempty"`
 	Project    string    `json:"project"`
 	URL        string    `json:"url"`
 	CreatedAt  time.Time `json:"createdAt"`
 	Read       bool      `json:"read"`
 }
 
+// BackupTarget is the well known target id for finished backup jobs. It is
+// no terminal, so the restore prune keeps it alive explicitly and it can
+// never collide with the UUID shaped session ids.
+const BackupTarget = "backup"
+
 // TargetInfo carries display context resolved at ingest time.
 type TargetInfo struct {
 	Name    string
+	Title   string
 	Project string
 	URL     string
 }
@@ -97,6 +106,7 @@ func (s *Service) Add(targetID string) {
 		ID:         statefile.NewID(),
 		TargetID:   targetID,
 		TargetName: name,
+		Title:      info.Title,
 		Project:    info.Project,
 		URL:        url,
 		CreatedAt:  s.now().UTC(),

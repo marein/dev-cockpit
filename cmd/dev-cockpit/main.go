@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/local/dev-cockpit/internal/backup"
 	"github.com/local/dev-cockpit/internal/clirun"
 	"github.com/local/dev-cockpit/internal/coder"
 	coderclaude "github.com/local/dev-cockpit/internal/coder/claude"
@@ -179,10 +180,11 @@ func runServe(opts serveOptions) error {
 	shells := shell.NewShells(cfg, tmuxClient, projectRepo, func() bool {
 		return settingsStore.Get(shell.HistorySettingKey) == "on"
 	})
+	backups := backup.New(cfg.StateDir, cfg.ProjectsRoot, resolveVersion())
 
 	notifier := notify.NewService(
 		notify.StorePath(cfg.StateDir),
-		notifyResolver(coders, shells, projectRepo),
+		notifyResolver(coders, shells, projectRepo, backups),
 	)
 	// The push channels subscribe before any watcher starts, so an inbox
 	// backlog ingested right after boot cannot slip past them.
@@ -226,7 +228,7 @@ func runServe(opts serveOptions) error {
 		})
 	}
 
-	srv, err := web.NewServer(cfg, coders, shells, projectRepo, notifier, settingsStore, pushService, restorer, resolveVersion())
+	srv, err := web.NewServer(cfg, coders, shells, projectRepo, notifier, settingsStore, pushService, restorer, backups, resolveVersion())
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}
@@ -261,9 +263,23 @@ func selectProviders(registry *coder.Registry) ([]coder.Coder, error) {
 // notifyResolver enriches notifications with the name, project, and target
 // page at ingest time, using the cached coder snapshots and shell list so a
 // burst of events never rescans coder state.
-func notifyResolver(coders []*coder.Manager, shells *shell.Shells, projects *project.Repository) notify.Resolver {
+func notifyResolver(coders []*coder.Manager, shells *shell.Shells, projects *project.Repository, backups *backup.Service) notify.Resolver {
 	return func(targetID string) notify.TargetInfo {
 		info := notify.TargetInfo{}
+		if targetID == notify.BackupTarget {
+			info.Name = "Backup"
+			info.URL = "/settings/backup"
+			// The notification fires right after a job finished, so the
+			// newest finished entry is the one it is about.
+			if b, ok := backups.LastFinished(); ok {
+				if b.Done() {
+					info.Title = fmt.Sprintf("Backup %q ready.", b.Name)
+				} else {
+					info.Title = fmt.Sprintf("Backup %q failed.", b.Name)
+				}
+			}
+			return info
+		}
 		for _, m := range coders {
 			snap := m.Snapshot()
 			for _, r := range snap.Running {

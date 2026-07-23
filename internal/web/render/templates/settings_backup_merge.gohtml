@@ -1,0 +1,55 @@
+{{define "settings_backup_merge.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      <div class="page-pretitle">Backup import</div>
+      <h2 class="page-title text-truncate mb-0">Resolve overwritten file</h2>
+    </div>
+    <a href="/settings/backup#settings-backup-review" class="btn flex-shrink-0">Back</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="mb-3"><code class="text-break">{{.FilePath}}</code></div>
+    {{if .Text}}
+      <form method="post" action="/settings/backup/merge" id="backup-merge">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="form" value="save">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-lg-6">
+            <label class="form-label">Imported version</label>
+            <div class="text-secondary small mb-2">Editable. Saving writes this buffer over the file and removes the previous copy.</div>
+            <textarea class="form-control font-monospace" name="content" rows="18" spellcheck="false">{{.Content}}</textarea>
+          </div>
+          <div class="col-12 col-lg-6 order-lg-first">
+            <label class="form-label">Previous version <span class="text-secondary">(read only)</span></label>
+            <div class="text-secondary small mb-2">The .dc-pre-import copy, for comparing and copying from.</div>
+            <textarea class="form-control font-monospace" rows="18" spellcheck="false" readonly>{{.Previous}}</textarea>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Save merged file{{if .Restart}} and restart{{end}}</button>
+      </form>
+    {{else}}
+    <div class="alert alert-info">Binary or very large file, no text merge. Keep the imported version or restore the previous one.</div>
+    {{end}}
+    <div class="d-flex gap-2 mt-3">
+      <form method="post" action="/settings/backup/merge">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="form" value="keep">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <button type="submit" class="btn">Keep imported</button>
+      </form>
+      <form method="post" action="/settings/backup/merge" data-confirm="Overwrite the imported file with the previous version?{{if .Restart}} Dev Cockpit restarts afterwards.{{end}}" data-confirm-button="Restore">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="form" value="restore">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <button type="submit" class="btn">Restore previous{{if .Restart}} and restart{{end}}</button>
+      </form>
+    </div>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
