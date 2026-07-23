@@ -760,6 +760,9 @@ terminal-tabs[hidden] { display: none; }
 coder-file-upload {
   display: contents;
 }
+body .swal2-styled.swal2-deny {
+  background-color: var(--tblr-secondary);
+}
 .coder-files-refresh {
   position: absolute;
   top: 1.1rem;

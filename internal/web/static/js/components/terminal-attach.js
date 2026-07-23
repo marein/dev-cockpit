@@ -1,6 +1,7 @@
 import { notifyError, notifySuccess, notifyInfo } from "@dc/toast";
 import { postForm, postJSON } from "@dc/http";
 import { get, set } from "@dc/store";
+import { fire as fireDialog, isVisible as dialogVisible } from "@dc/dialog";
 
 const TERMINAL_THEMES = {
   dark: {
@@ -1109,8 +1110,83 @@ function initTerminalAttach(host) {
     if (selectionLayer.textContent !== text) {
       selectionLayer.textContent = text;
     }
+    if (text.includes("https://claude.")) {
+      const url = findLoginLink(lines);
+      if (url && url !== promptedLoginLink && !dialogVisible()) {
+        promptedLoginLink = url;
+        promptLoginLink(url);
+      }
+    }
   };
   term.onRender(syncSelection);
+
+  let promptedLoginLink = "";
+  const LOGIN_LINK_START = /^https:\/\/claude\.(com|ai)\/\S*oauth/;
+  const LOGIN_LINK_CHARS = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/;
+  const findLoginLink = (lines) => {
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      if (!LOGIN_LINK_START.test(lines[i])) continue;
+      let url = lines[i];
+      if (url.length === term.cols) {
+        for (let j = i + 1; j < lines.length; j += 1) {
+          const frag = lines[j];
+          if (!frag || !LOGIN_LINK_CHARS.test(frag)) break;
+          url += frag;
+          if (frag.length !== term.cols) break;
+        }
+      }
+      return url;
+    }
+    return "";
+  };
+  const copyLoginLink = async (url) => {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(url);
+        return true;
+      } catch {
+        void 0;
+      }
+    }
+    const area = document.createElement("textarea");
+    area.value = url;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.append(area);
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    area.remove();
+    return ok;
+  };
+  const promptLoginLink = (url) => {
+    fireDialog({
+      icon: "question",
+      title: "Claude login",
+      text: "The login link on the screen cannot be clicked or copied cleanly in the terminal. Follow it from here?",
+      showCancelButton: true,
+      showDenyButton: true,
+      confirmButtonText: "Open",
+      denyButtonText: "Copy link",
+      cancelButtonText: "Cancel",
+      reverseButtons: true,
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        window.open(url, "_blank", "noopener,noreferrer");
+      } else if (result.isDenied) {
+        if (await copyLoginLink(url)) {
+          notifySuccess("Login link copied.");
+        } else {
+          notifyError("Copy failed.");
+        }
+      }
+    });
+  };
 
   // ---- Copy ------------------------------------------------------------------
   const terminalSelection = () => {
