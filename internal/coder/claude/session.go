@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/local/dev-cockpit/internal/coder"
@@ -27,6 +28,22 @@ type transcriptEntry struct {
 
 type sessionRepository struct {
 	stateRoot string
+	mu        sync.Mutex
+	cache     map[string]transcriptCache
+}
+
+// transcriptCache keeps the parse result of one transcript file, keyed on its
+// mtime and size, so unchanged transcripts are never read twice. It exists
+// because the transcripts are the only source of session metadata, so every
+// scan parsed every line of every file, a cost that grows with the accumulated
+// history and had reached hundreds of milliseconds per snapshot rebuild. With
+// the cache a scan pays only for files that changed. Failed parses are cached
+// too, otherwise a broken file would be re-read on every scan.
+type transcriptCache struct {
+	modTime time.Time
+	size    int64
+	session storedSession
+	ok      bool
 }
 
 type storedSession struct {
@@ -151,11 +168,39 @@ func (r *sessionRepository) listStored() []storedSession {
 	if err != nil {
 		return nil
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cache == nil {
+		r.cache = map[string]transcriptCache{}
+	}
+	seen := make(map[string]bool, len(matches))
 	out := make([]storedSession, 0, len(matches))
 	for _, transcript := range matches {
-		session, ok := r.loadTranscript(transcript)
-		if ok {
-			out = append(out, session)
+		seen[transcript] = true
+		info, err := os.Stat(transcript)
+		if err != nil {
+			delete(r.cache, transcript)
+			continue
+		}
+		entry, hit := r.cache[transcript]
+		if !hit || !entry.modTime.Equal(info.ModTime()) || entry.size != info.Size() {
+			session, ok := r.loadTranscript(transcript)
+			entry = transcriptCache{modTime: info.ModTime(), size: info.Size(), session: session, ok: ok}
+			r.cache[transcript] = entry
+		}
+		if !entry.ok {
+			continue
+		}
+		// The cwd check runs on every scan, cached entries included, so a
+		// session whose project directory vanished drops out at once.
+		if info, err := os.Stat(entry.session.CWD); err != nil || !info.IsDir() {
+			continue
+		}
+		out = append(out, entry.session)
+	}
+	for path := range r.cache {
+		if !seen[path] {
+			delete(r.cache, path)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return coder.LessSession(out[i].Session, out[j].Session) })
@@ -228,10 +273,6 @@ func (r *sessionRepository) loadTranscript(path string) (storedSession, bool) {
 		return storedSession{}, false
 	}
 	if cwd == "" {
-		return storedSession{}, false
-	}
-	info, err := os.Stat(cwd)
-	if err != nil || !info.IsDir() {
 		return storedSession{}, false
 	}
 	if updatedAt.IsZero() {
