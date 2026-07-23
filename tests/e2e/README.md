@@ -53,7 +53,6 @@ it; there is no stdlib equivalent that also covers WebKit/Safari).
 | `update.js` | complete self update: check shape, daily auto modal (once per day per version via localStorage, new version prompts again), badge + link, changelog dialog, real non-destructive apply (`MODE=available`); no-update (`MODE=uptodate`) |
 | `coder-claude.js` | coder create/attach/prompt with the claude coder picked in the form (needs the claude CLI on the host), Shift+Enter inserts a newline in the prompt box instead of submitting, also for claude launched by hand inside a shell session (and the same pane falls back to plain Enter after claude exits) |
 | `multi-coder.js` | coder select on new session, coder sidebar + section tabs on agents/skills/instructions, coder badges, quicknav labels; `MODE=single` asserts the adaptive parts stay off (only applies on hosts with a single coder CLI) |
-| `backup.js` | `/settings/backup`: adaptive export groups (unavailable sections disabled), no-selection flash, tar.gz download of selected sections, busy indicator (dc-backup-busy upgraded, export button re-enables via the `dc-download` cookie once the stream starts), upload + manifest inspect (only contained sections listed), apply restores state with the restart checkbox off, overwrite review (clashing file listed with its .dc-pre-import copy, merge page line diff, keep resolves, restore brings the previous file back), encrypted `.dcbackup` roundtrip (wrong password rejected, discard resets), plain tar accepted (Safari auto gunzip), foreign file rejected; MUST run against an instance whose `HOME` is a scratch directory |
 
 ## Instances a full run needs
 
@@ -72,10 +71,6 @@ Extra instances:
   as `999.0.0`, so the version must really be baked in. Apply swaps the binary
   in place, the instance must run its own copy, never the repo build.
 - one on `:3013` with the stub URL returning `[]`, for `update.js MODE=uptodate`.
-- `backup.js` needs its instance started with `HOME` pointing at a scratch
-  directory. The backup import writes into the state dir and `$HOME`, so an
-  instance with the real home must never serve this runner, even though the
-  checks only select the settings section and keep the restart checkbox off.
 
 Never save `/instructions` outside the runners' own flows, the instance writes the
 real per-coder files in `$HOME` (the default coder is the first installed one).

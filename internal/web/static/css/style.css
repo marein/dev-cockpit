@@ -1943,28 +1943,3 @@ dc-notify-volume { display: block; max-width: 24rem; }
   transition: opacity 0.25s ease 0.2s;
   opacity: 0;
 }
-
-.dc-diff {
-  font-family: var(--tblr-font-monospace);
-  font-size: 0.8125rem;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-all;
-  border: var(--tblr-border-width) solid var(--tblr-border-color);
-  border-radius: var(--tblr-border-radius);
-  max-height: 24rem;
-  overflow-y: auto;
-}
-
-.dc-diff-line {
-  padding: 0 0.5rem;
-  min-height: 1.4em;
-}
-
-.dc-diff-add {
-  background: rgba(var(--tblr-success-rgb), 0.14);
-}
-
-.dc-diff-del {
-  background: rgba(var(--tblr-danger-rgb), 0.12);
-}
