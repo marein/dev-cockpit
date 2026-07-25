@@ -2,6 +2,7 @@ package claude
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -220,6 +221,46 @@ func (r *sessionRepository) findStored(sessionID string) (storedSession, error) 
 	return storedSession{}, fmt.Errorf(`No session "%s" was found.`, id)
 }
 
+// maxTranscriptLine caps how much of a single transcript line is held in
+// memory. A line carrying an image the coder read, a screenshot handed to it
+// by path, holds the same base64 twice and passes a megabyte, so the cap sits
+// far above that. Beyond it the line is dropped, never the file.
+const maxTranscriptLine = 256 * 1024
+
+// newTranscriptSplit returns a scanner split that works like bufio.ScanLines,
+// except that a line reaching maxTranscriptLine is dropped and reading
+// continues. The stock scanner turns that case into an error for the whole
+// file, which cost every session whose coder had read an image its place in
+// the list. Dropping spans every call up to the next newline, so the rest of
+// an oversized line never reaches the parser as a line of its own. The state
+// belongs to one file, every transcript needs its own split.
+func newTranscriptSplit() bufio.SplitFunc {
+	dropping := false
+	return func(data []byte, atEOF bool) (int, []byte, error) {
+		if atEOF && len(data) == 0 {
+			return 0, nil, nil
+		}
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			if dropping {
+				dropping = false
+				return i + 1, nil, nil
+			}
+			return i + 1, bytes.TrimRight(data[:i], "\r"), nil
+		}
+		if atEOF {
+			if dropping {
+				return len(data), nil, nil
+			}
+			return len(data), bytes.TrimRight(data, "\r"), nil
+		}
+		if len(data) >= maxTranscriptLine {
+			dropping = true
+			return len(data), nil, nil
+		}
+		return 0, nil, nil
+	}
+}
+
 func (r *sessionRepository) loadTranscript(path string) (storedSession, bool) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -234,7 +275,8 @@ func (r *sessionRepository) loadTranscript(path string) (storedSession, bool) {
 	var updatedAt time.Time
 
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), maxTranscriptLine)
+	scanner.Split(newTranscriptSplit())
 	for scanner.Scan() {
 		var entry transcriptEntry
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {

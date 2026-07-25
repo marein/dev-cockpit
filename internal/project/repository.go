@@ -32,8 +32,8 @@ type Project struct {
 	InactiveCoderRefs []CoderRef
 	ShellRefs         []ShellRef
 	ActiveRefs        []TerminalRef // coders and shells merged in tab strip order
-	LastUsedUnix      int64 // last time the project was opened; 0 = never
-	HasNews           bool  // any coder or shell below has an unread notification
+	LastUsedUnix      int64         // last time the project was opened; 0 = never
+	HasNews           bool          // any coder or shell below has an unread notification
 }
 
 type CoderRef struct {

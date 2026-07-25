@@ -95,6 +95,46 @@ func TestListDropsDeletedTranscript(t *testing.T) {
 	}
 }
 
+func TestListDropsOversizedLineNotTranscript(t *testing.T) {
+	root, cwd := t.TempDir(), t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+	image := `{"type":"user","cwd":"` + cwd + `","data":"` + strings.Repeat("x", 2*1024*1024) + `"}`
+	writeTranscript(t, root, "p1", "aaa", cwdLine(cwd), image, titleLine("one"))
+
+	if names := sessionNames(t, r); len(names) != 1 || names[0] != "one" {
+		t.Fatalf("names = %v, want one", names)
+	}
+}
+
+func TestListIgnoresTailOfOversizedLine(t *testing.T) {
+	root, cwd := t.TempDir(), t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+	// The dropped part ends exactly on the cap, so what follows in the same
+	// line reaches the parser as if it were a line of its own.
+	oversized := strings.Repeat("x", maxTranscriptLine) + titleLine("tail")
+	writeTranscript(t, root, "p1", "aaa", cwdLine(cwd), titleLine("real"), oversized)
+
+	if names := sessionNames(t, r); len(names) != 1 || names[0] != "real" {
+		t.Fatalf("names = %v, want real", names)
+	}
+}
+
+func TestListReadsLastLineWithoutNewline(t *testing.T) {
+	root, cwd := t.TempDir(), t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+	path := filepath.Join(root, "p1", "aaa.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(cwdLine(cwd)+"\n"+titleLine("one")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if names := sessionNames(t, r); len(names) != 1 || names[0] != "one" {
+		t.Fatalf("names = %v, want one", names)
+	}
+}
+
 func TestListDropsVanishedCWD(t *testing.T) {
 	root, cwd := t.TempDir(), t.TempDir()
 	r := &sessionRepository{stateRoot: root}
