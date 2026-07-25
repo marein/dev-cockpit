@@ -199,6 +199,12 @@
                       <span class="nav-link-title">Settings{{if .BackupReviewCount}} <span class="status-dot status-dot-animated status-blue ms-1" title="Backup files to resolve" aria-label="Backup files to resolve"></span>{{end}}</span>
                     </a>
                   </li>
+                  <li class="nav-item">
+                    <a class="nav-link {{if eq .ActiveTab "docs"}}active{{end}}" href="/docs">
+                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-book-2"></i></span>
+                      <span class="nav-link-title">Docs</span>
+                    </a>
+                  </li>
                   {{if .User}}
                   <li class="nav-item d-md-none">
                     <hr class="my-2">

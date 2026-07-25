@@ -67,6 +67,11 @@ test. Update this file when a convention changes.
   against the backup registry in `internal/backup` and ask the user whether
   it belongs into a backup, into which section, and with which dependencies.
   Never leave new state out silently.
+- **New features consider documentation.** Whenever a feature adds, changes,
+  or removes user-visible behavior (a route, control, gesture, keyboard
+  shortcut, notification, setting, or workflow), weigh it against `/docs` and
+  update the relevant documentation section as part of the feature. Never
+  leave user-facing behavior undocumented silently.
 - **Page headers:** one pattern everywhere: `page-header d-print-none mb-3`,
   inside it pretitle/breadcrumb plus `page-title`. Pages with a right side action
   wrap both in `d-flex align-items-center gap-2` with the title block as

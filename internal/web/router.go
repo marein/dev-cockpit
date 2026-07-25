@@ -38,6 +38,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, "/projects") })
 	auth.POST("/logout", s.handleLogout)
 	auth.GET("/quicknav", s.handleQuickNav)
+	auth.GET("/docs", s.handleDocs)
 	auth.GET("/terminal-tabs", s.handleTerminalTabsFragment)
 	auth.POST("/terminal-tabs/order", s.handleTerminalTabsOrder)
 	auth.POST("/terminal-tabs/group", s.handleTerminalTabsGroup)

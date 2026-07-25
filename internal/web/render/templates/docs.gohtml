@@ -1,0 +1,46 @@
+{{define "docs_keys"}}{{range $ai, $alt := .}}{{if $ai}}<span class="text-secondary small mx-1">or</span>{{end}}<span class="text-nowrap">{{range $i, $cap := $alt.Parts}}{{if $i}}<span class="text-secondary small mx-1">+</span>{{end}}<kbd>{{if $cap.Icon}}<i class="ti {{$cap.Icon}} align-text-bottom" aria-hidden="true"></i><span class="visually-hidden">{{$cap.Text}}</span>{{else}}{{$cap.Text}}{{end}}</kbd>{{end}}</span>{{end}}{{end}}
+
+{{define "docs_marks"}}{{if .HasKeys}}{{template "docs_keys" .Keys}}{{end}}{{if .Tag}}<span class="badge {{.TagClass}}">{{.Tag}}</span>{{end}}{{end}}
+
+{{define "docs.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      <h2 class="page-title text-truncate mb-0">Documentation</h2>
+    </div>
+  </div>
+</div>
+
+<p class="text-secondary mb-3">{{.Lead}}</p>
+<div class="accordion" id="docs-accordion">
+  {{range $i, $topic := .Topics}}
+  <div class="accordion-item" id="{{$topic.Key}}">
+    <h3 class="accordion-header">
+      <button class="accordion-button{{if ne $i 0}} collapsed{{end}}" type="button" data-bs-toggle="collapse" data-bs-target="#docs-panel-{{$topic.Key}}" aria-expanded="{{if eq $i 0}}true{{else}}false{{end}}" aria-controls="docs-panel-{{$topic.Key}}">
+        <i class="ti {{$topic.Icon}} text-secondary me-2"></i>
+        <span class="fw-medium">{{$topic.Title}}</span>
+        <span class="text-secondary small ms-2 d-none d-sm-inline">{{$topic.Lead}}</span>
+        <span class="badge bg-secondary-lt ms-auto me-2">{{$topic.Count}}</span>
+      </button>
+    </h3>
+    <div id="docs-panel-{{$topic.Key}}" class="accordion-collapse collapse{{if eq $i 0}} show{{end}}" data-bs-parent="#docs-accordion">
+      <div class="accordion-body pt-0">
+        {{if $topic.Intro}}<p class="text-secondary">{{$topic.Intro}}</p>{{end}}
+        {{if $topic.LinkURL}}<a class="btn btn-sm btn-outline-primary mb-2" href="{{$topic.LinkURL}}">{{$topic.LinkText}}</a>{{end}}
+        {{range $topic.Items}}
+        <div class="row g-1 py-2 border-bottom">
+          <div class="col-md-4">
+            <div class="fw-medium">{{.Title}}</div>
+            {{if or .HasKeys .Tag}}<div class="d-flex flex-wrap align-items-center gap-1 mt-1">{{template "docs_marks" .}}</div>{{end}}
+          </div>
+          <div class="col-md-8 text-secondary">{{.Desc}}</div>
+        </div>
+        {{end}}
+      </div>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
