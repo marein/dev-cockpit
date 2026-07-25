@@ -284,7 +284,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Shells",
-					Desc:  `A command that runs for at least two seconds notifies when its prompt returns. A bell always counts as news, so use <code>printf '\a'</code> when a script needs attention.`,
+					Desc:  `A command that runs for at least two seconds notifies when its prompt returns. Every shell starts with <code>PS0</code> and <code>PROMPT_COMMAND</code> set to see that, an rc file that overwrites them would turn the notices off. A bell always counts as news, so use <code>printf '\a'</code> when a script needs attention.`,
 				},
 				{
 					Title: "In the browser",
