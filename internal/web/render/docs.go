@@ -106,7 +106,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Open the terminal switcher",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Ctrl"}}},
-					Desc:  `Tap Ctrl twice without another key in between. Type to filter; use arrows, Tab, or Ctrl+Tab to move; Enter opens the selection and Escape closes it. The palette includes active terminals, resumable coders, project editors, and new-terminal actions.`,
+					Desc:  `Tap Ctrl twice without another key in between. Type to filter; use the arrows to move; Enter opens the selection and Escape closes it. The palette includes active terminals, resumable coders, project editors, and new-terminal actions.`,
 				},
 			},
 		},

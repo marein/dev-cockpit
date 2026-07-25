@@ -26,8 +26,10 @@ const { assert, sleep, BASE } = L;
 // popup opens only via double tapping Ctrl or Meta within 400ms (collision
 // free: bare modifiers never reach the shell, a chord like Ctrl+C cancels the
 // tap); the double tap anchors one step forward from the current session and
-// wraps within the actives, then cycling via Tab, Ctrl+Tab or arrows rotates
-// over the full list including the inactive section, Enter or click switches,
+// wraps within the actives, then cycling via the arrow keys rotates
+// over the full list including the inactive section (Tab and Ctrl+Tab stay
+// inert while the switcher is open, they neither cycle nor move the focus out
+// of the filter field), Enter or click switches,
 // Esc closes, typing filters the list by name and project through the search
 // input, and it all works while the xterm terminal has focus. The switcher is
 // app wide: every page without an inline strip (projects, editor, settings)
@@ -66,7 +68,7 @@ const { assert, sleep, BASE } = L;
 // via DOM order, to the switcher's inactive rows too. The switcher lists those
 // inactive coders in a dimmed section below the active rows, grouped per
 // project with the same fold: three rows per project plus a selectable
-// "Show N more" row that Tab reaches like any other; Enter or click on it
+// "Show N more" row that the arrows reach like any other; Enter or click on it
 // expands the group and selects the first revealed row, which then all cycle
 // normally. Typing a filter suspends the folding (toggles hide, every match
 // shows), so all inactive coders stay findable. Enter or click on a row
@@ -305,7 +307,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await sleep(200);
     });
 
-    await run("double tapping Ctrl opens the switcher, plain Tab cycles, Esc closes", async () => {
+    await run("double tapping Ctrl opens the switcher, Tab is inert, Esc closes", async () => {
       await page.click(".attach-terminal");
       await sleep(200);
       await page.keyboard.press("Control");
@@ -314,7 +316,13 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       const first = await page.$eval(".terminal-switcher-item.selected", (e) => e.dataset.switcherId);
       await page.keyboard.press("Tab");
       await sleep(100);
-      assert(first !== (await page.$eval(".terminal-switcher-item.selected", (e) => e.dataset.switcherId)), "plain Tab did not cycle");
+      assert(first === (await page.$eval(".terminal-switcher-item.selected", (e) => e.dataset.switcherId)), "plain Tab still cycled the switcher");
+      await page.keyboard.down("Control");
+      await page.keyboard.press("Tab");
+      await page.keyboard.up("Control");
+      await sleep(100);
+      assert(first === (await page.$eval(".terminal-switcher-item.selected", (e) => e.dataset.switcherId)), "Ctrl+Tab still cycled the switcher");
+      assert(await page.evaluate(() => document.activeElement?.classList.contains("terminal-switcher-filter")), "Tab pulled the focus out of the filter field");
       await page.keyboard.press("Escape");
       await sleep(200);
       assert((await page.locator(".terminal-switcher").count()) === 0, "Esc did not close after double Ctrl");

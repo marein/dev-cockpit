@@ -563,18 +563,23 @@ class TerminalTabs extends HTMLElement {
       if (!this.switcher) this.openSwitcher(1);
       return;
     }
-    if (event.key === "Tab" && event.ctrlKey && !event.altKey && !event.metaKey) {
-      if (this.switcherOnly && !this.switcher) return;
+    if (event.key === "Tab" && event.ctrlKey && !event.altKey && !event.metaKey && !this.switcher) {
+      if (this.switcherOnly) return;
       event.preventDefault();
       event.stopPropagation();
-      if (this.switcher) this.moveSelection(event.shiftKey ? -1 : 1);
-      else this.switchTo(event.shiftKey ? -1 : 1);
+      this.switchTo(event.shiftKey ? -1 : 1);
       return;
     }
     if (!this.switcher) return;
     if (event.key === "Control" || event.key === "Shift" || event.key === "Alt" || event.key === "Meta") return;
+    // The switcher cycles with the arrows only. Tab stays swallowed so it neither
+    // moves the selection nor pulls the focus out of the filter field.
+    if (event.key === "Tab") {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const actions = {
-      Tab: () => this.moveSelection(event.shiftKey ? -1 : 1),
       ArrowDown: () => this.moveSelection(1),
       ArrowUp: () => this.moveSelection(-1),
       Enter: () => this.commitSelection(),
@@ -806,7 +811,7 @@ class TerminalTabs extends HTMLElement {
         { class: "terminal-switcher-panel" },
         input,
         el("div", { class: "terminal-switcher-list", role: "listbox" }, listNodes, empty),
-        el("div", { class: "terminal-switcher-hint" }, "Type to filter, Tab or arrows to cycle, Enter to switch, Esc to close"),
+        el("div", { class: "terminal-switcher-hint" }, "Type to filter, arrows to cycle, Enter to switch, Esc to close"),
       ),
     );
     input.addEventListener("input", () => this.applyFilter(true), { signal: this.ac.signal });
