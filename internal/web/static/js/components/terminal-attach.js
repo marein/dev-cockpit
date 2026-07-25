@@ -658,6 +658,18 @@ function initTerminalAttach(host) {
         host.dispatchEvent(new CustomEvent("terminal-input", { bubbles: true, detail: { raw: data } }));
       }
     });
+    // A paste never reaches xterm: it would send the text as plain bytes with
+    // every newline as Enter, so a coder submits the first line and eats the
+    // rest. The text goes to the server as a paste instead, where tmux writes
+    // it into the pane as one buffer and brackets it for programs that asked
+    // for bracketed paste. Capture beats xterm's own handler on the textarea.
+    listen(terminalElement, "paste", (event) => {
+      const text = event.clipboardData?.getData("text") ?? "";
+      if (!text) return;
+      event.preventDefault();
+      event.stopPropagation();
+      host.dispatchEvent(new CustomEvent("terminal-input", { bubbles: true, detail: { paste: text } }));
+    }, { capture: true });
     if (host.hasAttribute("active")) {
       term.focus();
     }

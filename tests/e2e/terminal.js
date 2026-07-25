@@ -50,6 +50,25 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       assert(text.includes(marker), `marker not mirrored (len ${text.length})`);
     });
 
+    await run("desktop: a multi line paste posts one paste payload, no Enter bytes", async () => {
+      await page.click("#terminal .xterm-screen");
+      const reqP = page.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
+      await page.evaluate(() => {
+        const area = document.querySelector(".xterm-helper-textarea");
+        const data = new DataTransfer();
+        data.setData("text/plain", "dcpaste one\ndcpaste two");
+        area.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+      });
+      const body = (await reqP).postData() || "";
+      // xterm would turn the newline into \r and submit the first line in a
+      // coder; the paste payload goes through tmux's buffer instead.
+      assert(body.includes('"paste"'), `paste posted as ${body}`);
+      assert(!body.includes("\\r"), `paste carries Enter bytes: ${body}`);
+      // bash keeps the pasted text on the prompt, clear it for the next check.
+      await page.keyboard.press("Control+C");
+      await sleep(600);
+    });
+
     await run("desktop: Shift+Enter posts the shift-enter control, shells run the command like Enter", async () => {
       const marker = `TSE${tag.slice(-4)}`;
       await page.click("#terminal .xterm-screen");

@@ -387,6 +387,11 @@ function initTerminalInput(host) {
     const raw = event.detail?.raw;
     if (typeof raw === "string" && raw !== "") {
       void sendTerminalInput({ raw });
+      return;
+    }
+    const paste = event.detail?.paste;
+    if (typeof paste === "string" && paste !== "") {
+      void sendTerminalInput({ paste });
     }
   });
 
