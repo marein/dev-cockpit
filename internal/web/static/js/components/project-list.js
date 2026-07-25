@@ -76,11 +76,40 @@ class ProjectList extends HTMLElement {
       items.push({
         label: xForm.dataset.confirmButton || "Delete",
         icon: stop ? "ti-player-stop" : "ti-trash",
-        danger: true,
+        danger: !stop,
+        warn: stop,
         action: () => xForm.requestSubmit(),
       });
+      // A running coder only offers stop on its chip, delete lives here.
+      if (stop && chip.dataset.chipKind === "coder" && chip.dataset.chipId) {
+        items.push({
+          label: "Delete",
+          icon: "ti-trash",
+          danger: true,
+          action: () => void this.deleteCoder(chip),
+        });
+      }
     }
     openMenu({ x, y, items, signal: this.ac.signal });
+  }
+
+  // The server stops the coder before it drops the conversation, so the chip
+  // goes away in one request. The terminals event refreshes the row behind it.
+  async deleteCoder(chip) {
+    const name = chip.dataset.chipName || "";
+    try {
+      const ok = await confirm({
+        title: `Delete coder "${name}"?`,
+        text: "It is stopped first, its conversation cannot be resumed afterwards.",
+        confirmText: "Delete",
+      });
+      if (!ok) return;
+      const response = await postForm(`/coders/${chip.dataset.chipId}/delete`, {});
+      await ensureOk(response, "Could not delete the coder.");
+      chip.remove();
+    } catch (error) {
+      notifyError(error.message);
+    }
   }
 
   async renameShell(chip) {

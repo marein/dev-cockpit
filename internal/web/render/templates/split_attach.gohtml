@@ -36,7 +36,7 @@
       {{else}}
       <form method="post" action="/coders/{{.ID}}/stop" data-confirm="Stop coder &quot;{{.Name}}&quot;?" data-confirm-button="Stop">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-        <button type="submit" class="btn btn-outline-danger btn-icon" aria-label="Stop coder {{.Name}}" title="Stop">
+        <button type="submit" class="btn btn-outline-orange btn-icon" aria-label="Stop coder {{.Name}}" title="Stop">
           <i class="ti ti-player-stop"></i>
         </button>
       </form>

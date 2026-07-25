@@ -16,12 +16,15 @@ const { assert, sleep, BASE } = L;
 // control: confirm dialog, POST /coders/:id/stop or /shells/:id/delete, and
 // deleting the terminal you are attached to navigates to its neighbor. Shell
 // rows also reveal a rename action ([data-qn-rename], prompt dialog, POST
-// /shells/:id/rename). The Projects tab detail mirrors the projects page chip
+// /shells/:id/rename). Coder rows reveal a second action ([data-qn-purge], POST
+// /coders/:id/delete) that deletes the coder outright, the server stops it
+// first. The Projects tab detail mirrors the projects page chip
 // row: no per-kind headlines, one merged list of the live coders and shells in
 // tab strip order, inactive coders after them, New coder and New shell at the
 // end. Detail rows swipe too, reorder stays active-list only: active coders
-// reveal stop, inactive coders reveal delete (POST /coders/:id/delete,
-// projects page confirm wording), shells reveal rename plus delete.
+// reveal stop plus delete, inactive coders reveal delete (POST
+// /coders/:id/delete, projects page confirm wording), shells reveal rename plus
+// delete.
 
 L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
   const tag = `qn-${Date.now().toString(36)}`;
@@ -311,6 +314,30 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       let gone = false;
       for (let i = 0; i < 15; i++) { await sleep(700); if (!(await mp.$(inactiveItem))) { gone = true; break; } }
       assert(gone, "inactive coder still listed after the swipe delete");
+    });
+
+    await run("mobile: the coder row's second swipe action deletes the running coder outright", async () => {
+      const mp = await mobilePage();
+      const name = `qnpur-${tag.slice(-4)}`;
+      await L.createSession(page, project, name);
+      const coderRow = `[data-pb-detail="${project}"] .quicknav-swipe-row:has([data-tab-kind="coder"])`;
+      const coderItem = `${coderRow} .quicknav-active-item`;
+      const inactiveItem = `[data-pb-detail="${project}"] .quicknav-swipe-row:has([data-tab-kind="inactive"]) .quicknav-active-item`;
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await mp.click(".quicknav-toggle");
+      await mp.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 });
+      await mp.locator('[data-quicknav-tab="projects"]:visible').first().click(); await sleep(400);
+      await mp.locator(`[data-pb-drill="${project}"]`).first().click();
+      await mp.waitForSelector(coderItem, { state: "visible", timeout: 10000 });
+      await swipeRow(mp, coderItem);
+      await sleep(400);
+      assert(await mp.$eval(`${coderRow} [data-qn-purge]`, (b) => getComputedStyle(b).visibility === "visible"), "coder delete action not revealed");
+      await mp.click(`${coderRow} [data-qn-purge]`);
+      await L.confirmSwal(mp);
+      let gone = false;
+      for (let i = 0; i < 30; i++) { await sleep(700); if (!(await mp.$(coderItem))) { gone = true; break; } }
+      assert(gone, "deleted coder still listed as active");
+      assert(!(await mp.$(inactiveItem)), "the deleted coder came back as an inactive row");
     });
 
     await run("context bar reflects the current project on a scoped page", async () => {

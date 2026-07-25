@@ -101,7 +101,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Quick-nav swipe actions",
 					Tag:      "Touch",
 					TagClass: "bg-blue-lt",
-					Desc:     `Swipe a row left to reveal its actions: stop or delete, shell and split rename, and split ungroup or remove.`,
+					Desc:     `Swipe a row left to reveal its actions, always in the same order: rename and ungroup first, then stop, then delete.`,
 				},
 				{
 					Title: "Open the terminal switcher",
@@ -154,13 +154,19 @@ func DocsTopics() []DocsTopic {
 					Title:    "Tab context menu",
 					Tag:      "Desktop",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Right-click a tab for rename, mark read, project and editor links, ungroup, and close.`,
+					Desc:     `Right-click a tab for rename, mark read, project and editor links, ungroup, stop, and delete. Split pane headers and the session chips on the projects page carry their own menu.`,
 				},
 				{
 					Title:    "Resume a coder",
 					Tag:      "Coder",
 					TagClass: "bg-secondary-lt",
 					Desc:     `Stopping a coder keeps its conversation. Resume it from the + menu in the tab strip, the terminal switcher, or its project page.`,
+				},
+				{
+					Title:    "Delete a coder",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Delete sits next to stop in every menu and behind the swipe on a phone. A running coder is stopped first, then its conversation is deleted and cannot be resumed.`,
 				},
 				{
 					Title:    "On-screen controls",

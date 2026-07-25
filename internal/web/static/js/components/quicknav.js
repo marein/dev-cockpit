@@ -73,7 +73,7 @@ class QuickNav extends HTMLElement {
         event.stopPropagation();
         return;
       }
-      if (this.openSwipe && !event.target.closest("[data-qn-delete], [data-qn-ungroup], [data-qn-remove], [data-qn-rename]")) {
+      if (this.openSwipe && !event.target.closest("[data-qn-delete], [data-qn-purge], [data-qn-ungroup], [data-qn-remove], [data-qn-rename]")) {
         this.closeSwipe();
         event.preventDefault();
         event.stopPropagation();
@@ -630,15 +630,17 @@ class QuickNav extends HTMLElement {
   // deleteTarget stops a coder, deletes a shell or deletes an inactive coder
   // from the revealed swipe action, mirroring the desktop tab strip's close
   // control and the projects page: same confirm dialogs, same endpoints and
-  // toasts. Deleting the active-list terminal you are attached to moves you to
-  // its neighbor; the projects tab has no neighbor order, there the server's
-  // redirect target wins.
-  async deleteTarget(row) {
+  // toasts. purge is the coder's second action, it deletes the running coder
+  // (the server stops it first). Deleting the active-list terminal you are
+  // attached to moves you to its neighbor; the projects tab has no neighbor
+  // order, there the server's redirect target wins.
+  async deleteTarget(row, purge = false) {
     if (this.confirming || !row) return;
     const item = this.swipeAnchor(row);
     if (!item) return;
     const { tabId: id, tabKind: kind, tabName: name } = item.dataset;
     const split = kind === "split";
+    const drop = purge && kind === "coder";
     const memberBlock = !split && row.hasAttribute("data-qn-group-member") ? row.closest("[data-qn-block]") : null;
     const unit = split ? row.closest("[data-qn-block]") : (memberBlock || row);
     const current = item.classList.contains("active");
@@ -660,10 +662,12 @@ class QuickNav extends HTMLElement {
       const ok = await confirm({
         title: split
           ? `Close all ${memberIds.length} terminals in "${name}"?`
-          : kind === "coder" ? `Stop coder "${name}"?`
-            : kind === "inactive" ? `Delete inactive coder "${name}"?`
-              : `Delete shell "${name}"?`,
-        confirmText: split ? "Close all" : (kind === "coder" ? "Stop" : "Delete"),
+          : drop ? `Delete coder "${name}"?`
+            : kind === "coder" ? `Stop coder "${name}"?`
+              : kind === "inactive" ? `Delete inactive coder "${name}"?`
+                : `Delete shell "${name}"?`,
+        text: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+        confirmText: split ? "Close all" : (kind === "coder" && !drop ? "Stop" : "Delete"),
       });
       if (!ok) {
         this.closeSwipe();
@@ -689,6 +693,11 @@ class QuickNav extends HTMLElement {
         response = await postForm(`/coders/${id}/delete`, {});
         await ensureOk(response, "Could not delete the coder.");
         notifySuccess(`Inactive coder "${name}" deleted.`);
+      } else if (drop) {
+        window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id } }));
+        response = await postForm(`/coders/${id}/delete`, {});
+        await ensureOk(response, "Could not delete the coder.");
+        notifySuccess(`Coder "${name}" deleted.`);
       } else {
         window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id } }));
         const action = kind === "coder" ? `/coders/${id}/stop` : `/shells/${id}/delete`;
@@ -825,6 +834,13 @@ class QuickNav extends HTMLElement {
       event.preventDefault();
       event.stopPropagation();
       void this.deleteTarget(del.closest(".quicknav-swipe-row"));
+      return;
+    }
+    const purge = event.target.closest("[data-qn-purge]");
+    if (purge) {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.deleteTarget(purge.closest(".quicknav-swipe-row"), true);
       return;
     }
     const rename = event.target.closest("[data-qn-rename]");

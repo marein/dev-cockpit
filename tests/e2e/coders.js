@@ -118,6 +118,26 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       await confirmSwal(page); await sleep(800);
       assert(await page.locator(`${card} form[action^="/coders/"][action$="/delete"]`).count() < before, "resumable row not removed");
     });
+
+    // The chip only carries stop, delete lives in its context menu and takes a
+    // running coder in one request: the server stops it before it drops the
+    // conversation, so it must not come back as a resumable row.
+    await run("chip context menu deletes a running coder, stop first", async () => {
+      const card = `#project-${project}`;
+      const url = await L.createSession(page, project, `chipdel-${tag.slice(-4)}`);
+      const id = url.split("/").filter(Boolean).pop();
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      const chip = page.locator(`${card} [data-chip][data-chip-kind="coder"][data-chip-id="${id}"]`);
+      await chip.waitFor({ state: "visible", timeout: 10000 });
+      await chip.click({ button: "right" });
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+      await page.click('.dc-context-menu button:text-is("Delete")');
+      await confirmSwal(page);
+      await page.waitForSelector(`${card} [data-chip][data-chip-id="${id}"]`, { state: "detached", timeout: 10000 });
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await sleep(500);
+      assert((await page.locator(`${card} form[action="/coders/${id}/resume"]`).count()) === 0, "the deleted coder is still resumable");
+    });
   } finally {
     if (sessionUrl) await L.stopSession(page, sessionUrl).catch(() => {});
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" }).catch(() => {});

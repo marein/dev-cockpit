@@ -329,6 +329,10 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
   color: var(--tblr-danger);
   background: rgba(var(--tblr-emphasis-color-rgb), 0.06);
 }
+.attach-split-pane[data-pane-kind="coder"] .attach-split-remove:hover,
+.attach-split-pane[data-pane-kind="coder"] .attach-split-remove:focus-visible {
+  color: var(--tblr-orange);
+}
 .attach-split .attach-terminal {
   flex: 1 1 auto;
   border: 0;
@@ -582,6 +586,7 @@ terminal-tabs[hidden] { display: none; }
     color: var(--tblr-danger);
     background: rgba(var(--tblr-emphasis-color-rgb), 0.06);
   }
+  .terminal-tab[data-tab-kind="coder"] .terminal-tab-close:hover { color: var(--tblr-orange); }
   .terminal-tabs-strip-dragging,
   .terminal-tabs-strip-dragging .terminal-tab { cursor: grabbing; }
   .terminal-tabs-strip-dragging .terminal-tab { transition: transform 0.12s ease; }
@@ -931,6 +936,7 @@ body:not(:has(.attach-footer)) .quicknav {
   --qn-swipe-btn: min(4.5rem, calc((100% - 3rem) / var(--qn-swipe-n)));
 }
 .quicknav-swipe-row:has(> .quicknav-swipe-rename),
+.quicknav-swipe-row:has(> .quicknav-swipe-stop),
 .quicknav-swipe-row:has(> .quicknav-swipe-ungroup) { --qn-swipe-n: 2; }
 .quicknav-swipe-row:has(> .quicknav-swipe-slot3) { --qn-swipe-n: 3; }
 .quicknav-active-item {
@@ -963,6 +969,10 @@ body:not(:has(.attach-footer)) .quicknav {
 .quicknav-swipe-rename {
   right: var(--qn-swipe-btn);
   background: var(--tblr-azure, #4299e1);
+}
+.quicknav-swipe-stop {
+  right: var(--qn-swipe-btn);
+  background: var(--tblr-orange, #f76707);
 }
 .quicknav-swipe-slot3 { right: calc(2 * var(--qn-swipe-btn)); }
 .quicknav-group-row .quicknav-active-item { padding-left: 2rem; }
@@ -1825,6 +1835,7 @@ terminal-input { display: none; }
   opacity: 0.65;
 }
 .project-chip-x:hover { color: var(--tblr-danger); opacity: 1; }
+.project-chip[data-chip-kind="coder"]:not(.is-idle) .project-chip-x:hover { color: var(--tblr-orange); }
 @media (hover: hover) and (pointer: fine) {
   .project-chip-x { opacity: 0; }
   .project-chip:hover .project-chip-x,

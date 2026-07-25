@@ -55,7 +55,10 @@ const { assert, sleep, BASE } = L;
 // POST /shells/:id/rename, tab updates over the event stream), Mark read only
 // while the tab carries news, Open project (projects page card fragment), Open
 // editor (with ?return to the attach page), and the same stop/delete action as
-// the close control. Switcher rows deliberately carry no close control
+// the close control. Menu labels carry no kind, the menu belongs to one tab:
+// a shell offers Delete, a coder offers Stop plus a second entry Delete (POST
+// /coders/:id/delete), which drops the conversation for good; the server stops
+// the coder first, so it never reappears as a resumable row. Switcher rows deliberately carry no close control
 // and no badges; the current session's row is marked by the current class
 // (accent bar) without extra row content. The + button at the strip's end
 // opens New coder / New shell with the current project preselected, followed by
@@ -483,10 +486,10 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.waitForSelector(tabSel(ids[2]), { state: "attached", timeout: 8000 });
       await openTabMenu(tabSel(ids[2]));
       const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
-      for (const want of ["Rename", "Open project", "Open editor", "Delete shell"]) {
+      for (const want of ["Rename", "Open project", "Open editor", "Delete"]) {
         assert(labels.includes(want), `shell menu misses '${want}': ${labels.join(", ")}`);
       }
-      assert(!labels.includes("Stop coder"), "shell menu offers Stop coder");
+      assert(!labels.includes("Stop"), "shell menu offers Stop");
       assert(!labels.includes("Mark read"), "menu offers Mark read without news");
       await closeTabMenu();
     });
@@ -534,7 +537,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.goto(shellUrls[2], { waitUntil: "domcontentloaded" });
       await page.waitForSelector(tabSel(ghostId), { state: "attached", timeout: 8000 });
       await openTabMenu(tabSel(ghostId));
-      await menuItem("Delete shell").click();
+      await menuItem("Delete").click();
       await L.confirmSwal(page);
       await page.waitForSelector(tabSel(ghostId), { state: "detached", timeout: 8000 });
       assert(page.url().includes(ids[2]), `deleting a background tab must not navigate: ${page.url()}`);
@@ -663,15 +666,35 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert((await page.locator(".terminal-switcher").count()) === 0, "switcher still open after resume");
     });
 
-    await run("a coder tab's context menu offers stop but no rename", async () => {
+    await run("a coder tab's context menu offers stop and delete but no rename", async () => {
       assert(coderUrl, "no live coder to inspect");
       const resumedId = ownId(coderUrl);
       await openTabMenu(tabSel(resumedId));
       const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
-      assert(labels.includes("Stop coder"), `coder menu misses Stop coder: ${labels.join(", ")}`);
+      assert(labels.includes("Stop"), `coder menu misses Stop: ${labels.join(", ")}`);
+      assert(labels.includes("Delete"), `coder menu misses Delete: ${labels.join(", ")}`);
+      assert(labels.indexOf("Stop") < labels.indexOf("Delete"), `stop must come before delete: ${labels.join(", ")}`);
       assert(!labels.includes("Rename"), "coder menu offers Rename");
-      assert(!labels.includes("Delete shell"), "coder menu offers Delete shell");
+      assert(!labels.some((l) => /coder|shell/i.test(l)), `menu labels carry the kind: ${labels.join(", ")}`);
       await closeTabMenu();
+    });
+
+    await run("Delete coder stops the running coder and drops it from the resume list", async () => {
+      assert(coderUrl, "no live coder to delete");
+      const deletedId = ownId(coderUrl);
+      await page.goto(coderUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`${tabSel(deletedId)}.active`, { state: "attached", timeout: 8000 });
+      await openTabMenu(tabSel(deletedId));
+      await menuItem("Delete").click();
+      await L.confirmSwal(page);
+      await page.waitForSelector(tabSel(deletedId), { state: "detached", timeout: 10000 });
+      coderUrl = null;
+      // Deleting the tab you are on moves to its neighbor, same as the close control.
+      await page.waitForURL((u) => !u.pathname.includes(deletedId), { timeout: 10000 });
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`#project-${project}`, { state: "attached", timeout: 8000 });
+      const left = await page.locator(`#project-${project} form[action="/coders/${deletedId}/resume"]`).count();
+      assert(left === 0, "the deleted coder is still offered for resume");
     });
 
     await run("switching tabs keeps the scroll position instead of jumping to the top", async () => {

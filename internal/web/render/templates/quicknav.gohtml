@@ -81,13 +81,23 @@
           <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename quicknav-swipe-slot3" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
             <i class="ti ti-pencil" aria-hidden="true"></i>
           </button>
-          {{end}}
           <button type="button" class="quicknav-swipe-delete quicknav-swipe-ungroup" data-qn-remove aria-label="Remove {{.Name}} from split view" title="Remove from split view">
             <i class="ti ti-layout-off" aria-hidden="true"></i>
           </button>
-          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}}">
-            <i class="ti {{if eq .Kind "coder"}}ti-player-stop{{else}}ti-trash{{end}}" aria-hidden="true"></i>
+          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="Delete shell {{.Name}}" title="Delete shell">
+            <i class="ti ti-trash" aria-hidden="true"></i>
           </button>
+          {{else}}
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-ungroup quicknav-swipe-slot3" data-qn-remove aria-label="Remove {{.Name}} from split view" title="Remove from split view">
+            <i class="ti ti-layout-off" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-stop" data-qn-delete aria-label="Stop coder {{.Name}}" title="Stop coder">
+            <i class="ti ti-player-stop" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="quicknav-swipe-delete" data-qn-purge aria-label="Delete coder {{.Name}}" title="Delete coder">
+            <i class="ti ti-trash" aria-hidden="true"></i>
+          </button>
+          {{end}}
         </div>
         {{end}}
       </div>
@@ -106,10 +116,17 @@
         <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
           <i class="ti ti-pencil" aria-hidden="true"></i>
         </button>
-        {{end}}
-        <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}}">
-          <i class="ti {{if eq .Kind "coder"}}ti-player-stop{{else}}ti-trash{{end}}" aria-hidden="true"></i>
+        <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="Delete shell {{.Name}}" title="Delete shell">
+          <i class="ti ti-trash" aria-hidden="true"></i>
         </button>
+        {{else}}
+        <button type="button" class="quicknav-swipe-delete quicknav-swipe-stop" data-qn-delete aria-label="Stop coder {{.Name}}" title="Stop coder">
+          <i class="ti ti-player-stop" aria-hidden="true"></i>
+        </button>
+        <button type="button" class="quicknav-swipe-delete" data-qn-purge aria-label="Delete coder {{.Name}}" title="Delete coder">
+          <i class="ti ti-trash" aria-hidden="true"></i>
+        </button>
+        {{end}}
       </div>
       {{end}}
       {{end}}
@@ -158,10 +175,17 @@
           <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
             <i class="ti ti-pencil" aria-hidden="true"></i>
           </button>
-          {{end}}
-          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if eq .Kind "coder"}}Stop coder{{else}}Delete shell{{end}}">
-            <i class="ti {{if eq .Kind "coder"}}ti-player-stop{{else}}ti-trash{{end}}" aria-hidden="true"></i>
+          <button type="button" class="quicknav-swipe-delete" data-qn-delete aria-label="Delete shell {{.Name}}" title="Delete shell">
+            <i class="ti ti-trash" aria-hidden="true"></i>
           </button>
+          {{else}}
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-stop" data-qn-delete aria-label="Stop coder {{.Name}}" title="Stop coder">
+            <i class="ti ti-player-stop" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="quicknav-swipe-delete" data-qn-purge aria-label="Delete coder {{.Name}}" title="Delete coder">
+            <i class="ti ti-trash" aria-hidden="true"></i>
+          </button>
+          {{end}}
         </div>
         {{end}}
         {{range .InactiveCoders}}

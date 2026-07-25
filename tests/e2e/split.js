@@ -420,7 +420,7 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await item.waitFor({ state: "visible", timeout: 4000 });
       const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((el) => el.textContent.trim()));
       assert(labels.some((l) => l.includes("Remove from split view")), `menu misses remove: ${labels}`);
-      assert(labels.some((l) => l.includes("Delete shell")), `menu misses delete: ${labels}`);
+      assert(labels.includes("Delete"), `menu misses delete: ${labels}`);
       await item.click();
       await page.waitForSelector(".swal2-input", { timeout: 4000 });
       await page.fill(".swal2-input", "bravo2");

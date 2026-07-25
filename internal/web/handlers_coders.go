@@ -376,10 +376,32 @@ func (s *Server) handleCoderResume(c *gin.Context) {
 	c.Redirect(http.StatusSeeOther, "/coders/"+stored.SessionID)
 }
 
+// handleCoderDelete removes a coder for good. A running one is stopped first,
+// DeleteResumable refuses to touch a live session and its tmux session would
+// outlive the store otherwise, so the delete entries in the menus and the swipe
+// actions need no second request.
 func (s *Server) handleCoderDelete(c *gin.Context) {
 	id := c.Param("id")
+	stopped := ""
+	project := ""
+	if co, running, err := s.resolveRunning(id); err == nil {
+		project = s.projects.ProjectNameFor(running.CWD)
+		name, err := co.Stop(id)
+		if err != nil {
+			s.redirectWithFlash(c, "/projects", "", err.Error())
+			return
+		}
+		stopped = name
+		s.notifier.MarkTargetRead(id)
+	}
 	co, _, err := s.resolveResumable(id)
 	if err != nil {
+		// A coder stopped before it wrote a session leaves nothing to delete.
+		if stopped != "" {
+			s.publishTerminals(project)
+			s.redirectWithProjectFlash(c, project, "Coder \""+stopped+"\" deleted.", "")
+			return
+		}
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
@@ -388,6 +410,7 @@ func (s *Server) handleCoderDelete(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
-	s.publishTerminals(s.projects.ProjectNameFor(stored.CWD))
-	s.redirectWithProjectFlash(c, s.projects.ProjectNameFor(stored.CWD), "Inactive coder \""+stored.Name+"\" deleted.", "")
+	project = s.projects.ProjectNameFor(stored.CWD)
+	s.publishTerminals(project)
+	s.redirectWithProjectFlash(c, project, "Coder \""+stored.Name+"\" deleted.", "")
 }

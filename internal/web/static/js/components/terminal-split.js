@@ -230,11 +230,20 @@ class TerminalSplit extends HTMLElement {
     items.push({ divider: true });
     items.push({ label: "Remove from split view", icon: "ti-layout-off", action: () => void this.removePane(dataset.paneId) });
     items.push({
-      label: dataset.paneKind === "coder" ? "Stop coder" : "Delete shell",
+      label: dataset.paneKind === "coder" ? "Stop" : "Delete",
       icon: dataset.paneKind === "coder" ? "ti-player-stop" : "ti-trash",
-      danger: true,
+      danger: dataset.paneKind !== "coder",
+      warn: dataset.paneKind === "coder",
       action: () => void this.closePane(dataset),
     });
+    if (dataset.paneKind === "coder") {
+      items.push({
+        label: "Delete",
+        icon: "ti-trash",
+        danger: true,
+        action: () => void this.closePane(dataset, true),
+      });
+    }
     openMenu({ x: event.clientX, y: event.clientY, items, signal: this.ac.signal });
   }
 
@@ -277,20 +286,25 @@ class TerminalSplit extends HTMLElement {
     }
   }
 
-  async closePane({ paneId, paneKind, paneName }) {
+  async closePane({ paneId, paneKind, paneName }, purge = false) {
     if (this.confirming) return;
+    const drop = purge && paneKind === "coder";
     this.confirming = true;
     try {
       const ok = await confirm({
-        title: paneKind === "coder" ? `Stop coder "${paneName}"?` : `Delete shell "${paneName}"?`,
-        confirmText: paneKind === "coder" ? "Stop" : "Delete",
+        title: drop ? `Delete coder "${paneName}"?`
+          : paneKind === "coder" ? `Stop coder "${paneName}"?` : `Delete shell "${paneName}"?`,
+        text: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+        confirmText: paneKind === "coder" && !drop ? "Stop" : "Delete",
       });
       if (!ok) return;
       window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id: paneId } }));
-      const action = paneKind === "coder" ? `/coders/${paneId}/stop` : `/shells/${paneId}/delete`;
+      const action = drop ? `/coders/${paneId}/delete`
+        : paneKind === "coder" ? `/coders/${paneId}/stop` : `/shells/${paneId}/delete`;
       const response = await postForm(action, {});
       await ensureOk(response, "Could not close the session.");
-      notifySuccess(paneKind === "coder" ? `Coder "${paneName}" stopped.` : `Shell "${paneName}" deleted.`);
+      notifySuccess(drop ? `Coder "${paneName}" deleted.`
+        : paneKind === "coder" ? `Coder "${paneName}" stopped.` : `Shell "${paneName}" deleted.`);
       this.refreshPage();
     } catch (error) {
       notifyError(error.message);

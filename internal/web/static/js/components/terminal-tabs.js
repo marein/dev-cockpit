@@ -215,11 +215,20 @@ class TerminalTabs extends HTMLElement {
       });
     } else {
       items.push({
-        label: dataset.tabKind === "coder" ? "Stop coder" : "Delete shell",
+        label: dataset.tabKind === "coder" ? "Stop" : "Delete",
         icon: dataset.tabKind === "coder" ? "ti-player-stop" : "ti-trash",
-        danger: true,
+        danger: dataset.tabKind !== "coder",
+        warn: dataset.tabKind === "coder",
         action: () => void this.closeTarget(dataset),
       });
+      if (dataset.tabKind === "coder") {
+        items.push({
+          label: "Delete",
+          icon: "ti-trash",
+          danger: true,
+          action: () => void this.closeTarget(dataset, true),
+        });
+      }
     }
     openMenu({ x: event.clientX, y: event.clientY, items, signal: this.ac.signal });
   }
@@ -998,7 +1007,9 @@ class TerminalTabs extends HTMLElement {
     else this.navigate(selected.dataset.switcherUrl);
   }
 
-  async closeTarget({ tabId, tabKind, tabName }) {
+  // closeTarget stops a coder or deletes a shell. purge turns the coder path
+  // into a delete, the server stops it first and drops its conversation.
+  async closeTarget({ tabId, tabKind, tabName }, purge = false) {
     if (this.confirming) return;
     const id = tabId;
     const tab = this.strip.querySelector(`.terminal-tab[data-tab-id="${CSS.escape(id)}"]`);
@@ -1010,18 +1021,23 @@ class TerminalTabs extends HTMLElement {
       void this.closeSplitMembers({ tabId: id, tabName: name });
       return;
     }
+    const drop = purge && kind === "coder";
     this.confirming = true;
     try {
       const ok = await confirm({
-        title: kind === "coder" ? `Stop coder "${name}"?` : `Delete shell "${name}"?`,
-        confirmText: kind === "coder" ? "Stop" : "Delete",
+        title: drop ? `Delete coder "${name}"?`
+          : kind === "coder" ? `Stop coder "${name}"?` : `Delete shell "${name}"?`,
+        text: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+        confirmText: kind === "coder" && !drop ? "Stop" : "Delete",
       });
       if (!ok) return;
       window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id } }));
-      const action = kind === "coder" ? `/coders/${id}/stop` : `/shells/${id}/delete`;
+      const action = drop ? `/coders/${id}/delete`
+        : kind === "coder" ? `/coders/${id}/stop` : `/shells/${id}/delete`;
       const response = await postForm(action, {});
       await ensureOk(response, "Could not close the session.");
-      notifySuccess(kind === "coder" ? `Coder "${name}" stopped.` : `Shell "${name}" deleted.`);
+      notifySuccess(drop ? `Coder "${name}" deleted.`
+        : kind === "coder" ? `Coder "${name}" stopped.` : `Shell "${name}" deleted.`);
       if (current) {
         const tabs = this.tabs();
         const index = tabs.indexOf(tab);

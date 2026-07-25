@@ -91,7 +91,7 @@
       <span class="project-chip-fold" data-chip-fold>
         {{range .ActiveRefs}}
         {{if eq .Kind "coder"}}
-        <div class="project-chip" data-chip data-chip-kind="coder">
+        <div class="project-chip" data-chip data-chip-kind="coder" data-chip-id="{{.ID}}" data-chip-name="{{.Name}}">
           <a href="/coders/{{.ID}}" class="project-chip-main" title="Attach to coder {{.Name}}" data-chip-main>
             <span class="dc-term-icon running{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
             <span class="project-chip-name">{{.Name}}</span>
