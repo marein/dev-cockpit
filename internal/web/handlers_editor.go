@@ -2,8 +2,10 @@ package web
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -16,6 +18,12 @@ import (
 type editorSaveForm struct {
 	Path    string `form:"path"`
 	Content string `form:"content"`
+}
+
+type editorMoveForm struct {
+	Path      string `form:"path"`
+	Dir       string `form:"dir"`
+	Overwrite string `form:"overwrite"`
 }
 
 type editorPathForm struct {
@@ -108,6 +116,15 @@ var inlineImageExt = map[string]bool{
 	".webp": true, ".avif": true, ".bmp": true, ".ico": true,
 }
 
+// inlineMediaExt are the types the viewer plays in place. They render in a
+// media element, never as a document, so they carry no script risk. Serving
+// them inline also keeps Range requests working, which is what lets the player
+// seek instead of downloading the whole file first.
+var inlineMediaExt = map[string]bool{
+	".mp4": true, ".m4v": true, ".webm": true, ".ogv": true, ".mov": true,
+	".mp3": true, ".m4a": true, ".wav": true, ".oga": true, ".ogg": true, ".flac": true,
+}
+
 // handleEditorRaw streams the file at ?path= as bytes. With ?download=1, or
 // for any type not safe to render inline, it is sent as an attachment.
 func (s *Server) handleEditorRaw(c *gin.Context) {
@@ -123,7 +140,8 @@ func (s *Server) handleEditorRaw(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.Header("X-Content-Type-Options", "nosniff")
 	name := filepath.Base(target)
-	if c.Query("download") == "1" || !inlineImageExt[strings.ToLower(filepath.Ext(name))] {
+	ext := strings.ToLower(filepath.Ext(name))
+	if c.Query("download") == "1" || !(inlineImageExt[ext] || inlineMediaExt[ext]) {
 		c.FileAttachment(target, name)
 		return
 	}
@@ -225,6 +243,110 @@ func (s *Server) handleEditorRename(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"entry": entry})
 }
 
+// editorWriteError answers a failed write. A name that is already taken gets a
+// 409 with a conflict flag, so the browser can ask whether to overwrite instead
+// of ending the drag or the upload with a plain error.
+func editorWriteError(c *gin.Context, err error) {
+	if errors.Is(err, filesystem.ErrExists) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "conflict": true})
+		return
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+}
+
+// handleEditorMove moves a file or folder into another folder, keeping its name.
+// It backs the drag and drop in the file tree.
+func (s *Server) handleEditorMove(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var form editorMoveForm
+	if err := c.ShouldBind(&form); err != nil || form.Path == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "A path and a target folder are required."})
+		return
+	}
+	entry, err := filesystem.MoveEntry(p.Path, form.Path, form.Dir, form.Overwrite == "1")
+	if err != nil {
+		editorWriteError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"entry": entry})
+}
+
+// handleEditorExtract unpacks a tar, tar.gz or zip into a new folder next to it.
+func (s *Server) handleEditorExtract(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var form editorPathForm
+	if err := c.ShouldBind(&form); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "A file path is required."})
+		return
+	}
+	entry, err := filesystem.ExtractArchive(p.Path, form.Path)
+	if err != nil {
+		editorWriteError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"entry": entry})
+}
+
+// handleEditorArchive streams a folder as a tar.gz. Both server platforms write
+// it from the standard library, and macOS, Linux and Windows all unpack it with
+// their built in tar.
+func (s *Server) handleEditorArchive(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	dir, err := filesystem.ResolveUnder(p.Path, c.Query("path"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+		return
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Folder not found."})
+		return
+	}
+	name := filepath.Base(dir)
+	if dir == filepath.Clean(p.Path) {
+		name = p.Name
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Content-Type", "application/gzip")
+	c.Header("Content-Disposition", "attachment; filename=\""+name+".tar.gz\"")
+	// The size is unknown up front, so this streams; an error mid stream can only
+	// truncate the download, it is logged and the connection closed.
+	if err := filesystem.WriteTarGz(c.Writer, dir, name); err != nil {
+		log.Printf("editor archive %s: %v", dir, err)
+		c.Abort()
+	}
+}
+
+// handleEditorCopy copies a file or folder into another folder. It backs the
+// copy and paste entries in the tree menu, whose clipboard lives in the browser.
+func (s *Server) handleEditorCopy(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var form editorMoveForm
+	if err := c.ShouldBind(&form); err != nil || form.Path == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "A path and a target folder are required."})
+		return
+	}
+	entry, err := filesystem.CopyEntry(p.Path, form.Path, form.Dir, form.Overwrite == "1")
+	if err != nil {
+		editorWriteError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"entry": entry})
+}
+
 // handleEditorFiles returns every file path in the project as JSON, feeding the
 // quick open palette.
 func (s *Server) handleEditorFiles(c *gin.Context) {
@@ -278,6 +400,8 @@ func (s *Server) handleEditorUpload(c *gin.Context) {
 		return
 	}
 	dir := c.PostForm("dir")
+	overwrite := c.PostForm("overwrite") == "1"
+	createDirs := c.PostForm("dirs") == "1"
 	entries := make([]filesystem.Entry, 0, len(files))
 	for _, header := range files {
 		src, err := header.Open()
@@ -285,10 +409,10 @@ func (s *Server) handleEditorUpload(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 			return
 		}
-		entry, saveErr := filesystem.SaveUpload(p.Path, dir, header.Filename, src)
+		entry, saveErr := filesystem.SaveUpload(p.Path, dir, header.Filename, src, overwrite, createDirs)
 		closeErr := src.Close()
 		if saveErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, saveErr)})
+			editorWriteError(c, saveErr)
 			return
 		}
 		if closeErr != nil {

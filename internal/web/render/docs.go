@@ -154,7 +154,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Tab context menu",
 					Tag:      "Desktop",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Right-click a tab for rename, mark read, project and editor links, ungroup, stop, and delete. Split pane headers and the session chips on the projects page carry their own menu.`,
+					Desc:     `Right-click a tab for rename, mark read, project and editor links, ungroup, stop, and delete. Split pane headers and the chips on the projects page carry their own menu.`,
 				},
 				{
 					Title:    "Resume a coder",
@@ -210,39 +210,57 @@ func DocsTopics() []DocsTopic {
 			Lead:  "Shortcuts and controls in the project editor.",
 			Items: []DocsItem{
 				{
-					Title: "The file tree",
-					Desc:  `On desktop, drag the divider next to the tree to resize it. On small screens the tree sits in a drawer behind the folder button <i class="ti ti-folder align-text-bottom" aria-hidden="true"></i>.`,
-				},
-				{
-					Title: "Editor settings",
-					Desc:  `The settings menu <i class="ti ti-adjustments align-text-bottom" aria-hidden="true"></i> sets tab width, indentation, font size, and line wrapping, stored per device. A file covered by a project's .editorconfig takes its indentation from there, the control then only shows it.`,
-				},
-				{
 					Title: "Switch projects",
 					Desc:  `The project name above the file tree switches to another project's editor.`,
 				},
 				{
-					Title: "Preview files",
-					Desc:  `The eye button <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i> previews markdown and SVG files; images open in a viewer.`,
+					Title: "The file tree",
+					Desc:  `On desktop, drag the divider next to the tree to resize it. On small screens the tree sits in a drawer behind the folder button <i class="ti ti-folder align-text-bottom" aria-hidden="true"></i>. Open folders are remembered per device, and closing one folds everything inside it.`,
 				},
 				{
-					Title: "Upload files",
-					Desc:  `Drop files onto the file tree to upload them; dropping onto a folder puts them there. The tree context menu uploads too, targeting the row's folder.`,
+					Title: "Quick open",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "O"}}},
+					Desc:  `Open any project file by name. Pressing bare Shift twice does the same.`,
 				},
 				{
 					Title:    "File and tab menus",
 					Tag:      "Editor",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Right-click a tab or a tree row for contextual actions. On touch, long-press; tapping the already active tab also opens its menu. The toolbar menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> collects what belongs to the open file: go to line, save all, copy path, download, rename, and delete.`,
+					Desc:     `Right-click a tab or a tree row for contextual actions; both carry the same file actions, copy, download, extract, rename, delete. On touch, long-press; tapping the already active tab also opens its menu. The toolbar menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> collects what belongs to the open file: go to line, save all, copy path, download, rename, and delete.`,
 				},
 				{
 					Title: "Reorder tabs",
 					Desc:  `Drag editor tabs to change their order; the order is stored per device.`,
 				},
 				{
-					Title: "Quick open",
-					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "O"}}},
-					Desc:  `Open any project file by name. Pressing bare Shift twice does the same.`,
+					Title: "Cycle tabs",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Tab"}}, {Caps: []string{"Ctrl", "Shift", "Tab"}}},
+					Desc:  `Step through the open editor tabs in strip order, wrapping at both ends.`,
+				},
+				{
+					Title: "Move files",
+					Desc:  `Drag a file or a folder in the tree onto another folder to move it there, drop it on empty tree space to move it to the project root. A pill names the target folder while you drag, holding the pointer at the top or bottom edge scrolls the tree, and resting it on a closed folder opens that folder. Open tabs follow the new path, and a name that is already taken asks before it is replaced.`,
+				},
+				{
+					Title: "Copy and paste files",
+					Desc:  `The tree menu copies a file or a folder and pastes it into another folder; pasting into the folder it already sits in makes a numbered copy. The clipboard belongs to this browser, it is not shared with your other devices.`,
+				},
+				{
+					Title: "Upload files",
+					Desc:  `Drop files or whole folders onto the file tree to upload them; dropping onto a folder puts them there, and a dropped folder keeps its structure. The tree context menu uploads files or a folder too, targeting the row's folder. A name that is already taken is listed before the upload starts, and replacing it needs one confirmation.`,
+				},
+				{
+					Title: "Download a folder",
+					Desc:  `The tree menu packs a folder into a <code>.tar.gz</code> and downloads it. Windows, macOS and Linux all unpack that with their built in tar.`,
+				},
+				{
+					Title: "Extract an archive",
+					Desc:  `A <code>.tar</code>, <code>.tar.gz</code> or <code>.zip</code> carries an extract entry in its tree menu, and opening it offers the same next to the download. It unpacks into a new folder beside the archive, so nothing existing is overwritten.`,
+				},
+				{
+					Title: "Save",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "S"}}},
+					Desc:  `Save the current file.`,
 				},
 				{
 					Title: "Find in the file",
@@ -255,14 +273,12 @@ func DocsTopics() []DocsTopic {
 					Desc:  `Search the contents of every project file and jump to a match.`,
 				},
 				{
-					Title: "Save",
-					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "S"}}},
-					Desc:  `Save the current file.`,
+					Title: "Preview files",
+					Desc:  `The eye button <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i> previews markdown and SVG files; images open in a viewer, video and audio files open in a player. Everything else offers a download.`,
 				},
 				{
-					Title: "Cycle tabs",
-					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Tab"}}, {Caps: []string{"Ctrl", "Shift", "Tab"}}},
-					Desc:  `Step through the open editor tabs in strip order, wrapping at both ends.`,
+					Title: "Editor settings",
+					Desc:  `The settings menu <i class="ti ti-adjustments align-text-bottom" aria-hidden="true"></i> sets tab width, indentation, font size, and line wrapping, stored per device. A file covered by a project's .editorconfig takes its indentation from there, the control then only shows it.`,
 				},
 				{
 					Title: "Fullscreen editor",

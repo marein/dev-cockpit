@@ -25,6 +25,7 @@ async function init(root) {
 
   const bodyEl = root.querySelector(".editor-body");
   const treeEl = root.querySelector("[data-editor-tree]");
+  const dropHintEl = root.querySelector("[data-editor-drop-hint]");
   const treeColEl = root.querySelector(".editor-tree-col");
   const surfaceEl = root.querySelector("[data-editor-surface]");
   const placeholderEl = root.querySelector("[data-editor-placeholder]");
@@ -37,6 +38,7 @@ async function init(root) {
   const saveBtn = root.querySelector("[data-editor-save]");
   const refreshBtn = root.querySelector("[data-editor-refresh]");
   const uploadInput = root.querySelector("[data-editor-upload-input]");
+  const uploadDirInput = root.querySelector("[data-editor-upload-dir-input]");
   const quickOpenBtn = root.querySelector("[data-editor-quick-open]");
   const searchProjectBtn = root.querySelector("[data-editor-search-project]");
   const searchProjectItem = root.querySelector("[data-editor-search-project-item]");
@@ -91,6 +93,9 @@ async function init(root) {
   const isMarkdown = (fileName) => /\.(md|markdown)$/i.test(fileName);
   const isSvg = (fileName) => /\.svg$/i.test(fileName);
   const isImage = (fileName) => /\.(png|jpe?g|gif|webp|avif|bmp|ico)$/i.test(fileName);
+  const isArchive = (fileName) => /\.(tar\.gz|tgz|tar|zip)$/i.test(fileName);
+  const isVideo = (fileName) => /\.(mp4|m4v|webm|ogv|mov)$/i.test(fileName);
+  const isAudio = (fileName) => /\.(mp3|m4a|wav|oga|ogg|flac)$/i.test(fileName);
   const hasPreview = (fileName) => isMarkdown(fileName) || isSvg(fileName);
   const rawUrl = (path, download) => `${base}/raw?path=${encodeURIComponent(path)}${download ? "&download=1" : ""}`;
 
@@ -254,6 +259,15 @@ async function init(root) {
       img.src = rawUrl(tab.path);
       img.alt = tab.name;
       viewerEl.appendChild(img);
+    } else if (tab.kind === "video" || tab.kind === "audio") {
+      // The player streams from the raw endpoint, so a large file neither loads
+      // into the editor nor into memory before it starts.
+      const media = document.createElement(tab.kind);
+      media.className = tab.kind === "video" ? "editor-viewer-video" : "editor-viewer-audio";
+      media.src = rawUrl(tab.path);
+      media.controls = true;
+      media.preload = "metadata";
+      viewerEl.appendChild(media);
     } else {
       const icon = document.createElement("i");
       icon.className = "ti ti-file-unknown fs-1 d-block text-secondary";
@@ -262,13 +276,26 @@ async function init(root) {
     const meta = document.createElement("div");
     meta.className = "small text-secondary text-break";
     meta.textContent = tab.size ? `${tab.name} · ${formatSize(tab.size)}` : tab.name;
+    const actions = document.createElement("div");
+    actions.className = "d-flex flex-wrap gap-2 justify-content-center";
     const dl = document.createElement("a");
     dl.className = "btn btn-sm btn-outline-secondary";
     dl.href = rawUrl(tab.path, true);
     dl.setAttribute("download", tab.name);
     dl.setAttribute("data-no-pe", "");
     dl.innerHTML = '<i class="ti ti-download me-1"></i>Download';
-    viewerEl.append(meta, dl);
+    actions.appendChild(dl);
+    // An archive is more useful unpacked than downloaded, so it says so here too.
+    if (isArchive(tab.name)) {
+      const extract = document.createElement("button");
+      extract.type = "button";
+      extract.className = "btn btn-sm btn-outline-primary";
+      extract.dataset.editorExtract = "";
+      extract.innerHTML = '<i class="ti ti-file-zip me-1"></i>Extract here';
+      extract.addEventListener("click", () => void extractArchive(tab.path));
+      actions.appendChild(extract);
+    }
+    viewerEl.append(meta, actions);
     viewerEl.hidden = false;
   }
 
@@ -298,6 +325,8 @@ async function init(root) {
     }
   }
 
+  // The tab menu carries the same file actions as the tree row, minus the ones
+  // that need a folder: a tab is always one file.
   function tabMenuItems(tab) {
     const index = tabs.indexOf(tab);
     return [
@@ -306,13 +335,16 @@ async function init(root) {
       { label: "Close to the right", icon: "ti-arrow-bar-to-right", disabled: index === tabs.length - 1, action: () => closeMany(tabs.slice(index + 1)) },
       { label: "Close all", icon: "ti-circle-x", action: () => closeMany(tabs) },
       { divider: true },
+      { label: "Copy file", icon: "ti-files", action: () => copyToClipboard(tab.path, false) },
+      clipboard ? { label: `Paste "${baseName(clipboard.path)}"`, icon: "ti-clipboard", action: () => void pasteInto(parentDir(tab.path)) } : null,
       { label: "Copy path", icon: "ti-copy", action: () => copyPath(tab.path) },
       { label: "Download", icon: "ti-download", action: () => startDownload(tab.path) },
+      isArchive(tab.name) ? { label: "Extract here", icon: "ti-file-zip", action: () => void extractArchive(tab.path) } : null,
       { label: "Reveal in tree", icon: "ti-list-tree", action: () => revealInTree(tab.path) },
       { divider: true },
       { label: "Rename", icon: "ti-pencil", action: () => renameEntry({ path: tab.path, name: tab.name, isDir: false }) },
       { label: "Delete", icon: "ti-trash", danger: true, action: () => deletePath(tab.path) },
-    ];
+    ].filter(Boolean);
   }
 
   function openTabMenu(path, x, y) {
@@ -369,7 +401,8 @@ async function init(root) {
   async function tabFor(path, data) {
     const name = baseName(path);
     if (data.binary) {
-      return { path, name, kind: isImage(name) ? "image" : "binary", size: data.size || 0, dirty: false };
+      const kind = isImage(name) ? "image" : isVideo(name) ? "video" : isAudio(name) ? "audio" : "binary";
+      return { path, name, kind, size: data.size || 0, dirty: false };
     }
     return {
       path,
@@ -425,6 +458,11 @@ async function init(root) {
     return (await getJSON(`${base}/list?path=${encodeURIComponent(path)}`, { signal })).entries || [];
   }
 
+  // Folders that were open before a rebuild fetch their children after the first
+  // paint. loadTree waits for them, otherwise the tree is still short when the
+  // scroll position is put back.
+  const pendingDirLoads = [];
+
   function renderEntries(container, entries, depth) {
     container.innerHTML = "";
     if (entries.length === 0) {
@@ -448,6 +486,17 @@ async function init(root) {
     row.dataset.path = entry.path;
     if (entry.isDir) row.dataset.dir = "1";
     row.innerHTML = `<i class="ti ${icon} editor-item-icon"></i><span class="editor-item-name text-truncate">${escapeHtml(entry.name)}</span>`;
+    row.draggable = true;
+    row.addEventListener("dragstart", (e) => {
+      dragging = { path: entry.path, isDir: !!entry.isDir };
+      row.classList.add("editor-dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", entry.path);
+    }, { signal });
+    row.addEventListener("dragend", () => {
+      row.classList.remove("editor-dragging");
+      endDrag();
+    }, { signal });
     return row;
   }
 
@@ -461,16 +510,38 @@ async function init(root) {
       { label: "New file", icon: "ti-file-plus", action: () => createFile() },
       { label: "New folder", icon: "ti-folder-plus", action: () => createFolder() },
       { label: "Upload files", icon: "ti-upload", action: () => uploadInput.click() },
+      { label: "Upload folder", icon: "ti-folder-up", action: () => uploadDirInput.click() },
     ];
+    // The clipboard is this browser's own; paste targets the row's folder, or
+    // the project root from the empty area below the tree.
+    const pasteDir = entry ? (entry.isDir ? entry.path : parentDir(entry.path)) : "";
+    if (clipboard) {
+      items.push({ divider: true });
+      items.push({
+        label: `Paste "${baseName(clipboard.path)}"`,
+        icon: "ti-clipboard",
+        action: () => void pasteInto(pasteDir),
+      });
+    }
     if (!entry) {
       items.push({ divider: true });
       items.push({ label: "Refresh", icon: "ti-refresh", action: () => loadTree() });
       return items;
     }
     items.push({ divider: true });
+    items.push({
+      label: entry.isDir ? "Copy folder" : "Copy file",
+      icon: "ti-files",
+      action: () => copyToClipboard(entry.path, entry.isDir),
+    });
     items.push({ label: "Copy path", icon: "ti-copy", action: () => copyPath(entry.path) });
-    if (!entry.isDir) {
-      items.push({ label: "Download", icon: "ti-download", action: () => startDownload(entry.path) });
+    items.push({
+      label: entry.isDir ? "Download as tar.gz" : "Download",
+      icon: "ti-download",
+      action: () => (entry.isDir ? startDownload(entry.path, true) : startDownload(entry.path)),
+    });
+    if (!entry.isDir && isArchive(baseName(entry.path))) {
+      items.push({ label: "Extract here", icon: "ti-file-zip", action: () => void extractArchive(entry.path) });
     }
     items.push({ divider: true });
     items.push({
@@ -497,6 +568,9 @@ async function init(root) {
     const wrap = document.createElement("div");
     const row = rowLabel(entry, "ti-chevron-right", depth);
     row.classList.add("editor-dir");
+    // A drag that rests on a closed folder opens it, so the opener has to be
+    // reachable from the drag handlers.
+    dirOpeners.set(row, (open) => setOpen(open));
     const children = document.createElement("div");
     children.className = "editor-children";
     children.hidden = true;
@@ -506,8 +580,17 @@ async function init(root) {
       children.hidden = !open;
       row.querySelector(".editor-item-icon").classList.toggle("editor-open", open);
       if (!open) {
-        expanded.delete(entry.path);
+        // Closing a folder closes everything inside it: the rendered children
+        // fold back and their entries leave the saved set, so reopening it (now
+        // or after a reload) starts collapsed.
+        for (const path of [...expanded]) {
+          if (path === entry.path || path.startsWith(entry.path + "/")) expanded.delete(path);
+        }
         persistExpanded();
+        for (const nested of children.querySelectorAll(".editor-children")) nested.hidden = true;
+        for (const icon of children.querySelectorAll(".editor-item-icon.editor-open")) {
+          icon.classList.remove("editor-open");
+        }
         return;
       }
       expanded.add(entry.path);
@@ -529,12 +612,12 @@ async function init(root) {
     wrap.appendChild(row);
     wrap.appendChild(children);
     // Re-open dirs that were open before a rebuild; children restore recursively.
-    if (expanded.has(entry.path)) setOpen(true);
+    if (expanded.has(entry.path)) pendingDirLoads.push(setOpen(true));
     return wrap;
   }
 
   function fileNode(entry, depth) {
-    const row = rowLabel(entry, "ti-file", depth);
+    const row = rowLabel(entry, fileIcon(entry.name), depth);
     row.classList.add("editor-file");
     row.title = entry.sizeText ? `${entry.path} · ${entry.sizeText}` : entry.path;
     if (entry.path === activePath) row.classList.add("selected");
@@ -545,12 +628,22 @@ async function init(root) {
     return row;
   }
 
+  // Every file action rebuilds the tree, so it also has to put the scroll
+  // position back; landing at the top after a rename or an upload loses the
+  // place you were working in.
   async function loadTree() {
+    const top = treeEl.scrollTop;
     selected = null; // rebuilding the DOM drops the highlight; keep state in sync
     treeEl.innerHTML = `<div class="text-secondary small p-3">Loading…</div>`;
     try {
+      pendingDirLoads.length = 0;
       renderEntries(treeEl, await listDir(""), 0);
       if (activePath) markTreeSelection(activePath);
+      // Nested folders queue more loads while the outer ones settle.
+      for (let round = 0; round < 12 && pendingDirLoads.length; round += 1) {
+        await Promise.allSettled(pendingDirLoads.splice(0));
+      }
+      treeEl.scrollTop = top;
     } catch (err) {
       treeEl.innerHTML = `<div class="text-danger small p-3">${escapeHtml(err.message)}</div>`;
     }
@@ -630,35 +723,122 @@ async function init(root) {
       const res = await postForm(`${base}/rename`, { path: entry.path, newName });
       await ensureOk(res, "Failed to rename.");
       const data = await res.json();
-      const oldPath = entry.path;
-      const newPath = data.entry.path;
-      const moved = (p) => (p === oldPath ? newPath : p.startsWith(oldPath + "/") ? newPath + p.slice(oldPath.length) : p);
-      for (const tab of tabs) {
-        tab.path = moved(tab.path);
-        tab.name = baseName(tab.path);
+      await applyNewPath(entry.path, data.entry.path);
+      status(`Renamed to ${data.entry.path}`, "ok");
+    } catch (err) {
+      status(err.message, "error");
+    }
+  }
+
+  // A rename and a move both change one path (and every path below it): carry
+  // the open tabs, the active file and the unfolded dirs over to the new one.
+  async function applyNewPath(oldPath, newPath) {
+    const moved = (p) => (p === oldPath ? newPath : p.startsWith(oldPath + "/") ? newPath + p.slice(oldPath.length) : p);
+    for (const tab of tabs) {
+      tab.path = moved(tab.path);
+      tab.name = baseName(tab.path);
+    }
+    if (activePath) activePath = moved(activePath);
+    for (const p of [...expanded]) {
+      const next = moved(p);
+      if (next !== p) {
+        expanded.delete(p);
+        expanded.add(next);
       }
-      if (activePath) activePath = moved(activePath);
-      for (const p of [...expanded]) {
-        const next = moved(p);
-        if (next !== p) {
-          expanded.delete(p);
-          expanded.add(next);
-        }
-      }
-      persistExpanded();
-      const tab = activeTab();
-      pathEl.textContent = tab ? tab.path : "";
-      pathEl.title = tab ? tab.path : "";
-      if (tab && tab.path.startsWith(newPath)) {
-        if (tab.kind) renderViewer(tab);
-        else editor.refreshLanguage(tab.name);
-      }
-      renderTabs();
-      updateActionStates();
-      syncPreview();
-      persistTabs();
+    }
+    persistExpanded();
+    const tab = activeTab();
+    pathEl.textContent = tab ? tab.path : "";
+    pathEl.title = tab ? tab.path : "";
+    if (tab && tab.path.startsWith(newPath)) {
+      if (tab.kind) renderViewer(tab);
+      else editor.refreshLanguage(tab.name);
+    }
+    renderTabs();
+    updateActionStates();
+    syncPreview();
+    persistTabs();
+    await loadTree();
+  }
+
+  function copyToClipboard(path, isDir) {
+    clipboard = { path, isDir };
+    status(`Copied ${path}`, "ok");
+  }
+
+  // extractArchive unpacks an archive into a fresh folder beside it. The name is
+  // free by construction, so nothing existing is touched.
+  async function extractArchive(path) {
+    status("Extracting…");
+    try {
+      const res = await postForm(`${base}/extract`, { path });
+      await ensureOk(res, "Failed to extract.");
+      const data = await res.json();
+      expandTo(parentDir(path));
       await loadTree();
-      status(`Renamed to ${newPath}`, "ok");
+      status(`Extracted to ${data.entry.path}`, "ok");
+    } catch (err) {
+      status(err.message, "error");
+    }
+  }
+
+  // pasteInto copies whatever the tree clipboard holds into dir. The clipboard
+  // belongs to this browser, nothing about it is shared or persisted.
+  async function pasteInto(dir) {
+    if (!clipboard) return;
+    const source = clipboard.path;
+    status("Copying…");
+    try {
+      let res = await postForm(`${base}/copy`, { path: source, dir });
+      if (res.status === 409) {
+        const name = baseName(source);
+        const ok = await confirmDialog({
+          title: `Replace "${name}"?`,
+          text: `${dir || "The project root"} already holds a file called ${name}.`,
+          confirmText: "Replace",
+        });
+        if (!ok) {
+          status("");
+          return;
+        }
+        res = await postForm(`${base}/copy`, { path: source, dir, overwrite: "1" });
+      }
+      await ensureOk(res, "Failed to copy.");
+      const data = await res.json();
+      if (dir) expandTo(dir);
+      await loadTree();
+      status(`Copied to ${data.entry.path}`, "ok");
+    } catch (err) {
+      status(err.message, "error");
+    }
+  }
+
+  // Drop of a tree row onto a folder row (or the empty tree area for the root).
+  async function moveEntry(path, dir) {
+    if (!path || parentDir(path) === dir) return;
+    status("Moving…");
+    try {
+      let res = await postForm(`${base}/move`, { path, dir });
+      // 409 means the target folder already holds that name. Offer to replace
+      // it rather than ending the drag with an error.
+      if (res.status === 409) {
+        const name = baseName(path);
+        const ok = await confirmDialog({
+          title: `Replace "${name}"?`,
+          text: `${dir || "The project root"} already holds a file called ${name}.`,
+          confirmText: "Replace",
+        });
+        if (!ok) {
+          status("");
+          return;
+        }
+        res = await postForm(`${base}/move`, { path, dir, overwrite: "1" });
+      }
+      await ensureOk(res, "Failed to move.");
+      const data = await res.json();
+      if (dir) expandTo(dir);
+      await applyNewPath(path, data.entry.path);
+      status(`Moved to ${data.entry.path}`, "ok");
     } catch (err) {
       status(err.message, "error");
     }
@@ -723,10 +903,11 @@ async function init(root) {
     }
   }
 
-  function startDownload(path) {
+  // A folder is packed into a tar.gz on the fly, a file goes as it is.
+  function startDownload(path, asArchive) {
     const a = document.createElement("a");
-    a.href = rawUrl(path, true);
-    a.setAttribute("download", baseName(path));
+    a.href = asArchive ? `${base}/archive?path=${encodeURIComponent(path)}` : rawUrl(path, true);
+    a.setAttribute("download", asArchive ? `${baseName(path)}.tar.gz` : baseName(path));
     a.setAttribute("data-no-pe", "");
     document.body.appendChild(a);
     a.click();
@@ -739,37 +920,56 @@ async function init(root) {
   // before anything is sent, so a stray tree selection cannot route files to
   // the wrong place unnoticed. Button uploads wait for a confirm; drops name
   // their target implicitly, so they start right away and only show progress.
+  // uploadFiles takes plain File objects or {file, rel} pairs, where rel is the
+  // path inside a dropped folder. The folders themselves are made by the server
+  // while the files land.
   async function uploadFiles(fileList, dir, { confirmFirst = true } = {}) {
-    const files = Array.from(fileList || []);
+    const items = Array.from(fileList || []).map((item) => (item instanceof File ? { file: item, rel: "" } : item));
+    const files = items.map((item) => item.file);
+    const nested = items.some((item) => item.rel);
     if (files.length === 0) return;
     if (!dialogAvailable()) {
       await uploadPlain(files, dir);
       return;
     }
     const where = dir ? `${dir}/` : "project root";
+    // Names already in the target folder are named up front, so the upload asks
+    // once instead of failing per file. A drop that collides opens the dialog
+    // even though it would otherwise upload straight away.
+    const taken = new Set((await listDir(dir).catch(() => [])).map((entry) => entry.name));
+    const clashes = nested ? [] : files.filter((file) => taken.has(file.name));
     const content = document.createElement("div");
     const target = document.createElement("div");
     target.className = "text-secondary small mb-3";
     target.innerHTML = `in <code>${escapeHtml(where)}</code>`;
     const list = document.createElement("div");
     list.className = "editor-upload-list";
-    files.forEach((file, index) => list.appendChild(uploadItem(file, index)));
+    items.forEach((item, index) => list.appendChild(uploadItem(item.file, index, item.rel)));
     content.append(target, list);
+    if (clashes.length) {
+      const warn = document.createElement("div");
+      warn.className = "text-warning small mt-3 text-break";
+      warn.dataset.uploadClash = String(clashes.length);
+      warn.textContent = clashes.length === 1
+        ? `${clashes[0].name} is already there and will be replaced.`
+        : `${clashes.length} files are already there and will be replaced: ${clashes.map((f) => f.name).join(", ")}`;
+      content.appendChild(warn);
+    }
     let uploaded = 0;
     const result = await fireDialog({
       title: files.length === 1 ? "Upload 1 file" : `Upload ${files.length} files`,
       html: content,
       showCancelButton: true,
-      confirmButtonText: "Upload",
+      confirmButtonText: clashes.length ? "Replace" : "Upload",
       cancelButtonText: "Cancel",
       reverseButtons: true,
       showLoaderOnConfirm: true,
       allowOutsideClick: () => !window.Swal.isLoading(),
       didOpen: () => {
-        if (!confirmFirst) window.Swal.clickConfirm();
+        if (!confirmFirst && !clashes.length) window.Swal.clickConfirm();
       },
       preConfirm: async () => {
-        const results = await runUploads(files, dir, list);
+        const results = await runUploads(items, dir, list, clashes.length > 0);
         uploaded += results.filter((r) => r.status === "fulfilled" && r.value).length;
         const failed = results.filter((r) => r.status === "rejected");
         if (failed.length > 0) {
@@ -781,6 +981,9 @@ async function init(root) {
     });
     if (uploaded > 0) {
       expandTo(dir);
+      // A folder upload lands in a new folder, open it so the result is visible.
+      const top = items.find((item) => item.rel)?.rel.split("/")[0];
+      if (top) expandTo(dir ? `${dir}/${top}` : top);
       await loadTree();
     }
     if (result.isConfirmed) {
@@ -812,8 +1015,8 @@ async function init(root) {
 
   // Already uploaded rows keep data-done, so a retry after a partial failure
   // only sends the files that are still missing.
-  function runUploads(files, dir, list) {
-    const jobs = files.map((file, index) => {
+  function runUploads(items, dir, list, overwrite = false) {
+    const jobs = items.map(({ file, rel }, index) => {
       const item = list.querySelector(`[data-file-index="${index}"]`);
       if (item.dataset.done === "true") return Promise.resolve(null);
       delete item.dataset.error;
@@ -821,7 +1024,8 @@ async function init(root) {
       const outer = item.querySelector(".progress");
       const statusEl = item.querySelector("[data-file-status]");
       statusEl.textContent = "Uploading";
-      return uploadOne(file, dir, (e) => {
+      const into = rel ? (dir ? `${dir}/${rel}` : rel) : dir;
+      return uploadOne(file, into, overwrite, !!rel, (e) => {
         if (!e.lengthComputable) return;
         const percent = Math.round((e.loaded / e.total) * 100);
         bar.style.width = `${percent}%`;
@@ -845,7 +1049,7 @@ async function init(root) {
     return Promise.allSettled(jobs);
   }
 
-  function uploadOne(file, dir, onProgress) {
+  function uploadOne(file, dir, overwrite, createDirs, onProgress) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", `${base}/upload`);
@@ -869,12 +1073,14 @@ async function init(root) {
       xhr.addEventListener("abort", () => reject(new Error("Upload canceled.")));
       const form = new FormData();
       form.append("dir", dir);
+      if (overwrite) form.append("overwrite", "1");
+      if (createDirs) form.append("dirs", "1");
       form.append("files", file, file.name);
       xhr.send(form);
     });
   }
 
-  function uploadItem(file, index) {
+  function uploadItem(file, index, rel) {
     const item = document.createElement("div");
     item.className = "editor-upload-item";
     item.dataset.fileIndex = String(index);
@@ -882,7 +1088,7 @@ async function init(root) {
     header.className = "d-flex justify-content-between gap-2 small mb-1";
     const nameEl = document.createElement("div");
     nameEl.className = "text-truncate";
-    nameEl.textContent = file.name;
+    nameEl.textContent = rel ? `${rel}/${file.name}` : file.name;
     const statusEl = document.createElement("div");
     statusEl.className = "text-secondary text-nowrap";
     statusEl.dataset.fileStatus = "";
@@ -918,6 +1124,24 @@ async function init(root) {
     return row.dataset.dir ? row.dataset.path : parentDir(row.dataset.path);
   }
 
+  // The row that owns the drop target directory, so the highlight sits where the
+  // files actually land: the folder row itself, or the tree box for the root.
+  function dropRowFor(target) {
+    const dir = dropDirFor(target);
+    if (!dir) return treeEl;
+    return treeEl.querySelector(`.editor-dir[data-path="${CSS.escape(dir)}"]`) || treeEl;
+  }
+
+  // A folder cannot land in itself or in one of its own children.
+  function dropAllowed(dir) {
+    if (!dragging) return true;
+    if (parentDir(dragging.path) === dir) return false;
+    return !(dragging.isDir && (dir === dragging.path || dir.startsWith(dragging.path + "/")));
+  }
+
+  const dirOpeners = new WeakMap(); // folder row -> its open/close function
+  let dragging = null;
+  let clipboard = null; // { path, isDir } for copy and paste, per browser
   let dropHighlight = null;
   function setDropHighlight(el) {
     if (dropHighlight === el) return;
@@ -926,23 +1150,174 @@ async function init(root) {
     dropHighlight?.classList.add("editor-drop");
   }
 
+  // While a drag hovers the top or bottom edge of the tree it scrolls, so a
+  // folder far up or down the list stays reachable without letting go.
+  const DRAG_EDGE = 32;
+  const DRAG_STEP = 12;
+  let edgeScroll = null;
+  function stopEdgeScroll() {
+    if (!edgeScroll) return;
+    cancelAnimationFrame(edgeScroll.raf);
+    edgeScroll = null;
+  }
+  function updateEdgeScroll(clientY) {
+    const box = treeEl.getBoundingClientRect();
+    const dir = clientY < box.top + DRAG_EDGE ? -1 : clientY > box.bottom - DRAG_EDGE ? 1 : 0;
+    if (!dir) {
+      stopEdgeScroll();
+      return;
+    }
+    if (edgeScroll?.dir === dir) return;
+    stopEdgeScroll();
+    const step = () => {
+      treeEl.scrollTop += dir * DRAG_STEP;
+      if (edgeScroll) edgeScroll.raf = requestAnimationFrame(step);
+    };
+    edgeScroll = { dir, raf: requestAnimationFrame(step) };
+  }
+
+  // Resting on a closed folder while dragging opens it, the way a file manager
+  // does, so a drop deep in the tree needs no detour to unfold it first.
+  const HOVER_OPEN_MS = 600;
+  let hoverOpen = null;
+  function cancelHoverOpen() {
+    if (!hoverOpen) return;
+    clearTimeout(hoverOpen.timer);
+    hoverOpen = null;
+  }
+  function scheduleHoverOpen(row) {
+    if (hoverOpen && hoverOpen.row === row) return;
+    cancelHoverOpen();
+    if (!row || !row.dataset.dir) return;
+    const children = row.nextElementSibling;
+    if (!children || !children.classList.contains("editor-children") || !children.hidden) return;
+    hoverOpen = {
+      row,
+      timer: setTimeout(() => {
+        hoverOpen = null;
+        dirOpeners.get(row)?.(true);
+      }, HOVER_OPEN_MS),
+    };
+  }
+
+  // The target folder can sit outside the scrolled view, so its name also shows
+  // in a pill pinned to the tree while the drag runs. Pass null to hide it.
+  function setDropHint(dir) {
+    if (!dropHintEl) return;
+    if (dir === null) {
+      dropHintEl.hidden = true;
+      return;
+    }
+    dropHintEl.hidden = false;
+    dropHintEl.textContent = `Target → ${dir || "project root"}`;
+  }
+
+  function endDrag() {
+    dragging = null;
+    stopEdgeScroll();
+    cancelHoverOpen();
+    setDropHighlight(null);
+    setDropHint(null);
+  }
+
+  // A dropped folder arrives as a directory entry, not as files. webkitGetAsEntry
+  // walks it in every current browser; the File System Access API would only
+  // cover Chromium. More than MAX_DROP_FILES entries is refused, an archive is
+  // the better route for a tree that size (the tree menu unpacks it again).
+  const MAX_DROP_FILES = 1000;
+
+  function readEntries(reader) {
+    return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+  }
+
+  async function walkEntry(entry, prefix, out) {
+    if (out.length > MAX_DROP_FILES) return;
+    if (entry.isFile) {
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      out.push({ file, rel: prefix });
+      return;
+    }
+    const reader = entry.createReader();
+    const here = prefix ? `${prefix}/${entry.name}` : entry.name;
+    for (;;) {
+      const batch = await readEntries(reader);
+      if (!batch.length) return;
+      for (const child of batch) await walkEntry(child, here, out);
+    }
+  }
+
+  // collectDrop returns {file, rel} pairs for everything in the drop, or null
+  // when the browser hands over no directory entries (plain files then).
+  async function collectDrop(dataTransfer) {
+    const entries = [...(dataTransfer.items || [])]
+      .map((item) => (item.kind === "file" && item.webkitGetAsEntry ? item.webkitGetAsEntry() : null))
+      .filter(Boolean);
+    if (!entries.some((entry) => entry.isDirectory)) return null;
+    const out = [];
+    for (const entry of entries) await walkEntry(entry, "", out);
+    if (out.length > MAX_DROP_FILES) {
+      throw new Error(`That folder holds more than ${MAX_DROP_FILES} files. Upload it as an archive and extract it here.`);
+    }
+    return out;
+  }
+
   function wireTreeDrop() {
     treeEl.addEventListener("dragover", (e) => {
-      if (!e.dataTransfer?.types?.includes("Files")) return;
+      const files = e.dataTransfer?.types?.includes("Files");
+      if (!files && !dragging) return;
+      const dir = dropDirFor(e.target);
+      if (!files && !dropAllowed(dir)) {
+        e.dataTransfer.dropEffect = "none";
+        cancelHoverOpen();
+        setDropHighlight(null);
+        setDropHint(null);
+        return;
+      }
       e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-      const row = e.target.closest(".editor-item");
-      setDropHighlight(row && row.dataset.dir ? row : treeEl);
+      e.dataTransfer.dropEffect = files ? "copy" : "move";
+      setDropHighlight(dropRowFor(e.target));
+      setDropHint(dir);
+      updateEdgeScroll(e.clientY);
+      scheduleHoverOpen(e.target.closest(".editor-dir"));
     }, { signal });
     treeEl.addEventListener("dragleave", (e) => {
-      if (!treeEl.contains(e.relatedTarget)) setDropHighlight(null);
+      if (!treeEl.contains(e.relatedTarget)) {
+        stopEdgeScroll();
+        cancelHoverOpen();
+        setDropHighlight(null);
+        setDropHint(null);
+      }
     }, { signal });
     treeEl.addEventListener("drop", (e) => {
-      if (!e.dataTransfer?.files?.length) return;
-      e.preventDefault();
       const dir = dropDirFor(e.target);
-      setDropHighlight(null);
-      uploadFiles(e.dataTransfer.files, dir, { confirmFirst: false });
+      // Same signal as dragover: only an outside drop carries files, a tree row
+      // drag carries its own path.
+      if (e.dataTransfer?.types?.includes("Files")) {
+        e.preventDefault();
+        endDrag();
+        const dropped = e.dataTransfer;
+        // The entries have to be read before the event handler returns, the
+        // items list is emptied afterwards.
+        const items = [...(dropped.items || [])];
+        const files = [...(dropped.files || [])];
+        void (async () => {
+          try {
+            const walked = await collectDrop({ items });
+            await uploadFiles(walked || files, dir, { confirmFirst: !!walked });
+          } catch (err) {
+            status(err.message, "error");
+          }
+        })();
+        return;
+      }
+      if (!dragging || !dropAllowed(dir)) {
+        endDrag();
+        return;
+      }
+      e.preventDefault();
+      const path = dragging.path;
+      endDrag();
+      void moveEntry(path, dir);
     }, { signal });
   }
 
@@ -1288,6 +1663,16 @@ async function init(root) {
     if (tab) startDownload(tab.path);
   }, { signal });
   refreshBtn.addEventListener("click", loadTree, { signal });
+  // The folder picker hands over every file with its path inside the folder.
+  uploadDirInput?.addEventListener("change", () => {
+    const items = Array.from(uploadDirInput.files || []).map((file) => ({
+      file,
+      rel: (file.webkitRelativePath || "").split("/").slice(0, -1).join("/"),
+    }));
+    uploadFiles(items, targetDir());
+    uploadDirInput.value = "";
+  }, { signal });
+
   uploadInput.addEventListener("change", () => {
     uploadFiles(uploadInput.files, targetDir());
     uploadInput.value = "";
@@ -1578,6 +1963,79 @@ async function createEditor(host, hooks, settings, signal) {
 // the single shared instances (otherwise instanceof checks break).
 const langUrl = (pkg) => `https://cdn.jsdelivr.net/npm/@codemirror/${pkg}/dist/index.js`;
 
+// Tabler carries a glyph for the common formats, everything else keeps the
+// plain file icon. Names win over extensions (Dockerfile, LICENSE, dotfiles).
+const FILE_ICONS = {
+  js: "ti-file-type-js", mjs: "ti-file-type-js", cjs: "ti-file-type-js",
+  jsx: "ti-file-type-jsx", ts: "ti-file-type-ts", tsx: "ti-file-type-tsx",
+  css: "ti-file-type-css", scss: "ti-file-type-css", less: "ti-file-type-css",
+  html: "ti-file-type-html", htm: "ti-file-type-html", vue: "ti-file-type-vue",
+  php: "ti-file-type-php", xml: "ti-file-type-xml", svg: "ti-file-type-svg",
+  sql: "ti-file-type-sql", rs: "ti-file-type-rs", csv: "ti-file-type-csv",
+  txt: "ti-file-type-txt", log: "ti-file-type-txt", pdf: "ti-file-type-pdf",
+  doc: "ti-file-type-doc", docx: "ti-file-type-doc",
+  zip: "ti-file-zip", tar: "ti-file-zip", gz: "ti-file-zip", tgz: "ti-file-zip",
+  png: "ti-file-type-png", jpg: "ti-file-type-jpg", jpeg: "ti-file-type-jpg",
+  bmp: "ti-file-type-bmp", gif: "ti-photo", webp: "ti-photo", ico: "ti-photo",
+  json: "ti-json", md: "ti-markdown", markdown: "ti-markdown",
+  go: "ti-brand-golang", py: "ti-brand-python",
+  yml: "ti-file-settings", yaml: "ti-file-settings", toml: "ti-file-settings",
+  ini: "ti-file-settings", conf: "ti-file-settings", cfg: "ti-file-settings",
+  env: "ti-key", lock: "ti-lock", db: "ti-database", sqlite: "ti-database",
+  sh: "ti-terminal-2", bash: "ti-terminal-2", zsh: "ti-terminal-2",
+  fish: "ti-terminal-2", bashrc: "ti-terminal-2", profile: "ti-terminal-2",
+  c: "ti-file-code", h: "ti-file-code", cpp: "ti-file-code", cc: "ti-file-code",
+  hpp: "ti-file-code", java: "ti-file-code", rb: "ti-file-code",
+};
+
+const NAME_ICONS = {
+  dockerfile: "ti-brand-docker",
+  "docker-compose.yml": "ti-brand-docker",
+  "docker-compose.yaml": "ti-brand-docker",
+  makefile: "ti-file-code",
+  license: "ti-license",
+  ".gitignore": "ti-brand-git",
+  ".gitattributes": "ti-brand-git",
+  ".gitmodules": "ti-brand-git",
+  ".env": "ti-key",
+};
+
+function fileIcon(name) {
+  const lower = (name || "").toLowerCase();
+  if (NAME_ICONS[lower]) return NAME_ICONS[lower];
+  if (lower.startsWith(".env.")) return "ti-key";
+  const ext = lower.includes(".") ? lower.split(".").pop() : "";
+  return FILE_ICONS[ext] || "ti-file";
+}
+
+// Shell, Dockerfile and TOML have no lezer grammar; the legacy stream modes are
+// the official route and ship as standalone ESM files.
+const modeUrl = (mode) => `https://cdn.jsdelivr.net/npm/@codemirror/legacy-modes@6.5.1/mode/${mode}.js`;
+
+const STREAM_LANGS = {
+  sh: ["shell", "shell"],
+  bash: ["shell", "shell"],
+  zsh: ["shell", "shell"],
+  ksh: ["shell", "shell"],
+  fish: ["shell", "shell"],
+  bashrc: ["shell", "shell"],
+  profile: ["shell", "shell"],
+  toml: ["toml", "toml"],
+  dockerfile: ["dockerfile", "dockerFile"], // the module exports it camel cased
+};
+
+// Files the shell modes own by name, they carry no extension.
+const STREAM_NAMES = {
+  ".bashrc": "sh",
+  ".bash_profile": "sh",
+  ".bash_aliases": "sh",
+  ".profile": "sh",
+  ".zshrc": "sh",
+  ".zprofile": "sh",
+  ".envrc": "sh",
+  dockerfile: "dockerfile",
+};
+
 const LANGS = {
   js: ["lang-javascript@6.2.2", "javascript", { jsx: true }],
   jsx: ["lang-javascript@6.2.2", "javascript", { jsx: true }],
@@ -1721,11 +2179,31 @@ async function createCodeMirror(host, hooks, settings, signal) {
     }
   }
 
-  async function langFor(filename) {
-    const ext = (filename.split(".").pop() || "").toLowerCase();
-    const spec = LANGS[ext];
-    if (!spec) return [];
+  // A file without a known extension still says what it is on its first line.
+  // Only the shells are read that way, their shebang is unambiguous.
+  function shebangMode(firstLine) {
+    const m = /^#!\s*(\S+)(?:\s+(\S+))?/.exec(firstLine || "");
+    if (!m) return null;
+    const interpreter = (m[1].endsWith("/env") ? m[2] || "" : m[1]).split("/").pop();
+    return /^(sh|bash|zsh|ksh|dash|ash|fish)$/.test(interpreter || "") ? "shell" : null;
+  }
+
+  async function langFor(filename, firstLine) {
+    const name = (filename || "").toLowerCase();
+    const ext = name.includes(".") ? name.split(".").pop() : STREAM_NAMES[name] || "";
+    // Dockerfile.dev and friends keep the type in front of the dot.
+    const byName = STREAM_NAMES[name] || (name.startsWith("dockerfile.") ? "dockerfile" : "");
+    const known = STREAM_LANGS[byName || ext];
+    const shebang = !known && !LANGS[ext] ? shebangMode(firstLine) : null;
+    const stream = known || (shebang ? [shebang, shebang] : null);
     try {
+      if (stream) {
+        const [mode, fn] = stream;
+        const mod = await import(modeUrl(mode));
+        return language.StreamLanguage.define(mod[fn]);
+      }
+      const spec = LANGS[ext];
+      if (!spec) return [];
       const [pkg, fn, arg] = spec;
       const mod = await import(langUrl(pkg));
       return arg ? mod[fn](arg) : mod[fn]();
@@ -1737,7 +2215,7 @@ async function createCodeMirror(host, hooks, settings, signal) {
 
   function refreshLanguage(filename) {
     const seq = ++langSeq;
-    langFor(filename).then((langExt) => {
+    langFor(filename, editorView.state.doc.line(1).text).then((langExt) => {
       if (seq === langSeq) editorView.dispatch({ effects: langConf.reconfigure(langExt) });
     });
   }
@@ -1748,7 +2226,7 @@ async function createCodeMirror(host, hooks, settings, signal) {
 
   return {
     async createDoc(content, filename) {
-      const langExt = await langFor(filename);
+      const langExt = await langFor(filename, (content || "").split("\n", 1)[0]);
       const state = EditorState.create({ doc: content, extensions: baseExtensions(langExt) });
       return { state, saved: state.doc };
     },

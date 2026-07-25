@@ -144,7 +144,11 @@ func shouldGzip(c *gin.Context) bool {
 	if !strings.Contains(req.Header.Get("Accept-Encoding"), "gzip") ||
 		strings.Contains(req.Header.Get("Connection"), "Upgrade") ||
 		strings.Contains(req.Header.Get("Accept"), "text/event-stream") ||
-		strings.HasSuffix(req.URL.Path, "/download") {
+		strings.HasSuffix(req.URL.Path, "/download") ||
+		// Already compressed or byte ranged: the editor's tar.gz would be gzipped
+		// a second time, and the raw endpoint serves images, video and audio.
+		strings.HasSuffix(req.URL.Path, "/editor/archive") ||
+		strings.HasSuffix(req.URL.Path, "/editor/raw") {
 		return false
 	}
 

@@ -1,8 +1,12 @@
 package filesystem
 
 import (
+	"archive/tar"
+	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -212,6 +216,10 @@ func ListFilesRecursive(root string) ([]string, bool, error) {
 	return out, truncated, nil
 }
 
+// ErrExists reports a name that is already taken. The editor answers it with a
+// 409 so the browser can offer to overwrite instead of showing a dead end.
+var ErrExists = errors.New("A file or folder with that name already exists.")
+
 // RenameEntry renames the file or directory at root/rel to newName inside the
 // same parent directory. newName must be a bare name without path separators.
 func RenameEntry(root, rel, newName string) (Entry, error) {
@@ -235,7 +243,7 @@ func RenameEntry(root, rel, newName string) (Entry, error) {
 	}
 	if dest != target {
 		if _, err := os.Lstat(dest); err == nil {
-			return Entry{}, errors.New("A file or folder with that name already exists.")
+			return Entry{}, ErrExists
 		}
 	}
 	if err := os.Rename(target, dest); err != nil {
@@ -248,9 +256,462 @@ func RenameEntry(root, rel, newName string) (Entry, error) {
 	return entryFromInfo(info, relTo(root, dest)), nil
 }
 
+// MoveEntry moves the file or directory at root/rel into the directory
+// root/dirRel, keeping its base name. An empty dirRel is the project root.
+// Without overwrite a taken name is reported as ErrExists, with it the file
+// there is replaced.
+func MoveEntry(root, rel, dirRel string, overwrite bool) (Entry, error) {
+	target, err := ResolveUnder(root, rel)
+	if err != nil {
+		return Entry{}, err
+	}
+	if filepath.Clean(target) == filepath.Clean(root) {
+		return Entry{}, errors.New("Refusing to move the project root.")
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		return Entry{}, errors.New("File or folder not found.")
+	}
+	dir, err := ResolveUnder(root, dirRel)
+	if err != nil {
+		return Entry{}, err
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil || !dirInfo.IsDir() {
+		return Entry{}, errors.New("Target folder not found.")
+	}
+	dest := filepath.Join(dir, filepath.Base(target))
+	if dest == target {
+		return entryFromInfo(info, relTo(root, target)), nil
+	}
+	// A directory cannot swallow itself, os.Rename would happily create the loop.
+	if info.IsDir() && IsUnder(dir, target) {
+		return Entry{}, errors.New("Cannot move a folder into itself.")
+	}
+	if existing, err := os.Lstat(dest); err == nil {
+		if !overwrite {
+			return Entry{}, ErrExists
+		}
+		// Renaming onto a directory fails, and dropping a whole tree to make room
+		// is not something a drag should do silently.
+		if existing.IsDir() || info.IsDir() {
+			return Entry{}, errors.New("A folder with that name is already there.")
+		}
+	}
+	if err := os.Rename(target, dest); err != nil {
+		return Entry{}, err
+	}
+	moved, err := os.Stat(dest)
+	if err != nil {
+		return Entry{}, err
+	}
+	return entryFromInfo(moved, relTo(root, dest)), nil
+}
+
+// WriteTarGz streams dir as a gzipped tar, with prefix as the single top level
+// folder inside the archive. Only directories and regular files go in, anything
+// else (symlinks, sockets) is skipped so the archive stays inside the project.
+func WriteTarGz(w io.Writer, dir, prefix string) error {
+	gz := gzip.NewWriter(w)
+	tw := tar.NewWriter(gz)
+	walkErr := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		name := prefix
+		if rel != "." {
+			name = path.Join(prefix, filepath.ToSlash(rel))
+		}
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = name
+		if d.IsDir() {
+			header.Name += "/"
+		}
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = io.Copy(tw, f)
+		return err
+	})
+	if walkErr != nil {
+		_ = tw.Close()
+		_ = gz.Close()
+		return walkErr
+	}
+	if err := tw.Close(); err != nil {
+		_ = gz.Close()
+		return err
+	}
+	return gz.Close()
+}
+
+// Extract limits keep a crafted archive from filling the disk.
+const (
+	maxExtractBytes = 1 << 30 // 1 GiB unpacked
+	maxExtractFiles = 20000
+)
+
+// ArchiveExt reports whether the name looks like an archive the editor can
+// unpack, and returns the name without that extension.
+func ArchiveExt(name string) (string, bool) {
+	lower := strings.ToLower(name)
+	for _, ext := range []string{".tar.gz", ".tgz", ".tar", ".zip"} {
+		if strings.HasSuffix(lower, ext) && len(lower) > len(ext) {
+			return name[:len(name)-len(ext)], true
+		}
+	}
+	return "", false
+}
+
+// ExtractArchive unpacks root/rel into a new folder next to it, named after the
+// archive. The folder name is free by construction, so nothing is overwritten.
+// Only directories and regular files are written; anything else in the archive
+// (symlinks, devices, paths that would leave the folder) is skipped.
+func ExtractArchive(root, rel string) (Entry, error) {
+	target, err := ResolveUnder(root, rel)
+	if err != nil {
+		return Entry{}, err
+	}
+	info, err := os.Stat(target)
+	if err != nil || !info.Mode().IsRegular() {
+		return Entry{}, errors.New("File not found.")
+	}
+	stem, ok := ArchiveExt(filepath.Base(target))
+	if !ok {
+		return Entry{}, errors.New("That file is not a tar, tar.gz or zip archive.")
+	}
+	dest, err := freeName(filepath.Join(filepath.Dir(target), stem))
+	if err != nil {
+		return Entry{}, err
+	}
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return Entry{}, err
+	}
+	if strings.HasSuffix(strings.ToLower(target), ".zip") {
+		err = extractZip(target, dest)
+	} else {
+		err = extractTar(target, dest)
+	}
+	if err != nil {
+		_ = os.RemoveAll(dest)
+		return Entry{}, err
+	}
+	out, err := os.Stat(dest)
+	if err != nil {
+		return Entry{}, err
+	}
+	return entryFromInfo(out, relTo(root, dest)), nil
+}
+
+// freeName returns base, or base with a counter, whichever is not taken yet.
+func freeName(base string) (string, error) {
+	for i := 1; i < 100; i++ {
+		candidate := base
+		if i > 1 {
+			candidate = fmt.Sprintf("%s %d", base, i)
+		}
+		if _, err := os.Lstat(candidate); err != nil {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("Too many folders with that name already.")
+}
+
+// extractPath joins the entry name onto dest and refuses anything that would
+// land outside it.
+func extractPath(dest, name string) (string, bool) {
+	clean := path.Clean("/" + strings.ReplaceAll(name, "\\", "/"))
+	out := filepath.Join(dest, filepath.FromSlash(strings.TrimPrefix(clean, "/")))
+	if out == dest || !IsUnder(out, dest) {
+		return "", false
+	}
+	return out, true
+}
+
+func extractTar(archive, dest string) error {
+	f, err := os.Open(archive)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	var reader io.Reader = f
+	if !strings.HasSuffix(strings.ToLower(archive), ".tar") {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return errors.New("That file is not a readable tar.gz archive.")
+		}
+		defer gz.Close()
+		reader = gz
+	}
+	tr := tar.NewReader(reader)
+	var written int64
+	var count int
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return errors.New("That file is not a readable archive.")
+		}
+		out, ok := extractPath(dest, header.Name)
+		if !ok {
+			continue
+		}
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(out, 0o755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			count++
+			written += header.Size
+			if count > maxExtractFiles || written > maxExtractBytes {
+				return errors.New("The archive is too large to unpack here.")
+			}
+			if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+				return err
+			}
+			if err := writeStream(out, tr, os.FileMode(header.Mode).Perm()); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func extractZip(archive, dest string) error {
+	r, err := zip.OpenReader(archive)
+	if err != nil {
+		return errors.New("That file is not a readable zip archive.")
+	}
+	defer r.Close()
+	var written uint64
+	var count int
+	for _, entry := range r.File {
+		out, ok := extractPath(dest, entry.Name)
+		if !ok {
+			continue
+		}
+		if entry.FileInfo().IsDir() {
+			if err := os.MkdirAll(out, 0o755); err != nil {
+				return err
+			}
+			continue
+		}
+		if !entry.FileInfo().Mode().IsRegular() {
+			continue
+		}
+		count++
+		written += entry.UncompressedSize64
+		if count > maxExtractFiles || written > maxExtractBytes {
+			return errors.New("The archive is too large to unpack here.")
+		}
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			return err
+		}
+		rc, err := entry.Open()
+		if err != nil {
+			return err
+		}
+		err = writeStream(out, rc, entry.Mode().Perm())
+		_ = rc.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeStream writes one extracted entry, capped so a lying header cannot make
+// it run away.
+func writeStream(out string, src io.Reader, mode os.FileMode) error {
+	if mode == 0 {
+		mode = 0o644
+	}
+	f, err := os.OpenFile(out, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(f, io.LimitReader(src, maxExtractBytes))
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	return err
+}
+
+// CopyEntry copies the file or directory at root/rel into the directory
+// root/dirRel. Copying into its own folder duplicates the entry under a free
+// "name copy" name; anywhere else a taken name is ErrExists unless overwrite
+// replaces the file there.
+func CopyEntry(root, rel, dirRel string, overwrite bool) (Entry, error) {
+	source, err := ResolveUnder(root, rel)
+	if err != nil {
+		return Entry{}, err
+	}
+	if filepath.Clean(source) == filepath.Clean(root) {
+		return Entry{}, errors.New("Refusing to copy the project root.")
+	}
+	info, err := os.Lstat(source)
+	if err != nil {
+		return Entry{}, errors.New("File or folder not found.")
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return Entry{}, errors.New("Only files and folders can be copied.")
+	}
+	dir, err := ResolveUnder(root, dirRel)
+	if err != nil {
+		return Entry{}, err
+	}
+	if dirInfo, err := os.Stat(dir); err != nil || !dirInfo.IsDir() {
+		return Entry{}, errors.New("Target folder not found.")
+	}
+	// A directory cannot be copied into itself, the walk would never end.
+	if info.IsDir() && IsUnder(dir, source) {
+		return Entry{}, errors.New("Cannot copy a folder into itself.")
+	}
+	dest := filepath.Join(dir, filepath.Base(source))
+	if dest == source {
+		if dest, err = freeCopyName(source); err != nil {
+			return Entry{}, err
+		}
+	} else if existing, err := os.Lstat(dest); err == nil {
+		if !overwrite {
+			return Entry{}, ErrExists
+		}
+		if existing.IsDir() || info.IsDir() {
+			return Entry{}, errors.New("A folder with that name is already there.")
+		}
+		if err := os.Remove(dest); err != nil {
+			return Entry{}, err
+		}
+	}
+	if info.IsDir() {
+		err = copyTree(source, dest)
+	} else {
+		err = copyFile(source, dest, info.Mode().Perm())
+	}
+	if err != nil {
+		return Entry{}, err
+	}
+	copied, err := os.Stat(dest)
+	if err != nil {
+		return Entry{}, err
+	}
+	return entryFromInfo(copied, relTo(root, dest)), nil
+}
+
+// freeCopyName picks "name copy", then "name copy 2" and so on, keeping the
+// extension where there is one.
+func freeCopyName(source string) (string, error) {
+	dir := filepath.Dir(source)
+	base := filepath.Base(source)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	for i := 1; i < 100; i++ {
+		suffix := " copy"
+		if i > 1 {
+			suffix = fmt.Sprintf(" copy %d", i)
+		}
+		candidate := filepath.Join(dir, stem+suffix+ext)
+		if _, err := os.Lstat(candidate); err != nil {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("Too many copies of that name already.")
+}
+
+// copyFile writes source to dest through a temp file in the same directory, so
+// a failed copy never leaves a half written file behind.
+func copyFile(source, dest string, mode os.FileMode) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".copy-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := io.Copy(tmp, in); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+// copyTree copies a directory recursively. Anything that is not a regular file
+// or a directory (symlinks, sockets) is skipped rather than followed, so a copy
+// can never reach outside the project.
+func copyTree(source, dest string) error {
+	return filepath.WalkDir(source, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(source, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dest, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(target, info.Mode().Perm())
+		case info.Mode().IsRegular():
+			return copyFile(p, target, info.Mode().Perm())
+		default:
+			return nil
+		}
+	})
+}
+
 // SaveUpload stores an uploaded file as dirRel/filename under root, writing to
-// a temp file first and renaming into place. It refuses to overwrite.
-func SaveUpload(root, dirRel, filename string, src io.Reader) (Entry, error) {
+// a temp file first and renaming into place. A taken name is reported as
+// ErrExists unless overwrite replaces the file there; createDirs makes the
+// missing folders on the way, which is what a folder upload needs.
+func SaveUpload(root, dirRel, filename string, src io.Reader, overwrite, createDirs bool) (Entry, error) {
 	name, err := CleanBaseName(filename)
 	if err != nil {
 		return Entry{}, err
@@ -263,10 +724,22 @@ func SaveUpload(root, dirRel, filename string, src io.Reader) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	if _, err := os.Lstat(target); err == nil {
-		return Entry{}, errors.New("A file or folder with that name already exists.")
+	if existing, err := os.Lstat(target); err == nil {
+		if !overwrite {
+			return Entry{}, ErrExists
+		}
+		if existing.IsDir() {
+			return Entry{}, errors.New("A folder with that name is already there.")
+		}
 	}
 	dir := filepath.Dir(target)
+	// A folder upload sends one request per file and carries the tree in the
+	// target path, so the folders come into being on the way.
+	if createDirs {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return Entry{}, err
+		}
+	}
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return Entry{}, errors.New("Target directory does not exist.")
 	}

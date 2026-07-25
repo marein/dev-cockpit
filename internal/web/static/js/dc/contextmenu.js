@@ -68,6 +68,27 @@ export function openMenu({ x, y, items, signal }) {
   place(node, x, y);
   node.focus({ preventScroll: true });
   const capture = { signal: ac.signal, capture: true };
+  // The finger that opened the menu is still down and now rests over the menu,
+  // so its lift would activate whatever landed under it. That one lift is
+  // swallowed, together with the click a lift can synthesize; every later tap
+  // works as usual.
+  if (fromTouch) {
+    let liftPending = true; // the finger that opened the menu is still down
+    let swallowClickUntil = 0;
+    document.addEventListener("touchend", (event) => {
+      if (!liftPending) return;
+      liftPending = false;
+      swallowClickUntil = Date.now() + 500;
+      event.preventDefault();
+      event.stopPropagation();
+    }, { signal: ac.signal, capture: true, passive: false });
+    document.addEventListener("click", (event) => {
+      if (Date.now() > swallowClickUntil) return;
+      swallowClickUntil = 0;
+      event.preventDefault();
+      event.stopPropagation();
+    }, capture);
+  }
   document.addEventListener("pointerdown", (event) => {
     if (!node.contains(event.target)) closeMenu();
   }, capture);
@@ -204,7 +225,10 @@ export function wireRowMenus(container, rowSelector, openFor, { signal } = {}) {
   // Rows holding links also need the native drag killed at the source: iOS
   // ignores draggable="false" on links, preventing dragstart is the way.
   container.addEventListener("dragstart", (e) => {
-    if (e.target.closest?.(rowSelector)) e.preventDefault();
+    const row = e.target.closest?.(rowSelector);
+    // A row that carries draggable itself (the editor tree) wants the native
+    // drag; only the link-bearing rows need it killed.
+    if (row && !row.draggable) e.preventDefault();
   }, { signal });
 
   container.addEventListener("pointerdown", (e) => {
