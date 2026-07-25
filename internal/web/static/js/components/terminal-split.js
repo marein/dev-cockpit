@@ -113,6 +113,15 @@ class TerminalSplit extends HTMLElement {
         pane.dataset.paneName = name;
       }
     }
+    // The page heading and the browser title carry the group name, which the
+    // server derives from the member names when the split has none of its own.
+    // Renaming a member anywhere therefore has to land here too.
+    const group = tab.dataset.tabName || "";
+    const heading = document.querySelector("[data-split-title]");
+    if (group && heading && heading.textContent !== group) {
+      heading.textContent = group;
+      document.title = group + (heading.dataset.titleSuffix || "");
+    }
   }
 
   onKeydown(event) {

@@ -15,6 +15,10 @@ const { assert, sleep, confirmSwal } = L;
 // owns the pane heads (context menu, drag reorder, Ctrl+Shift+Arrow pane
 // switch) and mirrors the strip's live refresh into the page (members,
 // order, names — a group change from anywhere re-renders the open split).
+// The group name is derived from the member names when the split carries none
+// of its own, so that mirror also feeds the page heading ([data-split-title])
+// and the browser title; the touch header keeps the focused member's name but
+// leaves the title alone.
 // Every close control kills for real after a confirm (strip tab X, page
 // header X, pane head X); ungrouping without killing lives in the context
 // menus and the quick nav swipes. On mobile the settings row above the
@@ -430,6 +434,14 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
         ids[1],
         { timeout: 6000 },
       );
+      // The group name is derived from the member names, so the page heading and
+      // the browser title have to follow a member rename too.
+      await page.waitForFunction(
+        () => document.querySelector("[data-split-title]")?.textContent.includes("bravo2")
+          && document.title.includes("bravo2"),
+        null,
+        { timeout: 6000 },
+      );
     });
 
     await run("rename split view via the tab context menu, empty name restores the derived label", async () => {
@@ -441,6 +453,12 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await sleep(1000);
       let label = await page.getAttribute(groupTabSel, "data-tab-name");
       assert(label === `duo-${tag.slice(-4)}`, `label after rename: ${label}`);
+      await page.waitForFunction(
+        (name) => document.querySelector("[data-split-title]")?.textContent.trim() === name
+          && document.title.startsWith(name),
+        `duo-${tag.slice(-4)}`,
+        { timeout: 6000 },
+      );
       const again = await contextItem(groupTabSel, "Rename split view");
       await again.click();
       await page.waitForSelector(".swal2-input", { timeout: 4000 });
@@ -449,7 +467,9 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await page.waitForFunction(
         () => {
           const name = document.querySelector("terminal-tabs .terminal-tab-split")?.getAttribute("data-tab-name") || "";
-          return name.includes("alpha") && name.includes("bravo2");
+          const heading = document.querySelector("[data-split-title]")?.textContent || "";
+          return name.includes("alpha") && name.includes("bravo2")
+            && heading === name && document.title.startsWith(name);
         },
         undefined,
         { timeout: 8000 },

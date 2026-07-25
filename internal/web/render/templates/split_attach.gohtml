@@ -4,7 +4,7 @@
   <div class="d-flex align-items-center gap-2 dc-fine-only">
     <div class="flex-fill min-w-0">
       {{template "project_breadcrumb.gohtml" .ProjectName}}
-      <h2 class="page-title text-truncate mb-0">{{.GroupName}}</h2>
+      <h2 class="page-title text-truncate mb-0" data-split-title data-title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">{{.GroupName}}</h2>
     </div>
     <div class="flex-shrink-0">
       <button type="button" class="btn btn-outline-danger btn-icon" data-split-close aria-label="Close all terminals in {{.GroupName}}" title="Close all terminals">
@@ -17,7 +17,7 @@
     <div class="flex-fill min-w-0">
       {{template "project_breadcrumb.gohtml" .Project}}
       {{if eq .Kind "shell"}}
-      <dc-inline-rename class="min-w-0" rename-url="/shells/{{.ID}}/rename" name-url="/shells/{{.ID}}/name" title-suffix="{{if .Project}} - {{.Project}}{{end}} - Dev Cockpit">
+      <dc-inline-rename class="min-w-0" rename-url="/shells/{{.ID}}/rename" name-url="/shells/{{.ID}}/name">
         <h2 class="page-title text-truncate mb-0" data-rename-label role="button" tabindex="0" title="Click to rename">{{.Name}}</h2>
         <input type="text" class="form-control d-none" data-rename-input maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Shell name" value="{{.Name}}">
       </dc-inline-rename>
