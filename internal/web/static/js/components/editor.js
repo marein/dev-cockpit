@@ -1765,12 +1765,21 @@ async function createCodeMirror(host, hooks, settings, signal) {
       });
       refreshLanguage(tab.name);
       reportCursor(editorView.state);
+      // setState resets the scroller, so a tab switch would drop you at the top
+      // of the file you come back to. The offset is captured per tab and set
+      // again after the measure pass that follows the state swap.
+      const top = tab.handle.scrollTop || 0;
+      editorView.scrollDOM.scrollTop = top;
       // Force a layout pass in case the editor mounted at zero size.
       editorView.requestMeasure();
-      requestAnimationFrame(() => editorView.requestMeasure());
+      requestAnimationFrame(() => {
+        editorView.scrollDOM.scrollTop = top;
+        editorView.requestMeasure();
+      });
     },
     captureDoc(tab) {
       tab.handle.state = editorView.state;
+      tab.handle.scrollTop = editorView.scrollDOM.scrollTop;
     },
     valueOf(tab, isActive) {
       return isActive ? editorView.state.doc.toString() : tab.handle.state.doc.toString();
@@ -1872,10 +1881,12 @@ function createTextarea(host, hooks, settings) {
       fileConfig = tab.editorConfig || {};
       ta.value = tab.handle.value;
       applyTabWidth();
+      ta.scrollTop = tab.handle.scrollTop || 0;
       reportCursor();
     },
     captureDoc(tab) {
       tab.handle.value = ta.value;
+      tab.handle.scrollTop = ta.scrollTop;
     },
     valueOf(tab, isActive) {
       return isActive ? ta.value : tab.handle.value;

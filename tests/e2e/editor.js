@@ -561,6 +561,59 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       assert(await page.$eval("[data-editor-placeholder]", (e) => !e.hidden), "placeholder hidden with no tabs open");
     });
 
+    await run("a tab switch keeps the scroll position and does not move the editor", async () => {
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      const longFile = `sc1_${tag}.txt`;
+      const shortFile = `sc2_${tag}.txt`;
+      await page.evaluate(async ([project, path, other]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const write = (p, content) => fetch(`/projects/${project}/editor/file`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: "path=" + encodeURIComponent(p) + "&content=" + encodeURIComponent(content),
+        });
+        await write(path, Array.from({ length: 400 }, (_, i) => `line ${i}`).join("\n"));
+        await write(other, "one line\n");
+      }, [project, longFile, shortFile]);
+      const openViaPalette = async (name) => {
+        await page.keyboard.press("Control+O");
+        await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+        await page.fill("[data-editor-quickopen-input]", name);
+        await page.waitForSelector(".editor-quickopen-item", { timeout: 6000 });
+        await page.keyboard.press("Enter");
+        await page.waitForSelector(`${tabSel(name)}.active`, { timeout: 8000 });
+        await sleep(600);
+      };
+      await openViaPalette(shortFile);
+      await openViaPalette(longFile);
+      await page.click(tabSel(longFile));
+      await sleep(600);
+      await page.evaluate(() => { document.querySelector(".cm-scroller").scrollTop = 900; });
+      await sleep(400);
+      const before = await page.evaluate(() => ({
+        top: Math.round(document.querySelector(".editor-tabs").getBoundingClientRect().top),
+        scroll: Math.round(document.querySelector(".cm-scroller").scrollTop),
+      }));
+      assert(before.scroll > 500, `the long file did not scroll (${before.scroll})`);
+      await page.click(tabSel(shortFile));
+      await sleep(700);
+      const middle = await page.evaluate(() => Math.round(document.querySelector(".editor-tabs").getBoundingClientRect().top));
+      assert(middle === before.top, `the editor moved on the switch: ${before.top} -> ${middle}`);
+      await page.click(tabSel(longFile));
+      await sleep(700);
+      const after = await page.evaluate(() => ({
+        top: Math.round(document.querySelector(".editor-tabs").getBoundingClientRect().top),
+        scroll: Math.round(document.querySelector(".cm-scroller").scrollTop),
+      }));
+      assert(after.top === before.top, `the editor moved coming back: ${before.top} -> ${after.top}`);
+      assert(Math.abs(after.scroll - before.scroll) < 20, `scroll position lost: ${before.scroll} -> ${after.scroll}`);
+      // Leave the strip as this check found it, the next ones count tabs.
+      for (const name of [longFile, shortFile]) {
+        await page.evaluate((s) => document.querySelector(`${s} .editor-tab-state`).click(), tabSel(name));
+        await page.waitForFunction((s) => !document.querySelector(s), tabSel(name), { timeout: 6000 });
+      }
+    });
+
     await run("Ctrl+Tab and Ctrl+Shift+Tab step through the open tabs in strip order", async () => {
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
       await newFile(`ct1_${tag}.txt`);

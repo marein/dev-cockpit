@@ -24,7 +24,11 @@ body {
 }
 
 .attach-page { display: flex; flex-direction: column; gap: 0.5rem; min-height: 100%; }
-.page-header { flex-wrap: nowrap; }
+/* The header is never the box that gives way: on the pages whose column fills
+   the viewport (editor, attach) the flex shrink would otherwise land here and
+   squeeze it down to its min-height, moving everything below. The content box
+   below is the flexible one. */
+.page-header { flex-wrap: nowrap; flex-shrink: 0; }
 .page-header > * { min-width: 0; max-width: 100%; }
 .attach-terminal {
   flex: 1 1 auto; min-height: 16rem;
