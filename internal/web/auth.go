@@ -118,8 +118,20 @@ func (s *Server) requireAuth(c *gin.Context) {
 }
 
 func (s *Server) authenticated(c *gin.Context) bool {
+	if s.localCall(c) {
+		return true
+	}
 	user, _ := ginsessions.Default(c).Get(sessionUserKey).(string)
 	return user == s.cfg.AuthUsername
+}
+
+// localCall reports whether the request arrived on the local socket. That is
+// how the assistant acts on the cockpit: through the same handlers a browser
+// uses, so the serve process stays the only writer of its state. Reaching the
+// socket is the whole credential, see LocalHandler.
+func (s *Server) localCall(c *gin.Context) bool {
+	local, _ := c.Request.Context().Value(localCallKey).(bool)
+	return local
 }
 
 func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
@@ -135,6 +147,8 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 	}
 	user, _ := sess.Get(sessionUserKey).(string)
 	token := s.csrfToken(c)
+	assistantID, assistantNews := s.assistantEntryState()
+	steered, prefill := s.watcher.Marks()
 	return render.Page{
 		Title:             title,
 		ActiveTab:         activeTab,
@@ -146,7 +160,11 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		CoderHome:         s.coderBase(s.coders[0]) + "/instructions",
 		QuickNav:          s.quicknav(c),
 		Jingle:            s.selectedJingle(),
+		AssistantID:       assistantID,
+		AssistantNews:     assistantNews,
 		BackupReviewCount: s.backups.PendingReviewCount(),
+		Steered:           steered,
+		SteerPrefill:      prefill,
 	}
 }
 
@@ -248,6 +266,12 @@ func (s *Server) formReturn(c *gin.Context) string {
 
 func (s *Server) csrfMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// A local caller has no session and no form, its token is the whole
+		// credential, so the cross site protection has nothing to protect here.
+		if s.localCall(c) {
+			c.Next()
+			return
+		}
 		token := s.csrfToken(c)
 		if isUnsafeMethod(c.Request.Method) {
 			got := c.GetHeader("X-CSRF-Token")

@@ -6,7 +6,8 @@ const path = require("path");
 // Backup (settings page /settings/backup): the export tab lists stored
 // backups (download via GET /settings/backup/download?id=, delete with
 // confirm), creation happens on /settings/backup/new: checkbox sections with
-// dependency enforcement (dc-backup-sections, data-requires) and a
+// dependency enforcement (dc-backup-sections, data-requires; terminal restore
+// and the assistant both need projects plus the coder sessions) and a
 // mandatory password (framed AES-256-GCM, extension .dcbackup, the only
 // accepted import shape), then a background job writes the archive under
 // <state-dir>/backups and raises a notification
@@ -105,6 +106,16 @@ L.runFeature("BACKUP", async ({ page, run }) => {
     assert(!(await box("terminals").isChecked()), "unchecking projects left terminals checked");
     await box("terminals").check();
     assert(await box("projects").isChecked(), "checking terminals did not pull projects in");
+    // The assistant carries the same dependency: an imported conversation only
+    // continues when the provider session travels with it.
+    assert(!(await box("assistant").isDisabled()), "the assistant section should always be available");
+    const assistantText = await page.locator('.form-check:has(input[value="assistant"])').textContent();
+    assert(assistantText.includes("Needs Projects") && assistantText.includes("Claude sessions") &&
+      assistantText.includes("Copilot sessions"), `assistant dependency line missing: ${assistantText.trim().slice(0, 160)}`);
+    await box("projects").uncheck();
+    assert(!(await box("assistant").isChecked()), "unchecking projects left the assistant checked");
+    await box("assistant").check();
+    assert(await box("projects").isChecked(), "checking the assistant did not pull projects in");
   });
 
   await run("tabs switch between export and import", async () => {
@@ -143,7 +154,9 @@ L.runFeature("BACKUP", async ({ page, run }) => {
     const note = (data.notifications || []).find((n) => n.targetId === "backup");
     assert(note, "backup notification missing");
     assert(note.url === "/settings/backup", `unexpected notification ${JSON.stringify(note)}`);
-    assert(/^Backup "dev-cockpit-backup_.*" ready\.$/.test(note.title || ""), `unexpected title ${note.title}`);
+    assert(note.title === "Backup ready.", `unexpected title ${note.title}`);
+    // A backup belongs to no project, so the archive name is the whole line.
+    assert(/^"dev-cockpit-backup_.*"$/.test(note.detail || ""), `unexpected detail ${note.detail}`);
     assert(note.read === true, "visiting the backup page should have marked the notification read");
   });
 

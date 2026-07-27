@@ -58,7 +58,7 @@ func (s *Service) ingestInboxEvent(data []byte) {
 	}
 	switch ev.HookEventName {
 	case "Stop":
-		s.Add(targetID)
+		s.Signal(targetID)
 	case "Notification":
 		// Claude's Notification hook also fires after 60s of plain input
 		// idling, which would re-raise a target the user already saw finish;
@@ -67,6 +67,6 @@ func (s *Service) ingestInboxEvent(data []byte) {
 		if strings.Contains(ev.Message, "waiting for your input") {
 			return
 		}
-		s.Add(targetID)
+		s.Signal(targetID)
 	}
 }

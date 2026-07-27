@@ -20,6 +20,7 @@ type terminalStream interface {
 	RefreshStream(name string, generation int64) (terminal.Attachment, bool)
 	StreamDelta(name string, offset int64) ([]byte, int64, bool)
 	StreamUpdated(name string) (<-chan struct{}, bool)
+	StreamModes(name string) (tmux.PaneModes, bool)
 	StreamExited(name string) bool
 	Resnapshot(name string) (terminal.Attachment, bool)
 }
@@ -82,6 +83,19 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 
 	lastActivity := time.Now()
 	var lastFrame time.Time
+	// The modes travel with the size event, and they are read once at attach.
+	// A program that switches into its full screen UI while somebody watches
+	// changes them, and nothing in the stream carries that: what the browser
+	// receives is rendered content, not the mode sequences. So they are re-read
+	// while there is output, and a change is sent on. Without it the wheel keeps
+	// scrolling the wrong way, which on a coder page means not at all.
+	modes := tmux.PaneModes{
+		MouseTracking: attached.MouseTracking,
+		MouseSGR:      attached.MouseSGR,
+		AltScreen:     attached.AltScreen,
+		AppCursor:     attached.AppCursor,
+	}
+	var modesReadAt time.Time
 	ctx := c.Request.Context()
 	for {
 		// Subscribe before reading so no wake is missed between the read below
@@ -129,6 +143,15 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 		if len(delta) > 0 {
 			offset = newOffset
 			lastActivity = time.Now()
+			if time.Since(modesReadAt) >= modeReadInterval {
+				modesReadAt = time.Now()
+				if fresh, ok := src.StreamModes(attached.Session); ok && fresh != modes {
+					modes = fresh
+					if err := writeSSEvent(w, "terminal-size", modePayload(attached, fresh)); err != nil {
+						return
+					}
+				}
+			}
 			if out := oscFilter.Filter(delta); len(out) > 0 {
 				if err := writeSSEvent(w, "delta", encodeBase64(out)); err != nil {
 					return
@@ -174,6 +197,21 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 			}
 		}
 	}
+}
+
+// modeReadInterval is how often a stream with output asks tmux for the pane's
+// modes again. One small query, and a program that switches its screen is
+// followed within this window instead of never.
+const modeReadInterval = 2 * time.Second
+
+// modePayload is the size event with fresh modes on an otherwise unchanged
+// attachment.
+func modePayload(a terminal.Attachment, m tmux.PaneModes) string {
+	a.MouseTracking = m.MouseTracking
+	a.MouseSGR = m.MouseSGR
+	a.AltScreen = m.AltScreen
+	a.AppCursor = m.AppCursor
+	return sizePayload(a)
 }
 
 func sizePayload(a terminal.Attachment) string {

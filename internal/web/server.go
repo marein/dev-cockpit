@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"log"
@@ -12,6 +13,7 @@ import (
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/assistant"
 	"github.com/local/dev-cockpit/internal/backup"
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/config"
@@ -31,9 +33,16 @@ var staticAssets embed.FS
 
 // Server wires HTTP handling against the domain services.
 type Server struct {
-	cfg          config.Config
-	coders       []*coder.Manager
-	shells       *shell.Shells
+	cfg    config.Config
+	coders []*coder.Manager
+	shells *shell.Shells
+	// conversations drives the cockpit's own conversations, assistant owns
+	// their workspace and memory.
+	conversations *assistant.Service
+	assistant     *assistant.Workspace
+	// watcher owns the steered jobs: what the assistant keeps an eye on and
+	// what wakes it.
+	watcher      *assistant.Watcher
 	projects     *project.Repository
 	notifier     *notify.Service
 	bus          *eventbus.Bus
@@ -49,8 +58,14 @@ type Server struct {
 	handler      http.Handler
 }
 
+// localCallKey marks a request that arrived on the local socket, see
+// LocalHandler.
+type localCallKeyType struct{}
+
+var localCallKey localCallKeyType
+
 // NewServer constructs a Server serving the given coders.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, version string) (*Server, error) {
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, version string) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
@@ -64,19 +79,22 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		updater = nil
 	}
 	s := &Server{
-		cfg:      cfg,
-		coders:   coders,
-		shells:   shells,
-		projects: projects,
-		notifier: notifier,
-		bus:      eventbus.New(),
-		settings: settingsStore,
-		pusher:   pusher,
-		restorer: restorer,
-		version:  version,
-		updater:  updater,
-		backups:  backups,
-		assets:   assets,
+		cfg:           cfg,
+		coders:        coders,
+		shells:        shells,
+		conversations: conversations,
+		assistant:     workspace,
+		watcher:       watcher,
+		projects:      projects,
+		notifier:      notifier,
+		bus:           eventbus.New(),
+		settings:      settingsStore,
+		pusher:        pusher,
+		restorer:      restorer,
+		version:       version,
+		updater:       updater,
+		backups:       backups,
+		assets:        assets,
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
 			cfg.LoginRateBlock, cfg.LoginRateMaxAttempts,
@@ -87,11 +105,31 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		return nil, err
 	}
 	s.handler = handler
+	// A job beginning or ending is ownership changing on a terminal, and the
+	// steered mark sits in server rendered fragments. The plain terminals
+	// event is what makes every surface pull them, the same way it follows a
+	// terminal that starts or stops; the restore snapshot is untouched, no
+	// terminal changed.
+	watcher.OnStateChange(func(project string) {
+		s.bus.Publish(eventbus.Event{Type: "terminals", Data: map[string]string{"project": project}})
+	})
 	return s, nil
 }
 
 // Handler returns the fully-wired HTTP handler.
 func (s *Server) Handler() http.Handler { return s.handler }
+
+// LocalHandler serves the same routes for callers on this machine, over the
+// socket in the state directory (see internal/localapi). Reaching that socket is
+// the whole credential: it lives in a directory only the owner of this process
+// may enter, so a caller that can open it is already allowed to change what the
+// cockpit holds. The request is marked here, at the door, and that marker is
+// what the session check and the CSRF check read.
+func (s *Server) LocalHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), localCallKey, true)))
+	})
+}
 
 func (s *Server) newHandler() (http.Handler, error) {
 	gin.SetMode(gin.ReleaseMode)
@@ -148,7 +186,9 @@ func shouldGzip(c *gin.Context) bool {
 		// Already compressed or byte ranged: the editor's tar.gz would be gzipped
 		// a second time, and the raw endpoint serves images, video and audio.
 		strings.HasSuffix(req.URL.Path, "/editor/archive") ||
-		strings.HasSuffix(req.URL.Path, "/editor/raw") {
+		strings.HasSuffix(req.URL.Path, "/editor/raw") ||
+		// The assistant serves images, audio and video from here, byte ranged.
+		strings.Contains(req.URL.Path, "/assistant/") && strings.Contains(req.URL.Path, "/media/") {
 		return false
 	}
 

@@ -21,6 +21,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -39,9 +40,13 @@ const (
 // component below data/<section>/ in the archive, Path is the absolute host
 // location, a file or a directory. The mapping is resolved against the
 // current registry on import, so an archive stays portable across homes.
+// Skip names relative slash paths below Path the export leaves out, a
+// directory in it takes its subtree with it. The import knows nothing about
+// it: an older archive that still carries such a file keeps importing it.
 type Source struct {
 	Name string
 	Path string
+	Skip []string
 }
 
 // Section is one selectable unit of the export and import. Requires names
@@ -156,82 +161,94 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 	return []Section{
 		{ID: "settings", Group: "Cockpit", Label: "Settings",
 			Description: "General settings and the notification jingle.",
-			Sources:     []Source{{"settings.json", st("settings.json")}}},
+			Sources:     []Source{{Name: "settings.json", Path: st("settings.json")}}},
 		{ID: "push", Group: "Cockpit", Label: "Push channels",
 			Description: "Web push devices, webhooks, the VAPID keys and the base URL. Devices keep ringing without a new registration as long as Dev Cockpit keeps its address, under a new address every device must register again. The keys let anyone holding this file push to the devices, and an old installation left running rings the same phones twice.",
 			Sources: []Source{
-				{"push-vapid.json", st("push-vapid.json")},
-				{"push-channels.json", st("push-channels.json")},
-				{"push-subscriptions.json", st("push-subscriptions.json")}}},
+				{Name: "push-vapid.json", Path: st("push-vapid.json")},
+				{Name: "push-channels.json", Path: st("push-channels.json")},
+				{Name: "push-subscriptions.json", Path: st("push-subscriptions.json")}}},
 		{ID: "terminals", Group: "Cockpit", Label: "Terminal restore",
 			Description: "The restore snapshot. With the restore setting on, coders and shells come back on the next start, in their project directories. The per shell command histories travel along.",
 			Sources: []Source{
-				{"terminal-restore.json", st("terminal-restore.json")},
-				{"shell-history", st("shell-history")}},
+				{Name: "terminal-restore.json", Path: st("terminal-restore.json")},
+				{Name: "shell-history", Path: st("shell-history")}},
+			Requires: []string{"projects", "claude-sessions", "copilot-sessions"}},
+
+		{ID: "assistant", Group: "Cockpit", Label: "Assistant",
+			Description: "Its memory, its conversations, the jobs it steers and the files a message carried. The generated instruction files stay out, the next start writes them from the memory again.",
+			Sources: []Source{
+				{Name: "assistant.json", Path: st("assistant/assistant.json")},
+				{Name: "conversations", Path: st("assistant/conversations")},
+				{Name: "jobs.json", Path: st("assistant/jobs.json")},
+				// CLAUDE.md and AGENTS.md are written from workspace/memory
+				// before every turn (see internal/assistant/memory.go) and carry
+				// this host's absolute paths and version, so they are noise.
+				{Name: "workspace", Path: st("assistant/workspace"), Skip: []string{"CLAUDE.md", "AGENTS.md"}}},
 			Requires: []string{"projects", "claude-sessions", "copilot-sessions"}},
 
 		{ID: "claude", Group: "Coders", Label: "Claude config",
 			Description: "Instructions, agents, skills, settings and the login credentials.",
 			Sources: []Source{
-				{"CLAUDE.md", hm(".claude/CLAUDE.md")},
-				{"settings.json", hm(".claude/settings.json")},
-				{"settings.local.json", hm(".claude/settings.local.json")},
-				{"keybindings.json", hm(".claude/keybindings.json")},
-				{"credentials.json", hm(".claude/.credentials.json")},
-				{"statusline.sh", hm(".claude/statusline.sh")},
-				{"agents", hm(".claude/agents")},
-				{"skills", hm(".claude/skills")},
-				{"commands", hm(".claude/commands")},
-				{"hooks", hm(".claude/hooks")}}},
+				{Name: "CLAUDE.md", Path: hm(".claude/CLAUDE.md")},
+				{Name: "settings.json", Path: hm(".claude/settings.json")},
+				{Name: "settings.local.json", Path: hm(".claude/settings.local.json")},
+				{Name: "keybindings.json", Path: hm(".claude/keybindings.json")},
+				{Name: "credentials.json", Path: hm(".claude/.credentials.json")},
+				{Name: "statusline.sh", Path: hm(".claude/statusline.sh")},
+				{Name: "agents", Path: hm(".claude/agents")},
+				{Name: "skills", Path: hm(".claude/skills")},
+				{Name: "commands", Path: hm(".claude/commands")},
+				{Name: "hooks", Path: hm(".claude/hooks")}}},
 		{ID: "claude-sessions", Group: "Coders", Label: "Claude sessions",
 			Description: "Session transcripts and prompt history. Can be large.",
 			Sources: []Source{
-				{"projects", hm(".claude/projects")},
-				{"history.jsonl", hm(".claude/history.jsonl")}}},
+				{Name: "projects", Path: hm(".claude/projects")},
+				{Name: "history.jsonl", Path: hm(".claude/history.jsonl")}}},
 		{ID: "copilot", Group: "Coders", Label: "Copilot config",
 			Description: "Instructions, agents, skills, settings and the login.",
 			Sources: []Source{
-				{"copilot-instructions.md", hm(".copilot/copilot-instructions.md")},
-				{"settings.json", hm(".copilot/settings.json")},
-				{"config.json", hm(".copilot/config.json")},
-				{"agents", hm(".copilot/agents")},
-				{"skills", hm(".copilot/skills")}}},
+				{Name: "copilot-instructions.md", Path: hm(".copilot/copilot-instructions.md")},
+				{Name: "settings.json", Path: hm(".copilot/settings.json")},
+				{Name: "config.json", Path: hm(".copilot/config.json")},
+				{Name: "agents", Path: hm(".copilot/agents")},
+				{Name: "skills", Path: hm(".copilot/skills")}}},
 		{ID: "copilot-sessions", Group: "Coders", Label: "Copilot sessions",
 			Description: "Session state and history. Can be large.",
 			Sources: []Source{
-				{"session-state", hm(".copilot/session-state")},
-				{"session-store.db", hm(".copilot/session-store.db")},
-				{"session-store.db-wal", hm(".copilot/session-store.db-wal")},
-				{"session-store.db-shm", hm(".copilot/session-store.db-shm")},
-				{"command-history-state.json", hm(".copilot/command-history-state.json")}}},
+				{Name: "session-state", Path: hm(".copilot/session-state")},
+				{Name: "session-store.db", Path: hm(".copilot/session-store.db")},
+				{Name: "session-store.db-wal", Path: hm(".copilot/session-store.db-wal")},
+				{Name: "session-store.db-shm", Path: hm(".copilot/session-store.db-shm")},
+				{Name: "command-history-state.json", Path: hm(".copilot/command-history-state.json")}}},
 
 		{ID: "projects", Group: "Host", Label: "Projects",
 			Description: "The complete projects directory, every working copy as it sits on disk. Imports into the current projects dir. Can be large. The recent projects order travels along.",
 			Sources: []Source{
-				{"projects", projectsDir},
-				{"recent-projects.json", st("recent-projects.json")}}},
+				{Name: "projects", Path: projectsDir},
+				{Name: "recent-projects.json", Path: st("recent-projects.json")}}},
 		{ID: "ssh", Group: "Host", Label: "SSH keys",
 			Description: "The complete ~/.ssh, keys, config, known_hosts, authorized_keys. File modes are preserved.",
-			Sources:     []Source{{"ssh", hm(".ssh")}}},
+			Sources:     []Source{{Name: "ssh", Path: hm(".ssh")}}},
 		{ID: "git", Group: "Host", Label: "Git config",
 			Description: "Global identity, aliases, helpers and the global gitignore: ~/.gitconfig, ~/.config/git, ~/.gitignore.",
 			Sources: []Source{
-				{"gitconfig", hm(".gitconfig")},
-				{"config-git", hm(".config/git")},
-				{"gitignore", hm(".gitignore")}}},
+				{Name: "gitconfig", Path: hm(".gitconfig")},
+				{Name: "config-git", Path: hm(".config/git")},
+				{Name: "gitignore", Path: hm(".gitignore")}}},
 		{ID: "git-clis", Group: "Host", Label: "gh and glab logins",
 			Description: "GitHub and GitLab CLI configuration including their tokens.",
 			Sources: []Source{
-				{"gh", hm(".config/gh")},
-				{"glab-cli", hm(".config/glab-cli")}}},
+				{Name: "gh", Path: hm(".config/gh")},
+				{Name: "glab-cli", Path: hm(".config/glab-cli")}}},
 		{ID: "docker", Group: "Host", Label: "Docker login",
 			Description: "~/.docker/config.json with the registry logins, plus the docker contexts. A login held by a credential helper sits outside this file and does not travel.",
 			Sources: []Source{
-				{"config.json", hm(".docker/config.json")},
-				{"contexts", hm(".docker/contexts")}}},
+				{Name: "config.json", Path: hm(".docker/config.json")},
+				{Name: "contexts", Path: hm(".docker/contexts")}}},
 		{ID: "dotfiles", Group: "Host", Label: "Dotfiles",
 			Description: "Every dot file directly in the home directory, bashrc, profile, inputrc, vimrc and friends, plus ~/.config/tmux. Files other sections cover, like .gitconfig, travel with those sections instead.",
-			Sources:     []Source{{"config-tmux", hm(".config/tmux")}}},
+			Sources:     []Source{{Name: "config-tmux", Path: hm(".config/tmux")}}},
 	}
 }
 
@@ -306,7 +323,7 @@ func (s *Service) Export(w io.Writer, ids []string) error {
 		sec := s.section(id)
 		entry := ManifestSection{ID: sec.ID, Label: sec.Label}
 		for _, src := range sec.Sources {
-			if err := collectPath(tw, "data/"+sec.ID+"/"+src.Name, src.Path, &entry); err != nil {
+			if err := collectPath(tw, "data/"+sec.ID+"/"+src.Name, src.Path, src.Skip, &entry); err != nil {
 				return err
 			}
 		}
@@ -314,7 +331,7 @@ func (s *Service) Export(w io.Writer, ids []string) error {
 			// The dotfiles set is discovered at export time, whatever dot
 			// files sit in the home directory right now.
 			for _, name := range s.HomeDotfiles() {
-				if err := collectPath(tw, "data/"+sec.ID+"/"+name, filepath.Join(s.home, name), &entry); err != nil {
+				if err := collectPath(tw, "data/"+sec.ID+"/"+name, filepath.Join(s.home, name), nil, &entry); err != nil {
 					return err
 				}
 			}
@@ -336,7 +353,10 @@ func (s *Service) Export(w io.Writer, ids []string) error {
 	return gz.Close()
 }
 
-func collectPath(tw *tar.Writer, key, root string, entry *ManifestSection) error {
+// collectPath streams one source into the archive under key. skip holds
+// relative slash paths below root the export leaves out, an empty skip costs
+// nothing.
+func collectPath(tw *tar.Writer, key, root string, skip []string, entry *ManifestSection) error {
 	info, err := os.Lstat(root)
 	if err != nil {
 		return nil
@@ -354,7 +374,14 @@ func collectPath(tw *tar.Writer, key, root string, entry *ManifestSection) error
 		}
 		name := key
 		if rel, err := filepath.Rel(root, p); err == nil && rel != "." {
-			name = key + "/" + filepath.ToSlash(rel)
+			rel = filepath.ToSlash(rel)
+			if slices.Contains(skip, rel) {
+				if d.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			name = key + "/" + rel
 		}
 		fi, err := d.Info()
 		if err != nil {

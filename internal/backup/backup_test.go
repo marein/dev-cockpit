@@ -4,8 +4,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +43,28 @@ func seedSource(t *testing.T, dirs testDirs) {
 	}
 	if err := os.WriteFile(filepath.Join(dirs.projects, "demo", "readme.md"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// archiveNames lists the entry names of an exported tar.gz, so a check can
+// state which files traveled and which did not.
+func archiveNames(t *testing.T, data []byte) []string {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(gz)
+	var names []string
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return names
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, strings.TrimSuffix(hdr.Name, "/"))
 	}
 }
 
@@ -453,5 +478,171 @@ func TestApplyBlocksEscapes(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(dstHome, ".ssh", "x", "pwned")); err == nil {
 		t.Fatal("file written through a planted symlink")
+	}
+}
+
+// New durable state is worth nothing in a backup that leaves it out: an import
+// would bring the conversations back and the jobs they steer would be gone. The
+// jobs file is state like any other, so it belongs in the section that carries
+// the assistant.
+func TestTheAssistantSectionCarriesTheSteeredJobs(t *testing.T) {
+	sections := buildSections("/state", "/projects", "/home/user")
+	var assistant *Section
+	for i := range sections {
+		if sections[i].ID == "assistant" {
+			assistant = &sections[i]
+		}
+	}
+	if assistant == nil {
+		t.Fatal("there is no assistant section any more")
+	}
+	for _, source := range assistant.Sources {
+		if source.Path == "/state/assistant/jobs.json" {
+			return
+		}
+	}
+	t.Fatalf("the steered jobs are not in the backup: %+v", assistant.Sources)
+}
+
+// An imported conversation only continues when the provider session travels
+// with it, and the jobs it steers point at coder terminals in the projects.
+func TestTheAssistantSectionDependsOnTheSessions(t *testing.T) {
+	sections := buildSections("/state", "/projects", "/home/user")
+	i := slices.IndexFunc(sections, func(sec Section) bool { return sec.ID == "assistant" })
+	if i < 0 {
+		t.Fatal("there is no assistant section any more")
+	}
+	want := []string{"projects", "claude-sessions", "copilot-sessions"}
+	if !slices.Equal(sections[i].Requires, want) {
+		t.Fatalf("requires %v, want %v", sections[i].Requires, want)
+	}
+	for _, id := range want {
+		if !slices.ContainsFunc(sections, func(sec Section) bool { return sec.ID == id }) {
+			t.Fatalf("the assistant section requires %q, which no section provides", id)
+		}
+	}
+}
+
+func seedAssistant(t *testing.T, dirs testDirs) {
+	t.Helper()
+	files := map[string]string{
+		"assistant.json":                     `{"conversations":[]}`,
+		"conversations/c1.json":              `{"id":"c1"}`,
+		"jobs.json":                          `[]`,
+		"workspace/CLAUDE.md":                "generated for /state/assistant/workspace",
+		"workspace/AGENTS.md":                "generated for /state/assistant/workspace",
+		"workspace/memory/likes-go.md":       "---\ntitle: Go\n---\nyes",
+		"workspace/assistant-files/note.txt": "scratch",
+		"workspace/user-upload/abc/pic.png":  "PNG",
+	}
+	for rel, content := range files {
+		p := filepath.Join(dirs.state, "assistant", filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// The instruction files are rebuilt from the memory before every turn and
+// carry the exporting host's paths, so they are noise in an archive. Memory,
+// the assistant's own files and the attachments a message carried are not.
+func TestAssistantExportLeavesTheGeneratedInstructionsOut(t *testing.T) {
+	src, srcDirs := testService(t)
+	seedAssistant(t, srcDirs)
+
+	var buf bytes.Buffer
+	if err := src.Export(&buf, []string{"assistant"}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	names := archiveNames(t, buf.Bytes())
+	for _, gone := range []string{"data/assistant/workspace/CLAUDE.md", "data/assistant/workspace/AGENTS.md"} {
+		if slices.Contains(names, gone) {
+			t.Fatalf("%s traveled: %v", gone, names)
+		}
+	}
+	for _, want := range []string{
+		"data/assistant/assistant.json",
+		"data/assistant/conversations/c1.json",
+		"data/assistant/jobs.json",
+		"data/assistant/workspace/memory/likes-go.md",
+		"data/assistant/workspace/assistant-files/note.txt",
+		"data/assistant/workspace/user-upload/abc/pic.png",
+	} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("%s did not travel: %v", want, names)
+		}
+	}
+
+	dst, dstDirs := testService(t)
+	id, err := dst.SavePending(encrypted(t, buf.Bytes()), "test-pw")
+	if err != nil {
+		t.Fatalf("save pending: %v", err)
+	}
+	if _, err := dst.Apply(id, []string{"assistant"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dstDirs.state, "assistant", "workspace", "user-upload", "abc", "pic.png")); err != nil || string(data) != "PNG" {
+		t.Fatalf("attachment not restored: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(dstDirs.state, "assistant", "workspace", "CLAUDE.md")); err == nil {
+		t.Fatal("the generated instructions reached the target host")
+	}
+}
+
+// Export side only: an archive written before the exclusion still carries the
+// instruction files, and it must import unchanged. Sync overwrites them on the
+// next start anyway.
+func TestOldAssistantArchivesStillImport(t *testing.T) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	write := func(name, content string) {
+		t.Helper()
+		hdr := &tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(content))}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("data/assistant/assistant.json", `{"conversations":[]}`)
+	write("data/assistant/workspace/CLAUDE.md", "old generated file")
+	write("data/assistant/workspace/AGENTS.md", "old generated file")
+	write("data/assistant/workspace/memory/likes-go.md", "yes")
+	write("data/assistant/workspace/user-upload/abc/pic.png", "PNG")
+	write(manifestName, `{"app":"dev-cockpit-backup","format":1,"sections":[{"id":"assistant","label":"Assistant","files":5}]}`)
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	dst, dstDirs := testService(t)
+	id, err := dst.SavePending(encrypted(t, buf.Bytes()), "test-pw")
+	if err != nil {
+		t.Fatalf("save pending: %v", err)
+	}
+	res, err := dst.Apply(id, []string{"assistant"})
+	if err != nil || res.Skipped != 0 {
+		t.Fatalf("apply: %+v, %v", res, err)
+	}
+	if res.Files != 5 {
+		t.Fatalf("an old archive lost files on import: %+v", res)
+	}
+	for rel, want := range map[string]string{
+		"assistant.json":                    `{"conversations":[]}`,
+		"workspace/CLAUDE.md":               "old generated file",
+		"workspace/memory/likes-go.md":      "yes",
+		"workspace/user-upload/abc/pic.png": "PNG",
+	} {
+		p := filepath.Join(dstDirs.state, "assistant", filepath.FromSlash(rel))
+		if data, err := os.ReadFile(p); err != nil || string(data) != want {
+			t.Fatalf("%s: %q, %v", rel, data, err)
+		}
 	}
 }

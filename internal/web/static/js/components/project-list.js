@@ -6,7 +6,8 @@ import { onServerEvent } from "@dc/events";
 import { applyFold } from "@dc/fold";
 import { openMenu, wireRowMenus } from "@dc/contextmenu";
 import { ensureOk, postForm } from "@dc/http";
-import { notifyError } from "@dc/toast";
+import { notifyError, notifySuccess } from "@dc/toast";
+import { releaseCoder, steerCoder } from "@dc/steer";
 
 const FILTER_KEY = "dc-project-filter";
 const CHIP_LIMIT = 8;
@@ -23,6 +24,7 @@ class ProjectList extends HTMLElement {
     this.ac = new AbortController();
     this.inFlight = false;
     this.dirty = false;
+    this.refreshWhole = false;
     this.setupSort();
     this.setupFilter();
     this.querySelectorAll("[data-sessions-body]").forEach((body) => this.foldChips(body));
@@ -38,6 +40,10 @@ class ProjectList extends HTMLElement {
     // filter or the scroll. A project-less event (reorder, connect snapshot)
     // touches every project.
     onServerEvent("terminals", (event) => this.applyTerminals(event.detail), { signal: this.ac.signal });
+    // Projects are also created and removed through the assistant's local API
+    // path. The server only signals the change; this client pulls its own
+    // server-rendered list, preserving its local filter and sort preferences.
+    onServerEvent("projects", () => this.refreshProjectList(), { signal: this.ac.signal });
   }
 
   disconnectedCallback() {
@@ -45,17 +51,39 @@ class ProjectList extends HTMLElement {
     this.ac = null;
   }
 
-  // Stop and Delete on a chip (data-ajax-refresh) act in place.
+  // Stop/Delete chip forms and project deletion act in place.
   async onAjaxSubmit(event) {
     const form = event.target;
-    if (!(form instanceof HTMLFormElement) || form.dataset.ajaxRefresh === undefined) return;
+    if (!(form instanceof HTMLFormElement)) return;
+    const deleteProject = form.dataset.projectDelete !== undefined;
+    if (!deleteProject && form.dataset.ajaxRefresh === undefined) return;
     event.preventDefault();
     event.stopPropagation();
     if (form.dataset.confirm) {
       const ok = await confirm({ title: form.dataset.confirm, confirmText: form.dataset.confirmButton || "Confirm" });
       if (!ok) return;
     }
+    if (deleteProject) {
+      await this.deleteProject(form);
+      return;
+    }
     this.ajaxRefresh(form);
+  }
+
+  async deleteProject(form) {
+    const name = new FormData(form).get("project");
+    if (typeof name !== "string" || !name) {
+      notifyError("Could not delete the project.");
+      return;
+    }
+    try {
+      const response = await postForm(form.action, { project: name });
+      await ensureOk(response, "Could not delete the project.");
+      notifySuccess(`Project "${name}" deleted.`);
+      this.refreshProjectList();
+    } catch (error) {
+      notifyError(error.message);
+    }
   }
 
   // The chip actions, offered on right click and on touch long press through
@@ -69,6 +97,25 @@ class ProjectList extends HTMLElement {
     if (mainForm) items.push({ label: "Resume", icon: "ti-player-play", action: () => mainForm.requestSubmit() });
     if (chip.dataset.chipKind === "shell" && chip.dataset.chipId) {
       items.push({ label: "Rename", icon: "ti-pencil", action: () => void this.renameShell(chip) });
+    }
+    if (chip.dataset.chipKind === "coder" && chip.dataset.chipId && main) {
+      items.push(chip.dataset.chipSteered
+        ? {
+          label: "Release",
+          icon: "ti-steering-wheel-off",
+          purple: true,
+          action: () => void releaseCoder({ terminal: chip.dataset.chipId, name: chip.dataset.chipName || "" }),
+        }
+        : {
+          label: "Steer",
+          icon: "ti-steering-wheel",
+          purple: true,
+          action: () => void steerCoder({
+            terminal: chip.dataset.chipId,
+            name: chip.dataset.chipName || "",
+            prefill: chip.dataset.chipSteerPrefill || "",
+          }),
+        });
     }
     if (xForm) {
       items.push({ divider: true });
@@ -201,7 +248,48 @@ class ProjectList extends HTMLElement {
       .finally(() => {
         if (bar) bar.remove();
         this.inFlight = false;
-        if (this.dirty) this.refreshProjects(null);
+        if (this.dirty) {
+          const whole = this.refreshWhole;
+          this.dirty = false;
+          this.refreshWhole = false;
+          if (whole) this.refreshProjectList();
+          else this.refreshProjects(null);
+        }
+      });
+  }
+
+  // A project create or delete changes the rows themselves, rather than merely a
+  // row's sessions. Keep this element mounted so its one SSE subscription and
+  // delegated chip actions survive while its inner server-rendered content swaps.
+  refreshProjectList() {
+    if (this.inFlight) {
+      this.dirty = true;
+      this.refreshWhole = true;
+      return;
+    }
+    this.inFlight = true;
+    fetch("/projects", { credentials: "same-origin" })
+      .then((response) => (response.ok ? response.text() : Promise.reject(new Error("refresh failed"))))
+      .then((html) => {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const fresh = doc.querySelector("dc-project-list");
+        if (!fresh) throw new Error("project list not found");
+        this.replaceChildren(...fresh.childNodes);
+        window.app.loadElements(this);
+        this.querySelectorAll("[data-sessions-body]").forEach((body) => this.foldChips(body));
+        this.setupSort();
+        this.setupFilter();
+      })
+      .catch(() => notifyError("Could not refresh projects."))
+      .finally(() => {
+        this.inFlight = false;
+        if (this.dirty) {
+          const whole = this.refreshWhole;
+          this.dirty = false;
+          this.refreshWhole = false;
+          if (whole) this.refreshProjectList();
+          else this.refreshProjects(null);
+        }
       });
   }
 

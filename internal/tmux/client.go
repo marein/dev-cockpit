@@ -303,6 +303,25 @@ func (c *Client) SetTabGroupName(names []string, groupName string) error {
 	return clirun.Check("tmux", args...)
 }
 
+// CapturePane returns what the pane shows plus the last lines of its
+// scrollback. Read only in the strict sense: capture-pane never attaches, so
+// the pane keeps the size the client that owns it gave it. Going through the
+// terminal hub instead would resize the pane to the reader's window.
+func (c *Client) CapturePane(name string, lines int) (string, error) {
+	if lines < 1 {
+		lines = 1
+	}
+	result := clirun.Run("tmux", "capture-pane", "-p", "-t", Target(name), "-S", "-"+strconv.Itoa(lines))
+	if result.Err != nil {
+		stderr := strings.TrimSpace(result.Stderr)
+		if stderr == "" {
+			stderr = result.Err.Error()
+		}
+		return "", errors.New(stderr)
+	}
+	return strings.TrimRight(result.Stdout, "\n \t"), nil
+}
+
 // StopPipe detaches any inherited pipe-pane logger (migration cleanup).
 func (c *Client) StopPipe(name string) error {
 	return clirun.Check("tmux", "pipe-pane", "-t", Target(name))

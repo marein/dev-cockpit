@@ -42,6 +42,14 @@ type snapshot struct {
 	Terminals []Entry `json:"terminals"`
 }
 
+// Jobs is the assistant's job store, as much of it as the startup pass needs:
+// the entries of terminals that are gone are dropped there like the
+// notifications are. An interface, so the restore does not have to know the
+// assistant.
+type Jobs interface {
+	PruneTerminals(keep map[string]bool) int
+}
+
 // Service keeps the terminal snapshot current and replays it at startup.
 // Safe for concurrent use.
 type Service struct {
@@ -51,6 +59,7 @@ type Service struct {
 	shells   *shell.Shells
 	tmux     *tmux.Client
 	notifier *notify.Service
+	jobs     Jobs
 
 	mu   sync.Mutex
 	last []Entry // last written entries, skips no-change rewrites
@@ -58,8 +67,8 @@ type Service struct {
 
 // New wires up the service. path is the snapshot file, enabled reads the
 // setting on every call.
-func New(path string, enabled func() bool, coders []*coder.Manager, shells *shell.Shells, t *tmux.Client, notifier *notify.Service) *Service {
-	return &Service{path: path, enabled: enabled, coders: coders, shells: shells, tmux: t, notifier: notifier}
+func New(path string, enabled func() bool, coders []*coder.Manager, shells *shell.Shells, t *tmux.Client, notifier *notify.Service, jobs Jobs) *Service {
+	return &Service{path: path, enabled: enabled, coders: coders, shells: shells, tmux: t, notifier: notifier, jobs: jobs}
 }
 
 // Write rewrites the snapshot from the live terminals. Called on every
@@ -94,10 +103,10 @@ func (s *Service) RunPeriodic(interval time.Duration) {
 // notification entries keep resolving (skipped when the directory is gone).
 // The recorded tab position is re-applied. A recreated shell is a fresh
 // bash, its output is gone, so its notifications are marked read instead of
-// ringing for nothing. Notification entries whose target resolves to
-// nothing are pruned and the snapshot is rewritten from a fresh scan; both
-// run on every startup, also with the setting off, so dead entries clean
-// themselves up regardless of the restore.
+// ringing for nothing. Notification entries and closed job entries whose
+// target resolves to nothing are pruned and the snapshot is rewritten from a
+// fresh scan; both run on every startup, also with the setting off, so dead
+// entries clean themselves up regardless of the restore.
 func (s *Service) RunStartup() {
 	if s.enabled() {
 		var snap snapshot
@@ -106,7 +115,7 @@ func (s *Service) RunStartup() {
 			s.replay(snap.Terminals)
 		}
 	}
-	s.pruneNotifications()
+	s.pruneDeadTargets()
 	s.Write()
 }
 
@@ -177,10 +186,13 @@ func (s *Service) applyTabGroup(e Entry) {
 	}
 }
 
-// pruneNotifications drops notification entries whose target stayed dead
-// through the restore pass (a shell whose directory is gone, a coder without
-// a store entry), their links would resolve to nothing forever.
-func (s *Service) pruneNotifications() {
+// pruneDeadTargets drops what a target that stayed dead through the restore
+// pass left behind (a shell whose directory is gone, a coder without a store
+// entry): its notification entries, whose links would resolve to nothing
+// forever, and the job it was steered under, which nothing can ever move
+// again. Both files are read whole on every look at them, so what is left in
+// them is paid for again and again.
+func (s *Service) pruneDeadTargets() {
 	valid := map[string]bool{}
 	for _, m := range s.coders {
 		snap := m.Snapshot()
@@ -197,6 +209,11 @@ func (s *Service) pruneNotifications() {
 	valid[notify.BackupTarget] = true
 	if removed := s.notifier.PruneTargets(valid); removed > 0 {
 		log.Printf("terminal restore: pruned %d notification(s) without a live target", removed)
+	}
+	if s.jobs != nil {
+		if removed := s.jobs.PruneTerminals(valid); removed > 0 {
+			log.Printf("terminal restore: pruned %d job(s) without a live terminal", removed)
+		}
 	}
 }
 

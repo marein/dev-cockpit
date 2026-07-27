@@ -130,7 +130,7 @@ func (s *Server) handleShellInput(c *gin.Context) {
 	}
 	if err := s.shells.Send(id, items); err != nil {
 		if errors.Is(err, shell.ErrNotRunning) {
-			c.String(http.StatusGone, err.Error())
+			s.shellNotRunning(c, id)
 			return
 		}
 		c.String(http.StatusBadRequest, err.Error())

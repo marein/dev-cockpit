@@ -24,8 +24,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run }) => {
       assert(ok.found && ok.editor && ok.del, `card wrong: ${JSON.stringify(ok)}`);
     });
 
-    // dc-project-list renders only when at least one project exists, so this
-    // runs after the create (self-contained on a fresh instance).
+    // This self-contained runner creates its project before exercising the list.
     await run("base custom elements upgraded on /projects", async () => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       const missing = await L.waitUpgraded(page, ["dc-quicknav", "dc-update-check", "dc-project-list"], 8000);
@@ -225,13 +224,15 @@ L.runFeature("PROJECTS", async ({ engine, page, run }) => {
       );
     });
 
-    await run("delete project (data-confirm) removes the card", async () => {
+    await run("delete project shows a toast and removes the card without a redirect", async () => {
       for (const u of shellUrls.splice(0)) await L.deleteShell(page, u).catch(() => {});
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       const btn = await page.evaluateHandle((p) => { const c = [...document.querySelectorAll("[data-project-name]")].find((e) => e.dataset.projectName === p); const s = c.closest('[id^="project-"]') || c; return s.querySelector('form[action="/projects/delete"] [type="submit"], form[action="/projects/delete"] button'); }, project);
       await btn.asElement().click();
       await confirmSwal(page);
-      await page.waitForFunction((p) => ![...document.querySelectorAll("[data-project-name]")].some((e) => e.dataset.projectName === p), project, { timeout: 10000 });
+      await page.waitForSelector('.swal2-popup.swal2-toast:has-text("Project")', { state: "visible", timeout: 8000 });
+      await page.waitForSelector(`#project-${project}`, { state: "detached", timeout: 10000 });
+      assert(page.url().endsWith("/projects"), `project deletion redirected: ${page.url()}`);
     });
   } finally {
     for (const u of shellUrls) await L.deleteShell(page, u).catch(() => {});

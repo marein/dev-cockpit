@@ -45,7 +45,7 @@ export function openMenu({ x, y, items, signal }) {
       "button",
       {
         type: "button",
-        class: "dropdown-item" + (item.danger ? " text-danger" : "") + (item.warn ? " text-orange" : ""),
+        class: "dropdown-item" + (item.danger ? " text-danger" : "") + (item.warn ? " text-orange" : "") + (item.purple ? " text-purple" : ""),
         role: "menuitem",
       },
       item.icon ? el("i", { class: `ti ${item.icon} me-2`, "aria-hidden": "true" }) : null,

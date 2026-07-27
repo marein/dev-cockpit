@@ -69,6 +69,11 @@ func (s *Server) handleUpdateApply(c *gin.Context) {
 		return
 	}
 
+	// Nothing here waits for anything. Coders and shells are tmux sessions and
+	// live through the restart, and an assistant turn is a detached process
+	// writing into a file of its own, so it does too: the new server picks the
+	// file up and writes the answer to its end. A user updates when they want
+	// to, and it costs them nothing.
 	c.JSON(http.StatusOK, gin.H{"restarting": true})
 	c.Writer.Flush()
 	go func() {

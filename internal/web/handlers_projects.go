@@ -201,10 +201,19 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 	}
 	path, err := s.projects.Create(form.Name.String())
 	if err != nil {
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		s.redirectWithFlash(c, "/projects/new", "", err.Error())
 		return
 	}
 	name := filepath.Base(path)
+	s.publishProjects()
+	if wantsJSON(c.Request) {
+		c.JSON(http.StatusOK, gin.H{"name": name, "path": path})
+		return
+	}
 	s.redirectWithProjectFlash(c, name, "Project \""+name+"\" created.", "")
 }
 
@@ -215,16 +224,29 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 	}
 	p, err := s.projects.FindByName(form.Project)
 	if err != nil {
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
 	s.purgeProjectRunners(p.Path)
-	s.publishTerminals("") // the purge stopped this project's coders/shells, drop them everywhere
 	if err := s.projects.Remove(p); err != nil {
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
-	s.redirectWithFlash(c, "/projects", "Project \""+p.Name+"\" deleted.", "")
+	s.publishTerminals("") // the purge removed this project's coders and shells everywhere
+	s.publishProjects()
+	if wantsJSON(c.Request) {
+		c.JSON(http.StatusOK, gin.H{"name": p.Name, "path": p.Path})
+		return
+	}
+	c.Redirect(http.StatusSeeOther, "/projects")
 }
 
 // purgeProjectRunners tears down everything a project has running before the
@@ -238,11 +260,15 @@ func (s *Server) purgeProjectRunners(path string) {
 		for _, r := range snap.Running {
 			if filesystem.IsUnder(r.CWD, path) {
 				_, _ = sessions.Stop(r.Identifier)
+				// The terminal is gone with the project, so its job is too:
+				// nothing will ever report on it again.
+				s.jobCalledOff(r.Identifier)
 			}
 		}
 		for _, r := range snap.Resumable {
 			if filesystem.IsUnder(r.CWD, path) {
 				_, _ = sessions.DeleteResumable(r.SessionID)
+				s.jobCalledOff(r.SessionID)
 			}
 		}
 	}

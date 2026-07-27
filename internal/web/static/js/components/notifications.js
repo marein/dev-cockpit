@@ -114,6 +114,8 @@ document.addEventListener("dc:terminal-activated", (event) => {
   reconcileOwnTarget(channel.targets);
 });
 
+document.addEventListener("dc:assistant-shown", () => reconcileOwnTarget(channel.targets));
+
 function updateTitle(unread) {
   const base = document.title.replace(/^\(\d+\+?\)\s/, "");
   document.title = unread > 0 ? `(${unread > 99 ? "99+" : unread}) ${base}` : base;
@@ -155,13 +157,41 @@ function targetURL(notification) {
   return notification.url || "/coders/" + encodeURIComponent(notification.targetId);
 }
 
+// openUrl acts on a notification URL without leaving the page when possible.
+// An assistant link opens the overlay in place, the panel reads conversation
+// and message anchor from the same URL the notification carries. Everything
+// else navigates boosted, the hard navigation stays the fallback.
+function openUrl(url) {
+  const panel = document.querySelector("dc-assistant-panel");
+  if (panel?.openFromUrl?.(url)) return;
+  if (window.app?.navigate) window.app.navigate(url);
+  else window.location.href = url;
+}
+
 function openTarget(notification) {
   postForm(channel.readUrl, { id: notification.id })
     .catch(() => {})
-    .finally(() => {
-      window.location.href = targetURL(notification);
-    });
+    .finally(() => openUrl(targetURL(notification)));
 }
+
+// pe.js boosts every anchor and does not look at a consumed click, so an
+// entry click would navigate twice, the raw href racing the read post.
+// Cancelling pe:click leaves the click to openTarget alone.
+window.addEventListener("pe:click", (event) => {
+  if (event.detail.a.closest("a[data-notify-id]")) event.preventDefault();
+});
+
+// A push notification click is handed over by the service worker as a message
+// with a reply port, see sw.js, because the consumed assistant query is
+// stripped from the address and no window matches the notification URL. The
+// ack on the port tells the worker the page took it, a page that stays
+// silent is driven by client.navigate instead.
+navigator.serviceWorker?.addEventListener("message", (event) => {
+  const data = event.data;
+  if (!data || data.type !== "open-url" || !data.url) return;
+  event.ports[0]?.postMessage(true);
+  openUrl(data.url);
+});
 
 // shownTargets returns every id the page renders visibly, active or not, but
 // only while the window has focus. A pane on screen in the focused window
@@ -177,6 +207,12 @@ function shownTargets() {
     .filter((el) => el.offsetParent !== null)
     .map((el) => el.getAttribute("terminal-id"))
     .filter(Boolean);
+  // The assistant surface on screen counts like a pane: in the docked panel,
+  // the fullscreen overlay, and on its own page alike.
+  shown.push(...[...document.querySelectorAll("dc-assistant[conversation-id]")]
+    .filter((el) => el.offsetParent !== null)
+    .map((el) => el.getAttribute("conversation-id"))
+    .filter(Boolean));
   if (shown.length) return shown;
   const match = window.location.pathname.match(/^\/(?:coders|shells)\/([^/]+)$/);
   return match ? [decodeURIComponent(match[1])] : [];
@@ -244,13 +280,17 @@ function toast(added) {
   playNotification().catch(() => {});
   if (!window.Swal) return;
 
-  let project;
-  if (added.project) {
-    project = document.createElement("div");
-    project.className = "text-secondary small text-start text-break";
+  let detail;
+  if (added.detail) {
+    detail = document.createElement("div");
+    detail.className = "text-secondary small text-start text-break";
+    detail.textContent = added.detail;
+  } else if (added.project) {
+    detail = document.createElement("div");
+    detail.className = "text-secondary small text-start text-break";
     const folder = document.createElement("i");
     folder.className = "ti ti-folder me-1";
-    project.append(folder, document.createTextNode(added.project));
+    detail.append(folder, document.createTextNode(added.project));
   }
 
   window.Swal.fire({
@@ -258,7 +298,7 @@ function toast(added) {
     position: "top-end",
     icon: "info",
     title: added.title || `Something new in "${added.targetName}".`,
-    html: project,
+    html: detail,
     customClass: { title: "text-break" },
     showConfirmButton: false,
     showCloseButton: true,
@@ -337,6 +377,9 @@ class Notifications extends HTMLElement {
       const item = event.target.closest("a[data-notify-id]");
       if (!item) return;
       event.preventDefault();
+      // The menu closes itself, an assistant entry opens the overlay in place
+      // and no page swap takes the open dropdown down anymore.
+      if (window.bootstrap) window.bootstrap.Dropdown.getOrCreateInstance(this.bell).hide();
       openTarget({ id: item.dataset.notifyId, targetId: item.dataset.notifyTarget, url: item.getAttribute("href") });
     }, { signal });
   }
@@ -402,7 +445,12 @@ class Notifications extends HTMLElement {
     name.className = "text-truncate";
     name.textContent = n.title || n.targetName;
     body.append(name);
-    if (n.project) {
+    if (n.detail) {
+      const detail = document.createElement("span");
+      detail.className = "text-secondary small text-break";
+      detail.textContent = n.detail;
+      body.append(detail);
+    } else if (n.project) {
       const project = document.createElement("span");
       project.className = "text-secondary small text-truncate";
       const folder = document.createElement("i");

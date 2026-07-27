@@ -138,6 +138,41 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       await sleep(500);
       assert((await page.locator(`${card} form[action="/coders/${id}/resume"]`).count()) === 0, "the deleted coder is still resumable");
     });
+
+    // The input route is shared: the assistant reaches it over the local socket
+    // and is told to run `coder-resume`, a browser must never read a command it
+    // cannot type on a phone. Both are answered from the same classified state,
+    // so this checks the browser half of it: what is wrong, and nothing offered
+    // where there is nothing to offer.
+    await run("input to a coder that is not running says why, in browser words", async () => {
+      const probe = (target) => page.evaluate(async (t) => {
+        const res = await fetch(`/coders/${t}/input`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content,
+          },
+          body: JSON.stringify({ items: [{ prompt: "ping" }] }),
+        });
+        return { status: res.status, body: await res.text() };
+      }, target);
+
+      const url = await L.createSession(page, project, `gone-${tag.slice(-4)}`);
+      const id = url.split("/").filter(Boolean).pop();
+      await L.stopSession(page, url);
+
+      const stopped = await probe(id);
+      assert(stopped.status === 410, `a stopped coder answered ${stopped.status}: ${stopped.body}`);
+      assert(/not running/i.test(stopped.body), `the stopped coder's answer says nothing: ${stopped.body}`);
+      assert(/resume/i.test(stopped.body), `the way back is not named: ${stopped.body}`);
+      assert(!stopped.body.includes("coder-resume"), `browser answer carries a CLI command: ${stopped.body}`);
+
+      const unknown = await probe(`zznone${tag.slice(-4)}`);
+      assert(unknown.status === 410, `an unknown id answered ${unknown.status}: ${unknown.body}`);
+      assert(/no session to resume/i.test(unknown.body), `an unknown id claims something to resume: ${unknown.body}`);
+      assert(!/coder-resume/.test(unknown.body), `browser answer carries a CLI command: ${unknown.body}`);
+    });
   } finally {
     if (sessionUrl) await L.stopSession(page, sessionUrl).catch(() => {});
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" }).catch(() => {});

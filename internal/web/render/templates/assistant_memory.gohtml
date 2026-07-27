@@ -1,0 +1,86 @@
+{{define "assistant_memory_content.gohtml"}}
+<div data-assistant-body>
+  <div class="d-flex justify-content-end mb-3">
+    <button type="button" class="btn btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#memory-new" aria-expanded="false" aria-controls="memory-new" data-memory-add>
+      <i class="ti ti-plus me-1"></i>Add a memory
+    </button>
+  </div>
+  <div class="collapse{{if not .Entries}} show{{end}} mb-3" id="memory-new">
+    <div class="card">
+      <form method="post" action="/assistant/memory" class="card-body">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="form" value="save">
+        <div class="mb-3">
+          <label class="form-label" for="memory-title">Title</label>
+          <input type="text" class="form-control" id="memory-title" name="title" maxlength="120" required autocomplete="off" placeholder="How I like commit messages">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="memory-body">What to remember</label>
+          <textarea class="form-control font-monospace" id="memory-body" name="body" rows="4" required placeholder="One fact, in one or two sentences."></textarea>
+          <small class="form-hint">The assistant reads this before every answer, so keep it short and true.</small>
+        </div>
+        <div class="d-flex gap-2">
+          <button type="submit" class="btn btn-primary">Add</button>
+          {{if .Entries}}<button type="button" class="btn" data-bs-toggle="collapse" data-bs-target="#memory-new">Cancel</button>{{end}}
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {{if not .Entries}}
+  <div class="card">
+    <div class="card-body text-center py-4">
+      <div class="text-secondary mb-2"><i class="ti ti-brain icon-lg"></i></div>
+      <p class="mb-0">Nothing yet. Tell the assistant to remember something, or add it above.</p>
+    </div>
+  </div>
+  {{else}}
+  <div class="card">
+    <div class="list-group list-group-flush">
+      {{range .Entries}}
+      {{/* Editing happens in the row itself: the reading half steps aside and
+           the fields take its place, title where the title stood, text where
+           the text stood, and the two controls where the pencil and the bin
+           sit. The wrappers carry no display utility class, so toggling the
+           hidden attribute really hides them. */}}
+      <div class="list-group-item" data-memory-entry="{{.Slug}}">
+        <div data-memory-view>
+          <div class="d-flex align-items-start gap-2">
+            <div class="flex-fill min-w-0">
+              <div class="fw-medium text-break">{{.Title}}</div>
+              <div class="text-secondary text-break" style="white-space: pre-wrap">{{.Body}}</div>
+              {{if .Updated}}<div class="text-secondary small mt-1"><dc-time datetime="{{.Updated}}"></dc-time></div>{{end}}
+            </div>
+            <div class="flex-shrink-0 d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-memory-edit-open aria-label="Edit {{.Title}}" title="Edit"><i class="ti ti-pencil"></i></button>
+              <form method="post" action="/assistant/memory" data-ajax-refresh data-confirm="Delete this memory?" data-confirm-button="Delete">
+                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                <input type="hidden" name="form" value="delete">
+                <input type="hidden" name="slug" value="{{.Slug}}">
+                <button type="submit" class="btn btn-sm btn-icon btn-ghost-secondary text-danger" aria-label="Delete {{.Title}}" title="Delete"><i class="ti ti-trash"></i></button>
+              </form>
+            </div>
+          </div>
+        </div>
+        <form method="post" action="/assistant/memory" data-memory-edit="{{.Slug}}" hidden>
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="form" value="save">
+          <input type="hidden" name="slug" value="{{.Slug}}">
+          <div class="d-flex align-items-start gap-2">
+            <div class="flex-fill min-w-0">
+              <input type="text" class="form-control form-control-sm fw-medium mb-2" name="title" maxlength="120" required autocomplete="off" aria-label="Title" value="{{.Title}}">
+              <textarea class="form-control form-control-sm font-monospace" name="body" rows="3" required aria-label="What to remember">{{.Body}}</textarea>
+            </div>
+            <div class="flex-shrink-0 d-flex gap-2">
+              <button type="submit" class="btn btn-sm btn-icon btn-ghost-primary" aria-label="Save {{.Title}}" title="Save"><i class="ti ti-check"></i></button>
+              <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-memory-edit-cancel aria-label="Cancel" title="Cancel"><i class="ti ti-x"></i></button>
+            </div>
+          </div>
+        </form>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}

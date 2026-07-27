@@ -75,6 +75,17 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "terminals"}); err != nil {
 		return
 	}
+	// A bare draft signal, no conversation named: an open composer pulls its own
+	// draft after a reconnect, the way the tab strip pulls its fragment.
+	if err := writeEnvelope(w, eventbus.Event{Type: "draft", Data: map[string]string{"conversation": ""}}); err != nil {
+		return
+	}
+	// A bare assistant signal: an open conversation surface pulls its state and
+	// catches up on a message that arrived while the socket was down, the same
+	// way the tab strip and the quick nav catch up on the terminals signal.
+	if err := writeEnvelope(w, eventbus.Event{Type: "assistant", Data: map[string]string{}}); err != nil {
+		return
+	}
 
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
@@ -121,4 +132,10 @@ func writeEnvelope(w http.ResponseWriter, ev eventbus.Event) error {
 func (s *Server) publishTerminals(projectName string) {
 	s.restorer.Write()
 	s.bus.Publish(eventbus.Event{Type: "terminals", Data: map[string]string{"project": projectName}})
+}
+
+// publishProjects signals that the project set changed. The projects page pulls
+// its own server-rendered list, including rows created or removed by the assistant.
+func (s *Server) publishProjects() {
+	s.bus.Publish(eventbus.Event{Type: "projects"})
 }

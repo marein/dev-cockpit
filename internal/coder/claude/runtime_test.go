@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/local/dev-cockpit/internal/coder"
 )
 
 func TestSessionSettings(t *testing.T) {
@@ -25,8 +27,24 @@ func TestSessionSettings(t *testing.T) {
 
 func TestStartCommandCarriesSettings(t *testing.T) {
 	r := runtime{}
-	command := r.StartCommand("sid", "name", "/work", "", false)
+	command := r.StartCommand(coder.SessionStart{SessionID: "sid", Name: "name", Workdir: "/work"})
 	if !strings.Contains(command, "--settings") || !strings.Contains(command, "disableAgentView") {
 		t.Errorf("start command misses settings injection: %s", command)
+	}
+}
+
+// A task reaches the CLI in its argv, as claude's positional prompt. Typing it
+// into the pane afterwards is what used to lose it.
+func TestStartCommandCarriesTheTask(t *testing.T) {
+	r := runtime{}
+	command := r.StartCommand(coder.SessionStart{
+		SessionID: "sid", Name: "name", Workdir: "/work", Task: "Fix the login redirect",
+	})
+	if !strings.HasSuffix(command, "'Fix the login redirect'") {
+		t.Errorf("task is not the positional prompt: %s", command)
+	}
+	plain := r.StartCommand(coder.SessionStart{SessionID: "sid", Name: "name", Workdir: "/work"})
+	if strings.Contains(plain, "''") {
+		t.Errorf("a session without a task must not carry an empty prompt: %s", plain)
 	}
 }

@@ -3,9 +3,10 @@ import { confirm, promptText } from "@dc/dialog";
 import { el } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import { applyFold } from "@dc/fold";
-import { ensureOk, getText, postForm, postJSON } from "@dc/http";
+import { ensureOk, getText, landingURL, postForm, postJSON } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
 import { notifyError, notifySuccess } from "@dc/toast";
+import { releaseCoder, steerCoder } from "@dc/steer";
 
 const DRAG_THRESHOLD = 6;
 const EDGE_ZONE = 32;
@@ -188,6 +189,25 @@ class TerminalTabs extends HTMLElement {
         icon: "ti-eye-check",
         action: () => newsTargets.forEach((id) => void this.markRead(id)),
       });
+    }
+    if (dataset.tabKind === "coder") {
+      items.push(dataset.tabSteered
+        ? {
+          label: "Release",
+          icon: "ti-steering-wheel-off",
+          purple: true,
+          action: () => void releaseCoder({ terminal: dataset.tabId, name: dataset.tabName }).then(() => this.tryRefresh()),
+        }
+        : {
+          label: "Steer",
+          icon: "ti-steering-wheel",
+          purple: true,
+          action: () => void steerCoder({
+            terminal: dataset.tabId,
+            name: dataset.tabName,
+            prefill: dataset.tabSteerPrefill || "",
+          }).then(() => this.tryRefresh()),
+        });
     }
     if (dataset.tabProject) {
       items.push({ divider: true });
@@ -663,6 +683,39 @@ class TerminalTabs extends HTMLElement {
     return row;
   }
 
+  // The assistant is a destination like a terminal, not a "new" action: it sits
+  // right under the open tabs so the switcher reaches it in the same two keys.
+  assistantRow(link) {
+    const icon = link.querySelector(".dc-term-icon");
+    const row = el(
+      "div",
+      {
+        role: "option",
+        class: "terminal-switcher-item",
+        dataset: {
+          switcherUrl: link.getAttribute("href") || "/assistant",
+          switcherName: "assistant",
+          switcherSection: "assistant",
+          switcherAssistant: "1",
+        },
+      },
+      icon ? icon.cloneNode(true) : el("span", { class: "terminal-tab-icon dc-term-icon assistant", "aria-hidden": "true" }, el("i", { class: "ti ti-sparkles" })),
+      el("span", { class: "terminal-switcher-name text-truncate" }, "Assistant"),
+    );
+    row.addEventListener("click", () => this.openAssistant(), { signal: this.ac.signal });
+    return row;
+  }
+
+  // The assistant is no page, it is the overlay: the row opens it where the
+  // user stands, like every other entry point does, instead of navigating to
+  // the redirect that would swap the page under it.
+  openAssistant() {
+    this.closeSwitcher();
+    const panel = document.querySelector("dc-assistant-panel");
+    if (panel?.openPanel) panel.openPanel();
+    else this.navigate("/assistant");
+  }
+
   actionRow(link) {
     const kind = link.dataset.tabsNew;
     const label = kind === "coder" ? "New coder" : "New shell";
@@ -739,9 +792,10 @@ class TerminalTabs extends HTMLElement {
     if (this.resuming) return;
     this.resuming = true;
     try {
-      const response = await postForm(`/coders/${row.dataset.switcherResume}/resume`, {});
+      const id = row.dataset.switcherResume;
+      const response = await postForm(`/coders/${id}/resume`, {});
       await ensureOk(response, "Could not resume the coder.");
-      this.navigate(response.url);
+      this.navigate((await landingURL(response)) || `/coders/${id}`);
     } catch (error) {
       notifyError(error.message);
       this.switcher?.input.focus();
@@ -782,6 +836,8 @@ class TerminalTabs extends HTMLElement {
       .map((link) => this.editorRow(link));
     const actionRows = Array.from(this.querySelectorAll(".terminal-tabs-new-menu [data-tabs-new]"))
       .map((link) => this.actionRow(link));
+    const assistantRows = Array.from(this.querySelectorAll("[data-tabs-assistant]"))
+      .map((link) => this.assistantRow(link));
     const sections = [];
     const listNodes = [...rows];
     const addSection = (key, title, nodes) => {
@@ -790,10 +846,11 @@ class TerminalTabs extends HTMLElement {
       sections.push({ key, node });
       listNodes.push(node, ...nodes);
     };
+    addSection("assistant", "Assistant", assistantRows);
     addSection("inactive", "Inactive coders", inactiveNodes);
     addSection("editors", "Editors", editorRows);
     addSection("new", "New", actionRows);
-    const cycleRows = rows.concat(resumeRows, editorRows, actionRows);
+    const cycleRows = rows.concat(assistantRows, resumeRows, editorRows, actionRows);
     return { rows, cycleRows, listNodes, sections, groupLabels };
   }
 
@@ -1004,6 +1061,7 @@ class TerminalTabs extends HTMLElement {
     if (!selected) return;
     if (selected.dataset.switcherToggle) this.expandGroup(selected.dataset.switcherToggle);
     else if (selected.dataset.switcherResume) void this.resumeTarget(selected);
+    else if (selected.dataset.switcherAssistant) this.openAssistant();
     else this.navigate(selected.dataset.switcherUrl);
   }
 
@@ -1043,7 +1101,7 @@ class TerminalTabs extends HTMLElement {
         const index = tabs.indexOf(tab);
         const neighbor = tabs[index + 1] || tabs[index - 1] || null;
         this.removeTab(id);
-        this.navigate(neighbor?.getAttribute("href") || response.url || "/projects");
+        this.navigate(neighbor?.getAttribute("href") || (await landingURL(response)) || "/projects");
         return;
       }
       this.removeTab(id);

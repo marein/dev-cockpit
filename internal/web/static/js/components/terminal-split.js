@@ -1,6 +1,7 @@
 import { openMenu } from "@dc/contextmenu";
 import { confirm, promptText } from "@dc/dialog";
-import { ensureOk, postForm, postJSON } from "@dc/http";
+import { ensureOk, landingURL, postForm, postJSON } from "@dc/http";
+import { releaseCoder, steerCoder } from "@dc/steer";
 import { notifyError, notifySuccess } from "@dc/toast";
 
 const DRAG_THRESHOLD = 6;
@@ -159,7 +160,7 @@ class TerminalSplit extends HTMLElement {
         try {
           const response = await postForm(action, {});
           await ensureOk(response, "Could not close the session.");
-          lastUrl = response.url || lastUrl;
+          lastUrl = (await landingURL(response)) || lastUrl;
         } catch (memberError) {
           void memberError;
           failed += 1;
@@ -220,6 +221,25 @@ class TerminalSplit extends HTMLElement {
         icon: "ti-eye-check",
         action: () => void postForm("/notifications/read", { target: dataset.paneId }).catch(() => {}),
       });
+    }
+    if (dataset.paneKind === "coder") {
+      items.push(head.querySelector(".dc-term-icon.steered")
+        ? {
+          label: "Release",
+          icon: "ti-steering-wheel-off",
+          purple: true,
+          action: () => void releaseCoder({ terminal: dataset.paneId, name: dataset.paneName }),
+        }
+        : {
+          label: "Steer",
+          icon: "ti-steering-wheel",
+          purple: true,
+          action: () => void steerCoder({
+            terminal: dataset.paneId,
+            name: dataset.paneName,
+            prefill: dataset.paneSteerPrefill || "",
+          }),
+        });
     }
     if (dataset.paneProject) {
       items.push({ divider: true });

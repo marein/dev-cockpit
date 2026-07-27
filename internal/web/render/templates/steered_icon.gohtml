@@ -1,0 +1,13 @@
+{{/*
+  The coder icon as the status light it already is: purple while a job is open
+  and the assistant holds this terminal, green otherwise, news blue stays on
+  top. Rendered server side wherever the icon shows; the strip, quick nav and
+  chip fragments refresh on the terminals event, and the attach pages wrap
+  this one in dc-steered-mark, which pulls it from /coders/:id/steered on the
+  same event. No badge logic lives in the client.
+
+  Dict: ID (terminal), Coder (coder id), Steered (bool).
+*/}}
+{{define "steered_icon.gohtml"}}
+<span class="dc-term-icon running{{if .Steered}} steered{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
+{{end}}

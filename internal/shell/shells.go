@@ -425,6 +425,10 @@ func (s *Shells) StreamUpdated(name string) (<-chan struct{}, bool) {
 	return s.streams.Updated(name)
 }
 
+// StreamModes reads the pane's current terminal modes, so a stream can tell the
+// browser when a program switched into or out of its full screen UI.
+func (s *Shells) StreamModes(name string) (tmux.PaneModes, bool) { return s.streams.Modes(name) }
+
 // StreamExited reports whether the underlying control client has ended.
 func (s *Shells) StreamExited(name string) bool { return s.streams.Exited(name) }
 

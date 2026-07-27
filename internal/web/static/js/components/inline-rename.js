@@ -16,6 +16,7 @@ class InlineRename extends HTMLElement {
     this.url = this.getAttribute("rename-url");
     this.nameUrl = this.getAttribute("name-url");
     this.titleSuffix = this.getAttribute("title-suffix") ?? "";
+    this.extraFields = Object.fromEntries(new URLSearchParams(this.getAttribute("extra-fields") ?? ""));
     this.label = this.querySelector("[data-rename-label]");
     this.input = this.querySelector("[data-rename-input]");
     if (!this.url || !this.label || !this.input) {
@@ -124,7 +125,7 @@ class InlineRename extends HTMLElement {
     }
     this.saving = true;
     try {
-      const response = await postForm(this.url, { name });
+      const response = await postForm(this.url, { ...this.extraFields, name });
       await ensureOk(response, "Could not rename.");
       const payload = await response.json().catch(() => ({}));
       this.applyName(payload.name || name);

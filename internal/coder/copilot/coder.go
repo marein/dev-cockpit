@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"path/filepath"
+	"sync"
 
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/filesystem"
@@ -11,11 +12,15 @@ import (
 type Coder struct {
 	tools        []string
 	agents       coder.AgentRepository
-	sessions     coder.SessionRepository
+	sessions     *sessionRepository
 	skills       coder.SkillRepository
 	instructions coder.GlobalInstructions
 	runtime      coder.SessionRuntime
 	controls     terminal.ControlMapper
+	// runner is probed on first use, see assistant.go. A CLI without the flags
+	// a turn needs loses the conversations only, never its terminal.
+	assistantOnce sync.Once
+	runner        *runner
 }
 
 func New() *Coder {

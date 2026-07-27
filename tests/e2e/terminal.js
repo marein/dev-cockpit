@@ -240,6 +240,56 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await page.evaluate(() => localStorage.removeItem("dc-terminal-fullscreen"));
     });
 
+    // A docked assistant keeps its column in fullscreen. The panel sits above
+    // the attach page, so a page that took the whole viewport would run under
+    // it and lose its right edge. The page ends at the panel's left edge
+    // instead, and it follows the resize handle because both sides read
+    // --dc-assistant-w. Closing the panel gives the viewport back.
+    await run("desktop: fullscreen leaves the docked assistant its column and follows its resize", async () => {
+      const edges = () => page.evaluate(() => {
+        const box = document.querySelector(".attach-page").getBoundingClientRect();
+        const card = document.querySelector(".dc-assistant-panel-card").getBoundingClientRect();
+        return {
+          right: Math.round(box.right),
+          panelLeft: Math.round(card.left),
+          width: window.innerWidth,
+          docked: document.body.classList.contains("dc-assistant-docked"),
+        };
+      });
+      await page.click("[data-assistant-corner]");
+      await page.waitForSelector(".dc-assistant-panel-card:not([hidden]) dc-assistant[ready]", { timeout: 20000 });
+      await page.click("terminal-tabs [data-terminal-fullscreen]");
+      await page.waitForFunction(() => document.documentElement.classList.contains("dc-terminal-fullscreen"), null, { timeout: 5000 });
+      await sleep(300);
+      const side = await edges();
+      assert(side.docked, "the panel did not dock");
+      assert(Math.abs(side.right - side.panelLeft) <= 1 && side.right < side.width - 100,
+        `the terminal does not stop at the panel: ${JSON.stringify(side)}`);
+
+      const handle = await page.locator("[data-assistant-resize]").boundingBox();
+      await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(handle.x - 120, handle.y + handle.height / 2, { steps: 10 });
+      await page.mouse.up();
+      await sleep(400);
+      const wider = await edges();
+      assert(wider.right < side.right - 30 && Math.abs(wider.right - wider.panelLeft) <= 1,
+        `the terminal did not follow the panel's resize: ${JSON.stringify(wider)}`);
+
+      await page.click("[data-assistant-panel-close]");
+      await page.waitForSelector(".dc-assistant-panel-card[hidden]", { state: "attached", timeout: 8000 });
+      await sleep(300);
+      const full = await page.evaluate(() => {
+        const box = document.querySelector(".attach-page").getBoundingClientRect();
+        return { right: Math.round(box.right), width: window.innerWidth };
+      });
+      assert(Math.abs(full.right - full.width) <= 1, `the closed panel left a gap: ${JSON.stringify(full)}`);
+      await page.keyboard.press("Control+Shift+F");
+      await page.waitForFunction(() => !document.documentElement.classList.contains("dc-terminal-fullscreen"), null, { timeout: 4000 });
+      await page.evaluate(() => localStorage.removeItem("dc-terminal-fullscreen"));
+      return "terminal left, panel right, width follows the handle";
+    });
+
     await run("desktop: refresh stream reconnects (no error)", async () => {
       const before = bag.consoleErrors.length + bag.pageErrors.length;
       await page.click(".attach-desktop [data-terminal-refresh]");

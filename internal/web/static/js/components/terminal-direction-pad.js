@@ -123,6 +123,10 @@ class TerminalDirectionPad extends HTMLElement {
     }
     this.dispatchEvent(new CustomEvent("terminal-control", {
       bubbles: true,
+      // A pad whose four directions page the view says so, and the server
+      // believes only what is said: an unmarked input is a takeover. The pad
+      // with the real arrow keys carries no mark, because those keys are meant
+      // for the program.
       detail: { control: this.activeControl },
     }));
   }

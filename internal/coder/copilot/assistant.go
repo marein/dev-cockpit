@@ -1,0 +1,196 @@
+package copilot
+
+import (
+	"encoding/json"
+	"errors"
+	"log"
+	"strings"
+
+	"github.com/local/dev-cockpit/internal/assistant"
+	"github.com/local/dev-cockpit/internal/clirun"
+)
+
+// assistantFlags are the flags this runner cannot work without.
+var assistantFlags = []string{"--prompt", "--output-format", "--session-id", "--resume", "--allow-all-tools"}
+
+// runner holds the store itself, not the repository interface: a turn's context
+// reading is not on copilot's output at all, it stands in the session's own
+// event log, and reading that is this store's job.
+type runner struct {
+	sessions *sessionRepository
+}
+
+// AssistantRunner returns the conversation capability, or nil when the
+// installed copilot cannot do what a turn needs.
+func (p *Coder) AssistantRunner() assistant.Runner {
+	p.assistantOnce.Do(func() {
+		if missing := missingAssistantFlags(); len(missing) > 0 {
+			log.Printf("copilot conversations disabled, the installed CLI has no %s", strings.Join(missing, ", "))
+			return
+		}
+		p.runner = &runner{sessions: p.sessions}
+	})
+	if p.runner == nil {
+		return nil
+	}
+	return p.runner
+}
+
+func missingAssistantFlags() []string {
+	help := clirun.Run("copilot", "--help")
+	if help.Err != nil && help.Stdout == "" {
+		return []string{"a usable --help output"}
+	}
+	text := help.Stdout + help.Stderr
+	var missing []string
+	for _, flag := range assistantFlags {
+		if !strings.Contains(text, flag) {
+			missing = append(missing, flag)
+		}
+	}
+	return missing
+}
+
+func (r *runner) SessionExists(sessionID string) bool {
+	for _, s := range r.sessions.List() {
+		if s.SessionID == sessionID {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *runner) DeleteSession(sessionID string) error {
+	return r.sessions.DeleteSession(sessionID)
+}
+
+// Command builds one non-interactive copilot turn. A conversation has the same tools as a
+// coder terminal, including the ones that change files and run commands. A
+// non-interactive run cannot ask for a decision, so the approval flags carry
+// what an interactive session would confirm; without them every tool that
+// needs a decision fails instead of doing the work.
+func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
+	args := []string{"-p", req.Prompt}
+	if req.Resume {
+		args = append(args, "--resume", req.SessionID)
+	} else {
+		args = append(args, "--session-id", req.SessionID)
+		if name := assistant.SessionName(req.Title); name != "" {
+			args = append(args, "--name", name)
+		}
+	}
+	// --allow-all-paths lifts copilot's path verification, which checks every
+	// path against the working directory and its trusted folders. An
+	// assistant turn has to reach the projects, the cockpit binary and its
+	// own workspace, none of which live in its working directory, so every
+	// turn carries the flag.
+	args = append(args,
+		"--allow-all-tools",
+		"--allow-all-urls",
+		"--allow-all-paths",
+		"--output-format", "json",
+		"--log-level", "none",
+		"--no-color",
+	)
+	return assistant.Command{Name: "copilot", Args: args}, nil
+}
+
+// Parse reads copilot's JSONL output. It is called again when a turn is picked
+// up after a restart, so it carries no state from the start of the turn.
+func (r *runner) Parse(sessionID string, events chan<- assistant.Event) assistant.Parser {
+	return &copilotParser{sessionID: sessionID, events: events, sessions: r.sessions, delivered: map[string]bool{}}
+}
+
+// copilotParser turns the documented JSONL events into conversation events.
+type copilotParser struct {
+	sessionID string
+	events    chan<- assistant.Event
+	sessions  *sessionRepository
+	// delivered tracks which assistant messages already arrived as deltas, so
+	// the final full message record is not appended a second time. A provider
+	// version that stops sending deltas still produces the complete answer.
+	delivered map[string]bool
+	sawResult bool
+}
+
+type copilotRecord struct {
+	Type string `json:"type"`
+	Data struct {
+		MessageID    string `json:"messageId"`
+		DeltaContent string `json:"deltaContent"`
+		Content      string `json:"content"`
+		ToolName     string `json:"toolName"`
+	} `json:"data"`
+	SessionID string `json:"sessionId"`
+	ExitCode  *int   `json:"exitCode"`
+}
+
+func (p *copilotParser) Line(line []byte) error {
+	var rec copilotRecord
+	if err := json.Unmarshal(line, &rec); err != nil {
+		log.Printf("copilot assistant: unreadable output record: %v", err)
+		return errors.New("The coder sent an answer this version cannot read.")
+	}
+	switch rec.Type {
+	case "assistant.message_delta":
+		if rec.Data.DeltaContent == "" {
+			return nil
+		}
+		p.delivered[rec.Data.MessageID] = true
+		p.events <- assistant.Event{Kind: assistant.EventDelta, Text: rec.Data.DeltaContent}
+	case "assistant.message":
+		if rec.Data.Content == "" || p.delivered[rec.Data.MessageID] {
+			return nil
+		}
+		p.delivered[rec.Data.MessageID] = true
+		p.events <- assistant.Event{Kind: assistant.EventDelta, Text: rec.Data.Content}
+	case "tool.execution_start":
+		p.events <- assistant.Event{Kind: assistant.EventTool, Text: rec.Data.ToolName}
+	case "result":
+		p.sawResult = true
+		if rec.SessionID != "" && rec.SessionID != p.sessionID {
+			log.Printf("copilot assistant: expected session %s, got %s", p.sessionID, rec.SessionID)
+			return errors.New("The coder answered in a different conversation, so this turn was dropped.")
+		}
+		if rec.ExitCode != nil && *rec.ExitCode != 0 {
+			return errors.New("The coder could not finish this answer.")
+		}
+	}
+	return nil
+}
+
+func (p *copilotParser) Finish() error {
+	// The context reading is read here and nowhere else: copilot writes it into
+	// the session's event log when the run shuts down, and a turn is one
+	// non-interactive run, so the record exists exactly once per turn and only
+	// after the process is gone. Nothing of it reaches standard output.
+	p.reportUsage()
+	if !p.sawResult {
+		return errors.New("The coder stopped before it finished the answer.")
+	}
+	return nil
+}
+
+// Diagnose reads what copilot said when it never got going. A run without a
+// login writes nothing to standard output at all and prints its whole complaint
+// on standard error, so the general path is the only one there is here.
+func (p *copilotParser) Diagnose(err error, stderr string) error {
+	if assistant.LooksLikeLogin(stderr) {
+		return assistant.ErrNotLoggedIn
+	}
+	return nil
+}
+
+// reportUsage sends what the finished run recorded about its context. A run
+// that recorded nothing readable reports nothing, so the page keeps the last
+// number it had instead of showing a guess.
+func (p *copilotParser) reportUsage() {
+	if p.sessions == nil {
+		return
+	}
+	usage, ok := p.sessions.contextUsage(p.sessionID)
+	if !ok {
+		return
+	}
+	p.events <- assistant.Event{Kind: assistant.EventUsage, Usage: &usage}
+}

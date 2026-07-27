@@ -377,15 +377,17 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await sleep(200);
     });
 
-    await run("the + menu links to the editor, new coder and new shell with the current project preselected", async () => {
+    await run("the + menu leads with new coder and new shell, then the assistant and the editor, project preselected", async () => {
       await page.click(".terminal-tabs-new-btn");
       await page.waitForSelector("terminal-tabs .dropdown-menu.show", { state: "visible", timeout: 4000 });
       const hrefs = await page.$$eval("terminal-tabs .dropdown-menu.show > a", (as) => as.map((a) => a.getAttribute("href")));
-      assert(hrefs.length === 3, `expected 3 links, got ${hrefs.length}`);
-      assert(hrefs[0].startsWith(`/projects/${project}/editor?return=`), `editor link ${hrefs[0]}`);
-      assert(hrefs[1].startsWith("/coders/new?") && hrefs[1].includes(`project=${project}`), `coder link ${hrefs[1]}`);
-      assert(hrefs[2].startsWith("/shells/new?") && hrefs[2].includes(`project=${project}`), `shell link ${hrefs[2]}`);
-      assert(hrefs[2].includes(`return=%2Fshells%2F${ids[2]}`), `shell link return target ${hrefs[2]}`);
+      assert(hrefs.length === 4, `expected 4 links, got ${hrefs.length}`);
+      // What the menu is mostly used for stands first.
+      assert(hrefs[0].startsWith("/coders/new?") && hrefs[0].includes(`project=${project}`), `coder link ${hrefs[0]}`);
+      assert(hrefs[1].startsWith("/shells/new?") && hrefs[1].includes(`project=${project}`), `shell link ${hrefs[1]}`);
+      assert(hrefs[2] === "/assistant", `assistant link ${hrefs[2]}`);
+      assert(hrefs[3].startsWith(`/projects/${project}/editor?return=`), `editor link ${hrefs[3]}`);
+      assert(hrefs[1].includes(`return=%2Fshells%2F${ids[2]}`), `shell link return target ${hrefs[1]}`);
       await page.click('terminal-tabs .dropdown-menu.show a[href^="/shells/new"]');
       await page.waitForURL(/\/shells\/new/, { timeout: 8000 });
       const selectedPath = await page.locator('select[name="project"]').inputValue();
@@ -606,6 +608,37 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(!toasts.includes("Terminal has ended"), "ended toast not suppressed on tab close");
     });
 
+    await run("closing the last tab lands on the projects page, never on the POST url", async () => {
+      const soloUrl = await L.createSession(page, project, `tabsolo-${tag.slice(-4)}`);
+      const soloId = ownId(soloUrl);
+      await page.goto(soloUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`${tabSel(soloId)}.active`, { state: "attached", timeout: 12000 });
+      // The neighbour is read out of the strip, and only a strip with a single
+      // tab has none. Reducing it in the DOM leaves the path an instance with
+      // one terminal takes, without touching a session this runner did not
+      // create; the refresh that would undo it is held off while a close is
+      // confirming.
+      const removed = await page.$$eval(
+        `terminal-tabs .terminal-tab:not([data-tab-id="${soloId}"])`,
+        (els) => { els.forEach((el) => el.remove()); return els.length; },
+      );
+      assert((await tabOrder()).length === 1, `the strip still holds ${(await tabOrder()).length} tabs after removing ${removed}`);
+      await page.click(`${tabSel(soloId)} [data-tab-close]`);
+      await L.confirmSwal(page);
+      await page.waitForURL(/\/projects/, { timeout: 15000 });
+      assert(!/\/stop$/.test(page.url()), `landed on the POST url: ${page.url()}`);
+      await page.waitForSelector(`#project-${project}`, { state: "attached", timeout: 8000 });
+      const body = await page.textContent("body");
+      assert(!/Method not allowed/i.test(body), "the projects page is an error page");
+      // The close stops the coder, it stays resumable: drop it too.
+      await page.evaluate(async (id) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/coders/${id}/delete`, { method: "POST", headers: { "X-CSRF-Token": token, Accept: "application/json" } });
+      }, soloId);
+      await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(tabSel(ids[0]), { state: "attached", timeout: 8000 });
+    });
+
     await run("a stopped coder is resumable from the + menu (grouped by project) and from the switcher", async () => {
       const coderName = `tabres-${tag.slice(-4)}`;
       coderUrl = await L.createSession(page, project, coderName);
@@ -812,9 +845,34 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(selectedPath.endsWith(`/${foreignProject}`), `preselected project path '${selectedPath}'`);
     });
 
+    await run("the switcher reaches the assistant", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      assert((await L.waitUpgraded(page, ["terminal-tabs"], 8000)).length === 0, "terminal-tabs not upgraded on /projects");
+      await page.keyboard.press("Control");
+      await page.keyboard.press("Control");
+      await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+      await page.keyboard.type("assist", { delay: 30 });
+      await sleep(200);
+      const rows = await page.$$eval(".terminal-switcher-item:not([hidden])", (els) => els.map((e) => e.dataset.switcherSection));
+      assert(rows.length === 1 && rows[0] === "assistant", `filter 'assist' shows ${JSON.stringify(rows)}`);
+      // The assistant is no page: the row opens the overlay where the user
+      // stands. The mark proves it, the address alone would not: the old route
+      // redirected back onto this very path.
+      await page.evaluate(() => { document.querySelector(".page").dataset.runnerMark = "1"; });
+      await page.click('.terminal-switcher-item[data-switcher-section="assistant"]');
+      await page.waitForSelector(".dc-assistant-panel-card:not([hidden]) dc-assistant[ready]", { timeout: 8000 });
+      assert(await page.evaluate(() => document.querySelector(".page")?.dataset.runnerMark === "1"),
+        "the switcher navigated the page instead of opening the overlay on it");
+      await page.click("[data-assistant-panel-close]");
+      await page.waitForSelector(".dc-assistant-panel-card[hidden]", { state: "attached", timeout: 8000 });
+    });
+
     await run("the strip stays hidden on coarse pointer (mobile) clients", async () => {
       const mp = await mobilePage();
       await mp.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+      // This is the runner's first mobile page, so the daily update dialog is
+      // still up and its backdrop swallows every click on the settings row.
+      await L.dismissUpdate(mp);
       await mp.waitForSelector("terminal-tabs", { state: "attached", timeout: 8000 });
       const display = await mp.$eval("terminal-tabs", (e) => getComputedStyle(e).display);
       assert(display === "none", `terminal-tabs display '${display}' on mobile`);

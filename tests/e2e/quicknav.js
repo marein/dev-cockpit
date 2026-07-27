@@ -52,6 +52,9 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
     await L.confirmSwal(pg);
   };
   try {
+    // The quick nav shows below lg only, the assistant's corner button replaces
+    // it on a desktop, so this whole runner drives it in a narrower window.
+    await page.setViewportSize({ width: 960, height: 900 });
     await L.createProject(page, project);
 
     await run("toggle opens, lazy loads tabs, drill + back", async () => {

@@ -127,12 +127,13 @@ func (r *sessionRepository) DeleteFile(sessionID, rawName string) (filesystem.Fi
 	return file, nil
 }
 
-// filesDir locates the files directory for a session without scanning every
-// transcript: the transcript lives at stateRoot/<project>/<sessionID>.jsonl
-// and its files at stateRoot/<project>/<sessionID>/files. Only when the
-// transcript file name does not match the session ID (sessions whose
-// transcript declares a different sessionId) does it fall back to a scan.
-func (r *sessionRepository) filesDir(sessionID string) (string, error) {
+// transcriptFile locates the transcript of a session without scanning every
+// file: it lives at stateRoot/<project>/<sessionID>.jsonl, because the cockpit
+// starts every session with the id it chose. Only when the file name does not
+// match the session ID (sessions whose transcript declares a different
+// sessionId) does it fall back to a scan. Nothing here is assembled from a
+// working directory, the id is the whole lookup.
+func (r *sessionRepository) transcriptFile(sessionID string) (string, error) {
 	id := strings.TrimSpace(sessionID)
 	if id == "" {
 		return "", fmt.Errorf("Session identifier is required.")
@@ -146,18 +147,27 @@ func (r *sessionRepository) filesDir(sessionID string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return stored.filesDir, nil
+		return stored.sessionFile, nil
 	}
 	abs, err := filepath.Abs(matches[0])
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(filepath.Dir(abs), id, "files")
 	absRoot, _ := filepath.Abs(r.stateRoot)
-	if !filesystem.IsUnder(dir, absRoot) {
+	if !filesystem.IsUnder(abs, absRoot) {
 		return "", fmt.Errorf("Invalid session identifier.")
 	}
-	return dir, nil
+	return abs, nil
+}
+
+// filesDir locates the files directory for a session: next to its transcript,
+// at stateRoot/<project>/<sessionID>/files.
+func (r *sessionRepository) filesDir(sessionID string) (string, error) {
+	transcript, err := r.transcriptFile(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(transcript), strings.TrimSpace(sessionID), "files"), nil
 }
 
 func (r *sessionRepository) listStored() []storedSession {

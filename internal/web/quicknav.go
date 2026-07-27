@@ -27,10 +27,19 @@ func (s *Server) handleQuickNav(c *gin.Context) {
 		path = "/"
 	}
 	id, name, cleanPath, focus := quicknavContextFromPath(path)
+	assistantID := s.currentAssistantID()
+	steered, prefill := s.watcher.Marks()
 	c.HTML(http.StatusOK, "quicknav_items.gohtml", render.Page{
 		QuickNav:   s.buildQuickNav(id, name, cleanPath, focus),
 		CSRFToken:  s.csrfToken(c),
 		MultiCoder: s.multiCoder(),
+		// The menu carries the assistant row too, so a refreshed fragment has to
+		// bring its news mark along or it would drop off on every open. The
+		// steered marks and the dialog prefills ride along for the same reason.
+		AssistantID:   assistantID,
+		AssistantNews: assistantID != "" && s.notifier.UnreadTargets()[assistantID],
+		Steered:       steered,
+		SteerPrefill:  prefill,
 	})
 }
 

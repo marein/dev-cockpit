@@ -395,6 +395,15 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
     margin-right: 0;
     margin-left: 0;
   }
+  /* A docked assistant keeps its column: fullscreen stops at the panel's left
+     edge instead of running under it. The width follows the resize handle
+     because both sides read the same custom property. Below lg the panel
+     covers the screen, so there is nothing to sit beside. */
+  @media (min-width: 992px) {
+    .dc-terminal-fullscreen body.dc-assistant-docked .attach-page {
+      right: var(--dc-assistant-w);
+    }
+  }
 }
 
 /* Swipe navigation between the open terminals, mobile only: the terminal
@@ -836,6 +845,213 @@ body .swal2-styled.swal2-deny {
 body:not(:has(.attach-footer)) .quicknav {
   bottom: calc(1.5rem + env(safe-area-inset-bottom));
 }
+/* The chat composer sits at the bottom of the overlay's column. The bottom
+   padding carries the home indicator inset, so an installed web app keeps its
+   distance from the screen edge. */
+.assistant-composer {
+  border-top: 1px solid var(--tblr-border-color);
+  background: var(--tblr-body-bg);
+  padding: 0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom));
+}
+/* One message. The assistant speaks in the page's own typography, the user's
+   words sit right aligned in a tinted bubble, which works at every width the
+   surface renders in, the phone, the page and the docked panel. */
+.dc-msg-user {
+  margin-left: auto;
+  max-width: 85%;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--tblr-border-radius-lg);
+  background: rgba(var(--tblr-primary-rgb), 0.08);
+}
+[data-assistant-text] pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+[data-assistant-text] table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.dc-assistant-media {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  border-radius: var(--tblr-border-radius);
+}
+.dc-assistant-audio {
+  width: 100%;
+  max-width: 24rem;
+}
+dc-assistant[dropping] .assistant-composer {
+  outline: 2px dashed var(--tblr-primary);
+  outline-offset: 0.25rem;
+}
+.dc-context-ring {
+  position: absolute;
+  inset: 1px;
+  pointer-events: none;
+}
+.dc-context-ring circle {
+  fill: none;
+  stroke-width: 2;
+}
+.dc-context-ring-track {
+  stroke: currentColor;
+  stroke-opacity: 0.3;
+}
+.dc-context-ring-fill {
+  stroke: currentColor;
+}
+.dc-context-ring-halo {
+  stroke: none;
+}
+.btn:hover .dc-context-ring[data-assistant-ring-level] .dc-context-ring-halo,
+.btn:focus-visible .dc-context-ring[data-assistant-ring-level] .dc-context-ring-halo,
+.btn.show .dc-context-ring[data-assistant-ring-level] .dc-context-ring-halo {
+  stroke: currentColor;
+  stroke-width: 3.5;
+}
+.dc-context-ring[data-assistant-ring-level="high"] .dc-context-ring-fill {
+  stroke: var(--tblr-orange);
+}
+.dc-context-ring[data-assistant-ring-level="full"] .dc-context-ring-fill {
+  stroke: var(--tblr-red);
+}
+/* The assistant overlay. From lg up it docks at the right edge and the page
+   takes a matching margin, so its container re-centers in what is left and
+   panel and content stay side by side on wide screens instead of drifting
+   apart. Below lg the same surface covers the whole screen. */
+:root { --dc-assistant-w: 25rem; }
+dc-assistant-panel:not([hidden]) { display: block; }
+.dc-assistant-panel-card:not([hidden]) {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1040;
+  display: flex;
+  flex-direction: column;
+  width: var(--dc-assistant-w);
+  background: var(--tblr-body-bg);
+  border-left: 1px solid var(--tblr-border-color);
+}
+@media (max-width: 991.98px) {
+  .dc-assistant-panel-card:not([hidden]) {
+    width: 100%;
+    border-left: 0;
+  }
+  body.dc-assistant-docked {
+    overflow: hidden;
+  }
+}
+@media (min-width: 992px) {
+  body.dc-assistant-docked .page {
+    margin-right: var(--dc-assistant-w);
+  }
+  /* On a desktop the assistant's corner button replaces the floating quick
+     nav; phones and tablets keep the quick nav as their primary navigation. */
+  .quicknav { display: none; }
+}
+@media (min-width: 992px) {
+  body.dc-assistant-docked .navbar .navbar-brand a > span { display: none; }
+  body.dc-assistant-docked .navbar .js-update-flag .nav-link-title { display: none; }
+  body.dc-assistant-docked .navbar .js-update-flag .ti,
+  body.dc-assistant-docked .navbar form[action="/logout"] .ti { margin-right: 0 !important; }
+  body.dc-assistant-docked .navbar form[action="/logout"] button > span { display: none; }
+  body.dc-assistant-docked .navbar .js-update-flag,
+  body.dc-assistant-docked .navbar .col-auto form[action="/logout"] .nav-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  body.dc-assistant-docked .navbar .col-auto > .d-flex {
+    gap: 0.5rem !important;
+  }
+}
+@media (min-width: 992px) and (max-width: 1219.98px) {
+  body.dc-assistant-docked .navbar .nav-link-icon { display: none !important; }
+}
+/* The corner button sits where the quick nav sits everywhere else: in the
+   right margin beside the content when the screen holds it, at the edge
+   otherwise, lifted above the terminal footer on the attach pages. */
+.dc-assistant-corner {
+  display: none;
+  position: fixed;
+  right: max(1rem, calc((100% - 1320px) / 2 - 3.75rem));
+  bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  z-index: 20;
+  width: 2.75rem;
+  height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--tblr-bg-surface);
+  border: 1px solid var(--tblr-border-color);
+}
+body:not(:has(.attach-footer)) .dc-assistant-corner {
+  bottom: calc(1.5rem + env(safe-area-inset-bottom));
+}
+@media (min-width: 992px) {
+  .dc-assistant-corner { display: inline-flex; }
+}
+body.dc-assistant-docked .dc-assistant-corner { display: none !important; }
+.dc-assistant-corner:hover,
+.dc-assistant-corner:focus-visible {
+  background: var(--tblr-purple);
+  border-color: var(--tblr-purple);
+}
+.dc-assistant-corner:hover .dc-term-icon.assistant:not(.news),
+.dc-assistant-corner:focus-visible .dc-term-icon.assistant:not(.news) {
+  color: var(--tblr-white, #fff);
+}
+.dc-assistant-panel-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.dc-assistant-panel-body > dc-assistant,
+.dc-assistant-panel-body > .dc-assistant-panel-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+[data-assistant-head] {
+  min-height: 3.5rem;
+  background: var(--tblr-bg-surface);
+  box-shadow: inset 0 calc(-1 * var(--tblr-border-width)) 0 0 var(--tblr-border-color);
+}
+.dc-assistant-scroll {
+  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 1rem;
+}
+/* The message box grows while typing and never by hand, a dragged corner
+   would tear the composer apart. The overlay's other textareas resize only
+   downwards, sideways they would break out of the panel. */
+textarea[data-assistant-input] { resize: none; }
+.dc-assistant-panel textarea:not([data-assistant-input]) { resize: vertical; }
+/* The docked panel resizes by its left edge. */
+.dc-assistant-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -0.25rem;
+  width: 0.5rem;
+  cursor: col-resize;
+  z-index: 1;
+}
+@media (max-width: 991.98px) {
+  .dc-assistant-resize { display: none; }
+}
 .quicknav-top {
   position: sticky;
   top: 0;
@@ -853,6 +1069,14 @@ body:not(:has(.attach-footer)) .quicknav {
   padding: 0.1875rem;
   border-radius: var(--tblr-border-radius);
   background: rgba(var(--tblr-emphasis-color-rgb), 0.04);
+}
+/* The assistant link shares the segment's line: same bottom margin, so both
+   sit on the same baseline, and the icon centers in the segment's height. */
+.quicknav-assistant {
+  display: flex;
+  align-items: center;
+  margin: 0 0.75rem 0.375rem 0;
+  padding: 0 0.375rem;
 }
 .quicknav-seg-btn {
   flex: 1 1 0;
@@ -943,6 +1167,7 @@ body:not(:has(.attach-footer)) .quicknav {
 .quicknav-swipe-row:has(> .quicknav-swipe-stop),
 .quicknav-swipe-row:has(> .quicknav-swipe-ungroup) { --qn-swipe-n: 2; }
 .quicknav-swipe-row:has(> .quicknav-swipe-slot3) { --qn-swipe-n: 3; }
+.quicknav-swipe-row:has(> .quicknav-swipe-slot4) { --qn-swipe-n: 4; }
 .quicknav-active-item {
   position: relative;
   z-index: 1;
@@ -978,7 +1203,11 @@ body:not(:has(.attach-footer)) .quicknav {
   right: var(--qn-swipe-btn);
   background: var(--tblr-orange, #f76707);
 }
+.quicknav-swipe-steer {
+  background: var(--tblr-purple);
+}
 .quicknav-swipe-slot3 { right: calc(2 * var(--qn-swipe-btn)); }
+.quicknav-swipe-slot4 { right: calc(3 * var(--qn-swipe-btn)); }
 .quicknav-group-row .quicknav-active-item { padding-left: 2rem; }
 .quicknav-active-list-dragging [data-qn-block] { transition: transform 0.12s ease; }
 .quicknav-active-list-dragging .quicknav-group-target {
@@ -1126,6 +1355,12 @@ body:not(:has(.attach-footer)) .quicknav {
     border-radius: 0;
   }
   .dc-editor-fullscreen .editor-back { display: inline-flex; }
+  /* Same as the terminal: leave the docked assistant its column. */
+  @media (min-width: 992px) {
+    .dc-editor-fullscreen body.dc-assistant-docked .editor {
+      right: var(--dc-assistant-w);
+    }
+  }
 }
 @media (pointer: coarse) {
   .editor [data-editor-fullscreen] { display: none; }
@@ -1792,6 +2027,11 @@ dc-project-list { display: block; }
 dc-quicknav { display: block; }
 dc-inline-rename { display: block; }
 dc-editor { display: block; }
+/* Without this the element is inline and its block children, the transcript and
+   the sticky composer among them, live in anonymous blocks split out of an
+   inline box. That is where a sticky footer gets its constraints wrong. */
+dc-assistant { display: block; }
+dc-assistant-list { display: block; }
 terminal-attach { display: block; }
 terminal-input { display: none; }
 
@@ -1808,7 +2048,29 @@ terminal-input { display: none; }
   color: var(--tblr-secondary);
 }
 .dc-term-icon[hidden] { display: none; }
+.dc-term-icon.assistant { color: var(--tblr-purple); }
+/* Inside a purple button the icon follows the button's own state, so the
+   hover fill never swallows it. */
+.btn-ghost-purple .dc-term-icon.assistant:not(.news) { color: inherit; }
+.btn-ghost-secondary:hover .dc-term-icon:not(.news),
+.btn-ghost-secondary:focus-visible .dc-term-icon:not(.news) { color: inherit; }
 .dc-term-icon.running { color: var(--tblr-green); }
+.dc-term-icon.steered { color: var(--tblr-purple); }
+.dc-steer-badge {
+  position: absolute;
+  top: 0.1rem;
+  right: 0.1rem;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.3rem;
+  border-radius: 1rem;
+  background: var(--tblr-purple);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.15rem;
+  text-align: center;
+}
 .dc-term-icon.news, .dc-term-icon.changed { color: var(--tblr-blue); }
 @media (prefers-reduced-motion: no-preference) {
   .dc-term-icon.news, .dc-term-icon.changed {

@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/assistant"
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/terminal"
 	"github.com/local/dev-cockpit/internal/web/render"
@@ -19,6 +21,15 @@ type coderCreateForm struct {
 	Coder             string             `form:"coder"`
 	Agent             string             `form:"agent"`
 	AutomaticApproval CheckboxBool       `form:"automatic_approval"`
+	// Task is the first prompt the session starts with. It reaches the CLI in
+	// its argv, so it arrives whether or not the CLI already reads stdin.
+	Task string `form:"prompt"`
+	// DoneWhen asks for the new coder to be steered, in the same request that
+	// creates it. The criterion is validated before the session exists: a
+	// criterion the watcher would refuse must not leave a running coder
+	// without its job, and a repeated call would start a second session on
+	// the same task.
+	DoneWhen string `form:"done_when"`
 }
 
 type terminalInputItem struct {
@@ -126,20 +137,73 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		s.redirectWithFlash(c, "/coders/new", "", err.Error())
 		return
 	}
+	// The criterion is checked before anything exists, with the watcher's own
+	// rule: refused afterwards it would leave a running coder without its job,
+	// and whoever repeats the command then has two sessions on the same task.
+	doneWhen := ""
+	if strings.TrimSpace(form.DoneWhen) != "" {
+		doneWhen, err = assistant.ValidateDoneWhen(form.DoneWhen)
+		if err != nil {
+			if wantsJSON(c.Request) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			s.redirectWithFlash(c, "/coders/new", "", err.Error())
+			return
+		}
+	}
 	res, err := co.Start(
 		form.Name.String(),
 		form.Project,
 		form.Agent,
 		coder.StartOptions{
 			AutomaticApproval: form.AutomaticApproval.Bool(),
+			Task:              form.Task,
 		},
 	)
 	if err != nil {
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		s.redirectWithFlash(c, "/coders/new", "", err.Error())
 		return
 	}
 	s.styleSessionPane(res.Identifier)
 	s.publishTerminals(s.projects.ProjectNameFor(res.Workdir))
+	answer := gin.H{
+		"id":      res.Identifier,
+		"project": s.projects.ProjectNameFor(res.Workdir),
+		"url":     "/coders/" + res.Identifier,
+	}
+	if doneWhen != "" {
+		job, err := s.watcher.Steer(assistant.Job{
+			Terminal: res.Identifier,
+			Name:     res.Name,
+			Project:  s.projects.ProjectNameFor(res.Workdir),
+			CoderID:  co.ID(),
+			Task:     form.Task,
+			DoneWhen: doneWhen,
+		})
+		if err != nil {
+			// The coder is running either way, so the answer carries it; the
+			// caller has to hear that nobody steers it.
+			answer["steerError"] = err.Error()
+		} else {
+			answer["maxWakes"] = job.MaxWakes
+			// The session got the whole prompt, only the job's stored copy is
+			// bounded, and a cut copy must not stay silent.
+			if _, notice := assistant.TruncateTask(form.Task); notice != "" {
+				answer["notice"] = notice
+			}
+		}
+	}
+	// A local caller (the assistant, through dev-cockpit assistant coder-new) needs the
+	// identifier it just created, not the page a browser would follow to.
+	if wantsJSON(c.Request) {
+		c.JSON(http.StatusOK, answer)
+		return
+	}
 	c.Redirect(http.StatusSeeOther, "/coders/"+res.Identifier)
 }
 
@@ -147,17 +211,29 @@ func (s *Server) handleCoderStop(c *gin.Context) {
 	id := c.Param("id")
 	co, running, err := s.resolveRunning(id)
 	if err != nil {
+		if coderRefused(c, err) {
+			return
+		}
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
 	project := s.projects.ProjectNameFor(running.CWD)
 	name, err := co.Stop(id)
 	if err != nil {
+		if coderRefused(c, err) {
+			return
+		}
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
 	s.notifier.MarkTargetRead(id)
+	// A stopped coder cannot report again, so its job would wait for a signal
+	// that never comes. Stopping is the same decision as deleting for the job.
+	s.jobCalledOff(id)
 	s.publishTerminals(project)
+	if s.coderJSON(c, id, name, running.CWD, projectLanding(project)) {
+		return
+	}
 	s.redirectWithProjectFlash(c, project, "Coder \""+name+"\" stopped.", "")
 }
 
@@ -319,7 +395,7 @@ func (s *Server) handleCoderInput(c *gin.Context) {
 	co, err := s.coderForInput(id)
 	if err != nil {
 		if errors.Is(err, coder.ErrNotRunning) {
-			c.String(http.StatusGone, err.Error())
+			s.coderNotRunning(c, id)
 			return
 		}
 		c.String(http.StatusBadRequest, err.Error())
@@ -327,13 +403,93 @@ func (s *Server) handleCoderInput(c *gin.Context) {
 	}
 	if err := co.Send(id, items); err != nil {
 		if errors.Is(err, coder.ErrNotRunning) {
-			c.String(http.StatusGone, err.Error())
+			s.coderNotRunning(c, id)
 			return
 		}
 		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
-	c.String(http.StatusOK, "OK")
+	// Steering is ownership and only steer and release change it, so the
+	// user's inputs are none of the job's business. An assistant send still
+	// lands on the job: the standstill rule reads it, and a blocked job takes
+	// it as the decision it was waiting for.
+	if s.localCall(c) {
+		s.watcher.NoteAssistantInput(id)
+	}
+	c.JSON(http.StatusOK, CoderInputAnswer)
+}
+
+// CoderInputAnswer is what a successful input POST answers. The local API
+// client requires a JSON object on every 2xx (internal/localapi), so a plain
+// text answer here would make `coder-send-prompt` and `coder-send-control-keys`
+// report a delivered input as an error. The CLI test replays exactly this value
+// instead of inventing an answer, so the two cannot drift apart.
+var CoderInputAnswer = map[string]string{"status": "ok"}
+
+// handleCoderActivity answers what a session last did and whether its turn is
+// over, from the coder's own record where there is one (coder.Manager.Activity).
+// It exists for the assistant's `coder-activity` command: the browser has the
+// terminal itself, but a turn that wants to know where a session stands must
+// not read the screen, whose input line carries the coder's own draft. The
+// session may be running or stopped, the record outlives the terminal. The
+// reading is capped by default; `full` lifts the cap.
+func (s *Server) handleCoderActivity(c *gin.Context) {
+	id := c.Param("id")
+	entries, err := strconv.Atoi(c.DefaultQuery("entries", "0"))
+	if err != nil || entries < 0 {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "entries has to be a number."})
+		return
+	}
+	budget := coder.ActivityBudget
+	if full, _ := strconv.ParseBool(c.DefaultQuery("full", "false")); full {
+		budget = 0
+	}
+	for _, m := range s.coders {
+		if _, err := m.ResolveRunning(id); err != nil {
+			if _, err := m.ResolveResumable(id); err != nil {
+				continue
+			}
+		}
+		activity, err := m.Activity(id, entries, budget)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, map[string]string{"error": userFacingError(c, err)})
+			return
+		}
+		c.JSON(http.StatusOK, map[string]any{
+			"text":     activity.Text,
+			"finished": activity.Finished,
+			"screen":   activity.Screen,
+		})
+		return
+	}
+	c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("No coder session %q is running or resumable.", id)})
+}
+
+// handleCoderSteeredMark serves the coder icon of one terminal, which is how
+// the attach pages follow the terminals event: their icons do not re-render
+// on it, so a dc-steered-mark element pulls this fragment instead. The icon
+// is rendered here exactly like everywhere else, purple while a job holds the
+// terminal, and the client only swaps it in. A terminal that is gone answers
+// empty: the page showing it is stale either way.
+func (s *Server) handleCoderSteeredMark(c *gin.Context) {
+	id := c.Param("id")
+	coderID := ""
+	for _, m := range s.coders {
+		if _, err := m.ResolveRunning(id); err == nil {
+			coderID = m.ID()
+			break
+		}
+	}
+	if coderID == "" {
+		c.Status(http.StatusOK)
+		return
+	}
+	steered, _ := s.watcher.Marks()
+	c.HTML(http.StatusOK, "steered_icon.gohtml", map[string]any{
+		"ID":      id,
+		"Coder":   coderID,
+		"Steered": steered[id],
+	})
 }
 
 func (s *Server) handleCoderResize(c *gin.Context) {
@@ -358,22 +514,74 @@ func (s *Server) handleCoderResume(c *gin.Context) {
 	id := c.Param("id")
 	// Already running (e.g. resumed in another tab): just go to its page.
 	if _, running, err := s.resolveRunning(id); err == nil {
+		if s.coderJSON(c, running.Identifier, running.Name, running.CWD, "/coders/"+running.Identifier) {
+			return
+		}
 		c.Redirect(http.StatusSeeOther, "/coders/"+running.Identifier)
 		return
 	}
 	co, _, err := s.resolveResumable(id)
 	if err != nil {
+		if coderRefused(c, err) {
+			return
+		}
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
 	stored, err := co.Resume(id)
 	if err != nil {
+		if coderRefused(c, err) {
+			return
+		}
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
 	s.styleSessionPane(stored.SessionID)
 	s.publishTerminals(s.projects.ProjectNameFor(stored.CWD))
+	if s.coderJSON(c, stored.SessionID, stored.Name, stored.CWD, "/coders/"+stored.SessionID) {
+		return
+	}
 	c.Redirect(http.StatusSeeOther, "/coders/"+stored.SessionID)
+}
+
+// coderJSON answers a caller that asked for JSON, the way the create route
+// does: the identifier is what every other command takes, so a command never
+// has to read it out of a redirect. landing is where a browser goes next, the
+// page this action would have redirected a form to: the fetch of a JSON caller
+// never follows a redirect, and the action's own URL has no GET, so a client
+// that navigates to the response URL lands on "Method not allowed". Reports
+// whether it answered.
+func (s *Server) coderJSON(c *gin.Context, id, name, cwd, landing string) bool {
+	if !wantsJSON(c.Request) {
+		return false
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":      id,
+		"name":    name,
+		"project": s.projects.ProjectNameFor(cwd),
+		"url":     landing,
+	})
+	return true
+}
+
+// projectLanding is the page a stopped or deleted coder leaves the browser on,
+// the same target redirectWithProjectFlash sends a form to.
+func projectLanding(project string) string {
+	if project == "" {
+		return "/projects"
+	}
+	return "/projects#project-" + project
+}
+
+// coderRefused hands a refusal to a caller that asked for JSON. A redirect plus
+// a flash says nothing to a command, and the sentence is the same one the page
+// would have shown.
+func coderRefused(c *gin.Context, err error) bool {
+	if !wantsJSON(c.Request) {
+		return false
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	return true
 }
 
 // handleCoderDelete removes a coder for good. A running one is stopped first,
@@ -384,10 +592,15 @@ func (s *Server) handleCoderDelete(c *gin.Context) {
 	id := c.Param("id")
 	stopped := ""
 	project := ""
+	cwd := ""
 	if co, running, err := s.resolveRunning(id); err == nil {
 		project = s.projects.ProjectNameFor(running.CWD)
+		cwd = running.CWD
 		name, err := co.Stop(id)
 		if err != nil {
+			if coderRefused(c, err) {
+				return
+			}
 			s.redirectWithFlash(c, "/projects", "", err.Error())
 			return
 		}
@@ -398,8 +611,15 @@ func (s *Server) handleCoderDelete(c *gin.Context) {
 	if err != nil {
 		// A coder stopped before it wrote a session leaves nothing to delete.
 		if stopped != "" {
+			s.jobDeleted(id)
 			s.publishTerminals(project)
+			if s.coderJSON(c, id, stopped, cwd, projectLanding(project)) {
+				return
+			}
 			s.redirectWithProjectFlash(c, project, "Coder \""+stopped+"\" deleted.", "")
+			return
+		}
+		if coderRefused(c, err) {
 			return
 		}
 		s.redirectWithFlash(c, "/projects", "", err.Error())
@@ -407,10 +627,34 @@ func (s *Server) handleCoderDelete(c *gin.Context) {
 	}
 	stored, err := co.DeleteResumable(id)
 	if err != nil {
+		if coderRefused(c, err) {
+			return
+		}
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
 	project = s.projects.ProjectNameFor(stored.CWD)
+	s.jobDeleted(id)
 	s.publishTerminals(project)
+	if s.coderJSON(c, id, stored.Name, stored.CWD, projectLanding(project)) {
+		return
+	}
 	s.redirectWithProjectFlash(c, project, "Coder \""+stored.Name+"\" deleted.", "")
+}
+
+// jobCalledOff ends the job of a coder that is being stopped or deleted.
+// Either way the terminal it steers will not report again, so nothing can ever
+// move the job, and one left steering would sit in the conversation as a promise
+// nobody can keep. A terminal nobody steers answers with an error, which is the
+// normal case here.
+func (s *Server) jobCalledOff(id string) {
+	_ = s.watcher.Release(id)
+}
+
+// jobDeleted is jobCalledOff for a session that is removed for good. A stopped
+// coder can be resumed, so its job stays readable next to it; a deleted one
+// leaves nothing to read it next to, and the entry would be parsed on every
+// look at the store from here on.
+func (s *Server) jobDeleted(id string) {
+	s.watcher.Forget(id)
 }

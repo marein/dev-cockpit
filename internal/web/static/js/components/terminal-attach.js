@@ -1606,6 +1606,15 @@ function initTerminalAttach(host) {
   }
 
   listen(window, "resize", scheduleResize);
+  let observedWidth = 0;
+  const widthObserver = new ResizeObserver(() => {
+    const width = host.clientWidth;
+    if (width === observedWidth) return;
+    const initial = observedWidth === 0;
+    observedWidth = width;
+    if (!initial) scheduleResize();
+  });
+  widthObserver.observe(host);
   listen(darkSchemeMedia, "change", () => {
     if (AUTO_THEMES[themeOverride]) {
       applyTheme();
@@ -1646,6 +1655,7 @@ function initTerminalAttach(host) {
       window.clearTimeout(resizeTimer);
     }
     measureElementObserver?.disconnect();
+    widthObserver.disconnect();
   });
 
   syncFollowOutput();
@@ -1656,6 +1666,7 @@ function initTerminalAttach(host) {
     ac.abort();
     source?.close();
     measureElementObserver?.disconnect();
+    widthObserver.disconnect();
     if (resizeTimer !== null) window.clearTimeout(resizeTimer);
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     document.documentElement.classList.remove("dc-terminal-fullscreen");

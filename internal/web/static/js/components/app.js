@@ -81,8 +81,20 @@ window.addEventListener("pe:form", (e) => {
   }
 });
 
+const closeOpenModals = () => {
+  document.querySelectorAll(".modal.show").forEach((modal) => window.bootstrap?.Modal.getInstance(modal)?.hide());
+};
+const dropModalOverlay = () => {
+  document.querySelectorAll(".modal-backdrop").forEach((backdrop) => backdrop.remove());
+  document.body.classList.remove("modal-open");
+  document.body.style.removeProperty("overflow");
+  document.body.style.removeProperty("padding-right");
+};
+
 window.addEventListener("pe:navigate", (e) => {
   let stale = false;
+  closeOpenModals();
+  e.detail.succeed.push(dropModalOverlay);
   e.detail.parsed.push((dom) => { stale = buildChanged(dom); if (!stale) window.app.loadElements(dom.body); });
   e.detail.succeed.push(() => { if (stale) location.reload(); });
   e.detail.succeed.push(() => window.dispatchEvent(new CustomEvent("dc:navigated")));
@@ -98,6 +110,8 @@ window.addEventListener("pe:form", (e) => {
   const buttons = [...e.detail.form.querySelectorAll("button")];
   buttons.forEach((b) => { b.disabled = true; b.classList.add("btn-loading"); });
   let stale = false;
+  closeOpenModals();
+  e.detail.succeed.push(dropModalOverlay);
   e.detail.parsed.push((dom) => { stale = buildChanged(dom); if (!stale) window.app.loadElements(dom.body); });
   e.detail.succeed.push(() => { if (stale) location.reload(); });
   e.detail.succeed.push(() => window.dispatchEvent(new CustomEvent("dc:navigated")));

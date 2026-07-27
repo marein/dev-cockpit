@@ -86,9 +86,16 @@ func (s *Service) Start(n Notifier) {
 				if title == "" {
 					title = fmt.Sprintf("Something new in %q.", added.TargetName)
 				}
+				// The body is the entry's own second line, which names what
+				// the news happened in; an entry from an older build without
+				// one falls back to where it happened.
+				body := added.Detail
+				if body == "" {
+					body = added.Project
+				}
 				s.deliver(Message{
 					Title: title,
-					Body:  added.Project,
+					Body:  body,
 					URL:   added.URL,
 					Tag:   added.TargetID,
 				})
@@ -106,11 +113,28 @@ func (s *Service) deliver(msg Message) {
 	}
 }
 
-// TestMessage is what the settings page test buttons send.
-func TestMessage() Message {
+// TestChannel is which of the settings page test buttons was pressed.
+type TestChannel string
+
+const (
+	// TestWebPush is the button next to the registered devices.
+	TestWebPush TestChannel = "webpush"
+	// TestWebhook is the button on a single webhook.
+	TestWebhook TestChannel = "webhook"
+)
+
+// TestMessage is what a test button on the settings page sends. It names the
+// channel it went out on, because both buttons sit on the same page and a
+// notification that only says that something arrived leaves the reader
+// guessing which of the two just worked.
+func TestMessage(channel TestChannel) Message {
+	body := "Web push works."
+	if channel == TestWebhook {
+		body = "Webhook works."
+	}
 	return Message{
 		Title: "Test notification.",
-		Body:  "The push channel works.",
+		Body:  body,
 		URL:   "/settings/notifications",
 	}
 }

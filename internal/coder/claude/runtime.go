@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/local/dev-cockpit/internal/clirun"
+	"github.com/local/dev-cockpit/internal/coder"
 )
 
 type runtime struct {
@@ -16,9 +17,17 @@ func (runtime) UsesProvidedSessionID() bool { return true }
 
 func (runtime) Env() map[string]string { return map[string]string{"CLAUDE_CODE_NO_FLICKER": "1"} }
 
-func (r runtime) StartCommand(sessionID, sessionName, workdir, agentID string, automaticApproval bool) string {
-	return fmt.Sprintf("cd %s && exec claude%s --session-id %s --name %s",
-		clirun.ShellQuote(workdir), r.flags(agentID, automaticApproval), clirun.ShellQuote(sessionID), clirun.ShellQuote(sessionName))
+// StartCommand builds the interactive session. A task is passed as claude's
+// positional prompt (`claude [options] [prompt]`), so the session comes up
+// already working on it.
+func (r runtime) StartCommand(start coder.SessionStart) string {
+	command := fmt.Sprintf("cd %s && exec claude%s --session-id %s --name %s",
+		clirun.ShellQuote(start.Workdir), r.flags(start.AgentID, start.AutomaticApproval),
+		clirun.ShellQuote(start.SessionID), clirun.ShellQuote(start.Name))
+	if task := strings.TrimSpace(start.Task); task != "" {
+		command += " " + clirun.ShellQuote(task)
+	}
+	return command
 }
 
 func (r runtime) ResumeCommand(sessionID, workdir string, automaticApproval bool) string {

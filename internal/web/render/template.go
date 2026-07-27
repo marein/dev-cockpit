@@ -18,12 +18,7 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string) *te
 		"asset":      assetPath,
 		"assetBuild": func() string { return assetBuild },
 		"appVersion": func() string { return version },
-		"coderLabel": func(id string) string {
-			if id == "" {
-				return ""
-			}
-			return strings.ToUpper(id[:1]) + id[1:]
-		},
+		"coderLabel": CoderLabel,
 		"projectName": func(path string) string {
 			p := strings.TrimSpace(path)
 			if p == "" {
@@ -41,6 +36,15 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string) *te
 		},
 	}
 	return template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.gohtml"))
+}
+
+// CoderLabel capitalizes a coder id for display. One implementation for the
+// templates and the handlers, so a label never differs by surface.
+func CoderLabel(id string) string {
+	if id == "" {
+		return ""
+	}
+	return strings.ToUpper(id[:1]) + id[1:]
 }
 
 // Flash carries a one-shot notice from a previous request.
@@ -73,10 +77,26 @@ type Page struct {
 	// inline. Every other page gets a hidden switcher-only terminal-tabs
 	// instance from the layout, so the double Ctrl/Meta switcher works app wide.
 	HasTabStrip bool
+	// AssistantID is the conversation the assistant entry points open, and
+	// AssistantNews whether it has unread news. The three entry points carry
+	// the id as a notification target, so dc-notifications marks them live the
+	// way it marks a terminal row.
+	AssistantID   string
+	AssistantNews bool
 	// BackupReviewCount is the number of open backup overwrite reviews,
 	// rendered as a badge on the Settings nav so the pending resolution is
 	// visible app wide. Fresh on every navigation (whole body boost).
 	BackupReviewCount int
+	// Steered marks the coders an open job holds, keyed by terminal id: the
+	// assistant owns those and may write into them, and every surface shows
+	// it as the purple steered mark. SteerPrefill carries the stored
+	// criterion of a closed job, which is what the steer dialog offers when
+	// such a terminal is steered again. Surfaces read both by id
+	// (`{{index $.Steered .ID}}`) instead of carrying the values through
+	// their own view structs; the fragments refresh on the terminals event,
+	// so the marks stay current without client logic.
+	Steered      map[string]bool
+	SteerPrefill map[string]string
 }
 
 // CoderNav feeds the coder pages layout (instructions, agents, skills): the

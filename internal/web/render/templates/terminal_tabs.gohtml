@@ -50,8 +50,9 @@
        href="{{.URL}}" role="tab" draggable="false"
        aria-selected="{{if eq .ID $.QuickNav.CurrentID}}true{{else}}false{{end}}"
        data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"
+       {{- if .Coder}}{{if index $.Steered .ID}} data-tab-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-tab-steer-prefill="{{.}}"{{end}}{{end}}
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
-      <span class="terminal-tab-icon dc-term-icon running{{if .HasNews}} news{{end}}" data-tab-icon data-notify-target="{{.ID}}" aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+      <span class="terminal-tab-icon dc-term-icon running{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}" data-tab-icon data-notify-target="{{.ID}}" aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
       <span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
         {{if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}
@@ -68,17 +69,20 @@
       <i class="ti ti-plus"></i>
     </button>
     <div class="dropdown-menu dropdown-menu-end terminal-tabs-new-menu">
-      {{if .QuickNav.CurrentProject}}
-      <a class="dropdown-item d-flex align-items-center gap-2" href="/projects/{{.QuickNav.CurrentProject}}/editor?return={{urlquery .QuickNav.CurrentPath}}" title="Editor for {{.QuickNav.CurrentProject}}">
-        <i class="ti ti-code flex-shrink-0"></i><span>Editor</span>
-      </a>
-      {{end}}
       <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-new="coder" href="/coders/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
         <i class="ti ti-robot flex-shrink-0"></i><span>New coder</span>
       </a>
       <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-new="shell" href="/shells/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
         <i class="ti ti-terminal-2 flex-shrink-0"></i><span>New shell</span>
       </a>
+      <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-assistant href="/assistant" title="Assistant">
+        <span class="terminal-tab-icon dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}} aria-hidden="true"><i class="ti ti-sparkles"></i></span><span>Assistant</span>
+      </a>
+      {{if .QuickNav.CurrentProject}}
+      <a class="dropdown-item d-flex align-items-center gap-2" href="/projects/{{.QuickNav.CurrentProject}}/editor?return={{urlquery .QuickNav.CurrentPath}}" title="Editor for {{.QuickNav.CurrentProject}}">
+        <i class="ti ti-code flex-shrink-0"></i><span>Editor</span>
+      </a>
+      {{end}}
       {{if .QuickNav.HasInactiveCoders}}
       <div class="dropdown-divider"></div>
       <h6 class="dropdown-header">Inactive coders</h6>

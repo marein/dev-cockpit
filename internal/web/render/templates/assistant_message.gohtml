@@ -1,0 +1,50 @@
+{{define "assistant_message.gohtml"}}
+{{with .Message}}
+<div id="message-{{.ID}}" class="dc-msg{{if .User}} dc-msg-user{{end}}" data-assistant-message data-no-pe data-role="{{if .User}}user{{else}}assistant{{end}}" data-message-id="{{.ID}}" data-run-id="{{.RunID}}" data-state="{{.State}}">
+  {{with .Wake}}
+  <div class="d-flex align-items-center gap-2 mb-1" data-assistant-wake="{{.Verdict}}">
+    <span class="badge {{if .Done}}bg-green-lt{{else if .Blocked}}bg-orange-lt{{else}}bg-secondary-lt{{end}}">
+      <i class="ti {{if .Expired}}ti-steering-wheel-off{{else}}ti-steering-wheel{{end}} me-1"></i>{{if .Done}}Done{{else if .Blocked}}Blocked{{else if .Expired}}Stopped{{else}}Checked{{end}}
+    </span>
+    <a href="{{.URL}}" class="text-secondary small text-truncate">{{.Name}}</a>
+  </div>
+  {{end}}
+  <div class="d-flex align-items-baseline gap-2 mb-1">
+    <span class="text-secondary small fw-medium text-truncate">{{.Author}}</span>
+    {{if .Time}}<dc-time datetime="{{.Time}}" class="text-secondary small flex-shrink-0"></dc-time>{{end}}
+    {{if .Streaming}}<span class="spinner-border spinner-border-sm text-secondary ms-auto flex-shrink-0" role="status" aria-label="Answering"></span>{{end}}
+    {{if .Queued}}<span class="badge bg-secondary-lt ms-auto flex-shrink-0" data-assistant-queued>{{if .CanDiscard}}Waiting{{else}}Not sent{{end}}</span>{{end}}
+  </div>
+  <div class="text-break{{if not .User}} markdown{{end}}" data-assistant-text>{{.HTML}}</div>
+  {{if .Attachments}}
+  <div class="d-flex flex-column gap-2 mt-2" data-assistant-files>
+    {{range .Attachments}}
+    {{if eq .Media "image"}}
+    <a href="{{.URL}}" target="_blank" rel="noopener" data-assistant-file="{{.Name}}"><img src="{{.URL}}" alt="{{.Name}}" class="dc-assistant-media"></a>
+    {{else if eq .Media "video"}}
+    <video src="{{.URL}}" class="dc-assistant-media" controls playsinline preload="metadata" data-assistant-file="{{.Name}}"></video>
+    {{else if eq .Media "audio"}}
+    <audio src="{{.URL}}" class="dc-assistant-audio" controls preload="metadata" data-assistant-file="{{.Name}}"></audio>
+    {{else}}
+    <a href="{{.URL}}?download=1" download class="d-inline-flex align-items-center gap-1 text-break" data-assistant-file="{{.Name}}">
+      <i class="ti ti-paperclip flex-shrink-0"></i><span>{{.Name}}</span><span class="text-secondary small">{{.SizeText}}</span>
+    </a>
+    {{end}}
+    {{end}}
+  </div>
+  {{end}}
+  {{if .Streaming}}<div class="text-secondary small mt-2 d-none" data-assistant-tool><i class="ti ti-tool me-1"></i>Working<span data-assistant-tool-name class="ms-1 font-monospace"></span></div>{{end}}
+  {{if .Error}}<div class="text-secondary small mt-2" data-assistant-error><i class="ti ti-alert-triangle me-1"></i>{{.Error}}</div>{{end}}
+  {{if .CanRetry}}
+  <div class="mt-2">
+    <button type="button" class="btn btn-sm" data-assistant-retry><i class="ti ti-refresh me-1"></i>Try again</button>
+  </div>
+  {{end}}
+  {{if .CanDiscard}}
+  <div class="mt-2">
+    <button type="button" class="btn btn-sm" data-assistant-discard="{{.ID}}"><i class="ti ti-x me-1"></i>Don't send</button>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}

@@ -1,0 +1,40 @@
+{{define "assistant_history_content.gohtml"}}
+<div data-assistant-body>
+  {{if not .Available}}
+  <div class="card">
+    <div class="card-body text-center py-4">
+      <div class="text-secondary mb-2"><span class="dc-term-icon assistant"><i class="ti ti-sparkles icon-lg"></i></span></div>
+      <p class="mb-0">No installed coder can run the assistant right now.</p>
+    </div>
+  </div>
+  {{else if not .Conversations}}
+  <div class="card">
+    <div class="card-body text-center py-4">
+      <div class="text-secondary mb-2"><i class="ti ti-history icon-lg"></i></div>
+      <p class="mb-0">Nothing here yet.</p>
+    </div>
+  </div>
+  {{else}}
+  <div class="card">
+    <div class="list-group list-group-flush">
+      {{range .Conversations}}
+      <div class="list-group-item d-flex align-items-center gap-2" data-assistant-conversation="{{.ID}}" data-conversation-url="{{.URL}}">
+        <a class="flex-fill min-w-0 text-reset text-decoration-none" href="{{.URL}}">
+          <div class="d-flex align-items-center gap-2">
+            <span class="text-truncate fw-medium flex-fill min-w-0">{{if .Title}}{{.Title}}{{else}}No answer yet{{end}}</span>
+            {{if .Current}}<span class="badge bg-purple-lt flex-shrink-0">Current</span>{{end}}
+            {{if .Unfinished}}<span class="badge bg-orange-lt flex-shrink-0">Unfinished</span>{{end}}
+          </div>
+          <div class="text-secondary small">{{.CoderLabel}} · {{.Messages}} message{{if ne .Messages 1}}s{{end}}{{if .Updated}} · <dc-time datetime="{{.Updated}}"></dc-time>{{end}}</div>
+          {{if .Preview}}<div class="text-secondary small text-truncate">{{.Preview}}</div>{{end}}
+        </a>
+        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary flex-shrink-0" aria-label="Conversation actions" title="Actions" data-conversation-menu>
+          <i class="ti ti-dots-vertical"></i>
+        </button>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}

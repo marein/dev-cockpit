@@ -19,6 +19,10 @@ type Running struct {
 // StartOptions control how a new provider session is launched.
 type StartOptions struct {
 	AutomaticApproval bool
+	// Task is the first prompt the session comes up with. It travels in the
+	// CLI's argv, never typed into the pane, so it cannot be lost to a CLI that
+	// has not read stdin yet.
+	Task string
 }
 
 // Snapshot captures the present state of every session category.

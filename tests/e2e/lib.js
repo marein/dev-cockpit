@@ -72,15 +72,49 @@ async function login(page) {
   await Promise.all([page.waitForURL(/\/projects/, { timeout: 15000 }), page.click('button[type="submit"]')]);
 }
 
+// dismissUpdate closes the update dialog if this instance found a newer release.
+// A runner that only clicks would hit its backdrop, and the failure looks like
+// the form itself is broken. Instances started for a run usually point at a
+// stub feed, but the README start command does not, so every runner has to cope.
+async function dismissUpdate(page) {
+  const cancel = page.locator(".swal2-cancel");
+  try {
+    await cancel.waitFor({ state: "visible", timeout: 1500 });
+  } catch {
+    return;
+  }
+  await cancel.click();
+  await page.waitForSelector(".swal2-container", { state: "detached", timeout: 5000 }).catch(() => {});
+}
+
 async function createProject(page, name) {
   await page.goto(`${BASE}/projects/new`, { waitUntil: "domcontentloaded" });
+  await dismissUpdate(page);
   await page.fill('input[name="project_name"]', name);
   await Promise.all([page.waitForURL(/\/projects/, { timeout: 15000 }), submitBtn(page, 'input[name="project_name"]').click()]);
   await page.waitForSelector(`[data-project-name="${name}"]`, { timeout: 8000 });
 }
 
+// projectPath is the absolute directory of a project, read from the new coder
+// form, whose select carries the paths the server accepts. A runner must not
+// assume where the projects root is: an instance started the way the README
+// describes serves ~/projects, one started from the crontab line serves another
+// root, and a hard coded path makes a runner pass on one and fail on the other.
+async function projectPath(page, name) {
+  await page.goto(`${BASE}/coders/new`, { waitUntil: "domcontentloaded" });
+  await dismissUpdate(page);
+  const path = await page.evaluate((project) => {
+    const options = [...document.querySelectorAll('select[name="project"] option')];
+    const match = options.find((option) => (option.value || "").split("/").pop() === project);
+    return match ? match.value : "";
+  }, name);
+  assert(path, `the project ${name} is not offered by this instance`);
+  return path;
+}
+
 async function deleteProject(page, name) {
   await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+  await dismissUpdate(page);
   const card = await page.$(`[data-project-name="${name}"]`);
   if (!card) return;
   const btn = await page.evaluateHandle((p) => {
@@ -216,7 +250,7 @@ async function runFeature(title, body) {
 
 module.exports = {
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
-  login, createProject, deleteProject, createShell, deleteShell, createSession, stopSession,
+  login, createProject, projectPath, deleteProject, dismissUpdate, createShell, deleteShell, createSession, stopSession,
   makeRunner, report, assert,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

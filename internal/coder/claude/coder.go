@@ -2,6 +2,7 @@ package claude
 
 import (
 	"path/filepath"
+	"sync"
 
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/filesystem"
@@ -9,13 +10,19 @@ import (
 )
 
 type Coder struct {
-	tools        []string
-	agents       coder.AgentRepository
-	sessions     coder.SessionRepository
+	tools  []string
+	agents coder.AgentRepository
+	// sessions is held as its own type, not as the interface: a session's
+	// transcript is also what says whether its turn is over, see activity.go.
+	sessions     *sessionRepository
 	skills       coder.SkillRepository
 	instructions coder.GlobalInstructions
 	runtime      coder.SessionRuntime
 	controls     terminal.ControlMapper
+	// runner is probed on first use, see assistant.go. A CLI without the flags
+	// a turn needs loses the conversations only, never its terminal.
+	assistantOnce sync.Once
+	runner        *runner
 }
 
 // New builds the claude coder. notifyInbox is the directory the injected

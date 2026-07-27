@@ -114,8 +114,12 @@ async function overflowAt(page, url) {
       for (const [w, h] of VIEWPORTS) {
         await page.setViewportSize({ width: w, height: h });
         await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
-        await page.click(".quicknav-toggle");
-        await page.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 }).catch(() => {});
+        // From lg up the assistant's corner button replaces the quick nav, so
+        // there is no menu to open there; the width still gets measured.
+        if (await page.locator(".quicknav-toggle").isVisible()) {
+          await page.click(".quicknav-toggle");
+          await page.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 }).catch(() => {});
+        }
         await sleep(400);
         const m = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth }));
         if (m.sw > m.cw + 1) bad.push(`${w}px: ${m.sw}/${m.cw}`);

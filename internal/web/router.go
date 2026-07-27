@@ -88,6 +88,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	}
 
 	auth.GET("/coders/:id", s.handleCoderAttach)
+	auth.GET("/coders/:id/activity", s.handleCoderActivity)
+	auth.GET("/coders/:id/steered", s.handleCoderSteeredMark)
 	auth.POST("/coders/:id/stop", s.handleCoderStop)
 	auth.GET("/coders/:id/files", s.handleCoderFiles)
 	auth.POST("/coders/:id/files", s.handleCoderFileUpload)
@@ -98,6 +100,39 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/coders/:id/stream", s.handleCoderStream)
 	auth.POST("/coders/:id/resume", s.handleCoderResume)
 	auth.POST("/coders/:id/delete", s.handleCoderDelete)
+
+	// The assistant has no pages of its own: every entry opens the overlay on
+	// whatever page is open, and its interior comes from /assistant/panel. The
+	// GET routes below serve the overlay's fragments; the bare paths redirect,
+	// so an old notification link or bookmark still opens the overlay, told
+	// what to show through the query (the browser keeps a #message fragment
+	// across the redirect). The static segments win over :id, and conversation
+	// ids are UUID shaped, so they cannot collide.
+	auth.GET("/assistant", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, "/projects?assistant=open") })
+	auth.GET("/assistant/panel", s.handleAssistantPanel)
+	auth.GET("/assistant/history", s.handleAssistantHistory)
+	auth.GET("/assistant/memory", s.handleAssistantMemory)
+	auth.POST("/assistant/memory", s.handleAssistantMemorySave)
+	// The steered jobs belong to the assistant, not to one conversation: a job
+	// outlives the conversation it was started from and reports into whichever
+	// one is live when it has something to say. So they sit on a path of their
+	// own, which is also the one `dev-cockpit assistant coder-steer` posts to.
+	auth.GET("/assistant/jobs", s.handleAssistantJobs)
+	auth.POST("/assistant/jobs", s.handleAssistantJobsAction)
+	// The two conversation reads answer the assistant's own `conversation-list`
+	// and `conversation-show` commands as JSON. The overlay renders its history
+	// from fragments, not from these.
+	auth.GET("/assistant/conversations", s.handleAssistantConversations)
+	auth.GET("/assistant/conversations/:id", s.handleAssistantConversationRead)
+	auth.GET("/assistant/:id", func(c *gin.Context) {
+		c.Redirect(http.StatusSeeOther, "/projects?assistant="+c.Param("id"))
+	})
+	auth.POST("/assistant/:id", s.handleAssistantAction)
+	auth.GET("/assistant/:id/stream", s.handleAssistantStream)
+	auth.GET("/assistant/:id/messages/:messageId", s.handleAssistantMessage)
+	auth.GET("/assistant/:id/draft", s.handleAssistantDraft)
+	auth.POST("/assistant/:id/user-upload", s.handleAssistantUpload)
+	auth.GET("/assistant/:id/media/*path", s.handleAssistantMedia)
 
 	auth.GET("/shells/new", s.handleShellNew)
 	auth.POST("/shells/new", s.handleShellCreate)

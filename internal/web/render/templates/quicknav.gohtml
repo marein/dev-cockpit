@@ -14,9 +14,14 @@
 {{define "quicknav_items.gohtml"}}
 <div data-quicknav-tabs data-quicknav-current-project="{{.QuickNav.CurrentProject}}">
   <div class="quicknav-top">
-    <div class="quicknav-seg" role="tablist">
-      <button type="button" class="quicknav-seg-btn active" data-quicknav-tab="active"><i class="ti ti-activity me-1"></i>Active</button>
-      <button type="button" class="quicknav-seg-btn" data-quicknav-tab="projects"><i class="ti ti-folders me-1"></i>Projects</button>
+    <div class="d-flex align-items-stretch">
+      <div class="quicknav-seg flex-fill" role="tablist">
+        <button type="button" class="quicknav-seg-btn active" data-quicknav-tab="active"><i class="ti ti-activity me-1"></i>Active</button>
+        <button type="button" class="quicknav-seg-btn" data-quicknav-tab="projects"><i class="ti ti-folders me-1"></i>Projects</button>
+      </div>
+      <a href="/assistant" class="link-secondary text-decoration-none flex-shrink-0 quicknav-assistant" title="Assistant" aria-label="Assistant" data-quicknav-assistant>
+        <span class="dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}}><i class="ti ti-sparkles"></i></span>
+      </a>
     </div>
     {{if .QuickNav.CurrentProject}}
     <div class="quicknav-context d-flex align-items-center gap-2 px-3 pb-2">
@@ -70,12 +75,11 @@
         <div class="quicknav-swipe-row quicknav-group-row" data-qn-group-member="{{$g.ID}}">
           <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if and (eq .ID $.QuickNav.Focus) (eq $g.ID $.QuickNav.CurrentID)}}active{{end}}" href="{{.URL}}" draggable="false"
              data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"{{if and (eq .ID $.QuickNav.Focus) (eq $g.ID $.QuickNav.CurrentID)}} aria-current="true"{{end}}>
-            <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+            <span class="dc-term-icon running{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
             <span class="d-flex flex-column min-w-0">
               <span class="text-truncate">{{.Name}}</span>
               {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
-            </span>
-            <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
+            </span>            <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
           </a>
           {{if eq .Kind "shell"}}
           <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename quicknav-swipe-slot3" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
@@ -88,6 +92,15 @@
             <i class="ti ti-trash" aria-hidden="true"></i>
           </button>
           {{else}}
+          {{if index $.Steered .ID}}
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-steer quicknav-swipe-slot4" data-qn-release aria-label="Release coder {{.Name}}" title="Release coder">
+            <i class="ti ti-steering-wheel-off" aria-hidden="true"></i>
+          </button>
+          {{else}}
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-steer quicknav-swipe-slot4" data-qn-steer data-steer-prefill="{{index $.SteerPrefill .ID}}" aria-label="Steer coder {{.Name}}" title="Steer coder">
+            <i class="ti ti-steering-wheel" aria-hidden="true"></i>
+          </button>
+          {{end}}
           <button type="button" class="quicknav-swipe-delete quicknav-swipe-ungroup quicknav-swipe-slot3" data-qn-remove aria-label="Remove {{.Name}} from split view" title="Remove from split view">
             <i class="ti ti-layout-off" aria-hidden="true"></i>
           </button>
@@ -105,12 +118,11 @@
       <div class="quicknav-swipe-row">
         <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
            data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-          <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+          <span class="dc-term-icon running{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
           <span class="d-flex flex-column min-w-0">
             <span class="text-truncate">{{.Name}}</span>
             {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
-          </span>
-          <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
+          </span>          <span class="quicknav-drag-handle flex-shrink-0 ms-auto" data-qn-drag-handle aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
         </a>
         {{if eq .Kind "shell"}}
         <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
@@ -120,6 +132,15 @@
           <i class="ti ti-trash" aria-hidden="true"></i>
         </button>
         {{else}}
+        {{if index $.Steered .ID}}
+        <button type="button" class="quicknav-swipe-delete quicknav-swipe-steer quicknav-swipe-slot3" data-qn-release aria-label="Release coder {{.Name}}" title="Release coder">
+          <i class="ti ti-steering-wheel-off" aria-hidden="true"></i>
+        </button>
+        {{else}}
+        <button type="button" class="quicknav-swipe-delete quicknav-swipe-steer quicknav-swipe-slot3" data-qn-steer data-steer-prefill="{{index $.SteerPrefill .ID}}" aria-label="Steer coder {{.Name}}" title="Steer coder">
+          <i class="ti ti-steering-wheel" aria-hidden="true"></i>
+        </button>
+        {{end}}
         <button type="button" class="quicknav-swipe-delete quicknav-swipe-stop" data-qn-delete aria-label="Stop coder {{.Name}}" title="Stop coder">
           <i class="ti ti-player-stop" aria-hidden="true"></i>
         </button>
@@ -169,8 +190,7 @@
         <div class="quicknav-swipe-row">
           <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
              data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-            <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span><span class="text-truncate">{{.Name}}</span>
-          </a>
+            <span class="dc-term-icon running{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span><span class="text-truncate">{{.Name}}</span>          </a>
           {{if eq .Kind "shell"}}
           <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
             <i class="ti ti-pencil" aria-hidden="true"></i>
@@ -179,6 +199,15 @@
             <i class="ti ti-trash" aria-hidden="true"></i>
           </button>
           {{else}}
+          {{if index $.Steered .ID}}
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-steer quicknav-swipe-slot3" data-qn-release aria-label="Release coder {{.Name}}" title="Release coder">
+            <i class="ti ti-steering-wheel-off" aria-hidden="true"></i>
+          </button>
+          {{else}}
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-steer quicknav-swipe-slot3" data-qn-steer data-steer-prefill="{{index $.SteerPrefill .ID}}" aria-label="Steer coder {{.Name}}" title="Steer coder">
+            <i class="ti ti-steering-wheel" aria-hidden="true"></i>
+          </button>
+          {{end}}
           <button type="button" class="quicknav-swipe-delete quicknav-swipe-stop" data-qn-delete aria-label="Stop coder {{.Name}}" title="Stop coder">
             <i class="ti ti-player-stop" aria-hidden="true"></i>
           </button>

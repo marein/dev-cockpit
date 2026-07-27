@@ -3,6 +3,7 @@ package coder
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -33,6 +34,19 @@ type Manager struct {
 	projects  *project.Repository
 	snapshots *snapshotCache
 	streams   *terminal.Hub
+	// hidden reports provider sessions that belong to another surface and
+	// must not appear as coder sessions. Chats set it: a chat drives a real
+	// provider session, and without the filter every chat would also show up
+	// as a ghost resumable coder in the lists built from this manager.
+	hidden func(sessionID string) bool
+	// screenGap is the distance between the two reads the activity fallback
+	// takes of a terminal, see activity.go. A field, so a test does not have to
+	// wait it out.
+	screenGap time.Duration
+	// now and sleep are the prompt gate's clock, fields so a test does not
+	// have to wait the gate out.
+	now   func() time.Time
+	sleep func(time.Duration)
 }
 
 // NewManager wires up a coder Manager with its dependencies.
@@ -49,7 +63,35 @@ func NewManager(
 		projects:  projects,
 		snapshots: &snapshotCache{ttl: cfg.SnapshotCacheTTL},
 		streams:   terminal.NewHub(cfg),
+		screenGap: screenSettleGap,
+		now:       time.Now,
+		sleep:     time.Sleep,
 	}
+}
+
+// SetHidden installs the session visibility filter. It must be set before the
+// first snapshot, and the predicate must never call back into this manager.
+func (s *Manager) SetHidden(hidden func(sessionID string) bool) {
+	s.hidden = hidden
+	s.Invalidate()
+}
+
+// visibleSessions is the stored session list with the hidden ones removed.
+// Every list the UI builds goes through it; ResumeReserved is the single,
+// explicit way past it.
+func (s *Manager) visibleSessions() []Session {
+	all := s.coder.SessionRepository().List()
+	if s.hidden == nil {
+		return all
+	}
+	out := make([]Session, 0, len(all))
+	for _, session := range all {
+		if s.hidden(session.SessionID) {
+			continue
+		}
+		out = append(out, session)
+	}
+	return out
 }
 
 // Snapshot returns the cached view of running/resumable sessions, recomputing
@@ -86,7 +128,7 @@ func (s *Manager) StopIdleStreams() error {
 
 func (s *Manager) compute() Snapshot {
 	panes, _ := s.tmux.ListPanes()
-	resumable := s.coder.SessionRepository().List()
+	resumable := s.visibleSessions()
 	running, inactive := scanRunning(panes, resumable, s.coder)
 	return Snapshot{Running: running, Inactive: inactive, Resumable: resumable}
 }
@@ -124,7 +166,7 @@ func (s *Manager) ResolveResumable(rawID string) (Session, error) {
 	if id == "" {
 		return Session{}, errors.New("Coder identifier is required.")
 	}
-	for _, r := range s.coder.SessionRepository().List() {
+	for _, r := range s.visibleSessions() {
 		if r.SessionID == id {
 			return r, nil
 		}
@@ -167,7 +209,15 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 			return StartResult{}, fmt.Errorf(`Coder "%s" already exists.`, sessionKey)
 		}
 	}
-	shellCmd := s.coder.SessionRuntime().StartCommand(sessionKey, name, workdir, agentID, opts.AutomaticApproval)
+	shellCmd := s.coder.SessionRuntime().StartCommand(SessionStart{
+		SessionID:         sessionKey,
+		Name:              name,
+		Workdir:           workdir,
+		AgentID:           agentID,
+		AutomaticApproval: opts.AutomaticApproval,
+		Task:              strings.TrimSpace(opts.Task),
+	})
+	s.trustWorkdir(workdir)
 	if err := s.tmux.NewSession(sessionKey, workdir, shellCmd, s.coder.SessionRuntime().Env()); err != nil {
 		return StartResult{}, err
 	}
@@ -191,6 +241,46 @@ func (s *Manager) Resume(rawID string) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
+	return s.resume(stored, false)
+}
+
+// ResumeReserved brings a session back that the visibility filter hides, the
+// one deliberate way past it. A chat drives a real provider session and keeps
+// it hidden from every coder surface; when the chat is handed over, this
+// starts the terminal on that exact conversation instead of a fresh one.
+//
+// It goes through the same body as Resume, so pane tagging, environment and
+// snapshot invalidation cannot drift apart. It cleans up after itself: a
+// failure between the tmux start and the tagging kills the half-built session,
+// otherwise the caller would be left with a pane it does not know about.
+func (s *Manager) ResumeReserved(rawSessionID, rawWorkdir, title string) (Session, error) {
+	id, err := terminal.ValidateIdentifier(rawSessionID)
+	if err != nil {
+		return Session{}, err
+	}
+	var stored Session
+	found := false
+	// Deliberately unfiltered: this is the caller that owns the reservation.
+	for _, r := range s.coder.SessionRepository().List() {
+		if r.SessionID == id {
+			stored = r
+			found = true
+			break
+		}
+	}
+	if !found {
+		return Session{}, fmt.Errorf(`No stored conversation "%s" was found.`, id)
+	}
+	if workdir := strings.TrimSpace(rawWorkdir); workdir != "" && NormalizeCWD(workdir) != NormalizeCWD(stored.CWD) {
+		return Session{}, errors.New("That conversation belongs to a different project.")
+	}
+	if strings.TrimSpace(stored.Name) == "" {
+		stored.Name = strings.TrimSpace(title)
+	}
+	return s.resume(stored, true)
+}
+
+func (s *Manager) resume(stored Session, cleanupOnFailure bool) (Session, error) {
 	if _, err := terminal.ValidateIdentifier(stored.SessionID); err != nil {
 		return Session{}, fmt.Errorf(`Coder "%s" cannot be resumed: its identifier is not usable as a tmux session name.`, stored.SessionID)
 	}
@@ -200,14 +290,24 @@ func (s *Manager) Resume(rawID string) (Session, error) {
 		}
 	}
 	cmd := s.coder.SessionRuntime().ResumeCommand(stored.SessionID, stored.CWD, true)
+	s.trustWorkdir(stored.CWD)
 	if err := s.tmux.NewSession(stored.SessionID, stored.CWD, cmd, s.coder.SessionRuntime().Env()); err != nil {
 		return Session{}, err
 	}
-	if err := s.configureTerminal(stored.SessionID); err != nil {
+	fail := func(err error) (Session, error) {
+		if cleanupOnFailure {
+			if killErr := s.tmux.Kill(stored.SessionID); killErr != nil {
+				log.Printf("coder: cleanup of a half-started session %s failed: %v", stored.SessionID, killErr)
+			}
+			s.Invalidate()
+		}
 		return Session{}, err
 	}
+	if err := s.configureTerminal(stored.SessionID); err != nil {
+		return fail(err)
+	}
 	if err := s.tagCoderPane(stored.SessionID, stored.Name, stored.CWD); err != nil {
-		return Session{}, err
+		return fail(err)
 	}
 	s.Invalidate()
 	return stored, nil
@@ -275,6 +375,12 @@ func (s *Manager) StreamUpdated(name string) (<-chan struct{}, bool) {
 	return s.streams.Updated(name)
 }
 
+// StreamModes reads the pane's current terminal modes, so a stream can tell the
+// browser when a program switched into or out of its full screen UI.
+func (s *Manager) StreamModes(name string) (tmux.PaneModes, bool) {
+	return s.streams.Modes(name)
+}
+
 // StreamExited reports whether the underlying control client has ended.
 func (s *Manager) StreamExited(name string) bool {
 	return s.streams.Exited(name)
@@ -286,18 +392,87 @@ func (s *Manager) Resnapshot(name string) (terminal.Attachment, bool) {
 }
 
 // Send dispatches a batch of user inputs to a session, in order. It resolves
-// the target once and stops at the first failing item.
+// the target once and stops at the first failing item. A prompt into a freshly
+// started session waits at the gate first, see gatePrompt; keys and raw input
+// stay immediate, a dialog answer must not lag behind the dialog.
 func (s *Manager) Send(rawID string, items []terminal.Input) error {
 	target, sink, err := s.resolveInput(rawID)
 	if err != nil {
 		return err
 	}
 	for _, item := range items {
+		if item.Prompt != "" {
+			s.gatePrompt(sink, target, rawID)
+		}
 		if err := terminal.SendInput(sink, s.coder.ControlMapper(), target, item); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// The measured loss window after a session start (send-timing-report.md, 2026-07-27):
+// a prompt is a paste plus a separately sent Enter, the paste always lands in
+// the coder's input box, but the TUI binds its input handler some time after it
+// comes up, and until then the Enter is dropped. The prompt then sits fully
+// typed but unsubmitted, indefinitely. tmux 3.4 exposes no signal for the
+// handler being bound: the TUI on the alternate screen is necessary but not
+// sufficient, a send at the flip instant still lost the Enter, so a settle
+// margin follows the first sighting. At 1s after start everything arrived in
+// the measurement; the window and the margin are generous because the boundary
+// moves with host load.
+const (
+	// promptGateWindow is how young a session has to be for the gate to run at
+	// all. Prompts into anything older cost nothing.
+	promptGateWindow = 5 * time.Second
+	// promptGateSettle is the margin between the TUI first being seen on the
+	// alternate screen and the send.
+	promptGateSettle = time.Second
+	promptGatePoll   = 50 * time.Millisecond
+	// promptGateMax bounds the whole wait. A pane that never shows the coder's
+	// TUI (the CLI crashed at startup) is sent to anyway, exactly as before the
+	// gate existed. It stays under the 10s the CLI gives the whole input
+	// request (cmd/dev-cockpit/act.go), so even that case answers instead of
+	// timing out.
+	promptGateMax = 8 * time.Second
+)
+
+// gatePrompt holds a prompt back while its session is too young to submit it.
+// Best effort on purpose: a session this cannot resolve, or a transport that
+// cannot report the pane's foreground, is sent to exactly as before.
+func (s *Manager) gatePrompt(sink terminal.Target, target, rawID string) {
+	fr, ok := sink.(terminal.ForegroundReporter)
+	if !ok {
+		return
+	}
+	r, err := s.ResolveRunning(rawID)
+	if err != nil || r.StartedAt.IsZero() {
+		return
+	}
+	awaitPromptReady(r.StartedAt, s.coder.ID(), func() (tmux.PaneForeground, bool) {
+		fg, err := fr.PaneForeground(target)
+		return fg, err == nil
+	}, s.now, s.sleep)
+}
+
+// awaitPromptReady is the gate itself, its clock injected so a test does not
+// wait it out. Ready is the coder's TUI running on the alternate screen plus
+// the settle margin behind it.
+func awaitPromptReady(started time.Time, coderCmd string, foreground func() (tmux.PaneForeground, bool), now func() time.Time, sleep func(time.Duration)) {
+	if now().Sub(started) >= promptGateWindow {
+		return
+	}
+	deadline := now().Add(promptGateMax)
+	for {
+		if fg, ok := foreground(); ok && fg.AltScreen && fg.Command == coderCmd {
+			sleep(promptGateSettle)
+			return
+		}
+		if !now().Before(deadline) {
+			return
+		}
+		sleep(promptGatePoll)
+	}
 }
 
 // resolveInput resolves the tmux target and the cheapest transport for input.
@@ -345,6 +520,25 @@ func (s *Manager) Resize(rawID, rawCols, rawRows string) error {
 }
 
 // --- helpers ---
+
+// trustWorkdir marks the directory a session is about to start in as trusted
+// in the coder CLI's own configuration, before the session exists. A CLI that
+// asks about an unknown folder asks before it reads the task out of its argv,
+// so the coder would sit on a dialog while the caller was told it is working.
+//
+// Best effort on purpose: a coder that comes up on the dialog is still a coder,
+// a project that cannot be opened because its CLI's config is unreadable is
+// not. The reason is logged, the session starts either way.
+func (s *Manager) trustWorkdir(workdir string) {
+	truster, ok := s.coder.SessionRuntime().(WorkdirTruster)
+	if !ok {
+		return
+	}
+	if err := truster.TrustWorkdir(workdir); err != nil {
+		log.Printf("coder %s: %s was not marked as trusted, the session may come up on the trust dialog: %v",
+			s.coder.ID(), workdir, err)
+	}
+}
 
 func (s *Manager) configureTerminal(name string) error {
 	// Enable tmux's mouse option so coder TUIs that probe it at startup (claude)

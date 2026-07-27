@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/local/dev-cockpit/internal/clirun"
+	"github.com/local/dev-cockpit/internal/coder"
 )
 
 type runtime struct{}
@@ -13,9 +14,17 @@ func (runtime) UsesProvidedSessionID() bool { return false }
 
 func (runtime) Env() map[string]string { return nil }
 
-func (runtime) StartCommand(sessionID, sessionName, workdir, agentID string, automaticApproval bool) string {
-	return fmt.Sprintf("cd %s && exec copilot%s --name %s",
-		clirun.ShellQuote(workdir), flags(agentID, automaticApproval), clirun.ShellQuote(sessionName))
+// StartCommand builds the interactive session. A task goes into copilot's
+// --interactive flag, which starts interactive mode and runs that prompt, so
+// the session comes up already working on it.
+func (runtime) StartCommand(start coder.SessionStart) string {
+	command := fmt.Sprintf("cd %s && exec copilot%s --name %s",
+		clirun.ShellQuote(start.Workdir), flags(start.AgentID, start.AutomaticApproval),
+		clirun.ShellQuote(start.Name))
+	if task := strings.TrimSpace(start.Task); task != "" {
+		command += " --interactive " + clirun.ShellQuote(task)
+	}
+	return command
 }
 
 func (runtime) ResumeCommand(sessionID, workdir string, automaticApproval bool) string {

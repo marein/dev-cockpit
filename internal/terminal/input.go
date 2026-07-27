@@ -9,7 +9,8 @@ import (
 	"github.com/local/dev-cockpit/internal/tmux"
 )
 
-// Input is one queued user action; exactly one field is non-empty.
+// Input is one queued user action; exactly one of the payload fields is
+// non-empty.
 type Input struct {
 	Prompt  string
 	Control string

@@ -1205,6 +1205,54 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       assert(!(await page.isVisible(".editor-back")), "back button visible outside fullscreen");
     });
 
+    // A docked assistant keeps its column in fullscreen. The panel sits above
+    // the editor, so an editor that took the whole viewport would run under it
+    // and lose its right edge. The editor ends at the panel's left edge
+    // instead, and it follows the resize handle because both sides read
+    // --dc-assistant-w. Closing the panel gives the viewport back.
+    await run("fullscreen: the docked assistant keeps its column and the editor follows its resize", async () => {
+      const edges = () => page.evaluate(() => {
+        const box = document.querySelector(".editor").getBoundingClientRect();
+        const card = document.querySelector(".dc-assistant-panel-card").getBoundingClientRect();
+        return {
+          right: Math.round(box.right),
+          panelLeft: Math.round(card.left),
+          width: window.innerWidth,
+          docked: document.body.classList.contains("dc-assistant-docked"),
+        };
+      });
+      await page.click("[data-assistant-corner]");
+      await page.waitForSelector(".dc-assistant-panel-card:not([hidden]) dc-assistant[ready]", { timeout: 20000 });
+      await page.click("[data-editor-fullscreen]");
+      await page.waitForFunction(() => document.documentElement.classList.contains("dc-editor-fullscreen"), null, { timeout: 6000 });
+      await sleep(300);
+      const side = await edges();
+      assert(side.docked, "the panel did not dock");
+      assert(Math.abs(side.right - side.panelLeft) <= 1 && side.right < side.width - 100,
+        `the editor does not stop at the panel: ${JSON.stringify(side)}`);
+
+      const handle = await page.locator("[data-assistant-resize]").boundingBox();
+      await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(handle.x - 120, handle.y + handle.height / 2, { steps: 10 });
+      await page.mouse.up();
+      await sleep(400);
+      const wider = await edges();
+      assert(wider.right < side.right - 30 && Math.abs(wider.right - wider.panelLeft) <= 1,
+        `the editor did not follow the panel's resize: ${JSON.stringify(wider)}`);
+
+      await page.click("[data-assistant-panel-close]");
+      await page.waitForSelector(".dc-assistant-panel-card[hidden]", { state: "attached", timeout: 8000 });
+      await sleep(300);
+      const full = await page.evaluate(() => {
+        const box = document.querySelector(".editor").getBoundingClientRect();
+        return { right: Math.round(box.right), width: window.innerWidth };
+      });
+      assert(Math.abs(full.right - full.width) <= 1, `the closed panel left a gap: ${JSON.stringify(full)}`);
+      await page.click("[data-editor-fullscreen]");
+      await page.waitForFunction(() => !document.documentElement.classList.contains("dc-editor-fullscreen"), null, { timeout: 6000 });
+    });
+
     await run("project switcher in the tree header switches to another project's editor", async () => {
       await L.createProject(page, projectB);
       await page.goto(editorURL, { waitUntil: "domcontentloaded" });

@@ -1,0 +1,192 @@
+{{define "assistant_thread.gohtml"}}
+{{if .EarlierCount}}
+<div class="text-center mb-3">
+  <a href="{{.AllURL}}" class="btn btn-sm" data-assistant-all>
+    <i class="ti ti-chevron-up me-1"></i>Show {{.EarlierCount}} earlier message{{if ne .EarlierCount 1}}s{{end}}
+  </a>
+</div>
+{{end}}
+<div class="d-flex flex-column gap-3" data-assistant-log aria-live="polite" aria-label="Conversation">
+  {{range .Messages}}{{template "assistant_message.gohtml" (dict "Message" .)}}{{end}}
+</div>
+{{if not .Messages}}
+<div class="text-center py-5" data-assistant-empty>
+  <div class="mb-3"><span class="dc-term-icon assistant fs-1" aria-hidden="true"><i class="ti ti-sparkles"></i></span></div>
+  <p class="mb-1">Give me a task. A coder builds it, I steer it and report done or stuck.</p>
+  <p class="text-secondary mb-1">Stuck somewhere? Ask me, I look at what is running and get it going again.</p>
+  <p class="text-secondary mb-1">I know your projects and this machine, and you can attach a picture, a recording or a clip.</p>
+  <p class="text-secondary mb-0">All of this is customizable, just tell me when I should <em>remember something</em>.</p>
+  <div class="d-inline-block border rounded text-secondary small mt-4 px-3 py-2" role="note">
+    <i class="ti ti-info-circle me-1" aria-hidden="true"></i>The assistant runs on the default model, choosing a model comes in a later release.
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{define "assistant_composer.gohtml"}}
+{{if .Blocked}}
+<div class="assistant-composer" data-assistant-footer role="status">
+  <div class="d-flex align-items-center gap-2">
+    <div class="text-secondary small flex-fill min-w-0">{{.Blocked}}</div>
+    {{if .CurrentURL}}
+    <a href="{{.CurrentURL}}" class="btn btn-primary flex-shrink-0" data-assistant-current>
+      <i class="ti ti-sparkles me-1"></i>Current conversation
+    </a>
+    {{else}}
+    <form method="post" action="{{.PostURL}}" class="flex-shrink-0">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="form" value="new">
+      {{if .NewCoderID}}<input type="hidden" name="coder" value="{{.NewCoderID}}">{{end}}
+      <button type="submit" class="btn btn-primary" data-assistant-new-context>
+        <i class="ti ti-plus me-1"></i>New conversation
+      </button>
+    </form>
+    {{end}}
+  </div>
+</div>
+{{else}}
+{{template "assistant_new_forms.gohtml" .}}
+<form method="post" action="{{.PostURL}}" class="assistant-composer" data-assistant-form data-assistant-footer data-no-pe>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="form" value="message">
+  <input type="file" class="d-none" multiple data-assistant-file accept="image/*,video/*,audio/*,.pdf,.txt,.md,.json,.csv,.log,.zip">
+  <div class="d-flex flex-wrap gap-2 mb-2 d-none" data-assistant-attachments aria-label="Attached files"></div>
+  <div class="d-flex align-items-end gap-2">
+    {{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .CoderID "ContextPercent" .ContextPercent "NewClass" "btn btn-icon btn-ghost-secondary flex-shrink-0")}}
+    <button type="button" class="btn btn-icon btn-ghost-secondary flex-shrink-0" aria-label="Attach a file" title="Attach a file, or drop it anywhere on the page" data-assistant-attach>
+      <i class="ti ti-paperclip"></i>
+    </button>
+    <div class="flex-fill min-w-0">
+      <textarea class="form-control" name="message" rows="1" data-assistant-input placeholder="What to do?" aria-label="Message" autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true">{{.Draft}}</textarea>
+    </div>
+    <button type="submit" class="btn btn-icon btn-primary flex-shrink-0" aria-label="Send message" data-assistant-send>
+      <i class="ti ti-send"></i>
+    </button>
+    <button type="button" class="btn btn-icon btn-outline-danger flex-shrink-0 d-none" aria-label="Stop answering" data-assistant-cancel>
+      <i class="ti ti-player-stop"></i>
+    </button>
+  </div>
+  <div class="text-center"><small class="form-hint d-none" data-assistant-count></small></div>
+</form>
+{{end}}
+{{end}}
+
+{{/* The new conversation control sits in the composer row, whose own element is
+     the message form. A form inside a form is dropped by the parser, and the
+     button would then post the message form with a stray form=new field, so
+     the posting forms render beside the composer and the buttons reach them by
+     id through the form attribute. One surface renders per document, so the ids
+     are unique. */}}
+{{define "assistant_new_forms.gohtml"}}
+{{if gt (len .Coders) 1}}
+{{range .Coders}}
+<form method="post" action="{{$.PostURL}}" id="assistant-new-{{.ID}}" class="d-none">
+  <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+  <input type="hidden" name="form" value="new">
+  <input type="hidden" name="coder" value="{{.ID}}">
+</form>
+{{end}}
+{{else}}
+<form method="post" action="{{.PostURL}}" id="assistant-new" class="d-none">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="form" value="new">
+  <input type="hidden" name="coder" value="{{.CoderID}}">
+</form>
+{{end}}
+{{end}}
+
+{{/* The ring around the button says how full the coder's context window is. It
+     sits inside the button, not around it: the dropdown branch needs the menu to
+     stay the toggle's next sibling and the plain branch reaches its posting form
+     through a form attribute, so a wrapper element would break one or the other.
+     The label carries the number as words, because a ring alone is not readable
+     without a pointer. */}}
+{{define "assistant_new_button.gohtml"}}
+{{$base := "New conversation, the memory comes along"}}
+{{$label := $base}}{{if .ContextPercent}}{{$label = printf "%s. Context %d percent" $base .ContextPercent}}{{end}}
+{{if gt (len .Coders) 1}}
+<div class="dropdown flex-shrink-0">
+  <button type="button" class="{{.NewClass}} position-relative" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" data-assistant-new-label="{{$base}}" aria-label="{{$label}}" title="{{$label}}">
+    <i class="ti ti-message-plus"></i>
+    {{template "assistant_context_ring.gohtml" .ContextPercent}}
+  </button>
+  <div class="dropdown-menu">
+    {{range .Coders}}
+    <button type="submit" form="assistant-new-{{.ID}}" class="dropdown-item d-flex align-items-center gap-2" data-assistant-new="{{.ID}}">
+      <span class="dc-term-icon" aria-hidden="true">{{template "coder_icon.gohtml" .ID}}</span>
+      <span>New with {{.Label}}</span>
+    </button>
+    {{end}}
+  </div>
+</div>
+{{else}}
+<button type="submit" form="assistant-new" class="{{.NewClass}} position-relative" data-assistant-new-label="{{$base}}" aria-label="{{$label}}" title="{{$label}}" data-assistant-new="{{.CoderID}}">
+  <i class="ti ti-message-plus"></i>
+  {{template "assistant_context_ring.gohtml" .ContextPercent}}
+</button>
+{{end}}
+{{end}}
+
+{{/* The circle's radius is 100/(2*pi), so its circumference is exactly 100 user
+     units and the filled part is the percentage itself: no arithmetic in the
+     template, and no dependence on pathLength, which browsers implement
+     unevenly. The rotation puts the start at twelve o'clock, the sweep runs
+     clockwise from there. The halo carries the same sweep one step wider: the
+     button fills its background while it is hovered, and that fill is what the
+     level colors would otherwise sink into. */}}
+{{define "assistant_context_ring.gohtml"}}
+<svg class="dc-context-ring" viewBox="0 0 36 36" aria-hidden="true" focusable="false" data-assistant-ring{{if ge . 95}} data-assistant-ring-level="full"{{else if ge . 85}} data-assistant-ring-level="high"{{end}}>
+  <circle class="dc-context-ring-track" cx="18" cy="18" r="15.9155"></circle>
+  <circle class="dc-context-ring-halo" cx="18" cy="18" r="15.9155" transform="rotate(-90 18 18)" stroke-dasharray="{{.}} 100" data-assistant-ring-halo></circle>
+  <circle class="dc-context-ring-fill" cx="18" cy="18" r="15.9155" transform="rotate(-90 18 18)" stroke-dasharray="{{.}} 100" data-assistant-ring-fill></circle>
+</svg>
+{{end}}
+
+{{define "assistant_panel_head.gohtml"}}
+<div class="d-flex align-items-center gap-1 px-3 flex-shrink-0" data-assistant-head>
+  {{if eq .View "chat"}}
+  <span class="dc-term-icon assistant me-1" aria-hidden="true"><i class="ti ti-sparkles"></i></span>
+  <span class="fw-medium flex-fill min-w-0 text-truncate">Assistant{{if gt (len .Coders) 1}} <span class="text-secondary fw-normal">· {{.CoderLabel}}</span>{{end}}</span>
+  {{template "assistant_jobs_button.gohtml" .}}
+  <button type="button" class="btn btn-icon btn-ghost-secondary" data-assistant-view-open="history" aria-label="Earlier conversations" title="Earlier conversations"><i class="ti ti-history"></i></button>
+  <button type="button" class="btn btn-icon btn-ghost-secondary" data-assistant-view-open="memory" aria-label="Memory" title="What the assistant knows about you"><i class="ti ti-brain"></i></button>
+  {{else}}
+  <button type="button" class="btn btn-icon btn-ghost-secondary" data-assistant-view-open="chat" aria-label="Back to the conversation" title="Back"><i class="ti ti-arrow-left"></i></button>
+  <span class="fw-medium flex-fill min-w-0 text-truncate">{{if eq .View "jobs"}}Steered coders{{else if eq .View "memory"}}Memory{{else}}Earlier conversations{{end}}</span>
+  {{end}}
+  <button type="button" class="btn btn-icon btn-ghost-secondary" aria-label="Close the assistant" title="Close" data-assistant-panel-close><i class="ti ti-x"></i></button>
+</div>
+{{end}}
+
+{{define "assistant_panel_content.gohtml"}}
+{{if eq .View "chat"}}
+<dc-assistant internal-scroll data-assistant-coder="{{.CoderID}}" conversation-id="{{.ID}}" coder-label="{{.CoderLabel}}" stream-url="{{.StreamURL}}" post-url="{{.PostURL}}" message-url="{{.MessageURL}}" upload-url="{{.UploadURL}}" max-bytes="{{.MaxPromptBytes}}" max-file-bytes="{{.MaxUploadBytes}}" draft-url="{{.DraftURL}}" draft-files="{{.DraftFiles}}"{{if .Running}} running{{end}}{{if .Blocked}} blocked{{end}}>
+  {{template "assistant_panel_head.gohtml" .}}
+  <div class="dc-assistant-scroll" data-assistant-scroll>
+    {{template "assistant_thread.gohtml" .}}
+  </div>
+  {{template "assistant_composer.gohtml" .}}
+</dc-assistant>
+{{else if eq .View "jobs"}}
+<div class="dc-assistant-panel-view">
+  {{template "assistant_panel_head.gohtml" .}}
+  <dc-assistant-list list-url="{{.JobsURL}}" class="dc-assistant-scroll">
+    {{template "assistant_jobs_list.gohtml" .}}
+  </dc-assistant-list>
+</div>
+{{else if eq .View "memory"}}
+<div class="dc-assistant-panel-view">
+  {{template "assistant_panel_head.gohtml" .}}
+  <dc-assistant-list list-url="/assistant/memory" quiet memory class="dc-assistant-scroll">
+    {{template "assistant_memory_content.gohtml" .MemoryData}}
+  </dc-assistant-list>
+</div>
+{{else}}
+<div class="dc-assistant-panel-view">
+  {{template "assistant_panel_head.gohtml" .}}
+  <dc-assistant-list list-url="/assistant/history" history class="dc-assistant-scroll">
+    {{template "assistant_history_content.gohtml" .HistoryData}}
+  </dc-assistant-list>
+</div>
+{{end}}
+{{end}}

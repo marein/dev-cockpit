@@ -40,6 +40,17 @@ export function postForm(url, fields, { accept = "application/json" } = {}) {
   });
 }
 
+export async function landingURL(response) {
+  if (response.redirected) {
+    return response.url;
+  }
+  if (!/application\/json/i.test(response.headers.get("Content-Type") || "")) {
+    return "";
+  }
+  const data = await response.json().catch(() => null);
+  return data && typeof data.url === "string" ? data.url : "";
+}
+
 export function postJSON(url, body) {
   return fetch(url, {
     method: "POST",

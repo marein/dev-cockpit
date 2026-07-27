@@ -10,8 +10,8 @@
     </div>
   </div>
 </div>
-{{if .Projects}}
 <dc-project-list>
+{{if .Projects}}
 <div class="mb-3">
   <div class="d-flex gap-2 align-items-start">
     <div class="input-icon flex-fill">
@@ -78,7 +78,7 @@
         <a href="/projects/{{.Name}}/editor?return={{urlquery (print "/projects#project-" .Name)}}" class="btn btn-sm btn-icon btn-ghost-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
           <i class="ti ti-code"></i>
         </a>
-        <form method="post" action="/projects/delete" data-confirm="Delete project &quot;{{.Name}}&quot;?" data-confirm-button="Delete">
+        <form method="post" action="/projects/delete" data-project-delete data-ajax-refresh data-confirm="Delete project &quot;{{.Name}}&quot;?" data-confirm-button="Delete">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="project" value="{{.Name}}">
           <button type="submit" class="btn btn-sm btn-icon btn-ghost-danger" aria-label="Delete project {{.Name}}" title="Delete">
@@ -91,9 +91,10 @@
       <span class="project-chip-fold" data-chip-fold>
         {{range .ActiveRefs}}
         {{if eq .Kind "coder"}}
-        <div class="project-chip" data-chip data-chip-kind="coder" data-chip-id="{{.ID}}" data-chip-name="{{.Name}}">
+        <div class="project-chip" data-chip data-chip-kind="coder" data-chip-id="{{.ID}}" data-chip-name="{{.Name}}"
+             {{- if index $.Steered .ID}} data-chip-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-chip-steer-prefill="{{.}}"{{end}}>
           <a href="/coders/{{.ID}}" class="project-chip-main" title="Attach to coder {{.Name}}" data-chip-main>
-            <span class="dc-term-icon running{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
+            <span class="dc-term-icon running{{if .HasNews}} news{{end}}{{if index $.Steered .ID}} steered{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
             <span class="project-chip-name">{{.Name}}</span>
           </a>
           <form method="post" action="/coders/{{.ID}}/stop" data-confirm="Stop coder &quot;{{.Name}}&quot;?" data-confirm-button="Stop" data-ajax-refresh data-chip-x>
@@ -149,7 +150,6 @@
   <div class="empty-icon"><i class="ti ti-search fs-1"></i></div>
   <p class="empty-title">No projects match.</p>
 </div>
-</dc-project-list>
 {{else}}
 <div class="empty">
   <div class="empty-icon"><i class="ti ti-folder fs-1"></i></div>
@@ -159,5 +159,6 @@
   </div>
 </div>
 {{end}}
+</dc-project-list>
 {{template "app_end.gohtml" .}}
 {{end}}

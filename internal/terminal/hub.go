@@ -418,6 +418,21 @@ func (h *Hub) attachmentLocked(name string, st *hubState) Attachment {
 	}
 }
 
+// Modes reads the pane's current terminal modes. A program switches into its
+// full screen UI while somebody is already watching, and the browser has no way
+// to see that in the stream: what it receives is rendered content, not the mode
+// sequences. Without this, a page attached before the switch keeps scrolling
+// like a normal screen, which for a coder means not at all.
+func (h *Hub) Modes(name string) (tmux.PaneModes, bool) {
+	h.mu.Lock()
+	st := h.streams[name]
+	h.mu.Unlock()
+	if st == nil || st.ctl == nil {
+		return tmux.PaneModes{}, false
+	}
+	return st.ctl.Modes(), true
+}
+
 func ValidateDimensions(cfg config.Config, rawCols, rawRows string) (int, int, error) {
 	cols, err := strconv.Atoi(strings.TrimSpace(rawCols))
 	if err != nil {

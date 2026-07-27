@@ -89,9 +89,9 @@ func DocsTopics() []DocsTopic {
 			Items: []DocsItem{
 				{
 					Title:    "Quick navigation",
-					Tag:      "Every page",
+					Tag:      "Phone and tablet",
 					TagClass: "bg-blue-lt",
-					Desc:     `Mainly for phones, where it is the primary way to move around: the floating grid button <i class="ti ti-layout-grid align-text-bottom" aria-hidden="true"></i> browses active terminals and projects, and a project's list also starts a new coder or shell in that project. On the desktop the terminal switcher (double Ctrl) is the better route, because it leverages the keyboard.`,
+					Desc:     `On phones and tablets, where it is the primary way to move around: the floating grid button <i class="ti ti-layout-grid align-text-bottom" aria-hidden="true"></i> browses active terminals and projects, and a project's list also starts a new coder or shell in that project. On a desktop its corner belongs to the assistant instead, and the terminal switcher (double Ctrl) is the route that leverages the keyboard.`,
 				},
 				{
 					Title: "Quick-nav reorder and split",
@@ -106,7 +106,77 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Open the terminal switcher",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Ctrl"}}},
-					Desc:  `Tap Ctrl twice without another key in between. Type to filter; use the arrows to move; Enter opens the selection and Escape closes it. The palette includes active terminals, resumable coders, project editors, and new-terminal actions.`,
+					Desc:  `Tap Ctrl twice without another key in between. Type to filter; use the arrows to move; Enter opens the selection and Escape closes it. The palette includes active terminals, the assistant, resumable coders, project editors, and new-terminal actions.`,
+				},
+			},
+		},
+		{
+			Key:   "assistant",
+			Title: "Assistant",
+			Icon:  "ti-sparkles",
+			Lead:  "Your own conversation with the cockpit, on every device.",
+			Items: []DocsItem{
+				{
+					Title: "One place, always open",
+					Desc:  `The sparkle button <i class="ti ti-sparkles align-text-bottom" aria-hidden="true"></i> opens the assistant in the header, the quick nav, the + menu of the tab strip and the terminal switcher. On a desktop it docks as a side panel, drag its left edge to resize, stored per device, and its round corner button takes the quick nav's place.`,
+				},
+				{
+					Title:    "It sees the cockpit",
+					Tag:      "Live state",
+					TagClass: "bg-blue-lt",
+					Desc:     `Ask what is running, what is waiting for you, or what happened while you were away: it reads the coders, the shells, the projects, the unread notifications, and what a session last did. It types into a coder for you too, a prompt or the keys a dialog needs. A shell it can only read.`,
+				},
+				{
+					Title:    "It remembers you",
+					Tag:      "Memory",
+					TagClass: "bg-blue-lt",
+					Desc:     `Say remember that and the assistant writes it down. The brain icon <i class="ti ti-brain align-text-bottom" aria-hidden="true"></i> opens what it knows, to read and to correct. It goes into every answer, so it survives a new conversation.`,
+				},
+				{
+					Title:    "Pictures, recordings and clips",
+					Tag:      "Files",
+					TagClass: "bg-blue-lt",
+					Desc:     `Drop files onto the assistant or paste them into the message box; the paperclip <i class="ti ti-paperclip align-text-bottom" aria-hidden="true"></i> does the same.`,
+				},
+				{
+					Title: "Starting over",
+					Desc:  `The new-conversation button <i class="ti ti-message-plus align-text-bottom" aria-hidden="true"></i> starts fresh, and with more than one coder installed it asks which one answers. One conversation is live at a time, the earlier ones stay read-only under the clock icon <i class="ti ti-history align-text-bottom" aria-hidden="true"></i>.`,
+				},
+				{
+					Title:    "How full the conversation is",
+					Tag:      "Context",
+					TagClass: "bg-blue-lt",
+					Desc:     `A ring around the new-conversation button <i class="ti ti-message-plus align-text-bottom" aria-hidden="true"></i> fills with how much of the coder's context window the conversation takes up, orange from 85 percent, red from 95. It moves once per answer and stays empty for a model whose window this cockpit does not know.`,
+				},
+				{
+					Title:    "What it may do",
+					Tag:      "Tools",
+					TagClass: "bg-blue-lt",
+					Desc:     `It has the tools of a coder: reading and searching, writing files, running commands, fetching a page from the web, on that coder's default model. It belongs to no project, its own files stay in a workspace next to the cockpit data. A finished answer notifies like any other news, and reads itself while the assistant is open in front of you.`,
+				},
+				{
+					Title:    "It hands work over",
+					Tag:      "Coordinates",
+					TagClass: "bg-blue-lt",
+					Desc:     `Changes in your projects are not its job: it starts a coder for the task, briefs it, steers the job from the start, and tells you which coder is on it. It also resumes, stops and deletes coder sessions, and creates and deletes projects.`,
+				},
+				{
+					Title:    "It steers a job to the end",
+					Tag:      "Wakes up",
+					TagClass: "bg-blue-lt",
+					Desc:     `A job is one coder, one task, and one criterion that decides the task is done. Work the assistant hands over is steered from the start, and you can steer any coder yourself. A steered coder that finishes, asks something or stops moving buys a check, and the check sends the coder what it needs to go on. Only done and blocked reach you. Ten checks and eight hours per job.`,
+				},
+				{
+					Title:    "The steered coders",
+					Tag:      "Coders",
+					TagClass: "bg-blue-lt",
+					Desc:     `The steering-wheel button <i class="ti ti-steering-wheel align-text-bottom" aria-hidden="true"></i> in the assistant's head opens the steered coders, its badge counts the ones still steered. A steered coder names its criterion, the last report, the checks it used and until when it runs, and takes the same criterion again once it is over.`,
+				},
+				{
+					Title:    "Steer and release where the coder is",
+					Tag:      "Ownership",
+					TagClass: "bg-blue-lt",
+					Desc:     `A steered coder's icon turns purple wherever it shows, and the color follows steer and release without a reload. Steer and release where the coder is listed: swipe its row in the quick nav, or open the context menu of its tab, its pane header or its chip. The dialog's criterion may stay empty, the checks then judge against the task the session is on.`,
 				},
 			},
 		},
@@ -154,7 +224,13 @@ func DocsTopics() []DocsTopic {
 					Title:    "Tab context menu",
 					Tag:      "Desktop",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Right-click a tab for rename, mark read, project and editor links, ungroup, stop, and delete. Split pane headers and the chips on the projects page carry their own menu.`,
+					Desc:     `Right-click a tab for rename, mark read, steer or release, project and editor links, ungroup, stop, and delete. Split pane headers and the chips on the projects page carry their own menu.`,
+				},
+				{
+					Title:    "A new project needs no permission",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `A coder started in a project it has never seen would ask whether it may work on the files there. The cockpit answers that beforehand, by marking the project as trusted in the coder's own configuration, so a coder that gets a task begins with the task.`,
 				},
 				{
 					Title:    "Resume a coder",
@@ -292,7 +368,7 @@ func DocsTopics() []DocsTopic {
 			Title: "Notifications",
 			Icon:  "ti-bell-ringing",
 			Lead:  "When a coder or shell has news, and where it shows.",
-			Intro: `A notification means that a coder or shell has news. Each target has at most one unread entry, and follow-up signals within 30 seconds are intentionally grouped. Opening a visible coder, shell, or split pane marks its news as read everywhere. Terminal icons double as status lights throughout the app: green means busy, blue means unread news, gray means idle.`,
+			Intro: `A notification means that a coder or shell has news. Every one of them reads the same way: one line saying what happened, and below it what it happened in, the name in quotes with its project. Each target has at most one unread entry, and follow-up signals within 30 seconds are intentionally grouped. Opening a visible coder, shell, or split pane marks its news as read everywhere. Terminal icons double as status lights throughout the app: green means busy, blue means unread notifications, gray means idle.`,
 			Items: []DocsItem{
 				{
 					Title: "Coders",
@@ -303,8 +379,20 @@ func DocsTopics() []DocsTopic {
 					Desc:  `A command that runs for at least two seconds notifies when its prompt returns. Every shell starts with <code>PS0</code> and <code>PROMPT_COMMAND</code> set to see that, an rc file that overwrites them would turn the notices off. A bell always counts as news, so use <code>printf '\a'</code> when a script needs attention.`,
 				},
 				{
+					Title:    "The assistant",
+					Tag:      "Sparkles",
+					TagClass: "bg-blue-lt",
+					Desc:     `An answer shows its first words below the title, in the entry, in the toast and on the phone. A report about a job says how it ended, done, blocked, or expired, and names the job below that.`,
+				},
+				{
 					Title: "In the browser",
-					Desc:  `The bell <i class="ti ti-bell align-text-bottom" aria-hidden="true"></i>, the blue marks on terminals and projects, the browser title, a toast, and the selected jingle all represent the same unread news; the bell opens the list, where single entries or everything can be marked read. Sound needs one browser interaction first; its volume is stored per device.`,
+					Desc:  `The bell <i class="ti ti-bell align-text-bottom" aria-hidden="true"></i>, the blue marks on terminals and projects, the browser title, a toast, and the selected jingle all represent the same unread notifications; the bell opens the list, where single entries or everything can be marked read. Sound needs one browser interaction first; its volume is stored per device.`,
+				},
+				{
+					Title:    "A steered coder stays quiet",
+					Tag:      "Ownership",
+					TagClass: "bg-blue-lt",
+					Desc:     `While the assistant steers a job on a coder, that coder's own news rings nowhere: its report is what reaches you. The entry is still listed, already read.`,
 				},
 			},
 		},
@@ -312,13 +400,13 @@ func DocsTopics() []DocsTopic {
 			Key:      "push",
 			Title:    "Push delivery",
 			Icon:     "ti-send",
-			Lead:     "Get the same news when the page is closed.",
+			Lead:     "Get the same notifications when the page is closed.",
 			LinkURL:  "/settings/notifications#settings-webpush",
 			LinkText: "Open settings",
 			Items: []DocsItem{
 				{
 					Title: "When delivery happens",
-					Desc:  `The server waits two seconds, then checks whether the target is still unread. News you are already viewing stays silent instead of sending duplicate browser, phone, or webhook alerts.`,
+					Desc:  `The server waits two seconds, then checks whether the target is still unread. Notifications you are already viewing stay silent instead of sending duplicate browser, phone, or webhook alerts.`,
 				},
 				{
 					Title: "Web push",

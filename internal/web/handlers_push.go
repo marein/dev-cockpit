@@ -90,7 +90,6 @@ func (s *Server) handlePushUnsubscribe(c *gin.Context) {
 }
 
 func (s *Server) handlePushTest(c *gin.Context) {
-	msg := push.TestMessage()
 	switch c.PostForm("channel") {
 	case "webpush":
 		if s.pusher.WebPush.LiveCount() == 0 {
@@ -101,12 +100,12 @@ func (s *Server) handlePushTest(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 			return
 		}
-		if err := s.pusher.WebPush.Deliver(msg); err != nil {
+		if err := s.pusher.WebPush.Deliver(push.TestMessage(push.TestWebPush)); err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "Sending failed: " + err.Error()})
 			return
 		}
 	case "webhook":
-		if err := s.pusher.Webhooks.Test(c.PostForm("id"), msg); err != nil {
+		if err := s.pusher.Webhooks.Test(c.PostForm("id"), push.TestMessage(push.TestWebhook)); err != nil {
 			if errors.Is(err, push.ErrUnknownWebhook) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "This webhook no longer exists, reload the page."})
 				return

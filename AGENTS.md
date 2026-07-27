@@ -56,6 +56,42 @@ test. Update this file when a convention changes.
 - **v2.0.0 markers:** legacy compatibility code that may be removed once
   breaking changes are allowed carries a `TODO(v2.0.0)` comment. Grep for it
   when preparing a 2.0.0 release.
+- **The assistant acts through the local API, never around it.** A state
+  directory belongs to one serve process, so a turn writes nothing itself: it
+  runs the cockpit's own commands, they reach the server over the unix socket in
+  its state directory (`internal/localapi`), and the request lands in the same
+  handler a browser hits. The socket is the whole credential, there is no token
+  anywhere: it sits in a directory only the owner may enter, and `LocalHandler`
+  marks what arrives on it, which is what the session check and the CSRF check
+  read. Never add a second writer of the state files, and never let the assistant
+  drive tmux directly.
+- **`dev-cockpit assistant …` is internal surface.** Everything the assistant
+  runs sits under that one command group, which shares the `--state-dir` and
+  `--projects-dir` flags. Unlike the rest of the CLI it is exempt from the never
+  remove rule above: its names, flags and output are tuned for the model and may
+  change with any release, and its help text says so. The generated instructions
+  build every call through `Workspace.CockpitCommand`, so a rename lands in one
+  place. Names are object first and verb last (`coder-send-prompt`, `job-list`,
+  `project-delete`), so the flat help list groups itself by object; `status` is
+  the one exception, it is about the whole cockpit. `run-turn` is hidden: it is
+  the mechanics a turn runs under, not something the assistant chooses to call,
+  and it takes the provider's argv unparsed, so it has no usable help.
+  What is not exempt is the group itself, `serve` and `hash-password`:
+  those are what a person and a start script use.
+- **One live conversation, and jobs belong to the assistant.** `Service.Current`
+  is the live conversation and `Service.Open` starts one when there is none;
+  nothing that acts carries a conversation id. A watched job outlives the
+  conversation it was asked for and reports into whichever one is live when its
+  check comes back, so a report is never written into a transcript the user has
+  already left. The jobs live on one path, `/assistant/jobs`, which serves the
+  list and takes both actions on it. A check runs in a provider session of its
+  own, which is also why only a chat turn (`RunChat`) may write what a turn
+  reports about the context window onto the conversation: a check's consumption
+  is not the conversation's, and the ring on the new conversation button would
+  otherwise show a stranger's number. In the panel a person reads coders, not
+  jobs (the head, the button and the empty state say steered coders); code,
+  routes, state values, the `dev-cockpit assistant` commands and the
+  notification titles keep job.
 - **Backup archives are a compat surface.** `internal/backup` maps archive
   paths `data/<section id>/<source name>` onto host paths through the current
   registry, and the manifest identifies the file (`app`, `format`). Old
@@ -222,6 +258,28 @@ A notification means one thing: the coder or shell has news (turn finished,
 question asked, permission wanted, shell command done). Events are
 deliberately not classified further, a target holds at most one unread entry,
 and follow-up signals within 30s of a fresh unread entry are swallowed.
+News from a target somebody else is already looking at is written read from
+the start (`Service.SetSilent`, set from the job store in `main.go` like
+`SetSignal`, because notify classifies nothing): while the assistant steers a
+job on a coder, its report is the message that reaches the user, so the raw
+signal counts as no unread, marks nothing, carries no `Added` (no toast, no
+jingle, no push) and only keeps the history complete. Such an entry replaces
+the target's previous silent one and never touches an unread entry.
+Every notification is written the same way, two lines: `Notification.Title`
+says what happened ("Coder has news.", "Command finished.", "Job done." /
+"blocked." / "expired.", "Assistant answered.", "Assistant could not
+finish.", "Backup ready." / "failed."), `Notification.Detail` is the line
+below it and names what it happened in, the name in quotes plus the project
+(`"git" - dev-cockpit`), for the assistant the first words of the answer. It
+is shown where the project stands (list, toast, push body). No name ever
+stands in a title, and no title classifies a coder's signal. The wording of
+every case lives together next to `notifyResolver` in `main.go`
+(`coderNews`, `shellNews`, `backupNews`, `assistantNews`), never in notify,
+which classifies nothing; a job report takes its name and project from the
+message's own `WakeNote`, never from a lookup. An entry without a title (a
+target the resolver could not resolve, an entry an older build stored) falls
+back to `Something new in "..."` in the list, the toast, the push and
+`dev-cockpit assistant notification-list`.
 Signals are coder-native, no pane-content parsing: claude sessions get
 Stop/Notification hooks injected via `--settings`, copilot sessions ring BEL
 through the CLI's global `beep` setting (enabled at startup when copilot is

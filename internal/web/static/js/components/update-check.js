@@ -225,6 +225,7 @@ class UpdateCheck extends HTMLElement {
           return;
         }
         if (!response.ok) throw new Error(await errorText(response, "Update failed."));
+        await response.json().catch(() => ({}));
         this.waitForRestart(status.latest);
       })
       .catch((error) => {
@@ -249,6 +250,7 @@ class UpdateCheck extends HTMLElement {
     }
   }
 
+  // The server restarts straight away: nothing it runs has to be waited for.
   waitForRestart(target) {
     const deadline = Date.now() + 60000;
     const poll = () => {

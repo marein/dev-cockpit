@@ -23,18 +23,30 @@ const maxStored = 100
 const dedupeWindow = 30 * time.Second
 
 // Notification is one entry in the notification center: this target (a
-// coder or shell) has news. URL is the page the entry links to. Title, when
-// set, replaces the generic "Something new in ..." wording everywhere the
-// entry surfaces, system targets like the backup use it for a real sentence.
+// coder or shell) has news. URL is the page the entry links to. Every entry
+// is written as two lines: Title says what happened, Detail says which one it
+// happened in. Title, when set, replaces the generic "Something new in ..."
+// wording everywhere the entry surfaces; an entry without one is a target
+// nobody could resolve or an entry from an older build, and falls back to it.
 type Notification struct {
-	ID         string    `json:"id"`
-	TargetID   string    `json:"targetId"`
-	TargetName string    `json:"targetName"`
-	Title      string    `json:"title,omitempty"`
-	Project    string    `json:"project"`
-	URL        string    `json:"url"`
-	CreatedAt  time.Time `json:"createdAt"`
-	Read       bool      `json:"read"`
+	ID         string `json:"id"`
+	TargetID   string `json:"targetId"`
+	TargetName string `json:"targetName"`
+	Title      string `json:"title,omitempty"`
+	// Detail is the line below the title, shown where the project would
+	// stand (list, toast, push body). A title that only says that something
+	// happened leaves the reader guessing what about, so this names it: the
+	// coder, shell, job or backup in quotes plus its project, or the first
+	// words of the assistant's answer.
+	Detail    string    `json:"detail,omitempty"`
+	Project   string    `json:"project"`
+	URL       string    `json:"url"`
+	CreatedAt time.Time `json:"createdAt"`
+	Read      bool      `json:"read"`
+	// Silent marks an entry that was written read from the start, see
+	// SetSilent. It is what lets the next silent entry of the same target
+	// replace this one without touching the lines a person really read.
+	Silent bool `json:"silent,omitempty"`
 }
 
 // BackupTarget is the well known target id for finished backup jobs. It is
@@ -46,6 +58,7 @@ const BackupTarget = "backup"
 type TargetInfo struct {
 	Name    string
 	Title   string
+	Detail  string
 	Project string
 	URL     string
 }
@@ -56,7 +69,8 @@ type Resolver func(targetID string) TargetInfo
 // Event is one fan-out message to SSE subscribers. Targets carries the ids
 // of every target with an unread entry, so pages can mark target lists
 // live. Added is set only when a new unread notification was ingested (the
-// toast trigger); events without it follow read-state changes.
+// toast trigger); events without it follow a read-state change or an entry
+// that was written read.
 type Event struct {
 	Unread  int           `json:"unread"`
 	Targets []string      `json:"targets"`
@@ -69,6 +83,10 @@ type Service struct {
 	path     string
 	resolver Resolver
 	now      func() time.Time
+	// signal hears every ingested signal, see SetSignal.
+	signal func(targetID string)
+	// silent decides whether a target's news is written quietly, see SetSilent.
+	silent func(targetID string) bool
 
 	mu   sync.Mutex
 	subs map[chan Event]struct{}
@@ -85,10 +103,43 @@ func NewService(path string, resolver Resolver) *Service {
 	}
 }
 
+// SetSignal installs a listener that hears every signal this service ingests,
+// before anything is collapsed or deduplicated. It exists because the entries
+// here are for a person, with their read state and their quiet window, while
+// another consumer needs the raw fact that a target reported. This service does
+// not know what the listener does with it and must not: it classifies nothing.
+// Set it before the pollers start.
+func (s *Service) SetSignal(listen func(targetID string)) { s.signal = listen }
+
+// SetSilent installs the predicate that decides whether a target's news is
+// written read from the start. It exists for the one case where somebody else
+// is already looking at that target: the assistant steers a job on it, it looks
+// into that coder when it reports, and its report is the message that reaches
+// the user. Ringing for the coder as well would say the same thing twice, and
+// the raw one would say it first and with less to say. The entry is still
+// written so the history stays complete, and it surfaces nowhere: it counts as
+// no unread, marks neither coder nor project, and raises no toast, no jingle
+// and no push.
+//
+// Like SetSignal it is set after construction, because this service classifies
+// nothing and must not learn what a job is. Set it before the pollers start.
+func (s *Service) SetSilent(quiet func(targetID string) bool) { s.silent = quiet }
+
+// Signal is one ingested signal: the notification for the person, and the raw
+// fact for whoever else listens. Every source of news goes through here, the
+// inbox files a coder's hooks drop and the bell a pane rings.
+func (s *Service) Signal(targetID string) {
+	s.Add(targetID)
+	if s.signal != nil {
+		s.signal(targetID)
+	}
+}
+
 // Add ingests one event, collapses older unread entries of the same target,
 // and notifies subscribers. A target therefore holds at most one unread
-// entry, no matter how many signals fired. Entries always start unread; the
-// client marks them read when the target's page is visibly open.
+// entry, no matter how many signals fired. Entries start unread unless the
+// silent predicate claims the target; the client marks them read when the
+// target's page is visibly open.
 func (s *Service) Add(targetID string) {
 	info := TargetInfo{}
 	if s.resolver != nil {
@@ -102,27 +153,42 @@ func (s *Service) Add(targetID string) {
 	if url == "" {
 		url = "/coders/" + targetID
 	}
+	silent := s.silent != nil && s.silent(targetID)
 	n := Notification{
 		ID:         statefile.NewID(),
 		TargetID:   targetID,
 		TargetName: name,
 		Title:      info.Title,
+		Detail:     info.Detail,
 		Project:    info.Project,
 		URL:        url,
 		CreatedAt:  s.now().UTC(),
+		Read:       silent,
+		Silent:     silent,
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.load()
-	for _, existing := range list {
-		if !existing.Read && existing.TargetID == targetID && s.now().UTC().Sub(existing.CreatedAt) < dedupeWindow {
-			return
+	if !silent {
+		for _, existing := range list {
+			if !existing.Read && existing.TargetID == targetID && s.now().UTC().Sub(existing.CreatedAt) < dedupeWindow {
+				return
+			}
 		}
 	}
 	kept := list[:0]
 	for _, existing := range list {
-		if !existing.Read && existing.TargetID == targetID {
+		if silent {
+			// A silent entry is history and nothing else, so it leaves the
+			// lines a person still has to read alone and replaces only the
+			// target's previous silent one. Without that a steered coder that
+			// reports ten times would write ten read lines and push real
+			// history off the end of the list.
+			if existing.Silent && existing.TargetID == targetID {
+				continue
+			}
+		} else if !existing.Read && existing.TargetID == targetID {
 			continue
 		}
 		kept = append(kept, existing)
@@ -132,7 +198,12 @@ func (s *Service) Add(targetID string) {
 		list = list[:maxStored]
 	}
 	s.save(list)
-	ev := Event{Unread: countUnread(list), Targets: unreadIDs(list), Added: &n}
+	ev := Event{Unread: countUnread(list), Targets: unreadIDs(list)}
+	if !silent {
+		// Added is the toast trigger on the client and what the push channels
+		// deliver on, so the silent entry carries none: it only joins the list.
+		ev.Added = &n
+	}
 	s.publishLocked(ev)
 }
 

@@ -1,0 +1,205 @@
+#!/bin/bash
+# Fake copilot for the chats e2e runner: emits the documented JSONL event shape,
+# persists a minimal session-state directory so the cockpit can resume it, and
+# never spends a premium request.
+set -u
+
+print_mode=0
+prompt=""
+task=""
+session=""
+resume=0
+tools="__unset__"
+name=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help)
+      cat <<'HELP'
+Usage: copilot [options] [command]
+Options:
+  -p, --prompt <text>
+  --output-format <format>
+  --session-id <id>
+  -r, --resume[=value]
+  --available-tools[=tools...]
+  --allow-all-tools
+  --allow-all-urls
+  --disable-builtin-mcps
+  --disallow-temp-dir
+  --log-level <level>
+  --no-color
+  -n, --name <name>
+HELP
+      exit 0
+      ;;
+    -p|--prompt) prompt="${2:-}"; print_mode=1; shift 2 ;;
+    --session-id) session="$2"; shift 2 ;;
+    -r|--resume) session="${2:-}"; resume=1; shift 2 ;;
+    --resume=*) session="${1#--resume=}"; resume=1; shift ;;
+    --available-tools=*) tools="${1#--available-tools=}"; shift ;;
+    --available-tools) tools="${2:-}"; shift 2 ;;
+    -n|--name) name="$2"; shift 2 ;;
+    -i|--interactive) task="${2:-}"; shift 2 ;;
+    --output-format|--log-level) shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+dir="$HOME/.copilot/session-state/$session"
+
+if [ "$print_mode" = "0" ]; then
+  echo "fake copilot interactive"
+  # A task arrives in the argv, never typed into the pane. Printing it is how a
+  # test can see that it survived the start.
+  [ -n "$task" ] && echo "task: $task"
+  [ -f "$dir/events.jsonl" ] && sed 's/^/> /' "$dir/events.jsonl"
+  echo "resumed $session"
+  while true; do sleep 3600; done
+fi
+
+emit() { printf '%s\n' "$1"; }
+
+# restart_server kills the cockpit that started this turn and puts it back the
+# way it was. A turn is a detached process writing into a file of its own, so it
+# keeps running while its server dies; the server's command line, environment
+# and working directory are readable through /proc, which is what makes the
+# restart reproducible from inside a turn. The direct parent is the turn host
+# holding the turn's lock, killing that one would end the turn itself, so the
+# walk climbs the chain until it stands on the serve process. Same function as
+# in the claude fake: which coder a conversation runs on is not the runner's
+# choice, so both have to be able to do this.
+restart_server() {
+  local pid=$PPID parent=""
+  while [ -n "$pid" ] && [ "$pid" != "1" ] && [ -r "/proc/$pid/cmdline" ]; do
+    if tr '\0' '\n' < "/proc/$pid/cmdline" | grep -qx "serve"; then parent=$pid; break; fi
+    pid=$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null)
+  done
+  [ -n "$parent" ] || return 0
+  local cwd
+  cwd=$(readlink "/proc/$parent/cwd") || return 0
+  local argv=() arg
+  while IFS= read -r -d '' arg; do argv+=("$arg"); done < "/proc/$parent/cmdline"
+  [ ${#argv[@]} -gt 0 ] || return 0
+  kill "$parent" 2>/dev/null || return 0
+  local waited=0
+  while kill -0 "$parent" 2>/dev/null && [ $waited -lt 100 ]; do sleep 0.1; waited=$((waited+1)); done
+  (
+    cd "$cwd" || exit 0
+    # The new server must not inherit this turn's descriptors: the turn's lock
+    # travels down from the host as an open fd, and a server holding it would
+    # keep the turn alive forever. A server started by cron inherits nothing
+    # either, so closing everything is also the honest restart.
+    local fds fd
+    fds=$(ls /proc/self/fd)
+    for fd in $fds; do
+      case "$fd" in ''|*[!0-9]*) continue ;; esac
+      [ "$fd" -le 2 ] && continue
+      eval "exec $fd>&-" 2>/dev/null
+    done
+    setsid "${argv[@]}" >>"${DC_RESTART_LOG:-/tmp/dc-e2e-restart.log}" 2>&1 &
+  )
+}
+
+emit '{"type":"session.mcp_servers_loaded","data":{"servers":[]},"ephemeral":true}'
+emit '{"type":"assistant.turn_start","data":{"turnId":"0"}}'
+
+answer="Fake copilot answer."
+case "$prompt" in
+  *SLOW*)
+    # A wake check answers under a contract that covers its whole answer, so the
+    # partial line only goes out for a chat turn: prefixed to a verdict it would
+    # be a different verdict.
+    case "$prompt" in
+      *"you are steering"*) : ;;
+      *) emit '{"type":"assistant.message_delta","data":{"messageId":"m1","deltaContent":"working"}}' ;;
+    esac
+    sleep 120
+    ;;
+  *FAIL*)
+    emit "{\"type\":\"result\",\"sessionId\":\"$session\",\"exitCode\":2}"
+    exit 0
+    ;;
+  *TOOL*)
+    emit '{"type":"tool.execution_start","data":{"toolName":"apply_patch","arguments":{}}}'
+    sleep 0.3
+    answer="I looked at the project."
+    ;;
+  *RESTART_CHAT*)
+    # Half the answer, then the server that started this turn is killed and
+    # started again. The turn keeps writing, which is the whole point.
+    emit '{"type":"assistant.message_delta","data":{"messageId":"m1","deltaContent":"before the restart "}}'
+    restart_server
+    sleep 3
+    answer="and after it"
+    ;;
+  *MAGIC*) answer="FLUGHAFEN" ;;
+esac
+
+# A check on a watched job. The criterion travels in the prompt, so the test
+# steers the verdict with it.
+case "$prompt" in
+  *"you are steering"*)
+    case "$prompt" in
+      *WAKE_DONE*)    answer="DONE: the job is finished, the file is there." ;;
+      *WAKE_BLOCKED*) answer="BLOCKED: it needs a decision from you." ;;
+      *WAKE_NOTHING*) answer="NOTHING" ;;
+      # The check survives a restart of the cockpit as well: it is killed
+      # halfway through and its verdict still reaches the job.
+      *WAKE_RESTART*)
+        restart_server
+        sleep 3
+        answer="DONE: the job is finished, checked across a restart."
+        ;;
+      # Thinking out loud before the verdict. Everything before it has to be
+      # gone by the time the user reads the note.
+      *WAKE_PREAMBLE*) answer="I will check the actual state rather than trust the summary.BLOCKED: it needs a decision from you." ;;
+      # A coder waiting in a dialog looks like a coder whose turn is over, so
+      # the check is the one that finds the dialog and presses the keys. It
+      # reports WORKING, because the coder is going again: pressing keys is
+      # input like any other, so the standstill rule is satisfied by it.
+      *WAKE_ANSWER*)
+        # The prompt spells the key-press command out with the executable and the
+        # directories of this instance, so the fake runs what it was told to run
+        # instead of guessing a cockpit on PATH.
+        press=$(printf '%s' "$prompt" | grep -o '`[^`]*coder-send-control-keys [^`]*`' | head -1 | tr -d '`' | sed 's/<key>\.\.\.//')
+        [ -n "$press" ] && eval "$press arrow-down enter" >/dev/null 2>&1
+        answer="WORKING: pressed enter on \"Yes, run them\", it is running the tests."
+        ;;
+      # The other honest answer to a coder that stands still: steer it, then
+      # report WORKING. The terminal id is read out of the prompt and the
+      # credential out of the environment, so this takes the route the prompt
+      # describes.
+      *WAKE_STEER*)
+        term=$(printf '%s' "$prompt" | sed -n 's/^- terminal: //p' | head -1)
+        [ -n "$term" ] && dev-cockpit assistant coder-send-prompt "$term" "keep going" >/dev/null 2>&1
+        answer="WORKING: nudged it."
+        ;;
+      *)              answer="WORKING: still going." ;;
+    esac
+    ;;
+esac
+
+esc=$(printf '%s' "$answer" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])')
+emit "{\"type\":\"assistant.message_delta\",\"data\":{\"messageId\":\"m1\",\"deltaContent\":\"$esc\"}}"
+emit "{\"type\":\"assistant.message\",\"data\":{\"messageId\":\"m1\",\"content\":\"$esc\",\"toolRequests\":[]}}"
+
+mkdir -p "$dir"
+printf 'id: %s\ncwd: %s\nclient_name: github/cli\nname: %s\nuser_named: false\nsummary_count: 0\ncreated_at: %s\nupdated_at: %s\n' \
+  "$session" "$PWD" "${name:-$prompt}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$dir/workspace.yaml"
+printf '{"prompt":"%s"}\n' "$(printf '%s' "$prompt" | tr -d '"\\')" >> "$dir/events.jsonl"
+
+# copilot keeps how full its context stands out of its output entirely: it records
+# it in the session's event log when the run shuts down, together with the model
+# that answered. A turn is one run, so this lands once per turn and the cockpit
+# reads the newest one. 136 of the 200 thousand a claude model holds, the same 68
+# percent the claude fake reports, and CONTEXT_HIGH pushes it to 96. A check's
+# session is its own, so its number is its own and must never reach the ring.
+context_tokens=136000
+case "$prompt" in
+  *"you are steering"*) context_tokens=199000 ;;
+  *CONTEXT_HIGH*) context_tokens=192000 ;;
+esac
+printf '{"type":"session.shutdown","data":{"shutdownType":"routine","currentModel":"claude-sonnet-5","currentTokens":%s,"systemTokens":17480,"toolDefinitionsTokens":12641}}\n' "$context_tokens" >> "$dir/events.jsonl"
+
+emit "{\"type\":\"result\",\"sessionId\":\"$session\",\"exitCode\":0}"

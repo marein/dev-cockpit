@@ -162,6 +162,20 @@ L.runFeature("LIVE-UPDATES", async ({ engine, browser, page, run, bag }) => {
       for (const url of otherShells) await L.deleteShell(pageB, url).catch(() => {});
       await L.deleteProject(pageB, other).catch(() => {});
     });
+
+    await run("the projects page adds and removes projects live", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      assert((await L.waitUpgraded(page, ["dc-project-list"], 8000)).length === 0, "project list not upgraded");
+      const remote = `zzlive-project-${tag}`;
+      const create = await postAs(pageB, "/projects", { project_name: remote });
+      assert(create.ok, `project create POST failed: ${create.status}`);
+      await page.waitForSelector(`#project-${remote}`, { timeout: 8000 });
+      assert(page.url().endsWith("/projects"), `client A navigated away: ${page.url()}`);
+
+      const remove = await postAs(pageB, "/projects/delete", { project: remote });
+      assert(remove.ok, `project delete POST failed: ${remove.status}`);
+      await page.waitForSelector(`#project-${remote}`, { state: "detached", timeout: 8000 });
+    });
   } finally {
     if (pageB) await pageB.close().catch(() => {});
     if (ctxB) await ctxB.close().catch(() => {});

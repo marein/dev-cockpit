@@ -4,8 +4,9 @@ import { onServerEvent } from "@dc/events";
 import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import { applyFold } from "@dc/fold";
-import { ensureOk, getText, postForm, postJSON } from "@dc/http";
+import { ensureOk, getText, landingURL, postForm, postJSON } from "@dc/http";
 import { notifyError, notifySuccess } from "@dc/toast";
+import { releaseCoder, steerCoder } from "@dc/steer";
 
 const TAB_KEY = "dc-quicknav-tab";
 const FOLD_LIMIT = 5;
@@ -73,7 +74,7 @@ class QuickNav extends HTMLElement {
         event.stopPropagation();
         return;
       }
-      if (this.openSwipe && !event.target.closest("[data-qn-delete], [data-qn-purge], [data-qn-ungroup], [data-qn-remove], [data-qn-rename]")) {
+      if (this.openSwipe && !event.target.closest("[data-qn-delete], [data-qn-purge], [data-qn-ungroup], [data-qn-remove], [data-qn-rename], [data-qn-steer], [data-qn-release]")) {
         this.closeSwipe();
         event.preventDefault();
         event.stopPropagation();
@@ -710,7 +711,7 @@ class QuickNav extends HTMLElement {
       if (current) {
         this.confirming = false;
         if (window.bootstrap) window.bootstrap.Dropdown.getOrCreateInstance(this.toggle).hide();
-        const url = neighborUrl || response?.url || "/projects";
+        const url = neighborUrl || (response ? await landingURL(response) : "") || "/projects";
         if (window.app?.navigate) window.app.navigate(url);
         else window.location.href = url;
       }
@@ -763,6 +764,36 @@ class QuickNav extends HTMLElement {
       if (this.opened) this.refresh();
     } catch (error) {
       notifyError(error.message);
+    } finally {
+      this.confirming = false;
+      if (this.dirty && this.opened) this.refresh();
+    }
+  }
+
+  async steerTarget(row, prefill) {
+    if (this.confirming || !row) return;
+    const item = this.swipeAnchor(row);
+    if (!item) return;
+    this.confirming = true;
+    try {
+      await steerCoder({ terminal: item.dataset.tabId, name: item.dataset.tabName, prefill });
+      this.closeSwipe();
+      if (this.opened) this.refresh();
+    } finally {
+      this.confirming = false;
+      if (this.dirty && this.opened) this.refresh();
+    }
+  }
+
+  async releaseTarget(row) {
+    if (this.confirming || !row) return;
+    const item = this.swipeAnchor(row);
+    if (!item) return;
+    this.confirming = true;
+    try {
+      await releaseCoder({ terminal: item.dataset.tabId, name: item.dataset.tabName });
+      this.closeSwipe();
+      if (this.opened) this.refresh();
     } finally {
       this.confirming = false;
       if (this.dirty && this.opened) this.refresh();
@@ -862,6 +893,20 @@ class QuickNav extends HTMLElement {
       event.preventDefault();
       event.stopPropagation();
       void this.removeTarget(remove.closest(".quicknav-swipe-row"));
+      return;
+    }
+    const steer = event.target.closest("[data-qn-steer]");
+    if (steer) {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.steerTarget(steer.closest(".quicknav-swipe-row"), steer.dataset.steerPrefill || "");
+      return;
+    }
+    const release = event.target.closest("[data-qn-release]");
+    if (release) {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.releaseTarget(release.closest(".quicknav-swipe-row"));
       return;
     }
     const tab = event.target.closest("[data-quicknav-tab]");

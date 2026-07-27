@@ -1,5 +1,5 @@
 const L = require("./lib");
-const { assert, sleep, confirmSwal } = L;
+const { assert, sleep, confirmSwal, BASE } = L;
 
 // Shells: plain throwaway terminals, the safe target. Custom elements terminal-attach,
 // terminal-input, terminal-setting-select, dc-inline-rename. The shared
@@ -59,6 +59,29 @@ L.runFeature("SHELLS", async ({ page, run }) => {
       assert(text.includes("Terminal has ended"), `unexpected toast: ${text}`);
       assert((await page.locator(".swal2-toast .swal2-info").count()) === 1, "ended toast is not info");
       assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "ended toast rendered as error");
+    });
+
+    // A shell leaves nothing behind, so nothing is offered: the route knows it
+    // was asked about a shell and says that much, and never a resume, which
+    // only a coder session has.
+    await run("input to a shell that is not running says so and offers nothing", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      const answer = await page.evaluate(async (t) => {
+        const res = await fetch(`/shells/${t}/input`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content,
+          },
+          body: JSON.stringify({ items: [{ text: "x" }] }),
+        });
+        return { status: res.status, body: await res.text() };
+      }, `zznone${tag.slice(-4)}`);
+      assert(answer.status === 410, `a shell that is gone answered ${answer.status}: ${answer.body}`);
+      assert(/shell is not running/i.test(answer.body), `the answer does not name the shell: ${answer.body}`);
+      assert(/cannot be resumed/i.test(answer.body), `the answer does not say nothing can be brought back: ${answer.body}`);
+      assert(!/coder-resume/.test(answer.body), `browser answer carries a CLI command: ${answer.body}`);
     });
   } finally {
     if (shellUrl) await L.deleteShell(page, shellUrl).catch(() => {});

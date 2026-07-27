@@ -8,11 +8,27 @@ const { assert, sleep, BASE } = L;
 // removed element sets it up exactly once. The CanvasAddon stacks several <canvas>
 // layers per terminal, so re-init is checked against the baseline layer count.
 
+// A throwaway instance built from a dev tree offers an update on the first
+// visit of a fresh context, and that modal swallows the first click of the
+// seed. Deny it, never confirm.
+async function dismissUpdate(page) {
+  const cancel = page.locator(".swal2-cancel");
+  try {
+    await cancel.waitFor({ state: "visible", timeout: 2500 });
+  } catch {
+    return;
+  }
+  await cancel.click();
+  await page.waitForSelector(".swal2-container", { state: "detached", timeout: 5000 });
+}
+
 L.runFeature("FRONTEND", async ({ page, run, bag }) => {
   const tag = `fe-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   let shellUrl = null;
   try {
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
     await L.createProject(page, project);
     // The scratch shell exists up front so the attach steps below run against a
     // session this runner owns (self-contained run).

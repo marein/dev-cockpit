@@ -136,6 +136,9 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       const deadline = Date.now() + 10000;
       while (Date.now() < deadline && !hookHits.some((h) => h.includes("Test notification"))) await sleep(250);
       assert(hookHits.some((h) => h.includes("Test notification")), `webhook payloads: ${JSON.stringify(hookHits)}`);
+      // Both test buttons sit on this page, so the message says which one rang.
+      const test = hookHits.map((h) => JSON.parse(h)).find((h) => h.title === "Test notification.");
+      assert(test && test.body === "Webhook works.", `the test message does not name the channel: ${JSON.stringify(hookHits)}`);
     });
 
     await run("settings: duplicate webhook is rejected with a flash", async () => {
@@ -227,11 +230,15 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
         const badge = document.querySelector(".quicknav-toggle [data-notify-count]");
         return badge && !badge.classList.contains("d-none") && parseInt(badge.textContent, 10) >= 1;
       }, null, { timeout: 6000 });
+      // The quick nav shows below lg only, the assistant's corner button
+      // replaces it on a desktop, so opening it needs a narrower window.
+      await page.setViewportSize({ width: 960, height: 900 });
       await page.click(".quicknav-toggle");
       // News shows as the ringing coder/shell icon now (dc-term-icon.news), not a
       // separate status dot; the project-level dot above stays a status dot.
       await page.waitForSelector(`[data-quicknav-pane="active"] [data-notify-target="${coderId}"].news`, { state: "attached", timeout: 6000 });
       await page.keyboard.press("Escape");
+      await page.setViewportSize({ width: 1360, height: 900 });
     });
 
     await run("quick nav badge and title counter survive a boosted navigation", async () => {
@@ -343,8 +350,9 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       const deadline = Date.now() + 12000;
       while (Date.now() < deadline && !hookHits.some((h) => h.includes(coderName))) await sleep(250);
       assert(hookHits.some((h) => h.includes(coderName)), `no webhook hit for unread news: ${JSON.stringify(hookHits)}`);
-      const payload = hookHits.find((h) => h.includes(coderName));
-      assert(payload.includes("Something new in") && payload.includes(project), `payload: ${payload}`);
+      const payload = JSON.parse(hookHits.find((h) => h.includes(coderName)));
+      assert(payload.title === "Coder has news.", `payload title: ${JSON.stringify(payload)}`);
+      assert(payload.body === `"${coderName}" - ${project}`, `payload body: ${JSON.stringify(payload)}`);
     });
 
     await run("a visible but unfocused coder page does not auto-read, news toasts and pushes, focus reconciles", async () => {

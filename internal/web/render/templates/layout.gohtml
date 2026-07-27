@@ -37,12 +37,19 @@
       "@dc/contextmenu": "{{asset "/js/dc/contextmenu.js"}}",
       "@dc/http": "{{asset "/js/dc/http.js"}}",
       "@dc/jingle": "{{asset "/js/dc/jingle.js"}}",
+      "@dc/steer": "{{asset "/js/dc/steer.js"}}",
       "dc-quicknav": "{{asset "/js/components/quicknav.js"}}",
       "dc-notifications": "{{asset "/js/components/notifications.js"}}",
       "dc-update-check": "{{asset "/js/components/update-check.js"}}",
+      "dc-steered-mark": "{{asset "/js/components/steered-mark.js"}}",
+      "dc-steer-badge": "{{asset "/js/components/steer-badge.js"}}",
       "dc-project-list": "{{asset "/js/components/project-list.js"}}",
+      "dc-assistant": "{{asset "/js/components/assistant.js"}}",
+      "dc-assistant-list": "{{asset "/js/components/assistant-list.js"}}",
+      "dc-assistant-panel": "{{asset "/js/components/assistant-panel.js"}}",
       "dc-coder-select": "{{asset "/js/components/coder-select.js"}}",
       "dc-inline-rename": "{{asset "/js/components/inline-rename.js"}}",
+      "dc-time": "{{asset "/js/components/dc-time.js"}}",
       "dc-editor": "{{asset "/js/components/editor.js"}}",
       "dc-jingle-picker": "{{asset "/js/components/jingle-picker.js"}}",
       "dc-notify-volume": "{{asset "/js/components/notify-volume.js"}}",
@@ -160,6 +167,11 @@
           <button type="button" class="js-update-flag d-none btn btn-icon btn-outline-primary" data-update-open aria-label="Update available">
             <i class="ti ti-arrow-up-circle"></i>
           </button>
+          {{if .User}}
+          <a href="/assistant" class="btn btn-icon btn-ghost-purple" aria-label="Assistant" title="Assistant" data-assistant-link>
+            <span class="dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}}><i class="ti ti-sparkles"></i></span>
+          </a>
+          {{end}}
           {{if .User}}<dc-notifications>{{template "notify_bell.gohtml" .}}</dc-notifications>{{else}}
           <span class="navbar-toggler invisible" aria-hidden="true" tabindex="-1">
             <span class="navbar-toggler-icon"></span>
@@ -227,6 +239,9 @@
                   <button type="button" class="js-update-flag d-none btn btn-sm btn-outline-primary" data-update-open>
                     <i class="ti ti-arrow-up-circle me-1"></i><span class="nav-link-title">Update available</span>
                   </button>
+                  <a href="/assistant" class="btn btn-icon btn-ghost-purple" aria-label="Assistant" title="Assistant" data-assistant-link>
+                    <span class="dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}}><i class="ti ti-sparkles"></i></span>
+                  </a>
                   <dc-notifications>{{template "notify_bell.gohtml" .}}</dc-notifications>
                   <form method="post" action="/logout" data-no-pe>
                     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -277,5 +292,22 @@
   {{template "quicknav.gohtml" .}}
   {{if and .User (not .HasTabStrip)}}{{template "terminal_tabs_switcher.gohtml" .}}{{end}}
   </div>
+  {{if .User}}
+  <!-- The assistant overlay sits next to the swapped page region, not in it, so
+       an open surface, a streaming answer and the words in the composer survive
+       every boosted navigation untouched. From lg up it docks as a side panel
+       and its corner button replaces the quick nav; below that it covers the
+       screen. The interior is fetched on open. Nothing here is re-rendered per
+       page, so the element keeps the corner's news target in sync itself. -->
+  <dc-assistant-panel class="dc-assistant-panel" panel-url="/assistant/panel">
+    <button type="button" class="btn btn-icon dc-assistant-corner" aria-label="Assistant" title="Assistant" data-assistant-corner>
+      <span class="dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}}><i class="ti ti-sparkles"></i></span>
+    </button>
+    <div class="dc-assistant-panel-card" hidden>
+      <div class="dc-assistant-resize" data-assistant-resize aria-hidden="true"></div>
+      <div class="dc-assistant-panel-body" data-panel-body></div>
+    </div>
+  </dc-assistant-panel>
+  {{end}}
 </body>
 </html>{{end}}

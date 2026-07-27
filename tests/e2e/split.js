@@ -673,6 +673,35 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await page.waitForURL((u) => !/\/splits\//.test(u.toString()), { timeout: 15000 });
       await sleep(600);
     });
+
+    // Close all has no neighbour to fall back to, it goes where the last POST
+    // says, and only a coder member answers that POST with JSON.
+    await run("close all on a split holding a coder lands on the projects page, never on the POST url", async () => {
+      const coderUrl = await L.createSession(page, project, `spl-${tag.slice(-5)}`);
+      const coderId = new URL(coderUrl).pathname.split("/").pop();
+      const shellUrl = await L.createShell(page, project);
+      shellUrls.push(shellUrl);
+      const shellId = new URL(shellUrl).pathname.split("/").pop();
+      await page.waitForSelector(tabSel(coderId), { state: "attached", timeout: 8000 });
+      const group = await groupVia([shellId, coderId]);
+      await page.goto(`${L.BASE}${group.url}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 15000 });
+      await page.click("[data-split-close]");
+      await confirmSwal(page);
+      await page.waitForURL((u) => !/\/splits\//.test(u.toString()), { timeout: 15000 });
+      assert(!/\/(stop|delete)$/.test(page.url()), `landed on the POST url: ${page.url()}`);
+      await page.waitForSelector(`#project-${project}`, { state: "attached", timeout: 10000 });
+      const body = await page.textContent("body");
+      assert(!/Method not allowed/i.test(body), "close all landed on an error page");
+      assert(!(await page.$(tabSel(coderId))), "the coder tab survived close all");
+      assert(!(await page.$(tabSel(shellId))), "the shell tab survived close all");
+      shellUrls.pop();
+      // The coder was stopped, not dropped: take its conversation with it.
+      await page.evaluate(async (id) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/coders/${id}/delete`, { method: "POST", headers: { "X-CSRF-Token": token, Accept: "application/json" } });
+      }, coderId);
+    });
   } finally {
     for (const url of shellUrls) await L.deleteShell(page, url).catch(() => {});
     await L.deleteProject(page, project).catch(() => {});
