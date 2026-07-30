@@ -69,6 +69,27 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await sleep(600);
     });
 
+    // A paste starting with a dash used to end in tmux's own flag parsing
+    // ("command set-buffer: unknown flag -d"), the buffer command separates the
+    // text with -- now.
+    await run("desktop: a paste starting with a dash lands on the prompt", async () => {
+      const marker = `-dxdebug.idekey=DCP${tag.slice(-4)}`;
+      await page.click("#terminal .xterm-screen");
+      const reqP = page.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
+      await page.evaluate((text) => {
+        const area = document.querySelector(".xterm-helper-textarea");
+        const data = new DataTransfer();
+        data.setData("text/plain", text);
+        area.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+      }, marker);
+      await reqP;
+      let text = "";
+      for (let i = 0; i < 12; i++) { text = await page.evaluate(() => { const m = document.querySelector(".attach-selection"); return m ? m.textContent || "" : ""; }); if (text.includes(marker)) break; await sleep(400); }
+      assert(text.includes(marker), `dash paste never reached the pane (len ${text.length})`);
+      await page.keyboard.press("Control+C");
+      await sleep(600);
+    });
+
     await run("desktop: Shift+Enter posts the shift-enter control, shells run the command like Enter", async () => {
       const marker = `TSE${tag.slice(-4)}`;
       await page.click("#terminal .xterm-screen");
@@ -307,6 +328,10 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
     // ---------------- mobile (coarse pointer) ----------------
     const mp = await mobilePage();
     await mp.goto(shellUrl, { waitUntil: "domcontentloaded" });
+    // The mobile context has its own localStorage, so an instance that found a
+    // newer release shows the update dialog here again; its backdrop swallows
+    // every tap on the toolbar below.
+    await L.dismissUpdate(mp);
     await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
     await sleep(1200);
 
@@ -331,6 +356,24 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       let text = "";
       for (let i = 0; i < 12; i++) { text = await mp.evaluate(() => { const m = document.querySelector(".attach-selection"); return m ? m.textContent || "" : ""; }); if (text.includes(marker)) break; await sleep(400); }
       assert(text.includes(marker), `mirror did not echo (len ${text.length})`);
+    });
+
+    // Same tmux flag parsing trap on the typing path: send-keys -l used to hand
+    // the text over as the first operand. insertText posts the whole string in
+    // one text payload (per keystroke posts would each carry a single dash,
+    // which tmux still takes as text).
+    await run("mobile: typed text starting with a dash reaches the pane", async () => {
+      const marker = `-dxdebug.idekey=MOD${tag.slice(-4)}`;
+      await mp.evaluate(() => document.getElementById("terminal-cursor-input").focus());
+      const reqP = mp.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
+      await mp.keyboard.insertText(marker);
+      await reqP;
+      let text = "";
+      for (let i = 0; i < 12; i++) { text = await mp.evaluate(() => { const m = document.querySelector(".attach-selection"); return m ? m.textContent || "" : ""; }); if (text.includes(marker)) break; await sleep(400); }
+      assert(text.includes(marker), `dash text never reached the pane (len ${text.length})`);
+      // Runs into a command-not-found, which clears the prompt for the next check.
+      await mp.keyboard.press("Enter");
+      await sleep(600);
     });
 
     await run("mobile: control button (enter) posts a control", async () => {

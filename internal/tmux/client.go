@@ -66,6 +66,34 @@ type Size struct {
 	Rows int
 }
 
+// endOfOptions terminates tmux's own flag parsing, so the operand behind it is
+// taken as text even when it starts with a dash. tmux stops parsing flags at
+// the first operand, so only that first position is at risk, and that is
+// exactly where user text lands (pasting "-dxdebug.idekey=PHPSTORM" without it
+// fails with "command set-buffer: unknown flag -d"). Values behind a flag like
+// -t or -b are safe, tmux takes the next argument whatever it looks like.
+const endOfOptions = "--"
+
+// sendKeyArgs builds the argv for one named key.
+func sendKeyArgs(name, key string) []string {
+	return []string{"send-keys", "-t", Target(name), endOfOptions, key}
+}
+
+// sendLiteralArgs builds the argv for literal text without key interpretation.
+func sendLiteralArgs(name, text string) []string {
+	return []string{"send-keys", "-t", Target(name), "-l", endOfOptions, text}
+}
+
+// setBufferArgs builds the argv that fills a named tmux buffer with text.
+func setBufferArgs(buffer, text string) []string {
+	return []string{"set-buffer", "-b", buffer, endOfOptions, text}
+}
+
+// renameArgs builds the argv that renames a session.
+func renameArgs(oldName, newName string) []string {
+	return []string{"rename-session", "-t", oldName, endOfOptions, newName}
+}
+
 // Client wraps the tmux CLI.
 type Client struct{}
 
@@ -332,7 +360,7 @@ func (c *Client) Rename(oldName, newName string) error {
 	if oldName == newName {
 		return nil
 	}
-	return clirun.Check("tmux", "rename-session", "-t", oldName, newName)
+	return clirun.Check("tmux", renameArgs(oldName, newName)...)
 }
 
 // Kill terminates a session.
@@ -342,7 +370,7 @@ func (c *Client) Kill(name string) error {
 
 // SendKey sends one named key (e.g. "Enter", "Up").
 func (c *Client) SendKey(name, key string) error {
-	return clirun.Check("tmux", "send-keys", "-t", Target(name), key)
+	return clirun.Check("tmux", sendKeyArgs(name, key)...)
 }
 
 // SendLiteral sends literal text without key interpretation.
@@ -350,7 +378,7 @@ func (c *Client) SendLiteral(name, text string) error {
 	if text == "" {
 		return nil
 	}
-	return clirun.Check("tmux", "send-keys", "-t", Target(name), "-l", text)
+	return clirun.Check("tmux", sendLiteralArgs(name, text)...)
 }
 
 // sendRawChunk bounds how many byte values go into one send-keys call so a long
@@ -385,7 +413,7 @@ func (c *Client) PasteLiteral(name, text string) error {
 		return nil
 	}
 	buffer := fmt.Sprintf("dev-cockpit-%d", time.Now().UnixNano())
-	if err := clirun.Check("tmux", "set-buffer", "-b", buffer, text); err != nil {
+	if err := clirun.Check("tmux", setBufferArgs(buffer, text)...); err != nil {
 		return err
 	}
 	return clirun.Check("tmux", "paste-buffer", "-t", Target(name), "-b", buffer, "-d", "-p", "-r")
