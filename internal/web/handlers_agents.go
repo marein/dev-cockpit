@@ -17,10 +17,10 @@ type agentForm struct {
 func (s *Server) handleAgentsList(co *coder.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.HTML(http.StatusOK, "agents_list.gohtml", render.AgentsListData{
-			Page:     s.page(c, s.coderTitle(co, "Agents"), "coder"),
-			CoderNav: s.coderNav("agents", co),
-			Base:     s.coderBase(co),
-			Agents:   co.Coder().AgentRepository().List(),
+			Page:        s.page(c, s.coderTitle(co, "Agents"), "settings"),
+			SettingsNav: s.coderSettingsNav("coder", co, "agents"),
+			Base:        s.coderBase(co),
+			Agents:      co.Coder().AgentRepository().List(),
 		})
 	}
 }
@@ -29,7 +29,7 @@ func (s *Server) handleAgentNew(co *coder.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		base := s.coderBase(co)
 		c.HTML(http.StatusOK, "agents_form.gohtml", render.AgentsFormData{
-			Page:        s.page(c, "Create agent", "coder"),
+			Page:        s.page(c, "Create agent", "settings"),
 			Base:        base,
 			FormAction:  base + "/agents",
 			SubmitLabel: "Create agent",
@@ -48,7 +48,7 @@ func (s *Server) handleAgentEdit(co *coder.Manager) gin.HandlerFunc {
 			return
 		}
 		c.HTML(http.StatusOK, "agents_form.gohtml", render.AgentsFormData{
-			Page:         s.page(c, "Edit agent", "coder"),
+			Page:         s.page(c, "Edit agent", "settings"),
 			Base:         base,
 			IsEdit:       true,
 			OriginalID:   a.ID,

@@ -157,7 +157,6 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		CSRFToken:         token,
 		User:              user,
 		MultiCoder:        s.multiCoder(),
-		CoderHome:         s.coderBase(s.coders[0]) + "/instructions",
 		QuickNav:          s.quicknav(c),
 		Jingle:            s.selectedJingle(),
 		AssistantID:       assistantID,

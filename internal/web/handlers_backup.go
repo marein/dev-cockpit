@@ -47,8 +47,9 @@ func (s *Server) handleSettingsBackup(c *gin.Context) {
 	// reads itself, like opening an attach page does for a terminal.
 	s.notifier.MarkTargetRead(notify.BackupTarget)
 	data := render.SettingsBackupData{
-		Page:    s.page(c, "Settings", "settings"),
-		Backups: s.backupRows(),
+		Page:        s.page(c, "Settings", "settings"),
+		SettingsNav: s.settingsNav("backup"),
+		Backups:     s.backupRows(),
 	}
 	for _, e := range s.backups.ReviewList() {
 		data.Review = append(data.Review, render.BackupReviewRow{

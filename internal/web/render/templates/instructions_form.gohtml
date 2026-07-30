@@ -1,6 +1,6 @@
 {{define "instructions_form.gohtml"}}
 {{template "app_start.gohtml" .}}
-{{template "coder_page_start.gohtml" .CoderNav}}
+{{template "coder_page_start.gohtml" .}}
 <form method="post" action="{{.Base}}/instructions">
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <div class="mb-3">

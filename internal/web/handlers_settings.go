@@ -49,6 +49,7 @@ func (s *Server) handleSettings(c *gin.Context) {
 func (s *Server) handleSettingsGeneral(c *gin.Context) {
 	c.HTML(http.StatusOK, "settings_general.gohtml", render.SettingsGeneralData{
 		Page:           s.page(c, "Settings", "settings"),
+		SettingsNav:    s.settingsNav("general"),
 		RestoreEnabled: s.settings.Get(restore.SettingKey) == "on",
 		HistoryEnabled: s.settings.Get(shell.HistorySettingKey) == "on",
 	})
@@ -103,6 +104,7 @@ func (s *Server) handleSettingsNotifications(c *gin.Context) {
 	}
 	c.HTML(http.StatusOK, "settings_notifications.gohtml", render.SettingsNotificationsData{
 		Page:           s.page(c, "Settings", "settings"),
+		SettingsNav:    s.settingsNav("notifications"),
 		Jingles:        jingleOptions,
 		Selected:       s.selectedJingle(),
 		VAPIDPublicKey: s.pusher.WebPush.PublicKey(),

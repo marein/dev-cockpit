@@ -1,5 +1,31 @@
 package render
 
+// SettingsNav feeds the settings sidebar, the one navigation every settings
+// page shares (`settings_nav.gohtml`). Active names the entry to mark
+// ("general", "notifications", "coder", "backup"). The coder pages are
+// settings of one coder, so the sidebar picks the coder first and the page
+// then shows that coder's sections: with several coders active the entry
+// becomes one row per coder (Selected marks it), a single coder host keeps
+// one plain Coder row pointing at Home.
+type SettingsNav struct {
+	Active   string
+	Coders   []SettingsCoder
+	Selected string // coder id the page is scoped to, empty off the coder pages
+	Section  string // active coder section: "instructions" | "agents" | "skills"
+	Reviews  int    // open backup overwrite reviews, badge on the backup entry
+}
+
+// SettingsCoder is one coder row in the settings sidebar. URL keeps the
+// section the page is on, so switching the coder stays in the same section.
+type SettingsCoder struct {
+	ID  string
+	URL string
+}
+
+// Multi reports whether the coder entry splits into one row per coder. Single
+// coder hosts keep the plain Coder row, like every other adaptive surface.
+func (n SettingsNav) Multi() bool { return len(n.Coders) > 1 }
+
 // JingleOption is one selectable notification jingle. The IDs must match the
 // tune keys in the client's @dc/jingle module.
 type JingleOption struct {
@@ -29,6 +55,7 @@ type PushWebhook struct {
 // SettingsGeneralData feeds the general settings page.
 type SettingsGeneralData struct {
 	Page
+	SettingsNav    SettingsNav
 	RestoreEnabled bool
 	HistoryEnabled bool
 }
@@ -108,6 +135,7 @@ type BackupRow struct {
 // lands on the right one.
 type SettingsBackupData struct {
 	Page
+	SettingsNav     SettingsNav
 	Tab             string
 	Backups         []BackupRow
 	Import          *BackupImport
@@ -145,6 +173,7 @@ type BackupMergeData struct {
 // SettingsNotificationsData feeds the notifications settings page.
 type SettingsNotificationsData struct {
 	Page
+	SettingsNav    SettingsNav
 	Jingles        []JingleOption
 	Selected       string
 	VAPIDPublicKey string

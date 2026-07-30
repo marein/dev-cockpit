@@ -46,9 +46,41 @@ func (s *Server) coderFromRequest(c *gin.Context) (*coder.Manager, error) {
 	return nil, errors.New(`Unknown coder "` + raw + `".`)
 }
 
-// coderBase returns the canonical URL prefix of a coder's scoped pages.
+// coderBase returns the canonical URL prefix of a coder's scoped pages. They
+// are settings of one coder, so they live under the settings.
 func (s *Server) coderBase(co *coder.Manager) string {
-	return "/coders/" + co.ID()
+	return "/settings/coders/" + co.ID()
+}
+
+// settingsNav builds the settings sidebar for a page that is not coder
+// scoped. The coder entries then lead to the instructions and none is marked.
+func (s *Server) settingsNav(active string) render.SettingsNav {
+	return s.coderSettingsNav(active, nil, "")
+}
+
+// coderSettingsNav builds the settings sidebar for a coder page: the page's
+// own coder is marked, and every coder entry keeps the section, so switching
+// the coder stays on instructions, agents or skills.
+func (s *Server) coderSettingsNav(active string, co *coder.Manager, section string) render.SettingsNav {
+	nav := render.SettingsNav{
+		Active:  active,
+		Section: section,
+		Reviews: s.backups.PendingReviewCount(),
+	}
+	if co != nil {
+		nav.Selected = co.ID()
+	}
+	target := section
+	if target == "" {
+		target = "instructions"
+	}
+	for i := range s.coders {
+		nav.Coders = append(nav.Coders, render.SettingsCoder{
+			ID:  s.coders[i].ID(),
+			URL: s.coderBase(s.coders[i]) + "/" + target,
+		})
+	}
+	return nav
 }
 
 // coderTitle prefixes a section title with the coder label when several
@@ -61,14 +93,25 @@ func (s *Server) coderTitle(co *coder.Manager, section string) string {
 	return strings.ToUpper(id[:1]) + id[1:] + " " + section
 }
 
-// coderNav feeds the coder switcher and section tabs on coder-scoped pages.
-func (s *Server) coderNav(active string, co *coder.Manager) render.CoderNav {
-	return render.CoderNav{Coders: s.coderIDs(), Selected: co.ID(), Active: active, Multi: s.multiCoder()}
+// redirectMovedCoderPath forwards a coder page URL from before the pages moved
+// under the settings (/coders/<coder>/...) to its canonical path, keeping the
+// rest of the path and the query. 308 keeps method and body, so a form of a
+// page loaded before the move still saves.
+// TODO(v2.0.0): drop together with the pre-settings routes.
+func (s *Server) redirectMovedCoderPath(co *coder.Manager) gin.HandlerFunc {
+	old := "/coders/" + co.ID()
+	return func(c *gin.Context) {
+		target := s.coderBase(co) + strings.TrimPrefix(c.Request.URL.Path, old)
+		if q := c.Request.URL.RawQuery; q != "" {
+			target += "?" + q
+		}
+		c.Redirect(http.StatusPermanentRedirect, target)
+	}
 }
 
 // redirectLegacyCoderPath forwards a pre-canonical coder page URL (top-level
 // /instructions, /agents, /skills, coder picked via query or form field) to
-// /coders/<coder> plus the same path. 308 keeps method and body, so stale
+// the coder's base plus the same path. 308 keeps method and body, so stale
 // forms and bookmarks replay against the canonical route.
 // TODO(v2.0.0): drop together with the legacy routes.
 func (s *Server) redirectLegacyCoderPath(c *gin.Context) {

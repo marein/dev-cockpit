@@ -34,19 +34,34 @@ test. Update this file when a convention changes.
   post then redirect depend on it. New form, add both routes on one path.
 - **Coders:** one instance serves every coder whose CLI is installed
   (`--provider` is deprecated and ignored, kept parseable for existing start
-  commands). Coder-scoped pages sit under the single Coder nav item at
-  canonical URLs `/coders/<coder>/{instructions,agents,skills}` and share one
-  layout (`coder_page_start`/`coder_page_end` in `coder_nav.gohtml`): the
-  page title carries the coder label, a horizontal coder switcher sits above
-  the card, the section tabs live in the card header. The legacy top-level
-  paths (`/instructions`, `/agents`, `/skills`, coder picked via `?coder=` or
-  a hidden `coder` form field) 308-redirect to the canonical URLs, marked
-  TODO(v2.0.0). Session identifiers are UUID-shaped, so the coder subtrees
-  cannot collide with the `/coders/:id` session routes. UI stays adaptive:
-  the coder switcher, the coder label in the title and the new-coder coder
-  select render only when more than one coder is active, so single-coder
-  hosts look unchanged. The coder icon badge on the attach and split pages
-  always renders (like the shell badge), it doubles as the status light.
+  commands). A coder's pages are the settings of that coder, so they live
+  under the settings at canonical URLs
+  `/settings/coders/<coder>/{instructions,agents,skills}` (`coderBase`), their
+  main nav tab is Settings, and the settings sidebar is where the coder is
+  picked: `settings_nav.gohtml` replaces the single Coder row with a quiet
+  Coder label plus one row per active coder, indented along a guide line
+  (`border-start`) that ends where the group ends, so the entries below it do
+  not read as part of it. It is fed by `render.SettingsNav` (built by
+  `coderSettingsNav`, never by threading values through a template `dict`).
+  The coder comes before the section on purpose, a coder may grow settings of
+  its own: pick the coder in the sidebar, then its sections in the card
+  header. Every coder row keeps the current section, so switching the coder
+  stays on instructions, agents or skills. The pages share one layout
+  (`coder_page_start`/`coder_page_end` in `coder_nav.gohtml`), the same shell
+  the other settings pages use: page title Settings, sidebar in the left card
+  column, section tabs in the right column's card header. Two older shapes
+  308-redirect to the canonical URLs, both marked TODO(v2.0.0): the
+  pre-settings `/coders/<coder>/...` (`redirectMovedCoderPath`) and the legacy
+  top-level paths (`/instructions`, `/agents`, `/skills`, coder picked via
+  `?coder=` or a hidden `coder` form field, `redirectLegacyCoderPath`). Both
+  replay `coderPagePaths` in `router.go`, the one list of a coder's pages, so
+  a page cannot move without its old links. Session identifiers are
+  UUID-shaped, so the redirect subtrees cannot collide with the `/coders/:id`
+  session routes. UI stays adaptive: the sidebar coder rows, the coder label
+  in the browser title and the new-coder coder select render only when more
+  than one coder is active, so single-coder hosts look unchanged. The coder
+  icon badge on the attach and split pages always renders (like the shell
+  badge), it doubles as the status light.
 - **Claude session settings:** every claude session starts with one injected
   `--settings` blob (`internal/coder/claude/runtime.go`): theme auto, the
   notification hooks, and `disableAgentView`. The cockpit forwards keys via

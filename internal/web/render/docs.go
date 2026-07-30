@@ -443,6 +443,12 @@ func DocsTopics() []DocsTopic {
 					Desc:     `Off by default. Gives every newly started shell its own command history instead of sharing the login shell's file; the history survives a restore.`,
 				},
 				{
+					Title:    "Coder instructions, agents and skills",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Settings &rarr; Coder edits a coder's own files: its global instructions, its agents, and its skills. With more than one coder installed, the sidebar lists them and picks whose files you edit.`,
+				},
+				{
 					Title:    "Back up and move your setup",
 					Tag:      "Data",
 					TagClass: "bg-secondary-lt",

@@ -3,7 +3,7 @@ package render
 // InstructionsData is the model for the global instructions editor.
 type InstructionsData struct {
 	Page
-	CoderNav     CoderNav
-	Base         string // canonical coder URL prefix, "/coders/<id>"
+	SettingsNav  SettingsNav
+	Base         string // canonical coder URL prefix, "/settings/coders/<id>"
 	Instructions string
 }

@@ -10,6 +10,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// coderPagePaths are a coder's scoped pages relative to their base. The
+// canonical routes are registered by hand below, method by method; this list
+// is what the two redirect families replay, so a page can never move without
+// its old links moving with it.
+var coderPagePaths = []string{
+	"/instructions",
+	"/agents", "/agents/new", "/agents/:id", "/agents/:id/edit", "/agents/:id/delete",
+	"/skills", "/skills/new", "/skills/:id", "/skills/:id/edit", "/skills/:id/delete",
+}
+
 // registerRoutes attaches all HTTP routes to the Gin router.
 func (s *Server) registerRoutes(r *gin.Engine) {
 	r.NoRoute(s.handleNotFound)
@@ -51,9 +61,9 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/coders/new", s.handleCoderCreate)
 
 	// Canonical coder pages, one subtree per active coder:
-	// /coders/<coder>/{instructions,agents,skills}. Static segments win over
-	// the :id session routes below, and session identifiers are UUID-shaped,
-	// so the two namespaces cannot collide.
+	// /settings/coders/<coder>/{instructions,agents,skills}. They are the
+	// settings of one coder, so they live under the settings and the sidebar
+	// picks the coder like it picks any other settings section.
 	for i := range s.coders {
 		co := s.coders[i]
 		home := s.coderBase(co) + "/instructions"
@@ -75,15 +85,24 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		base.POST("/skills/:id/delete", s.handleSkillDelete(co))
 	}
 
-	// TODO(v2.0.0): drop the legacy top-level coder pages, canonical is
-	// /coders/<coder>/... . 308 keeps the method, so stale forms and bookmarks
-	// replay against the canonical paths.
-	legacyCoderPaths := []string{
-		"/instructions",
-		"/agents", "/agents/new", "/agents/:id", "/agents/:id/edit", "/agents/:id/delete",
-		"/skills", "/skills/new", "/skills/:id", "/skills/:id/edit", "/skills/:id/delete",
+	// TODO(v2.0.0): drop the pre-settings coder pages, canonical is
+	// /settings/coders/<coder>/... . 308 keeps method and body, so a bookmark
+	// and a form of a page loaded before the move replay against the canonical
+	// path. Static segments win over the :id session routes below, and session
+	// identifiers are UUID-shaped, so the two namespaces cannot collide.
+	for i := range s.coders {
+		co := s.coders[i]
+		old := auth.Group("/coders/" + co.ID())
+		old.Any("", s.redirectMovedCoderPath(co))
+		for _, p := range coderPagePaths {
+			old.Any(p, s.redirectMovedCoderPath(co))
+		}
 	}
-	for _, p := range legacyCoderPaths {
+
+	// TODO(v2.0.0): drop the legacy top-level coder pages, canonical is
+	// /settings/coders/<coder>/... . 308 keeps the method, so stale forms and
+	// bookmarks replay against the canonical paths.
+	for _, p := range coderPagePaths {
 		auth.Any(p, s.redirectLegacyCoderPath)
 	}
 

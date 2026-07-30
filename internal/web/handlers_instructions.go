@@ -20,8 +20,8 @@ func (s *Server) handleInstructionsEdit(co *coder.Manager) gin.HandlerFunc {
 			return
 		}
 		c.HTML(http.StatusOK, "instructions_form.gohtml", render.InstructionsData{
-			Page:         s.page(c, s.coderTitle(co, "Instructions"), "coder"),
-			CoderNav:     s.coderNav("instructions", co),
+			Page:         s.page(c, s.coderTitle(co, "Instructions"), "settings"),
+			SettingsNav:  s.coderSettingsNav("coder", co, "instructions"),
 			Base:         s.coderBase(co),
 			Instructions: instructions,
 		})

@@ -17,10 +17,10 @@ type skillForm struct {
 func (s *Server) handleSkillsList(co *coder.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.HTML(http.StatusOK, "skills_list.gohtml", render.SkillsListData{
-			Page:     s.page(c, s.coderTitle(co, "Skills"), "coder"),
-			CoderNav: s.coderNav("skills", co),
-			Base:     s.coderBase(co),
-			Skills:   co.Coder().SkillRepository().List(),
+			Page:        s.page(c, s.coderTitle(co, "Skills"), "settings"),
+			SettingsNav: s.coderSettingsNav("coder", co, "skills"),
+			Base:        s.coderBase(co),
+			Skills:      co.Coder().SkillRepository().List(),
 		})
 	}
 }
@@ -29,7 +29,7 @@ func (s *Server) handleSkillNew(co *coder.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		base := s.coderBase(co)
 		c.HTML(http.StatusOK, "skills_form.gohtml", render.SkillsFormData{
-			Page:        s.page(c, "Create skill", "coder"),
+			Page:        s.page(c, "Create skill", "settings"),
 			Base:        base,
 			FormAction:  base + "/skills",
 			SubmitLabel: "Create skill",
@@ -48,7 +48,7 @@ func (s *Server) handleSkillEdit(co *coder.Manager) gin.HandlerFunc {
 			return
 		}
 		c.HTML(http.StatusOK, "skills_form.gohtml", render.SkillsFormData{
-			Page:         s.page(c, "Edit skill", "coder"),
+			Page:         s.page(c, "Edit skill", "settings"),
 			Base:         base,
 			IsEdit:       true,
 			OriginalID:   skill.ID,
