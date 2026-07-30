@@ -131,7 +131,11 @@ test. Update this file when a convention changes.
   every direct child (`min-width: 0; max-width: 100%`), otherwise long
   unbreakable names widen the layout. Page specific controls (for example the
   terminal font size and rows selects) belong to the content below, not into the
-  header.
+  header. On the terminal pages the header's destructive actions (stop a coder,
+  delete a shell) render `dc-coarse-only`: on a desktop the tab strip owns them
+  (close control and tab context menu), on touch the header is the direct way.
+  The split page has no close-all in its header at all, that is the group tab's
+  close control and the quick nav swipe.
 
 ## Frontend
 

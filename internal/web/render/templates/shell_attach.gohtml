@@ -9,7 +9,7 @@
         <input type="text" class="form-control d-none" data-rename-input maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Shell name" value="{{.Shell.Name}}">
       </dc-inline-rename>
     </div>
-    <div class="flex-shrink-0">
+    <div class="flex-shrink-0 dc-coarse-only">
       <form method="post" action="/shells/{{.Shell.Identifier}}/delete" data-confirm="Delete shell &quot;{{.Shell.Name}}&quot;?" data-confirm-button="Delete">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <button type="submit" class="btn btn-outline-danger btn-icon" aria-label="Delete shell {{.Shell.Name}}" title="Delete">

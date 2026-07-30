@@ -35,10 +35,12 @@ L.runFeature("SHELLS", async ({ page, run }) => {
       assert((await page.textContent("[data-rename-label]")).trim() === name, "rename not persisted");
     });
 
-    await run("delete shell (data-confirm) redirects + cleans up, no ended toast", async () => {
+    // The attach header carries the delete on touch only, so the desktop way
+    // is the tab strip's close control; both ask the same confirm.
+    await run("delete shell from the tab strip redirects + cleans up, no ended toast", async () => {
       await page.goto(shellUrl, { waitUntil: "domcontentloaded" });
-      const delPath = new URL(shellUrl).pathname + "/delete";
-      await page.click(`form[action="${delPath}"] button[type="submit"], form[action="${delPath}"] button`);
+      const id = new URL(shellUrl).pathname.split("/").pop();
+      await page.click(`terminal-tabs .terminal-tab[data-tab-id="${id}"] [data-tab-close]`);
       await confirmSwal(page);
       await page.waitForURL((u) => !new RegExp(new URL(shellUrl).pathname + "$").test(u.toString()), { timeout: 10000 });
       await sleep(800);

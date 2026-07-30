@@ -6,7 +6,7 @@
       {{template "project_breadcrumb.gohtml" .ProjectName}}
       <h2 class="page-title text-truncate mb-0">{{.Running.Name}}</h2>
     </div>
-    <div class="flex-shrink-0">
+    <div class="flex-shrink-0 dc-coarse-only">
       <form method="post" action="/coders/{{.Running.Identifier}}/stop" data-confirm="Stop coder &quot;{{.Running.Name}}&quot;?" data-confirm-button="Stop">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <button type="submit" class="btn btn-outline-orange btn-icon" aria-label="Stop coder {{.Running.Name}}" title="Stop">

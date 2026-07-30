@@ -6,11 +6,6 @@
       {{template "project_breadcrumb.gohtml" .ProjectName}}
       <h2 class="page-title text-truncate mb-0" data-split-title data-title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">{{.GroupName}}</h2>
     </div>
-    <div class="flex-shrink-0">
-      <button type="button" class="btn btn-outline-danger btn-icon" data-split-close aria-label="Close all terminals in {{.GroupName}}" title="Close all terminals">
-        <i class="ti ti-x"></i>
-      </button>
-    </div>
   </div>
   {{range .Members}}{{if eq .ID $.Focus}}
   <div class="d-flex align-items-center gap-2 dc-coarse-only">

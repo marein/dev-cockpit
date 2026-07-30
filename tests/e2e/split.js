@@ -19,8 +19,8 @@ const { assert, sleep, confirmSwal } = L;
 // of its own, so that mirror also feeds the page heading ([data-split-title])
 // and the browser title; the touch header keeps the focused member's name but
 // leaves the title alone.
-// Every close control kills for real after a confirm (strip tab X, page
-// header X, pane head X); ungrouping without killing lives in the context
+// Every close control kills for real after a confirm (strip tab X, pane head
+// X); ungrouping without killing lives in the context
 // menus and the quick nav swipes. On mobile the settings row above the
 // terminal carries the active member's type badge (data-terminal-badge,
 // coder icon only with several coders, shells always), toggled with the
@@ -619,8 +619,8 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await page.waitForSelector(groupTabSel, { state: "attached", timeout: 8000 });
     });
 
-    await run("the page header close control stops every member after a confirm", async () => {
-      await page.click("[data-split-close]");
+    await run("the group tab's close control stops every member after a confirm", async () => {
+      await page.click("terminal-tabs .terminal-tab-split [data-tab-close]");
       await confirmSwal(page);
       await page.waitForURL((u) => !/\/splits\//.test(u.toString()), { timeout: 15000 });
       await sleep(800);
@@ -674,9 +674,9 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await sleep(600);
     });
 
-    // Close all has no neighbour to fall back to, it goes where the last POST
-    // says, and only a coder member answers that POST with JSON.
-    await run("close all on a split holding a coder lands on the projects page, never on the POST url", async () => {
+    // Close all leaves the split behind: only a coder member answers its POST
+    // with JSON, so a naive follow would land on the POST url.
+    await run("close all on a split holding a coder lands on a real page, never on the POST url", async () => {
       const coderUrl = await L.createSession(page, project, `spl-${tag.slice(-5)}`);
       const coderId = new URL(coderUrl).pathname.split("/").pop();
       const shellUrl = await L.createShell(page, project);
@@ -686,11 +686,14 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       const group = await groupVia([shellId, coderId]);
       await page.goto(`${L.BASE}${group.url}`, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 15000 });
-      await page.click("[data-split-close]");
+      await page.click("terminal-tabs .terminal-tab-split [data-tab-close]");
       await confirmSwal(page);
       await page.waitForURL((u) => !/\/splits\//.test(u.toString()), { timeout: 15000 });
       assert(!/\/(stop|delete)$/.test(page.url()), `landed on the POST url: ${page.url()}`);
-      await page.waitForSelector(`#project-${project}`, { state: "attached", timeout: 10000 });
+      // The strip's close-all goes to the first tab that is left, or to the
+      // projects page when the strip runs empty. Both are real pages.
+      const landed = new URL(page.url()).pathname;
+      assert(/^\/(projects|coders|shells)/.test(landed), `close all landed on ${landed}`);
       const body = await page.textContent("body");
       assert(!/Method not allowed/i.test(body), "close all landed on an error page");
       assert(!(await page.$(tabSel(coderId))), "the coder tab survived close all");

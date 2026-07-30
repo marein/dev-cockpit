@@ -135,13 +135,8 @@ async function createShell(page, project) {
 }
 
 async function deleteShell(page, shellUrl) {
-  await page.goto(shellUrl, { waitUntil: "domcontentloaded" });
   const delPath = new URL(shellUrl).pathname + "/delete";
-  const btn = await page.$(`form[action="${delPath}"] button[type="submit"], form[action="${delPath}"] button`);
-  if (!btn) return;
-  await btn.click();
-  await confirmSwal(page).catch(() => {});
-  await sleep(500);
+  await closeTerminal(page, shellUrl, `form[action="${delPath}"] button[type="submit"], form[action="${delPath}"] button`);
 }
 
 async function createSession(page, project, name, coder) {
@@ -154,13 +149,34 @@ async function createSession(page, project, name, coder) {
   return page.url();
 }
 
-async function stopSession(page, sessionUrl) {
-  await page.goto(sessionUrl, { waitUntil: "domcontentloaded" });
-  const btn = await page.$('form[action$="/stop"] button[type="submit"], form[action$="/stop"] button');
-  if (!btn) return;
+// closeFromStrip closes a terminal through the tab strip's close control, the
+// desktop way: the attach page header carries stop and delete on touch only.
+// It asks the same confirm as the header button did.
+async function closeFromStrip(page, id) {
+  const btn = await page.$(`terminal-tabs .terminal-tab[data-tab-id="${id}"] [data-tab-close]`);
+  if (!btn) return false;
   await btn.click();
   await confirmSwal(page).catch(() => {});
-  await sleep(500);
+  await sleep(600);
+  return true;
+}
+
+// closeTerminal takes whichever way the viewport offers: the header button on
+// touch, the tab strip on the desktop.
+async function closeTerminal(page, url, headerSelector) {
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  const btn = await page.$(headerSelector);
+  if (btn && await btn.isVisible()) {
+    await btn.click();
+    await confirmSwal(page).catch(() => {});
+    await sleep(500);
+    return;
+  }
+  await closeFromStrip(page, new URL(url).pathname.split("/").pop());
+}
+
+async function stopSession(page, sessionUrl) {
+  await closeTerminal(page, sessionUrl, 'form[action$="/stop"] button[type="submit"], form[action$="/stop"] button');
 }
 
 function makeRunner() {
@@ -250,7 +266,7 @@ async function runFeature(title, body) {
 
 module.exports = {
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
-  login, createProject, projectPath, deleteProject, dismissUpdate, createShell, deleteShell, createSession, stopSession,
+  login, createProject, projectPath, deleteProject, dismissUpdate, createShell, deleteShell, createSession, stopSession, closeFromStrip,
   makeRunner, report, assert,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

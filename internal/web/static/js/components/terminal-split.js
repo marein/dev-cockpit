@@ -1,6 +1,6 @@
 import { openMenu } from "@dc/contextmenu";
 import { confirm, promptText } from "@dc/dialog";
-import { ensureOk, landingURL, postForm, postJSON } from "@dc/http";
+import { ensureOk, postForm, postJSON } from "@dc/http";
 import { releaseCoder, steerCoder } from "@dc/steer";
 import { notifyError, notifySuccess } from "@dc/toast";
 
@@ -30,12 +30,6 @@ class TerminalSplit extends HTMLElement {
     this.addEventListener("pointerup", (event) => this.onPointerUp(event), { signal });
     this.addEventListener("pointercancel", () => this.cancelDrag(), { signal });
     this.addEventListener("click", (event) => this.onClick(event), { signal, capture: true });
-
-    const headerClose = document.querySelector("[data-split-close]");
-    headerClose?.addEventListener("click", (event) => {
-      event.preventDefault();
-      void this.closeSplit();
-    }, { signal });
 
     document.addEventListener("keydown", (event) => this.onKeydown(event), { signal, capture: true });
 
@@ -139,46 +133,6 @@ class TerminalSplit extends HTMLElement {
     const base = active === -1 ? 0 : active;
     const next = (base + (event.key === "ArrowRight" ? 1 : -1) + panes.length) % panes.length;
     document.dispatchEvent(new CustomEvent("dc:activate-pane", { detail: { id: panes[next].dataset.paneId } }));
-  }
-
-  async closeSplit() {
-    if (this.confirming) return;
-    const panes = this.panes();
-    this.confirming = true;
-    try {
-      const ok = await confirm({
-        title: `Close all ${panes.length} terminals in this split view?`,
-        confirmText: "Close all",
-      });
-      if (!ok) return;
-      let failed = 0;
-      let lastUrl = "";
-      for (const pane of panes) {
-        const { paneId, paneKind } = pane.dataset;
-        window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id: paneId } }));
-        const action = paneKind === "shell" ? `/shells/${paneId}/delete` : `/coders/${paneId}/stop`;
-        try {
-          const response = await postForm(action, {});
-          await ensureOk(response, "Could not close the session.");
-          lastUrl = (await landingURL(response)) || lastUrl;
-        } catch (memberError) {
-          void memberError;
-          failed += 1;
-        }
-      }
-      if (failed) {
-        notifyError(`Could not close ${failed} of ${panes.length} terminals.`);
-        this.refreshPage();
-        return;
-      }
-      notifySuccess("Split view closed.");
-      const url = lastUrl || "/projects";
-      if (window.app?.navigate) Promise.resolve(window.app.navigate(url)).catch(() => {});
-      else window.location.href = url;
-    } finally {
-      this.confirming = false;
-      if (this.pendingSync) this.syncWithStrip();
-    }
   }
 
   panes() {

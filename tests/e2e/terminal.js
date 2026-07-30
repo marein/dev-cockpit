@@ -318,6 +318,12 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       assert(bag.consoleErrors.length + bag.pageErrors.length === before, "refresh errored");
     });
 
+    await run("desktop: the page header carries no stop or delete", async () => {
+      const action = page.locator('.page-header form[action$="/delete"] button').first();
+      assert(await action.count() === 1, "the delete form left the shell attach header");
+      assert(!(await action.isVisible()), "the header delete shows on a fine pointer");
+    });
+
     await run("desktop: lifecycle teardown (remove terminal + input, no new errors)", async () => {
       const before = bag.consoleErrors.length + bag.pageErrors.length;
       await page.evaluate(() => { document.getElementById("terminal")?.remove(); document.querySelector("terminal-input")?.remove(); });
@@ -334,6 +340,11 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
     await L.dismissUpdate(mp);
     await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
     await sleep(1200);
+
+    await run("mobile: the page header carries the delete", async () => {
+      assert(await mp.locator('.page-header form[action$="/delete"] button').first().isVisible(),
+        "the header delete is missing on a coarse pointer");
+    });
 
     await run("mobile: coarse pointer -> mirror + cursor input + mobile toolbar", async () => {
       assert(await mp.evaluate(() => matchMedia("(pointer: coarse)").matches), "pointer not coarse");
