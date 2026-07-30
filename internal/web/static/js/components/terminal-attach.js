@@ -1124,32 +1124,43 @@ function initTerminalAttach(host) {
     }
     if (text.includes("https://claude.")) {
       const url = findLoginLink(lines);
-      if (url && url !== promptedLoginLink && !dialogVisible()) {
-        promptedLoginLink = url;
+      if (url && !loginLinkPrompted(url) && !dialogVisible()) {
+        promptedLoginLinks.add(url);
         promptLoginLink(url);
       }
     }
   };
   term.onRender(syncSelection);
 
-  let promptedLoginLink = "";
+  const promptedLoginLinks = new Set();
   const LOGIN_LINK_START = /^https:\/\/claude\.(com|ai)\/\S*oauth/;
   const LOGIN_LINK_CHARS = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/;
   const findLoginLink = (lines) => {
     for (let i = lines.length - 1; i >= 0; i -= 1) {
       if (!LOGIN_LINK_START.test(lines[i])) continue;
       let url = lines[i];
-      if (url.length === term.cols) {
-        for (let j = i + 1; j < lines.length; j += 1) {
-          const frag = lines[j];
-          if (!frag || !LOGIN_LINK_CHARS.test(frag)) break;
-          url += frag;
-          if (frag.length !== term.cols) break;
-        }
+      const wrapWidth = url.length;
+      for (let j = i + 1; j < lines.length; j += 1) {
+        const frag = lines[j];
+        if (!frag || frag.length > wrapWidth || !LOGIN_LINK_CHARS.test(frag)) break;
+        url += frag;
+        if (frag.length !== wrapWidth) break;
       }
       return url;
     }
     return "";
+  };
+  const loginLinkState = (url) => {
+    const params = new URLSearchParams(url.slice(url.indexOf("?") + 1));
+    return params.get("state") || params.get("code_challenge") || "";
+  };
+  const loginLinkPrompted = (url) => {
+    const state = loginLinkState(url);
+    for (const prompted of promptedLoginLinks) {
+      if (prompted.startsWith(url) || url.startsWith(prompted)) return true;
+      if (state && state === loginLinkState(prompted)) return true;
+    }
+    return false;
   };
   const copyLoginLink = async (url) => {
     if (navigator.clipboard?.writeText) {

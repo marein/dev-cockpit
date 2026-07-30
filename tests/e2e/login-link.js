@@ -5,12 +5,15 @@ const { assert, sleep } = L;
 // wrapped (every screen row ends in a real newline), so selection copy carries
 // the breaks and no linkifier matches the rows. terminal-attach rejoins the
 // rows client side (URL starts at column zero on an https://claude.com|ai/
-// ...oauth... row, continuation rows fill the exact pane width with URL
-// characters only, bottom-most match wins) and auto-opens a dialog offering
-// Open (new tab) / Copy link / Cancel. One prompt per distinct URL, so
-// claude's redraws of the same screen stay silent; a fresh /login carries a
-// new state parameter and prompts again. Purely client side, no server
-// endpoint. Gotchas: checks emulate the hard wrap with `fold -w $COLUMNS`
+// ...oauth... row, continuation rows fill the width the row was rendered at,
+// with URL characters only, bottom-most match wins) and auto-opens a dialog
+// offering Open (new tab) / Copy link / Cancel. One prompt per oauth state,
+// for as long as the element lives, so claude's redraws and every reflow of
+// the same link stay silent (the dialog itself takes the browser scrollbar
+// away and resizes the terminal, so a width-dependent trigger would loop);
+// a fresh /login carries a new state parameter and prompts again, and so does
+// coming back to the page, which rebuilds the element. Purely client side, no
+// server endpoint. Gotchas: checks emulate the hard wrap with `fold -w $COLUMNS`
 // and split the "claude" literal in the typed command ("https://claude"".com")
 // so the command echo itself cannot match; `clear` between checks keeps stale
 // URLs from re-prompting via the bottom-most rule.
@@ -89,6 +92,32 @@ L.runFeature("LOGIN-LINK", async ({ engine, page, run, mobilePage }) => {
       assert(!(await page.$(".swal2-popup:not(.swal2-toast)")), "dialog came back after cancel");
     });
 
+    await run("resizes reflow the link without a second prompt", async () => {
+      await typeCmd(page, "clear");
+      await sleep(800);
+      await typeCmd(page, fakeLoginCmd(`${tag}-four`, "f"));
+      await waitDialog(page);
+      await page.click(".swal2-cancel");
+      await dialogGone(page);
+      const size = page.viewportSize();
+      for (const width of [size.width - 160, size.width - 340, size.width]) {
+        await page.setViewportSize({ width, height: size.height });
+        await sleep(1600);
+        assert(!(await page.$(".swal2-popup:not(.swal2-toast)")), `dialog came back at ${width}px`);
+      }
+    });
+
+    await run("leaving the page and coming back prompts again", async () => {
+      await page.evaluate((u) => window.pe.navigate(u), `${L.BASE}/projects`);
+      await page.waitForURL(/\/projects$/, { timeout: 10000 });
+      await sleep(500);
+      await page.evaluate((u) => window.pe.navigate(u), shellUrl);
+      await page.waitForURL(shellUrl, { timeout: 10000 });
+      await waitDialog(page);
+      await page.click(".swal2-cancel");
+      await dialogGone(page);
+    });
+
     await run("non-claude URLs never prompt", async () => {
       await typeCmd(page, "clear");
       await sleep(800);
@@ -103,6 +132,7 @@ L.runFeature("LOGIN-LINK", async ({ engine, page, run, mobilePage }) => {
       await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
       const mp = await mobilePage();
       await mp.goto(shellUrl, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(mp);
       await mp.waitForSelector("#terminal-cursor-input", { timeout: 12000 });
       await sleep(1500);
       await mp.evaluate(() => document.getElementById("terminal-cursor-input").focus());
