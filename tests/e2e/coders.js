@@ -58,8 +58,8 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       await page.click(".attach-desktop .coder-files-button");
       await modalShown(page, "coder-files-modal");
       const f1 = `u1_${tag.slice(-4)}.txt`, f2 = `u2_${tag.slice(-4)}.txt`, content = `payload ${tag}\n`;
+      // Picking sends right away, the button only opens the file chooser.
       await page.setInputFiles('#coder-files-modal input[type="file"][name="files"]', [{ name: f1, mimeType: "text/plain", buffer: Buffer.from(content) }, { name: f2, mimeType: "text/plain", buffer: Buffer.from("two\n") }]);
-      await page.click('#coder-files-modal [data-coder-file-upload-form] button[type="submit"]');
       await page.waitForFunction(() => document.querySelectorAll('#coder-files-modal [data-file-index]').length >= 2, null, { timeout: 8000 });
       await page.waitForFunction(() => { const s = [...document.querySelectorAll('#coder-files-modal [data-file-status]')].map((e) => e.textContent.trim()); return s.length >= 2 && s.every((x) => x === "Done"); }, null, { timeout: 15000 });
       await page.waitForFunction((ns) => { const c = document.querySelector("[data-coder-files-content]"); return c && ns.every((n) => c.textContent.includes(n)); }, [f1, f2], { timeout: 10000 });
@@ -80,6 +80,80 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       await sleep(150); await page.click(".swal2-confirm");
       assert((await respP).status() < 400, "delete POST failed");
       await page.waitForFunction((n) => document.querySelectorAll('#coder-files-modal a[href*="/files/download"]').length < n, beforeLinks, { timeout: 10000 });
+      await page.keyboard.press("Escape").catch(() => {});
+    });
+
+    // A paste into the open dialog takes the same path as a pick: it uploads,
+    // the hidden input is never something the user has to submit.
+    await run("files: a paste into the open dialog uploads right away", async () => {
+      await page.goto(sessionUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
+      await page.click(".attach-desktop .coder-files-button");
+      await modalShown(page, "coder-files-modal");
+      const f3 = `p1_${tag.slice(-4)}.txt`;
+      const carried = await page.evaluate((name) => {
+        const data = new DataTransfer();
+        data.items.add(new File(["pasted one\n"], name, { type: "text/plain" }));
+        if (!data.files.length) return false;
+        document.getElementById("coder-files-modal").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+        return true;
+      }, f3);
+      assert(carried, "the engine builds no file clipboard");
+      await page.waitForFunction((n) => { const c = document.querySelector("[data-coder-files-content]"); return c && c.textContent.includes(n); }, f3, { timeout: 15000 });
+      await page.keyboard.press("Escape").catch(() => {});
+    });
+
+    // The file input is hidden, so the button is the way to it: with nothing
+    // picked it opens the file chooser instead of posting an empty form.
+    await run("files: upload with nothing picked opens the file chooser", async () => {
+      await page.goto(sessionUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
+      await page.click(".attach-desktop .coder-files-button");
+      await modalShown(page, "coder-files-modal");
+      assert(!(await page.locator('#coder-files-modal input[type="file"][name="files"]').isVisible()), "the file input is on the page next to the button");
+      const posts = [];
+      const watch = (r) => { if (/\/files$/.test(r.url()) && r.method() === "POST") posts.push(r.url()); };
+      page.on("request", watch);
+      try {
+        const chooser = page.waitForEvent("filechooser", { timeout: 6000 });
+        await page.click('#coder-files-modal [data-coder-file-upload-form] button[type="submit"]');
+        assert(await chooser, "no file chooser opened");
+        await sleep(400);
+        assert(posts.length === 0, `the empty upload still posted: ${posts.join(" ")}`);
+        assert((await page.locator("#coder-files-modal .alert-danger").count()) === 0, "the empty upload answered with an error");
+      } finally {
+        page.off("request", watch);
+      }
+      await page.keyboard.press("Escape").catch(() => {});
+    });
+
+    // On the terminal a file clipboard takes the drop path, and the text part of
+    // that same clipboard must never arrive in the pane as keystrokes.
+    await run("files: a paste onto the terminal uploads like a drop, nothing types", async () => {
+      await page.goto(sessionUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
+      await sleep(1000);
+      const f4 = `p2_${tag.slice(-4)}.txt`;
+      const typed = [];
+      const watch = (r) => { if (/\/input$/.test(r.url()) && r.method() === "POST") typed.push(r.postData() || ""); };
+      page.on("request", watch);
+      try {
+        const carried = await page.evaluate((name) => {
+          const data = new DataTransfer();
+          data.items.add(new File(["pasted two\n"], name, { type: "text/plain" }));
+          data.setData("text/plain", name);
+          if (!data.files.length) return false;
+          document.querySelector(".xterm-helper-textarea").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+          return true;
+        }, f4);
+        assert(carried, "the engine builds no file clipboard");
+        await modalShown(page, "coder-files-modal");
+        await page.waitForFunction((n) => { const c = document.querySelector("[data-coder-files-content]"); return c && c.textContent.includes(n); }, f4, { timeout: 15000 });
+        await sleep(500);
+        assert(typed.length === 0, `the file clipboard reached the pane: ${typed.join(" ")}`);
+      } finally {
+        page.off("request", watch);
+      }
       await page.keyboard.press("Escape").catch(() => {});
     });
 

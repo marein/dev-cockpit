@@ -664,6 +664,7 @@ function initTerminalAttach(host) {
     // it into the pane as one buffer and brackets it for programs that asked
     // for bracketed paste. Capture beats xterm's own handler on the textarea.
     listen(terminalElement, "paste", (event) => {
+      if (event.clipboardData?.files?.length) return;
       const text = event.clipboardData?.getData("text") ?? "";
       if (!text) return;
       event.preventDefault();

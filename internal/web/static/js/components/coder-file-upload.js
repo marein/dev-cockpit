@@ -44,8 +44,10 @@ class CoderFileUpload extends HTMLElement {
       this.updateButtonState();
     }, { signal });
     this.form.addEventListener("submit", (event) => this.submitFiles(event), { signal });
+    this.input.addEventListener("change", () => this.onPicked(), { signal });
     this.modal.addEventListener("submit", (event) => this.submitDelete(event), { signal });
     this.modal.addEventListener("click", (event) => this.copyFilePath(event), { signal });
+    this.modal.addEventListener("paste", (event) => this.onPaste(event), { signal });
 
     this.setupTerminalDropZone();
   }
@@ -70,6 +72,7 @@ class CoderFileUpload extends HTMLElement {
     this.terminal.addEventListener("dragover", (event) => this.onDragOver(event), { signal });
     this.terminal.addEventListener("dragleave", (event) => this.onDragLeave(event), { signal });
     this.terminal.addEventListener("drop", (event) => this.onDrop(event), { signal });
+    this.terminal.addEventListener("paste", (event) => this.onPaste(event), { signal, capture: true });
   }
 
   isFileDrag(event) {
@@ -115,6 +118,27 @@ class CoderFileUpload extends HTMLElement {
     if (files.length === 0) {
       return;
     }
+    this.uploadFiles(files);
+  }
+
+  onPaste(event) {
+    const files = Array.from(event.clipboardData?.files || []);
+    if (files.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    this.uploadFiles(files);
+  }
+
+  onPicked() {
+    if ((this.input.files || []).length === 0) {
+      return;
+    }
+    this.submitFiles({ preventDefault() {} });
+  }
+
+  uploadFiles(files) {
     this.assignFiles(files);
     this.openModal();
     this.submitFiles({ preventDefault() {} }, 700);
@@ -140,7 +164,7 @@ class CoderFileUpload extends HTMLElement {
     const files = Array.from(this.input.files || []);
     if (files.length === 0) {
       this.progress.hidden = true;
-      this.request("POST", this.form.action, new FormData(this.form)).catch(() => {});
+      this.input.click();
       return;
     }
 
@@ -172,6 +196,9 @@ class CoderFileUpload extends HTMLElement {
         this.progress.hidden = true;
         if (shouldNotify) {
           this.setUploadState("done");
+        }
+        if (this.isModalOpen()) {
+          this.refreshFiles();
         }
       } else {
         if (shouldNotify) {

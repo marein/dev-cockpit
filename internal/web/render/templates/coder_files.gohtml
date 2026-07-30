@@ -7,11 +7,14 @@
   <div class="modal-body">
     <form method="post" action="/coders/{{.Identifier}}/files" enctype="multipart/form-data" class="row g-2 align-items-center" data-coder-file-upload-form data-no-pe>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <div class="col-12 col-md">
-        <input class="form-control" type="file" name="files" multiple>
-      </div>
+      <input type="file" name="files" multiple hidden>
       <div class="col-12 col-md-auto">
-        <button type="submit" class="btn btn-primary w-100">Upload files</button>
+        <button type="submit" class="btn btn-primary w-100">
+          <i class="ti ti-upload me-2"></i>Upload files
+        </button>
+      </div>
+      <div class="col-12 col-md text-secondary small">
+        Picked and pasted files are sent right away.
       </div>
     </form>
     <div class="coder-file-upload-progress mt-3" data-coder-file-upload-progress hidden></div>

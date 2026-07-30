@@ -204,7 +204,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Send files to a coder",
 					Tag:      "Coder",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Drop files onto a coder terminal to upload them, then reference them in a prompt by copying their path from the files dialog. The upload button <i class="ti ti-upload align-text-bottom" aria-hidden="true"></i> in the coder footer does the same.`,
+					Desc:     `Drop files onto a coder terminal or paste them there to upload them, then reference them in a prompt by copying their path from the files dialog. The upload button <i class="ti ti-upload align-text-bottom" aria-hidden="true"></i> in the coder footer opens the files dialog, which asks for the files and sends them as soon as they are picked or pasted.`,
 				},
 				{
 					Title: "Refresh the stream",
