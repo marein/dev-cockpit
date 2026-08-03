@@ -18,6 +18,7 @@ import (
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/eventbus"
+	"github.com/local/dev-cockpit/internal/hostinfo"
 	"github.com/local/dev-cockpit/internal/notify"
 	"github.com/local/dev-cockpit/internal/project"
 	"github.com/local/dev-cockpit/internal/push"
@@ -58,7 +59,10 @@ type Server struct {
 	// gitWatchers keeps the editor's per-project git poller alive only while a
 	// client says it is watching.
 	gitWatchers *gitWatchers
-	handler     http.Handler
+	// host reads load, memory and disk. It is read from the event stream, so
+	// an idle cockpit with no browser on it reads nothing at all.
+	host    *hostinfo.Cache
+	handler http.Handler
 }
 
 // localCallKey marks a request that arrived on the local socket, see
@@ -99,6 +103,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		backups:       backups,
 		assets:        assets,
 		gitWatchers:   newGitWatchers(),
+		host:          hostinfo.NewCache(cfg.ProjectsRoot, hostSampleTTL),
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
 			cfg.LoginRateBlock, cfg.LoginRateMaxAttempts,

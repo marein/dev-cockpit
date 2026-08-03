@@ -1,0 +1,30 @@
+{{define "host_status.gohtml"}}
+<dc-host-status class="dropdown"{{if not .Host.Any}} hidden{{end}}>
+  <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" data-host-toggle aria-label="Server status" title="Server status">
+    <i class="ti ti-server fs-2 js-host-icon {{hostLevelClass .Host.Level}}"></i>
+  </button>
+  <div class="dropdown-menu dropdown-menu-end shadow p-3">
+    {{/* The button already carries the server icon, the panel only needs the word. */}}
+    <div class="fw-bold mb-3">Server</div>
+    <div class="d-grid gap-3">
+      {{template "host_status_row.gohtml" (dict "key" "cpu" "title" "CPU" "has" .Host.HasCPU "percent" .Host.CPUPercent "label" .Host.CPULabel)}}
+      {{template "host_status_row.gohtml" (dict "key" "mem" "title" "RAM" "has" .Host.HasMem "percent" .Host.MemPercent "label" .Host.MemLabel)}}
+      {{template "host_status_row.gohtml" (dict "key" "disk" "title" "Disk" "has" .Host.HasDisk "percent" .Host.DiskPercent "label" .Host.DiskLabel)}}
+    </div>
+  </div>
+</dc-host-status>
+{{end}}
+
+{{define "host_status_row.gohtml"}}
+<div data-host-row="{{.key}}"{{if not .has}} hidden{{end}}>
+  <div class="d-flex align-items-baseline gap-3">
+    <span class="text-secondary">{{.title}}</span>
+    <span class="ms-auto fw-medium text-nowrap js-host-value">{{.percent}}%</span>
+  </div>
+  <div class="progress progress-sm mt-2">
+    <div class="progress-bar js-host-bar {{hostBarClass .percent}}" {{hostBarStyle .percent}} role="progressbar" aria-label="{{.title}}" aria-valuenow="{{.percent}}" aria-valuemin="0" aria-valuemax="100"></div>
+  </div>
+  <div class="text-secondary small mt-1 text-nowrap js-host-label">{{.label}}</div>
+</div>
+{{end}}
+

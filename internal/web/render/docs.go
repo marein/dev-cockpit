@@ -468,6 +468,12 @@ func DocsTopics() []DocsTopic {
 					Desc:  `Page, editor, and terminal follow the OS scheme, there is no manual switch. Coders may take up to two seconds to apply a theme change.`,
 				},
 				{
+					Title:    "How the machine is doing",
+					Tag:      "Header",
+					TagClass: "bg-secondary-lt",
+					Desc:     `The server button <i class="ti ti-server align-text-bottom" aria-hidden="true"></i> in the header, on a phone as well, opens CPU, RAM and disk, each as a percentage with the plain numbers below it. The icon turns yellow when one of them passes 80 percent and red from 95, so a quiet header means a quiet machine. The disk is the one the projects live on. CPU is the load average against the core count, so it can pass 100 percent when more work is queued than the machine can run at once. The values refresh while a page is open, roughly every 15 seconds.`,
+				},
+				{
 					Title:    "Restore terminals at startup",
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",

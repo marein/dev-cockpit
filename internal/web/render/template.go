@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/local/dev-cockpit/internal/hostinfo"
 )
 
 //go:embed templates/*.gohtml
@@ -26,6 +28,10 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string) *te
 			}
 			return filepath.Base(filepath.Clean(p))
 		},
+		"hostBarClass":   HostBarClass,
+		"hostValueClass": HostValueClass,
+		"hostLevelClass": HostLevelClass,
+		"hostBarStyle":   HostBarStyle,
 		"dict": func(pairs ...any) map[string]any {
 			m := make(map[string]any, len(pairs)/2)
 			for i := 0; i+1 < len(pairs); i += 2 {
@@ -94,6 +100,10 @@ type Page struct {
 	// so the marks stay current without client logic.
 	Steered      map[string]bool
 	SteerPrefill map[string]string
+	// Host is the machine's load, memory and disk at render time, so the status
+	// in the header is right before the first event arrives. It refreshes over
+	// the event stream from there.
+	Host hostinfo.Stats
 }
 
 // QuickNav feeds the quick nav floating button: the live sessions and shells you

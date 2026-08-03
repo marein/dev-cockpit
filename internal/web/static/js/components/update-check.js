@@ -143,8 +143,12 @@ class UpdateCheck extends HTMLElement {
   renderFlags(status) {
     document.querySelectorAll(".js-update-flag").forEach((node) => {
       node.classList.toggle("d-none", !status.available);
-      const title = node.querySelector(".nav-link-title");
-      if (title) title.textContent = "Update to " + status.latest;
+      node.title = "Update to " + status.latest;
+    });
+    // The surfaces word it themselves, the header button as the bare version and
+    // the menu row as a sentence; both take the number here.
+    document.querySelectorAll(".js-update-version").forEach((node) => {
+      node.textContent = status.latest;
     });
     document.querySelectorAll(".js-update-spacer").forEach((node) => {
       node.classList.toggle("d-none", status.available);
