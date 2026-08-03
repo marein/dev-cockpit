@@ -273,6 +273,11 @@ func DocsTopics() []DocsTopic {
 					Desc:  `Opens the plus menu <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> of the tab strip and puts the keyboard in it, so the arrow keys walk to a new coder, a new shell or a coder to resume and Enter takes it.`,
 				},
 				{
+					Title: "Close the current terminal",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "X"}}},
+					Desc:  `Stops a coder or deletes a shell, the same way the cross on its tab does, and it asks before it happens. On a split view it belongs to the tab, so it closes the whole split after one question.`,
+				},
+				{
 					Title: "Fullscreen terminal",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "F"}}, {Caps: []string{"Ctrl", "Shift", "Enter"}}},
 					Desc:  `<em>Fullscreen</em> in the terminal settings <i class="ti ti-settings align-text-bottom" aria-hidden="true"></i> of the tab strip. Double-clicking unused space in that strip does the same thing.`,
@@ -281,6 +286,11 @@ func DocsTopics() []DocsTopic {
 					Title: "Choose the active split pane",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "ti-arrow-left"}}, {Caps: []string{"Ctrl", "Shift", "ti-arrow-right"}}},
 					Desc:  `Moves focus between panes in a split terminal. The active pane receives keyboard input and shows its matching footer controls.`,
+				},
+				{
+					Title: "Close one pane of a split",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "Backspace"}}},
+					Desc:  `Closes the active pane and leaves the rest of the split standing, the same way the cross in its head does, and it asks first. This one is Ctrl even on a Mac, where the Cmd version belongs to the browser.`,
 				},
 			},
 		},
@@ -364,6 +374,11 @@ func DocsTopics() []DocsTopic {
 					Title: "Find in the file",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "F"}}},
 					Desc:  `Open the find panel for the current file.`,
+				},
+				{
+					Title: "Close the current file",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "X"}}},
+					Desc:  `Closes the open tab, and an unsaved one asks first. The same shortcut closes a terminal on the attach pages.`,
 				},
 				{
 					Title: "Find in files",

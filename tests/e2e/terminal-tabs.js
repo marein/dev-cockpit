@@ -50,7 +50,10 @@ const { assert, sleep, BASE } = L;
 // (confirm dialog, then coder stop or shell delete; closing the current session
 // switches to the right neighbor tab like Terminal.app, left as fallback,
 // projects page when the strip is empty; the page header stop button keeps its
-// own redirect+flash flow). Right click on a tab opens a context menu
+// own redirect+flash flow). Ctrl/Cmd+Shift+X takes the same path for the active
+// tab, confirm included; the combo is free in every browser, on all three
+// operating systems and in the terminal apps, so it never fights the pane, and
+// the editor binds it for its own tabs. Right click on a tab opens a context menu
 // (@dc/contextmenu, body-mounted .dc-context-menu): Rename for shells (prompt,
 // POST /shells/:id/rename, tab updates over the event stream), Mark read only
 // while the tab carries news, Open project (projects page card fragment), Open
@@ -654,6 +657,28 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "error toast after tab close");
       const toasts = (await page.locator(".swal2-toast").allTextContents()).join(" ");
       assert(!toasts.includes("Terminal has ended"), "ended toast not suppressed on tab close");
+    });
+
+    await run("Ctrl+Shift+X closes the current terminal, the same confirm as the close control", async () => {
+      const extraUrl = await L.createShell(page, project);
+      shellUrls.push(extraUrl);
+      const extraId = ownId(extraUrl);
+      await page.goto(extraUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`${tabSel(extraId)}.active`, { state: "attached", timeout: 12000 });
+      await page.click(".attach-terminal");
+      await sleep(200);
+      await page.keyboard.down("Control");
+      await page.keyboard.down("Shift");
+      await page.keyboard.press("x");
+      await page.keyboard.up("Shift");
+      await page.keyboard.up("Control");
+      await L.confirmSwal(page);
+      await page.waitForSelector(tabSel(extraId), { state: "detached", timeout: 10000 });
+      assert(!page.url().includes(extraId), `still on the closed terminal ${page.url()}`);
+      await sleep(600);
+      assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "error toast after the shortcut close");
+      await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
     });
 
     await run("closing the last tab lands on the projects page, never on the POST url", async () => {

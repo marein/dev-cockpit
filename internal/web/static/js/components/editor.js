@@ -3385,6 +3385,13 @@ async function init(root) {
     } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
       openQuickOpen("search");
+    } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && !e.repeat
+      && e.key.toLowerCase() === "x" && quickOpenEl.hidden) {
+      const tab = activeTab();
+      if (tab) {
+        e.preventDefault();
+        void closeTab(tab.path);
+      }
     } else if (e.key === "Escape") {
       if (!quickOpenEl.hidden) closeQuickOpen();
       else if (sheetKind) closeSheet();

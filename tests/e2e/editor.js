@@ -34,7 +34,9 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // wiring cancelled every dragstart. A bare .editor-textarea means the CDN import map failed (highlight
 // failure). Open files are tabs (.editor-tab, per-tab undo history, dirty dot,
 // persisted per project in localStorage and restored on load); switching tabs never
-// asks to discard, only closing a dirty tab does. The strip stands on every
+// asks to discard, only closing a dirty tab does, and Ctrl/Cmd+Shift+X closes the
+// active tab through that same path, the way it closes a terminal on the attach
+// pages. The strip stands on every
 // width, and so does one menu: outside it the header carries only the folder
 // toggle (where the tree is a drawer), the strip, a Save that shows up when the
 // file is unsaved, and the menu itself. Everything else is an entry in that
@@ -1351,6 +1353,26 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.keyboard.press("Control+Tab");
       await page.waitForSelector(`${tabSel(`ct1_${tag}.txt`)}.active`, { timeout: 6000 });
       await page.keyboard.press("Control+Shift+Tab");
+      await page.waitForSelector(`${tabSel(`ct2_${tag}.txt`)}.active`, { timeout: 6000 });
+    });
+
+    await run("Ctrl+Shift+X closes the active tab, a dirty one asks first", async () => {
+      await newFile(`cx_${tag}.txt`);
+      await page.click(".cm-content");
+      await page.keyboard.type("unsaved");
+      await waitDirty(`cx_${tag}.txt`, true);
+      await page.keyboard.down("Control");
+      await page.keyboard.down("Shift");
+      await page.keyboard.press("x");
+      await page.keyboard.up("Shift");
+      await page.keyboard.up("Control");
+      await page.waitForSelector(".swal2-popup", { timeout: 6000 });
+      assert(/discard/i.test(await page.textContent(".swal2-popup")), "no discard wording in the shortcut close confirm");
+      await confirmSwal(page);
+      await page.waitForFunction((s) => !document.querySelector(s), tabSel(`cx_${tag}.txt`), { timeout: 6000 });
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      await sleep(400);
+      await page.click(tabSel(`ct2_${tag}.txt`));
       await page.waitForSelector(`${tabSel(`ct2_${tag}.txt`)}.active`, { timeout: 6000 });
     });
 

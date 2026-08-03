@@ -622,6 +622,16 @@ class TerminalTabs extends HTMLElement {
       event.stopPropagation();
       return;
     }
+    if ((event.key === "x" || event.key === "X") && (event.ctrlKey || event.metaKey)
+      && event.shiftKey && !event.altKey && !event.repeat && !this.switcher) {
+      if (this.switcherOnly) return;
+      const active = this.strip.querySelector(".terminal-tab.active");
+      if (!active) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void this.closeTarget({ ...active.dataset });
+      return;
+    }
     if (this.menuOpen && !this.switcher) {
       const menuActions = {
         ArrowDown: () => this.moveMenuSelection(1),

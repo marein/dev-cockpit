@@ -20,7 +20,11 @@ const { assert, sleep, confirmSwal } = L;
 // and the browser title; the touch header keeps the focused member's name but
 // leaves the title alone.
 // Every close control kills for real after a confirm (strip tab X, pane head
-// X); ungrouping without killing lives in the context
+// X). The keyboard has both targets and never mixes them up: Ctrl/Cmd+Shift+X
+// belongs to the strip tab, which in a split is the whole group, and
+// Ctrl+Shift+Backspace takes the active pane alone (Ctrl only, no Cmd variant:
+// Cmd+Shift+Backspace clears the browsing data in the mac browsers).
+// Ungrouping without killing lives in the context
 // menus and the quick nav swipes. On mobile the settings row above the
 // terminal carries the active member's type badge (data-terminal-badge,
 // coder icon only with several coders, shells always), toggled with the
@@ -626,6 +630,68 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await sleep(800);
       assert(!(await page.$(tabSel(ids[0]))), "member A tab survived close");
       assert(!(await page.$(tabSel(ids[1]))), "member B tab survived close");
+      shellUrls.length = 0;
+    });
+
+    // The two keyboard closes are deliberately different targets: the strip
+    // shortcut belongs to the tab, which in a split is the whole group, and the
+    // pane shortcut is the only one that takes a single member.
+    let keptId = null;
+
+    await run("Ctrl+Shift+Backspace closes the active pane and leaves the rest of the split", async () => {
+      const urls = [await L.createShell(page, project), await L.createShell(page, project)];
+      shellUrls.push(...urls);
+      const pair = urls.map((u) => new URL(u).pathname.split("/").pop());
+      keptId = pair[0];
+      const group = await groupVia(pair);
+      await page.goto(`${L.BASE}${group.url}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 15000 });
+      await page.click(`terminal-attach[terminal-id="${pair[1]}"]`);
+      await page.waitForFunction(
+        (id) => document.querySelector("terminal-attach[active]")?.getAttribute("terminal-id") === id,
+        pair[1],
+        { timeout: 4000 },
+      );
+      await page.keyboard.down("Control");
+      await page.keyboard.down("Shift");
+      await page.keyboard.press("Backspace");
+      await page.keyboard.up("Shift");
+      await page.keyboard.up("Control");
+      await page.waitForSelector(".swal2-popup", { timeout: 6000 });
+      const asked = await page.textContent(".swal2-popup");
+      assert(/Delete shell/i.test(asked) && !/Close all/i.test(asked), `the pane close asked for the group: ${asked.replace(/\s+/g, " ").slice(0, 80)}`);
+      await confirmSwal(page);
+      // The close re-renders the page, so wait for the survivor's own tab to
+      // stand again before reading the strip; the closed pane's tab is gone
+      // during the swap either way.
+      await page.waitForSelector(tabSel(keptId), { state: "attached", timeout: 15000 });
+      await sleep(800);
+      assert(await page.$(tabSel(keptId)), "the other member went with the active pane");
+      assert(!(await page.$(tabSel(pair[1]))), "the closed pane kept its tab");
+    });
+
+    await run("Ctrl+Shift+X on a split page closes the whole split, never one pane", async () => {
+      const extraUrl = await L.createShell(page, project);
+      shellUrls.push(extraUrl);
+      const extraId = new URL(extraUrl).pathname.split("/").pop();
+      const group = await groupVia([keptId, extraId]);
+      await page.goto(`${L.BASE}${group.url}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 15000 });
+      await page.click(`terminal-attach[terminal-id="${extraId}"]`);
+      await sleep(200);
+      await page.keyboard.down("Control");
+      await page.keyboard.down("Shift");
+      await page.keyboard.press("x");
+      await page.keyboard.up("Shift");
+      await page.keyboard.up("Control");
+      await page.waitForSelector(".swal2-popup", { timeout: 6000 });
+      const asked = await page.textContent(".swal2-popup");
+      assert(/Close all 2 terminals/i.test(asked), `the strip close did not ask for the whole split: ${asked.replace(/\s+/g, " ").slice(0, 80)}`);
+      await confirmSwal(page);
+      await page.waitForURL((u) => !/\/splits\//.test(u.toString()), { timeout: 15000 });
+      await sleep(800);
+      assert(!(await page.$(tabSel(keptId))), "the split survived the shortcut");
+      assert(!(await page.$(tabSel(extraId))), "the active pane survived the shortcut");
       shellUrls.length = 0;
     });
 

@@ -120,12 +120,27 @@ class TerminalSplit extends HTMLElement {
   }
 
   onKeydown(event) {
-    if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.altKey) return;
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (!event.shiftKey || event.altKey) return;
+    const stepping = (event.key === "ArrowLeft" || event.key === "ArrowRight")
+      && (event.ctrlKey || event.metaKey);
+    // Ctrl+Shift+X on the strip closes the whole split, this closes the one
+    // pane. Cmd+Shift+Backspace clears the browsing data in the mac browsers,
+    // so the pane close takes Ctrl alone while the step keeps both modifiers.
+    const closing = event.key === "Backspace" && event.ctrlKey && !event.metaKey && !event.repeat;
+    if (!stepping && !closing) return;
     const target = event.target;
     if (target instanceof Element
       && target.closest("input, [contenteditable], textarea:not(.xterm-helper-textarea)")) return;
     const panes = this.panes();
+    if (closing) {
+      // No guess at the target: without an active pane the key does nothing.
+      const active = panes.find((pane) => pane.querySelector("terminal-attach[active]"));
+      if (!active) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void this.closePane({ ...active.dataset });
+      return;
+    }
     if (panes.length < 2) return;
     event.preventDefault();
     event.stopPropagation();
