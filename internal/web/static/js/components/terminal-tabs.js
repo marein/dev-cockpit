@@ -31,6 +31,9 @@ class TerminalTabs extends HTMLElement {
     this.inFlight = false;
     this.dirty = false;
     this.pendingIndex = null;
+    this.menuOpen = false;
+    this.menuFromKey = false;
+    this.menuIndex = -1;
     this.tap = { pending: null, lastKey: null, lastTime: 0 };
     const signal = this.ac.signal;
 
@@ -47,6 +50,20 @@ class TerminalTabs extends HTMLElement {
       toggle.focus = (options) => focus({ preventScroll: true, ...options });
       toggle.addEventListener("mousedown", (event) => event.preventDefault(), { signal });
     }
+    const newMenuEvent = (event) => event.target instanceof Element
+      && (event.target.matches("[data-tabs-new-menu]") || Boolean(event.target.querySelector("[data-tabs-new-menu]")));
+    this.addEventListener("shown.bs.dropdown", (event) => {
+      if (!newMenuEvent(event)) return;
+      this.menuOpen = true;
+      this.menuIndex = this.menuFromKey ? 0 : -1;
+      this.menuFromKey = false;
+      this.paintMenuSelection();
+    }, { signal });
+    this.addEventListener("hidden.bs.dropdown", (event) => {
+      if (!newMenuEvent(event)) return;
+      this.menuOpen = false;
+      this.paintMenuSelection();
+    }, { signal });
     this.strip.addEventListener("wheel", (event) => this.onWheel(event), { signal, passive: false });
     this.strip.addEventListener("dragstart", (event) => event.preventDefault(), { signal });
     this.strip.addEventListener("pointerdown", (event) => this.onPointerDown(event), { signal });
@@ -599,6 +616,27 @@ class TerminalTabs extends HTMLElement {
       this.switchTo(event.shiftKey ? -1 : 1);
       return;
     }
+    if ((event.key === "t" || event.key === "T") && event.metaKey && !event.ctrlKey && !event.altKey && !this.switcher) {
+      if (this.switcherOnly || !this.openNewMenu()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (this.menuOpen && !this.switcher) {
+      const menuActions = {
+        ArrowDown: () => this.moveMenuSelection(1),
+        ArrowUp: () => this.moveMenuSelection(-1),
+        Enter: () => this.commitMenuSelection(),
+        Escape: () => this.closeNewMenu(),
+      };
+      const menuAction = menuActions[event.key];
+      if (menuAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        menuAction();
+        return;
+      }
+    }
     if (!this.switcher) return;
     if (event.key === "Control" || event.key === "Shift" || event.key === "Alt" || event.key === "Meta") return;
     // The switcher cycles with the arrows only. Tab stays swallowed so it neither
@@ -619,6 +657,60 @@ class TerminalTabs extends HTMLElement {
     event.preventDefault();
     event.stopPropagation();
     action();
+  }
+
+  openNewMenu() {
+    const toggle = this.querySelector("[data-tabs-new-menu]");
+    if (!toggle || !toggle.offsetParent || !window.bootstrap?.Dropdown) return false;
+    this.menuFromKey = true;
+    window.bootstrap.Dropdown.getOrCreateInstance(toggle).show();
+    toggle.blur();
+    return true;
+  }
+
+  closeNewMenu() {
+    const toggle = this.querySelector("[data-tabs-new-menu]");
+    if (toggle) window.bootstrap?.Dropdown.getInstance(toggle)?.hide();
+  }
+
+  menuRows() {
+    const menu = this.querySelector(".terminal-tabs-new-menu");
+    if (!menu) return [];
+    return Array.from(menu.querySelectorAll(".dropdown-item")).filter((row) => row.offsetParent);
+  }
+
+  paintMenuSelection() {
+    const menu = this.querySelector(".terminal-tabs-new-menu");
+    if (!menu) return;
+    const rows = this.menuRows();
+    for (const row of menu.querySelectorAll(".dropdown-item.selected")) {
+      row.classList.remove("selected");
+      row.removeAttribute("aria-current");
+    }
+    if (!this.menuOpen || this.menuIndex < 0 || !rows.length) return;
+    this.menuIndex = Math.min(this.menuIndex, rows.length - 1);
+    const selected = rows[this.menuIndex];
+    selected.classList.add("selected");
+    selected.setAttribute("aria-current", "true");
+    const top = selected.offsetTop;
+    const bottom = top + selected.offsetHeight;
+    if (top < menu.scrollTop) menu.scrollTop = top;
+    else if (bottom > menu.scrollTop + menu.clientHeight) menu.scrollTop = bottom - menu.clientHeight;
+  }
+
+  moveMenuSelection(delta) {
+    const rows = this.menuRows();
+    if (!rows.length) return;
+    if (this.menuIndex < 0) this.menuIndex = delta > 0 ? 0 : rows.length - 1;
+    else this.menuIndex = (this.menuIndex + delta + rows.length) % rows.length;
+    this.paintMenuSelection();
+  }
+
+  commitMenuSelection() {
+    const selected = this.menuRows()[this.menuIndex];
+    if (!selected) return;
+    selected.click();
+    if (this.menuOpen) this.paintMenuSelection();
   }
 
   switchTo(direction) {
@@ -987,6 +1079,7 @@ class TerminalTabs extends HTMLElement {
           const editors = menu.querySelector("[data-tabs-editors]");
           if (editors) projectSort.sort(editors);
           menu.querySelectorAll("[data-tabs-resume-fold]").forEach((group) => this.foldResume(group));
+          this.paintMenuSelection();
         }
         if (this.switcher) this.rebuildSwitcher();
       })

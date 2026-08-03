@@ -21,6 +21,14 @@ const { assert, sleep } = L;
 // read text from the .attach-selection mirror. Uses a throwaway shell (safe target).
 // Routes: /shells/:id, /shells/:id/input, /shells/:id/resize, /shells/:id/stream.
 
+// The fullscreen switch is an entry of the tab strip's terminal settings, like
+// the editor's is an entry of its menu, so reaching it opens the gear first.
+async function fullscreenFromMenu(page) {
+  await page.click("terminal-tabs .terminal-tabs-settings .terminal-tabs-new-btn");
+  await page.waitForSelector("terminal-tabs .terminal-settings-menu.show [data-terminal-fullscreen]", { timeout: 4000 });
+  await page.click("terminal-tabs [data-terminal-fullscreen]");
+}
+
 L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
   const tag = `term-${engine}-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
@@ -220,7 +228,7 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
     // chrome disappears, and rows follow the viewport height instead of the
     // rows setting. Toggles: strip button, Ctrl+Shift+F or Cmd+Shift+F,
     // double-click on empty strip space. Persists per device.
-    await run("desktop: fullscreen via strip button + Ctrl/Cmd+Shift+F + Ctrl+Shift+Enter alias + strip double-click, rows follow the viewport", async () => {
+    await run("desktop: fullscreen via the settings menu + Ctrl/Cmd+Shift+F + Ctrl+Shift+Enter alias + strip double-click, rows follow the viewport", async () => {
       const state = () => page.evaluate(() => {
         const footer = document.querySelector(".attach-footer");
         const footerBox = footer.getBoundingClientRect();
@@ -232,20 +240,25 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
           stored: localStorage.getItem("dc-terminal-fullscreen"),
           pressed: document.querySelector("[data-terminal-fullscreen]").getAttribute("aria-pressed"),
           icon: document.querySelector("[data-terminal-fullscreen] i").className,
+          label: document.querySelector("[data-terminal-fullscreen-label]").textContent.trim(),
+          menuOpen: Boolean(document.querySelector("terminal-tabs .terminal-settings-menu.show")),
         };
       });
       const resizeRows = (r) => { const m = /(?:^|&)rows=(\d+)/.exec(r.postData() || ""); return m ? Number(m[1]) : 0; };
       const enterP = page.waitForRequest((r) => /\/resize$/.test(r.url()) && r.method() === "POST" && resizeRows(r) > 30, { timeout: 8000 });
-      await page.click("terminal-tabs [data-terminal-fullscreen]");
+      await fullscreenFromMenu(page);
       await enterP;
       let st = await state();
       assert(st.on && st.pagePos === "fixed" && st.footerVisible && st.footerAtBottom, `enter state wrong: ${JSON.stringify(st)}`);
-      assert(st.stored === "1" && st.pressed === "true" && /ti-minimize/.test(st.icon), `enter button state wrong: ${JSON.stringify(st)}`);
+      assert(st.stored === "1" && st.pressed === "true" && /ti-minimize/.test(st.icon) && st.label === "Exit fullscreen",
+        `enter button state wrong: ${JSON.stringify(st)}`);
+      assert(!st.menuOpen, "the settings menu stayed open behind the fullscreen page");
       const exitP = page.waitForRequest((r) => /\/resize$/.test(r.url()) && r.method() === "POST" && resizeRows(r) === 30, { timeout: 8000 });
       await page.keyboard.press("Control+Shift+F");
       await exitP;
       st = await state();
-      assert(!st.on && st.pagePos !== "fixed" && st.footerVisible && st.pressed === "false" && /ti-maximize/.test(st.icon), `exit state wrong: ${JSON.stringify(st)}`);
+      assert(!st.on && st.pagePos !== "fixed" && st.footerVisible && st.pressed === "false" && /ti-maximize/.test(st.icon) && st.label === "Fullscreen",
+        `exit state wrong: ${JSON.stringify(st)}`);
       await page.keyboard.press("Meta+Shift+F");
       await page.waitForFunction(() => document.documentElement.classList.contains("dc-terminal-fullscreen"), null, { timeout: 4000 });
       await page.reload({ waitUntil: "domcontentloaded" });
@@ -279,7 +292,7 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       });
       await page.click("[data-assistant-corner]");
       await page.waitForSelector(".dc-assistant-panel-card:not([hidden]) dc-assistant[ready]", { timeout: 20000 });
-      await page.click("terminal-tabs [data-terminal-fullscreen]");
+      await fullscreenFromMenu(page);
       await page.waitForFunction(() => document.documentElement.classList.contains("dc-terminal-fullscreen"), null, { timeout: 5000 });
       await sleep(300);
       const side = await edges();

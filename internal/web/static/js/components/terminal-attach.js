@@ -1261,12 +1261,15 @@ function initTerminalAttach(host) {
   const fullscreenButtons = document.querySelectorAll("[data-terminal-fullscreen]");
   const paintFullscreen = () => {
     document.documentElement.classList.toggle("dc-terminal-fullscreen", fullscreen);
+    const label = fullscreen ? "Exit fullscreen" : "Fullscreen";
     for (const button of fullscreenButtons) {
       button.setAttribute("aria-pressed", fullscreen ? "true" : "false");
-      button.setAttribute("aria-label", fullscreen ? "Exit fullscreen" : "Fullscreen");
-      button.title = (fullscreen ? "Exit fullscreen" : "Fullscreen") + " (Ctrl+Shift+F)";
+      button.setAttribute("aria-label", label);
+      button.title = label + " (Ctrl+Shift+F)";
       const icon = button.querySelector("i");
-      if (icon) icon.className = fullscreen ? "ti ti-minimize" : "ti ti-maximize";
+      if (icon) icon.className = (fullscreen ? "ti ti-minimize" : "ti ti-maximize") + " me-2";
+      const text = button.querySelector("[data-terminal-fullscreen-label]");
+      if (text) text.textContent = label;
     }
   };
   const setFullscreen = (on) => {
@@ -1598,6 +1601,8 @@ function initTerminalAttach(host) {
   for (const button of fullscreenButtons) {
     listen(button, "click", (event) => {
       event.preventDefault();
+      const toggle = button.closest(".dropdown")?.querySelector('[data-bs-toggle="dropdown"]');
+      if (toggle) window.bootstrap?.Dropdown.getInstance(toggle)?.hide();
       setFullscreen(!fullscreen);
     });
   }

@@ -61,6 +61,14 @@ const { assert, sleep, BASE } = L;
 // the coder first, so it never reappears as a resumable row. Switcher rows deliberately carry no close control
 // and no badges; the current session's row is marked by the current class
 // (accent bar) without extra row content. The + button at the strip's end
+// also answers Cmd+T (Cmd is no terminal modifier, so nothing is taken from the
+// pane): the menu opens with its first row selected and the arrows walk it,
+// Enter takes the row, Esc closes. Opened with the mouse it selects nothing,
+// the pointer is the pointer; the arrows still reach the rows from there. The
+// selection is a class on the row and
+// never the focus, like the switcher's: the menu hangs in the sticky strip and
+// focusing anything in there scrolls the page under it, which is what made
+// Bootstrap's own dropdown keys jump around. It
 // opens New coder / New shell with the current project preselected, followed by
 // a resume section listing every inactive coder grouped by project (same source
 // as the quick nav project browser, plain form POST to
@@ -375,6 +383,46 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await sleep(200);
       await page.keyboard.press("Escape");
       await sleep(200);
+    });
+
+    // Cmd is no terminal modifier, so the pane loses nothing by it: Cmd+T opens
+    // the plus menu and hands it the keyboard, the arrows walk it from there.
+    await run("Cmd+T opens the + menu on its first row, a mouse open selects nothing", async () => {
+      const selected = () => page.evaluate(() => {
+        const row = document.querySelector("terminal-tabs .terminal-tabs-new-menu .dropdown-item.selected");
+        return {
+          row: row ? (row.getAttribute("data-tabs-new") || row.textContent.trim()) : "",
+          count: document.querySelectorAll("terminal-tabs .terminal-tabs-new-menu .dropdown-item.selected").length,
+          focusedToggle: Boolean(document.activeElement?.hasAttribute?.("data-tabs-new-menu")),
+        };
+      });
+      await page.keyboard.press("Meta+t");
+      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "visible", timeout: 4000 });
+      let sel = await selected();
+      assert(sel.row === "coder" && sel.count === 1, `the menu did not open on its first row: ${JSON.stringify(sel)}`);
+      assert(!sel.focusedToggle, "the + button took the focus, the selection belongs to the row");
+      await page.keyboard.press("ArrowDown");
+      sel = await selected();
+      assert(sel.row === "shell" && sel.count === 1, `the arrow did not step to the new shell row: ${JSON.stringify(sel)}`);
+      await page.keyboard.press("ArrowUp");
+      sel = await selected();
+      assert(sel.row === "coder", `the arrow did not step back: ${JSON.stringify(sel)}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "detached", timeout: 4000 });
+      assert((await selected()).count === 0, "the selection outlived the closed menu");
+
+      // A menu opened with the mouse preselects nothing, the pointer is the
+      // pointer. The arrows still work, they take the first row from there.
+      await page.click("terminal-tabs [data-tabs-new-menu]");
+      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "visible", timeout: 4000 });
+      sel = await selected();
+      assert(sel.count === 0, `the mouse opened menu preselected a row: ${JSON.stringify(sel)}`);
+      await page.keyboard.press("ArrowDown");
+      sel = await selected();
+      assert(sel.row === "coder" && sel.count === 1, `the arrow did not take the first row: ${JSON.stringify(sel)}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "detached", timeout: 4000 });
+      return "keyboard opens on the first row, the mouse on none";
     });
 
     await run("the + menu leads with new coder and new shell, then the assistant and the editor, project preselected", async () => {

@@ -7,12 +7,11 @@
     </button>
     <div class="dropdown-menu dropdown-menu-end terminal-settings-menu">
       {{template "terminal_settings.gohtml"}}
+      <div class="dropdown-divider"></div>
+      <button type="button" class="dropdown-item" data-terminal-fullscreen aria-pressed="false" aria-label="Fullscreen" title="Fullscreen (Ctrl+Shift+F)">
+        <i class="ti ti-maximize me-2"></i><span data-terminal-fullscreen-label>Fullscreen</span>
+      </button>
     </div>
-  </div>
-  <div class="terminal-tabs-new">
-    <button type="button" class="terminal-tabs-new-btn" data-terminal-fullscreen aria-pressed="false" aria-label="Fullscreen" title="Fullscreen (Ctrl+Shift+F)">
-      <i class="ti ti-maximize"></i>
-    </button>
   </div>
 </terminal-tabs>
 {{end}}
@@ -65,7 +64,7 @@
     {{end}}
   </div>
   <div class="dropdown terminal-tabs-new">
-    <button type="button" class="terminal-tabs-new-btn" data-bs-toggle="dropdown" aria-expanded="false" aria-label="New coder or shell" title="New coder or shell">
+    <button type="button" class="terminal-tabs-new-btn" data-tabs-new-menu data-bs-toggle="dropdown" aria-expanded="false" aria-label="New coder or shell" title="New coder or shell (Cmd+T)">
       <i class="ti ti-plus"></i>
     </button>
     <div class="dropdown-menu dropdown-menu-end terminal-tabs-new-menu">

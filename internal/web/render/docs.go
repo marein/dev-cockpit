@@ -268,9 +268,14 @@ func DocsTopics() []DocsTopic {
 					Desc:  `Moves through active terminals in tab order and wraps at either end. Browsers often reserve this shortcut; it is reliable in an installed web app.`,
 				},
 				{
+					Title: "Open the plus menu",
+					Keys:  []DocsKeys{{Caps: []string{"Cmd", "T"}}},
+					Desc:  `Opens the plus menu <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> of the tab strip and puts the keyboard in it, so the arrow keys walk to a new coder, a new shell or a coder to resume and Enter takes it.`,
+				},
+				{
 					Title: "Fullscreen terminal",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "F"}}, {Caps: []string{"Ctrl", "Shift", "Enter"}}},
-					Desc:  `The fullscreen button <i class="ti ti-maximize align-text-bottom" aria-hidden="true"></i> sits in the terminal tab strip. Double-clicking unused space in that strip does the same thing.`,
+					Desc:  `<em>Fullscreen</em> in the terminal settings <i class="ti ti-settings align-text-bottom" aria-hidden="true"></i> of the tab strip. Double-clicking unused space in that strip does the same thing.`,
 				},
 				{
 					Title: "Choose the active split pane",
