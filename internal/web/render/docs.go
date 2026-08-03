@@ -376,7 +376,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Editor settings",
-					Desc:  `<em>Editor settings</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> sets tab width, indentation, font size, line wrapping and how a diff looks, side by side against inline and whether unchanged parts are folded. All of it stays on this device. A file covered by a project's .editorconfig takes its indentation from there, the control then only shows it.`,
+					Desc:  `<em>Editor settings</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> sets tab width, indentation, font size, line wrapping and how a diff looks, side by side against inline, or automatic, which picks by the window width and follows it while a diff is open, and whether unchanged parts are folded. All of it stays on this device. A file covered by a project's .editorconfig takes its indentation from there, the control then only shows it.`,
 				},
 				{
 					Title: "Fullscreen editor",

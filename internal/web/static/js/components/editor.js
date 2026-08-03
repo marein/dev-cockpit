@@ -114,6 +114,11 @@ async function init(root) {
   setupSettingsUI(root, editor, editorSettings, (key) => {
     if (key === "diff_view" || key === "diff_collapse") void reapplyComparison(key);
   });
+  wideMedia.addEventListener("change", () => {
+    if (editorSettings.diff_view !== "side" && editorSettings.diff_view !== "inline") {
+      void reapplyComparison("diff_view");
+    }
+  }, { signal });
   const syncIndentControl = setupIndentControl(root, editor, editorSettings);
 
   const tabs = [];

@@ -43,7 +43,10 @@ const { assert, sleep, BASE } = L;
 //     by side against inline and whether unchanged parts are folded, is the
 //     editor's own setting, per device in
 //     `dc-editor-settings` and never on the server, picked in the sheet behind
-//     the menu's Editor settings entry; automatic decides by the width. Either
+//     the menu's Editor settings entry; automatic decides by the width and
+//     keeps deciding while a comparison is open, so resizing the window across
+//     the lg breakpoint rebuilds it in the other view (a picked view stands,
+//     the window never overrules it). Either
 //     applies to an open comparison on the spot, so a check that needs one view
 //     waits for the comparison to stand and then switches, no reload. The
 //     settings page keeps only what describes the install: the poll interval
@@ -612,6 +615,32 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
 
       await setDiffView(page, "auto");
       return "view and folding stored per device, nothing on the server";
+    });
+
+    // Automatic reads the room, and the room changes while a diff stands open.
+    // The open comparison follows the window instead of waiting for the next
+    // time the file is opened.
+    await run("diff: on automatic the open comparison follows the window width", async () => {
+      await openTracked();
+      await page.waitForSelector(".cm-mergeView", { timeout: 20000 });
+      await page.setViewportSize({ width: 900, height: 900 });
+      await page.waitForSelector(".cm-deletedChunk, .cm-changedLine", { state: "attached", timeout: 20000 });
+      assert(await page.locator(".cm-mergeView").count() === 0,
+        "the narrow window kept the two pane view");
+      await page.setViewportSize({ width: 1360, height: 900 });
+      await page.waitForSelector(".cm-mergeView", { timeout: 20000 });
+      assert(await page.locator(".cm-mergeView .cm-content").count() === 2,
+        "the wide window did not bring the two panes back");
+      // A picked view is a decision, the window does not overrule it.
+      await setDiffView(page, "side");
+      await page.setViewportSize({ width: 900, height: 900 });
+      await sleep(600);
+      assert(await page.locator(".cm-mergeView").count() === 1,
+        "the narrow window overruled the picked side by side view");
+      await page.setViewportSize({ width: 1360, height: 900 });
+      await setDiffView(page, "auto");
+      await page.waitForSelector(".cm-mergeView", { timeout: 20000 });
+      return "narrow goes inline, wide comes back, a picked view stands";
     });
 
     await run("diff: the switch survives a reload and is stored as the revision", async () => {
