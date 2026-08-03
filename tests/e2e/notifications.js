@@ -80,7 +80,7 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       });
     });
 
-    await run("settings: jingle selection persists server-side and reaches the meta tag", async () => {
+    await run("settings: jingle selection persists server-side and reaches the meta tag, without a reload", async () => {
       await page.goto(`${BASE}/settings/notifications`, { waitUntil: "domcontentloaded" });
       assert(await page.$('input[name="jingle"][value="arpeggio"]:checked'), "default jingle not arpeggio");
       await page.check('input[name="jingle"][value="retro"]');
@@ -89,6 +89,19 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
         page.locator('form:has(dc-jingle-picker) button[type="submit"]').click(),
       ]);
       await page.waitForSelector('input[name="jingle"][value="retro"]:checked', { state: "attached", timeout: 6000 });
+      // The head is never swapped, so the tab that picked the jingle would keep
+      // playing the old one: app.js takes the fresh value out of the answer and
+      // writes it onto the live meta, which is what @dc/jingle reads per play.
+      // The waits above are no proof that the boosted submit is through: the
+      // url is the one the form sits on and the radio was checked before the
+      // click, so both settle before the answer arrives.
+      await page.waitForFunction(
+        () => document.querySelector('meta[name="dc-jingle"]')?.getAttribute("content") === "retro",
+        null,
+        { timeout: 8000 },
+      ).catch(() => {
+        throw new Error("the saving tab still carries the old jingle, no reload should be needed");
+      });
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       const meta = await page.getAttribute('meta[name="dc-jingle"]', "content");
       assert(meta === "retro", `meta dc-jingle: ${meta}`);

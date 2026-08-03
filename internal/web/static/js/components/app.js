@@ -38,6 +38,12 @@ function buildChanged(dom) {
   return Boolean(bootBuild && build && build !== bootBuild);
 }
 
+function syncJingle(dom) {
+  const fresh = dom.querySelector('meta[name="dc-jingle"]');
+  const meta = document.querySelector('meta[name="dc-jingle"]');
+  if (fresh && meta) meta.setAttribute("content", fresh.getAttribute("content") || "");
+}
+
 window.app.peInit();
 
 window.matchMedia("(prefers-color-scheme:dark)").addEventListener(
@@ -95,7 +101,7 @@ window.addEventListener("pe:navigate", (e) => {
   let stale = false;
   closeOpenModals();
   e.detail.succeed.push(dropModalOverlay);
-  e.detail.parsed.push((dom) => { stale = buildChanged(dom); if (!stale) window.app.loadElements(dom.body); });
+  e.detail.parsed.push((dom) => { stale = buildChanged(dom); syncJingle(dom); if (!stale) window.app.loadElements(dom.body); });
   e.detail.succeed.push(() => { if (stale) location.reload(); });
   e.detail.succeed.push(() => window.dispatchEvent(new CustomEvent("dc:navigated")));
   e.detail.catch.push((err) => err?.name !== "AbortError" && notifyError("Could not load the page."));
@@ -112,7 +118,7 @@ window.addEventListener("pe:form", (e) => {
   let stale = false;
   closeOpenModals();
   e.detail.succeed.push(dropModalOverlay);
-  e.detail.parsed.push((dom) => { stale = buildChanged(dom); if (!stale) window.app.loadElements(dom.body); });
+  e.detail.parsed.push((dom) => { stale = buildChanged(dom); syncJingle(dom); if (!stale) window.app.loadElements(dom.body); });
   e.detail.succeed.push(() => { if (stale) location.reload(); });
   e.detail.succeed.push(() => window.dispatchEvent(new CustomEvent("dc:navigated")));
   e.detail.catch.push((err) => err?.name !== "AbortError" && notifyError("Could not submit, the connection failed or was cut off."));

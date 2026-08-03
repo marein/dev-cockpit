@@ -334,9 +334,17 @@ free floating page scripts.
   style; **do not restructure it without asking.** `app.js` is the glue: loading bar, lazy custom element loader (by tag
   name via the import map, so pages carry no `<script>` tags), `pe:*` hooks,
   `data-confirm`, and a `dc-build` head check that forces one native reload after a
-  redeploy. It also fires a global `dc:navigated` event after every boosted
-  navigation (in the `pe:*` succeed hook, so `location.hash` is already pushed);
-  elements that must react to the final URL listen for it. `data-no-pe` opts a link or form out
+  redeploy. **The head is never swapped, so anything the head carries goes stale
+  in an open tab.** What has to survive that reads the answer instead: both the
+  `dc-build` check and `syncJingle` take it out of the parsed document in the
+  `parsed` hook, and the jingle one writes the fresh value onto the live
+  `meta[name="dc-jingle"]`, so a jingle picked in the settings plays on the next
+  notification without a reload. A value only qualifies when nothing caches it:
+  `@dc/jingle` reads that meta on every play, while `@dc/http` caches the CSRF
+  token in module scope, so copying that one would be a lie. A response without
+  a head (a fragment) is left alone. It also fires a global `dc:navigated` event
+  after every boosted navigation (in the `pe:*` succeed hook, so `location.hash`
+  is already pushed); elements that must react to the final URL listen for it. `data-no-pe` opts a link or form out
   into a native load (login, logout, downloads, JS owned forms). Framework scripts
   and toasts sit outside the swap and survive it.
 - **Shared modules:** `internal/web/static/js/dc/` (toast, dialog, contextmenu,
