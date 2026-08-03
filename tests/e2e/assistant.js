@@ -1392,6 +1392,34 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     await closePanel(page);
   });
 
+  // macOS sends Home and End for Fn+Left and Fn+Right, and a textarea answers
+  // them by scrolling its box while the caret stays where it was. The composer
+  // takes both keys and jumps through the whole text.
+  await run("Home and End jump to the start and the end of the composer", async () => {
+    await openAssistant(page);
+    const box = "dc-assistant-panel [data-assistant-input]";
+    await page.fill(box, "first line\nsecond line\nthird line");
+    const text = await page.inputValue(box);
+    await page.locator(box).evaluate((el) => el.setSelectionRange(15, 15));
+    await page.keyboard.press("End");
+    let caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
+    assert(caret[0] === text.length && caret[1] === text.length, `End did not reach the end: ${caret}`);
+    await page.keyboard.press("Home");
+    caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
+    assert(caret[0] === 0 && caret[1] === 0, `Home did not reach the start: ${caret}`);
+    await page.locator(box).evaluate((el) => el.setSelectionRange(15, 15));
+    await page.keyboard.press("Shift+End");
+    caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
+    assert(caret[0] === 15 && caret[1] === text.length, `Shift+End did not extend to the end: ${caret}`);
+    await page.keyboard.press("Shift+Home");
+    caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
+    assert(caret[0] === 0 && caret[1] === 15, `Shift+Home did not extend to the start: ${caret}`);
+    await page.fill(box, "");
+    await sleep(1200);
+    await closePanel(page);
+    return "both keys jump, Shift extends";
+  });
+
   // The error state replaces the whole panel body, so it must carry its own
   // close control, on a phone there is no Escape key to fall back to.
   await run("a failed panel load keeps a close control and retry recovers", async () => {

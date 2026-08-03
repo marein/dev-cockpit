@@ -1,6 +1,7 @@
 import { postForm, ensureOk, getText, getJSON, csrfHeaders } from "@dc/http";
 import { notifyError } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
+import { jumpTextEdge } from "@dc/dom";
 
 const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
@@ -224,6 +225,7 @@ class Assistant extends HTMLElement {
   }
 
   onKeydown(event) {
+    if (jumpTextEdge(event, this.input)) return;
     if (event.key !== "Enter") return;
     if (COARSE || event.shiftKey || event.isComposing) return;
     event.preventDefault();

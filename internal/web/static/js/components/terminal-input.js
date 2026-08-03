@@ -1,6 +1,7 @@
 import { createRepeater } from "@dc/repeater";
 import { notifyError } from "@dc/toast";
 import { postJSON, ensureOk } from "@dc/http";
+import { jumpTextEdge } from "@dc/dom";
 
 function initTerminalInput(host) {
   const inputUrl = host.getAttribute("input-url");
@@ -284,6 +285,7 @@ function initTerminalInput(host) {
   });
 
   listen(promptModalTextarea, "keydown", (event) => {
+    if (jumpTextEdge(event, promptModalTextarea)) return;
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
       promptModalForm?.requestSubmit();

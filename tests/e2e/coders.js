@@ -52,6 +52,34 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       assert(changed, "agent pane did not react (slow/not authed)");
     }, { soft: true });
 
+    // macOS sends Home and End for Fn+Left and Fn+Right, and a textarea answers
+    // them by scrolling its box while the caret stays where it was.
+    await run("desktop: Home and End jump through the whole prompt", async () => {
+      const box = "#terminal-prompt-modal-text";
+      await page.click(".attach-desktop [data-terminal-prompt-modal-open]");
+      await modalShown(page, "terminal-prompt-modal"); await sleep(300);
+      await page.fill(box, "first line\nsecond line\nthird line");
+      const text = await page.inputValue(box);
+      await page.locator(box).evaluate((el) => el.setSelectionRange(15, 15));
+      await page.keyboard.press("End");
+      let caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
+      assert(caret[0] === text.length && caret[1] === text.length, `End did not reach the end: ${caret}`);
+      await page.keyboard.press("Home");
+      caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
+      assert(caret[0] === 0 && caret[1] === 0, `Home did not reach the start: ${caret}`);
+      await page.locator(box).evaluate((el) => el.setSelectionRange(15, 15));
+      await page.keyboard.press("Shift+End");
+      caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
+      assert(caret[0] === 15 && caret[1] === text.length, `Shift+End did not extend to the end: ${caret}`);
+      await page.keyboard.press("Shift+Home");
+      caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
+      assert(caret[0] === 0 && caret[1] === 15, `Shift+Home did not extend to the start: ${caret}`);
+      await page.fill(box, "");
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => { const m = document.getElementById("terminal-prompt-modal"); return m && !m.classList.contains("show"); }, null, { timeout: 6000 });
+      return "both keys jump, Shift extends";
+    });
+
     await run("files: multi upload -> Done -> list, reference (Copied), download, delete", async () => {
       await page.goto(sessionUrl, { waitUntil: "domcontentloaded" });
       await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });

@@ -33,6 +33,22 @@ export function el(tag, props = {}, ...children) {
   return node;
 }
 
+export function jumpTextEdge(event, input) {
+  if (event.key !== "Home" && event.key !== "End") return false;
+  if (!input || event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return false;
+  event.preventDefault();
+  const to = event.key === "Home" ? 0 : input.value.length;
+  if (event.shiftKey) {
+    const anchor = input.selectionDirection === "backward" ? input.selectionEnd : input.selectionStart;
+    if (to < anchor) input.setSelectionRange(to, anchor, "backward");
+    else input.setSelectionRange(anchor, to, "forward");
+  } else {
+    input.setSelectionRange(to, to);
+  }
+  input.scrollTop = to === 0 ? 0 : input.scrollHeight;
+  return true;
+}
+
 const ESCAPE = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
 export function escapeHtml(value) {
