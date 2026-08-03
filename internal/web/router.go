@@ -164,6 +164,11 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/shells/:id/stream", s.handleShellStream)
 
 	auth.GET("/settings", s.handleSettings)
+	// The editor settings sit behind a tab, like a coder's sections, so the page
+	// can grow more of them; the bare path leads to the one there is.
+	auth.GET("/settings/editor", s.handleSettingsEditor)
+	auth.GET("/settings/editor/git", s.handleSettingsEditorGit)
+	auth.POST("/settings/editor/git", s.handleSettingsEditorGitSave)
 	auth.GET("/settings/notifications", s.handleSettingsNotifications)
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
@@ -211,6 +216,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/projects/:name/editor/search", s.handleEditorSearch)
 	auth.POST("/projects/:name/editor/upload", s.handleEditorUpload)
 	auth.POST("/projects/:name/editor/preview", s.handleEditorPreview)
+	auth.GET("/projects/:name/editor/git/changes", s.handleEditorGitChanges)
+	auth.GET("/projects/:name/editor/git/blame", s.handleEditorGitBlame)
+	auth.GET("/projects/:name/editor/git/file", s.handleEditorGitFile)
+	auth.POST("/projects/:name/editor/git/watch", s.handleEditorGitWatch)
 }
 
 func (s *Server) registerStaticRoutes(r *gin.Engine) {

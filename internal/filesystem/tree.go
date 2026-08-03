@@ -35,7 +35,16 @@ type Entry struct {
 // it onto root, refusing anything that would escape root (lexically or via
 // symlinks). An empty rel resolves to root itself.
 func ResolveUnder(root, rel string) (string, error) {
-	cleaned := path.Clean("/" + strings.ReplaceAll(strings.TrimSpace(rel), "\\", "/"))
+	slashed := strings.ReplaceAll(strings.TrimSpace(rel), "\\", "/")
+	// A path that walks out of the project is refused, and refused on purpose:
+	// the clean below would otherwise bend "../../etc/passwd" into "etc/passwd"
+	// inside the project and answer for whatever happens to be there. Until the
+	// symlink check learned to walk up to an existing ancestor, this was said by
+	// accident, because the parent of such a path is usually not on the disk.
+	if escaped := path.Clean(slashed); escaped == ".." || strings.HasPrefix(escaped, "../") {
+		return "", errors.New("Path escapes the project directory.")
+	}
+	cleaned := path.Clean("/" + slashed)
 	target := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(cleaned, "/")))
 	if !IsUnder(target, root) {
 		return "", errors.New("Path escapes the project directory.")
@@ -46,12 +55,25 @@ func ResolveUnder(root, rel string) (string, error) {
 	return target, nil
 }
 
-// ensureNoSymlinkEscape resolves symlinks on target (or its parent when target
-// does not exist yet) and verifies the real path is still under root.
+// ensureNoSymlinkEscape resolves symlinks on target and verifies the real path
+// is still under root. A path that is not on the disk is checked at its nearest
+// existing ancestor: that is the same question one level up, and it is the only
+// one that can be asked at all. Walking up rather than stopping at the direct
+// parent is what lets the git routes ask about a path the repository still has
+// and the disk does not, a deleted file inside a deleted folder for instance,
+// which they never touch on the disk anyway.
 func ensureNoSymlinkEscape(target, root string) error {
 	check := target
-	if _, err := os.Lstat(target); err != nil {
-		check = filepath.Dir(target)
+	for {
+		if _, err := os.Lstat(check); err == nil {
+			break
+		}
+		parent := filepath.Dir(check)
+		if parent == check || !IsUnder(parent, root) {
+			check = root
+			break
+		}
+		check = parent
 	}
 	resolved, err := filepath.EvalSymlinks(check)
 	if err != nil {
@@ -183,18 +205,26 @@ const MaxListedFiles = 5000
 // skippedDirs are directories the recursive file listing never descends into.
 var skippedDirs = map[string]bool{".git": true, "node_modules": true, ".worktrees": true}
 
-// ListFilesRecursive returns the relative paths of every regular file under
-// root, skipping VCS and dependency directories. Symlinked directories are not
-// followed. The walk stops after MaxListedFiles entries and reports truncation.
-func ListFilesRecursive(root string) ([]string, bool, error) {
-	out := []string{}
-	truncated := false
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+// ListFilesUnder walks one directory inside root and answers the relative paths
+// of every regular file in it. An empty rel walks the whole project.
+//
+// VCS and dependency directories are skipped, symlinked directories are not
+// followed, and the walk stops after MaxListedFiles files and reports
+// truncation. The paths stay relative to root, which is what every client path
+// is, so a caller that only cares about a subtree pays for that subtree and the
+// cap counts there.
+func ListFilesUnder(root, rel string) (files []string, truncated bool, err error) {
+	dir, err := ResolveUnder(root, rel)
+	if err != nil {
+		return nil, false, err
+	}
+	files = []string{}
+	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
 		if d.IsDir() {
-			if p != root && skippedDirs[d.Name()] {
+			if p != dir && skippedDirs[d.Name()] {
 				return filepath.SkipDir
 			}
 			return nil
@@ -202,18 +232,18 @@ func ListFilesRecursive(root string) ([]string, bool, error) {
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		if len(out) >= MaxListedFiles {
+		if len(files) >= MaxListedFiles {
 			truncated = true
 			return filepath.SkipAll
 		}
-		out = append(out, relTo(root, p))
+		files = append(files, relTo(root, p))
 		return nil
 	})
 	if err != nil {
 		return nil, false, err
 	}
-	sort.Strings(out)
-	return out, truncated, nil
+	sort.Strings(files)
+	return files, truncated, nil
 }
 
 // ErrExists reports a name that is already taken. The editor answers it with a

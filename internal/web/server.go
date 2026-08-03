@@ -55,7 +55,10 @@ type Server struct {
 	assets       staticAssetManifest
 	loginLimiter rateLimiter
 	termTheme    terminalTheme
-	handler      http.Handler
+	// gitWatchers keeps the editor's per-project git poller alive only while a
+	// client says it is watching.
+	gitWatchers *gitWatchers
+	handler     http.Handler
 }
 
 // localCallKey marks a request that arrived on the local socket, see
@@ -95,6 +98,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		updater:       updater,
 		backups:       backups,
 		assets:        assets,
+		gitWatchers:   newGitWatchers(),
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
 			cfg.LoginRateBlock, cfg.LoginRateMaxAttempts,

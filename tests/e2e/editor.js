@@ -34,9 +34,15 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // wiring cancelled every dragstart. A bare .editor-textarea means the CDN import map failed (highlight
 // failure). Open files are tabs (.editor-tab, per-tab undo history, dirty dot,
 // persisted per project in localStorage and restored on load); switching tabs never
-// asks to discard, only closing a dirty tab does. The tree is a drawer on small
-// screens (auto-open when no tab restores) and a drag-resizable column on wide
-// ones. Routes: GET /projects/:name/editor(/list|/file|/files), POST .../file
+// asks to discard, only closing a dirty tab does. The strip stands on every
+// width, and so does one menu: outside it the header carries only the folder
+// toggle (where the tree is a drawer), the strip, a Save that shows up when the
+// file is unsaved, and the menu itself. Everything else is an entry in that
+// menu, git included, and the entries are the same at 390 and at 1440. The list
+// of open files is a sheet the menu opens; on touch its grip handle is the only
+// way to reorder, the strip drag stays with the mouse. The tree is a drawer on
+// small screens (auto-open when no tab restores) and a drag-resizable column on
+// wide ones. Routes: GET /projects/:name/editor(/list|/file|/files), POST .../file
 // (save), .../create, .../mkdir, .../delete, .../rename, .../upload, .../preview.
 // The toolbar buttons are wired only after init() awaits the CDN, so wait for
 // .cm-editor before driving them; kebab menu items are clicked via evaluate so the
@@ -112,6 +118,175 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       return !!el && el.classList.contains("dirty") === want;
     }, [tabSel(path), on], { timeout: 6000 });
   const menuItem = (p, label) => p.locator(".dc-context-menu .dropdown-item", { hasText: new RegExp(`^${label}$`) });
+  const tabOrder = () => page.$$eval("[data-editor-tabs] .editor-tab", (els) => els.map((el) => el.dataset.path));
+  const dragLastTabToFront = async (order) => {
+    const from = await page.locator(tabSel(order[order.length - 1])).boundingBox();
+    const to = await page.locator(tabSel(order[0])).boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    const targetX = to.x + to.width * 0.2;
+    for (let i = 1; i <= 12; i++) {
+      await page.mouse.move(from.x + from.width / 2 + (targetX - from.x - from.width / 2) * (i / 12), from.y + from.height / 2, { steps: 2 });
+      await sleep(30);
+    }
+    await page.mouse.up();
+    await sleep(300);
+  };
+  // What the browser really lays out, never the hidden attribute: a display
+  // utility outranks it, so a control can carry hidden and still stand there.
+  const boxes = (p, map) => p.evaluate((sels) => {
+    const out = {};
+    for (const [key, sel] of Object.entries(sels)) {
+      const el = document.querySelector(sel);
+      if (!el) { out[key] = null; continue; }
+      const r = el.getBoundingClientRect();
+      out[key] = { display: getComputedStyle(el).display, w: Math.round(r.width), h: Math.round(r.height) };
+    }
+    return out;
+  }, map);
+  const activeName = (p) => p.$eval("[data-editor-tabs] .editor-tab.active .editor-tab-name", (el) => el.textContent);
+  // A menu entry carries its state in the hidden attribute; inside a closed
+  // dropdown it has no box, so this is the one place the attribute is the
+  // honest measurement. What it is worth on screen is checked with the menu
+  // open, in the checks that count the entries.
+  const waitItemShown = (p, sel) => p.waitForFunction((x) => {
+    const el = document.querySelector(x);
+    return el && !el.hidden;
+  }, sel, { timeout: 6000 });
+  // The one menu: what a person really sees in it, with it open.
+  const openMenu = async (p) => {
+    // With nothing open the drawer opens by itself on a phone, and its backdrop
+    // lies over the header until it is closed.
+    if (await p.$(".editor.editor-drawer-open")) {
+      await p.evaluate(() => document.querySelector("[data-editor-backdrop]").click());
+      await p.waitForFunction(() => !document.querySelector(".editor.editor-drawer-open"), null, { timeout: 6000 });
+    }
+    await p.click("[data-editor-menu]");
+    await p.waitForSelector("[data-editor-menu-list].show", { timeout: 4000 });
+    await sleep(250);
+  };
+  const closeMenu = async (p) => {
+    await p.keyboard.press("Escape");
+    await p.waitForSelector("[data-editor-menu-list].show", { state: "detached", timeout: 4000 }).catch(() => {});
+    await sleep(150);
+  };
+  const menuEntries = async (p) => {
+    await openMenu(p);
+    const rows = await p.$$eval("[data-editor-menu-list] .dropdown-item", (els) => els
+      .filter((el) => el.getBoundingClientRect().height > 0)
+      .map((el) => el.getAttributeNames().find((n) => n.startsWith("data-editor")) || el.className));
+    await closeMenu(p);
+    return rows;
+  };
+  // Everything a person can hit in the header, the strip counted as one. There
+  // are two pane headers, one over the tree and one over the editor: this is the
+  // one the strip sits in, hence the .editor-pane-col scope.
+  const headerControls = (p) => p.$$eval(
+    ".editor-pane-col > .editor-pane-header > button, .editor-pane-col > .editor-pane-header > .editor-tabs, .editor-pane-col > .editor-pane-header .editor-actions > button, .editor-pane-col > .editor-pane-header .editor-actions > a, .editor-pane-col > .editor-pane-header .editor-actions > .dropdown > button",
+    (els) => els
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && getComputedStyle(el).display !== "none";
+      })
+      .map((el) => el.getAttributeNames().find((n) => n.startsWith("data-editor")) || el.className.split(" ")[0]),
+  );
+  const openFilesSheet = async (p) => {
+    await openMenu(p);
+    await p.click("[data-editor-files-item]");
+    await p.waitForSelector(".editor-sheet-row", { timeout: 5000 });
+    await sleep(250);
+  };
+  // Opens a file on the phone through the tree drawer, the only way there.
+  const openOnPhone = async (mp, path) => {
+    if (!(await mp.$(".editor.editor-drawer-open"))) {
+      await mp.click("[data-editor-drawer-toggle]");
+      await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 6000 });
+    }
+    await mp.waitForSelector(`.editor-file[data-path="${path}"]`, { timeout: 8000 });
+    await mp.click(`.editor-file[data-path="${path}"]`);
+    await mp.waitForSelector(`${tabSel(path)}.active`, { state: "attached", timeout: 10000 });
+    await sleep(400);
+  };
+  const sheetRows = (mp) => mp.$$eval(".editor-sheet-row", (els) => els.map((el) => el.dataset.path));
+  // Opens a file through the palette and leaves nothing of it standing: when the
+  // file is already the active one the tab wait passes at once, and a palette
+  // still open then covers the whole editor, the menu button included.
+  const openViaPalette = async (target, name) => {
+    await target.keyboard.press("Control+o");
+    await target.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 4000 });
+    await target.fill("[data-editor-quickopen-input]", name);
+    await sleep(300);
+    await target.keyboard.press("Enter");
+    await target.waitForSelector(`${tabSel(name)}.active`, { state: "attached", timeout: 8000 });
+    if (await target.$("[data-editor-quickopen]:not([hidden])")) {
+      await target.keyboard.press("Escape");
+    }
+    await target.waitForSelector("[data-editor-quickopen]", { state: "hidden", timeout: 4000 });
+    await sleep(300);
+  };
+  // A finger on the grip handle, the gesture quicknav uses for the same job.
+  const dragSheetRow = async (mp, path, toIndex) => {
+    await mp.evaluate(async ([sel, want]) => {
+      const rows = [...document.querySelectorAll(".editor-sheet-row")];
+      const row = document.querySelector(sel);
+      const grip = row.querySelector("[data-editor-sheet-handle]");
+      const r = grip.getBoundingClientRect();
+      const x = Math.round(r.left + r.width / 2);
+      const y0 = Math.round(r.top + r.height / 2);
+      const raw = rows[want].getBoundingClientRect().top - row.getBoundingClientRect().top;
+      // The drag starts measuring where it crossed the threshold, so the first
+      // step is spent on that and the rest has to carry the whole distance.
+      const lift = Math.sign(raw) * 8;
+      const dy = Math.round(raw + lift + Math.sign(raw) * 10);
+      const send = (type, y) => grip.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerId: 41, pointerType: "touch", isPrimary: true,
+        clientX: x, clientY: y, buttons: type === "pointerup" ? 0 : 1,
+      }));
+      send("pointerdown", y0);
+      send("pointermove", Math.round(y0 + lift));
+      await new Promise((done) => setTimeout(done, 16));
+      for (let i = 1; i <= 10; i++) {
+        send("pointermove", Math.round(y0 + lift + ((dy - lift) * i) / 10));
+        await new Promise((done) => setTimeout(done, 16));
+      }
+      send("pointerup", y0 + dy);
+    }, [`.editor-sheet-row[data-path="${path}"]`, toIndex]);
+    await sleep(400);
+  };
+  // A horizontal drag over the editor surface. Returns whether the editor took
+  // the gesture (it cancels the move it acts on), which is what tells a swipe
+  // that switched files from one the surface kept for its own scrolling.
+  const swipeSurface = (mp, dx) => mp.evaluate(async (travel) => {
+    const el = document.querySelector("[data-editor-surface]");
+    const r = el.getBoundingClientRect();
+    const y = Math.round(r.top + r.height / 2);
+    const x0 = Math.round(r.left + r.width / 2);
+    let taken = false;
+    const send = (type, x) => {
+      const event = new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerId: 31, pointerType: "touch", isPrimary: true,
+        clientX: x, clientY: y, buttons: type === "pointerup" ? 0 : 1,
+      });
+      if (!el.dispatchEvent(event)) taken = true;
+    };
+    send("pointerdown", x0);
+    for (let i = 1; i <= 10; i++) {
+      send("pointermove", Math.round(x0 + (travel * i) / 10));
+      await new Promise((done) => setTimeout(done, 16));
+    }
+    send("pointerup", Math.round(x0 + travel));
+    return taken;
+  }, dx).then(async (taken) => {
+    await sleep(500);
+    return taken;
+  });
+  const setWrap = async (mp, on) => {
+    await mp.evaluate((want) => {
+      const box = document.querySelector('[data-editor-setting="line_wrap"]');
+      if (box.checked !== want) box.click();
+    }, on);
+    await sleep(400);
+  };
   const openRowMenu = async (p, sel) => {
     await p.click(sel, { button: "right" });
     await p.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
@@ -267,7 +442,7 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
     });
 
     await run("find in files searches contents and jumps to the match", async () => {
-      await page.click("[data-editor-search-project]");
+      await clickItem("[data-editor-search-project-item]");
       await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
       await page.fill("[data-editor-quickopen-input]", "hello " + tag);
       await page.waitForSelector(".editor-quickopen-match", { timeout: 8000 });
@@ -348,18 +523,28 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await waitDirty(renamed, false);
     });
 
-    await run("markdown preview renders server side and toggles off", async () => {
+    // The preview is a per file switch in the file's own context menu, on its
+    // tab and on its tree row, like the git ones; the editor menu has no entry
+    // for it.
+    await run("markdown preview renders server side and toggles off from the file's menu", async () => {
       await page.click(tabSel(noteFile));
       await page.click(".cm-content");
       await page.keyboard.press("Control+End").catch(() => {});
       await page.keyboard.type("\n\n# PreviewTitle" + tag);
-      await page.waitForSelector("[data-editor-preview-toggle]:not([hidden])", { timeout: 6000 });
-      await page.click("[data-editor-preview-toggle]");
+      assert(!(await page.$("[data-editor-preview-item]")), "the editor menu still carries a preview entry");
+      await openRowMenu(page, tabSel(noteFile));
+      await menuItem(page, "Show preview").click();
       await page.waitForFunction((t) => {
         const pane = document.querySelector("[data-editor-preview-pane]");
         return pane && !pane.hidden && /PreviewTitle/.test(pane.textContent) && pane.querySelector("h1");
       }, tag, { timeout: 8000 });
-      await page.click("[data-editor-preview-toggle]");
+      // It rides on the tab, so the stored state carries it and the menu of a
+      // file without a preview does not offer it at all.
+      const stored = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) || "{}"), `dc-editor-tabs:${project}`);
+      const entry = (stored.open || []).find((e) => e && e.path === noteFile);
+      assert(entry && entry.preview === true, `the preview is not on the tab entry: ${JSON.stringify(stored.open)}`);
+      await openRowMenu(page, tabSel(noteFile));
+      await menuItem(page, "Hide preview").click();
       await page.waitForFunction(() => document.querySelector("[data-editor-preview-pane]").hidden, null, { timeout: 6000 });
       await clickItem("[data-editor-save-all]");
       await waitDirty(noteFile, false);
@@ -367,7 +552,7 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
 
     await run("find in file opens the styled search panel", async () => {
       await page.click(tabSel(noteFile));
-      await page.click("[data-editor-find]");
+      await clickItem("[data-editor-find-item]");
       await page.waitForSelector(".cm-panel.cm-search", { timeout: 6000 });
       await page.keyboard.press("Escape");
       await page.waitForFunction(() => !document.querySelector(".cm-panel.cm-search"), null, { timeout: 6000 });
@@ -394,6 +579,9 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
         });
         await L.login(p2);
         await p2.goto(editorURL, { waitUntil: "domcontentloaded" });
+        // Its own context, so its own localStorage: the update dialog is
+        // unseen here and would swallow every click behind its backdrop.
+        await L.dismissUpdate(p2);
         await p2.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
         await p2.waitForFunction(() => { const t = document.querySelector("[data-editor-tree]"); return t && !/Loading/.test(t.textContent); }, null, { timeout: 8000 });
         assert((await p2.evaluate(() => navigator.platform)) === "MacIntel", "platform override did not stick");
@@ -434,7 +622,13 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
         const img = document.querySelector("[data-editor-viewer] img");
         return img && img.complete && img.naturalWidth === 1;
       }), "viewer image did not load");
-      assert(await page.evaluate(() => !document.querySelector("[data-editor-download]").disabled), "download item disabled for image tab");
+      // What a single file can do lives in the tab's menu, not in the editor
+      // menu: an image tab is a file like any other and can be downloaded.
+      await openRowMenu(page, tabSel(`pix_${tag}.png`));
+      const download = page.locator(".dc-context-menu .dropdown-item", { hasText: /^Download$/ });
+      assert(await download.count() === 1 && !(await download.isDisabled()), "the tab menu does not offer Download for an image");
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
       const raw = await page.evaluate(async (p) => {
         const res = await fetch(location.pathname.replace(/\/editor$/, "/editor/raw") + `?path=${encodeURIComponent(p)}&download=1`);
         return { status: res.status, disposition: res.headers.get("Content-Disposition") || "" };
@@ -442,11 +636,13 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       assert(raw.status === 200 && raw.disposition.includes("attachment"), `raw download wrong: ${JSON.stringify(raw)}`);
       await page.click(`.editor-file[data-path="pic_${tag}.svg"] .editor-item-name`);
       await page.waitForSelector(tabSel(`pic_${tag}.svg`), { timeout: 6000 });
-      await page.waitForSelector("[data-editor-preview-toggle]:not([hidden])", { timeout: 6000 });
-      await page.click("[data-editor-preview-toggle]");
+      await openRowMenu(page, tabSel(`pic_${tag}.svg`));
+      await menuItem(page, "Show preview").click();
       await page.waitForSelector("[data-editor-preview-pane]:not([hidden]) img", { state: "attached", timeout: 6000 });
-      await page.click("[data-editor-preview-toggle]");
-      await clickItem("[data-editor-delete]");
+      await openRowMenu(page, tabSel(`pic_${tag}.svg`));
+      await menuItem(page, "Hide preview").click();
+      await openRowMenu(page, tabSel(`pic_${tag}.svg`));
+      await menuItem(page, "Delete").click();
       await confirmSwal(page);
       await page.waitForFunction((p) => !document.querySelector(`.editor-file[data-path="${p}"]`), `pic_${tag}.svg`, { timeout: 8000 });
       await page.click(tabSel(`pix_${tag}.png`) + " .editor-tab-state");
@@ -1159,21 +1355,10 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
     });
 
     await run("mouse drag reorders the tabs and the order survives a reload", async () => {
-      const order = () => page.$$eval("[data-editor-tabs] .editor-tab", (els) => els.map((el) => el.dataset.path));
-      const before = await order();
+      const before = await tabOrder();
       assert(before.length >= 2, `need two tabs to drag: ${before}`);
-      const from = await page.locator(tabSel(before[before.length - 1])).boundingBox();
-      const to = await page.locator(tabSel(before[0])).boundingBox();
-      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
-      await page.mouse.down();
-      const targetX = to.x + to.width * 0.2;
-      for (let i = 1; i <= 12; i++) {
-        await page.mouse.move(from.x + from.width / 2 + (targetX - from.x - from.width / 2) * (i / 12), from.y + from.height / 2, { steps: 2 });
-        await sleep(30);
-      }
-      await page.mouse.up();
-      await sleep(300);
-      const after = await order();
+      await dragLastTabToFront(before);
+      const after = await tabOrder();
       const expected = [before[before.length - 1], ...before.slice(0, -1)];
       assert(JSON.stringify(after) === JSON.stringify(expected), `drag did not reorder: ${after} != ${expected}`);
       // The drag release must not switch the active tab.
@@ -1181,16 +1366,121 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
       await page.waitForSelector("[data-editor-tabs] .editor-tab", { timeout: 8000 });
-      assert(JSON.stringify(await order()) === JSON.stringify(expected), "reordered tabs did not survive the reload");
+      assert(JSON.stringify(await tabOrder()) === JSON.stringify(expected), "reordered tabs did not survive the reload");
+    });
+
+    // One editor on both widths: the strip stands, and the options that used to
+    // be seven icons next to it are in the one menu.
+    await run("at 1440 the strip stands and the header carries only the strip, the menu and a due Save", async () => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      // Its own page and its own two tabs: this is about the width, so it must
+      // not inherit whatever the checks before it left open. What it opens it
+      // closes again, the strip is shared with the checks that follow and one
+      // of them needs empty space in it.
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+      const opened = [];
+      for (const name of [noteFile, qoFile]) {
+        if (!(await page.$(tabSel(name)))) opened.push(name);
+        await openViaPalette(page, name);
+      }
+      const strip = await boxes(page, { strip: "[data-editor-tabs]" });
+      assert(strip.strip.display !== "none" && strip.strip.w > 0, `the strip is not laid out at 1440: ${JSON.stringify(strip.strip)}`);
+      assert(JSON.stringify(await headerControls(page)) === JSON.stringify(["data-editor-drawer-toggle", "data-editor-tabs", "data-editor-menu"]),
+        `the header at 1440 shows ${(await headerControls(page)).join(", ")}`);
+
+      const before = await tabOrder();
+      await dragLastTabToFront(before);
+      const expected = [before[before.length - 1], ...before.slice(0, -1)];
+      assert(JSON.stringify(await tabOrder()) === JSON.stringify(expected), "the mouse drag stopped reordering at 1440");
+      // Through a reload, not straight after the drag: the strip swallows the
+      // one click after a drag (that is what keeps a drop from switching tabs),
+      // and with the pointer moved that far the browser sends no click of its
+      // own to consume it, so the close control would be ignored once.
+      if (opened.length) {
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+        await sleep(600);
+        for (const name of opened) {
+          await page.evaluate((sel) => document.querySelector(`${sel} .editor-tab-state`).click(), tabSel(name));
+          await page.waitForFunction((sel) => !document.querySelector(sel), tabSel(name), { timeout: 6000 });
+        }
+      }
+      await page.setViewportSize({ width: 1360, height: 900 });
+      await sleep(400);
+      return `strip ${strip.strip.w}px, three controls in the header`;
+    });
+
+    await run("a due Save is the only control the header gains, and it goes with the save", async () => {
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+      await openViaPalette(page, noteFile);
+      await page.click(".cm-content", { force: true });
+      await page.keyboard.type("save me");
+      await page.waitForFunction(() => document.querySelector("[data-editor-save]").getBoundingClientRect().width > 0, null, { timeout: 6000 });
+      assert(JSON.stringify(await headerControls(page)) === JSON.stringify(["data-editor-drawer-toggle", "data-editor-tabs", "data-editor-save", "data-editor-menu"]),
+        `the header with an unsaved file shows ${(await headerControls(page)).join(", ")}`);
+      await page.click("[data-editor-save]");
+      await page.waitForFunction(() => document.querySelector("[data-editor-save]").getBoundingClientRect().width === 0, null, { timeout: 8000 });
+      assert(JSON.stringify(await headerControls(page)) === JSON.stringify(["data-editor-drawer-toggle", "data-editor-tabs", "data-editor-menu"]),
+        `Save stayed after the save: ${(await headerControls(page)).join(", ")}`);
+    });
+
+    // The gesture is touch only. This drives a real mouse, not a synthetic
+    // PointerEvent that could claim any pointerType it likes: press on the
+    // surface, cross it far past the distance that commits a swipe, release.
+    // Wrapping is on, so nothing but the pointer type stands between the drag
+    // and a file switch.
+    await run("a mouse drag across the editor surface never switches the file", async () => {
+      const wrapWas = await page.$eval('[data-editor-setting="line_wrap"]', (el) => el.checked);
+      const setWrapHere = async (on) => {
+        if (await page.$eval('[data-editor-setting="line_wrap"]', (el) => el.checked) === on) return;
+        await page.evaluate(() => document.querySelector('[data-editor-setting="line_wrap"]').click());
+        await sleep(400);
+      };
+      await setWrapHere(true);
+      // A second file, so a swipe would have somewhere to go: this check is
+      // about the pointer type, not about how many tabs the checks before it
+      // happened to leave open.
+      if ((await tabOrder()).length < 2) await openViaPalette(page, qoFile);
+      const open = await tabOrder();
+      assert(open.length >= 2, `the drag needs a file it could switch to: ${open.join(", ")}`);
+      const before = await page.$eval("[data-editor-tabs] .editor-tab.active", (el) => el.dataset.path);
+      const box = await page.locator("[data-editor-surface]").boundingBox();
+      const y = Math.round(box.y + box.height / 2);
+      const from = Math.round(box.x + box.width - 40);
+      const travel = Math.round(box.width - 80);
+      await page.mouse.move(from, y);
+      await page.mouse.down();
+      for (let i = 1; i <= 12; i++) {
+        await page.mouse.move(Math.round(from - (travel * i) / 12), y, { steps: 2 });
+        await sleep(20);
+      }
+      await page.mouse.up();
+      await sleep(600);
+      const after = await page.$eval("[data-editor-tabs] .editor-tab.active", (el) => el.dataset.path);
+      assert(after === before, `a mouse drag switched the file: ${before} -> ${after}`);
+      // It must not even have started: a running gesture pushes the surface
+      // along under the pointer and puts the target's name in a pill.
+      const trace = await page.evaluate(() => ({
+        transform: document.querySelector("[data-editor-surface]").style.transform,
+        pill: !!document.querySelector("[data-editor-swipe-pill]"),
+      }));
+      assert(!trace.transform && !trace.pill, `the mouse drag armed the swipe: ${JSON.stringify(trace)}`);
+      // Leave no selection behind for the checks that follow.
+      await page.mouse.click(Math.round(box.x + 40), y);
+      await sleep(200);
+      await setWrapHere(wrapWas);
+      return `${travel}px across, still on ${before.split("/").pop()}`;
     });
 
     await run("fullscreen: button toggles and persists, Ctrl+Shift+Enter and strip double-click toggle too", async () => {
       const waitFullscreen = (want) => page.waitForFunction(
         (w) => document.documentElement.classList.contains("dc-editor-fullscreen") === w, want, { timeout: 6000 });
-      await page.click("[data-editor-fullscreen]");
+      await clickItem("[data-editor-fullscreen]");
       await waitFullscreen(true);
       assert(await page.$eval("[data-editor-fullscreen]", (e) => e.getAttribute("aria-pressed") === "true"), "button not pressed after enabling");
-      assert(await page.$eval("[data-editor-fullscreen] i", (e) => e.className.includes("ti-minimize")), "icon did not switch to minimize");
+      assert(await page.$eval("[data-editor-fullscreen] i", (e) => e.className.includes("ti-minimize")), "entry icon did not switch to minimize");
       assert(await page.isVisible(".editor-back"), "back button not visible in fullscreen");
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
@@ -1200,7 +1490,7 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       const box = await page.locator("[data-editor-tabs]").boundingBox();
       await page.mouse.dblclick(box.x + box.width - 8, box.y + box.height / 2);
       await waitFullscreen(true);
-      await page.click("[data-editor-fullscreen]");
+      await clickItem("[data-editor-fullscreen]");
       await waitFullscreen(false);
       assert(!(await page.isVisible(".editor-back")), "back button visible outside fullscreen");
     });
@@ -1223,7 +1513,7 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       });
       await page.click("[data-assistant-corner]");
       await page.waitForSelector(".dc-assistant-panel-card:not([hidden]) dc-assistant[ready]", { timeout: 20000 });
-      await page.click("[data-editor-fullscreen]");
+      await clickItem("[data-editor-fullscreen]");
       await page.waitForFunction(() => document.documentElement.classList.contains("dc-editor-fullscreen"), null, { timeout: 6000 });
       await sleep(300);
       const side = await edges();
@@ -1249,7 +1539,7 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
         return { right: Math.round(box.right), width: window.innerWidth };
       });
       assert(Math.abs(full.right - full.width) <= 1, `the closed panel left a gap: ${JSON.stringify(full)}`);
-      await page.click("[data-editor-fullscreen]");
+      await clickItem("[data-editor-fullscreen]");
       await page.waitForFunction(() => !document.documentElement.classList.contains("dc-editor-fullscreen"), null, { timeout: 6000 });
     });
 
@@ -1309,7 +1599,7 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await mp.waitForSelector(tabSel(`mob_${tag}.txt`), { timeout: 8000 });
       assert(await mp.$(".editor.editor-drawer-open"), "creating a file closed the drawer");
       await mp.click(`.editor-file[data-path="${noteFile}"]`);
-      await mp.waitForSelector(`${tabSel(noteFile)}.active`, { timeout: 8000 });
+      await mp.waitForSelector(`${tabSel(noteFile)}.active`, { state: "attached", timeout: 8000 });
       await mp.waitForFunction(() => !document.querySelector(".editor.editor-drawer-open"), null, { timeout: 6000 });
       await mp.click("[data-editor-drawer-toggle]");
       await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 6000 });
@@ -1317,36 +1607,50 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await mp.waitForFunction(() => !document.querySelector(".editor.editor-drawer-open"), null, { timeout: 6000 });
     });
 
-    await run("mobile: tapping the active tab and long-pressing any tab open the context menu", async () => {
-      const mp = await mobilePage();
-      await mp.waitForSelector(`${tabSel(noteFile)}.active`, { timeout: 8000 });
-      await mp.tap(`${tabSel(noteFile)} .editor-tab-name`);
-      await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
-      await menuItem(mp, "Close").click();
-      await mp.waitForFunction((s) => !document.querySelector(s), tabSel(noteFile), { timeout: 6000 });
-      const mob = `mob_${tag}.txt`;
-      await mp.waitForSelector(`${tabSel(mob)}.active`, { timeout: 6000 });
-      await mp.evaluate((sel) => {
-        const el = document.querySelector(sel);
-        const rect = el.getBoundingClientRect();
-        el.dispatchEvent(new PointerEvent("pointerdown", {
-          bubbles: true, cancelable: true, pointerId: 7, pointerType: "touch",
-          clientX: rect.left + 12, clientY: rect.top + 12, buttons: 1,
-        }));
-      }, tabSel(mob));
-      await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
-      await mp.evaluate((sel) => {
-        const el = document.querySelector(sel);
-        const rect = el.getBoundingClientRect();
-        el.dispatchEvent(new PointerEvent("pointerup", {
-          bubbles: true, cancelable: true, pointerId: 7, pointerType: "touch",
-          clientX: rect.left + 12, clientY: rect.top + 12,
-        }));
-      }, tabSel(mob));
-      const labels = await mp.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
-      assert(labels.includes("Close all"), `long-press menu misses entries: ${labels.join(", ")}`);
-      await mp.keyboard.press("Escape");
-      await mp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+    // The strip's touch gestures are checked where a coarse pointer and a
+    // drawer meet, a tablet: the same strip stands on the phone, and its own
+    // checks are further down.
+    await run("touch tablet: tapping the active tab and long-pressing any tab open the context menu", async () => {
+      const ctx = await browser.newContext({ ignoreHTTPSErrors: true, hasTouch: true, isMobile: true, viewport: { width: 700, height: 900 } });
+      const tp = await ctx.newPage();
+      L.wirePage(tp, bag);
+      try {
+        await L.login(tp);
+        await tp.goto(editorURL, { waitUntil: "domcontentloaded" });
+        await L.dismissUpdate(tp);
+        await tp.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+        await openOnPhone(tp, qoFile);
+        await openOnPhone(tp, noteFile);
+        assert(await tp.isVisible("[data-editor-tabs]"), "the tab strip is folded away on a tablet");
+        await tp.tap(`${tabSel(noteFile)} .editor-tab-name`);
+        await tp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+        await menuItem(tp, "Close").click();
+        await tp.waitForFunction((s) => !document.querySelector(s), tabSel(noteFile), { timeout: 6000 });
+        await tp.waitForSelector(`${tabSel(qoFile)}.active`, { timeout: 6000 });
+        await tp.evaluate((sel) => {
+          const el = document.querySelector(sel);
+          const rect = el.getBoundingClientRect();
+          el.dispatchEvent(new PointerEvent("pointerdown", {
+            bubbles: true, cancelable: true, pointerId: 7, pointerType: "touch",
+            clientX: rect.left + 12, clientY: rect.top + 12, buttons: 1,
+          }));
+        }, tabSel(qoFile));
+        await tp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+        await tp.evaluate((sel) => {
+          const el = document.querySelector(sel);
+          const rect = el.getBoundingClientRect();
+          el.dispatchEvent(new PointerEvent("pointerup", {
+            bubbles: true, cancelable: true, pointerId: 7, pointerType: "touch",
+            clientX: rect.left + 12, clientY: rect.top + 12,
+          }));
+        }, tabSel(qoFile));
+        const labels = await tp.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+        assert(labels.includes("Close all"), `long-press menu misses entries: ${labels.join(", ")}`);
+        await tp.keyboard.press("Escape");
+        await tp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+      } finally {
+        await ctx.close();
+      }
     });
 
     await run("mobile: long-pressing a tree row opens the file actions menu", async () => {
@@ -1433,9 +1737,441 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await mp.waitForFunction(() => !document.querySelector(".editor.editor-drawer-open"), null, { timeout: 6000 });
     });
 
-    await run("mobile: fullscreen button hidden on coarse pointers", async () => {
+    const mobFile = `mob_${tag}.txt`;
+
+    await run("mobile: at 390 the strip stands and the header carries the folder, the strip and the menu", async () => {
       const mp = await mobilePage();
-      assert(!(await mp.isVisible("[data-editor-fullscreen]")), "fullscreen button visible on mobile");
+      await openOnPhone(mp, noteFile);
+      await openOnPhone(mp, qoFile);
+      const strip = await boxes(mp, { strip: "[data-editor-tabs]" });
+      assert(strip.strip.display !== "none" && strip.strip.w > 0 && strip.strip.h > 0,
+        `the strip is not laid out at 390: ${JSON.stringify(strip.strip)}`);
+      const tabs = await mp.$$eval("[data-editor-tabs] .editor-tab", (els) => els.length);
+      assert(tabs === 3, `the phone strip holds ${tabs} tabs`);
+      assert(JSON.stringify(await headerControls(mp)) === JSON.stringify(["data-editor-drawer-toggle", "data-editor-tabs", "data-editor-menu"]),
+        `the header at 390 shows ${(await headerControls(mp)).join(", ")}`);
+      return `strip ${strip.strip.w}px, three controls in the header`;
+    });
+
+    // Fullscreen is the one entry the two widths do not share: a phone has no
+    // window around the page to grow out of, so the switch stays away there.
+    await run("mobile: the menu carries the same entries as the wide screen, minus fullscreen", async () => {
+      const mp = await mobilePage();
+      // The same file open on both, so a file bound entry cannot make the two
+      // lists differ for a reason that has nothing to do with the width. The
+      // desktop page may stand on another project by now, the switcher check
+      // takes it there.
+      await openOnPhone(mp, noteFile);
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+      await openViaPalette(page, noteFile);
+      const phone = await menuEntries(mp);
+      const desktop = await menuEntries(page);
+      assert(!phone.includes("data-editor-fullscreen"), `the phone menu offers fullscreen: ${phone.join(", ")}`);
+      assert(desktop.includes("data-editor-fullscreen"), `the wide menu lost fullscreen: ${desktop.join(", ")}`);
+      const want = desktop.filter((entry) => entry !== "data-editor-fullscreen");
+      assert(JSON.stringify(phone) === JSON.stringify(want),
+        `the menus differ beyond fullscreen:\n  390:  ${phone.join(", ")}\n  1360: ${desktop.join(", ")}`);
+      for (const entry of ["data-editor-files-item", "data-editor-quick-open-item", "data-editor-find-item",
+        "data-editor-search-project-item", "data-editor-settings-item"]) {
+        assert(phone.includes(entry), `the menu misses ${entry}: ${phone.join(", ")}`);
+      }
+      // The file actions belong to the file: the tab menu and the tree row
+      // carry them, the editor menu keeps only what acts on the editor.
+      for (const gone of ["data-editor-copy-path", "data-editor-download", "data-editor-rename", "data-editor-delete"]) {
+        assert(!desktop.includes(gone), `the editor menu still carries ${gone}: ${desktop.join(", ")}`);
+      }
+      assert(desktop.includes("data-editor-save-all"), `the editor menu lost save all: ${desktop.join(", ")}`);
+      return `${phone.length} entries on the phone, ${desktop.length} wide`;
+    });
+
+    await run("mobile: the sheet comes from the menu, switches, closes and reorders, and the order survives a reload", async () => {
+      const mp = await mobilePage();
+      await openFilesSheet(mp);
+      assert(JSON.stringify(await sheetRows(mp)) === JSON.stringify([mobFile, noteFile, qoFile]),
+        `the sheet lists ${(await sheetRows(mp)).join(", ")}`);
+      await mp.click(`.editor-sheet-row[data-path="${mobFile}"] .editor-sheet-open`);
+      await mp.waitForSelector(`${tabSel(mobFile)}.active`, { state: "attached", timeout: 6000 });
+      const closed = await boxes(mp, { sheet: "[data-editor-sheet]" });
+      assert(closed.sheet.display === "none" && closed.sheet.h === 0, `the sheet stayed open after the switch: ${JSON.stringify(closed.sheet)}`);
+
+      await openFilesSheet(mp);
+      await dragSheetRow(mp, qoFile, 0);
+      const reordered = [qoFile, mobFile, noteFile];
+      assert(JSON.stringify(await sheetRows(mp)) === JSON.stringify(reordered),
+        `the grip did not reorder: ${(await sheetRows(mp)).join(", ")}`);
+      assert(JSON.stringify(await mp.$$eval("[data-editor-tabs] .editor-tab", (els) => els.map((el) => el.dataset.path))) === JSON.stringify(reordered),
+        "the strip behind the sheet kept the old order");
+
+      await mp.click(`.editor-sheet-row[data-path="${noteFile}"] [data-editor-sheet-close-tab]`);
+      await mp.waitForFunction((sel) => !document.querySelector(`.editor-sheet-row[data-path="${sel}"]`), noteFile, { timeout: 6000 });
+      assert(!(await mp.$(`[data-editor-tabs] .editor-tab[data-path="${noteFile}"]`)), "closing in the sheet left the tab open");
+
+      await mp.reload({ waitUntil: "domcontentloaded" });
+      await mp.waitForSelector(".cm-editor", { state: "attached", timeout: 15000 });
+      await sleep(800);
+      await openFilesSheet(mp);
+      assert(JSON.stringify(await sheetRows(mp)) === JSON.stringify([qoFile, mobFile]),
+        `the order did not survive the reload: ${(await sheetRows(mp)).join(", ")}`);
+      await mp.click("[data-editor-sheet-close]");
+      await mp.waitForFunction(() => document.querySelector("[data-editor-sheet]").getBoundingClientRect().height === 0, null, { timeout: 4000 });
+    });
+
+    await run("mobile: an unsaved file brings Save into the header and takes it away again", async () => {
+      const mp = await mobilePage();
+      let header = await headerControls(mp);
+      assert(!header.includes("data-editor-save"), `Save stands with nothing to save: ${header.join(", ")}`);
+      await mp.click(".cm-content", { force: true });
+      await mp.keyboard.type("phone edit");
+      await mp.waitForFunction(() => document.querySelector("[data-editor-save]").getBoundingClientRect().width > 0, null, { timeout: 6000 });
+      header = await headerControls(mp);
+      assert(JSON.stringify(header) === JSON.stringify(["data-editor-drawer-toggle", "data-editor-tabs", "data-editor-save", "data-editor-menu"]),
+        `the header with an unsaved file shows ${header.join(", ")}`);
+      // The sheet says the same about that file.
+      await openFilesSheet(mp);
+      const open = await mp.$eval("[data-editor-tabs] .editor-tab.active", (el) => el.dataset.path);
+      const row = await boxes(mp, { dot: `.editor-sheet-row[data-path="${open}"] [data-editor-sheet-dirty]` });
+      assert(row.dot && row.dot.w > 0, "the row of the unsaved file carries no dot");
+      await mp.click("[data-editor-sheet-close]");
+      await sleep(300);
+      await mp.click("[data-editor-save]");
+      await mp.waitForFunction(() => document.querySelector("[data-editor-save]").getBoundingClientRect().width === 0, null, { timeout: 8000 });
+    });
+
+    await run("mobile: a swipe changes the file and wraps at both ends, but only while lines wrap", async () => {
+      const mp = await mobilePage();
+      const order = await mp.$$eval("[data-editor-tabs] .editor-tab", (els) => els.map((el) => el.dataset.path));
+      assert(order.length === 2, `the phone should hold two files here: ${order.join(", ")}`);
+      const names = order.map((path) => path.split("/").pop());
+      await openFilesSheet(mp);
+      await mp.click(`.editor-sheet-row[data-path="${order[0]}"] .editor-sheet-open`);
+      await mp.waitForSelector(`${tabSel(order[0])}.active`, { state: "attached", timeout: 6000 });
+      // A line the surface has to scroll for, so "the gesture belongs to the
+      // code" is measurable and not just claimed.
+      await mp.click(".cm-content", { force: true });
+      await mp.keyboard.type(`${"scroll-me ".repeat(30)}`);
+      await mp.waitForFunction(() => document.querySelector("[data-editor-save]").getBoundingClientRect().width > 0, null, { timeout: 6000 });
+      await mp.click("[data-editor-save]");
+      await sleep(800);
+
+      // Who owns which gesture. The value has to sit on the scroller: the touch
+      // hits a .cm-line, and a pan reads the value from there up to the element
+      // that scrolls, so anything above .cm-scroller is never consulted. No pan
+      // is left to the browser, which decides the axis at the first pixels and
+      // answered every swipe with a downward drift with pointercancel; two
+      // fingers stay its own, so pinching still zooms.
+      await setWrap(mp, true);
+      const owned = await mp.$eval(".cm-scroller", (el) => getComputedStyle(el).touchAction);
+      assert(!/pan|auto/.test(owned), `the scroller still leaves a pan to the browser: ${owned}`);
+      assert(/pinch-zoom/.test(owned), `pinching no longer zooms: ${owned}`);
+      await setWrap(mp, false);
+      assert(await mp.$eval(".cm-scroller", (el) => getComputedStyle(el).touchAction) === "auto",
+        "the scroller keeps the swipe's axis rule with wrapping off, where the code needs it");
+
+      const before = await activeName(mp);
+      const takenOff = await swipeSurface(mp, -180);
+      assert(await activeName(mp) === before, `the swipe switched to ${await activeName(mp)} with wrapping off`);
+      assert(!takenOff, "the editor took the horizontal gesture away from the surface with wrapping off");
+      const scroll = await mp.evaluate(() => {
+        const s2 = document.querySelector(".cm-scroller");
+        s2.scrollLeft = 160;
+        return { left: Math.round(s2.scrollLeft), over: s2.scrollWidth > s2.clientWidth + 8 };
+      });
+      assert(scroll.over && scroll.left > 0, `the surface cannot scroll sideways there: ${JSON.stringify(scroll)}`);
+      await mp.evaluate(() => { document.querySelector(".cm-scroller").scrollLeft = 0; });
+
+      await setWrap(mp, true);
+      const takenOn = await swipeSurface(mp, -180);
+      assert(takenOn, "the editor did not take the gesture with wrapping on");
+      assert(await activeName(mp) === names[1], `the swipe did not move on: ${await activeName(mp)}`);
+      // Around at both ends, the way Ctrl+Tab and the terminal swipe do it.
+      await swipeSurface(mp, -180);
+      assert(await activeName(mp) === names[0], `the swipe past the last file did not wrap: ${await activeName(mp)}`);
+      await swipeSurface(mp, 180);
+      assert(await activeName(mp) === names[1], `the swipe past the first file did not wrap: ${await activeName(mp)}`);
+      await swipeSurface(mp, 180);
+      assert(await activeName(mp) === names[0], `the swipe back did not return: ${await activeName(mp)}`);
+      await swipeSurface(mp, -40);
+      assert(await activeName(mp) === names[0], "a swipe under the threshold switched the file");
+      return `${names.join(" / ")}, wrapping at both ends`;
+    });
+
+    // One pill for both swipes: same class, same place. The editor's sits where
+    // the terminal's sits, fixed near the top of the viewport, not at the
+    // bottom edge of the surface it belongs to.
+    await run("mobile: the swipe pill is the terminal's pill, at the top of the viewport", async () => {
+      const mp = await mobilePage();
+      await setWrap(mp, true);
+      const shown = await mp.evaluate(async () => {
+        const el = document.querySelector("[data-editor-surface]");
+        const r = el.getBoundingClientRect();
+        const y = Math.round(r.top + r.height / 2);
+        const x0 = Math.round(r.left + r.width / 2);
+        const send = (type, x) => el.dispatchEvent(new PointerEvent(type, {
+          bubbles: true, cancelable: true, pointerId: 61, pointerType: "touch", isPrimary: true,
+          clientX: x, clientY: y, buttons: type === "pointerup" ? 0 : 1,
+        }));
+        send("pointerdown", x0);
+        for (let i = 1; i <= 6; i++) {
+          send("pointermove", x0 - i * 14);
+          await new Promise((done) => setTimeout(done, 16));
+        }
+        const pill = document.querySelector("[data-editor-swipe-pill]");
+        const rect = pill ? pill.getBoundingClientRect() : null;
+        const out = {
+          shared: Boolean(pill && pill.classList.contains("dc-swipe-pill")),
+          own: Boolean(pill && pill.classList.contains("editor-swipe-pill")),
+          position: pill ? getComputedStyle(pill).position : "",
+          top: rect ? Math.round(rect.top) : -1,
+          half: Math.round(window.innerHeight / 2),
+          name: pill ? pill.textContent.trim() : "",
+        };
+        send("pointerup", x0 - 84);
+        return out;
+      });
+      await sleep(500);
+      assert(shown.shared, `the pill does not carry the shared class: ${JSON.stringify(shown)}`);
+      assert(!shown.own, "the pill still carries an editor-only class of its own");
+      assert(shown.position === "fixed", `the pill is ${shown.position}, the terminal's is fixed`);
+      assert(shown.top >= 0 && shown.top < shown.half, `the pill sits at ${shown.top}px, below the middle at ${shown.half}px`);
+      assert(shown.name.length > 0, "the pill does not name the file it would go to");
+      return `dc-swipe-pill at ${shown.top}px, "${shown.name}"`;
+    });
+
+    // The check above drives the gesture with synthetic pointer events, which
+    // skip the browser's own scroll arbitration, and that arbitration is
+    // exactly what broke this outside fullscreen. Chromium can be given a real
+    // finger through CDP, so there the gesture is the real one.
+    await run("mobile: a real finger swipes the file outside fullscreen (chromium)", async () => {
+      if (engine !== "chromium") return "skipped, CDP is chromium only";
+      const mp = await mobilePage();
+      const cdp = await mp.context().newCDPSession(mp);
+      await setWrap(mp, true);
+      assert(!(await mp.evaluate(() => document.documentElement.classList.contains("dc-editor-fullscreen"))),
+        "this has to run outside fullscreen, that is the case it is about");
+      const drag = async (dx) => {
+        const box = await mp.$eval("[data-editor-surface]", (el) => {
+          const r = el.getBoundingClientRect();
+          return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+        });
+        await mp.evaluate(() => {
+          window.__cancelled = false;
+          document.querySelector("[data-editor-surface]")
+            .addEventListener("pointercancel", () => { window.__cancelled = true; }, { once: true });
+        });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: box.x, y: box.y, id: 1 }] });
+        for (let i = 1; i <= 12; i++) {
+          await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: Math.round(box.x + (dx * i) / 12), y: box.y, id: 1 }] });
+          await sleep(20);
+        }
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await sleep(600);
+        return mp.evaluate(() => window.__cancelled);
+      };
+      const order = await mp.$$eval("[data-editor-tabs] .editor-tab", (els) => els.map((el) => el.dataset.path.split("/").pop()));
+      const first = await activeName(mp);
+      const cancelled = await drag(-200);
+      assert(!cancelled, "the browser took the gesture: pointercancel instead of the swipe");
+      assert(await activeName(mp) !== first, `a real finger changed nothing: still ${await activeName(mp)}`);
+      // Past the end it lands at the other end.
+      await drag(-200);
+      assert(await activeName(mp) === first, `the real swipe did not wrap around: ${await activeName(mp)}`);
+      // And a vertical drag scrolls the text, not the page around it, and a
+      // fast release keeps it moving: the browser hands both axes over now, so
+      // this scroll is the editor's own. That needs a file long enough to
+      // scroll at all, which a scratch file is not.
+      if (!(await mp.evaluate(() => {
+        const s2 = document.querySelector(".cm-scroller");
+        return s2.scrollHeight > s2.clientHeight + 20;
+      }))) {
+        await mp.click(".cm-content", { force: true });
+        await mp.keyboard.press("Control+End");
+        for (let i = 0; i < 60; i++) await mp.keyboard.press("Enter");
+        await mp.keyboard.type("bottom");
+        await mp.waitForFunction(() => document.querySelector("[data-editor-save]").getBoundingClientRect().width > 0, null, { timeout: 6000 });
+        await mp.click("[data-editor-save]");
+        await sleep(800);
+        await mp.evaluate(() => { document.querySelector(".cm-scroller").scrollTop = 0; });
+        await sleep(300);
+      }
+      const box = await mp.$eval("[data-editor-surface]", (el) => {
+        const r = el.getBoundingClientRect();
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+      });
+      const start = await mp.evaluate(() => ({ scroll: document.querySelector(".cm-scroller").scrollTop, page: window.scrollY }));
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: box.x, y: box.y, id: 2 }] });
+      for (let i = 1; i <= 12; i++) {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: box.x, y: box.y - i * 15, id: 2 }] });
+        await sleep(20);
+      }
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      const atRelease = await mp.evaluate(() => document.querySelector(".cm-scroller").scrollTop);
+      await sleep(700);
+      const after = await mp.evaluate(() => ({
+        scroll: document.querySelector(".cm-scroller").scrollTop,
+        page: window.scrollY,
+        file: document.querySelector("[data-editor-tabs] .editor-tab.active").dataset.path.split("/").pop(),
+      }));
+      assert(after.scroll > start.scroll, `a vertical drag did not scroll the code: ${start.scroll} -> ${after.scroll}`);
+      assert(after.page === start.page, `the page scrolled under the gesture: ${start.page} -> ${after.page}`);
+      assert(after.scroll > atRelease, `the release did not keep the text moving: ${atRelease} -> ${after.scroll}`);
+      assert(after.file === first, `a vertical drag switched the file to ${after.file}`);
+      return `${order.join(" / ")}, real finger, no fullscreen, fling ${Math.round(after.scroll - atRelease)}px`;
+    });
+
+    // One header on both widths, measured the same way on both: what a person
+    // can hit outside the menu, read off computed display and a real box. The
+    // page has two pane headers, one over the tree and one over the editor;
+    // this reads the one the tab strip sits in.
+    await run("the header outside the menu is folder, strip and menu at 390 and at 1440, Save only when due", async () => {
+      const mp = await mobilePage();
+      const want = ["data-editor-drawer-toggle", "data-editor-tabs", "data-editor-menu"];
+      const wantDirty = ["data-editor-drawer-toggle", "data-editor-tabs", "data-editor-save", "data-editor-menu"];
+      const seen = {};
+      for (const [label, target] of [["390", mp], ["1440", page]]) {
+        if (label === "1440") {
+          await page.setViewportSize({ width: 1440, height: 900 });
+          await sleep(400);
+        }
+        await target.goto(editorURL, { waitUntil: "domcontentloaded" });
+        await target.waitForSelector(".cm-editor", { state: "attached", timeout: 15000 });
+        await sleep(800);
+        if (await target.$(".editor.editor-drawer-open")) {
+          await target.evaluate(() => document.querySelector("[data-editor-backdrop]").click());
+          await sleep(300);
+        }
+        // A file open, and saved: Save has no business in the header then.
+        await openViaPalette(target, noteFile);
+        const clean = await headerControls(target);
+        assert(JSON.stringify(clean) === JSON.stringify(want), `${label}: the header shows ${clean.join(", ")}`);
+
+        await target.click(".cm-content", { force: true });
+        await target.keyboard.type("x");
+        await target.waitForFunction(() => document.querySelector("[data-editor-save]").getBoundingClientRect().width > 0, null, { timeout: 6000 });
+        const dirty = await headerControls(target);
+        assert(JSON.stringify(dirty) === JSON.stringify(wantDirty), `${label}: with an unsaved file the header shows ${dirty.join(", ")}`);
+        await target.click("[data-editor-save]");
+        await target.waitForFunction(() => document.querySelector("[data-editor-save]").getBoundingClientRect().width === 0, null, { timeout: 8000 });
+        seen[label] = `${clean.length} / ${dirty.length}`;
+      }
+      await page.setViewportSize({ width: 1360, height: 900 });
+      await sleep(400);
+      return `390: ${seen["390"]}, 1440: ${seen["1440"]} controls`;
+    });
+
+    // Where the tree is a column the same button folds it away, and the fold
+    // stays until it is folded back, a reload included.
+    await run("the folder button folds the tree column away at 1440 and the fold survives a reload", async () => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await sleep(400);
+      try {
+      const treeBox = () => boxes(page, { col: ".editor-tree-col", splitter: "[data-editor-splitter]", surface: "[data-editor-surface]" });
+      const before = await treeBox();
+      assert(before.col.display !== "none" && before.col.w > 0, `the tree column is not there to fold: ${JSON.stringify(before.col)}`);
+      assert(before.splitter.w > 0, "the splitter is not there while the column stands");
+
+      await page.click("[data-editor-drawer-toggle]");
+      await sleep(500);
+      const folded = await treeBox();
+      assert(folded.col.display === "none" && folded.col.w === 0, `the column did not fold away: ${JSON.stringify(folded.col)}`);
+      assert(folded.splitter.w === 0, "the splitter stayed without a column to drag");
+      assert(folded.surface.w > before.surface.w, `the editor did not take the room: ${before.surface.w} -> ${folded.surface.w}`);
+
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 15000 });
+      await sleep(700);
+      assert((await treeBox()).col.w === 0, "the fold did not survive the reload");
+
+      await page.click("[data-editor-drawer-toggle]");
+      await sleep(500);
+      const back = await treeBox();
+      assert(back.col.w > 0 && back.splitter.w > 0, `the column did not come back: ${JSON.stringify(back)}`);
+      // The splitter still drags the column it brought back. Grabbed at its left
+      // edge and moved in one step: the handle is six pixels wide with negative
+      // margins, the pane beside it paints over its right half, and a pointer
+      // that leaves it loses the capture, so a long multi-step drag measures the
+      // handle's reach rather than whether resizing works.
+      const handle = await page.locator("[data-editor-splitter]").boundingBox();
+      const onHandle = await page.evaluate(([x, y]) => {
+        const el = document.elementFromPoint(x, y);
+        return !!el && el.hasAttribute("data-editor-splitter");
+      }, [Math.round(handle.x + 1), Math.round(handle.y + handle.height / 2)]);
+      assert(onHandle, "the splitter is not the element under its own left edge");
+      await page.mouse.move(handle.x + 1, handle.y + handle.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(handle.x + 41, handle.y + handle.height / 2);
+      await sleep(100);
+      await page.mouse.up();
+      await sleep(400);
+      const wider = await treeBox();
+      assert(wider.col.w > back.col.w + 20, `the splitter stopped working: ${back.col.w} -> ${wider.col.w}`);
+      return `${before.col.w}px column, folded to 0, back at ${back.col.w}px, splitter to ${wider.col.w}px`;
+      } finally {
+        // Whatever failed, the checks after this one get the page they expect.
+        await page.evaluate(() => localStorage.removeItem("dc-editor-tree-width"));
+        await page.setViewportSize({ width: 1360, height: 900 });
+        await sleep(400);
+      }
+    });
+
+    // A tree row carries draggable for the mouse drag that moves a file. On a
+    // coarse pointer that is what hands the long press to the browser's own
+    // drag lift, and iOS then never lets the press become the row's menu, so
+    // the rows are draggable on a fine pointer only.
+    await run("mobile: a long press on a tree row opens the same menu as a right click", async () => {
+      const mp = await mobilePage();
+      if (!(await mp.$(".editor.editor-drawer-open"))) {
+        await mp.click("[data-editor-drawer-toggle]");
+        await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 6000 });
+      }
+      await mp.waitForSelector(`.editor-file[data-path="${noteFile}"]`, { timeout: 8000 });
+      assert(await mp.$eval(`.editor-file[data-path="${noteFile}"]`, (el) => el.draggable === false),
+        "a tree row is draggable on touch, the long press goes to the drag lift there");
+      // The press the way a finger delivers it. WebKit has no Touch
+      // constructor, so there it arrives through the pointer family, which is
+      // the other path wireRowMenus arms.
+      const family = await mp.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        const r = el.getBoundingClientRect();
+        const x = r.left + 20;
+        const y = r.top + r.height / 2;
+        try {
+          // WebKit has the interface object but no constructor behind it, so
+          // this throws there rather than reporting itself as missing.
+          const touch = new Touch({ identifier: 71, target: el, clientX: x, clientY: y });
+          el.dispatchEvent(new TouchEvent("touchstart", {
+            bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch],
+          }));
+          return "touch";
+        } catch (error) {
+          void error;
+        }
+        el.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true, cancelable: true, pointerId: 71, pointerType: "touch", isPrimary: true,
+          clientX: x, clientY: y, buttons: 1,
+        }));
+        return "pointer";
+      }, `.editor-file[data-path="${noteFile}"]`);
+      await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+      const touchLabels = await mp.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      await mp.keyboard.press("Escape");
+      await mp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+      // The same entries the mouse gets on the wide screen, from a page of this
+      // check's own: the checks before it resize and reload that page, and a
+      // tree rebuilt under the pointer takes the press with it.
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 15000 });
+      await page.waitForSelector(`.editor-file[data-path="${noteFile}"]`, { timeout: 10000 });
+      await sleep(800);
+      await openRowMenu(page, `.editor-file[data-path="${noteFile}"]`);
+      const mouseLabels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+      assert(JSON.stringify(touchLabels) === JSON.stringify(mouseLabels),
+        `the tree menu differs:\n  touch: ${touchLabels.join(", ")}\n  mouse: ${mouseLabels.join(", ")}`);
+      await mp.evaluate(() => document.querySelector("[data-editor-backdrop]").click());
+      await mp.waitForFunction(() => !document.querySelector(".editor.editor-drawer-open"), null, { timeout: 6000 });
+      return `${touchLabels.length} entries, the same on both (${family} press)`;
     });
 
     await run("mobile landscape: the closed drawer stays fully offscreen", async () => {

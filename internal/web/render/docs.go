@@ -124,7 +124,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "It sees the cockpit",
 					Tag:      "Live state",
 					TagClass: "bg-blue-lt",
-					Desc:     `Ask what is running, what is waiting for you, or what happened while you were away: it reads the coders, the shells, the projects, the unread notifications, and what a session last did. It types into a coder for you too, a prompt or the keys a dialog needs. A shell it can only read.`,
+					Desc:     `Ask what is running, what is waiting for you, or what happened while you were away: it reads the coders, the shells, the projects, the unread notifications, and what each of them last did. It types into a coder for you too, a prompt or the keys a dialog needs. A shell it can only read.`,
 				},
 				{
 					Title:    "It remembers you",
@@ -158,7 +158,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "It hands work over",
 					Tag:      "Coordinates",
 					TagClass: "bg-blue-lt",
-					Desc:     `Changes in your projects are not its job: it starts a coder for the task, briefs it, steers the job from the start, and tells you which coder is on it. It also resumes, stops and deletes coder sessions, and creates and deletes projects.`,
+					Desc:     `Changes in your projects are not its job: it starts a coder for the task, briefs it, steers the job from the start, and tells you which coder is on it. It also resumes, stops and deletes coders, and creates and deletes projects.`,
 				},
 				{
 					Title:    "It steers a job to the end",
@@ -176,7 +176,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Steer and release where the coder is",
 					Tag:      "Ownership",
 					TagClass: "bg-blue-lt",
-					Desc:     `A steered coder's icon turns purple wherever it shows, and the color follows steer and release without a reload. Steer and release where the coder is listed: swipe its row in the quick nav, or open the context menu of its tab, its pane header or its chip. The dialog's criterion may stay empty, the checks then judge against the task the session is on.`,
+					Desc:     `A steered coder's icon turns purple wherever it shows, and the color follows steer and release without a reload. Steer and release where the coder is listed: swipe its row in the quick nav, or open the context menu of its tab, its pane header or its chip. The dialog's criterion may stay empty, the checks then judge against the task the coder is on.`,
 				},
 			},
 		},
@@ -291,7 +291,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "The file tree",
-					Desc:  `On desktop, drag the divider next to the tree to resize it. On small screens the tree sits in a drawer behind the folder button <i class="ti ti-folder align-text-bottom" aria-hidden="true"></i>. Open folders are remembered per device, and closing one folds everything inside it.`,
+					Desc:  `The folder button <i class="ti ti-folder align-text-bottom" aria-hidden="true"></i> is on every width: on a wide screen it folds the tree column away and back, on a small one it opens the drawer the tree sits in. On a wide screen you can also drag the divider next to the tree to resize it. The fold and the width stay on this device, open folders are remembered per project, and closing a folder folds everything inside it.`,
 				},
 				{
 					Title: "Quick open",
@@ -299,19 +299,36 @@ func DocsTopics() []DocsTopic {
 					Desc:  `Open any project file by name. Pressing bare Shift twice does the same.`,
 				},
 				{
+					Title: "Git marks",
+					Desc:  `In a git repository a changed file carries a letter, on its tree row and on its tab: <span class="text-green">A</span> added, <span class="text-yellow">M</span> modified, <span class="text-red">D</span> deleted, <span class="text-azure">R</span> renamed, <span class="text-red">!</span> conflicted. A folder carries a dot for the most pressing change under it, the tooltip says how many lines came and went, and a change somebody else makes arrives on its own. The editor only reads git.`,
+				},
+				{
+					Title: "Diff and blame a file",
+					Desc:  `Right-click a file, on its tab or its tree row: <em>Show git diff</em> puts it next to the last commit, <em>Show git blame</em> writes the commit and the author next to every line. Both are per file and come back after a reload. To put two files on disk side by side instead, pick <em>Select for compare</em> on one and <em>Compare with</em> on the other.`,
+				},
+				{
 					Title:    "File and tab menus",
 					Tag:      "Editor",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Right-click a tab or a tree row for contextual actions; both carry the same file actions, copy, download, extract, rename, delete. On touch, long-press; tapping the already active tab also opens its menu. The toolbar menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> collects what belongs to the open file: go to line, save all, copy path, download, rename, and delete.`,
+					Desc:     `Right-click a tab or a tree row for everything that acts on that one file: copy, download, extract, rename, delete, and how you want to look at it, the preview, the git diff, the git blame and the two compare entries. On touch, long-press; tapping the already active tab also opens its menu. The editor menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> keeps only what acts on the editor as a whole.`,
 				},
 				{
 					Title: "Reorder tabs",
-					Desc:  `Drag editor tabs to change their order; the order is stored per device.`,
+					Desc:  `Drag editor tabs with the mouse to change their order; on touch the grip in <em>Open files</em> does it. Either way the order is stored per device.`,
 				},
 				{
-					Title: "Cycle tabs",
-					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Tab"}}, {Caps: []string{"Ctrl", "Shift", "Tab"}}},
-					Desc:  `Step through the open editor tabs in strip order, wrapping at both ends.`,
+					Title: "One menu for everything else",
+					Desc:  `Next to the tabs the toolbar keeps only the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> and, while the open file is unsaved, Save. Everything else is in that menu and reads the same on a phone and on a wide screen: the list of open files, go to file, find in the file and in the project, go to line, the editor settings and save all. Fullscreen is the one entry a phone does not get, there is no window there to grow out of. What does not apply is not in the list, rather than in it and dead.`,
+				},
+				{
+					Title: "The list of open files",
+					Desc:  `<em>Open files</em> in the menu brings the open files up from the bottom, one row each with its folder under the name, the git letter in front and a dot when it is unsaved. Tapping a row goes to that file, the cross closes it, and the grip <i class="ti ti-grip-vertical align-text-bottom" aria-hidden="true"></i> drags it into another position. On touch that grip is the way to reorder; with a mouse the tabs themselves drag. The order is the same one either way and stays on this device.`,
+				},
+				{
+					Title:    "Swipe to the next file",
+					Tag:      "Touch",
+					TagClass: "bg-blue-lt",
+					Desc:     `Swipe left or right on the text to go to the next or the previous open file, in the order the list shows, and it wraps around at both ends like <kbd>Ctrl</kbd>+<kbd>Tab</kbd> does. A pill names the file you would land on, the same one the terminal swipe shows and in the same place. It works while <em>Wrap long lines</em> is on. With wrapping off the text itself scrolls sideways, and then the gesture belongs to the code. Scrolling up and down stays scrolling either way, and a fast release keeps it moving. While text is selected the swipe steps aside, so the selection keeps the gesture.`,
 				},
 				{
 					Title: "Move files",
@@ -350,16 +367,16 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Preview files",
-					Desc:  `The eye button <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i> previews markdown and SVG files; images open in a viewer, video and audio files open in a player. Everything else offers a download.`,
+					Desc:  `<em>Show preview</em> <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i> in a file's context menu puts a markdown or an SVG file next to its rendered form and follows what you type. It is per file and comes back after a reload. Images open in a viewer, video and audio in a player, everything else offers a download.`,
 				},
 				{
 					Title: "Editor settings",
-					Desc:  `The settings menu <i class="ti ti-adjustments align-text-bottom" aria-hidden="true"></i> sets tab width, indentation, font size, and line wrapping, stored per device. A file covered by a project's .editorconfig takes its indentation from there, the control then only shows it.`,
+					Desc:  `<em>Editor settings</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> sets tab width, indentation, font size, line wrapping and how a diff looks, side by side against inline and whether unchanged parts are folded. All of it stays on this device. A file covered by a project's .editorconfig takes its indentation from there, the control then only shows it.`,
 				},
 				{
 					Title: "Fullscreen editor",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "Enter"}}},
-					Desc:  `Use the toolbar button <i class="ti ti-maximize align-text-bottom" aria-hidden="true"></i>, the shortcut, or double-click empty space in the editor tab strip.`,
+					Desc:  `<em>Fullscreen</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the shortcut, or a double-click on empty space in the tab strip. On a phone the entry is not there: the editor already has the screen.`,
 				},
 			},
 		},
@@ -441,6 +458,12 @@ func DocsTopics() []DocsTopic {
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",
 					Desc:     `Off by default. Gives every newly started shell its own command history instead of sharing the login shell's file; the history survives a restore.`,
+				},
+				{
+					Title:    "Git in the editor",
+					Tag:      "Setting",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Settings &rarr; Editor sets how often the server looks for a change, in seconds, and when a file is big enough to ask before it is diffed. How a diff looks is not here, that one is per device in the editor's own settings.`,
 				},
 				{
 					Title:    "Coder instructions, agents and skills",

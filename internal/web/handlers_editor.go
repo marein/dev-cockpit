@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/local/dev-cockpit/internal/git"
 	"github.com/local/dev-cockpit/internal/project"
 	"github.com/local/dev-cockpit/internal/web/render"
 )
@@ -59,12 +61,15 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 			LastUsedUnix: q.LastUsedUnix,
 		})
 	}
+	set := s.editorSettings()
 	c.HTML(http.StatusOK, "project_editor.gohtml", render.EditorData{
-		Page:       s.page(c, "Editor - "+p.Name, "projects"),
-		Project:    p,
-		MaxEditKiB: filesystem.MaxEditableBytes / 1024,
-		Return:     ret,
-		Projects:   switcher,
+		Page:         s.page(c, "Editor - "+p.Name, "projects"),
+		Project:      p,
+		MaxEditKiB:   filesystem.MaxEditableBytes / 1024,
+		Return:       ret,
+		Projects:     switcher,
+		DiffMaxLines: set.DiffMaxLines,
+		DiffMaxKiB:   set.DiffMaxKiB,
 	})
 }
 
@@ -347,14 +352,16 @@ func (s *Server) handleEditorCopy(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"entry": entry})
 }
 
-// handleEditorFiles returns every file path in the project as JSON, feeding the
-// quick open palette.
+// handleEditorFiles returns the project's file paths as JSON, feeding the quick
+// open palette. With ?path= it answers for that directory only. The paths stay
+// relative to the project either way, and the cap then counts inside that
+// directory instead of across the whole project.
 func (s *Server) handleEditorFiles(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
 		return
 	}
-	files, truncated, err := filesystem.ListFilesRecursive(p.Path)
+	files, truncated, err := filesystem.ListFilesUnder(p.Path, c.Query("path"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
@@ -441,6 +448,108 @@ func (s *Server) handleEditorPreview(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"html": html})
+}
+
+// handleEditorGitChanges returns what the working copy carries on top of HEAD,
+// one entry per changed path with the line counts, which is what feeds the
+// marks in the editor's file tree.
+func (s *Server) handleEditorGitChanges(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	changes, err := git.New(p.Path).Changes(c.Request.Context())
+	if err != nil {
+		log.Printf("editor git changes %s: %v", p.Path, err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "The changes could not be read."})
+		return
+	}
+	c.JSON(http.StatusOK, changes)
+}
+
+// handleEditorGitFile returns a file's text at HEAD, which is the other side
+// of the diff; the browser computes the diff itself, no route ever answers
+// one. A path that is not in HEAD is a normal answer, that is what a new file
+// looks like. Binary and too large carry the same markers the plain read route
+// uses, so the client shows the same "cannot edit this" as there.
+func (s *Server) handleEditorGitFile(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	rel := c.Query("path")
+	// The project root resolves fine and is not a file, so an empty path has to
+	// be refused here: further down it is git that says no, and a missing
+	// parameter would read as a repository that could not be asked.
+	if rel == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "A file path is required."})
+		return
+	}
+	if _, err := filesystem.ResolveUnder(p.Path, rel); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+		return
+	}
+	content, exists, err := git.New(p.Path).FileAt(c.Request.Context(), rel)
+	if err != nil {
+		log.Printf("editor git file %s: %v", p.Path, err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "The file could not be read at HEAD."})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusOK, gin.H{"path": rel, "exists": false, "content": ""})
+		return
+	}
+	// Binary and too large both mean "not something to diff", but they are not
+	// the same sentence to read, so the reason travels with the answer.
+	if err := filesystem.CheckEditableText(content); err != nil {
+		reason := "binary"
+		if errors.Is(err, filesystem.ErrTooLarge) {
+			reason = "large"
+		}
+		c.JSON(http.StatusOK, gin.H{"path": rel, "exists": true, "binary": true, "reason": reason, "size": len(content)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"path": rel, "exists": true, "content": string(content)})
+}
+
+// handleEditorGitBlame returns who last touched each line of the file on disk,
+// so lines that are not committed yet answer as pending, which is what
+// somebody who is still typing should see.
+func (s *Server) handleEditorGitBlame(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	rel := c.Query("path")
+	if rel == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "A file path is required."})
+		return
+	}
+	if _, err := filesystem.ResolveUnder(p.Path, rel); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+		return
+	}
+	blame, err := git.New(p.Path).Blame(c.Request.Context(), rel)
+	if err != nil {
+		log.Printf("editor git blame %s %s: %v", p.Path, rel, err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "The blame could not be read."})
+		return
+	}
+	c.JSON(http.StatusOK, blame)
+}
+
+// handleEditorGitWatch registers one client's interest in a project for a short
+// window. That window is what keeps the project's poller running, so a page
+// renews it while it is open and nothing polls once the last editor is gone.
+// Watching false means there is nothing to renew, either because git or because
+// the poll is turned off.
+func (s *Server) handleEditorGitWatch(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	watching := s.watchProjectGit(p, s.editorSettings())
+	c.JSON(http.StatusOK, gin.H{"watching": watching, "seconds": int(gitWatchWindow / time.Second)})
 }
 
 // editorProject resolves the project for a JSON editor request, writing a JSON

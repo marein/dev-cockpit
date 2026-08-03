@@ -13,6 +13,12 @@ type EditorData struct {
 	// Projects feeds the project switcher in the file tree header, one entry
 	// per selectable project linking to its editor page.
 	Projects []EditorProject
+	// The diff's limits ride along as page data: the diff itself is computed in
+	// the browser, so this is where the values have to be. How it looks, the
+	// view and the folding, is not here, that is per device in the editor's own
+	// settings.
+	DiffMaxLines int
+	DiffMaxKiB   int
 }
 
 // EditorProject is one project switcher entry in the editor's tree header. The

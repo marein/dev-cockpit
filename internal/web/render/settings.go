@@ -2,7 +2,7 @@ package render
 
 // SettingsNav feeds the settings sidebar, the one navigation every settings
 // page shares (`settings_nav.gohtml`). Active names the entry to mark
-// ("general", "notifications", "coder", "backup"). The coder pages are
+// ("general", "editor", "notifications", "coder", "backup"). The coder pages are
 // settings of one coder, so the sidebar picks the coder first and the page
 // then shows that coder's sections: with several coders active the entry
 // becomes one row per coder (Selected marks it), a single coder host keeps
@@ -58,6 +58,19 @@ type SettingsGeneralData struct {
 	SettingsNav    SettingsNav
 	RestoreEnabled bool
 	HistoryEnabled bool
+}
+
+// SettingsEditorData feeds the editor settings pages, one per tab. The values
+// are the effective ones, so a form always shows what applies, not what happens
+// to be stored. Section marks the open tab the way the coder pages mark theirs,
+// so the page can grow more of them.
+type SettingsEditorData struct {
+	Page
+	SettingsNav    SettingsNav
+	Section        string
+	GitPollSeconds int
+	DiffMaxLines   int
+	DiffMaxKiB     int
 }
 
 // BackupSection is one selectable export section on the backup form.

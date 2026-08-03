@@ -1,0 +1,43 @@
+{{define "settings_editor_git.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "editor_page_start.gohtml" .}}
+<form method="post" action="/settings/editor/git" id="settings-editor-git">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <div class="text-secondary small mb-3">In a project that is a git repository, changed files and the folders above them are marked in the file tree and on the open tabs.</div>
+  <div class="mb-3 row">
+    <div class="col-12 col-sm-7 col-lg-5">
+      <label class="form-label" for="editor-git-poll">Look for changes every</label>
+      <div class="input-group">
+        <input class="form-control" type="number" id="editor-git-poll" name="git_poll_seconds" min="0" max="60" step="1" value="{{.GitPollSeconds}}">
+        <span class="input-group-text">seconds</span>
+      </div>
+      <div class="form-text">Only while an editor of that project is open. Zero turns it off, the refresh button above the file tree still brings a fresh status.</div>
+    </div>
+  </div>
+
+  <hr class="my-4">
+  <h4 class="mb-1">Diff</h4>
+  <div class="text-secondary small mb-3">Show git diff, in the context menu of a file, puts it next to what git has. The diff is computed in the browser, so these limits are what keeps a slow device responsive. How it looks, side by side against inline and whether unchanged parts are folded, is picked in the editor's own settings and stays on that device.</div>
+  <div class="mb-3 row">
+    <div class="col-12 col-sm-7 col-lg-5">
+      <label class="form-label" for="editor-diff-max-lines">Ask before diffing more than</label>
+      <div class="input-group">
+        <input class="form-control" type="number" id="editor-diff-max-lines" name="diff_max_lines" min="0" max="200000" step="1" value="{{.DiffMaxLines}}">
+        <span class="input-group-text">lines</span>
+      </div>
+    </div>
+  </div>
+  <div class="mb-3 row">
+    <div class="col-12 col-sm-7 col-lg-5">
+      <label class="form-label" for="editor-diff-max-kib">Ask before diffing more than</label>
+      <div class="input-group">
+        <input class="form-control" type="number" id="editor-diff-max-kib" name="diff_max_kib" min="0" max="2048" step="1" value="{{.DiffMaxKiB}}">
+        <span class="input-group-text">KiB</span>
+      </div>
+    </div>
+  </div>
+  <button type="submit" class="btn btn-primary">Save</button>
+</form>
+{{template "editor_page_end.gohtml"}}
+{{template "app_end.gohtml" .}}
+{{end}}

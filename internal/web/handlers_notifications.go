@@ -139,3 +139,13 @@ func (s *Server) publishTerminals(projectName string) {
 func (s *Server) publishProjects() {
 	s.bus.Publish(eventbus.Event{Type: "projects"})
 }
+
+// publishGit signals that one project's git state moved, named like the
+// terminals event so an open editor of that project pulls the fresh status
+// itself. It carries the movement, never the state: what changed is what the
+// client's own request answers. base says whether the commit a diff is compared
+// against moved, as opposed to the working copy alone, so a save costs every
+// open diff nothing.
+func (s *Server) publishGit(projectName string, base bool) {
+	s.bus.Publish(eventbus.Event{Type: "git", Data: map[string]any{"project": projectName, "base": base}})
+}

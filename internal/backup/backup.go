@@ -155,6 +155,23 @@ func (s *Service) HomeDotfiles() []string {
 	return names
 }
 
+// buildSections is the registry: the one list that says what a backup can
+// carry and where each piece lives on this host. Everything else in the export
+// and the import reads it, so a feature that starts keeping state is only in a
+// backup once it appears here.
+//
+// That makes this the place to weigh a new state file, a directory or a host
+// file the cockpit manages: which section it belongs to, whether it is worth a
+// section of its own, and what it only makes sense together with (Requires).
+// Leaving it out is a decision like any other, but it has to be a decision,
+// because nobody notices a missing file until they need it on the new host.
+//
+// The ids and the source names are a compatibility surface. They are the path
+// inside the archive (data/<section id>/<source name>), and an archive written
+// a year ago still has to import into whatever this list says today. So they
+// only ever get added: renaming or reusing one silently drops what an old file
+// carries. What a section points at may move freely, that is resolved against
+// this list at import time; what it is called may not.
 func buildSections(stateDir, projectsDir, home string) []Section {
 	st := func(name string) string { return filepath.Join(stateDir, name) }
 	hm := func(name string) string { return filepath.Join(home, name) }

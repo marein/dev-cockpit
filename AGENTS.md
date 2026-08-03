@@ -107,6 +107,189 @@ test. Update this file when a convention changes.
   jobs (the head, the button and the empty state say steered coders); code,
   routes, state values, the `dev-cockpit assistant` commands and the
   notification titles keep job.
+- **The editor reads git, it never writes it.** `internal/git` is the only
+  place that runs the binary, and every call goes through its one helper:
+  `GIT_OPTIONAL_LOCKS=0` (a status read must never take the `index.lock` from a
+  coder that is committing), `-c core.quotepath=false`, `-z` where git offers
+  it, `--` before any path, no shell, `exec.CommandContext` with a timeout and
+  a cap on the output. A directory without a repository answers "no repo" and
+  never an error, and the editor then looks exactly like it did before it
+  learned git. Staging, committing and discarding stay with a coder or the
+  command line, so the whole surface has no destructive path. The editor's
+  routes sit in the editor group (`/projects/:name/editor/git/...`); the
+  cheap facts on the projects page keep coming from `internal/project`, which
+  reads `.git` as files and starts no process. One route answers one round:
+  the editor asks `.../git/changes` alone, which answers `repo` and the one
+  list `worktree`, because a second status route beside it would run
+  `git status` again at a second moment and the two answers could disagree
+  about the same repository. A project below the repository root is the case
+  to keep in mind on both sides of that answer: git reports every path
+  relative to the repository root, so the status paths are cut back to the
+  project (`withinPrefix`) **after** the line counts have been looked up, which
+  are keyed the way git printed them. Cutting first and looking up after finds
+  nothing, or the numbers of a same named file at the root. A rename whose
+  source lies outside the project reports no source at all rather than one the
+  tree cannot show. `POST .../git/watch` is what
+  starts and stops the per-project poller: it runs only while a client says it
+  is watching, compares a fingerprint and publishes a `git` event naming the
+  project, which every open editor answers by pulling the status itself, like
+  the terminals event. The fingerprint has two parts and the event says which
+  moved: the base (the commit HEAD points at) and the working copy
+  (a hash of the status output). Only a moved base can make an open comparison
+  stale, so a save costs no revision request at all. A round that could not ask
+  git at all is not a round that saw nothing: `Fingerprint` says so with a
+  second return value, and the poller keeps the last answer instead of
+  publishing a move that never happened. The poller reads the interval
+  again before every round, so a changed setting reaches a running poller and
+  zero stops it. A page that comes back to the front pulls everything itself:
+  while it was away its watch lapsed, the poller ended and nothing was
+  published.
+- **Everything git cannot attribute is an answer, not a failure.** A repository
+  without a first commit, a file git never heard of, a path that is not on the
+  disk any more: `Blame` answers each of them empty with a 200, and the unborn
+  case has to be asked first (`hasCommit`), because `ls-files` does list a
+  staged file there and the other two checks would let the error through. The
+  same for `FileAt`, which reads a file at HEAD with `cat-file blob` rather
+  than `git show`: show prints a directory's listing as if it were content, so
+  a path that is a directory in HEAD would come back as a file whose text is
+  that listing, and the verification behind it peels to a blob (`^{blob}`) so
+  such a path reads as "no file here" instead of a bad gateway. An empty
+  `?path=` is refused by the handler with a 400: the project root resolves
+  fine, so nothing further down would call it a missing parameter. What is left
+  for a 502 is git actually failing.
+- **A comparison of two files is a tab, not a file.** Both sides are real files,
+  picked in two steps (`Select for compare`, then `Compare with`) in the context
+  menu of a file, which the tree row and the tab both carry. `setCompare` builds
+  a `MergeView` whose two editors are writable, and the bar above the surface
+  names each side and carries its own Save; the ordinary save paths reach it
+  too, Ctrl+S and Save all write whatever sides a comparison carries unsaved
+  (`saveCompareTab`), because its tab path is synthetic and the file route could
+  never write it. That path (`//compare/<enc left>/<enc right>`) starts with a
+  double slash, which no project relative path does, and both halves are encoded
+  so it stays usable in a selector. The tab persists as its two paths and is
+  rebuilt from the disk on restore, carries no git mark, no preview and no git
+  compare control, its menu keeps only the close entries, and a tab switch
+  carries both documents on the tab and costs the two undo histories, the same
+  limit `setDiff` runs into.
+- **Blame belongs to the file.** The gutter is a per-file switch that rides on
+  the tab (`tab.blameOn`), persisted with the tab state like the diff switch,
+  never a server setting, never a key in the shared store and never a global
+  toggle. It is reachable only from the file's own context menu, on its tab and
+  on its tree row (`blameMenuItem`); a tree row whose file is not open opens it
+  with the gutter on. It renders through a compartment so turning it on and off
+  never rebuilds the document. `.../git/blame` answers the
+  commits once and one index per line, so a few thousand lines cost a handful of
+  entries; the gutter shows what git has, so a dirty buffer drops it until the
+  save catches up rather than attributing moved lines to the wrong commits, and
+  a file git has never seen answers empty, which the status line says instead of
+  an empty gutter. The editor's cross-device settings live in the shared settings store
+  under `editor-*` keys (`internal/web/editorsettings.go`); every default lives
+  there, so an install with an empty store behaves like one that saved the
+  defaults. They are edited on `/settings/editor/git`, one form behind a
+  tab built like a coder's sections (shared frame in `editor_nav.gohtml`), so
+  the page can grow more tabs later; `/settings/editor` redirects there. What
+  belongs to the screen in front of you goes the other way and never reaches
+  the server: tab width, indentation, font size, line wrapping **and how a
+  comparison looks, the view and the folding of unchanged parts**, are one
+  localStorage entry (`dc-editor-settings`), edited in the editor's own
+  settings and applied live, `reapplyComparison` rebuilding what is open from
+  the revision text or the two sides it already holds, so neither costs a
+  request. The view reaches a diff alone, a comparison of two files is always
+  side by side; the folding reaches both. What is left on the server is what
+  describes the install: the poll interval and the two size limits, a house
+  rule against a slow device. The rule for a new one is the question, not the
+  mechanism: does it describe this repository and everybody looking at it, or
+  this screen?
+- **No route ever answers a diff.** `@codemirror/merge` computes it in the
+  browser; the server only serves the file at HEAD
+  (`.../editor/git/file?path=`), with the same binary and too large markers the
+  plain read route uses. The diff is a mode of a normal file tab and never a
+  tab of its own, because the working copy side **is** that file's buffer
+  (`workView()` answers the merge view's right editor while one is up): save,
+  the dirty marker, undo, search, go to line and the blame gutter all address
+  it without knowing a diff exists, and the comparison therefore shows what you
+  are typing, not what lies on the disk. A tab type would hold a second copy of
+  the same file, and two writable copies of one file is a save clobbering the
+  other. The tab carries the revision it is compared against (`tab.diffRev`,
+  persisted as `diff: "<rev>"`), which is `DIFF_REV` and nothing else today: a
+  picker later fills that same field and teaches the route a `rev`, so neither
+  the tab model nor the stored shape changes for it. Where the working copy is
+  on neither side, two revisions against each other, the compare tab's shape
+  fits and this one does not.
+  `filesystem.ResolveUnder` is what the git routes resolve a path with, and it
+  answers about paths that are not on the disk at all: the symlink check walks
+  up to the first existing ancestor (a file inside a deleted folder is a path
+  the repository still has and the disk does not), while a path that walks out
+  of the project is refused in its own step, which that walk-up used to do by
+  accident. `repoPath` is not that guard, it clamps an upward path instead of
+  refusing it; a caller that skips `ResolveUnder` would quietly ask about
+  another file. Side by side is `MergeView`, inline is
+  `unifiedMergeView`, which is why a switch between them rebuilds the view.
+  **The buffer belongs to the person in front of it**: no switch, no revision
+  change and no server event ever writes into it. A `git` event whose base
+  moved makes the revision side follow on its own (`refreshDiffHead`), nothing
+  is asked and the buffer is not touched. Building a comparison waits for two
+  dynamic imports, and a tab switch inside that window would mount it over
+  whatever is open now, which is why `setDiff`, `setOriginal` and `setCompare`
+  all take a `valid` predicate and check it after the last await, before the
+  first write to the surface; for the same reason the side by side view reads
+  the document after those loads and not before, so what was typed while they
+  ran is in it. The one thing a switch costs is the undo
+  history of the side by side view, see the comment on `setDiff`. Hiding the
+  plain editor while the side by side view is up must go through `visibility`:
+  CodeMirror's base theme carries `display: flex !important` on `.cm-editor`,
+  and an important declaration in a stylesheet beats a plain inline style, so
+  `style.display = "none"` on an editor does nothing at all. The merge view
+  also owns the scrolling of its two editors, so the host styles
+  `.cm-mergeView` and never the editors inside it.
+- **One editor on every width: the strip stays, the options fold into one
+  menu.** A strip and seven icons do not share 390px, and two different
+  headers are two things to learn, so the icons went into the kebab instead of
+  the strip going away. Outside the menu the header carries only the folder
+  toggle, the strip, `[data-editor-save]` (`hidden` unless the active file is
+  dirty) and the menu itself; every other control is an entry of `[data-
+  editor-menu-list]`, and the entries are the same at 390 and at 1440. The
+  menu carries no git entry at all: the diff and blame switches are entries of
+  the file's context menu (`diffMenuItem`/`blameMenuItem`, tab and tree row),
+  because both are statements about one file. The folder toggle shows on both
+  widths with the effect the width
+  allows: below `md` it opens the drawer, above it folds the tree column and
+  its splitter away (`.editor-tree-folded`, per device in `dc-editor-tree-
+  folded`, the rule scoped to the widths that have a column so the class is
+  inert on a phone). The bottom sheet `[data-editor-sheet]` serves the menus
+  that need more than a dropdown on a phone: the editor settings live in the
+  hidden store `[data-editor-panels]` and the sheet **borrows the very
+  nodes** and puts them back on close, so there is one set of controls with
+  one wiring and every
+  `root.querySelectorAll` sync keeps working while they are adopted. The same
+  sheet lists the open files (`Open files`): tap switches, the cross closes,
+  the grip handle drags, which on touch is the only way to reorder them, and
+  the order is the tab order through `persistTabs`, no route and no server
+  state. A horizontal swipe on the surface steps through the open files
+  (threshold, damping and abort from the terminal swipe), wrapping around at
+  both ends like `stepTab` and the terminal swipe do, and only while
+  `line_wrap` is on: with wrapping off the surface scrolls sideways and the
+  gesture is the code's. Touch only, never with a selection, never in a
+  comparison. It does what the terminal's `terminal-scroll-zone` does rather
+  than listening harder: every pan is taken from the browser (`touch-action:
+  pinch-zoom` while wrapping is on, set through `.editor-swipe-zone`, and it
+  has to sit on `.cm-scroller` as well, because a pan reads the value from the
+  hit element up to the element that scrolls), the axis is decided here, and
+  the pointer is captured the moment it is. Leaving the vertical axis with the
+  browser (`pan-y`) looks like less to build and is worse: the browser decides
+  the axis at the first pixels and never revisits it, so a swipe with any
+  downward drift became a page scroll and answered ours with `pointercancel`.
+  The price is that scrolling the text is ours too, finger 1:1 plus a fling
+  that decays; what a scroller cannot take chains on to the page. The zone
+  class is therefore off wherever we do not want that job: with wrapping off,
+  in a comparison, and while a selection stands (`syncSwipeZone`, called from
+  `afterActiveChanged` and `onCursor`). The pill naming the target is one thing app wide,
+  `.dc-swipe-pill`, shared with the terminal swipe and fixed near the top of
+  the viewport; only the terminal adds the pulsing pending state, because only
+  it waits for a navigation. A tree row is `draggable` on a fine pointer only:
+  a row that carries it hands the long press to the browser's own drag lift,
+  and iOS then never lets that press become the row's context menu, which is
+  the one way to reach a file's actions with a finger.
 - **Backup archives are a compat surface.** `internal/backup` maps archive
   paths `data/<section id>/<source name>` onto host paths through the current
   registry, and the manifest identifies the file (`app`, `format`). Old
@@ -197,6 +380,18 @@ free floating page scripts.
   import map when you add a component.
 - **Element config:** pass data through attributes (e.g. `stream-url`,
   `input-url`), not window globals.
+- **`hidden` and a `d-*` display utility on one element:** style.css carries
+  `[hidden] { display: none !important; }` so the attribute always wins. Tabler
+  ships that same declaration from Bootstrap's reboot, but near the top of its
+  file, while `.d-flex` and its siblings sit near the bottom; both are important
+  and weigh the same, so source order decided and the utility won. An element
+  that carried both was visible no matter what JavaScript set, which is how the
+  editor's comparison bar stood on an empty editor with two nameless save
+  buttons. style.css is loaded after tabler.min.css in `layout.gohtml`, that
+  order is what makes the rule work. Two consequences for tests: an e2e check
+  must read real visibility (`state: "hidden"`, a computed `display`, a zero
+  box), never the attribute, and a check that something appears is only half of
+  it, the half that disappears is where this hid.
 - **Terminal islands and split view:** `terminal-attach`/`terminal-input` are
   real multi-instance islands, paired per session via the `terminal-id`
   attribute. Islands dispatch their input events (`terminal-input`,

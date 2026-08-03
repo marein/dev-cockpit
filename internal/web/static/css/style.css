@@ -17,6 +17,22 @@ body {
 
 .min-w-0 { min-width: 0 !important; }
 
+/* The hidden attribute wins over a display utility, everywhere.
+   Tabler carries `[hidden]{display:none!important}` itself, from Bootstrap's
+   reboot, but it sits near the top of that file and the display utilities
+   (`.d-flex{display:flex!important}` and its siblings) sit near the bottom.
+   Both are important and both weigh the same, so source order decides and the
+   utility wins: an element with a display utility is visible no matter what the
+   attribute says. That is how the editor's comparison bar came to stand on an
+   empty editor with nothing to say and two nameless save buttons.
+   This declaration is identical, it only comes later, because style.css is
+   loaded after tabler.min.css in layout.gohtml. Keep that order.
+   It lives here and not on those elements because it is a class of mistake, not
+   three places: every element that carries a display utility and is hidden from
+   JavaScript has it, and the next one would go unnoticed just as long. Elements
+   that hide themselves through .d-none are untouched, they carry no attribute. */
+[hidden] { display: none !important; }
+
 .dc-coarse-only { display: none !important; }
 @media (pointer: coarse) {
   .dc-coarse-only { display: flex !important; }
@@ -422,9 +438,11 @@ terminal-swipe-nav { display: none; }
     pointer-events: none;
   }
 }
-/* Fixed to the viewport, not the frame: with many rows the terminal's top edge
-   can be scrolled far off screen, the pill must stay visible regardless. */
-.terminal-swipe-pill {
+/* The one pill both swipes use, terminals and editor files alike: what you
+   would land on, named the same way in the same place. Fixed to the viewport,
+   not to the frame it belongs to: with many rows the terminal's top edge can be
+   scrolled far off screen, and the editor's surface moves under the finger. */
+.dc-swipe-pill {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 4.25rem);
   left: 50%;
@@ -442,8 +460,10 @@ terminal-swipe-nav { display: none; }
   font-size: 0.875rem;
   box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.25);
   white-space: nowrap;
+  pointer-events: none;
 }
-.terminal-swipe-pill-name { min-width: 0; }
+.dc-swipe-pill-name { min-width: 0; }
+/* Only the terminal waits for a navigation, so only it pulses. */
 .terminal-swipe-pill-pending { animation: dc-swipe-pending 1s ease-in-out infinite; }
 @keyframes dc-swipe-pending {
   0%, 100% { opacity: 1; }
@@ -1343,27 +1363,22 @@ textarea[data-assistant-input] { resize: none; }
   .page:has(.editor) .page-header { margin-bottom: 0.5rem !important; }
   .editor { height: 22rem; margin-bottom: 1rem; }
 }
-@media not (pointer: coarse) {
-  .dc-editor-fullscreen body { overflow: hidden; }
-  .dc-editor-fullscreen .editor {
-    position: fixed;
-    inset: 0;
-    z-index: 1030;
-    height: auto;
-    margin: 0;
-    border: 0;
-    border-radius: 0;
-  }
-  .dc-editor-fullscreen .editor-back { display: inline-flex; }
-  /* Same as the terminal: leave the docked assistant its column. */
-  @media (min-width: 992px) {
-    .dc-editor-fullscreen body.dc-assistant-docked .editor {
-      right: var(--dc-assistant-w);
-    }
-  }
+.dc-editor-fullscreen body { overflow: hidden; }
+.dc-editor-fullscreen .editor {
+  position: fixed;
+  inset: 0;
+  z-index: 1030;
+  height: auto;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
 }
-@media (pointer: coarse) {
-  .editor [data-editor-fullscreen] { display: none; }
+.dc-editor-fullscreen .editor-back { display: inline-flex; }
+/* Same as the terminal: leave the docked assistant its column. */
+@media (min-width: 992px) {
+  .dc-editor-fullscreen body.dc-assistant-docked .editor {
+    right: var(--dc-assistant-w);
+  }
 }
 .editor {
   margin-bottom: 0;
@@ -1396,6 +1411,7 @@ textarea[data-assistant-input] { resize: none; }
 }
 .editor-pane-col {
   flex: 1 1 auto;
+  position: relative;
 }
 .editor-splitter {
   flex: 0 0 6px;
@@ -1410,7 +1426,7 @@ textarea[data-assistant-input] { resize: none; }
   opacity: 0.3;
 }
 .editor-drawer-toggle {
-  display: none;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 2.75rem;
@@ -1427,6 +1443,16 @@ textarea[data-assistant-input] { resize: none; }
 .editor-back {
   display: none;
 }
+/* Where the tree is a column, the folder button folds it away instead of
+   opening a drawer, and the splitter goes with it: there is nothing left to
+   drag. Scoped to the widths that have a column at all, so the class can be
+   restored on any screen without touching the drawer. */
+@media (min-width: 768px) and (min-height: 501px) {
+  .editor.editor-tree-folded > .editor-body > .editor-tree-col,
+  .editor.editor-tree-folded > .editor-body > .editor-splitter {
+    display: none;
+  }
+}
 .editor-backdrop {
   position: absolute;
   inset: 0;
@@ -1439,9 +1465,6 @@ textarea[data-assistant-input] { resize: none; }
 @media (max-width: 767.98px), (max-height: 500px) {
   .editor-splitter {
     display: none;
-  }
-  .editor-drawer-toggle {
-    display: inline-flex;
   }
   .editor-placeholder-browse {
     display: inline-flex;
@@ -1661,6 +1684,22 @@ textarea[data-assistant-input] { resize: none; }
   overflow: hidden;
   position: relative;
 }
+/* Set while lines wrap, see syncSwipeZone: the terminal's scroll zone takes
+   every pan away from the browser and moves the content itself, and this is the
+   same thing for the editor. pan-y would leave the vertical axis with the
+   browser, and the browser decides the axis at the first pixels of the gesture:
+   a swipe with any downward drift became a page scroll and answered ours with
+   pointercancel. Two fingers stay the browser's, so pinching still zooms.
+   It has to sit on the scroller, not on the surface around it: the touch hits a
+   .cm-line, and the value that decides a pan is read from the hit element up to
+   the element that will do the scrolling, which is .cm-scroller. A value above
+   that scroller is never consulted. */
+.editor-surface.editor-swipe-zone,
+.editor-surface.editor-swipe-zone .cm-scroller,
+.editor-surface.editor-swipe-zone > .editor-textarea {
+  touch-action: pinch-zoom;
+  overscroll-behavior: contain;
+}
 /* Fill the mount via absolute insets, not height:100%. A percentage height does
    not resolve on iOS Safari when the column height comes from flex stretch (the
    landscape col-md case), collapsing the editor to 0 ("blank editor"). An
@@ -1669,10 +1708,75 @@ textarea[data-assistant-input] { resize: none; }
 .editor-surface > .cm-editor.cm-editor,
 .editor-surface > .editor-textarea,
 .editor-surface > .editor-placeholder,
+.editor-surface > .editor-merge,
 .editor-surface > .editor-preview,
 .editor-surface > .editor-viewer {
   position: absolute;
   inset: 0;
+}
+/* The merge view is the scroller of the two editors inside it, so it takes the
+   height and they keep their own. Sizing the inner row instead clips both
+   documents at the first screenful. */
+.editor-merge > .cm-mergeView {
+  height: 100%;
+}
+/* Diff marking. What goes away is red, what arrives is green, and inside a
+   changed line the words that actually differ carry the same hue at a much
+   higher strength: that is the part you are looking for, so it has to be the
+   part that stands out. @codemirror/merge draws those words as a 2px underline
+   by default, which disappears in running text.
+   Every background stays translucent, so the syntax highlighting underneath
+   keeps reading, and the hues come from the Tabler palette, so both color
+   schemes follow the app. Side by side marks the left editor (.cm-merge-a) and
+   the right one (.cm-merge-b); the inline view marks the removed block
+   (.cm-deletedChunk) and the lines as they are now (.cm-inlineChangedLine).
+   The extra .cm-editor level outranks @codemirror/merge's own theme, which
+   lands at (0,3,0). */
+.editor-surface .cm-editor.cm-merge-a .cm-changedLine,
+.editor-surface .cm-editor .cm-deletedChunk {
+  background-color: rgba(var(--tblr-red-rgb), 0.1);
+}
+.editor-surface .cm-editor.cm-merge-b .cm-changedLine,
+.editor-surface .cm-editor .cm-inlineChangedLine {
+  background-color: rgba(var(--tblr-green-rgb), 0.1);
+}
+/* The word diff. `background` and not `background-color`, the shorthand is what
+   carries the underline that has to go. */
+.editor-surface .cm-editor.cm-merge-a .cm-changedText,
+.editor-surface .cm-editor .cm-deletedChunk .cm-deletedText,
+.editor-surface .cm-editor.cm-merge-b .cm-deletedText {
+  background: rgba(var(--tblr-red-rgb), 0.32);
+  border-radius: 2px;
+}
+.editor-surface .cm-editor.cm-merge-b .cm-changedText {
+  background: rgba(var(--tblr-green-rgb), 0.32);
+  border-radius: 2px;
+}
+/* The bar in the change gutter says the same thing in the same colors. */
+.editor-surface .cm-editor.cm-merge-a .cm-changedLineGutter,
+.editor-surface .cm-editor .cm-deletedLineGutter {
+  background: rgba(var(--tblr-red-rgb), 0.85);
+}
+.editor-surface .cm-editor.cm-merge-b .cm-changedLineGutter,
+.editor-surface .cm-editor .cm-inlineChangedLineGutter {
+  background: rgba(var(--tblr-green-rgb), 0.85);
+}
+/* A dark surface swallows a tint, so both levels carry more of it there. */
+[data-bs-theme="dark"] .editor-surface .cm-editor.cm-merge-a .cm-changedLine,
+[data-bs-theme="dark"] .editor-surface .cm-editor .cm-deletedChunk {
+  background-color: rgba(var(--tblr-red-rgb), 0.16);
+}
+[data-bs-theme="dark"] .editor-surface .cm-editor.cm-merge-b .cm-changedLine,
+[data-bs-theme="dark"] .editor-surface .cm-editor .cm-inlineChangedLine {
+  background-color: rgba(var(--tblr-green-rgb), 0.16);
+}
+[data-bs-theme="dark"] .editor-surface .cm-editor.cm-merge-a .cm-changedText,
+[data-bs-theme="dark"] .editor-surface .cm-editor .cm-deletedChunk .cm-deletedText,
+[data-bs-theme="dark"] .editor-surface .cm-editor.cm-merge-b .cm-deletedText {
+  background: rgba(var(--tblr-red-rgb), 0.42);
+}
+[data-bs-theme="dark"] .editor-surface .cm-editor.cm-merge-b .cm-changedText {
+  background: rgba(var(--tblr-green-rgb), 0.42);
 }
 .editor-placeholder {
   display: flex;
@@ -1755,6 +1859,113 @@ textarea[data-assistant-input] { resize: none; }
   font-variant-numeric: tabular-nums;
 }
 .editor-settings-menu { min-width: 14rem; }
+.editor-sheet[hidden] {
+  display: none;
+}
+.editor-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(17, 24, 39, 0.55);
+}
+.editor-sheet-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 85%;
+  background: var(--tblr-bg-surface);
+  border-top: 1px solid var(--tblr-border-color);
+  border-radius: 12px 12px 0 0;
+  box-shadow: 0 -0.5rem 2rem rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.editor-sheet-body {
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 0.5rem;
+  touch-action: pan-y;
+}
+.editor-sheet-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--tblr-border-color);
+}
+.editor-sheet-row:last-child {
+  border-bottom: 0;
+}
+.editor-sheet-open {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--tblr-body-color);
+  text-align: left;
+}
+.editor-sheet-row.active {
+  background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18));
+}
+.editor-sheet-name {
+  font-size: 0.9rem;
+}
+.editor-sheet-dir {
+  font-size: 0.75rem;
+  color: var(--tblr-secondary);
+}
+.editor-sheet-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--tblr-orange);
+  flex: 0 0 auto;
+}
+.editor-sheet-grip,
+.editor-sheet-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--tblr-secondary);
+  touch-action: none;
+}
+.editor-sheet-dragging .editor-sheet-row {
+  transition: transform 0.12s ease;
+}
+.editor-sheet-dragging .editor-sheet-row-dragging {
+  position: relative;
+  z-index: 2;
+  transition: none;
+  background: var(--tblr-bg-surface-secondary);
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.35);
+}
+.editor-sheet-body .dropdown-menu {
+  position: static;
+  display: block;
+  float: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.editor-sheet-body .dropdown-item {
+  padding: 0.6rem 0.75rem;
+  white-space: normal;
+}
+.editor-sheet-body .editor-settings-menu {
+  padding: 0.75rem !important;
+}
 .editor-quickopen[hidden] {
   display: none;
 }

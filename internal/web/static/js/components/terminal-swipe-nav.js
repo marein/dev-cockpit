@@ -150,7 +150,7 @@ class TerminalSwipeNav extends HTMLElement {
 
   showPill(tab, dir, progress, pending) {
     if (!this.pill) {
-      this.pill = el("div", { class: "terminal-swipe-pill" });
+      this.pill = el("div", { class: "dc-swipe-pill terminal-swipe-pill" });
       this.appendChild(this.pill);
     }
     const key = tab.id + ":" + dir;
@@ -159,7 +159,7 @@ class TerminalSwipeNav extends HTMLElement {
       this.pill.replaceChildren(...[
         dir < 0 ? el("i", { class: "ti ti-chevron-left", "aria-hidden": "true" }) : null,
         tab.icon ? tab.icon.cloneNode(true) : null,
-        el("span", { class: "terminal-swipe-pill-name text-truncate" }, tab.name),
+        el("span", { class: "dc-swipe-pill-name text-truncate" }, tab.name),
         dir > 0 ? el("i", { class: "ti ti-chevron-right", "aria-hidden": "true" }) : null,
       ].filter(Boolean));
     }

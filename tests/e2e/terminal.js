@@ -476,6 +476,10 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
         const pill = document.querySelector(".terminal-swipe-pill");
         const midGesture = {
           pill: pill ? pill.textContent.trim() : "",
+          // The pill is one thing app wide: the editor's file swipe shows the
+          // same class in the same place, see editor.js.
+          shared: Boolean(pill && pill.classList.contains("dc-swipe-pill")),
+          top: pill ? Math.round(pill.getBoundingClientRect().top) : -1,
           frameMoved: Boolean(document.getElementById("terminal").style.transform),
         };
         ev("pointerup", { buttons: 0, clientX: x });
@@ -483,6 +487,8 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       }, dir);
       const left = await swipe(-1);
       assert(left.pill.length > 0, "no target pill during the swipe");
+      assert(left.shared, "the target pill does not use the shared dc-swipe-pill class");
+      assert(left.top >= 0 && left.top < 200, `the target pill is not at the top: ${left.top}px`);
       assert(left.frameMoved, "terminal frame did not follow the finger");
       await mp.waitForURL(new RegExp(secondId), { timeout: 8000 });
       await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
