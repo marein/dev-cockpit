@@ -624,9 +624,12 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       await openTracked();
       await page.waitForSelector(".cm-mergeView", { timeout: 20000 });
       await page.setViewportSize({ width: 900, height: 900 });
+      // The two pane view going away is the claim, and it is the only reliable
+      // signal: a changed line carries the same class on both views, so waiting
+      // for one of those matches the comparison that still stands.
+      await page.waitForSelector(".cm-mergeView", { state: "detached", timeout: 20000 })
+        .catch(() => { throw new Error("the narrow window kept the two pane view"); });
       await page.waitForSelector(".cm-deletedChunk, .cm-changedLine", { state: "attached", timeout: 20000 });
-      assert(await page.locator(".cm-mergeView").count() === 0,
-        "the narrow window kept the two pane view");
       await page.setViewportSize({ width: 1360, height: 900 });
       await page.waitForSelector(".cm-mergeView", { timeout: 20000 });
       assert(await page.locator(".cm-mergeView .cm-content").count() === 2,

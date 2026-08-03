@@ -2323,12 +2323,17 @@ async function init(root) {
     }
   }
 
-  // collectDrop returns {file, rel} pairs for everything in the drop, or null
-  // when the browser hands over no directory entries (plain files then).
-  async function collectDrop(dataTransfer) {
-    const entries = [...(dataTransfer.items || [])]
+  // The entries have to be read before the event handler returns, the items
+  // list is emptied afterwards. What this answers stays usable from the walk.
+  function transferEntries(items) {
+    return [...(items || [])]
       .map((item) => (item.kind === "file" && item.webkitGetAsEntry ? item.webkitGetAsEntry() : null))
       .filter(Boolean);
+  }
+
+  // collectDrop returns {file, rel} pairs for everything in the drop, or null
+  // when the browser hands over no directory entries (plain files then).
+  async function collectDrop(entries) {
     if (!entries.some((entry) => entry.isDirectory)) return null;
     const out = [];
     for (const entry of entries) await walkEntry(entry, "", out);
@@ -2373,13 +2378,11 @@ async function init(root) {
         e.preventDefault();
         endDrag();
         const dropped = e.dataTransfer;
-        // The entries have to be read before the event handler returns, the
-        // items list is emptied afterwards.
-        const items = [...(dropped.items || [])];
+        const entries = transferEntries(dropped.items);
         const files = [...(dropped.files || [])];
         void (async () => {
           try {
-            const walked = await collectDrop({ items });
+            const walked = await collectDrop(entries);
             await uploadFiles(walked || files, dir, { confirmFirst: !!walked });
           } catch (err) {
             status(err.message, "error");
@@ -2396,6 +2399,27 @@ async function init(root) {
       endDrag();
       void moveEntry(path, dir);
     }, { signal });
+  }
+
+  function wirePaste() {
+    root.addEventListener("paste", (e) => {
+      const clip = e.clipboardData;
+      if (!clip) return;
+      const entries = transferEntries(clip.items);
+      const files = [...(clip.files || [])];
+      if (!entries.length && !files.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const dir = targetDir();
+      void (async () => {
+        try {
+          const walked = await collectDrop(entries);
+          await uploadFiles(walked || files, dir, { confirmFirst: !!walked });
+        } catch (err) {
+          status(err.message, "error");
+        }
+      })();
+    }, { signal, capture: true });
   }
 
   // ---- markdown preview ------------------------------------------------------
@@ -3291,6 +3315,7 @@ async function init(root) {
   }, { signal });
   wireRowMenus(treeEl, ".editor-item", openTreeMenu, { signal });
   wireTreeDrop();
+  wirePaste();
   wireSplitter();
   wireQuickOpen();
   wireTabDrag();

@@ -355,7 +355,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Upload files",
-					Desc:  `Drop files or whole folders onto the file tree to upload them; dropping onto a folder puts them there, and a dropped folder keeps its structure. The tree context menu uploads files or a folder too, targeting the row's folder. A name that is already taken is listed before the upload starts, and replacing it needs one confirmation.`,
+					Desc:  `Drop files or whole folders onto the file tree to upload them; dropping onto a folder puts them there, and a dropped folder keeps its structure. Pasting them into the editor does the same, into the folder that is selected in the tree. The tree context menu uploads files or a folder too, targeting the row's folder. A name that is already taken is listed before the upload starts, and replacing it needs one confirmation.`,
 				},
 				{
 					Title: "Download a folder",

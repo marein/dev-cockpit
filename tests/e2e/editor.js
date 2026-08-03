@@ -1242,6 +1242,44 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       fs.rmSync(root, { recursive: true, force: true });
     });
 
+    // A paste has no row under a pointer, so it takes the folder the tree has
+    // selected and runs the drop's path from there: same walk, same dialog.
+    await run("pasting files uploads them into the selected folder", async () => {
+      const name = `pasted-${tag.slice(-4)}.txt`;
+      await page.click('.editor-dir[data-path="spring"]');
+      await sleep(300);
+      const carried = await page.evaluate((n) => {
+        const data = new DataTransfer();
+        data.items.add(new File(["pasted into the tree\n"], n, { type: "text/plain" }));
+        if (!data.files.length) return false;
+        document.querySelector("dc-editor [data-editor-tree]")
+          .dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+        return true;
+      }, name);
+      assert(carried, "the engine builds no file clipboard");
+      await page.waitForSelector(`.editor-file[data-path="spring/${name}"]`, { timeout: 15000 });
+      const content = await page.evaluate(async ([p, path]) => {
+        const r = await fetch(`/projects/${p}/editor/raw?path=${encodeURIComponent(path)}&download=1`);
+        return r.text();
+      }, [project, `spring/${name}`]);
+      assert(content.trim() === "pasted into the tree", `pasted content: ${content}`);
+
+      // Text keeps its own way through: the editor must not swallow a plain
+      // paste and must not upload anything for it.
+      const before = await page.$$eval(".editor-file", (els) => els.length);
+      const swallowed = await page.evaluate(() => {
+        const data = new DataTransfer();
+        data.setData("text/plain", "just text");
+        const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+        document.querySelector("dc-editor [data-editor-tree]").dispatchEvent(event);
+        return event.defaultPrevented;
+      });
+      await sleep(600);
+      assert(!swallowed, "a text paste was taken by the upload path");
+      assert((await page.$$eval(".editor-file", (els) => els.length)) === before, "a text paste changed the tree");
+      return "into the selected folder, text untouched";
+    });
+
     await run("closing a folder folds its children too, before and after a reload", async () => {
       await page.evaluate(async ([project]) => {
         const token = document.querySelector('meta[name="csrf-token"]').content;
