@@ -449,6 +449,7 @@ async function init(root) {
     const tab = activeTab();
     syncCompareBar();
     void applyBlame();
+    void applyChangeBars();
     placeholderEl.hidden = !!tab;
     // A comparison stands for two files, so the line below names both.
     const shown = tab && tab.compare ? `${tab.compare.left} ⇄ ${tab.compare.right}` : tab ? tab.path : "";
@@ -1166,6 +1167,7 @@ async function init(root) {
       // A line that moved belongs to a different commit than it did before, so
       // the gutter is read again whenever the file could have moved under it.
       void applyBlame(true);
+      void applyChangeBars();
     } catch (err) {
       if (signal.aborted) return;
       console.warn("git status unavailable", err);
@@ -1219,6 +1221,7 @@ async function init(root) {
   // be. The page asks for all of it itself rather than leaving an old tree
   // standing until somebody presses refresh.
   function catchUpGit() {
+    dropChangeHeads();
     void loadGitStatus();
     void refreshDiffHead();
     renewGitWatchNow();
@@ -1342,6 +1345,7 @@ async function init(root) {
     if (!rev) {
       await editor.setDiff({ mode: "off", name: tab.name, valid: current });
       persistTabs();
+      void applyChangeBars();
       return;
     }
     let data;
@@ -1354,6 +1358,7 @@ async function init(root) {
       // too: leaving it on means a reload comes back into a comparison the tab
       // is not in, and any later save of the set would drop it after all.
       persistTabs();
+      void applyChangeBars();
       return;
     }
     if (!current()) return;
@@ -1362,6 +1367,7 @@ async function init(root) {
         ? "That revision is too large to diff."
         : "That revision holds binary content, there is nothing to diff.", "error");
       persistTabs();
+      void applyChangeBars();
       return;
     }
     const original = data.content || "";
@@ -1369,7 +1375,10 @@ async function init(root) {
     if (ask && !(await withinDiffLimits(working, original))) {
       // Declined: the tab is not in a comparison, and a reload must not put it
       // in one and ask again.
-      if (current()) persistTabs();
+      if (current()) {
+        persistTabs();
+        void applyChangeBars();
+      }
       return;
     }
     if (!current()) return; // the tab or the wish changed while this loaded
@@ -1399,10 +1408,12 @@ async function init(root) {
       status("The diff could not be built, the file is open as usual.");
       notifyError(err.message || "The diff could not be built.");
       persistTabs();
+      void applyChangeBars();
       return;
     }
     status(data.exists === false ? "Not in HEAD yet" : "");
     persistTabs();
+    void applyChangeBars();
   }
 
   // applyTabDiff restores the switch a tab carries, after a tab switch or a
@@ -1453,6 +1464,58 @@ async function init(root) {
     } catch (err) {
       void err; // the next event asks again
     }
+  }
+
+  // ---- change bars -----------------------------------------------------------
+
+  // What changed against HEAD, always visible in the gutter, no switch. The
+  // HEAD text is cached on the tab and dropped whenever HEAD may have moved;
+  // the bars themselves follow the buffer live, so typing needs no request and
+  // no call here. While a comparison or a diff is up the bars rest, those views
+  // show the changes themselves.
+  let changesSeq = 0;
+
+  async function applyChangeBars() {
+    const tab = activeTab();
+    const textTab = tab && !tab.kind && !tab.compare ? tab : null;
+    const seq = ++changesSeq;
+    const valid = () => seq === changesSeq && activeTab() === tab;
+    if (!textTab || !gitRepo || !editor.canChanges || textTab.diffRev) {
+      void editor.setChanges(null, valid);
+      return;
+    }
+    if (textTab.changeHead === undefined) {
+      let data;
+      try {
+        data = await fetchHead(textTab.path);
+      } catch (err) {
+        // A missing answer is not "no changes": the cache stays empty, the next
+        // trigger asks again, and the bars that are up stay up.
+        if (!signal.aborted) console.warn("change bars unavailable", err);
+        return;
+      }
+      if (!valid()) return;
+      textTab.changeHead = data.exists === false || data.binary ? null : data.content || "";
+    }
+    const head = textTab.changeHead;
+    if (head == null || overChangeLimits(head, editor.valueOf(textTab, true))) {
+      void editor.setChanges(null, valid);
+      return;
+    }
+    void editor.setChanges(head, valid);
+  }
+
+  // The same limits the diff asks about, applied silently: bars that are always
+  // on cannot ask a question every time a huge file opens, so they stay away.
+  function overChangeLimits(head, working) {
+    const lines = Math.max(countLines(working), countLines(head));
+    const kib = Math.max(byteLength(working), byteLength(head)) / 1024;
+    return (diffSettings.maxLines > 0 && lines > diffSettings.maxLines)
+      || (diffSettings.maxKiB > 0 && kib > diffSettings.maxKiB);
+  }
+
+  function dropChangeHeads() {
+    for (const t of tabs) t.changeHead = undefined;
   }
 
   // ---- blame -----------------------------------------------------------------
@@ -1802,7 +1865,11 @@ async function init(root) {
         tab.name = `${baseName(left)} ⇄ ${baseName(right)}`;
         continue;
       }
-      tab.path = moved(tab.path);
+      const movedPath = moved(tab.path);
+      // A renamed file keeps its buffer, not its HEAD text: what HEAD has under
+      // the new name is a different question, usually "nothing yet".
+      if (movedPath !== tab.path) tab.changeHead = undefined;
+      tab.path = movedPath;
       tab.name = baseName(tab.path);
     }
     // A comparison that was active has already claimed its new path above.
@@ -1827,6 +1894,7 @@ async function init(root) {
     updateActionStates();
     syncCompareBar();
     syncPreview();
+    void applyChangeBars();
     persistTabs();
     await loadTree();
   }
@@ -2818,6 +2886,7 @@ async function init(root) {
   saveBtn.addEventListener("click", save, { signal });
   saveAllItem.addEventListener("click", saveAll, { signal });
   refreshBtn.addEventListener("click", () => {
+    dropChangeHeads();
     void loadTree();
     void loadGitStatus();
     void refreshDiffHead();
@@ -2829,6 +2898,9 @@ async function init(root) {
   // git show.
   onServerEvent("git", (event) => {
     if (!event.detail || event.detail.project !== name) return;
+    // A moved base means every cached HEAD text may be from before the move,
+    // so they all go; loadGitStatus rebuilds the bars for the open file.
+    if (event.detail.base) dropChangeHeads();
     void loadGitStatus();
     if (event.detail.base) void refreshDiffHead();
   }, { signal });
@@ -3765,6 +3837,192 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     });
   }
 
+  // ---- change bars -----------------------------------------------------------
+
+  // The gutter bars mark what the buffer holds against HEAD, the way the
+  // JetBrains editors do: a blue bar on changed lines, a green one on new
+  // lines, a grey tick where lines were deleted. They are not a mode like the
+  // diff, but a fact about the file, always visible, so there is no switch
+  // anywhere. The chunks live in a state field and follow every keystroke
+  // incrementally; only the plain editor carries them, a comparison already
+  // shows its changes.
+  const changesConf = new Compartment();
+
+  const CHANGE_COLORS = {
+    mod: "var(--tblr-azure, #4299e1)",
+    add: "var(--tblr-green, #2fb344)",
+    del: "var(--tblr-secondary, #6b7280)",
+  };
+
+  class ChangeMarker extends view.GutterMarker {
+    constructor(key) {
+      super();
+      this.key = key;
+    }
+
+    eq(other) {
+      return other.key === this.key;
+    }
+
+    toDOM() {
+      const [kind, first, last, cap] = this.key.split("|");
+      const el = document.createElement("div");
+      if (kind === "spacer") {
+        el.style.cssText = "width:3px;height:100%;margin:0 2px";
+        return el;
+      }
+      if (kind === "delTop" || kind === "delBottom" || kind === "delBoth") {
+        el.style.cssText = "position:relative;width:3px;height:100%;margin:0 2px";
+        if (kind !== "delBottom") el.appendChild(delTick("top:-3px"));
+        if (kind !== "delTop") el.appendChild(delTick("bottom:-3px"));
+        return el;
+      }
+      const r = (on) => (on === "1" ? "2px" : "0");
+      el.style.cssText = `width:3px;height:100%;margin:0 2px;background:${CHANGE_COLORS[kind]};`
+        + `border-radius:${r(first)} ${r(first)} ${r(last)} ${r(last)}`;
+      if (cap === "1") {
+        el.style.position = "relative";
+        el.appendChild(delTick("bottom:-3px"));
+      }
+      return el;
+    }
+  }
+
+  function delTick(edge) {
+    const tick = document.createElement("div");
+    tick.style.cssText = `position:absolute;left:-1px;width:6px;height:5px;border-radius:2px;background:${CHANGE_COLORS.del};${edge}`;
+    return tick;
+  }
+
+  const changeMarkerCache = new Map();
+
+  function changeMarker(kind, first = false, last = false, cap = false) {
+    const key = `${kind}|${first ? "1" : "0"}|${last ? "1" : "0"}|${cap ? "1" : "0"}`;
+    let marker = changeMarkerCache.get(key);
+    if (!marker) {
+      marker = new ChangeMarker(key);
+      changeMarkerCache.set(key, marker);
+    }
+    return marker;
+  }
+
+  // changeMarkers turns the chunks into gutter marks. A chunk is a char level
+  // answer that rounds to full lines and can therefore carry untouched
+  // neighbour lines (a deleted trailing line rides in a chunk with the line
+  // above it), so each chunk's lines are compared once more line by line: what
+  // matches nothing is a changed or new line, and lines HEAD had that match
+  // nothing put a tick on the boundary they vanished from.
+  function changeMarkers(chunks, doc, headDoc) {
+    const ranges = [];
+    const clamp = (pos) => Math.max(0, Math.min(pos, doc.length));
+    const headClamp = (pos) => Math.max(0, Math.min(pos, headDoc.length));
+    const barRun = (kind, from, to, cap) => {
+      for (let n = from; n <= to; n++) {
+        ranges.push(changeMarker(kind, n === from, n === to, cap && n === to).range(doc.line(n).from));
+      }
+    };
+    // Deletions above and below the same untouched line merge into one marker,
+    // two would stack in the gutter cell and break its height.
+    const ticks = new Map();
+    const tick = (kind, lineNo) => ticks.set(lineNo, ticks.has(lineNo) && ticks.get(lineNo) !== kind ? "delBoth" : kind);
+    for (const chunk of chunks) {
+      if (chunk.fromB >= chunk.toB) {
+        const line = doc.lineAt(clamp(chunk.fromB));
+        tick(clamp(chunk.fromB) === line.from ? "delTop" : "delBottom", line.number);
+        continue;
+      }
+      const fromLine = doc.lineAt(clamp(chunk.fromB)).number;
+      const toLine = doc.lineAt(Math.max(clamp(chunk.fromB), clamp(chunk.toB - 1))).number;
+      const bLines = [];
+      for (let n = fromLine; n <= toLine; n++) bLines.push(doc.line(n).text);
+      const aLines = [];
+      if (chunk.toA > chunk.fromA) {
+        const fromA = headDoc.lineAt(headClamp(chunk.fromA)).number;
+        const toA = headDoc.lineAt(Math.max(headClamp(chunk.fromA), headClamp(chunk.toA - 1))).number;
+        for (let n = fromA; n <= toA; n++) aLines.push(headDoc.line(n).text);
+      }
+      emitLineDiff(aLines, bLines, fromLine, barRun, tick);
+    }
+    for (const [lineNo, kind] of ticks) {
+      ranges.push(changeMarker(kind).range(doc.line(lineNo).from));
+    }
+    return state.RangeSet.of(ranges, true);
+  }
+
+  // emitLineDiff aligns a chunk's HEAD lines with its buffer lines (LCS over
+  // whole lines) and reads the runs between the matches: both sides present is
+  // a modification, buffer only is an addition, HEAD only is a tick on the
+  // boundary. A modification that swallowed more HEAD lines than it shows
+  // carries the tick under its last line. A chunk too large to align falls
+  // back to "all modified", which is what it visually is anyway.
+  function emitLineDiff(aLines, bLines, firstLine, barRun, tick) {
+    const n = aLines.length;
+    const m = bLines.length;
+    if (n === 0) {
+      barRun("add", firstLine, firstLine + m - 1, false);
+      return;
+    }
+    if (n * m > 20000) {
+      barRun("mod", firstLine, firstLine + m - 1, n > m);
+      return;
+    }
+    const w = m + 1;
+    const lcs = new Int32Array((n + 1) * w);
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        lcs[i * w + j] = aLines[i] === bLines[j]
+          ? lcs[(i + 1) * w + j + 1] + 1
+          : Math.max(lcs[(i + 1) * w + j], lcs[i * w + j + 1]);
+      }
+    }
+    let i = 0;
+    let j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && aLines[i] === bLines[j]) {
+        i += 1;
+        j += 1;
+        continue;
+      }
+      const jStart = j;
+      let del = 0;
+      let ins = 0;
+      while (i < n || j < m) {
+        if (i < n && j < m && aLines[i] === bLines[j]) break;
+        if (i < n && (j >= m || lcs[(i + 1) * w + j] >= lcs[i * w + j + 1])) {
+          i += 1;
+          del += 1;
+        } else {
+          j += 1;
+          ins += 1;
+        }
+      }
+      if (ins > 0) barRun(del > 0 ? "mod" : "add", firstLine + jStart, firstLine + j - 1, del > ins);
+      else if (j < m) tick("delTop", firstLine + j);
+      else tick("delBottom", firstLine + m - 1);
+    }
+  }
+
+  function changesExtension(text) {
+    if (text == null || !mergeMod) return [];
+    const headDoc = state.Text.of(text.split("\n"));
+    const field = state.StateField.define({
+      create: (st) => mergeMod.Chunk.build(headDoc, st.doc),
+      update: (chunks, tr) => (tr.docChanged ? mergeMod.Chunk.updateB(chunks, headDoc, tr.newDoc, tr.changes) : chunks),
+    });
+    let cache = { chunks: null, doc: null, set: state.RangeSet.empty };
+    return [field, view.gutter({
+      class: "cm-changes",
+      markers(v) {
+        const chunks = v.state.field(field);
+        if (cache.chunks !== chunks || cache.doc !== v.state.doc) {
+          cache = { chunks, doc: v.state.doc, set: changeMarkers(chunks, v.state.doc, headDoc) };
+        }
+        return cache.set;
+      },
+      initialSpacer: () => changeMarker("spacer"),
+    })];
+  }
+
   const editableExtensions = (langExt) => [
     keymap.of([{ key: "Ctrl-o", run: () => true }, { key: "Ctrl-f", run: search.openSearchPanel }]),
     sharedExtensions(langExt),
@@ -3777,7 +4035,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     }),
   ];
 
-  const baseExtensions = (langExt) => [editableExtensions(langExt), fillsTheBox];
+  const baseExtensions = (langExt) => [editableExtensions(langExt), changesConf.of([]), fillsTheBox];
 
   // The other side of a diff is a revision, not a file on disk, so it is read
   // only and reports nothing: the status bar follows the working copy.
@@ -4060,6 +4318,18 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       blameData = data;
       workView().dispatch({ effects: blameConf.reconfigure(blameExtension(data)) });
     },
+    canChanges: true,
+    // setChanges puts the bars for the given HEAD text on the plain editor, or
+    // takes them off with null. It always reaches the plain editor, never a
+    // merge view: a state restored by a tab switch carries whatever bars it had,
+    // and the caller reapplies right after, so dispatching unconditionally is
+    // what keeps the two in step. valid is checked after the one await, the
+    // same guard every builder here uses.
+    async setChanges(text, valid) {
+      if (text != null) await loadMerge();
+      if (valid && !valid()) return;
+      editorView.dispatch({ effects: changesConf.reconfigure(changesExtension(text)) });
+    },
     comparing: () => compareOn && !!mergeView,
     compareValue(side) {
       if (!mergeView) return "";
@@ -4277,6 +4547,8 @@ function createTextarea(host, hooks, settings) {
     },
     canBlame: false,
     setBlame() {},
+    canChanges: false,
+    async setChanges() {},
     comparing: () => false,
     compareValue: () => "",
     captureCompare() {},

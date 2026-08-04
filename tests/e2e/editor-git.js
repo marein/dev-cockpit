@@ -92,6 +92,13 @@ const { assert, sleep, BASE } = L;
 //   - the saved tab set carries typed entries; a bare string is an older state
 //     and reads as a file, and the legacy diff map still switches the diff on.
 //     One check seeds exactly that legacy shape.
+//   - the change bars (.cm-changes) are always on where a repository is: no
+//     switch, no menu entry, computed against HEAD in the browser and updated
+//     by the keystroke. Green is a new line, blue a changed one, a grey tick
+//     sits on the boundary deleted lines vanished from. They rest while a
+//     diff or a comparison is up and are absent for a file HEAD does not
+//     hold. The gutter keeps a hidden spacer cell for its width, checks must
+//     skip it.
 //   - never wait for "[x][hidden]" and never assert on the attribute when the
 //     claim is that something is gone. Tabler's display utilities are important
 //     and sit below its own [hidden] rule, so an element with a d-* class was
@@ -409,6 +416,90 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
         await page.waitForSelector(".swal2-container", { state: "detached", timeout: 6000 }).catch(() => {});
       }
     };
+
+    // The change bars have no switch: with a repository they ride in their own
+    // gutter (.cm-changes), computed against HEAD in the browser and following
+    // the buffer live. readBars classifies by the inline style the markers
+    // carry (the Tabler variable names, so no computed colors), and skips the
+    // spacer cell CodeMirror hides to keep the gutter's width.
+    const readBars = (target) => target.evaluate(() => {
+      const out = [];
+      for (const cell of document.querySelectorAll(".cm-changes .cm-gutterElement")) {
+        if (cell.style.visibility === "hidden") continue;
+        for (const el of cell.children) {
+          const bg = el.style.background || "";
+          const ticks = [...el.children].map((c) => (c.style.top ? "top" : "bottom"));
+          if (bg.includes("azure")) out.push(ticks.length ? "mod+tick" : "mod");
+          else if (bg.includes("green")) out.push("add");
+          else if (ticks.length) out.push(`del:${ticks.join("+")}`);
+        }
+      }
+      return out;
+    });
+    const waitBars = async (target, want, label) => {
+      const deadline = Date.now() + 15000;
+      let bars = [];
+      while (Date.now() < deadline) {
+        bars = await readBars(target);
+        if (JSON.stringify(bars) === JSON.stringify(want)) return;
+        await sleep(250);
+      }
+      assert(false, `${label}: the gutter carries ${JSON.stringify(bars)}, not ${JSON.stringify(want)}`);
+    };
+
+    await run("change bars: always on, following the buffer live, resting under a comparison", async () => {
+      await openTracked();
+      // HEAD holds one line, the working copy a second one: one green bar.
+      await waitBars(page, ["add"], "after opening");
+      await page.locator(".cm-content").first().click({ force: true });
+      await page.keyboard.press("Control+Home");
+      await page.keyboard.press("End");
+      await page.keyboard.type("X");
+      // The edit joins the new line into one changed region: both lines read
+      // as modified now, live, without a save and without a request.
+      await waitBars(page, ["mod", "mod"], "after typing");
+      await page.keyboard.press("Control+z");
+      await waitBars(page, ["add"], "after undo");
+      // A comparison shows the changes itself, so the bars rest under it, in
+      // both views, and come back when it goes away.
+      await toggleDiff(page);
+      await page.waitForSelector(".cm-mergeView", { timeout: 20000 });
+      assert((await page.locator(".cm-mergeView .cm-changes").count()) === 0, "the merge view carries the change bars");
+      await toggleDiff(page);
+      await page.waitForSelector(".cm-mergeView", { state: "detached", timeout: 10000 });
+      await waitBars(page, ["add"], "after the diff went away");
+      return "green for the new line, live to the keystroke, resting under the diff";
+    });
+
+    await run("change bars: a clean file shows none, a deleted line leaves a tick on the boundary", async () => {
+      await page.click(`.editor-item[data-path="${worded}"]`);
+      await page.waitForSelector(`.editor-tab[data-path="${worded}"].active`, { timeout: 10000 });
+      await waitBars(page, [], "on a committed unchanged file");
+      await page.locator(".cm-content").first().click({ force: true });
+      await page.keyboard.press("Control+Home");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Home");
+      await page.keyboard.down("Shift");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.up("Shift");
+      await page.keyboard.press("Delete");
+      await waitBars(page, ["del:top"], "after deleting the middle line");
+      await page.keyboard.press("Control+z");
+      await waitBars(page, [], "after undo");
+      await page.click(`.editor-tab[data-path="${worded}"] .editor-tab-close`);
+      await sleep(400);
+      return "nothing on a clean file, a grey tick where the line vanished";
+    });
+
+    await run("change bars: a file HEAD does not hold shows no gutter at all", async () => {
+      await page.click('.editor-item[data-path="fresh.txt"]');
+      await page.waitForSelector('.editor-tab[data-path="fresh.txt"].active', { timeout: 10000 });
+      await sleep(1500);
+      assert((await page.locator(".cm-changes").count()) === 0, "an untracked file carries a changes gutter");
+      await page.click('.editor-tab[data-path="fresh.txt"] .editor-tab-close');
+      await sleep(400);
+      return "untracked means nothing to compare, no gutter";
+    });
 
     await run("diff: the switch puts HEAD on a read only side", async () => {
       await openTracked();

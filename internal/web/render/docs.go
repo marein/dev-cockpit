@@ -318,6 +318,10 @@ func DocsTopics() []DocsTopic {
 					Desc:  `In a git repository a changed file carries a letter, on its tree row and on its tab: <span class="text-green">A</span> added, <span class="text-yellow">M</span> modified, <span class="text-red">D</span> deleted, <span class="text-azure">R</span> renamed, <span class="text-red">!</span> conflicted. A folder carries a dot for the most pressing change under it, the tooltip says how many lines came and went, and a change somebody else makes arrives on its own. The editor only reads git.`,
 				},
 				{
+					Title: "Changed lines in the gutter",
+					Desc:  `In a git repository the open file marks its changes against the last commit in the gutter, without a switch: a <span class="text-green">green</span> bar on a new line, a <span class="text-azure">blue</span> bar on a changed one, a grey tick where lines were deleted. The marks follow your typing without a save; they rest while a diff or a comparison is open, and a file the last commit does not hold yet shows none.`,
+				},
+				{
 					Title: "Diff and blame a file",
 					Desc:  `Right-click a file, on its tab or its tree row: <em>Show git diff</em> puts it next to the last commit, <em>Show git blame</em> writes the commit and the author next to every line. Both are per file and come back after a reload. To put two files on disk side by side instead, pick <em>Select for compare</em> on one and <em>Compare with</em> on the other.`,
 				},
