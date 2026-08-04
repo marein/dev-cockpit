@@ -458,6 +458,83 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       assert(/^Ln 1, Col 1/.test(pos || ""), `cursor not on the match line: ${pos}`);
     });
 
+    await run("a hit far down the file scrolls it into view, from the content search and from name:line", async () => {
+      // The check above matches on line 1, where there is nothing to scroll to.
+      // This one puts the hit at line 300 of 400, which is what caught the
+      // viewport staying put while the cursor moved.
+      const longFile = `jump_${tag}.txt`;
+      const needle = `deepneedle${tag}`;
+      const hitLine = 300;
+      await page.evaluate(async ([project, path, n, marker]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const body = Array.from({ length: 400 }, (_, i) => (i + 1 === n ? marker : `filler ${i + 1}`)).join("\n");
+        await fetch(`/projects/${project}/editor/create`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: "path=" + encodeURIComponent(path),
+        });
+        await fetch(`/projects/${project}/editor/file`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: "path=" + encodeURIComponent(path) + "&content=" + encodeURIComponent(body),
+        });
+      }, [project, longFile, hitLine, needle]);
+
+      const onLine = async (n) => page.waitForFunction(
+        (want) => /^Ln (\d+)/.exec(document.querySelector("[data-editor-pos]")?.textContent || "")?.[1] === String(want),
+        n, { timeout: 8000 });
+      // A viewport that never moved sits at zero; the cursor alone proves nothing.
+      const scrolled = async () => page.waitForFunction(
+        () => (document.querySelector(".cm-editor .cm-scroller")?.scrollTop ?? 0) > 0,
+        null, { timeout: 8000 });
+      const closeTab = async (name) => {
+        await page.evaluate((sel) => document.querySelector(`${sel} .editor-tab-state`)?.click(), tabSel(name));
+        await page.waitForFunction((sel) => !document.querySelector(sel), tabSel(name), { timeout: 6000 });
+      };
+
+      // Content search, opening the file fresh: the case that was broken.
+      await clickItem("[data-editor-search-project-item]");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.fill("[data-editor-quickopen-input]", needle);
+      await page.waitForSelector(".editor-quickopen-match", { timeout: 8000 });
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(`${tabSel(longFile)}.active`, { timeout: 8000 });
+      await onLine(hitLine);
+      await scrolled();
+
+      // Same file, same jump, through the file palette's :line suffix. Closed
+      // first so the editor has to open it from nothing again.
+      await closeTab(longFile);
+      const askLine = 120;
+      await page.keyboard.press("Control+O");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.fill("[data-editor-quickopen-input]", `${longFile}:${askLine}`);
+      await page.waitForSelector(".editor-quickopen-item", { timeout: 6000 });
+      // The suffix is not part of the path, so the file still has to be found.
+      const first = await page.textContent(".editor-quickopen-item .editor-quickopen-name");
+      assert(first === longFile, `the :line suffix leaked into the match: ${first}`);
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(`${tabSel(longFile)}.active`, { timeout: 8000 });
+      await onLine(askLine);
+      await scrolled();
+
+      // Without a suffix the file opens at the top, the jump is opt-in.
+      await closeTab(longFile);
+      await page.keyboard.press("Control+O");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.fill("[data-editor-quickopen-input]", longFile);
+      await page.waitForSelector(".editor-quickopen-item", { timeout: 6000 });
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(`${tabSel(longFile)}.active`, { timeout: 8000 });
+      await onLine(1);
+
+      // Leave the strip as it was found: the checks after this one count tabs.
+      await closeTab(longFile);
+      await page.click(tabSel(noteFile));
+      await page.waitForSelector(`${tabSel(noteFile)}.active`, { timeout: 6000 });
+      return `content search to line ${hitLine}, palette to line ${askLine}, both scrolled`;
+    });
+
     await run("open tabs, active tab and expanded tree dirs survive a reload", async () => {
       await treeRootMenu();
       await menuItem(page, "New folder").click();
@@ -649,6 +726,75 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.waitForFunction((p) => !document.querySelector(`.editor-file[data-path="${p}"]`), `pic_${tag}.svg`, { timeout: 8000 });
       await page.click(tabSel(`pix_${tag}.png`) + " .editor-tab-state");
       await page.waitForFunction((p) => !document.querySelector(`.editor-tab[data-path="${p}"]`), `pix_${tag}.png`, { timeout: 6000 });
+    });
+
+    await run("search settings: the Search tab holds the folder exclusions and they reach the palette", async () => {
+      // The exclusions are install-wide, so this leaves the setting the way it
+      // found it before it returns.
+      const before = await page.evaluate(async () => {
+        const html = await fetch("/settings/editor/search", { headers: { Accept: "text/html" } }).then((r) => r.text());
+        return new DOMParser().parseFromString(html, "text/html").querySelector('[name="exclusions"]').value;
+      });
+
+      // The bare path and the sidebar's Editor row lead to the leftmost tab,
+      // which is Search; Git is the tab next to it.
+      await page.goto(`${BASE}/settings/editor`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
+      assert(/\/settings\/editor\/search$/.test(page.url()), `the bare path landed on ${page.url()}`);
+      const tabs = await page.locator("[data-editor-sections] .nav-link").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+      assert(tabs.join() === "/settings/editor/search,/settings/editor/git", `the tabs are ${tabs.join(", ")}`);
+      const active = await page.locator("[data-editor-sections] .nav-link.active").getAttribute("href");
+      assert(active === "/settings/editor/search", `the marked tab is ${active}`);
+      assert(await page.$('[data-settings-nav] a[href="/settings/editor/search"].active'), "the Editor row is not marked in the settings nav");
+      assert(await page.locator("#settings-editor-search").count() === 1, "there is not exactly one form");
+
+      // A folder excluded here disappears from the palette without a restart:
+      // the index notices the setting changed and rebuilds itself.
+      const excluded = "zz_excluded";
+      // create makes the folders on the way, file would need them to be there.
+      const created = await page.evaluate(async ([project, dir]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const res = await fetch(`/projects/${project}/editor/create`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: "path=" + encodeURIComponent(`${dir}/buried.txt`),
+        });
+        return res.status;
+      }, [project, excluded]);
+      assert(created === 200, `creating the file answered ${created}`);
+
+      const paletteHas = async (needle) => page.evaluate(async ([project, q]) => {
+        const data = await fetch(`/projects/${project}/editor/files?q=${encodeURIComponent(q)}`, { headers: { Accept: "application/json" } }).then((r) => r.json());
+        return (data.files || []).some((f) => f.includes(q));
+      }, [project, needle]);
+
+      assert(await paletteHas("buried.txt"), "the file is not findable before it is excluded");
+
+      await page.fill('#settings-editor-search [name="exclusions"]', `.git\n${excluded}`);
+      await Promise.all([
+        page.waitForResponse((r) => r.url().includes("/settings/editor/search") && r.request().method() === "POST", { timeout: 15000 }),
+        page.click('#settings-editor-search button[type="submit"]'),
+      ]);
+      await page.waitForLoadState("domcontentloaded");
+      const stored = await page.inputValue('#settings-editor-search [name="exclusions"]');
+      assert(stored === `.git\n${excluded}`, `the form came back with ${JSON.stringify(stored)}`);
+
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
+      assert(!(await paletteHas("buried.txt")), "the excluded folder still shows up in the palette");
+
+      // Put the setting back so the rest of the run sees what it expected.
+      await page.goto(`${BASE}/settings/editor/search`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
+      await page.fill('#settings-editor-search [name="exclusions"]', before);
+      await Promise.all([
+        page.waitForResponse((r) => r.url().includes("/settings/editor/search") && r.request().method() === "POST", { timeout: 15000 }),
+        page.click('#settings-editor-search button[type="submit"]'),
+      ]);
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
+      assert(await paletteHas("buried.txt"), "the folder did not come back after the setting was restored");
+      return "search tab first, exclusions round-trip, index follows without a restart";
     });
 
     await run("settings persist to localStorage", async () => {

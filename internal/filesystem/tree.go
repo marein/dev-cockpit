@@ -199,21 +199,22 @@ func ResolveExistingFile(root, rel string) (string, os.FileInfo, error) {
 	return target, info, nil
 }
 
-// MaxListedFiles caps the recursive file list used by the quick open palette.
+// MaxListedFiles caps the recursive file list ListFilesUnder returns.
 const MaxListedFiles = 5000
-
-// skippedDirs are directories the recursive file listing never descends into.
-var skippedDirs = map[string]bool{".git": true, "node_modules": true, ".worktrees": true}
 
 // ListFilesUnder walks one directory inside root and answers the relative paths
 // of every regular file in it. An empty rel walks the whole project.
 //
-// VCS and dependency directories are skipped, symlinked directories are not
-// followed, and the walk stops after MaxListedFiles files and reports
-// truncation. The paths stay relative to root, which is what every client path
-// is, so a caller that only cares about a subtree pays for that subtree and the
-// cap counts there.
-func ListFilesUnder(root, rel string) (files []string, truncated bool, err error) {
+// The excluded directories are skipped, symlinked directories are not followed,
+// and the walk stops after MaxListedFiles files and reports truncation. The
+// paths stay relative to root, which is what every client path is, so a caller
+// that only cares about a subtree pays for that subtree and the cap counts
+// there.
+//
+// The quick open palette does not use this: it answers from an index of the
+// whole project instead, because a capped list cannot find what sits past the
+// cap. See QuickOpenCache.
+func ListFilesUnder(root, rel string, ex Exclusions) (files []string, truncated bool, err error) {
 	dir, err := ResolveUnder(root, rel)
 	if err != nil {
 		return nil, false, err
@@ -224,7 +225,7 @@ func ListFilesUnder(root, rel string) (files []string, truncated bool, err error
 			return nil
 		}
 		if d.IsDir() {
-			if p != dir && skippedDirs[d.Name()] {
+			if p != dir && ex.SkipDir(relTo(root, p), d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil

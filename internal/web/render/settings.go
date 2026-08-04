@@ -71,6 +71,8 @@ type SettingsEditorData struct {
 	GitPollSeconds int
 	DiffMaxLines   int
 	DiffMaxKiB     int
+	// Exclusions is the newline joined folder list the search tab edits.
+	Exclusions string
 }
 
 // BackupSection is one selectable export section on the backup form.

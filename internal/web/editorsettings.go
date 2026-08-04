@@ -1,6 +1,10 @@
 package web
 
-import "strconv"
+import (
+	"strconv"
+
+	"github.com/local/dev-cockpit/internal/filesystem"
+)
 
 // The editor's cross-device settings, edited on the tabs of /settings/editor and
 // stored as flat values in the shared settings store. A fresh install has no
@@ -10,6 +14,7 @@ import "strconv"
 // they are written from keep the underscores every form in the app uses.
 const (
 	editorGitPollSecondsKey = "editor-git-poll-seconds"
+	editorExclusionsKey     = "editor-search-exclusions"
 	editorDiffMaxLinesKey   = "editor-diff-max-lines"
 	editorDiffMaxKiBKey     = "editor-diff-max-kib"
 )
@@ -29,6 +34,11 @@ type editorSettings struct {
 	// The rest is read by the diff.
 	DiffMaxLines int
 	DiffMaxKiB   int
+	// Exclusions are the folders the quick open palette and the content search
+	// stay out of. Emptying the list is a real choice, so it is kept apart from
+	// never having chosen: an install that never opens the form gets the
+	// defaults, one that saved an empty list searches everything.
+	Exclusions filesystem.Exclusions
 }
 
 // editorSettings reads the effective editor settings.
@@ -37,7 +47,18 @@ func (s *Server) editorSettings() editorSettings {
 		GitPollSeconds: s.settingInt(editorGitPollSecondsKey, 2, 0, 60),
 		DiffMaxLines:   s.settingInt(editorDiffMaxLinesKey, 5000, 0, 200000),
 		DiffMaxKiB:     s.settingInt(editorDiffMaxKiBKey, 512, 0, 2048),
+		Exclusions:     s.exclusions(),
 	}
+}
+
+// exclusions reads the configured folder exclusions, falling back to the
+// defaults only while nothing has ever been saved.
+func (s *Server) exclusions() filesystem.Exclusions {
+	raw, ok := s.settings.Lookup(editorExclusionsKey)
+	if !ok {
+		return filesystem.DefaultExclusionSet()
+	}
+	return filesystem.ParseExclusions(raw)
 }
 
 // settingInt reads a stored number, clamped into the range the setting accepts.
@@ -69,4 +90,10 @@ func (s *Server) storeInt(key, value string, min, max int) {
 		n = max
 	}
 	s.settings.Set(key, strconv.Itoa(n))
+}
+
+// storeExclusions writes the folder exclusions in their canonical form, so the
+// list that comes back to the form is the list that applies.
+func (s *Server) storeExclusions(raw string) {
+	s.settings.Set(editorExclusionsKey, filesystem.ParseExclusions(raw).String())
 }

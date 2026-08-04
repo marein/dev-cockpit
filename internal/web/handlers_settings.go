@@ -82,7 +82,14 @@ func (s *Server) handleSettingsGeneralSave(c *gin.Context) {
 // editorSettingsPath is the editor settings page. It sits behind a tab so the
 // page can grow more of them, and the bare /settings/editor leads here the way
 // a coder's base path leads to its instructions.
-const editorSettingsPath = "/settings/editor/git"
+const (
+	// editorSettingsPath is where the bare /settings/editor and the settings
+	// sidebar's Editor row lead: the leftmost tab, the way a coder's base path
+	// leads to its first section.
+	editorSettingsPath       = editorSearchSettingsPath
+	editorSearchSettingsPath = "/settings/editor/search"
+	editorGitSettingsPath    = "/settings/editor/git"
+)
 
 func (s *Server) handleSettingsEditor(c *gin.Context) {
 	c.Redirect(http.StatusSeeOther, editorSettingsPath)
@@ -100,6 +107,25 @@ func (s *Server) handleSettingsEditorGit(c *gin.Context) {
 	})
 }
 
+func (s *Server) handleSettingsEditorSearch(c *gin.Context) {
+	set := s.editorSettings()
+	c.HTML(http.StatusOK, "settings_editor_search.gohtml", render.SettingsEditorData{
+		Page:        s.page(c, "Settings", "settings"),
+		SettingsNav: s.settingsNav("editor"),
+		Section:     "search",
+		Exclusions:  set.Exclusions.String(),
+	})
+}
+
+// handleSettingsEditorSearchSave stores the folder exclusions. An empty box is a
+// real answer, meaning search everything, so it is written rather than ignored.
+// The quick open index notices that the list changed by itself and rebuilds, so
+// nothing has to be invalidated here.
+func (s *Server) handleSettingsEditorSearchSave(c *gin.Context) {
+	s.storeExclusions(c.PostForm("exclusions"))
+	s.redirectWithFlash(c, editorSearchSettingsPath, "Settings saved.", "")
+}
+
 // handleSettingsEditorGitSave stores the editor settings. They are one form, so
 // they are written together; a number that is not a number keeps its current
 // value instead of dropping to a default the person never chose.
@@ -107,7 +133,7 @@ func (s *Server) handleSettingsEditorGitSave(c *gin.Context) {
 	s.storeInt(editorGitPollSecondsKey, c.PostForm("git_poll_seconds"), 0, 60)
 	s.storeInt(editorDiffMaxLinesKey, c.PostForm("diff_max_lines"), 0, 200000)
 	s.storeInt(editorDiffMaxKiBKey, c.PostForm("diff_max_kib"), 0, 2048)
-	s.redirectWithFlash(c, editorSettingsPath, "Settings saved.", "")
+	s.redirectWithFlash(c, editorGitSettingsPath, "Settings saved.", "")
 }
 
 func (s *Server) handleSettingsNotifications(c *gin.Context) {

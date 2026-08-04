@@ -352,21 +352,51 @@ func (s *Server) handleEditorCopy(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"entry": entry})
 }
 
-// handleEditorFiles returns the project's file paths as JSON, feeding the quick
-// open palette. With ?path= it answers for that directory only. The paths stay
-// relative to the project either way, and the cap then counts inside that
-// directory instead of across the whole project.
+// handleEditorFiles answers one quick open query with the best matching paths,
+// feeding the quick open palette. With ?path= it answers for that directory
+// only; the paths stay relative to the project either way.
+//
+// It used to ship the project's whole file list and let the browser filter it,
+// which meant the list was capped and everything past the cap was unreachable:
+// in a large project the palette could not open a file in src/ at all. Now the
+// match runs here against a cached index of every path, and only the handful of
+// paths the palette renders goes over the wire.
 func (s *Server) handleEditorFiles(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
 		return
 	}
-	files, truncated, err := filesystem.ListFilesUnder(p.Path, c.Query("path"))
+	res, err := s.quickOpen.Query(p.Path, c.Query("q"), c.Query("path"), s.exclusions(), filesystem.QuickOpenLimit)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"files": files, "truncated": truncated})
+	c.JSON(http.StatusOK, gin.H{
+		"files": res.Paths,
+		// truncated means "there are more matches than the ones shown", which is
+		// what the palette's footnote reports.
+		"truncated": res.Total > len(res.Paths),
+		"total":     res.Total,
+		"indexed":   res.Indexed,
+	})
+}
+
+// invalidateQuickOpenAfterWrite drops the project's quick open index after a
+// request that changed the tree, so a file is findable the moment it exists
+// instead of after the staleness bound expires. Reads pass straight through.
+func (s *Server) invalidateQuickOpenAfterWrite(c *gin.Context) {
+	c.Next()
+	if c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead {
+		return
+	}
+	if c.Writer.Status() >= http.StatusMultipleChoices {
+		return
+	}
+	p, err := s.projects.FindByName(c.Param("name"))
+	if err != nil {
+		return
+	}
+	s.quickOpen.Invalidate(p.Path)
 }
 
 // handleEditorSearch greps the project for the ?q= substring and returns the
@@ -381,7 +411,7 @@ func (s *Server) handleEditorSearch(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"matches": []filesystem.SearchMatch{}, "truncated": false})
 		return
 	}
-	matches, truncated, err := filesystem.SearchFiles(p.Path, q)
+	matches, truncated, err := filesystem.SearchFiles(p.Path, q, s.exclusions())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return

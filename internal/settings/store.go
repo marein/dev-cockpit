@@ -28,6 +28,16 @@ func (s *Store) Get(key string) string {
 	return s.load()[key]
 }
 
+// Lookup returns the stored value for key and whether it is there at all. A
+// setting whose empty value is a real choice, such as a list someone emptied on
+// purpose, cannot tell that apart from never having been set with Get alone.
+func (s *Store) Lookup(key string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, ok := s.load()[key]
+	return value, ok
+}
+
 // Set stores the value for key, merging into whatever is already on disk.
 func (s *Store) Set(key, value string) {
 	if key == "" {

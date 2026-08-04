@@ -28,8 +28,9 @@ const { assert, sleep, BASE } = L;
 //     which pulls both.
 //   - the tree is lazy: a file inside a folder only has a row once that folder
 //     has been opened.
-//   - the editor settings are one form behind one tab (/settings/editor/git,
-//     the bare path redirects there). They are shared state on the instance, so
+//   - the git editor settings are one form behind the Git tab
+//     (/settings/editor/git). The bare path and the sidebar's Editor row lead to
+//     the leftmost tab, which is Search; that tab is covered in editor.js. They are shared state on the instance, so
 //     the defaults are read before anything is saved and the poll interval is
 //     put back at the end. There is no switch for git itself: it shows where a
 //     repository is and nothing where there is none.
@@ -246,16 +247,19 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
     await L.createProject(page, project);
     await L.createProject(page, plain);
 
-    await run("settings: one tab, one form, and only what describes the install", async () => {
-      // The bare path leads to the tab, like a coder's base path leads to its
-      // instructions.
+    await run("settings: the git tab, one form, and only what describes the install", async () => {
+      // The bare path leads to the leftmost tab, like a coder's base path leads
+      // to its first section. That is Search; git is the tab next to it.
       await page.goto(`${BASE}/settings/editor`, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(page);
-      assert(/\/settings\/editor\/git$/.test(page.url()), `the bare path landed on ${page.url()}`);
-      assert(await page.locator("[data-editor-sections] .nav-link").count() === 1, "there is not exactly one tab");
+      assert(/\/settings\/editor\/search$/.test(page.url()), `the bare path landed on ${page.url()}`);
+      await page.goto(`${BASE}/settings/editor/git`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
+      const tabs = await page.locator("[data-editor-sections] .nav-link").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+      assert(tabs.join() === "/settings/editor/search,/settings/editor/git", `the tabs are ${tabs.join(", ")}`);
       const active = await page.locator("[data-editor-sections] .nav-link.active").getAttribute("href");
       assert(active === "/settings/editor/git", `the marked tab is ${active}`);
-      assert(await page.$('[data-settings-nav] a[href="/settings/editor/git"].active'), "the Editor row is not marked in the settings nav");
+      assert(await page.$('[data-settings-nav] a[href="/settings/editor/search"].active'), "the Editor row is not marked in the settings nav");
       assert(await page.locator("#settings-editor-git").count() === 1, "there is not exactly one form");
 
       const values = await editorValues();
@@ -279,7 +283,7 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       // Back to the defaults, the diff checks further down read these.
       await page.fill('#settings-editor-git [name="diff_max_lines"]', "5000");
       await saveEditorSettings();
-      return "one tab, one POST, three values";
+      return "search tab first, git next to it, one POST, three values";
     });
 
     await run("a project without a repository answers no repo and marks nothing", async () => {

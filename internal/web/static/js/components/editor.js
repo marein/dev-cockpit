@@ -12,7 +12,6 @@ import * as projectSort from "@dc/project-sort";
 import * as store from "@dc/store";
 
 const MAX_SAVED_TREE_DIRS = 200;
-const QUICK_OPEN_LIMIT = 100;
 const PREVIEW_DEBOUNCE_MS = 500;
 const DIFF_REV = "HEAD";
 const TREE_WIDTH_KEY = "dc-editor-tree-width";
@@ -2581,8 +2580,9 @@ async function init(root) {
 
   // ---- quick open --------------------------------------------------------------
 
-  // The palette has two modes: "files" filters the file list client side,
-  // "search" greps file contents server side and jumps to the matched line.
+  // The palette has two modes: "files" ranks paths, "search" greps file contents
+  // and jumps to the matched line. Both ask the server, which answers from an
+  // index of the whole project.
   let quickOpenMode = "files";
   let quickOpenFiles = null;
   let quickOpenMatches = [];
@@ -2590,6 +2590,8 @@ async function init(root) {
   let searchQuery = "";
   let searchSeq = 0;
   let searchTimer = 0;
+  let filesSeq = 0;
+  let filesTimer = 0;
 
   async function openQuickOpen(mode = "files") {
     closeDrawer();
@@ -2605,38 +2607,52 @@ async function init(root) {
       return;
     }
     quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-secondary small">Loading…</div>`;
-    try {
-      const data = await getJSON(`${base}/files`, { signal });
-      quickOpenFiles = { files: data.files || [], truncated: !!data.truncated };
-      renderQuickOpen();
-    } catch (err) {
-      quickOpenFiles = null;
-      quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-danger small">${escapeHtml(err.message)}</div>`;
-    }
+    runFileQuery("");
   }
 
   function closeQuickOpen() {
     quickOpenEl.hidden = true;
   }
 
-  function filterFiles(files, query) {
-    const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return files;
-    const scored = [];
-    for (const path of files) {
-      const lower = path.toLowerCase();
-      if (!tokens.every((t) => lower.includes(t))) continue;
-      const fileName = lower.slice(lower.lastIndexOf("/") + 1);
-      const score = fileName.startsWith(tokens[0]) ? 0 : fileName.includes(tokens[0]) ? 1 : 2;
-      scored.push([score, path.length, path]);
+  // The palette used to receive every path in the project and rank them here,
+  // which capped the list server side and made anything past the cap
+  // unreachable. Ranking now happens on the server against an index of the whole
+  // tree; this only debounces the keystrokes and draws what comes back.
+  function scheduleFileQuery() {
+    clearTimeout(filesTimer);
+    // The rendered rows must never belong to an older query than what stands in
+    // the box: filtering used to be synchronous, so pressing Enter right after
+    // typing could only ever open a file that matched. Going to the server
+    // reintroduces that gap, and both lines below close it. Advancing the
+    // sequence matters as much as clearing the rows: a request already in flight
+    // for the older query would otherwise still pass its own guard and paint its
+    // rows back over the cleared list, and an Enter landing in that window opens
+    // a file the query never matched. The debounce stays short because the
+    // answer comes out of an index in single digit milliseconds.
+    filesSeq++;
+    quickOpenMatches = [];
+    quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-secondary small">Searching…</div>`;
+    filesTimer = setTimeout(() => runFileQuery(quickOpenInput.value), 40);
+  }
+
+  async function runFileQuery(q) {
+    const seq = ++filesSeq;
+    try {
+      const data = await getJSON(`${base}/files?q=${encodeURIComponent(splitLineSuffix(q).query)}`, { signal });
+      // A slower answer to an older keystroke must not overwrite a newer one.
+      if (seq !== filesSeq || quickOpenEl.hidden || quickOpenMode !== "files") return;
+      quickOpenFiles = { files: data.files || [], truncated: !!data.truncated, total: data.total || 0 };
+      renderQuickOpen();
+    } catch (err) {
+      if (seq !== filesSeq || quickOpenMode !== "files") return;
+      quickOpenFiles = null;
+      quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-danger small">${escapeHtml(err.message)}</div>`;
     }
-    scored.sort((a, b) => a[0] - b[0] || a[1] - b[1] || (a[2] < b[2] ? -1 : 1));
-    return scored.map((s) => s[2]);
   }
 
   function renderQuickOpen() {
     if (quickOpenEl.hidden || !quickOpenFiles) return;
-    quickOpenMatches = filterFiles(quickOpenFiles.files, quickOpenInput.value).slice(0, QUICK_OPEN_LIMIT);
+    quickOpenMatches = quickOpenFiles.files;
     quickOpenActive = 0;
     quickOpenList.innerHTML = "";
     if (quickOpenMatches.length === 0) {
@@ -2656,7 +2672,9 @@ async function init(root) {
     if (quickOpenFiles.truncated) {
       const note = document.createElement("div");
       note.className = "editor-quickopen-empty text-secondary small";
-      note.textContent = "File list is truncated, narrow the search.";
+      note.textContent = quickOpenFiles.total
+        ? `Showing ${quickOpenMatches.length} of ${quickOpenFiles.total} matches, narrow the search.`
+        : "Results are truncated, narrow the search.";
       quickOpenList.appendChild(note);
     }
   }
@@ -2747,15 +2765,25 @@ async function init(root) {
     });
   }
 
+  // A trailing :line, optionally :line:column, is how editors everywhere say
+  // "open it there". It is stripped before the query goes to the server, which
+  // matches paths and knows nothing about lines. A bare ":42" with no path in
+  // front of it stays a literal query: there is no file it could mean.
+  function splitLineSuffix(raw) {
+    const m = /^(.*\S)\s*:(\d+)(?::\d+)?\s*$/.exec(raw);
+    return m ? { query: m[1], line: Number(m[2]) } : { query: raw, line: 0 };
+  }
+
   async function chooseQuickOpen(entry) {
+    // Read the wanted line before the palette closes and takes the input with it.
+    const fromSearch = typeof entry !== "string";
+    const path = fromSearch ? entry.path : entry;
+    const line = fromSearch ? entry.line : splitLineSuffix(quickOpenInput.value).line;
     closeQuickOpen();
-    if (typeof entry === "string") {
-      openPath(entry);
-      return;
-    }
-    await openPath(entry.path);
+    await openPath(path);
+    if (!line) return;
     const tab = activeTab();
-    if (tab && tab.path === entry.path && !tab.kind) editor.jumpTo(entry.line);
+    if (tab && tab.path === path && !tab.kind) editor.jumpTo(line);
   }
 
   function wireQuickOpen() {
@@ -2763,7 +2791,7 @@ async function init(root) {
     searchProjectItem.addEventListener("click", () => openQuickOpen("search"), { signal });
     quickOpenInput.addEventListener("input", () => {
       if (quickOpenMode === "search") scheduleSearch();
-      else renderQuickOpen();
+      else scheduleFileQuery();
     }, { signal });
     quickOpenInput.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown") {
@@ -4118,6 +4146,16 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
         effects: EditorView.scrollIntoView(pos, { y: "center" }),
       });
       view.focus();
+      // A file that was only just opened has not been laid out yet, and a view
+      // without a measured height computes that scroll against a geometry it
+      // does not have: the cursor lands on the right line while the viewport
+      // stays where it was. Asking once more after the frame is what actually
+      // moves it. Harmless when the tab was already open, the view is then
+      // already there and the second scroll is a no-op.
+      requestAnimationFrame(() => {
+        if (!view.dom.isConnected || workView() !== view) return;
+        view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "center" }) });
+      });
       return true;
     },
     // The swipe zone asks this one: a gesture must not take a selection's

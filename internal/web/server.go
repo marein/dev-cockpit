@@ -18,6 +18,7 @@ import (
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/eventbus"
+	"github.com/local/dev-cockpit/internal/filesystem"
 	"github.com/local/dev-cockpit/internal/hostinfo"
 	"github.com/local/dev-cockpit/internal/notify"
 	"github.com/local/dev-cockpit/internal/project"
@@ -43,8 +44,11 @@ type Server struct {
 	assistant     *assistant.Workspace
 	// watcher owns the steered jobs: what the assistant keeps an eye on and
 	// what wakes it.
-	watcher      *assistant.Watcher
-	projects     *project.Repository
+	watcher  *assistant.Watcher
+	projects *project.Repository
+	// quickOpen keeps one file path index per project so the quick open palette
+	// can reach every file without walking the tree on every keystroke.
+	quickOpen    *filesystem.QuickOpenCache
 	notifier     *notify.Service
 	bus          *eventbus.Bus
 	settings     *settings.Store
@@ -93,6 +97,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		assistant:     workspace,
 		watcher:       watcher,
 		projects:      projects,
+		quickOpen:     filesystem.NewQuickOpenCache(),
 		notifier:      notifier,
 		bus:           eventbus.New(),
 		settings:      settingsStore,
