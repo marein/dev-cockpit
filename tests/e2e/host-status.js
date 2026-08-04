@@ -14,10 +14,25 @@ const { assert, sleep, BASE } = L;
 // so a quiet header means a quiet machine. The one thing that moved into the
 // burger menu is the update, as a primary button naming the version.
 //
+// The panel's Float button lifts the three values into dc-host-float, a
+// draggable one-row card of ring gauges (value inside the ring, ring colored by
+// the shared thresholds, plain numbers as tooltips) the layout mounts once next
+// to the assistant panel, outside the region pe.js swaps: a boosted navigation
+// leaves the element standing (asserted through element identity). Open state
+// and position live in localStorage (dc-host-float); the card clamps itself
+// back into the viewport on restore, drag and resize. z-order: 1045 over what
+// stands (assistant panel 1040, fullscreen views 1030, sticky footers 10), and
+// a body:has duck rule drops it to 5 while anything that asks for interaction
+// is open (dropdowns incl. the quick nav, modals, dialogs, context menus, the
+// switcher, the editor's quick open), because the strip's dropdowns live inside
+// a z-10 sticky context no fixed number could respect.
+//
 // Gotchas:
 // - the layout mounts one dc-host-status per header breakpoint, like the bell,
 //   so every selector here is scoped to a header: DESKTOP for the wide one,
 //   MOBILE for the compact one. An unscoped query hits the hidden twin first.
+// - the float shares the [data-host-row] hooks with the dropdowns; float checks
+//   scope to dc-host-float for the same reason the header checks scope.
 // - the numbers are the real machine's, so no check asserts a specific value;
 //   what is asserted is the shape (0-100 plus a percent sign, a label, a bar
 //   width that matches) and how the surfaces react to a reading.
@@ -213,6 +228,155 @@ L.runFeature("HOST-STATUS", async ({ browser, page, run, mobilePage }) => {
     assert(/^Update to 9\.9\.9$/.test(entry.text), `entry reads "${entry.text}"`);
     assert(entry.title === "Update to 9.9.9", `entry tooltip "${entry.title}"`);
     assert(/btn-primary/.test(entry.button) && /btn-sm/.test(entry.button), `the update is not a small primary button: ${entry.button}`);
+  });
+
+  await run("mobile: the float squashes to mini bars with the value underneath", async () => {
+    const mp = await mobilePage();
+    await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await mp.waitForSelector(`${MOBILE} dc-host-status`, { timeout: 8000 });
+    await mp.click(`${MOBILE} [data-host-toggle]`);
+    await mp.waitForSelector(`${MOBILE} dc-host-status .dropdown-menu.show`, { timeout: 4000 });
+    await mp.click(`${MOBILE} [data-host-float-open]`);
+    await mp.waitForSelector("dc-host-float", { state: "visible", timeout: 4000 });
+    const shape = await mp.evaluate(() => {
+      const gauge = document.querySelector('dc-host-float [data-host-chip="cpu"]');
+      const fill = gauge.querySelector(".dc-host-gauge-mini-fill");
+      return {
+        ring: getComputedStyle(gauge.querySelector(".dc-host-gauge-ring")).display,
+        name: getComputedStyle(gauge.querySelector(".dc-host-gauge-name")).display,
+        mini: getComputedStyle(gauge.querySelector(".dc-host-gauge-mini")).display,
+        value: getComputedStyle(gauge.querySelector(".dc-host-gauge-mini-value")).display,
+        fillHeight: fill.style.height,
+        shown: gauge.querySelector(".dc-host-gauge-mini-value").textContent,
+        title: gauge.title,
+        height: document.querySelector("dc-host-float").offsetHeight,
+      };
+    });
+    assert(shape.ring === "none" && shape.name === "none", `ring/name still shown on the phone: ${JSON.stringify(shape)}`);
+    assert(shape.mini !== "none" && shape.value !== "none", `mini bar hidden on the phone: ${JSON.stringify(shape)}`);
+    const value = Math.min(100, Number(shape.shown.replace("%", "")));
+    assert(shape.fillHeight === `${value}%`, `fill ${shape.fillHeight} for ${shape.shown}`);
+    assert(/^CPU · /.test(shape.title), `the tooltip does not name the metric: ${shape.title}`);
+    assert(shape.height <= 44, `the phone card is ${shape.height}px tall, want <= 44`);
+    await mp.click("dc-host-float [data-host-float-close]");
+    return `${shape.height}px tall`;
+  });
+
+  await run("detach floats the panel, closes the dropdown, and the card carries the readings", async () => {
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(`${DESKTOP} dc-host-status`, { timeout: 8000 });
+    await page.click(`${DESKTOP} [data-host-toggle]`);
+    await page.waitForSelector(`${DESKTOP} dc-host-status .dropdown-menu.show`, { timeout: 4000 });
+    await page.click(`${DESKTOP} [data-host-float-open]`);
+    await page.waitForSelector("dc-host-float", { state: "visible", timeout: 4000 });
+    assert(!(await page.$(`${DESKTOP} dc-host-status .dropdown-menu.show`)), "the dropdown stayed open after detaching");
+    const gauges = await page.$$eval("dc-host-float [data-host-chip]", (els) => els
+      .filter((el) => getComputedStyle(el).display !== "none")
+      .map((el) => ({
+        key: el.dataset.hostChip,
+        value: el.querySelector(".js-host-value").textContent,
+        dash: el.querySelector(".dc-host-gauge-bar").getAttribute("stroke-dasharray"),
+        title: el.title,
+      })));
+    assert(gauges.length >= 1 && gauges.every((g) => /%$/.test(g.value)), `float gauges: ${JSON.stringify(gauges)}`);
+    for (const gauge of gauges) {
+      const value = Math.min(100, Number(gauge.value.replace("%", "")));
+      assert(gauge.dash.startsWith(`${value} `), `${gauge.key} ring dash ${gauge.dash} for ${gauge.value}`);
+      assert(gauge.title.trim().length > 0, `${gauge.key} gauge carries no tooltip with the plain numbers`);
+    }
+    // No plain-numbers line in the card: the sentence lives in the tooltip only.
+    assert((await page.locator("dc-host-float .js-host-label").count()) === 0, "the float still carries label lines");
+    const inside = await page.$eval("dc-host-float", (el) => {
+      const box = el.getBoundingClientRect();
+      return box.left >= 0 && box.right <= window.innerWidth && box.top >= 0;
+    });
+    assert(inside, "the fresh float is not inside the viewport");
+    const width = await page.$eval("dc-host-float", (el) => el.offsetWidth);
+    assert(width < 260, `the card is not slim: ${width}px wide`);
+    return gauges.map((g) => `${g.key} ${g.value}`).join(", ") + ` (${width}px)`;
+  });
+
+  await run("the float lives outside the swapped region: a boosted navigation keeps the element", async () => {
+    await page.evaluate(() => { document.querySelector("dc-host-float").dataset.probe = "kept"; });
+    await page.click('.navbar-collapse a[href="/docs"]');
+    await page.waitForURL(/\/docs/, { timeout: 8000 });
+    await sleep(400);
+    const kept = await page.evaluate(() => ({
+      probe: document.querySelector("dc-host-float")?.dataset.probe,
+      visible: document.querySelector("dc-host-float") && !document.querySelector("dc-host-float").hidden,
+      insidePage: !!document.querySelector("[data-page-content] dc-host-float"),
+    }));
+    assert(kept.probe === "kept", "the navigation re-created the float element");
+    assert(kept.visible, "the float closed on navigation");
+    assert(!kept.insidePage, "the float sits inside data-page-content and would flicker");
+  });
+
+  await run("dragging the card by its head persists, and a reload restores the spot", async () => {
+    const grip = await page.locator("dc-host-float [data-host-float-grip]").boundingBox();
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(300, 400, { steps: 8 });
+    await page.mouse.up();
+    const before = await page.$eval("dc-host-float", (el) => ({ x: el.style.left, y: el.style.top }));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector("dc-host-float", { state: "visible", timeout: 8000 });
+    const after = await page.$eval("dc-host-float", (el) => ({ x: el.style.left, y: el.style.top }));
+    assert(before.x === after.x && before.y === after.y,
+      `float moved across the reload: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+  });
+
+  await run("a shrinking window pushes the card back into view", async () => {
+    await page.evaluate(() => {
+      const el = document.querySelector("dc-host-float");
+      el.place(window.innerWidth - el.offsetWidth - 8, 100);
+    });
+    const parked = await page.$eval("dc-host-float", (el) => el.getBoundingClientRect().right);
+    assert(parked > 700, `expected the card at the right edge, right=${parked}`);
+    await page.setViewportSize({ width: 700, height: 700 });
+    await sleep(300);
+    const clamped = await page.$eval("dc-host-float", (el) => {
+      const box = el.getBoundingClientRect();
+      return { right: box.right, bottom: box.bottom };
+    });
+    assert(clamped.right <= 700, `the card hangs outside after the resize: right=${clamped.right}`);
+    assert(clamped.bottom <= 700, `the card hangs below after the resize: bottom=${clamped.bottom}`);
+    await page.setViewportSize({ width: 1360, height: 900 });
+    await sleep(200);
+  });
+
+  await run("z-order: over panel, fullscreen and footers; ducks under anything that pops up", async () => {
+    const z = await page.$eval("dc-host-float", (el) => Number(getComputedStyle(el).zIndex));
+    assert(z === 1045, `float z-index ${z}, want 1045 (over the 1040 panel and the 1030 fullscreen views)`);
+    const steady = await page.evaluate(() => {
+      const results = {};
+      for (const mode of ["dc-terminal-fullscreen", "dc-editor-fullscreen"]) {
+        document.documentElement.classList.add(mode);
+        results[mode] = Number(getComputedStyle(document.querySelector("dc-host-float")).zIndex);
+        document.documentElement.classList.remove(mode);
+      }
+      return results;
+    });
+    assert(steady["dc-terminal-fullscreen"] === 1045 && steady["dc-editor-fullscreen"] === 1045,
+      `fullscreen z ${JSON.stringify(steady)}, want 1045 over the 1030 views`);
+    // Any open popup has to win: an open dropdown ducks the card under everything.
+    await page.click(".dc-notify-bell:visible");
+    await page.waitForSelector(".dc-notify-menu.show", { timeout: 4000 });
+    const ducked = await page.$eval("dc-host-float", (el) => Number(getComputedStyle(el).zIndex));
+    assert(ducked === 5, `float z with an open dropdown ${ducked}, want 5 (under everything)`);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector(".dropdown-menu.show"), null, { timeout: 4000 });
+    const back = await page.$eval("dc-host-float", (el) => Number(getComputedStyle(el).zIndex));
+    assert(back === 1045, `float z after closing the dropdown ${back}, want 1045`);
+  });
+
+  await run("the cross closes the float and the closed state survives a reload", async () => {
+    await page.click("dc-host-float [data-host-float-close]");
+    await page.waitForSelector("dc-host-float", { state: "hidden", timeout: 4000 });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector(`${DESKTOP} dc-host-status`, { timeout: 8000 });
+    await sleep(300);
+    const hidden = await page.$eval("dc-host-float", (el) => el.hidden);
+    assert(hidden, "the float came back after being closed");
   });
 
   await run("the desktop header keeps the wordmark and the menu-only rows stay off it", async () => {

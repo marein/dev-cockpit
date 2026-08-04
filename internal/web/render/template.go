@@ -29,9 +29,11 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string) *te
 			return filepath.Base(filepath.Clean(p))
 		},
 		"hostBarClass":   HostBarClass,
-		"hostValueClass": HostValueClass,
+		"hostRingClass":  HostRingClass,
 		"hostLevelClass": HostLevelClass,
 		"hostBarStyle":   HostBarStyle,
+		"hostBarHeight":  HostBarHeight,
+		"hostBar":        hostinfo.Bar,
 		"dict": func(pairs ...any) map[string]any {
 			m := make(map[string]any, len(pairs)/2)
 			for i := 0; i+1 < len(pairs); i += 2 {

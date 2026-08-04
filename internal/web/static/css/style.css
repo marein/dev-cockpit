@@ -1318,6 +1318,110 @@ textarea[data-assistant-input] { resize: none; }
   border-top-right-radius: var(--tblr-card-inner-border-radius);
 }
 
+/* Over what stands (the assistant panel at 1040, the fullscreen views at 1030,
+   the sticky footers at 10), never over what pops up. A single number cannot do
+   both, the strip's dropdowns live inside a z-10 sticky context, so while
+   anything that asks for interaction is open the card ducks under everything
+   and comes back when it closes. */
+.dc-host-float {
+  position: fixed;
+  z-index: 1045;
+}
+body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .terminal-switcher, [data-editor-quickopen]:not([hidden])) .dc-host-float {
+  z-index: 5;
+}
+.dc-host-float [data-host-float-grip] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  white-space: nowrap;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+.dc-host-float .btn-close {
+  margin-top: 0.25rem;
+}
+.dc-host-gauge {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.125rem;
+}
+.dc-host-gauge-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+}
+.dc-host-gauge-ring svg {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+}
+.dc-host-gauge-ring circle {
+  fill: none;
+  stroke-width: 4;
+}
+.dc-host-gauge-track {
+  stroke: var(--tblr-border-color);
+}
+.dc-host-gauge-bar {
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+.dc-host-gauge-ring .js-host-value {
+  font-size: 0.7rem;
+}
+.dc-host-gauge-name {
+  font-size: 0.7rem;
+  color: var(--tblr-secondary);
+}
+.dc-host-gauge-mini,
+.dc-host-gauge-mini-value {
+  display: none;
+}
+.dc-host-gauge-mini-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: currentColor;
+}
+@media (max-width: 767.98px) {
+  .dc-host-float [data-host-float-grip] {
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.25rem 0.5rem;
+  }
+  .dc-host-float .btn-close {
+    margin-top: 0;
+  }
+  .dc-host-gauge {
+    gap: 0;
+  }
+  .dc-host-gauge-ring,
+  .dc-host-gauge-name {
+    display: none;
+  }
+  .dc-host-gauge-mini {
+    display: block;
+    position: relative;
+    width: 0.5rem;
+    height: 1rem;
+    border-radius: 2px;
+    background: var(--tblr-border-color);
+    overflow: hidden;
+  }
+  .dc-host-gauge-mini-value {
+    display: block;
+    font-size: 0.65rem;
+    line-height: 1.2;
+  }
+}
+
 .dc-context-menu {
   position: fixed;
   z-index: 1070;

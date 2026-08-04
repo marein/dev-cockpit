@@ -14,6 +14,8 @@ const WARN = 80;
 const CRIT = 95;
 
 const barClass = (value) => (value >= CRIT ? "bg-red" : value >= WARN ? "bg-yellow" : "bg-green");
+const ringClass = (value) => (value >= CRIT ? "text-red" : value >= WARN ? "text-yellow" : "text-green");
+const CHIP_NAMES = { cpu: "CPU", mem: "RAM", disk: "Disk" };
 
 class HostStatus extends HTMLElement {
   connectedCallback() {
@@ -35,7 +37,10 @@ class HostStatus extends HTMLElement {
       { key: "disk", has: stats.hasDisk, value: stats.disk, label: stats.diskLabel },
     ];
     for (const metric of metrics) {
-      for (const node of document.querySelectorAll(`[data-host-row="${metric.key}"]`)) {
+      const nodes = document.querySelectorAll(
+        `[data-host-row="${metric.key}"], [data-host-chip="${metric.key}"]`,
+      );
+      for (const node of nodes) {
         node.hidden = !metric.has;
         if (!metric.has) continue;
         this.paintMetric(node, metric);
@@ -54,14 +59,34 @@ class HostStatus extends HTMLElement {
 
   paintMetric(node, metric) {
     const value = Number(metric.value) || 0;
-    const text = node.querySelector(".js-host-value");
-    if (text) text.textContent = `${value}%`;
+    // A float gauge carries the value twice, inside the ring and under the
+    // phone's mini bar; the stylesheet shows one of the two.
+    for (const text of node.querySelectorAll(".js-host-value")) {
+      text.textContent = `${value}%`;
+    }
     const bar = node.querySelector(".js-host-bar");
     if (bar) {
       bar.style.width = `${Math.max(0, Math.min(100, value))}%`;
       bar.classList.remove("bg-green", "bg-yellow", "bg-red");
       bar.classList.add(barClass(value));
       bar.setAttribute("aria-valuenow", String(value));
+    }
+    const ring = node.querySelector(".dc-host-gauge-bar");
+    if (ring) {
+      ring.setAttribute("stroke-dasharray", `${Math.max(0, Math.min(100, value))} 100`);
+      ring.classList.remove("text-green", "text-yellow", "text-red");
+      ring.classList.add(ringClass(value));
+    }
+    const mini = node.querySelector(".dc-host-gauge-mini-fill");
+    if (mini) {
+      mini.style.height = `${Math.max(0, Math.min(100, value))}%`;
+      mini.classList.remove("text-green", "text-yellow", "text-red");
+      mini.classList.add(ringClass(value));
+    }
+    // The gauges carry no plain-numbers line; the sentence rides as the
+    // tooltip, with the metric's name in front since the phone shows no labels.
+    if (node.hasAttribute("data-host-chip") && metric.label) {
+      node.title = `${CHIP_NAMES[metric.key] || metric.key} · ${metric.label}`;
     }
     const label = node.querySelector(".js-host-label");
     if (label && metric.label) label.textContent = metric.label;

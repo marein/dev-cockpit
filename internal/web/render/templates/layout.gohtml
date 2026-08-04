@@ -42,6 +42,7 @@
       "dc-notifications": "{{asset "/js/components/notifications.js"}}",
       "dc-update-check": "{{asset "/js/components/update-check.js"}}",
       "dc-host-status": "{{asset "/js/components/host-status.js"}}",
+      "dc-host-float": "{{asset "/js/components/host-float.js"}}",
       "dc-steered-mark": "{{asset "/js/components/steered-mark.js"}}",
       "dc-steer-badge": "{{asset "/js/components/steer-badge.js"}}",
       "dc-project-list": "{{asset "/js/components/project-list.js"}}",
@@ -298,6 +299,7 @@
   {{if and .User (not .HasTabStrip)}}{{template "terminal_tabs_switcher.gohtml" .}}{{end}}
   </div>
   {{if .User}}
+  {{template "host_status_float.gohtml" .}}
   <!-- The assistant overlay sits next to the swapped page region, not in it, so
        an open surface, a streaming answer and the words in the composer survive
        every boosted navigation untouched. From lg up it docks as a side panel

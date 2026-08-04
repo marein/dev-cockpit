@@ -23,15 +23,16 @@ func HostBarClass(percent int) string {
 	}
 }
 
-// HostValueClass colors a bare number where no bar carries the color.
-func HostValueClass(percent int) string {
+// HostRingClass colors a ring gauge. Unlike a bare number a ring is always
+// visible, so the quiet state is an explicit green rather than no class.
+func HostRingClass(percent int) string {
 	switch {
 	case percent >= hostinfo.Crit:
 		return "text-red"
 	case percent >= hostinfo.Warn:
 		return "text-yellow"
 	default:
-		return ""
+		return "text-green"
 	}
 }
 
@@ -52,4 +53,9 @@ func HostLevelClass(level string) string {
 // template escaper has to guess at.
 func HostBarStyle(percent int) template.HTMLAttr {
 	return template.HTMLAttr(fmt.Sprintf(`style="width: %d%%"`, hostinfo.Bar(percent)))
+}
+
+// HostBarHeight is HostBarStyle for the standing mini bars of the float card.
+func HostBarHeight(percent int) template.HTMLAttr {
+	return template.HTMLAttr(fmt.Sprintf(`style="height: %d%%"`, hostinfo.Bar(percent)))
 }
