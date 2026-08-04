@@ -1,0 +1,59 @@
+{{define "editor_terminals.gohtml"}}
+<div class="editor-term-tabs" data-editor-term-tabs role="tablist" aria-label="Terminals">
+  {{range .Sessions}}
+  <button type="button" class="editor-term-tab" role="tab" aria-selected="false"
+          data-term-tab="{{.ID}}" data-term-kind="{{.Kind}}" data-term-name="{{.Name}}" data-term-url="{{.URL}}"
+          {{- if .Steered}} data-term-steered="1"{{end}}{{with .SteerPrefill}} data-term-steer-prefill="{{.}}"{{end}}
+          title="{{.Name}}">
+    <span class="dc-term-icon running{{if .HasNews}} news{{end}}{{if .Steered}} steered{{end}}" data-notify-target="{{.ID}}" aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+    <span class="editor-term-tab-name text-truncate">{{.Name}}</span>
+    <span class="editor-term-tab-close" data-term-close role="button" tabindex="-1" aria-label="{{if .Coder}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if .Coder}}Stop coder{{else}}Delete shell{{end}}">
+      <i class="ti ti-x" aria-hidden="true"></i>
+    </span>
+  </button>
+  {{end}}
+</div>
+<div class="editor-term-panes" data-editor-term-panes>
+  {{range .Sessions}}
+  <div class="editor-term-pane" data-term-pane="{{.ID}}" data-term-kind="{{.Kind}}"
+       data-stream-url="{{.StreamURL}}" data-resize-url="{{.ResizeURL}}" data-input-url="{{.InputURL}}"{{if .ScrollHistory}} data-scroll-history{{end}}></div>
+  {{end}}
+</div>
+<div data-editor-term-foots>
+  {{range .Sessions}}{{if .FilesData}}
+  <div class="d-flex" data-term-foot="{{.ID}}" data-terminal-footer="{{.ID}}" hidden>
+    <coder-file-upload class="d-flex">
+      <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary coder-files-button" data-coder-files-toggle data-bs-toggle="modal" data-bs-target="#coder-files-modal-{{.ID}}" aria-label="Files" title="Files">
+        <i class="ti ti-upload coder-files-button-icon"></i>
+      </button>
+    </coder-file-upload>
+  </div>
+  {{end}}{{end}}
+</div>
+<div data-editor-term-modals>
+  {{range .Sessions}}{{if .FilesData}}
+  <div class="modal modal-blur fade" id="coder-files-modal-{{.ID}}" tabindex="-1" aria-labelledby="coder-files-modal-title-{{.ID}}" aria-hidden="true" data-coder-files-modal data-term-modal="{{.ID}}">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      {{template "coder_files_modal.gohtml" .FilesData}}
+    </div>
+  </div>
+  {{end}}{{end}}
+</div>
+<div data-editor-term-resume>
+  {{if .Inactive}}
+  <div class="dropdown-divider"></div>
+  <h6 class="dropdown-header">Inactive coders</h6>
+  <div data-term-resume-fold>
+    {{range .Inactive}}
+    <form method="post" action="{{.URL}}" data-term-resume data-no-pe>
+      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+      <button type="submit" class="dropdown-item d-flex align-items-center gap-2" data-resume-id="{{.ID}}" title="Resume coder {{.Name}}">
+        <span class="terminal-tab-icon dc-term-icon{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" aria-hidden="true">{{template "coder_icon.gohtml" .Coder}}</span>
+        <span class="text-truncate">{{.Name}}</span>
+      </button>
+    </form>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}

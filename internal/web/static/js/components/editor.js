@@ -3,11 +3,13 @@
 // history, quick open palette and a markdown preview. CodeMirror is loaded from
 // a CDN; if that fails we fall back to a plain <textarea> so viewing/editing
 // still works.
-import { notifyError } from "@dc/toast";
+import { notifyError, notifySuccess } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
 import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
-import { csrfHeaders, ensureOk, getJSON, postForm } from "@dc/http";
+import { applyFold } from "@dc/fold";
+import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
+import { releaseCoder, steerCoder } from "@dc/steer";
 import * as projectSort from "@dc/project-sort";
 import * as store from "@dc/store";
 
@@ -16,6 +18,9 @@ const PREVIEW_DEBOUNCE_MS = 500;
 const DIFF_REV = "HEAD";
 const TREE_WIDTH_KEY = "dc-editor-tree-width";
 const FULLSCREEN_KEY = "dc-editor-fullscreen";
+const TERM_OPEN_KEY = "dc-editor-term-open";
+const TERM_HEIGHT_KEY = "dc-editor-term-height";
+const TERM_ACTIVE_KEY = "dc-editor-term-active";
 // Whether the tree column is folded away on a wide screen. Per device, like the
 // column's width: it is about the screen in front of you, not about the project.
 const TREE_FOLD_KEY = "dc-editor-tree-folded";
@@ -2470,6 +2475,7 @@ async function init(root) {
 
   function wirePaste() {
     root.addEventListener("paste", (e) => {
+      if (e.target instanceof Element && e.target.closest("[data-editor-term-panel]")) return;
       const clip = e.clipboardData;
       if (!clip) return;
       const entries = transferEntries(clip.items);
@@ -3471,6 +3477,605 @@ async function init(root) {
     if (!e.target.closest(".editor-tab")) setFullscreen(!fullscreenOn);
   }, { signal });
 
+  const termPanelEl = root.querySelector("[data-editor-term-panel]");
+  const termSplitterEl = root.querySelector("[data-editor-term-splitter]");
+  const termTabsHostEl = root.querySelector("[data-editor-term-tabs-host]");
+  const termBodyEl = root.querySelector("[data-editor-term-body]");
+  const termEmptyEl = root.querySelector("[data-editor-term-empty]");
+  const termItem = root.querySelector("[data-editor-term-item]");
+  const termHideBtn = root.querySelector("[data-editor-term-hide]");
+  const termPlusBtn = root.querySelector("[data-editor-term-plus]");
+  const termNewBtns = [root.querySelector("[data-editor-term-new]"), root.querySelector("[data-editor-term-new-empty]")];
+  const termFootsHostEl = root.querySelector("[data-editor-term-foots-host]");
+  const termModalsHostEl = root.querySelector("[data-editor-term-modals-host]");
+  const termResumeHostEl = root.querySelector("[data-editor-term-resume-host]");
+  const termOpenKey = `${TERM_OPEN_KEY}:${name}`;
+  const termActiveKey = `${TERM_ACTIVE_KEY}:${name}`;
+  let termOpen = store.get(termOpenKey, "") === "1";
+  let termLoaded = false;
+  let termActiveId = store.get(termActiveKey, "") || null;
+  let termSeq = 0;
+  let termDragging = false;
+  let termRefreshHeld = false;
+  let termSuppressClick = false;
+  let termFocusOwner = false;
+  let termResumeExpanded = false;
+  let termMenuOpen = false;
+  let termMenuFromKey = false;
+  let termMenuIndex = -1;
+  const termApplies = () => pointerMedia.matches && !mobileMedia.matches;
+  const termPanesEl = () => termBodyEl.querySelector("[data-editor-term-panes]");
+  const termPaneFor = (id) => (id ? termBodyEl.querySelector(`[data-term-pane="${CSS.escape(id)}"]`) : null);
+  const termTabFor = (id) => (id ? termTabsHostEl.querySelector(`[data-term-tab="${CSS.escape(id)}"]`) : null);
+  const termIds = () => [...termBodyEl.querySelectorAll("[data-term-pane]")].map((el) => el.getAttribute("data-term-pane"));
+  const termTabIds = () => [...termTabsHostEl.querySelectorAll("[data-term-tab]")].map((el) => el.getAttribute("data-term-tab"));
+
+  function paintTermTabs() {
+    for (const tab of termTabsHostEl.querySelectorAll("[data-term-tab]")) {
+      const on = tab.getAttribute("data-term-tab") === termActiveId;
+      tab.classList.toggle("active", on);
+      tab.setAttribute("aria-selected", on ? "true" : "false");
+    }
+    for (const pane of termBodyEl.querySelectorAll("[data-term-pane]")) {
+      pane.classList.toggle("active", pane.getAttribute("data-term-pane") === termActiveId);
+    }
+    termEmptyEl.hidden = termIds().length > 0;
+  }
+
+  async function mountTermIsland(pane) {
+    for (const other of document.querySelectorAll("terminal-attach[active]")) other.removeAttribute("active");
+    const id = pane.getAttribute("data-term-pane");
+    const attach = document.createElement("terminal-attach");
+    attach.className = "attach-terminal editor-term-island min-w-0 w-100 position-relative";
+    attach.setAttribute("terminal-id", id);
+    attach.setAttribute("embedded", "");
+    attach.setAttribute("stream-url", pane.getAttribute("data-stream-url") || "");
+    attach.setAttribute("resize-url", pane.getAttribute("data-resize-url") || "");
+    if (pane.hasAttribute("data-scroll-history")) attach.setAttribute("scroll-history", "");
+    const input = document.createElement("terminal-input");
+    input.setAttribute("terminal-id", id);
+    input.setAttribute("input-url", pane.getAttribute("data-input-url") || "");
+    if (pane.hasAttribute("data-scroll-history")) input.setAttribute("scroll-history", "");
+    pane.append(attach, input);
+    await window.app?.loadElements?.(pane);
+    const upload = termFootsHostEl.querySelector(`[data-term-foot="${CSS.escape(id)}"] coder-file-upload`);
+    if (upload) {
+      const parent = upload.parentElement;
+      const next = upload.nextSibling;
+      upload.remove();
+      parent.insertBefore(upload, next);
+    }
+  }
+
+  function markTermRead(id) {
+    const icon = termTabFor(id)?.querySelector(".dc-term-icon");
+    if (!icon || !icon.classList.contains("news")) return;
+    icon.classList.remove("news");
+    void postForm("/notifications/read", { target: id });
+  }
+
+  async function activateTermPane(id, { focus = true } = {}) {
+    termActiveId = id;
+    store.set(termActiveKey, id || "");
+    paintTermTabs();
+    const pane = termPaneFor(id);
+    if (!pane) return;
+    if (!pane.querySelector("terminal-attach")) await mountTermIsland(pane);
+    if (focus) document.dispatchEvent(new CustomEvent("dc:activate-pane", { detail: { id } }));
+    markTermRead(id);
+  }
+
+  function syncTermKeyed(container, fresh, attr) {
+    const wanted = new Map();
+    for (const el of fresh.querySelectorAll(`[${attr}]`)) {
+      wanted.set(el.getAttribute(attr), el);
+    }
+    for (const el of [...container.querySelectorAll(`[${attr}]`)]) {
+      const id = el.getAttribute(attr);
+      if (wanted.has(id)) wanted.delete(id);
+      else el.remove();
+    }
+    for (const el of wanted.values()) container.appendChild(el);
+  }
+
+  function reconcileTerminals(doc, { focus = false } = {}) {
+    const freshTabs = doc.querySelector("[data-editor-term-tabs]");
+    const freshPanes = doc.querySelector("[data-editor-term-panes]");
+    if (!freshTabs || !freshPanes) return;
+    let panes = termPanesEl();
+    if (!panes) {
+      panes = document.createElement("div");
+      panes.className = "editor-term-panes";
+      panes.setAttribute("data-editor-term-panes", "");
+      termBodyEl.appendChild(panes);
+    }
+    syncTermKeyed(panes, freshPanes, "data-term-pane");
+    const freshFoots = doc.querySelector("[data-editor-term-foots]");
+    if (freshFoots) {
+      syncTermKeyed(termFootsHostEl, freshFoots, "data-term-foot");
+      void window.app?.loadElements?.(termFootsHostEl);
+    }
+    const freshModals = doc.querySelector("[data-editor-term-modals]");
+    if (freshModals) syncTermKeyed(termModalsHostEl, freshModals, "data-term-modal");
+    const freshResume = doc.querySelector("[data-editor-term-resume]");
+    if (freshResume && termResumeHostEl) {
+      termResumeHostEl.replaceChildren(...freshResume.childNodes);
+      foldTermResume();
+    }
+    termTabsHostEl.replaceChildren(freshTabs);
+    const ids = termIds();
+    if (!termActiveId || !ids.includes(termActiveId)) termActiveId = ids[0] || null;
+    if (termOpen && termActiveId) void activateTermPane(termActiveId, { focus });
+    else paintTermTabs();
+  }
+
+  async function loadTerminals({ focus = false } = {}) {
+    if (termDragging) {
+      termRefreshHeld = true;
+      return;
+    }
+    const seq = ++termSeq;
+    let text;
+    try {
+      text = await getText(`${base}/terminals`, { signal });
+    } catch (err) {
+      void err;
+      if (seq === termSeq) status("Terminals could not be loaded.", "error");
+      return;
+    }
+    if (seq !== termSeq) return;
+    reconcileTerminals(new DOMParser().parseFromString(text, "text/html"), { focus });
+  }
+
+  function paintTermPanel() {
+    const applies = termApplies();
+    const shown = termOpen && applies;
+    termItem.hidden = !applies;
+    termItem.setAttribute("aria-pressed", shown ? "true" : "false");
+    termPanelEl.hidden = !shown;
+    editor.measure();
+  }
+
+  async function openTermPanel({ focus = true } = {}) {
+    if (!termApplies()) return;
+    termOpen = true;
+    store.set(termOpenKey, "1");
+    paintTermPanel();
+    if (!termLoaded) {
+      termLoaded = true;
+      await loadTerminals({ focus });
+      return;
+    }
+    if (termActiveId) await activateTermPane(termActiveId, { focus });
+  }
+
+  function closeTermPanel() {
+    if (!termOpen) return;
+    termOpen = false;
+    store.set(termOpenKey, "");
+    paintTermPanel();
+    editor.focus();
+  }
+
+  function toggleTermPanel() {
+    if (termOpen) closeTermPanel();
+    else void openTermPanel();
+  }
+
+  function applyTermHeight(px) {
+    if (px > 0) termPanelEl.style.setProperty("--editor-term-height", `${px}px`);
+    else termPanelEl.style.removeProperty("--editor-term-height");
+  }
+
+  function wireTermSplitter() {
+    applyTermHeight(parseInt(store.get(TERM_HEIGHT_KEY, "0"), 10) || 0);
+    let dragging = false;
+    termSplitterEl.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      termSplitterEl.classList.add("active");
+      termSplitterEl.setPointerCapture(e.pointerId);
+    }, { signal });
+    termSplitterEl.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const rect = termPanelEl.getBoundingClientRect();
+      const colRect = paneColEl.getBoundingClientRect();
+      const px = Math.round(Math.min(Math.max(rect.bottom - e.clientY, 96), colRect.height * 0.75));
+      applyTermHeight(px);
+    }, { signal });
+    termSplitterEl.addEventListener("pointerup", (e) => {
+      dragging = false;
+      termSplitterEl.classList.remove("active");
+      termSplitterEl.releasePointerCapture(e.pointerId);
+      store.set(TERM_HEIGHT_KEY, String(Math.round(termPanelEl.getBoundingClientRect().height)));
+      editor.measure();
+    }, { signal });
+  }
+
+  async function createTermShell() {
+    const res = await postForm("/shells/new", { project: root.dataset.editorProjectPath || "" });
+    const landed = new URL(res.url, window.location.origin).pathname;
+    const match = landed.match(/^\/shells\/(?!new$)([^/]+)$/);
+    if (!res.ok || !match) {
+      notifyError("The shell could not be created.");
+      return;
+    }
+    termActiveId = match[1];
+    if (!termOpen) await openTermPanel();
+    else await loadTerminals({ focus: true });
+  }
+
+  async function closeTermSession(id, kind, sessionName, purge = false) {
+    const coder = kind === "coder";
+    const drop = purge && coder;
+    const ok = await confirmDialog({
+      title: drop ? `Delete coder "${sessionName}"?`
+        : coder ? `Stop coder "${sessionName}"?` : `Delete shell "${sessionName}"?`,
+      text: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+      confirmText: coder && !drop ? "Stop" : "Delete",
+    });
+    if (!ok) return;
+    const wasActive = id === termActiveId;
+    if (wasActive) {
+      const ids = termTabIds();
+      const i = ids.indexOf(id);
+      termActiveId = ids[i + 1] || ids[i - 1] || null;
+    }
+    window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id } }));
+    const action = drop ? `/coders/${id}/delete` : coder ? `/coders/${id}/stop` : `/shells/${id}/delete`;
+    const res = await postForm(action, {});
+    if (!res.ok) {
+      notifyError("Could not close the session.");
+      return;
+    }
+    notifySuccess(drop ? `Coder "${sessionName}" deleted.`
+      : coder ? `Coder "${sessionName}" stopped.` : `Shell "${sessionName}" deleted.`);
+    await loadTerminals({ focus: wasActive });
+    if (wasActive && !termActiveId) editor.focus();
+  }
+
+  function termNavigate(url) {
+    if (anyDirty() && !window.confirm("Discard unsaved changes?")) return;
+    window.app?.navigate?.(url);
+  }
+
+  async function renameTermShell(id, current) {
+    const newName = await promptText({
+      title: `Rename shell "${current}"`,
+      value: current,
+      confirmText: "Rename",
+      validatorMessage: "Please enter a name.",
+    });
+    if (!newName || newName === current) return;
+    const res = await postForm(`/shells/${id}/rename`, { name: newName });
+    if (!res.ok) notifyError("The shell could not be renamed.");
+  }
+
+  function termMenuItems(tab) {
+    const id = tab.getAttribute("data-term-tab");
+    const kind = tab.getAttribute("data-term-kind");
+    const sessionName = tab.getAttribute("data-term-name") || "";
+    const url = tab.getAttribute("data-term-url") || "";
+    const coder = kind === "coder";
+    const items = [
+      { label: "Open terminal page", icon: "ti-external-link", action: () => termNavigate(url) },
+    ];
+    if (!coder) {
+      items.push({ label: "Rename", icon: "ti-pencil", action: () => void renameTermShell(id, sessionName) });
+    }
+    if (tab.querySelector(".dc-term-icon.news")) {
+      items.push({
+        label: "Mark read",
+        icon: "ti-eye-check",
+        action: () => void postForm("/notifications/read", { target: id }),
+      });
+    }
+    if (coder) {
+      items.push(tab.hasAttribute("data-term-steered")
+        ? {
+          label: "Release",
+          icon: "ti-steering-wheel-off",
+          purple: true,
+          action: () => void releaseCoder({ terminal: id, name: sessionName }).then(() => loadTerminals()),
+        }
+        : {
+          label: "Steer",
+          icon: "ti-steering-wheel",
+          purple: true,
+          action: () => void steerCoder({
+            terminal: id,
+            name: sessionName,
+            prefill: tab.getAttribute("data-term-steer-prefill") || "",
+          }).then(() => loadTerminals()),
+        });
+    }
+    items.push({ divider: true });
+    items.push({ label: "Open project", icon: "ti-folder", action: () => termNavigate("/projects#project-" + name) });
+    items.push({ divider: true });
+    items.push({
+      label: coder ? "Stop" : "Delete",
+      icon: coder ? "ti-player-stop" : "ti-trash",
+      danger: !coder,
+      warn: coder,
+      action: () => void closeTermSession(id, kind, sessionName),
+    });
+    if (coder) {
+      items.push({
+        label: "Delete",
+        icon: "ti-trash",
+        danger: true,
+        action: () => void closeTermSession(id, kind, sessionName, true),
+      });
+    }
+    return items;
+  }
+
+  function stepTermTab(direction) {
+    const ids = termTabIds();
+    if (ids.length < 2) return;
+    const i = ids.indexOf(termActiveId);
+    void activateTermPane(ids[(i + direction + ids.length) % ids.length]);
+  }
+
+  function openTermNewMenu() {
+    if (!termPlusBtn || !window.bootstrap?.Dropdown) return;
+    termMenuFromKey = true;
+    window.bootstrap.Dropdown.getOrCreateInstance(termPlusBtn).show();
+    termPlusBtn.blur();
+  }
+
+  function closeTermNewMenu() {
+    if (termPlusBtn) window.bootstrap?.Dropdown.getInstance(termPlusBtn)?.hide();
+  }
+
+  function termMenuRows() {
+    const menu = termPlusBtn?.closest(".dropdown")?.querySelector(".editor-term-new-menu");
+    if (!menu) return [];
+    return Array.from(menu.querySelectorAll(".dropdown-item")).filter((row) => row.offsetParent);
+  }
+
+  function paintTermMenuSelection() {
+    const menu = termPlusBtn?.closest(".dropdown")?.querySelector(".editor-term-new-menu");
+    if (!menu) return;
+    const rows = termMenuRows();
+    for (const row of menu.querySelectorAll(".dropdown-item.selected")) {
+      row.classList.remove("selected");
+      row.removeAttribute("aria-current");
+    }
+    if (!termMenuOpen || termMenuIndex < 0 || !rows.length) return;
+    termMenuIndex = Math.min(termMenuIndex, rows.length - 1);
+    const selected = rows[termMenuIndex];
+    selected.classList.add("selected");
+    selected.setAttribute("aria-current", "true");
+    const top = selected.offsetTop;
+    const bottom = top + selected.offsetHeight;
+    if (top < menu.scrollTop) menu.scrollTop = top;
+    else if (bottom > menu.scrollTop + menu.clientHeight) menu.scrollTop = bottom - menu.clientHeight;
+  }
+
+  function moveTermMenuSelection(delta) {
+    const rows = termMenuRows();
+    if (!rows.length) return;
+    if (termMenuIndex < 0) termMenuIndex = delta > 0 ? 0 : rows.length - 1;
+    else termMenuIndex = (termMenuIndex + delta + rows.length) % rows.length;
+    paintTermMenuSelection();
+  }
+
+  function commitTermMenuSelection() {
+    const selected = termMenuRows()[termMenuIndex];
+    if (!selected) return;
+    selected.click();
+    if (termMenuOpen) paintTermMenuSelection();
+  }
+
+  function foldTermResume() {
+    const group = termResumeHostEl?.querySelector("[data-term-resume-fold]");
+    if (!group) return;
+    applyFold(group, {
+      limit: 3,
+      expanded: termResumeExpanded,
+      toggleAttr: "data-term-resume-toggle",
+      toggleClass: "dropdown-item text-center text-secondary small py-1",
+      signal,
+      onToggle: (event, next) => {
+        event.preventDefault();
+        event.stopPropagation();
+        termResumeExpanded = next;
+        foldTermResume();
+      },
+    });
+  }
+
+  async function resumeTermCoder(action, id) {
+    status("Resuming the coder…");
+    const res = await postForm(action, {});
+    if (!res.ok) {
+      notifyError("The coder could not be resumed.");
+      return;
+    }
+    if (id) termActiveId = id;
+    await loadTerminals({ focus: true });
+  }
+
+  async function persistTermOrder() {
+    const ids = termTabIds();
+    try {
+      await ensureOk(await postJSON("/terminal-tabs/order", { ids }), "Could not save the tab order.");
+    } catch (err) {
+      notifyError(err.message);
+      void loadTerminals();
+    }
+  }
+
+  function wireTermTabDrag() {
+    let drag = null;
+    termTabsHostEl.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || !pointerMedia.matches) return;
+      const tab = e.target.closest("[data-term-tab]");
+      if (!tab || e.target.closest("[data-term-close]")) return;
+      drag = { tab, startX: e.clientX, moved: false };
+    }, { signal });
+    termTabsHostEl.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      if (!drag.moved) {
+        if (Math.abs(e.clientX - drag.startX) < 6) return;
+        drag.moved = true;
+        termDragging = true;
+        drag.tab.classList.add("editor-term-tab-dragging");
+        try { drag.tab.setPointerCapture(e.pointerId); } catch (err) { void err; }
+      }
+      const siblings = [...termTabsHostEl.querySelectorAll("[data-term-tab]")].filter((t) => t !== drag.tab);
+      const target = siblings.find((t) => {
+        const r = t.getBoundingClientRect();
+        return e.clientX >= r.left && e.clientX <= r.right;
+      });
+      if (!target) return;
+      const r = target.getBoundingClientRect();
+      if (e.clientX < r.left + r.width / 2) target.before(drag.tab);
+      else target.after(drag.tab);
+    }, { signal });
+    const endDrag = () => {
+      if (!drag) return;
+      const moved = drag.moved;
+      drag.tab.classList.remove("editor-term-tab-dragging");
+      drag = null;
+      if (!moved) return;
+      termSuppressClick = true;
+      termDragging = false;
+      void persistTermOrder().finally(() => {
+        if (termRefreshHeld) {
+          termRefreshHeld = false;
+          void loadTerminals();
+        }
+      });
+    };
+    termTabsHostEl.addEventListener("pointerup", endDrag, { signal });
+    termTabsHostEl.addEventListener("pointercancel", endDrag, { signal });
+  }
+
+  termTabsHostEl.addEventListener("click", (e) => {
+    if (termSuppressClick) {
+      termSuppressClick = false;
+      return;
+    }
+    const tab = e.target.closest("[data-term-tab]");
+    if (!tab) return;
+    if (e.target.closest("[data-term-close]")) {
+      void closeTermSession(tab.getAttribute("data-term-tab"), tab.getAttribute("data-term-kind"), tab.getAttribute("data-term-name") || "");
+      return;
+    }
+    if (menuJustClosed()) return;
+    void activateTermPane(tab.getAttribute("data-term-tab"));
+  }, { signal });
+  termTabsHostEl.addEventListener("wheel", (e) => {
+    const strip = e.target.closest("[data-editor-term-tabs]");
+    if (strip && !e.deltaX && e.deltaY) {
+      strip.scrollLeft += e.deltaY;
+      e.preventDefault();
+    }
+  }, { passive: false, signal });
+  wireRowMenus(termTabsHostEl, "[data-term-tab]", (row, x, y) => {
+    openMenu({ x, y, items: termMenuItems(row), signal });
+    return true;
+  }, { signal });
+  termItem.addEventListener("click", toggleTermPanel, { signal });
+  termHideBtn.addEventListener("click", closeTermPanel, { signal });
+  for (const btn of termNewBtns) btn?.addEventListener("click", () => void createTermShell(), { signal });
+  termResumeHostEl?.addEventListener("submit", (e) => {
+    const form = e.target.closest("form[data-term-resume]");
+    if (!form) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const id = form.querySelector("[data-resume-id]")?.getAttribute("data-resume-id") || "";
+    void resumeTermCoder(form.getAttribute("action") || "", id);
+  }, { signal });
+  const termPlusDrop = termPlusBtn?.closest(".dropdown");
+  termPlusDrop?.addEventListener("shown.bs.dropdown", () => {
+    termMenuOpen = true;
+    termMenuIndex = termMenuFromKey ? 0 : -1;
+    termMenuFromKey = false;
+    paintTermMenuSelection();
+  }, { signal });
+  termPlusDrop?.addEventListener("hidden.bs.dropdown", () => {
+    termMenuOpen = false;
+    paintTermMenuSelection();
+  }, { signal });
+  onServerEvent("terminals", (event) => {
+    if (!termLoaded) return;
+    const project = event.detail && event.detail.project;
+    if (project && project !== name) return;
+    void loadTerminals();
+  }, { signal });
+  document.addEventListener("pointerdown", (e) => {
+    if (e.target instanceof Element) termFocusOwner = !!e.target.closest("[data-editor-term-panel]");
+  }, { capture: true, signal });
+  document.addEventListener("focusin", (e) => {
+    if (e.target instanceof Element) termFocusOwner = !!e.target.closest("[data-editor-term-panel]");
+  }, { signal });
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "j") {
+      if (!termApplies()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleTermPanel();
+      return;
+    }
+    if (!termOpen) return;
+    if (termMenuOpen) {
+      const menuActions = {
+        ArrowDown: () => moveTermMenuSelection(1),
+        ArrowUp: () => moveTermMenuSelection(-1),
+        Enter: () => commitTermMenuSelection(),
+        Escape: () => closeTermNewMenu(),
+      };
+      const menuAction = menuActions[e.key];
+      if (menuAction) {
+        e.preventDefault();
+        e.stopPropagation();
+        menuAction();
+        return;
+      }
+    }
+    const fromPanel = e.target instanceof Element && !!e.target.closest("[data-editor-term-panel]");
+    if (!fromPanel && !termFocusOwner) return;
+    if (e.key === "Tab" && e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      stepTermTab(e.shiftKey ? -1 : 1);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && !e.repeat && e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      setFullscreen(!fullscreenOn);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "x") {
+      const tab = termTabFor(termActiveId);
+      if (!tab) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void closeTermSession(termActiveId, tab.getAttribute("data-term-kind"), tab.getAttribute("data-term-name") || "");
+      return;
+    }
+    if ((e.key === "t" || e.key === "T") && e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      openTermNewMenu();
+    }
+  }, { capture: true, signal });
+  mobileMedia.addEventListener("change", paintTermPanel, { signal });
+  wireTermSplitter();
+  wireTermTabDrag();
+  paintTermPanel();
+  document.body.appendChild(termModalsHostEl);
+  const urlTerminal = new URLSearchParams(window.location.search).get("terminal");
+  if (urlTerminal && termApplies()) {
+    termActiveId = urlTerminal;
+    void openTermPanel({ focus: true });
+  } else if (termOpen) {
+    void openTermPanel({ focus: false });
+  }
+
   // A double tap on bare Shift opens the quick open palette like Ctrl+O. Same
   // state machine as the terminal switcher's double Ctrl/Meta: a clean tap is
   // keydown then keyup with no chord, the second keydown inside the window
@@ -3479,6 +4084,7 @@ async function init(root) {
   let shiftTapPending = false;
   let shiftTapAt = 0;
   document.addEventListener("keydown", (e) => {
+    if (e.target instanceof Element && e.target.closest("[data-editor-term-panel]")) return;
     if (e.key === "Shift" && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey) {
       if (shiftTapAt && Date.now() - shiftTapAt < SHIFT_TAP_MS) {
         shiftTapPending = false;
@@ -3551,6 +4157,7 @@ async function init(root) {
   editor.setVisible(false);
   await Promise.all([loadTree(), restoreTabs(), loadGitStatus()]);
   if (tabs.length === 0 && mobileMedia.matches) openDrawer();
+  if (urlTerminal && termOpen && termApplies()) void activateTermPane(urlTerminal, { focus: true });
 
   return () => {
     ac.abort();
@@ -3560,6 +4167,7 @@ async function init(root) {
     clearTimeout(gitWatchTimer);
     if (svgPreviewUrl) URL.revokeObjectURL(svgPreviewUrl);
     document.documentElement.classList.remove("dc-editor-fullscreen");
+    termModalsHostEl.remove();
     editor.destroy();
   };
 }

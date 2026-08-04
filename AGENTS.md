@@ -423,6 +423,44 @@ free floating page scripts.
   re-POSTing `/terminal-tabs/group`). The group tab's close control closes
   every member (confirmed); ungrouping is the non-destructive context menu /
   header / pane-remove path. Decisions and endpoints: `docs/split-view.md`.
+  **One order, and a partial post is a permutation.** The strip position lives
+  in tmux as `@dc_tab_pos` and is the single order every surface renders, each
+  one a view on it (the strip and the quick nav show everything, the editor's
+  terminal panel one project). A surface that shows part of it also posts part
+  of it, so `POST /terminal-tabs/order` never takes the posted ids as the whole
+  strip: `applyTabOrder` folds them into the current order as a permutation of
+  the places those sessions already hold, the slots stay and only who sits in
+  which changes, and the write then covers every live session so no two share a
+  position. A full post is that same operation with every slot in it. Never add
+  a second order field for a new surface, and never let a surface renumber from
+  one what it cannot see.
+  The editor's terminal panel embeds the same islands, desktop only: the
+  fragment `/projects/:name/editor/terminals` renders the project's sessions
+  as tabs plus empty pane divs, and `editor.js` mounts an island pair into a
+  pane on its first activation, so a never shown pane holds no stream. Those
+  islands carry `embedded`: rows fit the pane the way fullscreen fits the
+  viewport (`MinTerminalRows` is 5, else the server clamps a low panel back
+  up to 30), the size observer watches height too, a hidden pane does not
+  connect, and the terminal fullscreen keys stay off the page. Open state and active tab are
+  per project (`dc-editor-term-open:<project>`, `-active:`), the height per
+  device. Inside the panel the terminal keys mirror the attach pages and
+  Ctrl/Cmd+Shift+Enter passes through to the editor fullscreen; the panel
+  owns them as long as the last click landed inside it, a focus-owner flag,
+  because a click on the bare strip focuses nothing. The editor's own
+  shortcuts skip events from inside the panel. A coder created through the +
+  menu comes back: the create form's action carries the return target
+  through the POST, an editor return redirects to `.../editor?terminal=<id>`,
+  and the panel activates that tab **after** the tab restore, whose own
+  `editor.focus()` lands later. A coder pane gets the attach page's files
+  modal, a `[data-terminal-footer]` button block the island's activation
+  unhides, and `coder-file-upload` is re-inserted after the mount so its drop
+  zone finds the terminal. The modals host and `dc-host-float` both meet the
+  fullscreen editor's fixed context at 1030, with opposite answers: the
+  modals move to `document.body`, else a modal falls under its own backdrop,
+  while the float keeps ducking to 5 and is gone there for as long as a popup
+  stands. Lifting that duck has been built and dropped twice, a float above
+  the surface can never be covered by a dropdown inside it. The tab context
+  menu mirrors the strip menu minus Open editor, plus Open terminal page.
 - **Terminal switcher app wide:** the attach pages render the tab strip inline
   and mark it via `Page.HasTabStrip`; every other authed page gets a hidden
   switcher-only `terminal-tabs` instance from the layout

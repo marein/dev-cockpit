@@ -219,6 +219,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	editor.POST("/copy", s.handleEditorCopy)
 	editor.POST("/extract", s.handleEditorExtract)
 	editor.GET("/files", s.handleEditorFiles)
+	editor.GET("/terminals", s.handleEditorTerminals)
 	editor.GET("/search", s.handleEditorSearch)
 	editor.POST("/upload", s.handleEditorUpload)
 	editor.POST("/preview", s.handleEditorPreview)

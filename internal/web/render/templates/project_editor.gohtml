@@ -16,6 +16,7 @@
 
 <dc-editor class="card editor"
      data-editor-name="{{.Project.Name}}"
+     data-editor-project-path="{{.Project.Path}}"
      data-editor-max-kib="{{.MaxEditKiB}}"
      data-editor-diff-max-lines="{{.DiffMaxLines}}"
      data-editor-diff-max-kib="{{.DiffMaxKiB}}">
@@ -82,6 +83,9 @@
               <button type="button" class="dropdown-item" data-editor-settings-item>
                 <i class="ti ti-adjustments me-2"></i>Editor settings
               </button>
+              <button type="button" class="dropdown-item" data-editor-term-item aria-pressed="false" hidden>
+                <i class="ti ti-terminal-2 me-2"></i>Terminal
+              </button>
               <button type="button" class="dropdown-item" data-editor-fullscreen aria-pressed="false" hidden>
                 <i class="ti ti-maximize me-2"></i>Fullscreen
               </button>
@@ -134,11 +138,75 @@
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd> close tab</span>
             <span class="mx-1 d-none d-md-inline">·</span>
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> fullscreen</span>
+            <span class="mx-1 d-none d-md-inline">·</span>
+            <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>J</kbd> terminal</span>
           </div>
         </div>
         <div class="editor-merge" data-editor-merge hidden></div>
         <div class="editor-preview markdown" data-editor-preview-pane hidden></div>
         <div class="editor-viewer" data-editor-viewer hidden></div>
+      </div>
+      <div class="editor-term-panel" data-editor-term-panel hidden>
+        <div class="editor-term-splitter" data-editor-term-splitter></div>
+        <div class="editor-term-head d-flex align-items-center border-top border-bottom">
+          <div class="editor-term-tabs-host flex-fill min-w-0" data-editor-term-tabs-host></div>
+          <div class="d-flex align-items-center gap-1 px-2 flex-shrink-0">
+            <div class="d-flex align-items-center" data-editor-term-foots-host></div>
+            <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
+              <i class="ti ti-refresh"></i>
+            </button>
+            <div class="dropdown d-flex">
+              <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-editor-term-plus data-bs-toggle="dropdown" aria-expanded="false" aria-label="New coder or shell" title="New coder or shell (Cmd+T)">
+                <i class="ti ti-plus"></i>
+              </button>
+              <div class="dropdown-menu dropdown-menu-end editor-term-new-menu">
+                <a class="dropdown-item" href="/coders/new?project={{urlquery .Project.Name}}&amp;return=/projects/{{urlquery .Project.Name}}/editor">
+                  <i class="ti ti-robot me-2"></i>New coder
+                </a>
+                <button type="button" class="dropdown-item" data-editor-term-new>
+                  <i class="ti ti-terminal-2 me-2"></i>New shell
+                </button>
+                <div data-editor-term-resume-host></div>
+              </div>
+            </div>
+            <div class="dropdown d-flex">
+              <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
+                <i class="ti ti-settings"></i>
+              </button>
+              <div class="dropdown-menu dropdown-menu-end terminal-settings-menu">
+                <terminal-setting-select
+                  setting="font-size"
+                  storage-key="dc-terminal-font-size"
+                  default-value="14"
+                  options="10,11,12,13,14,15,16,18,20,24"
+                  icon="text-size"
+                  label="Font size"
+                  title="Font size"
+                ></terminal-setting-select>
+                <terminal-setting-select
+                  setting="theme"
+                  storage-key="dc-terminal-theme"
+                  default-value="auto"
+                  options="auto:Standard,solarized-auto:Solarized,gruvbox-auto:Gruvbox,catppuccin-auto:Catppuccin,one-auto:One,tokyonight-auto:Tokyo Night,everforest-auto:Everforest,rosepine-auto:Rosé Pine,ayu-auto:Ayu"
+                  icon="palette"
+                  label="Theme"
+                  title="Terminal theme"
+                ></terminal-setting-select>
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-editor-term-hide aria-label="Hide terminal panel" title="Hide terminal panel (Ctrl+J)">
+              <i class="ti ti-chevron-down"></i>
+            </button>
+          </div>
+        </div>
+        <div class="editor-term-body" data-editor-term-body>
+          <div class="editor-term-empty text-secondary small p-3" data-editor-term-empty hidden>
+            <i class="ti ti-terminal-2 me-1"></i>No terminals are running in this project.
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-2" data-editor-term-new-empty>
+              <i class="ti ti-plus me-1"></i>New shell
+            </button>
+          </div>
+        </div>
       </div>
       <div class="editor-statusbar small d-flex align-items-center gap-2 px-2 py-1 border-top">
         <span class="text-truncate text-secondary" data-editor-path></span>
@@ -216,6 +284,7 @@
       </div>
     </div>
   </div>
+  <div data-editor-term-modals-host></div>
 </dc-editor>
 
 {{template "app_end.gohtml" .}}

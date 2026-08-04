@@ -480,6 +480,73 @@ func (s *Server) handleEditorPreview(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"html": html})
 }
 
+// handleEditorTerminals renders the editor's terminal panel fragment: the
+// project's live coders and shells in tab strip order, flat like the quick nav
+// (groups are strip UI). The stream, resize and input routes are the same ones
+// the attach pages use, so the panel is one more client of the same session.
+func (s *Server) handleEditorTerminals(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	steered, prefill := s.watcher.Marks()
+	page := s.page(c, "", "projects")
+	sessions := []render.EditorTerminal{}
+	for _, t := range s.terminalTabs() {
+		if t.Project != p.Name {
+			continue
+		}
+		et := render.EditorTerminal{
+			ID:            t.ID,
+			Name:          t.Name,
+			Kind:          t.Kind,
+			Coder:         t.Coder,
+			URL:           t.URL,
+			StreamURL:     t.URL + "/stream",
+			ResizeURL:     t.URL + "/resize",
+			InputURL:      t.URL + "/input",
+			ScrollHistory: t.Kind == "shell",
+			HasNews:       t.HasNews,
+			Steered:       steered[t.ID],
+			SteerPrefill:  prefill[t.ID],
+		}
+		if t.Kind == "coder" {
+			if co, running, err := s.resolveRunning(t.ID); err == nil {
+				if files, err := co.Coder().SessionRepository().ListFiles(running.Identifier); err == nil {
+					et.FilesData = &render.CoderFilesData{
+						Page:            page,
+						Identifier:      t.ID,
+						Files:           files,
+						MaxUploadSizeMB: maxRequestBodyMegabytes(s.cfg.MaxRequestBodySize),
+					}
+				}
+			}
+		}
+		sessions = append(sessions, et)
+	}
+	inactive := []render.EditorInactiveCoder{}
+	for _, q := range s.projectsWithRunners() {
+		if q.Name != p.Name {
+			continue
+		}
+		for _, r := range q.InactiveCoderRefs {
+			inactive = append(inactive, render.EditorInactiveCoder{
+				ID:      r.ID,
+				Name:    r.Name,
+				Coder:   r.Coder,
+				URL:     "/coders/" + r.ID + "/resume",
+				HasNews: r.HasNews,
+			})
+		}
+		break
+	}
+	c.HTML(http.StatusOK, "editor_terminals.gohtml", render.EditorTerminalsData{
+		Sessions:  sessions,
+		Inactive:  inactive,
+		CSRFToken: page.CSRFToken,
+	})
+}
+
 // handleEditorGitChanges returns what the working copy carries on top of HEAD,
 // one entry per changed path with the line counts, which is what feeds the
 // marks in the editor's file tree.

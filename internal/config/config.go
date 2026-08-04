@@ -161,7 +161,7 @@ func Load(opts Options) (Config, error) {
 		StreamMinFrameInterval:  33 * time.Millisecond, // ~30fps coalescing cap
 		TerminalHistoryLimit:    10000,
 		MinTerminalCols:         2,
-		MinTerminalRows:         30,
+		MinTerminalRows:         5,
 		MaxTerminalCols:         1000,
 		MaxTerminalRows:         1000,
 		SnapshotCacheTTL:        1500 * time.Millisecond,

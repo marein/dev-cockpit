@@ -203,6 +203,11 @@ const maxTabOrderIDs = 512
 // the live tmux sessions, first id is the leftmost tab. Ids that do not
 // resolve to a live coder or shell are dropped, so a client posting a strip
 // that contains a session which ended in the meantime still succeeds.
+//
+// A caller may post a subset (the editor's terminal panel shows one project),
+// so the posted ids are folded into the current order by applyTabOrder rather
+// than taken as the whole strip, and the write always covers every live
+// session, which is what keeps the positions collision free.
 func (s *Server) handleTerminalTabsOrder(c *gin.Context) {
 	var req tabOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -222,8 +227,8 @@ func (s *Server) handleTerminalTabsOrder(c *gin.Context) {
 	for _, sh := range s.shells.List() {
 		sessions[sh.Identifier] = sh.TmuxSession
 	}
-	names := make([]string, 0, len(req.IDs))
-	for _, id := range req.IDs {
+	names := make([]string, 0, len(sessions))
+	for _, id := range applyTabOrder(s.terminalTabs(), req.IDs) {
 		if name, ok := sessions[id]; ok {
 			names = append(names, name)
 			delete(sessions, id)
@@ -236,4 +241,48 @@ func (s *Server) handleTerminalTabsOrder(c *gin.Context) {
 	s.invalidateTerminals()
 	s.publishTerminals("") // order changed everywhere, refresh all
 	c.Status(http.StatusNoContent)
+}
+
+// applyTabOrder folds a posted order into the current one and answers the full
+// strip, left to right. A caller only ever sees part of the strip: the editor's
+// terminal panel lists one project, the quick nav and the tab strip list
+// everything. Taking a posted subset as the whole order would renumber those
+// sessions from one and push every session the caller never saw aside, so a
+// subset is read as what it is, a permutation of the places those sessions
+// already hold: the slots stay, only who sits in which changes, and sessions
+// outside the post keep their exact seat. A full post is the same operation
+// with every slot in it, so the strip and the quick nav are unaffected by this.
+//
+// Ids the current strip does not carry are dropped (a session that ended while
+// the drag was in flight), duplicates count once. A post that resolves to
+// nothing answers nothing, so a drag whose sessions all ended writes no
+// positions instead of renumbering the strip for no reason.
+func applyTabOrder(tabs []render.TerminalTab, posted []string) []string {
+	current := make([]string, len(tabs))
+	index := make(map[string]int, len(tabs))
+	for i, t := range tabs {
+		current[i] = t.ID
+		index[t.ID] = i
+	}
+
+	moved := make([]string, 0, len(posted))
+	seen := make(map[string]bool, len(posted))
+	slots := make([]int, 0, len(posted))
+	for _, id := range posted {
+		at, ok := index[id]
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		moved = append(moved, id)
+		slots = append(slots, at)
+	}
+	if len(moved) == 0 {
+		return nil
+	}
+	sort.Ints(slots)
+	for i, at := range slots {
+		current[at] = moved[i]
+	}
+	return current
 }

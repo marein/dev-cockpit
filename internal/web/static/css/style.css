@@ -1327,6 +1327,12 @@ textarea[data-assistant-input] { resize: none; }
   position: fixed;
   z-index: 1045;
 }
+/* The duck is one number for every case on purpose. Inside a fullscreen view
+   the surface itself is a stacking context at 1030, so a ducked float sinks
+   behind it and is gone for as long as the popup stands. That is the accepted
+   price: an in-surface dropdown could never outrank a float that stayed above
+   the surface, and the float covering what asks for interaction is the worse
+   of the two. */
 body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .terminal-switcher, [data-editor-quickopen]:not([hidden])) .dc-host-float {
   z-index: 5;
 }
@@ -1618,7 +1624,10 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+.editor-tabs::-webkit-scrollbar {
+  display: none;
 }
 .editor-tab {
   display: flex;
@@ -1964,6 +1973,141 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
 .editor-statusbar {
   min-height: 1.75rem;
   font-variant-numeric: tabular-nums;
+}
+.editor-term-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  position: relative;
+  height: var(--editor-term-height, 15rem);
+  min-height: 6rem;
+  max-height: 80%;
+}
+.editor-term-splitter {
+  flex: 0 0 6px;
+  margin: -3px 0;
+  z-index: 4;
+  cursor: row-resize;
+  touch-action: none;
+}
+.editor-term-splitter:hover,
+.editor-term-splitter.active {
+  background: var(--tblr-primary);
+  opacity: 0.3;
+}
+.editor-term-head {
+  background: var(--tblr-bg-surface-secondary);
+  min-height: 2.25rem;
+}
+.editor-term-tabs-host {
+  display: flex;
+  align-self: stretch;
+}
+.editor-term-tabs {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.editor-term-tabs::-webkit-scrollbar {
+  display: none;
+}
+.editor-term-tab-dragging {
+  opacity: 0.85;
+  background: var(--tblr-bg-surface-secondary);
+}
+.editor-term-new-menu {
+  max-height: min(70vh, 26rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.editor-term-new-menu .dropdown-item.selected {
+  background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18));
+}
+.editor-term-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+  max-width: 13rem;
+  padding: 0 0.4rem 0 0.65rem;
+  border: 0;
+  border-right: 1px solid var(--tblr-border-color);
+  background: transparent;
+  color: var(--tblr-secondary);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.editor-term-tab.active {
+  background: var(--tblr-bg-surface);
+  color: var(--tblr-body-color);
+  box-shadow: inset 0 2px 0 var(--tblr-primary);
+}
+.editor-term-tab-name {
+  min-width: 0;
+}
+.editor-term-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  opacity: 0.55;
+}
+.editor-term-tab-close:hover {
+  opacity: 1;
+  color: var(--tblr-danger);
+  background: rgba(var(--tblr-emphasis-color-rgb), 0.06);
+}
+.editor-term-tab[data-term-kind="coder"] .editor-term-tab-close:hover {
+  color: var(--tblr-orange);
+}
+.editor-term-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+.editor-term-panes {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.editor-term-pane {
+  display: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.editor-term-pane.active {
+  display: flex;
+}
+.editor-term-pane .attach-terminal {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+.editor-term-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+}
+@media (max-width: 767.98px), (max-height: 500px), (hover: none), (pointer: coarse) {
+  .editor-term-panel {
+    display: none !important;
+  }
 }
 .editor-settings-menu { min-width: 14rem; }
 .editor-sheet[hidden] {

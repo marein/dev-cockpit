@@ -31,3 +31,41 @@ type EditorProject struct {
 	Active       bool
 	LastUsedUnix int64
 }
+
+// EditorTerminalsData feeds the editor's terminal panel fragment: the live
+// coders and shells of one project in tab strip order, plus the project's
+// inactive coders for the panel's + menu.
+type EditorTerminalsData struct {
+	Sessions  []EditorTerminal
+	Inactive  []EditorInactiveCoder
+	CSRFToken string
+}
+
+// EditorInactiveCoder is one resumable coder in the panel's + menu.
+type EditorInactiveCoder struct {
+	ID      string
+	Name    string
+	Coder   string
+	URL     string
+	HasNews bool
+}
+
+// EditorTerminal is one session in the editor's terminal panel: the tab entry
+// and the pane the client mounts a terminal island into.
+type EditorTerminal struct {
+	ID            string
+	Name          string
+	Kind          string // "coder" or "shell"
+	Coder         string
+	URL           string
+	StreamURL     string
+	ResizeURL     string
+	InputURL      string
+	ScrollHistory bool
+	HasNews       bool
+	Steered       bool
+	SteerPrefill  string
+	// FilesData feeds a coder's files modal, the same one the attach pages
+	// carry; nil for shells and for coders whose files cannot be listed.
+	FilesData *CoderFilesData
+}

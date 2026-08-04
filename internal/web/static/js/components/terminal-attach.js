@@ -482,6 +482,7 @@ function initTerminalAttach(host) {
   const streamUrl = host.getAttribute("stream-url");
   const resizeUrl = host.getAttribute("resize-url");
   const scrollHistory = host.hasAttribute("scroll-history");
+  const embedded = host.hasAttribute("embedded");
 
   const ac = new AbortController();
   const signal = ac.signal;
@@ -671,7 +672,7 @@ function initTerminalAttach(host) {
       event.stopPropagation();
       host.dispatchEvent(new CustomEvent("terminal-input", { bubbles: true, detail: { paste: text } }));
     }, { capture: true });
-    if (host.hasAttribute("active")) {
+    if (host.hasAttribute("active") && !embedded) {
       term.focus();
     }
   }
@@ -1257,9 +1258,10 @@ function initTerminalAttach(host) {
   let lastClientRows = rowsOverride;
   let measureElementObserver = null;
 
-  let fullscreen = interactiveInput && get("dc-terminal-fullscreen", "") === "1";
+  let fullscreen = !embedded && interactiveInput && get("dc-terminal-fullscreen", "") === "1";
   const fullscreenButtons = document.querySelectorAll("[data-terminal-fullscreen]");
   const paintFullscreen = () => {
+    if (embedded) return;
     document.documentElement.classList.toggle("dc-terminal-fullscreen", fullscreen);
     const label = fullscreen ? "Exit fullscreen" : "Fullscreen";
     for (const button of fullscreenButtons) {
@@ -1273,7 +1275,7 @@ function initTerminalAttach(host) {
     }
   };
   const setFullscreen = (on) => {
-    if (!interactiveInput || fullscreen === on) {
+    if (!interactiveInput || embedded || fullscreen === on) {
       return;
     }
     fullscreen = on;
@@ -1326,7 +1328,7 @@ function initTerminalAttach(host) {
     await waitForLayout();
     const dims = fitAddon.proposeDimensions();
     const cols = Math.max(2, (dims && dims.cols) ? dims.cols : lastClientCols || term.cols || 2);
-    const rows = fullscreen
+    const rows = (fullscreen || embedded)
       ? Math.max(2, (dims && dims.rows) ? dims.rows : lastClientRows || DEFAULT_ROWS)
       : Math.max(2, rowsOverride || lastClientRows || DEFAULT_ROWS);
     lastClientCols = cols;
@@ -1529,6 +1531,9 @@ function initTerminalAttach(host) {
   };
 
   const performResize = async () => {
+    if (embedded && host.clientWidth === 0) {
+      return;
+    }
     const { cols, rows } = await resolveClientSize();
     const hadSource = Boolean(source);
     if (term.cols !== cols || term.rows !== rows) {
@@ -1588,6 +1593,7 @@ function initTerminalAttach(host) {
 
   for (const button of streamRefreshButtons) {
     listen(button, "click", (event) => {
+      if (embedded && !host.hasAttribute("active")) return;
       event.preventDefault();
       setRefreshing(true);
       notifyInfo("Reconnecting to the terminal…");
@@ -1606,7 +1612,7 @@ function initTerminalAttach(host) {
       setFullscreen(!fullscreen);
     });
   }
-  if (interactiveInput) {
+  if (interactiveInput && !embedded) {
     listen(document, "keydown", (event) => {
       if ((event.key === "F" || event.key === "f" || event.key === "Enter") && (event.ctrlKey || event.metaKey)
         && event.shiftKey && !event.altKey && !event.repeat) {
@@ -1624,8 +1630,17 @@ function initTerminalAttach(host) {
 
   listen(window, "resize", scheduleResize);
   let observedWidth = 0;
+  let observedHeight = 0;
   const widthObserver = new ResizeObserver(() => {
     const width = host.clientWidth;
+    if (embedded) {
+      const height = host.clientHeight;
+      if (width === observedWidth && height === observedHeight) return;
+      observedWidth = width;
+      observedHeight = height;
+      if (width > 0) scheduleResize();
+      return;
+    }
     if (width === observedWidth) return;
     const initial = observedWidth === 0;
     observedWidth = width;
@@ -1677,7 +1692,7 @@ function initTerminalAttach(host) {
 
   syncFollowOutput();
   // Initial connect; a real failure surfaces through the stream's own handlers.
-  void performResize().catch(() => {});
+  if (!embedded) void performResize().catch(() => {});
 
   return () => {
     ac.abort();

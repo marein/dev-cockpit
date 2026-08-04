@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -204,8 +206,19 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		c.JSON(http.StatusOK, answer)
 		return
 	}
+	// A create that came from an editor's terminal panel goes back there: the
+	// form action carries the return target through the POST, and the editor
+	// picks the new session up via ?terminal and activates its tab.
+	if ret := s.formReturn(c); editorReturnPath.MatchString(ret) {
+		c.Redirect(http.StatusSeeOther, ret+"?terminal="+url.QueryEscape(res.Identifier))
+		return
+	}
 	c.Redirect(http.StatusSeeOther, "/coders/"+res.Identifier)
 }
+
+// editorReturnPath matches a create form's return target that is a project
+// editor page.
+var editorReturnPath = regexp.MustCompile(`^/projects/[^/]+/editor$`)
 
 func (s *Server) handleCoderStop(c *gin.Context) {
 	id := c.Param("id")

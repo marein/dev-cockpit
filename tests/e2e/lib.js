@@ -14,13 +14,14 @@ function isCdnNoise(t) {
 }
 
 // WebKit reports a same-origin request that a navigation aborted mid-flight (the
-// /events stream connect, the /update/check poll) as a page error ending in "due
-// to access control checks". That is a browser artifact of racing navigations on
-// the throwaway instance, not an app defect, so it joins the non-gating noise
-// bucket. The filter stays narrow (only these two always-on background paths) so
-// a real access control failure on an app route still gates.
+// /events stream connect, the /update/check poll, the editor's terminals
+// fragment pull) as a page error ending in "due to access control checks". That
+// is a browser artifact of racing navigations on the throwaway instance, not an
+// app defect, so it joins the non-gating noise bucket. The filter stays narrow
+// (only these always-on background paths) so a real access control failure on
+// an app route still gates.
 function isWebkitAbortNoise(t) {
-  return /\/(events|update\/check)\b.*due to access control checks/.test(t);
+  return /\/(events|update\/check|editor\/terminals)\b.*due to access control checks/.test(t);
 }
 function wirePage(page, bag) {
   bag.cdnNoise = bag.cdnNoise || [];

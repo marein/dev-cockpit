@@ -1975,9 +1975,13 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       const desktop = await menuEntries(page);
       assert(!phone.includes("data-editor-fullscreen"), `the phone menu offers fullscreen: ${phone.join(", ")}`);
       assert(desktop.includes("data-editor-fullscreen"), `the wide menu lost fullscreen: ${desktop.join(", ")}`);
-      const want = desktop.filter((entry) => entry !== "data-editor-fullscreen");
+      // Fullscreen and the terminal panel are the two deliberate desktop-only
+      // entries: a phone has no window to grow out of and no panel either.
+      assert(!phone.includes("data-editor-term-item"), `the phone menu offers the terminal panel: ${phone.join(", ")}`);
+      assert(desktop.includes("data-editor-term-item"), `the wide menu lost the terminal panel: ${desktop.join(", ")}`);
+      const want = desktop.filter((entry) => entry !== "data-editor-fullscreen" && entry !== "data-editor-term-item");
       assert(JSON.stringify(phone) === JSON.stringify(want),
-        `the menus differ beyond fullscreen:\n  390:  ${phone.join(", ")}\n  1360: ${desktop.join(", ")}`);
+        `the menus differ beyond fullscreen and terminal:\n  390:  ${phone.join(", ")}\n  1360: ${desktop.join(", ")}`);
       for (const entry of ["data-editor-files-item", "data-editor-quick-open-item", "data-editor-find-item",
         "data-editor-search-project-item", "data-editor-settings-item"]) {
         assert(phone.includes(entry), `the menu misses ${entry}: ${phone.join(", ")}`);

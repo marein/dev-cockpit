@@ -402,6 +402,11 @@ func DocsTopics() []DocsTopic {
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "Enter"}}},
 					Desc:  `<em>Fullscreen</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the shortcut, or a double-click on empty space in the tab strip. On a phone the entry is not there: the editor already has the screen.`,
 				},
+				{
+					Title: "Terminal panel",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "J"}}},
+					Desc:  `<em>Terminal</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, or the shortcut, opens the project's coders and shells below the code. Tabs switch between them, <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> starts a new one or resumes a stopped coder, and the keys, the refresh and the file upload work like on the terminal pages. Open or closed is remembered per project. Desktop only.`,
+				},
 			},
 		},
 		{

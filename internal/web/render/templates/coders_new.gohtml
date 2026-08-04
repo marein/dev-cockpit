@@ -7,7 +7,7 @@
   <h2 class="page-title">Start coder</h2>
 </div>
 <div class="card">
-  <form method="post" action="/coders/new">
+  <form method="post" action="/coders/new?return={{urlquery .Return}}">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <div class="card-body">
       <div class="mb-3">
