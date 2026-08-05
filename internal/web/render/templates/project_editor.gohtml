@@ -86,6 +86,9 @@
               <button type="button" class="dropdown-item" data-editor-term-item aria-pressed="false" hidden>
                 <i class="ti ti-terminal-2 me-2"></i>Terminal
               </button>
+              <button type="button" class="dropdown-item" data-editor-docker-item hidden>
+                <i class="ti ti-brand-docker me-2"></i>Docker
+              </button>
               <button type="button" class="dropdown-item" data-editor-fullscreen aria-pressed="false" hidden>
                 <i class="ti ti-maximize me-2"></i>Fullscreen
               </button>
@@ -140,6 +143,8 @@
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> fullscreen</span>
             <span class="mx-1 d-none d-md-inline">·</span>
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>J</kbd> terminal</span>
+            <span class="mx-1 d-none d-md-inline">·</span>
+            <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> docker</span>
           </div>
         </div>
         <div class="editor-merge" data-editor-merge hidden></div>
@@ -211,6 +216,12 @@
       <div class="editor-statusbar small d-flex align-items-center gap-2 px-2 py-1 border-top">
         <span class="text-truncate text-secondary" data-editor-path></span>
         <span class="text-truncate flex-fill text-secondary" data-editor-status></span>
+        <button type="button" class="btn btn-sm p-0 border-0 bg-transparent text-secondary text-nowrap d-inline-flex align-items-center gap-1" data-editor-docker-status hidden>
+          <i class="ti ti-brand-docker" aria-hidden="true"></i><span data-editor-docker-status-text></span>
+        </button>
+        <button type="button" class="btn btn-sm p-0 border-0 bg-transparent text-secondary text-nowrap d-inline-flex align-items-center" data-editor-term-status aria-pressed="false" aria-label="Terminal" title="Terminal (Ctrl+J)" hidden>
+          <i class="ti ti-terminal-2" aria-hidden="true"></i>
+        </button>
         <span class="text-secondary text-nowrap" data-editor-pos hidden></span>
         <span class="text-secondary text-nowrap d-none d-sm-inline" data-editor-indent-info hidden></span>
       </div>
@@ -262,6 +273,9 @@
           <input class="form-check-input" type="checkbox" data-editor-setting="line_wrap">
           <span class="form-check-label small">Wrap long lines</span>
         </label>
+      </div>
+      <div class="dropdown-menu" data-editor-docker-menu>
+        <div data-editor-docker-list></div>
       </div>
     </div>
 

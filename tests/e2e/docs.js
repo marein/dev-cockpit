@@ -8,7 +8,7 @@ const { assert, BASE } = L;
 // accordion, a panel per topic with title/description rows, first topic open.
 // Built from Tabler components only, no page specific CSS.
 
-const TOPICS = ["navigation", "terminals", "editor", "notifications", "push", "settings"];
+const TOPICS = ["navigation", "terminals", "editor", "docker", "notifications", "push", "settings"];
 
 const docsText = (page) => page.locator("#docs-accordion").evaluate((el) => el.textContent);
 

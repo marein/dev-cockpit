@@ -393,6 +393,13 @@ func runDeleteProject(out io.Writer, opts inspectOptions, name string, confirmed
 	if err != nil {
 		return err
 	}
+	// A project that runs containers is deleted in the background: its compose
+	// stacks are brought down first, and the cockpit answers before that is
+	// through, so the word here says what is true at this moment.
+	if running, _ := deleted["deleting"].(bool); running {
+		fmt.Fprintf(out, "project %s is being deleted, its containers go down first\n", text(deleted["name"]))
+		return nil
+	}
 	fmt.Fprintf(out, "project %s deleted\n", text(deleted["name"]))
 	return nil
 }

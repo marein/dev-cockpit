@@ -153,7 +153,7 @@ func (s *Service) killChecks(terminal string) {
 	for _, a := range doomed {
 		a.cancelled.Store(true)
 		s.runs.Update(a.rec.ID, func(rec *RunRecord) { rec.Cancelled = true })
-		a.proc.kill()
+		a.proc.Kill()
 	}
 }
 

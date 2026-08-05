@@ -1,0 +1,204 @@
+{{define "settings_docker.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      <h2 class="page-title text-truncate mb-0">Settings</h2>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row g-0">
+    <div class="col-12 col-md-3 border-end">
+      <div class="card-body">
+        {{template "settings_nav" .SettingsNav}}
+      </div>
+    </div>
+    <div class="col-12 col-md-9">
+      <div class="card-body">
+        <h3 class="card-title">Docker</h3>
+        <form method="post" action="/settings/docker" id="settings-docker">
+          {{if and (eq $.FlashProject "settings-docker") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <div class="mb-3">
+            <label class="form-label" for="settings-docker-host">Docker host</label>
+            <div class="text-secondary small mb-2">The projects page shows each project's compose containers, matched by their compose working directory. Leave the host empty to use <code>DOCKER_HOST</code>, the current docker context, or the standard socket paths.</div>
+            <input type="text" class="form-control" id="settings-docker-host" name="docker_host" value="{{.DockerHost}}" placeholder="unix:///var/run/docker.sock" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+            <div class="form-text{{if .DockerConnected}} text-success{{end}}">{{.DockerStatus}}</div>
+          </div>
+          <hr class="my-4">
+          <div class="mb-3" id="settings-docker-actions">
+            <label class="form-label">Compose actions</label>
+            <div class="text-secondary small mb-2">The commands a project's compose menu offers, in this order. Each one runs in the stack's directory with <code>DOCKER_HOST</code> set, and it runs directly, never through a shell: quotes group words, and nothing else is interpreted, no variables, no wildcards. A program written as <code>./deploy.sh</code> is looked for from the stack directory upwards to the project root.</div>
+            <dc-docker-actions class="d-block" icons="{{range $i, $icon := .Icons}}{{if $i}} {{end}}{{$icon.Name}}:{{$icon.Class}}{{end}}">
+              <div data-actions-rows>
+                {{range .Actions}}
+                <div class="border rounded p-2 mb-2" data-action-row>
+                  <input type="hidden" name="action_id" value="{{.ID}}" data-action-id>
+                  <input type="hidden" name="action_icon" value="{{.Icon}}" data-action-icon-value>
+                  <div class="row g-2">
+                    <div class="col-auto">
+                      <label class="form-label small mb-1">Icon</label>
+                      <button type="button" class="btn btn-icon d-block" data-action-icon-pick aria-label="Pick an icon" title="Icon">
+                        <i class="ti {{.IconClass}}" data-action-icon-preview aria-hidden="true"></i>
+                      </button>
+                    </div>
+                    <div class="col col-sm-4">
+                      <label class="form-label small mb-1">Label</label>
+                      <input type="text" class="form-control" name="action_label" value="{{.Label}}" maxlength="60" autocomplete="off">
+                    </div>
+                    <div class="w-100 d-sm-none"></div>
+                    <div class="col-8 col-sm-4">
+                      <label class="form-label small mb-1">Command</label>
+                      <input type="text" class="form-control font-monospace" name="action_command" value="{{.Command}}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                    </div>
+                    <div class="col-4 col-sm-2">
+                      <label class="form-label small mb-1">Timeout</label>
+                      <input type="text" class="form-control" name="action_timeout" value="{{.TimeoutLabel}}" placeholder="10m" autocomplete="off">
+                    </div>
+                  </div>
+                  <div class="d-flex align-items-center gap-3 flex-wrap mt-2">
+                    <label class="form-check mb-0">
+                      <input type="hidden" name="action_confirm" value="{{if .Confirm}}1{{else}}0{{end}}" data-action-confirm>
+                      <input class="form-check-input" type="checkbox" data-action-confirm-box{{if .Confirm}} checked{{end}}>
+                      <span class="form-check-label">Ask before it starts</span>
+                    </label>
+                    <div class="form-text m-0 flex-fill min-w-0">
+                      {{if .Error}}<span class="text-danger">{{.Error}}</span>{{else}}{{range .Argv}}<code class="me-1">{{.}}</code>{{end}}{{end}}
+                    </div>
+                  </div>
+                  <div class="d-flex mt-2">
+                    <button type="button" class="btn btn-sm btn-ghost-danger ms-auto" data-action-remove><i class="ti ti-trash me-1"></i>Remove</button>
+                  </div>
+                </div>
+                {{end}}
+              </div>
+              {{if not .Actions}}
+              <div class="text-secondary small mb-2" data-actions-empty>No compose actions. A project's compose menu offers none, only its ports and logs.</div>
+              <button type="button" class="btn btn-sm btn-outline-primary me-2" data-actions-restore><i class="ti ti-restore me-1"></i>Restore the default actions</button>
+              {{end}}
+              <button type="button" class="btn btn-sm btn-ghost-secondary" data-action-add><i class="ti ti-plus me-1"></i>Add action</button>
+              <template data-action-template>
+                <div class="border rounded p-2 mb-2" data-action-row>
+                  <input type="hidden" name="action_id" value="" data-action-id>
+                  <input type="hidden" name="action_icon" value="command" data-action-icon-value>
+                  <div class="row g-2">
+                    <div class="col-auto">
+                      <label class="form-label small mb-1">Icon</label>
+                      <button type="button" class="btn btn-icon d-block" data-action-icon-pick aria-label="Pick an icon" title="Icon">
+                        <i class="ti ti-command" data-action-icon-preview aria-hidden="true"></i>
+                      </button>
+                    </div>
+                    <div class="col col-sm-4">
+                      <label class="form-label small mb-1">Label</label>
+                      <input type="text" class="form-control" name="action_label" value="" maxlength="60" autocomplete="off">
+                    </div>
+                    <div class="w-100 d-sm-none"></div>
+                    <div class="col-8 col-sm-4">
+                      <label class="form-label small mb-1">Command</label>
+                      <input type="text" class="form-control font-monospace" name="action_command" value="" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                    </div>
+                    <div class="col-4 col-sm-2">
+                      <label class="form-label small mb-1">Timeout</label>
+                      <input type="text" class="form-control" name="action_timeout" value="10m" placeholder="10m" autocomplete="off">
+                    </div>
+                  </div>
+                  <div class="d-flex align-items-center gap-3 flex-wrap mt-2">
+                    <label class="form-check mb-0">
+                      <input type="hidden" name="action_confirm" value="0" data-action-confirm>
+                      <input class="form-check-input" type="checkbox" data-action-confirm-box>
+                      <span class="form-check-label">Ask before it starts</span>
+                    </label>
+                    <div class="form-text m-0 flex-fill min-w-0">The command is split into arguments after the next save.</div>
+                  </div>
+                  <div class="d-flex mt-2">
+                    <button type="button" class="btn btn-sm btn-ghost-danger ms-auto" data-action-remove><i class="ti ti-trash me-1"></i>Remove</button>
+                  </div>
+                </div>
+              </template>
+            </dc-docker-actions>
+          </div>
+          <hr class="my-4">
+          <div class="mb-3" id="settings-docker-links">
+            <label class="form-label">Container links</label>
+            <div class="text-secondary small mb-2">Where a container's own address comes from, on top of its published ports, which are always offered. A reverse proxy in front of a container publishes nothing and routes by host name, and it learned that host from a label of the container: one rule says which label to read and where the address sits in its value. Leave the scheme empty when the same proxy stands in front of this cockpit, the link is then opened over the scheme this page was reached over.</div>
+            <dc-docker-link-rules class="d-block">
+              <div data-link-rows>
+                {{range .LinkRules}}
+                <div class="border rounded p-2 mb-2" data-link-row>
+                  <div class="row g-2">
+                    <div class="col-12 col-sm-6">
+                      <label class="form-label small mb-1">Label</label>
+                      <input type="text" class="form-control font-monospace" name="link_label" value="{{.Label}}" placeholder="traefik.http.routers.*.rule" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                    </div>
+                    <div class="col-8 col-sm-4">
+                      <label class="form-label small mb-1">Opt-out label</label>
+                      <input type="text" class="form-control font-monospace" name="link_unless" value="{{.Unless}}" placeholder="traefik.enable=false" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                    </div>
+                    <div class="col-4 col-sm-2">
+                      <label class="form-label small mb-1">Scheme</label>
+                      <select class="form-select" name="link_scheme">
+                        {{$scheme := .Scheme}}
+                        {{range $.LinkSchemes}}<option value="{{.}}"{{if eq . $scheme}} selected{{end}}>{{if .}}{{.}}{{else}}this page's{{end}}</option>{{end}}
+                      </select>
+                    </div>
+                    <div class="col-12">
+                      <label class="form-label small mb-1">Pattern</label>
+                      <input type="text" class="form-control font-monospace" name="link_pattern" value="{{.Pattern}}" placeholder="(?P&lt;host&gt;.*)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                    </div>
+                  </div>
+                  <div class="form-text mt-2" data-link-preview>
+                    {{if .Error}}<span class="text-danger">{{.Error}}</span>
+                    {{else if .Sample}}Right now: {{range .Sample}}<code class="me-1">{{.}}</code>{{end}}{{if .More}}and {{.More}} more{{end}}
+                    {{else}}Right now this rule finds nothing in the running containers.{{end}}
+                  </div>
+                  <div class="d-flex mt-2">
+                    <button type="button" class="btn btn-sm btn-ghost-danger ms-auto" data-link-remove><i class="ti ti-trash me-1"></i>Remove</button>
+                  </div>
+                </div>
+                {{end}}
+              </div>
+              {{if not .LinkRules}}
+              <div class="text-secondary small mb-2" data-link-empty>No link rules. A container is offered its published ports and nothing else.</div>
+              <button type="button" class="btn btn-sm btn-outline-primary me-2" data-link-restore><i class="ti ti-restore me-1"></i>Restore the default rules</button>
+              {{end}}
+              <button type="button" class="btn btn-sm btn-ghost-secondary" data-link-add><i class="ti ti-plus me-1"></i>Add rule</button>
+              <template data-link-template>
+                <div class="border rounded p-2 mb-2" data-link-row>
+                  <div class="row g-2">
+                    <div class="col-12 col-sm-6">
+                      <label class="form-label small mb-1">Label</label>
+                      <input type="text" class="form-control font-monospace" name="link_label" value="" placeholder="traefik.http.routers.*.rule" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                    </div>
+                    <div class="col-8 col-sm-4">
+                      <label class="form-label small mb-1">Opt-out label</label>
+                      <input type="text" class="form-control font-monospace" name="link_unless" value="" placeholder="traefik.enable=false" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                    </div>
+                    <div class="col-4 col-sm-2">
+                      <label class="form-label small mb-1">Scheme</label>
+                      <select class="form-select" name="link_scheme">
+                        {{range $.LinkSchemes}}<option value="{{.}}">{{if .}}{{.}}{{else}}this page's{{end}}</option>{{end}}
+                      </select>
+                    </div>
+                    <div class="col-12">
+                      <label class="form-label small mb-1">Pattern</label>
+                      <input type="text" class="form-control font-monospace" name="link_pattern" value="" placeholder="(?P&lt;host&gt;.*)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                    </div>
+                  </div>
+                  <div class="form-text mt-2" data-link-preview>What this rule finds stands here after the next save.</div>
+                  <div class="d-flex mt-2">
+                    <button type="button" class="btn btn-sm btn-ghost-danger ms-auto" data-link-remove><i class="ti ti-trash me-1"></i>Remove</button>
+                  </div>
+                </div>
+              </template>
+            </dc-docker-link-rules>
+          </div>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

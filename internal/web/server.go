@@ -17,6 +17,7 @@ import (
 	"github.com/local/dev-cockpit/internal/backup"
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/config"
+	"github.com/local/dev-cockpit/internal/docker"
 	"github.com/local/dev-cockpit/internal/eventbus"
 	"github.com/local/dev-cockpit/internal/filesystem"
 	"github.com/local/dev-cockpit/internal/hostinfo"
@@ -65,7 +66,13 @@ type Server struct {
 	gitWatchers *gitWatchers
 	// host reads load, memory and disk. It is read from the event stream, so
 	// an idle cockpit with no browser on it reads nothing at all.
-	host    *hostinfo.Cache
+	host *hostinfo.Cache
+	// docker is the one connection to the daemon, its cache feeds the
+	// container chips on the projects page and the action handlers.
+	docker *docker.Service
+	// deletes are the project deletions that run past their request, the ones
+	// that bring compose stacks down first.
+	deletes *projectDeletes
 	handler http.Handler
 }
 
@@ -76,7 +83,7 @@ type localCallKeyType struct{}
 var localCallKey localCallKeyType
 
 // NewServer constructs a Server serving the given coders.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, version string) (*Server, error) {
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, version string) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
@@ -109,6 +116,8 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		assets:        assets,
 		gitWatchers:   newGitWatchers(),
 		host:          hostinfo.NewCache(cfg.ProjectsRoot, hostSampleTTL),
+		docker:        dockerService,
+		deletes:       newProjectDeletes(cfg.StateDir),
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
 			cfg.LoginRateBlock, cfg.LoginRateMaxAttempts,
@@ -127,6 +136,12 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 	watcher.OnStateChange(func(project string) {
 		s.bus.Publish(eventbus.Event{Type: "terminals", Data: map[string]string{"project": project}})
 	})
+	// The docker cache moved: every open projects page pulls its own fresh
+	// render, the same way it follows the terminals.
+	dockerService.OnChange(func() {
+		s.bus.Publish(eventbus.Event{Type: "docker"})
+	})
+	dockerService.OnComposeDone(s.composeDone)
 	return s, nil
 }
 

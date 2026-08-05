@@ -1,16 +1,34 @@
 import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
+import * as docker from "@dc/docker";
 import { confirm, promptText } from "@dc/dialog";
 import { el } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import { applyFold } from "@dc/fold";
-import { openMenu, wireRowMenus } from "@dc/contextmenu";
+import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
 import { ensureOk, postForm } from "@dc/http";
-import { notifyError, notifySuccess } from "@dc/toast";
+import { notifyError, notifyInfo, notifySuccess } from "@dc/toast";
 import { releaseCoder, steerCoder } from "@dc/steer";
 
 const FILTER_KEY = "dc-project-filter";
 const CHIP_LIMIT = 8;
+// chipLinks reads the addresses a container chip carries, one hidden span per
+// address: a proxy route names a host and maybe a path, a published port names
+// only the port, and an empty scheme means the one this page was reached over.
+function chipLinks(chip) {
+  return Array.from(chip.querySelectorAll("[data-docker-link]")).map((span) => ({
+    scheme: span.dataset.linkScheme || "",
+    host: span.dataset.linkHost || "",
+    port: Number(span.dataset.linkPort || 0),
+    path: span.dataset.linkPath || "",
+  }));
+}
+
+// What each chip row calls the things it hides, for the fold toggle's label.
+const CHIP_WORDS = {
+  terminals: { more: (count) => `Show ${count} more sessions`, fewer: "Show fewer sessions" },
+  docker: { more: (count) => `Show ${count} more containers`, fewer: "Show fewer containers" },
+};
 
 // Owns the projects page interactivity: a frontend-only name filter, the sort
 // switcher, the chip fold, the chip context menu, and the in place Stop/Delete
@@ -29,6 +47,35 @@ class ProjectList extends HTMLElement {
     this.setupFilter();
     this.querySelectorAll("[data-sessions-body]").forEach((body) => this.foldChips(body));
     this.addEventListener("submit", (event) => this.onAjaxSubmit(event), { signal: this.ac.signal });
+    this.addEventListener("click", (event) => {
+      const logsBtn = event.target.closest("[data-docker-logs]");
+      if (logsBtn && this.contains(logsBtn)) {
+        const chip = logsBtn.closest("[data-chip]");
+        if (!chip) return;
+        event.preventDefault();
+        void this.openLogTerminal(chip.dataset.chipId, chip.dataset.chipName || "");
+        return;
+      }
+      const composeBtn = event.target.closest("[data-docker-project-menu]");
+      if (composeBtn && this.contains(composeBtn)) {
+        event.preventDefault();
+        if (menuJustClosed()) return;
+        this.openComposeMenu(composeBtn);
+        return;
+      }
+      const main = event.target.closest("[data-chip-main-menu]");
+      if (!main || !this.contains(main)) return;
+      const chip = main.closest("[data-chip]");
+      if (!chip) return;
+      event.preventDefault();
+      if (menuJustClosed()) return;
+      if (chip.dataset.chipKind === "docker" && chip.dataset.dockerRunning === "1") {
+        void this.openContainerShell({ id: chip.dataset.chipId, name: chip.dataset.chipName || "" }, "shell");
+        return;
+      }
+      const rect = main.getBoundingClientRect();
+      this.openChipMenu(chip, Math.round(rect.left), Math.round(rect.bottom));
+    }, { signal: this.ac.signal });
     wireRowMenus(this, "[data-chip]", (chip, x, y) => {
       if (!chip) return false;
       this.openChipMenu(chip, x, y);
@@ -44,6 +91,7 @@ class ProjectList extends HTMLElement {
     // path. The server only signals the change; this client pulls its own
     // server-rendered list, preserving its local filter and sort preferences.
     onServerEvent("projects", () => this.refreshProjectList(), { signal: this.ac.signal });
+    onServerEvent("docker", () => this.refreshProjects(null), { signal: this.ac.signal });
   }
 
   disconnectedCallback() {
@@ -60,7 +108,11 @@ class ProjectList extends HTMLElement {
     event.preventDefault();
     event.stopPropagation();
     if (form.dataset.confirm) {
-      const ok = await confirm({ title: form.dataset.confirm, confirmText: form.dataset.confirmButton || "Confirm" });
+      const ok = await confirm({
+        title: form.dataset.confirm,
+        text: form.dataset.confirmText,
+        confirmText: form.dataset.confirmButton || "Confirm",
+      });
       if (!ok) return;
     }
     if (deleteProject) {
@@ -79,7 +131,12 @@ class ProjectList extends HTMLElement {
     try {
       const response = await postForm(form.action, { project: name });
       await ensureOk(response, "Could not delete the project.");
-      notifySuccess(`Project "${name}" deleted.`);
+      // A project with containers is deleted in the background: its stacks go
+      // down first. The row then renders as working until the projects event
+      // says it is gone, so this only says what was started.
+      const data = await response.json().catch(() => null);
+      if (data && data.deleting) notifyInfo(`Deleting project "${name}"…`);
+      else notifySuccess(`Project "${name}" deleted.`);
       this.refreshProjectList();
     } catch (error) {
       notifyError(error.message);
@@ -89,6 +146,10 @@ class ProjectList extends HTMLElement {
   // The chip actions, offered on right click and on touch long press through
   // the shared wireRowMenus gesture, plus shell rename.
   openChipMenu(chip, x, y) {
+    if (chip.dataset.chipKind === "docker") {
+      this.openDockerMenu(chip, x, y);
+      return;
+    }
     const main = chip.querySelector("[data-chip-main]");
     const mainForm = chip.querySelector("[data-chip-main-form]");
     const xForm = chip.querySelector("[data-chip-x]");
@@ -140,6 +201,87 @@ class ProjectList extends HTMLElement {
     openMenu({ x, y, items, signal: this.ac.signal });
   }
 
+  openDockerMenu(chip, x, y) {
+    const info = {
+      id: chip.dataset.chipId,
+      name: chip.dataset.chipName || "",
+      portsLabel: chip.dataset.dockerPorts || "",
+      links: chipLinks(chip),
+      running: chip.dataset.dockerRunning === "1",
+    };
+    const items = docker.containerMenuItems(info, {
+      onShell: (target, kind) => this.openContainerShell(target, kind),
+    });
+    openMenu({ x, y, items, signal: this.ac.signal });
+  }
+
+  // The project's menu says which container to reach, so one is reachable
+  // without finding its chip first, plus the logs of the whole stack and the
+  // compose actions. A container with several addresses drills in: the same
+  // menu, at the same place, with that container's addresses and a way back.
+  openComposeMenu(button) {
+    const section = button.closest("[id^='project-']");
+    const project = button.dataset.dockerProject || "";
+    const stacks = Array.from(button.querySelectorAll("[data-docker-stack]")).map((span) => ({
+      label: span.dataset.stackLabel || "",
+      running: Number(span.dataset.stackRunning || 0),
+      total: Number(span.dataset.stackTotal || 0),
+      busy: Boolean(span.dataset.stackBusy),
+      run: span.dataset.stackRun
+        ? {
+          id: span.dataset.stackRun,
+          action: span.dataset.stackRunAction || "",
+          running: Boolean(span.dataset.stackRunGoing),
+          url: `/projects/${encodeURIComponent(project)}/docker/runs/${span.dataset.stackRun}`,
+        }
+        : null,
+    }));
+    const actions = Array.from(button.querySelectorAll("[data-docker-action]")).map((span) => ({
+      id: span.dataset.actionId || "",
+      icon: span.dataset.actionIcon || "",
+      label: span.dataset.actionLabel || "",
+      command: span.dataset.actionCommand || "",
+      confirm: Boolean(span.dataset.actionConfirm),
+    }));
+    // The containers in the order the row renders them, which is the order the
+    // daemon's cache holds.
+    const containers = Array.from(section?.querySelectorAll('[data-chip-kind="docker"]') || []).map((chip) => ({
+      name: chip.dataset.chipName || "",
+      links: chipLinks(chip),
+    }));
+    const rect = button.getBoundingClientRect();
+    const x = Math.round(rect.left);
+    const y = Math.round(rect.bottom);
+    // onDrill(null) is the way back, which is this menu built again.
+    const open = (items) => {
+      const list = items || docker.projectMenuItems({
+        project,
+        stacks,
+        containers,
+        actions,
+        onLogs: (stack) => this.openComposeLogs(project, stack),
+        onDrill: open,
+      });
+      if (!list.length) return;
+      openMenu({ x, y, items: list, signal: this.ac.signal });
+    };
+    open(null);
+  }
+
+  async openContainerShell(info, kind) {
+    const data = await docker.openShell(info.id, kind, info.name);
+    if (data && data.url) docker.navigate(data.url);
+  }
+
+  async openLogTerminal(id, name) {
+    await this.openContainerShell({ id, name }, "logs-shell");
+  }
+
+  async openComposeLogs(project, stack) {
+    const data = await docker.composeLogs(project, stack.label, stack.label || project);
+    if (data && data.url) docker.navigate(data.url);
+  }
+
   // The server stops the coder before it drops the conversation, so the chip
   // goes away in one request. The terminals event refreshes the row behind it.
   async deleteCoder(chip) {
@@ -179,13 +321,21 @@ class ProjectList extends HTMLElement {
     }
   }
 
-  // Collapses a long chip list to the first few entries behind a "+N" chip. The
-  // expanded flag lives on the persistent [data-sessions-body] container, so it
-  // survives the live swaps.
+  // A project's chips stand in two rows, terminals and containers, and each one
+  // folds on its own: a project with a dozen containers must not push its
+  // coders behind a "+N", and the other way round.
   foldChips(body) {
-    const fold = body.querySelector("[data-chip-fold]");
-    if (!fold) return;
-    const expanded = body.dataset.chipsExpanded === "1";
+    body.querySelectorAll("[data-chip-fold]").forEach((fold) => this.foldRow(body, fold));
+  }
+
+  // Collapses one row to the first few entries behind a "+N" chip. The expanded
+  // flag lives on the persistent [data-sessions-body] container, one per row, so
+  // it survives the live swaps that replace everything inside it.
+  foldRow(body, fold) {
+    const kind = fold.dataset.chipFold || "terminals";
+    const words = CHIP_WORDS[kind] || CHIP_WORDS.terminals;
+    const flag = `${kind}Expanded`;
+    const expanded = body.dataset[flag] === "1";
     applyFold(fold, {
       limit: CHIP_LIMIT,
       items: Array.from(fold.querySelectorAll(":scope > [data-chip]")),
@@ -196,15 +346,16 @@ class ProjectList extends HTMLElement {
       collapsedLabel: "Show less",
       signal: this.ac?.signal,
       onToggle: (event, next) => {
-        body.dataset.chipsExpanded = next ? "1" : "";
-        this.foldChips(body);
+        body.dataset[flag] = next ? "1" : "";
+        this.foldRow(body, fold);
       },
     });
     const toggle = fold.querySelector("[data-chips-toggle]");
     if (toggle) {
       const hidden = fold.querySelectorAll(":scope > [data-chip]").length - CHIP_LIMIT;
-      toggle.setAttribute("aria-label", expanded ? "Show fewer sessions" : `Show ${hidden} more sessions`);
-      toggle.setAttribute("title", expanded ? "Show fewer sessions" : `Show ${hidden} more sessions`);
+      const label = expanded ? words.fewer : words.more(hidden);
+      toggle.setAttribute("aria-label", label);
+      toggle.setAttribute("title", label);
     }
   }
 
@@ -234,16 +385,7 @@ class ProjectList extends HTMLElement {
     const wanted = names && new Set(names.map((n) => `project-${n}`));
     fetch("/projects", { credentials: "same-origin" })
       .then((response) => (response.ok ? response.text() : Promise.reject(new Error("refresh failed"))))
-      .then((html) => {
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        this.querySelectorAll("[data-sessions-body]").forEach((body) => {
-          const section = body.closest("[id^='project-']");
-          if (!section || (wanted && !wanted.has(section.id))) return;
-          const fresh = doc.getElementById(section.id);
-          const freshBody = fresh && fresh.querySelector("[data-sessions-body]");
-          if (freshBody) this.swapChips(body, freshBody.innerHTML);
-        });
-      })
+      .then((html) => this.applySections(new DOMParser().parseFromString(html, "text/html"), wanted))
       .catch(() => {})
       .finally(() => {
         if (bar) bar.remove();
@@ -256,6 +398,37 @@ class ProjectList extends HTMLElement {
           else this.refreshProjects(null);
         }
       });
+  }
+
+  // applySections swaps what a row carries without rebuilding the list: its chip
+  // list and its actions, for the named rows or for all of them. The row itself
+  // stays in the DOM, which is what keeps the unfold flag, the filter and the
+  // scroll where they were.
+  applySections(doc, wanted) {
+    this.querySelectorAll("[data-sessions-body]").forEach((body) => {
+      const section = body.closest("[id^='project-']");
+      if (!section || (wanted && !wanted.has(section.id))) return;
+      const fresh = doc.getElementById(section.id);
+      const freshBody = fresh && fresh.querySelector("[data-sessions-body]");
+      if (freshBody) this.swapChips(body, freshBody.innerHTML);
+      if (!fresh) return;
+      // The row's actions are swapped whole: the compose button comes and goes
+      // with the stacks, the delete form's confirm names the containers only
+      // while there are any, and a deletion under way stands in their place.
+      // Only when they really moved, though: a chip refresh is frequent, and
+      // replacing the buttons under a finger that is already on one is churn
+      // for nothing.
+      const freshActions = fresh.querySelector(".btn-list");
+      const actions = section.querySelector(".btn-list");
+      if (freshActions && actions && freshActions.outerHTML !== actions.outerHTML) actions.replaceWith(freshActions);
+    });
+  }
+
+  // sameRows reports whether a fresh render carries exactly the rows this list
+  // shows, in the same order.
+  sameRows(doc) {
+    const ids = (root) => Array.from(root.querySelectorAll(".projects-card [id^='project-']")).map((row) => row.id).join(",");
+    return ids(this) === ids(doc);
   }
 
   // A project create or delete changes the rows themselves, rather than merely a
@@ -274,13 +447,25 @@ class ProjectList extends HTMLElement {
         const doc = new DOMParser().parseFromString(html, "text/html");
         const fresh = doc.querySelector("dc-project-list");
         if (!fresh) throw new Error("project list not found");
+        // Every connect asks for this as well, the snapshot names the project
+        // set so a row that came or went while the socket was down is not
+        // missed. When the rows are the same, rebuilding them would throw away
+        // the filter focus and the unfolded chips for nothing, so the rows keep
+        // standing and only what they carry is swapped.
+        if (this.sameRows(doc)) {
+          this.applySections(doc, null);
+          return;
+        }
         this.replaceChildren(...fresh.childNodes);
         window.app.loadElements(this);
         this.querySelectorAll("[data-sessions-body]").forEach((body) => this.foldChips(body));
         this.setupSort();
         this.setupFilter();
       })
-      .catch(() => notifyError("Could not refresh projects."))
+      // A pull that did not land says nothing: it is a background sync like the
+      // section refresh above, every connect asks for it again, and the next one
+      // carries whatever this one missed.
+      .catch(() => {})
       .finally(() => {
         this.inFlight = false;
         if (this.dirty) {

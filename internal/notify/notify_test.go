@@ -158,3 +158,45 @@ func TestBothLinesReachTheEntryAndTheEvent(t *testing.T) {
 		t.Fatalf("want the lower line in the fan-out, got %+v", events)
 	}
 }
+
+// The dedupe window is per target, and a compose run's target is its project:
+// two projects finishing in the same moment are two entries, while the same
+// project's second run inside the window collapses into the one that stands.
+func TestComposeNewsIsDedupedPerProject(t *testing.T) {
+	s := testService(t)
+	s.Add(DockerTarget("one"))
+	s.Add(DockerTarget("two"))
+	list := s.List(0)
+	if len(list) != 2 {
+		t.Fatalf("two projects wrote %d entries: %+v", len(list), list)
+	}
+	if list[0].TargetID != DockerTarget("two") || list[1].TargetID != DockerTarget("one") {
+		t.Fatalf("the entries name %q and %q", list[0].TargetID, list[1].TargetID)
+	}
+
+	s.Add(DockerTarget("one"))
+	if list = s.List(0); len(list) != 2 {
+		t.Fatalf("a second run of one project wrote %d entries: %+v", len(list), list)
+	}
+	if s.UnreadCount() != 2 {
+		t.Fatalf("unread answered %d", s.UnreadCount())
+	}
+}
+
+// A compose target names a project and a run, not a terminal, so the terminal
+// restore's prune cannot know it and must not take it.
+func TestPruneKeepsComposeNews(t *testing.T) {
+	s := testService(t)
+	s.Add(DockerTarget("one"))
+	s.Add("11111111-1111-4111-8111-111111111111")
+	if removed := s.PruneTargets(map[string]bool{}); removed != 1 {
+		t.Fatalf("the prune removed %d entries", removed)
+	}
+	list := s.List(0)
+	if len(list) != 1 || !IsDockerTarget(list[0].TargetID) {
+		t.Fatalf("the prune left %+v", list)
+	}
+	if DockerTargetProject(list[0].TargetID) != "one" {
+		t.Fatalf("the target lost its project: %q", list[0].TargetID)
+	}
+}

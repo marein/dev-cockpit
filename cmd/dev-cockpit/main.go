@@ -2,12 +2,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -22,6 +24,8 @@ import (
 	coderclaude "github.com/local/dev-cockpit/internal/coder/claude"
 	codercopilot "github.com/local/dev-cockpit/internal/coder/copilot"
 	"github.com/local/dev-cockpit/internal/config"
+	"github.com/local/dev-cockpit/internal/detach"
+	"github.com/local/dev-cockpit/internal/docker"
 	"github.com/local/dev-cockpit/internal/localapi"
 	"github.com/local/dev-cockpit/internal/markdown"
 	"github.com/local/dev-cockpit/internal/notify"
@@ -99,7 +103,7 @@ func newRootCommand() *cobra.Command {
 			return errors.New("command required")
 		},
 	}
-	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newAssistantCommand())
+	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newAssistantCommand(), newRunDetachedCommand())
 	return cmd
 }
 
@@ -144,22 +148,54 @@ func newAssistantCommand() *cobra.Command {
 	return cmd
 }
 
-// newRunTurnCommand is the process a turn runs under, not a command for
-// anyone to type: the server starts `assistant run-turn <provider> ...` for
-// every turn, and that process holds the turn's lock while the provider runs.
-// Flag parsing is off because everything after run-turn is the provider's
-// argv, including the prompt, and none of it is ours to interpret, which is
-// also why it carries no usable help. Hidden for that reason: it is the
-// mechanics of a turn, not something the assistant chooses to call, and it
-// stays callable because every turn hangs on it.
+// newRunTurnCommand is where a turn's hold process used to live, and it has to
+// stay reachable although this group may rename what it likes. That exemption
+// rests on the caller being the freshly generated instruction text, always in
+// step with the binary it names. This one command has a different caller: a
+// server of the previous version that is still in memory while this binary is
+// already on disk, and every turn it starts execs this binary with the argv it
+// knows. That happens in the window between a self update swapping the binary
+// and re-execing, after a re-exec that did not come off, and on any host where
+// the binary is replaced before the service is restarted. Without this line the
+// turn dies with an unknown command, and what the user reads is the coder's
+// stderr, which points at the coder and not at us.
+//
+// It is the same process as `run-detached` behind an older name: the argv of an
+// old caller carries no separator, and internal/detach reads that shape as the
+// program alone. TODO(v2.0.0): drop it once no binary that starts turns this
+// way can still be in memory.
 func newRunTurnCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:                "run-turn <provider> [args...]",
-		Short:              "Run one turn's provider and hold its lock",
+		Short:              "Run one turn's provider and hold its lock (older name of run-detached)",
 		Hidden:             true,
 		DisableFlagParsing: true,
 		Run: func(cmd *cobra.Command, args []string) {
-			os.Exit(assistant.RunTurn(args))
+			os.Exit(detach.Hold(args))
+		},
+	}
+}
+
+// newRunDetachedCommand is the process a detached run runs under, not a
+// command for anyone to type: the server starts
+// `dev-cockpit run-detached [--result <file>] [--timeout <d>] -- <program> ...`
+// for every run that has to outlive it, an assistant turn and a compose run
+// alike, and that process holds the run's lock while the program runs. It is
+// nobody's interface, so it is hidden, and it stays callable because every such
+// run hangs on it.
+//
+// Flag parsing is off: everything after the separator is the program's argv,
+// including whatever a prompt carries, and none of it is ours to interpret.
+// internal/detach reads the few arguments that are ours itself, which is also
+// what lets the test binary stand in for this command.
+func newRunDetachedCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:                detach.HoldArgs[0] + " [--result <file>] [--timeout <duration>] -- <program> [args...]",
+		Short:              "Run one detached program and hold its lock",
+		Hidden:             true,
+		DisableFlagParsing: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			os.Exit(detach.Hold(args))
 		},
 	}
 }
@@ -277,9 +313,17 @@ func runServe(opts serveOptions) error {
 	})
 	backups := backup.New(cfg.StateDir, cfg.ProjectsRoot, resolveVersion())
 
+	// The one docker connection of the cockpit. It re-reads the setting on
+	// every round, so a save on the settings page reaches it without a
+	// restart. Built before the notifier, whose resolver names the last
+	// compose run.
+	dockerService := docker.NewService(cfg.StateDir, func() string {
+		return settingsStore.Get(docker.HostSettingKey)
+	})
+
 	notifier := notify.NewService(
 		notify.StorePath(cfg.StateDir),
-		notifyResolver(coders, shells, conversations, projectRepo, backups),
+		notifyResolver(coders, shells, conversations, projectRepo, backups, dockerService),
 	)
 	// The push channels subscribe before any watcher starts, so an inbox
 	// backlog ingested right after boot cannot slip past them.
@@ -326,7 +370,7 @@ func runServe(opts serveOptions) error {
 		jobs,
 		coderSessions{coders: coders},
 	)
-	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, resolveVersion())
+	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, dockerService, resolveVersion())
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}
@@ -377,6 +421,11 @@ func runServe(opts serveOptions) error {
 	adopted := conversations.Recover()
 	watcher.Recover(adopted)
 	sweepCheckSessions(coders, assistantService.Workspace())
+	// The compose runs of the previous process are detached the same way and
+	// keep going too. This puts their busy marks and their directory claims
+	// back, and reports the ones that finished while nobody was there to hear
+	// it. It runs before anything can start a run of its own.
+	dockerService.Recover()
 	// A job is looked at even when nothing reports: a coder that stopped, that
 	// ran out of room to think in or that waits on a question sends nothing at
 	// all, and that is exactly the job that needs looking at. The pass reads what
@@ -391,6 +440,14 @@ func runServe(opts serveOptions) error {
 	go shells.RunCommandWatch(3*time.Second, func(shellID string) {
 		notifier.Add(shellID)
 	})
+	// After the server is up, so the change callback is wired before the
+	// first list can move the state. A machine without a daemon just idles.
+	go dockerService.Run(context.Background())
+	// The project deletions the last process was in the middle of. Their rows
+	// already say they are working, that was read when the server was built;
+	// this is the work behind them starting again, and it waits for the docker
+	// connection above, which is why it comes after it and in its own goroutine.
+	go srv.ResumeProjectDeletes()
 	for _, m := range coders {
 		if m.ID() != "copilot" {
 			continue
@@ -448,9 +505,31 @@ func selectProviders(registry *coder.Registry) ([]coder.Coder, error) {
 // notifyResolver enriches notifications with the name, project, and target
 // page at ingest time, using the cached coder snapshots and shell list so a
 // burst of events never rescans coder state.
-func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, projects *project.Repository, backups *backup.Service) notify.Resolver {
+func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, projects *project.Repository, backups *backup.Service, dockerService *docker.Service) notify.Resolver {
 	return func(targetID string) notify.TargetInfo {
 		info := notify.TargetInfo{}
+		if notify.IsDockerTarget(targetID) {
+			project := notify.DockerTargetProject(targetID)
+			info.Name = "Compose"
+			info.Project = project
+			info.URL = "/projects"
+			if project != "" {
+				info.URL = "/projects#project-" + project
+			}
+			// The notification fires right after a run of that project
+			// finished, so its newest finished run is the one it is about.
+			// Asked per project, because another project may have finished a
+			// run in the same moment.
+			if run, ok := dockerService.LastComposeRun(project); ok {
+				info.Title, info.Detail = composeNews(run)
+				// The output of the run is what somebody wants after such a
+				// notification, not the row it ran for.
+				if run.ID != "" {
+					info.URL = "/projects/" + url.PathEscape(project) + "/docker/runs/" + run.ID
+				}
+			}
+			return info
+		}
 		// The assistant comes first: its conversations are hidden from the
 		// coder lists, and it is the only surface with a fixed home, so the
 		// lookup is cheap and cannot be shadowed by a coder of the same id.
@@ -561,6 +640,20 @@ func backupNews(name string, ok bool) (title, detail string) {
 		title = "Backup ready."
 	}
 	return title, newsTarget(name, "")
+}
+
+// composeNews is what a finished docker compose run says: the command that
+// ran as the name, the project it ran for behind it.
+func composeNews(run docker.RunView) (title, detail string) {
+	title = "Compose finished."
+	if run.Failure != "" {
+		title = "Compose failed."
+	}
+	name := run.Action
+	if name == "" {
+		name = "compose"
+	}
+	return title, newsTarget(name, run.Project)
 }
 
 // assistantNews is what a notification about the assistant says: a report about

@@ -2,7 +2,7 @@ package render
 
 // SettingsNav feeds the settings sidebar, the one navigation every settings
 // page shares (`settings_nav.gohtml`). Active names the entry to mark
-// ("general", "editor", "notifications", "coder", "backup"). The coder pages are
+// ("general", "editor", "docker", "notifications", "coder", "backup"). The coder pages are
 // settings of one coder, so the sidebar picks the coder first and the page
 // then shows that coder's sections: with several coders active the entry
 // becomes one row per coder (Selected marks it), a single coder host keeps
@@ -58,6 +58,32 @@ type SettingsGeneralData struct {
 	SettingsNav    SettingsNav
 	RestoreEnabled bool
 	HistoryEnabled bool
+}
+
+// SettingsDockerData feeds the docker settings page: which daemon the cockpit
+// talks to, and the compose commands its menus offer.
+type SettingsDockerData struct {
+	Page
+	SettingsNav SettingsNav
+	// DockerHost is the stored docker-host setting, empty means resolve
+	// automatically. DockerStatus is the current connection line under the
+	// field, DockerConnected colors it.
+	DockerHost      string
+	DockerStatus    string
+	DockerConnected bool
+	// Actions is the configured compose commands, each with the argv it
+	// splits into, so the form shows what a line really becomes. Empty means
+	// no buttons anywhere, and the page then offers the defaults back.
+	Actions []DockerActionRow
+	// Icons is the icon vocabulary an entry picks from, name and picture.
+	Icons []DockerIcon
+	// LinkRules is where a container's own address comes from, each rule with
+	// what it finds in what runs right now. Empty means the menus offer the
+	// published ports and nothing else.
+	LinkRules []DockerLinkRuleRow
+	// LinkSchemes is what a rule may pin its links to, the empty one being
+	// the page's own scheme.
+	LinkSchemes []string
 }
 
 // SettingsEditorData feeds the editor settings pages, one per tab. The values

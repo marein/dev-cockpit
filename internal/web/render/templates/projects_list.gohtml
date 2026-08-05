@@ -49,6 +49,15 @@
   <div class="list-group list-group-flush list-group-hoverable">
   {{range .Projects}}
   <div class="list-group-item project-row" id="project-{{.Name}}" data-project-name="{{.Name}}" data-project-active="{{if or .ActiveCoderRefs .ShellRefs}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
+    {{$delete := index $.Deleting .Name}}
+    {{if $delete.Failed}}
+    <div class="alert alert-danger mb-2" role="alert">
+      <div class="d-flex">
+        <i class="ti ti-alert-circle me-2 fs-3"></i>
+        <div class="text-break min-w-0">{{$delete.Failed}}</div>
+      </div>
+    </div>
+    {{end}}
     {{if and (eq $.FlashProject .Name) $.Flash.Message}}
     <div class="alert alert-{{if eq $.Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible mb-2" role="alert">
       <div class="d-flex">
@@ -75,20 +84,35 @@
         {{end}}
       </div>
       <div class="btn-list flex-nowrap flex-shrink-0">
+        {{$projectName := .Name}}
+        {{if $delete.Running}}
+        <span class="text-secondary small d-inline-flex align-items-center gap-2" role="status" data-project-deleting>
+          <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>Deleting…
+        </span>
+        {{else}}
+        {{with index $.Docker .Name}}{{if .Stacks}}
+        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-docker-project-menu data-docker-project="{{$projectName}}" aria-label="Compose actions for project {{$projectName}}" title="Compose">
+          <span class="dc-term-icon{{if .AnyRunning}} running{{end}}" aria-hidden="true"><i class="ti ti-brand-docker"></i></span>
+          {{range .Stacks}}<span hidden data-docker-stack data-stack-label="{{.Label}}" data-stack-running="{{.Running}}" data-stack-total="{{.Total}}"{{if .Busy}} data-stack-busy="1"{{end}}{{if .RunID}} data-stack-run="{{.RunID}}" data-stack-run-action="{{.RunAction}}"{{if .RunGoing}} data-stack-run-going="1"{{end}}{{end}}></span>{{end}}
+          {{range $.DockerActions}}<span hidden data-docker-action data-action-id="{{.ID}}" data-action-icon="{{.Icon}}" data-action-label="{{.Label}}" data-action-command="{{.Command}}"{{if .Confirm}} data-action-confirm="1"{{end}}></span>{{end}}
+        </button>
+        {{end}}{{end}}
         <a href="/projects/{{.Name}}/editor?return={{urlquery (print "/projects#project-" .Name)}}" class="btn btn-sm btn-icon btn-ghost-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
           <i class="ti ti-code"></i>
         </a>
-        <form method="post" action="/projects/delete" data-project-delete data-ajax-refresh data-confirm="Delete project &quot;{{.Name}}&quot;?" data-confirm-button="Delete">
+        <form method="post" action="/projects/delete" data-project-delete data-ajax-refresh data-confirm="Delete project &quot;{{.Name}}&quot;?"{{with index $.Docker .Name}}{{if .Containers}} data-confirm-text="Its directory goes, and its containers are brought down with compose first, volumes included."{{end}}{{end}} data-confirm-button="Delete">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="project" value="{{.Name}}">
           <button type="submit" class="btn btn-sm btn-icon btn-ghost-danger" aria-label="Delete project {{.Name}}" title="Delete">
             <i class="ti ti-trash"></i>
           </button>
         </form>
+        {{end}}
       </div>
     </div>
-    <div class="project-chips mt-2" data-sessions-body>
-      <span class="project-chip-fold" data-chip-fold>
+    <div data-sessions-body>
+      <div class="project-chips mt-2">
+      <span class="project-chip-fold" data-chip-fold="terminals">
         {{range .ActiveRefs}}
         {{if eq .Kind "coder"}}
         <div class="project-chip" data-chip data-chip-kind="coder" data-chip-id="{{.ID}}" data-chip-name="{{.Name}}"
@@ -131,6 +155,7 @@
         </div>
         {{end}}
       </span>
+      {{if not $delete.Running}}
       <a href="/coders/new?project={{urlquery .Name}}&amp;return={{urlquery (printf "/projects#project-%s" .Name)}}" class="project-chip project-chip-new" title="Start coder in project {{.Name}}" aria-label="Start coder in project {{.Name}}">
         <i class="ti ti-robot" aria-hidden="true"></i><i class="ti ti-plus" aria-hidden="true"></i>
       </a>
@@ -141,6 +166,26 @@
           <i class="ti ti-terminal-2" aria-hidden="true"></i><i class="ti ti-plus" aria-hidden="true"></i>
         </button>
       </form>
+      {{end}}
+      </div>
+      {{with index $.Docker .Name}}{{if .Containers}}
+      <div class="project-chips mt-2">
+        <span class="project-chip-fold" data-chip-fold="docker">
+          {{range .Containers}}
+          <div class="project-chip{{if not .Running}} is-idle{{end}}" data-chip data-chip-kind="docker" data-chip-id="{{.ID}}" data-chip-name="{{.DisplayName}}"
+               data-docker-running="{{if .Running}}1{{end}}" data-docker-ports="{{.PortsLabel}}">
+            <button type="button" class="project-chip-main" data-chip-main-menu title="{{if .Running}}Shell in {{.Name}}{{else}}{{.Name}}{{end}}">
+              <span class="dc-term-icon{{if .Running}} running{{end}}{{if .Unwell}} text-danger{{end}}" aria-hidden="true"><i class="ti ti-brand-docker"></i></span>
+              <span class="project-chip-name">{{.DisplayName}}</span>
+            </button>
+            <button type="button" class="project-chip-x" data-docker-logs aria-label="Logs of {{.DisplayName}}" title="Logs"><i class="ti ti-file-text"></i></button>
+            {{/* One hidden span per address the container answers on, the way the compose button carries its stacks: a route names a host of its own and maybe a path, a published port names only the port. An empty scheme is the page's own. */}}
+            {{range .Links}}<span hidden data-docker-link data-link-scheme="{{.Scheme}}" data-link-host="{{.Host}}" data-link-port="{{if .Port}}{{.Port}}{{end}}" data-link-path="{{.Path}}"></span>{{end}}
+          </div>
+          {{end}}
+        </span>
+      </div>
+      {{end}}{{end}}
     </div>
   </div>
   {{end}}

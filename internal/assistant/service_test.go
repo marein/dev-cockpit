@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/local/dev-cockpit/internal/detach"
 	"github.com/local/dev-cockpit/internal/statefile"
 )
 
@@ -349,7 +350,7 @@ func quiesce(t *testing.T, svc *Service, w *Watcher) {
 		// write the last of it while the directories are still there.
 		for _, a := range open {
 			a.cancelled.Store(true)
-			a.proc.kill()
+			a.proc.Kill()
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -1020,7 +1021,7 @@ func TestATurnSurvivesARestartAndIsWrittenToItsEnd(t *testing.T) {
 	created, _ := svc.create("claude", "/projects/demo")
 	rec := orphanTurn(t, svc, created.ID, runner)
 
-	if !processAlive(rec.PID, rec.Lock) {
+	if !detach.Alive(rec.PID, rec.Lock) {
 		t.Fatal("want the turn to still be running")
 	}
 
@@ -1081,7 +1082,7 @@ func TestATurnThatEndedDuringTheRestartIsComplete(t *testing.T) {
 	svc, _, _, _ := newTestServiceIn(t, dir, runner)
 	created, _ := svc.create("claude", "/projects/demo")
 	rec := orphanTurn(t, svc, created.ID, runner)
-	waitFor(t, "the turn to end on its own", func() bool { return !processAlive(rec.PID, rec.Lock) })
+	waitFor(t, "the turn to end on its own", func() bool { return !detach.Alive(rec.PID, rec.Lock) })
 
 	restarted, _, _, _ := newTestServiceIn(t, dir, runner)
 	restarted.Recover()
@@ -1099,7 +1100,7 @@ func TestATurnWhoseProcessDiedBecomesInterrupted(t *testing.T) {
 	svc, _, _, _ := newTestServiceIn(t, dir, runner)
 	created, _ := svc.create("claude", "/projects/demo")
 	rec := orphanTurn(t, svc, created.ID, runner)
-	waitFor(t, "the turn to die", func() bool { return !processAlive(rec.PID, rec.Lock) })
+	waitFor(t, "the turn to die", func() bool { return !detach.Alive(rec.PID, rec.Lock) })
 
 	restarted, _, _, _ := newTestServiceIn(t, dir, runner)
 	restarted.Recover()
@@ -1183,7 +1184,7 @@ func TestAStoppedTurnStaysStoppedAcrossARestart(t *testing.T) {
 	rec := orphanTurn(t, svc, created.ID, runner)
 	rec.Cancelled = true
 	runs.Save(rec)
-	waitFor(t, "the turn to end", func() bool { return !processAlive(rec.PID, rec.Lock) })
+	waitFor(t, "the turn to end", func() bool { return !detach.Alive(rec.PID, rec.Lock) })
 
 	restarted, _, _, _ := newTestServiceIn(t, dir, runner)
 	restarted.Recover()
@@ -1204,7 +1205,7 @@ func TestATurnWithLostOutputIsNotReadBack(t *testing.T) {
 	svc, _, _, runs := newTestServiceIn(t, dir, runner)
 	created, _ := svc.create("claude", "/projects/demo")
 	rec := orphanTurn(t, svc, created.ID, runner)
-	waitFor(t, "the turn to end", func() bool { return !processAlive(rec.PID, rec.Lock) })
+	waitFor(t, "the turn to end", func() bool { return !detach.Alive(rec.PID, rec.Lock) })
 	rec.Processed = 1 << 20
 	runs.Save(rec)
 

@@ -175,6 +175,9 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
 	auth.POST("/settings/general", s.handleSettingsGeneralSave)
+	// Docker is a section of its own: the daemon and the compose commands.
+	auth.GET("/settings/docker", s.handleSettingsDocker)
+	auth.POST("/settings/docker", s.handleSettingsDockerSave)
 	auth.GET("/settings/backup", s.handleSettingsBackup)
 	auth.POST("/settings/backup", s.handleSettingsBackupSave)
 	auth.GET("/settings/backup/new", s.handleSettingsBackupNew)
@@ -186,6 +189,20 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 
 	auth.GET("/notifications", s.handleNotificationsList)
 	auth.POST("/notifications/read", s.handleNotificationsRead)
+
+	// The container actions the docker chips and the editor's docker sheet
+	// offer. They address the daemon's container id, which no project owns,
+	// so they sit at the top level like the other JS routes; only the compose
+	// actions are project scoped and live under the project below.
+	// The configured compose commands belong to the install, not to a
+	// container, so putting the list back sits next to them.
+	auth.POST("/docker/actions/restore", s.handleDockerActionsRestore)
+	auth.POST("/docker/link-rules/restore", s.handleDockerLinkRulesRestore)
+	auth.POST("/docker/:id/start", s.handleDockerStart)
+	auth.POST("/docker/:id/stop", s.handleDockerStop)
+	auth.POST("/docker/:id/restart", s.handleDockerRestart)
+	auth.POST("/docker/:id/shell", s.handleDockerShell)
+	auth.POST("/docker/:id/logs-shell", s.handleDockerLogsShell)
 
 	// /events is the app-wide server to client stream.
 	auth.GET("/events", s.handleEventStream)
@@ -202,6 +219,14 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/projects", s.handleProjectCreate)
 	auth.POST("/projects/delete", s.handleProjectDelete)
 	auth.GET("/projects/:name/editor", s.handleProjectEditor)
+	auth.POST("/projects/:name/docker/compose", s.handleDockerCompose)
+	auth.POST("/projects/:name/docker/logs", s.handleDockerComposeLogs)
+	// A compose run outlives the request that started it, so its output is a
+	// place of its own: the page reads the file the detached run writes into,
+	// and the cancel goes at the hold process holding it.
+	auth.GET("/projects/:name/docker/runs/:id", s.handleDockerRun)
+	auth.GET("/projects/:name/docker/runs/:id/output", s.handleDockerRunOutput)
+	auth.POST("/projects/:name/docker/runs/:id/stop", s.handleDockerRunStop)
 	// Grouped so that every write below /editor drops the project's quick open
 	// index on its way out. Putting it here rather than in each handler means a
 	// route added later cannot forget to invalidate.
@@ -220,6 +245,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	editor.POST("/extract", s.handleEditorExtract)
 	editor.GET("/files", s.handleEditorFiles)
 	editor.GET("/terminals", s.handleEditorTerminals)
+	editor.GET("/docker", s.handleEditorDocker)
 	editor.GET("/search", s.handleEditorSearch)
 	editor.POST("/upload", s.handleEditorUpload)
 	editor.POST("/preview", s.handleEditorPreview)

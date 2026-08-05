@@ -9,6 +9,7 @@
 package notify
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +54,26 @@ type Notification struct {
 // no terminal, so the restore prune keeps it alive explicitly and it can
 // never collide with the UUID shaped session ids.
 const BackupTarget = "backup"
+
+// DockerTargetPrefix names the targets of finished docker compose runs, one
+// per project (`docker:<project>`), under the same rules as BackupTarget.
+//
+// One target per project and not one for all of docker, because a target is
+// what holds at most one unread entry: bringing two projects down at the same
+// moment is two pieces of news and has to read as two, while a down and an up
+// of the same project seconds apart is one and still collapses.
+const DockerTargetPrefix = "docker:"
+
+// DockerTarget is the target id one project's compose runs report under.
+func DockerTarget(project string) string { return DockerTargetPrefix + project }
+
+// IsDockerTarget reports whether an id is one of them.
+func IsDockerTarget(targetID string) bool { return strings.HasPrefix(targetID, DockerTargetPrefix) }
+
+// DockerTargetProject answers the project such an id names.
+func DockerTargetProject(targetID string) string {
+	return strings.TrimPrefix(targetID, DockerTargetPrefix)
+}
 
 // TargetInfo carries display context resolved at ingest time.
 type TargetInfo struct {
@@ -258,15 +279,17 @@ func (s *Service) MarkTargetRead(targetID string) int {
 
 // PruneTargets drops stored notifications whose target id is not in keep.
 // The startup terminal restore calls it for targets that stayed dead through
-// the restore pass, their entries would link nowhere forever. Returns how
-// many entries were removed.
+// the restore pass, their entries would link nowhere forever. A compose run's
+// target is kept whatever the caller says: it names a project and a run, not a
+// terminal, so no terminal pass can know it. Returns how many entries were
+// removed.
 func (s *Service) PruneTargets(keep map[string]bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.load()
 	kept := list[:0]
 	for _, n := range list {
-		if keep[n.TargetID] {
+		if keep[n.TargetID] || IsDockerTarget(n.TargetID) {
 			kept = append(kept, n)
 		}
 	}

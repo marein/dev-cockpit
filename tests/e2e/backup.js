@@ -68,7 +68,7 @@ L.runFeature("BACKUP", async ({ page, run }) => {
     await page.goto(`${BASE}/settings/general`, { waitUntil: "domcontentloaded" });
     const cb = page.locator('#settings-terminal-restore input[name="restore"]');
     if (on) await cb.check(); else await cb.uncheck();
-    await page.click('#settings-terminal-restore button[type="submit"]');
+    await page.click('#settings-general button[type="submit"]');
     await sleep(500);
   };
 

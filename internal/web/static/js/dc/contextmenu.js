@@ -24,6 +24,21 @@ export function closeMenu() {
   if (menu.prevFocus?.isConnected) menu.prevFocus.focus({ preventScroll: true });
 }
 
+// labelNodes renders an item's label. A plain string is the usual case; a
+// {head, tail} label is one that must not lose its end when it does not fit,
+// an address being the example: what tells two of them apart is the tail. The
+// head shrinks and ellipsizes, the tail never does, so the ellipsis lands in
+// the middle without anything measuring text. Menus that render items
+// themselves (the editor's docker sheet) do the same two spans.
+export function labelNodes(label) {
+  const head = label && typeof label === "object" ? label.head : label;
+  const nodes = [el("span", { class: "dc-menu-label-head" }, head ?? "")];
+  if (label && typeof label === "object" && label.tail) {
+    nodes.push(el("span", { class: "dc-menu-label-tail" }, label.tail));
+  }
+  return nodes;
+}
+
 export function openMenu({ x, y, items, signal }) {
   closeMenu();
   const openedAt = Date.now();
@@ -47,9 +62,10 @@ export function openMenu({ x, y, items, signal }) {
         type: "button",
         class: "dropdown-item" + (item.danger ? " text-danger" : "") + (item.warn ? " text-orange" : "") + (item.purple ? " text-purple" : ""),
         role: "menuitem",
+        title: item.title || null,
       },
       item.icon ? el("i", { class: `ti ${item.icon} me-2`, "aria-hidden": "true" }) : null,
-      item.label,
+      ...labelNodes(item.label),
     );
     if (item.disabled) button.disabled = true;
     button.addEventListener("click", (event) => {

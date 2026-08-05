@@ -43,6 +43,35 @@ func TestLookupReadsWhatSetWrote(t *testing.T) {
 	}
 }
 
+// TestDeleteTakesTheKeyOutOfTheFile is the other half of that distinction:
+// putting a setting back to "never answered" means the key has to leave the
+// file, because storing an empty value is itself an answer.
+func TestDeleteTakesTheKeyOutOfTheFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	store := New(path)
+	store.Set("kept", "value")
+	store.Set("going", "[]")
+
+	store.Delete("going")
+	if value, ok := store.Lookup("going"); ok || value != "" {
+		t.Errorf("deleted key = (%q, %v), want (\"\", false)", value, ok)
+	}
+	// Only that one goes, and the file really loses it: another process reads
+	// the same absence.
+	if value, ok := New(path).Lookup("kept"); !ok || value != "value" {
+		t.Errorf("kept = (%q, %v), want (value, true)", value, ok)
+	}
+	if _, ok := New(path).Lookup("going"); ok {
+		t.Error("the key is still in the file")
+	}
+	// Deleting what is not there changes nothing and is not an error.
+	store.Delete("going")
+	store.Delete("")
+	if value, ok := store.Lookup("kept"); !ok || value != "value" {
+		t.Errorf("kept = (%q, %v) after the no-op deletes", value, ok)
+	}
+}
+
 // TestLookupSeesAnotherProcessesWrite covers the store's promise that several
 // serve processes sharing a state dir see each other's changes.
 func TestLookupSeesAnotherProcessesWrite(t *testing.T) {

@@ -25,10 +25,57 @@ func (s *Server) handleProjectsList(c *gin.Context) {
 		s.coders[i].Invalidate()
 	}
 	s.shells.Invalidate()
+	projects := s.projectsWithRunners()
 	c.HTML(http.StatusOK, "projects_list.gohtml", render.ProjectsListData{
-		Page:     s.page(c, "Projects", "projects"),
-		Projects: s.projectsWithRunners(),
+		Page:          s.page(c, "Projects", "projects"),
+		Projects:      projects,
+		Docker:        s.dockerByProject(projects),
+		DockerActions: render.DockerButtons(s.composeActions()),
+		Deleting:      s.deletes.view(projects),
 	})
+}
+
+// dockerByProject joins the cached container list and the compose stacks
+// onto the projects through the compose working directory. One cache read
+// for the whole page, nothing asks the daemon here; only the stack lookup
+// stats the project roots for a compose file.
+func (s *Server) dockerByProject(projects []project.Project) map[string]render.ProjectDocker {
+	state := s.docker.State()
+	if !state.Available {
+		return nil
+	}
+	// One matcher for the whole page: the link rules are the install's, not a
+	// project's, and compiling them per container would compile them per chip.
+	matcher := s.linkMatcher()
+	out := map[string]render.ProjectDocker{}
+	for i := range projects {
+		entry := render.ProjectDocker{}
+		for _, container := range state.ForDir(projects[i].Path) {
+			entry.Containers = append(entry.Containers, render.DockerContainer{
+				Container: container,
+				Links:     matcher.Links(container),
+			})
+		}
+		for _, stack := range state.StacksForDir(projects[i].Path) {
+			row := render.DockerStack{
+				Stack: stack,
+				Busy:  s.docker.ComposeBusy(stack.Dir),
+			}
+			// The newest run of the stack, going or over: its output is what
+			// the menu leads to, which is the only way back to what a command
+			// wrote once the toast is gone.
+			if runs := s.docker.ComposeRunsForDir(stack.Dir); len(runs) > 0 {
+				row.RunID = runs[0].ID
+				row.RunAction = runs[0].Action
+				row.RunGoing = runs[0].Running
+			}
+			entry.Stacks = append(entry.Stacks, row)
+		}
+		if len(entry.Containers) > 0 || len(entry.Stacks) > 0 {
+			out[projects[i].Name] = entry
+		}
+	}
+	return out
 }
 
 // projectsWithRunners returns every project enriched with the running and
@@ -231,6 +278,15 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
+	// A project that runs containers is deleted off the request: compose down
+	// takes as long as it takes and no page may wait on it. A project that runs
+	// no containers but has a compose run under way goes the same road, because
+	// that run has to be waited out before the directory can go, and waiting is
+	// exactly what a request must not do.
+	if len(s.composeStacksToStop(p.Path)) > 0 || s.docker.ComposeBusyUnder(p.Path) {
+		s.startProjectDelete(c, p)
+		return
+	}
 	s.purgeProjectRunners(p.Path)
 	if err := s.projects.Remove(p); err != nil {
 		if wantsJSON(c.Request) {
@@ -244,6 +300,21 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 	s.publishProjects()
 	if wantsJSON(c.Request) {
 		c.JSON(http.StatusOK, gin.H{"name": p.Name, "path": p.Path})
+		return
+	}
+	c.Redirect(http.StatusSeeOther, "/projects")
+}
+
+// startProjectDelete answers the request at once and leaves the work to the
+// goroutine behind it. The projects event is what puts the working row on every
+// open list, this client's own included.
+func (s *Server) startProjectDelete(c *gin.Context, p project.Project) {
+	if s.deletes.start(p.Name, p.Path) {
+		go s.deleteProjectWithCompose(p)
+		s.publishProjects()
+	}
+	if wantsJSON(c.Request) {
+		c.JSON(http.StatusAccepted, gin.H{"name": p.Name, "path": p.Path, "deleting": true})
 		return
 	}
 	c.Redirect(http.StatusSeeOther, "/projects")

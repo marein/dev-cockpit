@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/local/dev-cockpit/internal/detach"
 	"github.com/local/dev-cockpit/internal/statefile"
 	"github.com/local/dev-cockpit/internal/terminal"
 )
@@ -1301,7 +1302,7 @@ func TestACheckSurvivesARestart(t *testing.T) {
 		CheckingSince: time.Now().UTC(),
 	})
 	rec := orphanCheck(t, svc, c.ID, "term-1", runner)
-	if !processAlive(rec.PID, rec.Lock) {
+	if !detach.Alive(rec.PID, rec.Lock) {
 		t.Fatal("want the check to still be running")
 	}
 
@@ -1400,7 +1401,7 @@ func TestAnOverdueFinishedCheckStillDeliversItsVerdict(t *testing.T) {
 		CheckingSince: time.Now().UTC(),
 	})
 	rec := orphanCheck(t, svc, c.ID, "term-1", runner)
-	waitFor(t, "the check to finish on its own", func() bool { return !processAlive(rec.PID, rec.Lock) })
+	waitFor(t, "the check to finish on its own", func() bool { return !detach.Alive(rec.PID, rec.Lock) })
 	// The downtime was longer than the check's time budget.
 	runs.Update(rec.ID, func(r *RunRecord) { r.Deadline = time.Now().UTC().Add(-time.Minute) })
 

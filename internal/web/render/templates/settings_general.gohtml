@@ -18,10 +18,11 @@
     <div class="col-12 col-md-9">
       <div class="card-body">
         <h3 class="card-title">General</h3>
-        <form method="post" action="/settings/general" id="settings-terminal-restore">
-          {{if and (eq $.FlashProject "settings-terminal-restore") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+        <form method="post" action="/settings/general" id="settings-general">
+          {{if and (eq $.FlashProject "settings-general") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-          <div class="mb-3">
+          <input type="hidden" name="form" value="general">
+          <div class="mb-3" id="settings-terminal-restore">
             <label class="form-label">Restore</label>
             <div class="text-secondary small mb-2">On host reboot, the next start brings the working set back: coders are resumed, shells are recreated empty in their project directory, the tab order is kept.</div>
             <label class="form-check">
@@ -29,14 +30,8 @@
               <span class="form-check-label">Restore terminals at startup</span>
             </label>
           </div>
-          <button type="submit" class="btn btn-primary">Save</button>
-        </form>
-        <hr class="my-4">
-        <form method="post" action="/settings/general" id="settings-shell-history">
-          {{if and (eq $.FlashProject "settings-shell-history") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
-          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-          <input type="hidden" name="form" value="shell-history">
-          <div class="mb-3">
+          <hr class="my-4">
+          <div class="mb-3" id="settings-shell-history">
             <label class="form-label">Shell history</label>
             <div class="text-secondary small mb-2">Give every shell its own command history instead of sharing the login shell's file. History is kept per shell and survives a restore. Only affects newly started shells.</div>
             <label class="form-check">

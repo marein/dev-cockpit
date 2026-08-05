@@ -1432,9 +1432,35 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   position: fixed;
   z-index: 1070;
   min-width: 11rem;
+  /* Without a max width one long entry (a routed host is long) grows the menu
+     past the viewport and its text runs off the screen. The menu stops at the
+     window minus the placement margin on both sides, and the labels ellipsize
+     inside it. */
+  max-width: min(26rem, calc(100vw - 0.75rem));
   max-height: calc(100vh - 0.75rem);
   overflow-y: auto;
   outline: 0;
+}
+.dc-context-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.dc-context-menu .dropdown-item > i {
+  flex: 0 0 auto;
+}
+/* A label that must keep its end: the head takes the space that is left and
+   ellipsizes, the tail always stands, so the ellipsis lands in the middle.
+   Both halves are one line, the item never wraps. */
+.dc-menu-label-head {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.dc-menu-label-tail {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 /* ---- project editor --------------------------------------------------- */
@@ -2607,6 +2633,7 @@ terminal-input { display: none; }
 }
 .project-chip-x:hover { color: var(--tblr-danger); opacity: 1; }
 .project-chip[data-chip-kind="coder"]:not(.is-idle) .project-chip-x:hover { color: var(--tblr-orange); }
+.project-chip[data-chip-kind="docker"] .project-chip-x:hover { color: var(--tblr-primary); }
 @media (hover: hover) and (pointer: fine) {
   .project-chip-x { opacity: 0; }
   .project-chip:hover .project-chip-x,

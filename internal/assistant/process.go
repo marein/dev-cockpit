@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"log"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/local/dev-cockpit/internal/detach"
 )
 
 // maxLineBytes bounds one structured output line. A provider packs a complete
@@ -59,100 +61,32 @@ type Parser interface {
 	Diagnose(err error, stderr string) error
 }
 
-// process is a started turn: what it takes to find it again, and how to tell
-// whether it is still writing.
-type process struct {
-	// pid is the turn process, lock the file whose flock says whether the turn
-	// still runs.
-	pid  int
-	lock string
-	// exited is closed when this process reaped its own child. A turn adopted
-	// from an earlier server has no such channel and is watched through the
-	// lock instead, see alive.
-	exited chan struct{}
-}
-
-// alive reports whether the provider is still writing.
-func (p process) alive() bool {
-	if p.exited != nil {
-		select {
-		case <-p.exited:
-			return false
-		default:
-			return true
-		}
-	}
-	return processAlive(p.pid, p.lock)
-}
-
-// kill ends the whole process group. A coder CLI spawns helpers, and killing
-// only the leader would leave them writing into a file nobody reads.
-func (p process) kill() { killProcess(p.pid, p.lock) }
-
-// start launches one turn detached from this server: its own session, its
-// standard output straight into a file, no pipe between the two. That is what
-// lets the answer keep being written while the cockpit restarts, and it is why
-// nothing here may hold a handle the child depends on.
+// start launches one turn detached from this server, through internal/detach:
+// its own session, its standard output straight into a file, no pipe between
+// the two, and a lock that says whether it is still writing. That is what lets
+// the answer keep being written while the cockpit restarts.
 //
-// The provider runs under a turn process, a copy of this binary whose one job
-// is to hold the turn's lock while the provider runs. The lock is taken here,
-// before anything starts, and travels as an inherited descriptor, so there is
-// no moment where the turn runs and the lock is free.
-func start(c Command, workdir, outPath, errPath, lockPath string) (process, error) {
+// A turn carries no timeout down there. A chat turn runs as long as the user
+// lets it, and a check's deadline is the server's to enforce, because only the
+// server knows what to write into the transcript when it passes.
+//
+// Whatever goes wrong on the way reads the same to the user: this server could
+// not start the coder. The reason is the caller's log, not their sentence.
+func start(c Command, workdir, outPath, errPath, lockPath string) (detach.Process, error) {
 	if strings.TrimSpace(c.Name) == "" {
-		return process{}, errors.New("The coder could not be started.")
+		return detach.Process{}, errors.New("The coder could not be started.")
 	}
-	// The turn process starting is not the provider starting, so a CLI that
-	// is not there is caught here, where the caller still hears about it at
-	// once.
-	if _, err := exec.LookPath(c.Name); err != nil {
-		return process{}, errors.New("The coder could not be started.")
-	}
-	self, err := selfExecutable()
+	p, err := detach.Start(detach.Options{
+		Command: append([]string{c.Name}, c.Args...),
+		Dir:     workdir,
+		Out:     outPath,
+		Err:     errPath,
+		Lock:    lockPath,
+	})
 	if err != nil {
-		return process{}, errors.New("The coder could not be started.")
+		log.Printf("assistant: start %s: %v", c.Name, err)
+		return detach.Process{}, errors.New("The coder could not be started.")
 	}
-	out, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return process{}, errors.New("The coder could not be started.")
-	}
-	defer out.Close()
-	errFile, err := os.OpenFile(errPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return process{}, errors.New("The coder could not be started.")
-	}
-	defer errFile.Close()
-	lock, err := lockTurn(lockPath)
-	if err != nil {
-		return process{}, errors.New("The coder could not be started.")
-	}
-	// The server's own copy of the lock goes when start returns. The turn
-	// process keeps its inherited one, and with it the lock, until it is over.
-	defer lock.Close()
-
-	argv := append([]string{}, runTurnArgs...)
-	argv = append(argv, c.Name)
-	argv = append(argv, c.Args...)
-	cmd := exec.Command(self, argv...)
-	cmd.Dir = workdir
-	cmd.Stdout = out
-	cmd.Stderr = errFile
-	cmd.ExtraFiles = []*os.File{lock}
-	if err := detach(cmd); err != nil {
-		return process{}, err
-	}
-	if err := cmd.Start(); err != nil {
-		return process{}, errors.New("The coder could not be started.")
-	}
-
-	p := process{pid: cmd.Process.Pid, lock: lockPath, exited: make(chan struct{})}
-	// The child is reaped for as long as this server lives, so it never sits
-	// around as a zombie that still looks alive. A server that goes away leaves
-	// that to the init process, and whoever adopts the turn reaps it instead.
-	go func() {
-		_ = cmd.Wait()
-		close(p.exited)
-	}()
 	return p, nil
 }
 

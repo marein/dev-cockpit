@@ -674,7 +674,7 @@ func (s *Service) Cancel(id string) error {
 	s.mu.Unlock()
 
 	s.runs.Update(id, func(rec *RunRecord) { rec.Cancelled = true })
-	proc.kill()
+	proc.Kill()
 	return nil
 }
 
@@ -827,7 +827,7 @@ func (s *Service) Delete(id string) error {
 		runID, proc, done := a.rec.ID, a.proc, a.done
 		s.mu.Unlock()
 		s.runs.Update(runID, func(rec *RunRecord) { rec.Cancelled = true })
-		proc.kill()
+		proc.Kill()
 		<-done
 		s.mu.Lock()
 	}

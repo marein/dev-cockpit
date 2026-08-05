@@ -405,7 +405,63 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Terminal panel",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "J"}}},
-					Desc:  `<em>Terminal</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, or the shortcut, opens the project's coders and shells below the code. Tabs switch between them, <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> starts a new one or resumes a stopped coder, and the keys, the refresh and the file upload work like on the terminal pages. Open or closed is remembered per project. Desktop only.`,
+					Desc:  `<em>Terminal</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the terminal icon <i class="ti ti-terminal-2 align-text-bottom" aria-hidden="true"></i> in the statusbar, or the shortcut opens the project's coders and shells below the code. Tabs switch between them, <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> starts a new one or resumes a stopped coder, and the keys, the refresh and the file upload work like on the terminal pages. Open or closed is remembered per project. Desktop only.`,
+				},
+				{
+					Title: "Docker view",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "D"}}},
+					Desc:  `<em>Docker</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the docker icon <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> in the statusbar, which counts how many of the project's containers run, or the shortcut opens what the project's compose menu offers: its addresses, the stack logs, the compose commands and the output of the last run, and below them every container, side by side, as many per line as the width allows. On a desktop a container's shell and logs open in the terminal panel instead of taking the page.`,
+				},
+			},
+		},
+		{
+			Key:   "docker",
+			Title: "Docker",
+			Icon:  "ti-brand-docker",
+			Lead:  "Each project's compose containers and the commands that drive them.",
+			Intro: `The cockpit keeps one connection to the Docker daemon and follows its event stream, so everything docker is live without anything polling. Containers belong to the project whose directory their compose file was started in. A machine without a reachable daemon simply shows none of this.`,
+			Items: []DocsItem{
+				{
+					Title: "Container chips",
+					Desc:  `Each compose container is a chip <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> on its project's row, named by its compose service. Green means running, gray means stopped, red means a failing healthcheck. The chips follow starts and stops live, also ones made from the command line.`,
+				},
+				{
+					Title: "Container actions",
+					Desc:  `A click or tap on the chip of a running container opens a shell inside it, the common reason to reach for one. A right-click or a long-press opens its menu instead: the published ports, an <em>Open</em> entry per address the container answers on, <em>Shell</em>, <em>Logs</em>, and <em>Start</em>, <em>Stop</em>, or <em>Restart</em>. A container that is not running has no shell, so there a click opens the menu. Logs are always a terminal, never a dialog: they keep talking, and the tab is one like any other. The logs icon <i class="ti ti-file-text align-text-bottom" aria-hidden="true"></i> on the chip opens that terminal with one tap.`,
+				},
+				{
+					Title: "Where an Open entry goes",
+					Desc:  `A container is reachable in two ways and both stand in the menu. A published port is opened on the address this page was reached on, at that port, <em>Open :18088</em>. A container behind a reverse proxy publishes nothing at all and is reached by host name, and that host stands in a label of the container, which is where the cockpit reads it: <em>Open app.example.com</em>, the routed addresses first, because where one exists it is the address you want. Such a link carries no port, the proxy answers on the default one, and it is opened over the same scheme this page uses, so the same setup works over http at home and over https behind an ingress.`,
+				},
+				{
+					Title: "Which label carries an address",
+					Desc:  `That is configuration, under Settings &rsaquo; Docker below the commands: one rule says which label to read, <code>*</code> standing for any part of it, and a regular expression with a <code>host</code> capture says where the address sits in its value; <code>path</code> and <code>port</code> may be captured too. Out of the box one rule covers the traefik router labels, which is what most setups write. A rule may pin <code>http</code> or <code>https</code> when the app is reached differently than the cockpit, and it may name a label that switches it off for a container, the way <code>traefik.enable=false</code> does. Each row says what is wrong with its pattern and what it finds in the containers running right now. Removing every rule is a real answer, only the published ports are then offered, and one button puts the default rule back.`,
+				},
+				{
+					Title: "Compose actions",
+					Desc:  `A project with a compose file carries a compose button <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> next to its row actions, also while nothing runs yet. Its menu opens every address the project's containers answer on, so one is one click away without looking for its container first, follows the whole stack in one <em>Logs</em> terminal, and below that stands one entry per configured command, <em>Compose up</em>, <em>Compose down</em>, <em>Compose build</em> and a down that takes the volumes with it. Each one runs in the background; the chips follow along live, and a notification tells when the run finished or failed. The run does not belong to the page that started it: it keeps going when the cockpit restarts, and the notification still arrives afterwards.`,
+				},
+				{
+					Title: "What a run wrote",
+					Desc:  `The menu entry above the commands opens the output of the newest run of that stack, and so does the notification when it is over: the whole output, while it runs and afterwards, with the exit code at the top. <em>Cancel</em> ends a command that is still going, which works from any page and after a restart, because it goes at the process and not at the page that started it.`,
+				},
+				{
+					Title: "Configuring the commands",
+					Desc:  `Settings &rsaquo; Docker is where docker lives: the daemon to talk to, and below it the commands themselves. Each entry has an icon picked from a short list, a label, the command line, how long it may take, and whether it asks before it starts. The order there is the order in the menu. A command runs in the stack's directory with <code>DOCKER_HOST</code> set, and it runs directly instead of through a shell, so quotes group words and nothing else is interpreted; the arguments it becomes stand under the field. A program written as <code>./deploy.sh</code> is looked for from the stack directory upwards to the project root, so one script can serve every stack below it. Removing every entry is a real answer, the menu then offers ports and logs alone and one button to put the defaults back.`,
+				},
+				{
+					Title: "Deleting a project",
+					Desc:  `A project whose containers the daemon still shows is emptied before its directory goes: every one of its stacks comes down with its volumes, named by the compose project the daemon reports, so nothing is left running or lying around without the project it belonged to. That one command is fixed and not one of the configured ones. It takes a moment: the row says <em>Deleting…</em> while it works, the rest of the page stays usable, and the row disappears when it is through. A restart in the middle of it does not leave the project half deleted, the row says <em>Deleting…</em> again and the deletion carries on. If a stack cannot be brought down, the deletion stops, its reason stands on the row, and nothing is removed.`,
+				},
+				{
+					Title:    "Shell into a container",
+					Tag:      "Terminal",
+					TagClass: "bg-blue-lt",
+					Desc:     `<em>Shell</em> opens a normal cockpit terminal that steps into the container, <em>Log terminal</em> one that follows its output. Both live in the tab strip and the quick nav like any shell, and when the container stops, the pane falls back to a plain shell in the project.`,
+				},
+				{
+					Title: "Docker host",
+					Desc:  `Which daemon the cockpit talks to is resolved automatically: <code>DOCKER_HOST</code>, then the current docker context, then the standard socket paths. A host set under Settings &rsaquo; Docker wins over all of that.`,
 				},
 			},
 		},

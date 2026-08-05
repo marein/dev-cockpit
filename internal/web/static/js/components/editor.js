@@ -5,11 +5,12 @@
 // still works.
 import { notifyError, notifySuccess } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
-import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
+import { labelNodes, menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { applyFold } from "@dc/fold";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { releaseCoder, steerCoder } from "@dc/steer";
+import * as dockerApi from "@dc/docker";
 import * as projectSort from "@dc/project-sort";
 import * as store from "@dc/store";
 
@@ -94,6 +95,12 @@ async function init(root) {
   const sheetBodyEl = root.querySelector("[data-editor-sheet-body]");
   const sheetCloseBtn = root.querySelector("[data-editor-sheet-close]");
   const paneColEl = root.querySelector(".editor-pane-col");
+  const dockerItem = root.querySelector("[data-editor-docker-item]");
+  const dockerMenuEl = root.querySelector("[data-editor-docker-menu]");
+  const dockerListEl = root.querySelector("[data-editor-docker-list]");
+  const dockerStatusBtn = root.querySelector("[data-editor-docker-status]");
+  const dockerStatusText = root.querySelector("[data-editor-docker-status-text]");
+  const termStatusBtn = root.querySelector("[data-editor-term-status]");
 
   const editorSettings = loadEditorSettings();
   // The diff runs in the browser, so the limits that keep a slow device
@@ -429,6 +436,190 @@ async function init(root) {
   function openSettingsSheet() {
     openSheet("settings", "Editor settings");
     adoptIntoSheet(settingsMenuEl);
+  }
+
+  let dockerData = null;
+  let dockerSeq = 0;
+
+  async function loadDocker() {
+    const seq = ++dockerSeq;
+    try {
+      const res = await fetch(`${base}/docker`, { credentials: "same-origin", signal });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (seq !== dockerSeq) return;
+      dockerData = data;
+      paintDocker();
+      if (sheetKind === "docker") renderDockerSheet();
+    } catch {}
+  }
+
+  function paintDocker() {
+    const data = dockerData;
+    const show = !!(data && data.available && (data.containers.length || data.stacks.length));
+    dockerItem.hidden = !show;
+    dockerStatusBtn.hidden = !show;
+    if (!show) {
+      if (sheetKind === "docker") closeSheet();
+      return;
+    }
+    const running = data.containers.filter((c) => c.running).length;
+    const unwell = data.containers.some((c) => c.unwell);
+    dockerStatusText.textContent = data.containers.length ? `${running}/${data.containers.length}` : "";
+    dockerStatusBtn.title = data.containers.length
+      ? `Docker: ${running} of ${data.containers.length} running`
+      : "Docker: nothing running";
+    const icon = dockerStatusBtn.querySelector("i");
+    icon.classList.toggle("text-danger", unwell);
+    icon.classList.toggle("text-success", !unwell && running > 0);
+  }
+
+  function dockerSheetRow({ icon, iconClass, label, title, sub, disabled, onClick }) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "dropdown-item d-flex align-items-center gap-2";
+    if (disabled) row.disabled = true;
+    if (title) row.title = title;
+    const mark = document.createElement("i");
+    mark.className = `ti ${icon}${iconClass ? ` ${iconClass}` : ""}`;
+    mark.setAttribute("aria-hidden", "true");
+    row.appendChild(mark);
+    const col = document.createElement("span");
+    col.className = "d-flex flex-column min-w-0 text-start";
+    const nameEl = document.createElement("span");
+    // A label may carry a head and a tail (an address keeps its end when it
+    // does not fit), which is what @dc/contextmenu renders in a menu.
+    nameEl.className = "d-flex min-w-0";
+    nameEl.append(...labelNodes(label));
+    col.appendChild(nameEl);
+    if (sub) {
+      const subEl = document.createElement("span");
+      subEl.className = "small text-secondary text-truncate";
+      subEl.textContent = sub;
+      col.appendChild(subEl);
+    }
+    row.appendChild(col);
+    if (onClick) row.addEventListener("click", onClick, { signal });
+    return row;
+  }
+
+  // paintDockerItems draws one list of @dc/docker entries into the sheet. It
+  // is called with the project's own list and again with a container's
+  // addresses when one of its entries drills in.
+  function paintDockerItems(items) {
+    for (const item of items) {
+      if (item.divider) {
+        const divider = document.createElement("div");
+        divider.className = "dropdown-divider";
+        dockerListEl.appendChild(divider);
+        continue;
+      }
+      dockerListEl.appendChild(dockerSheetRow({
+        icon: item.icon || "ti-brand-docker",
+        label: item.label,
+        title: item.title,
+        disabled: item.disabled,
+        onClick: item.action,
+      }));
+    }
+  }
+
+  function renderDockerSheet() {
+    const data = dockerData;
+    if (!data) return;
+    dockerListEl.replaceChildren();
+    // The project's own entries first: which container to reach, its logs, its
+    // compose actions. Same list as the projects page builds, from @dc/docker,
+    // and a container with several addresses drills into them here too: the
+    // sheet then shows that one list, its first row leading back.
+    const containers = data.containers;
+    const drill = (items) => {
+      if (!items) {
+        renderDockerSheet();
+        return;
+      }
+      dockerListEl.replaceChildren();
+      paintDockerItems(items);
+    };
+    const items = data.cli
+      ? dockerApi.projectMenuItems({
+        project: name,
+        stacks: data.stacks,
+        containers,
+        actions: data.actions || [],
+        onLogs: (stack) => void composeLogsFromEditor(stack),
+        onDrill: drill,
+      })
+      : dockerApi.projectMenuItems({ project: name, containers, onDrill: drill });
+    paintDockerItems(items);
+    if (items.length && data.containers.length) {
+      const divider = document.createElement("div");
+      divider.className = "dropdown-divider";
+      dockerListEl.appendChild(divider);
+    }
+    // The containers stand next to each other, as many per line as the width
+    // allows: a project with a dozen of them is a list nobody scrolls, and each
+    // one is a name and a menu, not a paragraph. What a single one can do lives
+    // in its menu, so no row carries buttons of its own.
+    if (data.containers.length) {
+      const grid = document.createElement("div");
+      grid.className = "row row-deck g-0";
+      for (const container of data.containers) {
+        const iconClass = container.unwell ? "text-danger" : container.running ? "text-success" : "text-secondary";
+        const cell = dockerSheetRow({
+          icon: "ti-brand-docker",
+          iconClass,
+          label: container.name,
+          sub: container.portsLabel,
+          onClick: (event) => {
+            const info = { ...container, cli: data.cli };
+            const menu = dockerApi.containerMenuItems(info, { onShell: dockerShellFromEditor });
+            openMenu({ x: Math.round(event.clientX), y: Math.round(event.clientY), items: menu, signal });
+          },
+        });
+        cell.dataset.dockerContainer = "";
+        const col = document.createElement("div");
+        col.className = "col-12 col-sm-6 col-lg-4";
+        col.appendChild(cell);
+        grid.appendChild(col);
+      }
+      dockerListEl.appendChild(grid);
+    }
+    if (!data.containers.length && !data.stacks.length) {
+      dockerListEl.appendChild(dockerSheetRow({ icon: "ti-brand-docker", label: "No containers.", disabled: true }));
+    }
+  }
+
+  // The stack's logs are a terminal like a container's, so they land in the
+  // editor's own panel on a desktop and on the shell page otherwise.
+  async function composeLogsFromEditor(stack) {
+    const data = await dockerApi.composeLogs(name, stack.label, stack.label || name);
+    if (!data) return;
+    await openShellFromEditor(data);
+  }
+
+  async function dockerShellFromEditor(info, kind) {
+    const data = await dockerApi.openShell(info.id, kind, info.name);
+    if (!data) return;
+    await openShellFromEditor(data);
+  }
+
+  async function openShellFromEditor(data) {
+    if (termApplies()) {
+      closeSheet();
+      termActiveId = data.id;
+      if (!termOpen) await openTermPanel({ focus: true });
+      else await loadTerminals({ focus: true });
+      return;
+    }
+    if (data.url) dockerApi.navigate(data.url);
+  }
+
+  function openDockerSheet() {
+    openSheet("docker", "Docker");
+    adoptIntoSheet(dockerMenuEl);
+    renderDockerSheet();
+    void loadDocker();
   }
 
   function updateActionStates() {
@@ -3435,15 +3626,20 @@ async function init(root) {
 
   filesItem.addEventListener("click", openFilesSheet, { signal });
   settingsItem.addEventListener("click", openSettingsSheet, { signal });
+  dockerItem.addEventListener("click", openDockerSheet, { signal });
+  dockerStatusBtn.addEventListener("click", openDockerSheet, { signal });
+  termStatusBtn.addEventListener("click", toggleTermPanel, { signal });
   sheetCloseBtn.addEventListener("click", closeSheet, { signal });
   sheetEl.addEventListener("click", (e) => {
     if (e.target === sheetEl) closeSheet();
   }, { signal });
   // A row of an adopted menu did what it says; the sheet has served its purpose
   // and gets out of the way so the answer is visible. The settings keep their
-  // sheet, they are selects and a switch, not one-shot actions.
+  // sheet, they are selects and a switch, not one-shot actions; the docker
+  // sheet keeps it too, its rows open a menu or start a run the sheet then
+  // shows as busy.
   sheetBodyEl.addEventListener("click", (e) => {
-    if (sheetKind !== "settings" && e.target.closest(".dropdown-item")) closeSheet();
+    if (sheetKind !== "settings" && sheetKind !== "docker" && e.target.closest(".dropdown-item")) closeSheet();
   }, { signal });
 
   const projectMenuEl = root.querySelector(".editor-project-menu");
@@ -3632,6 +3828,8 @@ async function init(root) {
     const shown = termOpen && applies;
     termItem.hidden = !applies;
     termItem.setAttribute("aria-pressed", shown ? "true" : "false");
+    termStatusBtn.hidden = !applies;
+    termStatusBtn.setAttribute("aria-pressed", shown ? "true" : "false");
     termPanelEl.hidden = !shown;
     editor.measure();
   }
@@ -4005,6 +4203,9 @@ async function init(root) {
     if (project && project !== name) return;
     void loadTerminals();
   }, { signal });
+  onServerEvent("docker", () => {
+    void loadDocker();
+  }, { signal });
   document.addEventListener("pointerdown", (e) => {
     if (e.target instanceof Element) termFocusOwner = !!e.target.closest("[data-editor-term-panel]");
   }, { capture: true, signal });
@@ -4017,6 +4218,14 @@ async function init(root) {
       e.preventDefault();
       e.stopPropagation();
       toggleTermPanel();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "d") {
+      if (dockerItem.hidden) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (sheetKind === "docker") closeSheet();
+      else openDockerSheet();
       return;
     }
     if (!termOpen) return;
@@ -4067,6 +4276,7 @@ async function init(root) {
   wireTermSplitter();
   wireTermTabDrag();
   paintTermPanel();
+  void loadDocker();
   document.body.appendChild(termModalsHostEl);
   const urlTerminal = new URLSearchParams(window.location.search).get("terminal");
   if (urlTerminal && termApplies()) {

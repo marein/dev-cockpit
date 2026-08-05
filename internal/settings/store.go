@@ -50,6 +50,25 @@ func (s *Store) Set(key, value string) {
 	s.save(m)
 }
 
+// Delete takes the key out of the file, which is not the same as storing an
+// empty value: a setting whose empty value is a real choice reads as set
+// afterwards, and Lookup is what tells the two apart. Removing it is what puts
+// a setting back to "never answered", so whatever the code calls its default
+// applies again, including a default a later version changes.
+func (s *Store) Delete(key string) {
+	if key == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.load()
+	if _, ok := m[key]; !ok {
+		return
+	}
+	delete(m, key)
+	s.save(m)
+}
+
 func (s *Store) load() map[string]string {
 	m := map[string]string{}
 	statefile.Load(s.path, &m)

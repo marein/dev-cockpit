@@ -177,7 +177,7 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 	hm := func(name string) string { return filepath.Join(home, name) }
 	return []Section{
 		{ID: "settings", Group: "Cockpit", Label: "Settings",
-			Description: "General settings and the notification jingle.",
+			Description: "General settings, the configured compose actions and the notification jingle.",
 			Sources:     []Source{{Name: "settings.json", Path: st("settings.json")}}},
 		{ID: "push", Group: "Cockpit", Label: "Push channels",
 			Description: "Web push devices, webhooks, the VAPID keys and the base URL. Devices keep ringing without a new registration as long as Dev Cockpit keeps its address, under a new address every device must register again. The keys let anyone holding this file push to the devices, and an old installation left running rings the same phones twice.",

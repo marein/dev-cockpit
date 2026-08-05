@@ -177,7 +177,21 @@ func (s *Shells) Start(workdir, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.start(workdir, name, key)
+	return s.start(workdir, name, key, "")
+}
+
+// StartCommand launches a shell that types its first command itself: the
+// session runs command under the usual interactive login bash, so the full
+// profile applies and the pane behaves like a shell somebody typed it into.
+// The command should end in an exec of a shell when the pane is to survive
+// it; a restored shell always comes back as a plain bash, commands are not
+// part of the snapshot.
+func (s *Shells) StartCommand(workdir, name, command string) (string, error) {
+	key, err := terminal.NewKey()
+	if err != nil {
+		return "", err
+	}
+	return s.start(workdir, name, key, command)
 }
 
 // StartWithKey launches a shell under a caller-provided session key. The
@@ -188,10 +202,10 @@ func (s *Shells) StartWithKey(workdir, name, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.start(workdir, name, id)
+	return s.start(workdir, name, id, "")
 }
 
-func (s *Shells) start(workdir, name, key string) (string, error) {
+func (s *Shells) start(workdir, name, key, command string) (string, error) {
 	dir := strings.TrimSpace(workdir)
 	if dir == "" {
 		return "", errors.New("Shell directory is required.")
@@ -213,7 +227,7 @@ func (s *Shells) start(workdir, name, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := s.tmux.NewSession(key, dir, "", env); err != nil {
+	if err := s.tmux.NewSession(key, dir, command, env); err != nil {
 		return "", err
 	}
 	if err := s.tmux.SetOption(key, shellNameOption, label); err != nil {

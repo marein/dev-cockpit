@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/local/dev-cockpit/internal/detach"
 )
 
 // progressInterval is how often the register records how far the output file
@@ -21,7 +23,7 @@ const progressInterval = 5 * time.Second
 // is in the entry, and what lives here is only what following costs.
 type activeRun struct {
 	rec  RunRecord
-	proc process
+	proc detach.Process
 	done chan struct{}
 	// cancelled is set by a stop and read when the turn ends, so a killed
 	// process is reported as a stop and not as a coder that fell over.
@@ -98,7 +100,7 @@ func (s *Service) launch(runner Runner, req TurnRequest, rec RunRecord) (*active
 		remove(lock)
 		return nil, err
 	}
-	rec.PID = p.pid
+	rec.PID = p.PID()
 	s.runs.Save(rec)
 	return &activeRun{rec: rec, proc: p, done: make(chan struct{})}, nil
 }
@@ -135,7 +137,7 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 	var readErr error
 	go func() {
 		defer close(events)
-		err := tail(a.rec.Output, a.proc.alive, parser.Line, s.progress(a))
+		err := tail(a.rec.Output, a.proc.Alive, parser.Line, s.progress(a))
 		if err == nil {
 			err = parser.Finish()
 		}
@@ -196,7 +198,7 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 				if buf.Len()+len(ev.Text) > MaxResponseBytes {
 					if turnErr == nil {
 						turnErr = errors.New("The answer grew past the size this conversation can hold. The part received so far is kept.")
-						a.proc.kill()
+						a.proc.Kill()
 					}
 					continue
 				}
@@ -229,7 +231,7 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 			if turnErr == nil {
 				turnErr = errors.New("The turn hit its time limit before the coder answered.")
 			}
-			a.proc.kill()
+			a.proc.Kill()
 		}
 	}
 	if turnErr == nil {
@@ -454,18 +456,18 @@ func (s *Service) Recover() []AdoptedCheck {
 			s.orphan(rec, errors.New("The coder of this answer is not available any more."))
 			continue
 		}
-		alive := processAlive(rec.PID, rec.Lock)
+		alive := detach.Alive(rec.PID, rec.Lock)
 		if info, err := os.Stat(rec.Output); err != nil || info.Size() < rec.Processed {
 			// The answer this turn was writing is not in that file any more, so
 			// reading it would put somebody else's words into this message.
 			if alive {
-				killProcess(rec.PID, rec.Lock)
+				detach.Kill(rec.PID, rec.Lock)
 			}
 			s.orphan(rec, errTruncatedOutput)
 			continue
 		}
 
-		a := &activeRun{rec: rec, proc: process{pid: rec.PID, lock: rec.Lock}, done: make(chan struct{}), orphaned: !alive}
+		a := &activeRun{rec: rec, proc: detach.Adopt(rec.PID, rec.Lock), done: make(chan struct{}), orphaned: !alive}
 		a.cancelled.Store(rec.Cancelled)
 
 		s.mu.Lock()

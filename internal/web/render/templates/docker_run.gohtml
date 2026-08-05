@@ -1,0 +1,30 @@
+{{define "docker_run.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      {{template "project_breadcrumb.gohtml" .Project}}
+      <h2 class="page-title text-truncate mb-0">{{.Run.Action}}</h2>
+    </div>
+  </div>
+</div>
+
+<dc-docker-run class="d-block" output-url="{{.OutputURL}}" stop-url="{{.StopURL}}">
+  <div class="card">
+    <div class="card-body">
+      <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+        <span class="badge{{if .Run.Running}} bg-blue-lt{{else if .Failed}} bg-red-lt{{else}} bg-green-lt{{end}}" data-run-status>{{.Status}}</span>
+        {{if .Stack}}<span class="text-secondary small">{{.Stack}}</span>{{end}}
+        <span class="text-secondary small font-monospace text-break">{{.Run.Command}}</span>
+        <div class="ms-auto">
+          <button type="button" class="btn btn-sm btn-ghost-danger" data-run-stop{{if not .Run.Running}} hidden{{end}}>
+            <i class="ti ti-player-stop me-1"></i>Cancel
+          </button>
+        </div>
+      </div>
+      <pre class="mb-0 p-3 bg-body-tertiary border rounded overflow-auto" style="max-height: 60vh" data-run-output>{{.Output}}</pre>
+    </div>
+  </div>
+</dc-docker-run>
+{{template "app_end.gohtml" .}}
+{{end}}

@@ -1,11 +1,16 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/docker"
+	"github.com/local/dev-cockpit/internal/eventbus"
 	"github.com/local/dev-cockpit/internal/restore"
+	"github.com/local/dev-cockpit/internal/settings"
 	"github.com/local/dev-cockpit/internal/shell"
 	"github.com/local/dev-cockpit/internal/web/render"
 )
@@ -55,28 +60,250 @@ func (s *Server) handleSettingsGeneral(c *gin.Context) {
 	})
 }
 
-// handleSettingsGeneralSave stores one of the general settings, dispatched on
-// the hidden form field. The value is explicit ("on"/"off") instead of
-// deleting the key, so a later default flip cannot silently re-enable it for
-// users who turned it off. An empty form field stays routed to the restore
-// switch, which predates the dispatch.
-func (s *Server) handleSettingsGeneralSave(c *gin.Context) {
-	switch c.PostForm("form") {
-	case "shell-history":
-		value := "off"
-		if c.PostForm("history") == "on" {
-			value = "on"
+// handleSettingsDocker is docker's own settings page: the daemon to talk to and
+// the commands its menus offer. Both describe the same thing, what this cockpit
+// does with docker, so they sit together and not in the general drawer.
+func (s *Server) handleSettingsDocker(c *gin.Context) {
+	dockerState := s.docker.State()
+	dockerStatus := "No Docker host answers right now."
+	if dockerState.Available {
+		noun := "containers"
+		if len(dockerState.Containers) == 1 {
+			noun = "container"
 		}
-		s.settings.Set(shell.HistorySettingKey, value)
+		dockerStatus = fmt.Sprintf("Connected to %s (%d %s).", dockerState.Host, len(dockerState.Containers), noun)
+	}
+	c.HTML(http.StatusOK, "settings_docker.gohtml", render.SettingsDockerData{
+		Page:            s.page(c, "Settings", "settings"),
+		SettingsNav:     s.settingsNav("docker"),
+		DockerHost:      s.settings.Get(docker.HostSettingKey),
+		DockerStatus:    dockerStatus,
+		DockerConnected: dockerState.Available,
+		Actions:         render.DockerActionRows(s.composeActions()),
+		Icons:           render.DockerIcons(),
+		// The preview reads the same cache every page reads, so a rule says
+		// what it finds in the containers this machine runs at this moment.
+		LinkRules:   render.DockerLinkRuleRows(s.linkRules(), dockerState.Containers),
+		LinkSchemes: docker.LinkSchemes,
+	})
+}
+
+// handleSettingsDockerSave stores the host and the command list together, the
+// one form the page has.
+func (s *Server) handleSettingsDockerSave(c *gin.Context) {
+	host := strings.TrimSpace(c.PostForm("docker_host"))
+	if host != "" {
+		if err := docker.ValidateHost(host); err != nil {
+			s.redirectWithAnchoredFlash(c, "/settings/docker", "settings-docker", "",
+				"The Docker host must be a unix:// or tcp:// address.")
+			return
+		}
+	}
+	actions, err := composeActionsFromForm(c)
+	if err != nil {
+		s.redirectWithAnchoredFlash(c, "/settings/docker", "settings-docker", "", err.Error())
+		return
+	}
+	rules, err := linkRulesFromForm(c)
+	if err != nil {
+		s.redirectWithAnchoredFlash(c, "/settings/docker", "settings-docker", "", err.Error())
+		return
+	}
+	s.settings.Set(docker.HostSettingKey, host)
+	storeComposeActions(s.settings, actions)
+	storeLinkRules(s.settings, rules)
+	s.docker.Kick()
+	s.bus.Publish(eventbus.Event{Type: "docker"})
+	s.redirectWithAnchoredFlash(c, "/settings/docker", "settings-docker", "Settings saved.", "")
+}
+
+// handleSettingsGeneralSave stores the general settings. The page is one
+// form saving every section at once; the older per-section form values keep
+// answering so a tab loaded before the merge still saves what it carries.
+// Values are explicit ("on"/"off") instead of deleting the key, so a later
+// default flip cannot silently re-enable a switch somebody turned off.
+func (s *Server) handleSettingsGeneralSave(c *gin.Context) {
+	onOff := func(field string) string {
+		if c.PostForm(field) == "on" {
+			return "on"
+		}
+		return "off"
+	}
+	switch c.PostForm("form") {
+	case "general":
+		s.settings.Set(restore.SettingKey, onOff("restore"))
+		s.settings.Set(shell.HistorySettingKey, onOff("history"))
+		s.redirectWithAnchoredFlash(c, "/settings/general", "settings-general", "Settings saved.", "")
+	case "shell-history":
+		s.settings.Set(shell.HistorySettingKey, onOff("history"))
 		s.redirectWithAnchoredFlash(c, "/settings/general", "settings-shell-history", "Settings saved.", "")
 	default:
-		value := "off"
-		if c.PostForm("restore") == "on" {
-			value = "on"
-		}
-		s.settings.Set(restore.SettingKey, value)
+		s.settings.Set(restore.SettingKey, onOff("restore"))
 		s.redirectWithAnchoredFlash(c, "/settings/general", "settings-terminal-restore", "Settings saved.", "")
 	}
+}
+
+// storeComposeActions writes the edited list, unless it is exactly the default
+// one: saving the defaults unchanged says nothing that the absent key does not
+// already say, and storing them would freeze this install on today's list. So
+// that case takes the key out instead, the same thing the restore button does.
+func storeComposeActions(store *settings.Store, actions []docker.Action) {
+	if docker.IsDefault(actions) {
+		store.Delete(docker.ActionsSettingKey)
+		return
+	}
+	store.Set(docker.ActionsSettingKey, docker.EncodeActions(actions))
+}
+
+// storeLinkRules writes the edited rules, and it is the same decision as the
+// commands above: the defaults unchanged take the key out, so a later version
+// may improve them, and an emptied list is stored as such, which leaves the
+// menus with the published ports alone.
+func storeLinkRules(store *settings.Store, rules []docker.LinkRule) {
+	if docker.IsDefaultLinkRules(rules) {
+		store.Delete(docker.LinkRulesSettingKey)
+		return
+	}
+	store.Set(docker.LinkRulesSettingKey, docker.EncodeLinkRules(rules))
+}
+
+// linkRulesFromForm reads the link rules off the same form. A rule whose
+// pattern cannot be compiled is refused here rather than stored and skipped
+// later: the field is right in front of the person who typed it.
+func linkRulesFromForm(c *gin.Context) ([]docker.LinkRule, error) {
+	labels := c.PostFormArray("link_label")
+	patterns := c.PostFormArray("link_pattern")
+	schemes := c.PostFormArray("link_scheme")
+	unless := c.PostFormArray("link_unless")
+	out := []docker.LinkRule{}
+	for i := range labels {
+		rule := docker.LinkRule{
+			Label:   strings.TrimSpace(labels[i]),
+			Pattern: strings.TrimSpace(at(patterns, i)),
+			Scheme:  strings.TrimSpace(at(schemes, i)),
+			Unless:  strings.TrimSpace(at(unless, i)),
+		}
+		// A row somebody added and left alone is not a rule.
+		if rule.Label == "" && rule.Pattern == "" {
+			continue
+		}
+		if err := rule.Validate(); err != nil {
+			return nil, fmt.Errorf("%s: %s.", ruleName(rule, i), err)
+		}
+		out = append(out, rule)
+	}
+	return out, nil
+}
+
+// ruleName is what a complaint calls the row it is about: a rule has no name
+// of its own, the label it reads is what a person recognises it by.
+func ruleName(rule docker.LinkRule, index int) string {
+	if rule.Label != "" {
+		return rule.Label
+	}
+	return fmt.Sprintf("Link rule %d", index+1)
+}
+
+// composeActionsFromForm reads the compose commands off the docker settings
+// form, the empty list included: taking every row away is a real answer and
+// the surfaces then offer no buttons at all. Putting the defaults back is not
+// one of the things this saves, it is its own route (see
+// handleDockerActionsRestore): it clears the setting instead of writing rows,
+// and a submit button could not reach it anyway, pe.js builds its body from
+// the form alone and drops what the button carries.
+func composeActionsFromForm(c *gin.Context) ([]docker.Action, error) {
+	ids := c.PostFormArray("action_id")
+	icons := c.PostFormArray("action_icon")
+	labels := c.PostFormArray("action_label")
+	commands := c.PostFormArray("action_command")
+	timeouts := c.PostFormArray("action_timeout")
+	// The confirm rides in a hidden field per row, aligned with the other
+	// columns by position: a checkbox posts nothing while unchecked, and a
+	// value keyed on the id would follow the wrong row once a duplicate id is
+	// renamed.
+	confirms := c.PostFormArray("action_confirm")
+	used := map[string]bool{}
+	out := []docker.Action{}
+	for i := range ids {
+		action := docker.Action{
+			ID: strings.TrimSpace(ids[i]),
+			// The picker offers the vocabulary, so anything else is a hand
+			// written request: it takes the neutral icon rather than a name
+			// nothing can draw.
+			Icon:    docker.NormalizeIcon(strings.TrimSpace(at(icons, i))),
+			Label:   strings.TrimSpace(at(labels, i)),
+			Command: strings.TrimSpace(at(commands, i)),
+			Timeout: strings.TrimSpace(at(timeouts, i)),
+			Confirm: at(confirms, i) == "1",
+		}
+		// A row somebody added and left alone is not an entry.
+		if action.Label == "" && action.Command == "" {
+			continue
+		}
+		if action.Label == "" {
+			return nil, fmt.Errorf("Every compose action needs a label (%q has none).", action.Command)
+		}
+		argv, err := docker.SplitCommand(action.Command)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %s.", action.Label, err)
+		}
+		if len(argv) == 0 {
+			return nil, fmt.Errorf("%s: the command is empty.", action.Label)
+		}
+		if action.Timeout != "" {
+			if d, err := time.ParseDuration(action.Timeout); err != nil || d <= 0 {
+				return nil, fmt.Errorf("%s: the timeout must be a duration like 10m.", action.Label)
+			}
+		}
+		if action.ID == "" || used[action.ID] {
+			action.ID = freeActionID(action.Label, used)
+		}
+		used[action.ID] = true
+		out = append(out, action)
+	}
+	return out, nil
+}
+
+// at reads one row's field, tolerating a form that carries fewer of them than
+// it has rows.
+func at(list []string, i int) string {
+	if i < len(list) {
+		return list[i]
+	}
+	return ""
+}
+
+// freeActionID names a new entry after its label, which is what makes the
+// stored list readable, and counts up when that name is taken.
+func freeActionID(label string, used map[string]bool) string {
+	base := actionSlug(label)
+	id := base
+	for n := 2; used[id]; n++ {
+		id = fmt.Sprintf("%s-%d", base, n)
+	}
+	return id
+}
+
+func actionSlug(label string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(label) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		default:
+			if !dash && b.Len() > 0 {
+				b.WriteByte('-')
+				dash = true
+			}
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		return "action"
+	}
+	return slug
 }
 
 // editorSettingsPath is the editor settings page. It sits behind a tab so the

@@ -88,11 +88,30 @@ test. Update this file when a convention changes.
   build every call through `Workspace.CockpitCommand`, so a rename lands in one
   place. Names are object first and verb last (`coder-send-prompt`, `job-list`,
   `project-delete`), so the flat help list groups itself by object; `status` is
-  the one exception, it is about the whole cockpit. `run-turn` is hidden: it is
-  the mechanics a turn runs under, not something the assistant chooses to call,
-  and it takes the provider's argv unparsed, so it has no usable help.
+  the one exception, it is about the whole cockpit.
   What is not exempt is the group itself, `serve` and `hash-password`:
   those are what a person and a start script use.
+- **Work that has to outlive the cockpit goes through `internal/detach`.** One
+  package, no caller's subject in it: it starts a program in a session of its
+  own (`Setsid`), writes its output into files instead of pipes, and takes an
+  exclusive flock before anything starts that travels into the child as an
+  inherited descriptor. Whether that file can be locked is whether the run is
+  still going, so nothing trusts a process number, and `Alive`/`Kill` are what
+  a later process asks with. The program never runs directly: it runs under a
+  hold process, `dev-cockpit run-detached [--result <file>] [--timeout <d>] --
+  <program> ...`, a copy of this binary that holds the lock, enforces the
+  timeout (the server that asked may be gone long before it passes; it ends
+  the run's whole process group, itself included, with the result already on
+  disk, because the program's helpers inherit the lock and a survivor would
+  keep the run reading as alive) and writes the exit code down, because the
+  exit code of a process this server did not start is lost to it. That command
+  is hidden and nobody's interface, and it
+  takes everything behind the separator unparsed, which is also what lets a
+  test binary stand in for it (`detach.HoldArgs`). Two features hang on it: an
+  assistant turn (no timeout, no result, its parser diagnoses) and a compose
+  run (timeout and result, one output file for both streams). A run without a
+  result did not finish by its own decision, and that is not the same as a
+  zero.
 - **One live conversation, and jobs belong to the assistant.** `Service.Current`
   is the live conversation and `Service.Open` starts one when there is none;
   nothing that acts carries a conversation id. A watched job outlives the
@@ -306,6 +325,214 @@ test. Update this file when a convention changes.
   shortcut, notification, setting, or workflow), weigh it against `/docs` and
   update the relevant documentation section as part of the feature. Never
   leave user-facing behavior undocumented silently.
+- **Docker is one connection and a cache.** `internal/docker` keeps the single
+  daemon connection of the whole cockpit: one container list, then the event
+  stream refreshes the cache (debounced, exec events filtered out, they are
+  healthcheck noise), and every surface reads the cache, nothing asks the
+  daemon per request or per project. Host resolution order: the `docker-host`
+  setting (empty means not set), then `DOCKER_HOST`, then the current docker
+  context, then the known socket paths. Containers join a project through the
+  compose label `com.docker.compose.project.working_dir`, never through the
+  compose project name, which is a normalised folder name and collides for
+  same named directories. No reachable daemon is a normal state: the cache
+  answers empty and every docker surface stays away, without errors. A moved
+  cache publishes the `docker` SSE event (no payload, every client pulls its
+  own state). Container actions are JSON routes on `/docker/:id/...`, the id
+  is the daemon's and no project owns it; compose runs are project scoped
+  (`POST /projects/:name/docker/compose`, stack picked by its project
+  relative label), run in the stack's directory in the background like a backup
+  job, and report through a notification target per project
+  (`notify.DockerTarget(project)`, wording in `composeNews`, main.go, URL to
+  the run's output page). Per project and not one for all of docker, because a
+  target holds at most one unread entry: two projects brought down at the same
+  moment are two pieces of news and read as two, while one project's down and
+  up seconds apart still collapse into one. The resolver asks
+  `Service.LastComposeRun(project)` for the run the entry is about, never a
+  global "the newest run", which with two projects finishing together would
+  name the wrong one.
+  **What those runs are is configuration, not code.** The compose buttons are a
+  list in the settings store (`docker-compose-actions`, one JSON value,
+  `internal/docker/actions.go`): icon, label, command line, timeout, and
+  whether it asks first, in the order the buttons stand. That key has three
+  states and only `Lookup` can tell them apart, which is why nothing reads it
+  with `Get`: not set means `DefaultActions` (never written at first start, so
+  a later version may improve the list instead of finding a copy of today's in
+  everybody's settings), set means what is stored, and an empty list means
+  somebody took every button away, which stays that way and is what the menu's
+  restore entry is the way back from. That way back is one route,
+  `POST /docker/actions/restore`, taken by the docker menu and the settings
+  page alike, and it **removes** the key (`settings.Store.Delete`) rather than
+  writing the defaults into it; saving a form whose rows are exactly the
+  defaults does the same (`docker.IsDefault`, `storeComposeActions`). A stored
+  copy would read as answered and freeze the install on the list of the version
+  that wrote it, which is the one thing the absent state exists to prevent. A
+  submit button could not carry that anyway, pe.js builds a form's body from
+  the form alone and drops what the submitter carries.
+  **Where a browser link comes from is two sources, and the second one is
+  configuration too.** A container is reachable in two ways: through a
+  published port, which is docker's own truth and always offered, and through
+  a reverse proxy in front of it, which publishes nothing and routes by host
+  name. That host stands in a label of the container, because that is how the
+  proxy learned it, and the container list already carries the labels
+  (`Container.Labels`), so reading them costs no call. Which label and how to
+  read it is a list in the settings store, `docker-link-rules`
+  (`internal/docker/links.go`), with the same three states as the compose
+  actions and the same way back (`POST /docker/link-rules/restore`,
+  `IsDefaultLinkRules`, `storeLinkRules`): a rule is a label with `*` as the
+  wildcard, a regular expression over its value with named captures (`host`,
+  optionally `path` and `port`; every match in the value counts, and a host
+  capture may name several separated by commas), an optional scheme, and an
+  optional `label=value` that switches the rule off for a container. No type,
+  function, field or file in the engine is named after a proxy:
+  `DefaultLinkRules` carries the traefik router labels as data, because that
+  is the one convention wide enough to default to, and a second default
+  belongs there only if it is as safe. A convention carried in an environment
+  variable (nginx-proxy's `VIRTUAL_HOST`) is deliberately out of reach: it
+  would cost an inspect per container, and the whole integration is one list
+  call plus the event stream. `LinkMatcher` compiles the rules once per read
+  and is asked per container, `Links` answers the routes before the ports,
+  deduplicated and stably ordered, and a rule that does not validate is
+  skipped there and reported where it is edited.
+  **The scheme of a route is the browser's answer, never the server's.** A
+  rule that pins none yields a link without one, which the client opens
+  protocol relative, because what terminates TLS may sit above the proxy where
+  no label of the routed container can see it, and this server's
+  `X-Forwarded-Proto` is the proxy's own entrypoint, which says http for a
+  page the browser loaded over https. A published port keeps exactly what it
+  had: the scheme of the container port (443 is https) and
+  `window.location.hostname`. The two labels of the proxy's inner side,
+  `traefik.http.services.*.loadbalancer.server.port` and `.scheme`, are how
+  the proxy reaches the container inside its own network and must never reach
+  a browser link. One shape carries both kinds, `docker.Link` (empty host is
+  this page's host, empty scheme is this page's scheme, a route carries no
+  port), one client function turns it into menu entries (`linkItems` in
+  `@dc/docker`: "Open :18088" for a port, "Open host/path" for a route), and
+  every surface carries both, the chip's hidden `[data-docker-link]` spans,
+  the project menu, the editor's docker JSON and its sheet. The disabled ports
+  line in the container menu stays the published mappings alone. The rules are
+  edited under the commands on `/settings/docker`
+  (`#settings-docker-links`, `dc-docker-link-rules`), and a regex field needs
+  the two things that row gives it: what makes the pattern unusable, and what
+  the rule finds in the containers running right now, both out of the same
+  matcher and the same cache the pages read, so the preview cannot drift. An
+  entry's icon is one word out of `docker.IconNames` (`start`, `purge`, ...),
+  our own vocabulary for what a command does, and which picture a word gets is
+  one table in the render layer (`render.DockerIconClass`): the stored setting
+  never names a glyph, no client carries a second copy of the table (the
+  editor's JSON is resolved server side too), and the icon set can be swapped
+  without touching anybody's settings.
+  Docker has a settings section of its own, `/settings/docker`, which carries
+  the host, the command list and the link rules, and it is the only place any
+  of them is edited: the host field left `/settings/general` without a redirect and
+  without a compat branch, because none of this has shipped yet.
+  `Action.Resolve` is the one place an entry becomes a run, argv and timeout
+  together, and `startCompose` knows nothing else: the line is split by
+  `SplitCommand` (quotes group, a backslash escapes, nothing is expanded and
+  nothing is globbed, because no shell is ever involved) and a program written
+  as `./deploy.sh` is searched from the stack directory up to the project root
+  and handed on absolute, because `detach.Start` resolves the program before it
+  sets the working directory. Every run, whichever entry it came from, lands on
+  the same output page (`GET /projects/:name/docker/runs/:id`, JSON at
+  `/output`, `dc-docker-run` repaints it while it goes), reachable from the
+  stack's own menu entry and from the notification; cancelling goes at the hold
+  process (`POST .../stop` to `Service.CancelCompose`), never at the server that
+  asked, which may be long gone. A container shell is a normal cockpit shell
+  started with a
+  first command (`Shells.StartCommand`, `docker exec … ; exec bash -il`, same
+  for the log follower), so it lives in the tab strip, the quick nav and the
+  editor's terminal panel like any shell, falls back to a plain shell in the
+  compose directory when the container ends, and restore brings it back
+  commandless. The client menus are shared through `@dc/docker` (projects
+  page chips and the editor); deleting a project brings its stacks down
+  before the directory goes (`composeStacksToStop`, only the ones the daemon
+  shows containers for), with the one command no setting reaches: a fixed
+  `docker compose -p <compose project> down -v`, volumes included, and the
+  project name comes from the daemon's label, because compose otherwise derives
+  it from the directory name and clears nothing while reporting success. That is
+  also why that delete runs off the request: the
+  handler answers `deleting` at once, `projectDeletes` holds what is under way
+  and what a finished one failed with, the row renders as working out of that
+  state and disappears on the `projects` event. No daemon and no CLI means no
+  stacks, so such a host deletes exactly as before. **Both of those outlive a
+  restart, by different means, because they cost different things.** A compose
+  run is a detached process (`internal/detach`, timeout in the hold process,
+  combined output in one file) registered in `<state-dir>/docker/runs.json`
+  with its files under `docker/runs/<id>.{out,lock,result}`; `Service.Recover`
+  reads it at start, claims the directory of every run whose lock still holds
+  and waits it out, reports the ones that finished while nobody was listening
+  (their notification is the one a restart would otherwise have swallowed) and
+  writes down how it ended either way. Every finished run, adopted or not,
+  reports through the one `OnComposeDone` callback, never a per-call closure:
+  the closure of the process that asked is gone by then. A `Quiet` run only
+  speaks when it failed, which is what the deletion's own down is. A down that
+  could not run or that failed ends the deletion instead of being worked past:
+  its reason stands on the row, the directory stays, and the wait on a busy
+  directory is bounded by the running entry's own timeout
+  (`docker.ComposeDeadline`), never by a flat number. A finished
+  entry stays in the register with its outcome and its output file, the newest
+  `keptRuns` of them, which is what the output page still reads; only the lock
+  and the result, what the run needed while it ran, go with the end.
+  A project deletion instead remembers nothing but the intent: one flat file
+  `<state-dir>/project-deletes.json`, name to path, written by `start` and
+  removed by `finish` however it ended, so the file carries what is going on and
+  never history. The failure text stays in this process's map, so a name cannot
+  carry an old error into a project created under it later. `newProjectDeletes`
+  reads the file before the server answers anything, which is what keeps the row
+  from rendering naked, and `ResumeProjectDeletes` then runs every entry through
+  `deleteProjectWithCompose` again from the top: every step of it is idempotent,
+  which is why it needs no lock and no held process. It waits for the docker
+  connection first, because a cache that has not answered yet looks exactly like
+  a host without docker. The compose actions hang
+  on a compose button
+  next to the project row's actions (`[data-docker-project-menu]`, its stacks
+  ride as hidden child spans so the live row swap keeps them fresh, the
+  projects page swap replaces the button alongside the chip list), never on
+  a chip of their own. The editor reads
+  `GET /projects/:name/editor/docker` (JSON from the cache) for its statusbar
+  segment and its docker sheet (also on Ctrl+Shift+D), and on a desktop opens
+  container shells in its own terminal panel instead of navigating away. The
+  container chips carry a direct logs icon (`[data-docker-logs]`), and a plain
+  click or tap on a running container's chip opens a shell in it, the common
+  reason to reach for one; the menu stays where every row's menu is, on the
+  right click and the long press. That chip and the project's compose button
+  both ask `menuJustClosed()` before they open anything, the shared window that
+  makes a second click on a toggle close its menu instead of reopening it.
+  **Logs are a terminal, never a dialog**, and there is one entry for them:
+  `Logs` with the logs icon, opening what `Log terminal` used to
+  (`POST /docker/:id/logs-shell`). A whole stack has the same, project scoped
+  (`POST /projects/:name/docker/logs`, `docker.ComposeLogsCommand`), so nobody
+  has to find the container that is talking first. A stack's logs terminal is
+  called `docker logs` (`dockerLogsName`) and not after the project: it is every
+  service of one compose directory, and its first line says which. A
+  container's keeps its own name. Both menus, the projects
+  page's and the editor's, are built by one function in `@dc/docker`
+  (`projectMenuItems`): which container to reach first, because reaching
+  something is the usual reason to open it, then per stack its logs and the two
+  compose actions. **The project menu answers which container, a container's
+  own menu answers which address.** One entry per container, in the order the
+  containers already stand in: with exactly one address that entry is the
+  address, with several it names the container and how many, and opening it
+  opens the same menu again with that container's addresses and a Back entry
+  (`onDrill`, `openMenu` is reentrant and the editor's sheet repaints its
+  list). Everything in one flat list was a wall in front of the one entry
+  somebody wants, and choosing the first of a dozen host names for them is
+  exactly what the cockpit cannot know. The chip's own menu keeps every
+  address of that container directly, whoever long presses a container asked
+  about that container.
+  **A label never loses its tail**: an address is told apart by its end, so
+  `@dc/contextmenu` takes a `{head, tail}` label (plus a `title`) and renders
+  two spans, the head shrinking and ellipsizing and the tail never, which puts
+  the ellipsis in the middle without measuring text (`.dc-menu-label-head`,
+  `.dc-menu-label-tail`, and `.dc-context-menu` carries the `max-width` that
+  keeps the whole menu inside the viewport). **No surface renders the
+  daemon's status string**: it is a snapshot of the last cache refresh, which
+  only happens on connect and on container events, so an idle daemon serves an
+  uptime that is hours old. What a container is doing is the icon color, what
+  it offers is its addresses. In the editor the containers stand in a plain
+  bootstrap row
+  (`row-deck`, `col-12 col-sm-6 col-lg-4`, one, two or three per line by the
+  width, equal heights per line, no stylesheet of our own for it) and carry no
+  buttons of their own, everything is in the menu.
 - **Page headers:** one pattern everywhere: `page-header d-print-none mb-3`,
   inside it pretitle/breadcrumb plus `page-title`. Pages with a right side action
   wrap both in `d-flex align-items-center gap-2` with the title block as
@@ -331,7 +558,8 @@ free floating page scripts.
   https://github.com/marein/php-gaming-website with one local change: it applies a
   `Pe-Location` fragment to `scroll` and `pushState` (server sends `200` +
   `Pe-Location` with the anchor on a boosted redirect). Keep edits minimal and in its
-  style; **do not restructure it without asking.** `app.js` is the glue: loading bar, lazy custom element loader (by tag
+  style; **do not restructure it without asking.** `app.js` is the glue:
+  loading bar, lazy custom element loader (by tag
   name via the import map, so pages carry no `<script>` tags), `pe:*` hooks,
   `data-confirm`, and a `dc-build` head check that forces one native reload after a
   redeploy. **The head is never swapped, so anything the head carries goes stale
@@ -344,7 +572,8 @@ free floating page scripts.
   token in module scope, so copying that one would be a lie. A response without
   a head (a fragment) is left alone. It also fires a global `dc:navigated` event
   after every boosted navigation (in the `pe:*` succeed hook, so `location.hash`
-  is already pushed); elements that must react to the final URL listen for it. `data-no-pe` opts a link or form out
+  is already pushed); elements that must react to the final URL listen for it.
+  `data-no-pe` opts a link or form out
   into a native load (login, logout, downloads, JS owned forms). Framework scripts
   and toasts sit outside the swap and survive it.
 - **Shared modules:** `internal/web/static/js/dc/` (toast, dialog, contextmenu,
@@ -352,7 +581,8 @@ free floating page scripts.
   `@dc/<name>`. `@dc/contextmenu` renders a body-mounted `.dc-context-menu`
   dropdown at a point, one open menu at a time (Escape/arrow keys, outside
   pointerdown, outside wheel/touchmove, `dc:navigated` and the caller's abort
-  signal close it; programmatic scrolls must never close it). Row menus (right click plus touch
+  signal close it; programmatic scrolls must never close it). Row menus
+  (right click plus touch
   long press) go through its `wireRowMenus(container, rowSelector, openFor)`,
   never a hand-rolled press timer. It runs three paths because no single one
   covers every device: `contextmenu` (the mouse, and browsers raising it on a
@@ -441,7 +671,8 @@ free floating page scripts.
   islands carry `embedded`: rows fit the pane the way fullscreen fits the
   viewport (`MinTerminalRows` is 5, else the server clamps a low panel back
   up to 30), the size observer watches height too, a hidden pane does not
-  connect, and the terminal fullscreen keys stay off the page. Open state and active tab are
+  connect, and the terminal fullscreen keys stay off the page. Open state and
+  active tab are
   per project (`dc-editor-term-open:<project>`, `-active:`), the height per
   device. Inside the panel the terminal keys mirror the attach pages and
   Ctrl/Cmd+Shift+Enter passes through to the editor fullscreen; the panel
@@ -558,8 +789,13 @@ projects store) and fans out over SSE at `/events`, the app-wide server to
 client event bus (`internal/eventbus`, client module `@dc/events`). Every frame
 is a `{type,data}` envelope under the SSE event name `dc`, re-dispatched on
 `document` as a `dc:<type>` CustomEvent (subscribe via `onServerEvent`). On
-every connect the server sends a snapshot (unread state plus a bare `terminals`
-signal), then a `ping` frame every 15s; the client forces a reconnect when the
+every connect, and that means every reconnect, the server sends a snapshot of
+everything a page reads from this stream (unread state plus the bare
+`terminals`, `projects` and `docker` signals, the draft and assistant ones and
+the host reading), because a surface that asks once and then follows an event
+stands on what it saw before the socket went down until something happens to
+move: the editor's docker segment is exactly that. Then a `ping` frame every
+15s; the client forces a reconnect when the
 stream stays silent past 45s (interval timer plus visibilitychange), because a
 dead socket does not reliably fire an error. `Server.publishTerminals(project)`
 emits a `terminals` event on every live coder/shell change (create, stop,
@@ -572,13 +808,18 @@ stays pinned to the visible top). The tab strip skips the pull while hidden
 (coarse pointer, mobile navigates via the quick nav) or during a close/drag and
 flushes after; its refresh keeps the + menu and switcher current.
 `dc-project-list` swaps only the named project's
-`[data-sessions-body]` chip list and re-folds it; the unfold flag lives on
-that container, which stays in the DOM across swaps. The shell attach header (`dc-inline-rename`) re-pulls
+`[data-sessions-body]` chip lists and re-folds them; the unfold flags live on
+that container, which stays in the DOM across swaps, one per row. Its rows are
+two: the terminals with the two new chips, and below them the containers, each
+its own `[data-chip-fold]` with its own "+N", because a project with a dozen
+containers must not push its coders behind a fold and the other way round. The
+shell attach header (`dc-inline-rename`) re-pulls
 `GET /shells/:id/name` into heading and page title. A state dir belongs to one
 serve process, a second process on the same dir would miss live pushes. The
 `dc-notifications` element owns bell, badge, center, toasts, and the title
 counter; unread state is module scope because the element mounts once per
-header breakpoint, while `@dc/events` owns the one connection. Opening an attach page marks that
+header breakpoint, while `@dc/events` owns the one connection. Opening an
+attach page marks that
 target read. Entries always start unread; the dc-notifications client
 reconciles on every SSE event (including the initial one after a reconnect)
 and on visibilitychange: when the target's own page is open in a visible tab

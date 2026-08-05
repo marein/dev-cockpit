@@ -134,7 +134,11 @@ document.addEventListener("submit", async (event) => {
   if (form.dataset.ajaxDelete !== undefined || form.dataset.ajaxRefresh !== undefined) return;
   event.preventDefault();
   event.stopImmediatePropagation();
-  const ok = await confirm({ title: form.dataset.confirm, confirmText: form.dataset.confirmButton || "Confirm" });
+  const ok = await confirm({
+    title: form.dataset.confirm,
+    text: form.dataset.confirmText,
+    confirmText: form.dataset.confirmButton || "Confirm",
+  });
   if (!ok) return;
   if (form.closest("[data-no-pe]")) form.submit();
   else window.pe.submit(form);

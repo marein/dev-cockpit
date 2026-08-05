@@ -50,8 +50,9 @@ const hostSampleTTL = 10 * time.Second
 // each SSE frame is a {type, data} envelope sent under the event name "dc", which
 // the @dc/events client re-dispatches as a dc:<type> DOM event so any custom
 // element can subscribe. On connect, including every EventSource reconnect, it
-// pushes a snapshot of the current state (unread notifications plus a terminals
-// signal), so a freshly attached or a woken background page catches up in one shot.
+// pushes a snapshot of the current state (unread notifications, the terminals,
+// projects and docker signals, the draft and assistant ones, the host reading),
+// so a freshly attached or a woken background page catches up in one shot.
 func (s *Server) handleEventStream(c *gin.Context) {
 	w := c.Writer
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -78,6 +79,22 @@ func (s *Server) handleEventStream(c *gin.Context) {
 		return
 	}
 	if err := writeEnvelope(w, eventbus.Event{Type: "terminals"}); err != nil {
+		return
+	}
+	// The project set too: the terminals signal only reconciles the sections of
+	// the rows a page already has, so a row created or removed while the socket
+	// was down would stand there until the next navigation. A deletion that
+	// brings compose stacks down is exactly that case, it outlives its request
+	// and finishes into whatever stream is up then.
+	if err := writeEnvelope(w, eventbus.Event{Type: "projects"}); err != nil {
+		return
+	}
+	// And what docker shows: the cache only speaks when a container moves, so a
+	// surface that reads it on connect alone stands on what it saw before the
+	// socket went down until something happens to move. The editor's docker
+	// segment and an open docker sheet are exactly that, they ask once and then
+	// follow this event.
+	if err := writeEnvelope(w, eventbus.Event{Type: "docker"}); err != nil {
 		return
 	}
 	// A bare draft signal, no conversation named: an open composer pulls its own

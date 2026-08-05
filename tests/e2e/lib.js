@@ -21,7 +21,7 @@ function isCdnNoise(t) {
 // (only these always-on background paths) so a real access control failure on
 // an app route still gates.
 function isWebkitAbortNoise(t) {
-  return /\/(events|update\/check|editor\/terminals)\b.*due to access control checks/.test(t);
+  return /\/(events|update\/check|editor\/(terminals|docker))\b.*due to access control checks/.test(t);
 }
 function wirePage(page, bag) {
   bag.cdnNoise = bag.cdnNoise || [];
