@@ -2,7 +2,7 @@ package copilot
 
 import (
 	"path/filepath"
-	"sync"
+	"time"
 
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/filesystem"
@@ -19,8 +19,8 @@ type Coder struct {
 	controls     terminal.ControlMapper
 	// runner is probed on first use, see assistant.go. A CLI without the flags
 	// a turn needs loses the conversations only, never its terminal.
-	assistantOnce sync.Once
-	runner        *runner
+	assistantProbe *coder.CapabilityProbe
+	runner         *runner
 }
 
 func New() *Coder {
@@ -29,7 +29,7 @@ func New() *Coder {
 		home = "/root"
 	}
 	stateRoot := filepath.Join(home, ".copilot", "session-state")
-	return &Coder{
+	c := &Coder{
 		tools:        []string{"copilot"},
 		agents:       coder.NewStandardAgentRepository(filepath.Join(home, ".copilot", "agents"), ".agent.md"),
 		sessions:     &sessionRepository{stateRoot: stateRoot},
@@ -38,6 +38,8 @@ func New() *Coder {
 		runtime:      runtime{},
 		controls:     terminal.DefaultControlMapper(),
 	}
+	c.assistantProbe = coder.NewCapabilityProbe(c.probeAssistant, 10*time.Second)
+	return c
 }
 
 func (p *Coder) ID() string                                   { return "copilot" }

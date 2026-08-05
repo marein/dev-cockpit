@@ -21,19 +21,22 @@ type runner struct {
 }
 
 // AssistantRunner returns the conversation capability, or nil when the
-// installed copilot cannot do what a turn needs.
+// installed copilot cannot do what a turn needs. A pass holds for the process,
+// a miss is probed again after a pause, see coder.CapabilityProbe.
 func (p *Coder) AssistantRunner() assistant.Runner {
-	p.assistantOnce.Do(func() {
-		if missing := missingAssistantFlags(); len(missing) > 0 {
-			log.Printf("copilot conversations disabled, the installed CLI has no %s", strings.Join(missing, ", "))
-			return
-		}
-		p.runner = &runner{sessions: p.sessions}
-	})
-	if p.runner == nil {
+	if !p.assistantProbe.Passed() {
 		return nil
 	}
 	return p.runner
+}
+
+func (p *Coder) probeAssistant() bool {
+	if missing := missingAssistantFlags(); len(missing) > 0 {
+		log.Printf("copilot conversations disabled, the installed CLI has no %s", strings.Join(missing, ", "))
+		return false
+	}
+	p.runner = &runner{sessions: p.sessions}
+	return true
 }
 
 func missingAssistantFlags() []string {

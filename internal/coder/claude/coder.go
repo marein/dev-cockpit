@@ -2,7 +2,7 @@ package claude
 
 import (
 	"path/filepath"
-	"sync"
+	"time"
 
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/filesystem"
@@ -21,8 +21,8 @@ type Coder struct {
 	controls     terminal.ControlMapper
 	// runner is probed on first use, see assistant.go. A CLI without the flags
 	// a turn needs loses the conversations only, never its terminal.
-	assistantOnce sync.Once
-	runner        *runner
+	assistantProbe *coder.CapabilityProbe
+	runner         *runner
 }
 
 // New builds the claude coder. notifyInbox is the directory the injected
@@ -34,7 +34,7 @@ func New(notifyInbox string) *Coder {
 		home = "/root"
 	}
 	stateRoot := filepath.Join(home, ".claude", "projects")
-	return &Coder{
+	c := &Coder{
 		tools:        []string{"claude"},
 		agents:       coder.NewStandardAgentRepository(filepath.Join(home, ".claude", "agents"), ".md"),
 		sessions:     &sessionRepository{stateRoot: stateRoot},
@@ -43,6 +43,8 @@ func New(notifyInbox string) *Coder {
 		runtime:      runtime{notifyInbox: notifyInbox},
 		controls:     controlMapper{base: terminal.DefaultControlMapper()},
 	}
+	c.assistantProbe = coder.NewCapabilityProbe(c.probeAssistant, 10*time.Second)
+	return c
 }
 
 func (p *Coder) ID() string                                   { return "claude" }
