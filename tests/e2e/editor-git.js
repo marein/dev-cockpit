@@ -16,8 +16,8 @@ const { assert, sleep, BASE } = L;
 // Marks are computed in the browser out of the flat status list: a changed file
 // carries a letter at the end of its row, a folder carries a dot for the most
 // pressing thing under it (conflict > deleted > modified > renamed > added >
-// untracked, and untracked reads as an added file, the tooltip keeps the
-// difference), and both take their color from Tabler's text utilities so they
+// untracked; untracked carries its own cyan U, so it never reads as a staged
+// file), and both take their color from Tabler's text utilities so they
 // follow the OS theme. Gotchas:
 //   - a scratch project is not a repository, so this runner makes one through a
 //     shell in that project (git init plus one commit). There is no route that
@@ -385,7 +385,8 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       await page.click("[data-editor-refresh]");
       await page.waitForSelector('.editor-item[data-path="fresh.txt"][data-git-status="untracked"]', { timeout: 15000 });
       const fresh = await markOf(page, "fresh.txt");
-      assert(fresh.mark === "A", `untracked mark: ${fresh.mark}`);
+      assert(fresh.mark === "U", `untracked mark: ${fresh.mark}`);
+      assert(await page.$('.editor-item[data-path="fresh.txt"] .editor-item-name.text-cyan'), "an untracked file's name is not cyan");
       return "a new file arrives marked untracked";
     });
 
@@ -1059,6 +1060,29 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       assert(await runInShell("git merge --abort || git reset -q --hard\r") === 200, "the shell refused to end the merge");
       await page.waitForSelector('.editor-item[data-path="root.txt"][data-git-status]', { state: "detached", timeout: 30000 });
       return "unmerged reads as !, aborted in the shell";
+    });
+
+    // Untracked and staged are two different answers about a new file: git has
+    // never heard of the one and already holds the other. The letter and the
+    // color say which one a row is, on the phone too, where no tooltip exists.
+    await run("staging a new file turns the cyan U into the green A", async () => {
+      await openEditor(page);
+      await writeHere("staged.txt", "staged\n");
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector('.editor-item[data-path="staged.txt"][data-git-status="untracked"]', { timeout: 15000 });
+      const before = await markOf(page, "staged.txt");
+      assert(before.mark === "U", `untracked mark: ${before.mark}`);
+      assert(await page.$('.editor-item[data-path="staged.txt"] .editor-item-name.text-cyan'), "an untracked file's name is not cyan");
+
+      assert(await runInShell("git add staged.txt\r") === 200, "the shell refused to stage");
+      await page.waitForSelector('.editor-item[data-path="staged.txt"][data-git-status="added"]', { timeout: 30000 });
+      const after = await markOf(page, "staged.txt");
+      assert(after.mark === "A", `added mark: ${after.mark}`);
+      assert(await page.$('.editor-item[data-path="staged.txt"] .editor-item-name.text-green'), "a staged file's name is not green");
+
+      assert(await runInShell(`git ${author} commit -qm staged\r`) === 200, "the shell refused the commit");
+      await page.waitForSelector('.editor-item[data-path="staged.txt"][data-git-status]', { state: "detached", timeout: 30000 });
+      return "U in cyan while unknown, A in green once staged, gone with the commit";
     });
 
     // ---- comparing two files -------------------------------------------------

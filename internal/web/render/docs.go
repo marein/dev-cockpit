@@ -315,7 +315,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Git marks",
-					Desc:  `In a git repository a changed file carries a letter, on its tree row and on its tab: <span class="text-green">A</span> added, <span class="text-yellow">M</span> modified, <span class="text-red">D</span> deleted, <span class="text-azure">R</span> renamed, <span class="text-red">!</span> conflicted. A folder carries a dot for the most pressing change under it, the tooltip says how many lines came and went, and a change somebody else makes arrives on its own. The editor only reads git.`,
+					Desc:  `In a git repository a changed file carries a letter, on its tree row and on its tab: <span class="text-green">A</span> added, <span class="text-cyan">U</span> untracked, <span class="text-yellow">M</span> modified, <span class="text-red">D</span> deleted, <span class="text-azure">R</span> renamed, <span class="text-red">!</span> conflicted. A folder carries a dot for the most pressing change under it, the tooltip says how many lines came and went, and a change somebody else makes arrives on its own. The editor only reads git.`,
 				},
 				{
 					Title: "Changed lines in the gutter",

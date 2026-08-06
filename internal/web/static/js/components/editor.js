@@ -36,7 +36,7 @@ const GIT_MARKS = {
   modified: { rank: 3, cls: "text-yellow", mark: "M", label: "Modified" },
   renamed: { rank: 2, cls: "text-azure", mark: "R", label: "Renamed" },
   added: { rank: 1, cls: "text-green", mark: "A", label: "Added" },
-  untracked: { rank: 0, cls: "text-green", mark: "A", label: "Untracked" },
+  untracked: { rank: 0, cls: "text-cyan", mark: "U", label: "Untracked" },
 };
 const GIT_MARK_CLASSES = Object.values(GIT_MARKS).map((m) => m.cls);
 
