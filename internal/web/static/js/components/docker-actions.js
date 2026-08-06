@@ -1,6 +1,10 @@
 import { openMenu } from "@dc/contextmenu";
 import { restoreActions } from "@dc/docker";
 
+const DRAG_THRESHOLD = 6;
+const EDGE_ZONE = 56;
+const EDGE_STEP = 10;
+
 class DockerActions extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -42,6 +46,108 @@ class DockerActions extends HTMLElement {
       const value = box.closest("[data-action-row]")?.querySelector("[data-action-confirm]");
       if (value) value.value = box.checked ? "1" : "0";
     }, { signal: this.ac.signal });
+    this.wireDrag();
+  }
+
+  wireDrag() {
+    if (!this.rows) return;
+    const signal = this.ac.signal;
+    let drag = null;
+    const docY = (clientY) => clientY + window.scrollY;
+    const update = () => {
+      if (!drag || !drag.active) return;
+      const dy = docY(drag.lastClientY) - drag.startDocY;
+      const center = drag.centers[drag.fromIndex] + dy;
+      let toIndex = 0;
+      for (let i = 0; i < drag.centers.length; i++) {
+        if (i !== drag.fromIndex && drag.centers[i] < center) toIndex += 1;
+      }
+      drag.toIndex = toIndex;
+      drag.row.style.transform = `translateY(${dy}px)`;
+      drag.els.forEach((el, i) => {
+        if (el === drag.row) return;
+        let shift = 0;
+        if (i > drag.fromIndex && i <= drag.toIndex) shift = -drag.step;
+        else if (i < drag.fromIndex && i >= drag.toIndex) shift = drag.step;
+        el.style.transform = shift ? `translateY(${shift}px)` : "";
+      });
+    };
+    const tick = () => {
+      if (!drag || !drag.active) return;
+      let delta = 0;
+      if (drag.lastClientY < EDGE_ZONE) delta = -EDGE_STEP;
+      else if (drag.lastClientY > window.innerHeight - EDGE_ZONE) delta = EDGE_STEP;
+      if (delta) {
+        const before = window.scrollY;
+        window.scrollBy(0, delta);
+        if (window.scrollY !== before) update();
+      }
+      drag.raf = window.requestAnimationFrame(tick);
+    };
+    const clear = () => {
+      if (!drag) return;
+      if (drag.active) {
+        window.cancelAnimationFrame(drag.raf);
+        this.classList.remove("dc-actions-dragging");
+        drag.row.classList.remove("dc-action-drag");
+        for (const el of drag.els) el.style.transform = "";
+      }
+      drag = null;
+    };
+    this.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || drag) return;
+      const grip = event.target.closest("[data-action-grip]");
+      if (!grip || !this.contains(grip)) return;
+      const row = grip.closest("[data-action-row]");
+      if (!row) return;
+      drag = {
+        row,
+        grip,
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        lastClientY: event.clientY,
+        active: false,
+        raf: 0,
+      };
+    }, { signal });
+    this.addEventListener("pointermove", (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      if (!drag.active) {
+        if (Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY) < DRAG_THRESHOLD) return;
+        drag.active = true;
+        drag.els = [...this.rows.querySelectorAll("[data-action-row]")];
+        drag.fromIndex = drag.els.indexOf(drag.row);
+        drag.toIndex = drag.fromIndex;
+        const rect = drag.row.getBoundingClientRect();
+        drag.step = rect.height + parseFloat(getComputedStyle(drag.row).marginBottom) || rect.height;
+        drag.centers = drag.els.map((el) => {
+          const box = el.getBoundingClientRect();
+          return box.top + box.height / 2 + window.scrollY;
+        });
+        drag.startDocY = docY(event.clientY);
+        this.classList.add("dc-actions-dragging");
+        drag.row.classList.add("dc-action-drag");
+        try {
+          drag.grip.setPointerCapture(event.pointerId);
+        } catch (error) {
+          void error;
+        }
+        drag.raf = window.requestAnimationFrame(tick);
+      }
+      event.preventDefault();
+      drag.lastClientY = event.clientY;
+      update();
+    }, { passive: false, signal });
+    this.addEventListener("pointerup", (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const done = drag;
+      clear();
+      if (!done.active || done.toIndex === done.fromIndex) return;
+      const others = done.els.filter((el) => el !== done.row);
+      this.rows.insertBefore(done.row, others[done.toIndex] || null);
+    }, { signal });
+    this.addEventListener("pointercancel", clear, { signal });
   }
 
   disconnectedCallback() {

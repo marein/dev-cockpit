@@ -20,7 +20,9 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // [data-project-deleting] while it works), and docker's own settings section
 // (/settings/docker: the host field with its connection line plus the compose
 // commands under #settings-docker-actions, one row per entry with the argv it
-// splits into, the icon picked from a fixed vocabulary, add and remove, the
+// splits into, the icon picked from a fixed vocabulary, add and remove, a
+// touch drag on the grip handle reordering the rows with the save keeping the
+// new order and the compose menu following it, the
 // empty list and the way back; the host field is gone from /settings/general,
 // docker is unreleased and moves without a redirect).
 //
@@ -687,6 +689,60 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     const addedArgv = await added.locator("code").allTextContents();
     // The quotes group and disappear, which is what the preview is for.
     assert(addedArgv.join("|") === "docker|compose|logs|-f|--tail|5", `the added argv reads "${addedArgv.join("|")}"`);
+  });
+
+  await run("a grip drag reorders the commands and the save keeps the new order", async () => {
+    await page.goto(`${BASE}/settings/docker`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    const labels = () => page.$$eval('#settings-docker-actions [data-action-row] input[name="action_label"]', (els) => els.map((el) => el.value));
+    const before = await labels();
+    assert(before.length >= 2, `expected at least two rows, got ${before.length}`);
+    // The element upgrades lazily after the load, and a drag dispatched before
+    // its listeners exist moves nothing.
+    await page.waitForFunction(() => !!document.querySelector("dc-docker-actions")?.rows, null, { timeout: 4000 });
+    // A finger on the grip handle, the way the quick nav and the editor sheet
+    // reorder on touch: the first move spends the threshold, the rest carries
+    // the whole distance past the next row's center.
+    await page.evaluate(async () => {
+      const rows = [...document.querySelectorAll("#settings-docker-actions [data-action-row]")];
+      const grip = rows[0].querySelector("[data-action-grip]");
+      const r = grip.getBoundingClientRect();
+      const x = Math.round(r.left + r.width / 2);
+      const y0 = Math.round(r.top + r.height / 2);
+      const lift = 8;
+      const raw = rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top + 10;
+      const send = (type, y) => grip.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerId: 51, pointerType: "touch", isPrimary: true,
+        clientX: x, clientY: y, buttons: type === "pointerup" ? 0 : 1,
+      }));
+      send("pointerdown", y0);
+      send("pointermove", y0 + lift);
+      await new Promise((done) => setTimeout(done, 16));
+      for (let i = 1; i <= 10; i++) {
+        send("pointermove", Math.round(y0 + lift + (raw * i) / 10));
+        await new Promise((done) => setTimeout(done, 16));
+      }
+      send("pointerup", y0 + lift + raw);
+    });
+    const after = await labels();
+    assert(after[0] === before[1] && after[1] === before[0], `the drag did not swap the first two rows: ${after.join(", ")}`);
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "domcontentloaded" }),
+      page.click('#settings-docker button[type="submit"]:not([name])'),
+    ]);
+    const saved = await labels();
+    assert(saved[0] === before[1] && saved[1] === before[0], `the saved order came back as ${saved.join(", ")}`);
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    await composeBtn(page).click();
+    await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+    // Exact labels: the menu also carries "Output of <label>" for the newest
+    // run, which a substring match would take for the command itself.
+    const items = (await page.locator(".dc-context-menu button").allTextContents()).map((t) => t.trim());
+    const first = items.indexOf(before[1]);
+    const second = items.indexOf(before[0]);
+    assert(first >= 0 && second >= 0 && first < second, `the menu does not follow the stored order: ${items.join(" | ")}`);
+    await closeMenu(page);
   });
 
   await run("a configured command runs, shows its output live, and cancels", async () => {

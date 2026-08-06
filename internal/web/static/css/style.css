@@ -2756,3 +2756,18 @@ dc-notify-volume { display: block; max-width: 24rem; }
   opacity: 0;
 }
 
+.dc-action-grip {
+  touch-action: none;
+  cursor: grab;
+}
+dc-docker-actions.dc-actions-dragging [data-action-row] {
+  transition: transform 0.12s ease;
+}
+dc-docker-actions.dc-actions-dragging [data-action-row].dc-action-drag {
+  position: relative;
+  z-index: 2;
+  transition: none;
+  background: var(--tblr-bg-surface);
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.35);
+}
+

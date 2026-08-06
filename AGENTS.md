@@ -357,7 +357,11 @@ test. Update this file when a convention changes.
   **What those runs are is configuration, not code.** The compose buttons are a
   list in the settings store (`docker-compose-actions`, one JSON value,
   `internal/docker/actions.go`): icon, label, command line, timeout, and
-  whether it asks first, in the order the buttons stand. That key has three
+  whether it asks first, in the order the buttons stand. On the settings page
+  that order is the row order: each row carries a grip handle
+  (`data-action-grip`) that drags it, touch included, the rows are full of
+  inputs so the grip is the one drag surface, and the save persists the order
+  because the handler reads the rows in form order. That key has three
   states and only `Lookup` can tell them apart, which is why nothing reads it
   with `Get`: not set means `DefaultActions` (never written at first start, so
   a later version may improve the list instead of finding a copy of today's in
