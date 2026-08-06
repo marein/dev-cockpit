@@ -156,3 +156,19 @@ func TestTheInstructionsNameTheAssistantFilesFolder(t *testing.T) {
 		"easy to find and easy to clean up",
 	)
 }
+
+// A file in the workspace reaches the user as a relative link: the render
+// layer resolves it against the workspace and the extension decides whether
+// it embeds, plays or downloads, while an absolute path renders as a dead
+// link. Pinned so the assistant keeps handing files over instead of naming
+// paths.
+func TestTheInstructionsTellHowToHandOverAFile(t *testing.T) {
+	pinned(t,
+		"Link such a file with a relative path to hand it over",
+		"`[the patch](assistant-files/x.patch)` becomes a download",
+		"`![shot](assistant-files/shot.png)` shows the picture",
+		"a video or an audio file plays in the answer",
+		"The extension decides which, the link syntax does not",
+		"An absolute path is only a path, it reaches nobody",
+	)
+}
