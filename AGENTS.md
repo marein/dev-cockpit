@@ -349,7 +349,11 @@ test. Update this file when a convention changes.
   up seconds apart still collapse into one. The resolver asks
   `Service.LastComposeRun(project)` for the run the entry is about, never a
   global "the newest run", which with two projects finishing together would
-  name the wrong one.
+  name the wrong one. A failed run resolves as urgent news
+  (`TargetInfo.Urgent`), which the notify dedupe window never swallows as a
+  follow-up of a fresh success, and opening a run's output page marks the
+  project's docker target read (`handleDockerRun`), the way an attach page
+  reads a terminal's news.
   **What those runs are is configuration, not code.** The compose buttons are a
   list in the settings store (`docker-compose-actions`, one JSON value,
   `internal/docker/actions.go`): icon, label, command line, timeout, and
@@ -424,7 +428,9 @@ test. Update this file when a convention changes.
   Docker has a settings section of its own, `/settings/docker`, which carries
   the host, the command list and the link rules, and it is the only place any
   of them is edited: the host field left `/settings/general` without a redirect and
-  without a compat branch, because none of this has shipped yet.
+  without a compat branch, a move made before any of this had shipped. The
+  docker integration has shipped since, so its routes, form fields and config
+  keys are under the no breaking changes rule like everything else.
   `Action.Resolve` is the one place an entry becomes a run, argv and timeout
   together, and `startCompose` knows nothing else: the line is split by
   `SplitCommand` (quotes group, a backslash escapes, nothing is expanded and
@@ -749,6 +755,10 @@ A notification means one thing: the coder or shell has news (turn finished,
 question asked, permission wanted, shell command done). Events are
 deliberately not classified further, a target holds at most one unread entry,
 and follow-up signals within 30s of a fresh unread entry are swallowed.
+News the resolver marked urgent (`TargetInfo.Urgent`, today a failed compose
+run) passes that window and replaces the stale unread entry: right after a
+success it says the opposite of the fresh entry, so it is no follow-up. The
+decision stays with the resolver, notify itself classifies nothing.
 News from a target somebody else is already looking at is written read from
 the start (`Service.SetSilent`, set from the job store in `main.go` like
 `SetSignal`, because notify classifies nothing): while the assistant steers a

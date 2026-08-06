@@ -522,6 +522,10 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 			// run in the same moment.
 			if run, ok := dockerService.LastComposeRun(project); ok {
 				info.Title, info.Detail = composeNews(run)
+				// A failure is no follow-up: right after a success the fresh
+				// unread entry says everything went through, and the dedupe
+				// window would swallow the one word the user is owed.
+				info.Urgent = run.Failure != ""
 				// The output of the run is what somebody wants after such a
 				// notification, not the row it ran for.
 				if run.ID != "" {

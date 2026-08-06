@@ -51,6 +51,14 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // goes. The runner edits that list on the settings page and puts the defaults
 // back, so it needs its own throwaway instance like every other one.
 //
+// The run's news: opening a run's page marks the project's docker target read
+// (server side on the GET, like the backup page), and a failed run is never
+// swallowed by the notify dedupe window as a follow-up of a fresh success,
+// it replaces it as the target's one unread entry. The output block is
+// Tabler's own pre, a dark surface with light text in both themes, measured
+// as a real luminance gap under both color schemes: a half override once
+// kept the light text on a light ground and was unreadable in light mode.
+//
 // Fixture the host prepares before the run (see README): the instance's
 // projects dir holds a project named DOCKER_PROJECT (default "dockere2e")
 // whose directory carries a compose file with one service "web" publishing
@@ -109,6 +117,27 @@ async function postAs(page, path, body) {
     });
     return { ok: res.ok, status: res.status };
   }, { path, body });
+}
+
+// notifications reads the center's list from inside the page. The polling
+// around it stays on the Node side: Playwright's waitForFunction does not
+// await an async predicate, the returned promise is always truthy and the
+// wait resolves at once, which is how a check that "waited" this way once
+// raced the very run it had just started.
+async function notifications(page) {
+  return page.evaluate(async () => {
+    const res = await fetch("/notifications", { headers: { Accept: "application/json" } });
+    return (await res.json()).notifications || [];
+  });
+}
+
+async function waitNotify(page, test, timeout, what) {
+  const t0 = Date.now();
+  for (;;) {
+    if (test(await notifications(page))) return;
+    if (Date.now() - t0 > timeout) throw new Error(`timed out waiting for ${what}`);
+    await sleep(1000);
+  }
 }
 
 // apiClient is a logged in request client of its own, outside every browser
@@ -438,6 +467,36 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     assert(/Exit status 0/.test(status), `the finished run reads "${status}"`);
     assert(/docker compose up -d/.test(await page.locator("dc-docker-run").textContent()), "the page does not name the command line");
     assert(await page.locator("[data-run-stop]:not([hidden])").count() === 0, "a finished run still offers Cancel");
+    // The output is readable in both themes: Tabler's own pre, a dark block
+    // with light text, so the gap between the text and what it stands on is
+    // large under either scheme. The broken state was a light background kept
+    // under the light text, a gap of almost nothing in light mode.
+    const contrastGap = async (scheme) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForFunction((want) => {
+        const theme = document.documentElement.getAttribute("data-bs-theme");
+        return want === "dark" ? theme === "dark" : theme !== "dark";
+      }, scheme, { timeout: 4000 });
+      return page.evaluate(() => {
+        const pre = document.querySelector("[data-run-output]");
+        const lum = (v) => {
+          const c = (v.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
+          return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        };
+        let el = pre;
+        let bg = getComputedStyle(el).backgroundColor;
+        while (el && (bg === "rgba(0, 0, 0, 0)" || bg === "transparent")) {
+          el = el.parentElement;
+          bg = el ? getComputedStyle(el).backgroundColor : "rgb(255, 255, 255)";
+        }
+        return Math.abs(lum(getComputedStyle(pre).color) - lum(bg));
+      });
+    };
+    const light = await contrastGap("light");
+    assert(light > 60, `the output has no contrast in light mode (gap ${Math.round(light)})`);
+    const dark = await contrastGap("dark");
+    assert(dark > 60, `the output has no contrast in dark mode (gap ${Math.round(dark)})`);
+    await page.emulateMedia({ colorScheme: null });
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
   });
@@ -701,12 +760,9 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
       ]);
       assert(both.every((r) => r.ok), `the two runs answered ${both.map((r) => r.status).join(", ")}`);
       // Two unread targets, which is what a shared target could never show.
-      await page.waitForFunction(async () => {
-        const res = await fetch("/notifications", { headers: { Accept: "application/json" } });
-        const data = await res.json();
-        const unread = (data.notifications || []).filter((n) => !n.read && n.targetId.startsWith("docker:"));
-        return unread.length >= 2;
-      }, null, { timeout: 90000, polling: 1000 });
+      await waitNotify(page, (list) =>
+        list.filter((n) => !n.read && n.targetId.startsWith("docker:")).length >= 2,
+        90000, "two unread compose entries");
 
       await page.locator(".dc-notify-bell:visible").first().click();
       await page.waitForSelector(".dc-notify-menu.show", { timeout: 6000 });
@@ -723,6 +779,52 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
       assert(hrefs.some((h) => h.includes(`/projects/${scratch}/docker/runs/`)), `the scratch entry links at ${JSON.stringify(hrefs)}`);
       await page.keyboard.press("Escape");
       await postAs(page, "/notifications/read", { all: "1" });
+    } finally {
+      await L.deleteProject(page, scratch);
+      await page.waitForSelector(`#project-${scratch}`, { state: "detached", timeout: 180000 }).catch(() => {});
+    }
+  });
+
+  await run("a failed run rings through the window, and its page reads the news away", async () => {
+    const scratch = `dcfail-${Date.now().toString(36)}`;
+    await L.createProject(page, scratch);
+    try {
+      const target = `docker:${scratch}`;
+      const wrote = await postAs(page, `/projects/${scratch}/editor/file`, { path: "compose.yaml", content: SCRATCH_COMPOSE });
+      assert(wrote.ok, `writing the scratch compose file answered ${wrote.status}`);
+      await postAs(page, "/notifications/read", { all: "1" });
+      const up = await postAs(page, `/projects/${scratch}/docker/compose`, { stack: "", action: "up" });
+      assert(up.ok, `compose up on the scratch project answered ${up.status}`);
+      // The success entry first: it proves the run is over (the file is free
+      // to break) and opens the 30s window the failure has to ring through.
+      await waitNotify(page, (list) =>
+        list.some((n) => !n.read && n.targetId === target && /finished/i.test(n.title || "")),
+        90000, "the success entry");
+
+      // A compose file nobody can parse fails the next run within seconds.
+      const broke = await postAs(page, `/projects/${scratch}/editor/file`, { path: "compose.yaml", content: "services: {\n" });
+      assert(broke.ok, `breaking the compose file answered ${broke.status}`);
+      const fail = await postAs(page, `/projects/${scratch}/docker/compose`, { stack: "", action: "up" });
+      assert(fail.ok, `the failing compose up answered ${fail.status}`);
+      // The failure is not swallowed as a follow-up of the fresh success: it
+      // replaces it as the project's one unread entry.
+      await waitNotify(page, (list) => {
+        const unread = list.filter((n) => !n.read && n.targetId === target);
+        return unread.length === 1 && /failed/i.test(unread[0].title || "");
+      }, 60000, "the failure entry");
+
+      // Opening the run's page is seeing the outcome: the project's docker
+      // news reads itself, like an attach page does for a terminal.
+      const entry = (await notifications(page)).find((n) => !n.read && n.targetId === target);
+      const href = (entry || {}).url || "";
+      assert(href.includes(`/projects/${scratch}/docker/runs/`), `the failure links at "${href}"`);
+      await page.goto(`${BASE}${href}`, { waitUntil: "domcontentloaded" });
+      await dismissUpdate(page);
+      await page.waitForSelector("dc-docker-run", { timeout: 8000 });
+      assert(/exit status|failed/i.test(await page.locator("[data-run-status]").textContent()), "the failed run does not say how it ended");
+      await waitNotify(page, (list) => !list.some((n) => !n.read && n.targetId === target), 8000, "the news to read itself");
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await dismissUpdate(page);
     } finally {
       await L.deleteProject(page, scratch);
       await page.waitForSelector(`#project-${scratch}`, { state: "detached", timeout: 180000 }).catch(() => {});

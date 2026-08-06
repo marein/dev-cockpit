@@ -273,6 +273,10 @@ func (s *Server) handleDockerRun(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// Being here is seeing a run's outcome, so the project's compose
+	// notification reads itself, like opening an attach page does for a
+	// terminal.
+	s.notifier.MarkTargetRead(notify.DockerTarget(p.Name))
 	c.HTML(http.StatusOK, "docker_run.gohtml", render.DockerRunData{
 		Page:      s.page(c, run.Action, "projects"),
 		Project:   p.Name,

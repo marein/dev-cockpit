@@ -183,6 +183,39 @@ func TestComposeNewsIsDedupedPerProject(t *testing.T) {
 	}
 }
 
+// A failed run right after a success is not a follow-up: the resolver marks
+// such news urgent, the dedupe window lets it through, and it replaces the
+// stale success as the target's one unread entry.
+func TestUrgentNewsPassesTheDedupeWindow(t *testing.T) {
+	urgent := false
+	s := NewService(filepath.Join(t.TempDir(), "notifications.json"), func(targetID string) TargetInfo {
+		if urgent {
+			return TargetInfo{Name: "Compose", Title: "Compose failed.", Urgent: true}
+		}
+		return TargetInfo{Name: "Compose", Title: "Compose finished."}
+	})
+	published := collect(t, s)
+
+	s.Add(DockerTarget("one"))
+	urgent = true
+	s.Add(DockerTarget("one"))
+
+	list := s.List(0)
+	if len(list) != 1 || list[0].Title != "Compose failed." {
+		t.Fatalf("want the failure as the target's one entry, got %+v", list)
+	}
+	if list[0].Read {
+		t.Fatalf("want the failure unread, got %+v", list[0])
+	}
+	if s.UnreadCount() != 1 {
+		t.Fatalf("want one unread, got %d", s.UnreadCount())
+	}
+	events := published()
+	if len(events) != 2 || events[1].Added == nil || events[1].Added.Title != "Compose failed." {
+		t.Fatalf("want the failure to ring with its own Added, got %+v", events)
+	}
+}
+
 // A compose target names a project and a run, not a terminal, so the terminal
 // restore's prune cannot know it and must not take it.
 func TestPruneKeepsComposeNews(t *testing.T) {

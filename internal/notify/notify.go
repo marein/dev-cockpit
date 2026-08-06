@@ -20,7 +20,9 @@ const maxStored = 100
 
 // dedupeWindow swallows follow-up signals for a target that already has a
 // fresh unread entry: a question dialog and the turn end can ring within
-// seconds of each other, and one piece of news deserves one toast.
+// seconds of each other, and one piece of news deserves one toast. News the
+// resolver marked urgent passes it, see TargetInfo.Urgent: what says the
+// opposite of the entry standing there is no follow-up.
 const dedupeWindow = 30 * time.Second
 
 // Notification is one entry in the notification center: this target (a
@@ -82,6 +84,11 @@ type TargetInfo struct {
 	Detail  string
 	Project string
 	URL     string
+	// Urgent marks news the dedupe window must not swallow: a compose run
+	// that failed right after one that went through says the opposite of the
+	// fresh unread entry standing there, and that word is owed. The resolver
+	// decides at ingest, this service still classifies nothing.
+	Urgent bool
 }
 
 // Resolver looks up display context for a target.
@@ -191,7 +198,7 @@ func (s *Service) Add(targetID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.load()
-	if !silent {
+	if !silent && !info.Urgent {
 		for _, existing := range list {
 			if !existing.Read && existing.TargetID == targetID && s.now().UTC().Sub(existing.CreatedAt) < dedupeWindow {
 				return
