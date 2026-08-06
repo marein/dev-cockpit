@@ -1744,6 +1744,76 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   padding: 0.25rem 0;
   -webkit-overflow-scrolling: touch;
 }
+.editor-commit {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.editor-commit-list {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+  padding: 0.25rem 0;
+  -webkit-overflow-scrolling: touch;
+}
+.editor-commit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.2rem 0.5rem;
+  line-height: 1.4;
+}
+.editor-commit-row > .form-check-input {
+  margin-top: 0.2rem;
+}
+.editor-commit-row:hover {
+  background: var(--tblr-bg-surface-secondary);
+}
+.editor-commit-open {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--tblr-body-color);
+  text-align: left;
+  font-size: inherit;
+}
+.editor-commit-line {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.editor-commit-path {
+  font-size: 0.75rem;
+  color: var(--tblr-secondary);
+  overflow-wrap: anywhere;
+}
+.editor-commit-grouprow:not(:first-child) {
+  margin-top: 0.35rem;
+}
+.editor-commit-grouprow .editor-commit-line {
+  flex: 1 1 auto;
+}
+.editor-commit-open:disabled {
+  color: var(--tblr-body-color);
+  opacity: 1;
+}
+.editor-commit-error {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 9rem;
+  overflow-y: auto;
+}
+.editor-commit-message {
+  font-family: var(--tblr-font-monospace);
+  resize: none;
+}
 .editor-item {
   display: flex;
   align-items: center;

@@ -35,12 +35,53 @@
             {{end}}
           </div>
         </div>
+        <button type="button" class="btn btn-sm btn-ghost-secondary p-1" data-editor-commit-toggle aria-pressed="false" aria-label="Commit changes" title="Commit changes" hidden>
+          <i class="ti ti-git-commit"></i>
+        </button>
         <button type="button" class="btn btn-sm btn-ghost-secondary p-1" data-editor-refresh aria-label="Refresh files" title="Refresh">
           <i class="ti ti-refresh"></i>
         </button>
       </div>
       <div class="editor-tree" data-editor-tree role="tree">
         <div class="text-secondary small p-3">Loading…</div>
+      </div>
+      <div class="editor-commit" data-editor-commit hidden>
+        <div class="d-flex align-items-center gap-2 px-2 py-2 border-bottom">
+          <span class="small fw-medium text-truncate flex-fill">Commit to <span class="fw-bold" data-editor-commit-branch></span></span>
+          <button type="button" class="btn btn-sm btn-ghost-secondary p-1 flex-shrink-0" data-editor-commit-group aria-pressed="false" aria-label="Group by folder" title="Group by folder">
+            <i class="ti ti-folders"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-ghost-secondary p-1 flex-shrink-0" data-editor-commit-close aria-label="Back to the files" title="Back to the files">
+            <i class="ti ti-x"></i>
+          </button>
+        </div>
+        <label class="d-flex align-items-center gap-2 m-0 px-2 py-1 border-bottom small editor-commit-all">
+          <input class="form-check-input m-0 flex-shrink-0" type="checkbox" data-editor-commit-all aria-label="Select all changes">
+          <span class="text-secondary" data-editor-commit-summary></span>
+        </label>
+        <div class="editor-commit-list" data-editor-commit-list></div>
+        <div class="border-top p-2 d-flex flex-column gap-2">
+          <div class="alert alert-danger small mb-0 py-1 px-2 editor-commit-error" data-editor-commit-error hidden></div>
+          <textarea class="form-control form-control-sm editor-commit-message" data-editor-commit-message rows="3" placeholder="Commit message" aria-label="Commit message" spellcheck="false"></textarea>
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <label class="form-check m-0 small">
+              <input class="form-check-input" type="checkbox" data-editor-commit-amend>
+              <span class="form-check-label">Amend</span>
+            </label>
+            <span class="small text-warning ms-auto" data-editor-commit-length></span>
+            <div class="btn-group flex-shrink-0 ms-auto">
+              <button type="button" class="btn btn-sm btn-primary" data-editor-commit-button disabled>
+                <i class="ti ti-git-commit me-1"></i>Commit
+              </button>
+              <button type="button" class="btn btn-sm btn-primary dropdown-toggle dropdown-toggle-split" data-editor-commit-more data-bs-toggle="dropdown" aria-expanded="false" aria-label="More ways to commit" disabled></button>
+              <div class="dropdown-menu dropdown-menu-end">
+                <button type="button" class="dropdown-item" data-editor-commit-push>
+                  <i class="ti ti-upload me-2"></i>Commit and push
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="editor-drop-hint" data-editor-drop-hint hidden></div>
       <input type="file" data-editor-upload-input multiple hidden>
@@ -96,6 +137,9 @@
               <button type="button" class="dropdown-item" data-editor-save-all disabled>
                 <i class="ti ti-device-floppy me-2"></i>Save all
               </button>
+              <button type="button" class="dropdown-item" data-editor-commit-item hidden>
+                <i class="ti ti-git-commit me-2"></i>Commit<span class="badge bg-secondary-lt ms-2" data-editor-commit-item-count></span>
+              </button>
             </div>
           </div>
           <a class="btn btn-sm btn-icon btn-ghost-secondary editor-back" href="{{.Return}}" aria-label="Back" title="Back">
@@ -141,6 +185,8 @@
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd> close tab</span>
             <span class="mx-1 d-none d-md-inline">·</span>
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> fullscreen</span>
+            <span class="mx-1 d-none d-md-inline">·</span>
+            <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>K</kbd> commit</span>
             <span class="mx-1 d-none d-md-inline">·</span>
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>J</kbd> terminal</span>
             <span class="mx-1 d-none d-md-inline">·</span>

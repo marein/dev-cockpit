@@ -20,8 +20,11 @@ const { assert, sleep, BASE } = L;
 // file), and both take their color from Tabler's text utilities so they
 // follow the OS theme. Gotchas:
 //   - a scratch project is not a repository, so this runner makes one through a
-//     shell in that project (git init plus one commit). There is no route that
-//     writes git, and there never will be: the editor only reads.
+//     shell in that project (git init plus one commit). The one route that
+//     writes git is the commit (GET/POST .../git/commit, the GET carries the
+//     branch and the last message): a pathspec commit of exactly the checked
+//     rows, untracked paths through intent-to-add, staged work on other paths
+//     untouched. Init, add, merge and everything else stay with the shell.
 //   - the "git" event refreshes the status, not the file tree. A file created
 //     elsewhere has no row yet, so the live check changes a file that is
 //     already rendered, and the new-file case goes through the refresh button,
@@ -884,8 +887,9 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
         await other.close().catch(() => {});
       }
     };
-    // The shell this runner created is how the repository is written: git add
-    // is a write, and the editor has no route for it and never will.
+    // The shell this runner created is how the repository is driven: init,
+    // add and merge stay with the shell, the editor's one write is the commit
+    // route and it is covered by its own checks below.
     const runInShell = (command) => page.evaluate(([href, cmd]) => {
       const token = document.querySelector('meta[name="csrf-token"]').content;
       return fetch(`${href}/input`, {
@@ -1083,6 +1087,333 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       assert(await runInShell(`git ${author} commit -qm staged\r`) === 200, "the shell refused the commit");
       await page.waitForSelector('.editor-item[data-path="staged.txt"][data-git-status]', { state: "detached", timeout: 30000 });
       return "U in cyan while unknown, A in green once staged, gone with the commit";
+    });
+
+    // ---- committing from the editor ------------------------------------------
+    //
+    // The commit view takes the tree's place in the column. Everything here
+    // starts by taking every row out and picking back exactly what the check
+    // is about, because earlier checks leave changes of their own behind and
+    // committing those would pull the ground from under them.
+    const openCommitView = async (target) => {
+      await target.waitForSelector("[data-editor-commit-toggle]:not([hidden])", { timeout: 15000 });
+      await target.click("[data-editor-commit-toggle]");
+      await target.waitForSelector("[data-editor-commit]:not([hidden])", { timeout: 10000 });
+    };
+    const pickOnly = async (path) => {
+      await page.waitForSelector(`.editor-commit-row[data-path="${path}"]`, { timeout: 15000 });
+      await page.setChecked("[data-editor-commit-all]", false);
+      await page.setChecked(`.editor-commit-row[data-path="${path}"] input[type="checkbox"]`, true);
+    };
+    // A count comes out of the shell into a file the editor can read; the
+    // file is a worktree change while it exists, which is exactly why every
+    // commit here picks its rows instead of taking everything. The old file
+    // goes first, or a second count could read the first one's number.
+    const shellCount = async (command) => {
+      await post(page, `${editorBase}/delete`, { path: "count.txt" }).catch(() => {});
+      assert(await runInShell(`${command} > count.txt\r`) === 200, "the shell refused the count");
+      const deadline = Date.now() + 20000;
+      while (Date.now() < deadline) {
+        const data = await page.evaluate((b) =>
+          fetch(`${b}/file?path=count.txt`, { headers: { Accept: "application/json" } })
+            .then((r) => (r.ok ? r.json() : null)).catch(() => null), editorBase);
+        const count = data && parseInt(data.content, 10);
+        if (count > 0) return count;
+        await sleep(500);
+      }
+      throw new Error("the count never arrived");
+    };
+    const revCount = () => shellCount("git rev-list --count HEAD");
+
+    await run("commit: the panel lists the changes and a partial commit takes only the checked rows", async () => {
+      await openEditor(page);
+      await writeHere("commit-a.txt", "aaa\n");
+      await writeHere("commit-b.txt", "bbb\n");
+      assert(await post(page, `${editorBase}/mkdir`, { path: "deep" }) === 200, "mkdir deep failed");
+      assert(await post(page, `${editorBase}/mkdir`, { path: "deep/nested" }) === 200, "mkdir deep/nested failed");
+      assert(await post(page, `${editorBase}/mkdir`, { path: "chain" }) === 200, "mkdir chain failed");
+      assert(await post(page, `${editorBase}/mkdir`, { path: "chain/one" }) === 200, "mkdir chain/one failed");
+      await writeHere("deep/one.txt", "one\n");
+      await writeHere("deep/nested/two.txt", "two\n");
+      await writeHere("chain/one/two.txt", "chained\n");
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector('.editor-item[data-path="commit-a.txt"][data-git-status="untracked"]', { timeout: 15000 });
+
+      // The editor menu carries the entry with the count of changes.
+      await page.click("[data-editor-menu]");
+      await page.waitForSelector("[data-editor-menu-list].show", { timeout: 4000 });
+      assert(await page.locator("[data-editor-commit-item]").isVisible(), "the menu does not offer the commit");
+      assert(/\d/.test(await page.locator("[data-editor-commit-item-count]").textContent()), "the menu entry carries no count");
+      await page.keyboard.press("Escape");
+      await sleep(300);
+
+      await openCommitView(page);
+      await page.waitForSelector("[data-editor-tree]", { state: "hidden", timeout: 5000 });
+      assert(await page.$("[data-editor-commit-toggle].active"), "the toggle does not read as active while the view is open");
+      // The branch arrives with the info request, after the panel is up.
+      await page.waitForFunction(() =>
+        (document.querySelector("[data-editor-commit-branch]").textContent || "").trim() !== "", null, { timeout: 10000 });
+      const branch = (await page.locator("[data-editor-commit-branch]").textContent()).trim();
+      assert(branch === "master", `the panel commits to "${branch}"`);
+      const marks = await page.evaluate(() => Object.fromEntries(
+        [...document.querySelectorAll(".editor-commit-row")]
+          .filter((row) => row.dataset.path)
+          .map((row) => [row.dataset.path, row.querySelector(".editor-commit-open span").textContent])));
+      assert(marks["commit-a.txt"] === "U" && marks["commit-b.txt"] === "U", `the rows carry ${JSON.stringify(marks)}`);
+      // A whole new folder is not one collapsed line: its files list one by
+      // one, so a single one of them can be picked.
+      assert(!("deep/" in marks), "an untracked folder is one collapsed row");
+      assert(marks["deep/one.txt"] === "U" && marks["deep/nested/two.txt"] === "U",
+        `the folder's files are not listed one by one: ${JSON.stringify(marks)}`);
+
+      // Grouped is the default and reads the way an IDE's directory tree
+      // does: folders first and files after them on every level, a subfolder
+      // nested under its parent labelled with only what its path adds, a
+      // folder chain that only hands down to one subfolder merged into one
+      // row, a folder's checkbox covering its whole subtree and reading
+      // mixed while only part of it is picked, its count the subtree's. The
+      // folders button switches to the flat list the rest of this check
+      // works in.
+      await page.waitForSelector('.editor-commit-grouprow[data-dir="deep/nested"]', { timeout: 5000 });
+      const grouped = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll(".editor-commit-row")];
+        return {
+          firstIsGroup: rows.length > 0 && rows[0].classList.contains("editor-commit-grouprow"),
+          groups: rows.filter((r) => r.dataset.dir != null).map((r) => r.dataset.dir),
+          order: rows.map((r) => r.dataset.dir || r.dataset.path),
+          nestedHasPath: !!document.querySelector('.editor-commit-row[data-path="deep/nested/two.txt"] .editor-commit-path'),
+          nestedLabel: document.querySelector('.editor-commit-grouprow[data-dir="deep/nested"] .text-truncate').textContent,
+          chainLabel: (document.querySelector('.editor-commit-grouprow[data-dir="chain/one"] .text-truncate') || {}).textContent,
+          deepCount: document.querySelector('.editor-commit-grouprow[data-dir="deep"] .ms-auto').textContent,
+        };
+      });
+      assert(grouped.firstIsGroup, `the list does not lead with a folder: ${JSON.stringify(grouped.order)}`);
+      assert(grouped.groups.includes("deep") && grouped.groups.includes("deep/nested"),
+        `the groups are ${JSON.stringify(grouped.groups)}`);
+      assert(!grouped.groups.includes("chain"), "a folder that only hands down got a row of its own");
+      assert(grouped.chainLabel === "chain/one", `the chain reads as "${grouped.chainLabel}"`);
+      assert(grouped.nestedLabel === "nested", `the nested group is labelled "${grouped.nestedLabel}"`);
+      assert(grouped.deepCount === "2", `the parent's count speaks for ${grouped.deepCount} instead of its subtree`);
+      assert(!grouped.nestedHasPath, "a grouped file still carries its own path line");
+      assert(grouped.order.indexOf("deep/one.txt") > grouped.order.indexOf("deep/nested/two.txt"),
+        `a folder's files do not follow its subfolders: ${JSON.stringify(grouped.order)}`);
+      await page.setChecked('.editor-commit-grouprow[data-dir="deep/nested"] input', false);
+      assert(!(await page.locator('.editor-commit-row[data-path="deep/nested/two.txt"] input').isChecked()),
+        "dropping the group left its file picked");
+      assert(await page.evaluate(() =>
+        document.querySelector('.editor-commit-grouprow[data-dir="deep"] input').indeterminate),
+      "a partly picked subtree does not read as mixed on the folder above");
+      await page.setChecked('.editor-commit-row[data-path="deep/nested/two.txt"] input', true);
+      assert(await page.locator('.editor-commit-grouprow[data-dir="deep/nested"] input').isChecked(),
+        "picking the file back did not reach its group row");
+      await page.setChecked('.editor-commit-grouprow[data-dir="deep"] input', false);
+      const subtree = await page.evaluate(() => [
+        document.querySelector('.editor-commit-row[data-path="deep/one.txt"] input').checked,
+        document.querySelector('.editor-commit-row[data-path="deep/nested/two.txt"] input').checked,
+      ]);
+      assert(subtree.join() === "false,false", `dropping the parent left its subtree at ${subtree.join()}`);
+      await page.setChecked('.editor-commit-grouprow[data-dir="deep"] input', true);
+      await page.click("[data-editor-commit-group]");
+      await page.waitForSelector(".editor-commit-grouprow", { state: "detached", timeout: 5000 });
+      assert(await page.$('.editor-commit-row[data-path="deep/nested/two.txt"] .editor-commit-path'),
+        "the flat list does not carry the full path under the name");
+
+      await pickOnly("commit-a.txt");
+      const summary = await page.locator("[data-editor-commit-summary]").textContent();
+      assert(/^1 of \d+ changes$/.test(summary.trim()), `the summary says "${summary}"`);
+      assert(await page.locator("[data-editor-commit-button]").isDisabled(), "the button is offered without a message");
+      await page.fill("[data-editor-commit-message]", "editor commit one");
+      await page.click("[data-editor-commit-button]");
+      await page.waitForSelector('.editor-commit-row[data-path="commit-a.txt"]', { state: "detached", timeout: 20000 });
+      assert(await page.locator('.editor-commit-row[data-path="commit-b.txt"]').count() === 1, "the unchecked row went into the commit");
+      assert((await page.inputValue("[data-editor-commit-message]")) === "", "the message box did not empty");
+
+      const changes = await gitChanges(page, project);
+      assert(!changes.worktree.some((e) => e.path === "commit-a.txt"), "the picked file is still a change");
+      assert(changes.worktree.some((e) => e.path === "commit-b.txt" && e.worktree === "?"), "the unchecked file is no longer untracked");
+      const atHead = await page.evaluate((b) =>
+        fetch(`${b}/git/file?path=commit-a.txt`, { headers: { Accept: "application/json" } }).then((r) => r.json()), editorBase);
+      assert(atHead.exists && /aaa/.test(atHead.content), `HEAD does not hold the committed file: ${JSON.stringify(atHead)}`);
+
+      await page.click("[data-editor-commit-close]");
+      await page.waitForSelector("[data-editor-tree]", { state: "visible", timeout: 5000 });
+      await page.waitForSelector("[data-editor-commit]", { state: "hidden", timeout: 5000 });
+      assert(!(await page.$("[data-editor-commit-toggle].active")), "the toggle still reads as active after the close");
+      assert(await post(page, `${editorBase}/delete`, { path: "deep" }) === 200, "the folder could not be removed");
+      assert(await post(page, `${editorBase}/delete`, { path: "chain" }) === 200, "the chain folder could not be removed");
+      return "grouped tree by default, flat behind the switch, one picked, one left standing";
+    });
+
+    await run("commit: unsaved work on a picked file is saved into the commit, Ctrl+K and Ctrl+Enter drive it", async () => {
+      await openEditor(page);
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector('.editor-item[data-path="commit-b.txt"]', { timeout: 15000 });
+      await page.click('.editor-item[data-path="commit-b.txt"]');
+      await page.waitForSelector('.editor-tab[data-path="commit-b.txt"]', { timeout: 10000 });
+      await diffReady(page);
+      await page.locator("[data-editor-surface] .cm-content").first().click({ force: true });
+      await page.keyboard.press("Control+End");
+      await page.keyboard.type("TYPED");
+      await page.waitForSelector(".editor-tab.dirty", { timeout: 8000 });
+
+      await page.keyboard.press("Control+k");
+      await page.waitForSelector("[data-editor-commit]:not([hidden])", { timeout: 10000 });
+      await pickOnly("commit-b.txt");
+      await page.fill("[data-editor-commit-message]", "editor commit two");
+      await page.keyboard.press("Control+Enter");
+      await page.waitForSelector('.editor-commit-row[data-path="commit-b.txt"]', { state: "detached", timeout: 20000 });
+      assert(!(await page.$(".editor-tab.dirty")), "the buffer still reads as unsaved");
+      const atHead = await page.evaluate((b) =>
+        fetch(`${b}/git/file?path=commit-b.txt`, { headers: { Accept: "application/json" } }).then((r) => r.json()), editorBase);
+      assert(/TYPED/.test(atHead.content), `the unsaved words never reached the commit: ${JSON.stringify(atHead.content)}`);
+      await page.keyboard.press("Control+k");
+      await page.waitForSelector("[data-editor-commit]", { state: "hidden", timeout: 5000 });
+      return "typed, never saved by hand, and in HEAD";
+    });
+
+    await run("commit: an amend borrows the last message and rewrites the tip instead of adding one", async () => {
+      await openEditor(page);
+      const before = await revCount();
+      await writeHere("commit-b.txt", "bbb\nTYPED\namended\n");
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector('.editor-item[data-path="commit-b.txt"][data-git-status="modified"]', { timeout: 15000 });
+
+      await openCommitView(page);
+      await pickOnly("commit-b.txt");
+      await page.waitForFunction(() => !document.querySelector("[data-editor-commit-amend]").disabled, null, { timeout: 10000 });
+      await page.setChecked("[data-editor-commit-amend]", true);
+      await page.waitForFunction(() => document.querySelector("[data-editor-commit-message]").value.length > 0, null, { timeout: 8000 });
+      const borrowed = await page.inputValue("[data-editor-commit-message]");
+      assert(borrowed === "editor commit two", `the amend starts from "${borrowed}"`);
+      await page.fill("[data-editor-commit-message]", "editor commit two, amended");
+      await page.click("[data-editor-commit-button]");
+      await page.waitForSelector('.editor-commit-row[data-path="commit-b.txt"]', { state: "detached", timeout: 20000 });
+
+      const info = await page.evaluate((b) =>
+        fetch(`${b}/git/commit`, { headers: { Accept: "application/json" } }).then((r) => r.json()), editorBase);
+      assert(info.lastMessage === "editor commit two, amended", `the tip says "${info.lastMessage}"`);
+      const after = await revCount();
+      assert(after === before, `the amend went from ${before} to ${after} commits`);
+      assert(await post(page, `${editorBase}/delete`, { path: "count.txt" }) === 200, "the count file could not be removed");
+      await page.click("[data-editor-commit-close]");
+      return `still ${after} commits, the tip reworded`;
+    });
+
+    await run("commit: push rides behind the arrow, a refused push leaves the commit standing", async () => {
+      await openEditor(page);
+      await writeHere("push-a.txt", "pa\n");
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector('.editor-item[data-path="push-a.txt"]', { timeout: 15000 });
+      // The arrow toggles: a click while the menu is somehow still up closes
+      // it again, so this keeps clicking until the entry really shows.
+      const pickPush = async () => {
+        const deadline = Date.now() + 10000;
+        while (!(await page.locator("[data-editor-commit-push]").isVisible())) {
+          assert(Date.now() < deadline, "the push entry never came up");
+          await page.click("[data-editor-commit-more]");
+          await sleep(400);
+        }
+        await page.click("[data-editor-commit-push]");
+      };
+      await openCommitView(page);
+      await pickOnly("push-a.txt");
+      await page.fill("[data-editor-commit-message]", "push without a destination");
+      await pickPush();
+      // No remote: the commit lands, the push refusal stands beside it.
+      await page.waitForSelector('.editor-commit-row[data-path="push-a.txt"]', { state: "detached", timeout: 20000 });
+      await page.waitForSelector("[data-editor-commit-error]:not([hidden])", { timeout: 15000 });
+      const said = await page.locator("[data-editor-commit-error]").textContent();
+      assert(/push/.test(said) && /destination|upstream/i.test(said), `the refusal says "${said}"`);
+      assert((await page.inputValue("[data-editor-commit-message]")) === "", "the commit took the message, the box must be empty");
+      // The arrow gets disabled by the very click, which used to keep
+      // bootstrap from closing the menu behind it.
+      assert(await page.evaluate(() =>
+        !document.querySelector("[data-editor-commit-push]").closest(".dropdown-menu").classList.contains("show")),
+      "the menu stayed open after Commit and push");
+
+      const remote = `/tmp/zzgit-remote-${tag}.git`;
+      assert(await runInShell(
+        `git init -q --bare ${remote} && git remote add origin ${remote} && git push -q -u origin master\r`,
+      ) === 200, "the shell refused the remote setup");
+      const before = await shellCount(`git --git-dir ${remote} rev-list --count --all`);
+      await writeHere("push-a.txt", "pa2\n");
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector('.editor-commit-row[data-path="push-a.txt"]', { timeout: 15000 });
+      await pickOnly("push-a.txt");
+      await page.fill("[data-editor-commit-message]", "push with a destination");
+      await pickPush();
+      await page.waitForSelector('.editor-commit-row[data-path="push-a.txt"]', { state: "detached", timeout: 30000 });
+      const after = await shellCount(`git --git-dir ${remote} rev-list --count --all`);
+      assert(after === before + 1, `the upstream went from ${before} to ${after}`);
+      assert(await page.evaluate(() => document.querySelector("[data-editor-commit-error]").hidden),
+        "a delivered push left a refusal standing");
+
+      assert(await post(page, `${editorBase}/delete`, { path: "count.txt" }) === 200, "the count file could not be removed");
+      assert(await runInShell(`git remote remove origin && rm -rf ${remote}\r`) === 200, "the shell refused the cleanup");
+      await page.click("[data-editor-commit-close]");
+      return "refused without a destination, delivered with one";
+    });
+
+    await run("commit: git's refusal stands in the panel and a conflicted row cannot be picked", async () => {
+      await openEditor(page);
+      assert(await runInShell(
+        "git checkout -q -b clash2 && printf 'root\\nclash two\\n' > root.txt && "
+        + `git add -A && git ${author} commit -qm clash2 && `
+        + "git checkout -q master && printf 'root\\nmaster two\\n' > root.txt && "
+        + `git add -A && git ${author} commit -qm master2 && `
+        + `git ${author} merge clash2; true\r`,
+      ) === 200, "the shell refused the merge setup");
+      const deadline = Date.now() + 60000;
+      let unmerged = false;
+      while (Date.now() < deadline) {
+        const changes = await gitChanges(page, project);
+        unmerged = !!changes.repo && changes.worktree.some((e) => e.index === "U" || e.worktree === "U");
+        if (unmerged) break;
+        await sleep(1000);
+      }
+      assert(unmerged, "the merge left no unmerged path");
+      // The probe goes onto the disk only now: written before the shell's
+      // branch dance it would ride into the clash2 commit, and the abort at
+      // the end would take it away with the merge.
+      await writeHere("refused.txt", "probe\n");
+      await page.click("[data-editor-refresh]");
+      await openCommitView(page);
+
+      await page.waitForSelector('.editor-commit-row[data-path="root.txt"]', { timeout: 15000 });
+      assert(await page.locator('.editor-commit-row[data-path="root.txt"] input[type="checkbox"]').isDisabled(),
+        "a conflicted row offers its checkbox");
+      await pickOnly("refused.txt");
+      await page.fill("[data-editor-commit-message]", "must not land");
+      await page.click("[data-editor-commit-button]");
+      await page.waitForSelector("[data-editor-commit-error]:not([hidden])", { timeout: 20000 });
+      const said = await page.locator("[data-editor-commit-error]").textContent();
+      assert(/partial commit/i.test(said), `the panel says "${said}" instead of git's own words`);
+      assert((await page.inputValue("[data-editor-commit-message]")) === "must not land", "a refused commit ate the message");
+
+      assert(await runInShell("git merge --abort || git reset -q --hard\r") === 200, "the shell refused to end the merge");
+      assert(await post(page, `${editorBase}/delete`, { path: "refused.txt" }) === 200, "the probe could not be removed");
+      await page.click("[data-editor-commit-close]");
+      return "refused in git's words, the message kept, the conflict unpickable";
+    });
+
+    await run("commit: on the phone the view opens inside the drawer", async () => {
+      const mp = await mobilePage();
+      await openEditor(mp);
+      await diffReady(mp);
+      // A phone with no tab open opens the drawer by itself, and its backdrop
+      // would stand in front of the menu; what this check is about is the menu
+      // entry opening the drawer, so it starts closed.
+      await mp.keyboard.press("Escape");
+      await mp.waitForSelector("[data-editor-backdrop]", { state: "hidden", timeout: 5000 });
+      await mp.click("[data-editor-menu]");
+      await mp.waitForSelector("[data-editor-menu-list].show", { timeout: 4000 });
+      await mp.click("[data-editor-commit-item]");
+      await mp.waitForSelector(".editor-drawer-open [data-editor-commit]:not([hidden])", { timeout: 10000 });
+      assert(await mp.locator("[data-editor-commit-button]").isVisible(), "the commit button is not on screen");
+      await mp.click("[data-editor-commit-close]");
+      await mp.waitForSelector("[data-editor-commit]", { state: "hidden", timeout: 5000 });
+      assert(await mp.locator(".editor-drawer-open").count() === 1, "closing the view closed the drawer with it");
+      return "the drawer carries the view, closing it keeps the drawer";
     });
 
     // ---- comparing two files -------------------------------------------------

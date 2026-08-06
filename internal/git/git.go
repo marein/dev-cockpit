@@ -1,6 +1,7 @@
-// Package git reads what a repository says about a project's working copy. It
-// only ever reads: the editor shows git state, everything that writes a
-// repository happens in a coder or on the command line.
+// Package git reads what a repository says about a project's working copy,
+// and writes it in exactly two places: Commit, and the plain Push behind it.
+// Everything else that writes a repository happens in a coder or on the
+// command line.
 //
 // Every call goes through run, which is the one place the safety rules live,
 // because a status poll runs next to a coder that may be committing right now:

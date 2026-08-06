@@ -25,6 +25,9 @@ const TERM_ACTIVE_KEY = "dc-editor-term-active";
 // Whether the tree column is folded away on a wide screen. Per device, like the
 // column's width: it is about the screen in front of you, not about the project.
 const TREE_FOLD_KEY = "dc-editor-tree-folded";
+// Whether the commit view groups its list by folder. Per device for the same
+// reason, and for every project alike.
+const COMMIT_GROUP_KEY = "dc-editor-commit-grouped";
 // How a changed path is marked in the tree: the letter at the end of the row and
 // the color both the name and that letter take. The colors are Tabler variables
 // through its text utilities, so they follow the light and dark theme. rank
@@ -101,6 +104,23 @@ async function init(root) {
   const dockerStatusBtn = root.querySelector("[data-editor-docker-status]");
   const dockerStatusText = root.querySelector("[data-editor-docker-status-text]");
   const termStatusBtn = root.querySelector("[data-editor-term-status]");
+  const commitEl = root.querySelector("[data-editor-commit]");
+  const commitToggleBtn = root.querySelector("[data-editor-commit-toggle]");
+  const commitCloseBtn = root.querySelector("[data-editor-commit-close]");
+  const commitListEl = root.querySelector("[data-editor-commit-list]");
+  const commitAllEl = root.querySelector("[data-editor-commit-all]");
+  const commitSummaryEl = root.querySelector("[data-editor-commit-summary]");
+  const commitBranchEl = root.querySelector("[data-editor-commit-branch]");
+  const commitMsgEl = root.querySelector("[data-editor-commit-message]");
+  const commitAmendEl = root.querySelector("[data-editor-commit-amend]");
+  const commitBtn = root.querySelector("[data-editor-commit-button]");
+  const commitErrorEl = root.querySelector("[data-editor-commit-error]");
+  const commitLengthEl = root.querySelector("[data-editor-commit-length]");
+  const commitItem = root.querySelector("[data-editor-commit-item]");
+  const commitItemCount = root.querySelector("[data-editor-commit-item-count]");
+  const commitGroupBtn = root.querySelector("[data-editor-commit-group]");
+  const commitMoreBtn = root.querySelector("[data-editor-commit-more]");
+  const commitPushItem = root.querySelector("[data-editor-commit-push]");
 
   const editorSettings = loadEditorSettings();
   // The diff runs in the browser, so the limits that keep a slow device
@@ -165,6 +185,18 @@ async function init(root) {
   // refresh); the one started last is the one that describes the repository
   // now, whichever order the answers arrive in.
   let gitSeq = 0;
+  // The commit view: the same flat list of changes the marks come from, plus
+  // which of them the person took out of the next commit. The exclusions are
+  // this visit's, the message draft survives a reload.
+  let commitOn = false;
+  let commitBusy = false;
+  let commitInfo = null;
+  let commitInfoSeq = 0;
+  let commitChanges = [];
+  const commitExcluded = new Set();
+  let commitStash = "";
+  let commitGrouped = store.get(COMMIT_GROUP_KEY, "") !== "0";
+  const commitMsgKey = `dc-editor-commit-msg:${name}`;
 
   const activeTab = () => tabs.find((t) => t.path === activePath) || null;
   const tabByPath = (path) => tabs.find((t) => t.path === path) || null;
@@ -1278,6 +1310,13 @@ async function init(root) {
     for (const btn of tabsEl.querySelectorAll(".editor-tab[data-path]")) markGitTab(btn);
     syncFilesItem();
     if (sheetKind === "files") renderFilesSheet();
+    commitChanges = ((changes && changes.worktree) || []).slice();
+    // A path that left the list was committed or reverted; when it changes
+    // again later that is a new change, and a new change starts included.
+    for (const path of [...commitExcluded]) {
+      if (!commitChanges.some((entry) => entry.path === path)) commitExcluded.delete(path);
+    }
+    syncCommitUI();
   }
 
   // numbersText is what the tooltip says about size: how many lines came and
@@ -1422,6 +1461,435 @@ async function init(root) {
     void refreshDiffHead();
     renewGitWatchNow();
   }
+
+  // ---- commit ----------------------------------------------------------------
+
+  // The commit view borrows the tree's place in the column: it answers the same
+  // question from the other side, what the working copy carries, and on a phone
+  // it lives in the same drawer. What it commits is exactly the checked rows,
+  // as a pathspec commit, so whatever a coder keeps staged next door stays
+  // staged and stays out.
+
+  function commitSelectable() {
+    return commitChanges.filter((entry) => gitKind(entry) !== "conflict");
+  }
+
+  function commitSelectedPaths() {
+    return commitSelectable()
+      .filter((entry) => !commitExcluded.has(entry.path))
+      .map((entry) => entry.path);
+  }
+
+  // commitDir is the folder a row is grouped under: the parent, with the
+  // trailing slash of a directory entry out of the way first.
+  function commitDir(entry) {
+    return parentDir(entry.path.endsWith("/") ? entry.path.slice(0, -1) : entry.path);
+  }
+
+  function commitRow(entry, nested, depth) {
+    const kind = gitKind(entry);
+    const info = GIT_MARKS[kind];
+    const row = document.createElement("div");
+    row.className = "editor-commit-row";
+    if (nested) {
+      row.classList.add("editor-commit-nested");
+      row.style.paddingLeft = `${0.5 + (depth || 1) * 1.1}rem`;
+    }
+    row.dataset.path = entry.path;
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.className = "form-check-input m-0 flex-shrink-0";
+    check.setAttribute("aria-label", `Include ${entry.path}`);
+    if (kind === "conflict") {
+      check.disabled = true;
+      check.title = "Resolve the conflict first.";
+    } else {
+      check.checked = !commitExcluded.has(entry.path);
+      check.addEventListener("change", () => {
+        if (check.checked) commitExcluded.delete(entry.path);
+        else commitExcluded.add(entry.path);
+        // Every folder above carries this file in its subtree, so each of
+        // their rows may have to move to or from the mixed state.
+        for (let dir = commitDir(entry); dir; dir = parentDir(dir)) syncGroupRow(dir);
+        syncCommitControls();
+      });
+    }
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "editor-commit-open";
+    const isDirEntry = entry.path.endsWith("/");
+    const shown = isDirEntry ? entry.path.slice(0, -1) : entry.path;
+    const line = document.createElement("div");
+    line.className = "editor-commit-line";
+    const mark = document.createElement("span");
+    mark.className = `small fw-bold flex-shrink-0 ${info.cls}`;
+    mark.textContent = info.mark;
+    const nameEl = document.createElement("span");
+    nameEl.className = `text-truncate ${info.cls}`;
+    nameEl.textContent = baseName(shown) + (isDirEntry ? "/" : "");
+    line.append(mark, nameEl);
+    const numbers = numbersText(entry.path);
+    if (numbers) {
+      const counts = document.createElement("span");
+      counts.className = "small ms-auto ps-2 flex-shrink-0";
+      if (entry.binary) {
+        counts.classList.add("text-secondary");
+        counts.textContent = numbers;
+      } else {
+        const plus = document.createElement("span");
+        plus.className = "text-green";
+        plus.textContent = `+${entry.added || 0}`;
+        const minus = document.createElement("span");
+        minus.className = "text-red ms-1";
+        minus.textContent = `−${entry.removed || 0}`;
+        counts.append(plus, minus);
+      }
+      line.append(counts);
+    }
+    open.append(line);
+    // The full path on a line of its own, wrapping instead of being cut: a
+    // name alone does not tell two same named files apart. A file at the
+    // root would only repeat its name, and under a group row the folder
+    // already stands above the file.
+    if (!nested && parentDir(shown)) {
+      const pathEl = document.createElement("div");
+      pathEl.className = "editor-commit-path";
+      pathEl.textContent = entry.path;
+      open.append(pathEl);
+    }
+    open.title = [entry.path, info.label, numbers].filter(Boolean).join(" · ");
+    // A deleted file is not on the disk and a directory is not a file, so
+    // there is nothing to open for either; the row still commits them.
+    if (isDirEntry || kind === "deleted" || kind === "conflict") {
+      open.disabled = true;
+    } else {
+      open.addEventListener("click", () => void diffFromTree(entry.path));
+    }
+    row.append(check, open);
+    return row;
+  }
+
+  // commitSubtree is everything a folder holds, its own files and its
+  // subfolders' alike: that is what its checkbox and its count speak about.
+  function commitSubtree(dir) {
+    return commitChanges.filter((entry) => {
+      const d = commitDir(entry);
+      return d === dir || d.startsWith(`${dir}/`);
+    });
+  }
+
+  // A group row is one folder's line over its whole subtree: the checkbox
+  // picks and drops everything below it, a mixed pick reads as indeterminate.
+  // The folder is only a grouping, what is committed are always the files.
+  function commitGroupRow(dir, label, depth) {
+    const row = document.createElement("div");
+    row.className = "editor-commit-row editor-commit-grouprow";
+    row.dataset.dir = dir;
+    if (depth) row.style.paddingLeft = `${0.5 + depth * 1.1}rem`;
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.className = "form-check-input m-0 flex-shrink-0";
+    check.setAttribute("aria-label", `Include everything in ${dir}`);
+    check.addEventListener("change", () => {
+      for (const entry of commitSubtree(dir)) {
+        if (gitKind(entry) === "conflict") continue;
+        if (check.checked) commitExcluded.delete(entry.path);
+        else commitExcluded.add(entry.path);
+        const fileCheck = commitListEl.querySelector(
+          `.editor-commit-row[data-path="${CSS.escape(entry.path)}"] input`);
+        if (fileCheck && !fileCheck.disabled) fileCheck.checked = check.checked;
+      }
+      // A subtree toggle moves rows in both directions, the groups inside it
+      // and the ones this folder sits in.
+      for (const groupRow of commitListEl.querySelectorAll(".editor-commit-grouprow")) {
+        syncGroupRow(groupRow.dataset.dir);
+      }
+      syncCommitControls();
+    });
+    const line = document.createElement("div");
+    line.className = "editor-commit-line";
+    const icon = document.createElement("i");
+    icon.className = "ti ti-folder flex-shrink-0 text-secondary";
+    icon.setAttribute("aria-hidden", "true");
+    const nameEl = document.createElement("span");
+    nameEl.className = "text-truncate small fw-medium";
+    nameEl.textContent = label;
+    const count = document.createElement("span");
+    count.className = "small text-secondary ms-auto ps-2 flex-shrink-0";
+    count.textContent = String(commitSubtree(dir).length);
+    line.append(icon, nameEl, count);
+    row.title = dir;
+    row.append(check, line);
+    return row;
+  }
+
+  // syncGroupRow reads a folder's pick state back onto its group row, so a
+  // single file's checkbox never costs a rebuild of the list.
+  function syncGroupRow(dir) {
+    if (!dir) return;
+    const input = commitListEl.querySelector(
+      `.editor-commit-grouprow[data-dir="${CSS.escape(dir)}"] input`);
+    if (!input) return;
+    const selectable = commitSubtree(dir).filter((entry) => gitKind(entry) !== "conflict");
+    const picked = selectable.filter((entry) => !commitExcluded.has(entry.path));
+    input.disabled = selectable.length === 0;
+    input.checked = selectable.length > 0 && picked.length === selectable.length;
+    input.indeterminate = picked.length > 0 && picked.length < selectable.length;
+  }
+
+  function renderCommitList() {
+    if (commitChanges.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "text-secondary small p-3";
+      const line = document.createElement("div");
+      line.textContent = "Nothing to commit, the working copy is clean.";
+      empty.append(line);
+      if (commitInfo && commitInfo.hasCommit && commitInfo.lastMessage) {
+        const last = document.createElement("div");
+        last.className = "mt-1 text-truncate";
+        last.title = commitInfo.lastMessage;
+        last.textContent = `Last commit: ${commitInfo.lastMessage.split("\n", 1)[0]}`;
+        empty.append(last);
+      }
+      commitListEl.replaceChildren(empty);
+      syncCommitControls();
+      return;
+    }
+    const entries = [...commitChanges].sort((a, b) => a.path.localeCompare(b.path));
+    if (!commitGrouped) {
+      commitListEl.replaceChildren(...entries.map((entry) => commitRow(entry, false)));
+      syncCommitControls();
+      return;
+    }
+    // Grouped by folder, the way an IDE's directory tree reads: folders
+    // first and files after them, on every level. A folder becomes a row of
+    // its own as soon as it holds more than one thing; a chain of folders
+    // that only hands down to a single subfolder and has no files of its own
+    // merges into one row with the joined path as its label. A group's
+    // checkbox covers its whole subtree, see commitGroupRow.
+    const treeTop = { dirs: new Map(), files: [] };
+    for (const entry of entries) {
+      const dir = commitDir(entry);
+      let node = treeTop;
+      if (dir) {
+        for (const segment of dir.split("/")) {
+          if (!node.dirs.has(segment)) node.dirs.set(segment, { dirs: new Map(), files: [] });
+          node = node.dirs.get(segment);
+        }
+      }
+      node.files.push(entry);
+    }
+    const rows = [];
+    const emit = (node, prefix, depth) => {
+      for (const segment of [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
+        let label = segment;
+        let child = node.dirs.get(segment);
+        while (child.files.length === 0 && child.dirs.size === 1) {
+          const [next] = child.dirs.keys();
+          label = `${label}/${next}`;
+          child = child.dirs.get(next);
+        }
+        const dir = prefix ? `${prefix}/${label}` : label;
+        rows.push(commitGroupRow(dir, label, depth));
+        emit(child, dir, depth + 1);
+      }
+      for (const entry of node.files) {
+        rows.push(commitRow(entry, depth > 0, depth));
+      }
+    };
+    emit(treeTop, "", 0);
+    commitListEl.replaceChildren(...rows);
+    for (const groupRow of commitListEl.querySelectorAll(".editor-commit-grouprow")) {
+      syncGroupRow(groupRow.dataset.dir);
+    }
+    syncCommitControls();
+  }
+
+  function syncCommitUI() {
+    commitToggleBtn.hidden = !gitRepo;
+    commitItem.hidden = !gitRepo;
+    commitItemCount.textContent = commitChanges.length ? String(commitChanges.length) : "";
+    commitToggleBtn.title = commitChanges.length
+      ? `Commit changes (${commitChanges.length})`
+      : "Commit changes";
+    if (!gitRepo && commitOn) closeCommit();
+    if (commitOn) renderCommitList();
+  }
+
+  function syncCommitControls() {
+    const selectable = commitSelectable();
+    const picked = commitSelectedPaths();
+    commitSummaryEl.textContent = selectable.length === 0
+      ? "No changes"
+      : `${picked.length} of ${selectable.length} ${selectable.length === 1 ? "change" : "changes"}`;
+    commitAllEl.disabled = selectable.length === 0;
+    commitAllEl.checked = selectable.length > 0 && picked.length === selectable.length;
+    commitAllEl.indeterminate = picked.length > 0 && picked.length < selectable.length;
+    const firstLine = commitMsgEl.value.split("\n", 1)[0] || "";
+    commitLengthEl.textContent = firstLine.length > 72 ? String(firstLine.length) : "";
+    commitLengthEl.title = firstLine.length > 72 ? "The subject line is longer than 72 characters." : "";
+    commitBtn.disabled = commitBusy || picked.length === 0 || commitMsgEl.value.trim() === "";
+    commitMoreBtn.disabled = commitBtn.disabled;
+  }
+
+  function openCommit() {
+    if (commitOn || !gitRepo) return;
+    commitOn = true;
+    treeEl.hidden = true;
+    commitEl.hidden = false;
+    commitToggleBtn.classList.add("active");
+    commitToggleBtn.setAttribute("aria-pressed", "true");
+    if (mobileMedia.matches) openDrawer();
+    else if (treeFolded) toggleDrawer();
+    renderCommitList();
+    void loadCommitInfo();
+    if (pointerMedia.matches) commitMsgEl.focus();
+  }
+
+  function closeCommit() {
+    if (!commitOn) return;
+    commitOn = false;
+    commitEl.hidden = true;
+    treeEl.hidden = false;
+    commitToggleBtn.classList.remove("active");
+    commitToggleBtn.setAttribute("aria-pressed", "false");
+  }
+
+  function toggleCommit() {
+    if (commitOn) closeCommit();
+    else openCommit();
+  }
+
+  async function loadCommitInfo() {
+    const seq = ++commitInfoSeq;
+    try {
+      const data = await getJSON(`${base}/git/commit`, { signal });
+      if (seq !== commitInfoSeq || signal.aborted) return;
+      commitInfo = data;
+      commitBranchEl.textContent = data.branch || "?";
+      commitAmendEl.disabled = !data.hasCommit;
+      commitAmendEl.closest("label").title = data.hasCommit ? "" : "There is no commit to amend yet.";
+      if (!data.hasCommit && commitAmendEl.checked) {
+        commitAmendEl.checked = false;
+        commitMsgEl.value = commitStash;
+      }
+      if (commitOn && commitChanges.length === 0) renderCommitList();
+    } catch (err) {
+      if (!signal.aborted) status(err.message, "error");
+    }
+  }
+
+  async function doCommit(push) {
+    if (commitBusy) return;
+    const paths = commitSelectedPaths();
+    const message = commitMsgEl.value.trim();
+    if (paths.length === 0 || message === "") return;
+    commitBusy = true;
+    commitErrorEl.hidden = true;
+    syncCommitControls();
+    status(push ? "Committing and pushing…" : "Committing…");
+    try {
+      // What the person sees in the buffer is what the commit has to take, so
+      // unsaved work on a picked path is written first, like every save path.
+      const covered = (path) => paths.some((p) => path === p
+        || (p.endsWith("/") ? path.startsWith(p) : path.startsWith(`${p}/`)));
+      for (const tab of tabs) {
+        if (!tab.dirty) continue;
+        if (tab.compare
+          ? covered(tab.compare.left) || covered(tab.compare.right)
+          : covered(tab.path)) {
+          await saveTab(tab);
+        }
+      }
+      const res = await postJSON(`${base}/git/commit`, {
+        message,
+        paths,
+        amend: commitAmendEl.checked,
+        push: !!push,
+      });
+      await ensureOk(res, "The commit failed.");
+      const data = await res.json();
+      commitMsgEl.value = "";
+      commitStash = "";
+      commitAmendEl.checked = false;
+      store.set(commitMsgKey, "");
+      const stamp = data.hash ? ` ${data.hash} "${data.subject}"` : "";
+      notifySuccess(data.pushed ? `Committed and pushed${stamp}` : `Committed${stamp}.`);
+      // A refused push does not touch the commit: it stands, the refusal
+      // stands beside it, and the message is gone because the commit took it.
+      if (data.pushError) {
+        commitErrorEl.textContent = data.pushError;
+        commitErrorEl.hidden = false;
+      }
+      status("");
+      // HEAD moved: the same pull the git event triggers, without waiting for
+      // an event that may race the answer.
+      dropChangeHeads();
+      void loadGitStatus();
+      void refreshDiffHead();
+      void loadCommitInfo();
+    } catch (err) {
+      if (signal.aborted) return;
+      commitErrorEl.textContent = err.message || "The commit failed.";
+      commitErrorEl.hidden = false;
+      status("");
+    } finally {
+      commitBusy = false;
+      syncCommitControls();
+    }
+  }
+
+  commitToggleBtn.addEventListener("click", toggleCommit, { signal });
+  commitItem.addEventListener("click", openCommit, { signal });
+  commitCloseBtn.addEventListener("click", closeCommit, { signal });
+  commitAllEl.addEventListener("change", () => {
+    if (commitAllEl.checked) commitExcluded.clear();
+    else for (const entry of commitSelectable()) commitExcluded.add(entry.path);
+    renderCommitList();
+  }, { signal });
+  commitMsgEl.addEventListener("input", () => {
+    // The draft survives a reload; while an amend borrows the field the draft
+    // it replaced stays what comes back.
+    if (!commitAmendEl.checked) store.set(commitMsgKey, commitMsgEl.value);
+    commitErrorEl.hidden = true;
+    syncCommitControls();
+  }, { signal });
+  commitMsgEl.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      void doCommit();
+    }
+  }, { signal });
+  commitAmendEl.addEventListener("change", () => {
+    commitErrorEl.hidden = true;
+    if (commitAmendEl.checked) {
+      commitStash = commitMsgEl.value;
+      if (commitInfo && commitInfo.lastMessage) commitMsgEl.value = commitInfo.lastMessage;
+    } else {
+      commitMsgEl.value = commitStash;
+    }
+    syncCommitControls();
+  }, { signal });
+  commitBtn.addEventListener("click", () => void doCommit(), { signal });
+  commitPushItem.addEventListener("click", () => {
+    // doCommit disables the arrow in this very click, and bootstrap's
+    // auto-close skips a disabled toggle, so the menu would stay open.
+    window.bootstrap?.Dropdown.getInstance(commitMoreBtn)?.hide();
+    void doCommit(true);
+  }, { signal });
+  function paintCommitGroup() {
+    commitGroupBtn.classList.toggle("active", commitGrouped);
+    commitGroupBtn.setAttribute("aria-pressed", commitGrouped ? "true" : "false");
+  }
+  commitGroupBtn.addEventListener("click", () => {
+    commitGrouped = !commitGrouped;
+    store.set(COMMIT_GROUP_KEY, commitGrouped ? "1" : "0");
+    paintCommitGroup();
+    renderCommitList();
+  }, { signal });
+  paintCommitGroup();
+  commitMsgEl.value = store.get(commitMsgKey, "");
 
   // ---- diff ------------------------------------------------------------------
 
@@ -4333,9 +4801,16 @@ async function init(root) {
         e.preventDefault();
         void closeTab(tab.path);
       }
+    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && !e.repeat
+      && e.key.toLowerCase() === "k" && quickOpenEl.hidden) {
+      if (gitRepo) {
+        e.preventDefault();
+        toggleCommit();
+      }
     } else if (e.key === "Escape") {
       if (!quickOpenEl.hidden) closeQuickOpen();
       else if (sheetKind) closeSheet();
+      else if (commitOn && commitEl.contains(document.activeElement)) closeCommit();
       else closeDrawer();
     }
   }, { signal });

@@ -635,6 +635,83 @@ func (s *Server) handleEditorGitBlame(c *gin.Context) {
 	c.JSON(http.StatusOK, blame)
 }
 
+// handleEditorGitCommitInfo returns what the commit panel shows before
+// anything is committed: the branch the commit would land on and the last
+// commit's message, which is what an amend starts from.
+func (s *Server) handleEditorGitCommitInfo(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	info, err := git.New(p.Path).CommitInfo(c.Request.Context())
+	if err != nil {
+		log.Printf("editor git commit info %s: %v", p.Path, err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "The repository could not be read."})
+		return
+	}
+	c.JSON(http.StatusOK, info)
+}
+
+type editorCommitRequest struct {
+	Message string   `json:"message"`
+	Paths   []string `json:"paths"`
+	Amend   bool     `json:"amend"`
+	Push    bool     `json:"push"`
+}
+
+// handleEditorGitCommit records the picked paths as a commit. What git refuses
+// travels back in git's own words: a hook that said no, a missing identity, a
+// merge that forbids a partial commit are all sentences the person in front of
+// the panel can act on, and no wording of ours says it better. A successful
+// commit publishes the git event itself, base moved, so every other open
+// editor of the project follows without waiting for the poller's next round.
+func (s *Server) handleEditorGitCommit(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorCommitRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	req.Message = strings.TrimSpace(req.Message)
+	if req.Message == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "A commit message is required."})
+		return
+	}
+	if len(req.Paths) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Pick at least one change to commit."})
+		return
+	}
+	for _, rel := range req.Paths {
+		if _, err := filesystem.ResolveUnder(p.Path, rel); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+			return
+		}
+	}
+	result, err := git.New(p.Path).Commit(c.Request.Context(), req.Message, req.Paths, req.Amend)
+	if err != nil {
+		log.Printf("editor git commit %s: %v", p.Path, err)
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	// The push rides behind the commit and never undoes it: a commit whose
+	// push is refused is a successful commit with the refusal in the answer,
+	// which is also why this stays a 200.
+	response := gin.H{"hash": result.Hash, "subject": result.Subject, "pushed": false}
+	if req.Push {
+		if err := git.New(p.Path).Push(c.Request.Context()); err != nil {
+			log.Printf("editor git push %s: %v", p.Path, err)
+			response["pushError"] = err.Error()
+		} else {
+			response["pushed"] = true
+		}
+	}
+	s.publishGit(p.Name, true)
+	c.JSON(http.StatusOK, response)
+}
+
 // handleEditorGitWatch registers one client's interest in a project for a short
 // window. That window is what keeps the project's poller running, so a page
 // renews it while it is open and nothing polls once the last editor is gone.

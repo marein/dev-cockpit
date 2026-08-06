@@ -7,8 +7,13 @@ import (
 // statusArgs is the one status call this package makes. Version 2 of the
 // porcelain format is the stable machine format, -z makes it NUL separated so a
 // file name may contain anything a file name may contain, and -M asks for
-// renames instead of a delete plus an add.
-var statusArgs = []string{"status", "--porcelain=v2", "-z", "--untracked-files=normal", "-M"}
+// renames instead of a delete plus an add. Untracked files are listed one by
+// one instead of collapsed to their directory: the commit panel picks per
+// file, so a single line for a whole new folder would make its files
+// unpickable, and the fingerprint has to move when a file appears inside a
+// folder that was already untracked. Ignored files are not listed either way,
+// so the usual heavyweights stay out.
+var statusArgs = []string{"status", "--porcelain=v2", "-z", "--untracked-files=all", "-M"}
 
 // FileStatus is one path git reports as changed. Index and Worktree are the two
 // status codes of the porcelain format, one character each ("." for unchanged,

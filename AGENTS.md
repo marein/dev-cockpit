@@ -126,15 +126,17 @@ test. Update this file when a convention changes.
   jobs (the head, the button and the empty state say steered coders); code,
   routes, state values, the `dev-cockpit assistant` commands and the
   notification titles keep job.
-- **The editor reads git, it never writes it.** `internal/git` is the only
-  place that runs the binary, and every call goes through its one helper:
+- **The editor reads git, and writes it in exactly one place: the commit.**
+  `internal/git` is the only place that runs the binary, and every call goes
+  through its one helper:
   `GIT_OPTIONAL_LOCKS=0` (a status read must never take the `index.lock` from a
   coder that is committing), `-c core.quotepath=false`, `-z` where git offers
   it, `--` before any path, no shell, `exec.CommandContext` with a timeout and
   a cap on the output. A directory without a repository answers "no repo" and
   never an error, and the editor then looks exactly like it did before it
-  learned git. Staging, committing and discarding stay with a coder or the
-  command line, so the whole surface has no destructive path. The editor's
+  learned git. Staging, discarding and branch surgery stay with a coder or the
+  command line; the writes are `git.Commit` and the `git.Push` behind it,
+  their own bullet below. The editor's
   routes sit in the editor group (`/projects/:name/editor/git/...`); the
   cheap facts on the projects page keep coming from `internal/project`, which
   reads `.git` as files and starts no process. One route answers one round:
@@ -163,6 +165,50 @@ test. Update this file when a convention changes.
   zero stops it. A page that comes back to the front pulls everything itself:
   while it was away its watch lapsed, the poller ended and nothing was
   published.
+- **A commit takes the checked paths and nothing else.** `git.Commit` is the
+  single write in `internal/git`, behind the editor's one writing route pair
+  (`GET`/`POST /projects/:name/editor/git/commit`; the GET answers branch,
+  hasCommit and the last message, which is what an amend starts from). It is a
+  pathspec commit of exactly the picked paths: it records their working copy
+  content and leaves what is staged for any other path staged and out of the
+  commit, which is what lets it run beside a coder preparing a commit of its
+  own. Two things have to travel along for the commit to mean what the panel
+  showed, and the server finds both by asking status itself rather than
+  trusting the client's list: an untracked path gets an intent-to-add entry
+  first (taken back when the commit is refused), and the source of a rename
+  joins the pathspec, or the commit would record a copy and keep the deletion
+  pending. Every pathspec is built `:(top,literal)`: top so a rename source
+  outside a subdirectory project stays addressable, literal so a name that
+  looks like a glob stays a name. Amend rewrites the tip. What git refuses
+  travels back in git's own words (a missing identity, a hook that said no,
+  the partial-commit ban during a merge), because no wording of ours says it
+  better; the write gets a longer timeout than a read, hooks and signers are
+  programs of their own. A successful commit publishes the `git` event itself,
+  base moved, so every open editor of the project follows at once instead of
+  waiting for the poller's round. The panel is the tree column's second face
+  (commit button above the tree, `Commit` in the editor menu, Ctrl+K, Escape
+  from inside it goes back to the files): the same flat changes list with a
+  checkbox per row, unchecked rows stay out, conflicted rows cannot be picked,
+  a row click opens the file's diff, dirty picked buffers are saved before the
+  commit like every save path, the message draft lives per project in
+  localStorage, and an amend borrows the message field and gives the draft
+  back on the way out. The status lists untracked files one by one
+  (`--untracked-files=all`), never a collapsed folder line, so a single file
+  of a new folder can be picked; the list opens grouped by
+  folder (flat behind the device-local switch `dc-editor-commit-grouped`),
+  folders first and files after them on every level: a folder becomes a row
+  of its own as soon as it holds more than one thing, a chain of folders that
+  only hands down to a single subfolder and has no files of its own merges
+  into one row with the joined path as its label, a group's checkbox covers
+  its whole subtree, and folders stay grouping and never the committed unit.
+  `Commit and push` behind the button's arrow is the one push the editor
+  knows: a plain `git push` right after a successful commit (`git.Push`, no
+  options, a longer timeout again because the network and a credential
+  prompt with no terminal both end here), where it goes and whether it may is
+  the repository's own configuration. A commit whose push is refused stands
+  as a commit: the answer stays a 200 and carries `pushed` and `pushError`,
+  the panel shows the refusal in git's words next to the success. The editor
+  still never stages, never discards and never switches branches.
 - **Everything git cannot attribute is an answer, not a failure.** A repository
   without a first commit, a file git never heard of, a path that is not on the
   disk any more: `Blame` answers each of them empty with a 200, and the unborn

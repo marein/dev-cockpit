@@ -252,6 +252,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	editor.GET("/git/changes", s.handleEditorGitChanges)
 	editor.GET("/git/blame", s.handleEditorGitBlame)
 	editor.GET("/git/file", s.handleEditorGitFile)
+	editor.GET("/git/commit", s.handleEditorGitCommitInfo)
+	editor.POST("/git/commit", s.handleEditorGitCommit)
 	editor.POST("/git/watch", s.handleEditorGitWatch)
 }
 

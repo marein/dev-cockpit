@@ -315,7 +315,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Git marks",
-					Desc:  `In a git repository a changed file carries a letter, on its tree row and on its tab: <span class="text-green">A</span> added, <span class="text-cyan">U</span> untracked, <span class="text-yellow">M</span> modified, <span class="text-red">D</span> deleted, <span class="text-azure">R</span> renamed, <span class="text-red">!</span> conflicted. A folder carries a dot for the most pressing change under it, the tooltip says how many lines came and went, and a change somebody else makes arrives on its own. The editor only reads git.`,
+					Desc:  `In a git repository a changed file carries a letter, on its tree row and on its tab: <span class="text-green">A</span> added, <span class="text-cyan">U</span> untracked, <span class="text-yellow">M</span> modified, <span class="text-red">D</span> deleted, <span class="text-azure">R</span> renamed, <span class="text-red">!</span> conflicted. A folder carries a dot for the most pressing change under it, the tooltip says how many lines came and went, and a change somebody else makes arrives on its own.`,
 				},
 				{
 					Title: "Changed lines in the gutter",
@@ -324,6 +324,11 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Diff and blame a file",
 					Desc:  `Right-click a file, on its tab or its tree row: <em>Show git diff</em> puts it next to the last commit, <em>Show git blame</em> writes the commit and the author next to every line. Both are per file and come back after a reload. To put two files on disk side by side instead, pick <em>Select for compare</em> on one and <em>Compare with</em> on the other.`,
+				},
+				{
+					Title: "Commit from the editor",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "K"}}},
+					Desc:  `The commit button <i class="ti ti-git-commit align-text-bottom" aria-hidden="true"></i> above the file tree, or <em>Commit</em> in the editor menu, turns the tree into the list of changes, each with a checkbox. Unchecked rows stay out of the commit, and only the checked files go in, exactly as they are in the working copy; whatever a coder has staged for other files stays staged and untouched. Clicking a row shows its diff. Write the message below, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> commits; unsaved picked files are saved first, the message draft survives a reload, and <em>Amend</em> rewords or extends the last commit instead. The list opens grouped by folder, folders first and files after them on every level: a subfolder nests under its parent, a chain of folders with nothing of its own reads as one row, and a folder's checkbox picks and drops everything below it. The folders button <i class="ti ti-folders align-text-bottom" aria-hidden="true"></i> switches to a flat list, each file with its full path under its name, and the choice stays on this device. Conflicted files cannot be picked. <em>Commit and push</em> behind the arrow next to the button pushes right after the commit, to wherever <code>git push</code> goes in this repository; a commit whose push is refused stands, with the refusal in the panel.`,
 				},
 				{
 					Title:    "File and tab menus",
