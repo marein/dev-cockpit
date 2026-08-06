@@ -23,6 +23,50 @@ func parseProcLoadAvg(s string) (float64, bool) {
 	return value, true
 }
 
+// parseProcStat reads the summary cpu line of /proc/stat ("cpu  10132153
+// 290696 3084719 46828483 16683 0 25195 0 175628 0"): user, nice, system,
+// idle, iowait, irq, softirq, steal, then the guest fields, all in ticks
+// since boot. It answers the idle and the total ticks of the sample, the busy
+// share is the delta between two of them. Waiting for a disk is not work, so
+// iowait counts as idle, and the guest fields are dropped because the kernel
+// already counts guest time into user.
+func parseProcStat(s string) (idle, total uint64, ok bool) {
+	for _, line := range strings.Split(s, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || fields[0] != "cpu" {
+			continue
+		}
+		values := fields[1:]
+		if len(values) > 8 {
+			values = values[:8]
+		}
+		for i, field := range values {
+			value, err := strconv.ParseUint(field, 10, 64)
+			if err != nil {
+				return 0, 0, false
+			}
+			total += value
+			if i == 3 || i == 4 {
+				idle += value
+			}
+		}
+		return idle, total, true
+	}
+	return 0, 0, false
+}
+
+// busyPercent turns the movement between two /proc/stat samples into the busy
+// share of the cores over that window.
+func busyPercent(idleDelta, totalDelta uint64) int {
+	if totalDelta == 0 {
+		return 0
+	}
+	if idleDelta > totalDelta {
+		idleDelta = totalDelta
+	}
+	return percent(totalDelta-idleDelta, totalDelta)
+}
+
 // parseSysctlLoadAvg takes the first average out of what
 // `sysctl -n vm.loadavg` prints on macOS: "{ 1.85 2.03 2.11 }".
 func parseSysctlLoadAvg(s string) (float64, bool) {

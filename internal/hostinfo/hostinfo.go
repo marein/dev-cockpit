@@ -4,11 +4,13 @@
 // connected, and nothing to configure.
 //
 // Everything here stays free of cgo, because the released binaries are built
-// that way. That rules out the mach calls a true CPU busy percentage would need
-// on macOS, so the busy number is the load average against the core count. It
-// means the same thing on both systems, it is already averaged over a minute so
-// the reading does not flicker, and it may pass 100 percent when more work is
-// queued than the machine can run at once. That is information, not a bug.
+// that way. On Linux the kernel publishes its busy counters in /proc/stat, so
+// the busy number there is the real share of the cores at work, the delta
+// between two readings. macOS keeps the same counters behind mach calls that
+// would need cgo, so there the busy number stays the load average against the
+// core count: already averaged over a minute, and it may pass 100 percent when
+// more work is queued than the machine can run at once. That is information,
+// not a bug, and the CPU label says which of the two the number is.
 package hostinfo
 
 import (
@@ -113,14 +115,10 @@ func (c *Cache) Stats() Stats {
 // cannot answer one of them still reports the other two.
 func read(path string) Stats {
 	s := Stats{CPUPercent: -1, MemPercent: -1, DiskPercent: -1}
-	cores := runtime.NumCPU()
-	if load, ok := loadAverage(); ok && cores > 0 {
+	if busy, label, ok := cpu(); ok {
 		s.HasCPU = true
-		s.CPUPercent = int(math.Round(load / float64(cores) * 100))
-		s.CPULabel = fmt.Sprintf("Load %.2f on %d cores", load, cores)
-		if cores == 1 {
-			s.CPULabel = fmt.Sprintf("Load %.2f on 1 core", load)
-		}
+		s.CPUPercent = busy
+		s.CPULabel = label
 	}
 	if total, available, ok := memory(); ok && total > 0 {
 		if available > total {
@@ -146,6 +144,24 @@ func read(path string) Stats {
 		s.Level = "warn"
 	}
 	return s
+}
+
+// loadCPU is the busy number every platform can answer, the load average
+// against the core count. It may pass 100, and the label says what it is.
+// Linux answers it only for the very first reading, before a /proc/stat delta
+// exists; everywhere else it is the number.
+func loadCPU() (busy int, label string, ok bool) {
+	cores := runtime.NumCPU()
+	load, ok := loadAverage()
+	if !ok || cores <= 0 {
+		return 0, "", false
+	}
+	busy = int(math.Round(load / float64(cores) * 100))
+	label = fmt.Sprintf("Load %.2f on %d cores", load, cores)
+	if cores == 1 {
+		label = fmt.Sprintf("Load %.2f on 1 core", load)
+	}
+	return busy, label, true
 }
 
 func percent(part, whole uint64) int {

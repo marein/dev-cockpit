@@ -3,10 +3,11 @@ const L = require("./lib");
 const { assert, sleep, BASE } = L;
 
 // Server status in the header: CPU, RAM and disk, each a percentage. The server
-// reads them in internal/hostinfo (load against the cores, memory in use, the
-// filesystem the projects sit on), renders the first values into the page and
-// pushes every later reading as a `host` event on the shared stream, on connect
-// and on every 15s heartbeat. dc-host-status only paints.
+// reads them in internal/hostinfo (busy cores from /proc/stat on Linux, load
+// against the cores on a Mac, memory in use, the filesystem the projects sit
+// on), renders the first values into the page and pushes every later reading as
+// a `host` event on the shared stream, on connect and on its own 5s beat.
+// dc-host-status only paints.
 //
 // The button sits at the right end of the header on both widths, next to the
 // assistant, and opens the same panel: one bar per metric plus the plain

@@ -2,8 +2,8 @@ import { onServerEvent } from "@dc/events";
 
 // Server status: how busy the machine is, how much memory is in use, how full
 // the disk under the projects is. The server renders the first reading into the
-// page and sends every one after it on the event stream, on connect and on each
-// heartbeat, so this element only paints.
+// page and sends every one after it on the event stream, on connect and on the
+// stream's own host beat, so this element only paints.
 //
 // The layout mounts one instance per header breakpoint, the way it mounts the
 // notification bell twice, so a reading paints every surface at once rather than

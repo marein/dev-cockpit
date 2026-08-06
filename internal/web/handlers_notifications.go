@@ -40,10 +40,14 @@ func (s *Server) handleNotificationsRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"unread": unread})
 }
 
+// hostPushInterval is the beat of the host event on the stream, faster than
+// the 15 second heartbeat so the gauges read as live.
+const hostPushInterval = 5 * time.Second
+
 // hostSampleTTL is how long one host reading serves every connected browser.
-// Below the 15 second heartbeat, so a lone tab gets a fresh number on every
-// beat while ten tabs still cost one reading.
-const hostSampleTTL = 10 * time.Second
+// Below the push interval, so a lone tab gets a fresh number on every beat
+// while ten tabs still cost one reading.
+const hostSampleTTL = 4 * time.Second
 
 // handleEventStream is the single server to client push channel, served at /events.
 // It carries every server event, not only notifications:
@@ -108,15 +112,18 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "assistant", Data: map[string]string{}}); err != nil {
 		return
 	}
-	// The host reading rides the stream: it goes out on connect and then on
-	// every heartbeat, so it needs no ticker of its own and costs nothing while
-	// no browser is connected. Several tabs share one reading through the cache.
+	// The host reading rides the stream: it goes out on connect and then on its
+	// own beat in the loop below. That ticker lives in this handler, so without
+	// a connected browser nothing ticks and nothing is read, and several tabs
+	// share one reading through the cache.
 	if err := writeEnvelope(w, eventbus.Event{Type: "host", Data: s.host.Stats()}); err != nil {
 		return
 	}
 
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
+	hostBeat := time.NewTicker(hostPushInterval)
+	defer hostBeat.Stop()
 	ctx := c.Request.Context()
 	for {
 		select {
@@ -129,6 +136,7 @@ func (s *Server) handleEventStream(c *gin.Context) {
 			if err := writeEnvelope(w, eventbus.Event{Type: "ping"}); err != nil {
 				return
 			}
+		case <-hostBeat.C:
 			if err := writeEnvelope(w, eventbus.Event{Type: "host", Data: s.host.Stats()}); err != nil {
 				return
 			}
