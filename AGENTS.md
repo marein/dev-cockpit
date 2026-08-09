@@ -126,24 +126,96 @@ test. Update this file when a convention changes.
   jobs (the head, the button and the empty state say steered coders); code,
   routes, state values, the `dev-cockpit assistant` commands and the
   notification titles keep job.
-- **The editor reads git, and writes it in exactly one place: the commit.**
-  `internal/git` is the only place that runs the binary, and every call goes
-  through its one helper:
+- **The editor reads git, and writes it through a deliberately short list of
+  actions.** `internal/git` is the only place that runs the binary, and every
+  call goes through its one helper:
   `GIT_OPTIONAL_LOCKS=0` (a status read must never take the `index.lock` from a
   coder that is committing), `-c core.quotepath=false`, `-z` where git offers
   it, `--` before any path, no shell, `exec.CommandContext` with a timeout and
-  a cap on the output. A directory without a repository answers "no repo" and
-  never an error, and the editor then looks exactly like it did before it
-  learned git. Staging, discarding and branch surgery stay with a coder or the
-  command line; the writes are `git.Commit` and the `git.Push` behind it,
-  their own bullet below. The editor's
+  a cap on the output, and `GIT_ALLOW_PROTOCOL` as an own whitelist, because
+  `ext::` runs the command in the URL and is a scheme, not an option a `--`
+  could disarm. A directory without a repository answers "no repo" and never
+  an error; only `Changes` keeps "git could not be asked" apart from it, so
+  one stalled git does not put the clone where the repository's actions
+  were. The writes are `git.Commit`, `git.Push` (plain or force-with-lease),
+  `git.Fetch`, the fast forward `git.Pull`, `git.Checkout`,
+  `git.CreateBranch` and `git.Clone`; staging, discarding, stashing, merging
+  and conflict resolution stay with a coder or the command line, and a
+  refused write leaves the working copy as it was. Writes carry their own
+  timeouts, minutes not seconds, and run on `gitWriteContext`
+  (`context.WithoutCancel`): a closed tab or a dropped line must never
+  SIGKILL a checkout mid working copy or leave half a clone git refuses to
+  reuse, so the write's own deadline is the only thing that ends it. Ending
+  means killing the whole process group, with `cmd.WaitDelay` bounding the
+  wait for pipes a leftover ssh or pinentry still holds, and the error says
+  which of deadline, cancellation or a process that never ran it was; those
+  three carry `git.ErrNoAnswer`, an exit code never does, the distinction
+  `Fingerprint` and `WorkingCopy` are built on. Every background call fails
+  prompts in seconds instead: `GIT_TERMINAL_PROMPT=0` for git's own
+  questions, `SSH_ASKPASS=/bin/false` plus `SSH_ASKPASS_REQUIRE=force` for
+  ssh's — the askpass is pinned, never the ssh, so the host's wiring
+  (`core.sshCommand`, `GIT_SSH_COMMAND`) and agent keys keep working. A
+  user-triggered action instead carries the askpass bridge
+  (`internal/askpass`), and a git question travels like this: the call's
+  `SSH_ASKPASS` and `GIT_ASKPASS` point at a stub that execs this binary's
+  hidden `askpass` command, which reports the prompt line over the broker's
+  unix socket (the one-time token from its environment is the helper's
+  whole credential) and blocks until the answer comes back. The parked
+  question is server state, keyed by the project and carrying the action's
+  name: it belongs to the cockpit and not to the page that started the
+  action, which may be reloaded, updated away or lying on a desk while the
+  phone answers, and it is bound to nothing with a lifecycle of its own,
+  after two bindings (the CSRF token, then a lazily minted session value)
+  each stood dialogs that never came while git waited blind. Every move of
+  the standing questions publishes the bare `gitprompt` event
+  (`Broker.OnChange`), the connect snapshot carries the same signal, and
+  one app level pair serves every page alike: `GET /git/prompt` lists the
+  standing questions oldest first, `POST /git/prompt` answers under project
+  and question id; the session is the whole authorization, single user by
+  design. The dialog is the global module `@dc/gitprompt` (imported by the
+  notification bell: every app page, never login), a mirror of that server
+  state: it shows the oldest question, never re-fires the one it already
+  shows, so typing survives every signal, closes when the server no longer
+  lists it, which is how an answer on one device takes it down on all, and
+  replaces it when a new question follows, ssh asking again after a wrong
+  passphrase. It names project and action as this server's truth above the
+  escaped prompt line, which is ssh's, git's or a repository hook's and
+  therefore capped (`maxPrompt`); the field is masked only when the line
+  names a secret, because the same helper carries user names and host key
+  confirmations, and masking those is answering blind. A rejected answer
+  (answered elsewhere, action gone) is swallowed, the closing travels on
+  the event; without SweetAlert the module shows nothing and denies
+  nothing, an auto deny from one Swal-less page would cancel questions
+  every other page could answer. The backstop is the breathing deadline
+  (`git.Prompt`): a delivered question grants the person `promptWait`, an
+  answer grants the action its full budget back, silence ends in the
+  readable timeout sentence. Answers live in memory for one question, never
+  logged, never stored; cancel ends the action in git's words plus `— the
+  question was cancelled.` Which calls may ask is the route's decision
+  alone, the request bodies carry nothing for it: push, pull, the explicit
+  fetch, clone, checkout and the commit's ride-along push (opened before
+  the commit, so a refusal refuses the whole request); a status poll or the
+  quiet fetch never asks. `Begin` refusing a project that already runs an
+  action is an invariant guard behind the write lock, not a surface. Two
+  mechanics are not detail: the socket path comes from a **resolved** state
+  directory (`filesystem.AbsDir`), because it travels into git processes
+  whose working directory is the project, and the stub is rewritten at
+  every start with the binary's path **shell quoted** (`helperScript`),
+  because an update may move the binary onto a path a shell would take
+  apart. Nothing of the bridge outlives the process, so `<state-dir>/ask/`
+  is deliberately no backup section. The editor's
   routes sit in the editor group (`/projects/:name/editor/git/...`); the
   cheap facts on the projects page keep coming from `internal/project`, which
   reads `.git` as files and starts no process. One route answers one round:
-  the editor asks `.../git/changes` alone, which answers `repo` and the one
-  list `worktree`, because a second status route beside it would run
-  `git status` again at a second moment and the two answers could disagree
-  about the same repository. A project below the repository root is the case
+  the editor asks `.../git/changes` alone, which answers `repo`, the branch
+  (name, upstream, ahead and behind, out of the same status call's
+  `--branch` headers, read from the leading block alone, `parseBranch`,
+  because a rename's bare source record could fake them) and the one list
+  `worktree`, because a second status route beside it would run `git
+  status` again at a second moment and the two answers could disagree; the
+  headers riding in the status output is also why a fetch from anywhere
+  moves the fingerprint and reaches every open editor through the ordinary
+  poll. A project below the repository root is the case
   to keep in mind on both sides of that answer: git reports every path
   relative to the repository root, so the status paths are cut back to the
   project (`withinPrefix`) **after** the line counts have been looked up, which
@@ -164,9 +236,14 @@ test. Update this file when a convention changes.
   again before every round, so a changed setting reaches a running poller and
   zero stops it. A page that comes back to the front pulls everything itself:
   while it was away its watch lapsed, the poller ended and nothing was
-  published.
+  published. A reconnected stream is the same case with the page in front:
+  the snapshot carries a bare `git` signal, the editor answers it with the
+  full catch-up, and a failed status round retries itself once
+  (`gitRetryTimer`), because a move published into a gap or into a dead
+  fetch is published never again.
 - **A commit takes the checked paths and nothing else.** `git.Commit` is the
-  single write in `internal/git`, behind the editor's one writing route pair
+  one call in `internal/git` that records a commit, one write out of the short
+  list further up, and it has the editor's commit route pair to itself
   (`GET`/`POST /projects/:name/editor/git/commit`; the GET answers branch,
   hasCommit and the last message, which is what an amend starts from). It is a
   pathspec commit of exactly the picked paths: it records their working copy
@@ -188,11 +265,18 @@ test. Update this file when a convention changes.
   waiting for the poller's round. The panel is the tree column's second face
   (commit button above the tree, `Commit` in the editor menu, Ctrl+K, Escape
   from inside it goes back to the files): the same flat changes list with a
-  checkbox per row, unchecked rows stay out, conflicted rows cannot be picked,
-  a row click opens the file's diff, dirty picked buffers are saved before the
-  commit like every save path, the message draft lives per project in
-  localStorage, and an amend borrows the message field and gives the draft
-  back on the way out. The status lists untracked files one by one
+  checkbox per row, nothing starts picked, unchecked rows stay out,
+  conflicted rows cannot be picked, a row click opens the file's diff, dirty
+  picked buffers are saved before the commit like every save path, and an
+  amend borrows the message field and gives the draft back on the way out.
+  **The draft is server state, per project** (`editor-commit-drafts.json`,
+  `GET`/`POST .../editor/git/commit-draft`, deliberately not in the backup:
+  an unsent commit is typing, not configuration): message, picks and an
+  amend in progress follow the assistant composer's pattern, one debounced
+  save as the only write path, the `commitdraft` event only on movement, a
+  pull never typing over unsaved local edits, a successful commit spending
+  the draft on every device. The pre-1.43 localStorage draft is lifted onto
+  an empty server draft once, TODO(v2.0.0). The status lists untracked files one by one
   (`--untracked-files=all`), never a collapsed folder line, so a single file
   of a new folder can be picked; the list opens grouped by
   folder (flat behind the device-local switch `dc-editor-commit-grouped`),
@@ -201,14 +285,72 @@ test. Update this file when a convention changes.
   only hands down to a single subfolder and has no files of its own merges
   into one row with the joined path as its label, a group's checkbox covers
   its whole subtree, and folders stay grouping and never the committed unit.
-  `Commit and push` behind the button's arrow is the one push the editor
-  knows: a plain `git push` right after a successful commit (`git.Push`, no
-  options, a longer timeout again because the network and a credential
-  prompt with no terminal both end here), where it goes and whether it may is
+  An amend with nothing picked commits anyway and rewrites only the message
+  (`--only --amend`, the everyday typo fix; `--only` is what keeps a coder's
+  staged work out of it), while without the amend flag an empty pick stays
+  refused. `Commit and push` behind the button's arrow is that same
+  `git.Push` right after a successful commit (plain, no force; a longer
+  timeout again because the network and a credential prompt with no terminal
+  both end here), where it goes and whether it may is
   the repository's own configuration. A commit whose push is refused stands
   as a commit: the answer stays a 200 and carries `pushed` and `pushError`,
   the panel shows the refusal in git's words next to the success. The editor
-  still never stages, never discards and never switches branches.
+  still never stages and never discards; the branch moves it does make are
+  the next bullet's.
+- **The branch lives in the statusbar, and the git sheet is where the
+  repository acts** (the segment, `Git` in the editor menu, Ctrl+Shift+G).
+  The sheet's actions are routes of their own: `git/push` (`force` is
+  force-with-lease behind an explicit confirmation), `git/fetch`, `git/pull`
+  (fast forward only), `git/checkout` and `git/branch` (name normalized
+  client side, `normalizeBranchName`); a refusal travels as a 409 in git's
+  words, and there is deliberately no stash, no merge and no conflict UI
+  behind any of them. The file history and the revision picker fill
+  `tab.diffRev`, the same field the HEAD switch fills, and `.../git/file`
+  takes it as `?rev=` (verified server side, `git.ErrRevision` answers a
+  400). Opening the sheet and listing branches go through `git.FetchIfStale`
+  (`editorFetchMaxAge`; no remote means nothing to fetch, a state and not a
+  failure). Checkout and pull publish the `git` event with the base moved,
+  push, fetch and a created branch with it standing, **and that event is the
+  only round those three cost**. After a checkout or pull the client reloads
+  every clean tab (`reloadCleanTabs`; only the server's own 4xx closes a
+  tab, a transport error must not take the open set away), and a dirty
+  buffer is never touched by a branch move. `git/log` answers one page of
+  history (`?skip=`, the file's with `?path=`). A project that is no
+  repository yet gets the same segment saying so and a sheet whose one
+  action is `git/clone`, straight into the project directory, which git
+  itself refuses unless it holds nothing.
+- **A picker asks git, it never filters a list it happens to hold.**
+  `git/refs` (`?q=`, `?kinds=`) answers only the hits, capped per kind
+  (`editorRefsCap`), the name match in Go because `for-each-ref`'s wildmatch
+  does not cross slashes, commits through `log --all --regexp-ignore-case
+  --fixed-strings --grep=…` plus a hex gated `rev-parse` for hashes. **The
+  typed text travels into git arguments**: it rides in the attached
+  `--grep=` form, never as an option and never as a pattern. In the client
+  `openRefPicker` debounces, numbers its rounds so a slow answer never
+  paints over a newer one, and lets a raw name typed past the list through
+  on Enter.
+- **One write runs at a time, and that is two locks for two questions.** The
+  page's own (`gitBusy`) is what a person sees: spinner on the tapped row
+  and in the statusbar, every other row and the commit panel disabled with
+  it. The server holds the working copy for every write (`gitWrites`, taken
+  in `takeGitWrite` before the bridge opens; a second write reads a 409
+  `gitInUse`), and a write holds two names, taken together or not at all
+  (`gitWriteKeys`): the absolute git directory (`git.WorkingCopy`; two
+  projects in one checkout are one working copy, a linked worktree is its
+  own) and the project path, which is what covers a clone, because the
+  fresh `.git` resolves moments after it starts and the git directory alone
+  would be walked past for the minutes it still runs. A git that could not
+  be asked ends the write with a 502 `gitUnknownCopy` instead of guessing a
+  name (`ErrNoAnswer` kept apart in `WorkingCopy`): two names for one
+  working copy are no lock at all. The lock is a try and never a wait, and
+  a commit and its ride-along push are one write. The quiet fetch holds
+  marked names of its own (`quietFetchKeys`) and a short budget of its own
+  (`quietFetchTimeout`): it meets itself, never a commit or a push, sets no
+  `gitBusy` and fails without a word. The five sheet writes share their
+  whole shape in `gitWrite`; the commit, the created branch and the quiet
+  fetch are deliberately not on it. None of this reaches a coder on the
+  command line: git's `index.lock` is the only thing between the two, and
+  that is on purpose.
 - **Everything git cannot attribute is an answer, not a failure.** A repository
   without a first commit, a file git never heard of, a path that is not on the
   disk any more: `Blame` answers each of them empty with a 200, and the unborn
@@ -276,9 +418,11 @@ test. Update this file when a convention changes.
   are typing, not what lies on the disk. A tab type would hold a second copy of
   the same file, and two writable copies of one file is a save clobbering the
   other. The tab carries the revision it is compared against (`tab.diffRev`,
-  persisted as `diff: "<rev>"`), which is `DIFF_REV` and nothing else today: a
-  picker later fills that same field and teaches the route a `rev`, so neither
-  the tab model nor the stored shape changes for it. Where the working copy is
+  persisted as `diff: "<rev>"`): HEAD from the diff switch, or whatever the
+  file history and the revision picker put there, which the route takes as
+  `?rev=`. `refreshDiffHead` refetches the revision side on a moved base
+  whatever the revision is; an immutable one answers the same text and the
+  replace is a no-op. Where the working copy is
   on neither side, two revisions against each other, the compare tab's shape
   fits and this one does not.
   `filesystem.ResolveUnder` is what the git routes resolve a path with, and it
@@ -290,6 +434,13 @@ test. Update this file when a convention changes.
   refusing it; a caller that skips `ResolveUnder` would quietly ask about
   another file. Side by side is `MergeView`, inline is
   `unifiedMergeView`, which is why a switch between them rebuilds the view.
+  **An inline diff is taken down before another one goes up**
+  (`buildUnified`, `dropUnified`): `unifiedMergeView` keeps the revision in
+  a StateField, and reconfiguring a compartment keeps existing field
+  values, so a rebuilt extension keeps the old revision and the new one
+  never arrives. `showDoc` empties the compartment **after** the state
+  swap, and a moved base goes through `originalDocChangeEffect`, which is
+  what recomputes the chunks.
   **The buffer belongs to the person in front of it**: no switch, no revision
   change and no server event ever writes into it. A `git` event whose base
   moved makes the revision side follow on its own (`refreshDiffHead`), nothing
@@ -314,9 +465,11 @@ test. Update this file when a convention changes.
   toggle, the strip, `[data-editor-save]` (`hidden` unless the active file is
   dirty) and the menu itself; every other control is an entry of `[data-
   editor-menu-list]`, and the entries are the same at 390 and at 1440. The
-  menu carries no git entry at all: the diff and blame switches are entries of
-  the file's context menu (`diffMenuItem`/`blameMenuItem`, tab and tree row),
-  because both are statements about one file. The folder toggle shows on both
+  menu carries one git entry, `Git`, which opens the git sheet; the per-file
+  switches stay entries of the file's context menu
+  (`diffMenuItem`/`blameMenuItem`, the revision diff and the file history,
+  tab and tree row), because those are statements about one file. The folder
+  toggle shows on both
   widths with the effect the width
   allows: below `md` it opens the drawer, above it folds the tree column and
   its splitter away (`.editor-tree-folded`, per device in `dc-editor-tree-
@@ -634,7 +787,10 @@ free floating page scripts.
   and toasts sit outside the swap and survive it.
 - **Shared modules:** `internal/web/static/js/dc/` (toast, dialog, contextmenu,
   http, dom, store, repeater, fold, project-sort). Imported by bare specifier
-  `@dc/<name>`. `@dc/contextmenu` renders a body-mounted `.dc-context-menu`
+  `@dc/<name>`. There is exactly one `escapeHtml` and it lives in `@dc/dom`,
+  imported by everything that builds markup out of a value: a second copy is
+  how a smaller escape set ends up around a value inside an attribute one day.
+  `@dc/contextmenu` renders a body-mounted `.dc-context-menu`
   dropdown at a point, one open menu at a time (Escape/arrow keys, outside
   pointerdown, outside wheel/touchmove, `dc:navigated` and the caller's abort
   signal close it; programmatic scrolls must never close it). Row menus

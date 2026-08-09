@@ -29,7 +29,12 @@ export async function ensureOk(response, fallback) {
   if (response.ok) {
     return response;
   }
-  throw new Error(await errorText(response, fallback));
+  const error = new Error(await errorText(response, fallback));
+  // The status rides along, because "the server said no" and "the request never
+  // arrived" are two different answers and a caller that acts on one of them
+  // must not act on the other. A rejection without it came from the transport.
+  error.status = response.status;
+  throw error;
 }
 
 export function postForm(url, fields, { accept = "application/json" } = {}) {
@@ -59,8 +64,11 @@ export function postJSON(url, body) {
   });
 }
 
-export function getJSON(url, { signal } = {}) {
-  return fetch(url, { headers: { Accept: "application/json" }, cache: "no-store", signal })
+// headers is for the one value a caller may not put in the URL: the access log
+// writes the query out, so anything that names a running action of one browser
+// travels as a header instead.
+export function getJSON(url, { signal, headers } = {}) {
+  return fetch(url, { headers: { Accept: "application/json", ...headers }, cache: "no-store", signal })
     .then((response) => ensureOk(response, "Request failed."))
     .then((response) => response.json());
 }

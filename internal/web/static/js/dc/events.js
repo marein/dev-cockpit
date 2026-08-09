@@ -56,12 +56,20 @@ document.addEventListener("visibilitychange", () => {
   if (!source || source.readyState === EventSource.CLOSED || Date.now() - lastFrameAt > STALE_MS) reconnect();
 });
 
+// The network coming back is the same wake with the page in front: a drop can
+// park the source in CONNECTING with a retry the browser never fires, so
+// anything but a healthy open stream reconnects the moment the line is back.
+window.addEventListener("online", () => {
+  if (!source || source.readyState !== EventSource.OPEN || Date.now() - lastFrameAt > STALE_MS) reconnect();
+});
+
 // Background watchdog: while the tab is visible, force a reconnect once the stream
-// has been silent past STALE_MS. CONNECTING is skipped so a reconnect in progress
-// gets time to land before another is triggered.
+// has been silent past STALE_MS. There is deliberately no readyState guard:
+// open() stamps lastFrameAt, so a reconnect in progress holds the full window
+// before it is judged, while a source parked in CONNECTING forever (a retry the
+// browser dropped during an outage) would otherwise stay deaf for good.
 setInterval(() => {
   if (document.hidden || !source) return;
-  if (source.readyState === EventSource.CONNECTING) return;
   if (Date.now() - lastFrameAt > STALE_MS) reconnect();
 }, WATCHDOG_MS);
 

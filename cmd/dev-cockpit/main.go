@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/local/dev-cockpit/internal/askpass"
 	"github.com/local/dev-cockpit/internal/assistant"
 	"github.com/local/dev-cockpit/internal/backup"
 	"github.com/local/dev-cockpit/internal/clirun"
@@ -103,8 +104,46 @@ func newRootCommand() *cobra.Command {
 			return errors.New("command required")
 		},
 	}
-	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newAssistantCommand(), newRunDetachedCommand())
+	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newAssistantCommand(), newRunDetachedCommand(), newAskpassCommand())
 	return cmd
+}
+
+// newAskpassCommand is what SSH_ASKPASS and GIT_ASKPASS of a user-triggered
+// git action point at, through the tiny stub the server writes next to its
+// socket (ssh executes the askpass program without arguments of ours). It is
+// nobody's interface: it reads the one-time token and the socket from its
+// environment, reports the prompt line to the serve process, blocks until
+// the person in the browser answered, and prints that answer. Without the
+// bridge environment it fails like /bin/false, which is the fate of every
+// call that is not allowed to ask.
+func newAskpassCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:                "askpass [prompt]",
+		Short:              "Answer one ssh or git prompt through the running cockpit",
+		Hidden:             true,
+		DisableFlagParsing: true,
+		SilenceErrors:      true,
+		SilenceUsage:       true,
+		// A denial exits silently: whatever this command wrote would end up
+		// in git's error message as if git had said it, and the server
+		// already words the refusal.
+		Run: func(cmd *cobra.Command, args []string) {
+			socket := os.Getenv("DC_ASKPASS_SOCKET")
+			token := os.Getenv("DC_ASKPASS_TOKEN")
+			if socket == "" || token == "" {
+				os.Exit(1)
+			}
+			prompt := ""
+			if len(args) > 0 {
+				prompt = strings.TrimSpace(strings.Join(args, " "))
+			}
+			answer, err := askpass.Ask(socket, token, prompt)
+			if err != nil {
+				os.Exit(1)
+			}
+			fmt.Println(answer)
+		},
+	}
 }
 
 // newAssistantCommand groups everything the cockpit's own assistant runs. They
@@ -408,6 +447,27 @@ func runServe(opts serveOptions) error {
 			log.Printf("the local API stopped: %v", err)
 		}
 	}()
+
+	// The askpass bridge: a socket of its own next to the local API's, plus
+	// the helper stub SSH_ASKPASS and GIT_ASKPASS of a user-triggered action
+	// point at. Only the editor's git handlers ever hand its environment to a
+	// call, everything else keeps failing prompts fast.
+	askBroker := askpass.New(cfg.StateDir)
+	askListener, err := askpass.Listen(cfg.StateDir)
+	if err != nil {
+		return fmt.Errorf("failed to open the askpass socket: %w", err)
+	}
+	defer askListener.Close()
+	go func() {
+		if err := (&http.Server{Handler: askBroker.Handler()}).Serve(askListener); err != nil {
+			log.Printf("the askpass bridge stopped: %v", err)
+		}
+	}()
+	askScript, err := askpass.WriteScript(cfg.StateDir)
+	if err != nil {
+		return fmt.Errorf("failed to write the askpass helper: %w", err)
+	}
+	srv.SetAskpass(askBroker, askScript)
 
 	listener, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {

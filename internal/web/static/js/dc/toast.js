@@ -2,6 +2,8 @@
 // non-blocking toast (SweetAlert2 when present, console otherwise) and exposes
 // helpers modules call directly. installErrorHandler wires unhandled promise
 // rejections, where most uncaught fetch failures land, into the same channel.
+import { escapeHtml } from "@dc/dom";
+
 let last = { text: "", at: 0 };
 
 function show(text, icon, timer, force) {
@@ -16,11 +18,19 @@ function show(text, icon, timer, force) {
     else console.log(text);
     return;
   }
+  // The message rides in a plain block of its own with a bounded, scrollable
+  // height, so a fat git refusal stays readable on a phone instead of
+  // overflowing the screen. Deliberately not a style on Swal's title or html
+  // container: those are grid children of the popup, and iOS WebKit sizes
+  // scrollable grid children wrong, which blew every toast up to the bound.
+  // The line breaks are kept, because the messages this bound exists for are
+  // git's, and git writes its refusal as an error line plus its hints. Run
+  // into one paragraph they are exactly as unreadable as before, only shorter.
   window.Swal.fire({
     toast: true,
     position: "top-end",
     icon: icon || "error",
-    title: text,
+    html: `<div style="max-height: 45vh; overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap; text-align: start;">${escapeHtml(text)}</div>`,
     showConfirmButton: false,
     showCloseButton: true,
     timer: timer || 6000,

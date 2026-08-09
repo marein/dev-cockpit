@@ -12,11 +12,6 @@ import (
 // hears a timeout instead of a result.
 const commitTimeout = 30 * time.Second
 
-// pushTimeout caps the push, which goes over the network and may sit behind
-// an SSH handshake; a push that would prompt for credentials has no terminal
-// to prompt on and runs into this instead of hanging the request.
-const pushTimeout = 60 * time.Second
-
 // CommitInfo is what the commit panel shows before anything is committed:
 // where the commit would go, and what the last one said, which is what an
 // amend starts from. A directory without a repository answers Repo false and
@@ -67,7 +62,8 @@ func (r *Repo) CommitInfo(ctx context.Context) (CommitInfo, error) {
 // before a pathspec commit may take it, the source of a rename has to be in
 // the pathspec or the commit would record the copy and keep the deletion
 // pending, and both are found by asking status here rather than trusting the
-// caller's list. Amend rewrites the tip instead of adding to it.
+// caller's list. Amend rewrites the tip instead of adding to it, and an amend
+// with no paths at all rewrites only the message, the everyday typo fix.
 //
 // Every pathspec is built as :(top,literal) from the repository relative path:
 // top so a rename source outside the project keeps addressable, literal so a
@@ -76,7 +72,7 @@ func (r *Repo) Commit(ctx context.Context, message string, paths []string, amend
 	if strings.TrimSpace(message) == "" {
 		return CommitResult{}, errors.New("A commit message is required.")
 	}
-	if len(paths) == 0 {
+	if len(paths) == 0 && !amend {
 		return CommitResult{}, errors.New("Pick at least one change to commit.")
 	}
 	w := *r
@@ -84,6 +80,16 @@ func (r *Repo) Commit(ctx context.Context, message string, paths []string, amend
 	info, ok := w.resolve(ctx)
 	if !ok {
 		return CommitResult{}, errors.New("The project is not inside a git repository.")
+	}
+
+	// An amend with nothing picked rewrites the message and nothing else.
+	// --only is what keeps a coder's staged work out of it: a bare --amend
+	// would take the index along.
+	if len(paths) == 0 {
+		if _, err := w.run(ctx, []string{"commit", "--only", "--amend", "-m", message}, nil); err != nil {
+			return CommitResult{}, err
+		}
+		return w.tipResult(ctx), nil
 	}
 
 	selected := map[string]bool{}
@@ -151,23 +157,17 @@ func (r *Repo) Commit(ctx context.Context, message string, paths []string, amend
 		return CommitResult{}, err
 	}
 
+	return w.tipResult(ctx), nil
+}
+
+// tipResult names the commit that was just made, best effort: the commit
+// stands either way, only its stamp would be missing.
+func (r *Repo) tipResult(ctx context.Context) CommitResult {
 	result := CommitResult{}
-	if out, err := w.run(ctx, []string{"log", "-1", "--format=%h%x00%s"}, nil); err == nil {
+	if out, err := r.run(ctx, []string{"log", "-1", "--format=%h%x00%s"}, nil); err == nil {
 		if hash, subject, found := strings.Cut(strings.TrimRight(string(out), "\n"), "\x00"); found {
 			result.Hash, result.Subject = hash, subject
 		}
 	}
-	return result, nil
-}
-
-// Push sends the current branch to its upstream, a plain `git push` with no
-// options: where it goes, and whether it may, is the repository's own
-// configuration, and what git refuses comes back in git's words, a missing
-// upstream included. It exists for the commit that wants to leave right away;
-// a commit whose push is refused stands as a commit.
-func (r *Repo) Push(ctx context.Context) error {
-	w := *r
-	w.timeout = pushTimeout
-	_, err := w.run(ctx, []string{"push"}, nil)
-	return err
+	return result
 }

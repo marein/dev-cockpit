@@ -70,15 +70,11 @@ func SocketPath(stateDir string) string {
 
 // resolve spells a state directory the one way both sides have to spell it: a
 // command may name it relative or with a ~, the server has already expanded it,
-// and two spellings of one directory must not resolve to two sockets.
+// and two spellings of one directory must not resolve to two sockets. The rule
+// lives in filesystem.AbsDir, because the askpass broker derives its own socket
+// from the same directory and has to spell it the same way.
 func resolve(stateDir string) string {
-	if expanded, err := filesystem.ExpandHome(stateDir); err == nil {
-		stateDir = expanded
-	}
-	if abs, err := filepath.Abs(stateDir); err == nil {
-		stateDir = abs
-	}
-	return filepath.Clean(stateDir)
+	return filesystem.AbsDir(stateDir)
 }
 
 // Listen binds the socket for one serve process. A socket file a dead process

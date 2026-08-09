@@ -106,10 +106,29 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "draft", Data: map[string]string{"conversation": ""}}); err != nil {
 		return
 	}
+	// The same for the commit panel: a bare commitdraft signal, no project
+	// named, and every open editor pulls its own project's draft.
+	if err := writeEnvelope(w, eventbus.Event{Type: "commitdraft", Data: map[string]string{"project": ""}}); err != nil {
+		return
+	}
+	// And a bare git signal, no project named. The git event is otherwise only
+	// published when something moves, and a move that fell into a gap is
+	// published never again: the same file changing further does not move the
+	// status list. Every open editor answers this one with its full catch-up.
+	if err := writeEnvelope(w, eventbus.Event{Type: "git", Data: map[string]any{"project": "", "base": true}}); err != nil {
+		return
+	}
 	// A bare assistant signal: an open conversation surface pulls its state and
 	// catches up on a message that arrived while the socket was down, the same
 	// way the tab strip and the quick nav catch up on the terminals signal.
 	if err := writeEnvelope(w, eventbus.Event{Type: "assistant", Data: map[string]string{}}); err != nil {
+		return
+	}
+	// And the standing git questions: the dialog is a mirror of server state,
+	// so a page that just loaded, reconnected or woke pulls the list and shows
+	// or clears its dialog accordingly. Without this a question parked while
+	// the socket was down would wait out its whole window unseen.
+	if err := writeEnvelope(w, eventbus.Event{Type: "gitprompt"}); err != nil {
 		return
 	}
 	// The host reading rides the stream: it goes out on connect and then on its
@@ -187,4 +206,19 @@ func (s *Server) publishProjects() {
 // open diff nothing.
 func (s *Server) publishGit(projectName string, base bool) {
 	s.bus.Publish(eventbus.Event{Type: "git", Data: map[string]any{"project": projectName, "base": base}})
+}
+
+// publishCommitDraft signals that one project's commit draft moved: a device
+// saved the panel, or a commit spent it. Like the git event it carries the
+// movement and never the state, every open panel pulls the draft itself.
+func (s *Server) publishCommitDraft(projectName string) {
+	s.bus.Publish(eventbus.Event{Type: "commitdraft", Data: map[string]string{"project": projectName}})
+}
+
+// publishGitPrompt signals that the standing askpass questions moved: one was
+// parked, answered, or taken along by its action's end. Bare like the other
+// signals, every page pulls the list itself and reconciles its dialog, which
+// is also how an answered or expired question closes on every other device.
+func (s *Server) publishGitPrompt() {
+	s.bus.Publish(eventbus.Event{Type: "gitprompt"})
 }

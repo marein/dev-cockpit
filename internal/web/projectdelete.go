@@ -227,6 +227,8 @@ func (s *Server) deleteProjectWithCompose(p project.Project) {
 	if err := s.projects.Remove(p); err != nil {
 		log.Printf("delete project %s: %v", p.Name, err)
 		failure = err.Error()
+	} else {
+		s.commitDrafts.Delete(p.Name)
 	}
 	s.deletes.finish(p.Name, failure)
 	s.publishProjects()

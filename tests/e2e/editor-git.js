@@ -4,15 +4,23 @@ const { assert, sleep, BASE } = L;
 // Editor git: what the editor shows about the repository a project sits in,
 // and the two git switches of a file tab, Git diff and Git blame. Routes:
 // GET /projects/:name/editor/git/changes (what the working copy carries, one
-// entry per changed path with the line counts, plus the repo flag), GET
-// .../git/file?path= (the file at HEAD; no route ever answers a diff,
-// @codemirror/merge computes it in the browser), GET .../git/blame,
-// POST .../git/watch. The watch is what starts and stops the
+// entry per changed path with the line counts, plus the repo flag and the
+// branch with ahead/behind), GET .../git/file?path=&rev= (the file at a
+// revision, HEAD without one; no route ever answers a diff,
+// @codemirror/merge computes it in the browser), GET .../git/blame, GET
+// .../git/log, GET .../git/refs, POST .../git/watch, the write routes of
+// the git surface (push, fetch, pull, checkout, branch, clone) and the app
+// level askpass pair (GET/POST /git/prompt, standing questions as server
+// state), covered in their
+// own section below. The watch is what starts and stops the
 // server's per-project poller: it only runs while a client says it is
 // watching, it compares a fingerprint (HEAD, the status output) and publishes a
 // bare "git" event over the shared /events stream when that moves. The event
 // carries no state, dc-editor pulls the status itself, exactly like the tab
-// strip pulls its fragment on "terminals".
+// strip pulls its fragment on "terminals". The stream's connect snapshot
+// carries a git signal without a project name, which an editor answers with
+// the full catch-up: a move published into a connection gap comes never
+// again, the same file changing further does not move the status list.
 // Marks are computed in the browser out of the flat status list: a changed file
 // carries a letter at the end of its row, a folder carries a dot for the most
 // pressing thing under it (conflict > deleted > modified > renamed > added >
@@ -25,6 +33,15 @@ const { assert, sleep, BASE } = L;
 //     branch and the last message): a pathspec commit of exactly the checked
 //     rows, untracked paths through intent-to-add, staged work on other paths
 //     untouched. Init, add, merge and everything else stay with the shell.
+//   - nothing starts picked in the commit panel, and the panel's draft (the
+//     message, the picked paths and an amend in progress with its borrowed
+//     message) is server state per project
+//     (GET/POST .../git/commit-draft, saved debounced, published as the
+//     commitdraft event, spent by a successful commit). Picks therefore stick
+//     across navigations: every commit here clears the pick first (clearPicks
+//     goes through the all checkbox's checked state, an indeterminate box
+//     reads as unchecked and setChecked(false) would do nothing) and picks
+//     back exactly what the check is about.
 //   - the "git" event refreshes the status, not the file tree. A file created
 //     elsewhere has no row yet, so the live check changes a file that is
 //     already rendered, and the new-file case goes through the refresh button,
@@ -37,10 +54,12 @@ const { assert, sleep, BASE } = L;
 //     the defaults are read before anything is saved and the poll interval is
 //     put back at the end. There is no switch for git itself: it shows where a
 //     repository is and nothing where there is none.
-//   - the diff always compares against HEAD and is one switch in the file's
+//   - the diff switch compares against HEAD and lives in the file's
 //     context menu (tab and tree row), reading "Show git diff" / "Hide git
-//     diff"; it is not in the editor menu, and without a repository the menu
-//     carries no git entries at all. `dc-editor` carries `data-git-repo` once
+//     diff"; the file history and the revision picker fill the same field
+//     with another revision. The editor menu carries git only as the Git
+//     entry that opens the sheet; without a repository the entry stays, the
+//     sheet then offers the clone and nothing else. `dc-editor` carries `data-git-repo` once
 //     the status answered, which is what diffReady waits on. The tab stores
 //     the revision it compares against (`diff: "HEAD"`), not a boolean, so a
 //     revision picker later fills the same field. How a comparison looks, side
@@ -60,6 +79,28 @@ const { assert, sleep, BASE } = L;
 //     renders the revision as decorations (.cm-deletedChunk / .cm-changedLine).
 //     The working copy keeps its buffer across every switch, which is what the
 //     save check proves.
+//   - switching the revision under an open diff needs a file whose revisions
+//     say different things, or a switch that never happened passes as one.
+//     sub/rev.txt is that file: two commits ("one", "two") and a working copy
+//     ("work"), so the revision side names which revision is up. The inline
+//     view is where this broke, and it broke silently: it is an extension on
+//     the open editor, and reconfiguring a compartment that already holds one
+//     keeps the StateField values it had, so the new revision never arrived
+//     while the status line already named it.
+//   - a diff against a commit hash is immutable, so a commit cannot move it.
+//     The check for the moved base has to put the tab back on HEAD first
+//     (switch off, switch on), else it proves nothing.
+//   - the pickers search on the server (`git/refs?q=&kinds=`), so a row is
+//     only there once the round it belongs to came back: type, then wait for
+//     `[data-picker-loading]` to go hidden. Typing is debounced at 200ms, so
+//     a `keyboard.type` with a delay under that costs one round and not one
+//     per character. The revision picker asks for commits as well and the
+//     branch picker does not.
+//   - proving that a slow answer never overwrites a newer one needs a slow
+//     answer: `page.route` holds one query back, and the delayed
+//     `route.continue()` has to swallow its own error, because the check
+//     unroutes before the round comes home and playwright handles what is
+//     still parked. An uncaught rejection there takes the whole runner down.
 //   - asking the DOM whether the merge view exists is not enough, and that is
 //     exactly how the side by side view shipped broken once: the plain editor
 //     sat on top of it, because CodeMirror's base theme carries
@@ -102,6 +143,27 @@ const { assert, sleep, BASE } = L;
 //     diff or a comparison is up and are absent for a file HEAD does not
 //     hold. The gutter keeps a hidden spacer cell for its width, checks must
 //     skip it.
+//   - the askpass bridge needs something that asks, and nothing real may be
+//     contacted. `core.sshCommand` of this one repository points at a script
+//     written through the editor's own file route (no quoting through the
+//     shell), which talks to nothing: it runs `$SSH_ASKPASS` with the line a
+//     passphrased key would ask, writes down what came back and exits 255, so
+//     the push always ends in git's words and only the answer is the claim.
+//     It has to stay quiet on `ssh -G <host>`, the configuration probe git
+//     runs before it opens the connection, or one push asks twice and the
+//     second question stands there unanswered until the action times out.
+//     That is also the regression signal: without the bridge `SSH_ASKPASS` is
+//     `/bin/false`, no dialog ever appears and the check fails on the wait.
+//     The field is masked only for a secret, decided on the prompt line
+//     itself, which is why the stand-in asks for a passphrase: the same
+//     helper also carries an https user name and ssh's host key yes, and
+//     those are typed in the open. A check that asserts `type="password"`
+//     has to ask a question that names one.
+//     The dialog is the one moment in which a write is provably still running,
+//     which is where the single lock is read (statusbar spinner, every sheet
+//     row disabled, the commit button disabled), and the commit message is
+//     filled first, else that button is dead over the empty field and the
+//     check would prove nothing.
 //   - never wait for "[x][hidden]" and never assert on the attribute when the
 //     claim is that something is gone. Tabler's display utilities are important
 //     and sit below its own [hidden] rule, so an element with a d-* class was
@@ -373,6 +435,41 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       const colored = await page.$(`.editor-item[data-path="${tracked}"] .editor-item-name.text-yellow`);
       assert(colored, "the changed file's name is not colored");
       return "modified file and its folder marked live";
+    });
+
+    // The poller publishes only moves, and a move that fell into a gap comes
+    // never again: the same file changing further does not move the status
+    // list. Two healers close that gap. A stream that really died comes back
+    // through the connect snapshot's bare git signal, which the editor
+    // answers with the full catch-up. And a pull that failed retries on its
+    // own, for the connection that half-died: offline emulation builds
+    // exactly that half, an established SSE keeps delivering while every new
+    // request fails, so the git event arrives here and its status pull dies —
+    // which is also what a phone waking before its radio does.
+    await run("a reconnect catches up on the git change the gap swallowed", async () => {
+      const mp = await mobilePage();
+      try {
+        await ctx.setOffline(true);
+        try {
+          await sleep(1000);
+          assert(await post(mp, `${editorBase}/file`, { path: worded, content: wordedAfter }) === 200,
+            "the other device could not save");
+          await sleep(2500);
+          assert(!(await page.$(`.editor-item[data-path="${worded}"][data-git-status]`)),
+            "the mark arrived while the page was offline");
+        } finally {
+          await ctx.setOffline(false);
+        }
+        // No refresh, no visibility change, no further git move: the mark has
+        // to arrive on its own, here through the retry of the pull that
+        // failed while the requests were down.
+        await page.waitForSelector(`.editor-item[data-path="${worded}"][data-git-status="modified"]`, { timeout: 30000 });
+      } finally {
+        // The later checks need this file clean, a failed wait included.
+        await post(page, `${editorBase}/file`, { path: worded, content: wordedBefore }).catch(() => {});
+      }
+      await page.waitForSelector(`.editor-item[data-path="${worded}"][data-git-status]`, { state: "detached", timeout: 20000 });
+      return "the mark arrived with the reconnect, and live events flow again after it";
     });
 
     await run("the refresh button pulls the status with the files", async () => {
@@ -798,6 +895,37 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       return "asked, declined, asked again, confirmed";
     });
 
+    await run("diff: the switch on a background tab brings the tab to the front", async () => {
+      await openTracked();
+      await page.click('.editor-item[data-path="root.txt"]');
+      await page.waitForSelector('.editor-tab[data-path="root.txt"].active', { timeout: 10000 });
+
+      await pick(`.editor-tab[data-path="${tracked}"]`, "Show git diff");
+      await page.waitForSelector(`.editor-tab[data-path="${tracked}"].active`, { timeout: 10000 });
+      await page.waitForSelector(".cm-mergeView", { timeout: 20000 });
+      await toggleDiff(page);
+      await page.waitForSelector(".cm-mergeView", { state: "detached", timeout: 20000 });
+
+      await page.click('.editor-tab[data-path="root.txt"]');
+      await page.waitForSelector('.editor-tab[data-path="root.txt"].active', { timeout: 10000 });
+      await pick(`.editor-item[data-path="${tracked}"]`, "Show git diff");
+      await page.waitForSelector(`.editor-tab[data-path="${tracked}"].active`, { timeout: 10000 });
+      await page.waitForSelector(".cm-mergeView", { timeout: 20000 });
+
+      await page.click('.editor-tab[data-path="root.txt"]');
+      await page.waitForSelector('.editor-tab[data-path="root.txt"].active', { timeout: 10000 });
+      await pick(`.editor-item[data-path="${tracked}"]`, "Hide git diff");
+      await sleep(600);
+      assert(await page.locator('.editor-tab[data-path="root.txt"].active').count() === 1,
+        "hiding from the back stole the front tab");
+      await page.click(`.editor-tab[data-path="${tracked}"]`);
+      await page.waitForSelector(`.editor-tab[data-path="${tracked}"].active`, { timeout: 10000 });
+      await sleep(800);
+      assert(await page.locator(".cm-mergeView").count() === 0, "a hidden diff was built anyway");
+      assert(!(await diffPressed(page)), "the entry still reads as on");
+      return "show surfaces the tab with the diff, hide only clears the wish";
+    });
+
     // The tab strip says what the tree says: the same letter, the same color,
     // and nothing at all for a file git has no entry for.
     await run("the open tabs carry the git mark, live", async () => {
@@ -1100,9 +1228,21 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       await target.click("[data-editor-commit-toggle]");
       await target.waitForSelector("[data-editor-commit]:not([hidden])", { timeout: 10000 });
     };
+    // clearPicks empties the pick through the all checkbox. The box can stand
+    // indeterminate, where setChecked(false) reads it as unchecked and does
+    // nothing, so it goes through checked first.
+    const clearPicks = async () => {
+      const enabled = await page.evaluate(() => {
+        const all = document.querySelector("[data-editor-commit-all]");
+        return !!all && !all.disabled;
+      });
+      if (!enabled) return;
+      await page.setChecked("[data-editor-commit-all]", true);
+      await page.setChecked("[data-editor-commit-all]", false);
+    };
     const pickOnly = async (path) => {
       await page.waitForSelector(`.editor-commit-row[data-path="${path}"]`, { timeout: 15000 });
-      await page.setChecked("[data-editor-commit-all]", false);
+      await clearPicks();
       await page.setChecked(`.editor-commit-row[data-path="${path}"] input[type="checkbox"]`, true);
     };
     // A count comes out of the shell into a file the editor can read; the
@@ -1124,6 +1264,37 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       throw new Error("the count never arrived");
     };
     const revCount = () => shellCount("git rev-list --count HEAD");
+    // The same trip for a question whose answer is a line and not a number,
+    // a commit's subject being the one that says whether a rewrite arrived.
+    const shellText = async (command) => {
+      await post(page, `${editorBase}/delete`, { path: "count.txt" }).catch(() => {});
+      assert(await runInShell(`${command} > count.txt\r`) === 200, "the shell refused the read");
+      const deadline = Date.now() + 20000;
+      while (Date.now() < deadline) {
+        const data = await page.evaluate((b) =>
+          fetch(`${b}/file?path=count.txt`, { headers: { Accept: "application/json" } })
+            .then((r) => (r.ok ? r.json() : null)).catch(() => null), editorBase);
+        const text = data && (data.content || "").trim();
+        if (text) return text;
+        await sleep(500);
+      }
+      throw new Error("the answer never arrived");
+    };
+    // Reads a file of the project straight through the editor's own route,
+    // which is how the checks below see what a process outside the browser
+    // wrote down.
+    const readHere = async (path) => {
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        const data = await page.evaluate(([b, p]) =>
+          fetch(`${b}/file?path=${encodeURIComponent(p)}`, { headers: { Accept: "application/json" } })
+            .then((r) => (r.ok ? r.json() : null)).catch(() => null), [editorBase, path]);
+        const text = data && (data.content || "").trim();
+        if (text) return text;
+        await sleep(400);
+      }
+      return "";
+    };
 
     await run("commit: the panel lists the changes and a partial commit takes only the checked rows", async () => {
       await openEditor(page);
@@ -1139,11 +1310,11 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       await page.click("[data-editor-refresh]");
       await page.waitForSelector('.editor-item[data-path="commit-a.txt"][data-git-status="untracked"]', { timeout: 15000 });
 
-      // The editor menu carries the entry with the count of changes.
+      // The editor menu carries the Git entry with the count of changes.
       await page.click("[data-editor-menu]");
       await page.waitForSelector("[data-editor-menu-list].show", { timeout: 4000 });
-      assert(await page.locator("[data-editor-commit-item]").isVisible(), "the menu does not offer the commit");
-      assert(/\d/.test(await page.locator("[data-editor-commit-item-count]").textContent()), "the menu entry carries no count");
+      assert(await page.locator("[data-editor-git-item]").isVisible(), "the menu does not offer git");
+      assert(/\d/.test(await page.locator("[data-editor-git-item-count]").textContent()), "the git entry carries no count");
       await page.keyboard.press("Escape");
       await sleep(300);
 
@@ -1197,9 +1368,19 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       assert(!grouped.nestedHasPath, "a grouped file still carries its own path line");
       assert(grouped.order.indexOf("deep/one.txt") > grouped.order.indexOf("deep/nested/two.txt"),
         `a folder's files do not follow its subfolders: ${JSON.stringify(grouped.order)}`);
+      // Nothing starts picked: a change goes into the commit because somebody
+      // picked it, never because it appeared.
+      assert(await page.evaluate(() =>
+        [...document.querySelectorAll(".editor-commit-row input")].every((el) => !el.checked)),
+      "a fresh panel starts with rows picked");
+      const startSummary = await page.locator("[data-editor-commit-summary]").textContent();
+      assert(/^0 of \d+ changes$/.test(startSummary.trim()), `the summary starts at "${startSummary}"`);
+      await page.setChecked('.editor-commit-grouprow[data-dir="deep"] input', true);
       await page.setChecked('.editor-commit-grouprow[data-dir="deep/nested"] input', false);
       assert(!(await page.locator('.editor-commit-row[data-path="deep/nested/two.txt"] input').isChecked()),
         "dropping the group left its file picked");
+      assert(await page.locator('.editor-commit-row[data-path="deep/one.txt"] input').isChecked(),
+        "dropping the subfolder took the parent's own file with it");
       assert(await page.evaluate(() =>
         document.querySelector('.editor-commit-grouprow[data-dir="deep"] input').indeterminate),
       "a partly picked subtree does not read as mixed on the folder above");
@@ -1297,6 +1478,32 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       assert(await post(page, `${editorBase}/delete`, { path: "count.txt" }) === 200, "the count file could not be removed");
       await page.click("[data-editor-commit-close]");
       return `still ${after} commits, the tip reworded`;
+    });
+
+    await run("commit: an amend with nothing picked rewrites only the message", async () => {
+      await openEditor(page);
+      await openCommitView(page);
+      await page.waitForFunction(() => !document.querySelector("[data-editor-commit-amend]").disabled, null, { timeout: 10000 });
+      // Nothing picked and no amend: the button stands disabled however hard
+      // the message tries.
+      await clearPicks();
+      await page.fill("[data-editor-commit-message]", "will not land");
+      assert(await page.locator("[data-editor-commit-button]").isDisabled(), "an empty pick enables the commit");
+      // Amend on: the borrowed message commits alone, the everyday typo fix.
+      await page.setChecked("[data-editor-commit-amend]", true);
+      await page.waitForFunction(() => {
+        const value = document.querySelector("[data-editor-commit-message]").value;
+        return value.length > 0 && value !== "will not land";
+      }, null, { timeout: 8000 });
+      const borrowed = await page.inputValue("[data-editor-commit-message]");
+      await page.fill("[data-editor-commit-message]", `${borrowed}, message only`);
+      await page.waitForFunction(() => !document.querySelector("[data-editor-commit-button]").disabled, null, { timeout: 8000 });
+      await page.click("[data-editor-commit-button]");
+      await page.waitForFunction((b) =>
+        fetch(`${b}/git/commit`, { headers: { Accept: "application/json" } })
+          .then((r) => r.json()).then((i) => /message only$/.test(i.lastMessage || "")), editorBase, { timeout: 20000 });
+      await page.click("[data-editor-commit-close]");
+      return "no pick needed with amend on, the tip reworded in place";
     });
 
     await run("commit: push rides behind the arrow, a refused push leaves the commit standing", async () => {
@@ -1407,13 +1614,803 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       await mp.waitForSelector("[data-editor-backdrop]", { state: "hidden", timeout: 5000 });
       await mp.click("[data-editor-menu]");
       await mp.waitForSelector("[data-editor-menu-list].show", { timeout: 4000 });
-      await mp.click("[data-editor-commit-item]");
+      await mp.click("[data-editor-git-item]");
+      await mp.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 6000 });
+      await mp.locator("[data-editor-sheet-body] .dropdown-item", { hasText: /^Commit/ }).first().click();
       await mp.waitForSelector(".editor-drawer-open [data-editor-commit]:not([hidden])", { timeout: 10000 });
       assert(await mp.locator("[data-editor-commit-button]").isVisible(), "the commit button is not on screen");
       await mp.click("[data-editor-commit-close]");
       await mp.waitForSelector("[data-editor-commit]", { state: "hidden", timeout: 5000 });
       assert(await mp.locator(".editor-drawer-open").count() === 1, "closing the view closed the drawer with it");
-      return "the drawer carries the view, closing it keeps the drawer";
+
+      // A row of the list surfaces the file's diff, and the drawer goes with
+      // every way out: a fresh open went through openPath, which closes it,
+      // but a file that was already open behind another one used to keep the
+      // drawer standing over the comparison it just built.
+      await writeHere("drawer-a.txt", "da\n");
+      await writeHere("drawer-b.txt", "db\n");
+      await mp.click("[data-editor-refresh]");
+      await mp.waitForSelector('.editor-item[data-path="drawer-a.txt"]', { timeout: 15000 });
+      await mp.click('.editor-item[data-path="drawer-a.txt"]');
+      await mp.waitForSelector('.editor-tab[data-path="drawer-a.txt"].active', { state: "attached", timeout: 10000 });
+      await mp.waitForSelector(".editor.editor-drawer-open", { state: "detached", timeout: 5000 });
+      await mp.click("[data-editor-drawer-toggle]");
+      await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 5000 });
+      await mp.click('.editor-item[data-path="drawer-b.txt"]');
+      await mp.waitForSelector('.editor-tab[data-path="drawer-b.txt"].active', { state: "attached", timeout: 10000 });
+      await mp.waitForSelector(".editor.editor-drawer-open", { state: "detached", timeout: 5000 });
+      await mp.click("[data-editor-drawer-toggle]");
+      await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 5000 });
+      await mp.click("[data-editor-commit-toggle]");
+      await mp.waitForSelector("[data-editor-commit]:not([hidden])", { timeout: 10000 });
+      await mp.waitForSelector('.editor-commit-row[data-path="drawer-a.txt"]', { timeout: 15000 });
+      await mp.click('.editor-commit-row[data-path="drawer-a.txt"] .editor-commit-open');
+      await mp.waitForSelector(".editor.editor-drawer-open", { state: "detached", timeout: 8000 });
+      await mp.waitForSelector('.editor-tab[data-path="drawer-a.txt"].active', { state: "attached", timeout: 10000 });
+      await mp.waitForSelector(".cm-mergeView, .cm-deletedChunk, .cm-changedLine", { state: "attached", timeout: 20000 });
+      return "the drawer carries the view, keeps standing when it closes, and goes when a row surfaces an open file's diff";
+    });
+
+    await run("commit: the draft lives with the project, hands off to a second session, and a commit spends it", async () => {
+      await openEditor(page);
+      await writeHere("draft-a.txt", "da\n");
+      await writeHere("draft-b.txt", "db\n");
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector('.editor-item[data-path="draft-a.txt"]', { timeout: 15000 });
+      await openCommitView(page);
+      await pickOnly("draft-a.txt");
+      await page.fill("[data-editor-commit-message]", "carried draft");
+      const storedDraft = () => page.evaluate((b) =>
+        fetch(`${b}/git/commit-draft`, { headers: { Accept: "application/json" } })
+          .then((r) => r.json()), editorBase);
+      const waitStored = async (want, label) => {
+        const deadline = Date.now() + 15000;
+        let d = null;
+        while (Date.now() < deadline) {
+          d = await storedDraft();
+          if (want(d)) return;
+          await sleep(400);
+        }
+        assert(false, `${label}: the server holds ${JSON.stringify(d)}`);
+      };
+      await waitStored((d) => d.message === "carried draft" && (d.paths || []).includes("draft-a.txt")
+        && !(d.paths || []).includes("draft-b.txt"), "after typing and picking");
+
+      await openEditor(page);
+      await openCommitView(page);
+      await page.waitForFunction(() =>
+        document.querySelector("[data-editor-commit-message]").value === "carried draft", null, { timeout: 10000 });
+      await page.waitForSelector('.editor-commit-row[data-path="draft-a.txt"]', { timeout: 15000 });
+      assert(await page.locator('.editor-commit-row[data-path="draft-a.txt"] input').isChecked(),
+        "the pick did not survive the reload");
+      assert(!(await page.locator('.editor-commit-row[data-path="draft-b.txt"] input').isChecked()),
+        "an unpicked row came back picked");
+
+      const other = await ctx.newPage();
+      L.wirePage(other, bag);
+      try {
+        await openEditor(other);
+        await openCommitView(other);
+        await other.waitForFunction(() =>
+          document.querySelector("[data-editor-commit-message]").value === "carried draft", null, { timeout: 10000 });
+        assert(await other.locator('.editor-commit-row[data-path="draft-a.txt"] input').isChecked(),
+          "the handed-off pick is not checked");
+        await other.fill("[data-editor-commit-message]", "carried draft, grown");
+        await page.waitForFunction(() =>
+          document.querySelector("[data-editor-commit-message]").value === "carried draft, grown", null, { timeout: 15000 });
+
+        // An amend in progress travels too: the flag, the borrowed message as
+        // it was edited, and the stash the amend displaced, which unchecking
+        // gives back on whichever device does it.
+        await other.waitForFunction(() => !document.querySelector("[data-editor-commit-amend]").disabled, null, { timeout: 10000 });
+        await other.setChecked("[data-editor-commit-amend]", true);
+        await other.waitForFunction(() => {
+          const value = document.querySelector("[data-editor-commit-message]").value;
+          return value.length > 0 && value !== "carried draft, grown";
+        }, null, { timeout: 8000 });
+        await other.fill("[data-editor-commit-message]", "amend carried over");
+        await page.waitForFunction(() => document.querySelector("[data-editor-commit-amend]").checked
+          && document.querySelector("[data-editor-commit-message]").value === "amend carried over", null, { timeout: 15000 });
+        await page.setChecked("[data-editor-commit-amend]", false);
+        await page.waitForFunction(() =>
+          document.querySelector("[data-editor-commit-message]").value === "carried draft, grown", null, { timeout: 8000 });
+        await other.waitForFunction(() => !document.querySelector("[data-editor-commit-amend]").checked
+          && document.querySelector("[data-editor-commit-message]").value === "carried draft, grown", null, { timeout: 15000 });
+      } finally {
+        await other.close().catch(() => {});
+      }
+
+      await page.click("[data-editor-commit-button]");
+      await page.waitForSelector('.editor-commit-row[data-path="draft-a.txt"]', { state: "detached", timeout: 20000 });
+      assert((await page.inputValue("[data-editor-commit-message]")) === "", "the commit left the message standing");
+      await waitStored((d) => (d.message || "") === "" && (d.paths || []).length === 0, "after the commit");
+
+      await pickOnly("draft-b.txt");
+      await waitStored((d) => (d.paths || []).includes("draft-b.txt"), "after picking the second file");
+      assert(await post(page, `${editorBase}/delete`, { path: "draft-b.txt" }) === 200, "draft-b could not be removed");
+      await page.waitForSelector('.editor-commit-row[data-path="draft-b.txt"]', { state: "detached", timeout: 15000 });
+      await page.fill("[data-editor-commit-message]", "prune probe");
+      await waitStored((d) => d.message === "prune probe" && (d.paths || []).length === 0,
+        "after the picked file left the changes");
+
+      await page.fill("[data-editor-commit-message]", "");
+      await waitStored((d) => (d.message || "") === "", "after emptying the box");
+      await page.click("[data-editor-commit-close]");
+      return "stored on the server, handed off live with the amend, spent by the commit, pruned with the changes";
+    });
+
+    // ---- the git surface -----------------------------------------------------
+    //
+    // The branch stands in the statusbar with the ahead/behind arrows and is
+    // the way into the git sheet, which carries every repository wide action:
+    // switch branch, new branch, commit, push, pull (fast forward only),
+    // fetch, force push, and the recent commits. Push, fetch and pull run
+    // against a local bare repository under /tmp, never against anything
+    // real. Routes: GET git/log (paged history, ?path= for one file's), GET
+    // git/refs (a plain read; the branch list asks POST git/fetch with auto
+    // first, so no GET of ours ever touches the network), POST git/push,
+    // .../fetch, .../pull, .../checkout, .../branch.
+    const waitBranch = (target, want) => target.waitForFunction((name) => {
+      const el = document.querySelector("[data-editor-git-branch]");
+      const btn = document.querySelector("[data-editor-git-status]");
+      return !!btn && !btn.hidden && !!el && el.textContent === name;
+    }, want, { timeout: 30000 });
+    const waitArrow = (target, pattern) => target.waitForFunction((p) => {
+      const ab = document.querySelector("[data-editor-git-ab]");
+      if (p === "") return !!ab && ab.hidden;
+      return !!ab && !ab.hidden && new RegExp(p).test(ab.textContent);
+    }, pattern, { timeout: 30000 });
+    const openGitSheet = async (target) => {
+      await target.click("[data-editor-git-status]");
+      await target.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 6000 });
+      await target.waitForSelector("[data-editor-sheet-body] .dropdown-item", { timeout: 6000 });
+    };
+    const sheetAction = (target, pattern) => target.locator("[data-editor-sheet-body] .dropdown-item", { hasText: pattern });
+    const surfaceRemote = `/tmp/zzgit-surface-${tag}.git`;
+    const surfacePeer = `/tmp/zzgit-peer-${tag}`;
+
+    await run("the statusbar names the branch, counts ahead, and the sheet's push clears it", async () => {
+      await openEditor(page);
+      await diffReady(page);
+      await waitBranch(page, "master");
+      assert(await runInShell(
+        `git init -q --bare ${surfaceRemote} && git remote add origin ${surfaceRemote} && git push -q -u origin master\r`,
+      ) === 200, "the shell refused the remote setup");
+      await writeHere("surface.txt", "away\n");
+      assert(await runInShell(`git add surface.txt && git ${author} commit -qm surface\r`) === 200, "the shell refused the commit");
+      await waitArrow(page, "↑1");
+      await openGitSheet(page);
+      const pushRow = sheetAction(page, /^Push/);
+      assert(/1 commit to push/.test(await pushRow.first().textContent()), "the push row does not count the commit");
+      await pushRow.first().click();
+      await waitArrow(page, "");
+      const pushed = await shellCount(`git --git-dir ${surfaceRemote} rev-list --count HEAD`);
+      const local = await revCount();
+      assert(pushed === local, `the remote holds ${pushed} of ${local} commits`);
+      assert(await post(page, `${editorBase}/delete`, { path: "count.txt" }) === 200, "the count file could not be removed");
+      return "↑1 shown, push delivered, arrows gone";
+    });
+
+    await run("the git sheet fetches on open, and pull only fast forwards", async () => {
+      await openEditor(page);
+      await diffReady(page);
+      assert(await runInShell(
+        `git clone -q ${surfaceRemote} ${surfacePeer} && git -C ${surfacePeer} ${author} commit -qm peer --allow-empty && git -C ${surfacePeer} push -q\r`,
+      ) === 200, "the shell refused the peer");
+      // The shell runs on its own time: the remote's count is what says the
+      // peer's push has landed, and clearing FETCH_HEAD makes the sheet's
+      // quiet fetch deterministically stale (a fresh one skips on purpose).
+      assert(await runInShell("rm -f .git/FETCH_HEAD\r") === 200, "the shell refused the marker cleanup");
+      const remoteCount = await shellCount(`git --git-dir ${surfaceRemote} rev-list --count HEAD`);
+      assert(remoteCount >= 2, `the peer's push has not landed: ${remoteCount}`);
+      assert(await post(page, `${editorBase}/delete`, { path: "count.txt" }) === 200, "the count file could not be removed");
+      // Nothing here has fetched it, so nothing counts behind yet; opening
+      // the sheet runs the quiet fetch, and the arrow arrives over the git
+      // event.
+      await openGitSheet(page);
+      await waitArrow(page, "↓1");
+      await sheetAction(page, /^Pull/).first().click();
+      await waitArrow(page, "");
+      return "↓1 after the sheet's own fetch, gone after the pull";
+    });
+
+    await run("a running action's spinner keeps the row's label in place", async () => {
+      await openEditor(page);
+      await diffReady(page);
+      await openGitSheet(page);
+      const fetchRow = () => page.evaluate(() => {
+        const row = [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item")]
+          .find((el) => /^Fetch/.test(el.textContent.trim()));
+        if (!row) return null;
+        const label = row.querySelector("span.d-flex.flex-column") || row;
+        return { x: label.getBoundingClientRect().x, busy: !!row.querySelector(".spinner-border") };
+      });
+      const before = await fetchRow();
+      assert(before && !before.busy, "the fetch row is not idle before the click");
+      let releaseFetch = null;
+      const heldFetch = new Promise((resolve) => { releaseFetch = resolve; });
+      await page.route("**/git/fetch", async (route) => {
+        await heldFetch;
+        await route.continue().catch(() => {});
+      });
+      let during = null;
+      try {
+        await sheetAction(page, /^Fetch/).first().click();
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          during = await fetchRow();
+          if (during && during.busy) break;
+          await sleep(50);
+        }
+      } finally {
+        releaseFetch();
+        await page.unroute("**/git/fetch");
+      }
+      assert(during && during.busy, "the spinner never showed on the tapped row");
+      assert(Math.abs(during.x - before.x) < 0.5,
+        `the label moved from ${before.x} to ${during.x} while the spinner stood`);
+      await page.waitForFunction(() => {
+        const row = [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item")]
+          .find((el) => /^Fetch/.test(el.textContent.trim()));
+        return row && !row.querySelector(".spinner-border");
+      }, null, { timeout: 20000 });
+      await page.keyboard.press("Escape");
+      await sleep(300);
+      return "the spinner takes the icon's box, the label stands still";
+    });
+
+    await run("force push asks first, and a cancelled question leaves the remote alone", async () => {
+      await openEditor(page);
+      await diffReady(page);
+      // A rewritten tip is no fast forward: the plain push has nothing to do
+      // here, the force one is the only way, and it asks before it goes. The
+      // tip the pull left standing is the peer's empty commit, and amending
+      // one of those is what --allow-empty is for.
+      assert(await runInShell(`git ${author} commit -q --amend --allow-empty -m FORCED\r`) === 200, "the shell refused the amend");
+      await waitArrow(page, "↑1");
+      const before = await shellText(`git --git-dir ${surfaceRemote} log -1 --format=%s`);
+      assert(!/FORCED/.test(before), `the remote already carries the rewrite: ${before}`);
+
+      await openGitSheet(page);
+      await sheetAction(page, /^Force push/).first().click();
+      await page.waitForSelector(".swal2-popup:not(.swal2-toast)", { state: "visible", timeout: 8000 });
+      const asked = await page.textContent(".swal2-html-container");
+      assert(/force-with-lease/.test(asked), `the question does not name the lease: ${asked}`);
+      // Cancelled means nothing ran, not "ran and was undone".
+      await page.click(".swal2-cancel");
+      await page.waitForSelector(".swal2-popup:not(.swal2-toast)", { state: "hidden", timeout: 8000 });
+      await sleep(1500);
+      const stillThere = await shellText(`git --git-dir ${surfaceRemote} log -1 --format=%s`);
+      assert(stillThere === before, `the cancelled question moved the remote to ${stillThere}`);
+
+      // The sheet is excepted from the body's close-on-action-click, so it
+      // stands through a cancelled question and the next try starts at the row.
+      assert(await page.isVisible("[data-editor-sheet]:not([hidden])"), "the sheet closed under the cancelled question");
+      await sheetAction(page, /^Force push/).first().click();
+      await page.waitForSelector(".swal2-popup:not(.swal2-toast)", { state: "visible", timeout: 8000 });
+      await page.click(".swal2-confirm");
+      await waitArrow(page, "");
+      const after = await shellText(`git --git-dir ${surfaceRemote} log -1 --format=%s`);
+      assert(/FORCED/.test(after), `the remote did not follow the rewrite: ${after}`);
+      assert(await post(page, `${editorBase}/delete`, { path: "count.txt" }) === 200, "the count file could not be removed");
+      return "asked, cancelled without effect, then the rewrite landed";
+    });
+
+    // What ssh and git ask when they cannot get in reaches the browser through
+    // the askpass bridge: the server points SSH_ASKPASS and GIT_ASKPASS of one
+    // user-triggered action at a stub, the stub reports the prompt line over
+    // the broker's unix socket and blocks, the standing question is server
+    // state announced on the gitprompt event, the app-wide dialog in
+    // @dc/gitprompt pulls GET /git/prompt and shows it naming the project and
+    // the action, and the masked answer posts back to the waiting helper.
+    // Nothing real is contacted here: core.sshCommand of this one repository
+    // points at a script that only asks the question a passphrased key would
+    // ask and writes down what came back. Which is also the regression signal,
+    // because without the bridge SSH_ASKPASS is /bin/false and no dialog ever
+    // appears.
+    const fakeSsh = "zz-fake-ssh";
+    const askAnswer = "zz-ask-answer.txt";
+    await run("the askpass bridge carries the question, the answer and the cancel", async () => {
+      await openEditor(page);
+      await diffReady(page);
+      assert(await post(page, `${editorBase}/file`, {
+        path: fakeSsh,
+        content: [
+          "#!/bin/sh",
+          "# Stands in for ssh: talks to nothing, asks the one question a key",
+          "# with a passphrase asks, and writes down what came back.",
+          "# git probes the configuration first (ssh -G <host>) and only then",
+          "# opens the connection. Real ssh never asks anything on the probe,",
+          "# so neither does this, or every push would ask twice.",
+          'case "$1" in -G) exit 0 ;; esac',
+          'here=$(dirname "$0")',
+          'if answer=$("$SSH_ASKPASS" "Enter passphrase for key \'/zz/fake_ed25519\':"); then',
+          '  printf %s "$answer" > "$here/' + askAnswer + '"',
+          "else",
+          '  printf denied > "$here/' + askAnswer + '"',
+          "fi",
+          'echo "zz-fake-ssh: no such identity" >&2',
+          "exit 255",
+          "",
+        ].join("\n"),
+      }) === 200, "writing the ssh stand-in failed");
+      assert(await runInShell(
+        `chmod +x ${fakeSsh} && git config core.sshCommand "$PWD/${fakeSsh}" && git remote set-url origin ssh://zz-fake.invalid/repo.git\r`,
+      ) === 200, "the shell refused the ssh wiring");
+      // The push has to have something to send, or git answers before it ever
+      // reaches the transport.
+      await writeHere("ask-probe.txt", "probe\n");
+      assert(await runInShell(`git add ask-probe.txt && git ${author} commit -qm "ask probe"\r`) === 200, "the shell refused the commit");
+
+      // A commit that is ready to go is what makes the lock check below say
+      // anything: a message plus the picked rows is the one state in which the
+      // commit button is live, so seeing it dead during the push is the claim
+      // and not the empty field's doing.
+      await page.click("[data-editor-commit-toggle]");
+      await page.waitForSelector(".editor-commit-row", { timeout: 20000 });
+      await page.setChecked("[data-editor-commit-all]", true);
+      await page.fill("[data-editor-commit-message]", "would commit");
+      // The rows arrive with a status round, so this waits for the button to
+      // be live rather than assuming it already is.
+      await page.waitForFunction(() => !document.querySelector("[data-editor-commit-button]").disabled,
+        null, { timeout: 30000 });
+
+      await openGitSheet(page);
+      await sheetAction(page, /^Push/).first().click();
+      await page.waitForSelector(".swal2-popup:not(.swal2-toast) input.swal2-input", { timeout: 20000 });
+      const question = await page.textContent(".swal2-html-container");
+      assert(/Enter passphrase for key '\/zz\/fake_ed25519':/.test(question),
+        `the dialog does not carry ssh's own line: ${question}`);
+      // Above ssh's line the dialog carries this server's own truth, the
+      // project and the action, kept apart from whatever the helper reported.
+      assert(question.includes(`${project} · push`),
+        `the dialog does not name project and action: ${question}`);
+      assert(await page.getAttribute(".swal2-popup input.swal2-input", "type") === "password",
+        "the answer field is not masked");
+
+      // One write at a time, and the running one holds the whole surface: the
+      // statusbar carries the spinner in the branch's place, every sheet row
+      // is out, and the commit button is out with them. Two locks side by side
+      // is what would let a checkout and a commit run at each other.
+      const busy = await page.evaluate(() => ({
+        spinner: !document.querySelector("[data-editor-git-spin]").hidden,
+        icon: document.querySelector("[data-editor-git-icon]").hidden,
+        rows: [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item")].map((el) => el.disabled),
+        commit: document.querySelector("[data-editor-commit-button]").disabled,
+      }));
+      assert(busy.spinner && busy.icon, "the statusbar does not show the running action");
+      assert(busy.rows.length > 0 && busy.rows.every(Boolean), `a sheet row stayed live while a write ran: ${JSON.stringify(busy.rows)}`);
+      assert(busy.commit, "the commit button stayed live while a sheet action ran");
+
+      // The question is the cockpit's and not this page's: any signed-in page
+      // shows it, the projects page included, and the answer given on one
+      // device takes the dialog down on every other. A fresh page catches up
+      // through the connect snapshot's bare gitprompt signal, so nothing has
+      // to happen for the dialog to arrive.
+      const second = await page.context().newPage();
+      await second.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await second.waitForSelector(".swal2-popup:not(.swal2-toast) input.swal2-input", { timeout: 20000 });
+
+      await page.fill(".swal2-popup input.swal2-input", "opensesame");
+      await page.click(".swal2-confirm");
+      await second.waitForSelector(".swal2-popup:not(.swal2-toast)", { state: "hidden", timeout: 20000 });
+      await second.close();
+      // The stand-in refuses whatever it gets, so the push ends in git's
+      // words; what matters is that the typed answer reached the helper.
+      assert(await readHere(askAnswer) === "opensesame", "the answer never reached the helper");
+      const cleared = await page.waitForFunction(() => !document.querySelector("[data-editor-git-spin]") ||
+        document.querySelector("[data-editor-git-spin]").hidden, null, { timeout: 30000 }).then(() => true).catch(() => false);
+      if (!cleared) {
+        const state = await page.evaluate(() => ({
+          dialog: !!document.querySelector(".swal2-popup:not(.swal2-toast)"),
+          dialogText: (document.querySelector(".swal2-html-container") || {}).textContent || "",
+          toasts: [...document.querySelectorAll(".swal2-toast")].map((t) => t.textContent),
+        }));
+        throw new Error(`the write never released: ${JSON.stringify(state)}`);
+      }
+
+      // Cancel denies the helper, and the refusal says so instead of hiding
+      // behind an authentication failure.
+      assert(await post(page, `${editorBase}/delete`, { path: askAnswer }) === 200, "the answer file could not be removed");
+      assert(await page.isVisible("[data-editor-sheet]:not([hidden])"), "the sheet closed under the running action");
+      await sheetAction(page, /^Push/).first().click();
+      await page.waitForSelector(".swal2-popup:not(.swal2-toast) input.swal2-input", { timeout: 20000 });
+      await page.click(".swal2-cancel");
+      assert(await readHere(askAnswer) === "denied", "the cancel never reached the helper");
+      await page.waitForFunction(() => [...document.querySelectorAll(".swal2-toast")]
+        .some((t) => /the question was cancelled/.test(t.textContent)), null, { timeout: 30000 });
+
+      assert(await runInShell(
+        `git config --unset core.sshCommand && git remote set-url origin ${surfaceRemote} && git reset -q --hard HEAD~1\r`,
+      ) === 200, "the shell refused the cleanup");
+      await post(page, `${editorBase}/delete`, { path: fakeSsh }).catch(() => {});
+      await post(page, `${editorBase}/delete`, { path: askAnswer }).catch(() => {});
+      // The draft is per project and survives a reload, so this one goes back
+      // out instead of standing in the next check's panel.
+      await page.fill("[data-editor-commit-message]", "");
+      await page.click("[data-editor-sheet-close]");
+      await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      await page.click("[data-editor-commit-close]");
+      await waitArrow(page, "");
+      return "prompt shown on both pages, answer delivered and closed everywhere, surface locked, cancel named";
+    });
+
+    await run("a new branch and the switch back, both from the sheet", async () => {
+      const probe = `probe-${tag}`;
+      await openEditor(page);
+      await diffReady(page);
+      await openGitSheet(page);
+      await sheetAction(page, /^New branch/).first().click();
+      await page.waitForSelector(".swal2-popup input.swal2-input", { timeout: 8000 });
+      await page.fill(".swal2-popup input.swal2-input", probe);
+      await page.click(".swal2-confirm");
+      await waitBranch(page, probe);
+      // The sheet stays open after the creation, its head row repainted; the
+      // switch drills from it into the branch list, whose filter narrows and
+      // whose exact name tells master from origin/master.
+      await page.click('[data-editor-sheet-body] .dropdown-item[title="Switch branch"]');
+      await page.waitForSelector("[data-editor-sheet-body] input", { timeout: 8000 });
+      await page.fill("[data-editor-sheet-body] input", "master");
+      await page.click('[data-editor-sheet] .editor-sheet-row:has(.editor-sheet-name:text-is("master")) .editor-sheet-open');
+      await waitBranch(page, "master");
+      assert(await runInShell(
+        `git branch -qd ${probe} && git remote remove origin && rm -rf ${surfaceRemote} ${surfacePeer}\r`,
+      ) === 200, "the shell refused the cleanup");
+      return "created, switched, back on master";
+    });
+
+    await run("file history opens the diff against the picked commit, a typed revision works too", async () => {
+      await setDiffView(page, "side");
+      await openTracked();
+      await page.click(".editor-tab.active", { button: "right" });
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+      await menuItem("File history").first().click();
+      await page.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 8000 });
+      await page.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-row").length > 0, null, { timeout: 15000 });
+      await page.locator("[data-editor-sheet-body] .editor-sheet-row .editor-sheet-open").first().click();
+      await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 8000 });
+      await page.waitForSelector(".cm-mergeView", { state: "attached", timeout: 20000 });
+      // The tab stores the picked commit in the same field the HEAD switch
+      // fills, so a reload would come back into this very comparison.
+      const storedRev = await page.evaluate((key) => {
+        const saved = JSON.parse(localStorage.getItem(key) || "null");
+        const entry = saved && saved.open.find((e) => e && typeof e === "object" && e.path === "sub/tracked.txt");
+        return entry ? entry.diff : null;
+      }, `dc-editor-tabs:${project}`);
+      assert(/^[0-9a-f]{40}$/.test(storedRev || ""), `the tab stores "${storedRev}" as the revision`);
+
+      await page.click(".editor-tab.active", { button: "right" });
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+      await menuItem("Diff against revision").first().click();
+      await page.waitForSelector("[data-editor-sheet-body] input", { timeout: 8000 });
+      await page.fill("[data-editor-sheet-body] input", "HEAD~1");
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(".cm-mergeView", { state: "attached", timeout: 20000 });
+      await page.waitForFunction(() => /Diff against HEAD~1/.test(document.querySelector("[data-editor-status]").textContent), null, { timeout: 10000 });
+      await toggleDiff(page);
+      await page.waitForFunction(() => !document.querySelector(".cm-mergeView"), null, { timeout: 20000 });
+      await setDiffView(page, "auto");
+      return "history row and typed revision both land in the comparison";
+    });
+
+    // ---- switching the revision under an open diff ---------------------------
+    //
+    // One file in three states: two commits and the working copy, so the
+    // revision side has something different to say for each of them and a
+    // switch that did not happen cannot pass as one. The inline view is where
+    // this broke: it is an extension on the open editor, and reconfiguring a
+    // compartment that already holds one keeps the StateField values it had,
+    // so the new revision never arrived and the old comparison stayed on
+    // screen while the status line already named the new one.
+    const revFile = "sub/rev.txt";
+    const revAlpha = `rev alpha ${tag}`;
+    const revBeta = `rev beta ${tag}`;
+    let revOne = null;
+    let revTwo = null;
+
+    const logOf = (path) => page.evaluate(([b, p]) =>
+      fetch(`${b}/git/log?path=${encodeURIComponent(p)}`, { headers: { Accept: "application/json" } })
+        .then((r) => r.json()), [editorBase, path]);
+
+    const openRevFile = async () => {
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
+      await L.waitUpgraded(page, ["dc-editor"]);
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 15000 });
+      if (!(await page.$(`.editor-item[data-path="${revFile}"]`))) {
+        if (!(await page.$(`.editor-item[data-path="${tracked}"]`))) await page.click('.editor-item[data-path="sub"]');
+        await page.click("[data-editor-refresh]");
+      }
+      await page.waitForSelector(`.editor-item[data-path="${revFile}"]`, { timeout: 15000 });
+      await page.click(`.editor-item[data-path="${revFile}"]`);
+      await page.waitForSelector(`.editor-tab[data-path="${revFile}"].active`, { timeout: 10000 });
+      await diffReady(page);
+    };
+
+    // What the revision side of the open comparison reads, whichever view is
+    // up: the first editor of the two pane view, the removed blocks inline.
+    const revisionText = () => page.evaluate(() => {
+      const merge = document.querySelector(".cm-mergeView");
+      if (merge) return merge.querySelectorAll(".cm-content")[0].textContent;
+      return [...document.querySelectorAll(".cm-deletedChunk")].map((n) => n.textContent).join(" ");
+    });
+    const waitRevision = (want, missing) => page.waitForFunction(([w, m]) => {
+      const merge = document.querySelector(".cm-mergeView");
+      const text = merge
+        ? merge.querySelectorAll(".cm-content")[0].textContent
+        : [...document.querySelectorAll(".cm-deletedChunk")].map((n) => n.textContent).join(" ");
+      return text.includes(w) && !text.includes(m);
+    }, [want, missing], { timeout: 20000 });
+
+    const openPickerFromTab = async (label) => {
+      await page.click(".editor-tab.active", { button: "right" });
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+      await menuItem(label).first().click();
+      await page.waitForSelector("[data-editor-sheet-body] input", { timeout: 8000 });
+      await page.waitForSelector("[data-picker-loading]", { state: "hidden", timeout: 20000 });
+    };
+    // Typing is debounced, so a row is only asked for once the round it
+    // belongs to has come back.
+    const searchPicker = async (text) => {
+      await page.fill("[data-editor-sheet-body] input", text);
+      await page.waitForSelector("[data-picker-loading]", { state: "hidden", timeout: 20000 });
+    };
+    const pickerRow = (text) => page.locator("[data-editor-sheet-body] .editor-sheet-row", { hasText: text });
+
+    await run("a diff switches to another revision in place, in both views and from both ways in", async () => {
+      assert(await runInShell(
+        `printf 'one\\n' > ${revFile} && git add ${revFile} && git ${author} commit -qm "${revAlpha}" && `
+        + `printf 'two\\n' > ${revFile} && git add ${revFile} && git ${author} commit -qm "${revBeta}" && `
+        + `printf 'work\\n' > ${revFile}\r`,
+      ) === 200, "the shell refused the two revisions");
+      const deadline = Date.now() + 45000;
+      while (Date.now() < deadline) {
+        const page1 = await logOf(revFile);
+        if (page1.commits && page1.commits.length === 2) {
+          [revTwo, revOne] = page1.commits;
+          break;
+        }
+        await sleep(1000);
+      }
+      assert(revOne && revTwo, "the two revisions never landed in the history");
+      assert(revOne.summary === revAlpha && revTwo.summary === revBeta, `the history reads ${revTwo && revTwo.summary} / ${revOne && revOne.summary}`);
+
+      for (const view of ["inline", "side"]) {
+        await openRevFile();
+        await setDiffView(page, view);
+        // Start where a person starts, at HEAD, which is the second commit.
+        if (!(await diffPressed(page))) await toggleDiff(page);
+        await waitRevision("two", "one");
+
+        // The revision picker: type a piece of the older commit's subject and
+        // take that row. The status line names it, and the revision side has
+        // to say what that commit said.
+        await openPickerFromTab("Diff against revision");
+        await searchPicker(revAlpha);
+        await pickerRow(revAlpha).first().locator(".editor-sheet-open").click();
+        await page.waitForFunction((sha) => new RegExp(`Diff against ${sha}`).test(document.querySelector("[data-editor-status]").textContent), revOne.sha, { timeout: 15000 });
+        await waitRevision("one", "two").catch(async () => {
+          throw new Error(`${view}: the revision picker did not move the comparison, it still reads ${await revisionText()}`);
+        });
+        assert(view === "side" ? await page.locator(".cm-mergeView").count() === 1 : await page.locator(".cm-mergeView").count() === 0,
+          `${view}: the comparison is not in the view that was picked`);
+
+        // And the same the other way in, the file history, back to the newer
+        // commit. A switch that does nothing would leave "one" standing.
+        await page.click(".editor-tab.active", { button: "right" });
+        await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+        await menuItem("File history").first().click();
+        await page.waitForSelector("[data-editor-sheet-body] .editor-sheet-row", { timeout: 15000 });
+        await page.locator("[data-editor-sheet-body] .editor-sheet-row", { hasText: revBeta }).first().locator(".editor-sheet-open").first().click();
+        await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 8000 });
+        await waitRevision("two", "one").catch(async () => {
+          throw new Error(`${view}: the file history did not move the comparison, it still reads ${await revisionText()}`);
+        });
+      }
+
+      await setDiffView(page, "auto");
+      return "revision picker and file history both switch, inline and side by side";
+    });
+
+    await run("a commit under an open inline diff moves the revision side along", async () => {
+      await openRevFile();
+      await setDiffView(page, "inline");
+      // Against HEAD and not against the hash the last check left on the tab:
+      // a commit does not move an immutable revision, so a diff against one
+      // would have nothing to follow and the check would prove nothing.
+      if (await diffPressed(page)) await toggleDiff(page);
+      await toggleDiff(page);
+      await waitRevision("two", "one");
+      // The base moves, which is the one thing that makes an open comparison
+      // stale. Nothing is asked of the person and the buffer is not touched:
+      // only the revision side follows, through setOriginal, which is the
+      // inline path with the same reconfigure trap under it.
+      assert(await runInShell(`git add ${revFile} && git ${author} commit -qm "rev gamma ${tag}"\r`) === 200, "the shell refused the commit");
+      await page.waitForFunction(() => !document.querySelector(".cm-deletedChunk"), null, { timeout: 40000 })
+        .catch(() => { throw new Error("the inline diff never followed the moved base"); });
+      const buffer = await page.evaluate(() => document.querySelector("[data-editor-surface] .cm-content").textContent);
+      assert(/work/.test(buffer), `the buffer was rewritten by the follow: ${buffer}`);
+      await toggleDiff(page);
+      await setDiffView(page, "auto");
+      return "the inline revision side followed the commit, the buffer stood";
+    });
+
+    await run("the revision picker finds commits, the branch picker stays with names", async () => {
+      await openRevFile();
+      await openPickerFromTab("Diff against revision");
+
+      // By a piece of the subject: the row names the short hash and the
+      // subject, with the author and the date under it.
+      await searchPicker(revAlpha);
+      const row = pickerRow(revAlpha).first();
+      assert(await row.count() === 1, `the subject search found no commit row for "${revAlpha}"`);
+      const name = (await row.locator(".editor-sheet-name").textContent()).trim();
+      const sub = (await row.locator(".editor-sheet-dir").textContent()).trim();
+      assert(name.startsWith(revOne.sha.slice(0, 7)), `the row does not lead with the short hash: ${name}`);
+      assert(/e2e/.test(sub) && /\d/.test(sub), `the row does not carry author and date: ${sub}`);
+
+      // And by a hash prefix, which is not a subject and only rev-parse can
+      // resolve.
+      await searchPicker(revOne.sha.slice(0, 8));
+      const byHash = pickerRow(revOne.sha.slice(0, 7)).first();
+      assert(await byHash.count() === 1, `the hash prefix found nothing: ${revOne.sha.slice(0, 8)}`);
+      await byHash.locator(".editor-sheet-open").click();
+      await page.waitForFunction((sha) => new RegExp(`Diff against ${sha}`).test(document.querySelector("[data-editor-status]").textContent), revOne.sha, { timeout: 15000 });
+      // The value the row carries is the whole hash, so the tab compares
+      // against exactly that commit and not against what a prefix might grow
+      // into.
+      const storedRev = await page.evaluate((key) => {
+        const saved = JSON.parse(localStorage.getItem(key) || "null");
+        const entry = saved && saved.open.find((e) => e && typeof e === "object" && e.path === "sub/rev.txt");
+        return entry ? entry.diff : null;
+      }, `dc-editor-tabs:${project}`);
+      assert(storedRev === revOne.sha, `the tab stores "${storedRev}" and not the full hash`);
+
+      // A checkout of a hash is a detached HEAD, so the branch picker never
+      // offers one.
+      await openGitSheet(page);
+      await page.click('[data-editor-sheet-body] .dropdown-item[title="Switch branch"]');
+      await page.waitForSelector("[data-editor-sheet-body] input", { timeout: 15000 });
+      await searchPicker(revAlpha);
+      assert(await pickerRow(revOne.sha.slice(0, 7)).count() === 0, "the branch picker offered a commit");
+      await page.click("[data-editor-sheet-close]");
+      await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      await toggleDiff(page);
+      return "subject and hash both find the commit, the branch picker does not";
+    });
+
+    await run("the picker's search is the server's, debounced, and a slow answer never wins", async () => {
+      await openRevFile();
+      const asked = [];
+      const count = (request) => {
+        if (request.url().includes("/editor/git/refs")) asked.push(new URL(request.url()).search);
+      };
+      // One query is held back long enough to come home after a newer one.
+      await page.route("**/editor/git/refs*", async (route) => {
+        const q = new URL(route.request().url()).searchParams.get("q") || "";
+        if (q === "slow") await new Promise((done) => setTimeout(done, 2500));
+        // The held back round may outlive the interception itself: the check
+        // unroutes as soon as it is done, and playwright then handles what is
+        // still parked. Continuing it twice is an uncaught rejection that
+        // takes the whole runner down, so this one is allowed to be late.
+        await route.continue().catch(() => {});
+      });
+      page.on("request", count);
+      try {
+        await openPickerFromTab("Diff against revision");
+        assert(asked.length === 1, `opening the picker asked ${asked.length} times`);
+        assert(/kinds=/.test(asked[0]) && !/q=/.test(asked[0]), `the opening round is not the plain list: ${asked[0]}`);
+
+        // Typing goes out once, not once per character, and it carries the
+        // text: nothing is filtered here any more.
+        asked.length = 0;
+        await page.click("[data-editor-sheet-body] input");
+        await page.keyboard.type(revAlpha, { delay: 20 });
+        await page.waitForSelector("[data-picker-loading]", { state: "hidden", timeout: 20000 });
+        assert(asked.length === 1, `${revAlpha.length} characters cost ${asked.length} rounds`);
+        assert(/[?&]q=/.test(asked[0]) && /kinds=.*commit/.test(decodeURIComponent(asked[0])),
+          `the round does not carry the search: ${asked[0]}`);
+        assert(await pickerRow(revAlpha).count() === 1, "the searched round shows no hit");
+
+        // While a round is out the sheet says so.
+        await page.fill("[data-editor-sheet-body] input", "slow");
+        await page.waitForSelector("[data-picker-loading]", { state: "visible", timeout: 5000 });
+        // Past the debounce, so the held back round is really out on the wire:
+        // typing again inside it would only cancel a timer.
+        await sleep(600);
+        // A newer query lands first; the slow one comes home two seconds later
+        // and must not paint its own list over it.
+        await searchPicker(revAlpha);
+        assert(await pickerRow(revAlpha).count() === 1, "the newer round did not paint");
+        await sleep(3000);
+        assert(await pickerRow(revAlpha).count() === 1, "the slow answer painted over the newer one");
+        assert(await page.locator("[data-picker-loading]").isVisible() === false, "the loading state stayed up");
+
+        // A raw revision typed past the list still goes through on Enter while
+        // a round is running, which is the one path that may never wait.
+        await page.fill("[data-editor-sheet-body] input", "slow");
+        await page.waitForSelector("[data-picker-loading]", { state: "visible", timeout: 5000 });
+        await sleep(600);
+        await page.fill("[data-editor-sheet-body] input", "HEAD~1");
+        await page.keyboard.press("Enter");
+        await page.waitForFunction(() => /Diff against HEAD~1/.test(document.querySelector("[data-editor-status]").textContent), null, { timeout: 20000 });
+      } finally {
+        page.off("request", count);
+        await page.unroute("**/editor/git/refs*");
+      }
+      await toggleDiff(page);
+      await page.click(`.editor-tab[data-path="${revFile}"] .editor-tab-close`).catch(() => {});
+      await sleep(400);
+      return "one round per pause, the text goes to git, the slow answer is dropped";
+    });
+
+    await run("the git surface fits the phone", async () => {
+      const mp = await mobilePage();
+      await openEditor(mp);
+      await diffReady(mp);
+      // A phone with no tab open opens the drawer by itself, and its backdrop
+      // would swallow the tap on the statusbar.
+      await mp.keyboard.press("Escape");
+      await mp.waitForSelector("[data-editor-backdrop]", { state: "hidden", timeout: 5000 });
+      const btn = mp.locator("[data-editor-git-status]");
+      assert(await btn.isVisible(), "the statusbar branch is not on screen at phone width");
+      await btn.click();
+      await mp.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 6000 });
+      await mp.waitForSelector("[data-editor-sheet-body] .dropdown-item", { timeout: 6000 });
+      // Every action row is a real touch target inside the viewport.
+      const rows = await mp.evaluate(() => [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item")]
+        .map((el) => {
+          const rect = el.getBoundingClientRect();
+          return { text: el.textContent.trim().slice(0, 14), h: rect.height, left: rect.left, right: rect.right, vw: window.innerWidth };
+        }));
+      assert(rows.length >= 7, `the sheet carries ${rows.length} actions`);
+      for (const row of rows) {
+        assert(row.h >= 36, `a row is ${Math.round(row.h)}px tall: ${row.text}`);
+        assert(row.left >= 0 && row.right <= row.vw + 1, `a row leaves the viewport: ${JSON.stringify(row)}`);
+      }
+      // The picker opens, filters and closes without leaving the sheet world.
+      await mp.click('[data-editor-sheet-body] .dropdown-item[title="Switch branch"]');
+      await mp.waitForSelector("[data-editor-sheet-body] input", { timeout: 6000 });
+      await mp.waitForSelector("[data-editor-sheet] .editor-sheet-row", { timeout: 10000 });
+      await mp.click("[data-editor-sheet-close]");
+      await mp.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      return "branch button, sheet rows and picker usable at phone width";
+    });
+
+    await run("a project without a repository offers the clone, and the clone fills it", async () => {
+      const cloneSrc = `/tmp/zzgit-clone-${tag}.git`;
+      assert(await runInShell(`git clone -q --bare . ${cloneSrc}\r`) === 200, "the shell refused the bare copy");
+      const bared = await shellCount(`git --git-dir ${cloneSrc} rev-list --count HEAD`);
+      assert(bared >= 1, `the bare copy is empty: ${bared}`);
+      assert(await post(page, `${editorBase}/delete`, { path: "count.txt" }) === 200, "the count file could not be removed");
+
+      // The clone wants an empty directory and git refuses anything else, so
+      // the check gets a fresh project; the plain one carries a probe file by
+      // now.
+      const cloneProject = `zzgit-empty-${tag}`;
+      await L.createProject(page, cloneProject);
+      await page.goto(`${BASE}/projects/${encodeURIComponent(cloneProject)}/editor`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
+      await L.waitUpgraded(page, ["dc-editor"]);
+      await diffReady(page, false);
+      // The statusbar says what is missing and is the way in.
+      await page.waitForFunction(() => {
+        const btn = document.querySelector("[data-editor-git-status]");
+        return btn && !btn.hidden && /No repository/.test(btn.textContent);
+      }, null, { timeout: 15000 });
+      await openGitSheet(page);
+      const cloneRow = sheetAction(page, /^Clone repository/);
+      assert(await cloneRow.first().isVisible(), "the sheet does not offer the clone");
+      await cloneRow.first().click();
+      await page.waitForSelector(".swal2-popup input.swal2-input", { timeout: 8000 });
+      await page.fill(".swal2-popup input.swal2-input", cloneSrc);
+      await page.click(".swal2-confirm");
+      // Tree, statusbar and marks follow the clone on their own.
+      await waitBranch(page, "master");
+      await page.waitForSelector('.editor-item[data-path="root.txt"]', { timeout: 20000 });
+      assert(await runInShell(`rm -rf ${cloneSrc}\r`) === 200, "the shell refused the cleanup");
+      await L.deleteProject(page, cloneProject).catch(() => {});
+      return "no repository named in the statusbar, one clone later the branch is";
     });
 
     // ---- comparing two files -------------------------------------------------
@@ -1841,8 +2838,8 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
     // clicking it builds the comparison right there, on the phone in the
     // inline view because the automatic setting picks by the width. The open
     // file has to differ from HEAD, or the inline view would have no chunk to
-    // wait for. The editor menu carries no git entry at all anymore.
-    await run("the diff toggles from the file's menu and the editor menu carries no git, on both widths", async () => {
+    // wait for. The editor menu carries git only as the one Git entry.
+    await run("the diff toggles from the file's menu and the editor menu carries git only as the sheet entry, on both widths", async () => {
       await writeHere("root.txt", "root\ndiff me\n");
       for (const [where, target] of [["phone", await mobilePage()], ["desktop", page]]) {
         if (target === page) {
@@ -1867,7 +2864,8 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
         const labels = await target.$$eval("[data-editor-menu-list] .dropdown-item", (els) => els
           .filter((el) => !el.hidden)
           .map((el) => el.textContent.trim()));
-        assert(!labels.some((l) => /git diff|blame/i.test(l)), `${where}: the editor menu still carries git: ${labels.join(", ")}`);
+        assert(!labels.some((l) => /git diff|blame/i.test(l)), `${where}: the editor menu still carries per-file git: ${labels.join(", ")}`);
+        assert(labels.some((l) => /^Git\d*$/.test(l)), `${where}: the menu misses the Git entry: ${labels.join(", ")}`);
         await target.keyboard.press("Escape");
         await sleep(200);
         assert(await diffEntry(target, "label") === "Show git diff",
@@ -1883,7 +2881,7 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
           && !document.querySelector(".cm-deletedChunk") && !document.querySelector(".cm-changedLine"), null, { timeout: 20000 });
         assert(!(await diffPressed(target)), `${where}: the entry does not read as off`);
       }
-      return "one switch in the file's menu, no sheet, no git in the editor menu";
+      return "one switch in the file's menu, no sheet, the editor menu keeps only the Git entry";
     });
 
     const boxOf = (target, selector) => target.evaluate((sel) => {

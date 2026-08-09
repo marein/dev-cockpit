@@ -1,6 +1,7 @@
 package git
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -12,8 +13,78 @@ import (
 // file, so a single line for a whole new folder would make its files
 // unpickable, and the fingerprint has to move when a file appears inside a
 // folder that was already untracked. Ignored files are not listed either way,
-// so the usual heavyweights stay out.
-var statusArgs = []string{"status", "--porcelain=v2", "-z", "--untracked-files=all", "-M"}
+// so the usual heavyweights stay out. --branch puts the branch headers in
+// front of the entries, which is what names the branch and counts ahead and
+// behind in the same round the changes come from; it also makes the worktree
+// fingerprint move when the upstream does, so a fetch from anywhere reaches
+// every open editor through the ordinary poll.
+var statusArgs = []string{"status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "-M"}
+
+// BranchInfo is what the status headers say about where HEAD stands: the
+// branch, its upstream, and how far the two have drifted apart. Counted says
+// whether git could count at all, which it cannot without an upstream or with
+// an upstream whose ref is gone. A detached HEAD has no branch name and
+// carries its abbreviated commit instead.
+type BranchInfo struct {
+	Name     string `json:"name"`
+	Detached bool   `json:"detached,omitempty"`
+	Upstream string `json:"upstream,omitempty"`
+	Ahead    int    `json:"ahead"`
+	Behind   int    `json:"behind"`
+	Counted  bool   `json:"counted,omitempty"`
+}
+
+// parseBranch reads the branch headers out of the status output. They are
+// ordinary NUL separated records starting with "# ", written in front of the
+// entries, and only that leading block is read: the source path of a rename
+// follows its entry as a record of its own and is the bare path, so a file
+// named "# branch.head something" would otherwise be taken for a header and
+// name a branch nobody is on. Reading the front of the output is what the
+// format guarantees, guessing from a prefix is not.
+func parseBranch(out []byte) BranchInfo {
+	info := BranchInfo{}
+	oid := ""
+	for _, rec := range strings.Split(string(out), "\x00") {
+		if rec == "" {
+			continue
+		}
+		if !strings.HasPrefix(rec, "# ") {
+			break
+		}
+		key, value, _ := strings.Cut(rec[2:], " ")
+		switch key {
+		case "branch.oid":
+			oid = value
+		case "branch.head":
+			info.Name = value
+		case "branch.upstream":
+			info.Upstream = value
+		case "branch.ab":
+			// Counted says git could count, so it is set by a number that
+			// arrived and never by the header alone: a record whose two fields
+			// neither of them parsed says as little about the drift as a
+			// missing header does, and a zero that means "nobody knows" reads
+			// on the statusbar as a branch that is level with its upstream.
+			for _, part := range strings.Fields(value) {
+				n, err := strconv.Atoi(part[1:])
+				if err != nil {
+					continue
+				}
+				if strings.HasPrefix(part, "+") {
+					info.Ahead = n
+				} else {
+					info.Behind = n
+				}
+				info.Counted = true
+			}
+		}
+	}
+	if info.Name == "(detached)" {
+		info.Detached = true
+		info.Name = shortSHA(oid)
+	}
+	return info
+}
 
 // FileStatus is one path git reports as changed. Index and Worktree are the two
 // status codes of the porcelain format, one character each ("." for unchanged,

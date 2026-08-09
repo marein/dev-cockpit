@@ -2228,6 +2228,16 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   box-shadow: 0 -0.5rem 2rem rgba(0, 0, 0, 0.35);
   overflow: hidden;
 }
+@media (min-width: 768px) {
+  .editor-sheet {
+    justify-content: center;
+  }
+  .editor-sheet-panel {
+    width: 50%;
+    border-left: 1px solid var(--tblr-border-color);
+    border-right: 1px solid var(--tblr-border-color);
+  }
+}
 .editor-sheet-body {
   overflow: auto;
   overscroll-behavior: contain;

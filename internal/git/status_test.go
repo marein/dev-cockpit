@@ -30,6 +30,21 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// gitOut is runGit for the calls a check reads an answer from.
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func writeAt(t *testing.T, root, rel, content string) {
 	t.Helper()
 	full := filepath.Join(root, filepath.FromSlash(rel))
@@ -70,6 +85,75 @@ func TestParseStatusEntries(t *testing.T) {
 		if files[i] != w {
 			t.Fatalf("file %d: got %+v, want %+v", i, files[i], w)
 		}
+	}
+}
+
+func TestParseBranchReadsTheHeaders(t *testing.T) {
+	out := record(
+		"# branch.oid 1234567890abcdef1234567890abcdef12345678",
+		"# branch.head master",
+		"# branch.upstream origin/master",
+		"# branch.ab +2 -1",
+		"? notes.md",
+	)
+
+	info := parseBranch([]byte(out))
+
+	if info.Name != "master" || info.Upstream != "origin/master" || info.Detached {
+		t.Fatalf("info: %+v", info)
+	}
+	if !info.Counted || info.Ahead != 2 || info.Behind != 1 {
+		t.Fatalf("counts: %+v", info)
+	}
+
+	detached := parseBranch([]byte(record(
+		"# branch.oid 1234567890abcdef1234567890abcdef12345678",
+		"# branch.head (detached)",
+	)))
+	if !detached.Detached || detached.Name != "1234567" || detached.Counted {
+		t.Fatalf("detached: %+v", detached)
+	}
+}
+
+// Counted says git could count, so it hangs on a number that arrived and not
+// on the header having been there. A record whose fields do not parse says as
+// little about the drift as a missing header does, and a counted zero reads on
+// the statusbar as a branch level with its upstream.
+func TestParseBranchCountsOnlyWhatItCouldRead(t *testing.T) {
+	info := parseBranch([]byte(record(
+		"# branch.oid 1234567890abcdef1234567890abcdef12345678",
+		"# branch.head master",
+		"# branch.upstream origin/master",
+		"# branch.ab +x -y",
+	)))
+
+	if info.Counted || info.Ahead != 0 || info.Behind != 0 {
+		t.Fatalf("a header nobody could read must not count as counted: %+v", info)
+	}
+}
+
+// Only the leading block is headers. The source path of a rename follows its
+// entry as a bare record, so a file named like a header would otherwise name a
+// branch nobody is on and count a drift nobody has.
+func TestParseBranchIgnoresRecordsBehindTheEntries(t *testing.T) {
+	out := record(
+		"# branch.oid 1234567890abcdef1234567890abcdef12345678",
+		"# branch.head master",
+		"# branch.upstream origin/master",
+		"# branch.ab +1 -0",
+		"2 R. N... 100644 100644 100644 aaaa bbbb R100 renamed.txt",
+		"# branch.head spoofed",
+		"2 R. N... 100644 100644 100644 cccc dddd R100 other.txt",
+		"# branch.ab +99 -42",
+	)
+
+	info := parseBranch([]byte(out))
+
+	if info.Name != "master" {
+		t.Fatalf("a path behind the entries named the branch: %q", info.Name)
+	}
+	if info.Ahead != 1 || info.Behind != 0 {
+		t.Fatalf("a path behind the entries counted the drift: +%d -%d", info.Ahead, info.Behind)
 	}
 }
 

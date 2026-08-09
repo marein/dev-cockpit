@@ -51,6 +51,10 @@ export function jumpTextEdge(event, input) {
 
 const ESCAPE = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
+// The one escape in the app, imported by everything that builds markup from a
+// value: the toast, the editor, the menus. Element content would not need the
+// two quotes, but a second copy of this with a smaller set is how a value ends
+// up unquoted inside an attribute one day, so there is no second copy.
 export function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ESCAPE[char]);
 }

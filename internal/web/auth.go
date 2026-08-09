@@ -289,14 +289,26 @@ func (s *Server) csrfMiddleware() gin.HandlerFunc {
 }
 
 func (s *Server) csrfToken(c *gin.Context) string {
+	return s.sessionValue(c, csrfTokenKey)
+}
+
+// sessionValue reads a per session random value, making it on first use.
+// Nothing an in-flight action depends on may live here: the store is the
+// cookie, a value minted by one request only reaches the browser with that
+// request's response, and two concurrent requests that both find the key
+// missing mint two different values. The CSRF token is safe because a page
+// render mints it long before any form posts it back; the askpass bridge
+// was not, which is why its questions are addressed by project now and not
+// by a session value.
+func (s *Server) sessionValue(c *gin.Context, key string) string {
 	sess := ginsessions.Default(c)
-	if token, _ := sess.Get(csrfTokenKey).(string); token != "" {
-		return token
+	if value, _ := sess.Get(key).(string); value != "" {
+		return value
 	}
-	token := randomURLToken()
-	sess.Set(csrfTokenKey, token)
+	value := randomURLToken()
+	sess.Set(key, value)
 	_ = sess.Save()
-	return token
+	return value
 }
 
 func isUnsafeMethod(method string) bool {

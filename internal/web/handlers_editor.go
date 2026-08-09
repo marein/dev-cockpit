@@ -1,16 +1,19 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/askpass"
 	"github.com/local/dev-cockpit/internal/filesystem"
 	"github.com/local/dev-cockpit/internal/git"
 	"github.com/local/dev-cockpit/internal/project"
@@ -564,11 +567,13 @@ func (s *Server) handleEditorGitChanges(c *gin.Context) {
 	c.JSON(http.StatusOK, changes)
 }
 
-// handleEditorGitFile returns a file's text at HEAD, which is the other side
-// of the diff; the browser computes the diff itself, no route ever answers
-// one. A path that is not in HEAD is a normal answer, that is what a new file
-// looks like. Binary and too large carry the same markers the plain read route
-// uses, so the client shows the same "cannot edit this" as there.
+// handleEditorGitFile returns a file's text at a revision, HEAD without a
+// ?rev=, which is the other side of the diff; the browser computes the diff
+// itself, no route ever answers one. A path that is not in the revision is a
+// normal answer, that is what a new file looks like; a revision the
+// repository cannot resolve is the caller's mistake and answers a 400 in the
+// package's words. Binary and too large carry the same markers the plain
+// read route uses, so the client shows the same "cannot edit this" as there.
 func (s *Server) handleEditorGitFile(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -586,10 +591,14 @@ func (s *Server) handleEditorGitFile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
-	content, exists, err := git.New(p.Path).FileAt(c.Request.Context(), rel)
+	content, exists, err := git.New(p.Path).FileAt(c.Request.Context(), c.Query("rev"), rel)
+	if errors.Is(err, git.ErrRevision) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if err != nil {
 		log.Printf("editor git file %s: %v", p.Path, err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "The file could not be read at HEAD."})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "The file could not be read at that revision."})
 		return
 	}
 	if !exists {
@@ -652,6 +661,84 @@ func (s *Server) handleEditorGitCommitInfo(c *gin.Context) {
 	c.JSON(http.StatusOK, info)
 }
 
+// maxCommitDraftMessage bounds a stored draft message. It is far beyond any
+// commit message and only refuses a body that cannot be one.
+const maxCommitDraftMessage = 64 << 10
+
+// handleEditorGitCommitDraft serves the commit panel's stored draft: the
+// message, the picked paths and when they last moved. It is its own read, so
+// a device catching up after the commitdraft event pulls the draft and
+// nothing else.
+func (s *Server) handleEditorGitCommitDraft(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	draft := s.commitDrafts.Get(p.Name)
+	paths := draft.Paths
+	if paths == nil {
+		paths = []string{}
+	}
+	updated := ""
+	if !draft.UpdatedAt.IsZero() {
+		updated = draft.UpdatedAt.Format(time.RFC3339Nano)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":      draft.Message,
+		"paths":        paths,
+		"amend":        draft.Amend,
+		"amendMessage": draft.AmendMessage,
+		"updatedAt":    updated,
+	})
+}
+
+type editorCommitDraftRequest struct {
+	Message      string   `json:"message"`
+	Paths        []string `json:"paths"`
+	Amend        bool     `json:"amend"`
+	AmendMessage string   `json:"amendMessage"`
+}
+
+// handleEditorGitCommitDraftSave stores what the panel holds: every pause in
+// typing and every pick lands here. Only a save that changed something is
+// published, so the other devices are not woken for a draft that already is
+// what they hold.
+func (s *Server) handleEditorGitCommitDraftSave(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorCommitDraftRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	if len(req.Message) > maxCommitDraftMessage || len(req.AmendMessage) > maxCommitDraftMessage {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "That message is too long."})
+		return
+	}
+	for _, rel := range req.Paths {
+		if _, err := filesystem.ResolveUnder(p.Path, rel); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+			return
+		}
+	}
+	draft, changed := s.commitDrafts.Save(p.Name, commitDraft{
+		Message:      req.Message,
+		Paths:        req.Paths,
+		Amend:        req.Amend,
+		AmendMessage: req.AmendMessage,
+	})
+	if changed {
+		s.publishCommitDraft(p.Name)
+	}
+	response := gin.H{"saved": true}
+	if !draft.UpdatedAt.IsZero() {
+		response["updatedAt"] = draft.UpdatedAt.Format(time.RFC3339Nano)
+	}
+	c.JSON(http.StatusOK, response)
+}
+
 type editorCommitRequest struct {
 	Message string   `json:"message"`
 	Paths   []string `json:"paths"`
@@ -680,7 +767,9 @@ func (s *Server) handleEditorGitCommit(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "A commit message is required."})
 		return
 	}
-	if len(req.Paths) == 0 {
+	// An amend may come with no paths at all: it then rewrites the message of
+	// the last commit and nothing else.
+	if len(req.Paths) == 0 && !req.Amend {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Pick at least one change to commit."})
 		return
 	}
@@ -690,7 +779,30 @@ func (s *Server) handleEditorGitCommit(c *gin.Context) {
 			return
 		}
 	}
-	result, err := git.New(p.Path).Commit(c.Request.Context(), req.Message, req.Paths, req.Amend)
+	// The commit and its ride-along push are one write, so the working copy is
+	// taken once and held over both: a checkout that slipped between them
+	// would push a branch nobody meant.
+	writeKeys, ok := s.takeGitWrite(c, p)
+	if !ok {
+		return
+	}
+	defer s.gitWrites.release(writeKeys...)
+	// The bridge for the ride-along push is opened before the commit, not
+	// between the two: a refused bridge has to refuse the whole request, and
+	// after the commit there would be nothing left to refuse.
+	var action *askpass.Action
+	var prompt *git.Prompt
+	if req.Push {
+		var ok bool
+		if action, prompt, ok = s.promptAction(p.Name, "push"); !ok {
+			c.JSON(http.StatusConflict, gin.H{"error": gitInUse})
+			return
+		}
+		if action != nil {
+			defer action.End()
+		}
+	}
+	result, err := git.New(p.Path).Commit(gitWriteContext(c), req.Message, req.Paths, req.Amend)
 	if err != nil {
 		log.Printf("editor git commit %s: %v", p.Path, err)
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
@@ -701,15 +813,539 @@ func (s *Server) handleEditorGitCommit(c *gin.Context) {
 	// which is also why this stays a 200.
 	response := gin.H{"hash": result.Hash, "subject": result.Subject, "pushed": false}
 	if req.Push {
-		if err := git.New(p.Path).Push(c.Request.Context()); err != nil {
+		pushRepo := git.New(p.Path)
+		if prompt != nil {
+			pushRepo = pushRepo.WithPrompt(prompt)
+		}
+		if err := pushRepo.Push(gitWriteContext(c), false); err != nil {
 			log.Printf("editor git push %s: %v", p.Path, err)
-			response["pushError"] = err.Error()
+			response["pushError"] = promptRefusal(action, err)
 		} else {
 			response["pushed"] = true
 		}
 	}
+	// The commit spent the draft, on every device: the panel that sent it
+	// empties itself, the others hear it here.
+	if s.commitDrafts.Clear(p.Name) {
+		s.publishCommitDraft(p.Name)
+	}
 	s.publishGit(p.Name, true)
 	c.JSON(http.StatusOK, response)
+}
+
+// editorLogPage is one page of history: small enough for a sheet, large
+// enough that paging is the exception.
+const editorLogPage = 30
+
+// editorRefsCap bounds one round of the picker's list, per kind and not
+// across all of them, so a repository full of tags cannot push the branches
+// out. Without a search text it caps the recently moved, with one it caps the
+// matches, which is what makes it a page and not the whole world: while the
+// browser did the filtering this had to be large enough to hold everything
+// somebody might type, and now the typing is answered by git, so it is the
+// size of a list a person reads.
+const editorRefsCap = 50
+
+// editorFetchMaxAge is how old the last fetch may be before an automatic one
+// runs. Opening the git surface and listing remote branches want counts that
+// are roughly current, not a network round trip on every glance.
+const editorFetchMaxAge = 2 * time.Minute
+
+// handleEditorGitLog answers one page of history, newest first: the file's
+// with ?path=, the project's without one. ?skip= pages through it, and the
+// answer says whether older commits exist beyond the page.
+func (s *Server) handleEditorGitLog(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	rel := c.Query("path")
+	if rel != "" {
+		if _, err := filesystem.ResolveUnder(p.Path, rel); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+			return
+		}
+	}
+	skip, _ := strconv.Atoi(c.Query("skip"))
+	page, err := git.New(p.Path).Log(c.Request.Context(), rel, skip, editorLogPage)
+	if err != nil {
+		log.Printf("editor git log %s: %v", p.Path, err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "The history could not be read."})
+		return
+	}
+	c.JSON(http.StatusOK, page)
+}
+
+// editorRefKinds is what `?kinds=` may name, and the answer when it names
+// nothing: the three kinds of name, which is what the branch picker asks for
+// and what an older page that knows no parameter at all still gets.
+var editorRefKinds = map[string]bool{
+	git.KindBranch: true,
+	git.KindRemote: true,
+	git.KindTag:    true,
+	git.KindCommit: true,
+}
+
+// handleEditorGitRefs answers one round of a picker's search: the names, and
+// with `kinds=…,commit` the commits too. `?q=` is what was typed, and the
+// search runs here and not in the browser, because the browser only ever had
+// the first `editorRefsCap` names of each kind to search through and a
+// repository is not obliged to keep the interesting one among them.
+//
+// It only reads: a client that wants the remotes up to date first asks the
+// quiet fetch for it (`POST .../git/fetch` with auto), which is the one route
+// that touches the network, so nothing a GET can be talked into changes
+// anything.
+func (s *Server) handleEditorGitRefs(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	kinds := []string{git.KindBranch, git.KindRemote, git.KindTag}
+	if asked := c.Query("kinds"); asked != "" {
+		kinds = kinds[:0]
+		for _, kind := range strings.Split(asked, ",") {
+			kind = strings.TrimSpace(kind)
+			if editorRefKinds[kind] {
+				kinds = append(kinds, kind)
+			}
+		}
+	}
+	found, err := git.New(p.Path).Refs(c.Request.Context(), git.RefSearch{
+		Text:  c.Query("q"),
+		Kinds: kinds,
+		Limit: editorRefsCap,
+	})
+	if err != nil {
+		log.Printf("editor git refs %s: %v", p.Path, err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "The refs could not be read."})
+		return
+	}
+	c.JSON(http.StatusOK, found)
+}
+
+// gitWriteContext is what a git write runs on: everything the request
+// carries, except its cancellation. A browser that goes away — a closed tab,
+// a phone that locked, a line that dropped — must never end a write halfway
+// through, because ending one means SIGKILL to the whole process group: a
+// checkout stopped mid working copy, or half a clone left in the project
+// directory, which git then refuses to clone into ever again. What ends a
+// write is its own timeout, minutes long and the package's own, and nothing
+// else. A read may keep hanging on the request, there is nobody left to
+// answer it anyway.
+func gitWriteContext(c *gin.Context) context.Context {
+	return context.WithoutCancel(c.Request.Context())
+}
+
+// promptAction opens the askpass bridge for one user-triggered action, named
+// by the project it runs in and the action's own name, which is what the
+// dialog shows as this server's truth above ssh's or git's line. Whether a
+// call may ask at all is the route's decision alone: only the handlers of the
+// actions somebody started call this, a status poll or the quiet fetch never
+// does, and everything without a bridge keeps failing prompts fast.
+//
+// The third value is false only when the project already runs a bridged
+// action. The write lock in front of every caller makes that unreachable, so
+// it is an invariant guard, but it may not be worked past: running the action
+// anyway would leave it without a bridge, and every question would come back
+// as an authentication failure with nothing saying that it was never asked.
+func (s *Server) promptAction(project, name string) (*askpass.Action, *git.Prompt, bool) {
+	if s.askpassBroker == nil {
+		return nil, nil, true
+	}
+	action := s.askpassBroker.Begin(project, name)
+	if action == nil {
+		return nil, nil, false
+	}
+	env := append(action.Env(),
+		"SSH_ASKPASS="+s.askpassScript,
+		"GIT_ASKPASS="+s.askpassScript,
+	)
+	return action, &git.Prompt{Env: env, Asked: action.Asked(), Answered: action.Answered()}, true
+}
+
+// gitInUse is what a second write on the same working copy reads, whichever
+// page it came from. It names the repository and not the page, because that
+// is what is busy, and not the project either: two projects can share one.
+const gitInUse = "Another git action is already running in this repository. Wait for it to finish and try again."
+
+// gitUnknownCopy is what a write reads when the working copy could not even
+// be named. It is not the busy refusal: nothing is running, nothing was
+// started, and git is what did not answer.
+const gitUnknownCopy = "The repository could not be read, so this action was not started. Try again."
+
+// gitWriteKeys names everything one write holds, and it is deliberately more
+// than one name.
+//
+// The working copy is the name that makes two projects in one checkout meet,
+// a project below the repository root included: keyed by the project alone
+// they would take a lock each and let a checkout and a commit run at each
+// other, which is the one thing this lock exists for.
+//
+// The project path is the name that exists before any repository does, and it
+// is the clone's. A clone starts in an empty directory and git creates the
+// `.git` in it within the first moments, so the working copy resolves long
+// before the clone is through: taken alone, the clone would hold the project
+// path while every write arriving a moment later resolves the fresh git
+// directory and walks straight past it, for the minutes the clone still runs.
+// Both names together close that, and they cost nothing extra, the project
+// path is already in hand.
+//
+// A git that could not be asked ends the write here instead of guessing
+// (`git.ErrNoAnswer`, kept apart from "no repository" in `WorkingCopy`): a
+// guessed name is a name another write may not take, and two names for one
+// working copy are no lock. Resolving costs the one rev-parse every git read
+// starts with, milliseconds in front of a write that runs for seconds or
+// minutes.
+func gitWriteKeys(c *gin.Context, p project.Project) ([]string, bool) {
+	key, inRepo, err := git.New(p.Path).WorkingCopy(c.Request.Context())
+	if err != nil {
+		return nil, false
+	}
+	if !inRepo {
+		return []string{p.Path}, true
+	}
+	return []string{p.Path, key}, true
+}
+
+// takeGitWrite claims the working copy for one write and answers the refusal
+// itself: a 409 when somebody else holds it, a 502 when git could not say
+// what is being written at all. Every write route starts with it, and the
+// caller releases the keys it hands back when the handler returns.
+//
+// A try and not a wait: the second request would otherwise sit behind a
+// checkout for as long as that checkout takes, with a spinner and no way to
+// tell the two apart. Refusing says which of the two happened.
+func (s *Server) takeGitWrite(c *gin.Context, p project.Project) ([]string, bool) {
+	keys, ok := gitWriteKeys(c, p)
+	if !ok {
+		log.Printf("editor git write %s: the working copy could not be named", p.Path)
+		c.JSON(http.StatusBadGateway, gin.H{"error": gitUnknownCopy})
+		return nil, false
+	}
+	if s.gitWrites.try(keys...) {
+		return keys, true
+	}
+	c.JSON(http.StatusConflict, gin.H{"error": gitInUse})
+	return nil, false
+}
+
+// promptRefusal is the error a bridged action answers with: git's words, and
+// when the person pressed cancel, the honest reason the words alone would
+// hide behind an authentication failure.
+func promptRefusal(action *askpass.Action, err error) string {
+	if action != nil && action.Cancelled() {
+		return err.Error() + " — the question was cancelled."
+	}
+	return err.Error()
+}
+
+// gitWrite is the one way through for the sheet's write actions. Push, the
+// explicit fetch, pull, checkout and clone each differ in a single line, the
+// call they make on the repository, and everything around that line is the
+// same in the same order: take the working copy, open the askpass bridge,
+// hand the repository the bridge, and turn a refusal into a 409 in git's
+// words. Written out five times, that order is five places to keep in step.
+//
+// What is left to a handler is what actually differs: bind its body, name the
+// action, and answer. The bookkeeping ends when it returns, so a caller may
+// only publish and answer while the answer is true, and must return at once
+// when it is false: the refusal has been written by then, and the lock and
+// the bridge are already on their way out.
+//
+// Three writes are deliberately not on this path, because they are not this
+// shape. The commit opens its ride-along push's bridge before the commit and
+// holds one lock across two calls; the created branch touches nothing that
+// could ask and opens no bridge at all; and the quiet fetch holds a lock of
+// its own that a commit or a push must never meet.
+func (s *Server) gitWrite(c *gin.Context, p project.Project, name string, write func(*git.Repo) error) bool {
+	writeKeys, ok := s.takeGitWrite(c, p)
+	if !ok {
+		return false
+	}
+	defer s.gitWrites.release(writeKeys...)
+	action, prompt, open := s.promptAction(p.Name, name)
+	if !open {
+		c.JSON(http.StatusConflict, gin.H{"error": gitInUse})
+		return false
+	}
+	if action != nil {
+		defer action.End()
+	}
+	repo := git.New(p.Path)
+	if prompt != nil {
+		repo = repo.WithPrompt(prompt)
+	}
+	if err := write(repo); err != nil {
+		log.Printf("editor git %s %s: %v", name, p.Path, err)
+		c.JSON(http.StatusConflict, gin.H{"error": promptRefusal(action, err)})
+		return false
+	}
+	return true
+}
+
+type editorPushRequest struct {
+	Force bool `json:"force"`
+}
+
+// handleEditorGitPush pushes the current branch to its upstream, on its own,
+// without a commit in front of it. force is force-with-lease and sits behind
+// the client's explicit confirmation; what git refuses comes back in git's
+// words, like the commit's refusals do.
+func (s *Server) handleEditorGitPush(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorPushRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	if !s.gitWrite(c, p, "push", func(repo *git.Repo) error {
+		return repo.Push(gitWriteContext(c), req.Force)
+	}) {
+		return
+	}
+	// The push moved the remote tracking ref, so ahead is stale everywhere;
+	// the base did not move, no open diff has to refetch anything.
+	s.publishGit(p.Name, false)
+	c.JSON(http.StatusOK, gin.H{"pushed": true})
+}
+
+type editorFetchRequest struct {
+	Auto bool `json:"auto"`
+}
+
+// handleEditorGitFetch fetches the remotes. auto is the quiet path the git
+// surface takes when it opens: it only runs when the last fetch is old, so a
+// glance costs no network. The explicit action always runs.
+func (s *Server) handleEditorGitFetch(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorFetchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	// fetched is what the answer and the event hang on, so it starts false:
+	// a repository without a remote fetches nothing, and telling every open
+	// editor that something moved would be a round for nothing.
+	fetched := false
+	if req.Auto {
+		fetched = s.quietFetch(c, p)
+	} else if !s.gitWrite(c, p, "fetch", func(repo *git.Repo) error {
+		var err error
+		fetched, err = repo.Fetch(gitWriteContext(c))
+		return err
+	}) {
+		return
+	}
+	if fetched {
+		s.publishGit(p.Name, false)
+	}
+	c.JSON(http.StatusOK, gin.H{"fetched": fetched})
+}
+
+// quietFetchKeys names what the fetch nobody asked for holds. They are the
+// working copy's names with a mark of their own in front, so two quiet
+// fetches on one working copy still meet — FETCH_HEAD only ages once the
+// running one is through, and a sheet plus a branch list on a slow line would
+// otherwise start two that fight over the same refs — while a commit, a push,
+// a checkout or a clone never meet them at all.
+//
+// Sharing the write lock is what this used to do, and it was the wrong
+// question asked twice: that lock is for "somebody is rewriting the working
+// copy", and a fetch writes remote refs and touches no file on disk. On a
+// remote that does not answer, the quiet fetch behind an opening sheet held
+// it for as long as its budget lasted, and every commit and push of those
+// minutes was refused as busy with nothing on the page running.
+func quietFetchKeys(keys []string) []string {
+	quiet := make([]string, 0, len(keys))
+	for _, key := range keys {
+		quiet = append(quiet, "quiet-fetch\x00"+key)
+	}
+	return quiet
+}
+
+// quietFetch is the fetch the git surface runs on its way in. It stays quiet
+// in both directions: it runs uninvited, so it may never open a dialog, and
+// it refuses nothing either. A lock it cannot take, a git that cannot say
+// what it would be writing, a remote that is not there and a fetch that
+// failed all end the same way, with false and no word, because there is
+// nothing on the page that said this was happening.
+func (s *Server) quietFetch(c *gin.Context, p project.Project) bool {
+	keys, named := gitWriteKeys(c, p)
+	if !named {
+		return false
+	}
+	quiet := quietFetchKeys(keys)
+	if !s.gitWrites.try(quiet...) {
+		return false
+	}
+	defer s.gitWrites.release(quiet...)
+	fetched, err := git.New(p.Path).FetchIfStale(gitWriteContext(c), editorFetchMaxAge)
+	if err != nil {
+		log.Printf("editor git quiet fetch %s: %v", p.Path, err)
+		return false
+	}
+	return fetched
+}
+
+// handleEditorGitPull brings the current branch up to its upstream, fast
+// forward only: a branch that drifted apart is refused in git's words and the
+// working copy stands untouched, there is no merge and no stash behind this
+// route. There is nothing to bind, the pull carries no parameters.
+func (s *Server) handleEditorGitPull(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	if !s.gitWrite(c, p, "pull", func(repo *git.Repo) error {
+		return repo.Pull(gitWriteContext(c))
+	}) {
+		return
+	}
+	s.publishGit(p.Name, true)
+	c.JSON(http.StatusOK, gin.H{"pulled": true})
+}
+
+type editorCheckoutRequest struct {
+	Branch string `json:"branch"`
+}
+
+// handleEditorGitCheckout switches the working copy to a branch, a remote one
+// included, which creates the local tracking branch on the way. Local changes
+// the switch would overwrite are git's refusal to make, and it travels back
+// in git's words with the working copy untouched.
+func (s *Server) handleEditorGitCheckout(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorCheckoutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	if !s.gitWrite(c, p, "checkout", func(repo *git.Repo) error {
+		return repo.Checkout(gitWriteContext(c), req.Branch)
+	}) {
+		return
+	}
+	s.publishGit(p.Name, true)
+	c.JSON(http.StatusOK, gin.H{"branch": req.Branch})
+}
+
+type editorCloneRequest struct {
+	URL string `json:"url"`
+}
+
+// handleEditorGitClone fills a project that is not a repository yet, straight
+// into the project directory. git's refusals travel back in its words: a
+// directory that already holds anything, and a remote that wants credentials
+// this host cannot produce on its own.
+func (s *Server) handleEditorGitClone(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorCloneRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	// This is the write the project path key exists for: the directory holds no
+	// repository at the start and a `.git` moments later, so the name the clone
+	// took would stop being the name a second write resolves. The project path
+	// is the same at both ends and holds for the clone's whole run.
+	if !s.gitWrite(c, p, "clone", func(repo *git.Repo) error {
+		return repo.Clone(gitWriteContext(c), req.URL)
+	}) {
+		return
+	}
+	s.publishGit(p.Name, true)
+	c.JSON(http.StatusOK, gin.H{"cloned": true})
+}
+
+type editorBranchRequest struct {
+	Branch string `json:"branch"`
+}
+
+// handleEditorGitBranch creates a branch at the current HEAD and switches to
+// it. The commit under HEAD does not move, so the event says the base stood.
+// Nothing on this path can ask anything, so no bridge is opened here and the
+// request carries no prompt key to open one with; the client agrees, it runs
+// this action with `ask: false` and has no key to send.
+func (s *Server) handleEditorGitBranch(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorBranchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	writeKeys, ok := s.takeGitWrite(c, p)
+	if !ok {
+		return
+	}
+	defer s.gitWrites.release(writeKeys...)
+	if err := git.New(p.Path).CreateBranch(gitWriteContext(c), req.Branch); err != nil {
+		log.Printf("editor git branch %s: %v", p.Path, err)
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	s.publishGit(p.Name, false)
+	c.JSON(http.StatusOK, gin.H{"branch": req.Branch})
+}
+
+// handleGitPromptList answers the standing questions of every running git
+// action, oldest first. It sits at the app level and not under a project,
+// because the dialog does too: the page that started an action may be
+// reloaded, updated away, or lying on a desk while another device answers, so
+// every signed-in page shows what is being asked. The session is the whole
+// authorization, single user by design.
+func (s *Server) handleGitPromptList(c *gin.Context) {
+	if s.askpassBroker == nil {
+		c.JSON(http.StatusOK, gin.H{"questions": []askpass.Question{}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"questions": s.askpassBroker.Questions()})
+}
+
+type gitPromptAnswer struct {
+	Project string `json:"project"`
+	ID      string `json:"id"`
+	Answer  string `json:"answer"`
+	Cancel  bool   `json:"cancel"`
+}
+
+// handleGitPromptAnswer carries the typed answer, or the cancel, back to the
+// helper that asked. The answer lives in this request and the broker's
+// channel and nowhere else: not in a log line, not in a state file. ok says
+// whether the broker took it; false is a question that was already answered
+// on another device or whose action already ended, which the dialog swallows,
+// its close travels on the gitprompt event.
+func (s *Server) handleGitPromptAnswer(c *gin.Context) {
+	var req gitPromptAnswer
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	if s.askpassBroker == nil {
+		c.JSON(http.StatusOK, gin.H{"ok": false})
+		return
+	}
+	action := s.askpassBroker.Find(req.Project)
+	if action == nil {
+		c.JSON(http.StatusOK, gin.H{"ok": false})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": action.Answer(req.ID, req.Answer, req.Cancel)})
 }
 
 // handleEditorGitWatch registers one client's interest in a project for a short

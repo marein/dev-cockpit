@@ -71,7 +71,7 @@
             <span class="small text-warning ms-auto" data-editor-commit-length></span>
             <div class="btn-group flex-shrink-0 ms-auto">
               <button type="button" class="btn btn-sm btn-primary" data-editor-commit-button disabled>
-                <i class="ti ti-git-commit me-1"></i>Commit
+                <span class="spinner-border spinner-border-sm me-1" style="width: 1em; height: 1em" data-editor-commit-spin aria-hidden="true" hidden></span><i class="ti ti-git-commit me-1" data-editor-commit-icon></i>Commit
               </button>
               <button type="button" class="btn btn-sm btn-primary dropdown-toggle dropdown-toggle-split" data-editor-commit-more data-bs-toggle="dropdown" aria-expanded="false" aria-label="More ways to commit" disabled></button>
               <div class="dropdown-menu dropdown-menu-end">
@@ -130,15 +130,15 @@
               <button type="button" class="dropdown-item" data-editor-docker-item hidden>
                 <i class="ti ti-brand-docker me-2"></i>Docker
               </button>
+              <button type="button" class="dropdown-item" data-editor-git-item hidden>
+                <i class="ti ti-git-branch me-2"></i>Git<span class="badge bg-secondary-lt ms-2" data-editor-git-item-count></span>
+              </button>
               <button type="button" class="dropdown-item" data-editor-fullscreen aria-pressed="false" hidden>
                 <i class="ti ti-maximize me-2"></i>Fullscreen
               </button>
               <div class="dropdown-divider"></div>
               <button type="button" class="dropdown-item" data-editor-save-all disabled>
                 <i class="ti ti-device-floppy me-2"></i>Save all
-              </button>
-              <button type="button" class="dropdown-item" data-editor-commit-item hidden>
-                <i class="ti ti-git-commit me-2"></i>Commit<span class="badge bg-secondary-lt ms-2" data-editor-commit-item-count></span>
               </button>
             </div>
           </div>
@@ -187,6 +187,8 @@
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> fullscreen</span>
             <span class="mx-1 d-none d-md-inline">·</span>
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>K</kbd> commit</span>
+            <span class="mx-1 d-none d-md-inline">·</span>
+            <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> git</span>
             <span class="mx-1 d-none d-md-inline">·</span>
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>J</kbd> terminal</span>
             <span class="mx-1 d-none d-md-inline">·</span>
@@ -262,6 +264,9 @@
       <div class="editor-statusbar small d-flex align-items-center gap-2 px-2 py-1 border-top">
         <span class="text-truncate text-secondary" data-editor-path></span>
         <span class="text-truncate flex-fill text-secondary" data-editor-status></span>
+        <button type="button" class="btn btn-sm p-0 border-0 bg-transparent text-secondary text-nowrap d-inline-flex align-items-center gap-1 mw-100" data-editor-git-status aria-label="Git" hidden>
+          <i class="ti ti-git-branch" aria-hidden="true" data-editor-git-icon></i><span class="spinner-border spinner-border-sm" style="width: 1em; height: 1em" data-editor-git-spin aria-hidden="true" hidden></span><span class="text-truncate" style="max-width: 9rem" data-editor-git-branch></span><span data-editor-git-ab hidden></span>
+        </button>
         <button type="button" class="btn btn-sm p-0 border-0 bg-transparent text-secondary text-nowrap d-inline-flex align-items-center gap-1" data-editor-docker-status hidden>
           <i class="ti ti-brand-docker" aria-hidden="true"></i><span data-editor-docker-status-text></span>
         </button>

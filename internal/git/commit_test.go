@@ -159,6 +159,43 @@ func TestCommitAmendRewritesTheTip(t *testing.T) {
 	}
 }
 
+func TestCommitAmendWithoutPathsRewritesOnlyTheMessage(t *testing.T) {
+	dir := t.TempDir()
+	commitRepo(t, dir)
+	writeAt(t, dir, "a.txt", "a\n")
+	writeAt(t, dir, "staged.txt", "staged\n")
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-qm", "typo in the messge")
+	writeAt(t, dir, "staged.txt", "the coder's work\n")
+	runGit(t, dir, "add", "staged.txt")
+
+	result, err := New(dir).Commit(context.Background(), "typo in the message", nil, true)
+
+	if err != nil {
+		t.Fatalf("amend: %v", err)
+	}
+	if result.Subject != "typo in the message" {
+		t.Fatalf("result: %+v", result)
+	}
+	repo := New(dir)
+	out, err := repo.run(context.Background(), []string{"rev-list", "--count", "HEAD"}, nil)
+	if err != nil || strings.TrimSpace(string(out)) != "1" {
+		t.Fatalf("an amend must not add a commit: %s %v", out, err)
+	}
+	shown, err := repo.run(context.Background(), []string{"cat-file", "blob", "HEAD:./staged.txt"}, nil)
+	if err != nil || string(shown) != "staged\n" {
+		t.Fatalf("the staged work must stay out of the tip: %q %v", shown, err)
+	}
+	left := worktreeByPath(t, dir)
+	if got := left["staged.txt"]; got.Index != "M" {
+		t.Fatalf("the coder's staged work must stay staged: %+v", left)
+	}
+
+	if _, err := New(dir).Commit(context.Background(), "no amend, no paths", nil, false); err == nil {
+		t.Fatal("without an amend an empty pick must be refused")
+	}
+}
+
 func TestCommitInASubdirectoryProjectStaysInsideIt(t *testing.T) {
 	root := t.TempDir()
 	commitRepo(t, root)
@@ -179,38 +216,6 @@ func TestCommitInASubdirectoryProjectStaysInsideIt(t *testing.T) {
 	}
 	if _, ok := left["outside.txt"]; !ok {
 		t.Fatal("a file outside the project must stay a change")
-	}
-}
-
-func TestPushSendsTheBranchToItsUpstream(t *testing.T) {
-	dir := t.TempDir()
-	commitRepo(t, dir)
-	writeAt(t, dir, "a.txt", "a\n")
-	runGit(t, dir, "add", "-A")
-	runGit(t, dir, "commit", "-qm", "init")
-
-	if err := New(dir).Push(context.Background()); err == nil {
-		t.Fatal("a push without a destination must be refused")
-	}
-
-	remote := t.TempDir()
-	runGit(t, remote, "init", "-q", "--bare")
-	runGit(t, dir, "remote", "add", "origin", remote)
-	runGit(t, dir, "push", "-q", "-u", "origin", "HEAD")
-
-	writeAt(t, dir, "a.txt", "a2\n")
-	if _, err := New(dir).Commit(context.Background(), "second", []string{"a.txt"}, false); err != nil {
-		t.Fatalf("commit: %v", err)
-	}
-	if err := New(dir).Push(context.Background()); err != nil {
-		t.Fatalf("push: %v", err)
-	}
-	out, err := New(remote).run(context.Background(), []string{"rev-list", "--count", "--all"}, nil)
-	if err != nil {
-		t.Fatalf("rev-list: %v", err)
-	}
-	if strings.TrimSpace(string(out)) != "2" {
-		t.Fatalf("the upstream holds %s commits", strings.TrimSpace(string(out)))
 	}
 }
 

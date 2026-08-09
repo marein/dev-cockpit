@@ -13,6 +13,7 @@ import (
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/askpass"
 	"github.com/local/dev-cockpit/internal/assistant"
 	"github.com/local/dev-cockpit/internal/backup"
 	"github.com/local/dev-cockpit/internal/coder"
@@ -64,6 +65,19 @@ type Server struct {
 	// gitWatchers keeps the editor's per-project git poller alive only while a
 	// client says it is watching.
 	gitWatchers *gitWatchers
+	// gitWrites serializes the editor's git writes per working copy. The
+	// editor's own lock is one page's, and a working copy has more than one
+	// page on it.
+	gitWrites *gitWrites
+	// commitDrafts is the commit panel's unsent state per project, message and
+	// picked paths, so another device takes the panel over where this one left
+	// it.
+	commitDrafts *commitDrafts
+	// askpassBroker and askpassScript are the bridge a user-triggered git
+	// action may ask the browser through; nil keeps every prompt failing
+	// fast, which is also what the tests run with.
+	askpassBroker *askpass.Broker
+	askpassScript string
 	// host reads load, memory and disk. It is read from the event stream, so
 	// an idle cockpit with no browser on it reads nothing at all.
 	host *hostinfo.Cache
@@ -115,6 +129,8 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		backups:       backups,
 		assets:        assets,
 		gitWatchers:   newGitWatchers(),
+		gitWrites:     newGitWrites(),
+		commitDrafts:  newCommitDrafts(cfg.StateDir),
 		host:          hostinfo.NewCache(cfg.ProjectsRoot, hostSampleTTL),
 		docker:        dockerService,
 		deletes:       newProjectDeletes(cfg.StateDir),
@@ -252,4 +268,14 @@ func requestIsSecure(c *gin.Context) bool {
 	}
 	// ClientIP only differs from RemoteIP when Gin accepted the forwarding headers from a trusted proxy.
 	return strings.EqualFold(strings.TrimSpace(proto), "https") && c.ClientIP() != c.RemoteIP()
+}
+
+// SetAskpass wires the bridge a user-triggered git action may ask the
+// browser through. Without it every prompt keeps failing fast. The broker's
+// change hook becomes the gitprompt event, which is how a parked, answered
+// or expired question reaches every open page at once.
+func (s *Server) SetAskpass(broker *askpass.Broker, script string) {
+	broker.OnChange = s.publishGitPrompt
+	s.askpassBroker = broker
+	s.askpassScript = script
 }

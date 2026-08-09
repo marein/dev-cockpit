@@ -296,6 +296,7 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
+	s.commitDrafts.Delete(p.Name)
 	s.publishTerminals("") // the purge removed this project's coders and shells everywhere
 	s.publishProjects()
 	if wantsJSON(c.Request) {

@@ -1,6 +1,7 @@
 import { onServerEvent } from "@dc/events";
 import { getJSON, postForm } from "@dc/http";
 import { playNotification } from "@dc/jingle";
+import "@dc/gitprompt";
 
 // Notification bell + center. The element renders a bell with an unread badge
 // and a dropdown listing recent "coder finished" / "needs attention" events.

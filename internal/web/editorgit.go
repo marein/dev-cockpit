@@ -64,6 +64,62 @@ func (g *gitWatchers) release(projectName string) {
 	delete(g.running, projectName)
 }
 
+// gitWrites is which working copies are being written right now. The editor's
+// own lock lives in one page and can only speak for that page, while a working
+// copy has as many pages on it as somebody opened: a phone and a desktop, two
+// tabs, the same project in a second window. Two writes that pass each other
+// there are not two failures, they are one commit that records half of the old
+// branch, because git serializes the index and not the files on disk.
+//
+// It is a try, never a wait: a request that queued behind a checkout would sit
+// there for minutes with nothing to show, so the second one is refused in the
+// same words the bridge uses and the person tries again when the first is
+// through. The quiet fetch is the exception, it asks and simply does nothing.
+//
+// One write holds more than one name for what it is writing (`gitWriteKeys`),
+// and they are taken together or not at all. The working copy is the name two
+// projects in one checkout meet under, a project below the repository root
+// included. The project path is the name that exists before any repository
+// does: a clone starts in an empty directory, and git creates the `.git` there
+// within the first moments, so a working copy name taken at the start and one
+// resolved a second later are two different answers for one running write.
+// Holding the project path across the whole clone is what keeps the second
+// write out for as long as the clone runs.
+type gitWrites struct {
+	mu   sync.Mutex
+	held map[string]bool
+}
+
+func newGitWrites() *gitWrites {
+	return &gitWrites{held: map[string]bool{}}
+}
+
+// try takes every name of one write at once and reports whether it got them.
+// All or nothing: a write that took one name and found the second one held
+// would have to give the first back, and between those two moments it is a
+// lock that lets somebody else in.
+func (g *gitWrites) try(keys ...string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, key := range keys {
+		if g.held[key] {
+			return false
+		}
+	}
+	for _, key := range keys {
+		g.held[key] = true
+	}
+	return true
+}
+
+func (g *gitWrites) release(keys ...string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, key := range keys {
+		delete(g.held, key)
+	}
+}
+
 // watchProjectGit takes a client's watch and starts the project's poller when
 // it is the one that opened the window. Polling turned off starts nothing; the
 // answer says so and the client stops renewing.
@@ -91,7 +147,12 @@ func (s *Server) watchProjectGit(p project.Project, set editorSettings) bool {
 // here as well, and the next watch answers that there is nothing to renew.
 func (s *Server) pollProjectGit(p project.Project) {
 	repo := git.New(p.Path)
-	last, _ := repo.Fingerprint(context.Background())
+	// The opening read is a round like any other, so whether it could ask git
+	// counts here too: its zero value is indistinguishable from a directory
+	// that is no repository, and taking it as the baseline would make the
+	// first healthy round report a move that never happened, base included.
+	// Until one round has answered, there is nothing to compare against.
+	last, haveBase := repo.Fingerprint(context.Background())
 	for {
 		seconds := s.editorSettings().GitPollSeconds
 		if seconds <= 0 {
@@ -107,6 +168,10 @@ func (s *Server) pollProjectGit(p project.Project) {
 		// answer and waits: publishing on it would send every open editor after
 		// a status that did not move, and again when the next round recovers.
 		if !ok {
+			continue
+		}
+		if !haveBase {
+			last, haveBase = fingerprint, true
 			continue
 		}
 		if !fingerprint.Moved(last) {

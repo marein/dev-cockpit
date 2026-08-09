@@ -19,19 +19,30 @@ type WorktreeChange struct {
 }
 
 // Changes is what the working copy carries on top of HEAD, one entry per
-// changed path, which is what feeds the marks in the editor's file tree.
+// changed path, which is what feeds the marks in the editor's file tree. The
+// branch rides along because it comes out of the same status call: one round,
+// one answer, nothing to disagree about.
 type Changes struct {
 	Repo     bool             `json:"repo"`
+	Branch   BranchInfo       `json:"branch"`
 	Worktree []WorktreeChange `json:"worktree"`
 }
 
 // Changes lists what the working copy changed. A directory without a
 // repository answers an empty list and no error, like Status does.
+//
+// This is the one read the whole git surface hangs on, so unlike the reads
+// that only decorate a file it does not flatten "git could not be asked" into
+// "no repository": that answer takes the branch out of the statusbar, the
+// marks out of the tree and puts the clone where the repository's actions
+// were, and a single stalled call must not do that to a repository that is
+// there. A call that answered nothing travels as an error, and the client
+// keeps what it had.
 func (r *Repo) Changes(ctx context.Context) (Changes, error) {
 	out := Changes{Worktree: []WorktreeChange{}}
-	info, ok := r.resolve(ctx)
+	info, ok, err := r.resolveErr(ctx)
 	if !ok {
-		return out, nil
+		return out, err
 	}
 	out.Repo = true
 
@@ -39,6 +50,7 @@ func (r *Repo) Changes(ctx context.Context) (Changes, error) {
 	if err != nil {
 		return out, err
 	}
+	out.Branch = parseBranch(status)
 	// The working copy against HEAD carries the numbers for everything git
 	// tracks. An untracked file is in no diff at all, so it keeps zeroes and the
 	// tooltip simply says nothing about its size.

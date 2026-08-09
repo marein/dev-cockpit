@@ -44,6 +44,14 @@ export function set(key, value) {
   }
 }
 
+export function remove(key) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch (error) {
+    void error;
+  }
+}
+
 export function getJSON(key, fallback = null) {
   try {
     const value = readItem(key);

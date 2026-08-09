@@ -207,6 +207,13 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// /events is the app-wide server to client stream.
 	auth.GET("/events", s.handleEventStream)
 
+	// The questions ssh and git ask during a running action are app level like
+	// the stream that announces them: any signed-in page shows and answers
+	// them, because the page that started the action may be gone or out of
+	// reach while the action still waits.
+	auth.GET("/git/prompt", s.handleGitPromptList)
+	auth.POST("/git/prompt", s.handleGitPromptAnswer)
+
 	auth.POST("/push/subscribe", s.handlePushSubscribe)
 	auth.POST("/push/unsubscribe", s.handlePushUnsubscribe)
 	auth.POST("/push/test", s.handlePushTest)
@@ -252,8 +259,18 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	editor.GET("/git/changes", s.handleEditorGitChanges)
 	editor.GET("/git/blame", s.handleEditorGitBlame)
 	editor.GET("/git/file", s.handleEditorGitFile)
+	editor.GET("/git/log", s.handleEditorGitLog)
+	editor.GET("/git/refs", s.handleEditorGitRefs)
 	editor.GET("/git/commit", s.handleEditorGitCommitInfo)
 	editor.POST("/git/commit", s.handleEditorGitCommit)
+	editor.GET("/git/commit-draft", s.handleEditorGitCommitDraft)
+	editor.POST("/git/commit-draft", s.handleEditorGitCommitDraftSave)
+	editor.POST("/git/push", s.handleEditorGitPush)
+	editor.POST("/git/fetch", s.handleEditorGitFetch)
+	editor.POST("/git/pull", s.handleEditorGitPull)
+	editor.POST("/git/checkout", s.handleEditorGitCheckout)
+	editor.POST("/git/branch", s.handleEditorGitBranch)
+	editor.POST("/git/clone", s.handleEditorGitClone)
 	editor.POST("/git/watch", s.handleEditorGitWatch)
 }
 

@@ -8,6 +8,7 @@ import { onServerEvent } from "@dc/events";
 import { labelNodes, menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { applyFold } from "@dc/fold";
+import { escapeHtml } from "@dc/dom";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { releaseCoder, steerCoder } from "@dc/steer";
 import * as dockerApi from "@dc/docker";
@@ -116,8 +117,13 @@ async function init(root) {
   const commitBtn = root.querySelector("[data-editor-commit-button]");
   const commitErrorEl = root.querySelector("[data-editor-commit-error]");
   const commitLengthEl = root.querySelector("[data-editor-commit-length]");
-  const commitItem = root.querySelector("[data-editor-commit-item]");
-  const commitItemCount = root.querySelector("[data-editor-commit-item-count]");
+  const gitItem = root.querySelector("[data-editor-git-item]");
+  const gitItemCount = root.querySelector("[data-editor-git-item-count]");
+  const gitStatusBtn = root.querySelector("[data-editor-git-status]");
+  const gitBranchEl = root.querySelector("[data-editor-git-branch]");
+  const gitAbEl = root.querySelector("[data-editor-git-ab]");
+  const gitIconEl = root.querySelector("[data-editor-git-icon]");
+  const gitSpinEl = root.querySelector("[data-editor-git-spin]");
   const commitGroupBtn = root.querySelector("[data-editor-commit-group]");
   const commitMoreBtn = root.querySelector("[data-editor-commit-more]");
   const commitPushItem = root.querySelector("[data-editor-commit-push]");
@@ -181,20 +187,37 @@ async function init(root) {
   let gitWatchGen = 0;
   let gitRepo = false;
   let gitErrorSaid = false;
+  let gitRetryTimer = 0;
   // Two status requests can be in flight at once (an event and a click on
   // refresh); the one started last is the one that describes the repository
   // now, whichever order the answers arrive in.
   let gitSeq = 0;
+  // What the status headers said about where HEAD stands: branch, upstream,
+  // ahead and behind. It feeds the statusbar segment and the git sheet.
+  let gitBranch = null;
+  // Whether the status has answered at all: the git surface renders on the
+  // answer, repository or not, never on the guess.
+  let gitLoaded = false;
+  // One git write at a time: a second push while the first is on the network
+  // would only race it. The action key is what lets the row that was tapped
+  // carry the spinner while every other one waits disabled.
+  let gitBusy = false;
+  let gitBusyAction = "";
   // The commit view: the same flat list of changes the marks come from, plus
-  // which of them the person took out of the next commit. The exclusions are
-  // this visit's, the message draft survives a reload.
+  // which of them the person picked into the next commit. Nothing starts
+  // picked; the picks and the message live on the server per project, so a
+  // second device takes the panel over where this one left it.
   let commitOn = false;
   let commitBusy = false;
   let commitInfo = null;
   let commitInfoSeq = 0;
   let commitChanges = [];
-  const commitExcluded = new Set();
+  const commitPicked = new Set();
   let commitStash = "";
+  let commitDraftTimer = 0;
+  let commitDraftSaving = false;
+  let commitDraftAt = "";
+  let commitDraftSaved = { message: "", paths: "", amend: false, amendMessage: "" };
   let commitGrouped = store.get(COMMIT_GROUP_KEY, "") !== "0";
   const commitMsgKey = `dc-editor-commit-msg:${name}`;
 
@@ -365,6 +388,9 @@ async function init(root) {
   // close: one set of controls, one wiring, and every `root.querySelectorAll`
   // sync keeps working while they are adopted.
   let sheetKind = "";
+  // Where Escape leads inside a drilled sheet level: one step back, not all
+  // the way out. Set by the level that has a Back, cleared with the sheet.
+  let sheetBack = null;
   let sheetAdopted = [];
   let sheetDrag = null;
   const sheetDragging = () => !!(sheetDrag && sheetDrag.active);
@@ -388,6 +414,7 @@ async function init(root) {
     if (!sheetKind) return;
     for (const item of sheetAdopted.reverse()) item.parent.insertBefore(item.node, item.next);
     sheetAdopted = [];
+    sheetBack = null;
     sheetBodyEl.replaceChildren();
     sheetEl.hidden = true;
     sheetKind = "";
@@ -506,16 +533,32 @@ async function init(root) {
     icon.classList.toggle("text-success", !unwell && running > 0);
   }
 
-  function dockerSheetRow({ icon, iconClass, label, title, sub, disabled, onClick }) {
+  // sheetActionRow is one action line of a sheet, the shape the docker and
+  // git sheets share: an icon, a label that may keep its tail, a quiet second
+  // line, and one click.
+  function sheetActionRow({ icon, iconClass, label, title, sub, disabled, busy, onClick }) {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "dropdown-item d-flex align-items-center gap-2";
     if (disabled) row.disabled = true;
     if (title) row.title = title;
-    const mark = document.createElement("i");
-    mark.className = `ti ${icon}${iconClass ? ` ${iconClass}` : ""}`;
-    mark.setAttribute("aria-hidden", "true");
-    row.appendChild(mark);
+    // While this row's action runs, the spinner stands where its icon stood:
+    // the busy state lives at the control that was tapped. It is sized to the
+    // icon's 1em box, spinner-border-sm's fixed 1rem is wider at this font
+    // size and pushed the label to the right.
+    if (busy) {
+      const spin = document.createElement("span");
+      spin.className = "spinner-border spinner-border-sm flex-shrink-0";
+      spin.style.width = "1em";
+      spin.style.height = "1em";
+      spin.setAttribute("aria-hidden", "true");
+      row.appendChild(spin);
+    } else {
+      const mark = document.createElement("i");
+      mark.className = `ti ${icon}${iconClass ? ` ${iconClass}` : ""}`;
+      mark.setAttribute("aria-hidden", "true");
+      row.appendChild(mark);
+    }
     const col = document.createElement("span");
     col.className = "d-flex flex-column min-w-0 text-start";
     const nameEl = document.createElement("span");
@@ -546,7 +589,7 @@ async function init(root) {
         dockerListEl.appendChild(divider);
         continue;
       }
-      dockerListEl.appendChild(dockerSheetRow({
+      dockerListEl.appendChild(sheetActionRow({
         icon: item.icon || "ti-brand-docker",
         label: item.label,
         title: item.title,
@@ -598,7 +641,7 @@ async function init(root) {
       grid.className = "row row-deck g-0";
       for (const container of data.containers) {
         const iconClass = container.unwell ? "text-danger" : container.running ? "text-success" : "text-secondary";
-        const cell = dockerSheetRow({
+        const cell = sheetActionRow({
           icon: "ti-brand-docker",
           iconClass,
           label: container.name,
@@ -618,7 +661,7 @@ async function init(root) {
       dockerListEl.appendChild(grid);
     }
     if (!data.containers.length && !data.stacks.length) {
-      dockerListEl.appendChild(dockerSheetRow({ icon: "ti-brand-docker", label: "No containers.", disabled: true }));
+      dockerListEl.appendChild(sheetActionRow({ icon: "ti-brand-docker", label: "No containers.", disabled: true }));
     }
   }
 
@@ -839,6 +882,8 @@ async function init(root) {
       { divider: true },
       previewMenuItem(tab),
       diffMenuItem(tab),
+      revDiffMenuItem(tab.path),
+      historyMenuItem(tab.path),
       blameMenuItem(tab),
       { label: "Select for compare", icon: "ti-columns-2", action: () => selectForCompare(tab.path) },
       compareSelection && compareSelection !== tab.path ? {
@@ -1128,6 +1173,10 @@ async function init(root) {
           action: () => void diffFromTree(entry.path),
         });
       }
+      const revItem = revDiffMenuItem(entry.path);
+      if (revItem) items.push(revItem);
+      const histItem = historyMenuItem(entry.path);
+      if (histItem) items.push(histItem);
       if (gitRepo && editor.canBlame) {
         items.push({
           label: tab && tab.blameOn ? "Hide git blame" : "Show git blame",
@@ -1311,11 +1360,11 @@ async function init(root) {
     syncFilesItem();
     if (sheetKind === "files") renderFilesSheet();
     commitChanges = ((changes && changes.worktree) || []).slice();
-    // A path that left the list was committed or reverted; when it changes
-    // again later that is a new change, and a new change starts included.
-    for (const path of [...commitExcluded]) {
-      if (!commitChanges.some((entry) => entry.path === path)) commitExcluded.delete(path);
-    }
+    // A picked path that left the list was committed or reverted elsewhere; it
+    // leaves the pick too, and the next save writes the pruned draft. Nothing
+    // is saved for the pruning alone: a commit on another device clears the
+    // stored draft, and a save from here would put the old message back.
+    pruneCommitPicked();
     syncCommitUI();
   }
 
@@ -1382,6 +1431,8 @@ async function init(root) {
 
   async function loadGitStatus() {
     const seq = ++gitSeq;
+    // A fresh round replaces the pending retry of a failed one.
+    clearTimeout(gitRetryTimer);
     try {
       const changes = await getJSON(`${base}/git/changes`, { signal });
       // A slower answer to an older question says nothing about the repository
@@ -1392,6 +1443,9 @@ async function init(root) {
       // The answer on the root: the per-file git entries render on it, and a
       // test that waits for the status has something honest to wait for.
       root.dataset.gitRepo = gitRepo ? "1" : "0";
+      gitLoaded = true;
+      gitBranch = gitRepo ? changes.branch || null : null;
+      paintGitStatus();
       applyGitState(changes);
       // Only a repository is worth watching. A project that becomes one later
       // shows up on the next refresh, which is cheaper than polling git for
@@ -1406,6 +1460,13 @@ async function init(root) {
     } catch (err) {
       if (signal.aborted) return;
       console.warn("git status unavailable", err);
+      // A round that failed retries on its own: the event that asked for it is
+      // spent and may have been the last one for hours (the same file changing
+      // further moves nothing), so waiting for the next one means staying
+      // stale. Only the newest round schedules, a newer one replaces it.
+      if (seq === gitSeq) {
+        gitRetryTimer = setTimeout(() => void loadGitStatus(), 8000);
+      }
       if (!gitErrorSaid) {
         gitErrorSaid = true;
         status(err.message || "The git status could not be read.", "error");
@@ -1459,6 +1520,7 @@ async function init(root) {
     dropChangeHeads();
     void loadGitStatus();
     void refreshDiffHead();
+    void pullCommitDraft();
     renewGitWatchNow();
   }
 
@@ -1476,8 +1538,18 @@ async function init(root) {
 
   function commitSelectedPaths() {
     return commitSelectable()
-      .filter((entry) => !commitExcluded.has(entry.path))
+      .filter((entry) => commitPicked.has(entry.path))
       .map((entry) => entry.path);
+  }
+
+  // pruneCommitPicked drops picks the changes list no longer holds. Only a
+  // status that actually answered may prune: before the first one every list
+  // is empty and pruning would eat the picks another device stored.
+  function pruneCommitPicked() {
+    if (!gitLoaded) return;
+    for (const path of [...commitPicked]) {
+      if (!commitChanges.some((entry) => entry.path === path)) commitPicked.delete(path);
+    }
   }
 
   // commitDir is the folder a row is grouped under: the parent, with the
@@ -1504,14 +1576,15 @@ async function init(root) {
       check.disabled = true;
       check.title = "Resolve the conflict first.";
     } else {
-      check.checked = !commitExcluded.has(entry.path);
+      check.checked = commitPicked.has(entry.path);
       check.addEventListener("change", () => {
-        if (check.checked) commitExcluded.delete(entry.path);
-        else commitExcluded.add(entry.path);
+        if (check.checked) commitPicked.add(entry.path);
+        else commitPicked.delete(entry.path);
         // Every folder above carries this file in its subtree, so each of
         // their rows may have to move to or from the mixed state.
         for (let dir = commitDir(entry); dir; dir = parentDir(dir)) syncGroupRow(dir);
         syncCommitControls();
+        queueCommitDraft();
       });
     }
     const open = document.createElement("button");
@@ -1563,7 +1636,7 @@ async function init(root) {
     if (isDirEntry || kind === "deleted" || kind === "conflict") {
       open.disabled = true;
     } else {
-      open.addEventListener("click", () => void diffFromTree(entry.path));
+      open.addEventListener("click", () => void diffAgainst(entry.path, DIFF_REV));
     }
     row.append(check, open);
     return row;
@@ -1593,8 +1666,8 @@ async function init(root) {
     check.addEventListener("change", () => {
       for (const entry of commitSubtree(dir)) {
         if (gitKind(entry) === "conflict") continue;
-        if (check.checked) commitExcluded.delete(entry.path);
-        else commitExcluded.add(entry.path);
+        if (check.checked) commitPicked.add(entry.path);
+        else commitPicked.delete(entry.path);
         const fileCheck = commitListEl.querySelector(
           `.editor-commit-row[data-path="${CSS.escape(entry.path)}"] input`);
         if (fileCheck && !fileCheck.disabled) fileCheck.checked = check.checked;
@@ -1605,6 +1678,7 @@ async function init(root) {
         syncGroupRow(groupRow.dataset.dir);
       }
       syncCommitControls();
+      queueCommitDraft();
     });
     const line = document.createElement("div");
     line.className = "editor-commit-line";
@@ -1631,7 +1705,7 @@ async function init(root) {
       `.editor-commit-grouprow[data-dir="${CSS.escape(dir)}"] input`);
     if (!input) return;
     const selectable = commitSubtree(dir).filter((entry) => gitKind(entry) !== "conflict");
-    const picked = selectable.filter((entry) => !commitExcluded.has(entry.path));
+    const picked = selectable.filter((entry) => commitPicked.has(entry.path));
     input.disabled = selectable.length === 0;
     input.checked = selectable.length > 0 && picked.length === selectable.length;
     input.indeterminate = picked.length > 0 && picked.length < selectable.length;
@@ -1707,13 +1781,14 @@ async function init(root) {
 
   function syncCommitUI() {
     commitToggleBtn.hidden = !gitRepo;
-    commitItem.hidden = !gitRepo;
-    commitItemCount.textContent = commitChanges.length ? String(commitChanges.length) : "";
+    gitItem.hidden = !gitSurface();
+    gitItemCount.textContent = commitChanges.length ? String(commitChanges.length) : "";
     commitToggleBtn.title = commitChanges.length
       ? `Commit changes (${commitChanges.length})`
       : "Commit changes";
     if (!gitRepo && commitOn) closeCommit();
     if (commitOn) renderCommitList();
+    if (sheetKind === "git") renderGitSheet();
   }
 
   function syncCommitControls() {
@@ -1728,21 +1803,39 @@ async function init(root) {
     const firstLine = commitMsgEl.value.split("\n", 1)[0] || "";
     commitLengthEl.textContent = firstLine.length > 72 ? String(firstLine.length) : "";
     commitLengthEl.title = firstLine.length > 72 ? "The subject line is longer than 72 characters." : "";
-    commitBtn.disabled = commitBusy || picked.length === 0 || commitMsgEl.value.trim() === "";
+    // An amend commits with nothing picked: it then rewrites the message of
+    // the last commit and nothing else, the everyday typo fix.
+    commitBtn.disabled = commitBusy
+      || gitBusy
+      || (picked.length === 0 && !commitAmendEl.checked)
+      || commitMsgEl.value.trim() === "";
     commitMoreBtn.disabled = commitBtn.disabled;
+    // The running commit spins on its own button, like every git action does.
+    const spin = commitBtn.querySelector("[data-editor-commit-spin]");
+    const icon = commitBtn.querySelector("[data-editor-commit-icon]");
+    if (spin && icon) {
+      spin.hidden = !commitBusy;
+      icon.hidden = commitBusy;
+    }
   }
 
+  // openCommit is "bring the commit view up", whatever stands: a view that is
+  // already on but sits in a closed drawer or a folded column still has to
+  // become visible, which is what the entry in the git sheet promises.
   function openCommit() {
-    if (commitOn || !gitRepo) return;
-    commitOn = true;
-    treeEl.hidden = true;
-    commitEl.hidden = false;
-    commitToggleBtn.classList.add("active");
-    commitToggleBtn.setAttribute("aria-pressed", "true");
+    if (!gitRepo) return;
+    if (!commitOn) {
+      commitOn = true;
+      treeEl.hidden = true;
+      commitEl.hidden = false;
+      commitToggleBtn.classList.add("active");
+      commitToggleBtn.setAttribute("aria-pressed", "true");
+      renderCommitList();
+      void loadCommitInfo();
+      void pullCommitDraft();
+    }
     if (mobileMedia.matches) openDrawer();
     else if (treeFolded) toggleDrawer();
-    renderCommitList();
-    void loadCommitInfo();
     if (pointerMedia.matches) commitMsgEl.focus();
   }
 
@@ -1772,6 +1865,7 @@ async function init(root) {
       if (!data.hasCommit && commitAmendEl.checked) {
         commitAmendEl.checked = false;
         commitMsgEl.value = commitStash;
+        queueCommitDraft();
       }
       if (commitOn && commitChanges.length === 0) renderCommitList();
     } catch (err) {
@@ -1779,14 +1873,141 @@ async function init(root) {
     }
   }
 
+  // The draft is the panel's unsent state, the message and the picks, and it
+  // lives on the server per project so another device takes the panel over
+  // where this one left it. It follows the assistant composer's pattern: a
+  // debounced save is the only write path, a save that changed something is
+  // published as the commitdraft event, and a pull never types over unsaved
+  // local edits, the newer writer wins by the stored timestamp.
+
+  // commitDraftState is what would be saved right now. While an amend borrows
+  // the message field the draft's message stays the stash it displaced, so
+  // amending never overwrites it; the amend itself travels as its own pair,
+  // the flag and the borrowed text, and comes back checked on every device.
+  function commitDraftState() {
+    const amend = commitAmendEl.checked;
+    return {
+      message: amend ? commitStash : commitMsgEl.value,
+      amend,
+      amendMessage: amend ? commitMsgEl.value : "",
+      paths: [...commitPicked].sort().join("\n"),
+    };
+  }
+
+  function sameCommitDraft(a, b) {
+    return !!a && !!b && a.message === b.message && a.amend === b.amend
+      && a.amendMessage === b.amendMessage && a.paths === b.paths;
+  }
+
+  function queueCommitDraft() {
+    window.clearTimeout(commitDraftTimer);
+    commitDraftTimer = window.setTimeout(() => void saveCommitDraft(), 600);
+  }
+
+  async function saveCommitDraft() {
+    window.clearTimeout(commitDraftTimer);
+    if (!gitRepo) return;
+    const state = commitDraftState();
+    if (sameCommitDraft(commitDraftSaved, state)) return;
+    commitDraftSaved = state;
+    commitDraftSaving = true;
+    try {
+      const res = await postJSON(`${base}/git/commit-draft`, {
+        message: state.message,
+        amend: state.amend,
+        amendMessage: state.amendMessage,
+        paths: state.paths ? state.paths.split("\n") : [],
+      });
+      if (!res.ok) throw new Error("refused");
+      const payload = await res.json().catch(() => ({}));
+      // What this device wrote last: a pull only applies what is newer, so an
+      // echo of the own save never lands back in the panel.
+      if (payload.updatedAt) commitDraftAt = payload.updatedAt;
+    } catch (err) {
+      void err;
+      commitDraftSaved = null; // the next change tries again
+    } finally {
+      commitDraftSaving = false;
+    }
+    // Look once after every save: two devices that wrote at the same moment
+    // both end on what the server kept.
+    await pullCommitDraft();
+  }
+
+  async function pullCommitDraft() {
+    if (!gitRepo) return;
+    // A save of this device is on its way; the answer of this pull would be
+    // older than what the server is about to hold. saveCommitDraft pulls
+    // again when it is through.
+    if (commitDraftSaving) return;
+    let draft;
+    try {
+      draft = await getJSON(`${base}/git/commit-draft`, { signal });
+    } catch (err) {
+      void err;
+      return;
+    }
+    const at = draft.updatedAt || "";
+    if (!at) {
+      // TODO(v2.0.0): drop the lift of the pre-1.43 device-local draft.
+      const seed = store.get(commitMsgKey, "");
+      if (seed) {
+        store.remove(commitMsgKey);
+        if (!commitMsgEl.value && !commitAmendEl.checked) {
+          commitMsgEl.value = seed;
+          syncCommitControls();
+          queueCommitDraft();
+        }
+      }
+      return;
+    }
+    if (commitDraftAt && at <= commitDraftAt) return;
+    const paths = (draft.paths || []).slice().sort();
+    const incoming = {
+      message: draft.message || "",
+      amend: !!draft.amend,
+      amendMessage: draft.amend ? draft.amendMessage || "" : "",
+      paths: paths.join("\n"),
+    };
+    const held = commitDraftState();
+    if (sameCommitDraft(incoming, held)) {
+      commitDraftAt = at;
+      return;
+    }
+    // Unsaved edits win until this device has written them; the save that the
+    // pending debounce runs pulls again, so the two devices end on the same
+    // draft instead of each keeping what the other one replaced.
+    if (!sameCommitDraft(commitDraftSaved, held)) return;
+    commitDraftAt = at;
+    commitDraftSaved = incoming;
+    // Setting checked by hand fires no change event, so the borrow/restore of
+    // the local handler stays out and field plus stash are set explicitly.
+    commitAmendEl.checked = incoming.amend;
+    if (incoming.amend) {
+      commitStash = incoming.message;
+      commitMsgEl.value = incoming.amendMessage;
+    } else {
+      commitStash = "";
+      commitMsgEl.value = incoming.message;
+    }
+    commitPicked.clear();
+    for (const path of paths) commitPicked.add(path);
+    pruneCommitPicked();
+    if (commitOn) renderCommitList();
+    else syncCommitControls();
+  }
+
   async function doCommit(push) {
-    if (commitBusy) return;
+    if (commitBusy || gitBusy) return;
     const paths = commitSelectedPaths();
     const message = commitMsgEl.value.trim();
-    if (paths.length === 0 || message === "") return;
+    if ((paths.length === 0 && !commitAmendEl.checked) || message === "") return;
     commitBusy = true;
+    gitBusy = true;
+    gitBusyAction = "commit";
     commitErrorEl.hidden = true;
     syncCommitControls();
+    paintGitStatus();
     status(push ? "Committing and pushing…" : "Committing…");
     try {
       // What the person sees in the buffer is what the commit has to take, so
@@ -1812,7 +2033,11 @@ async function init(root) {
       commitMsgEl.value = "";
       commitStash = "";
       commitAmendEl.checked = false;
-      store.set(commitMsgKey, "");
+      // The commit spent the draft; the server cleared its copy and published,
+      // so the other devices empty themselves the same way.
+      commitPicked.clear();
+      window.clearTimeout(commitDraftTimer);
+      commitDraftSaved = { message: "", paths: "", amend: false, amendMessage: "" };
       const stamp = data.hash ? ` ${data.hash} "${data.subject}"` : "";
       notifySuccess(data.pushed ? `Committed and pushed${stamp}` : `Committed${stamp}.`);
       // A refused push does not touch the commit: it stands, the refusal
@@ -1835,22 +2060,26 @@ async function init(root) {
       status("");
     } finally {
       commitBusy = false;
+      gitBusy = false;
+      gitBusyAction = "";
       syncCommitControls();
+      paintGitStatus();
     }
   }
 
   commitToggleBtn.addEventListener("click", toggleCommit, { signal });
-  commitItem.addEventListener("click", openCommit, { signal });
+  gitItem.addEventListener("click", () => openGitSheet(), { signal });
   commitCloseBtn.addEventListener("click", closeCommit, { signal });
   commitAllEl.addEventListener("change", () => {
-    if (commitAllEl.checked) commitExcluded.clear();
-    else for (const entry of commitSelectable()) commitExcluded.add(entry.path);
+    if (commitAllEl.checked) for (const entry of commitSelectable()) commitPicked.add(entry.path);
+    else commitPicked.clear();
     renderCommitList();
+    queueCommitDraft();
   }, { signal });
   commitMsgEl.addEventListener("input", () => {
-    // The draft survives a reload; while an amend borrows the field the draft
-    // it replaced stays what comes back.
-    if (!commitAmendEl.checked) store.set(commitMsgKey, commitMsgEl.value);
+    // commitDraftState knows whose text the field holds, the draft's or the
+    // borrowed amend's, so every keystroke saves into the right slot.
+    queueCommitDraft();
     commitErrorEl.hidden = true;
     syncCommitControls();
   }, { signal });
@@ -1870,6 +2099,7 @@ async function init(root) {
       commitMsgEl.value = commitStash;
     }
     syncCommitControls();
+    queueCommitDraft();
   }, { signal });
   commitBtn.addEventListener("click", () => void doCommit(), { signal });
   commitPushItem.addEventListener("click", () => {
@@ -1889,7 +2119,795 @@ async function init(root) {
     renderCommitList();
   }, { signal });
   paintCommitGroup();
-  commitMsgEl.value = store.get(commitMsgKey, "");
+
+  // ---- git surface -----------------------------------------------------------
+
+  // The branch stands in the statusbar for as long as the project is a
+  // repository: the name, and the two arrows that say how far it is from its
+  // upstream. The button is the way into the git sheet, which holds every
+  // action on the repository as a whole; what concerns one file stays in that
+  // file's context menu.
+
+  // gitSurface is the one answer to "is there a git surface at all": the status
+  // has arrived, and either the project is no repository, which is what the
+  // clone is reached from, or git named the branch it stands on. The statusbar
+  // segment, the menu entry, the sheet and the shortcut all read this one, so
+  // they cannot end up offering different halves of the same thing.
+  function gitSurface() {
+    return gitLoaded && (!gitRepo || !!(gitBranch && gitBranch.name));
+  }
+
+  function paintGitStatus() {
+    const show = gitSurface();
+    gitStatusBtn.hidden = !show;
+    if (!show) return;
+    gitIconEl.hidden = gitBusy;
+    gitSpinEl.hidden = !gitBusy;
+    if (!gitRepo) {
+      gitBranchEl.textContent = "No repository";
+      gitAbEl.hidden = true;
+      gitStatusBtn.title = "Clone a repository into this project";
+      if (sheetKind === "git") renderGitSheet();
+      return;
+    }
+    gitBranchEl.textContent = gitBranch.name;
+    const ab = [];
+    if (gitBranch.counted) {
+      if (gitBranch.ahead) ab.push(`↑${gitBranch.ahead}`);
+      if (gitBranch.behind) ab.push(`↓${gitBranch.behind}`);
+    }
+    gitAbEl.textContent = ab.join(" ");
+    gitAbEl.hidden = ab.length === 0;
+    const parts = [gitBranch.detached ? `Detached at ${gitBranch.name}` : `On branch ${gitBranch.name}`];
+    if (gitBranch.upstream) {
+      parts.push(gitBranch.counted
+        ? `${gitBranch.ahead} ahead, ${gitBranch.behind} behind ${gitBranch.upstream}`
+        : `upstream ${gitBranch.upstream}`);
+    } else if (!gitBranch.detached) {
+      parts.push("no upstream");
+    }
+    gitStatusBtn.title = parts.join(" · ");
+    if (sheetKind === "git") renderGitSheet();
+  }
+
+  // The sheet's two halves: the action rows the data repaints, and the
+  // history below them, which loads once per open and pages by hand.
+  let gitSheetEls = null;
+
+  // fetch is false on the way back from a drilled level: the sheet is being
+  // rebuilt, not opened, and the round it would run has already run.
+  function openGitSheet({ fetch = true } = {}) {
+    if (!gitSurface()) return;
+    openSheet("git", "Git");
+    const actions = document.createElement("div");
+    const log = document.createElement("div");
+    sheetBodyEl.append(actions, log);
+    gitSheetEls = { actions, log };
+    renderGitSheet();
+    if (!gitRepo) return;
+    void appendGitLog(log, "", 0);
+    // The counts on show may be minutes old. The quiet fetch runs only when
+    // they are, and its answer arrives as the ordinary git event.
+    if (fetch) postJSON(`${base}/git/fetch`, { auto: true }).catch(() => {});
+  }
+
+  // The divider draws its own line: bootstrap's rule reads variables that
+  // only a .dropdown-menu defines, and the sheet body is none.
+  function gitDivider() {
+    const divider = document.createElement("div");
+    divider.className = "dropdown-divider";
+    divider.style.borderTop = "1px solid var(--tblr-border-color)";
+    divider.style.margin = "0.25rem 0";
+    return divider;
+  }
+
+  function renderGitSheet() {
+    if (sheetKind !== "git" || !gitSheetEls || !gitSheetEls.actions.isConnected) return;
+    if (!gitRepo) {
+      gitSheetEls.actions.replaceChildren(sheetActionRow({
+        icon: "ti-cloud-download",
+        label: "Clone repository",
+        sub: "into this project folder",
+        disabled: gitBusy,
+        busy: gitBusyAction === "clone",
+        onClick: () => void cloneDialog(),
+      }));
+      return;
+    }
+    const b = gitBranch || {};
+    const count = commitChanges.length;
+    const standing = b.detached ? `detached at ${b.name}` : `on ${b.name}`;
+    const drift = b.upstream
+      ? (b.counted ? `${b.ahead} ahead, ${b.behind} behind ${b.upstream}` : `upstream ${b.upstream}`)
+      : (b.detached ? "" : "no upstream");
+    const rows = [
+      sheetActionRow({
+        icon: "ti-git-branch",
+        label: "Switch branch",
+        title: "Switch branch",
+        disabled: gitBusy,
+        busy: gitBusyAction === "checkout",
+        sub: [standing, drift].filter(Boolean).join(" · "),
+        onClick: () => openBranchPicker(),
+      }),
+      sheetActionRow({
+        icon: "ti-plus",
+        label: "New branch",
+        disabled: gitBusy,
+        busy: gitBusyAction === "branch",
+        sub: "created here and switched to",
+        onClick: () => void createBranchDialog(),
+      }),
+      gitDivider(),
+      sheetActionRow({
+        icon: "ti-git-commit",
+        label: "Commit",
+        disabled: gitBusy,
+        sub: count ? `${count} ${count === 1 ? "change" : "changes"}` : "the working copy is clean",
+        onClick: () => {
+          closeSheet();
+          openCommit();
+        },
+      }),
+      gitDivider(),
+      sheetActionRow({
+        icon: "ti-upload",
+        label: "Push",
+        disabled: gitBusy,
+        busy: gitBusyAction === "push",
+        sub: b.counted
+          ? (b.ahead ? `${b.ahead} ${b.ahead === 1 ? "commit" : "commits"} to push` : "nothing to push")
+          : "",
+        onClick: () => void doPush(false),
+      }),
+      sheetActionRow({
+        icon: "ti-download",
+        label: "Pull",
+        disabled: gitBusy,
+        busy: gitBusyAction === "pull",
+        sub: b.counted && b.behind ? `${b.behind} behind, fast forward only` : "fast forward only",
+        onClick: () => void doPull(),
+      }),
+      sheetActionRow({
+        icon: "ti-refresh",
+        label: "Fetch",
+        disabled: gitBusy,
+        busy: gitBusyAction === "fetch",
+        sub: "updates ahead and behind",
+        onClick: () => void doFetch(),
+      }),
+      gitDivider(),
+      sheetActionRow({
+        icon: "ti-alert-triangle",
+        iconClass: "text-danger",
+        label: "Force push",
+        disabled: gitBusy,
+        busy: gitBusyAction === "force",
+        sub: "with lease, asks first",
+        onClick: () => void doPush(true),
+      }),
+    ];
+    gitSheetEls.actions.replaceChildren(...rows);
+  }
+
+  function logDate(time) {
+    if (!time) return "";
+    return new Date(time * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+
+  async function copyHash(sha) {
+    try {
+      await navigator.clipboard.writeText(sha);
+      notifySuccess(`Copied ${sha.slice(0, 7)}.`);
+    } catch {
+      notifyError("Clipboard is not available.");
+    }
+  }
+
+  // gitLogRow is one commit of a history: with a path it opens the file's
+  // diff against that commit, without one it stands for the project's history
+  // and a click copies the hash, which the copy control on every row does
+  // anyway.
+  function gitLogRow(commit, path) {
+    const row = document.createElement("div");
+    row.className = "editor-sheet-row";
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "editor-sheet-open";
+    const icon = document.createElement("i");
+    icon.className = "ti ti-git-commit flex-shrink-0";
+    icon.setAttribute("aria-hidden", "true");
+    const col = document.createElement("span");
+    col.className = "d-flex flex-column min-w-0";
+    const nameEl = document.createElement("span");
+    nameEl.className = "editor-sheet-name text-truncate";
+    nameEl.textContent = commit.summary || commit.short;
+    const subEl = document.createElement("span");
+    subEl.className = "editor-sheet-dir text-truncate";
+    subEl.textContent = [commit.short, commit.author, logDate(commit.time)].filter(Boolean).join(" · ");
+    col.append(nameEl, subEl);
+    open.append(icon, col);
+    if (path) {
+      open.title = "Diff against this commit";
+      open.addEventListener("click", () => {
+        closeSheet();
+        void diffAgainst(path, commit.sha);
+      }, { signal });
+    } else {
+      open.title = "Diff the open file against this commit";
+      open.addEventListener("click", () => {
+        const tab = activeTab();
+        if (tab && !tab.kind && !tab.compare) {
+          closeSheet();
+          void diffAgainst(tab.path, commit.sha);
+          return;
+        }
+        void copyHash(commit.sha);
+      }, { signal });
+    }
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "editor-sheet-close";
+    copy.title = "Copy the hash";
+    copy.setAttribute("aria-label", `Copy ${commit.short}`);
+    copy.innerHTML = `<i class="ti ti-copy"></i>`;
+    copy.addEventListener("click", () => void copyHash(commit.sha), { signal });
+    row.append(open, copy);
+    return row;
+  }
+
+  // appendGitLog fills one page of history into the sheet and hangs an
+  // "older" row behind it while there is more. The host outliving the await
+  // is the guard: a sheet that moved on took it out of the document.
+  async function appendGitLog(host, path, skip) {
+    const loading = document.createElement("div");
+    loading.className = "text-secondary small px-3 py-2";
+    loading.textContent = "Loading history…";
+    host.appendChild(loading);
+    let page;
+    try {
+      page = await getJSON(`${base}/git/log?skip=${skip}${path ? `&path=${encodeURIComponent(path)}` : ""}`, { signal });
+    } catch (err) {
+      if (!signal.aborted && loading.isConnected) loading.textContent = err.message || "The history could not be read.";
+      return;
+    }
+    if (!loading.isConnected) return;
+    loading.remove();
+    if (skip === 0) {
+      if (!path) {
+        host.appendChild(gitDivider());
+        const head = document.createElement("div");
+        head.className = "dropdown-header";
+        head.style.padding = "0.5rem 0.75rem 0.25rem";
+        head.textContent = "History";
+        host.appendChild(head);
+      }
+      if (page.commits.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "text-secondary small px-3 py-2";
+        empty.textContent = path ? "No commit touches this file yet." : "No commits yet.";
+        host.appendChild(empty);
+        return;
+      }
+    }
+    for (const commit of page.commits) host.appendChild(gitLogRow(commit, path));
+    if (page.more) {
+      const row = document.createElement("div");
+      row.className = "editor-sheet-row";
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "editor-sheet-open";
+      more.innerHTML = `<i class="ti ti-chevron-down" aria-hidden="true"></i><span class="text-secondary">Older commits</span>`;
+      more.addEventListener("click", () => {
+        row.remove();
+        void appendGitLog(host, path, skip + page.commits.length);
+      }, { signal });
+      row.appendChild(more);
+      host.appendChild(row);
+    }
+  }
+
+  // The file's history lives in the file's context menu, like the diff and
+  // the blame: a sheet of its commits, and picking one opens the diff against
+  // exactly that state.
+  function openFileHistory(path) {
+    openSheet("history", `History of ${baseName(path)}`);
+    const host = document.createElement("div");
+    sheetBodyEl.appendChild(host);
+    void appendGitLog(host, path, 0);
+  }
+
+  // diffAgainst opens a file's diff against a revision: an open tab switches
+  // in place, a closed file opens into it. The history and the revision
+  // picker both land here, filling the same field the HEAD switch fills.
+  async function diffAgainst(path, rev) {
+    let tab = tabByPath(path);
+    if (!tab) {
+      await openPath(path);
+      tab = tabByPath(path);
+    }
+    if (!tab || tab.kind || tab.compare) return;
+    // The comparison is what this click is about, so the drawer goes on every
+    // way out, not only when openPath opened the file fresh.
+    closeDrawer();
+    if (tab.path === activePath) {
+      await applyDiff(rev);
+      return;
+    }
+    tab.diffRev = rev;
+    tab.diffOriginal = null;
+    persistTabs();
+    activateTab(path);
+  }
+
+  // openRefPicker is the one autocomplete over what the repository can be
+  // asked about. The branch switch lists branches with the remotes fetched
+  // fresh; the revision diff lists the names plus the commits and lets a raw
+  // name or hash through as typed.
+  //
+  // The search is the server's (`git/refs?q=&kinds=`) and never a filter over
+  // a list this page happens to hold. It used to be one, and that made the
+  // list the whole world: a name outside the first page of each kind could not
+  // be found by typing it, and a commit was not in the list at all, so the one
+  // revision somebody usually wants to diff against was the one thing the
+  // revision picker could not offer.
+  //
+  // Three things hang together for that to read as an autocomplete and not as
+  // a request per keystroke: the typing is debounced, a round in flight says
+  // so on the sheet, and every answer carries the number of the round it
+  // belongs to, so a slow one that comes back after a newer one is dropped
+  // instead of painting an older query's list — the same guard loadGitStatus
+  // uses for the status. Typing voids the rounds in flight at once and not
+  // only when the next one goes out: an answer to what stood there two letters
+  // ago is not this list's answer any more.
+  async function openRefPicker({ title, kinds, fetchFirst, raw, placeholder, onPick, onBack }) {
+    openSheet("picker", title);
+    // A picker that was drilled into from the git sheet carries the way back,
+    // like the docker menus do: one Back row on top, above the filter.
+    if (onBack) {
+      sheetBack = onBack;
+      const backRow = document.createElement("div");
+      backRow.className = "editor-sheet-row";
+      const back = document.createElement("button");
+      back.type = "button";
+      back.className = "editor-sheet-open";
+      back.innerHTML = `<i class="ti ti-arrow-left" aria-hidden="true"></i><span>Back</span>`;
+      back.addEventListener("click", () => onBack(), { signal });
+      backRow.appendChild(back);
+      sheetBodyEl.appendChild(backRow);
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "p-2 border-bottom";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "form-control form-control-sm";
+    input.placeholder = placeholder;
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.setAttribute("aria-label", title);
+    wrap.appendChild(input);
+    const listEl = document.createElement("div");
+    // The round in flight is visible, and it is one element for both cases:
+    // the list this sheet opens with is a round like any other.
+    const loading = document.createElement("div");
+    loading.className = "text-secondary small px-3 py-2 d-flex align-items-center gap-2";
+    loading.setAttribute("data-picker-loading", "");
+    loading.innerHTML = `<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span data-picker-loading-text>Loading…</span>`;
+    const note = document.createElement("div");
+    note.className = "text-secondary small px-3 py-2";
+    note.hidden = true;
+    sheetBodyEl.append(wrap, loading, listEl, note);
+    if (pointerMedia.matches) input.focus();
+
+    const kindIcon = { branch: "ti-git-branch", remote: "ti-cloud", tag: "ti-tag" };
+    // One row model for both halves of the answer, so the list renders one
+    // thing. A name is a place the repository keeps: picking a remote branch
+    // means checking out its local name, which git creates as the tracking
+    // branch when it is not there yet.
+    const refEntry = (ref) => ({
+      value: ref.kind === "remote" && ref.branch ? ref.branch : ref.name,
+      name: ref.name,
+      sub: ref.head ? "current branch" : ref.kind === "remote" ? `remote, checks out ${ref.branch || ref.name}` : ref.kind,
+      icon: kindIcon[ref.kind] || "ti-git-branch",
+      // Switching to where you already stand does nothing, so the row says so
+      // instead of doing it; for a diff the current branch is as good a
+      // revision as any.
+      disabled: !!ref.head && !raw,
+    });
+    // A commit is a point in the history, and a row of them has to be told
+    // apart from the next one: the short hash and the subject on the first
+    // line, the author and the date under it. The value is the full hash, so
+    // the diff is against exactly this commit and not against whatever a
+    // prefix might grow into.
+    const commitEntry = (commit) => ({
+      value: commit.sha,
+      name: `${commit.short} ${commit.summary}`,
+      sub: [commit.author, commitDate(commit.time)].filter(Boolean).join(" · "),
+      icon: "ti-git-commit",
+      disabled: false,
+    });
+
+    let entries = [];
+    let active = 0;
+    let searchSeq = 0;
+    let searching = false;
+    let searchTimer = 0;
+    let fetchError = "";
+
+    const setSearching = (on, text) => {
+      searching = on;
+      loading.hidden = !on;
+      if (on) loading.querySelector("[data-picker-loading-text]").textContent = text || "Searching…";
+    };
+    // Picking awaits the action with the picked row carrying the spinner;
+    // only a success closes the sheet, a refusal leaves the list standing for
+    // the next try. Quick picks close themselves inside onPick, and the
+    // second close is a no-op.
+    let picking = false;
+    let busyValue = null;
+    const pick = async (value) => {
+      if (picking || !value) return;
+      picking = true;
+      busyValue = value;
+      input.disabled = true;
+      renderList();
+      const ok = await onPick(value);
+      if (signal.aborted || !listEl.isConnected) return;
+      if (ok === false) {
+        picking = false;
+        busyValue = null;
+        input.disabled = false;
+        renderList();
+        return;
+      }
+      closeSheet();
+    };
+    const renderList = () => {
+      if (active >= entries.length) active = Math.max(0, entries.length - 1);
+      listEl.replaceChildren(...entries.map((entry, i) => {
+        const row = document.createElement("div");
+        row.className = "editor-sheet-row";
+        if (i === active) row.classList.add("active");
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "editor-sheet-open";
+        let icon;
+        if (busyValue === entry.value) {
+          icon = document.createElement("span");
+          icon.className = "spinner-border spinner-border-sm flex-shrink-0";
+          icon.style.width = "1em";
+          icon.style.height = "1em";
+        } else {
+          icon = document.createElement("i");
+          icon.className = `ti ${entry.icon} flex-shrink-0`;
+        }
+        icon.setAttribute("aria-hidden", "true");
+        const col = document.createElement("span");
+        col.className = "d-flex flex-column min-w-0";
+        const nameEl = document.createElement("span");
+        nameEl.className = "editor-sheet-name text-truncate";
+        nameEl.textContent = entry.name;
+        const subEl = document.createElement("span");
+        subEl.className = "editor-sheet-dir text-truncate";
+        subEl.textContent = entry.sub;
+        col.append(nameEl, subEl);
+        open.append(icon, col);
+        if (entry.disabled) {
+          open.disabled = true;
+          open.style.opacity = "0.55";
+        } else if (picking) {
+          open.disabled = true;
+        } else {
+          open.addEventListener("click", () => void pick(entry.value), { signal });
+        }
+        row.appendChild(open);
+        return row;
+      }));
+      if (!entries.length && !searching) {
+        const empty = document.createElement("div");
+        empty.className = "text-secondary small px-3 py-2";
+        empty.textContent = raw ? "Nothing matches; Enter uses what you typed." : "No matching branch.";
+        listEl.appendChild(empty);
+      }
+    };
+    // runSearch is one round. An empty text is the list the sheet opens with,
+    // the recently moved names and no commits, which is what the server
+    // answers for it.
+    const runSearch = async (text) => {
+      if (signal.aborted || !listEl.isConnected) return;
+      const seq = ++searchSeq;
+      setSearching(true, text ? "Searching…" : "Loading…");
+      const params = new URLSearchParams({ kinds: kinds.join(",") });
+      if (text) params.set("q", text);
+      let data;
+      try {
+        data = await getJSON(`${base}/git/refs?${params.toString()}`, { signal });
+      } catch (err) {
+        if (seq !== searchSeq || signal.aborted || !listEl.isConnected) return;
+        setSearching(false);
+        entries = [];
+        note.textContent = err.message || "The refs could not be read.";
+        note.hidden = false;
+        renderList();
+        return;
+      }
+      if (seq !== searchSeq || !listEl.isConnected) return;
+      setSearching(false);
+      entries = [...(data.refs || []).map(refEntry), ...(data.commits || []).map(commitEntry)];
+      active = 0;
+      note.textContent = fetchError ? `The remotes could not be fetched: ${fetchError}` : "";
+      note.hidden = !fetchError;
+      renderList();
+    };
+    // The listeners go on before the first answer arrives: typing a raw name
+    // and pressing Enter must work however slow the round is, and with raw off
+    // an early Enter simply has nothing to pick yet.
+    input.addEventListener("input", () => {
+      searchSeq += 1;
+      setSearching(true, input.value.trim() ? "Searching…" : "Loading…");
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => void runSearch(input.value.trim()), 200);
+    }, { signal });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (!entries.length) return;
+        active = (active + (e.key === "ArrowDown" ? 1 : -1) + entries.length) % entries.length;
+        renderList();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const typed = input.value.trim();
+        // While a round is out the list belongs to an older text, so a row of
+        // it is not what Enter means any more. A typed name still is, and that
+        // is the path that must keep working however slow the search is.
+        if (searching) {
+          if (raw && typed) void pick(typed);
+          return;
+        }
+        const chosen = entries[active];
+        if (chosen && !chosen.disabled) void pick(chosen.value);
+        else if (raw && typed) void pick(typed);
+      }
+    }, { signal });
+
+    setSearching(true, "Loading…");
+    if (fetchFirst) {
+      try {
+        await ensureOk(await postJSON(`${base}/git/fetch`, { auto: true }), "The remotes could not be fetched.");
+      } catch (err) {
+        fetchError = err.message || "The remotes could not be fetched.";
+      }
+      if (signal.aborted || !listEl.isConnected) return;
+    }
+    await runSearch("");
+  }
+
+  function openBranchPicker() {
+    // Branches and remotes, and no commits: a checkout of a hash is a
+    // detached HEAD, which is not what this picker is for.
+    void openRefPicker({
+      title: "Switch branch",
+      kinds: ["branch", "remote"],
+      fetchFirst: true,
+      placeholder: "Branch…",
+      onPick: (name) => doCheckout(name),
+      onBack: () => openGitSheet({ fetch: false }),
+    });
+  }
+
+  function openRevPicker(path) {
+    void openRefPicker({
+      title: `Diff ${baseName(path)} against`,
+      kinds: ["branch", "remote", "tag", "commit"],
+      raw: true,
+      placeholder: "Branch, tag or commit…",
+      onPick: (rev) => {
+        closeSheet();
+        void diffAgainst(path, rev);
+      },
+    });
+  }
+
+  // gitRun is the one door every write goes through, one at a time: the
+  // statusbar icon becomes a spinner and the tapped row carries its own, so
+  // the busy state stands at the control itself; the guard is what keeps a
+  // double tap one action. The guard is this page's alone though, the server
+  // holds the working copy for the write and answers a second one with its
+  // own refusal, which lands in the toast like every other.
+  async function gitRun(action, body, progress, busyKey) {
+    if (gitBusy || commitBusy) return null;
+    gitBusy = true;
+    gitBusyAction = busyKey || action;
+    paintGitStatus();
+    syncCommitControls();
+    status(progress);
+    try {
+      const res = await postJSON(`${base}/git/${action}`, body);
+      await ensureOk(res, "The git action failed.");
+      return await res.json();
+    } catch (err) {
+      if (!signal.aborted) notifyError(err.message || "The git action failed.");
+      return null;
+    } finally {
+      gitBusy = false;
+      gitBusyAction = "";
+      paintGitStatus();
+      syncCommitControls();
+      status("");
+    }
+  }
+
+  async function doPush(force) {
+    if (force) {
+      const target = gitBranch && gitBranch.upstream ? `"${escapeHtml(gitBranch.upstream)}"` : "the upstream";
+      const ok = await confirmDialog({
+        title: "Force push?",
+        html: `<div class="text-secondary">Overwrites ${target} where it moved away. It runs as force-with-lease: work this repository has not fetched is never overwritten.</div>`,
+        confirmText: "Force push",
+      });
+      if (!ok) return;
+    }
+    const data = await gitRun("push", { force: !!force }, force ? "Force pushing…" : "Pushing…", force ? "force" : "push");
+    if (!data) return;
+    notifySuccess(force ? "Force pushed." : "Pushed.");
+    // No status round here: a push that went through publishes the git event
+    // itself, and this page answers that event like every other one. Asking as
+    // well was two rounds for one answer, and the second one raced the first.
+  }
+
+  async function doPull() {
+    const data = await gitRun("pull", {}, "Pulling…");
+    if (!data) return;
+    notifySuccess("Pulled.");
+    await afterGitMutation();
+  }
+
+  async function doFetch() {
+    const data = await gitRun("fetch", { auto: false }, "Fetching…");
+    if (!data) return;
+    notifySuccess("Fetched.");
+    // Same as the push: a fetch that brought something publishes the event,
+    // and one that brought nothing has nothing for a status round to find.
+  }
+
+  async function doCheckout(name) {
+    if (gitBranch && !gitBranch.detached && gitBranch.name === name) return true;
+    const data = await gitRun("checkout", { branch: name }, `Switching to "${name}"…`, "checkout");
+    if (!data) return false;
+    notifySuccess(`Switched to "${name}".`);
+    await afterGitMutation();
+    return true;
+  }
+
+  function normalizeBranchName(raw) {
+    let name = String(raw || "").trim().replace(/[^\w./-]+/g, "-");
+    name = name.replace(/\.{2,}/g, ".");
+    name = name.replace(/\/{2,}/g, "/");
+    name = name.replace(/(^|\/)\.+/g, "$1");
+    name = name.replace(/\.+(?=\/)/g, "");
+    name = name.replace(/\.lock(?=\/|$)/g, "");
+    name = name.replace(/^[-/.]+/, "").replace(/[-/.]+$/, "");
+    return name;
+  }
+
+  async function createBranchDialog() {
+    let name = "";
+    if (dialogAvailable()) {
+      const result = await fireDialog({
+        title: "New branch",
+        input: "text",
+        inputPlaceholder: "feature/name",
+        html: `<div class="text-secondary small">Created at the current state and switched to.</div>`
+          + `<div class="small mt-2" data-branch-preview hidden>Will be created as <code></code></div>`,
+        showCancelButton: true,
+        confirmButtonText: "Create and switch",
+        cancelButtonText: "Cancel",
+        reverseButtons: true,
+        didOpen: () => {
+          const input = window.Swal.getInput();
+          const preview = window.Swal.getHtmlContainer().querySelector("[data-branch-preview]");
+          const code = preview.querySelector("code");
+          input.addEventListener("input", () => {
+            const normalized = normalizeBranchName(input.value);
+            code.textContent = normalized;
+            preview.hidden = normalized === "" || normalized === input.value.trim();
+          });
+        },
+        preConfirm: (value) => {
+          const normalized = normalizeBranchName(value);
+          if (!normalized) {
+            window.Swal.showValidationMessage("A branch name is required.");
+            return false;
+          }
+          return normalized;
+        },
+      });
+      if (!result.isConfirmed || !result.value) return;
+      name = result.value;
+    } else {
+      name = normalizeBranchName(await promptText({
+        title: "New branch",
+        placeholder: "feature/name",
+        confirmText: "Create and switch",
+      }) || "");
+      if (!name) return;
+    }
+    // A branch is created here and touches no remote, so it opens no bridge.
+    const data = await gitRun("branch", { branch: name }, `Creating "${name}"…`, "branch");
+    if (!data) return;
+    notifySuccess(`On the new branch "${name}".`);
+    void loadGitStatus();
+  }
+
+  async function cloneDialog() {
+    const url = await promptText({
+      title: "Clone repository",
+      html: `<div class="text-secondary small">Cloned straight into this project folder, which has to be empty. Authentication is whatever git on this host can already do.</div>`,
+      placeholder: "git@host:owner/repo.git",
+      confirmText: "Clone",
+    });
+    if (!url) return;
+    const data = await gitRun("clone", { url }, "Cloning…", "clone");
+    if (!data) return;
+    notifySuccess("Cloned.");
+    await loadTree();
+    await afterGitMutation();
+  }
+
+  // After a write that may have moved the working copy under the editor, a
+  // checkout or a pull, everything follows: the caches go, clean tabs read
+  // the disk again, and the fresh status paints tree, tabs and statusbar. A
+  // dirty buffer stays what it is: unsaved work belongs to the person in
+  // front of it, never to a branch move.
+  async function afterGitMutation() {
+    dropChangeHeads();
+    await reloadCleanTabs();
+    void loadGitStatus();
+    void refreshDiffHead();
+    void loadCommitInfo();
+  }
+
+  async function reloadCleanTabs() {
+    for (const tab of [...tabs]) {
+      if (tab.kind || tab.compare || tab.dirty) continue;
+      let data;
+      try {
+        data = await getJSON(`${base}/file?path=${encodeURIComponent(tab.path)}`, { signal });
+      } catch (err) {
+        if (signal.aborted) return;
+        // Only the server's own no closes a tab: a file the new branch does not
+        // hold answers a 4xx, and a clean tab of it has nothing left to show,
+        // the way a deleted file's tab does. A request that never arrived says
+        // nothing about the branch, and closing on it would take the whole open
+        // set away over one hiccup on a bad line.
+        if (!(err.status >= 400 && err.status < 500)) continue;
+        await closeTab(tab.path, true);
+        continue;
+      }
+      if (signal.aborted) return;
+      if (data.binary) continue;
+      const isActive = tab.path === activePath;
+      if ((data.content || "") === editor.valueOf(tab, isActive)) continue;
+      tab.handle = await editor.createDoc(data.content || "", tab.name);
+      tab.editorConfig = data.editorConfig || {};
+      if (isActive) {
+        editor.showDoc(tab);
+        void applyTabDiff(tab);
+        void applyBlame(true);
+        void applyChangeBars();
+      }
+    }
+  }
+
+  function historyMenuItem(path) {
+    if (!gitRepo) return null;
+    return { label: "File history", icon: "ti-history", action: () => openFileHistory(path) };
+  }
+
+  function revDiffMenuItem(path) {
+    if (!gitRepo || !editor.canDiff) return null;
+    return { label: "Diff against revision", icon: "ti-versions", action: () => openRevPicker(path) };
+  }
 
   // ---- diff ------------------------------------------------------------------
 
@@ -1936,8 +2954,15 @@ async function init(root) {
     });
   }
 
+  // fetchRev reads the file at a revision, the other side of a diff. HEAD is
+  // the everyday one; the history and the revision picker put other names in
+  // the same field.
+  async function fetchRev(path, rev) {
+    return getJSON(`${base}/git/file?path=${encodeURIComponent(path)}&rev=${encodeURIComponent(rev || DIFF_REV)}`, { signal });
+  }
+
   async function fetchHead(path) {
-    return getJSON(`${base}/git/file?path=${encodeURIComponent(path)}`, { signal });
+    return fetchRev(path, DIFF_REV);
   }
 
   // withinDiffLimits keeps a phone from freezing on a file nobody wants to see
@@ -1974,18 +2999,26 @@ async function init(root) {
   async function toggleTabDiff(tab) {
     const next = tab.diffRev ? "" : DIFF_REV;
     if (tab.path === activePath) {
+      if (next) closeDrawer();
       await applyDiff(next);
       return;
     }
-    // A background tab only carries the wish; applyTabDiff builds it when the
-    // tab comes to the front.
+    // Hiding only clears the wish the background tab carries; showing brings
+    // the tab to the front, where activateTab builds the diff.
     tab.diffRev = next;
-    if (!next) tab.diffOriginal = null;
+    if (!next) {
+      tab.diffOriginal = null;
+      persistTabs();
+      return;
+    }
     persistTabs();
+    closeDrawer();
+    activateTab(tab.path);
   }
 
-  // diffFromTree reaches the same switch from a tree row: an open file toggles
-  // in place, a closed one opens into the comparison.
+  // diffFromTree reaches the same switch from a tree row: the active file
+  // toggles in place, an open one comes to the front, a closed one opens into
+  // the comparison.
   async function diffFromTree(path) {
     let tab = tabByPath(path);
     if (!tab) {
@@ -2008,13 +3041,14 @@ async function init(root) {
     tab.diffOriginal = null;
     if (!rev) {
       await editor.setDiff({ mode: "off", name: tab.name, valid: current });
+      status("");
       persistTabs();
       void applyChangeBars();
       return;
     }
     let data;
     try {
-      data = await fetchHead(tab.path);
+      data = await fetchRev(tab.path, rev);
     } catch (err) {
       if (!current()) return;
       if (!signal.aborted) status(err.message, "error");
@@ -2075,7 +3109,8 @@ async function init(root) {
       void applyChangeBars();
       return;
     }
-    status(data.exists === false ? "Not in HEAD yet" : "");
+    const label = rev === DIFF_REV ? "HEAD" : rev;
+    status(data.exists === false ? `Not in ${label} yet` : rev === DIFF_REV ? "" : `Diff against ${label}`);
     persistTabs();
     void applyChangeBars();
   }
@@ -2105,16 +3140,17 @@ async function init(root) {
     await applyTabDiff(tab);
   }
 
-  // refreshDiffHead follows HEAD under an open diff: when a commit moves it,
-  // the revision side is fetched again and replaced in place. Only that side
-  // moves, the buffer belongs to the person in front of it, and the dirty
-  // marker and the undo history stay untouched.
+  // refreshDiffHead follows a moved base under an open diff: the revision
+  // side is fetched again and replaced in place. A branch name moves like
+  // HEAD does, a tag or a hash answers the same text and the replace is a
+  // no-op. Only that side moves, the buffer belongs to the person in front of
+  // it, and the dirty marker and the undo history stay untouched.
   async function refreshDiffHead() {
     const tab = activeTab();
     if (!tab || tab.kind || tab.compare || !tab.diffRev || tab.diffOriginal == null) return;
     const seq = diffSeq;
     try {
-      const data = await fetchHead(tab.path);
+      const data = await fetchRev(tab.path, tab.diffRev);
       if (data.binary || activeTab() !== tab || seq !== diffSeq) return;
       if (!tab.diffRev || tab.diffOriginal == null) return;
       const fresh = data.content || "";
@@ -3562,12 +4598,26 @@ async function init(root) {
   // working copy, which is what the status describes, so a save never costs a
   // git show.
   onServerEvent("git", (event) => {
-    if (!event.detail || event.detail.project !== name) return;
+    // A signal without a project is the snapshot after a reconnect: the moves
+    // of the gap were published to nobody and never come again, so this page
+    // pulls everything itself, the way it does when it comes back to the
+    // front.
+    if (!event.detail || !event.detail.project) {
+      catchUpGit();
+      return;
+    }
+    if (event.detail.project !== name) return;
     // A moved base means every cached HEAD text may be from before the move,
     // so they all go; loadGitStatus rebuilds the bars for the open file.
     if (event.detail.base) dropChangeHeads();
     void loadGitStatus();
     if (event.detail.base) void refreshDiffHead();
+  }, { signal });
+  // Another device saved the commit panel or a commit spent it; a bare signal
+  // (the snapshot after a reconnect) means catch up too.
+  onServerEvent("commitdraft", (event) => {
+    if (event.detail && event.detail.project && event.detail.project !== name) return;
+    void pullCommitDraft();
   }, { signal });
   // Nothing was published while this page was away, see catchUpGit.
   document.addEventListener("visibilitychange", () => {
@@ -4096,6 +5146,7 @@ async function init(root) {
   settingsItem.addEventListener("click", openSettingsSheet, { signal });
   dockerItem.addEventListener("click", openDockerSheet, { signal });
   dockerStatusBtn.addEventListener("click", openDockerSheet, { signal });
+  gitStatusBtn.addEventListener("click", () => openGitSheet(), { signal });
   termStatusBtn.addEventListener("click", toggleTermPanel, { signal });
   sheetCloseBtn.addEventListener("click", closeSheet, { signal });
   sheetEl.addEventListener("click", (e) => {
@@ -4107,7 +5158,11 @@ async function init(root) {
   // sheet keeps it too, its rows open a menu or start a run the sheet then
   // shows as busy.
   sheetBodyEl.addEventListener("click", (e) => {
-    if (sheetKind !== "settings" && sheetKind !== "docker" && e.target.closest(".dropdown-item")) closeSheet();
+    // A row whose handler opened another sheet is detached by the time this
+    // bubbles; closing then would close what just replaced it, which is how
+    // the branch picker used to vanish the moment it opened.
+    if (!sheetBodyEl.contains(e.target)) return;
+    if (sheetKind !== "settings" && sheetKind !== "docker" && sheetKind !== "git" && e.target.closest(".dropdown-item")) closeSheet();
   }, { signal });
 
   const projectMenuEl = root.querySelector(".editor-project-menu");
@@ -4807,8 +5862,16 @@ async function init(root) {
         e.preventDefault();
         toggleCommit();
       }
+    } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && !e.repeat
+      && e.key.toLowerCase() === "g" && quickOpenEl.hidden) {
+      if (gitSurface()) {
+        e.preventDefault();
+        if (sheetKind === "git") closeSheet();
+        else openGitSheet();
+      }
     } else if (e.key === "Escape") {
       if (!quickOpenEl.hidden) closeQuickOpen();
+      else if (sheetKind && sheetBack) sheetBack();
       else if (sheetKind) closeSheet();
       else if (commitOn && commitEl.contains(document.activeElement)) closeCommit();
       else closeDrawer();
@@ -4997,7 +6060,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     import("@codemirror/theme-one-dark"),
   ]);
   const { EditorView, basicSetup } = cm;
-  const { EditorState, Compartment } = state;
+  const { ChangeSet, EditorState, Compartment } = state;
   const { keymap } = view;
   const { indentWithTab } = commands;
   const { indentUnit } = language;
@@ -5016,6 +6079,11 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   let langSeq = 0;
   let mergeMod = null;
   let mergeView = null;
+  // Whether the compartment holds an inline diff right now. It is written by
+  // the two functions that put one up and take one down and by nothing else,
+  // so it says what the open state carries, which is what setOriginal reads to
+  // decide between the package's own update and a fresh build.
+  let unifiedOn = false;
 
   const fontTheme = (px) => EditorView.theme({ "&": { fontSize: `${px}px` } });
 
@@ -5550,20 +6618,50 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       dropMergeView();
       editorView.setState(EditorState.create({ doc: text, extensions: baseExtensions(langExt) }));
     }
-    editorView.dispatch({
-      effects: mergeConf.reconfigure(merge
-        ? merge.unifiedMergeView({
-          original: spec.original,
-          // Nothing in the editor writes a chunk back into the buffer, the
-          // revision side is there to be read.
-          mergeControls: false,
-          gutter: true,
-          highlightChanges: true,
-          collapseUnchanged: collapseOption(spec),
-        })
-        : []),
-    });
+    if (merge) buildUnified(merge, spec);
+    else dropUnified();
     editorView.requestMeasure();
+  }
+
+  // buildUnified puts the inline diff up against spec.original, and it takes
+  // whatever inline diff stood there down first. That order is the whole
+  // function.
+  //
+  // unifiedMergeView keeps the revision in a StateField and hands it its
+  // starting value through StateField.init, and CodeMirror runs an init only
+  // for a field the state does not already carry: reconfiguring a compartment
+  // that already holds one of these keeps every field value it had, so the
+  // extension is rebuilt around the revision that was already in there and the
+  // new one never arrives. That is exactly what switching revisions looked
+  // like — the picker closed, the status line named the new revision, and the
+  // comparison on screen was still the old one. Emptying the compartment takes
+  // the fields out of the state, so the build after it starts them over. Both
+  // dispatches run in one task, so nothing is painted in between, and the undo
+  // history belongs to the plain editor and is touched by neither.
+  function buildUnified(merge, spec) {
+    dropUnified();
+    editorView.dispatch({
+      effects: mergeConf.reconfigure(merge.unifiedMergeView({
+        original: spec.original,
+        // Nothing in the editor writes a chunk back into the buffer, the
+        // revision side is there to be read.
+        mergeControls: false,
+        gutter: true,
+        highlightChanges: true,
+        collapseUnchanged: collapseOption(spec),
+      })),
+    });
+    unifiedOn = true;
+  }
+
+  // dropUnified empties the compartment whatever is in it. It dispatches
+  // unconditionally on purpose: a state restored by a tab switch carries the
+  // inline diff it was captured with, so "the flag says there is none" is not
+  // the same as "the state holds none", and this is what puts the two back in
+  // step.
+  function dropUnified() {
+    editorView.dispatch({ effects: mergeConf.reconfigure([]) });
+    unifiedOn = false;
   }
 
   // setOriginal replaces the revision side without touching the working copy,
@@ -5576,22 +6674,25 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     }
     const merge = await loadMerge();
     if (spec.valid && !spec.valid()) return;
-    editorView.dispatch({
-      effects: mergeConf.reconfigure(merge.unifiedMergeView({
-        original: spec.original,
-        mergeControls: false,
-        gutter: true,
-        highlightChanges: true,
-        collapseUnchanged: collapseOption(spec),
-      })),
-    });
+    if (!unifiedOn) {
+      buildUnified(merge, spec);
+      return;
+    }
+    // The package's own way to move the revision side: an effect carrying the
+    // new revision and the change that leads to it, which is what recomputes
+    // the chunks. Reconfiguring instead would keep the old revision, see
+    // buildUnified, and this is the path a moved base takes, so it would have
+    // meant an open diff that never follows a commit.
+    const before = merge.getOriginalDoc(editorView.state);
+    const whole = ChangeSet.of({ from: 0, to: before.length, insert: spec.original }, before.length);
+    editorView.dispatch({ effects: merge.originalDocChangeEffect(editorView.state, whole) });
   }
 
   // exitDiff drops any diff view without carrying a document anywhere. The
   // caller is about to show another tab or nothing at all.
   function exitDiff() {
     dropMergeView();
-    editorView.dispatch({ effects: mergeConf.reconfigure([]) });
+    dropUnified();
   }
 
   // Re-measure when the viewport changes (orientation flip resizes the editor
@@ -5645,8 +6746,15 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       return { state, saved: state.doc };
     },
     showDoc(tab) {
-      exitDiff();
+      dropMergeView();
       editorView.setState(tab.handle.state);
+      // The stored state may carry an inline diff of its own: captureDoc keeps
+      // the state as it is, undo history and all, and while an inline diff is
+      // up that state holds the merge extension around the revision it was
+      // built against. Emptying the compartment after the swap, not before it,
+      // is what keeps the state and the flag in step, and applyTabDiff builds
+      // this tab's own diff again from the revision the tab carries.
+      dropUnified();
       fileConfig = tab.editorConfig || {};
       reconfigureIndent();
       editorView.dispatch({
@@ -5955,10 +7063,6 @@ function setupIndentControl(root, editor, settings) {
   });
   sync();
   return sync;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 // commitDate is how a commit's time reads next to it: the device's own format,

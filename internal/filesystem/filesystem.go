@@ -35,6 +35,25 @@ func ExpandHome(p string) (string, error) {
 	return p, nil
 }
 
+// AbsDir spells a directory the one way everybody who derives something from it
+// has to spell it: a command may name it relative or with a ~, and two
+// spellings of one directory must not become two answers. It is what the unix
+// socket paths are derived from, where a relative path would be resolved
+// against whatever working directory the reader happens to have, and where the
+// length of the path decides whether it fits an address at all.
+//
+// A path that cannot be expanded is answered as it came: nothing here refuses,
+// the caller's own step does that if it has to.
+func AbsDir(p string) string {
+	if expanded, err := ExpandHome(p); err == nil {
+		p = expanded
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	return filepath.Clean(p)
+}
+
 // HumanSize formats a byte count for display; negative counts are "unknown".
 func HumanSize(n int64) string {
 	if n < 0 {
