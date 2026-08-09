@@ -90,7 +90,7 @@ class Assistant extends HTMLElement {
     this.running = this.hasAttribute("running");
     this.pending = null;
     this.pinned = true;
-    this.programmatic = 0;
+    this.ownTops = [];
     this.scrollQueued = false;
 
     this.form?.addEventListener("submit", (event) => {
@@ -189,6 +189,27 @@ class Assistant extends HTMLElement {
     this.scroller?.scrollTo({ top, behavior: "instant" });
   }
 
+  // A machine move must not read as the reader scrolling away, and its
+  // scroll event cannot be told apart by counting: the browser fires at most
+  // one event per frame for all movement in it, and it also moves scrollTop
+  // on its own, clamping to the bottom of a layout the streaming answer has
+  // meanwhile changed again, so a counter drifts and then either swallows
+  // the reader's real scroll or lets a stale event unpin a follower. What is
+  // reliable is the place a machine move can land on: where a jump ended, or
+  // the bottom the layout had when the machinery last looked. trackPin
+  // ignores an event that reads back one of those places, because no reader
+  // intent lies in it, and judges everything else.
+  notePlace(top) {
+    const now = Date.now();
+    this.ownTops = this.ownTops.filter((entry) => now - entry.at < 500);
+    this.ownTops.push({ top, at: now });
+  }
+
+  maskedJump(jump) {
+    jump();
+    this.notePlace(this.scrollPosition());
+  }
+
   // focusMessage brings one message to the top of the transcript, the way a
   // notification's link lands on the answer it announced, and releases the
   // end pin so the settling page does not drag the reader away from it.
@@ -196,9 +217,7 @@ class Assistant extends HTMLElement {
     const node = this.bubble(messageId);
     if (!node || !this.scroller) return false;
     this.pinned = false;
-    this.programmatic += 1;
-    node.scrollIntoView({ block: "start", behavior: "instant" });
-    window.setTimeout(() => { this.programmatic = Math.max(0, this.programmatic - 1); }, 0);
+    this.maskedJump(() => node.scrollIntoView({ block: "start", behavior: "instant" }));
     return true;
   }
 
@@ -206,10 +225,8 @@ class Assistant extends HTMLElement {
     const node = this.bubble(messageId);
     if (!node || !this.scroller) return false;
     this.pinned = false;
-    this.programmatic += 1;
     const shift = node.getBoundingClientRect().top - this.scroller.getBoundingClientRect().top - offset;
-    this.scrollToPosition(this.scrollPosition() + shift);
-    window.setTimeout(() => { this.programmatic = Math.max(0, this.programmatic - 1); }, 0);
+    this.maskedJump(() => this.scrollToPosition(this.scrollPosition() + shift));
     return true;
   }
 
@@ -855,26 +872,31 @@ class Assistant extends HTMLElement {
   // pin would win the next time the transcript grows and take the page to the
   // bottom the reader never asked for.
   trackPin() {
-    if (this.programmatic) return;
-    const remaining = this.scrollLength() - this.scrollPosition() - this.viewportHeight();
+    const now = Date.now();
+    this.ownTops = this.ownTops.filter((entry) => now - entry.at < 500);
+    const top = this.scrollPosition();
+    if (this.ownTops.some((entry) => Math.abs(top - entry.top) <= 1)) return;
+    const remaining = this.scrollLength() - top - this.viewportHeight();
     this.pinned = remaining < 120;
   }
 
   // stickToEnd holds the transcript at its end while the reader is following
-  // it, and nowhere at all once they scrolled away.
+  // it, and nowhere at all once they scrolled away. The bottom is written
+  // down before anything else, on every call: this is the moment the layout
+  // may clamp the scroller there on its own, and that clamp must never read
+  // as the reader.
   stickToEnd() {
+    this.notePlace(this.scrollLength() - this.viewportHeight());
     if (!this.pinned) return;
     if (this.scrollQueued) return;
     this.scrollQueued = true;
     window.requestAnimationFrame(() => {
       this.scrollQueued = false;
       if (!this.pinned) return;
-      this.programmatic += 1;
       // Scrolling smoothly never catches up with a growing answer: every
       // delta would start a new animation from where the last one got to.
       // Following the end of a transcript is a jump.
-      this.scrollToPosition(this.scrollLength());
-      window.setTimeout(() => { this.programmatic = Math.max(0, this.programmatic - 1); }, 0);
+      this.maskedJump(() => this.scrollToPosition(this.scrollLength()));
     });
   }
 }
