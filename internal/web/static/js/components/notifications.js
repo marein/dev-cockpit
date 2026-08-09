@@ -1,6 +1,7 @@
 import { onServerEvent } from "@dc/events";
 import { getJSON, postForm } from "@dc/http";
 import { playNotification } from "@dc/jingle";
+import { showToast } from "@dc/toast";
 import "@dc/gitprompt";
 
 // Notification bell + center. The element renders a bell with an unread badge
@@ -267,6 +268,7 @@ function markChanged(ids) {
 const graceDelay = 750;
 
 let shownToastTarget = null;
+let shownToastHandle = null;
 
 // A toast for a target that got read on another device is handled news:
 // take it down instead of letting the timer run out.
@@ -274,12 +276,12 @@ function dismissReadToast(unreadTargets) {
   if (!shownToastTarget) return;
   if ((unreadTargets || []).includes(shownToastTarget)) return;
   shownToastTarget = null;
-  window.Swal?.close();
+  shownToastHandle?.close();
+  shownToastHandle = null;
 }
 
 function toast(added) {
   playNotification().catch(() => {});
-  if (!window.Swal) return;
 
   let detail;
   if (added.detail) {
@@ -294,29 +296,20 @@ function toast(added) {
     detail.append(folder, document.createTextNode(added.project));
   }
 
-  window.Swal.fire({
-    toast: true,
-    position: "top-end",
+  shownToastTarget = added.targetId;
+  shownToastHandle = showToast({
     icon: "info",
     title: added.title || `Something new in "${added.targetName}".`,
-    html: detail,
-    customClass: { title: "text-break" },
-    showConfirmButton: false,
-    showCloseButton: true,
+    detail: detail,
     timer: 8000,
-    timerProgressBar: true,
-    didOpen: (popup) => {
-      popup.style.cursor = "pointer";
-      popup.addEventListener("click", (event) => {
-        if (event.target.closest(".swal2-close")) return;
-        openTarget(added);
-      });
-    },
-    didClose: () => {
-      if (shownToastTarget === added.targetId) shownToastTarget = null;
+    onClick: () => openTarget(added),
+    onHidden: () => {
+      if (shownToastTarget === added.targetId) {
+        shownToastTarget = null;
+        shownToastHandle = null;
+      }
     },
   });
-  shownToastTarget = added.targetId;
 }
 
 function relativeTime(iso) {

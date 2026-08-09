@@ -933,9 +933,14 @@ free floating page scripts.
   follows the OS between a light and dark variant), defined in
   `terminal-attach.js`. The tab strip follows the page theme, only the active
   tab keeps the dark frame via a `[data-bs-theme="dark"]` override. SweetAlert
-  is themed in `style.css` by setting its `--swal2-background`/`--swal2-color`
-  custom properties on `body` to Tabler variables, so open dialogs and toasts
-  follow a live theme flip (never pass colors to `Swal.fire`). CodeMirror
+  serves dialogs only, and is themed in `style.css` by setting its
+  `--swal2-background`/`--swal2-color` custom properties on `body` to Tabler
+  variables, so open dialogs follow a live theme flip (never pass colors to
+  `Swal.fire`). Toasts deliberately do not ride the Swal singleton, a toast
+  firing while a dialog stands must never close it: `@dc/toast` builds
+  Bootstrap toasts (`showToast`, plus the notify helpers) into the layout's
+  fixed `[data-dc-toasts]` container, which sits outside the swapped region
+  and follows the theme through Tabler's own toast styles. CodeMirror
   oneDark applies only while dark is active.
   The terminal colors ride every server contact — the `POST /terminal-theme`,
   the resize POST (`bg`/`fg` fields) and the stream connect (`bg`/`fg` query) all

@@ -752,7 +752,7 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
     assert(await menuItem(page, "E2E follow").count() === 1, "the added command is not in the menu");
     await menuItem(page, "E2E follow").click();
-    await page.waitForSelector(".dc-toast, .swal2-toast", { timeout: 8000 }).catch(() => {});
+    await page.waitForSelector(".dc-toast", { timeout: 8000 }).catch(() => {});
     await sleep(1500);
     await composeBtn(page).click();
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
@@ -896,7 +896,7 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.waitForFunction(() => document.querySelectorAll("#settings-docker-actions [data-action-row]").length === 4, null, { timeout: 15000 });
       assert(await page.locator("#settings-docker-actions [data-actions-restore]").count() === 0, "the way back still stands with a full list");
       // It says so, and the list it shows is the default one again.
-      const said = await page.locator(".swal2-toast").textContent().catch(() => "");
+      const said = (await page.locator(".dc-toast").allTextContents().catch(() => [])).join(" ");
       assert(/default compose actions/i.test(said), `the button said "${said}"`);
       assert((await page.locator('#settings-docker-actions input[name="action_label"]').first().inputValue()) === "Compose up", "the restored list is not the default one");
     } finally {

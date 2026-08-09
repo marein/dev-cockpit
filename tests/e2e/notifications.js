@@ -197,7 +197,7 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       await sleep(1500);
       injectCopilotDone(coderId);
       await page.waitForFunction((name) =>
-        [...document.querySelectorAll(".swal2-toast")].some((t) => t.textContent.includes(name)),
+        [...document.querySelectorAll(".dc-toast")].some((t) => t.textContent.includes(name)),
         coderName, { timeout: 12000 });
       await page.waitForFunction(() => {
         const badge = document.querySelector(".dc-notify-badge:not(.d-none)");
@@ -301,7 +301,7 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await sleep(1500);
       injectCopilotDone(coderId);
-      await page.waitForSelector(".swal2-toast", { timeout: 12000 });
+      await page.waitForSelector(".dc-toast", { timeout: 12000 });
       await page.evaluate((sid) => {
         const token = document.querySelector('meta[name="csrf-token"]').content;
         return fetch("/notifications", { headers: { Accept: "application/json" } })
@@ -315,7 +315,7 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
             });
           });
       }, coderId);
-      await page.waitForSelector(".swal2-toast", { state: "detached", timeout: 4000 });
+      await page.waitForSelector(".dc-toast", { state: "detached", timeout: 4000 });
     });
 
     await run("second event on the visible coder page is auto-marked read", async () => {
@@ -384,7 +384,7 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
         hookHits.length = 0;
         injectCopilotDone(coderId);
         await away.waitForFunction((name) =>
-          [...document.querySelectorAll(".swal2-toast")].some((t) => t.textContent.includes(name)),
+          [...document.querySelectorAll(".dc-toast")].some((t) => t.textContent.includes(name)),
           coderName, { timeout: 12000 });
         const deadline = Date.now() + 12000;
         while (Date.now() < deadline && !hookHits.some((h) => h.includes(coderName))) await sleep(250);

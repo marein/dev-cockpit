@@ -230,7 +230,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run }) => {
       const btn = await page.evaluateHandle((p) => { const c = [...document.querySelectorAll("[data-project-name]")].find((e) => e.dataset.projectName === p); const s = c.closest('[id^="project-"]') || c; return s.querySelector('form[action="/projects/delete"] [type="submit"], form[action="/projects/delete"] button'); }, project);
       await btn.asElement().click();
       await confirmSwal(page);
-      await page.waitForSelector('.swal2-popup.swal2-toast:has-text("Project")', { state: "visible", timeout: 8000 });
+      await page.waitForSelector('.dc-toast:has-text("Project")', { state: "visible", timeout: 8000 });
       await page.waitForSelector(`#project-${project}`, { state: "detached", timeout: 10000 });
       assert(page.url().endsWith("/projects"), `project deletion redirected: ${page.url()}`);
     });

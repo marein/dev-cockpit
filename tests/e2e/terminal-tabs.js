@@ -654,8 +654,8 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.waitForSelector(tabSel(ids[2]), { state: "detached", timeout: 8000 });
       await page.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
       await sleep(800);
-      assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "error toast after tab close");
-      const toasts = (await page.locator(".swal2-toast").allTextContents()).join(" ");
+      assert((await page.locator(".dc-toast .ti-alert-circle").count()) === 0, "error toast after tab close");
+      const toasts = (await page.locator(".dc-toast").allTextContents()).join(" ");
       assert(!toasts.includes("Terminal has ended"), "ended toast not suppressed on tab close");
     });
 
@@ -676,7 +676,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.waitForSelector(tabSel(extraId), { state: "detached", timeout: 10000 });
       assert(!page.url().includes(extraId), `still on the closed terminal ${page.url()}`);
       await sleep(600);
-      assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "error toast after the shortcut close");
+      assert((await page.locator(".dc-toast .ti-alert-circle").count()) === 0, "error toast after the shortcut close");
       await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
       await page.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
     });

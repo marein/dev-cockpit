@@ -2814,6 +2814,35 @@ dc-notify-volume { display: block; max-width: 24rem; }
   animation: dc-notify-pop 0.5s ease-out;
 }
 
+.dc-toast {
+  overflow: hidden;
+  position: relative;
+}
+.dc-toast-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 100%;
+  background: var(--tblr-primary);
+  animation-name: dc-toast-progress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+.dc-toast-progress.bg-success { background: var(--tblr-success); }
+.dc-toast-progress.bg-danger { background: var(--tblr-danger); }
+@keyframes dc-toast-progress {
+  from { width: 100%; }
+  to { width: 0; }
+}
+.dc-toast-detail {
+  max-height: 45vh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.dc-toast-clickable { cursor: pointer; }
+
 .dc-page-progress {
   z-index: 10000;
   top: 0;

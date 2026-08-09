@@ -1,8 +1,101 @@
 // Global client-side notification channel. Turns recoverable failures into a
-// non-blocking toast (SweetAlert2 when present, console otherwise) and exposes
-// helpers modules call directly. installErrorHandler wires unhandled promise
-// rejections, where most uncaught fetch failures land, into the same channel.
-import { escapeHtml } from "@dc/dom";
+// non-blocking Bootstrap toast (console when bootstrap is missing) and exposes
+// helpers modules call directly. Toasts deliberately do not ride the SweetAlert
+// singleton: a toast firing while a dialog stands must never close that dialog.
+// installErrorHandler wires unhandled promise rejections, where most uncaught
+// fetch failures land, into the same channel.
+
+const kinds = {
+  info: { icon: "ti-info-circle", color: "text-info", bar: "" },
+  success: { icon: "ti-circle-check", color: "text-success", bar: "bg-success" },
+  error: { icon: "ti-alert-circle", color: "text-danger", bar: "bg-danger" },
+};
+
+function toastContainer() {
+  let el = document.querySelector("[data-dc-toasts]");
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "toast-container position-fixed top-0 end-0 p-3";
+    el.setAttribute("data-dc-toasts", "");
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+export function showToast({ icon, title, detail, timer, onClick, onHidden } = {}) {
+  const kind = kinds[icon] || kinds.error;
+  const duration = timer || 6000;
+
+  if (!window.bootstrap) {
+    const text = [title, typeof detail === "string" ? detail : ""].filter(Boolean).join("\n");
+    if (kind === kinds.error) console.error(text);
+    else console.log(text);
+    if (onHidden) onHidden();
+    return { close() {} };
+  }
+
+  const toast = document.createElement("div");
+  toast.className = "toast dc-toast" + (onClick ? " dc-toast-clickable" : "");
+  toast.setAttribute("role", "status");
+
+  const row = document.createElement("div");
+  row.className = "d-flex align-items-start p-3";
+
+  const glyph = document.createElement("i");
+  glyph.className = `ti ${kind.icon} ${kind.color} fs-2 me-2`;
+
+  const body = document.createElement("div");
+  body.className = "flex-fill min-w-0";
+  if (title) {
+    const heading = document.createElement("div");
+    heading.className = "fw-bold text-break";
+    heading.textContent = title;
+    body.append(heading);
+  }
+  if (detail instanceof Node) {
+    body.append(detail);
+  } else if (detail) {
+    const block = document.createElement("div");
+    block.className = "dc-toast-detail small text-start";
+    block.textContent = detail;
+    body.append(block);
+  }
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "btn-close ms-2";
+  close.setAttribute("data-bs-dismiss", "toast");
+  close.setAttribute("aria-label", "Close");
+
+  row.append(glyph, body, close);
+
+  const progress = document.createElement("div");
+  progress.className = "dc-toast-progress" + (kind.bar ? ` ${kind.bar}` : "");
+  progress.style.animationDuration = `${duration}ms`;
+
+  toast.append(row, progress);
+
+  if (onClick) {
+    toast.addEventListener("click", (event) => {
+      if (event.target.closest(".btn-close")) return;
+      onClick(event);
+    });
+  }
+
+  toastContainer().appendChild(toast);
+  const instance = new window.bootstrap.Toast(toast, { delay: duration, autohide: true });
+  toast.addEventListener("hidden.bs.toast", () => {
+    instance.dispose();
+    toast.remove();
+    if (onHidden) onHidden();
+  }, { once: true });
+  instance.show();
+  return {
+    close() {
+      if (toast.isConnected) instance.hide();
+    },
+  };
+}
 
 let last = { text: "", at: 0 };
 
@@ -13,29 +106,18 @@ function show(text, icon, timer, force) {
   }
   last = { text: text, at: now };
 
-  if (!window.Swal) {
-    if (icon === "error") console.error(text);
-    else console.log(text);
-    return;
+  // The message rides in the bounded, scrollable detail block for errors, so a
+  // fat git refusal stays readable on a phone instead of overflowing the
+  // screen. The line breaks are kept, because the messages this bound exists
+  // for are git's, and git writes its refusal as an error line plus its hints.
+  // Run into one paragraph they are exactly as unreadable as before, only
+  // shorter. Success and info messages are short statements and read as the
+  // bold line instead.
+  if (icon === "success" || icon === "info") {
+    showToast({ icon: icon, title: text, timer: timer });
+  } else {
+    showToast({ icon: "error", detail: text, timer: timer });
   }
-  // The message rides in a plain block of its own with a bounded, scrollable
-  // height, so a fat git refusal stays readable on a phone instead of
-  // overflowing the screen. Deliberately not a style on Swal's title or html
-  // container: those are grid children of the popup, and iOS WebKit sizes
-  // scrollable grid children wrong, which blew every toast up to the bound.
-  // The line breaks are kept, because the messages this bound exists for are
-  // git's, and git writes its refusal as an error line plus its hints. Run
-  // into one paragraph they are exactly as unreadable as before, only shorter.
-  window.Swal.fire({
-    toast: true,
-    position: "top-end",
-    icon: icon || "error",
-    html: `<div style="max-height: 45vh; overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap; text-align: start;">${escapeHtml(text)}</div>`,
-    showConfirmButton: false,
-    showCloseButton: true,
-    timer: timer || 6000,
-    timerProgressBar: true,
-  });
 }
 
 function clean(value, fallback) {

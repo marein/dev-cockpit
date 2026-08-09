@@ -53,12 +53,12 @@ L.runFeature("LOGIN-LINK", async ({ engine, page, run, mobilePage }) => {
       await page.click(".swal2-deny");
       await dialogGone(page);
       if (engine !== "chromium") return "copy assert skipped (no clipboard grant)";
-      await page.waitForSelector(".swal2-toast", { timeout: 8000 });
-      const toast = (await page.locator(".swal2-toast").textContent()) || "";
+      await page.waitForSelector(".dc-toast", { timeout: 8000 });
+      const toast = (await page.locator(".dc-toast").allTextContents()).join(" ");
       assert(toast.includes("Login link copied."), `unexpected toast: ${toast}`);
       const clip = await page.evaluate(() => navigator.clipboard.readText());
       assert(clip === fakeLoginUrl(`${tag}-one`, "a"), `clipboard mismatch: ${clip.slice(0, 90)}...`);
-      await page.locator(".swal2-toast .swal2-close").click().catch(() => {});
+      await page.locator(".dc-toast .btn-close").first().click().catch(() => {});
     });
 
     await run("same URL on screen never re-prompts", async () => {

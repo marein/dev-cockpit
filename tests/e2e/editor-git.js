@@ -2004,7 +2004,7 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
         const state = await page.evaluate(() => ({
           dialog: !!document.querySelector(".swal2-popup:not(.swal2-toast)"),
           dialogText: (document.querySelector(".swal2-html-container") || {}).textContent || "",
-          toasts: [...document.querySelectorAll(".swal2-toast")].map((t) => t.textContent),
+          toasts: [...document.querySelectorAll(".dc-toast")].map((t) => t.textContent),
         }));
         throw new Error(`the write never released: ${JSON.stringify(state)}`);
       }
@@ -2017,7 +2017,7 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       await page.waitForSelector(".swal2-popup:not(.swal2-toast) input.swal2-input", { timeout: 20000 });
       await page.click(".swal2-cancel");
       assert(await readHere(askAnswer) === "denied", "the cancel never reached the helper");
-      await page.waitForFunction(() => [...document.querySelectorAll(".swal2-toast")]
+      await page.waitForFunction(() => [...document.querySelectorAll(".dc-toast")]
         .some((t) => /the question was cancelled/.test(t.textContent)), null, { timeout: 30000 });
 
       assert(await runInShell(

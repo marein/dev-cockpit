@@ -303,6 +303,7 @@
   {{template "quicknav.gohtml" .}}
   {{if and .User (not .HasTabStrip)}}{{template "terminal_tabs_switcher.gohtml" .}}{{end}}
   </div>
+  <div class="toast-container position-fixed top-0 end-0 p-3" data-dc-toasts></div>
   {{if .User}}
   {{template "host_status_float.gohtml" .}}
   <!-- The assistant overlay sits next to the swapped page region, not in it, so

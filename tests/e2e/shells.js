@@ -44,8 +44,8 @@ L.runFeature("SHELLS", async ({ page, run }) => {
       await confirmSwal(page);
       await page.waitForURL((u) => !new RegExp(new URL(shellUrl).pathname + "$").test(u.toString()), { timeout: 10000 });
       await sleep(800);
-      assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "error toast after user delete");
-      const toasts = (await page.locator(".swal2-toast").allTextContents()).join(" ");
+      assert((await page.locator(".dc-toast .ti-alert-circle").count()) === 0, "error toast after user delete");
+      const toasts = (await page.locator(".dc-toast").allTextContents()).join(" ");
       assert(!toasts.includes("Terminal has ended"), "ended toast not suppressed on user delete");
       shellUrl = null;
     });
@@ -56,11 +56,11 @@ L.runFeature("SHELLS", async ({ page, run }) => {
       await page.click("#terminal");
       await page.keyboard.type("exit");
       await page.keyboard.press("Enter");
-      await page.waitForSelector(".swal2-toast", { timeout: 10000 });
-      const text = (await page.locator(".swal2-toast").textContent()) || "";
+      await page.waitForSelector(".dc-toast", { timeout: 10000 });
+      const text = (await page.locator(".dc-toast").allTextContents()).join(" ");
       assert(text.includes("Terminal has ended"), `unexpected toast: ${text}`);
-      assert((await page.locator(".swal2-toast .swal2-info").count()) === 1, "ended toast is not info");
-      assert((await page.locator(".swal2-toast .swal2-error").count()) === 0, "ended toast rendered as error");
+      assert((await page.locator(".dc-toast .ti-info-circle").count()) === 1, "ended toast is not info");
+      assert((await page.locator(".dc-toast .ti-alert-circle").count()) === 0, "ended toast rendered as error");
     });
 
     // A shell leaves nothing behind, so nothing is offered: the route knows it
