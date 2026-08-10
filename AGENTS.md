@@ -588,6 +588,18 @@ test. Update this file when a convention changes.
   a row that carries it hands the long press to the browser's own drag lift,
   and iOS then never lets that press become the row's context menu, which is
   the one way to reach a file's actions with a finger.
+  **A name that does not fit is cut inside the row it belongs to, never over
+  its neighbour.** Every one of those rows is a flex line, and a flex child
+  refuses to go under its own text unless it is told to (`min-width: 0`), so
+  each of them says which part yields first: in a tab the parent directory
+  hint takes the whole shrink (`flex: 1 1 0`, so it lives in the room the name
+  leaves and never steals a sub pixel of it), in a quick open row the
+  directory does, and the file name follows only once the other side is spent.
+  Both ends in an ellipsis, the tab keeps its `max-width` and its close
+  control its full hit area, and the strip stays the one thing that scrolls
+  sideways. Whatever a row cuts it carries whole as its `title`: a tab the
+  file's path, a quick open row its path, a find in files row its path and
+  line, because that is the only place a cut name can be read out in full.
 - **Backup archives are a compat surface.** `internal/backup` maps archive
   paths `data/<section id>/<source name>` onto host paths through the current
   registry, and the manifest identifies the file (`app`, `format`). Old

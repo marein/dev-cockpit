@@ -4824,6 +4824,7 @@ async function init(root) {
       item.classList.toggle("active", i === quickOpenActive);
       item.setAttribute("role", "option");
       item.dataset.path = path;
+      item.title = path;
       item.innerHTML = `<i class="ti ti-file"></i><span class="editor-quickopen-name">${escapeHtml(baseName(path))}</span><span class="editor-quickopen-dir">${escapeHtml(parentDir(path))}</span>`;
       item.addEventListener("click", () => chooseQuickOpen(path));
       quickOpenList.appendChild(item);
@@ -4877,6 +4878,7 @@ async function init(root) {
       item.className = "editor-quickopen-item editor-quickopen-match";
       item.classList.toggle("active", i === quickOpenActive);
       item.setAttribute("role", "option");
+      item.title = `${match.path}:${match.line}`;
       const head = document.createElement("div");
       head.className = "editor-quickopen-match-head";
       head.innerHTML = `<i class="ti ti-file"></i><span class="editor-quickopen-name">${escapeHtml(baseName(match.path))}:${match.line}</span><span class="editor-quickopen-dir">${escapeHtml(parentDir(match.path))}</span>`;
