@@ -72,6 +72,13 @@ func (r *runner) DeleteSession(sessionID string) error {
 // non-interactive run cannot ask for a decision, so the approval flags carry
 // what an interactive session would confirm; without them every tool that
 // needs a decision fails instead of doing the work.
+//
+// The prompt is the value of -p and never a positional, which is what keeps a
+// prompt starting with a dash text: copilot's -p takes an argument it requires,
+// so it consumes the next word whatever it looks like (measured on GitHub
+// Copilot CLI 1.0.78, `copilot -p --output-format json` takes the flag itself as
+// the prompt). An end of options separator would therefore become the prompt, so
+// this argv deliberately carries none.
 func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	args := []string{"-p", req.Prompt}
 	if req.Resume {

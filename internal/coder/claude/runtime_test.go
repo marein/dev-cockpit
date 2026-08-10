@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/local/dev-cockpit/internal/clirun"
 	"github.com/local/dev-cockpit/internal/coder"
 )
 
@@ -40,11 +41,42 @@ func TestStartCommandCarriesTheTask(t *testing.T) {
 	command := r.StartCommand(coder.SessionStart{
 		SessionID: "sid", Name: "name", Workdir: "/work", Task: "Fix the login redirect",
 	})
-	if !strings.HasSuffix(command, "'Fix the login redirect'") {
+	if !strings.HasSuffix(command, "-- 'Fix the login redirect'") {
 		t.Errorf("task is not the positional prompt: %s", command)
 	}
 	plain := r.StartCommand(coder.SessionStart{SessionID: "sid", Name: "name", Workdir: "/work"})
 	if strings.Contains(plain, "''") {
 		t.Errorf("a session without a task must not carry an empty prompt: %s", plain)
+	}
+	if strings.Contains(plain, " -- ") {
+		t.Errorf("a session without a task must not carry the separator: %s", plain)
+	}
+}
+
+// A task is text, whatever it starts with. The shell quoting protects the shell
+// alone, so the end of options separator is what keeps claude's own parser from
+// reading the task as an option: measured on claude 2.1.226,
+// -dxdebug.idekey=PHPSTORM is taken as the short flag -d with a filter and the
+// task never reaches the session.
+func TestStartCommandCarriesADashLeadingTaskAsText(t *testing.T) {
+	tasks := map[string]string{
+		"a php option somebody pasted": "-dxdebug.idekey=PHPSTORM",
+		"a long flag":                  "--help",
+		"a bare dash":                  "-",
+		"an ordinary task":             "Fix the login redirect",
+	}
+	for name, task := range tasks {
+		command := runtime{}.StartCommand(coder.SessionStart{
+			SessionID: "sid", Name: "name", Workdir: "/work", Task: task,
+		})
+		want := "-- " + clirun.ShellQuote(task)
+		if !strings.HasSuffix(command, want) {
+			t.Errorf("%s: want %q at the end, got %s", name, want, command)
+		}
+		// The separator is the last thing before the task, so every flag of the
+		// session stands in front of it.
+		if strings.Count(command, " -- ") != 1 {
+			t.Errorf("%s: want one separator, got %s", name, command)
+		}
 	}
 }

@@ -16,7 +16,13 @@ func (runtime) Env() map[string]string { return nil }
 
 // StartCommand builds the interactive session. A task goes into copilot's
 // --interactive flag, which starts interactive mode and runs that prompt, so
-// the session comes up already working on it.
+// the session comes up already working on it. The task is the value of that
+// flag and never a positional, which is what keeps a task starting with a dash
+// text: --interactive takes an argument it requires and consumes the next word
+// whatever it looks like (measured on GitHub Copilot CLI 1.0.78, `copilot
+// --interactive --output-format json` takes the flag itself as the task). An end
+// of options separator would therefore become the task, so this command line
+// deliberately carries none.
 func (runtime) StartCommand(start coder.SessionStart) string {
 	command := fmt.Sprintf("cd %s && exec copilot%s --name %s",
 		clirun.ShellQuote(start.Workdir), flags(start.AgentID, start.AutomaticApproval),

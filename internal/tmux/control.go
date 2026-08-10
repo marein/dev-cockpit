@@ -404,8 +404,15 @@ func (c *Control) SendRaw(name string, data []byte) error {
 
 // SendKey sends one named key (e.g. "Enter", "Up") over this connection.
 func (c *Control) SendKey(name, key string) error {
-	_, _, err := c.commandSync("send-keys -t " + Target(name) + " " + key)
+	_, _, err := c.commandSync(sendKeyCommand(name, key))
 	return err
+}
+
+// sendKeyCommand builds the control mode line for one named key. It carries the
+// same endOfOptions its twin in client.go carries, so the key stays an operand
+// even when a caller hands one that starts with a dash.
+func sendKeyCommand(name, key string) string {
+	return "send-keys -t " + Target(name) + " " + endOfOptions + " " + key
 }
 
 // SendLiteral sends literal text over this connection. It is encoded as hex

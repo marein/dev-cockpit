@@ -76,8 +76,12 @@ func (r *runner) DeleteSession(sessionID string) error {
 // change files and run commands, and the same automatic approval the cockpit
 // starts its terminals with. A non-interactive turn cannot ask, so without it
 // every tool that needs a decision would fail instead of doing the work.
+//
+// Every flag comes first and the prompt goes last, behind endOfOptions: it is
+// claude's positional argument, so that separator is the one thing that keeps a
+// prompt somebody typed from being read as an option.
 func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
-	args := []string{"-p", req.Prompt}
+	args := []string{"-p"}
 	if req.Resume {
 		args = append(args, "--resume", req.SessionID)
 	} else {
@@ -91,6 +95,7 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 		"--output-format", "stream-json",
 		"--include-partial-messages",
 		"--verbose",
+		endOfOptions, req.Prompt,
 	)
 	return assistant.Command{Name: "claude", Args: args}, nil
 }

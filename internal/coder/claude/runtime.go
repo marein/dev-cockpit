@@ -19,13 +19,15 @@ func (runtime) Env() map[string]string { return map[string]string{"CLAUDE_CODE_N
 
 // StartCommand builds the interactive session. A task is passed as claude's
 // positional prompt (`claude [options] [prompt]`), so the session comes up
-// already working on it.
+// already working on it. It goes behind endOfOptions, because the shell quoting
+// protects the shell and not claude's own flag parser: a task that starts with a
+// dash would otherwise be parsed as an option and never reach the session.
 func (r runtime) StartCommand(start coder.SessionStart) string {
 	command := fmt.Sprintf("cd %s && exec claude%s --session-id %s --name %s",
 		clirun.ShellQuote(start.Workdir), r.flags(start.AgentID, start.AutomaticApproval),
 		clirun.ShellQuote(start.SessionID), clirun.ShellQuote(start.Name))
 	if task := strings.TrimSpace(start.Task); task != "" {
-		command += " " + clirun.ShellQuote(task)
+		command += " " + endOfOptions + " " + clirun.ShellQuote(task)
 	}
 	return command
 }

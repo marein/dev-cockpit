@@ -181,6 +181,43 @@ func TestTurnArgvFirstAndResume(t *testing.T) {
 	}
 }
 
+// A prompt is text, whatever it starts with. It rides as the value of -p, which
+// copilot requires an argument for and therefore takes whatever the next word is
+// (measured on GitHub Copilot CLI 1.0.78), so a prompt like
+// -dxdebug.idekey=PHPSTORM reaches the turn as text. An end of options separator
+// would be consumed as the prompt itself, which is why this argv carries none.
+func TestATurnCarriesADashLeadingPromptAsText(t *testing.T) {
+	prompts := map[string]string{
+		"a php option somebody pasted": "-dxdebug.idekey=PHPSTORM",
+		"a long flag":                  "--help",
+		"a bare dash":                  "-",
+		"an ordinary prompt":           "Fix the login redirect",
+	}
+	for name, prompt := range prompts {
+		for _, resume := range []bool{false, true} {
+			r := testRunner(t)
+			cmd, err := r.Command(assistant.TurnRequest{
+				SessionID: sessionID,
+				Resume:    resume,
+				Title:     "A conversation title",
+				Workdir:   t.TempDir(),
+				Prompt:    prompt,
+			})
+			if err != nil {
+				t.Fatalf("%s (resume %v): command: %v", name, resume, err)
+			}
+			if len(cmd.Args) < 2 || cmd.Args[0] != "-p" || cmd.Args[1] != prompt {
+				t.Fatalf("%s (resume %v): want the prompt as the value of -p, got %v", name, resume, cmd.Args)
+			}
+			for _, arg := range cmd.Args {
+				if arg == "--" {
+					t.Fatalf("%s (resume %v): a separator here would be the prompt, got %v", name, resume, cmd.Args)
+				}
+			}
+		}
+	}
+}
+
 // The assistant is not about one project: it reaches the projects, the cockpit
 // binary and its own workspace, and copilot refuses every path outside the
 // working directory and its trusted folders. Every turn lifts that

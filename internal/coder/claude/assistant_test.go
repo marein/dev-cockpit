@@ -48,9 +48,9 @@ func resultLine(id string) string {
 	return `{"type":"result","subtype":"success","is_error":false,"session_id":"` + id + `"}`
 }
 
-// argvOf builds the process one turn runs, which is what the runner decides now:
-// the assistant package starts it and reads its file.
-func argvOf(t *testing.T, resume bool) string {
+// commandOf builds the process one turn runs, which is what the runner decides
+// now: the assistant package starts it and reads its file.
+func commandOf(t *testing.T, resume bool, prompt string) assistant.Command {
 	t.Helper()
 	r := &runner{sessions: stubSessions{}}
 	cmd, err := r.Command(assistant.TurnRequest{
@@ -58,11 +58,19 @@ func argvOf(t *testing.T, resume bool) string {
 		Resume:    resume,
 		Title:     "A conversation title",
 		Workdir:   t.TempDir(),
-		Prompt:    "hello",
+		Prompt:    prompt,
 	})
 	if err != nil {
 		t.Fatalf("command: %v", err)
 	}
+	return cmd
+}
+
+// argvOf is that command as one line, which is what a test reads when it is
+// about which flags a turn carries and not about where a word sits.
+func argvOf(t *testing.T, resume bool) string {
+	t.Helper()
+	cmd := commandOf(t, resume, "hello")
 	return strings.Join(append([]string{cmd.Name}, cmd.Args...), " ")
 }
 
@@ -163,7 +171,8 @@ func TestTurnAssemblesDeltas(t *testing.T) {
 func TestTurnArgvFirstAndResume(t *testing.T) {
 	argv := argvOf(t, false)
 	for _, want := range []string{
-		"claude -p hello",
+		"claude -p ",
+		"-- hello",
 		"--session-id " + sessionID,
 		"--name A conversation title",
 		"--permission-mode auto",
@@ -192,6 +201,42 @@ func TestTurnArgvFirstAndResume(t *testing.T) {
 	}
 	if strings.Contains(argv, "--session-id") || strings.Contains(argv, "--name") {
 		t.Fatalf("want no session creation flags on a resumed turn, got %q", argv)
+	}
+}
+
+// A prompt is text, whatever it starts with. It is claude's positional argument,
+// so it stands last behind the end of options separator: measured on claude
+// 2.1.226, `claude -p -dxdebug.idekey=PHPSTORM` reads the prompt as the short
+// flag -d with a filter and exits with "Input must be provided", which the turn
+// reports as a coder that stopped before it finished.
+func TestATurnCarriesADashLeadingPromptAsText(t *testing.T) {
+	prompts := map[string]string{
+		"a php option somebody pasted": "-dxdebug.idekey=PHPSTORM",
+		"a long flag":                  "--help",
+		"a bare dash":                  "-",
+		"the separator itself":         "--",
+		"an ordinary prompt":           "Fix the login redirect",
+	}
+	for name, prompt := range prompts {
+		for _, resume := range []bool{false, true} {
+			args := commandOf(t, resume, prompt).Args
+			if len(args) < 2 {
+				t.Fatalf("%s (resume %v): argv too short: %v", name, resume, args)
+			}
+			if got := args[len(args)-1]; got != prompt {
+				t.Fatalf("%s (resume %v): want the prompt last, got %q in %v", name, resume, got, args)
+			}
+			if got := args[len(args)-2]; got != "--" {
+				t.Fatalf("%s (resume %v): want the separator before the prompt, got %q in %v", name, resume, got, args)
+			}
+			// Every flag stands before the separator, or the one behind it would
+			// be an operand instead of the prompt.
+			for _, arg := range args[:len(args)-2] {
+				if arg == "--" {
+					t.Fatalf("%s (resume %v): want one separator and the prompt behind it, got %v", name, resume, args)
+				}
+			}
+		}
 	}
 }
 

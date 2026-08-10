@@ -46,6 +46,14 @@ HELP
     --name) name="$2"; shift 2 ;;
     --permission-mode) shift 2 ;;
     --settings) shift 2 ;;
+    --)
+      # The cockpit puts the prompt behind the end of options separator, because
+      # claude reads a positional starting with a dash as an option. Everything
+      # behind it is text.
+      shift
+      [ $# -gt 0 ] && [ -z "$prompt" ] && prompt="$1"
+      break
+      ;;
     -*) shift ;;
     *)
       # A positional argument is the first prompt of an interactive session.

@@ -9,6 +9,16 @@ import (
 	"github.com/local/dev-cockpit/internal/terminal"
 )
 
+// endOfOptions terminates claude's own flag parsing, so the operand behind it is
+// taken as text even when it starts with a dash. claude's prompt is a positional
+// argument, and a positional that looks like an option is parsed as one: the
+// paste "-dxdebug.idekey=PHPSTORM" arrives as the short flag -d with a filter,
+// the prompt is gone, and a print run ends with "Input must be provided", which
+// the turn reports as a coder that stopped before it finished. Values behind a
+// flag like --session-id, --resume, --name or --agent are safe, claude takes the
+// next argument whatever it looks like.
+const endOfOptions = "--"
+
 type Coder struct {
 	tools  []string
 	agents coder.AgentRepository
