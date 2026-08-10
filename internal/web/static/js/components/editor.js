@@ -5,7 +5,7 @@
 // still works.
 import { notifyError, notifySuccess } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
-import { labelNodes, menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
+import { focusRow, labelNodes, menuJustClosed, openMenu, rowsOf, stepRowFocus, wireRowMenus } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { applyFold } from "@dc/fold";
 import { escapeHtml } from "@dc/dom";
@@ -395,6 +395,95 @@ async function init(root) {
   let sheetDrag = null;
   const sheetDragging = () => !!(sheetDrag && sheetDrag.active);
 
+  // A sheet is a list of rows, whichever sheet it is: the action rows the
+  // docker and git sheets are built of, and the list rows of the open files,
+  // the history and the pickers. The arrow keys walk them like the context
+  // menu's, which is where the movement itself lives.
+  const SHEET_ROW = ".dropdown-item, .editor-sheet-open";
+  const sheetRows = () => rowsOf(sheetBodyEl, SHEET_ROW);
+  const typingTarget = (node) => node instanceof Element
+    && (node.isContentEditable || !!node.closest("input, textarea, select"));
+  // Where the keyboard stands while a repaint takes the row away, remembered
+  // as a position inside the very list that is being replaced: a git write
+  // disables every action row at once, so the focus falls to the body and the
+  // position is all there is to come back to. It is kept per list and not per
+  // sheet, because the git sheet holds two of them and a position in the
+  // actions means nothing in the history below them.
+  let sheetFocus = { host: null, index: -1 };
+
+  function focusSheetRow(index) {
+    const rows = sheetRows();
+    if (!rows.length) return;
+    focusRow(sheetBodyEl, rows[Math.max(0, Math.min(index, rows.length - 1))]);
+  }
+
+  // sheetArrow walks the open sheet's rows. The arrows belong to the sheet
+  // while one stands, and to whatever is typed in wherever that is: the
+  // pickers' own filter walks their list from the field, and the editor, the
+  // commit message and every select keep the arrows they always had.
+  function sheetArrow(e) {
+    const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+    if (!step || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || typingTarget(e.target)) return;
+    e.preventDefault();
+    stepRowFocus(sheetBodyEl, step, SHEET_ROW);
+  }
+
+  // Escape inside a sheet is one step back, out of a drilled level or out of
+  // the sheet.
+  function sheetEscape() {
+    if (sheetBack) sheetBack();
+    else closeSheet();
+  }
+
+  // keepSheetFocus puts the keyboard back on a position of one row list, and
+  // only when the list it belongs to lost it.
+  function keepSheetFocus(host, index) {
+    const rows = rowsOf(host, SHEET_ROW);
+    if (!rows.length || rows.includes(document.activeElement)) return;
+    focusRow(sheetBodyEl, rows[Math.min(index, rows.length - 1)]);
+  }
+
+  // A sheet opens with its first row focused, so the arrows have somewhere to
+  // start; force is what a level change inside a sheet passes, where the focus
+  // stands on the row that led there and belongs back on top. What already
+  // holds the focus is left alone, the pickers' filter and the git sheet's
+  // actions while its history arrives, and that is the body alone: the close
+  // button in the head keeps the focus a click on it left behind, and a sheet
+  // opened after that one would find itself already focused. Only where there
+  // is a keyboard: on a touch screen the focus ring is noise, the same reason
+  // the pickers focus their filter only on a fine pointer.
+  function focusSheetTop({ force = false } = {}) {
+    if (!pointerMedia.matches) return;
+    if (!force && sheetBodyEl.contains(document.activeElement)) return;
+    focusSheetRow(0);
+  }
+
+  // repaintSheet is what every repaint of a row list runs through: the rows are
+  // replaced and the focus falls to the body with them, so the position taken
+  // before the paint is what the row landing there gets back, the last row when
+  // the list got shorter. A repaint that leaves no row to focus at all (a git
+  // write disables them while it runs) keeps the position for the repaint that
+  // ends the write. A focus outside the repainted list is left alone.
+  function repaintSheet(host, paint) {
+    const before = rowsOf(host, SHEET_ROW);
+    let index = before.indexOf(document.activeElement);
+    if (index < 0 && sheetFocus.host === host) index = sheetFocus.index;
+    if (index < 0) {
+      paint();
+      return;
+    }
+    sheetFocus = { host, index };
+    paint();
+    keepSheetFocus(host, index);
+  }
+
+  document.addEventListener("focusin", (e) => {
+    if (!sheetFocus.host) return;
+    const index = rowsOf(sheetFocus.host, SHEET_ROW).indexOf(e.target);
+    if (index < 0) sheetFocus = { host: null, index: -1 };
+    else sheetFocus.index = index;
+  }, { signal });
+
   function adoptIntoSheet(node) {
     if (!node) return;
     sheetAdopted.push({ node, parent: node.parentNode, next: node.nextSibling });
@@ -404,6 +493,7 @@ async function init(root) {
   function openSheet(kind, title) {
     if (sheetKind) closeSheet();
     sheetKind = kind;
+    sheetFocus = { host: null, index: -1 };
     sheetTitleEl.textContent = title;
     sheetPanelEl.setAttribute("aria-label", title);
     sheetBodyEl.replaceChildren();
@@ -415,6 +505,7 @@ async function init(root) {
     for (const item of sheetAdopted.reverse()) item.parent.insertBefore(item.node, item.next);
     sheetAdopted = [];
     sheetBack = null;
+    sheetFocus = { host: null, index: -1 };
     sheetBodyEl.replaceChildren();
     sheetEl.hidden = true;
     sheetKind = "";
@@ -478,6 +569,10 @@ async function init(root) {
   }
 
   function renderFilesSheet() {
+    repaintSheet(sheetBodyEl, paintFilesSheet);
+  }
+
+  function paintFilesSheet() {
     if (sheetDragging()) return;
     if (tabs.length === 0) {
       closeSheet();
@@ -490,6 +585,7 @@ async function init(root) {
     if (tabs.length === 0) return;
     openSheet("files", "Open files");
     renderFilesSheet();
+    focusSheetTop();
   }
 
   function openSettingsSheet() {
@@ -600,6 +696,10 @@ async function init(root) {
   }
 
   function renderDockerSheet() {
+    repaintSheet(dockerListEl, paintDockerSheet);
+  }
+
+  function paintDockerSheet() {
     const data = dockerData;
     if (!data) return;
     dockerListEl.replaceChildren();
@@ -611,10 +711,12 @@ async function init(root) {
     const drill = (items) => {
       if (!items) {
         renderDockerSheet();
+        focusSheetTop({ force: true });
         return;
       }
       dockerListEl.replaceChildren();
       paintDockerItems(items);
+      focusSheetTop({ force: true });
     };
     const items = data.cli
       ? dockerApi.projectMenuItems({
@@ -649,7 +751,13 @@ async function init(root) {
           onClick: (event) => {
             const info = { ...container, cli: data.cli };
             const menu = dockerApi.containerMenuItems(info, { onShell: dockerShellFromEditor });
-            openMenu({ x: Math.round(event.clientX), y: Math.round(event.clientY), items: menu, signal });
+            // A row reached with the keyboard clicks at no point at all, so the
+            // row itself is the anchor then; at 0,0 the menu would sit in the
+            // screen corner and read as not opening.
+            const rect = event.currentTarget.getBoundingClientRect();
+            const x = event.clientX || rect.left;
+            const y = event.clientY || rect.bottom + 4;
+            openMenu({ x: Math.round(x), y: Math.round(y), items: menu, signal });
           },
         });
         cell.dataset.dockerContainer = "";
@@ -694,6 +802,7 @@ async function init(root) {
     openSheet("docker", "Docker");
     adoptIntoSheet(dockerMenuEl);
     renderDockerSheet();
+    focusSheetTop();
     void loadDocker();
   }
 
@@ -2193,6 +2302,7 @@ async function init(root) {
     sheetBodyEl.append(actions, log);
     gitSheetEls = { actions, log };
     renderGitSheet();
+    focusSheetTop();
     if (!gitRepo) return;
     void appendGitLog(log, "", 0);
     // The counts on show may be minutes old. The quiet fetch runs only when
@@ -2211,6 +2321,10 @@ async function init(root) {
   }
 
   function renderGitSheet() {
+    repaintSheet(gitSheetEls ? gitSheetEls.actions : sheetBodyEl, paintGitSheet);
+  }
+
+  function paintGitSheet() {
     if (sheetKind !== "git" || !gitSheetEls || !gitSheetEls.actions.isConnected) return;
     if (!gitRepo) {
       gitSheetEls.actions.replaceChildren(sheetActionRow({
@@ -2400,6 +2514,10 @@ async function init(root) {
       }
     }
     for (const commit of page.commits) host.appendChild(gitLogRow(commit, path));
+    // A history that is the whole sheet arrives after it opened, so the first
+    // row takes the focus here; the git sheet's own actions already have it and
+    // focusSheetTop leaves a sheet that holds the focus alone.
+    if (skip === 0) focusSheetTop();
     if (page.more) {
       const row = document.createElement("div");
       row.className = "editor-sheet-row";
@@ -2407,9 +2525,13 @@ async function init(root) {
       more.type = "button";
       more.className = "editor-sheet-open";
       more.innerHTML = `<i class="ti ti-chevron-down" aria-hidden="true"></i><span class="text-secondary">Older commits</span>`;
-      more.addEventListener("click", () => {
+      // Asking for a page takes the row that asked away, so the focus lands
+      // where it stood, which is the first commit of the page that arrived.
+      more.addEventListener("click", async () => {
+        const index = rowsOf(host, SHEET_ROW).indexOf(more);
         row.remove();
-        void appendGitLog(host, path, skip + page.commits.length);
+        await appendGitLog(host, path, skip + page.commits.length);
+        if (index >= 0) keepSheetFocus(host, index);
       }, { signal });
       row.appendChild(more);
       host.appendChild(row);
@@ -5999,14 +6121,30 @@ async function init(root) {
         if (sheetKind === "git") closeSheet();
         else openGitSheet();
       }
+    } else if (sheetKind && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      sheetArrow(e);
     } else if (e.key === "Escape") {
       if (!quickOpenEl.hidden) closeQuickOpen();
-      else if (sheetKind && sheetBack) sheetBack();
-      else if (sheetKind) closeSheet();
+      else if (sheetKind) sheetEscape();
       else if (commitOn && commitEl.contains(document.activeElement)) closeCommit();
       else closeDrawer();
     }
   }, { signal });
+  // Bootstrap's dropdown answers ArrowUp, ArrowDown and Escape from inside a
+  // .dropdown-menu by looking for the toggle that opened it, and the menus the
+  // sheet borrows have none: the lookup throws, and on a select it swallows the
+  // arrows before that. Its data api listens on the document in the capture
+  // phase, so the one place ahead of it is the window, where those three keys
+  // are taken out of the way for the sheet; what the sheet does with them is
+  // the same as below.
+  window.addEventListener("keydown", (e) => {
+    if (!sheetKind || !(e.target instanceof Element)) return;
+    if (e.key !== "Escape" && e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    if (!sheetBodyEl.contains(e.target) || !e.target.closest(".dropdown-menu")) return;
+    e.stopPropagation();
+    if (e.key === "Escape") sheetEscape();
+    else sheetArrow(e);
+  }, { capture: true, signal });
   document.addEventListener("keyup", (e) => {
     if (shiftTapPending && e.key === "Shift") shiftTapAt = Date.now();
     shiftTapPending = false;

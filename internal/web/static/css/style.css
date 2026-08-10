@@ -2228,14 +2228,21 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   box-shadow: 0 -0.5rem 2rem rgba(0, 0, 0, 0.35);
   overflow: hidden;
 }
+/* Where there is room the sheet docks to the right edge of the editor instead
+   of standing in the middle, and it takes three quarters of the width: the
+   lists in it are rows of names and paths, and the code stays readable beside
+   them. It keeps sitting on the bottom edge, so only the left side needs the
+   rounding, the border and the shadow. On a phone it is the full width bottom
+   sheet it always was. */
 @media (min-width: 768px) {
   .editor-sheet {
-    justify-content: center;
+    justify-content: flex-end;
   }
   .editor-sheet-panel {
-    width: 50%;
+    width: 75%;
     border-left: 1px solid var(--tblr-border-color);
-    border-right: 1px solid var(--tblr-border-color);
+    border-radius: 12px 0 0 0;
+    box-shadow: -0.5rem -0.5rem 2rem rgba(0, 0, 0, 0.35);
   }
 }
 .editor-sheet-body {
@@ -2266,7 +2273,7 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   text-align: left;
 }
 .editor-sheet-row.active {
-  background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18));
+  background: var(--tblr-active-bg);
 }
 .editor-sheet-name {
   font-size: 0.9rem;
@@ -2316,9 +2323,32 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   box-shadow: none;
   background: transparent;
 }
+/* A menu row carries Tabler's 11rem minimum width, which is what gives a
+   floating menu its shape and what makes a cell of the container grid grow out
+   of its column as soon as the column is narrower: the row then stands over
+   the next one, its surface runs past it and the sheet scrolls sideways. In
+   here a row takes the width it is given, and the label ellipsizes inside it. */
 .editor-sheet-body .dropdown-item {
+  min-width: 0;
   padding: 0.6rem 0.75rem;
   white-space: normal;
+}
+/* One state for the whole sheet, and it is the menus' own: the surface the new
+   menu paints on the row the keyboard stands on (--tblr-active-bg), painted
+   the same for the mouse, so a hovered row and a walked-to row look alike, and
+   painted on the row rather than on the button inside it, so a list row marks
+   over its full width. The keyboard walks by focusing, so the browser's ring
+   comes off and this surface stands in its place; disabled rows stay flat. */
+.editor-sheet-body .dropdown-item:not(:disabled):hover,
+.editor-sheet-body .dropdown-item:not(:disabled):focus,
+.editor-sheet-body .editor-sheet-row:hover,
+.editor-sheet-body .editor-sheet-row:has(.editor-sheet-open:focus) {
+  background: var(--tblr-active-bg);
+}
+.editor-sheet-body .dropdown-item:focus,
+.editor-sheet-body .editor-sheet-open:focus {
+  outline: 0;
+  box-shadow: none;
 }
 .editor-sheet-body .editor-settings-menu {
   padding: 0.75rem !important;

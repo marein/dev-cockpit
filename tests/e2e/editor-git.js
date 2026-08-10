@@ -1909,6 +1909,171 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       return "the spinner takes the icon's box, the label stands still";
     });
 
+    // The sheet is a list of rows, and the keyboard walks it: the first row
+    // takes the focus when it opens, the arrows step and wrap over the enabled
+    // rows, Enter runs the focused one, and Escape goes one level back before
+    // it closes. The repaint is where this gets hard: a write disables every
+    // row while it runs, so the focus has nowhere to sit, and the repaint that
+    // ends the write has to put it back where it stood.
+    const sheetRows = (target) => target.evaluate(() =>
+      [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item, [data-editor-sheet-body] .editor-sheet-open")]
+        .filter((row) => !row.disabled)
+        .map((row) => row.textContent.replace(/\s+/g, " ").trim()));
+    const sheetFocus = (target) => target.evaluate(() => {
+      const el = document.activeElement;
+      const body = document.querySelector("[data-editor-sheet-body]");
+      const box = body ? body.getBoundingClientRect() : null;
+      const rect = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      // The surface may sit on the row around a list row's button, which is
+      // what marks such a row over its full width.
+      const line = getComputedStyle(el.closest(".editor-sheet-row") || el);
+      const transparent = (value) => !value || value === "rgba(0, 0, 0, 0)" || value === "transparent";
+      return {
+        text: (el.textContent || "").replace(/\s+/g, " ").trim(),
+        tag: el.tagName.toLowerCase(),
+        inSheet: !!el.closest("[data-editor-sheet-body]"),
+        inside: !!box && rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1,
+        paints: !transparent(style.backgroundColor) || !transparent(line.backgroundColor),
+        surface: transparent(style.backgroundColor) ? line.backgroundColor : style.backgroundColor,
+        outline: `${style.outlineWidth} ${style.outlineStyle}`,
+        scrollTop: body ? body.scrollTop : 0,
+        pageY: window.scrollY,
+      };
+    });
+
+    await run("the git sheet takes the keyboard: the arrows walk it, Enter runs a row, Escape steps back", async () => {
+      await openEditor(page);
+      await diffReady(page);
+      await openGitSheet(page);
+      await sleep(300);
+      const rows = await sheetRows(page);
+      assert(rows.length > 2, `the sheet carries ${rows.length} rows`);
+      const opened = await sheetFocus(page);
+      assert(opened.inSheet && opened.text === rows[0], `the sheet opened with the focus on "${opened.text}"`);
+      // The row the keyboard stands on is marked by a surface and never by a
+      // ring, the same surface the mouse paints, and it is dragged into view as
+      // the focus walks past the fold without the page moving under it.
+      assert(opened.paints, "the row the sheet opened on paints nothing");
+      assert(opened.outline === "0px none", `the focused row draws ${opened.outline}`);
+      // A short window is what makes the list longer than the sheet, which is
+      // the case the scrolling is for: every step keeps the focused row inside
+      // the body, and the page behind it never moves.
+      await page.setViewportSize({ width: 1200, height: 520 });
+      await sleep(300);
+      let scrolled = false;
+      for (let i = 1; i < rows.length; i += 1) {
+        await page.keyboard.press("ArrowDown");
+        const step = await sheetFocus(page);
+        assert(step.inside, `the focused row "${step.text}" stands outside the sheet body`);
+        assert(step.pageY === 0, `the page scrolled to ${step.pageY} while the focus walked`);
+        if (step.scrollTop > 0) scrolled = true;
+      }
+      assert(scrolled, "the sheet never scrolled while the focus walked past its edge");
+      assert((await sheetFocus(page)).text === rows[rows.length - 1], "ArrowDown did not walk to the last row");
+      await page.keyboard.press("ArrowDown");
+      assert((await sheetFocus(page)).text === rows[0], "ArrowDown did not wrap to the first row");
+      await page.keyboard.press("ArrowUp");
+      assert((await sheetFocus(page)).text === rows[rows.length - 1], "ArrowUp did not wrap to the last row");
+
+      // Enter on a held fetch: the rows go disabled under the focus, and the
+      // answer brings it back to the row that was pressed.
+      await page.evaluate(() => [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item")]
+        .find((el) => /^Fetch/.test(el.textContent.trim())).focus());
+      let releaseFetch = null;
+      const heldFetch = new Promise((resolve) => { releaseFetch = resolve; });
+      await page.route("**/git/fetch", async (route) => {
+        await heldFetch;
+        await route.continue().catch(() => {});
+      });
+      let during = null;
+      try {
+        await page.keyboard.press("Enter");
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          during = await page.evaluate(() => ({
+            rows: [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item")].map((el) => el.disabled),
+            onRow: !!document.activeElement.closest("[data-editor-sheet-body] .dropdown-item"),
+          }));
+          if (during.rows.length && during.rows.every(Boolean)) break;
+          await sleep(50);
+        }
+      } finally {
+        releaseFetch();
+        await page.unroute("**/git/fetch");
+      }
+      assert(during && during.rows.every(Boolean), "the rows never went disabled under the running fetch");
+      assert(!during.onRow, "a disabled row kept the focus");
+      await page.waitForFunction(() => {
+        const el = document.activeElement;
+        return !!el && /^Fetch/.test(el.textContent.trim());
+      }, null, { timeout: 20000 });
+
+      // A drilled level is a level of its own: it opens on its own first stop,
+      // and Escape leads back to the row it was reached from, not out.
+      await page.evaluate(() => [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item")]
+        .find((el) => /^Switch branch/.test(el.textContent.trim())).focus());
+      await page.keyboard.press("Enter");
+      await page.waitForSelector("[data-editor-sheet-body] input", { timeout: 10000 });
+      await sleep(400);
+      assert((await sheetFocus(page)).tag === "input", "the branch picker did not start on its filter");
+      await page.keyboard.press("Escape");
+      await sleep(400);
+      assert(await page.isVisible("[data-editor-sheet]:not([hidden])"), "Escape out of the picker closed the whole sheet");
+      const back = await sheetFocus(page);
+      assert(back.inSheet && /^Switch branch/.test(back.text), `back on the git sheet the focus stands on "${back.text}"`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      await page.setViewportSize({ width: 1360, height: 900 });
+      await sleep(300);
+      return `${rows.length} rows walked on ${opened.surface}, focus survived the write, picker level stepped back`;
+    });
+
+    // The sheet is the editor's own panel: it docks to the right on a screen
+    // that has the room and stays the full width bottom sheet on a phone, and
+    // it never leaves the editor, which is what its click-away close hangs on.
+    await run("the sheet docks right where there is room and stays a bottom sheet on a phone", async () => {
+      await openEditor(page);
+      await diffReady(page);
+      await openGitSheet(page);
+      await sleep(300);
+      const shape = () => page.evaluate(() => {
+        const sheet = document.querySelector("[data-editor-sheet]");
+        const panel = document.querySelector("[data-editor-sheet-panel]");
+        const s = sheet.getBoundingClientRect();
+        const p = panel.getBoundingClientRect();
+        return {
+          share: p.width / s.width,
+          heightShare: p.height / s.height,
+          rightGap: Math.round(s.right - p.right),
+          bottomGap: Math.round(s.bottom - p.bottom),
+          radius: getComputedStyle(panel).borderRadius,
+        };
+      });
+      const wide = await shape();
+      assert(Math.abs(wide.share - 0.75) < 0.02, `the panel takes ${(wide.share * 100).toFixed(1)}% of the width`);
+      assert(wide.rightGap === 0 && wide.bottomGap === 0, `the panel sits ${wide.rightGap}px from the right and ${wide.bottomGap}px from the bottom`);
+      assert(wide.heightShare <= 0.86, `the panel is ${(wide.heightShare * 100).toFixed(1)}% tall, the height was to stay`);
+      assert(/^12px 0px 0px/.test(wide.radius), `the rounding reads ${wide.radius}, it belongs on the left edge`);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await sleep(400);
+      const phone = await shape();
+      assert(Math.abs(phone.share - 1) < 0.02, `on a phone the panel takes ${(phone.share * 100).toFixed(1)}%`);
+      assert(phone.bottomGap === 0, "on a phone the panel left the bottom edge");
+      // The backdrop is what a click outside closes on, and it is still there:
+      // the strip of the sheet above the panel is that backdrop.
+      const spot = await page.evaluate(() => {
+        const s = document.querySelector("[data-editor-sheet]").getBoundingClientRect();
+        const p = document.querySelector("[data-editor-sheet-panel]").getBoundingClientRect();
+        return { x: Math.round(s.left + s.width / 2), y: Math.round(s.top + Math.max(4, (p.top - s.top) / 2)) };
+      });
+      await page.mouse.click(spot.x, spot.y);
+      await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      await page.setViewportSize({ width: 1360, height: 900 });
+      await sleep(300);
+      return `wide ${(wide.share * 100).toFixed(0)}% docked right, ${(wide.heightShare * 100).toFixed(0)}% tall; phone full width`;
+    });
+
     await run("force push asks first, and a cancelled question leaves the remote alone", async () => {
       await openEditor(page);
       await diffReady(page);

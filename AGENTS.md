@@ -488,16 +488,57 @@ test. Update this file when a convention changes.
   allows: below `md` it opens the drawer, above it folds the tree column and
   its splitter away (`.editor-tree-folded`, per device in `dc-editor-tree-
   folded`, the rule scoped to the widths that have a column so the class is
-  inert on a phone). The bottom sheet `[data-editor-sheet]` serves the menus
+  inert on a phone). The sheet `[data-editor-sheet]` serves the menus
   that need more than a dropdown on a phone: the editor settings live in the
   hidden store `[data-editor-panels]` and the sheet **borrows the very
   nodes** and puts them back on close, so there is one set of controls with
   one wiring and every
-  `root.querySelectorAll` sync keeps working while they are adopted. The same
+  `root.querySelectorAll` sync keeps working while they are adopted. It is a
+  full width bottom sheet on a phone and docks to the right edge of the editor
+  from `md` up, three quarters of the width, still sitting on the bottom edge
+  and still capped at 85% of the height, so the rounding, the border and the
+  shadow are on its left side there. It stays `position: absolute` inside the
+  editor and never `fixed` in the window: the backdrop a click closes it on is
+  the sheet element itself (`event.target === sheetEl`). The same
   sheet lists the open files (`Open files`): tap switches, the cross closes,
   the grip handle drags, which on touch is the only way to reorder them, and
   the order is the tab order through `persistTabs`, no route and no server
-  state. A horizontal swipe on the surface steps through the open files
+  state.
+  **Whatever the sheet shows, it is a list of rows, and the keyboard walks
+  it.** The movement is `@dc/contextmenu`'s (`rowsOf`, `focusRow`,
+  `stepRowFocus`), the
+  same one the context menu's arrows use, with the sheet's own row selector
+  (`SHEET_ROW`, the action rows plus the list rows); a sheet opens on its
+  first row and a drilled level starts over on its own first row, both
+  through `focusSheetTop` and only on a fine pointer, because a marked row is
+  noise on a touch screen. **A row is reached only through `focusRow`**, which
+  focuses with `preventScroll` and then moves the container's own `scrollTop`
+  by exactly what brings the row back inside it: the page behind a sheet or a
+  menu must not move, and a row below the fold must not stay there. **What
+  marks that row is a surface and never a ring**: the sheet paints
+  `--tblr-active-bg`, the same variable the terminal view's new menu paints on
+  the row its arrows stand on, for `:hover` and `:focus` alike, so the mouse
+  and the keyboard mark a row the same way and there is one state to
+  recognise; the browser's focus ring is taken off with it (`outline: 0`), and
+  a list row carries the surface on `.editor-sheet-row` so it marks over the
+  full width. **Tabler gives every `.dropdown-item` a `min-width` of 11rem**,
+  which is what shapes a floating menu and what makes a container cell grow
+  out of its grid column, so the sheet resets it: without that the cell stands
+  over the next one, its surface runs past the row and the whole sheet scrolls
+  sideways. Two things are not detail. **A repaint replaces
+  the rows and the focus falls to the body with them**, so every repaint runs
+  through `repaintSheet(host, paint)`, which takes the position inside the
+  very list it repaints and gives it back afterwards: per list and not per
+  sheet, because a position in the git actions means nothing in the history
+  below them, and a repaint that leaves no row to focus at all (a git write
+  disables them while it runs) keeps the position for the repaint that ends
+  the write. **And bootstrap's dropdown answers those very keys**: its data
+  api listens for ArrowUp, ArrowDown and Escape from inside a
+  `.dropdown-menu`, which the borrowed menus are, and looks for the toggle
+  that opened them, which they have none of, so it swallows the arrows off a
+  focused select and then throws. It listens on the document in the capture
+  phase, so the one place ahead of it is the **window**, where the editor
+  takes those three keys for an open sheet. A horizontal swipe on the surface steps through the open files
   (threshold, damping and abort from the terminal swipe), wrapping around at
   both ends like `stepTab` and the terminal swipe do, and only while
   `line_wrap` is on: with wrapping off the surface scrolls sideways and the
@@ -807,7 +848,12 @@ free floating page scripts.
   `@dc/contextmenu` renders a body-mounted `.dc-context-menu`
   dropdown at a point, one open menu at a time (Escape/arrow keys, outside
   pointerdown, outside wheel/touchmove, `dc:navigated` and the caller's abort
-  signal close it; programmatic scrolls must never close it). Row menus
+  signal close it; programmatic scrolls must never close it). The arrow key
+  movement over its rows is exported (`rowsOf`, `focusRow`, `stepRowFocus`)
+  and takes a row selector, so a second list of rows walks the same way
+  instead of growing its own: the editor's sheets are that second one.
+  `focusRow` is the one that reaches a row, and it scrolls the container it
+  was given, never the page. Row menus
   (right click plus touch
   long press) go through its `wireRowMenus(container, rowSelector, openFor)`,
   never a hand-rolled press timer. It runs three paths because no single one

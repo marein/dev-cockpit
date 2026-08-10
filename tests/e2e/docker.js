@@ -585,6 +585,74 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 4000 });
   });
 
+  // The sheet is a list of rows and the keyboard walks it: it opens with the
+  // first row focused, the arrows step over the rows, a drill in and the way
+  // back both start over on the first row of the level they land on, and a row
+  // pressed with Enter carries no click point, so a menu it opens takes the
+  // row's own rect as its anchor instead of the screen corner.
+  await run("the docker sheet takes the keyboard, into a drilled level and back out", async () => {
+    const focus = () => page.evaluate(() => {
+      const el = document.activeElement;
+      return { text: (el.textContent || "").replace(/\s+/g, " ").trim(), inSheet: !!el.closest("[data-editor-sheet-body]") };
+    });
+    const rows = () => page.evaluate(() =>
+      [...document.querySelectorAll("[data-editor-docker-list] .dropdown-item")]
+        .filter((row) => !row.disabled)
+        .map((row) => row.textContent.replace(/\s+/g, " ").trim()));
+    await page.keyboard.press("Control+Shift+D");
+    await page.waitForSelector("[data-editor-docker-list] .dropdown-item", { timeout: 8000 });
+    await sleep(700);
+    const list = await rows();
+    const opened = await focus();
+    assert(opened.inSheet && opened.text === list[0], `the sheet opened with the focus on "${opened.text}"`);
+    await page.keyboard.press("ArrowDown");
+    assert((await focus()).text === list[1], `ArrowDown landed on "${(await focus()).text}" instead of "${list[1]}"`);
+
+    await page.evaluate(() => [...document.querySelectorAll("[data-editor-docker-list] .dropdown-item")]
+      .find((row) => /^web \(2 addresses\)$/.test(row.textContent.trim())).focus());
+    await page.keyboard.press("Enter");
+    await sleep(400);
+    const drilled = await rows();
+    assert(/^Back$/.test(drilled[0]), `the drilled level starts with "${drilled[0]}"`);
+    assert((await focus()).text === drilled[0], `the drilled level focused "${(await focus()).text}"`);
+    await page.keyboard.press("Enter");
+    await sleep(400);
+    assert((await focus()).text === list[0], `the way back focused "${(await focus()).text}" instead of "${list[0]}"`);
+
+    // The row the keyboard stands on carries a surface and no ring, and it is
+    // the very surface the mouse paints: one state, whichever way a row is
+    // reached. A container name is long, so the cells are also where the sheet
+    // would scroll sideways if a row grew out of its column.
+    const cell = page.locator("[data-editor-docker-list] [data-docker-container]").first();
+    const painted = await cell.evaluate((el) => {
+      el.focus();
+      const cs = getComputedStyle(el);
+      return { bg: cs.backgroundColor, outline: `${cs.outlineWidth} ${cs.outlineStyle}` };
+    });
+    assert(painted.bg !== "rgba(0, 0, 0, 0)", "the focused container cell paints nothing");
+    assert(painted.outline === "0px none", `the focused container cell draws ${painted.outline}`);
+    await cell.hover();
+    await sleep(200);
+    const hovered = await cell.evaluate((el) => getComputedStyle(el).backgroundColor);
+    assert(hovered === painted.bg, `hover paints ${hovered} and the keyboard ${painted.bg}`);
+    const sideways = await page.evaluate(() => {
+      const body = document.querySelector("[data-editor-sheet-body]");
+      return { client: body.clientWidth, scroll: body.scrollWidth };
+    });
+    assert(sideways.scroll <= sideways.client + 1,
+      `the sheet scrolls sideways: ${sideways.client} wide, ${sideways.scroll} to scroll`);
+
+    await page.evaluate(() => document.querySelector("[data-editor-docker-list] [data-docker-container]").focus());
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+    const box = await page.locator(".dc-context-menu").boundingBox();
+    assert(box.x > 10 && box.y > 10, `the menu of a row pressed with Enter sits at ${box.x},${box.y}`);
+    await closeMenu(page);
+    assert((await focus()).inSheet, "the closed menu left the focus outside the sheet");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 4000 });
+  });
+
   await run("Ctrl+Shift+D toggles the docker view, the statusbar terminal icon the panel", async () => {
     await page.keyboard.press("Control+Shift+D");
     await page.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 4000 });

@@ -39,6 +39,40 @@ export function labelNodes(label) {
   return nodes;
 }
 
+// What the arrow keys walk in a menu. The editor's sheets pass a selector of
+// their own, the movement below is the same one.
+const MENU_ROW = ".dropdown-item";
+
+// rowsOf answers a container's rows in document order, the disabled ones left
+// out, and stepRowFocus is one step down or up over them: both ends wrap.
+export function rowsOf(container, selector = MENU_ROW) {
+  return Array.from(container.querySelectorAll(selector)).filter((row) => !row.disabled);
+}
+
+// focusRow is the one way a row is reached with the keyboard: the browser is
+// told not to scroll anything (it would move the page under a menu that is
+// scrolled inside itself), and the container is then scrolled by exactly the
+// amount that brings the row back inside it. A container that does not scroll
+// stays where it is, because there is nothing to move.
+export function focusRow(container, row) {
+  row.focus({ preventScroll: true });
+  const box = container.getBoundingClientRect();
+  const rect = row.getBoundingClientRect();
+  if (rect.top < box.top) container.scrollTop -= box.top - rect.top;
+  else if (rect.bottom > box.bottom) container.scrollTop += rect.bottom - box.bottom;
+  return row;
+}
+
+export function stepRowFocus(container, step, selector = MENU_ROW) {
+  const rows = rowsOf(container, selector);
+  if (!rows.length) return null;
+  const index = rows.indexOf(document.activeElement);
+  const next = index === -1
+    ? (step > 0 ? rows[0] : rows[rows.length - 1])
+    : rows[(index + step + rows.length) % rows.length];
+  return focusRow(container, next);
+}
+
 export function openMenu({ x, y, items, signal }) {
   closeMenu();
   const openedAt = Date.now();
@@ -283,13 +317,7 @@ function onKeydown(event, node) {
   if (!step) return;
   event.preventDefault();
   event.stopPropagation();
-  const buttons = Array.from(node.querySelectorAll(".dropdown-item:not(:disabled)"));
-  if (!buttons.length) return;
-  const index = buttons.indexOf(document.activeElement);
-  const next = index === -1
-    ? (step === 1 ? buttons[0] : buttons[buttons.length - 1])
-    : buttons[(index + step + buttons.length) % buttons.length];
-  next.focus({ preventScroll: true });
+  stepRowFocus(node, step);
 }
 
 function place(node, x, y) {
