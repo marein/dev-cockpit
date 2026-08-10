@@ -6938,7 +6938,47 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   // a revision. Both are a MergeView; only this tells them apart.
   let compareOn = false;
 
+  // The listeners that tie the two sides together sideways, see
+  // syncMergeScroll. One controller per merge view, aborted with it.
+  let mergeScroll = null;
+
+  // The two sides of a merge view already share the vertical axis: the outer
+  // .cm-mergeView is their scroller and the editors grow to their full height,
+  // see fillsTheBox. The horizontal axis is the one they do not share, every
+  // editor keeps its own .cm-scroller for it, so with wrapping off the left
+  // column stands at one place and the right one at another and the two halves
+  // of a line are no longer next to each other. This ties them together on
+  // that axis alone and leaves the vertical scroller exactly where the package
+  // put it.
+  //
+  // Writing scrollLeft raises a scroll event of its own, and answering that
+  // one would send the value straight back. Comparing the two values instead
+  // of guarding is not enough either: a side whose longest line is shorter
+  // clamps what it is given, keeps answering with its own end and pulls its
+  // neighbour back there, which is a comparison that refuses to scroll past
+  // the shorter file's width. So a write that really moved the other side
+  // marks it, and that one event is spent instead of answered.
+  function syncMergeScroll(view) {
+    const sides = [view.a.scrollDOM, view.b.scrollDOM];
+    const echo = new Set();
+    mergeScroll = new AbortController();
+    for (const [index, from] of sides.entries()) {
+      const to = sides[index === 0 ? 1 : 0];
+      from.addEventListener("scroll", () => {
+        if (echo.delete(from)) return;
+        const was = to.scrollLeft;
+        if (was === from.scrollLeft) return;
+        to.scrollLeft = from.scrollLeft;
+        if (to.scrollLeft !== was) echo.add(to);
+      }, { signal: mergeScroll.signal, passive: true });
+    }
+  }
+
   function dropMergeView() {
+    if (mergeScroll) {
+      mergeScroll.abort();
+      mergeScroll = null;
+    }
     if (!mergeView) return;
     mergeView.destroy();
     mergeView = null;
@@ -6981,6 +7021,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     mergeHost.hidden = false;
     mergeView = view;
     compareOn = true;
+    syncMergeScroll(view);
     syncSurface();
     view.b.requestMeasure();
     reportCursor(view.b.state);
@@ -7021,6 +7062,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       mergeHost.replaceChildren(view.dom);
       mergeHost.hidden = false;
       mergeView = view;
+      syncMergeScroll(view);
       syncSurface();
       view.b.requestMeasure();
       reportCursor(view.b.state);

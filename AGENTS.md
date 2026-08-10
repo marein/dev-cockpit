@@ -496,7 +496,18 @@ test. Update this file when a convention changes.
   and an important declaration in a stylesheet beats a plain inline style, so
   `style.display = "none"` on an editor does nothing at all. The merge view
   also owns the scrolling of its two editors, so the host styles
-  `.cm-mergeView` and never the editors inside it.
+  `.cm-mergeView` and never the editors inside it. That ownership covers one
+  axis: the outer `.cm-mergeView` is the vertical scroller and the editors
+  grow to their full height inside it, while sideways every editor keeps its
+  own `.cm-scroller`, so with wrapping off the two sides drift apart and the
+  halves of a line stop standing next to each other. `syncMergeScroll` ties
+  them together on that axis alone, for both merge views (`setDiff` and
+  `setCompare`), and `dropMergeView` aborts it with the view. Writing
+  `scrollLeft` raises a scroll event of its own, so a write that really moved
+  the other side marks it and that one event is spent instead of answered:
+  guarding by comparing the two values would let a side whose longest line is
+  shorter clamp what it is given and pull its neighbour back to its own end,
+  which is a comparison that cannot be scrolled past the shorter file's width.
 - **One editor on every width: the strip stays, the options fold into one
   menu.** A strip and seven icons do not share 390px, and two different
   headers are two things to learn, so the icons went into the kebab instead of
