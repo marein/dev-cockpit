@@ -1217,6 +1217,56 @@ L.runFeature("EDITOR GIT", async ({ ctx, page, run, bag, mobilePage }) => {
       return "U in cyan while unknown, A in green once staged, gone with the commit";
     });
 
+    // The revert is the editor's one deliberate discard (POST git/revert, no
+    // askpass bridge): a marked row's context menu takes the path back to
+    // HEAD, and the confirm says the one thing that cannot be restored before
+    // anything runs, a file without a state in HEAD is deleted. The entry only
+    // exists on a marked row, which is why every wait here goes through the
+    // row's git status first.
+    await run("revert: a tracked file goes back to HEAD, an untracked one is deleted after the confirm says so", async () => {
+      await openEditor(page);
+      await writeHere("revertme.txt", "head\n");
+      assert(await runInShell(`git add revertme.txt && git ${author} commit -qm revertme\r`) === 200, "the shell refused the baseline");
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector('.editor-item[data-path="revertme.txt"]:not([data-git-status])', { timeout: 30000 });
+      await writeHere("revertme.txt", "changed\n");
+      // The open buffer is part of the claim: after the revert it has to read
+      // the disk again instead of showing the discarded text.
+      await page.click('.editor-item[data-path="revertme.txt"]');
+      await page.waitForFunction(() => (document.querySelector(".cm-content")?.textContent || "").includes("changed"), null, { timeout: 15000 });
+      await page.waitForSelector('.editor-item[data-path="revertme.txt"][data-git-status="modified"]', { timeout: 20000 });
+      await pick('.editor-item[data-path="revertme.txt"]', "Revert changes");
+      await page.waitForSelector(".swal2-popup:not(.swal2-toast)", { state: "visible", timeout: 8000 });
+      const asked = await page.textContent(".swal2-html-container");
+      assert(/state in HEAD/.test(asked), `the confirm does not name HEAD: ${asked}`);
+      await page.click(".swal2-confirm");
+      await page.waitForSelector('.editor-item[data-path="revertme.txt"][data-git-status]', { state: "detached", timeout: 30000 });
+      const reverted = await page.evaluate((b) =>
+        fetch(`${b}/file?path=revertme.txt`, { headers: { Accept: "application/json" } })
+          .then((r) => (r.ok ? r.json() : null)).catch(() => null), editorBase);
+      assert(reverted && reverted.content === "head\n", `the disk reads ${JSON.stringify(reverted && reverted.content)}`);
+      await page.waitForFunction(() => {
+        const text = document.querySelector(".cm-content")?.textContent || "";
+        return text.includes("head") && !text.includes("changed");
+      }, null, { timeout: 15000 });
+
+      await writeHere("loose.txt", "no HEAD state\n");
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector('.editor-item[data-path="loose.txt"][data-git-status="untracked"]', { timeout: 20000 });
+      await pick('.editor-item[data-path="loose.txt"]', "Revert changes");
+      await page.waitForSelector(".swal2-popup:not(.swal2-toast)", { state: "visible", timeout: 8000 });
+      const question = await page.textContent(".swal2-html-container");
+      assert(/deletes the file/.test(question), `the confirm does not say the deletion: ${question}`);
+      const button = (await page.textContent(".swal2-confirm")).trim();
+      assert(button === "Delete file", `the confirm button says ${button}`);
+      await page.click(".swal2-confirm");
+      await page.waitForSelector('.editor-item[data-path="loose.txt"]', { state: "detached", timeout: 30000 });
+      const status = await page.evaluate((b) =>
+        fetch(`${b}/file?path=loose.txt`, { headers: { Accept: "application/json" } }).then((r) => r.status), editorBase);
+      assert(status >= 400, `the deleted file still answers ${status}`);
+      return "restored to HEAD with the buffer following, deletion said and done";
+    });
+
     // ---- committing from the editor ------------------------------------------
     //
     // The commit view takes the tree's place in the column. Everything here

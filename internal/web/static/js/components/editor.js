@@ -891,6 +891,7 @@ async function init(root) {
         icon: "ti-git-compare",
         action: () => void openCompare(compareSelection, tab.path),
       } : null,
+      revertMenuItem(tab.path, false),
       { divider: true },
       { label: "Rename", icon: "ti-pencil", action: () => renameEntry({ path: tab.path, name: tab.name, isDir: false }) },
       { label: "Delete", icon: "ti-trash", danger: true, action: () => deletePath(tab.path) },
@@ -1192,6 +1193,14 @@ async function init(root) {
           action: () => void openCompare(compareSelection, entry.path),
         });
       }
+    }
+    // The revert belongs to the git actions, so it closes their group; a
+    // folder has no other git entries and the revert stands as that group
+    // alone.
+    const revertItem = revertMenuItem(entry.path, entry.isDir);
+    if (revertItem) {
+      if (entry.isDir) items.push({ divider: true });
+      items.push(revertItem);
     }
     items.push({ divider: true });
     items.push({
@@ -2890,6 +2899,116 @@ async function init(root) {
       if ((data.content || "") === editor.valueOf(tab, isActive)) continue;
       tab.handle = await editor.createDoc(data.content || "", tab.name);
       tab.editorConfig = data.editorConfig || {};
+      if (isActive) {
+        editor.showDoc(tab);
+        void applyTabDiff(tab);
+        void applyBlame(true);
+        void applyChangeBars();
+      }
+    }
+  }
+
+  // revertMenuItem is the one entry the tree rows and the changes list share:
+  // one path back to HEAD. Only a path that carries a mark has anything to
+  // revert, so a clean row does not offer it.
+  function revertMenuItem(path, isDir) {
+    if (!gitRepo) return null;
+    if (!(isDir ? dirKind(path) : fileKind(path))) return null;
+    return { label: "Revert changes", icon: "ti-arrow-back-up", danger: true, action: () => void revertPath(path, isDir) };
+  }
+
+  // revertPath discards what the working copy carries under one path, back to
+  // HEAD. The confirmation is built from the status this page already holds,
+  // so it says what the revert will hit before anything runs, and deletion is
+  // said in so many words: a path without a state in HEAD, untracked or just
+  // added, is not restored but deleted. The server asks status itself, so a
+  // stale list here never widens what actually happens.
+  async function revertPath(path, isDir) {
+    const bare = (p) => (p.endsWith("/") ? p.slice(0, -1) : p);
+    const under = (p) => bare(p) === path || (isDir && bare(p).startsWith(`${path}/`));
+    const restored = [];
+    const removed = [];
+    const goneAfter = [];
+    for (const entry of commitChanges) {
+      if (!under(entry.path)) continue;
+      const kind = gitKind(entry);
+      if (kind === "untracked" || kind === "added") {
+        removed.push(entry);
+        goneAfter.push(bare(entry.path));
+      } else {
+        restored.push(entry);
+        // A rename goes back as a tracked change, and still takes its target
+        // off the disk: the old name comes back, the new one goes.
+        if (kind === "renamed") goneAfter.push(bare(entry.path));
+      }
+    }
+    let html = "";
+    let confirmText = "Revert";
+    if (!isDir) {
+      const entry = restored.concat(removed).find((e) => bare(e.path) === path);
+      const kind = entry ? gitKind(entry) : fileKind(path);
+      if (kind === "untracked" || kind === "added") {
+        html = `<div class="text-secondary">"${escapeHtml(path)}" has no state in HEAD. Reverting deletes the file.</div>`;
+        confirmText = "Delete file";
+      } else if (kind === "deleted") {
+        html = `<div class="text-secondary">"${escapeHtml(path)}" comes back at its state in HEAD.</div>`;
+      } else if (kind === "renamed" && entry && entry.from) {
+        html = `<div class="text-secondary">The rename is taken back: "${escapeHtml(entry.from)}" comes back and "${escapeHtml(path)}" is deleted. Uncommitted changes are lost.</div>`;
+      } else {
+        html = `<div class="text-secondary">"${escapeHtml(path)}" goes back to its state in HEAD, staged edits included. Uncommitted changes are lost.</div>`;
+      }
+    } else {
+      const parts = [];
+      if (restored.length) parts.push(`${restored.length} tracked ${restored.length === 1 ? "change is" : "changes are"} restored`);
+      if (removed.length) parts.push(`${removed.length} ${removed.length === 1 ? "file" : "files"} without a state in HEAD ${removed.length === 1 ? "is" : "are"} deleted`);
+      html = parts.length
+        ? `<div class="text-secondary">Everything under "${escapeHtml(path)}" goes back to HEAD: ${parts.join(", ")}. Uncommitted changes are lost.</div>`
+        : `<div class="text-secondary">Everything under "${escapeHtml(path)}" goes back to its state in HEAD; files that have no state there are deleted.</div>`;
+    }
+    const ok = await confirmDialog({ title: `Revert "${path}"?`, html, confirmText });
+    if (!ok) return;
+    const data = await gitRun("revert", { path }, `Reverting "${path}"…`, "revert");
+    if (!data) return;
+    notifySuccess(`Reverted "${path}".`);
+    await reloadRevertedTabs(path, isDir, goneAfter);
+    await loadTree();
+    void loadGitStatus();
+  }
+
+  // After a revert the disk under the path is HEAD again, and the open buffers
+  // have to say so too: a file the revert deleted closes its tab the way a
+  // delete does, everything else is read back from the disk, dirty buffers
+  // included, because the revert was asked to discard exactly those changes.
+  async function reloadRevertedTabs(path, isDir, gone) {
+    const under = (p) => p === path || (isDir && p.startsWith(`${path}/`));
+    const isGone = (p) => gone.some((g) => p === g || p.startsWith(`${g}/`));
+    if (compareSelection && isGone(compareSelection)) compareSelection = null;
+    for (const tab of [...tabs]) {
+      // A comparison goes with either of its sides, like it does on a delete.
+      if (tab.compare) {
+        if (isGone(tab.compare.left) || isGone(tab.compare.right)) await closeTab(tab.path, true);
+        continue;
+      }
+      if (isGone(tab.path)) {
+        await closeTab(tab.path, true);
+        continue;
+      }
+      if (tab.kind || !under(tab.path)) continue;
+      let data;
+      try {
+        data = await getJSON(`${base}/file?path=${encodeURIComponent(tab.path)}`, { signal });
+      } catch (err) {
+        if (signal.aborted) return;
+        // Only the server's own no closes a tab, like reloadCleanTabs.
+        if (err.status >= 400 && err.status < 500) await closeTab(tab.path, true);
+        continue;
+      }
+      if (signal.aborted) return;
+      if (data.binary) continue;
+      const isActive = tab.path === activePath;
+      tab.handle = await editor.createDoc(data.content || "", tab.name);
+      tab.editorConfig = data.editorConfig || {};
+      markDirty(tab, false);
       if (isActive) {
         editor.showDoc(tab);
         void applyTabDiff(tab);
@@ -5129,6 +5248,17 @@ async function init(root) {
     return true;
   }, { signal });
   wireRowMenus(treeEl, ".editor-item", openTreeMenu, { signal });
+  // The changes list carries the revert where the change is listed: a file row
+  // reverts the file, a folder row everything under it.
+  wireRowMenus(commitListEl, ".editor-commit-row", (row, x, y) => {
+    const raw = row && (row.dataset.dir || row.dataset.path);
+    if (!raw) return false;
+    const isDir = !!row.dataset.dir || raw.endsWith("/");
+    const item = revertMenuItem(raw.endsWith("/") ? raw.slice(0, -1) : raw, isDir);
+    if (!item) return false;
+    openMenu({ x, y, items: [item], signal });
+    return true;
+  }, { signal });
   wireTreeDrop();
   wirePaste();
   wireSplitter();

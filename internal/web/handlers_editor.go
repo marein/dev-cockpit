@@ -1303,6 +1303,49 @@ func (s *Server) handleEditorGitBranch(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"branch": req.Branch})
 }
 
+type editorRevertRequest struct {
+	Path string `json:"path"`
+}
+
+// handleEditorGitRevert discards what the working copy carries under one path,
+// a file or a directory, back to HEAD: tracked changes are restored, staged
+// edits included, and what has no state in HEAD is deleted, which the client's
+// confirmation says before this is called. A local action like the created
+// branch: nothing on this path can ask anything, so no bridge is opened and
+// the client runs it with ask false. What git refuses travels back in git's
+// words; the base does not move, so the event says the worktree did.
+func (s *Server) handleEditorGitRevert(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorRevertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	if req.Path == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "A path is required."})
+		return
+	}
+	if _, err := filesystem.ResolveUnder(p.Path, req.Path); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+		return
+	}
+	writeKeys, ok := s.takeGitWrite(c, p)
+	if !ok {
+		return
+	}
+	defer s.gitWrites.release(writeKeys...)
+	if err := git.New(p.Path).Revert(gitWriteContext(c), req.Path); err != nil {
+		log.Printf("editor git revert %s: %v", p.Path, err)
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	s.publishGit(p.Name, false)
+	c.JSON(http.StatusOK, gin.H{"reverted": true})
+}
+
 // handleGitPromptList answers the standing questions of every running git
 // action, oldest first. It sits at the app level and not under a project,
 // because the dialog does too: the page that started an action may be

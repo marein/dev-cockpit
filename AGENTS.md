@@ -139,7 +139,12 @@ test. Update this file when a convention changes.
   one stalled git does not put the clone where the repository's actions
   were. The writes are `git.Commit`, `git.Push` (plain or force-with-lease),
   `git.Fetch`, the fast forward `git.Pull`, `git.Checkout`,
-  `git.CreateBranch` and `git.Clone`; staging, discarding, stashing, merging
+  `git.CreateBranch`, `git.Clone` and `git.Revert`, the one deliberate
+  discard: one path back to HEAD, staged edits included, found by asking
+  status itself (what HEAD knows goes through restore, what it does not is
+  deleted through clean, a rename's source joins like it joins the commit),
+  and a repository without a commit refuses instead of deleting somebody's
+  only copy. Staging, stashing, merging
   and conflict resolution stay with a coder or the command line, and a
   refused write leaves the working copy as it was. Writes carry their own
   timeouts, minutes not seconds, and run on `gitWriteContext`
@@ -295,8 +300,17 @@ test. Update this file when a convention changes.
   the repository's own configuration. A commit whose push is refused stands
   as a commit: the answer stays a 200 and carries `pushed` and `pushError`,
   the panel shows the refusal in git's words next to the success. The editor
-  still never stages and never discards; the branch moves it does make are
-  the next bullet's.
+  still never stages; what it discards is the explicit revert alone
+  (`git/revert`, one path back to HEAD, no bridge because nothing on that
+  path can ask): the entry sits in the file tree's context menu, on a file's
+  tab and on the changes list's rows, only where the path carries a mark,
+  and the confirmation is built from the status the page already holds, so
+  the deletion of what has no state in HEAD, untracked files and staged
+  additions, is said before anything runs, with the counts on a directory.
+  After it the reverted tabs read the disk again, dirty buffers included
+  because discarding them is what was asked, and a file the revert deleted
+  closes its tab the way a delete does. The branch moves the editor makes
+  are the next bullet's.
 - **The branch lives in the statusbar, and the git sheet is where the
   repository acts** (the segment, `Git` in the editor menu, Ctrl+Shift+G).
   The sheet's actions are routes of their own: `git/push` (`force` is

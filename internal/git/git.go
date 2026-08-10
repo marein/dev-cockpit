@@ -1,10 +1,10 @@
 // Package git reads what a repository says about a project's working copy,
 // and writes it in a deliberately short list of places: Commit, Push (plain,
 // or force-with-lease), Fetch, the fast forward Pull, the two branch moves
-// Checkout and CreateBranch, and Clone into a directory that holds nothing
-// yet. Staging, discarding, stashing, merging and everything else that
-// rewrites a repository stays with a coder or the command line, and a
-// refused write leaves the working copy as it was.
+// Checkout and CreateBranch, Clone into a directory that holds nothing
+// yet, and Revert, which takes one path back to HEAD. Staging, stashing,
+// merging and everything else that rewrites a repository stays with a coder
+// or the command line, and a refused write leaves the working copy as it was.
 //
 // Every call goes through run, which is the one place the safety rules live,
 // because a status poll runs next to a coder that may be committing right now:

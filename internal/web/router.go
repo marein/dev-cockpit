@@ -270,6 +270,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	editor.POST("/git/pull", s.handleEditorGitPull)
 	editor.POST("/git/checkout", s.handleEditorGitCheckout)
 	editor.POST("/git/branch", s.handleEditorGitBranch)
+	editor.POST("/git/revert", s.handleEditorGitRevert)
 	editor.POST("/git/clone", s.handleEditorGitClone)
 	editor.POST("/git/watch", s.handleEditorGitWatch)
 }
