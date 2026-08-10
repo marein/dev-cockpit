@@ -357,7 +357,6 @@ func NewQuickOpenCache() *QuickOpenCache {
 func (c *QuickOpenCache) Query(root, query, scope string, ex Exclusions, limit int) (QuickOpenMatches, error) {
 	now := c.now()
 	entry := c.entryFor(root, now)
-	entry.lastUsed.Store(now.UnixNano())
 
 	// An index built under different exclusions answers a different question, so
 	// it counts as absent. Changing the setting needs no invalidation hook.
@@ -394,8 +393,26 @@ func (c *QuickOpenCache) Invalidate(root string) {
 	}
 }
 
+// Forget drops root from the cache entirely. Invalidate is for a project that
+// changed and will be queried again, so it keeps the entry and only clears the
+// index; a project that is gone has no next query, and the sweep that would
+// have collected it runs on a query. Its index would sit there until somebody
+// happened to search in another project.
+func (c *QuickOpenCache) Forget(root string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, root)
+}
+
 // entryFor returns the cache entry for root, creating it if needed, and takes
 // the opportunity to drop indexes nobody has used in a while.
+//
+// The use is recorded here rather than by the caller, under the same lock the
+// sweep runs under. A fresh entry starts out with a zero lastUsed, which reads
+// as 1970 and therefore as idle, so a caller that stored it afterwards left a
+// window in which a query for another project swept the entry away while its
+// walk was still running: the index was then built into an entry no longer in
+// the map, and the next query paid for the walk again.
 func (c *QuickOpenCache) entryFor(root string, now time.Time) *quickOpenEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -412,6 +429,7 @@ func (c *QuickOpenCache) entryFor(root string, now time.Time) *quickOpenEntry {
 		entry = &quickOpenEntry{}
 		c.entries[root] = entry
 	}
+	entry.lastUsed.Store(now.UnixNano())
 	return entry
 }
 

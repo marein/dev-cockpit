@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -323,6 +324,150 @@ func TestQuickOpenCacheEvictsIdleProjects(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("entries = %d, want 1", count)
+	}
+}
+
+// TestQuickOpenCacheKeepsABuildingProjectDuringAnotherQuery drives the whole
+// rule through Query in the shape it happens in: one project is walking its
+// tree while somebody opens the palette in another one, and the sweep that
+// second query runs must leave the first project alone.
+//
+// The sync point is the cache's own clock. Query reads it a second time for the
+// index it is about to build, and by then the entry is in the map, so parking
+// there puts the other query at a defined moment instead of a slept guess.
+func TestQuickOpenCacheKeepsABuildingProjectDuringAnotherQuery(t *testing.T) {
+	a, b := quickOpenTree(t), quickOpenTree(t)
+	cache := NewQuickOpenCache()
+	clock := time.Now()
+
+	var armed atomic.Bool
+	armed.Store(true)
+	building, release := make(chan struct{}), make(chan struct{})
+	cache.now = func() time.Time {
+		// Neither of Query's two clock reads holds c.mu, so asking the map
+		// whether the entry exists yet is what tells the two apart.
+		if armed.Load() {
+			cache.mu.Lock()
+			_, exists := cache.entries[a]
+			cache.mu.Unlock()
+			if exists && armed.CompareAndSwap(true, false) {
+				close(building)
+				<-release
+			}
+		}
+		return clock
+	}
+
+	done := make(chan QuickOpenMatches, 1)
+	go func() {
+		res, err := cache.Query(a, "Game", "", DefaultExclusionSet(), QuickOpenLimit)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- res
+	}()
+	<-building
+
+	cache.mu.Lock()
+	held := cache.entries[a]
+	cache.mu.Unlock()
+	if held == nil {
+		t.Fatal("the project being indexed should be in the cache")
+	}
+
+	// The other project's query, with the first project's walk still in flight.
+	// This is the one that sweeps.
+	if _, err := cache.Query(b, "Game", "", DefaultExclusionSet(), QuickOpenLimit); err != nil {
+		t.Fatal(err)
+	}
+
+	cache.mu.Lock()
+	survivor, stillThere := cache.entries[a]
+	count := len(cache.entries)
+	cache.mu.Unlock()
+	if !stillThere {
+		t.Fatal("a project being indexed was evicted by a query for another one")
+	}
+	if survivor != held {
+		t.Error("the entry being built was replaced while its walk was running")
+	}
+	if count != 2 {
+		t.Errorf("entries = %d, want 2", count)
+	}
+
+	close(release)
+	if res := <-done; len(res.Paths) == 0 {
+		t.Fatal("the build produced no matches")
+	}
+	// The finished walk has to have landed in the entry the cache still holds.
+	// An evicted entry takes the walk with it and the next query pays again.
+	if held.index.Load() == nil {
+		t.Error("the finished index did not land in the cached entry")
+	}
+}
+
+// TestQuickOpenCacheRecordsUseUnderItsOwnLock pins where the use is recorded.
+// It is deliberately not the concurrent test above: recording it after entryFor
+// returned leaves a window between that unlock and the next instruction, and
+// there is nothing in it to interpose on, so no timing can catch it from the
+// outside. What can be checked is the invariant that closes the window, that an
+// entry is already fresh when entryFor hands it over, and a second entryFor is
+// the sweep that would have collected it while it read as 1970.
+func TestQuickOpenCacheRecordsUseUnderItsOwnLock(t *testing.T) {
+	cache := NewQuickOpenCache()
+	now := time.Now()
+	cache.now = func() time.Time { return now }
+
+	cache.entryFor("/project/a", now)
+	cache.entryFor("/project/b", now)
+
+	cache.mu.Lock()
+	_, stillThere := cache.entries["/project/a"]
+	count := len(cache.entries)
+	cache.mu.Unlock()
+	if !stillThere {
+		t.Error("a just created entry should not be swept")
+	}
+	if count != 2 {
+		t.Errorf("entries = %d, want 2", count)
+	}
+}
+
+// TestQuickOpenCacheForgetDropsTheEntry covers the deleted project: Invalidate
+// keeps the entry for the next query, Forget has to leave nothing behind,
+// because a project that is gone never runs the sweep that would collect it.
+func TestQuickOpenCacheForgetDropsTheEntry(t *testing.T) {
+	root := quickOpenTree(t)
+	cache := NewQuickOpenCache()
+
+	if _, err := cache.Query(root, "Game", "", DefaultExclusionSet(), QuickOpenLimit); err != nil {
+		t.Fatal(err)
+	}
+
+	cache.Invalidate(root)
+	cache.mu.Lock()
+	afterInvalidate := len(cache.entries)
+	cache.mu.Unlock()
+	if afterInvalidate != 1 {
+		t.Fatalf("entries after Invalidate = %d, want 1", afterInvalidate)
+	}
+
+	cache.Forget(root)
+	cache.mu.Lock()
+	afterForget := len(cache.entries)
+	cache.mu.Unlock()
+	if afterForget != 0 {
+		t.Errorf("entries after Forget = %d, want 0", afterForget)
+	}
+
+	// Forgetting a project nobody indexed is what a delete of an unopened
+	// project does, and it has to be a no-op rather than a new entry.
+	cache.Forget("/never/indexed")
+	cache.mu.Lock()
+	afterUnknown := len(cache.entries)
+	cache.mu.Unlock()
+	if afterUnknown != 0 {
+		t.Errorf("entries after forgetting an unknown project = %d, want 0", afterUnknown)
 	}
 }
 
