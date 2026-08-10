@@ -246,6 +246,31 @@ test. Update this file when a convention changes.
   full catch-up, and a failed status round retries itself once
   (`gitRetryTimer`), because a move published into a gap or into a dead
   fetch is published never again.
+- **A save writes onto the file it was loaded from, or it does not write.**
+  The editor is one writer among several on the same working copy, a coder and
+  git being the others, so the read route answers a version of the file
+  (`filesystem.ReadFileText`) and the save carries it back. The comparison is
+  the filesystem package's and never the handler's
+  (`filesystem.WriteFileTextIfUnchanged`): a version that no longer describes
+  the disk writes nothing at all. The token is a hash over the content and
+  deliberately not mtime plus size, which would miss a same sized write inside
+  one clock tick and invent a conflict for every `git checkout` that rewrites
+  identical bytes; it is FNV-1a, fast and not cryptographic, because it says
+  whether the file moved and authenticates nothing. The load path pays nothing
+  for it, the save one read. A refused save answers a 409 whose `conflict`
+  names which of the two happened, and the two are apart because their ways
+  out are: `changed` offers to read the disk back over the buffer,
+  `deleted` offers to write the buffer as a new file, since a deleted file has
+  no state to reload and `WriteFileText` would silently put it back. There is
+  no force save on any path and no flag that could be one: a save is written,
+  or the buffer stands untouched, and `saveTab` answers `saved`, `reloaded` or
+  `kept` so every caller can tell those apart, the commit's save-first
+  included, which stops rather than commit a buffer that never landed. A save
+  **without** a version is the create path and writes: a file created in the
+  editor is saved before anything read it back. Every side of a comparison
+  carries its own version, and every path that puts the disk into a tab goes
+  through one place (`applyDiskContent`), so a reload can never leave the old
+  token behind.
 - **A commit takes the checked paths and nothing else.** `git.Commit` is the
   one call in `internal/git` that records a commit, one write out of the short
   list further up, and it has the editor's commit route pair to itself

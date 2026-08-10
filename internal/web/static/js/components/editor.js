@@ -1121,6 +1121,10 @@ async function init(root) {
       name,
       handle: await editor.createDoc(data.content, name),
       editorConfig: data.editorConfig || {},
+      // The version of the bytes this buffer was built from. It rides the save
+      // so the write can refuse to land on a file somebody else has written
+      // since, and every save answers with the version of what it wrote.
+      version: data.version || "",
       dirty: false,
     };
   }
@@ -2137,7 +2141,13 @@ async function init(root) {
         if (tab.compare
           ? covered(tab.compare.left) || covered(tab.compare.right)
           : covered(tab.path)) {
-          await saveTab(tab);
+          // A save the disk refused is answered in a dialog, and a commit that
+          // walked past that answer would record a file nobody in front of the
+          // panel has seen. The commit ends here instead, with the picks and
+          // the message still standing.
+          if ((await saveTab(tab)) !== "saved") {
+            throw new Error(`"${tab.compare ? tab.name : tab.path}" was not saved, so nothing was committed.`);
+          }
         }
       }
       const res = await postJSON(`${base}/git/commit`, {
@@ -2998,6 +3008,24 @@ async function init(root) {
     void loadCommitInfo();
   }
 
+  // applyDiskContent puts what the disk answered into a tab: a fresh document,
+  // the version those very bytes carry, and the views that read the buffer. It
+  // is the one place a tab takes the disk over, so the version can never be
+  // left behind by one of them.
+  async function applyDiskContent(tab, data) {
+    const isActive = tab.path === activePath;
+    tab.handle = await editor.createDoc(data.content || "", tab.name);
+    tab.editorConfig = data.editorConfig || {};
+    tab.version = data.version || "";
+    markDirty(tab, false);
+    if (isActive) {
+      editor.showDoc(tab);
+      void applyTabDiff(tab);
+      void applyBlame(true);
+      void applyChangeBars();
+    }
+  }
+
   async function reloadCleanTabs() {
     for (const tab of [...tabs]) {
       if (tab.kind || tab.compare || tab.dirty) continue;
@@ -3017,16 +3045,12 @@ async function init(root) {
       }
       if (signal.aborted) return;
       if (data.binary) continue;
-      const isActive = tab.path === activePath;
-      if ((data.content || "") === editor.valueOf(tab, isActive)) continue;
-      tab.handle = await editor.createDoc(data.content || "", tab.name);
-      tab.editorConfig = data.editorConfig || {};
-      if (isActive) {
-        editor.showDoc(tab);
-        void applyTabDiff(tab);
-        void applyBlame(true);
-        void applyChangeBars();
-      }
+      // The version comes along even when the content did not move, and it is
+      // free to trust: the token is over the content, so identical text is the
+      // identical token whatever the branch move did to the timestamps.
+      tab.version = data.version || "";
+      if ((data.content || "") === editor.valueOf(tab, tab.path === activePath)) continue;
+      await applyDiskContent(tab, data);
     }
   }
 
@@ -3127,16 +3151,7 @@ async function init(root) {
       }
       if (signal.aborted) return;
       if (data.binary) continue;
-      const isActive = tab.path === activePath;
-      tab.handle = await editor.createDoc(data.content || "", tab.name);
-      tab.editorConfig = data.editorConfig || {};
-      markDirty(tab, false);
-      if (isActive) {
-        editor.showDoc(tab);
-        void applyTabDiff(tab);
-        void applyBlame(true);
-        void applyChangeBars();
-      }
+      await applyDiskContent(tab, data);
     }
   }
 
@@ -3571,6 +3586,10 @@ async function init(root) {
         rightDoc: rightText,
         leftSaved: leftText,
         rightSaved: rightText,
+        // Two files are two versions: each side saves through the file route on
+        // its own and answers for its own path alone.
+        leftVersion: a.version || "",
+        rightVersion: b.version || "",
         leftDirty: false,
         rightDirty: false,
       },
@@ -3649,6 +3668,49 @@ async function init(root) {
     markDirty(tab, state.leftDirty || state.rightDirty);
   }
 
+  // writeCompareSide writes one side of a comparison, and answers the same
+  // three words a tab's save does. A refused write asks the same two questions
+  // here, per side and per path: each half of a comparison is a real file with
+  // a version of its own.
+  async function writeCompareSide(tab, side, content) {
+    const state = tab.compare;
+    const path = state[side];
+    try {
+      state[`${side}Version`] = await writeFile(path, content, state[`${side}Version`]);
+    } catch (err) {
+      if (err.conflict === "deleted") {
+        if (!(await askRecreateFile(path))) return "kept";
+        state[`${side}Version`] = await writeFile(path, content, "");
+      } else if (err.conflict === "changed") {
+        if (!(await askReloadOverBuffer(path))) return "kept";
+        return (await reloadCompareSide(tab, side)) ? "reloaded" : "kept";
+      } else {
+        throw err;
+      }
+    }
+    state[`${side}Doc`] = content;
+    state[`${side}Saved`] = content;
+    return "saved";
+  }
+
+  // reloadCompareSide replaces one half of a comparison with what is on the
+  // disk. The panes hold what was typed, so they are taken onto the tab first
+  // and the reloaded side then replaces its own half: reading them back after
+  // the assignment would put the buffer straight back over the disk.
+  async function reloadCompareSide(tab, side) {
+    const state = tab.compare;
+    const data = await getJSON(`${base}/file?path=${encodeURIComponent(state[side])}`, { signal });
+    if (signal.aborted || data.binary) return false;
+    const live = tab.path === activePath && editor.comparing();
+    if (live) editor.captureCompare(tab);
+    const text = data.content || "";
+    state[`${side}Doc`] = text;
+    state[`${side}Saved`] = text;
+    state[`${side}Version`] = data.version || "";
+    if (live) await showCompare(tab);
+    return true;
+  }
+
   async function saveCompareSide(side) {
     const tab = activeTab();
     if (!tab || !tab.compare || !editor.comparing()) return;
@@ -3656,10 +3718,9 @@ async function init(root) {
     const content = editor.compareValue(side);
     status("Saving…");
     try {
-      await writeFile(path, content);
-      tab.compare[`${side}Saved`] = content;
+      const result = await writeCompareSide(tab, side, content);
       syncCompareBar();
-      status(`Saved ${path}`, "ok");
+      status(saveOutcome(result, path), result === "kept" ? "error" : "ok");
     } catch (err) {
       status(err.message, "error");
     }
@@ -3667,15 +3728,18 @@ async function init(root) {
 
   // saveCompareTab saves whatever a comparison carries unsaved, both sides if
   // both moved. It is what the ordinary save paths (Ctrl+S, Save all) do with a
-  // compare tab: a synthetic path is nothing the file route could write.
+  // compare tab: a synthetic path is nothing the file route could write. The
+  // outcome is the worse of the two sides, so a comparison whose one half was
+  // refused never reads as saved.
   async function saveCompareTab(tab) {
     if (tab.path === activePath && editor.comparing()) editor.captureCompare(tab);
     const state = tab.compare;
+    let outcome = "saved";
     for (const side of ["left", "right"]) {
       const content = state[`${side}Doc`];
       if (content === state[`${side}Saved`]) continue;
-      await writeFile(state[side], content);
-      state[`${side}Saved`] = content;
+      const result = await writeCompareSide(tab, side, content);
+      if (result === "kept" || (result === "reloaded" && outcome === "saved")) outcome = result;
     }
     if (tab.path === activePath && editor.comparing()) {
       syncCompareBar();
@@ -3684,23 +3748,99 @@ async function init(root) {
       state.rightDirty = state.rightDoc !== state.rightSaved;
       markDirty(tab, state.leftDirty || state.rightDirty);
     }
+    return outcome;
   }
 
   // ---- file actions ----------------------------------------------------------
 
-  async function writeFile(path, content) {
-    const res = await postForm(`${base}/file`, { path, content });
+  // A save carries the version the file was loaded with, and the server writes
+  // only while that version still describes what is on the disk, so an open
+  // buffer can never write over what a coder did to the same working copy in
+  // the meantime. What comes back is the version of what was just written, so
+  // saving twice in a row asks nothing. A refusal is not an error to show, it
+  // is a question to ask, and it travels as one: err.conflict says "changed"
+  // when somebody else wrote the file and "deleted" when it is gone.
+  async function writeFile(path, content, version) {
+    const res = await postForm(`${base}/file`, { path, content, version: version || "" });
+    if (res.status === 409) {
+      const data = await res.json().catch(() => null);
+      const err = new Error((data && data.error) || "Failed to save file.");
+      err.status = 409;
+      if (data && (data.conflict === "changed" || data.conflict === "deleted")) err.conflict = data.conflict;
+      throw err;
+    }
     await ensureOk(res, "Failed to save file.");
+    const data = await res.json().catch(() => null);
+    return (data && data.version) || "";
   }
 
+  // The two ways out of a refused save, and there is no third one anywhere: a
+  // save never writes over what it did not see, so neither dialog offers to
+  // force it through. Cancel is the same answer in both, the buffer stands
+  // exactly as it is and nothing is written.
+  function askReloadOverBuffer(path) {
+    return confirmDialog({
+      title: `"${path}" changed on disk.`,
+      html: `<div class="text-secondary">Somebody wrote the file after you opened it, a coder or git, and nothing has been saved. <em>Reload</em> replaces what is in the editor with what is on the disk, so your unsaved changes are gone. <em>Cancel</em> keeps them and writes nothing.</div>`,
+      confirmText: "Reload",
+    });
+  }
+
+  function askRecreateFile(path) {
+    return confirmDialog({
+      title: `"${path}" no longer exists on the server.`,
+      html: `<div class="text-secondary">The file was deleted after you opened it, by a coder or by git, and nothing has been written. <em>Create again</em> writes what is in the editor as a new file. <em>Cancel</em> keeps the buffer and writes nothing.</div>`,
+      confirmText: "Create again",
+    });
+  }
+
+  // saveOutcome puts one of the three words a save ends on into a status line.
+  // "kept" says nothing was written and does not repeat why: the dialog that
+  // asked said it a second ago.
+  function saveOutcome(result, label) {
+    if (result === "reloaded") return `Reloaded ${label} from disk`;
+    if (result === "kept") return "Not saved";
+    return `Saved ${label}`;
+  }
+
+  // reloadTabFromDisk reads the file back over a tab whatever its buffer holds.
+  // It is the way out of a save the server refused as changed: somebody asked
+  // for the disk's state, so the buffer goes. It answers false when there is
+  // nothing to put in the buffer, a text file that is a binary one now.
+  async function reloadTabFromDisk(tab) {
+    const data = await getJSON(`${base}/file?path=${encodeURIComponent(tab.path)}`, { signal });
+    if (signal.aborted || data.binary) return false;
+    await applyDiskContent(tab, data);
+    return true;
+  }
+
+  // saveTab writes one tab and says what happened to it, because a save the
+  // server refused is not a failure: "saved" was written, "reloaded" is the
+  // buffer replaced by the disk, "kept" is nothing written and the buffer
+  // untouched. Only a real failure throws.
   async function saveTab(tab) {
-    if (tab.compare) {
-      await saveCompareTab(tab);
-      return;
+    if (tab.compare) return await saveCompareTab(tab);
+    const content = editor.valueOf(tab, tab.path === activePath);
+    let version;
+    try {
+      version = await writeFile(tab.path, content, tab.version);
+    } catch (err) {
+      if (err.conflict === "deleted") {
+        if (!(await askRecreateFile(tab.path))) return "kept";
+        // No version, which is the create path: whoever answered that dialog
+        // asked for exactly that, a new file with the buffer in it.
+        version = await writeFile(tab.path, content, "");
+      } else if (err.conflict === "changed") {
+        if (!(await askReloadOverBuffer(tab.path))) return "kept";
+        return (await reloadTabFromDisk(tab)) ? "reloaded" : "kept";
+      } else {
+        throw err;
+      }
     }
-    await writeFile(tab.path, editor.valueOf(tab, tab.path === activePath));
+    tab.version = version;
     editor.markSaved(tab, tab.path === activePath);
     markDirty(tab, false);
+    return "saved";
   }
 
   async function save() {
@@ -3709,8 +3849,11 @@ async function init(root) {
     status("Saving…");
     saveBtn.disabled = true;
     try {
-      await saveTab(tab);
-      status(`Saved ${tab.compare ? tab.name : tab.path}`, "ok");
+      const result = await saveTab(tab);
+      // A buffer that stands is still unsaved, and the button was disabled for
+      // a save that never happened.
+      if (result !== "saved") updateActionStates();
+      status(saveOutcome(result, tab.compare ? tab.name : tab.path), result === "kept" ? "error" : "ok");
     } catch (err) {
       updateActionStates();
       status(err.message, "error");
@@ -3722,12 +3865,18 @@ async function init(root) {
     if (dirtyTabs.length === 0) return;
     status("Saving…");
     try {
-      for (const tab of dirtyTabs) {
-        await saveTab(tab);
+      // Each file is refused on its own, so a batch can end with some written
+      // and some not, and "Saved 3 files" would cover that up.
+      const results = [];
+      for (const tab of dirtyTabs) results.push(await saveTab(tab));
+      const saved = results.filter((r) => r === "saved").length;
+      if (saved === results.length) {
+        status(results.length === 1
+          ? saveOutcome("saved", dirtyTabs[0].compare ? dirtyTabs[0].name : dirtyTabs[0].path)
+          : `Saved ${results.length} files`, "ok");
+      } else {
+        status(saved === 0 ? "Nothing was saved" : `Saved ${saved} of ${results.length} files`, "error");
       }
-      status(dirtyTabs.length === 1
-        ? `Saved ${dirtyTabs[0].compare ? dirtyTabs[0].name : dirtyTabs[0].path}`
-        : `Saved ${dirtyTabs.length} files`, "ok");
     } catch (err) {
       status(err.message, "error");
     }

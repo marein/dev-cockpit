@@ -23,6 +23,7 @@ import (
 type editorSaveForm struct {
 	Path    string `form:"path"`
 	Content string `form:"content"`
+	Version string `form:"version"`
 }
 
 type editorMoveForm struct {
@@ -90,15 +91,19 @@ func (s *Server) handleEditorList(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"path": c.Query("path"), "entries": entries})
 }
 
-// handleEditorReadFile returns a file's text content at ?path= as JSON. Files
-// the editor cannot edit (binary or too large) answer with a binary marker and
-// their size, so the client can show a viewer or a download instead.
+// handleEditorReadFile returns a file's text content at ?path= as JSON, with
+// the version of exactly those bytes: the save carries it back, and that is
+// what lets the write refuse to land on a file somebody else has written since
+// (see filesystem.WriteFileTextIfUnchanged). Files the editor cannot edit
+// (binary or too large) answer with a binary marker and their size, so the
+// client can show a viewer or a download instead, and carry no version, there
+// is no buffer of them to save.
 func (s *Server) handleEditorReadFile(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
 		return
 	}
-	content, err := filesystem.ReadFileText(p.Path, c.Query("path"))
+	content, version, err := filesystem.ReadFileText(p.Path, c.Query("path"))
 	if err != nil {
 		if errors.Is(err, filesystem.ErrBinary) || errors.Is(err, filesystem.ErrTooLarge) {
 			if _, info, statErr := filesystem.ResolveExistingFile(p.Path, c.Query("path")); statErr == nil {
@@ -112,6 +117,7 @@ func (s *Server) handleEditorReadFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"path":         c.Query("path"),
 		"content":      content,
+		"version":      version,
 		"editorConfig": filesystem.EditorConfigForFile(p.Path, c.Query("path")),
 	})
 }
@@ -156,7 +162,18 @@ func (s *Server) handleEditorRaw(c *gin.Context) {
 	c.File(target)
 }
 
-// handleEditorSaveFile writes editor content back to disk.
+// handleEditorSaveFile writes editor content back to disk, and only onto the
+// file the buffer was loaded from. The version the load path answered comes
+// back with the save; a save whose version no longer describes the disk writes
+// nothing and is refused with a 409 that names which of the two happened. The
+// comparison itself is the filesystem package's, not this handler's, so the
+// only place that decides whether a write may land is the one that writes.
+//
+// Nothing here can force the write, and there is deliberately no flag that
+// could: the browser's two dialogs either leave the buffer alone, replace it
+// with what is on disk, or write it as a new file where the old one is gone.
+// A save without a version is the create path and writes, because a file
+// created in the editor is saved before anything ever read it back.
 func (s *Server) handleEditorSaveFile(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -167,12 +184,34 @@ func (s *Server) handleEditorSaveFile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "A file path is required."})
 		return
 	}
-	entry, err := filesystem.WriteFileText(p.Path, form.Path, []byte(form.Content))
+	entry, version, err := filesystem.WriteFileTextIfUnchanged(p.Path, form.Path, []byte(form.Content), form.Version)
 	if err != nil {
+		if kind := saveConflictKind(err); kind != "" {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "conflict": kind})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"entry": entry})
+	c.JSON(http.StatusOK, gin.H{"entry": entry, "version": version})
+}
+
+// saveConflictKind names the refusal in the one word the browser dispatches on,
+// and answers "" for everything that is a plain error. The two are apart
+// because the dialogs are: a changed file offers to be read back over the
+// buffer, a deleted one offers to be written again, and offering the wrong one
+// is offering nothing. It is the save route's own marker, next to the boolean
+// `conflict` the move, copy and upload routes answer a taken name with
+// (editorWriteError): same field name, two routes, and neither reads the
+// other's answers.
+func saveConflictKind(err error) string {
+	switch {
+	case errors.Is(err, filesystem.ErrFileDeleted):
+		return "deleted"
+	case errors.Is(err, filesystem.ErrFileChanged):
+		return "changed"
+	}
+	return ""
 }
 
 // handleEditorCreateFile creates a new empty file.

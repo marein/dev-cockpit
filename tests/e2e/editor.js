@@ -46,6 +46,13 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // small screens (auto-open when no tab restores) and a drag-resizable column on
 // wide ones. Routes: GET /projects/:name/editor(/list|/file|/files), POST .../file
 // (save), .../create, .../mkdir, .../delete, .../rename, .../upload, .../preview.
+// The read answers a version of the file and the save carries it back, so a
+// buffer never lands on a file a coder or git wrote in the meantime: the write
+// is refused with a 409 whose `conflict` says `changed` or `deleted`, and each
+// of the two gets its own dialog with exactly two ways out (Reload / Cancel,
+// Create again / Cancel). There is no force save. A save with no version at all
+// is the create path, which is what a file created in the editor takes on its
+// first save, and what the checks here write behind the editor's back with.
 // The toolbar buttons are wired only after init() awaits the CDN, so wait for
 // .cm-editor before driving them; kebab menu items are clicked via evaluate so the
 // bootstrap dropdown does not need to be opened first. Tabs and tree rows carry a
@@ -832,6 +839,113 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await confirmSwal(page);
       await page.waitForFunction((f) => !document.querySelector(`.editor-file[data-path="${f}"]`), renamed, { timeout: 8000 });
       assert(!(await page.$(tabSel(renamed))), "tab of the deleted file still open");
+    });
+
+    // A save carries the version the file was read with, so a buffer can never
+    // land on a file somebody else wrote in the meantime. Both out of band
+    // writes below go through the save route with no version, which is exactly
+    // what the create path is and what a coder's write looks like from here:
+    // the editor's own state is untouched by them.
+    const outOfBand = (path, content) => page.evaluate(async ([base, p, c]) => {
+      const token = document.querySelector('meta[name="csrf-token"]').getAttribute("content");
+      const res = await fetch(`${base}/file`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-Token": token, Accept: "application/json" },
+        body: new URLSearchParams({ path: p, content: c }).toString(),
+      });
+      return res.status;
+    }, [`/projects/${encodeURIComponent(project)}/editor`, path, content]);
+    const conflictFile = `conflict_${tag}.txt`;
+    // Swal hides the buttons a dialog does not use with an inline display, so
+    // the count of exactly two ways out is read off what is really shown.
+    const dialogButtons = () => page.$$eval(".swal2-actions button", (els) => els
+      .filter((el) => getComputedStyle(el).display !== "none")
+      .map((el) => el.textContent.trim()));
+    const diskText = (path) => page.evaluate(async ([base, p]) => {
+      const res = await fetch(`${base}/file?path=${encodeURIComponent(p)}`, { headers: { Accept: "application/json" } });
+      return (await res.json()).content;
+    }, [`/projects/${encodeURIComponent(project)}/editor`, path]);
+
+    await run("a file written behind the editor's back refuses the save and Cancel keeps the buffer", async () => {
+      // The check before this one confirmed a dialog, and a raw right click
+      // lands on the backdrop while it closes: treeRootMenu drives the mouse
+      // by coordinates, so it cannot wait the way a locator click does.
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      await newFile(conflictFile);
+      await page.click(".cm-content"); await page.keyboard.type("mine");
+      await waitDirty(conflictFile, true);
+      assert((await outOfBand(conflictFile, "theirs")) === 200, "the out of band write did not land");
+      await page.keyboard.press("Control+S");
+      await page.waitForSelector(".swal2-confirm", { state: "visible", timeout: 8000 });
+      const title = await page.textContent(".swal2-title");
+      assert(/changed on disk/.test(title || ""), `the conflict dialog says ${title}`);
+      const buttons = await dialogButtons();
+      assert(buttons.length === 2 && buttons.includes("Reload"), `the dialog offers ${buttons.join(", ")}`);
+      await page.click(".swal2-cancel");
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      // Nothing written, and the buffer is still the one that was typed.
+      await waitDirty(conflictFile, true);
+      assert((await page.textContent(".cm-content")).includes("mine"), "the cancelled save changed the buffer");
+      const disk = await diskText(conflictFile);
+      assert(disk === "theirs", `the cancelled save wrote ${JSON.stringify(disk)}`);
+    });
+
+    await run("Reload replaces the buffer with the server state and the next save writes", async () => {
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+S");
+      await confirmSwal(page);
+      await page.waitForFunction((sel) => document.querySelector(sel).textContent.includes("theirs"), ".cm-content", { timeout: 8000 });
+      await waitDirty(conflictFile, false);
+      // The reload brought the fresh version with it, so this one goes through
+      // without a second dialog.
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+End");
+      await page.keyboard.type(" plus mine");
+      await waitDirty(conflictFile, true);
+      await page.keyboard.press("Control+S");
+      await waitDirty(conflictFile, false);
+      assert(!(await page.$(".swal2-confirm")), "the save after the reload asked again");
+    });
+
+    await run("a deleted file gets its own dialog and Create again writes it back", async () => {
+      await page.click(".cm-content"); await page.keyboard.type(" and more");
+      await waitDirty(conflictFile, true);
+      const gone = await page.evaluate(async ([base, p]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').getAttribute("content");
+        const res = await fetch(`${base}/delete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-Token": token, Accept: "application/json" },
+          body: new URLSearchParams({ path: p }).toString(),
+        });
+        return res.status;
+      }, [`/projects/${encodeURIComponent(project)}/editor`, conflictFile]);
+      assert(gone === 200, `the out of band delete answered ${gone}`);
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+S");
+      await page.waitForSelector(".swal2-confirm", { state: "visible", timeout: 8000 });
+      const title = await page.textContent(".swal2-title");
+      assert(/no longer exists/.test(title || ""), `the deleted dialog says ${title}`);
+      const buttons = await dialogButtons();
+      assert(buttons.length === 2 && buttons.includes("Create again"), `the deleted dialog offers ${buttons.join(", ")}`);
+      assert(!buttons.includes("Reload"), "the deleted dialog offers a reload of a file that is gone");
+      await page.click(".swal2-confirm");
+      await waitDirty(conflictFile, false);
+      const disk = await diskText(conflictFile);
+      assert(/and more$/.test(disk || ""), `the recreated file holds ${JSON.stringify(disk)}`);
+      // Its version came back with it, so the next save asks nothing either.
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+End");
+      await page.keyboard.type("!");
+      await waitDirty(conflictFile, true);
+      await page.keyboard.press("Control+S");
+      await waitDirty(conflictFile, false);
+      assert(!(await page.$(".swal2-confirm")), "the save after the recreate asked again");
+      // The tree never heard about the out of band delete, so its row is the
+      // one the recreate made valid again.
+      await openRowMenu(page, `.editor-file[data-path="${conflictFile}"]`);
+      await menuItem(page, "Delete").click();
+      await confirmSwal(page);
+      await page.waitForFunction((f) => !document.querySelector(`.editor-file[data-path="${f}"]`), conflictFile, { timeout: 8000 });
     });
 
     await run("right click on a tab opens the context menu, Escape closes it", async () => {

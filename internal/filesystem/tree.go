@@ -155,31 +155,35 @@ func CheckEditableText(data []byte) error {
 	return nil
 }
 
-// ReadFileText reads a regular file for editing. It rejects directories, files
-// over MaxEditableBytes, and binary content.
-func ReadFileText(root, rel string) (string, error) {
+// ReadFileText reads a regular file for editing and answers the version token
+// of exactly the bytes it returns, which is what the save carries back. The
+// token is taken from those bytes and never from a second look at the disk: a
+// write landing between the read and that look would hand the caller a token
+// for content it never saw. It rejects directories, files over
+// MaxEditableBytes, and binary content.
+func ReadFileText(root, rel string) (content string, version string, err error) {
 	target, err := ResolveUnder(root, rel)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	info, err := os.Stat(target)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !info.Mode().IsRegular() {
-		return "", errors.New("Only regular files can be edited.")
+		return "", "", errors.New("Only regular files can be edited.")
 	}
 	if info.Size() > MaxEditableBytes {
-		return "", ErrTooLarge
+		return "", "", ErrTooLarge
 	}
 	data, err := os.ReadFile(target)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := CheckEditableText(data); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return string(data), nil
+	return string(data), versionOf(data), nil
 }
 
 // ResolveExistingFile resolves rel to an existing regular file under root and
@@ -807,15 +811,21 @@ func SaveUpload(root, dirRel, filename string, src io.Reader, overwrite, createD
 	return entryFromInfo(info, relTo(root, target)), nil
 }
 
+// errWriteDir is what both write paths say about a path that is a directory,
+// the unconditional one here and the versioned one in version.go.
+var errWriteDir = errors.New("Cannot write to a directory.")
+
 // WriteFileText writes content to root/rel atomically, preserving the existing
-// file mode when the target already exists. The parent directory must exist.
+// file mode when the target already exists. The parent directory must exist. It
+// writes whatever is there: a caller that has to keep somebody else's work goes
+// through WriteFileTextIfUnchanged.
 func WriteFileText(root, rel string, content []byte) (Entry, error) {
 	target, err := ResolveUnder(root, rel)
 	if err != nil {
 		return Entry{}, err
 	}
 	if info, err := os.Stat(target); err == nil && info.IsDir() {
-		return Entry{}, errors.New("Cannot write to a directory.")
+		return Entry{}, errWriteDir
 	}
 	dir := filepath.Dir(target)
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
