@@ -6033,48 +6033,125 @@ async function init(root) {
 
   function wireTermTabDrag() {
     let drag = null;
-    termTabsHostEl.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0 || !pointerMedia.matches) return;
-      const tab = e.target.closest("[data-term-tab]");
-      if (!tab || e.target.closest("[data-term-close]")) return;
-      drag = { tab, startX: e.clientX, moved: false };
-    }, { signal });
-    termTabsHostEl.addEventListener("pointermove", (e) => {
-      if (!drag) return;
-      if (!drag.moved) {
-        if (Math.abs(e.clientX - drag.startX) < 6) return;
-        drag.moved = true;
-        termDragging = true;
-        drag.tab.classList.add("editor-term-tab-dragging");
-        try { drag.tab.setPointerCapture(e.pointerId); } catch (err) { void err; }
+    const contentX = (strip, clientX) => clientX - strip.getBoundingClientRect().left + strip.scrollLeft;
+    const updateDrag = () => {
+      if (!drag || !drag.active) return;
+      const dx = contentX(drag.strip, drag.lastClientX) - drag.startContentX;
+      const draggedCenter = drag.centers[drag.fromIndex] + dx;
+      let toIndex = 0;
+      for (let i = 0; i < drag.centers.length; i += 1) {
+        if (i !== drag.fromIndex && drag.centers[i] < draggedCenter) toIndex += 1;
       }
-      const siblings = [...termTabsHostEl.querySelectorAll("[data-term-tab]")].filter((t) => t !== drag.tab);
-      const target = siblings.find((t) => {
-        const r = t.getBoundingClientRect();
-        return e.clientX >= r.left && e.clientX <= r.right;
-      });
-      if (!target) return;
-      const r = target.getBoundingClientRect();
-      if (e.clientX < r.left + r.width / 2) target.before(drag.tab);
-      else target.after(drag.tab);
-    }, { signal });
-    const endDrag = () => {
-      if (!drag) return;
-      const moved = drag.moved;
-      drag.tab.classList.remove("editor-term-tab-dragging");
-      drag = null;
-      if (!moved) return;
-      termSuppressClick = true;
-      termDragging = false;
-      void persistTermOrder().finally(() => {
-        if (termRefreshHeld) {
-          termRefreshHeld = false;
-          void loadTerminals();
-        }
+      drag.toIndex = toIndex;
+      drag.tab.style.transform = `translateX(${dx}px)`;
+      drag.tabs.forEach((tab, i) => {
+        if (tab === drag.tab) return;
+        let shift = 0;
+        if (i > drag.fromIndex && i <= drag.toIndex) shift = -drag.width;
+        else if (i < drag.fromIndex && i >= drag.toIndex) shift = drag.width;
+        tab.style.transform = shift ? `translateX(${shift}px)` : "";
       });
     };
-    termTabsHostEl.addEventListener("pointerup", endDrag, { signal });
-    termTabsHostEl.addEventListener("pointercancel", endDrag, { signal });
+    const tickEdgeScroll = () => {
+      if (!drag || !drag.active) return;
+      const rect = drag.strip.getBoundingClientRect();
+      let delta = 0;
+      if (drag.lastClientX < rect.left + 32) delta = -12;
+      else if (drag.lastClientX > rect.right - 32) delta = 12;
+      if (delta) {
+        const max = drag.strip.scrollWidth - drag.strip.clientWidth;
+        const next = Math.max(0, Math.min(drag.strip.scrollLeft + delta, max));
+        if (next !== drag.strip.scrollLeft) {
+          drag.strip.scrollLeft = next;
+          updateDrag();
+        }
+      }
+      drag.raf = window.requestAnimationFrame(tickEdgeScroll);
+    };
+    const flushHeld = () => {
+      if (!termRefreshHeld) return;
+      termRefreshHeld = false;
+      void loadTerminals();
+    };
+    const clearDrag = () => {
+      if (!drag) return;
+      if (drag.active) {
+        window.cancelAnimationFrame(drag.raf);
+        drag.strip.classList.remove("editor-term-tabs-dragging");
+        drag.tab.classList.remove("editor-term-tab-dragging");
+        for (const tab of drag.tabs) tab.style.transform = "";
+        termDragging = false;
+      }
+      drag = null;
+    };
+    termTabsHostEl.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || !pointerMedia.matches || drag) return;
+      const tab = e.target.closest("[data-term-tab]");
+      if (!tab || e.target.closest("[data-term-close]")) return;
+      const strip = tab.closest("[data-editor-term-tabs]");
+      if (!strip) return;
+      drag = {
+        tab,
+        strip,
+        pointerId: e.pointerId,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        lastClientX: e.clientX,
+        active: false,
+        raf: 0,
+      };
+      try {
+        tab.setPointerCapture(e.pointerId);
+      } catch (err) {
+        void err;
+      }
+    }, { signal });
+    termTabsHostEl.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      if (!drag.active) {
+        if (!(e.buttons & 1)) {
+          drag = null;
+          return;
+        }
+        if (Math.hypot(e.clientX - drag.startClientX, e.clientY - drag.startClientY) < 6) return;
+        drag.active = true;
+        termDragging = true;
+        drag.tabs = [...drag.strip.querySelectorAll("[data-term-tab]")];
+        drag.fromIndex = drag.tabs.indexOf(drag.tab);
+        drag.toIndex = drag.fromIndex;
+        drag.width = drag.tab.getBoundingClientRect().width;
+        const left = drag.strip.getBoundingClientRect().left;
+        drag.centers = drag.tabs.map((el) => {
+          const rect = el.getBoundingClientRect();
+          return rect.left + rect.width / 2 - left + drag.strip.scrollLeft;
+        });
+        drag.startContentX = contentX(drag.strip, e.clientX);
+        drag.strip.classList.add("editor-term-tabs-dragging");
+        drag.tab.classList.add("editor-term-tab-dragging");
+        drag.raf = window.requestAnimationFrame(tickEdgeScroll);
+      }
+      e.preventDefault();
+      drag.lastClientX = e.clientX;
+      updateDrag();
+    }, { signal });
+    termTabsHostEl.addEventListener("pointerup", (e) => {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      const done = drag;
+      clearDrag();
+      if (!done.active) return;
+      termSuppressClick = true;
+      if (done.toIndex === done.fromIndex) {
+        flushHeld();
+        return;
+      }
+      const others = done.tabs.filter((tab) => tab !== done.tab);
+      done.strip.insertBefore(done.tab, others[done.toIndex] || null);
+      void persistTermOrder().finally(flushHeld);
+    }, { signal });
+    termTabsHostEl.addEventListener("pointercancel", () => {
+      clearDrag();
+      flushHeld();
+    }, { signal });
   }
 
   termTabsHostEl.addEventListener("click", (e) => {

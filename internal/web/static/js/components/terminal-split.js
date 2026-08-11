@@ -154,7 +154,7 @@ class TerminalSplit extends HTMLElement {
     const desired = this.columnsOf(members, (tab.getAttribute("data-tab-member-cols") || "")
       .split(" ").filter(Boolean).map(Number));
     if (desired && signatureOf(desired) !== signatureOf(this.columns())) {
-      this.applyColumns(desired);
+      this.previewColumns(desired, null);
     }
     for (const span of tab.querySelectorAll("[data-member-name]")) {
       const id = span.getAttribute("data-notify-target") || "";
@@ -552,8 +552,42 @@ class TerminalSplit extends HTMLElement {
     });
     drag.signature = signatureOf(drag.columns);
     drag.applied = drag.signature;
+    drag.startRect = drag.pane.getBoundingClientRect();
+    drag.tx = 0;
+    drag.ty = 0;
     this.classList.add("attach-split-dragging");
     drag.pane.classList.add("attach-split-pane-dragging");
+  }
+
+  previewColumns(cols, dragPane) {
+    const others = this.panes().filter((pane) => pane !== dragPane);
+    const before = new Map(others.map((pane) => [pane, pane.getBoundingClientRect()]));
+    for (const pane of others) {
+      pane.style.transition = "none";
+      pane.style.transform = "";
+    }
+    this.applyColumns(cols);
+    for (const pane of others) {
+      const prev = before.get(pane);
+      const rect = pane.getBoundingClientRect();
+      const dx = prev.left - rect.left;
+      const dy = prev.top - rect.top;
+      pane.style.transform = Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5 ? `translate(${dx}px, ${dy}px)` : "";
+    }
+    void this.offsetWidth;
+    for (const pane of others) {
+      pane.style.transition = "";
+      pane.style.transform = "";
+    }
+  }
+
+  followPointer(drag) {
+    const rect = drag.pane.getBoundingClientRect();
+    const tx = drag.startRect.left + drag.lastX - drag.startX - rect.left + drag.tx;
+    const ty = drag.startRect.top + drag.lastY - drag.startY - rect.top + drag.ty;
+    drag.tx = tx;
+    drag.ty = ty;
+    drag.pane.style.transform = `translate(${tx}px, ${ty}px)`;
   }
 
   // dropTarget answers where the pointer wants the pane: inside a column at a
@@ -601,9 +635,11 @@ class TerminalSplit extends HTMLElement {
     else next[target.column].splice(target.row, 0, drag.pane);
     const cols = next.filter((column) => column.length > 0);
     const signature = signatureOf(cols);
-    if (signature === drag.applied) return;
-    drag.applied = signature;
-    this.applyColumns(cols);
+    if (signature !== drag.applied) {
+      drag.applied = signature;
+      this.previewColumns(cols, drag.pane);
+    }
+    this.followPointer(drag);
   }
 
   onPointerUp(event) {
@@ -616,6 +652,7 @@ class TerminalSplit extends HTMLElement {
     }
     this.suppressClick = true;
     this.clearDragMarks(drag);
+    drag.pane.style.transform = "";
     if (drag.applied !== drag.signature) {
       const flat = this.columns().flat();
       postJSON("/terminal-tabs/group", {
@@ -632,8 +669,10 @@ class TerminalSplit extends HTMLElement {
     const drag = this.drag;
     this.drag = null;
     if (!drag || !drag.active) return;
+    this.previewColumns(drag.columns, drag.pane);
+    this.followPointer(drag);
     this.clearDragMarks(drag);
-    this.applyColumns(drag.columns);
+    drag.pane.style.transform = "";
   }
 
   clearDragMarks(drag) {
