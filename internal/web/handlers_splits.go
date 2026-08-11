@@ -22,6 +22,7 @@ type sessionRef struct {
 	Group       string
 	GroupPos    int
 	GroupName   string
+	GroupCol    int
 }
 
 // terminalSessions indexes every live coder and shell by identifier.
@@ -35,6 +36,7 @@ func (s *Server) terminalSessions() map[string]sessionRef {
 				Group:       r.TabGroup,
 				GroupPos:    r.TabGroupPos,
 				GroupName:   r.TabGroupName,
+				GroupCol:    r.TabGroupCol,
 			}
 		}
 	}
@@ -45,6 +47,7 @@ func (s *Server) terminalSessions() map[string]sessionRef {
 			Group:       sh.TabGroup,
 			GroupPos:    sh.TabGroupPos,
 			GroupName:   sh.TabGroupName,
+			GroupCol:    sh.TabGroupCol,
 		}
 	}
 	return refs
@@ -124,8 +127,9 @@ func (s *Server) handleSplitAttach(c *gin.Context) {
 	groupName := groupLabel(members)
 	page := s.page(c, pageTitle(groupName, projectName), "projects")
 	page.HasTabStrip = true
+	cols, rows, cells := splitLayout(members)
 	rendered := make([]render.SplitMember, 0, len(members))
-	for _, m := range members {
+	for i, m := range members {
 		base := m.URL
 		sm := render.SplitMember{
 			ID:            m.ID,
@@ -138,6 +142,10 @@ func (s *Server) handleSplitAttach(c *gin.Context) {
 			ResizeURL:     base + "/resize",
 			InputURL:      base + "/input",
 			ScrollHistory: m.Kind == "shell",
+			Col:           cells[i].Col,
+			Row:           cells[i].Row,
+			RowSpan:       cells[i].RowSpan,
+			Order:         cells[i].Order,
 		}
 		if m.Kind == "coder" {
 			if co, running, err := s.resolveRunning(m.ID); err == nil {
@@ -161,11 +169,114 @@ func (s *Server) handleSplitAttach(c *gin.Context) {
 		Focus:         focus,
 		FocusExplicit: focusValid,
 		Members:       rendered,
+		Cols:          cols,
+		Rows:          rows,
 	})
+}
+
+// splitTarget is what a create route carries when the create was started from
+// a split view. It rides the GET query into the form and back out through the
+// POST the way `return` does, so one request creates the terminal and puts it
+// into the split; nothing ever renders a half done split.
+//
+// A column has no id of its own and its index is not stable state (a member
+// without @dc_tab_gcol renders as a column of its own), so the target column
+// is named by a member of it. Empty means a column of its own at the right
+// edge, which is what a split wide entry asks for.
+type splitTarget struct {
+	Group  string
+	Column string
+}
+
+// splitTargetFromRequest reads the target out of a form post, falling back to
+// the query so a GET rendered form and the POST behind it read the same.
+func splitTargetFromRequest(c *gin.Context) splitTarget {
+	group := c.PostForm("group")
+	if group == "" {
+		group = c.Query("group")
+	}
+	column := c.PostForm("column")
+	if column == "" {
+		column = c.Query("column")
+	}
+	return splitTarget{Group: strings.TrimSpace(group), Column: strings.TrimSpace(column)}
+}
+
+// splitTargetMembers resolves the target's live members, empty when the group
+// is gone or no longer folds.
+func (s *Server) splitTargetMembers(target splitTarget) []render.TerminalTab {
+	gid, err := terminal.ValidateIdentifier(target.Group)
+	if err != nil {
+		return nil
+	}
+	members := s.groupMembers(gid)
+	if len(members) < 2 {
+		return nil
+	}
+	return members
+}
+
+// joinSplit puts a freshly created session into a split view: last in the
+// group's order and in the column the target names. It touches the new session
+// alone and renumbers nobody — @dc_tab_gpos is the group's highest plus one,
+// and the columns stand in the members' order, not by their index.
+//
+// A group that vanished between the form and the POST is no error: the
+// terminal is created and lands on its own page, a layout wish must never fail
+// a create. A write that fails is reported to the caller, which leaves the
+// session running and ungrouped rather than discarding it.
+func (s *Server) joinSplit(id string, target splitTarget) error {
+	members := s.splitTargetMembers(target)
+	if len(members) == 0 {
+		return nil
+	}
+	refs := s.terminalSessions()
+	ref, ok := refs[id]
+	if !ok {
+		return nil
+	}
+	pos, maxCol, gname := 0, 0, ""
+	for _, m := range members {
+		if m.GroupPos > pos {
+			pos = m.GroupPos
+		}
+		if m.GroupCol > maxCol {
+			maxCol = m.GroupCol
+		}
+		if gname == "" {
+			gname = strings.TrimSpace(m.GroupName)
+		}
+	}
+	client := tmux.New()
+	column := maxCol + 1
+	for _, m := range members {
+		if m.ID != target.Column {
+			continue
+		}
+		column = m.GroupCol
+		if column == 0 {
+			// That column was never written down (a split that was only ever
+			// dragged together carries no columns at all). Give the source
+			// pane a fresh index so the new pane can name the same one; it
+			// moves nobody, the columns stand in the members' order.
+			column = maxCol + 1
+			if err := client.SetTabGroupColumn(refs[m.ID].TmuxSession, column); err != nil {
+				return err
+			}
+		}
+		break
+	}
+	return client.SetTabGroupEntry(ref.TmuxSession, members[0].Group, pos+1, column, gname)
 }
 
 type groupRequest struct {
 	IDs []string `json:"ids"`
+	// Cols is the column layout, one entry per posted id (0 puts that member
+	// in a column of its own). It is optional on purpose: the strip drag, the
+	// quick nav drag and the group route's other callers say nothing about
+	// columns, and what they say nothing about keeps the columns it has. Only
+	// the split page's pane drag posts it.
+	Cols []int `json:"cols"`
 }
 
 // handleTerminalTabsGroup creates or extends a split view group: the posted
@@ -186,14 +297,20 @@ func (s *Server) handleTerminalTabsGroup(c *gin.Context) {
 	refs := s.terminalSessions()
 	seen := map[string]bool{}
 	var members []string
+	var cols []int
 	gid := ""
-	for _, id := range req.IDs {
+	for i, id := range req.IDs {
 		ref, ok := refs[id]
 		if !ok || seen[id] {
 			continue
 		}
 		seen[id] = true
 		members = append(members, id)
+		col := ref.GroupCol
+		if i < len(req.Cols) {
+			col = req.Cols[i]
+		}
+		cols = append(cols, col)
 		if gid == "" && ref.Group != "" {
 			gid = ref.Group
 		}
@@ -219,7 +336,10 @@ func (s *Server) handleTerminalTabsGroup(c *gin.Context) {
 			}
 			return leftover[i] < leftover[j]
 		})
-		members = append(members, leftover...)
+		for _, id := range leftover {
+			members = append(members, id)
+			cols = append(cols, refs[id].GroupCol)
+		}
 	}
 	if len(members) < 2 {
 		c.String(http.StatusBadRequest, "A split view needs at least two terminals.")
@@ -233,11 +353,12 @@ func (s *Server) handleTerminalTabsGroup(c *gin.Context) {
 		}
 		gid = key
 	}
-	names := make([]string, len(members))
+	cols = normalizeSplitCols(cols)
+	write := make([]tmux.TabGroupMember, len(members))
 	for i, id := range members {
-		names[i] = refs[id].TmuxSession
+		write[i] = tmux.TabGroupMember{Name: refs[id].TmuxSession, Col: cols[i]}
 	}
-	if err := tmux.New().SetTabGroup(names, gid, gname); err != nil {
+	if err := tmux.New().SetTabGroup(write, gid, gname); err != nil {
 		c.String(http.StatusInternalServerError, "Could not create the split view.")
 		return
 	}

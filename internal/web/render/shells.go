@@ -9,6 +9,12 @@ type ShellNewData struct {
 	Projects    []string
 	DefaultPath string
 	Return      string // where Cancel goes back to (the page you came from)
+	// SplitGroup and SplitColumn carry a split view the new shell joins right
+	// after it starts: the group id, and a member of the column it stacks into
+	// (empty for a column of its own at the right edge). They ride the query
+	// into the form and back out through the POST, like Return does.
+	SplitGroup  string
+	SplitColumn string
 }
 
 // ShellAttachData is the model for the shell attach page.

@@ -5,6 +5,7 @@ import { onServerEvent } from "@dc/events";
 import { applyFold } from "@dc/fold";
 import { ensureOk, getText, landingURL, postForm, postJSON } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
+import { splitCreateItems } from "@dc/split";
 import { notifyError, notifySuccess } from "@dc/toast";
 import { releaseCoder, steerCoder } from "@dc/steer";
 
@@ -225,6 +226,18 @@ class TerminalTabs extends HTMLElement {
             prefill: dataset.tabSteerPrefill || "",
           }).then(() => this.tryRefresh()),
         });
+    }
+    if (split) {
+      // The whole split is the context here, so the new pane opens a column of
+      // its own; the project follows the focused member, like the quick nav's
+      // project context row does.
+      items.push({ divider: true });
+      const focused = document.querySelector(`terminal-attach[active][split-group="${CSS.escape(dataset.tabId)}"]`)
+        ?.closest(".attach-split-pane");
+      items.push(...splitCreateItems({
+        group: dataset.tabId,
+        project: focused?.dataset.paneProject || dataset.tabProject || "",
+      }));
     }
     if (dataset.tabProject) {
       items.push({ divider: true });
@@ -1070,6 +1083,9 @@ class TerminalTabs extends HTMLElement {
     if (focused) path += "?focus=" + encodeURIComponent(focused.getAttribute("terminal-id") || "");
     getText(this.dataset.tabsUrl + "?path=" + encodeURIComponent(path))
       .then((html) => {
+        // A navigation may have swapped this strip away while the fragment was
+        // in flight; painting a torn down element throws on its gone signal.
+        if (!this.ac || !this.isConnected) return;
         const template = document.createElement("template");
         template.innerHTML = html;
         const fresh = template.content.querySelector("terminal-tabs");

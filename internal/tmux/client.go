@@ -29,6 +29,7 @@ type Pane struct {
 	TabGroup  string // @dc_tab_group option; non-empty puts the session into a split view group
 	TabGPos   string // @dc_tab_gpos option; the session's position inside its group, raw
 	TabGName  string // @dc_tab_gname option; the group's display name, duplicated on every member
+	TabGCol   string // @dc_tab_gcol option; the column the member's pane renders in, raw
 }
 
 // TabPosition parses the pane's tab strip position; 0 when unset or invalid,
@@ -45,6 +46,16 @@ func (p Pane) TabPosition() int {
 // when unset or invalid, which sorts the member after every positioned one.
 func (p Pane) TabGroupPosition() int {
 	v, err := strconv.Atoi(strings.TrimSpace(p.TabGPos))
+	if err != nil || v < 1 {
+		return 0
+	}
+	return v
+}
+
+// TabGroupColumn parses the column the member's pane renders in; 0 when unset
+// or invalid, which renders the member as a column of its own.
+func (p Pane) TabGroupColumn() int {
+	v, err := strconv.Atoi(strings.TrimSpace(p.TabGCol))
 	if err != nil || v < 1 {
 		return 0
 	}
@@ -244,52 +255,81 @@ func (c *Client) SetTabPosition(name string, pos int) error {
 }
 
 // Split view group membership lives in tmux like the tab order does: every
-// member session carries the group id, its position inside the group and the
-// group's display name as user options. Membership dies with the session, is
-// cross-device by construction and needs no state file. The name is duplicated
-// on every member with last-write-wins semantics.
+// member session carries the group id, its position inside the group, the
+// column it renders in and the group's display name as user options.
+// Membership dies with the session, is cross-device by construction and needs
+// no state file. The name is duplicated on every member with last-write-wins
+// semantics. The column is the only optional one: a member without it renders
+// as a column of its own, which is what every group looked like before the
+// grid layout existed.
 const (
 	tabGroupOption     = "@dc_tab_group"
 	tabGroupPosOption  = "@dc_tab_gpos"
 	tabGroupNameOption = "@dc_tab_gname"
+	tabGroupColOption  = "@dc_tab_gcol"
 )
 
-// SetTabGroup writes a split view group onto its member sessions, first name
-// is group position 1. The optional display name rides along when non-empty.
-// All assignments go into one tmux invocation.
-func (c *Client) SetTabGroup(names []string, group, groupName string) error {
-	if len(names) == 0 {
+// TabGroupMember is one session's place in a split view group: the tmux
+// session name and the column its pane renders in, 0 for a column of its own.
+type TabGroupMember struct {
+	Name string
+	Col  int
+}
+
+// SetTabGroup writes a split view group onto its member sessions, first member
+// is group position 1. The optional display name rides along when non-empty, a
+// column of 0 takes the column option off the session. All assignments go into
+// one tmux invocation.
+func (c *Client) SetTabGroup(members []TabGroupMember, group, groupName string) error {
+	if len(members) == 0 {
 		return nil
 	}
-	args := make([]string, 0, len(names)*16)
-	for i, name := range names {
+	args := make([]string, 0, len(members)*22)
+	for i, m := range members {
 		if i > 0 {
 			args = append(args, ";")
 		}
 		args = append(args,
-			"set-option", "-t", name, tabGroupOption, group, ";",
-			"set-option", "-t", name, tabGroupPosOption, strconv.Itoa(i+1))
+			"set-option", "-t", m.Name, tabGroupOption, group, ";",
+			"set-option", "-t", m.Name, tabGroupPosOption, strconv.Itoa(i+1), ";")
+		args = append(args, setTabGroupColArgs(m.Name, m.Col)...)
 		if groupName != "" {
-			args = append(args, ";", "set-option", "-t", name, tabGroupNameOption, groupName)
+			args = append(args, ";", "set-option", "-t", m.Name, tabGroupNameOption, groupName)
 		}
 	}
 	return clirun.Check("tmux", args...)
 }
 
-// SetTabGroupEntry re-applies one session's recorded group membership, used by
-// the startup terminal restore on resumed and recreated sessions.
-func (c *Client) SetTabGroupEntry(name, group string, pos int, groupName string) error {
+// SetTabGroupEntry writes one session's group membership: the startup terminal
+// restore re-applies a recorded one, the create-into-a-split path writes a
+// fresh one onto the session it just started.
+func (c *Client) SetTabGroupEntry(name, group string, pos, col int, groupName string) error {
 	if group == "" || pos < 1 {
 		return nil
 	}
 	args := []string{
 		"set-option", "-t", name, tabGroupOption, group, ";",
-		"set-option", "-t", name, tabGroupPosOption, strconv.Itoa(pos),
+		"set-option", "-t", name, tabGroupPosOption, strconv.Itoa(pos), ";",
 	}
+	args = append(args, setTabGroupColArgs(name, col)...)
 	if groupName != "" {
 		args = append(args, ";", "set-option", "-t", name, tabGroupNameOption, groupName)
 	}
 	return clirun.Check("tmux", args...)
+}
+
+// SetTabGroupColumn writes one member's column, used when a pane created into
+// a split names a column that was never written down.
+func (c *Client) SetTabGroupColumn(name string, col int) error {
+	return clirun.Check("tmux", setTabGroupColArgs(name, col)...)
+}
+
+// setTabGroupColArgs sets or unsets one session's column option.
+func setTabGroupColArgs(name string, col int) []string {
+	if col < 1 {
+		return []string{"set-option", "-u", "-t", name, tabGroupColOption}
+	}
+	return []string{"set-option", "-t", name, tabGroupColOption, strconv.Itoa(col)}
 }
 
 // ClearTabGroup removes the split view group options from the sessions, in one
@@ -298,7 +338,7 @@ func (c *Client) ClearTabGroup(names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
-	args := make([]string, 0, len(names)*16)
+	args := make([]string, 0, len(names)*20)
 	for i, name := range names {
 		if i > 0 {
 			args = append(args, ";")
@@ -306,6 +346,7 @@ func (c *Client) ClearTabGroup(names []string) error {
 		args = append(args,
 			"set-option", "-u", "-t", name, tabGroupOption, ";",
 			"set-option", "-u", "-t", name, tabGroupPosOption, ";",
+			"set-option", "-u", "-t", name, tabGroupColOption, ";",
 			"set-option", "-u", "-t", name, tabGroupNameOption)
 	}
 	return clirun.Check("tmux", args...)
@@ -422,7 +463,7 @@ func (c *Client) PasteLiteral(name, text string) error {
 // ListPanes returns the unique first-pane entries for every session.
 func (c *Client) ListPanes() ([]Pane, error) {
 	r := clirun.Run("tmux", "list-panes", "-a", "-F",
-		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}\t#{@dc_shell_dir}\t#{@dc_coder}\t#{@dc_coder_name}\t#{@dc_coder_dir}\t#{@dc_tab_pos}\t#{@dc_tab_group}\t#{@dc_tab_gpos}\t#{@dc_tab_gname}")
+		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}\t#{@dc_shell_dir}\t#{@dc_coder}\t#{@dc_coder_name}\t#{@dc_coder_dir}\t#{@dc_tab_pos}\t#{@dc_tab_group}\t#{@dc_tab_gpos}\t#{@dc_tab_gname}\t#{@dc_tab_gcol}")
 	if r.Err != nil && r.ExitCode != 0 {
 		if isNoServerError(r.Stderr) {
 			return nil, nil
@@ -452,12 +493,12 @@ func parsePanes(out string) []Pane {
 	var panes []Pane
 	for _, raw := range strings.Split(out, "\n") {
 		parts := strings.Split(strings.TrimRight(raw, "\n"), "\t")
-		if len(parts) != 14 {
+		if len(parts) != 15 {
 			continue
 		}
 		name, pid, created, win, pane, shellName, workdir := parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
 		coder, coderName, coderDir, tabPos := parts[7], parts[8], parts[9], parts[10]
-		tabGroup, tabGPos, tabGName := parts[11], parts[12], parts[13]
+		tabGroup, tabGPos, tabGName, tabGCol := parts[11], parts[12], parts[13], parts[14]
 		if win != "0" || pane != "0" || seen[name] {
 			continue
 		}
@@ -469,7 +510,7 @@ func parsePanes(out string) []Pane {
 			Name: name, PID: pid, StartedAt: created,
 			ShellName: shellName, Workdir: workdir,
 			Coder: coder, CoderName: coderName, CoderDir: coderDir,
-			TabPos: tabPos, TabGroup: tabGroup, TabGPos: tabGPos, TabGName: tabGName,
+			TabPos: tabPos, TabGroup: tabGroup, TabGPos: tabGPos, TabGName: tabGName, TabGCol: tabGCol,
 		})
 	}
 	sort.Slice(panes, func(i, j int) bool {

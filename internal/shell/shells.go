@@ -49,6 +49,7 @@ type Shell struct {
 	TabGroup     string // split view group id from @dc_tab_group, empty when ungrouped
 	TabGroupPos  int    // position inside the group from @dc_tab_gpos, 0 when unset
 	TabGroupName string // group display name from @dc_tab_gname, may be empty
+	TabGroupCol  int    // column inside the group from @dc_tab_gcol, 0 for a column of its own
 }
 
 // shellsCache memoises List for a short TTL so the repeated tmux pane scans
@@ -140,6 +141,7 @@ func (s *Shells) List() []Shell {
 			TabGroup:     strings.TrimSpace(p.TabGroup),
 			TabGroupPos:  p.TabGroupPosition(),
 			TabGroupName: strings.TrimSpace(p.TabGName),
+			TabGroupCol:  p.TabGroupColumn(),
 		})
 	}
 	s.listCache.put(out)

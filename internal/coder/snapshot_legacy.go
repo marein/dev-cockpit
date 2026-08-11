@@ -98,6 +98,7 @@ func (l *legacyScanner) match(p tmux.Pane) (Running, string, bool) {
 				TabGroup:     p.TabGroup,
 				TabGroupPos:  p.TabGroupPosition(),
 				TabGroupName: p.TabGName,
+				TabGroupCol:  p.TabGroupColumn(),
 			}, "", true
 		}
 		return Running{}, "", false
@@ -113,6 +114,7 @@ func (l *legacyScanner) match(p tmux.Pane) (Running, string, bool) {
 		TabGroup:     p.TabGroup,
 		TabGroupPos:  p.TabGroupPosition(),
 		TabGroupName: p.TabGName,
+		TabGroupCol:  p.TabGroupColumn(),
 	}, match.SessionID, true
 }
 

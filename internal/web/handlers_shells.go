@@ -18,15 +18,24 @@ func (s *Server) handleShellNew(c *gin.Context) {
 			defaultPath = p.Path
 		}
 	}
+	// A split scoped create opens this form prefilled and carries the group
+	// target through as hidden fields, like the coder create does.
+	target := splitTargetFromRequest(c)
 	c.HTML(http.StatusOK, "shells_new.gohtml", render.ShellNewData{
 		Page:        s.page(c, "New Shell", "projects"),
 		Projects:    s.projects.SelectablePaths(),
 		DefaultPath: defaultPath,
 		Return:      s.formReturn(c),
+		SplitGroup:  target.Group,
+		SplitColumn: target.Column,
 	})
 }
 
 func (s *Server) handleShellCreate(c *gin.Context) {
+	// A split scoped create carries its target through the form's hidden
+	// fields, like the coder create does; the project is the form's own field
+	// either way.
+	target := splitTargetFromRequest(c)
 	p, err := s.projects.Find(strings.TrimSpace(c.PostForm("project")))
 	if err != nil {
 		s.redirectWithFlash(c, "/shells/new", "", err.Error())
@@ -38,7 +47,14 @@ func (s *Server) handleShellCreate(c *gin.Context) {
 		return
 	}
 	s.styleSessionPane(id)
+	joinErr := s.joinSplit(id, target)
+	s.invalidateTerminals()
 	s.publishTerminals(s.projects.ProjectNameFor(p.Path))
+	if joinErr != nil {
+		// The shell runs either way; only the split view did not happen.
+		s.redirectWithFlash(c, "/shells/"+id, "", "The shell was started but could not join the split view.")
+		return
+	}
 	c.Redirect(http.StatusSeeOther, "/shells/"+id)
 }
 

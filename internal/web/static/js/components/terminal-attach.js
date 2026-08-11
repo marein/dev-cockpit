@@ -1258,6 +1258,31 @@ function initTerminalAttach(host) {
   let lastClientRows = rowsOverride;
   let measureElementObserver = null;
 
+  // A pane of a desktop split view takes its rows from the box it is given,
+  // like fullscreen and the editor's panel do: the rows setting is the
+  // column's height budget from here on, and stacked panes share it. On a
+  // coarse pointer the split shows one pane like a solo page, so the setting
+  // keeps applying there.
+  const splitPane = !embedded && interactiveInput && Boolean(host.closest("terminal-split"));
+  // The split container needs one terminal line in pixels to turn the rows
+  // setting into its height. Only a rendered terminal knows it, so every
+  // island reports it after a layout; the value is the font's, not this
+  // pane's, so whoever hears it first can size the whole page.
+  const reportCellHeight = () => {
+    const screen = terminalElement.querySelector(".xterm-screen");
+    if (!screen || term.rows < 1) return;
+    const cell = screen.getBoundingClientRect().height / term.rows;
+    if (!(cell > 0)) return;
+    // On the element as well as in the event: the islands upgrade before or
+    // after the split around them (every custom element is imported lazily),
+    // and whoever comes second has to be able to read what the first measured.
+    host.dataset.cellHeight = String(cell);
+    host.dispatchEvent(new CustomEvent("dc:terminal-metrics", {
+      bubbles: true,
+      detail: { id: terminalId, cell, fontSize: fontSizeOverride },
+    }));
+  };
+
   let fullscreen = !embedded && interactiveInput && get("dc-terminal-fullscreen", "") === "1";
   const fullscreenButtons = document.querySelectorAll("[data-terminal-fullscreen]");
   const paintFullscreen = () => {
@@ -1326,9 +1351,10 @@ function initTerminalAttach(host) {
   const resolveClientSize = async () => {
     term.options.fontSize = fontSizeOverride;
     await waitForLayout();
+    reportCellHeight();
     const dims = fitAddon.proposeDimensions();
     const cols = Math.max(2, (dims && dims.cols) ? dims.cols : lastClientCols || term.cols || 2);
-    const rows = (fullscreen || embedded)
+    const rows = (fullscreen || embedded || splitPane)
       ? Math.max(2, (dims && dims.rows) ? dims.rows : lastClientRows || DEFAULT_ROWS)
       : Math.max(2, rowsOverride || lastClientRows || DEFAULT_ROWS);
     lastClientCols = cols;
@@ -1633,12 +1659,16 @@ function initTerminalAttach(host) {
   let observedHeight = 0;
   const widthObserver = new ResizeObserver(() => {
     const width = host.clientWidth;
-    if (embedded) {
+    if (embedded || splitPane) {
+      // Both take their rows from their box, so the height is as much a
+      // resize as the width is. The mount's own first measurement is not one:
+      // an embedded island starts on it, a split pane already resized itself.
       const height = host.clientHeight;
       if (width === observedWidth && height === observedHeight) return;
+      const initial = observedWidth === 0 && observedHeight === 0;
       observedWidth = width;
       observedHeight = height;
-      if (width > 0) scheduleResize();
+      if (width > 0 && !(initial && splitPane)) scheduleResize();
       return;
     }
     if (width === observedWidth) return;

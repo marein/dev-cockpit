@@ -57,9 +57,9 @@
   </div>
   <div class="attach-frame min-w-0 w-100">
     {{template "terminal_tabs.gohtml" .}}
-    <terminal-split class="attach-split min-w-0 w-100">
+    <terminal-split class="attach-split min-w-0 w-100" style="--dc-split-cols: {{.Cols}}; --dc-split-rows: {{.Rows}};">
       {{range .Members}}
-      <div class="attach-split-pane min-w-0" data-pane-id="{{.ID}}" data-pane-kind="{{.Kind}}" data-pane-name="{{.Name}}" data-pane-project="{{.Project}}"{{if .Coder}}{{with index $.SteerPrefill .ID}} data-pane-steer-prefill="{{.}}"{{end}}{{end}}>
+      <div class="attach-split-pane min-w-0" data-pane-id="{{.ID}}" data-pane-kind="{{.Kind}}" data-pane-name="{{.Name}}" data-pane-project="{{.Project}}" data-pane-col="{{.Col}}" style="order: {{.Order}}; grid-column: {{.Col}}; grid-row: {{.Row}} / span {{.RowSpan}};"{{if .Coder}}{{with index $.SteerPrefill .ID}} data-pane-steer-prefill="{{.}}"{{end}}{{end}}>
         <div class="attach-split-head" data-pane-head title="Drag to reorder, right click for actions">
           {{if .Coder}}<dc-steered-mark class="d-inline-flex" src="/coders/{{.ID}}/steered">
             {{- template "steered_icon.gohtml" (dict "ID" .ID "Coder" .Coder "Steered" (index $.Steered .ID)) -}}

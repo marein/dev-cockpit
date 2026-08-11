@@ -1,13 +1,29 @@
 const L = require("./lib");
 const { assert, sleep, confirmSwal } = L;
 
-// Split view: several live terminals grouped into one tab, rendered side by
-// side on GET /splits/:id. Group membership lives in tmux user options
-// (@dc_tab_group/@dc_tab_gpos/@dc_tab_gname), so it is cross-device and dies
-// with the sessions. Routes: GET /splits/:id (?focus=<id> renders that pane
-// active; member solo URLs 303-redirect here), POST /terminal-tabs/group
-// (also persists the pane order), POST /terminal-tabs/ungroup, POST
-// /terminal-tabs/group/name (empty name removes it). Custom elements: one
+// Split view: several live terminals grouped into one tab, rendered in columns
+// of stacked panes on GET /splits/:id. Group membership lives in tmux user
+// options (@dc_tab_group/@dc_tab_gpos/@dc_tab_gname/@dc_tab_gcol), so it is
+// cross-device and dies with the sessions. Routes: GET /splits/:id (?focus=<id>
+// renders that pane active; member solo URLs 303-redirect here), POST
+// /terminal-tabs/group (also persists the pane order and, optionally, a `cols`
+// array parallel to `ids`), POST /terminal-tabs/ungroup, POST
+// /terminal-tabs/group/name (empty name removes it).
+// The columns: @dc_tab_gcol says which members share one, a member without it
+// is a column of its own (which is what every group was before), and a column
+// stands where its first member stands in the flat @dc_tab_gpos order. The
+// panes are flat siblings of one CSS grid, so a column change is a style change
+// and never a DOM move: the streams stay connected. The pane head drag is
+// two-dimensional here — sideways joins another column, up and down sorts
+// inside one, and only a drop on an outer edge opens a column, which is also
+// how two side by side panes swap places. The rows setting is the height of the
+// page from here on: a column shows about that many lines in total, stacked
+// panes share them minus their heads, and stacking never changes the page
+// height. Creating into a split rides the create routes themselves (`group`
+// plus `column`, a member of the target column, through the query and the
+// form): the pane head's menu creates into that pane's column, the group tab's
+// menu into a column of its own at the right edge, and the strip's + menu stays
+// a standalone create everywhere. Custom elements: one
 // terminal-attach/terminal-input pair per member paired via terminal-id; the
 // island touched last carries `active` and receives every untargeted input
 // (contextual per-member footer, prompt dialog); typing into a pane's xterm
@@ -32,7 +48,11 @@ const { assert, sleep, confirmSwal } = L;
 // (member sort, remove, group with the same dwell drag as the strip).
 // Gotchas: drag-to-group dwell must be waited out with the pointer still
 // down; the quick nav refreshes its list shortly after opening (settle
-// ~800ms before measuring); shells need a moment before bash echoes input.
+// ~800ms before measuring); shells need a moment before bash echoes input;
+// the floating quick nav only exists below lg (the assistant's corner button
+// replaces it from 992px up), so its checks run in a 900px window; a member
+// of a split has no tab of its own in the strip, so the shared delete helper
+// finds nothing to click and a member is closed through its pane head.
 
 L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
   const tag = `split-${Date.now().toString(36)}`;
@@ -83,6 +103,20 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await sleep(200);
     }
     throw new Error(`no stable box for ${selector}`);
+  };
+
+  // The floating quick nav is the primary navigation below lg only: from 992px
+  // up the assistant's corner button replaces it, so its checks need a window
+  // that still carries it. Fine pointer either way, the drags stay mouse driven.
+  const withQuickNav = async (fn) => {
+    await page.setViewportSize({ width: 900, height: 900 });
+    await sleep(500);
+    try {
+      return await fn();
+    } finally {
+      await page.setViewportSize({ width: 1360, height: 900 });
+      await sleep(500);
+    }
   };
 
   try {
@@ -358,44 +392,187 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 15000 });
     });
 
-    await run("dragging a pane head reorders the split and persists via gpos", async () => {
-      const dragPane = async (fromId, toRatio) => {
-        const head = await steadyBox(page, `.attach-split-pane[data-pane-id="${fromId}"] [data-pane-head]`);
-        const container = await steadyBox(page, "terminal-split");
-        const startX = head.x + head.width / 2;
-        const y = head.y + head.height / 2;
-        const endX = container.x + container.width * toRatio;
-        await page.mouse.move(startX, y);
-        await page.mouse.down();
-        for (let i = 1; i <= 10; i++) {
-          await page.mouse.move(startX + (endX - startX) * (i / 10), y, { steps: 2 });
-          await sleep(25);
-        }
-        await page.mouse.up();
-      };
-      const membersAre = (expected) => page.waitForFunction(
-        (want) => document.querySelector("terminal-tabs .terminal-tab-split")?.getAttribute("data-tab-members") === want,
-        expected,
-        { timeout: 8000 },
-      );
-      await dragPane(ids[0], 0.75);
+    // The pane head drag is two-dimensional since the grid layout: sideways
+    // into another column joins it, up and down sorts inside it, and only a
+    // drop on an outer edge opens a column of its own — which is also how two
+    // side by side panes swap places.
+    const dragPane = async (fromId, xRatio, yRatio = null) => {
+      const head = await steadyBox(page, `.attach-split-pane[data-pane-id="${fromId}"] [data-pane-head]`);
+      const container = await steadyBox(page, "terminal-split");
+      const startX = head.x + head.width / 2;
+      const startY = head.y + head.height / 2;
+      const endX = container.x + container.width * xRatio;
+      const endY = yRatio === null ? startY : container.y + container.height * yRatio;
+      await page.mouse.move(startX, startY);
+      await page.mouse.down();
+      for (let i = 1; i <= 10; i++) {
+        await page.mouse.move(startX + (endX - startX) * (i / 10), startY + (endY - startY) * (i / 10), { steps: 2 });
+        await sleep(25);
+      }
+      await page.mouse.up();
+    };
+    const membersAre = (expected) => page.waitForFunction(
+      (want) => document.querySelector("terminal-tabs .terminal-tab-split")?.getAttribute("data-tab-members") === want,
+      expected,
+      { timeout: 8000 },
+    );
+    // The rendered columns, left to right and top to bottom. The flat order
+    // (@dc_tab_gpos) is a different reading of the same panes, so both are
+    // measured where they matter.
+    const columnsView = () => page.$$eval(".attach-split-pane", (panes) => {
+      const byCol = new Map();
+      for (const pane of panes) {
+        const col = Number(pane.dataset.paneCol) || 0;
+        const row = parseInt(pane.style.gridRow, 10) || 1;
+        if (!byCol.has(col)) byCol.set(col, []);
+        byCol.get(col).push({ id: pane.dataset.paneId, row });
+      }
+      return [...byCol.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, items]) => items.sort((a, b) => a.row - b.row).map((item) => item.id));
+    });
+    // The layout as the page shows it: the panes in their flat order with the
+    // column each one renders in.
+    const layout = () => page.$$eval(".attach-split-pane", (panes) => panes
+      .map((p) => ({ id: p.dataset.paneId, col: Number(p.dataset.paneCol) || 0, order: Number(p.style.order) || 0 }))
+      .sort((a, b) => a.order - b.order)
+      .map((p) => `${p.id}:${p.col}`));
+
+    await run("dragging a pane head onto an outer edge reorders the columns and persists via gpos", async () => {
+      await dragPane(ids[0], 0.98);
       await membersAre(`${ids[1]} ${ids[0]}`);
       const firstVisual = await page.$$eval(".attach-split-pane", (panes) => panes
         .map((p) => ({ id: p.dataset.paneId, order: Number(p.style.order) || 0 }))
         .sort((a, b) => a.order - b.order)[0].id);
       assert(firstVisual === ids[1], `left pane after reorder: ${firstVisual}`);
-      await dragPane(ids[0], 0.2);
+      await dragPane(ids[0], 0.02);
       await membersAre(`${ids[0]} ${ids[1]}`);
     });
 
-    await run("quick nav: the group is a block, dragging a member reorders the panes", async () => {
+    // ---- The column grid ----------------------------------------------------
+    // A split arranges its panes in columns of stacked rows: @dc_tab_gcol says
+    // which members share a column, @dc_tab_gpos stays the one global order and
+    // stacks them inside it. The panes stay flat siblings of one CSS grid, so a
+    // column change is a style change and never a DOM move.
+    let thirdUrl = null;
+    let thirdId = null;
+    let stackedId = null;
+    const splitHeight = () => page.$eval("terminal-split", (el) => Math.round(el.getBoundingClientRect().height));
+    const screenHeights = () => page.$$eval(".attach-split-pane", (panes) => Object.fromEntries(panes.map((p) => [
+      p.dataset.paneId,
+      Math.round(p.querySelector(".xterm-screen")?.getBoundingClientRect().height || 0),
+    ])));
+
+    await run("a pane dragged into another column stacks there, and the rows budget keeps the page height", async () => {
+      thirdUrl = await L.createShell(page, project);
+      shellUrls.push(thirdUrl);
+      thirdId = new URL(thirdUrl).pathname.split("/").pop();
+      await page.goto(`${L.BASE}/splits/${gid}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(tabSel(thirdId), { state: "attached", timeout: 8000 });
+      await groupVia([ids[0], ids[1], thirdId]);
+      await page.waitForFunction(
+        () => document.querySelectorAll("terminal-attach[terminal-id]").length === 3,
+        undefined,
+        { timeout: 15000 },
+      );
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 20000 });
+      await sleep(2000);
+      const before = await layout();
+      assert(
+        JSON.stringify(before) === JSON.stringify([`${ids[0]}:1`, `${ids[1]}:2`, `${thirdId}:3`]),
+        `three panes are three columns: ${before}`,
+      );
+      const heightBefore = await splitHeight();
+      const tallBefore = (await screenHeights())[ids[0]];
+      // Sideways into the first column, below its pane: joins that column.
+      await dragPane(thirdId, 0.15, 0.75);
+      await membersAre(`${ids[0]} ${thirdId} ${ids[1]}`);
+      const after = await layout();
+      assert(
+        JSON.stringify(after) === JSON.stringify([`${ids[0]}:1`, `${thirdId}:1`, `${ids[1]}:2`]),
+        `two stacked left, one right: ${after}`,
+      );
+      const cols = await page.$eval("terminal-split", (el) => el.style.getPropertyValue("--dc-split-cols").trim());
+      assert(cols === "2", `grid columns after stacking: ${cols}`);
+      await sleep(1500);
+      const heightAfter = await splitHeight();
+      assert(Math.abs(heightAfter - heightBefore) <= 2, `page height moved from ${heightBefore} to ${heightAfter}`);
+      // The column's budget is shared: the two stacked terminals fit into the
+      // height the single one had, minus the second pane head.
+      const screens = await screenHeights();
+      assert(
+        screens[thirdId] > 0 && screens[thirdId] < tallBefore * 0.75 && screens[ids[1]] > tallBefore * 0.9,
+        `stacked ${screens[thirdId]} / ${screens[ids[0]]} against the full column ${screens[ids[1]]} (was ${tallBefore})`,
+      );
+      return `${heightBefore}px stays ${heightAfter}px`;
+    });
+
+    await run("the column layout is group state: the strip carries it and a reload renders the same grid", async () => {
+      const stripCols = await page.getAttribute(groupTabSel, "data-tab-member-cols");
+      assert(stripCols === "1 1 2", `strip member columns: ${stripCols}`);
+      await page.goto(`${L.BASE}/splits/${gid}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 20000 });
+      const reloaded = await layout();
+      assert(
+        JSON.stringify(reloaded) === JSON.stringify([`${ids[0]}:1`, `${thirdId}:1`, `${ids[1]}:2`]),
+        `layout after reload: ${reloaded}`,
+      );
+      const spans = await page.$$eval(".attach-split-pane", (panes) => Object.fromEntries(panes.map((p) => [p.dataset.paneId, p.style.gridRow])));
+      assert(spans[ids[1]] === "1 / span 2", `the single pane column spans its whole height: ${spans[ids[1]]}`);
+      assert(spans[ids[0]] === "1 / span 1" && spans[thirdId] === "2 / span 1", `stacked rows: ${JSON.stringify(spans)}`);
+    });
+
+    await run("mobile keeps one pane per page whatever the columns are", async () => {
+      const mp = await mobilePage();
+      await mp.goto(`${L.BASE}/splits/${gid}?focus=${thirdId}`, { waitUntil: "domcontentloaded" });
+      await mp.waitForSelector(`terminal-attach[terminal-id="${thirdId}"] .xterm-screen canvas`, { timeout: 20000 });
+      const visible = await mp.$$eval(".attach-split-pane", (panes) => panes.filter((p) => p.offsetParent !== null).length);
+      assert(visible === 1, `visible panes on mobile with a stacked column: ${visible}`);
+      const flat = await mp.$$eval("terminal-tabs .terminal-tab-split [data-member-url]", (els) => els.map((el) => el.getAttribute("data-member-url")));
+      assert(
+        JSON.stringify(flat) === JSON.stringify([ids[0], thirdId, ids[1]].map((id) => `/splits/${gid}?focus=${id}`)),
+        `the swipe order stays flat and follows the columns: ${flat}`,
+      );
+      await mp.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
+    });
+
+    await run("a drop on the outer edge opens a column of its own again", async () => {
+      await page.goto(`${L.BASE}/splits/${gid}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 20000 });
+      await sleep(1200);
+      await dragPane(thirdId, 0.99);
+      await membersAre(`${ids[0]} ${ids[1]} ${thirdId}`);
+      const after = await layout();
+      assert(
+        JSON.stringify(after) === JSON.stringify([`${ids[0]}:1`, `${ids[1]}:2`, `${thirdId}:3`]),
+        `three columns again: ${after}`,
+      );
+      // Close it through its own pane head: a member has no tab of its own in
+      // the strip, so the shared delete helper would find nothing to click.
+      await page.click(`${paneSel(thirdId)} .attach-split-remove`);
+      await confirmSwal(page);
+      await page.waitForFunction(
+        () => document.querySelectorAll("terminal-attach[terminal-id]").length === 2,
+        undefined,
+        { timeout: 15000 },
+      );
+      shellUrls.splice(shellUrls.indexOf(thirdUrl), 1);
+      thirdUrl = null;
+      await sleep(800);
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 20000 });
+    });
+
+    await run("quick nav: the group is a block, dragging a member reorders the panes", async () => withQuickNav(async () => {
       const memberRowSel = (index) => `[data-qn-block="${gid}"] [data-qn-group-member]:nth-of-type(${index + 2})`;
+      const membersNow = () => page.getAttribute(groupTabSel, "data-tab-members");
       const membersAre = async (expected) => {
         await page.waitForFunction(
           (want) => document.querySelector("terminal-tabs .terminal-tab-split")?.getAttribute("data-tab-members") === want,
           expected,
           { timeout: 8000 },
-        );
+        ).catch(async () => {
+          throw new Error(`members are "${await membersNow()}", want "${expected}"`);
+        });
         await sleep(900);
       };
       const dragMember = async (fromIndex, toIndex) => {
@@ -414,13 +591,14 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await page.click(".quicknav-toggle");
       await page.waitForSelector(`[data-qn-block="${gid}"]`, { state: "visible", timeout: 8000 });
       await sleep(800);
+      const start = (await membersNow()).split(" ");
       await dragMember(0, 1);
-      await membersAre(`${ids[1]} ${ids[0]}`);
+      await membersAre(`${start[1]} ${start[0]}`);
       await dragMember(1, 0);
-      await membersAre(`${ids[0]} ${ids[1]}`);
+      await membersAre(start.join(" "));
       await page.click(".quicknav-toggle");
       await sleep(400);
-    });
+    }));
 
     await run("a pane head context menu offers pane actions and renames the shell in place", async () => {
       await page.click(`.attach-split-pane[data-pane-id="${ids[1]}"] [data-pane-head]`, { button: "right" });
@@ -477,6 +655,199 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
         },
         undefined,
         { timeout: 8000 },
+      );
+    });
+
+    // ---- Creating a terminal into a split -----------------------------------
+    // The pane head's menu creates into that pane's column, the strip's group
+    // tab menu into a column of its own at the right edge. Both ride the
+    // existing create routes: `group` and `column` (a member of the target
+    // column) travel through the query and the form like `return` does, so one
+    // request creates the terminal and puts it into the split.
+    await run("'New shell here' from a pane head opens the form prefilled and lands in that pane's column", async () => {
+      await page.goto(`${L.BASE}/splits/${gid}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 20000 });
+      await sleep(1200);
+      const item = await contextItem(`.attach-split-pane[data-pane-id="${ids[0]}"] [data-pane-head]`, "New shell here");
+      await item.click();
+      await page.waitForURL(/\/shells\/new/, { timeout: 10000 });
+      const query = new URL(page.url()).searchParams;
+      assert(query.get("group") === gid && query.get("column") === ids[0], `the form carries the target: ${page.url()}`);
+      const fields = await page.$$eval("form input[type=hidden]", (els) => Object.fromEntries(els.map((e) => [e.name, e.value])));
+      assert(fields.group === gid && fields.column === ids[0], `hidden fields: ${JSON.stringify(fields)}`);
+      const selected = await page.$eval('select[name="project"]', (el) => el.value.split("/").pop());
+      assert(selected === project, `the project select stands on the pane's project: ${selected}`);
+      // The field stays editable, which project the new pane works in is the
+      // person's decision.
+      const editable = await page.$eval('select[name="project"]', (el) => !el.disabled && el.offsetParent !== null);
+      assert(editable, "the project select is not editable");
+      await page.locator('form:has(select[name="project"]) button[type="submit"]').first().click();
+      await page.waitForURL(new RegExp(`/splits/${gid}\\?focus=`), { timeout: 20000 });
+      const fresh = new URL(page.url()).searchParams.get("focus");
+      stackedId = fresh;
+      shellUrls.push(`${L.BASE}/shells/${fresh}`);
+      await page.waitForFunction(
+        () => document.querySelectorAll("terminal-attach[terminal-id]").length === 3,
+        undefined,
+        { timeout: 20000 },
+      );
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 20000 });
+      await sleep(1200);
+      const columns = await columnsView();
+      assert(
+        JSON.stringify(columns) === JSON.stringify([[ids[0], fresh], [ids[1]]]),
+        `the new pane stacks at the bottom of the pane's column: ${JSON.stringify(columns)}`,
+      );
+      // Its @dc_tab_gpos is the group's highest plus one, so it is last in the
+      // flat order the strip, the quick nav and the mobile swipe walk — which
+      // can differ from reading the columns left to right.
+      const members = await page.getAttribute(groupTabSel, "data-tab-members");
+      assert(members === `${ids[0]} ${ids[1]} ${fresh}`, `members after the create: ${members}`);
+      const active = await page.getAttribute("terminal-attach[active]", "terminal-id");
+      assert(active === fresh, `the new pane is the focused one: ${active}`);
+      // The keyboard steps the visual order, columns left to right and top to
+      // bottom, straight from the server render: the new pane sits between
+      // its column neighbour and the next column even though the flat member
+      // order lists it last.
+      const stepping = await layout();
+      assert(
+        JSON.stringify(stepping) === JSON.stringify([`${ids[0]}:1`, `${fresh}:1`, `${ids[1]}:2`]),
+        `pane order for the keyboard: ${stepping}`,
+      );
+      await page.keyboard.press("Control+Shift+ArrowLeft");
+      await page.waitForFunction(
+        (id) => document.querySelector("terminal-attach[active]")?.getAttribute("terminal-id") === id,
+        ids[0],
+        { timeout: 4000 },
+      );
+      await page.keyboard.press("Control+Shift+ArrowRight");
+      await page.waitForFunction(
+        (id) => document.querySelector("terminal-attach[active]")?.getAttribute("terminal-id") === id,
+        fresh,
+        { timeout: 4000 },
+      );
+    });
+
+    await run("'New coder here' from the group tab opens the form prefilled and carries the target through it", async () => {
+      const item = await contextItem(groupTabSel, "New coder here");
+      await item.click();
+      await page.waitForURL(/\/coders\/new/, { timeout: 10000 });
+      const query = new URL(page.url()).searchParams;
+      assert(query.get("group") === gid, `the form carries the split: ${page.url()}`);
+      assert(!query.get("column"), `a split wide create names no column: ${page.url()}`);
+      assert(query.get("project") === project, `the project is prefilled: ${query.get("project")}`);
+      const fields = await page.$$eval("form input[type=hidden]", (els) => Object.fromEntries(els.map((e) => [e.name, e.value])));
+      assert(fields.group === gid, `hidden group field: ${JSON.stringify(fields)}`);
+      assert(fields.column === "", `hidden column field: ${JSON.stringify(fields)}`);
+      const selected = await page.$eval('select[name="project"]', (el) => el.value.split("/").pop());
+      assert(selected === project, `the project select stands on the source project: ${selected}`);
+      // The field stays editable: which project the new pane works in is the
+      // person's decision, so nothing here is disabled or hidden.
+      const editable = await page.$eval('select[name="project"]', (el) => !el.disabled && el.offsetParent !== null);
+      assert(editable, "the project select is not editable");
+      // Send the form: the hidden fields carry the target through the POST, so
+      // the coder starts and joins the split in one request.
+      const form = page.locator('form:has(select[name="agent"])').first();
+      await form.locator('input[name="name"]').fill(`sc-${tag.slice(-5)}`);
+      await form.locator('button[type="submit"]').first().click();
+      await page.waitForURL(new RegExp(`/splits/${gid}\\?focus=`), { timeout: 25000 });
+      await page.waitForFunction(
+        () => document.querySelectorAll("terminal-attach[terminal-id]").length === 4,
+        undefined,
+        { timeout: 20000 },
+      );
+      await sleep(1500);
+      const coderId = new URL(page.url()).searchParams.get("focus");
+      const columns = await columnsView();
+      assert(
+        JSON.stringify(columns) === JSON.stringify([[ids[0], stackedId], [ids[1]], [coderId]]),
+        `the coder joined as a column of its own at the right edge: ${JSON.stringify(columns)}`,
+      );
+      await page.click(`.attach-split-pane[data-pane-id="${coderId}"] .attach-split-remove`);
+      await confirmSwal(page);
+      await page.waitForFunction(
+        () => document.querySelectorAll("terminal-attach[terminal-id]").length === 3,
+        undefined,
+        { timeout: 20000 },
+      );
+      // The coder was stopped, not dropped: take its conversation with it.
+      await page.evaluate(async (id) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/coders/${id}/delete`, { method: "POST", headers: { "X-CSRF-Token": token, Accept: "application/json" } });
+      }, coderId);
+      await sleep(800);
+    });
+
+    // A layout wish must never fail a create: the split may be gone by the
+    // time the form comes back, and the terminal is what was asked for.
+    await run("a create for a split that is gone still starts the terminal and lands on its own page", async () => {
+      const projectDir = await L.projectPath(page, project);
+      const path = await page.evaluate(async ({ projectDir, group }) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const response = await fetch("/shells/new", {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ project: projectDir, group }).toString(),
+        });
+        return new URL(response.url).pathname;
+      }, { projectDir, group: "11111111-2222-3333-4444-555555555555" });
+      assert(/^\/shells\/[0-9a-f-]+$/.test(path), `landed on ${path}`);
+      const orphan = path.split("/").pop();
+      await page.evaluate(async (id) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/shells/${id}/delete`, { method: "POST", headers: { "X-CSRF-Token": token, Accept: "application/json" } });
+      }, orphan);
+      await sleep(800);
+      await page.goto(`${L.BASE}/splits/${gid}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 20000 });
+    });
+
+    await run("a split wide create opens a column of its own at the right edge", async () => {
+      const item = await contextItem(groupTabSel, "New shell here");
+      await item.click();
+      await page.waitForURL(/\/shells\/new/, { timeout: 10000 });
+      const query = new URL(page.url()).searchParams;
+      assert(query.get("group") === gid && !query.get("column"), `a split wide create names no column: ${page.url()}`);
+      await page.locator('form:has(select[name="project"]) button[type="submit"]').first().click();
+      await page.waitForURL(new RegExp(`/splits/${gid}\\?focus=`), { timeout: 20000 });
+      const fresh = new URL(page.url()).searchParams.get("focus");
+      shellUrls.push(`${L.BASE}/shells/${fresh}`);
+      await page.waitForFunction(
+        () => document.querySelectorAll("terminal-attach[terminal-id]").length === 4,
+        undefined,
+        { timeout: 20000 },
+      );
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 20000 });
+      await sleep(1200);
+      const columns = await columnsView();
+      assert(
+        JSON.stringify(columns) === JSON.stringify([[ids[0], stackedId], [ids[1]], [fresh]]),
+        `the new pane is a column of its own at the right edge: ${JSON.stringify(columns)}`,
+      );
+      // Clean both extra panes out again through their own pane heads.
+      for (const id of [stackedId, fresh]) {
+        await page.click(`.attach-split-pane[data-pane-id="${id}"] .attach-split-remove`);
+        await confirmSwal(page);
+        await sleep(1500);
+        shellUrls.splice(shellUrls.indexOf(`${L.BASE}/shells/${id}`), 1);
+      }
+      await page.waitForFunction(
+        () => document.querySelectorAll("terminal-attach[terminal-id]").length === 2,
+        undefined,
+        { timeout: 20000 },
+      );
+      stackedId = null;
+    });
+
+    await run("the strip's + menu stays a standalone create, also on a split page", async () => {
+      const entries = await page.$$eval("terminal-tabs [data-tabs-new]", (els) => els.map((el) => ({
+        kind: el.dataset.tabsNew,
+        href: el.getAttribute("href"),
+      })));
+      assert(entries.length === 2, `the + menu has its two create entries: ${JSON.stringify(entries)}`);
+      assert(
+        entries.every((e) => !/[?&]group=/.test(e.href)),
+        `the + menu never carries a split target: ${JSON.stringify(entries)}`,
       );
     });
 
@@ -579,7 +950,7 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       assert(await page.$(tabSel(ids[1])), "member B tab missing after ungroup");
     });
 
-    await run("quick nav: dragging a row onto another (with dwell) groups them", async () => {
+    await run("quick nav: dragging a row onto another (with dwell) groups them", async () => withQuickNav(async () => {
       const rowSel = (id) => `.quicknav-active-list .quicknav-swipe-row:has(.quicknav-active-item[data-tab-id="${id}"])`;
       await page.click(".quicknav-toggle");
       await page.waitForSelector(rowSel(ids[1]), { state: "visible", timeout: 8000 });
@@ -603,9 +974,9 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 15000 });
       const members = await page.getAttribute(groupTabSel, "data-tab-members");
       assert(members === `${ids[0]} ${ids[1]}`, `members after quick nav grouping: ${members}`);
-    });
+    }));
 
-    await run("quick nav: the member swipe action removes one terminal from the split", async () => {
+    await run("quick nav: the member swipe action removes one terminal from the split", async () => withQuickNav(async () => {
       await page.click(".quicknav-toggle");
       await page.waitForSelector(`[data-qn-block="${gid}"]`, { state: "visible", timeout: 8000 });
       await sleep(800);
@@ -621,7 +992,7 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       gid = group.id;
       await page.goto(`${L.BASE}${group.url}`, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(groupTabSel, { state: "attached", timeout: 8000 });
-    });
+    }));
 
     await run("the group tab's close control stops every member after a confirm", async () => {
       await page.click("terminal-tabs .terminal-tab-split [data-tab-close]");

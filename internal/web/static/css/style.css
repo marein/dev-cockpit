@@ -251,9 +251,17 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
 }
 .attach-frame .attach-terminal { flex: 1 1 auto; }
 
+/* The panes are columns of stacked terminals, and they are one flat grid
+   instead of a container per column: a pane changes its column by changing its
+   placement, never its parent, because a DOM move would take the terminal
+   island with it and reconnect its stream. Every column divides the same row
+   tracks (--dc-split-rows is the least common multiple of the column depths),
+   so a column of one pane spans them all and a column of two splits them. */
 .attach-split {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(var(--dc-split-cols, 1), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--dc-split-rows, 1), minmax(0, 1fr));
   flex: 1 1 auto;
   gap: 1px;
   min-width: 0;
@@ -266,7 +274,6 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
 .attach-split-pane {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   background: var(--tblr-body-bg);
@@ -355,14 +362,43 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
 }
 .attach-split .attach-terminal {
   flex: 1 1 auto;
+  /* A stacked pane gets the height its row tracks give it, so the shared
+     16rem floor would push the column past its budget. */
+  min-height: 0;
   border: 0;
   border-radius: 0;
 }
+/* The drag's live preview: the pane being carried, and the edge a drop would
+   open a new column on. */
+@media not (pointer: coarse) {
+  .attach-split-edge::before,
+  .attach-split-edge::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 8;
+    width: 3px;
+    background: var(--tblr-primary);
+    pointer-events: none;
+  }
+  .attach-split-edge-start::before { left: 0; }
+  .attach-split-edge-end::after { right: 0; }
+  .attach-split-edge:not(.attach-split-edge-start)::before { display: none; }
+  .attach-split-edge:not(.attach-split-edge-end)::after { display: none; }
+}
 @media (pointer: coarse) {
+  /* One pane per page on a phone: the columns are desktop layout, the flat
+     order is what a swipe walks. */
   .attach-split {
+    display: flex;
+    flex-direction: column;
     border: 0;
     border-radius: 0;
     background: transparent;
+  }
+  .attach-split-pane {
+    flex: 1 1 auto;
   }
   .attach-split-pane:not(:has(terminal-attach[active])) { display: none; }
   .attach-split-head { display: none; }

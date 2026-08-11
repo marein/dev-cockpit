@@ -32,7 +32,7 @@
     <a class="terminal-tab terminal-tab-split{{if .IsActive $.QuickNav.CurrentID}} active{{end}}"
        href="{{.URL}}" role="tab" draggable="false"
        aria-selected="{{if .IsActive $.QuickNav.CurrentID}}true{{else}}false{{end}}"
-       data-tab-id="{{.ID}}" data-tab-kind="split" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}" data-tab-members="{{.MemberIDs}}" data-tab-member-kinds="{{.MemberKinds}}"
+       data-tab-id="{{.ID}}" data-tab-kind="split" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}" data-tab-members="{{.MemberIDs}}" data-tab-member-kinds="{{.MemberKinds}}" data-tab-member-cols="{{.MemberCols}}"
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
       <span class="terminal-tab-icon dc-term-icon running{{if .HasNews}} news{{end}}" data-tab-icon data-notify-targets="{{.MemberIDs}}" aria-hidden="true"><i class="ti ti-layout"></i></span>
       {{$t := .}}<span class="d-none" aria-hidden="true">{{range $t.Members}}<span class="dc-term-icon running{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" data-member-name="{{.Name}}" data-member-url="/splits/{{$t.ID}}?focus={{.ID}}">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>{{end}}</span>

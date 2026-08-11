@@ -5,6 +5,7 @@ import (
 	"embed"
 	"html/template"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -168,6 +169,7 @@ type TerminalTab struct {
 	Group     string // split view group id from @dc_tab_group, empty when ungrouped
 	GroupPos  int    // position inside the group from @dc_tab_gpos, 0 when unset
 	GroupName string // group display name from @dc_tab_gname, may be empty
+	GroupCol  int    // column inside the group from @dc_tab_gcol, 0 for a column of its own
 }
 
 // StripTab is one rendered entry of the tab strip: a single session, or a
@@ -210,6 +212,21 @@ func (t StripTab) IsActive(currentID string) bool {
 		}
 	}
 	return false
+}
+
+// MemberCols returns the space separated column indices matching MemberIDs (0
+// for a member that renders as a column of its own). The strip is the split
+// page's live mirror, so a column change made anywhere travels to an open
+// split through this attribute, the way the member order does.
+func (t StripTab) MemberCols() string {
+	if len(t.Members) == 0 {
+		return ""
+	}
+	cols := make([]string, len(t.Members))
+	for i := range t.Members {
+		cols[i] = strconv.Itoa(t.Members[i].GroupCol)
+	}
+	return strings.Join(cols, " ")
 }
 
 // MemberKinds returns the space separated kinds matching MemberIDs, so the

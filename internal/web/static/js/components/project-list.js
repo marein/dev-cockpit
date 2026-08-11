@@ -405,6 +405,9 @@ class ProjectList extends HTMLElement {
   // stays in the DOM, which is what keeps the unfold flag, the filter and the
   // scroll where they were.
   applySections(doc, wanted) {
+    // A navigation may have swapped this list away while the pull was in
+    // flight; the fold wiring listens on a torn down element's gone signal.
+    if (!this.ac || !this.isConnected) return;
     this.querySelectorAll("[data-sessions-body]").forEach((body) => {
       const section = body.closest("[id^='project-']");
       if (!section || (wanted && !wanted.has(section.id))) return;
@@ -444,6 +447,9 @@ class ProjectList extends HTMLElement {
     fetch("/projects", { credentials: "same-origin" })
       .then((response) => (response.ok ? response.text() : Promise.reject(new Error("refresh failed"))))
       .then((html) => {
+        // A navigation may have swapped this list away while the pull was in
+        // flight; rebuilding a torn down element throws on its gone signal.
+        if (!this.ac || !this.isConnected) return;
         const doc = new DOMParser().parseFromString(html, "text/html");
         const fresh = doc.querySelector("dc-project-list");
         if (!fresh) throw new Error("project list not found");

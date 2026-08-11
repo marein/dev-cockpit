@@ -14,6 +14,7 @@ type Running struct {
 	TabGroup     string // split view group id from @dc_tab_group, empty when ungrouped
 	TabGroupPos  int    // position inside the group from @dc_tab_gpos, 0 when unset
 	TabGroupName string // group display name from @dc_tab_gname, may be empty
+	TabGroupCol  int    // column inside the group from @dc_tab_gcol, 0 for a column of its own
 }
 
 // StartOptions control how a new provider session is launched.

@@ -36,6 +36,7 @@ func (s *Server) terminalTabs() []render.TerminalTab {
 				Group:     r.TabGroup,
 				GroupPos:  r.TabGroupPos,
 				GroupName: r.TabGroupName,
+				GroupCol:  r.TabGroupCol,
 			})
 		}
 	}
@@ -52,6 +53,7 @@ func (s *Server) terminalTabs() []render.TerminalTab {
 			Group:     sh.TabGroup,
 			GroupPos:  sh.TabGroupPos,
 			GroupName: sh.TabGroupName,
+			GroupCol:  sh.TabGroupCol,
 		})
 	}
 	sort.SliceStable(tabs, func(i, j int) bool {

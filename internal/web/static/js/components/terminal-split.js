@@ -1,10 +1,51 @@
 import { openMenu } from "@dc/contextmenu";
 import { confirm, promptText } from "@dc/dialog";
 import { ensureOk, postForm, postJSON } from "@dc/http";
+import { splitCreateItems } from "@dc/split";
+import { get, set } from "@dc/store";
 import { releaseCoder, steerCoder } from "@dc/steer";
 import { notifyError, notifySuccess } from "@dc/toast";
 
 const DRAG_THRESHOLD = 6;
+// The row tracks every column divides, capped like the server's splitLayout.
+const MAX_GRID_ROWS = 512;
+// What a stacked pane keeps whatever the budget says. A column of many panes
+// grows past the rows setting instead of squeezing them into nothing.
+const MIN_PANE_ROWS = 4;
+// The 1px flex gap between the panes, the border color showing through.
+const PANE_GAP = 1;
+const DEFAULT_ROWS = 30;
+const DEFAULT_FONT_SIZE = 14;
+
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+const lcm = (a, b) => (a < 1 || b < 1 ? 1 : (a / gcd(a, b)) * b);
+
+// groupColumns folds panes and their column indices into the columns they
+// render as: panes sharing an index share a column, a pane without one stands
+// alone, and a column stands where its first member stands in the flat order.
+// That is the rule the server renders by (splitLayout), and it is what makes a
+// group written by an older client render something defined.
+const groupColumns = (panes, indices) => {
+  const cols = [];
+  const byIndex = new Map();
+  panes.forEach((pane, i) => {
+    const index = Number(indices[i]) || 0;
+    let column = index > 0 ? byIndex.get(index) : null;
+    if (!column) {
+      column = [];
+      cols.push(column);
+      if (index > 0) byIndex.set(index, column);
+    }
+    column.push(pane);
+  });
+  return cols;
+};
+
+// signatureOf names a layout, so a drag preview and the strip mirror can tell
+// whether anything actually moved before writing styles.
+const signatureOf = (columns) => columns
+  .map((column) => column.map((pane) => pane.dataset.paneId).join(","))
+  .join("|");
 
 class TerminalSplit extends HTMLElement {
   connectedCallback() {
@@ -14,7 +55,12 @@ class TerminalSplit extends HTMLElement {
     this.suppressClick = false;
     this.confirming = false;
     this.pendingSync = false;
+    this.cellHeight = 0;
     const signal = this.ac.signal;
+    this.addEventListener("dc:terminal-metrics", (event) => this.onMetrics(event), { signal });
+    document.addEventListener("terminal-setting-change", (event) => {
+      if (event.detail?.setting === "rows" || event.detail?.setting === "font-size") this.applyBudget();
+    }, { signal });
     this.addEventListener("contextmenu", (event) => this.onContextMenu(event), { signal });
     this.addEventListener("click", (event) => {
       const close = event.target.closest("[data-pane-close]");
@@ -41,12 +87,22 @@ class TerminalSplit extends HTMLElement {
       this.observer = new MutationObserver(() => this.syncWithStrip());
       this.observer.observe(strip, { childList: true, subtree: true });
     }
+    // Fullscreen gives the panes the whole viewport, so the budget steps
+    // aside; the flag lives on the root element as a class.
+    this.fullscreenObserver = new MutationObserver(() => this.applyBudget());
+    this.fullscreenObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    this.cellHeight = Number(this.querySelector("terminal-attach[data-cell-height]")?.dataset.cellHeight)
+      || Number(get(this.cellKey(), ""))
+      || 0;
+    this.applyBudget();
   }
 
   disconnectedCallback() {
     this.cancelDrag();
     this.observer?.disconnect();
     this.observer = null;
+    this.fullscreenObserver?.disconnect();
+    this.fullscreenObserver = null;
     if (this.refreshTimer) {
       clearTimeout(this.refreshTimer);
       this.refreshTimer = null;
@@ -91,12 +147,14 @@ class TerminalSplit extends HTMLElement {
       this.deferRefresh();
       return;
     }
-    const { tab, members, paneIds } = state;
-    if (members.join(" ") !== paneIds.join(" ")) {
-      members.forEach((id, index) => {
-        const pane = this.querySelector(`.attach-split-pane[data-pane-id="${CSS.escape(id)}"]`);
-        if (pane) pane.style.order = String(index);
-      });
+    const { tab, members } = state;
+    // Order and columns both ride the strip: a layout change made on another
+    // device arrives as the group tab's member list plus its column list, and
+    // is re-applied in place so the streams stay connected.
+    const desired = this.columnsOf(members, (tab.getAttribute("data-tab-member-cols") || "")
+      .split(" ").filter(Boolean).map(Number));
+    if (desired && signatureOf(desired) !== signatureOf(this.columns())) {
+      this.applyColumns(desired);
     }
     for (const span of tab.querySelectorAll("[data-member-name]")) {
       const id = span.getAttribute("data-notify-target") || "";
@@ -155,6 +213,114 @@ class TerminalSplit extends HTMLElement {
       .sort((a, b) => (Number(a.style.order) || 0) - (Number(b.style.order) || 0));
   }
 
+  // ---- Layout ---------------------------------------------------------------
+  // A layout is which panes share a column and in which order they stack. The
+  // panes stay flat siblings of one grid: moving a pane to another column is a
+  // change of its placement, never of its parent, so the terminal island is
+  // never re-created and its stream stays connected.
+
+  // columns reads the rendered layout back out of the DOM.
+  columns() {
+    const panes = this.panes();
+    return groupColumns(panes, panes.map((pane) => pane.dataset.paneCol));
+  }
+
+  // columnsOf builds a layout out of a member order and its column indices,
+  // the pair the strip carries and the group route takes. A member the page
+  // does not hold means the member set drifted, which the refresh handles.
+  columnsOf(ids, indices) {
+    const panes = ids.map((id) => this.querySelector(`.attach-split-pane[data-pane-id="${CSS.escape(id)}"]`));
+    if (!panes.length || panes.some((pane) => !pane)) return null;
+    return groupColumns(panes, indices);
+  }
+
+  applyColumns(cols) {
+    let rows = 1;
+    for (const column of cols) {
+      const next = lcm(rows, column.length);
+      if (next <= MAX_GRID_ROWS) rows = next;
+    }
+    this.style.setProperty("--dc-split-cols", String(cols.length));
+    this.style.setProperty("--dc-split-rows", String(rows));
+    let flat = 0;
+    cols.forEach((column, c) => {
+      const span = Math.max(1, Math.floor(rows / column.length));
+      column.forEach((pane, r) => {
+        const start = r * span + 1;
+        // The last pane of a column takes what is left, so a depth the row
+        // count does not divide evenly still fills its column.
+        const end = r === column.length - 1 ? rows + 1 : start + span;
+        pane.dataset.paneCol = String(c + 1);
+        pane.style.gridColumn = String(c + 1);
+        pane.style.gridRow = `${start} / ${end}`;
+        // The flat order is the columns read left to right, top to bottom;
+        // that is what @dc_tab_gpos holds and what the strip, the quick nav
+        // and the mobile swipe walk.
+        pane.style.order = String(flat);
+        flat += 1;
+      });
+    });
+    this.applyBudget();
+  }
+
+  // ---- The rows budget ------------------------------------------------------
+  // The rows setting is the height of the vertical axis, not of every pane: a
+  // column shows about that many terminal lines in total, stacked panes share
+  // them minus their pane heads, and grouping or stacking never changes the
+  // page height. The container therefore carries the height and the panes fit
+  // their rows into the box they are given (the fullscreen mechanism, reused).
+  applyBudget() {
+    if (!this.isConnected) return;
+    const off = window.matchMedia("(pointer: coarse)").matches
+      || document.documentElement.classList.contains("dc-terminal-fullscreen")
+      || !(this.cellHeight > 0);
+    if (off) {
+      if (this.style.height) {
+        this.style.height = "";
+        this.style.flex = "";
+      }
+      return;
+    }
+    const head = this.querySelector("[data-pane-head]")?.offsetHeight || 0;
+    let depth = 1;
+    for (const column of this.columns()) depth = Math.max(depth, column.length);
+    // The height is a border box, so the container's own border rides along or
+    // a single pane column comes out one line short of the setting.
+    const border = Math.max(0, this.offsetHeight - this.clientHeight);
+    const budget = this.settingValue("rows", DEFAULT_ROWS) * this.cellHeight + head;
+    const floor = depth * (head + MIN_PANE_ROWS * this.cellHeight) + (depth - 1) * PANE_GAP;
+    const height = `${Math.round(Math.max(budget, floor) + border)}px`;
+    if (this.style.height === height) return;
+    this.style.height = height;
+    this.style.flex = "0 0 auto";
+  }
+
+  // One terminal line in pixels: only a rendered terminal knows it, so the
+  // islands report it and it is remembered per font size. Without the memory
+  // the first paint of every split page would be the flat fallback height and
+  // reflow once the first pane has measured itself.
+  onMetrics(event) {
+    const cell = Number(event.detail?.cell) || 0;
+    if (!(cell > 0) || Math.abs(cell - this.cellHeight) < 0.01) return;
+    this.cellHeight = cell;
+    set(this.cellKey(Number(event.detail?.fontSize) || 0), String(cell));
+    this.applyBudget();
+  }
+
+  cellKey(fontSize) {
+    return `dc-terminal-cell-${fontSize || this.settingValue("font-size", DEFAULT_FONT_SIZE)}`;
+  }
+
+  // Read straight from storage like terminal-attach does: the select is lazy
+  // loaded and may not have upgraded yet.
+  settingValue(setting, fallback) {
+    const el = document.querySelector(`terminal-setting-select[setting="${setting}"]`);
+    if (!el) return fallback;
+    return parseInt(get(el.getAttribute("storage-key") || "", ""), 10)
+      || parseInt(el.getAttribute("default-value") || "", 10)
+      || fallback;
+  }
+
   refreshPage() {
     const active = this.querySelector("terminal-attach[active]")?.getAttribute("terminal-id");
     const url = window.location.pathname
@@ -210,6 +376,14 @@ class TerminalSplit extends HTMLElement {
           }),
         });
     }
+    // The pane the menu was opened on names the target column, which is what
+    // makes these two entries unambiguous.
+    items.push({ divider: true });
+    items.push(...splitCreateItems({
+      group: this.groupId(),
+      column: dataset.paneId,
+      project: dataset.paneProject || "",
+    }));
     if (dataset.paneProject) {
       items.push({ divider: true });
       items.push({
@@ -329,6 +503,7 @@ class TerminalSplit extends HTMLElement {
       startX: event.clientX,
       startY: event.clientY,
       lastX: event.clientX,
+      lastY: event.clientY,
       active: false,
     };
     try {
@@ -351,35 +526,84 @@ class TerminalSplit extends HTMLElement {
     }
     event.preventDefault();
     drag.lastX = event.clientX;
+    drag.lastY = event.clientY;
     this.updateDrag();
   }
 
+  // The pane head drag is two-dimensional: up and down sorts the pane inside
+  // its column, sideways moves it into another one, and a drop on an outer
+  // edge opens a column of its own. The geometry is read once, at the start:
+  // a preview that changes the column widths would otherwise move the ground
+  // the pointer is measured against and the layout would flap under the hand.
   beginDrag() {
     const drag = this.drag;
     drag.active = true;
-    drag.panes = this.panes();
-    drag.fromIndex = drag.panes.indexOf(drag.pane);
-    drag.toIndex = drag.fromIndex;
-    drag.panes.forEach((pane, i) => {
-      pane.style.order = String(i);
+    drag.columns = this.columns();
+    drag.ranges = drag.columns.map((column) => {
+      const items = column.map((pane) => {
+        const rect = pane.getBoundingClientRect();
+        return { pane, mid: rect.top + rect.height / 2, left: rect.left, right: rect.right };
+      });
+      return {
+        left: Math.min(...items.map((item) => item.left)),
+        right: Math.max(...items.map((item) => item.right)),
+        items,
+      };
     });
+    drag.signature = signatureOf(drag.columns);
+    drag.applied = drag.signature;
     this.classList.add("attach-split-dragging");
     drag.pane.classList.add("attach-split-pane-dragging");
+  }
+
+  // dropTarget answers where the pointer wants the pane: inside a column at a
+  // row, or as a new column before the first or after the last one.
+  dropTarget(x, y) {
+    const drag = this.drag;
+    const rect = this.getBoundingClientRect();
+    // The outer edge is the one place a drop opens a column, so it is wide
+    // enough to aim at: it is also the only way to move a pane past the
+    // column at the end without joining it.
+    const edge = Math.min(96, Math.max(32, rect.width * 0.08));
+    if (x < rect.left + edge) return { newColumn: 0 };
+    if (x > rect.right - edge) return { newColumn: drag.columns.length };
+    let column = drag.ranges.length - 1;
+    for (let i = 0; i < drag.ranges.length; i += 1) {
+      if (x <= drag.ranges[i].right) {
+        column = i;
+        break;
+      }
+    }
+    const items = drag.ranges[column].items.filter((item) => item.pane !== drag.pane);
+    let row = items.length;
+    for (let i = 0; i < items.length; i += 1) {
+      if (y < items[i].mid) {
+        row = i;
+        break;
+      }
+    }
+    return { column, row };
   }
 
   updateDrag() {
     const drag = this.drag;
     if (!drag || !drag.active) return;
-    const rect = this.getBoundingClientRect();
-    const count = drag.panes.length;
-    const toIndex = Math.max(0, Math.min(count - 1, Math.floor((drag.lastX - rect.left) / (rect.width / count))));
-    if (toIndex === drag.toIndex) return;
-    drag.toIndex = toIndex;
-    const order = drag.panes.filter((pane) => pane !== drag.pane);
-    order.splice(toIndex, 0, drag.pane);
-    order.forEach((pane, i) => {
-      pane.style.order = String(i);
-    });
+    const target = this.dropTarget(drag.lastX, drag.lastY);
+    const newColumn = target.newColumn !== undefined;
+    this.classList.toggle("attach-split-edge", newColumn);
+    this.classList.toggle("attach-split-edge-start", target.newColumn === 0);
+    this.classList.toggle("attach-split-edge-end", target.newColumn === drag.columns.length);
+    // Always built from the layout the drag started with, never from the
+    // preview standing right now, so the same pointer position always means
+    // the same layout.
+    const next = drag.columns.map((column) => column.filter((pane) => pane !== drag.pane));
+    if (newColumn) next.splice(target.newColumn, 0, [drag.pane]);
+    else next[target.column].splice(target.row, 0, drag.pane);
+    const cols = next.filter((column) => column.length > 0);
+    const signature = signatureOf(cols);
+    if (signature === drag.applied) return;
+    drag.applied = signature;
+    this.applyColumns(cols);
   }
 
   onPointerUp(event) {
@@ -391,12 +615,14 @@ class TerminalSplit extends HTMLElement {
       return;
     }
     this.suppressClick = true;
-    this.classList.remove("attach-split-dragging");
-    drag.pane.classList.remove("attach-split-pane-dragging");
-    if (drag.toIndex !== drag.fromIndex) {
-      const ids = this.panes().map((pane) => pane.dataset.paneId);
-      postJSON("/terminal-tabs/group", { ids })
-        .then((response) => ensureOk(response, "Could not save the pane order."))
+    this.clearDragMarks(drag);
+    if (drag.applied !== drag.signature) {
+      const flat = this.columns().flat();
+      postJSON("/terminal-tabs/group", {
+        ids: flat.map((pane) => pane.dataset.paneId),
+        cols: flat.map((pane) => Number(pane.dataset.paneCol) || 0),
+      })
+        .then((response) => ensureOk(response, "Could not save the pane layout."))
         .catch((error) => notifyError(error.message));
     }
     if (this.pendingSync) this.syncWithStrip();
@@ -406,11 +632,13 @@ class TerminalSplit extends HTMLElement {
     const drag = this.drag;
     this.drag = null;
     if (!drag || !drag.active) return;
-    this.classList.remove("attach-split-dragging");
+    this.clearDragMarks(drag);
+    this.applyColumns(drag.columns);
+  }
+
+  clearDragMarks(drag) {
+    this.classList.remove("attach-split-dragging", "attach-split-edge", "attach-split-edge-start", "attach-split-edge-end");
     drag.pane.classList.remove("attach-split-pane-dragging");
-    drag.panes.forEach((pane, i) => {
-      pane.style.order = String(i);
-    });
   }
 }
 

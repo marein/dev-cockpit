@@ -212,13 +212,19 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Font size, rows, and theme",
-					Desc:  `The gear button <i class="ti ti-settings align-text-bottom" aria-hidden="true"></i> on a terminal page sets the font size, the visible rows, and the color theme, stored per device. Every palette follows the OS between a light and a dark variant.`,
+					Desc:  `The gear button <i class="ti ti-settings align-text-bottom" aria-hidden="true"></i> on a terminal page sets the font size, the visible rows, and the color theme, stored per device. Every palette follows the OS between a light and a dark variant. In a split view the rows are the height of the page, not of every pane: a column shows about that many lines in total, and stacked panes share them.`,
 				},
 				{
 					Title:    "Arrange tabs and panes",
 					Tag:      "Desktop",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Drag tabs to reorder them; the order is shared across devices. Hold a tab over the center of another tab briefly to make a split. Drag split pane headers to change their order.`,
+					Desc:     `Drag tabs to reorder them; the order is shared across devices. Hold a tab over the center of another tab briefly to make a split. Drag a split pane by its head: sideways into another column stacks it there, up and down sorts it inside its column, and a drop on the left or right edge of the split opens a column of its own.`,
+				},
+				{
+					Title:    "New terminal inside a split",
+					Tag:      "Desktop",
+					TagClass: "bg-secondary-lt",
+					Desc:     `The context menu of a pane head offers <em>New shell here</em> and <em>New coder here</em>: the new terminal joins that pane's column. The same two entries in the split tab's menu open a column of its own on the right. The plus menu <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> keeps creating a standalone terminal everywhere, a split page included.`,
 				},
 				{
 					Title:    "Tab context menu",
@@ -285,7 +291,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Choose the active split pane",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "ti-arrow-left"}}, {Caps: []string{"Ctrl", "Shift", "ti-arrow-right"}}},
-					Desc:  `Moves focus between panes in a split terminal. The active pane receives keyboard input and shows its matching footer controls.`,
+					Desc:  `Moves focus between panes in a split terminal, walking the columns top to bottom and left to right, wrapping at the ends. The active pane receives keyboard input and shows its matching footer controls.`,
 				},
 				{
 					Title: "Close one pane of a split",

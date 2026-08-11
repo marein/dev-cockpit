@@ -68,6 +68,7 @@ func scanRunning(panes []tmux.Pane, resumable []Session, prov Coder) (running []
 					TabGroup:     p.TabGroup,
 					TabGroupPos:  p.TabGroupPosition(),
 					TabGroupName: p.TabGName,
+					TabGroupCol:  p.TabGroupColumn(),
 				})
 				runningIDs[match.SessionID] = true
 				continue
@@ -85,6 +86,7 @@ func scanRunning(panes []tmux.Pane, resumable []Session, prov Coder) (running []
 				TabGroup:     p.TabGroup,
 				TabGroupPos:  p.TabGroupPosition(),
 				TabGroupName: p.TabGName,
+				TabGroupCol:  p.TabGroupColumn(),
 			})
 			continue
 		}

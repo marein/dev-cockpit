@@ -973,6 +973,53 @@ free floating page scripts.
   re-POSTing `/terminal-tabs/group`). The group tab's close control closes
   every member (confirmed); ungrouping is the non-destructive context menu /
   header / pane-remove path. Decisions and endpoints: `docs/split-view.md`.
+  **A split arranges its panes in columns, and a layout change is a style
+  change.** One more member option says which of them share a column,
+  `@dc_tab_gcol`; a member without one renders as a column of its own, which
+  is what every group looked like before columns existed, so there is nothing
+  to migrate. `@dc_tab_gpos` stays the group's one global order: it drives the
+  strip label, the quick nav, the mobile swipe and the stacking inside a
+  column, and a column stands where its first member stands in that order,
+  never by the raw option value. The panes stay flat siblings of one CSS grid
+  (`splitLayout` in Go, mirrored by `terminal-split`; every column divides the
+  same row tracks, `--dc-split-rows` is the least common multiple of the
+  column depths), because moving a pane between column containers would take
+  its terminal island with it and reconnect the stream. The pane head drag is
+  therefore two-dimensional on that page, and it reads the geometry once at
+  the start so the preview cannot move the ground it measures against: it
+  posts `/terminal-tabs/group` with the flat order plus a `cols` array, which
+  is optional on purpose, every other caller of that route (the strip drag,
+  the quick nav drag) says nothing about columns and what it says nothing
+  about keeps the columns it has. The mobile page is untouched, one pane per
+  page and a flat swipe order. The desktop pane stepping (Ctrl+Shift+arrows)
+  walks the visual order, columns left to right and each column top to
+  bottom: the server emits it as every pane's `order` style
+  (`splitCell.Order`) and `applyColumns` rewrites it, so a pane created into
+  a mid page column steps where it stands while the flat order still lists
+  it last. **The rows setting is the height of the
+  vertical axis from here on**, not of every pane: the container carries a
+  height of `rows × cell + one pane head` and the panes fit their rows into
+  the box they are given (the fullscreen mechanism plus the `fitAddon` path,
+  the editor panel's), so a column shows about `rows` lines in total and
+  grouping or stacking never changes the page height. One terminal line in
+  pixels is only known to a rendered terminal, so the islands report it
+  (`dc:terminal-metrics` plus a `data-cell-height` attribute, because every
+  custom element upgrades lazily and either of the two may come first) and it
+  is remembered per font size, so the next split page is sized before its
+  first paint. **A terminal can be created straight into a split**, from the
+  pane head's menu into that pane's column and from the group tab's menu into
+  a column of its own at the right edge (`@dc/split`); both entries open the
+  session's create form prefilled. It rides the existing
+  create routes, `group` and `column` travelling through the query and the
+  form the way `return` does, so one request creates the terminal and puts it
+  in; nothing ever renders a half done split. A column has no id of its own,
+  so `column` names a member of it. Three rules hold: a split that vanished
+  between the form and the POST still creates the terminal and lands on its
+  own page, a layout wish must never fail a create; a failed group write
+  reports and leaves the session running and ungrouped; and the new member is
+  written alone, `@dc_tab_gpos` the group's highest plus one, so nobody is
+  renumbered (the one exception writes the source pane's column when that
+  column was never written down, which moves nobody either).
   **One order, and a partial post is a permutation.** The strip position lives
   in tmux as `@dc_tab_pos` and is the single order every surface renders, each
   one a view on it (the strip and the quick nav show everything, the editor's

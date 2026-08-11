@@ -35,6 +35,7 @@ type Entry struct {
 	Group string `json:"group,omitempty"` // @dc_tab_group at snapshot time, empty when ungrouped
 	GPos  int    `json:"gpos,omitempty"`  // @dc_tab_gpos at snapshot time, 0 when unset
 	GName string `json:"gname,omitempty"` // @dc_tab_gname at snapshot time, may be empty
+	GCol  int    `json:"gcol,omitempty"`  // @dc_tab_gcol at snapshot time, 0 for a column of its own
 }
 
 // snapshot is the JSON shape of the state file.
@@ -181,7 +182,7 @@ func (s *Service) applyTabGroup(e Entry) {
 	if e.Group == "" || e.GPos < 1 {
 		return
 	}
-	if err := s.tmux.SetTabGroupEntry(e.ID, e.Group, e.GPos, e.GName); err != nil {
+	if err := s.tmux.SetTabGroupEntry(e.ID, e.Group, e.GPos, e.GCol, e.GName); err != nil {
 		log.Printf("terminal restore: tab group for %s: %v", e.ID, err)
 	}
 }
@@ -222,11 +223,11 @@ func (s *Service) scan() []Entry {
 	for _, m := range s.coders {
 		coderID := m.ID()
 		for _, r := range m.Snapshot().Running {
-			entries = append(entries, Entry{Kind: "coder", Coder: coderID, ID: r.Identifier, Name: r.Name, CWD: r.CWD, Pos: r.TabPos, Group: r.TabGroup, GPos: r.TabGroupPos, GName: r.TabGroupName})
+			entries = append(entries, Entry{Kind: "coder", Coder: coderID, ID: r.Identifier, Name: r.Name, CWD: r.CWD, Pos: r.TabPos, Group: r.TabGroup, GPos: r.TabGroupPos, GName: r.TabGroupName, GCol: r.TabGroupCol})
 		}
 	}
 	for _, sh := range s.shells.List() {
-		entries = append(entries, Entry{Kind: "shell", ID: sh.Identifier, Name: sh.Name, CWD: sh.CWD, Pos: sh.TabPos, Group: sh.TabGroup, GPos: sh.TabGroupPos, GName: sh.TabGroupName})
+		entries = append(entries, Entry{Kind: "shell", ID: sh.Identifier, Name: sh.Name, CWD: sh.CWD, Pos: sh.TabPos, Group: sh.TabGroup, GPos: sh.TabGroupPos, GName: sh.TabGroupName, GCol: sh.TabGroupCol})
 	}
 	return entries
 }

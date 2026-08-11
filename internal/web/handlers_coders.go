@@ -81,6 +81,9 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 			DefaultAgent: defaultAgent,
 		})
 	}
+	// A coder needs its whole form, so a split scoped create opens it
+	// prefilled and carries the group target through as hidden fields.
+	target := splitTargetFromRequest(c)
 	c.HTML(http.StatusOK, "coders_new.gohtml", render.CoderNewData{
 		Page:              s.page(c, "New Coder", "projects"),
 		Projects:          s.projects.SelectablePaths(),
@@ -89,6 +92,8 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 		SelectedCoder:     selected.ID(),
 		AutomaticApproval: true,
 		Return:            s.formReturn(c),
+		SplitGroup:        target.Group,
+		SplitColumn:       target.Column,
 	})
 }
 
@@ -172,6 +177,8 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		return
 	}
 	s.styleSessionPane(res.Identifier)
+	joinErr := s.joinSplit(res.Identifier, splitTargetFromRequest(c))
+	s.invalidateTerminals()
 	s.publishTerminals(s.projects.ProjectNameFor(res.Workdir))
 	answer := gin.H{
 		"id":      res.Identifier,
@@ -211,6 +218,11 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 	// picks the new session up via ?terminal and activates its tab.
 	if ret := s.formReturn(c); editorReturnPath.MatchString(ret) {
 		c.Redirect(http.StatusSeeOther, ret+"?terminal="+url.QueryEscape(res.Identifier))
+		return
+	}
+	if joinErr != nil {
+		// The coder runs either way; only the split view did not happen.
+		s.redirectWithFlash(c, "/coders/"+res.Identifier, "", "The coder was started but could not join the split view.")
 		return
 	}
 	c.Redirect(http.StatusSeeOther, "/coders/"+res.Identifier)
