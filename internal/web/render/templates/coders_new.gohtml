@@ -41,6 +41,18 @@
           </select>
         </div>
         {{end}}
+        {{range $co := .Coders}}
+        {{if $co.NeedsLogin}}
+        <div class="mb-3" data-coder-login="{{$co.ID}}" {{if ne $co.ID $.SelectedCoder}}hidden{{end}}>
+          <dc-coder-login login-url="/settings/coders/{{$co.ID}}/login" coder-name="{{coderLabel $co.ID}}">
+            <div class="alert alert-warning d-flex align-items-center gap-2 flex-wrap mb-0" data-login-out>
+              <div class="flex-fill">{{coderLabel $co.ID}} is not logged in on this machine.</div>
+              <button type="button" class="btn btn-sm flex-shrink-0" data-login-start>Log in</button>
+            </div>
+          </dc-coder-login>
+        </div>
+        {{end}}
+        {{end}}
       </dc-coder-select>
       <div class="mb-2">
         <div class="form-label mb-0">Options</div>

@@ -218,4 +218,4 @@ func LooksLikeLogin(text string) bool { return loginPattern.MatchString(text) }
 // nobody logged it in on this machine. The sentence lives here and not next to a
 // coder on purpose: a parser answers whether it happened, this package owns what
 // the user reads about it, so no CLI's own wording leaks into a conversation.
-var ErrNotLoggedIn = errors.New("The coder is not logged in on this machine. Start it once in a terminal, log in there, and send this again.")
+var ErrNotLoggedIn = errors.New("The coder is not logged in on this machine. Log it in, then send this again.")

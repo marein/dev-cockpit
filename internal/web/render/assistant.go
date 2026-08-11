@@ -181,15 +181,27 @@ type AssistantMessageView struct {
 	Attachments []AssistantAttachmentView
 	State       string
 	Error       string
-	Streaming   bool
-	Failed      bool
-	CanRetry    bool
+	// Login is set on the one failure this surface can fix itself: the coder
+	// was never logged in, so the login dialog opens right next to the
+	// sentence instead of sending the reader to a settings page. The overlay
+	// is its own world, a link out of it would close what is open.
+	Login     *AssistantLoginView
+	Streaming bool
+	Failed    bool
+	CanRetry  bool
 	// Queued marks a message still waiting for the running turn to end, and
 	// CanDiscard says the page may still take it back. A waiting entry in a
 	// read-only conversation renders as never sent instead.
 	Queued     bool
 	CanDiscard bool
 	Time       string
+}
+
+// AssistantLoginView feeds the login element a failed turn carries: the JSON
+// route of that coder's login and the name the dialog says.
+type AssistantLoginView struct {
+	URL   string
+	Label string
 }
 
 // AssistantWakeView describes the check a message came from.

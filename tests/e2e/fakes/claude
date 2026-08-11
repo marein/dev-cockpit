@@ -4,6 +4,40 @@
 # spends a model request.
 set -u
 
+# The auth subcommands answer the web login: status is the cheap probe the
+# settings pages render from, login is the flow the dialog drives. Logged in is
+# the default so every other runner sees the state a working host has; the
+# marker file flips it, and a login with the one good code flips it back. The
+# URL rides in a terminal hyperlink like the real CLI prints it, so the escape
+# stripping is exercised too.
+if [ "${1:-}" = "auth" ]; then
+  case "${2:-}" in
+    status)
+      if [ -f "$HOME/.claude/fake-logged-out" ]; then
+        echo '{"loggedIn":false}'
+      else
+        echo '{"loggedIn":true,"authMethod":"claude.ai","email":"fake@example.test","subscriptionType":"max"}'
+      fi
+      exit 0
+      ;;
+    login)
+      printf 'Opening browser to sign in…\n'
+      printf 'If the browser did not open, visit: \033]8;;https://claude.example.test/oauth/authorize?code=true\007https://claude.example.test/oauth/authorize?code=true\033]8;;\007\n'
+      printf 'Paste code here if prompted > '
+      while IFS= read -r code; do
+        if [ "$code" = "GOOD-CODE" ]; then
+          rm -f "$HOME/.claude/fake-logged-out"
+          echo "Logged in"
+          exit 0
+        fi
+        echo "Invalid code. Please make sure the full code was copied." >&2
+      done
+      exit 1
+      ;;
+    *) exit 1 ;;
+  esac
+fi
+
 print_mode=0
 prompt=""
 name=""
@@ -166,6 +200,16 @@ fi
 if [ "$stream" = "0" ] || [ "$partial" = "0" ]; then
   echo "Error: When using --print, --output-format=stream-json requires --verbose" >&2
   exit 1
+fi
+
+# A claude nobody logged in fails every turn the same way, on standard output:
+# the record marked as an API error, then the result that closes the turn. That
+# is what the cockpit turns into its own login sentence, so the marker that
+# makes the fake logged out has to reach a turn as well, not only the status.
+if [ -f "$HOME/.claude/fake-logged-out" ]; then
+  printf '{"type":"assistant","error":"authentication_failed","message":{"content":[{"type":"text","text":"Invalid API key"}]}}\n'
+  printf '{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"%s"}\n' "$session"
+  exit 0
 fi
 
 emit() { printf '%s\n' "$1"; }

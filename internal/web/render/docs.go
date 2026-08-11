@@ -591,6 +591,12 @@ func DocsTopics() []DocsTopic {
 					Desc:     `Settings &rarr; Coder edits a coder's own files: its global instructions, its agents, and its skills. With more than one coder installed, the sidebar lists them and picks whose files you edit.`,
 				},
 				{
+					Title:    "Coder login",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `A coder's Account section under Settings &rarr; Coder shows who its CLI is logged in as and logs it in without a terminal: a dialog carries the provider's login page, for Claude you paste the code it hands you back into the dialog, for Copilot you enter the shown code on the device page and the dialog finishes on its own. The new-coder form offers the same login when the picked coder is not logged in, and so does an assistant answer that failed for that reason, right where it failed. The CLI stores its own credentials, the cockpit keeps none of it. After a Claude login the first terminal comes up on its task, the first-run wizard has nothing left to ask.`,
+				},
+				{
 					Title:    "Back up and move your setup",
 					Tag:      "Data",
 					TagClass: "bg-secondary-lt",

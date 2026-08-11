@@ -69,6 +69,7 @@ func (s *Server) coderSettingsNav(active string, co *coder.Manager, section stri
 	}
 	if co != nil {
 		nav.Selected = co.ID()
+		nav.Account = s.coderLogin.Supported(co.ID())
 	}
 	target := section
 	if target == "" {

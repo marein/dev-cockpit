@@ -75,10 +75,12 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 		if agentID, err := co.Coder().AgentRepository().ValidateSelected(c.Query("agent")); err == nil {
 			defaultAgent = agentID
 		}
+		needsLogin := s.coderLogin.Supported(co.ID()) && !s.coderLogin.State(co.ID()).LoggedIn
 		coders = append(coders, render.CoderChoice{
 			ID:           co.ID(),
 			Agents:       co.Coder().AgentRepository().Options(),
 			DefaultAgent: defaultAgent,
+			NeedsLogin:   needsLogin,
 		})
 	}
 	// A coder needs its whole form, so a split scoped create opens it

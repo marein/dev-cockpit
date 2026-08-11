@@ -379,21 +379,35 @@ func (s *Server) assistantMessageViews(current assistant.Conversation, blocked b
 	out := make([]render.AssistantMessageView, 0, len(current.Messages))
 	for i, m := range current.Messages {
 		last := i == len(current.Messages)-1 && !blocked
-		out = append(out, s.assistantMessageView(current.ID, m, last, !blocked, render.CoderLabel(current.CoderID)))
+		out = append(out, s.assistantMessageView(current.ID, m, last, !blocked, current.CoderID))
 	}
 	return out
 }
 
-func (s *Server) assistantMessageView(conversationID string, m assistant.Message, retryable, writable bool, coder string) render.AssistantMessageView {
+// assistantLoginView answers the login a failed turn offers, and only for the
+// one failure a login fixes. The error text is this server's own sentence, so
+// comparing against it is comparing two spellings of one constant.
+func (s *Server) assistantLoginView(coderID, message string) *render.AssistantLoginView {
+	if message != assistant.ErrNotLoggedIn.Error() || !s.coderLogin.Supported(coderID) {
+		return nil
+	}
+	return &render.AssistantLoginView{
+		URL:   "/settings/coders/" + coderID + "/login",
+		Label: render.CoderLabel(coderID),
+	}
+}
+
+func (s *Server) assistantMessageView(conversationID string, m assistant.Message, retryable, writable bool, coderID string) render.AssistantMessageView {
 	view := render.AssistantMessageView{
 		ID:         m.ID,
 		RunID:      m.RunID,
 		User:       m.Role == assistant.RoleUser,
 		Wake:       s.assistantWakeView(m.Wake),
-		Author:     coder,
+		Author:     render.CoderLabel(coderID),
 		Text:       m.Content,
 		State:      string(m.State),
 		Error:      m.Error,
+		Login:      s.assistantLoginView(coderID, m.Error),
 		Streaming:  m.State == assistant.StateStreaming,
 		Failed:     m.State == assistant.StateFailed || m.State == assistant.StateInterrupted,
 		CanRetry:   retryable && m.Role == assistant.RoleAssistant && m.State.Retryable(),
@@ -469,7 +483,7 @@ func (s *Server) handleAssistantMessage(c *gin.Context) {
 		}
 		last := i == len(current.Messages)-1 && !blocked
 		c.HTML(http.StatusOK, "assistant_message.gohtml", render.AssistantMessageData{
-			Message: s.assistantMessageView(current.ID, m, last, !blocked, render.CoderLabel(current.CoderID)),
+			Message: s.assistantMessageView(current.ID, m, last, !blocked, current.CoderID),
 		})
 		return
 	}

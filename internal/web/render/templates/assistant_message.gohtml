@@ -35,6 +35,13 @@
   {{end}}
   {{if .Streaming}}<div class="text-secondary small mt-2 d-none" data-assistant-tool><i class="ti ti-tool me-1"></i>Working<span data-assistant-tool-name class="ms-1 font-monospace"></span></div>{{end}}
   {{if .Error}}<div class="text-secondary small mt-2" data-assistant-error><i class="ti ti-alert-triangle me-1"></i>{{.Error}}</div>{{end}}
+  {{with .Login}}
+  <div class="mt-2">
+    <dc-coder-login login-url="{{.URL}}" coder-name="{{.Label}}">
+      <button type="button" class="btn btn-sm" data-login-out data-login-start><i class="ti ti-user me-1"></i>Log {{.Label}} in</button>
+    </dc-coder-login>
+  </div>
+  {{end}}
   {{if .CanRetry}}
   <div class="mt-2">
     <button type="button" class="btn btn-sm" data-assistant-retry><i class="ti ti-refresh me-1"></i>Try again</button>

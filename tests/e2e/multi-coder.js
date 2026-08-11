@@ -70,7 +70,7 @@ L.runFeature(`MULTI-CODER (${MODE})`, async ({ page, run }) => {
     assert(rows.includes("/settings/coders/claude/agents") && rows.includes("/settings/coders/copilot/agents"), `coder rows wrong: ${rows}`);
     assert(await page.$("[data-settings-coder] svg.coder-icon"), "no Claude icon in the sidebar coder rows");
     const sections = await page.$$eval("[data-coder-sections] a", (as) => as.map((a) => new URL(a.href).pathname));
-    assert(JSON.stringify(sections) === JSON.stringify(["/settings/coders/copilot/instructions", "/settings/coders/copilot/agents", "/settings/coders/copilot/skills"]), `section tabs wrong: ${sections}`);
+    assert(JSON.stringify(sections) === JSON.stringify(["/settings/coders/copilot/account", "/settings/coders/copilot/instructions", "/settings/coders/copilot/agents", "/settings/coders/copilot/skills"]), `section tabs wrong: ${sections}`);
     await page.goto(`${BASE}/agents/new?coder=claude`, { waitUntil: "domcontentloaded" });
     assert(page.url().endsWith("/settings/coders/claude/agents/new"), `legacy coder query did not map to canonical URL: ${page.url()}`);
     await page.fill('input[name="agent_id"]', id); await page.fill('input[name="agent_description"]', "throwaway"); await page.fill('textarea[name="agent_instructions"]', "test only");

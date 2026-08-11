@@ -18,6 +18,11 @@
     <div class="col-12 col-md-9">
       <div class="card-header">
         <ul class="nav nav-tabs card-header-tabs" data-coder-sections>
+          {{if $nav.Account}}
+          <li class="nav-item">
+            <a class="nav-link{{if eq $nav.Section "account"}} active{{end}}" href="{{.Base}}/account"><i class="ti ti-user me-1 d-none d-sm-inline-block"></i>Account</a>
+          </li>
+          {{end}}
           <li class="nav-item">
             <a class="nav-link{{if eq $nav.Section "instructions"}} active{{end}}" href="{{.Base}}/instructions"><i class="ti ti-file-description me-1 d-none d-sm-inline-block"></i>Instructions</a>
           </li>

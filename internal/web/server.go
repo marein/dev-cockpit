@@ -17,6 +17,7 @@ import (
 	"github.com/local/dev-cockpit/internal/assistant"
 	"github.com/local/dev-cockpit/internal/backup"
 	"github.com/local/dev-cockpit/internal/coder"
+	"github.com/local/dev-cockpit/internal/coderlogin"
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/docker"
 	"github.com/local/dev-cockpit/internal/eventbus"
@@ -84,6 +85,9 @@ type Server struct {
 	// docker is the one connection to the daemon, its cache feeds the
 	// container chips on the projects page and the action handlers.
 	docker *docker.Service
+	// coderLogin owns the browser login flows of the coder CLIs and the
+	// cached login state the settings and new-coder pages show.
+	coderLogin *coderlogin.Service
 	// deletes are the project deletions that run past their request, the ones
 	// that bring compose stacks down first.
 	deletes *projectDeletes
@@ -139,6 +143,13 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 			cfg.LoginRateBlock, cfg.LoginRateMaxAttempts,
 		),
 	}
+	logins := map[string]coderlogin.Login{}
+	for i := range coders {
+		if login := coder.WebLoginFor(coders[i].Coder()); login != nil {
+			logins[coders[i].ID()] = login
+		}
+	}
+	s.coderLogin = coderlogin.NewService(logins)
 	handler, err := s.newHandler()
 	if err != nil {
 		return nil, err

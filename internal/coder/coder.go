@@ -2,6 +2,7 @@ package coder
 
 import (
 	"github.com/local/dev-cockpit/internal/assistant"
+	"github.com/local/dev-cockpit/internal/coderlogin"
 	"github.com/local/dev-cockpit/internal/terminal"
 )
 
@@ -35,4 +36,21 @@ func AssistantRunnerFor(c Coder) assistant.Runner {
 		return nil
 	}
 	return capable.AssistantRunner()
+}
+
+// LoginCapable is the optional browser login capability: the coder's CLI can
+// be logged in headless, with the URL or code it prints carried into a
+// dialog. A coder without it keeps every other surface and logs in on its own
+// terminal.
+type LoginCapable interface {
+	WebLogin() coderlogin.Login
+}
+
+// WebLoginFor returns the coder's web login, or nil.
+func WebLoginFor(c Coder) coderlogin.Login {
+	capable, ok := c.(LoginCapable)
+	if !ok {
+		return nil
+	}
+	return capable.WebLogin()
 }

@@ -83,6 +83,14 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		base.GET("/skills/:id/edit", s.handleSkillEdit(co))
 		base.POST("/skills/:id", s.handleSkillUpdate(co))
 		base.POST("/skills/:id/delete", s.handleSkillDelete(co))
+		// The account section exists only for coders whose CLI the browser can
+		// log in. It is new with the web login, so unlike the sections above it
+		// has no legacy paths to replay.
+		if s.coderLogin.Supported(co.ID()) {
+			base.GET("/account", s.handleCoderAccount(co))
+			base.GET("/login", s.handleCoderLoginDescribe(co))
+			base.POST("/login", s.handleCoderLoginAction(co))
+		}
 	}
 
 	// TODO(v2.0.0): drop the pre-settings coder pages, canonical is

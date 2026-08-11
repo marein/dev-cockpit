@@ -1,0 +1,24 @@
+{{define "coder_account.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "coder_page_start.gohtml" .}}
+<dc-coder-login login-url="{{.Base}}/login" coder-name="{{coderLabel .CoderID}}">
+  <div data-login-in {{if not .LoggedIn}}hidden{{end}}>
+    <div class="d-flex align-items-center gap-3">
+      <span class="avatar"><i class="ti ti-user-check fs-2"></i></span>
+      <div class="min-w-0">
+        <div class="fw-bold text-break">Logged in as <span data-login-account>{{.Account}}</span></div>
+        <div class="text-secondary text-break" data-login-detail>{{.Detail}}</div>
+      </div>
+    </div>
+    <div class="mt-3">
+      <button type="button" class="btn" data-login-start>Log in again</button>
+    </div>
+  </div>
+  <div data-login-out {{if .LoggedIn}}hidden{{end}}>
+    <p class="text-secondary">{{coderLabel .CoderID}} is installed but not logged in on this machine. The login runs right here: a dialog carries the provider's page to you, and the CLI stores its own credentials, the cockpit keeps none of it.</p>
+    <button type="button" class="btn btn-primary" data-login-start>Log in</button>
+  </div>
+</dc-coder-login>
+{{template "coder_page_end.gohtml"}}
+{{template "app_end.gohtml" .}}
+{{end}}

@@ -17,6 +17,9 @@ class CoderSelect extends HTMLElement {
           agents.disabled = !active;
         }
       }
+      for (const group of this.querySelectorAll("[data-coder-login]")) {
+        group.hidden = group.dataset.coderLogin !== coder.value;
+      }
     };
     coder.addEventListener("change", apply, { signal: this.abort.signal });
     apply();

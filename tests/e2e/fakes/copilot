@@ -4,6 +4,43 @@
 # never spends a premium request.
 set -u
 
+# The login subcommand answers the web login's device flow: print the one line
+# the dialog reads, then poll like the real CLI until the authorization marker
+# appears, which is the runner's stand-in for the browser side. Success records
+# the login in the config the cockpit's probe reads.
+if [ "${1:-}" = "login" ]; then
+  echo "To authenticate, visit https://github.example.test/login/device and enter code FAKE-1234"
+  echo "Waiting for authorization..."
+  waited=0
+  while [ $waited -lt 1200 ]; do
+    if [ -f "$HOME/.copilot/fake-device-authorized" ]; then
+      rm -f "$HOME/.copilot/fake-device-authorized"
+      python3 - <<'PY'
+import json, os
+path = os.path.expanduser("~/.copilot/config.json")
+config = {}
+try:
+    with open(path) as handle:
+        body = "".join(line for line in handle if not line.lstrip().startswith("//"))
+    config = json.loads(body)
+except Exception:
+    pass
+user = {"host": "https://github.com", "login": "fake-user"}
+config["loggedInUsers"] = [user]
+config["lastLoggedInUser"] = user
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(path, "w") as handle:
+    json.dump(config, handle, indent=2)
+PY
+      echo "Logged in as fake-user"
+      exit 0
+    fi
+    sleep 0.5
+    waited=$((waited+1))
+  done
+  exit 1
+fi
+
 print_mode=0
 prompt=""
 task=""
