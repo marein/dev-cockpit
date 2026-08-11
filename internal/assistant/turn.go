@@ -91,7 +91,7 @@ func (s *Service) launch(runner Runner, req TurnRequest, rec RunRecord) (*active
 	}
 	rec.Output, rec.Errors, rec.Lock = out, errs, lock
 	rec.StartedAt = s.now().UTC()
-	p, err := start(cmd, req.Workdir, out, errs, lock)
+	p, err := start(cmd, req.Workdir, req.Source, out, errs, lock)
 	if err != nil {
 		remove(out)
 		remove(errs)

@@ -178,6 +178,24 @@ func DocsTopics() []DocsTopic {
 					TagClass: "bg-blue-lt",
 					Desc:     `A steered coder's icon turns purple wherever it shows, and the color follows steer and release without a reload. Steer and release where the coder is listed: swipe its row in the quick nav, or open the context menu of its tab, its pane header or its chip. The dialog's criterion may stay empty, the checks then judge against the task the session is on.`,
 				},
+				{
+					Title:    "Reach it from Telegram",
+					Tag:      "Chat",
+					TagClass: "bg-blue-lt",
+					Desc:     `A Telegram bot is a second way into the same conversation: what you start on the phone continues in the browser. Set it up under <a href="/settings/assistant#settings-telegram">Settings, Assistant</a>: create a bot with @BotFather, paste its token, create a pairing code and send that code to the bot as a message. It is good for ten minutes and works once. A connected chat talks to the assistant past the login, so treat it like your password: only one chat can be connected, every other chat is dropped without an answer, and a chat is disconnected on that page.`,
+				},
+				{
+					Title:    "What the chat carries",
+					Tag:      "Chat",
+					TagClass: "bg-blue-lt",
+					Desc:     `Every finished answer and every report of a steered job arrives there, formatted: bold, italics, code and links survive. Text and images go in, a picture also when your phone sends it as a file; voice messages, videos and stickers do not arrive and are answered with one line saying so. Two settings narrow what the bot sends, every answer or only the answers to questions asked there, every job report or only the jobs started there, both wide to begin with. They narrow the bot and nothing else: there is one conversation, and the browser always shows all of it.`,
+				},
+				{
+					Title:    "The three commands",
+					Tag:      "Chat",
+					TagClass: "bg-blue-lt",
+					Desc:     `<code>/start</code> says what the chat is. <code>/new</code> asks which coder answers and opens the new conversation on the button you press, so no slipped thumb starts one; while an answer is still being written it is refused instead of tearing that answer off, and text behind the command is not taken as a message. <code>/context</code> says how full the context window of the current conversation stands, and says so plainly when the window of that model is not known here.`,
+				},
 			},
 		},
 		{

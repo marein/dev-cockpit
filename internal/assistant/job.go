@@ -72,9 +72,14 @@ type Job struct {
 	// Task and DoneWhen are the job itself: one thing to do and the one
 	// criterion that decides it is done. A job that needs a second step gets it
 	// the same way the first one arrived, from the assistant a DONE woke.
-	Task      string    `json:"task"`
-	DoneWhen  string    `json:"doneWhen"`
-	State     JobState  `json:"state"`
+	Task     string   `json:"task"`
+	DoneWhen string   `json:"doneWhen"`
+	State    JobState `json:"state"`
+	// Source is where this job was asked for, empty for the browser and for
+	// every job stored before this existed. It comes from the turn that called
+	// coder-new or coder-steer, and it is what a channel filters its reports
+	// by: a job steered from the settings page is nobody's chat business.
+	Source    string    `json:"source,omitempty"`
 	Wakes     int       `json:"wakes"`
 	MaxWakes  int       `json:"maxWakes"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -490,6 +495,7 @@ func (w *Watcher) Steer(spec Job) (Job, error) {
 		CoderID:   strings.TrimSpace(spec.CoderID),
 		Task:      task,
 		DoneWhen:  doneWhen,
+		Source:    Source(spec.Source),
 		State:     JobSteering,
 		MaxWakes:  defaultMaxWakes,
 		CreatedAt: now,
@@ -721,6 +727,9 @@ func (w *Watcher) wake(job Job) {
 		Terminal: job.Terminal,
 		Prompt:   w.wakePrompt(job, activity),
 		Context:  seen,
+		// A check acts for the job, so whatever it starts belongs where the job
+		// belongs: the origin travels on into its turn.
+		Source: job.Source,
 	})
 	if err != nil {
 		w.conclude(job, seen, wakeOutcome{}, err)

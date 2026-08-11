@@ -61,7 +61,15 @@ type Workspace struct {
 	memoryDir  string
 	uploadRoot string
 	cockpit    Cockpit
+	// delivers reports whether a channel can carry a file out of an answer. The
+	// instructions are rebuilt before every turn, so this is asked then.
+	delivers func() bool
 }
+
+// SetFileDelivery registers what tells the workspace whether a file named in
+// an answer is actually sent anywhere. Without such a channel the instructions
+// say nothing about it: a marker nobody reads is noise in every turn.
+func (s *Workspace) SetFileDelivery(delivers func() bool) { s.delivers = delivers }
 
 // Paths returns the assistant's store locations for a state directory. The
 // inspection commands build the same store to know which provider sessions

@@ -334,6 +334,15 @@ func (s *Workspace) instructions() string {
 		b.WriteString("and say what you deleted.\n\n")
 	}
 
+	if s.delivers != nil && s.delivers() {
+		b.WriteString("## Sending a file along\n\n")
+		b.WriteString("The user also reads you in a chat that carries files. When a file in `assistant-files/` is part of the ")
+		b.WriteString("answer, a screenshot, a report, a small script, name it on a line of its own:\n\n")
+		b.WriteString("```\n[[datei: assistant-files/report.png]]\n```\n\n")
+		b.WriteString("The line is taken out of the answer and the file goes with it. Only files inside this workspace are sent, ")
+		b.WriteString("at most five per answer, and only when you write the line: a path in a sentence stays a path.\n\n")
+	}
+
 	entries := s.Memory()
 	b.WriteString("## What you know about the user\n\n")
 	if len(entries) == 0 {

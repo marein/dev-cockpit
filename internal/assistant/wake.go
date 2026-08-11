@@ -26,6 +26,9 @@ const wakeTimeout = 2 * time.Hour
 type wakeSpec struct {
 	Terminal string
 	Prompt   string
+	// Source is where the job this check acts for was asked for, so what the
+	// check starts carries the same origin.
+	Source string
 	// Context is what the watcher saw before the check started. It travels into
 	// the register with the turn, so the answer is judged the same way whether
 	// or not the cockpit restarted while the check ran.
@@ -100,6 +103,7 @@ func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
 		Title:     wakeSessionName(c.Title),
 		Workdir:   c.ProjectPath,
 		Prompt:    spec.Prompt,
+		Source:    spec.Source,
 	}, RunRecord{
 		ID:   statefile.NewID(),
 		Kind: RunCheck,
@@ -206,6 +210,10 @@ func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text st
 			Name:    strings.TrimSpace(job.Name),
 			Project: strings.TrimSpace(job.Project),
 			Verdict: string(verdict),
+			// Where the job was asked for travels with the report for the same
+			// reason: a channel that only carries its own jobs decides on this
+			// long after the job may be gone.
+			Source: job.Source,
 		},
 	}
 	c.Messages = append(c.Messages, message)

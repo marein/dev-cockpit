@@ -711,6 +711,7 @@ func (s *Server) assistantSteer(c *gin.Context) {
 		CoderID:  target.CoderID,
 		Task:     c.PostForm("task"),
 		DoneWhen: c.PostForm("done_when"),
+		Source:   s.turnSource(c),
 	})
 	if err != nil {
 		s.assistantJobError(c, err)

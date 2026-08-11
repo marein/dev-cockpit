@@ -98,7 +98,7 @@ func (p process) kill() { killProcess(p.pid, p.lock) }
 // is to hold the turn's lock while the provider runs. The lock is taken here,
 // before anything starts, and travels as an inherited descriptor, so there is
 // no moment where the turn runs and the lock is free.
-func start(c Command, workdir, outPath, errPath, lockPath string) (process, error) {
+func start(c Command, workdir, source, outPath, errPath, lockPath string) (process, error) {
 	if strings.TrimSpace(c.Name) == "" {
 		return process{}, errors.New("The coder could not be started.")
 	}
@@ -138,6 +138,12 @@ func start(c Command, workdir, outPath, errPath, lockPath string) (process, erro
 	cmd.Stdout = out
 	cmd.Stderr = errFile
 	cmd.ExtraFiles = []*os.File{lock}
+	// Where the message came from travels down the whole tree: this process,
+	// the provider it runs, and the cockpit commands the provider calls from
+	// its shell. That is how a job it starts knows where it was asked for.
+	if source != "" {
+		cmd.Env = append(os.Environ(), TurnSourceEnv+"="+source)
+	}
 	if err := detach(cmd); err != nil {
 		return process{}, err
 	}

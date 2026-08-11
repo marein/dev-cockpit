@@ -2,6 +2,7 @@
 package render
 
 import (
+	"bytes"
 	"embed"
 	"html/template"
 	"path/filepath"
@@ -14,7 +15,20 @@ var templatesFS embed.FS
 
 // HTMLTemplate returns the parsed template set used by Gin's HTML renderer.
 func HTMLTemplate(assetPath func(string) string, version, assetBuild string) *template.Template {
+	// set is the parsed template set itself, closed over so a page can render a
+	// partial whose name it only knows at runtime. `{{template}}` takes a
+	// literal name, and a page built from a list of sections has none.
+	var set *template.Template
 	funcMap := template.FuncMap{
+		"section": func(name string, data any) (template.HTML, error) {
+			var buf bytes.Buffer
+			if err := set.ExecuteTemplate(&buf, name, data); err != nil {
+				return "", err
+			}
+			// What comes back is the output of a template of this set, escaped
+			// by the same engine, so it is markup and not user text.
+			return template.HTML(buf.String()), nil
+		},
 		"asset":      assetPath,
 		"assetBuild": func() string { return assetBuild },
 		"appVersion": func() string { return version },
@@ -35,7 +49,8 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string) *te
 			return m
 		},
 	}
-	return template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.gohtml"))
+	set = template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.gohtml"))
+	return set
 }
 
 // CoderLabel capitalizes a coder id for display. One implementation for the

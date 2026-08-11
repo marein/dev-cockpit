@@ -471,6 +471,15 @@ func (s *Service) dropSessionLocked(c Conversation) {
 // finds older messages still waiting queues behind them even when nothing
 // runs, so the order of what was typed is the order of what goes out.
 func (s *Service) Send(id, prompt string, attachments []Attachment) (Run, error) {
+	return s.SendFrom(id, prompt, attachments, "")
+}
+
+// SendFrom is Send with the origin of the message. It is its own method and not
+// a fourth parameter on Send so every existing caller keeps meaning what it
+// meant: the browser is the empty source, and only a channel that knows it is
+// one names itself here.
+func (s *Service) SendFrom(id, prompt string, attachments []Attachment, source string) (Run, error) {
+	source = Source(source)
 	text, err := validatePrompt(prompt, len(attachments))
 	if err != nil {
 		return Run{}, err
@@ -495,6 +504,7 @@ func (s *Service) Send(id, prompt string, attachments []Attachment) (Run, error)
 			Attachments: attachments,
 			CreatedAt:   now,
 			State:       StateQueued,
+			Source:      source,
 		}
 		c.Messages = append(c.Messages, msg)
 		c.Draft = Draft{UpdatedAt: now}
@@ -513,6 +523,7 @@ func (s *Service) Send(id, prompt string, attachments []Attachment) (Run, error)
 		Attachments: attachments,
 		CreatedAt:   now,
 		State:       StateComplete,
+		Source:      source,
 	}
 	c.Messages = append(c.Messages, user)
 	if c.Title == "" || c.Title == DefaultTitle {
@@ -613,12 +624,17 @@ func (s *Service) startLocked(c *Conversation, co CoderInfo, prompt string, anno
 	}
 
 	runID := statefile.NewID()
+	// The answer inherits the origin of the question it answers, which is the
+	// last user message of the conversation whichever way this turn started: a
+	// send, a retry, or a queue that flushed several at once.
+	source := lastUserSource(*c)
 	msg := Message{
 		ID:        statefile.NewID(),
 		Role:      RoleAssistant,
 		CreatedAt: s.now().UTC(),
 		RunID:     runID,
 		State:     StateStreaming,
+		Source:    source,
 	}
 	c.Messages = append(c.Messages, msg)
 	c.UpdatedAt = s.now().UTC()
@@ -630,6 +646,7 @@ func (s *Service) startLocked(c *Conversation, co CoderInfo, prompt string, anno
 		Title:     c.Title,
 		Workdir:   c.ProjectPath,
 		Prompt:    prompt,
+		Source:    source,
 	}
 	rec := RunRecord{
 		ID:           runID,
@@ -950,6 +967,18 @@ func validatePrompt(raw string, attachments int) (string, error) {
 		return "", fmt.Errorf("That message is too long. Keep it under %d KB.", MaxPromptBytes/1024)
 	}
 	return text, nil
+}
+
+// lastUserSource is where the question of this turn came from. A conversation
+// mixes origins, so it is the newest user message that decides, the one this
+// turn is about to answer.
+func lastUserSource(c Conversation) string {
+	for i := len(c.Messages) - 1; i >= 0; i-- {
+		if c.Messages[i].Role == RoleUser {
+			return c.Messages[i].Source
+		}
+	}
+	return ""
 }
 
 // queuedMessages are the transcript entries still waiting to go out, in the

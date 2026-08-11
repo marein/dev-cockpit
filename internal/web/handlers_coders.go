@@ -184,6 +184,7 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 			CoderID:  co.ID(),
 			Task:     form.Task,
 			DoneWhen: doneWhen,
+			Source:   s.turnSource(c),
 		})
 		if err != nil {
 			// The coder is running either way, so the answer carries it; the

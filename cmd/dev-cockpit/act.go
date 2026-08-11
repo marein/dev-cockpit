@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/local/dev-cockpit/internal/assistant"
 	"github.com/local/dev-cockpit/internal/localapi"
 	"github.com/spf13/cobra"
 )
@@ -27,6 +29,13 @@ const (
 	inputTimeout  = 10 * time.Second
 	actionTimeout = 90 * time.Second
 )
+
+// turnSource is where the message came from that the turn running this command
+// answers. The server puts it into the turn's environment, every process under
+// it inherits it, and the two commands that create a job hand it on, so a
+// report ends up where the work was asked for. Unset means the browser, which
+// is also what a command typed by hand is.
+func turnSource() string { return assistant.Source(os.Getenv(assistant.TurnSourceEnv)) }
 
 func newSendCommand(opts *inspectOptions) *cobra.Command {
 	return &cobra.Command{
@@ -234,6 +243,9 @@ func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, age
 	if doneWhen = strings.TrimSpace(doneWhen); doneWhen != "" {
 		form.Set("done_when", doneWhen)
 	}
+	if source := turnSource(); source != "" {
+		form.Set("source", source)
+	}
 	created, err := client.PostForm("/coders/new", form, actionTimeout)
 	if err != nil {
 		return err
@@ -291,6 +303,7 @@ func runSteer(out io.Writer, opts inspectOptions, terminal, task, doneWhen strin
 		"terminal":  {strings.TrimSpace(terminal)},
 		"task":      {strings.TrimSpace(task)},
 		"done_when": {strings.TrimSpace(doneWhen)},
+		"source":    {turnSource()},
 	}, actionTimeout)
 	if err != nil {
 		return err

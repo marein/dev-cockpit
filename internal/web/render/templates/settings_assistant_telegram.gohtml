@@ -1,0 +1,108 @@
+{{define "settings_assistant_telegram"}}
+{{$action := .Action}}
+{{$csrf := .CSRFToken}}
+{{with .Data}}
+<div class="alert {{if .Stopped}}alert-danger{{else}}alert-secondary{{end}} mb-4" role="alert">
+  <div class="d-flex">
+    <i class="ti {{if .Stopped}}ti-alert-circle{{else}}ti-brand-telegram{{end}} me-2 fs-3"></i>
+    <div class="text-break min-w-0">{{.Status}}</div>
+  </div>
+</div>
+
+<div class="mb-4">
+  <label class="form-label d-flex align-items-center gap-2">
+    Bot token
+    {{if .TokenSet}}<span class="badge bg-green-lt" data-telegram-token-state>Stored</span>
+    {{else}}<span class="badge bg-secondary-lt" data-telegram-token-state>Not set</span>{{end}}
+  </label>
+  <div class="text-secondary small mb-2">Create a bot with @BotFather in Telegram and paste the token it hands you. It is stored on this machine and never shown again. An empty field keeps what is stored.</div>
+  <form method="post" action="{{$action}}" class="d-flex gap-2">
+    <input type="hidden" name="csrf_token" value="{{$csrf}}">
+    <input type="hidden" name="form" value="telegram-token">
+    <input type="password" class="form-control" name="token" autocomplete="off" placeholder="123456789:AA...">
+    <button type="submit" class="btn btn-primary flex-shrink-0">Save</button>
+  </form>
+  {{if .TokenSet}}
+  <form method="post" action="{{$action}}" class="mt-2" data-confirm="Remove the bot token?" data-confirm-button="Remove">
+    <input type="hidden" name="csrf_token" value="{{$csrf}}">
+    <input type="hidden" name="form" value="telegram-token-clear">
+    <button type="submit" class="btn btn-sm btn-outline-danger"><i class="ti ti-trash me-1"></i>Remove token</button>
+  </form>
+  {{end}}
+</div>
+
+<div class="mb-4">
+  <label class="form-label">Connected chat</label>
+  {{if .ChatID}}
+  <div class="text-secondary small mb-2">This chat reaches the assistant. It talks to it without logging in, so treat it like your password.</div>
+  <div class="list-group mb-2">
+    <div class="list-group-item d-flex align-items-center gap-2">
+      <i class="ti ti-brand-telegram fs-2 text-secondary"></i>
+      <div class="flex-fill min-w-0">
+        <div class="text-truncate" data-telegram-chat>{{.ChatName}}</div>
+        <div class="text-secondary small">ID {{.ChatID}}{{if .Paired}} - connected {{.Paired}}{{end}}</div>
+      </div>
+      <form method="post" action="{{$action}}" data-confirm="Disconnect this chat?" data-confirm-button="Disconnect">
+        <input type="hidden" name="csrf_token" value="{{$csrf}}">
+        <input type="hidden" name="form" value="telegram-unpair">
+        <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Disconnect chat" title="Disconnect"><i class="ti ti-plug-off"></i></button>
+      </form>
+    </div>
+  </div>
+  {{else}}
+  <div class="text-secondary small mb-2">No chat yet. Create a pairing code here and send it to your bot as a message. It is good for ten minutes and works once, and messages from every other chat are dropped without an answer.</div>
+  {{if .Code}}
+  <div class="mb-2">
+    <span class="h1 font-monospace" data-telegram-code>{{.Code}}</span>
+    <div class="text-secondary small">Send this to the bot within {{.CodeExpires}}.</div>
+  </div>
+  {{end}}
+  <form method="post" action="{{$action}}">
+    <input type="hidden" name="csrf_token" value="{{$csrf}}">
+    <input type="hidden" name="form" value="telegram-pair">
+    <button type="submit" class="btn btn-primary"{{if not .TokenSet}} disabled{{end}}>{{if .Code}}New pairing code{{else}}Create pairing code{{end}}</button>
+  </form>
+  {{end}}
+</div>
+
+<div class="mb-4">
+  <label class="form-label">What goes to the chat</label>
+  <div class="text-secondary small mb-2">Narrows what the bot sends, nothing else: the conversation keeps every question, every answer and every report either way, and the browser shows all of it.</div>
+  <form method="post" action="{{$action}}">
+    <input type="hidden" name="csrf_token" value="{{$csrf}}">
+    <input type="hidden" name="form" value="telegram-delivery">
+    <div class="mb-3">
+      <label class="form-label" for="telegram-answers">Answers</label>
+      <select class="form-select" id="telegram-answers" name="answers">
+        <option value=""{{if not .AnswersFromTelegram}} selected{{end}}>Every finished answer</option>
+        <option value="telegram"{{if .AnswersFromTelegram}} selected{{end}}>Only answers to questions asked here</option>
+      </select>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="telegram-reports">Job reports</label>
+      <select class="form-select" id="telegram-reports" name="reports">
+        <option value=""{{if not .ReportsFromTelegram}} selected{{end}}>Every job report</option>
+        <option value="telegram"{{if .ReportsFromTelegram}} selected{{end}}>Only jobs started from here</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Save</button>
+  </form>
+</div>
+
+<div class="mb-3">
+  <label class="form-label">Channel</label>
+  <div class="text-secondary small mb-2">Switches the bot off without losing the token or the connected chat. While it is off nothing arrives and nothing goes out.</div>
+  <form method="post" action="{{$action}}">
+    <input type="hidden" name="csrf_token" value="{{$csrf}}">
+    <input type="hidden" name="form" value="telegram-enabled">
+    <label class="form-check form-switch mb-2">
+      <input class="form-check-input" type="checkbox" name="enabled" value="on"{{if .Enabled}} checked{{end}}>
+      <span class="form-check-label">Channel on</span>
+    </label>
+    <button type="submit" class="btn btn-primary">Save</button>
+  </form>
+</div>
+
+<div class="text-secondary small">Three commands work in the connected chat: <code>/start</code> says what this is, <code>/new</code> asks which coder answers a new conversation, <code>/context</code> says how full the current one is. Text and images arrive, voice messages do not.</div>
+{{end}}
+{{end}}

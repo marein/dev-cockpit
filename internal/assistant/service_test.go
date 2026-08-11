@@ -1978,3 +1978,53 @@ func TestTranscriptWindowsAndCutsVisibly(t *testing.T) {
 		t.Fatal("an unknown conversation has to be refused")
 	}
 }
+
+// The origin is written on a message so a channel can decide what it carries.
+// It decides nothing about the conversation: every message is written, stored
+// and shown whichever way it came in, which is what makes the transcript the
+// one truth both surfaces read.
+func TestAnAnswerInheritsTheOriginOfItsQuestion(t *testing.T) {
+	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "Answered"}}}
+	svc, _, _ := newTestService(t, runner)
+
+	created, err := svc.create("claude", "/projects/demo")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := svc.SendFrom(created.ID, "from the phone", nil, SourceTelegram); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitIdle(t, svc, created.ID)
+
+	conversation, _ := svc.Get(created.ID)
+	if len(conversation.Messages) != 2 {
+		t.Fatalf("unexpected transcript: %+v", conversation.Messages)
+	}
+	if conversation.Messages[0].Source != SourceTelegram {
+		t.Fatalf("the question carries source %q", conversation.Messages[0].Source)
+	}
+	if conversation.Messages[1].Source != SourceTelegram {
+		t.Fatalf("the answer did not inherit the origin: %q", conversation.Messages[1].Source)
+	}
+}
+
+func TestAMessageFromTheBrowserCarriesNoOrigin(t *testing.T) {
+	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "Answered"}}}
+	svc, _, _ := newTestService(t, runner)
+
+	created, err := svc.create("claude", "/projects/demo")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := svc.Send(created.ID, "from the browser", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitIdle(t, svc, created.ID)
+
+	conversation, _ := svc.Get(created.ID)
+	for i, message := range conversation.Messages {
+		if message.Source != "" {
+			t.Fatalf("message %d carries source %q, the browser is the empty one", i, message.Source)
+		}
+	}
+}

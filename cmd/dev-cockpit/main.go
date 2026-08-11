@@ -31,6 +31,7 @@ import (
 	"github.com/local/dev-cockpit/internal/restore"
 	"github.com/local/dev-cockpit/internal/settings"
 	"github.com/local/dev-cockpit/internal/shell"
+	"github.com/local/dev-cockpit/internal/telegram"
 	"github.com/local/dev-cockpit/internal/tmux"
 	"github.com/local/dev-cockpit/internal/web"
 	"github.com/spf13/cobra"
@@ -277,6 +278,14 @@ func runServe(opts serveOptions) error {
 	})
 	backups := backup.New(cfg.StateDir, cfg.ProjectsRoot, resolveVersion())
 
+	// The assistant's second door: a Telegram bot the user writes to from a
+	// phone, answering in the same live conversation the browser shows. Without
+	// a bot token nothing of it exists, which is the normal state here.
+	telegramChannel := telegram.New(cfg.StateDir, conversations, assistantService)
+	// A file the assistant made only goes anywhere while that channel can carry
+	// it, so the instructions mention the line that sends one only then.
+	assistantService.SetFileDelivery(telegramChannel.Delivers)
+
 	notifier := notify.NewService(
 		notify.StorePath(cfg.StateDir),
 		notifyResolver(coders, shells, conversations, projectRepo, backups),
@@ -326,14 +335,20 @@ func runServe(opts serveOptions) error {
 		jobs,
 		coderSessions{coders: coders},
 	)
-	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, resolveVersion())
+	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, telegramChannel, resolveVersion())
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}
 	// A finished answer is normal cockpit news, and a change refreshes the open
 	// lists. Neither hook may run while the service holds its lock, both are
 	// called after it is released.
-	conversations.SetHooks(srv.PublishConversations, notifier.Add)
+	conversations.SetHooks(srv.PublishConversations, func(conversationID string) {
+		notifier.Add(conversationID)
+		// The chat channel gets the same answers and the same job reports. It
+		// runs on a goroutine of its own with a timeout: this hook sits in the
+		// turn's path, and a slow Telegram may not hold an answer in the browser.
+		go telegramChannel.Notify(conversationID)
+	})
 	conversations.SetRenderer(markdown.RenderGFM)
 	notifier.SetSignal(watcher.Handle)
 	// A coder somebody steers has the assistant looking at it, so its own news
@@ -384,6 +399,12 @@ func runServe(opts serveOptions) error {
 	// is worth one. It also ends the jobs whose time or budget is up, because a
 	// job that goes quiet has no signal left to write that report with.
 	go watcher.RunHeartbeat(0)
+
+	// The chat channel comes up by itself, not only when somebody saves the
+	// settings, otherwise the bot would go silent after every restart. It runs
+	// after the recovery above, so the line it may write about a turn the
+	// restart cut off is written about a turn that really is over.
+	telegramChannel.Start()
 
 	for _, c := range selected {
 		go notifier.RunInbox(notify.InboxDir(cfg.StateDir, c.ID()), time.Second)

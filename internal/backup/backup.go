@@ -163,11 +163,12 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 			Description: "General settings and the notification jingle.",
 			Sources:     []Source{{Name: "settings.json", Path: st("settings.json")}}},
 		{ID: "push", Group: "Cockpit", Label: "Push channels",
-			Description: "Web push devices, webhooks, the VAPID keys and the base URL. Devices keep ringing without a new registration as long as Dev Cockpit keeps its address, under a new address every device must register again. The keys let anyone holding this file push to the devices, and an old installation left running rings the same phones twice.",
+			Description: "Web push devices, webhooks, the VAPID keys and the base URL, plus the assistant's Telegram bot token with the chat it is connected to. Devices keep ringing without a new registration as long as Dev Cockpit keeps its address, under a new address every device must register again. The keys and the bot token let anyone holding this file push to the devices and speak as that bot, and an old installation left running rings the same phones twice.",
 			Sources: []Source{
 				{Name: "push-vapid.json", Path: st("push-vapid.json")},
 				{Name: "push-channels.json", Path: st("push-channels.json")},
-				{Name: "push-subscriptions.json", Path: st("push-subscriptions.json")}}},
+				{Name: "push-subscriptions.json", Path: st("push-subscriptions.json")},
+				{Name: "assistant-telegram.json", Path: st("assistant-telegram.json")}}},
 		{ID: "terminals", Group: "Cockpit", Label: "Terminal restore",
 			Description: "The restore snapshot. With the restore setting on, coders and shells come back on the next start, in their project directories. The per shell command histories travel along.",
 			Sources: []Source{

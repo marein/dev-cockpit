@@ -1,6 +1,9 @@
 package assistant
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Status is the lifecycle state of a conversation.
 type Status string
@@ -16,6 +19,28 @@ const (
 	// continue it, and the cockpit holds the whole conversation on disk.
 	StatusArchived Status = "archived"
 )
+
+// SourceTelegram marks what came in through the chat channel. An empty source
+// is the browser, which is what every message written before this existed
+// carries, so an old transcript keeps meaning what it meant.
+const SourceTelegram = "telegram"
+
+// TurnSourceEnv carries the origin of the message a turn answers into that
+// turn's process, and from there into the cockpit commands the turn runs. It
+// is how a job knows where it was asked for: `coder-new` and `coder-steer`
+// reach the server over the local socket and would otherwise arrive with
+// nothing but their arguments. Unset means the browser.
+const TurnSourceEnv = "DEV_COCKPIT_TURN_SOURCE"
+
+// Source normalizes an origin from outside: only what this cockpit knows is
+// kept, everything else counts as the browser. The value ends up in state
+// files and in filters, so nothing unchecked goes in.
+func Source(raw string) string {
+	if strings.TrimSpace(raw) == SourceTelegram {
+		return SourceTelegram
+	}
+	return ""
+}
 
 // Role distinguishes the two message authors.
 type Role string
@@ -163,6 +188,10 @@ type Message struct {
 	// Error is a curated, user facing sentence. Provider stderr, argv and
 	// paths never reach it.
 	Error string `json:"error,omitempty"`
+	// Source is where this message came from, empty for the browser. An answer
+	// inherits it from the question it answers, which is what lets a channel
+	// send only what was asked there.
+	Source string `json:"source,omitempty"`
 	// Wake marks a message a check wrote, so the page can show where it came
 	// from. A check's prompt is never stored, only what it concluded, which is
 	// why nothing in a transcript can look like something the user said.
@@ -181,6 +210,11 @@ type WakeNote struct {
 	// where that coder worked without asking anybody.
 	Project string `json:"project,omitempty"`
 	Verdict string `json:"verdict"`
+	// Source is where the job was asked for, copied from the job when the
+	// report is written and for the same reason as the name: by the time a
+	// channel decides whether to carry this report, the job may be gone or the
+	// terminal steered again.
+	Source string `json:"source,omitempty"`
 }
 
 // Last returns the final message of the transcript.

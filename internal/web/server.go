@@ -24,6 +24,7 @@ import (
 	"github.com/local/dev-cockpit/internal/restore"
 	"github.com/local/dev-cockpit/internal/settings"
 	"github.com/local/dev-cockpit/internal/shell"
+	"github.com/local/dev-cockpit/internal/telegram"
 	"github.com/local/dev-cockpit/internal/update"
 	"github.com/local/dev-cockpit/internal/web/render"
 )
@@ -42,16 +43,19 @@ type Server struct {
 	assistant     *assistant.Workspace
 	// watcher owns the steered jobs: what the assistant keeps an eye on and
 	// what wakes it.
-	watcher      *assistant.Watcher
-	projects     *project.Repository
-	notifier     *notify.Service
-	bus          *eventbus.Bus
-	settings     *settings.Store
-	pusher       *push.Service
-	restorer     *restore.Service
-	version      string
-	updater      *update.Updater
-	backups      *backup.Service
+	watcher  *assistant.Watcher
+	projects *project.Repository
+	notifier *notify.Service
+	bus      *eventbus.Bus
+	settings *settings.Store
+	pusher   *push.Service
+	restorer *restore.Service
+	version  string
+	updater  *update.Updater
+	backups  *backup.Service
+	// telegram is the assistant's chat channel, configured on the assistant
+	// settings page.
+	telegram     *telegram.Channel
 	assets       staticAssetManifest
 	loginLimiter rateLimiter
 	termTheme    terminalTheme
@@ -65,7 +69,7 @@ type localCallKeyType struct{}
 var localCallKey localCallKeyType
 
 // NewServer constructs a Server serving the given coders.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, version string) (*Server, error) {
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, telegramChannel *telegram.Channel, version string) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
@@ -94,6 +98,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		version:       version,
 		updater:       updater,
 		backups:       backups,
+		telegram:      telegramChannel,
 		assets:        assets,
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),

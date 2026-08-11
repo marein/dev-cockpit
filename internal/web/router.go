@@ -166,6 +166,12 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/settings", s.handleSettings)
 	auth.GET("/settings/notifications", s.handleSettingsNotifications)
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
+	// The assistant settings are a page of sections, and every section posts to
+	// its own path. The GET of a section path is the page again, so the form
+	// path pairing holds and a login redirect lands on something that renders.
+	auth.GET("/settings/assistant", s.handleSettingsAssistant)
+	auth.GET("/settings/assistant/telegram", s.handleSettingsAssistant)
+	auth.POST("/settings/assistant/telegram", s.handleSettingsTelegramSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
 	auth.POST("/settings/general", s.handleSettingsGeneralSave)
 	auth.GET("/settings/backup", s.handleSettingsBackup)

@@ -17,6 +17,10 @@ type TurnRequest struct {
 	// Workdir is the validated project directory the process runs in.
 	Workdir string
 	Prompt  string
+	// Source is where the message this turn answers came from, empty for the
+	// browser. It travels into the turn's process as TurnSourceEnv, so the
+	// cockpit commands the turn runs can hand it on to whatever they create.
+	Source string
 }
 
 // MaxSessionNameBytes bounds the name a provider session is created with. A

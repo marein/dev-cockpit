@@ -1,0 +1,43 @@
+{{define "settings_assistant.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      <h2 class="page-title text-truncate mb-0">Settings</h2>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row g-0">
+    <div class="col-12 col-md-3 border-end">
+      <div class="card-body">
+        {{template "settings_nav" .SettingsNav}}
+      </div>
+    </div>
+    <div class="col-12 col-md-9">
+      <div class="card-body">
+        {{range $index, $section := .Sections}}
+        {{if $index}}<hr class="my-4">{{end}}
+        <div id="settings-{{$section.ID}}">
+          <h3 class="card-title">{{$section.Title}}</h3>
+          {{if $section.Lead}}<div class="text-secondary small mb-3">{{$section.Lead}}</div>{{end}}
+          {{if $section.ShowFlash}}{{template "settings_section_flash" $section}}{{end}}
+          {{if $section.Missing}}
+          <div class="alert alert-warning" role="alert">
+            <div class="d-flex">
+              <i class="ti ti-alert-triangle me-2 fs-3"></i>
+              <div class="text-break min-w-0">{{$section.Missing}}</div>
+            </div>
+          </div>
+          {{else}}
+          {{section $section.Template $section}}
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+    </div>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

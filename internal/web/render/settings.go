@@ -170,6 +170,69 @@ type BackupMergeData struct {
 	Restart  bool
 }
 
+// TelegramSettings feeds the Telegram section of the assistant settings page.
+// The bot token is never part of it, only whether one is stored: it is a
+// bearer credential and never goes back to a browser.
+type TelegramSettings struct {
+	TokenSet bool
+	Enabled  bool
+	// Status is the poller in one sentence: running, off, or stopped with the
+	// reason, so a silent bot is looked up here and not on the phone.
+	Status string
+	// Stopped marks the state that needs the user, so the sentence can carry a
+	// warning instead of reading like an ordinary line.
+	Stopped  bool
+	ChatName string
+	ChatID   int64
+	Paired   string
+	// Code is the pairing code waiting to be sent to the bot, empty when none
+	// was created or the last one ran out.
+	Code string
+	// CodeExpires is how long that code is still good for, "8 minutes".
+	CodeExpires string
+	// AnswersFromTelegram and ReportsFromTelegram are the two narrow choices,
+	// each false when everything goes out. They decide what the bot sends and
+	// nothing about the conversation itself.
+	AnswersFromTelegram bool
+	ReportsFromTelegram bool
+}
+
+// SettingsSection is one block of the assistant settings page. The page is
+// rendered from a list of these, not from blocks written one after another in
+// the template: the assistant is getting more settings, and a new one has to be
+// an entry plus its own partial, never a rebuild of the page.
+//
+// Every section owns its form and its POST target, so saving one cannot touch
+// the values of another, and a section whose precondition is missing says so in
+// its own block instead of disappearing.
+type SettingsSection struct {
+	// ID is the anchor of the block, "telegram" renders as #settings-telegram.
+	ID    string
+	Title string
+	Lead  string
+	// Template is the partial that renders the block's body.
+	Template string
+	// Action is the section's own POST target, e.g. /settings/assistant/telegram.
+	Action string
+	// Missing says why this section cannot be used right now, empty when it can.
+	Missing string
+	// Data is what the partial renders, the section's own view model.
+	Data any
+	// CSRFToken and Flash are what a partial needs from the page: its forms
+	// carry the token, and the flash of the section that was just saved is
+	// rendered inside that section's own block.
+	CSRFToken string
+	Flash     Flash
+	ShowFlash bool
+}
+
+// SettingsAssistantData feeds the assistant settings page.
+type SettingsAssistantData struct {
+	Page
+	SettingsNav SettingsNav
+	Sections    []SettingsSection
+}
+
 // SettingsNotificationsData feeds the notifications settings page.
 type SettingsNotificationsData struct {
 	Page

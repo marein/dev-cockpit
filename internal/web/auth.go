@@ -13,6 +13,7 @@ import (
 
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/assistant"
 	"github.com/local/dev-cockpit/internal/web/render"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -132,6 +133,17 @@ func (s *Server) authenticated(c *gin.Context) bool {
 func (s *Server) localCall(c *gin.Context) bool {
 	local, _ := c.Request.Context().Value(localCallKey).(bool)
 	return local
+}
+
+// turnSource is where a job created by this request was asked for. Only a
+// caller on the local socket may say: that is the assistant's own command,
+// which learned it from the turn it runs in. A request from a browser is the
+// browser, whatever it puts in the field.
+func (s *Server) turnSource(c *gin.Context) string {
+	if !s.localCall(c) {
+		return ""
+	}
+	return assistant.Source(c.PostForm("source"))
 }
 
 func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {

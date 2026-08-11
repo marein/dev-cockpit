@@ -107,6 +107,50 @@ test. Update this file when a convention changes.
   jobs (the head, the button and the empty state say steered coders); code,
   routes, state values, the `dev-cockpit assistant` commands and the
   notification titles keep job.
+- **The Telegram channel is a second door into the assistant, not a push
+  channel.** `internal/telegram` polls `getUpdates` in the serve process and
+  turns a message from the connected chat into `Service.Open("")` plus
+  `Service.Send`, and it hangs on the same `onDone` hook the notification
+  center listens on, so answers and job reports leave through one place. Its
+  rules are not negotiable, they are what keeps a door past the login narrow:
+  exactly one chat id may talk, bound from the inside with a code that lives
+  ten minutes in memory (never on disk) and is spent once, every other chat is
+  dropped without an answer and logged once per chat id; the bot token is a
+  bearer credential in the API path, so everything leaving the package goes
+  through `client.redact` and the token never reaches a browser; the offset is
+  written after a message was delivered, never before; only 401 stops the
+  poller, a 409 is what a restart looks like while the old process still holds
+  the one long poll a bot gets; and a path an answer names is resolved inside
+  the assistant workspace with symlinks followed, or nothing is sent. Without
+  a token none of it exists, which is the state of every installation that
+  never sets one up. `DEV_COCKPIT_TELEGRAM_API_URL` points it at another API
+  root, which is how the e2e instances set a token without reaching Telegram.
+  What goes out is formatted with `parse_mode=HTML`, translated from Markdown
+  into Telegram's subset by `markdown.RenderTelegramHTML` (b, i, code, pre, a,
+  s, and `&`, `<`, `>` escaped); a 400 on a formatted message resends it as
+  plain text, so a bug in the translator can only cost the markup, never the
+  answer.
+- **What the chat channel sends is filtered at the door and nowhere else.**
+  Its two settings (answers, job reports; each all or only what came from the
+  chat) sit in `Channel.deliver`, immediately before sending. Nothing about
+  them touches `Send`, `recordWake` or the transcript: there is one
+  conversation, the browser shows every question, answer and report whichever
+  channel they came through, and Telegram is a window onto it that can be made
+  narrower. What the filter reads is an origin written when the message was
+  made: `Message.Source` (empty is the browser, `SendFrom` sets it, an answer
+  inherits it from the last user message) and `Job.Source` for a report, which
+  travels the chain turn process env `DEV_COCKPIT_TURN_SOURCE` → `coder-new` /
+  `coder-steer` → `Job` → `WakeNote.Source`. Only a local API call may name an
+  origin, a browser request is always the browser. Empty everywhere means the
+  browser, so old transcripts and old jobs keep meaning what they meant.
+- **The assistant settings page is a list of sections.** `/settings/assistant`
+  renders `render.SettingsSection` entries, each with its own heading, its own
+  forms and its own POST target (`/settings/assistant/<id>`, whose GET renders
+  the page again so the form path rule holds). A section that cannot be used
+  says so in its own block instead of disappearing. A new group of assistant
+  settings is an entry in `assistantSections` plus its partial, never a rebuild
+  of the page; the template renders a partial by name through the `section`
+  template function.
 - **Backup archives are a compat surface.** `internal/backup` maps archive
   paths `data/<section id>/<source name>` onto host paths through the current
   registry, and the manifest identifies the file (`app`, `format`). Old
