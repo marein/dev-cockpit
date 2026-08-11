@@ -23,9 +23,12 @@ const { assert, sleep, BASE } = L;
 // loads (becomes active) or when a wrap brings you back to the current tab.
 // Browsers reserve
 // Ctrl+Tab, so the direct switch only reaches headless and PWAs. The switcher
-// popup opens only via double tapping Ctrl or Meta within 400ms (collision
-// free: bare modifiers never reach the shell, a chord like Ctrl+C cancels the
-// tap); the double tap anchors one step forward from the current session and
+// popup opens only via double tapping Ctrl or Meta: a tap is a quick press and
+// release, a held press is not a tap, the second tap must start inside the
+// window after the first tap's keyup, and the gesture fires on the keyup that
+// completes the second tap (@dc/doubletap; collision free: bare modifiers
+// never reach the shell, a chord like Ctrl+C cancels the tap); the
+// double tap anchors one step forward from the current session and
 // wraps within the actives, then cycling via the arrow keys rotates
 // over the full list including the inactive section (Tab and Ctrl+Tab stay
 // inert while the switcher is open, they neither cycle nor move the focus out
@@ -300,6 +303,42 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await sleep(200);
       assert((await page.locator(".terminal-switcher").count()) === 0, "Esc did not close the switcher");
       assert(page.url() === before, "Esc navigated away");
+    });
+
+    await run("a held Ctrl is not a tap: hold, release, tap opens no switcher", async () => {
+      await page.click(".attach-terminal");
+      await sleep(200);
+      await page.keyboard.down("Control");
+      await sleep(450);
+      await page.keyboard.up("Control");
+      await page.keyboard.press("Control");
+      await sleep(350);
+      assert((await page.locator(".terminal-switcher").count()) === 0, "switcher opened after a held Control plus a tap");
+    });
+
+    await run("the gesture fires on the second tap's keyup, a held second press does not (Ctrl and Meta)", async () => {
+      for (const key of ["Control", "Meta"]) {
+        await page.click(".attach-terminal");
+        await sleep(200);
+        await page.keyboard.press(key);
+        await sleep(80);
+        await page.keyboard.down(key);
+        await sleep(450);
+        assert((await page.locator(".terminal-switcher").count()) === 0, `${key}: switcher opened while the second press was held`);
+        await page.keyboard.up(key);
+        await sleep(200);
+        assert((await page.locator(".terminal-switcher").count()) === 0, `${key}: switcher opened on the late second keyup`);
+        await page.keyboard.press(key);
+        await sleep(80);
+        await page.keyboard.down(key);
+        await sleep(80);
+        assert((await page.locator(".terminal-switcher").count()) === 0, `${key}: switcher opened on the second keydown already`);
+        await page.keyboard.up(key);
+        await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+        await page.keyboard.press("Escape");
+        await sleep(200);
+        assert((await page.locator(".terminal-switcher").count()) === 0, `${key}: Esc did not close the switcher`);
+      }
     });
 
     await run("the open switcher overlays the attach footer, its buttons are not hit-testable", async () => {

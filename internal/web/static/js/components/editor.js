@@ -9,6 +9,7 @@ import { focusRow, labelNodes, menuJustClosed, openMenu, rowsOf, stepRowFocus, w
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { applyFold } from "@dc/fold";
 import { escapeHtml } from "@dc/dom";
+import { DoubleTap } from "@dc/doubletap";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { releaseCoder, steerCoder } from "@dc/steer";
 import * as dockerApi from "@dc/docker";
@@ -6213,30 +6214,18 @@ async function init(root) {
   }
 
   // A double tap on bare Shift opens the quick open palette like Ctrl+O. Same
-  // state machine as the terminal switcher's double Ctrl/Meta: a clean tap is
-  // keydown then keyup with no chord, the second keydown inside the window
-  // triggers, any other key resets.
-  const SHIFT_TAP_MS = 400;
-  let shiftTapPending = false;
-  let shiftTapAt = 0;
+  // state machine as the terminal switcher's double Ctrl/Meta (@dc/doubletap):
+  // two quick clean taps, keydown then keyup with no chord, holding a press is
+  // not a tap, the gesture fires on the second tap's keyup, any other key
+  // resets.
+  const shiftTap = new DoubleTap();
   document.addEventListener("keydown", (e) => {
     if (e.target instanceof Element && e.target.closest("[data-editor-term-panel]")) return;
     if (e.key === "Shift" && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      if (shiftTapAt && Date.now() - shiftTapAt < SHIFT_TAP_MS) {
-        shiftTapPending = false;
-        shiftTapAt = 0;
-        if (quickOpenEl.hidden) {
-          e.preventDefault();
-          openQuickOpen("files");
-        }
-        return;
-      }
-      shiftTapPending = true;
-      shiftTapAt = 0;
+      shiftTap.keydown(e.key);
       return;
     }
-    shiftTapPending = false;
-    shiftTapAt = 0;
+    shiftTap.reset();
     if (e.key === "Tab" && e.ctrlKey && !e.altKey && !e.metaKey) {
       e.preventDefault();
       stepTab(e.shiftKey ? -1 : 1);
@@ -6297,8 +6286,11 @@ async function init(root) {
     else sheetArrow(e);
   }, { capture: true, signal });
   document.addEventListener("keyup", (e) => {
-    if (shiftTapPending && e.key === "Shift") shiftTapAt = Date.now();
-    shiftTapPending = false;
+    if (e.target instanceof Element && e.target.closest("[data-editor-term-panel]")) return;
+    if (shiftTap.keyup(e.key) && quickOpenEl.hidden) {
+      e.preventDefault();
+      openQuickOpen("files");
+    }
   }, { signal });
   window.addEventListener("beforeunload", (e) => {
     if (anyDirty()) {
@@ -6619,13 +6611,12 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
 
   // ---- change bars -----------------------------------------------------------
 
-  // The gutter bars mark what the buffer holds against HEAD, the way the
-  // JetBrains editors do: a blue bar on changed lines, a green one on new
-  // lines, a grey tick where lines were deleted. They are not a mode like the
-  // diff, but a fact about the file, always visible, so there is no switch
-  // anywhere. The chunks live in a state field and follow every keystroke
-  // incrementally; only the plain editor carries them, a comparison already
-  // shows its changes.
+  // The gutter bars mark what the buffer holds against HEAD: a blue bar on
+  // changed lines, a green one on new lines, a grey tick where lines were
+  // deleted. They are not a mode like the diff, but a fact about the file,
+  // always visible, so there is no switch anywhere. The chunks live in a
+  // state field and follow every keystroke incrementally; only the plain
+  // editor carries them, a comparison already shows its changes.
   const changesConf = new Compartment();
 
   const CHANGE_COLORS = {

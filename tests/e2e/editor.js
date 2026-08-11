@@ -431,7 +431,8 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.waitForSelector(".editor-quickopen-item", { timeout: 6000 });
       await page.keyboard.press("Enter");
       await page.waitForSelector(`${tabSel(qoFile)}.active`, { timeout: 8000 });
-      // Double Shift opens the palette like Ctrl+O; a Shift chord must not.
+      // Double Shift opens the palette like Ctrl+O; a Shift chord must not,
+      // and a held Shift is not a tap.
       await page.click(".cm-content");
       await page.keyboard.press("Shift+A");
       await page.keyboard.press("Shift");
@@ -446,8 +447,31 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.keyboard.press("Shift");
       await sleep(600);
       await page.keyboard.press("Shift");
-      await sleep(300);
+      await sleep(350);
       assert(await page.$("[data-editor-quickopen][hidden]"), "two slow Shift taps outside the window opened the palette");
+      await page.keyboard.down("Shift");
+      await sleep(450);
+      await page.keyboard.up("Shift");
+      await page.keyboard.press("Shift");
+      await sleep(350);
+      assert(await page.$("[data-editor-quickopen][hidden]"), "a held Shift then a tap opened the palette");
+      await page.keyboard.press("Shift");
+      await sleep(80);
+      await page.keyboard.down("Shift");
+      await sleep(450);
+      assert(await page.$("[data-editor-quickopen][hidden]"), "a held second press opened the palette");
+      await page.keyboard.up("Shift");
+      await sleep(200);
+      assert(await page.$("[data-editor-quickopen][hidden]"), "a late second keyup opened the palette");
+      await page.keyboard.press("Shift");
+      await sleep(80);
+      await page.keyboard.down("Shift");
+      await sleep(80);
+      assert(await page.$("[data-editor-quickopen][hidden]"), "the palette opened on the second keydown already");
+      await page.keyboard.up("Shift");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 6000 });
     });
 
     await run("find in files searches contents and jumps to the match", async () => {

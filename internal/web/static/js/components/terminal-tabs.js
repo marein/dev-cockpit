@@ -1,6 +1,7 @@
 import { openMenu } from "@dc/contextmenu";
 import { confirm, promptText } from "@dc/dialog";
 import { el } from "@dc/dom";
+import { DoubleTap } from "@dc/doubletap";
 import { onServerEvent } from "@dc/events";
 import { applyFold } from "@dc/fold";
 import { ensureOk, getText, landingURL, postForm, postJSON } from "@dc/http";
@@ -12,7 +13,6 @@ import { releaseCoder, steerCoder } from "@dc/steer";
 const DRAG_THRESHOLD = 6;
 const EDGE_ZONE = 32;
 const EDGE_STEP = 12;
-const TAP_WINDOW_MS = 400;
 const RESUME_FOLD_LIMIT = 3;
 const GROUP_ZONE_RATIO = 0.3;
 const GROUP_DWELL_MS = 220;
@@ -35,7 +35,7 @@ class TerminalTabs extends HTMLElement {
     this.menuOpen = false;
     this.menuFromKey = false;
     this.menuIndex = -1;
-    this.tap = { pending: null, lastKey: null, lastTime: 0 };
+    this.tap = new DoubleTap();
     const signal = this.ac.signal;
 
     this.revealActive();
@@ -584,44 +584,30 @@ class TerminalTabs extends HTMLElement {
 
   trackTap(event) {
     if (event.key !== "Control" && event.key !== "Meta") {
-      this.tap.pending = null;
-      this.tap.lastKey = null;
-      return false;
+      this.tap.reset();
+      return;
     }
     const otherModifiers = event.key === "Control"
       ? event.metaKey || event.altKey || event.shiftKey
       : event.ctrlKey || event.altKey || event.shiftKey;
     if (event.repeat || otherModifiers) {
-      this.tap.pending = null;
-      this.tap.lastKey = null;
-      return false;
+      this.tap.reset();
+      return;
     }
-    if (this.tap.lastKey === event.key && Date.now() - this.tap.lastTime < TAP_WINDOW_MS) {
-      this.tap.pending = null;
-      this.tap.lastKey = null;
-      return true;
-    }
-    this.tap.pending = event.key;
-    this.tap.lastKey = null;
-    return false;
+    this.tap.keydown(event.key);
   }
 
   onKeyup(event) {
-    if (this.tap.pending === event.key) {
-      this.tap.lastKey = event.key;
-      this.tap.lastTime = Date.now();
+    if (this.tap.keyup(event.key) && !this.confirming) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!this.switcher) this.openSwitcher(1);
     }
-    this.tap.pending = null;
   }
 
   onKeydown(event) {
     if (this.confirming) return;
-    if (this.trackTap(event)) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (!this.switcher) this.openSwitcher(1);
-      return;
-    }
+    this.trackTap(event);
     if (event.key === "Tab" && event.ctrlKey && !event.altKey && !event.metaKey && !this.switcher) {
       if (this.switcherOnly) return;
       event.preventDefault();
