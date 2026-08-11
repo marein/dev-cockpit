@@ -996,7 +996,16 @@ free floating page scripts.
   bottom: the server emits it as every pane's `order` style
   (`splitCell.Order`) and `applyColumns` rewrites it, so a pane created into
   a mid page column steps where it stands while the flat order still lists
-  it last. **The rows setting is the height of the
+  it last. The strip's + menu follows the active pane: activating one fires
+  `dc:terminal-activated`, which triggers the strip fragment refresh (the
+  pull reports the active island as `?focus`, so the create links and the
+  editor entry carry that pane's project); a guard compares the rendered
+  links' focus first, so only a real context change costs a fetch. On a
+  split page that refresh builds its path from the active island's
+  attributes (`/splits/<split-group>?focus=<id>`), never from
+  window.location: the remembered pane activation fires on the boosted DOM
+  swap before pushState runs, and a fragment pulled with the old location
+  paints the page you just left as the active tab. **The rows setting is the height of the
   vertical axis from here on**, not of every pane: the container carries a
   height of `rows × cell + one pane head` and the panes fit their rows into
   the box they are given (the fullscreen mechanism plus the `fitAddon` path,

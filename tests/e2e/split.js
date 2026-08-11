@@ -851,6 +851,61 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       );
     });
 
+    await run("the + menu context follows the active pane", async () => {
+      // Activating a pane refreshes the strip fragment, so the create links'
+      // return target (and with it the project context) points at the pane
+      // that is active now, not at the focus of the last terminals event.
+      const menuFocusIs = (want) => page.waitForFunction((id) => {
+        const el = document.querySelector('terminal-tabs [data-tabs-new="shell"]');
+        if (!el) return false;
+        const ret = new URL(el.getAttribute("href"), window.location.href).searchParams.get("return") || "";
+        return new URL(ret, window.location.href).searchParams.get("focus") === id;
+      }, want, { timeout: 8000 });
+      await page.click(`terminal-attach[terminal-id="${ids[1]}"]`);
+      await menuFocusIs(ids[1]);
+      await page.click(`terminal-attach[terminal-id="${ids[0]}"]`);
+      await menuFocusIs(ids[0]);
+      const linked = await page.$eval(
+        'terminal-tabs [data-tabs-new="shell"]',
+        (el) => new URL(el.getAttribute("href"), window.location.href).searchParams.get("project"),
+      );
+      assert(linked === project, `project context after the switch: ${linked}`);
+    });
+
+    await run("Ctrl+Tab onto the split tab keeps it marked active despite the remembered pane", async () => {
+      // The remembered pane restore fires an activation during the boosted
+      // DOM swap, before pushState: the refresh it triggers must read the
+      // split from the island's attributes, or it pulls a fragment for the
+      // page navigated away from and paints that tab active, which also
+      // makes the next Ctrl+Tab a no-op step onto the page itself.
+      await page.goto(`${L.BASE}/splits/${gid}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 20000 });
+      await page.click(`terminal-attach[terminal-id="${ids[1]}"]`);
+      await sleep(600);
+      const soloUrl = await L.createShell(page, project);
+      shellUrls.push(soloUrl);
+      const soloId = new URL(soloUrl).pathname.split("/").pop();
+      await page.goto(soloUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(groupTabSel, { state: "attached", timeout: 8000 });
+      await sleep(800);
+      await page.keyboard.press("Control+Tab");
+      await page.waitForURL(new RegExp(`/splits/${gid}`), { timeout: 10000 });
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 20000 });
+      // Give the activation triggered fragment refresh time to land before
+      // reading the strip: the bug was that very fragment.
+      await sleep(1500);
+      assert(await page.$(`${groupTabSel}.active`), "the split tab lost its active marking");
+      assert(!(await page.$(`${tabSel(soloId)}.active`)), "the previous page's tab stayed marked active");
+      const active = await page.getAttribute("terminal-attach[active]", "terminal-id");
+      assert(active === ids[1], `the remembered pane is the active one: ${active}`);
+      await page.keyboard.press("Control+Tab");
+      await page.waitForURL(new RegExp(`/shells/${soloId}`), { timeout: 10000 });
+      await L.deleteShell(page, soloUrl);
+      shellUrls.splice(shellUrls.indexOf(soloUrl), 1);
+      await page.goto(`${L.BASE}/splits/${gid}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".attach-split-pane .xterm-screen canvas", { timeout: 20000 });
+    });
+
     await run("adding a terminal from the split page renders the new pane", async () => {
       const extraUrl = await L.createShell(page, project);
       const extraId = new URL(extraUrl).pathname.split("/").pop();

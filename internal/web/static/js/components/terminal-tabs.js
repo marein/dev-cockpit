@@ -79,6 +79,25 @@ class TerminalTabs extends HTMLElement {
     // A coder or shell started, stopped, was renamed or reordered somewhere (this
     // device or another one): pull the fresh strip.
     onServerEvent("terminals", () => this.refresh(), { signal });
+    // The + menu's create entries and the editor link carry the page's
+    // project context, which on a split page is the focused member's. The
+    // fragment pull already reports the active island as ?focus; what was
+    // missing is the trigger, activating a pane is client side only, so the
+    // menu kept the context of the last terminals event. The pull is only
+    // paid when the context actually moved: a solo page, a re-activation and
+    // the activation right after a render all match what the links carry.
+    document.addEventListener("dc:terminal-activated", () => this.onPaneActivated(), { signal });
+  }
+
+  onPaneActivated() {
+    const active = document.querySelector("terminal-attach[active][split-group]");
+    const id = active?.getAttribute("terminal-id") || "";
+    const link = this.querySelector('[data-tabs-new="shell"]');
+    if (!id || !link) return;
+    const ret = new URL(link.getAttribute("href") || "", window.location.href).searchParams.get("return") || "";
+    const focus = new URL(ret, window.location.href).searchParams.get("focus") || "";
+    if (focus === id) return;
+    this.refresh();
   }
 
   onRenamed({ url, name }) {
@@ -1064,9 +1083,17 @@ class TerminalTabs extends HTMLElement {
       host.prepend(bar);
       return bar;
     });
-    let path = window.location.pathname;
+    // On a split page the path comes from the active island's server rendered
+    // attributes, never from window.location: under a boosted navigation the
+    // islands upgrade and activate on the DOM swap before pushState runs, so
+    // the location can still be the previous page's, and a fragment pulled
+    // with it paints the previous tab active (the activation triggered
+    // refresh sits exactly in that window).
     const focused = document.querySelector("terminal-attach[active][split-group]");
-    if (focused) path += "?focus=" + encodeURIComponent(focused.getAttribute("terminal-id") || "");
+    const path = focused
+      ? "/splits/" + encodeURIComponent(focused.getAttribute("split-group") || "")
+        + "?focus=" + encodeURIComponent(focused.getAttribute("terminal-id") || "")
+      : window.location.pathname;
     getText(this.dataset.tabsUrl + "?path=" + encodeURIComponent(path))
       .then((html) => {
         // A navigation may have swapped this strip away while the fragment was
