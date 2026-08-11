@@ -1,0 +1,77 @@
+{{define "settings_login.gohtml"}}
+{{template "app_start.gohtml" .}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      <h2 class="page-title text-truncate mb-0">Settings</h2>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row g-0">
+    <div class="col-12 col-md-3 border-end">
+      <div class="card-body">
+        {{template "settings_nav" .SettingsNav}}
+      </div>
+    </div>
+    <div class="col-12 col-md-9">
+      <div class="card-body">
+        <h3 class="card-title">Sign in</h3>
+        <div class="text-secondary small mb-4">
+          A passkey signs in with the fingerprint, face or PIN of the device it lives on. Register one here and the login page of this address opens with it, username and password stay one link away. On <span class="text-break">{{.Host}}</span> the login page currently starts with <strong>{{if .PasskeyMain}}a passkey{{else}}username and password{{end}}</strong>. Username and password come from the start flags, so they are always reachable and can never be configured away.
+        </div>
+
+        <div id="{{.PasskeyAnchor}}" class="mb-4">
+          {{if and (eq $.FlashProject $.PasskeyAnchor) $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+          <label class="form-label">Passkeys</label>
+          <div class="text-secondary small mb-2">Several side by side are normal, one per device. A passkey belongs to the address it was registered under, so a cockpit reached under two names needs one per name.</div>
+          {{if .PasskeyReason}}
+          <div class="alert alert-warning" role="alert">
+            <div class="d-flex">
+              <i class="ti ti-alert-triangle me-2 fs-3"></i>
+              <div>{{.PasskeyReason}}</div>
+            </div>
+          </div>
+          {{end}}
+          {{if .Passkeys}}
+          <div class="list-group mb-2">
+            {{range .Passkeys}}
+            <div class="list-group-item d-flex align-items-center gap-2" data-passkey-row="{{.ID}}">
+              <i class="ti ti-fingerprint fs-2 text-secondary"></i>
+              <div class="flex-fill min-w-0">
+                <div class="text-truncate">{{.Label}}</div>
+                <div class="text-secondary small text-truncate">
+                  {{.RPID}} &middot; added {{.Created}}{{if .LastUsed}} &middot; last used {{.LastUsed}}{{else}} &middot; never used{{end}}
+                </div>
+              </div>
+              {{if not .Current}}<span class="badge bg-secondary-lt flex-shrink-0">Other address</span>{{end}}
+              <form method="post" action="/settings/login/passkey/delete" data-confirm="Remove the passkey &quot;{{.Label}}&quot;?" data-confirm-button="Remove">
+                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                <input type="hidden" name="id" value="{{.ID}}">
+                <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Remove passkey {{.Label}}" title="Remove"><i class="ti ti-trash"></i></button>
+              </form>
+            </div>
+            {{end}}
+          </div>
+          {{end}}
+          <dc-passkey-settings class="d-block" options-url="/settings/login/passkey/options" register-url="/settings/login/passkey" done-url="/settings/login#{{.PasskeyAnchor}}">
+            <button type="button" class="btn btn-primary" data-passkey-add{{if .PasskeyReason}} disabled{{end}}>
+              <i class="ti ti-plus me-2"></i>Add passkey
+            </button>
+            <div class="text-secondary small mt-2 d-none" data-passkey-status></div>
+          </dc-passkey-settings>
+        </div>
+
+        <div class="alert" role="alert">
+          <div class="d-flex">
+            <i class="ti ti-info-circle me-2 fs-3"></i>
+            <div>Removing a passkey does not sign anybody out. Browsers that are signed in stay signed in until their session expires. The way to end all of them at once is a new <code>--session-cookie-key</code> at startup.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

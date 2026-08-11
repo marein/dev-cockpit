@@ -13,6 +13,7 @@ import (
 
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"github.com/local/dev-cockpit/internal/auth"
 	"github.com/local/dev-cockpit/internal/web/render"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -40,20 +41,48 @@ func (s *Server) handleLoginGet(c *gin.Context) {
 		c.Redirect(http.StatusSeeOther, "/")
 		return
 	}
-	c.HTML(http.StatusOK, "login.gohtml", render.LoginData{
-		Page: s.page(c, "Login", ""),
-		Next: safeRedirectPath(c.Query("next")),
-	})
+	next := safeRedirectPath(c.Query("next"))
+	// Wherever a passkey is registered for this host it is what the page opens
+	// with, and the username and password mask is one link away. ?method is a
+	// preference, not an instruction: an unknown value renders whatever this
+	// host would show anyway.
+	registered := s.auth.Registered(auth.HostRPID(c.Request.Host))
+	data := render.LoginData{
+		Page:    s.page(c, "Login", ""),
+		Next:    next,
+		Passkey: registered && c.Query("method") != "password",
+	}
+	if data.Passkey {
+		data.PasswordURL = withNext("/login?method=password", next)
+	} else if registered {
+		data.PasskeyURL = withNext("/login?method=passkey", next)
+	}
+	c.HTML(http.StatusOK, "login.gohtml", data)
+}
+
+// withNext appends the post login destination to a login URL, so the page you
+// were sent to the login from is where you land, whichever way you sign in.
+func withNext(path, next string) string {
+	if next == "" || next == "/" {
+		return path
+	}
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + "next=" + url.QueryEscape(next)
 }
 
 func (s *Server) handleLoginPost(c *gin.Context) {
 	ip := c.ClientIP()
-	// Preserve the post-login destination across failed attempts.
+	// Preserve the post-login destination across failed attempts, and the
+	// password mask itself where the page would open with the passkey.
 	next := safeRedirectPath(c.PostForm("next"))
 	loginPath := "/login"
-	if next != "/" {
-		loginPath = "/login?next=" + url.QueryEscape(next)
+	if s.auth.Registered(auth.HostRPID(c.Request.Host)) {
+		loginPath = "/login?method=password"
 	}
+	loginPath = withNext(loginPath, next)
 	if ok, retry := s.loginLimiter.allow(ip); !ok {
 		s.respondBlocked(c, loginPath, retry)
 		return

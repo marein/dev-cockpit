@@ -3,6 +3,17 @@
 <div class="card card-md">
   <div class="card-body">
     <h2 class="h2 text-center mb-4">Login to your account</h2>
+    {{if .Passkey}}
+    <dc-passkey-login class="d-block" options-url="/login/passkey/options" verify-url="/login/passkey" next="{{.Next}}">
+      <button type="button" class="btn btn-primary w-100" data-passkey-start>
+        <i class="ti ti-fingerprint me-2"></i>Sign in with a passkey
+      </button>
+      <div class="text-secondary small mt-2 d-none" data-passkey-status></div>
+    </dc-passkey-login>
+    <div class="mt-3">
+      <a href="{{.PasswordURL}}" data-login-password>Sign in with a password</a>
+    </div>
+    {{else}}
     <form method="post" action="/login" data-no-pe>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <input type="hidden" name="next" value="{{.Next}}">
@@ -18,7 +29,13 @@
         <button type="submit" class="btn btn-primary w-100">Sign in</button>
       </div>
     </form>
+    {{if .PasskeyURL}}
+    <div class="mt-3">
+      <a href="{{.PasskeyURL}}" data-login-passkey>Sign in with a passkey</a>
     </div>
+    {{end}}
+    {{end}}
   </div>
+</div>
 {{template "login_end.gohtml" .}}
 {{end}}

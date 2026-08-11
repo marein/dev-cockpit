@@ -43,6 +43,12 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	browser := r.Group("/", s.csrfMiddleware())
 	browser.GET("/login", s.handleLoginGet)
 	browser.POST("/login", s.handleLoginPost)
+	// The passkey way in. It proves the identity and ends in the same session
+	// line the password post writes, so it sits next to it, outside
+	// requireAuth. The pair is JSON XHR, not a form, so the form path pairing
+	// does not apply to it; both count against the login rate limit.
+	browser.POST("/login/passkey/options", s.handlePasskeyLoginOptions)
+	browser.POST("/login/passkey", s.handlePasskeyLogin)
 
 	auth := browser.Group("/", s.requireAuth)
 	auth.GET("/", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, "/projects") })
@@ -166,6 +172,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/settings", s.handleSettings)
 	auth.GET("/settings/notifications", s.handleSettingsNotifications)
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
+	auth.GET("/settings/login", s.handleSettingsLogin)
+	auth.POST("/settings/login/passkey/options", s.handlePasskeyRegisterOptions)
+	auth.POST("/settings/login/passkey", s.handlePasskeyRegister)
+	auth.POST("/settings/login/passkey/delete", s.handlePasskeyDelete)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
 	auth.POST("/settings/general", s.handleSettingsGeneralSave)
 	auth.GET("/settings/backup", s.handleSettingsBackup)

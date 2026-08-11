@@ -456,5 +456,31 @@ func DocsTopics() []DocsTopic {
 				},
 			},
 		},
+		{
+			Key:      "signin",
+			Title:    "Signing in",
+			Icon:     "ti-key",
+			Lead:     "Username and password, plus a passkey per device.",
+			LinkURL:  "/settings/login",
+			LinkText: "Open settings",
+			Items: []DocsItem{
+				{
+					Title: "What the login page offers",
+					Desc:  `Where a passkey is registered, that is what the page opens with, and username and password sit one link below it. Everywhere else it is the mask it has always been. Username and password come from the start flags, so that way in can never be configured away.`,
+				},
+				{
+					Title:    "Passkey",
+					Tag:      "Setting",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Register one per device under Settings &rarr; Sign in and it signs you in with that device's fingerprint, face or PIN. It needs a domain name and a secure page, so an IP address cannot carry one. A passkey belongs to the address it was registered under, so a cockpit reached under two names needs one per name, and the list names that address next to every entry.`,
+				},
+				{
+					Title:    "The file",
+					Tag:      "Data",
+					TagClass: "bg-secondary-lt",
+					Desc:     `The passkeys live in <code>auth/passkey.json</code> under the state directory. The file is the whole switch: put one in place and the passkey is on the login page at the next load, remove the last entry and it is gone. It stays out of a backup, it belongs to this host name.`,
+				},
+			},
+		},
 	}
 }

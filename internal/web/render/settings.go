@@ -170,6 +170,42 @@ type BackupMergeData struct {
 	Restart  bool
 }
 
+// SettingsLoginData feeds the sign in settings page. Host is the name this
+// cockpit is currently reached under, which is what decides whether a
+// registered passkey is offered at all.
+type SettingsLoginData struct {
+	Page
+	SettingsNav SettingsNav
+	Host        string
+	// PasskeyMain is true when this address has a passkey, so its login page
+	// opens with it instead of with username and password.
+	PasskeyMain bool
+	Passkeys    []PasskeyRow
+	// PasskeyReason says why no passkey can be registered here, empty when one
+	// can. The page shows it instead of letting the browser throw.
+	PasskeyReason string
+}
+
+// AnchorPasskeys is the id of the passkey section: the flash anchor and the
+// fragment the registration returns to.
+const AnchorPasskeys = "settings-passkeys"
+
+// PasskeyAnchor hands the id to the template, which cannot read package
+// constants.
+func (d SettingsLoginData) PasskeyAnchor() string { return AnchorPasskeys }
+
+// PasskeyRow is one registered passkey on the settings page. RPID is the host
+// it was registered under and Current marks the ones that work on the address
+// this page is served from, the rest belong to another name of this cockpit.
+type PasskeyRow struct {
+	ID       string
+	Label    string
+	RPID     string
+	Created  string
+	LastUsed string
+	Current  bool
+}
+
 // SettingsNotificationsData feeds the notifications settings page.
 type SettingsNotificationsData struct {
 	Page

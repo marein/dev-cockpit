@@ -60,8 +60,13 @@ async function waitUpgraded(page, names, timeout = 12000) {
 // the second fill inserts its text, leaving "passwordadmin" in the username
 // field and an empty required password (the submit then silently no-ops).
 // Filling is therefore verified and retried before submitting.
+//
+// ?method=password asks for the username and password mask by name. On an
+// instance with no auth files that is what /login shows anyway, but an
+// instance that has a passkey or an identity provider configured would open on
+// that method instead, and every runner would fail on a missing input.
 async function login(page) {
-  await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/login?method=password`, { waitUntil: "domcontentloaded" });
   for (let i = 0; i < 5; i += 1) {
     await page.fill('input[name="username"]', "admin");
     await page.fill('input[name="password"]', "password");

@@ -146,6 +146,48 @@ a random cookie key:
   --session-cookie-key '<random-secret>'
 ```
 
+### Passkey
+
+Username and password stay the way in that always works. On top of them you can
+register a passkey per device under **Settings → Sign in**: it signs you in with
+that device's fingerprint, face or PIN. Where a passkey is registered, the login
+page opens with it and username and password sit one link below.
+
+A passkey needs a domain name and a secure page, an IP address cannot carry one.
+It belongs to the address it was registered under, so a cockpit you reach under
+two names needs one passkey per name; the list shows that address next to every
+entry. Registering needs an existing login, so a brand new device always starts
+with username and password.
+
+The passkeys are one file, `auth/passkey.json` in the state directory, mode
+`0600`. The file is the whole switch: put one in place and the passkey is on the
+login page at the next load, remove the last entry and it is gone. You can write
+it by hand, no restart needed.
+
+```json
+{
+  "credentials": [
+    {
+      "id": "base64url-credential-id",
+      "public_key": "base64-cose-key",
+      "sign_count": 7,
+      "transports": ["internal", "hybrid"],
+      "rp_id": "cockpit.example.org",
+      "label": "iPhone",
+      "created_at": "2026-07-30T14:00:00Z",
+      "last_used_at": "2026-07-30T18:12:00Z"
+    }
+  ]
+}
+```
+
+The file stays out of a backup: a passkey is bound to this host name and would
+be silent rubbish under another one. Nothing is lost, a passkey is registered
+again in ten seconds, and the way in never depends on it anyway.
+
+Removing a passkey does not sign anybody out. To end every signed in browser at
+once, start with a new `--session-cookie-key`.
+
 ### HTTPS
 
 Serve TLS directly, or terminate it in a reverse proxy and serve plain HTTP.

@@ -3,6 +3,7 @@ package config
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -48,6 +49,10 @@ type Config struct {
 	// Filesystem locations
 	ProjectsRoot string
 	StateDir     string
+	// AuthDir holds the registered passkeys (auth/passkey.json). It is
+	// deliberately its own directory under the state dir: what decides who may
+	// sign in is tied to this host name, so it stays out of the backup.
+	AuthDir string
 
 	// Terminal stream tuning
 	StreamHeartbeatInterval time.Duration
@@ -157,6 +162,7 @@ func Load(opts Options) (Config, error) {
 		LoginRateBlock:          15 * time.Second,
 		ProjectsRoot:            projectsRoot,
 		StateDir:                stateDir,
+		AuthDir:                 filepath.Join(stateDir, "auth"),
 		StreamHeartbeatInterval: 1 * time.Second,
 		StreamMinFrameInterval:  33 * time.Millisecond, // ~30fps coalescing cap
 		TerminalHistoryLimit:    10000,

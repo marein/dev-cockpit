@@ -29,6 +29,17 @@ test. Update this file when a convention changes.
   (read through on every call, atomic tmp+rename write, a corrupt file is
   quarantined as `<path>.broken` instead of being silently overwritten).
   Do not hand-roll load/save; entry ids come from `statefile.NewID`.
+- **Passkeys:** `authenticated()` in `internal/web/auth.go` stays the one check,
+  `session["user"] == cfg.AuthUsername`. A passkey only proves the identity and
+  then writes that same line. Username and password come from the flags and stay
+  reachable from the login page whatever is registered, so nothing can lock a
+  host out of its own cockpit. The passkeys are one file, `<state-dir>/auth/`
+  (`internal/auth`, mode 0600, read through like every state file), and the file
+  is the whole switch, there is no enabled field and no unlocking step: a file
+  placed by hand takes effect on the next request. It stays out of the backup on
+  purpose, a passkey is bound to the host name it was registered under and is
+  silent rubbish anywhere else. Registration sits behind `requireAuth`, so a new
+  device always starts with username and password.
 - **Forms:** POST action path must equal the GET path that renders it (pairs in
   `internal/web/router.go`, e.g. `/coders/new`). Backlinks, login redirect, and
   post then redirect depend on it. New form, add both routes on one path.

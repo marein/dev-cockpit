@@ -14,6 +14,7 @@ import (
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/local/dev-cockpit/internal/assistant"
+	"github.com/local/dev-cockpit/internal/auth"
 	"github.com/local/dev-cockpit/internal/backup"
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/config"
@@ -42,11 +43,15 @@ type Server struct {
 	assistant     *assistant.Workspace
 	// watcher owns the steered jobs: what the assistant keeps an eye on and
 	// what wakes it.
-	watcher      *assistant.Watcher
-	projects     *project.Repository
-	notifier     *notify.Service
-	bus          *eventbus.Bus
-	settings     *settings.Store
+	watcher  *assistant.Watcher
+	projects *project.Repository
+	notifier *notify.Service
+	bus      *eventbus.Bus
+	settings *settings.Store
+	// auth holds the alternative sign in methods. It is built here instead of
+	// being passed in because nothing outside the web layer reads it: the
+	// files only ever decide what a login page offers.
+	auth         *auth.Store
 	pusher       *push.Service
 	restorer     *restore.Service
 	version      string
@@ -89,6 +94,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		notifier:      notifier,
 		bus:           eventbus.New(),
 		settings:      settingsStore,
+		auth:          auth.New(cfg.AuthDir),
 		pusher:        pusher,
 		restorer:      restorer,
 		version:       version,
