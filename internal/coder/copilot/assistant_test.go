@@ -280,14 +280,43 @@ func TestTurnFailsWithoutAResult(t *testing.T) {
 	}
 }
 
-func TestTurnFailsOnMalformedOutput(t *testing.T) {
-	events := runTurn(t, "{not json at all}")
+// A line nobody can decode is logged and read past: the run keeps going after
+// such a record, so the turn's outcome stays with the records the parser does
+// evaluate. Noise alone still fails the turn, through the missing result.
+func TestMalformedOutputIsReadPastAndTheResultDecides(t *testing.T) {
+	events := runTurn(t, "{not json at all}\n"+messageLine("m1", "hi")+"\n"+resultLine(sessionID))
+	if err := errorOf(events); err != nil {
+		t.Fatalf("want the noisy line skipped, got %v", err)
+	}
+	if got := textOf(events); got != "hi" {
+		t.Fatalf("want the answer kept around the noise, got %q", got)
+	}
+
+	events = runTurn(t, "{not json at all}")
 	err := errorOf(events)
 	if err == nil {
-		t.Fatal("want malformed output to fail the turn")
+		t.Fatal("want a turn with nothing readable to fail")
 	}
-	if strings.Contains(err.Error(), "{") {
-		t.Fatalf("want a curated message without the raw record, got %q", err)
+	if !strings.Contains(err.Error(), "stopped before it finished") {
+		t.Fatalf("want the missing result named, got %q", err)
+	}
+}
+
+// A known record type whose payload has an unexpected shape reads the same
+// way: logged, skipped, and the turn goes on to its result.
+func TestARecordWithAForeignPayloadShapeIsReadPast(t *testing.T) {
+	fixture := strings.Join([]string{
+		`{"type":"assistant.message","data":"a plain string where an object stands"}`,
+		messageLine("m1", "hi"),
+		resultLine(sessionID),
+	}, "\n")
+
+	events := runTurn(t, fixture)
+	if err := errorOf(events); err != nil {
+		t.Fatalf("want the foreign shape read past, got %v", err)
+	}
+	if got := textOf(events); got != "hi" {
+		t.Fatalf("want the answer delivered, got %q", got)
 	}
 }
 

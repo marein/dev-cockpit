@@ -111,7 +111,10 @@ func (r *runner) Parse(sessionID string, events chan<- assistant.Event) assistan
 	return &copilotParser{sessionID: sessionID, events: events, sessions: r.sessions, delivered: map[string]bool{}}
 }
 
-// copilotParser turns the documented JSONL events into conversation events.
+// copilotParser turns the documented JSONL events into conversation events. It
+// reads past anything it cannot decode, noting it in the server log; what
+// stays strict is what the turn's outcome hangs on, the result record and
+// Finish.
 type copilotParser struct {
 	sessionID string
 	events    chan<- assistant.Event
@@ -123,40 +126,68 @@ type copilotParser struct {
 	sawResult bool
 }
 
-type copilotRecord struct {
+// copilotHead is the first pass over a record: only what routes it. Everything
+// else is decoded per type, so a record whose payload has a shape this version
+// does not know cannot fail records of every other type with it.
+type copilotHead struct {
 	Type string `json:"type"`
+}
+
+// copilotDataRecord carries the message and tool payloads, the records that
+// stream an answer.
+type copilotDataRecord struct {
 	Data struct {
 		MessageID    string `json:"messageId"`
 		DeltaContent string `json:"deltaContent"`
 		Content      string `json:"content"`
 		ToolName     string `json:"toolName"`
 	} `json:"data"`
+}
+
+// copilotResultRecord is the record that closes a turn.
+type copilotResultRecord struct {
 	SessionID string `json:"sessionId"`
 	ExitCode  *int   `json:"exitCode"`
 }
 
 func (p *copilotParser) Line(line []byte) error {
-	var rec copilotRecord
-	if err := json.Unmarshal(line, &rec); err != nil {
-		log.Printf("copilot assistant: unreadable output record: %v", err)
-		return errors.New("The coder sent an answer this version cannot read.")
+	var head copilotHead
+	if err := json.Unmarshal(line, &head); err != nil {
+		p.skipUnreadable(line, err)
+		return nil
 	}
-	switch rec.Type {
-	case "assistant.message_delta":
-		if rec.Data.DeltaContent == "" {
+	switch head.Type {
+	case "assistant.message_delta", "assistant.message", "tool.execution_start":
+		var rec copilotDataRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			p.skipUnreadable(line, err)
 			return nil
 		}
-		p.delivered[rec.Data.MessageID] = true
-		p.events <- assistant.Event{Kind: assistant.EventDelta, Text: rec.Data.DeltaContent}
-	case "assistant.message":
-		if rec.Data.Content == "" || p.delivered[rec.Data.MessageID] {
-			return nil
+		switch head.Type {
+		case "assistant.message_delta":
+			if rec.Data.DeltaContent == "" {
+				return nil
+			}
+			p.delivered[rec.Data.MessageID] = true
+			p.events <- assistant.Event{Kind: assistant.EventDelta, Text: rec.Data.DeltaContent}
+		case "assistant.message":
+			if rec.Data.Content == "" || p.delivered[rec.Data.MessageID] {
+				return nil
+			}
+			p.delivered[rec.Data.MessageID] = true
+			p.events <- assistant.Event{Kind: assistant.EventDelta, Text: rec.Data.Content}
+		case "tool.execution_start":
+			p.events <- assistant.Event{Kind: assistant.EventTool, Text: rec.Data.ToolName}
 		}
-		p.delivered[rec.Data.MessageID] = true
-		p.events <- assistant.Event{Kind: assistant.EventDelta, Text: rec.Data.Content}
-	case "tool.execution_start":
-		p.events <- assistant.Event{Kind: assistant.EventTool, Text: rec.Data.ToolName}
 	case "result":
+		var rec copilotResultRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			// The one record the outcome hangs on. Skipping it leaves sawResult
+			// unset, so Finish names the broken turn; inventing an outcome out
+			// of a line nobody could read would be worse.
+			p.skipUnreadable(line, err)
+			return nil
+		}
 		p.sawResult = true
 		if rec.SessionID != "" && rec.SessionID != p.sessionID {
 			log.Printf("copilot assistant: expected session %s, got %s", p.sessionID, rec.SessionID)
@@ -167,6 +198,15 @@ func (p *copilotParser) Line(line []byte) error {
 		}
 	}
 	return nil
+}
+
+// skipUnreadable notes a line this parser could not decode and lets the turn
+// read on. The line travels into the log in shortened form, so the next time a
+// record like it arrives the log says what it was. Ending the turn here would
+// kill a conversation over a record copilot sends in passing while the run
+// itself carries on to its result.
+func (p *copilotParser) skipUnreadable(line []byte, err error) {
+	log.Printf("copilot assistant: unreadable output record: %v: %s", err, assistant.UnreadableLine(line))
 }
 
 func (p *copilotParser) Finish() error {

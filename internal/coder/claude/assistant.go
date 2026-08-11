@@ -108,7 +108,9 @@ func (r *runner) Parse(sessionID string, events chan<- assistant.Event) assistan
 
 // claudeParser turns the documented stream-json records into conversation events. It
 // accepts assistant text and the final result, ignores documented progress
-// records, and refuses anything that does not match.
+// records, and reads past anything it cannot decode, noting it in the server
+// log. What stays strict is what the turn's outcome hangs on: the result
+// record and Finish.
 type claudeParser struct {
 	sessionID string
 	events    chan<- assistant.Event
@@ -129,10 +131,19 @@ type claudeParser struct {
 	authFailed bool
 }
 
-type claudeRecord struct {
+// claudeHead is the first pass over a record: only what routes it. Everything
+// else is decoded per type, because the same field name carries different
+// shapes across types. A system record's message is a string where an
+// assistant record's is an object, and one struct over every record let a
+// permission denial claude sends in passing fail the whole line and kill a
+// turn claude itself finished.
+type claudeHead struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype"`
-	// stream_event
+}
+
+// claudeStreamRecord is a stream_event record, the normal path of an answer.
+type claudeStreamRecord struct {
 	Event struct {
 		Type  string `json:"type"`
 		Delta struct {
@@ -144,9 +155,12 @@ type claudeRecord struct {
 			Name string `json:"name"`
 		} `json:"content_block"`
 	} `json:"event"`
-	// assistant, the assembled message claude sends after its stream events.
-	// The content is read on its own, so a shape this version does not know
-	// costs nothing: the deltas are the normal path.
+}
+
+// claudeAssistantRecord is the assembled message claude sends after its stream
+// events. The content is read on its own, so a shape this version does not
+// know costs nothing: the deltas are the normal path.
+type claudeAssistantRecord struct {
 	Message struct {
 		Content json.RawMessage `json:"content"`
 		Model   string          `json:"model"`
@@ -159,8 +173,11 @@ type claudeRecord struct {
 	// Error names what an API error record is about, the field claude sets next
 	// to is_api_error_message. It is the machine readable half of that record,
 	// which is why it and not the text next to it decides anything.
-	Error string `json:"error"`
-	// result
+	Error looseString `json:"error"`
+}
+
+// claudeResultRecord is the record that closes a turn.
+type claudeResultRecord struct {
 	IsError   bool   `json:"is_error"`
 	SessionID string `json:"session_id"`
 	// ModelUsage is what the result record says about every model the turn
@@ -171,6 +188,20 @@ type claudeRecord struct {
 		ContextWindow  int    `json:"contextWindow"`
 		CanonicalModel string `json:"canonicalModel"`
 	} `json:"modelUsage"`
+}
+
+// looseString is a field that is a string in the documented records but has
+// arrived as an object in the wild. Any shape but a string reads as empty
+// instead of failing the record, because a field this parser only compares
+// must never decide whether a line is readable.
+type looseString string
+
+func (s *looseString) UnmarshalJSON(data []byte) error {
+	var text string
+	if json.Unmarshal(data, &text) == nil {
+		*s = looseString(text)
+	}
+	return nil
 }
 
 // claudeUsage is the token part of an assistant message. What the context holds
@@ -187,13 +218,18 @@ func (u claudeUsage) contextTokens() int {
 }
 
 func (p *claudeParser) Line(line []byte) error {
-	var rec claudeRecord
-	if err := json.Unmarshal(line, &rec); err != nil {
-		log.Printf("claude assistant: unreadable output record: %v", err)
-		return errors.New("The coder sent an answer this version cannot read.")
+	var head claudeHead
+	if err := json.Unmarshal(line, &head); err != nil {
+		p.skipUnreadable(line, err)
+		return nil
 	}
-	switch rec.Type {
+	switch head.Type {
 	case "stream_event":
+		var rec claudeStreamRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			p.skipUnreadable(line, err)
+			return nil
+		}
 		switch rec.Event.Type {
 		case "message_start":
 			p.sawDelta = false
@@ -209,6 +245,11 @@ func (p *claudeParser) Line(line []byte) error {
 		}
 		return nil
 	case "assistant":
+		var rec claudeAssistantRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			p.skipUnreadable(line, err)
+			return nil
+		}
 		// The failure the user can act on arrives here, on standard output: a
 		// claude nobody logged in on this machine sends a record marked as an API
 		// error carrying its own wording. That is not an answer, so it is noted
@@ -240,6 +281,14 @@ func (p *claudeParser) Line(line []byte) error {
 		}
 		return nil
 	case "result":
+		var rec claudeResultRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			// The one record the outcome hangs on. Skipping it leaves sawResult
+			// unset, so Finish names the broken turn; inventing an outcome out
+			// of a line nobody could read would be worse.
+			p.skipUnreadable(line, err)
+			return nil
+		}
 		p.sawResult = true
 		if rec.SessionID != "" && rec.SessionID != p.sessionID {
 			log.Printf("claude assistant: expected session %s, got %s", p.sessionID, rec.SessionID)
@@ -252,7 +301,7 @@ func (p *claudeParser) Line(line []byte) error {
 		if p.authFailed {
 			return assistant.ErrNotLoggedIn
 		}
-		if rec.IsError || (rec.Subtype != "" && rec.Subtype != "success") {
+		if rec.IsError || (head.Subtype != "" && head.Subtype != "success") {
 			return errors.New("The coder could not finish this answer.")
 		}
 		return nil
@@ -260,12 +309,22 @@ func (p *claudeParser) Line(line []byte) error {
 	return nil
 }
 
+// skipUnreadable notes a line this parser could not decode and lets the turn
+// read on. The line travels into the log in shortened form, so the next time a
+// record like it arrives the log says what it was. Ending the turn here is
+// what this parser used to do, and that killed conversations over records
+// claude sends in passing while claude itself carried on to a successful
+// result.
+func (p *claudeParser) skipUnreadable(line []byte, err error) {
+	log.Printf("claude assistant: unreadable output record: %v: %s", err, assistant.UnreadableLine(line))
+}
+
 // reportUsage sends the context reading of this turn, once, on the record that
 // closes it. The window comes from the run itself where the run says it, which
 // is what keeps a model with an unusual window (a long context variant of a
 // model whose plain form is far smaller) from being measured against the wrong
 // number.
-func (p *claudeParser) reportUsage(rec claudeRecord) {
+func (p *claudeParser) reportUsage(rec claudeResultRecord) {
 	if p.tokens <= 0 {
 		return
 	}

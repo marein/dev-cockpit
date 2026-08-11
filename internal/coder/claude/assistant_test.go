@@ -285,14 +285,64 @@ func TestTurnFailsWithoutAResult(t *testing.T) {
 	}
 }
 
-func TestTurnFailsOnMalformedOutput(t *testing.T) {
-	events := runTurn(t, "{not json at all}")
+// A line nobody can decode is logged and read past: claude keeps running after
+// such a record, so the turn's outcome stays with the records the parser does
+// evaluate. Noise alone still fails the turn, through the missing result.
+func TestMalformedOutputIsReadPastAndTheResultDecides(t *testing.T) {
+	events := runTurn(t, "{not json at all}\n"+deltaLine("hi")+"\n"+resultLine(sessionID))
+	if err := errorOf(events); err != nil {
+		t.Fatalf("want the noisy line skipped, got %v", err)
+	}
+	if got := textOf(events); got != "hi" {
+		t.Fatalf("want the answer kept around the noise, got %q", got)
+	}
+
+	events = runTurn(t, "{not json at all}")
 	err := errorOf(events)
 	if err == nil {
-		t.Fatal("want malformed output to fail the turn")
+		t.Fatal("want a turn with nothing readable to fail")
 	}
-	if strings.Contains(err.Error(), "{") {
-		t.Fatalf("want a curated message without the raw record, got %q", err)
+	if !strings.Contains(err.Error(), "stopped before it finished") {
+		t.Fatalf("want the missing result named, got %q", err)
+	}
+}
+
+// Measured on claude 2.1.136: a denied permission arrives as a system record
+// whose message is a string, where an assistant record carries an object. One
+// struct over every record made that string fail the whole line and kill the
+// turn, while claude itself carried on to a successful result.
+func TestAPermissionDenialDoesNotEndTheTurn(t *testing.T) {
+	fixture := strings.Join([]string{
+		initLine(`"Bash"`),
+		`{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_x","decision_reason_type":"subcommandResults","message":"This Bash command contains multiple operations. The following parts require approval: rm -rf","uuid":"u1","session_id":"` + sessionID + `"}`,
+		deltaLine("done without it"),
+		resultLine(sessionID),
+	}, "\n")
+
+	events := runTurn(t, fixture)
+	if err := errorOf(events); err != nil {
+		t.Fatalf("want the denial read past, got %v", err)
+	}
+	if got := textOf(events); got != "done without it" {
+		t.Fatalf("want the answer delivered, got %q", got)
+	}
+}
+
+// There are records whose error field is an object instead of the documented
+// string. The string form is what the login check compares, any other shape
+// reads as empty and the record keeps the rest of its meaning.
+func TestAnErrorFieldThatIsAnObjectIsReadPast(t *testing.T) {
+	fixture := strings.Join([]string{
+		`{"type":"assistant","error":{"code":529,"message":"overloaded"},"message":{"content":[{"type":"text","text":"hi"}]}}`,
+		resultLine(sessionID),
+	}, "\n")
+
+	events := runTurn(t, fixture)
+	if err := errorOf(events); err != nil {
+		t.Fatalf("want the object shaped error read past, got %v", err)
+	}
+	if got := textOf(events); got != "hi" {
+		t.Fatalf("want the message text kept, got %q", got)
 	}
 }
 

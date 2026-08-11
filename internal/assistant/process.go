@@ -23,6 +23,29 @@ const maxLineBytes = 4 << 20
 // the server log. It never reaches the browser.
 const stderrTailBytes = 4 << 10
 
+// unreadableLineBytes bounds how much of an undecodable output line reaches the
+// server log.
+const unreadableLineBytes = 300
+
+// UnreadableLine shortens a raw output line for the server log. A parser that
+// meets a line it cannot decode logs it through this and reads on, so the log
+// says what arrived without carrying a whole answer, and the turn's outcome
+// stays with the records the parser does evaluate.
+func UnreadableLine(line []byte) string {
+	text := strings.TrimSpace(string(line))
+	if len(text) <= unreadableLineBytes {
+		return text
+	}
+	cut := 0
+	for i := range text {
+		if i > unreadableLineBytes {
+			break
+		}
+		cut = i
+	}
+	return text[:cut] + "…"
+}
+
 // pollInterval is how long the reader waits when the output file has nothing
 // new. A provider writes in bursts, and a read that found something reads again
 // at once, so this is the pause between bursts and not a delay on the answer.
