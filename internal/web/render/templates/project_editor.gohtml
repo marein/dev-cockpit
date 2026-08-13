@@ -19,7 +19,8 @@
      data-editor-project-path="{{.Project.Path}}"
      data-editor-max-kib="{{.MaxEditKiB}}"
      data-editor-diff-max-lines="{{.DiffMaxLines}}"
-     data-editor-diff-max-kib="{{.DiffMaxKiB}}">
+     data-editor-diff-max-kib="{{.DiffMaxKiB}}"
+     data-editor-lsp="{{.LSPExts}}">
   <div class="editor-body">
     <div class="editor-tree-col">
       <div class="editor-pane-header d-flex align-items-center gap-2 px-2 py-2 border-bottom">
@@ -120,6 +121,9 @@
               <button type="button" class="dropdown-item" data-editor-goto disabled>
                 <i class="ti ti-arrow-bar-to-down me-2"></i>Go to line
               </button>
+              <button type="button" class="dropdown-item" data-editor-reindex-item hidden>
+                <i class="ti ti-refresh me-2"></i>Reindex
+              </button>
               <div class="dropdown-divider"></div>
               <button type="button" class="dropdown-item" data-editor-settings-item>
                 <i class="ti ti-adjustments me-2"></i>Editor settings
@@ -181,6 +185,8 @@
             <kbd>Ctrl</kbd>+<kbd>F</kbd> find in file
             <span class="mx-1">·</span>
             <kbd>Ctrl</kbd>+<kbd>Tab</kbd> next tab
+            <span class="mx-1 d-none d-md-inline">·</span>
+            <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>B</kbd> go to definition</span>
             <span class="mx-1 d-none d-md-inline">·</span>
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd> close tab</span>
             <span class="mx-1 d-none d-md-inline">·</span>
@@ -262,8 +268,11 @@
         </div>
       </div>
       <div class="editor-statusbar small d-flex align-items-center gap-2 px-2 py-1 border-top">
-        <span class="text-truncate text-secondary" data-editor-path></span>
         <span class="text-truncate flex-fill text-secondary" data-editor-status></span>
+        <span class="d-inline-flex align-items-center gap-1 text-secondary text-nowrap" data-editor-lsp-index style="font-size: 0.85em" hidden>
+          <span data-editor-lsp-index-label></span>
+          <span class="progress" style="width: 3.5rem; height: 3px"><span class="progress-bar" data-editor-lsp-index-bar></span></span>
+        </span>
         <button type="button" class="btn btn-sm p-0 border-0 bg-transparent text-secondary text-nowrap d-inline-flex align-items-center gap-1 mw-100" data-editor-git-status aria-label="Git" hidden>
           <i class="ti ti-git-branch" aria-hidden="true" data-editor-git-icon></i><span class="spinner-border spinner-border-sm" style="width: 1em; height: 1em" data-editor-git-spin aria-hidden="true" hidden></span><span class="text-truncate" style="max-width: 9rem" data-editor-git-branch></span><span data-editor-git-ab hidden></span>
         </button>
@@ -274,7 +283,6 @@
           <i class="ti ti-terminal-2" aria-hidden="true"></i>
         </button>
         <span class="text-secondary text-nowrap" data-editor-pos hidden></span>
-        <span class="text-secondary text-nowrap d-none d-sm-inline" data-editor-indent-info hidden></span>
       </div>
     </div>
 

@@ -118,6 +118,12 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "git", Data: map[string]any{"project": "", "base": true}}); err != nil {
 		return
 	}
+	// A bare lsp signal for the same reason: indexing moves published into a
+	// gap come never again, and a page opened mid-indexing has seen none of
+	// them, so every open editor pulls its project's indexing status.
+	if err := writeEnvelope(w, eventbus.Event{Type: "lsp", Data: map[string]string{"project": ""}}); err != nil {
+		return
+	}
 	// A bare assistant signal: an open conversation surface pulls its state and
 	// catches up on a message that arrived while the socket was down, the same
 	// way the tab strip and the quick nav catch up on the terminals signal.

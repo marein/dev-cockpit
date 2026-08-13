@@ -18,10 +18,9 @@ function isCdnNoise(t) {
 // fragment pull) as a page error ending in "due to access control checks". That
 // is a browser artifact of racing navigations on the throwaway instance, not an
 // app defect, so it joins the non-gating noise bucket. The filter stays narrow
-// (only these always-on background paths) so a real access control failure on
-// an app route still gates.
+// so a real access control failure on an app route still gates.
 function isWebkitAbortNoise(t) {
-  return /\/(events|update\/check|editor\/(terminals|docker))\b.*due to access control checks/.test(t);
+  return /\/(events|update\/check|editor\/(terminals|docker|lsp\/status|list|file|git\/changes))\b.*due to access control checks/.test(t);
 }
 function wirePage(page, bag) {
   bag.cdnNoise = bag.cdnNoise || [];

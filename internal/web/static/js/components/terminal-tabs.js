@@ -75,6 +75,8 @@ class TerminalTabs extends HTMLElement {
     this.strip.addEventListener("contextmenu", (event) => this.onContextMenu(event), { signal });
     document.addEventListener("keydown", (event) => this.onKeydown(event), { signal, capture: true });
     document.addEventListener("keyup", (event) => this.onKeyup(event), { signal, capture: true });
+    // A modifier click is not a bare modifier tap.
+    document.addEventListener("pointerdown", () => this.tap.reset(), { signal, capture: true });
     document.addEventListener("dc-renamed", (event) => this.onRenamed(event.detail || {}), { signal });
     // A coder or shell started, stopped, was renamed or reordered somewhere (this
     // device or another one): pull the fresh strip.

@@ -1,0 +1,119 @@
+// Package editorintelligence provides code navigation for the project
+// editor: go to definition and find usages answered by language servers over
+// stdio JSON-RPC. The servers run server side, the browser only exchanges
+// bounded document snapshots and locations.
+package editorintelligence
+
+import (
+	"path"
+	"sort"
+	"strings"
+)
+
+// Profile is one fixed language server profile compiled into the binary. The
+// command, and the container recipe of the Docker option, are never
+// configurable, so no setting can become a command execution surface; a
+// setting only picks which of the fixed ways runs, or none.
+type Profile struct {
+	// ID is the stable profile identifier, used by the settings key.
+	ID string
+	// Label names the language on the settings page and in the indexing
+	// indicator.
+	Label string
+	// Command is the server's argv, run inside the profile's container
+	// over the Docker option; its leading token also names the server in
+	// container and volume names.
+	Command []string
+	// Marker is the file at a project root whose presence already says
+	// the project holds this language, so the warm skips the tree walk.
+	Marker string
+	// languageIDs maps the owned file extensions (lowercase, without dot)
+	// to the LSP language identifier sent in didOpen.
+	languageIDs map[string]string
+	// container is how the Docker option runs this server.
+	container container
+}
+
+// profiles is the fixed registry, ordered for stable rendering. Deliberately
+// only the two languages the navigation is verified against; a profile joins
+// the list with that verification, not before.
+var profiles = []*Profile{
+	{
+		ID:          "go",
+		Label:       "Go",
+		Command:     []string{"gopls"},
+		Marker:      "go.mod",
+		languageIDs: map[string]string{"go": "go"},
+		container: container{
+			Image:      "dev-cockpit-gopls",
+			CacheMount: "/go/pkg/mod",
+			Dockerfile: goplsDockerfile + entrypointDockerfile,
+			// The file cache would die with the container under its default
+			// XDG_CACHE_HOME: pointed into the volume, next to the module
+			// downloads it indexes.
+			Env: []string{"XDG_CACHE_HOME=/go/pkg/mod/.cache"},
+		},
+	},
+	{
+		ID:          "php",
+		Label:       "PHP",
+		Command:     []string{"intelephense", "--stdio"},
+		Marker:      "composer.json",
+		languageIDs: map[string]string{"php": "php"},
+		container: container{
+			Image:      "dev-cockpit-intelephense",
+			CacheMount: "/tmp",
+			Dockerfile: intelephenseDockerfile + entrypointDockerfile,
+			// The server stores its index under its own storage paths, not
+			// under os.tmpdir: without pointing them into the mount the
+			// index died with the container and every start ran cold. The
+			// per-project volume is the project boundary, the paths inside
+			// it stay plain.
+			InitOptions: func(string) map[string]any {
+				return map[string]any{
+					"storagePath":       "/tmp/intelephense/storage",
+					"globalStoragePath": "/tmp/intelephense/global",
+				}
+			},
+		},
+	},
+}
+
+// Profiles returns the fixed profile registry in rendering order.
+func Profiles() []*Profile {
+	return profiles
+}
+
+// Extensions returns the file extensions the profile owns, sorted.
+func (p *Profile) Extensions() []string {
+	exts := make([]string, 0, len(p.languageIDs))
+	for ext := range p.languageIDs {
+		exts = append(exts, ext)
+	}
+	sort.Strings(exts)
+	return exts
+}
+
+// ProfileForPath returns the profile owning the file's extension and the
+// LSP language id for it.
+func ProfileForPath(rel string) (*Profile, string, bool) {
+	ext := strings.ToLower(strings.TrimPrefix(path.Ext(rel), "."))
+	if ext == "" {
+		return nil, "", false
+	}
+	for _, p := range profiles {
+		if id, ok := p.languageIDs[ext]; ok {
+			return p, id, true
+		}
+	}
+	return nil, "", false
+}
+
+// Detection is a launcher's answer whether its way can run, see
+// Launcher.Detect. It never starts a process.
+type Detection struct {
+	Found bool
+	// Path is the resolved executable when found, the docker client for
+	// the Docker way.
+	Path string
+}

@@ -335,7 +335,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await page.goto(`${BASE}/settings/editor/git`, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(page);
       const tabs = await page.locator("[data-editor-sections] .nav-link").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
-      assert(tabs.join() === "/settings/editor/search,/settings/editor/git", `the tabs are ${tabs.join(", ")}`);
+      assert(tabs.join() === "/settings/editor/search,/settings/editor/git,/settings/editor/lsp", `the tabs are ${tabs.join(", ")}`);
       const active = await page.locator("[data-editor-sections] .nav-link.active").getAttribute("href");
       assert(active === "/settings/editor/git", `the marked tab is ${active}`);
       assert(await page.$('[data-settings-nav] a[href="/settings/editor/search"].active'), "the Editor row is not marked in the settings nav");
@@ -3364,7 +3364,6 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     // menu to open, and the entries are built per call from the tab.
     const FILE_CONTROLS = {
       "the comparison bar": "[data-editor-compare]",
-      "the indentation readout": "[data-editor-indent-info]",
       "the cursor position": "[data-editor-pos]",
     };
     const assertGone = (where, name, box) => {
@@ -3398,9 +3397,6 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       const placeholder = await boxOf(page, "[data-editor-placeholder]");
       assert(!placeholder.attribute && placeholder.height > 0, `the placeholder is not on screen: ${JSON.stringify(placeholder)}`);
 
-      // The phone is where this was noticed, and the width matters: the
-      // indentation readout hides itself through d-none below the sm
-      // breakpoint, so only the wide measurement above proves anything about it.
       const mp = await mobilePage();
       await emptyEditor(mp);
       for (const [name, selector] of Object.entries(FILE_CONTROLS)) {

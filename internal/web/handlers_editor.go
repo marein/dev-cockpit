@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/local/dev-cockpit/internal/askpass"
+	"github.com/local/dev-cockpit/internal/editorintelligence"
 	"github.com/local/dev-cockpit/internal/filesystem"
 	"github.com/local/dev-cockpit/internal/git"
 	"github.com/local/dev-cockpit/internal/project"
@@ -53,6 +54,12 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		return
 	}
 	s.projects.Touch(p.Name)
+	// The language servers of the project's languages start with the page,
+	// so their indexing runs while the reader still orients, not under the
+	// first lookup; the statusbar indicator shows it meanwhile. The editor
+	// page itself is editor action.
+	s.intel.Touch(p.Name)
+	go s.warmLSPServers(p)
 	ret := s.formReturn(c)
 	list := s.projectsWithRunners()
 	switcher := make([]render.EditorProject, 0, len(list))
@@ -74,7 +81,25 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		Projects:     switcher,
 		DiffMaxLines: set.DiffMaxLines,
 		DiffMaxKiB:   set.DiffMaxKiB,
+		LSPExts:      s.lspSpec(),
 	})
+}
+
+// lspSpec is the code navigation surface handed to the editor page:
+// `ext:Label` pairs of the enabled profiles, comma joined, so the browser
+// never mirrors the registry and a language switched off leaves no surface
+// at all. A settings change reaches an open editor with its next load.
+func (s *Server) lspSpec() string {
+	pairs := make([]string, 0)
+	for _, p := range editorintelligence.Profiles() {
+		if s.lspProfileOff(p) {
+			continue
+		}
+		for _, ext := range p.Extensions() {
+			pairs = append(pairs, ext+":"+p.Label)
+		}
+	}
+	return strings.Join(pairs, ",")
 }
 
 // handleEditorList returns the directory listing at ?path= as JSON.
@@ -427,6 +452,10 @@ func (s *Server) handleEditorFiles(c *gin.Context) {
 // request that changed the tree, so a file is findable the moment it exists
 // instead of after the staleness bound expires. Reads pass straight through.
 func (s *Server) invalidateQuickOpenAfterWrite(c *gin.Context) {
+	// Every route below /editor is editor action for the project, which is
+	// what the language server lifetime measures; the lsp routes stay off
+	// this group so their status poll never counts.
+	s.intel.Touch(c.Param("name"))
 	c.Next()
 	if c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead {
 		return

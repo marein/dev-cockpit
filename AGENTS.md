@@ -611,6 +611,100 @@ test. Update this file when a convention changes.
   sideways. Whatever a row cuts it carries whole as its `title`: a tab the
   file's path, a quick open row its path, a find in files row its path and
   line, because that is the only place a cut name can be read out in full.
+- **Code navigation asks a language server, and the server processes belong
+  to the cockpit.** `internal/editorintelligence` keeps a fixed profile
+  registry, only the languages the navigation is verified against (gopls,
+  intelephense); the commands and the container recipe are compiled in, so
+  no setting can become a command execution surface. A way to run a server
+  is a `Launcher`, Docker the only one today: it owns detection, preparation,
+  argv and what a death means, so the service carries no flavor branches and
+  another runtime is one more implementation. The one setting is per language
+  (`/settings/editor/lsp`, stored install wide as `editor-lsp-<profile>`:
+  `auto`, `<server>-docker` or `off`, absent and unknown read as `auto`, so a
+  later option never hides the feature). Automatic runs Docker while the
+  daemon answers and is off otherwise without a word, while an explicitly
+  picked Docker that cannot run keeps saying so; the select shows the stored
+  choice, never what Automatic resolved to. A language on Off is not rendered
+  into the client's surface (`data-editor-lsp`), and the routes refuse a stale
+  page's request for it with `disabled`.
+  **The Docker option spawns the server itself**: `docker run --rm -i --init`
+  named `dev-cockpit-<server>-<project>` (the project part sanitized to
+  docker's charset, the whole name capped at 63, a short hash of the raw name
+  joining once anything was rewritten), the projects directory mounted at its
+  own path so file URIs match inside and outside, and one cache volume per
+  project and server wearing the container's name, which makes the volume the
+  project boundary. The servers are pointed into their mount explicitly
+  (intelephense's storagePath through the launcher's InitOptions, gopls'
+  XDG_CACHE_HOME through the container env), or the index would die with the
+  container. **The projects root label is the ownership boundary**: the boot
+  sweep and the orphan sweeps only ever touch containers, volumes and image
+  tags carrying this serve process's own root, because the throwaway test
+  instance shares the daemon and must not lose the live one's servers. A name
+  that outlived an unclean death is removed right before the next start. The
+  image is built on this host from the shipped build file, on first use, and
+  never pulled prebuilt: whoever builds holds the licenses. Deleting a project
+  closes its servers and removes its volumes.
+  **The container watches its workspace**: the entrypoint, one block appended
+  in Go to both build files so the exit code contract cannot drift apart, runs
+  the server next to a recursive inotify watcher (.git excluded, settle window,
+  a refused watch loud on stderr) and ends the container with exit code 64 on
+  a relevant change. `WantsRestart` reads exactly that code: while the project
+  still sees editor action the slot restarts right away, no backoff and no
+  toast, and the fresh slot keeps the old idle clock, so background churn alone
+  never holds a server past the timeout; an idle project's wish waits for the
+  next editor open. Such a death stays out of the error backoff, which is keyed
+  per project and profile.
+  **One process per project and profile, shared by every editor of the
+  project**, so a reload reconnects to the warm index instead of building a new
+  one, which is what made usages complete. It starts with the editor page
+  (`warmLSPServers`: a marker file at the root first, the bounded walk cached
+  per project as the fallback), speaks stdio JSON-RPC with `processId: null`
+  (a containerized server lives in another PID namespace and would exit
+  believing its parent dead), and lives until the project saw no editor action
+  for ten minutes: every route under the editor group counts through the
+  middleware's `Touch`, the indexing status pull deliberately does not. A full
+  table evicts the least recently used idle connection, busy is the answer only
+  when every slot works. Because the connection is shared, a document carries
+  the server's own version counter and its set of holders (didClose on the last
+  one, cancellation per client and document), and a lookup re-syncs and sends
+  under one lock, so no other instance's didChange slips between the text and
+  the position describing it.
+  **A request waits out the announced workspace indexing**, bounded: answers
+  during it are real but partial, references most of all, and a partial answer
+  is not empty, so no empty-answer retry ever catches it, that was the missed
+  usages bug. The announcement itself arrives seconds after the handshake, so a
+  connection that announced nothing counts as warming for `warmupWindow` after
+  start. **No poll stands behind the indicator**: the service tells one listener
+  about every move of the picture, the web layer publishes it as the `lsp` event
+  naming the project, and every open editor pulls `.../editor/lsp/status`
+  itself; the connect snapshot carries a bare signal for a page that opened
+  mid-indexing. The status marks the stretch before the server answers as
+  preparing, which is where the first-use image build lives. Reindex in the
+  editor's menu stops the project's servers and warms them again over a fresh
+  scan, the project is the unit.
+  **The lookup routes stay off the editor group**
+  (`.../editor/lsp/{definition,references,close}`): its middleware drops the
+  quick open index after a write, and a lookup writes nothing. The answer is
+  editor coordinates plus a preview cut by the search snippet rule
+  (`filesystem.SnippetAround`) around the usage's own column, so both lists
+  share one cutting rule; a target outside the project root is counted, never
+  opened. A definition whose range covers the asked position carries
+  `declaration` and the client shows the usages instead, and the check is range
+  containment, never the start line, because one server answers the whole
+  declaration body, docblock included.
+  **Client side** the gesture is Ctrl/Cmd+click (the word underlines through a
+  CodeMirror theme, no stylesheet rule), Ctrl/Cmd+B looks up the symbol under
+  the cursor with the same declaration rule (bound as Mod and as plain Ctrl,
+  always claimed, or the editable surface takes it as a formatting command),
+  Shift+F12 lists the usages. No context menu is claimed anywhere: the right
+  click stays the browser's, and touch gets the cursor pill
+  (`data-editor-lsp-pill`) with one Look up action running that very command,
+  so the label never pretends to know which of the two cases it lands in. A
+  pointerdown resets the bare modifier double tap machines, or two modifier
+  clicks in a row read as a double tap. The usages list is the quick open panel
+  from `md` up and the editor's bottom sheet below. There is deliberately no
+  jump history. Beyond the settings key nothing here persists, and that key
+  lives in the shared settings store the backup already carries.
 - **Backup archives are a compat surface.** `internal/backup` maps archive
   paths `data/<section id>/<source name>` onto host paths through the current
   registry, and the manifest identifies the file (`app`, `format`). Old

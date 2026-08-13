@@ -3,6 +3,7 @@ package web
 import (
 	"strconv"
 
+	"github.com/local/dev-cockpit/internal/editorintelligence"
 	"github.com/local/dev-cockpit/internal/filesystem"
 )
 
@@ -18,6 +19,65 @@ const (
 	editorDiffMaxLinesKey   = "editor-diff-max-lines"
 	editorDiffMaxKiBKey     = "editor-diff-max-kib"
 )
+
+// editorLSPServerKey holds how a language's LSP server runs, one key per
+// profile. The stored value is the server's name with the "-docker"
+// marker, "off", or "auto". Absent, "auto" and unknown values all mean
+// the automatic default, so a later version may add one more way to run
+// a server without an old value hiding the feature.
+func editorLSPServerKey(profileID string) string {
+	return "editor-lsp-" + profileID
+}
+
+// lspChoice normalizes one stored value onto the three the select offers,
+// "auto" for everything unknown. The settings page renders through it and
+// the save accepts exactly what it answers unchanged, so the value scheme
+// lives in this one place.
+func lspChoice(stored string, p *editorintelligence.Profile) string {
+	switch stored {
+	case "off", p.Command[0] + "-docker":
+		return stored
+	}
+	return "auto"
+}
+
+// resolveLSPMode turns one stored value into whether the server runs. The
+// two explicit values mean what they always meant, runnable or not.
+// Everything else is the automatic default: Docker while it can run, else
+// off, quietly.
+func resolveLSPMode(stored, server string, dockerOK bool) (off bool) {
+	switch stored {
+	case "off":
+		return true
+	case server + "-docker":
+		return false
+	}
+	return !dockerOK
+}
+
+// lspDockerHost answers the configured daemon the docker cache resolved,
+// the same one the availability gate reads.
+func (s *Server) lspDockerHost() string {
+	return s.docker.State().Host
+}
+
+// lspProfileOff reports whether the language's navigation is off right
+// now, explicitly or as the end of the automatic chain. The automatic
+// default needs both the reachable daemon and the Docker launcher's own
+// detection, the docker client; without them it is off.
+func (s *Server) lspProfileOff(p *editorintelligence.Profile) bool {
+	dockerOK := s.docker.State().Available && editorintelligence.DockerLauncher(s.lspDockerHost).Detect(p).Found
+	return resolveLSPMode(s.settings.Get(editorLSPServerKey(p.ID)), p.Command[0], dockerOK)
+}
+
+// lspProfileLauncher is the resolved mode as the launcher the intelligence
+// service runs the server with, nil while the language is off.
+func (s *Server) lspProfileLauncher(p *editorintelligence.Profile) editorintelligence.Launcher {
+	if s.lspProfileOff(p) {
+		return nil
+	}
+	return editorintelligence.DockerLauncher(s.lspDockerHost)
+}
 
 // editorSettings are the effective values, defaults filled in. Whether the
 // editor shows git at all is not among them: it shows it where there is a

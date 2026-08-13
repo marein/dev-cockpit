@@ -99,6 +99,23 @@ type SettingsEditorData struct {
 	DiffMaxKiB     int
 	// Exclusions is the newline joined folder list the search tab edits.
 	Exclusions string
+	// LSPProfiles are the code navigation's language server profiles the
+	// LSP tab offers a server select for.
+	LSPProfiles []EditorLSPProfile
+}
+
+// EditorLSPProfile is one language on the LSP tab: its select offers
+// Automatic, Server over Docker, and Off, with Selected carrying the
+// stored pick, "auto" while nothing explicit is stored. Command is the
+// full line the description names, DockerOK whether the local daemon
+// answers right now.
+type EditorLSPProfile struct {
+	ID       string
+	Label    string
+	Command  string
+	Server   string
+	Selected string
+	DockerOK bool
 }
 
 // BackupSection is one selectable export section on the backup form.

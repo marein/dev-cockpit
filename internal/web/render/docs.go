@@ -320,6 +320,11 @@ func DocsTopics() []DocsTopic {
 					Desc:  `Open any project file by name. Pressing bare Shift twice does the same.`,
 				},
 				{
+					Title: "Go to definition and usages",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "B"}}, {Caps: []string{"Shift", "F12"}}},
+					Desc:  `For PHP and Go files. Hold <kbd>Ctrl</kbd> (<kbd>Cmd</kbd> on a Mac) and click a symbol to jump to its definition, or to its usages when the cursor already sits on the declaration; <kbd>Ctrl</kbd>+<kbd>B</kbd> does the same for the symbol under the cursor, <kbd>Shift</kbd>+<kbd>F12</kbd> always lists the usages. On touch, a tap on a symbol raises a small <em>Look up</em> action next to it. Typing in the usages list narrows the rows, a click or tap jumps there. The project's language servers start when its editor opens and index in the background: the statusbar shows how far they are, and a lookup waits for the index instead of answering from half of it. <em>Reindex</em> in the editor's menu starts them over. Under Settings, Editor, LSP each language picks how its server runs.`,
+				},
+				{
 					Title: "Git marks",
 					Desc:  `In a git repository a changed file carries a letter, on its tree row and on its tab: <span class="text-green">A</span> added, <span class="text-cyan">U</span> untracked, <span class="text-yellow">M</span> modified, <span class="text-red">D</span> deleted, <span class="text-azure">R</span> renamed, <span class="text-red">!</span> conflicted. A folder carries a dot for the most pressing change under it, the tooltip says how many lines came and went, and a change somebody else makes arrives on its own.`,
 				},

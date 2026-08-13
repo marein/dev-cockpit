@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-contrib/gzip"
@@ -19,6 +20,7 @@ import (
 	"github.com/local/dev-cockpit/internal/coder"
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/docker"
+	"github.com/local/dev-cockpit/internal/editorintelligence"
 	"github.com/local/dev-cockpit/internal/eventbus"
 	"github.com/local/dev-cockpit/internal/filesystem"
 	"github.com/local/dev-cockpit/internal/hostinfo"
@@ -84,6 +86,13 @@ type Server struct {
 	// docker is the one connection to the daemon, its cache feeds the
 	// container chips on the projects page and the action handlers.
 	docker *docker.Service
+	// intel owns the language server connections behind the editor's code
+	// navigation.
+	intel *editorintelligence.Service
+	// lspWalks caches the per project language detection walk, guarded by
+	// lspWalksMu; see lspWalkLanguages.
+	lspWalksMu sync.Mutex
+	lspWalks   map[string]lspWalkEntry
 	// deletes are the project deletions that run past their request, the ones
 	// that bring compose stacks down first.
 	deletes *projectDeletes
@@ -97,7 +106,7 @@ type localCallKeyType struct{}
 var localCallKey localCallKeyType
 
 // NewServer constructs a Server serving the given coders.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, version string) (*Server, error) {
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, version string) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
@@ -133,6 +142,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		commitDrafts:  newCommitDrafts(cfg.StateDir),
 		host:          hostinfo.NewCache(cfg.ProjectsRoot, hostSampleTTL),
 		docker:        dockerService,
+		intel:         intel,
 		deletes:       newProjectDeletes(cfg.StateDir),
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
@@ -158,6 +168,13 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		s.bus.Publish(eventbus.Event{Type: "docker"})
 	})
 	dockerService.OnComposeDone(s.composeDone)
+	// A project's indexing picture moved (a server preparing, announcing
+	// progress, dying, closing): every open editor of the project pulls the
+	// status itself, the same way it follows the git event. No poll stands
+	// behind the indicator.
+	intel.OnChange(func(project string) {
+		s.bus.Publish(eventbus.Event{Type: "lsp", Data: map[string]string{"project": project}})
+	})
 	return s, nil
 }
 

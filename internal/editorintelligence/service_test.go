@@ -1,0 +1,997 @@
+package editorintelligence
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+// TestMain doubles as the fake language server: tests install a wrapper
+// script named like a real server that re-executes this binary with
+// GO_WANT_FAKE_LSP set, so no test depends on locally installed language
+// servers.
+func TestMain(m *testing.M) {
+	if os.Getenv("GO_WANT_FAKE_LSP") == "1" {
+		runFakeLSP(os.Getenv("FAKE_LSP_MODE"))
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// runFakeLSP speaks just enough framed LSP for the tests: it tracks
+// document versions and open documents, and its navigation answers encode
+// that state in the line numbers, so assertions read the protocol effects
+// from the results.
+func runFakeLSP(mode string) {
+	if mode == "fail-init" {
+		os.Exit(3)
+	}
+	r := bufio.NewReader(os.Stdin)
+	var writeMu sync.Mutex
+	docs := map[string]int{}
+	rootURI := ""
+	respond := func(id *json.RawMessage, result any) {
+		msg := rpcMessage{JSONRPC: "2.0", ID: id, Result: mustMarshal(result)}
+		payload, _ := json.Marshal(msg)
+		writeMu.Lock()
+		_ = writeFrame(os.Stdout, payload)
+		writeMu.Unlock()
+	}
+	progress := func(kind string, pct int) {
+		value := map[string]any{"kind": kind}
+		if pct >= 0 {
+			value["percentage"] = pct
+		}
+		msg := rpcMessage{JSONRPC: "2.0", Method: "$/progress",
+			Params: mustMarshal(map[string]any{"token": "work", "value": value})}
+		payload, _ := json.Marshal(msg)
+		writeMu.Lock()
+		_ = writeFrame(os.Stdout, payload)
+		writeMu.Unlock()
+	}
+	// Whether the fake's index is complete. Every mode announces its
+	// indexing through the standard progress pair; the indexing mode keeps
+	// it open for a while and answers partial references meanwhile, the way
+	// a real server does.
+	var indexed atomic.Bool
+	var initID *json.RawMessage
+	for {
+		payload, err := readFrame(r)
+		if err != nil {
+			return
+		}
+		var msg rpcMessage
+		if err := json.Unmarshal(payload, &msg); err != nil {
+			return
+		}
+		switch msg.Method {
+		case "initialize":
+			// Exercise the client's server request answering before the
+			// handshake finishes: the initialize response only goes out
+			// once the client answered workspace/configuration, so the
+			// order is deterministic for the assertions.
+			var params struct {
+				RootURI string `json:"rootUri"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			rootURI = params.RootURI
+			initID = msg.ID
+			id := json.RawMessage("9001")
+			req := rpcMessage{JSONRPC: "2.0", ID: &id, Method: "workspace/configuration",
+				Params: mustMarshal(map[string]any{"items": []map[string]any{{"section": "test"}}})}
+			raw, _ := json.Marshal(req)
+			writeMu.Lock()
+			_ = writeFrame(os.Stdout, raw)
+			writeMu.Unlock()
+		case "initialized":
+		case "textDocument/didOpen":
+			var params struct {
+				TextDocument struct {
+					URI     string `json:"uri"`
+					Version int    `json:"version"`
+				} `json:"textDocument"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			docs[params.TextDocument.URI] = params.TextDocument.Version
+		case "textDocument/didChange":
+			var params struct {
+				TextDocument struct {
+					URI     string `json:"uri"`
+					Version int    `json:"version"`
+				} `json:"textDocument"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			docs[params.TextDocument.URI] = params.TextDocument.Version
+		case "textDocument/didClose":
+			var params struct {
+				TextDocument struct {
+					URI string `json:"uri"`
+				} `json:"textDocument"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			delete(docs, params.TextDocument.URI)
+		case "textDocument/definition":
+			if mode == "crash-on-request" {
+				os.Exit(4)
+			}
+			if mode == "exit-restart-on-request" {
+				os.Exit(watcherRestartCode)
+			}
+			if mode == "hang" {
+				continue
+			}
+			if mode == "empty" {
+				respond(msg.ID, nil)
+				continue
+			}
+			var params struct {
+				TextDocument struct {
+					URI string `json:"uri"`
+				} `json:"textDocument"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			// The document version travels as the start line, the open count
+			// as the start character; the range spans a word's width so a
+			// request at a covered position reads as the declaration.
+			respond(msg.ID, []map[string]any{{
+				"uri": rootURI + "/def.go",
+				"range": map[string]any{
+					"start": map[string]any{"line": docs[params.TextDocument.URI], "character": len(docs)},
+					"end":   map[string]any{"line": docs[params.TextDocument.URI], "character": len(docs) + 11},
+				},
+			}})
+		case "textDocument/references":
+			if mode == "hang" {
+				continue
+			}
+			var params struct {
+				Context struct {
+					IncludeDeclaration bool `json:"includeDeclaration"`
+				} `json:"context"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			locs := []map[string]any{
+				{"uri": rootURI + "/use.go", "range": map[string]any{"start": map[string]any{"line": 4, "character": 2}, "end": map[string]any{"line": 4, "character": 5}}},
+			}
+			// While the index is announced as running, the answer is real
+			// but partial, which is exactly what the service must wait out.
+			if indexed.Load() {
+				locs = append(locs, map[string]any{"uri": "file:///outside/stub.go", "range": map[string]any{"start": map[string]any{"line": 0, "character": 0}, "end": map[string]any{"line": 0, "character": 0}}})
+				if params.Context.IncludeDeclaration {
+					locs = append(locs, map[string]any{"uri": rootURI + "/def.go", "range": map[string]any{"start": map[string]any{"line": 1, "character": 0}, "end": map[string]any{"line": 1, "character": 3}}})
+				}
+			}
+			respond(msg.ID, locs)
+		case "shutdown":
+			respond(msg.ID, nil)
+		case "exit":
+			os.Exit(0)
+		default:
+			if msg.ID != nil && msg.Method == "" && initID != nil {
+				// The configuration response arrived; finish the handshake
+				// and announce the indexing.
+				respond(initID, map[string]any{"capabilities": map[string]any{}})
+				initID = nil
+				switch mode {
+				case "indexing":
+					progress("begin", 0)
+					go func() {
+						time.Sleep(350 * time.Millisecond)
+						progress("report", 50)
+						time.Sleep(350 * time.Millisecond)
+						indexed.Store(true)
+						progress("end", -1)
+					}()
+				case "mute":
+					// A server that never announces its indexing; the
+					// warming grace is all that holds its requests back.
+					indexed.Store(true)
+				default:
+					indexed.Store(true)
+					progress("begin", -1)
+					progress("end", -1)
+				}
+			}
+		}
+	}
+}
+
+// installFakeLSP puts wrapper scripts for the given command names on PATH,
+// each re-executing the test binary as the fake server.
+func installFakeLSP(t *testing.T, mode string, commands ...string) {
+	t.Helper()
+	dir := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range commands {
+		script := fmt.Sprintf("#!/bin/sh\nexec env GO_WANT_FAKE_LSP=1 FAKE_LSP_MODE=%s %q\n", mode, exe)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func newTestService(t *testing.T) *Service {
+	t.Helper()
+	work := t.TempDir()
+	marker := filepath.Join(work, "image-built")
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installFakeDocker(t, filepath.Join(work, "docker-args"), marker, "", "")
+	s := New(t.TempDir(), nil)
+	t.Cleanup(s.Close)
+	return s
+}
+
+func goRequest(t *testing.T) Request {
+	t.Helper()
+	return Request{
+		Client:      "client-a",
+		ProjectName: "proj",
+		ProjectRoot: t.TempDir(),
+		Path:        "main.go",
+		Content:     "package main\n",
+		Line:        1,
+		Character:   0,
+	}
+}
+
+func TestServiceUnknownLanguage(t *testing.T) {
+	s := newTestService(t)
+	req := goRequest(t)
+	req.Path = "readme.txt"
+	res, _ := s.Definition(context.Background(), req)
+	if res.Available || res.Status != StatusNoLanguage {
+		t.Fatalf("status %+v", res)
+	}
+}
+
+func TestServiceNotInstalled(t *testing.T) {
+	s := newTestService(t)
+	// An empty PATH: the Docker way's own detection, the docker client,
+	// finds nothing.
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	res, _ := s.Definition(context.Background(), goRequest(t))
+	if res.Status != StatusNotInstalled {
+		t.Fatalf("status %q", res.Status)
+	}
+}
+
+func TestServiceInvalidPosition(t *testing.T) {
+	s := newTestService(t)
+	req := goRequest(t)
+	req.Line = 99
+	if _, err := s.Definition(context.Background(), req); err == nil {
+		t.Fatal("expected position error")
+	}
+}
+
+func TestServiceDefinitionFlow(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+
+	req := goRequest(t)
+	res, err := s.Definition(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Available || len(res.Locations) != 1 {
+		t.Fatalf("unavailable: %+v", res)
+	}
+	// The fake answers 0-based line = the server assigned document version,
+	// 1 after didOpen, and the service maps to 1-based.
+	if res.Locations[0] != (Location{Path: "def.go", Line: 2, Character: 1}) {
+		t.Fatalf("location %+v", res.Locations[0])
+	}
+
+	// Changed text syncs via didChange with the next server version; the
+	// same text again costs nothing and keeps the version.
+	req.Content = "package main\nx"
+	res, _ = s.Definition(context.Background(), req)
+	if !res.Available || res.Locations[0].Line != 3 {
+		t.Fatalf("after change: %+v", res)
+	}
+	res, _ = s.Definition(context.Background(), req)
+	if !res.Available || res.Locations[0].Line != 3 {
+		t.Fatalf("unchanged text must keep the version: %+v", res)
+	}
+	if s.ConnectionCount() != 1 {
+		t.Fatalf("connections %d", s.ConnectionCount())
+	}
+
+	// A second document on the same connection, then closing it again is
+	// visible in the open count the fake encodes as the character.
+	req2 := goRequest(t)
+	req2.ProjectRoot = req.ProjectRoot
+	req2.Path = "other.go"
+	res, _ = s.Definition(context.Background(), req2)
+	if !res.Available || res.Locations[0].Character != 2 {
+		t.Fatalf("second doc: %+v", res)
+	}
+	s.CloseDocument(req.Client, req.ProjectName, "other.go")
+	res, _ = s.Definition(context.Background(), req)
+	if !res.Available || res.Locations[0].Character != 1 {
+		t.Fatalf("after close: %+v", res)
+	}
+}
+
+func TestServiceSharedAcrossClients(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+
+	// Two editor instances of one project share one connection and one open
+	// document; the fake's open count stays at one for both.
+	a := goRequest(t)
+	b := a
+	b.Client = "client-b"
+	resA, _ := s.Definition(context.Background(), a)
+	resB, _ := s.Definition(context.Background(), b)
+	if !resA.Available || !resB.Available {
+		t.Fatalf("answers: %+v %+v", resA, resB)
+	}
+	if s.ConnectionCount() != 1 {
+		t.Fatalf("connections %d", s.ConnectionCount())
+	}
+	if resB.Locations[0].Character != 1 {
+		t.Fatalf("the shared document must be open once: %+v", resB.Locations[0])
+	}
+
+	// One client letting go does not close the document the other still
+	// holds; the last one does.
+	s.CloseDocument(a.Client, a.ProjectName, a.Path)
+	res, _ := s.Definition(context.Background(), b)
+	if !res.Available || res.Locations[0].Character != 1 || res.Locations[0].Line != 2 {
+		t.Fatalf("document must survive the first close: %+v", res.Locations)
+	}
+	s.CloseDocument(b.Client, b.ProjectName, b.Path)
+	s.CloseDocument(a.Client, a.ProjectName, a.Path)
+	// Reopened after everybody let go: the server version starts over.
+	res, _ = s.Definition(context.Background(), a)
+	if !res.Available || res.Locations[0].Line != 2 {
+		t.Fatalf("document must reopen fresh: %+v", res.Locations)
+	}
+}
+
+func TestServiceTouchKeepsProjectAlive(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+
+	req := goRequest(t)
+	if res, _ := s.Definition(context.Background(), req); !res.Available {
+		t.Fatal("setup request failed")
+	}
+	base := time.Now()
+	// Just short of the idle timeout an editor action lands: the connection
+	// counts as used from that moment.
+	s.now = func() time.Time { return base.Add(connIdleTimeout - time.Minute) }
+	s.Touch(req.ProjectName)
+	s.now = func() time.Time { return base.Add(2*connIdleTimeout - 2*time.Minute) }
+	s.expireIdle()
+	if s.ConnectionCount() != 1 {
+		t.Fatal("a touched connection must survive the sweep")
+	}
+	s.now = func() time.Time { return base.Add(3 * connIdleTimeout) }
+	s.expireIdle()
+	if s.ConnectionCount() != 0 {
+		t.Fatal("an untouched connection must expire")
+	}
+}
+
+func TestServiceWarmStartsWithoutARequest(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+
+	req := goRequest(t)
+	s.Warm(req.ProjectName, req.ProjectRoot, []WarmMode{{ProfileID: "go"}, {ProfileID: "unknown"}})
+	// Only the known profile starts; the first request reuses it.
+	if s.ConnectionCount() != 1 {
+		t.Fatalf("connections after warm: %d", s.ConnectionCount())
+	}
+	if res, _ := s.Definition(context.Background(), req); !res.Available {
+		t.Fatal("request after warm failed")
+	}
+	if s.ConnectionCount() != 1 {
+		t.Fatalf("the request must reuse the warm connection: %d", s.ConnectionCount())
+	}
+}
+
+// The change events feed the editor's indicator over SSE: a slot appearing,
+// the handshake ending and the announced progress each fire one, all naming
+// the project.
+func TestServiceChangeEvents(t *testing.T) {
+	installFakeLSP(t, "indexing", "gopls")
+	s := newTestService(t)
+	var events atomic.Int64
+	var wrongProject atomic.Bool
+	s.OnChange(func(project string) {
+		if project != "proj" {
+			wrongProject.Store(true)
+		}
+		events.Add(1)
+	})
+
+	req := goRequest(t)
+	if res, _ := s.Definition(context.Background(), req); !res.Available {
+		t.Fatal("setup request failed")
+	}
+	if wrongProject.Load() {
+		t.Fatal("an event named a foreign project")
+	}
+	// At least the appearing slot, the finished handshake and the progress
+	// moves of the announced indexing.
+	if n := events.Load(); n < 4 {
+		t.Fatalf("expected the indexing moves to fire events, got %d", n)
+	}
+}
+
+func TestServiceIndexStatus(t *testing.T) {
+	installFakeLSP(t, "indexing", "gopls")
+	s := newTestService(t)
+
+	req := goRequest(t)
+	s.Warm(req.ProjectName, req.ProjectRoot, []WarmMode{{ProfileID: "go"}})
+	sawIndexing := false
+	sawPct := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		states := s.IndexStatus(req.ProjectName)
+		if len(states) == 1 && states[0].Indexing {
+			sawIndexing = true
+			if states[0].Percentage >= 0 {
+				sawPct = true
+			}
+		}
+		if len(states) == 1 && !states[0].Indexing && sawIndexing {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !sawIndexing || !sawPct {
+		t.Fatalf("indexing %v with percentage %v must be visible while it runs", sawIndexing, sawPct)
+	}
+	states := s.IndexStatus(req.ProjectName)
+	if len(states) != 1 || states[0].Indexing {
+		t.Fatalf("indexing must end: %+v", states)
+	}
+}
+
+func TestServiceReferences(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+
+	req := goRequest(t)
+	req.Path = "use.go"
+	res, err := s.References(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Available || res.Outside != 1 {
+		t.Fatalf("references: %+v", res)
+	}
+	// The asked file sorts first, the declaration follows; the outside
+	// stub is dropped.
+	want := []Location{
+		{Path: "use.go", Line: 5, Character: 2},
+		{Path: "def.go", Line: 2, Character: 0},
+	}
+	if len(res.Locations) != len(want) || res.Locations[0] != want[0] || res.Locations[1] != want[1] {
+		t.Fatalf("locations %+v", res.Locations)
+	}
+}
+
+func TestServiceEmptyAnswerRetriesThenReturns(t *testing.T) {
+	installFakeLSP(t, "empty", "gopls")
+	s := newTestService(t)
+
+	res, err := s.Definition(context.Background(), goRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Available || len(res.Locations) != 0 {
+		t.Fatalf("empty: %+v", res)
+	}
+}
+
+func TestServiceCrashIsolationAndBackoff(t *testing.T) {
+	installFakeLSP(t, "crash-on-request", "gopls")
+	s := newTestService(t)
+
+	res, _ := s.Definition(context.Background(), goRequest(t))
+	if res.Available || res.Status != StatusError {
+		t.Fatalf("crash: %+v", res)
+	}
+	if s.ConnectionCount() != 0 {
+		t.Fatalf("dead connection kept: %d", s.ConnectionCount())
+	}
+	res, _ = s.Definition(context.Background(), goRequest(t))
+	if res.Status != StatusUnavailable {
+		t.Fatalf("backoff: %+v", res)
+	}
+	// The backoff is keyed per project: another project of the same
+	// language starts its own server instead of reading unavailable.
+	other := goRequest(t)
+	other.ProjectName = "proj-other"
+	other.ProjectRoot = t.TempDir()
+	res, _ = s.Definition(context.Background(), other)
+	if res.Status == StatusUnavailable {
+		t.Fatalf("one project's backoff must not silence another: %+v", res)
+	}
+}
+
+func TestServiceRestartExitSkipsBackoff(t *testing.T) {
+	installFakeLSP(t, "exit-restart-on-request", "gopls")
+	s := newTestService(t)
+
+	// The server dies with the watcher's agreed restart code while the
+	// lookup is in flight: an error for this request, but no backoff, the
+	// restart is routine.
+	req := goRequest(t)
+	res, _ := s.Definition(context.Background(), req)
+	if res.Available || res.Status != StatusError {
+		t.Fatalf("restart exit: %+v", res)
+	}
+	res, _ = s.Definition(context.Background(), req)
+	if res.Status == StatusUnavailable {
+		t.Fatalf("a restart wish must not put the project into backoff: %+v", res)
+	}
+}
+
+func TestServiceCancellation(t *testing.T) {
+	installFakeLSP(t, "hang", "gopls")
+	s := newTestService(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	res, _ := s.Definition(ctx, goRequest(t))
+	if res.Status != StatusCanceled {
+		t.Fatalf("canceled: %+v", res)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("cancellation hung")
+	}
+}
+
+func TestServiceIdleExpiry(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+
+	if res, _ := s.Definition(context.Background(), goRequest(t)); !res.Available {
+		t.Fatalf("setup request failed: %+v", res)
+	}
+	s.mu.Lock()
+	var conn *lspConn
+	for _, mc := range s.conns {
+		conn = mc.conn
+	}
+	s.mu.Unlock()
+
+	s.now = func() time.Time { return time.Now().Add(connIdleTimeout + time.Hour) }
+	s.expireIdle()
+	if s.ConnectionCount() != 0 {
+		t.Fatalf("idle connection kept: %d", s.ConnectionCount())
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for conn.alive() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if conn.alive() {
+		t.Fatal("expired connection still alive")
+	}
+	<-conn.exited
+}
+
+func TestServiceCloseShutsProcessesDown(t *testing.T) {
+	work := t.TempDir()
+	marker := filepath.Join(work, "image-built")
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installFakeDocker(t, filepath.Join(work, "docker-args"), marker, "", "")
+	installFakeLSP(t, "normal", "gopls")
+	s := New(t.TempDir(), nil)
+
+	if res, _ := s.Definition(context.Background(), goRequest(t)); !res.Available {
+		t.Fatal("setup request failed")
+	}
+	s.mu.Lock()
+	var conn *lspConn
+	for _, mc := range s.conns {
+		conn = mc.conn
+	}
+	s.mu.Unlock()
+
+	s.Close()
+	select {
+	case <-conn.exited:
+	default:
+		t.Fatal("process not reaped after Close")
+	}
+	if s.ConnectionCount() != 0 {
+		t.Fatalf("connections after Close: %d", s.ConnectionCount())
+	}
+}
+
+func TestServiceLimitEvictsIdle(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+
+	// One project past the table size: the extra one evicts the least
+	// recently used idle connection instead of answering busy, so the count
+	// never passes the limit.
+	var last Result
+	for i := 0; i <= maxConnections; i++ {
+		req := goRequest(t)
+		req.ProjectName = fmt.Sprintf("proj%d", i)
+		req.ProjectRoot = t.TempDir()
+		last, _ = s.Definition(context.Background(), req)
+	}
+	if !last.Available {
+		t.Fatalf("the extra project must evict an idle connection: %+v", last)
+	}
+	if s.ConnectionCount() != maxConnections {
+		t.Fatalf("connections %d", s.ConnectionCount())
+	}
+}
+
+func TestServiceBusyWhenEverySlotWorks(t *testing.T) {
+	installFakeLSP(t, "hang", "gopls")
+	s := newTestService(t)
+
+	// Every slot hangs in flight, so nothing may be evicted.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var wg sync.WaitGroup
+	for i := 0; i < maxConnections; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req := goRequest(t)
+			req.ProjectName = fmt.Sprintf("proj%d", i)
+			req.ProjectRoot = t.TempDir()
+			_, _ = s.Definition(ctx, req)
+		}(i)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for s.ConnectionCount() < maxConnections && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	// The hanging calls register their in flight token right after the
+	// handshake; a short settle keeps the check off that race.
+	time.Sleep(300 * time.Millisecond)
+
+	req := goRequest(t)
+	req.ProjectName = "proj-more"
+	req.ProjectRoot = t.TempDir()
+	res, _ := s.Definition(context.Background(), req)
+	if res.Status != StatusBusy {
+		t.Fatalf("every slot in flight must answer busy: %+v", res)
+	}
+	cancel()
+	wg.Wait()
+}
+
+func TestServiceWaitsOutAnnouncedIndexing(t *testing.T) {
+	installFakeLSP(t, "indexing", "gopls")
+	s := newTestService(t)
+
+	req := goRequest(t)
+	req.Path = "use.go"
+	start := time.Now()
+	res, err := s.References(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fake answers one location while its announced indexing runs and
+	// three once it ended; a complete answer proves the wait.
+	if !res.Available || len(res.Locations) != 2 || res.Outside != 1 {
+		t.Fatalf("must wait for the announced indexing: %+v", res)
+	}
+	if time.Since(start) < 500*time.Millisecond {
+		t.Fatal("answered before the indexing ended")
+	}
+}
+
+func TestServiceWarmingGraceForSilentServer(t *testing.T) {
+	installFakeLSP(t, "mute", "gopls")
+	s := newTestService(t)
+	s.warmupGrace = 400 * time.Millisecond
+
+	req := goRequest(t)
+	req.Path = "use.go"
+	start := time.Now()
+	res, err := s.References(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A server that never announces is held for the warming grace, then
+	// asked anyway.
+	if !res.Available || len(res.Locations) == 0 {
+		t.Fatalf("silent server must still answer after the grace: %+v", res)
+	}
+	if time.Since(start) < 350*time.Millisecond {
+		t.Fatal("answered before the warming grace passed")
+	}
+}
+
+// installFakeDocker puts a fake docker client on PATH: it records every
+// call into argsFile, answers `image inspect` by whether markerFile
+// exists, creates it on `build`, lists psFile's lines on `ps` and
+// volsFile's on `volume ls` (none when empty), and on `run` execs the
+// server command that follows the image token, which resolves to the fake
+// language server wrapper on PATH, mode included. The Docker way runs end
+// to end without a daemon.
+func installFakeDocker(t *testing.T, argsFile, markerFile, psFile, volsFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+case "$1" in
+  image) [ -f %q ] && exit 0 || exit 1 ;;
+  build) touch %q; exit 0 ;;
+  ps) [ -n %q ] && cat %q 2>/dev/null; exit 0 ;;
+  volume)
+    case "$2" in
+      ls) [ -n %q ] && cat %q 2>/dev/null; exit 0 ;;
+      *) exit 0 ;;
+    esac ;;
+  rm) exit 0 ;;
+  images) exit 0 ;;
+  rmi) exit 0 ;;
+  run)
+    prev=""
+    for a in "$@"; do
+      case "$prev" in dev-cockpit-gopls:*|dev-cockpit-intelephense:*) exec "$a" ;; esac
+      prev="$a"
+    done
+    exit 1 ;;
+  *) exit 1 ;;
+esac
+`, argsFile, markerFile, markerFile, psFile, psFile, volsFile, volsFile)
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// The boot sweep takes exactly the containers wearing the cockpit's LSP
+// scheme, leaves every other name alone, coder containers included, and
+// removes the LSP volumes whose project no longer exists on disk.
+func TestSweepStaleMatchesOnlyTheScheme(t *testing.T) {
+	work := t.TempDir()
+	argsFile := filepath.Join(work, "args")
+	psFile := filepath.Join(work, "names")
+	volsFile := filepath.Join(work, "vols")
+	projectsRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(projectsRoot, "alive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(psFile, []byte(strings.Join([]string{
+		"dev-cockpit-gopls-old-project",
+		"dev-cockpit-intelephense-x-abc123",
+		"dev-cockpit-copilot",
+		"dev-cockpit-gopls",
+		"dc-ollama",
+		"gopls-standalone",
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(volsFile, []byte(strings.Join([]string{
+		"dev-cockpit-gopls-alive",
+		"dev-cockpit-gopls-gone-project",
+		"dev-cockpit-intelephense-alive",
+		"dev-cockpit-gomod",
+		"dc-ollama",
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installFakeDocker(t, argsFile, filepath.Join(work, "image-built"), psFile, volsFile)
+	sweepStale(context.Background(), projectsRoot, nil)
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rms, volRms []string
+	for _, call := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if strings.HasPrefix(call, "rm -f ") {
+			rms = append(rms, strings.TrimPrefix(call, "rm -f "))
+		}
+		if strings.HasPrefix(call, "volume rm ") {
+			volRms = append(volRms, strings.TrimPrefix(call, "volume rm "))
+		}
+	}
+	want := "dev-cockpit-gopls-old-project,dev-cockpit-intelephense-x-abc123"
+	if strings.Join(rms, ",") != want {
+		t.Fatalf("swept %v, want %s", rms, want)
+	}
+	if strings.Join(volRms, ",") != "dev-cockpit-gopls-gone-project" {
+		t.Fatalf("volume sweep took %v, want only the orphan", volRms)
+	}
+}
+
+func TestServiceDockerModeBuildsOnceAndMountsTheContract(t *testing.T) {
+	work := t.TempDir()
+	argsFile := filepath.Join(work, "args")
+	installFakeDocker(t, argsFile, filepath.Join(work, "image-built"), "", "")
+	installFakeLSP(t, "normal", "gopls")
+	projectsRoot := t.TempDir()
+	s := New(projectsRoot, nil)
+	t.Cleanup(s.Close)
+
+	req := goRequest(t)
+	req.Launcher = DockerLauncher(nil)
+	res, err := s.Definition(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Available || len(res.Locations) != 1 {
+		t.Fatalf("docker mode answer: %+v", res)
+	}
+
+	// A second project reuses the built image: one build call, two runs.
+	goProfile, _, _ := ProfileForPath("main.go")
+	goImageRef := imageRef(goProfile)
+	req2 := goRequest(t)
+	req2.ProjectName = "proj2"
+	req2.Launcher = DockerLauncher(nil)
+	if res, _ := s.Definition(context.Background(), req2); !res.Available {
+		t.Fatalf("second docker project failed: %+v", res)
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	builds, runs, rms := 0, 0, 0
+	var runLine string
+	lastWasRm := false
+	for _, call := range calls {
+		if strings.HasPrefix(call, "build ") {
+			builds++
+		}
+		if strings.HasPrefix(call, "rm -f dev-cockpit-gopls-") {
+			rms++
+			lastWasRm = true
+			continue
+		}
+		if strings.HasPrefix(call, "run ") {
+			runs++
+			runLine = call
+			// The stale name is cleared right before each start.
+			if !lastWasRm {
+				t.Fatalf("run without a preceding rm: %v", calls)
+			}
+		}
+		lastWasRm = false
+	}
+	if builds != 1 || runs != 2 || rms != 2 {
+		t.Fatalf("builds %d runs %d rms %d: %v", builds, runs, rms, calls)
+	}
+	// The run carries the wrapper contract: reaped, interactive, a speaking
+	// name with the project in it, projects dir at its own path, the cache
+	// volume, the workspace as workdir, the built image, the server command.
+	for _, want := range []string{
+		"--rm", "-i", "--init",
+		"--name dev-cockpit-gopls-" + req2.ProjectName,
+		"--label " + lspRootLabel + "=" + projectsRoot,
+		"-v " + projectsRoot + ":" + projectsRoot,
+		"-v dev-cockpit-gopls-" + req2.ProjectName + ":/go/pkg/mod",
+		"-w " + req2.ProjectRoot,
+		"-e XDG_CACHE_HOME=/go/pkg/mod/.cache",
+		goImageRef + " gopls",
+	} {
+		if !strings.Contains(runLine, want) {
+			t.Fatalf("run line misses %q: %s", want, runLine)
+		}
+	}
+}
+
+// The launchers' initializationOptions: the container way points the PHP
+// server's index storage into its cache mount, everything else stays nil,
+// the PATH way most of all.
+func TestLauncherInitOptions(t *testing.T) {
+	php, _, _ := ProfileForPath("index.php")
+	goProfile, _, _ := ProfileForPath("main.go")
+	opts, ok := DockerLauncher(nil).InitOptions("my-app", php).(map[string]any)
+	if !ok || opts["storagePath"] != "/tmp/intelephense/storage" || opts["globalStoragePath"] != "/tmp/intelephense/global" {
+		t.Fatalf("php docker init options: %#v", opts)
+	}
+	if DockerLauncher(nil).InitOptions("proj", goProfile) != nil {
+		t.Fatalf("go docker init options must be nil")
+	}
+}
+
+// The image tag is a stable hash of the shipped build file: same content,
+// same tag; the tag never collides across the two images and stays a
+// valid docker tag.
+func TestImageRefFollowsTheBuildFile(t *testing.T) {
+	goProfile, _, _ := ProfileForPath("main.go")
+	php, _, _ := ProfileForPath("index.php")
+	goRef, phpRef := imageRef(goProfile), imageRef(php)
+	if goRef != imageRef(goProfile) {
+		t.Fatal("the tag is not deterministic")
+	}
+	if !strings.HasPrefix(goRef, "dev-cockpit-gopls:") || !strings.HasPrefix(phpRef, "dev-cockpit-intelephense:") {
+		t.Fatalf("refs: %s / %s", goRef, phpRef)
+	}
+	if !regexp.MustCompile(`^[a-z0-9-]+:[0-9a-f]{12}$`).MatchString(goRef) {
+		t.Fatalf("tag shape: %s", goRef)
+	}
+}
+
+// The container names: speaking for a plain project, sanitized plus a short
+// hash once anything was rewritten, so no two projects share a name.
+func TestContainerNames(t *testing.T) {
+	if got := containerName("gopls", "dev-cockpit"); got != "dev-cockpit-gopls-dev-cockpit" {
+		t.Fatalf("plain name: %s", got)
+	}
+	spaced := containerName("gopls", "my app")
+	if !strings.HasPrefix(spaced, "dev-cockpit-gopls-my-app-") || len(spaced) != len("dev-cockpit-gopls-my-app-")+6 {
+		t.Fatalf("sanitized name misses its hash: %s", spaced)
+	}
+	if dashed := containerName("gopls", "my-app"); dashed != "dev-cockpit-gopls-my-app" || spaced == dashed {
+		t.Fatalf("sanitizing collided: %q vs %q", spaced, dashed)
+	}
+	if spaced != containerName("gopls", "my app") {
+		t.Fatal("the name is not deterministic")
+	}
+	long := strings.Repeat("a", 60)
+	longer := long + "b"
+	if containerName("gopls", long) == containerName("gopls", longer) {
+		t.Fatal("capping collided")
+	}
+	if got := containerName("gopls", ""); got != containerName("gopls", "") || !strings.HasPrefix(got, "dev-cockpit-gopls-") {
+		t.Fatalf("empty project name: %s", got)
+	}
+	for _, name := range []string{spaced, containerName("gopls", "über app"), containerName("gopls", long), containerName("intelephense", longer)} {
+		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`).MatchString(name) {
+			t.Fatalf("name %q is not a valid container name", name)
+		}
+		if len(name) > 63 {
+			t.Fatalf("name %q is longer than 63", name)
+		}
+	}
+}
+
+func TestServiceDefinitionAtDeclaration(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+
+	// The fake's definition range starts at (version, open count) and spans
+	// a word: a request inside that range in the answered file reads as the
+	// declaration, one from another file does not. The server assigns
+	// version 1 on open, so the range sits on line 1.
+	req := goRequest(t)
+	req.Path = "def.go"
+	req.Content = "package main\nfunc IntelTarget() {}\n"
+	req.Line = 1
+	req.Character = 5
+	res, err := s.Definition(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Available || !res.Declaration {
+		t.Fatalf("a covered position must read as the declaration: %+v", res)
+	}
+
+	other := goRequest(t)
+	other.ProjectRoot = req.ProjectRoot
+	res, _ = s.Definition(context.Background(), other)
+	if !res.Available || res.Declaration {
+		t.Fatalf("another file must not read as the declaration: %+v", res)
+	}
+}

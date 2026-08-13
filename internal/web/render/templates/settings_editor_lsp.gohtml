@@ -1,0 +1,26 @@
+{{define "settings_editor_lsp.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "editor_page_start.gohtml" .}}
+<form method="post" action="/settings/editor/lsp" id="settings-editor-lsp">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <div class="text-secondary small mb-3">Go to definition and Find usages ask a language server per language, which the cockpit runs in a container, its image built on this host on first use. Automatic runs it while the Docker daemon answers and stays off otherwise; Off takes the surface away for that language entirely.</div>
+  <div class="mb-3 row">
+    <div class="col-12 col-lg-6">
+      {{range .LSPProfiles}}
+      <div class="mb-3">
+        <label class="form-label" for="editor-lsp-{{.ID}}">{{.Label}}</label>
+        <select class="form-select" id="editor-lsp-{{.ID}}" name="server_{{.ID}}">
+          <option value="auto"{{if eq .Selected "auto"}} selected{{end}}>Automatic</option>
+          <option value="{{.Server}}-docker"{{if eq .Selected (printf "%s-docker" .Server)}} selected{{end}}>{{.Server}} (Docker)</option>
+          <option value="off"{{if eq .Selected "off"}} selected{{end}}>Off</option>
+        </select>
+        <div class="form-text">Runs <code>{{.Command}}</code>; {{if .DockerOK}}the daemon answers{{else}}no daemon answers right now{{end}}.</div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  <button type="submit" class="btn btn-primary">Save</button>
+</form>
+{{template "editor_page_end.gohtml"}}
+{{template "app_end.gohtml" .}}
+{{end}}

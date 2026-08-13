@@ -367,9 +367,9 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await waitDirty(noteFile, false);
     });
 
-    await run("statusbar shows the cursor position", async () => {
+    await run("statusbar shows the cursor position as line colon column", async () => {
       const pos = await page.textContent("[data-editor-pos]");
-      assert(/Ln \d+, Col \d+/.test(pos || ""), `unexpected position readout: ${pos}`);
+      assert(/^\d+:\d+$/.test(pos || ""), `unexpected position readout: ${pos}`);
     });
 
     await run("real language highlighting for a code file", async () => {
@@ -486,7 +486,7 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.waitForFunction(() => document.querySelector("[data-editor-quickopen]").hidden, null, { timeout: 6000 });
       await page.waitForSelector(`${tabSel(noteFile)}.active`, { timeout: 8000 });
       const pos = await page.textContent("[data-editor-pos]");
-      assert(/^Ln 1, Col 1/.test(pos || ""), `cursor not on the match line: ${pos}`);
+      assert(/^1:1$/.test(pos || ""), `cursor not on the match line: ${pos}`);
     });
 
     await run("a hit far down the file scrolls it into view, from the content search and from name:line", async () => {
@@ -512,7 +512,7 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       }, [project, longFile, hitLine, needle]);
 
       const onLine = async (n) => page.waitForFunction(
-        (want) => /^Ln (\d+)/.exec(document.querySelector("[data-editor-pos]")?.textContent || "")?.[1] === String(want),
+        (want) => /^(\d+):/.exec(document.querySelector("[data-editor-pos]")?.textContent || "")?.[1] === String(want),
         n, { timeout: 8000 });
       // A viewport that never moved sits at zero; the cursor alone proves nothing.
       const scrolled = async () => page.waitForFunction(
@@ -773,7 +773,7 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await L.dismissUpdate(page);
       assert(/\/settings\/editor\/search$/.test(page.url()), `the bare path landed on ${page.url()}`);
       const tabs = await page.locator("[data-editor-sections] .nav-link").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
-      assert(tabs.join() === "/settings/editor/search,/settings/editor/git", `the tabs are ${tabs.join(", ")}`);
+      assert(tabs.join() === "/settings/editor/search,/settings/editor/git,/settings/editor/lsp", `the tabs are ${tabs.join(", ")}`);
       const active = await page.locator("[data-editor-sections] .nav-link.active").getAttribute("href");
       assert(active === "/settings/editor/search", `the marked tab is ${active}`);
       assert(await page.$('[data-settings-nav] a[href="/settings/editor/search"].active'), "the Editor row is not marked in the settings nav");

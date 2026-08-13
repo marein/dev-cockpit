@@ -288,6 +288,7 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 		return
 	}
 	s.purgeProjectRunners(p.Path)
+	s.closeProjectLSP(p.Name)
 	if err := s.projects.Remove(p); err != nil {
 		if wantsJSON(c.Request) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

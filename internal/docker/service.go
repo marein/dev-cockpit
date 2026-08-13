@@ -65,8 +65,13 @@ func (s *Service) OnChange(fn func()) {
 	s.mu.Unlock()
 }
 
-// State answers the current reading of the cache.
+// State answers the current reading of the cache. Nil-receiver-safe like
+// the editor intelligence service: web tests build a Server without the
+// daemon wiring, and for them the daemon simply is not there.
 func (s *Service) State() State {
+	if s == nil {
+		return State{}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := s.state

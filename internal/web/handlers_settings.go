@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/local/dev-cockpit/internal/docker"
+	"github.com/local/dev-cockpit/internal/editorintelligence"
 	"github.com/local/dev-cockpit/internal/eventbus"
 	"github.com/local/dev-cockpit/internal/restore"
 	"github.com/local/dev-cockpit/internal/settings"
@@ -316,6 +317,7 @@ const (
 	editorSettingsPath       = editorSearchSettingsPath
 	editorSearchSettingsPath = "/settings/editor/search"
 	editorGitSettingsPath    = "/settings/editor/git"
+	editorLSPSettingsPath    = "/settings/editor/lsp"
 )
 
 func (s *Server) handleSettingsEditor(c *gin.Context) {
@@ -342,6 +344,48 @@ func (s *Server) handleSettingsEditorSearch(c *gin.Context) {
 		Section:     "search",
 		Exclusions:  set.Exclusions.String(),
 	})
+}
+
+// handleSettingsEditorLSP renders the LSP tab: one select per language,
+// offering the automatic default, the server over Docker, and Off. A
+// select on purpose: another way to run a server joins as one more
+// option, nothing about the form changes shape.
+// The select shows the stored choice, never what automatic resolves to
+// right now: the choice is what the form edits.
+func (s *Server) handleSettingsEditorLSP(c *gin.Context) {
+	dockerOK := s.docker.State().Available
+	profiles := make([]render.EditorLSPProfile, 0)
+	for _, p := range editorintelligence.Profiles() {
+		selected := lspChoice(s.settings.Get(editorLSPServerKey(p.ID)), p)
+		profiles = append(profiles, render.EditorLSPProfile{
+			ID:       p.ID,
+			Label:    p.Label,
+			Command:  strings.Join(p.Command, " "),
+			Server:   p.Command[0],
+			Selected: selected,
+			DockerOK: dockerOK,
+		})
+	}
+	c.HTML(http.StatusOK, "settings_editor_lsp.gohtml", render.SettingsEditorData{
+		Page:        s.page(c, "Settings", "settings"),
+		SettingsNav: s.settingsNav("editor"),
+		Section:     "lsp",
+		LSPProfiles: profiles,
+	})
+}
+
+// handleSettingsEditorLSPSave stores each language's pick: the automatic
+// default, the server's name with the Docker marker, or off. A value the
+// select never offered keeps the current setting instead of writing
+// something no option stands for.
+func (s *Server) handleSettingsEditorLSPSave(c *gin.Context) {
+	for _, p := range editorintelligence.Profiles() {
+		value := c.PostForm("server_" + p.ID)
+		if value != "" && lspChoice(value, p) == value {
+			s.settings.Set(editorLSPServerKey(p.ID), value)
+		}
+	}
+	s.redirectWithFlash(c, editorLSPSettingsPath, "Settings saved.", "")
 }
 
 // handleSettingsEditorSearchSave stores the folder exclusions. An empty box is a

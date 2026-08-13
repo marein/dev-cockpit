@@ -171,6 +171,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/editor/git", s.handleSettingsEditorGitSave)
 	auth.GET("/settings/editor/search", s.handleSettingsEditorSearch)
 	auth.POST("/settings/editor/search", s.handleSettingsEditorSearchSave)
+	auth.GET("/settings/editor/lsp", s.handleSettingsEditorLSP)
+	auth.POST("/settings/editor/lsp", s.handleSettingsEditorLSPSave)
 	auth.GET("/settings/notifications", s.handleSettingsNotifications)
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
@@ -226,6 +228,15 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/projects", s.handleProjectCreate)
 	auth.POST("/projects/delete", s.handleProjectDelete)
 	auth.GET("/projects/:name/editor", s.handleProjectEditor)
+	// The navigation routes stay off the editor group below on purpose: its
+	// middleware drops the quick open index after every POST (a navigation
+	// request writes nothing) and counts editor action for the language
+	// server lifetime, which the status poll must not.
+	auth.POST("/projects/:name/editor/lsp/definition", s.handleEditorLSPDefinition)
+	auth.POST("/projects/:name/editor/lsp/references", s.handleEditorLSPReferences)
+	auth.POST("/projects/:name/editor/lsp/close", s.handleEditorLSPClose)
+	auth.GET("/projects/:name/editor/lsp/status", s.handleEditorLSPStatus)
+	auth.POST("/projects/:name/editor/lsp/reindex", s.handleEditorLSPReindex)
 	auth.POST("/projects/:name/docker/compose", s.handleDockerCompose)
 	auth.POST("/projects/:name/docker/logs", s.handleDockerComposeLogs)
 	// A compose run outlives the request that started it, so its output is a

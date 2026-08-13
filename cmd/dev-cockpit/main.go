@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -27,6 +29,7 @@ import (
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/detach"
 	"github.com/local/dev-cockpit/internal/docker"
+	"github.com/local/dev-cockpit/internal/editorintelligence"
 	"github.com/local/dev-cockpit/internal/localapi"
 	"github.com/local/dev-cockpit/internal/markdown"
 	"github.com/local/dev-cockpit/internal/notify"
@@ -409,7 +412,34 @@ func runServe(opts serveOptions) error {
 		jobs,
 		coderSessions{coders: coders},
 	)
-	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, dockerService, resolveVersion())
+	// Editor intelligence owns the language server child processes. On a
+	// stop signal they are shut down along the protocol before exit; the
+	// self-update exec path needs no hook because the pipe ends close on
+	// exec and the servers exit on stdin EOF. Containers a previous process
+	// left behind, and volumes of projects that left the disk, are swept in
+	// the background; the first server start waits the sweep out, and the
+	// root label keeps other live instances' servers untouched.
+	intel := editorintelligence.New(cfg.ProjectsRoot, func() string {
+		return dockerService.State().Host
+	})
+	intel.SweepStale()
+	stop := make(chan os.Signal, 2)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-stop
+		log.Printf("received %s, shutting down", sig)
+		// The graceful close is bounded (it aborts a running image build
+		// first), and a second signal ends the wait the hard way.
+		go func() {
+			sig := <-stop
+			log.Printf("received %s again, exiting now", sig)
+			os.Exit(1)
+		}()
+		intel.Close()
+		os.Exit(0)
+	}()
+
+	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, dockerService, intel, resolveVersion())
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}

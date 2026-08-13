@@ -1,0 +1,123 @@
+package editorintelligence
+
+import (
+	"context"
+	"os/exec"
+)
+
+// Launcher is one way to run a language server process; the Docker
+// container is the one way today, a second container runtime would be the
+// next. Everything that differs between the ways lives behind this
+// interface: whether the way can run at all, what must stand before a
+// start, the command line and environment that start the server, and what
+// a death means. The service programs against the interface and carries no
+// flavor branches, so another way is one more implementation and nothing
+// else.
+type Launcher interface {
+	// ID tells launchers apart in the connection slots: a server whose
+	// way to run changed is evicted and restarted the way a changed root
+	// evicts it. The Docker way includes its configured daemon, so a
+	// moved docker-host setting evicts too.
+	ID() string
+	// Detect answers whether the profile's server can run this way, and
+	// where the way's own executable was found.
+	Detect(p *Profile) Detection
+	// Prepare stands up what one start needs, bounded by ctx. The Docker
+	// way builds its image on first use, creates the labeled cache volume
+	// and clears the stale container's name; a way with nothing to
+	// prepare returns nil. projectsRoot is the ownership boundary the
+	// labels carry.
+	Prepare(ctx context.Context, projectsRoot, project string, p *Profile) error
+	// Argv is the command line that starts the profile's server for the
+	// workspace at root. projectsRoot is the directory a container mounts
+	// at its own path so file URIs match inside and outside.
+	Argv(projectsRoot, project, root string, p *Profile) []string
+	// ProcEnv is the extra process environment the start command needs,
+	// nil for none. The Docker way carries DOCKER_HOST when the cockpit
+	// is configured for a daemon of its own, so the server runs on the
+	// same daemon the availability gate read.
+	ProcEnv() []string
+	// InitOptions are the initializationOptions this way hands the server
+	// for the project, nil for none. The container way points the server's
+	// index storage into its cache mount, whose per-project volume is the
+	// project boundary.
+	InitOptions(project string, p *Profile) any
+	// WantsRestart reads a dead server's exit code: true means the way
+	// asks for an immediate fresh start (the container's workspace watcher
+	// ends the container with an agreed code on a relevant change), every
+	// other death stays an error.
+	WantsRestart(exitCode int) bool
+}
+
+// DockerLauncher runs the server inside a container the cockpit builds
+// and names itself. dockerHost answers the configured daemon, nil or empty
+// for the ambient one.
+func DockerLauncher(dockerHost func() string) Launcher {
+	return dockerLauncher{host: dockerHost}
+}
+
+// lookPath is the detection primitive every launcher shares.
+func lookPath(name string) Detection {
+	resolved, err := exec.LookPath(name)
+	if err != nil {
+		return Detection{}
+	}
+	return Detection{Found: true, Path: resolved}
+}
+
+type dockerLauncher struct {
+	host func() string
+}
+
+func (l dockerLauncher) hostValue() string {
+	if l.host == nil {
+		return ""
+	}
+	return l.host()
+}
+
+func (l dockerLauncher) ID() string { return "docker@" + l.hostValue() }
+
+func (dockerLauncher) Detect(p *Profile) Detection { return lookPath("docker") }
+
+func (l dockerLauncher) ProcEnv() []string { return dockerHostEnv(l.hostValue()) }
+
+func (l dockerLauncher) Prepare(ctx context.Context, projectsRoot, project string, p *Profile) error {
+	dockerPath := l.Detect(p).Path
+	env := l.ProcEnv()
+	if err := ensureImage(ctx, dockerPath, env, p); err != nil {
+		return err
+	}
+	name := containerName(p.Command[0], project)
+	ensureVolume(ctx, dockerPath, env, name, projectsRoot)
+	removeStaleContainer(ctx, dockerPath, env, name)
+	return nil
+}
+
+func (l dockerLauncher) Argv(projectsRoot, project, root string, p *Profile) []string {
+	return dockerArgv(l.Detect(p).Path, projectsRoot, root, containerName(p.Command[0], project), p)
+}
+
+func (dockerLauncher) InitOptions(project string, p *Profile) any {
+	if p.container.InitOptions == nil {
+		return nil
+	}
+	return p.container.InitOptions(project)
+}
+
+// dockerHostEnv is the environment a configured daemon travels in, nil for
+// the ambient one.
+func dockerHostEnv(host string) []string {
+	if host == "" {
+		return nil
+	}
+	return []string{"DOCKER_HOST=" + host}
+}
+
+// watcherRestartCode is the agreed exit code the container's workspace
+// watcher ends the container with on a relevant change: the cockpit reads
+// exactly this code as a restart wish. The shared entrypoint carries the
+// same number.
+const watcherRestartCode = 64
+
+func (dockerLauncher) WantsRestart(exitCode int) bool { return exitCode == watcherRestartCode }

@@ -13,6 +13,7 @@ import { DoubleTap } from "@dc/doubletap";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { releaseCoder, steerCoder } from "@dc/steer";
 import * as dockerApi from "@dc/docker";
+import * as editorLSP from "@dc/editor-lsp";
 import * as projectSort from "@dc/project-sort";
 import * as store from "@dc/store";
 
@@ -50,6 +51,7 @@ async function init(root) {
   const base = `/projects/${encodeURIComponent(name)}/editor`;
   const tabsKey = `dc-editor-tabs:${name}`;
   const treeKey = `dc-editor-tree:${name}`;
+  const lsp = editorLSP.createClient(base, root.dataset.editorLsp);
 
   const bodyEl = root.querySelector(".editor-body");
   const treeEl = root.querySelector("[data-editor-tree]");
@@ -68,10 +70,8 @@ async function init(root) {
   const placeholderEl = root.querySelector("[data-editor-placeholder]");
   const previewPaneEl = root.querySelector("[data-editor-preview-pane]");
   const tabsEl = root.querySelector("[data-editor-tabs]");
-  const pathEl = root.querySelector("[data-editor-path]");
   const statusEl = root.querySelector("[data-editor-status]");
   const posEl = root.querySelector("[data-editor-pos]");
-  const indentInfoEl = root.querySelector("[data-editor-indent-info]");
   const saveBtn = root.querySelector("[data-editor-save]");
   const refreshBtn = root.querySelector("[data-editor-refresh]");
   const uploadInput = root.querySelector("[data-editor-upload-input]");
@@ -79,6 +79,9 @@ async function init(root) {
   const searchProjectItem = root.querySelector("[data-editor-search-project-item]");
   const findItem = root.querySelector("[data-editor-find-item]");
   const gotoItem = root.querySelector("[data-editor-goto]");
+  const lspIndexEl = root.querySelector("[data-editor-lsp-index]");
+  const lspIndexLabel = root.querySelector("[data-editor-lsp-index-label]");
+  const lspIndexBar = root.querySelector("[data-editor-lsp-index-bar]");
   const saveAllItem = root.querySelector("[data-editor-save-all]");
   const mergeEl = root.querySelector("[data-editor-merge]");
   const viewerEl = root.querySelector("[data-editor-viewer]");
@@ -93,6 +96,7 @@ async function init(root) {
   const filesCountEl = root.querySelector("[data-editor-files-count]");
   const settingsMenuEl = root.querySelector("[data-editor-settings-menu]");
   const settingsItem = root.querySelector("[data-editor-settings-item]");
+  const reindexItem = root.querySelector("[data-editor-reindex-item]");
   const quickOpenItem = root.querySelector("[data-editor-quick-open-item]");
   const sheetEl = root.querySelector("[data-editor-sheet]");
   const sheetPanelEl = root.querySelector("[data-editor-sheet-panel]");
@@ -147,7 +151,7 @@ async function init(root) {
   // onCursor runs from inside createEditor's first update, before the const
   // below is bound, so anything of ours that reads the editor waits for this.
   let editorReady = false;
-  const editor = await createEditor(surfaceEl, { onChange, onCursor }, editorSettings, signal, mergeEl);
+  const editor = await createEditor(surfaceEl, { onChange, onCursor, lspUsable, onLSPClick: goToDefinition, onFindUsages: findUsages, onGoToDefinition: goToDefinitionAtCursor }, editorSettings, signal, mergeEl);
   editorReady = true;
   setupSettingsUI(root, editor, editorSettings, (key) => {
     if (key === "diff_view" || key === "diff_collapse") void reapplyComparison(key);
@@ -262,17 +266,153 @@ async function init(root) {
   }
 
   function onCursor(line, col) {
-    posEl.textContent = `Ln ${line}, Col ${col}`;
+    posEl.textContent = `${line}:${col}`;
     syncSwipeZone();
   }
 
-  function syncIndentInfo() {
+  // ---- code navigation --------------------------------------------------------
+
+  // Real failures toast; lookup outcomes stay statusbar notes, a canceled
+  // lookup stays silent.
+  const LSP_STATUS_TEXT = {
+    "not-installed": "No language server is installed for this file type.",
+    disabled: "The language is switched off in the editor settings.",
+    busy: "The language server limit is reached, try again in a moment.",
+    unavailable: "The language server is not answering right now.",
+    error: "The language server failed to answer.",
+  };
+
+  // The indicator follows the lsp event, no poll stands behind it; the seq
+  // guard keeps a slow older answer from painting over a newer one.
+  let lspIndexSeq = 0;
+  async function pullLSPIndex() {
+    if (!lsp) return;
+    const seq = ++lspIndexSeq;
+    try {
+      const res = await getJSON(`${base}/lsp/status`, { signal });
+      if (seq !== lspIndexSeq || signal.aborted) return;
+      const indexing = (res.profiles || []).filter((p) => p.indexing);
+      renderLSPIndex(indexing[0] || null);
+    } catch {}
+  }
+
+  function renderLSPIndex(state) {
+    if (!state) {
+      lspIndexEl.hidden = true;
+      return;
+    }
+    lspIndexLabel.textContent = state.preparing ? `Preparing ${state.label}…` : `Indexing ${state.label}…`;
+    const pct = !state.preparing && typeof state.percentage === "number" ? state.percentage : -1;
+    lspIndexBar.classList.toggle("progress-bar-indeterminate", pct < 0);
+    lspIndexBar.style.width = pct >= 0 ? `${Math.max(2, Math.min(100, pct))}%` : "";
+    lspIndexEl.hidden = false;
+  }
+
+  let lspAbort = null;
+
+  function lspUsable() {
     const tab = activeTab();
-    indentInfoEl.hidden = !tab || !!tab.kind || !!tab.compare;
-    if (!tab || tab.kind || tab.compare) return;
-    const ind = editor.getIndent();
-    indentInfoEl.textContent = ind.style === "space" ? `Spaces: ${ind.size}` : `Tab: ${editor.getTabWidth()}`;
-    indentInfoEl.title = ind.fromConfig ? "From .editorconfig" : "Editor setting";
+    return !!(lsp && tab && !tab.kind && !tab.compare && lsp.usable(tab.path));
+  }
+
+  function lspNote(msg) {
+    status(msg);
+    statusTimer = setTimeout(() => {
+      if (statusEl.textContent === msg) status("");
+    }, 4000);
+  }
+
+  // A newer gesture cancels an older one; an answer landing after a tab
+  // switch is dropped.
+  async function lspCall(kind, pos, note) {
+    // The lookup may be what starts the server; the events cover the rest.
+    void pullLSPIndex();
+    const tab = activeTab();
+    if (lspAbort) lspAbort.abort();
+    const abort = new AbortController();
+    lspAbort = abort;
+    status(note);
+    try {
+      const res = await lsp[kind]({
+        path: tab.path,
+        content: editor.valueOf(tab, true),
+        position: { line: pos.line, character: pos.character },
+      }, abort.signal);
+      if (abort.signal.aborted || activeTab() !== tab) return null;
+      if (!res.available) {
+        lsp.note(tab.path, res.status);
+        const text = LSP_STATUS_TEXT[res.status];
+        if (text) status(text, "error");
+        else status("");
+        return null;
+      }
+      return res;
+    } catch (err) {
+      if (!abort.signal.aborted) status(err.message, "error");
+      return null;
+    } finally {
+      if (lspAbort === abort) lspAbort = null;
+    }
+  }
+
+  async function goToDefinition(pos) {
+    if (!lspUsable()) return;
+    const res = await lspCall("definition", pos, "Looking up the definition…");
+    if (!res) return;
+    await applyDefinition(res, pos);
+  }
+
+  // On the declaration itself the usages take the jump's place.
+  async function applyDefinition(res, pos) {
+    if (res.declaration) {
+      await findUsages(pos);
+      return;
+    }
+    const locs = res.locations || [];
+    if (locs.length === 0) {
+      lspNote(res.outside ? "The definition is outside the project." : "No definition found.");
+      return;
+    }
+    status("");
+    if (locs.length === 1) {
+      await goToLocation(locs[0]);
+      return;
+    }
+    openUsages(pos.word || "definition", locs, res);
+  }
+
+  async function goToDefinitionAtCursor() {
+    if (!lspUsable() || !editor.lspPosition) return;
+    const pos = editor.lspPosition();
+    if (!pos.word) {
+      lspNote("Place the cursor on a symbol first.");
+      return;
+    }
+    await goToDefinition(pos);
+  }
+
+  async function findUsages(at) {
+    if (!lspUsable() || !editor.lspPosition) return;
+    const pos = at || editor.lspPosition();
+    if (!pos.word) {
+      lspNote("Place the cursor on a symbol first.");
+      return;
+    }
+    const res = await lspCall("references", pos, `Finding usages of "${pos.word}"…`);
+    if (!res) return;
+    const locs = res.locations || [];
+    if (locs.length === 0) {
+      lspNote(res.outside ? "Every usage is outside the project." : "No usages found.");
+      return;
+    }
+    status("");
+    openUsages(pos.word, locs, res);
+  }
+
+  async function goToLocation(loc) {
+    if (activePath !== loc.path) await openPath(loc.path);
+    const tab = activeTab();
+    if (tab && tab.path === loc.path && !tab.kind) editor.jumpTo(loc.line, loc.character);
   }
 
   // ---- tabs ------------------------------------------------------------------
@@ -833,15 +973,11 @@ async function init(root) {
     void applyChangeBars();
     placeholderEl.hidden = !!tab;
     // A comparison stands for two files, so the line below names both.
-    const shown = tab && tab.compare ? `${tab.compare.left} ⇄ ${tab.compare.right}` : tab ? tab.path : "";
-    pathEl.textContent = shown;
-    pathEl.title = shown;
     posEl.hidden = !tab || !!tab.kind;
     renderTabs();
     updateActionStates();
     syncSwipeZone();
     syncIndentControl();
-    syncIndentInfo();
     syncPreview();
     if (tab && !tab.compare) markTreeSelection(tab.path);
     persistTabs();
@@ -949,6 +1085,7 @@ async function init(root) {
       return;
     }
     tabs.splice(i, 1);
+    if (lsp && !tab.kind && !tab.compare) lsp.closeDocument(tab.path);
     if (activePath === path) {
       activePath = null;
       const next = tabs[i] || tabs[i - 1];
@@ -3974,9 +4111,6 @@ async function init(root) {
     }
     persistExpanded();
     const tab = activeTab();
-    const shown = tab && tab.compare ? `${tab.compare.left} ⇄ ${tab.compare.right}` : tab ? tab.path : "";
-    pathEl.textContent = shown;
-    pathEl.title = shown;
     if (tab && !tab.compare && tab.path.startsWith(newPath)) {
       if (tab.kind) renderViewer(tab);
       else editor.refreshLanguage(tab.name);
@@ -4770,8 +4904,11 @@ async function init(root) {
     runFileQuery("");
   }
 
+  // Every way out lands here; the surface takes the focus back.
   function closeQuickOpen() {
+    if (quickOpenEl.hidden) return;
     quickOpenEl.hidden = true;
+    editor.focus();
   }
 
   // The palette used to receive every path in the project and rank them here,
@@ -4918,6 +5055,101 @@ async function init(root) {
     return out;
   }
 
+  function usagesNote(locations, res) {
+    if (res.truncated) return `Only the first ${locations.length} usages are shown.`;
+    if (res.outside) return `${res.outside} more outside the project.`;
+    return "";
+  }
+
+  let usagesAll = [];
+  let usagesNoteText = "";
+
+  // Bottom sheet on a small screen, else the search panel in usages mode.
+  function openUsages(word, locations, res) {
+    const title = `${locations.length} ${locations.length === 1 ? "usage" : "usages"} of "${word}"`;
+    if (mobileMedia.matches) {
+      openUsagesSheet(word, locations, res, title);
+      return;
+    }
+    closeDrawer();
+    closeSheet();
+    quickOpenMode = "usages";
+    quickOpenEl.hidden = false;
+    quickOpenInput.value = "";
+    quickOpenInput.placeholder = title;
+    searchQuery = word;
+    usagesAll = locations.map((l) => ({ path: l.path, line: l.line, character: l.character, text: l.preview || "" }));
+    usagesNoteText = usagesNote(locations, res);
+    paintUsages(usagesAll, true);
+    quickOpenInput.focus();
+  }
+
+  // The note describes the whole answer, so it only stands unfiltered.
+  function paintUsages(rows, withNote) {
+    renderSearchResults(rows, false);
+    if (withNote && usagesNoteText) {
+      const el = document.createElement("div");
+      el.className = "editor-quickopen-empty text-secondary small";
+      el.textContent = usagesNoteText;
+      quickOpenList.appendChild(el);
+    }
+  }
+
+  function filterUsages() {
+    const q = quickOpenInput.value.trim().toLowerCase();
+    if (!q) {
+      paintUsages(usagesAll, true);
+      return;
+    }
+    paintUsages(usagesAll.filter((m) => `${m.path}:${m.line}`.toLowerCase().includes(q)
+      || (m.text || "").toLowerCase().includes(q)), false);
+  }
+
+  function openUsagesSheet(word, locations, res, title) {
+    closeDrawer();
+    openSheet("usages", title);
+    sheetBodyEl.replaceChildren(...locations.map((loc) => usagesSheetRow(word, loc)));
+    const note = usagesNote(locations, res);
+    if (note) {
+      const el = document.createElement("div");
+      el.className = "text-secondary small px-3 py-2";
+      el.textContent = note;
+      sheetBodyEl.appendChild(el);
+    }
+    focusSheetTop();
+  }
+
+  function usagesSheetRow(word, loc) {
+    const row = document.createElement("div");
+    row.className = "editor-sheet-row";
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "editor-sheet-open";
+    open.title = `${loc.path}:${loc.line}`;
+    const col = document.createElement("span");
+    col.className = "d-flex flex-column min-w-0";
+    const nameEl = document.createElement("span");
+    nameEl.className = "editor-sheet-name text-truncate";
+    nameEl.textContent = `${baseName(loc.path)}:${loc.line}`;
+    const dirEl = document.createElement("span");
+    dirEl.className = "editor-sheet-dir text-truncate";
+    dirEl.textContent = parentDir(loc.path) || "/";
+    col.append(nameEl, dirEl);
+    if (loc.preview) {
+      const text = document.createElement("span");
+      text.className = "editor-sheet-dir text-truncate";
+      text.append(...markedFragments(loc.preview, word));
+      col.append(text);
+    }
+    open.appendChild(col);
+    open.addEventListener("click", () => {
+      closeSheet();
+      void goToLocation(loc);
+    });
+    row.append(open);
+    return row;
+  }
+
   function moveQuickOpenActive(delta) {
     if (quickOpenMatches.length === 0) return;
     quickOpenActive = (quickOpenActive + delta + quickOpenMatches.length) % quickOpenMatches.length;
@@ -4941,17 +5173,27 @@ async function init(root) {
     const fromSearch = typeof entry !== "string";
     const path = fromSearch ? entry.path : entry;
     const line = fromSearch ? entry.line : splitLineSuffix(quickOpenInput.value).line;
+    const isUsage = quickOpenMode === "usages";
     closeQuickOpen();
+    if (isUsage) {
+      await goToLocation(entry);
+      return;
+    }
     await openPath(path);
     if (!line) return;
     const tab = activeTab();
-    if (tab && tab.path === path && !tab.kind) editor.jumpTo(line);
+    if (tab && tab.path === path && !tab.kind) editor.jumpTo(line, fromSearch ? entry.character || 0 : 0);
   }
 
   function wireQuickOpen() {
     quickOpenItem.addEventListener("click", () => openQuickOpen("files"), { signal });
     searchProjectItem.addEventListener("click", () => openQuickOpen("search"), { signal });
     quickOpenInput.addEventListener("input", () => {
+      // A usages list is an answer, not a query.
+      if (quickOpenMode === "usages") {
+        filterUsages();
+        return;
+      }
       if (quickOpenMode === "search") scheduleSearch();
       else scheduleFileQuery();
     }, { signal });
@@ -5012,9 +5254,18 @@ async function init(root) {
     if (event.detail && event.detail.project && event.detail.project !== name) return;
     void pullCommitDraft();
   }, { signal });
+  // The indexing picture moved; a bare signal (the snapshot after a
+  // reconnect) covers a page that opened or came back mid-indexing.
+  onServerEvent("lsp", (event) => {
+    if (event.detail && event.detail.project && event.detail.project !== name) return;
+    void pullLSPIndex();
+  }, { signal });
   // Nothing was published while this page was away, see catchUpGit.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") catchUpGit();
+    if (document.visibilityState === "visible") {
+      catchUpGit();
+      void pullLSPIndex();
+    }
   }, { signal });
   for (const el of root.querySelectorAll("[data-editor-compare-save]")) {
     el.addEventListener("click", () => void saveCompareSide(el.dataset.editorCompareSave), { signal });
@@ -5039,6 +5290,10 @@ async function init(root) {
   gotoItem.addEventListener("click", () => {
     if (!editor.gotoLine()) status("Go to line requires the CodeMirror editor.", "error");
   }, { signal });
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "Control" || e.key === "Meta") editor.clearLSPHint?.();
+  }, { signal });
+  window.addEventListener("blur", () => editor.clearLSPHint?.(), { signal });
   drawerToggleBtn.addEventListener("click", toggleDrawer, { signal });
   browseBtn.addEventListener("click", openDrawer, { signal });
   backdropEl.addEventListener("click", closeDrawer, { signal });
@@ -5548,6 +5803,11 @@ async function init(root) {
 
   filesItem.addEventListener("click", openFilesSheet, { signal });
   settingsItem.addEventListener("click", openSettingsSheet, { signal });
+  reindexItem.hidden = !lsp;
+  reindexItem.addEventListener("click", () => {
+    void lsp?.reindex();
+    void pullLSPIndex();
+  }, { signal });
   dockerItem.addEventListener("click", openDockerSheet, { signal });
   dockerStatusBtn.addEventListener("click", openDockerSheet, { signal });
   gitStatusBtn.addEventListener("click", () => openGitSheet(), { signal });
@@ -6281,6 +6541,7 @@ async function init(root) {
   wireTermTabDrag();
   paintTermPanel();
   void loadDocker();
+  void pullLSPIndex();
   document.body.appendChild(termModalsHostEl);
   const urlTerminal = new URLSearchParams(window.location.search).get("terminal");
   if (urlTerminal && termApplies()) {
@@ -6296,6 +6557,8 @@ async function init(root) {
   // not a tap, the gesture fires on the second tap's keyup, any other key
   // resets.
   const shiftTap = new DoubleTap();
+  // A Shift+click is not a bare Shift tap.
+  document.addEventListener("pointerdown", () => shiftTap.reset(), { capture: true, signal });
   document.addEventListener("keydown", (e) => {
     if (e.target instanceof Element && e.target.closest("[data-editor-term-panel]")) return;
     if (e.key === "Shift" && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey) {
@@ -6402,6 +6665,11 @@ async function init(root) {
     clearTimeout(searchTimer);
     clearTimeout(gitWatchTimer);
     if (svgPreviewUrl) URL.revokeObjectURL(svgPreviewUrl);
+    if (lsp) {
+      for (const tab of tabs) {
+        if (!tab.kind && !tab.compare) lsp.closeDocument(tab.path);
+      }
+    }
     document.documentElement.classList.remove("dc-editor-fullscreen");
     termModalsHostEl.remove();
     editor.destroy();
@@ -6548,8 +6816,8 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     import("@codemirror/theme-one-dark"),
   ]);
   const { EditorView, basicSetup } = cm;
-  const { ChangeSet, EditorState, Compartment } = state;
-  const { keymap } = view;
+  const { ChangeSet, EditorState, Compartment, StateEffect, StateField } = state;
+  const { keymap, Decoration, showTooltip } = view;
   const { indentWithTab } = commands;
   const { indentUnit } = language;
   const langConf = new Compartment();
@@ -6613,6 +6881,153 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     const line = viewState.doc.lineAt(head);
     hooks.onCursor(line.number, head - line.from + 1);
   }
+
+  // ---- code navigation --------------------------------------------------------
+
+  // The word under the mouse while Ctrl or Cmd is held.
+  const setLSPHint = StateEffect.define();
+  const lspHintField = StateField.define({
+    create: () => null,
+    update(value, tr) {
+      for (const e of tr.effects) {
+        if (e.is(setLSPHint)) value = e.value;
+      }
+      if (tr.docChanged) value = null;
+      return value;
+    },
+    provide: (f) => EditorView.decorations.from(f, (r) => (
+      r ? Decoration.set([Decoration.mark({ class: "cm-dc-lsp-target" }).range(r.from, r.to)]) : Decoration.none
+    )),
+  });
+  const lspTheme = EditorView.theme({
+    ".cm-dc-lsp-target": { textDecoration: "underline", cursor: "pointer" },
+    ".cm-tooltip.dc-lsp-pill": { padding: "2px", borderRadius: "8px", display: "flex", gap: "2px" },
+  });
+
+  function lspHintRange(v, r) {
+    const cur = v.state.field(lspHintField, false);
+    if (cur === undefined) return;
+    if (!r && !cur) return;
+    if (r && cur && cur.from === r.from && cur.to === r.to) return;
+    v.dispatch({ effects: setLSPHint.of(r ? { from: r.from, to: r.to } : null) });
+  }
+
+  // Off a word the modifier click stays CodeMirror's own add-cursor gesture.
+  function lspWordAt(v, e) {
+    const pos = v.posAtCoords({ x: e.clientX, y: e.clientY });
+    if (pos == null) return null;
+    const word = v.state.wordAt(pos);
+    return word ? { from: word.from, to: word.to, pos } : null;
+  }
+
+  const lspMouse = EditorView.domEventHandlers({
+    mousedown(e, v) {
+      if (e.button !== 0 || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return false;
+      if (!hooks.lspUsable?.()) return false;
+      const target = lspWordAt(v, e);
+      if (!target) return false;
+      e.preventDefault();
+      lspHintRange(v, null);
+      const line = v.state.doc.lineAt(target.pos);
+      hooks.onLSPClick?.({
+        line: line.number - 1,
+        character: target.pos - line.from,
+        word: v.state.doc.sliceString(target.from, target.to),
+      });
+      return true;
+    },
+    mousemove(e, v) {
+      if (!(e.ctrlKey || e.metaKey) || !hooks.lspUsable?.()) {
+        lspHintRange(v, null);
+        return false;
+      }
+      lspHintRange(v, lspWordAt(v, e));
+      return false;
+    },
+  });
+  // The cursor pill, the touch way to the lookups: static, no server
+  // request rides on a cursor move; empty selection only, so it never
+  // sits on selection handles.
+  const setLSPPill = StateEffect.define();
+  const lspPillField = StateField.define({
+    create: () => null,
+    update(value, tr) {
+      let set = false;
+      for (const e of tr.effects) {
+        if (e.is(setLSPPill)) {
+          value = e.value;
+          set = true;
+        }
+      }
+      if (!set && (tr.docChanged || tr.selection)) value = null;
+      return value;
+    },
+    provide: (f) => showTooltip.from(f),
+  });
+  // Touch only: the window opens with a touch and closes with an edit.
+  let lastSurfaceTouch = 0;
+  const lspPillTouch = EditorView.domEventHandlers({
+    touchstart() {
+      lastSurfaceTouch = Date.now();
+      return false;
+    },
+    // A re-tap on the same spot fires no update, so the lift looks itself.
+    touchend(_, v) {
+      setTimeout(() => syncLSPPill(v), 250);
+      return false;
+    },
+  });
+  const pillButton = (label, act) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-sm";
+    btn.textContent = label;
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      act();
+    });
+    return btn;
+  };
+  // The server decides definition or usages on invocation, so the label
+  // must not pretend to know the case.
+  const lspPillTooltip = (pos) => ({
+    pos,
+    above: true,
+    create: (v) => {
+      const dom = document.createElement("div");
+      dom.className = "dc-lsp-pill";
+      dom.setAttribute("data-editor-lsp-pill", "");
+      const offset = { x: 0, y: 6 };
+      const act = pillButton("Look up", () => {
+        lastSurfaceTouch = 0;
+        v.dispatch({ effects: setLSPPill.of(null) });
+        void hooks.onGoToDefinition?.();
+      });
+      act.setAttribute("data-pill-action", "");
+      dom.append(act);
+      return { dom, offset };
+    },
+  });
+  // A dispatch cannot run inside an update.
+  let pillScheduled = false;
+  function syncLSPPill(v) {
+    if (pillScheduled) return;
+    pillScheduled = true;
+    requestAnimationFrame(() => {
+      pillScheduled = false;
+      const field = v.state.field(lspPillField, false);
+      if (field === undefined) return;
+      const sel = v.state.selection.main;
+      const word = sel.empty ? v.state.wordAt(sel.head) : null;
+      const want = !!word && Date.now() - lastSurfaceTouch < 800 && !!hooks.lspUsable?.();
+      if (want && (!field || field.pos !== sel.head)) {
+        v.dispatch({ effects: setLSPPill.of(lspPillTooltip(sel.head)) });
+      } else if (!want && field) {
+        v.dispatch({ effects: setLSPPill.of(null) });
+      }
+    });
+  }
+  const lspExtension = [lspHintField, lspTheme, lspMouse, lspPillField, lspPillTouch];
 
   // Everything both sides share. The compartments live in both, so a font or
   // theme change reaches the read only side of a diff as well.
@@ -6871,15 +7286,41 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     })];
   }
 
+  const goToDefinitionKey = () => {
+    if (hooks.lspUsable?.()) void hooks.onGoToDefinition?.();
+    return true;
+  };
+
   const editableExtensions = (langExt) => [
-    keymap.of([{ key: "Ctrl-o", run: () => true }, { key: "Ctrl-f", run: search.openSearchPanel }]),
+    keymap.of([
+      { key: "Ctrl-o", run: () => true },
+      { key: "Ctrl-f", run: search.openSearchPanel },
+      {
+        key: "Shift-F12",
+        run: () => {
+          if (!hooks.lspUsable?.()) return false;
+          void hooks.onFindUsages?.();
+          return true;
+        },
+      },
+      {
+        // Always claimed, or the surface takes it as a formatting command;
+        // Mod is Cmd alone on a mac, so Ctrl-b binds beside it.
+        key: "Mod-b",
+        run: goToDefinitionKey,
+      },
+      { key: "Ctrl-b", run: goToDefinitionKey },
+    ]),
     sharedExtensions(langExt),
     keymap.of([indentWithTab]),
+    lspExtension,
     mergeConf.of([]),
     blameConf.of(blameExtension(blameData)),
     EditorView.updateListener.of((u) => {
       if (u.docChanged) hooks.onChange();
       if (u.docChanged || u.selectionSet) reportCursor(u.state);
+      if (u.docChanged) lastSurfaceTouch = 0;
+      if (u.docChanged || u.selectionSet) syncLSPPill(u.view);
     }),
   ];
 
@@ -7337,10 +7778,11 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       search.gotoLine(workView());
       return true;
     },
-    jumpTo(line) {
+    jumpTo(line, character) {
       const view = workView();
       const doc = view.state.doc;
-      const pos = doc.line(Math.max(1, Math.min(line, doc.lines))).from;
+      const target = doc.line(Math.max(1, Math.min(line, doc.lines)));
+      const pos = target.from + Math.max(0, Math.min(character || 0, target.length));
       view.dispatch({
         selection: { anchor: pos },
         effects: EditorView.scrollIntoView(pos, { y: "center" }),
@@ -7362,6 +7804,20 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     // place.
     hasSelection() {
       return !workView().state.selection.main.empty;
+    },
+    lspPosition() {
+      const st = workView().state;
+      const head = st.selection.main.head;
+      const line = st.doc.lineAt(head);
+      const word = st.wordAt(head);
+      return {
+        line: line.number - 1,
+        character: head - line.from,
+        word: word ? st.doc.sliceString(word.from, word.to) : "",
+      };
+    },
+    clearLSPHint() {
+      for (const v of liveViews()) lspHintRange(v, null);
     },
     refreshLanguage,
     applyEditorConfig(ec) {

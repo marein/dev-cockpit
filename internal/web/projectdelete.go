@@ -223,6 +223,7 @@ func (s *Server) deleteProjectWithCompose(p project.Project) {
 		s.abortProjectDelete(p, errors.New("A compose run in the project would not end, nothing was removed."))
 		return
 	}
+	s.closeProjectLSP(p.Name)
 	failure := ""
 	if err := s.projects.Remove(p); err != nil {
 		log.Printf("delete project %s: %v", p.Name, err)

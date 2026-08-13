@@ -271,10 +271,28 @@ func appendLowerBytes(dst, src []byte) []byte {
 // the first match when the line is longer than maxSnippetBytes.
 func searchSnippet(line []byte, needle string) string {
 	text := strings.TrimSpace(string(line))
+	idx := strings.Index(strings.ToLower(text), needle)
+	if idx < 0 {
+		idx = 0
+	}
+	return SnippetAround(text, idx)
+}
+
+// SnippetAround trims a line for transport, keeping a window around the byte
+// offset idx when the line is longer than the snippet cap. The search cuts
+// around its match and the LSP usage previews around the usage's column, so
+// the two lists that share one look share one cutting rule; idx counts into
+// the given text, leading whitespace included, and is clamped.
+func SnippetAround(text string, idx int) string {
+	trimmed := strings.TrimSpace(text)
+	idx -= strings.Index(text, trimmed)
+	text = trimmed
 	if len(text) > maxSnippetBytes {
-		idx := strings.Index(strings.ToLower(text), needle)
 		if idx < 0 {
 			idx = 0
+		}
+		if idx > len(text) {
+			idx = len(text)
 		}
 		start := idx - 60
 		if start < 0 {

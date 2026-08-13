@@ -19,6 +19,10 @@ type EditorData struct {
 	// settings.
 	DiffMaxLines int
 	DiffMaxKiB   int
+	// LSPExts is the code navigation surface as comma joined `ext:Label`
+	// pairs of the enabled language server profiles, so the client never
+	// mirrors the registry and a disabled profile leaves no surface.
+	LSPExts string
 }
 
 // EditorProject is one project switcher entry in the editor's tree header. The
