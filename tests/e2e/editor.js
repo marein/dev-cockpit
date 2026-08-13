@@ -4,7 +4,8 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // Editor: the per-project file editor. Custom element dc-editor; CodeMirror 6 loads
 // through the layout import map (jsDelivr CDN), language packs are dynamic-imported
 // by extension; shell, Dockerfile and TOML have no lezer grammar and come from
-// the legacy stream modes instead. Tree rows carry a per type icon, and a row
+// the legacy stream modes instead, and the templates borrow a pack: .twig rides
+// the jinja one, .gohtml, .tmpl and .gotmpl ride html. Tree rows carry a per type icon, and a row
 // dragged onto a folder row moves the file or folder there (POST /editor/move,
 // the drop highlight always sits on the target folder, the tree box stands in
 // for the project root, a pill names the destination, the tree scrolls while the
@@ -1119,6 +1120,53 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.click('.editor-file[data-path="icons.sh"]');
       await page.waitForSelector(`${tabSel("icons.sh")}.active`, { timeout: 8000 });
       await page.waitForFunction(() => document.querySelectorAll(".cm-line span[class]").length > 0, null, { timeout: 10000 });
+    });
+
+    // A template is markup plus its own tags. .twig rides the jinja pack (the two
+    // dialects share {{ }}, {% %} and {# #}), so an `if` inside a tag has to come
+    // back as its own token; .gohtml keeps the html pack, where only the markup
+    // carries tokens. Both leave the strip the way they found it, the drag check
+    // below reads the active tab.
+    await run("template files highlight their tags and their markup", async () => {
+      await page.evaluate(async ([project, files]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        for (const [path, content] of files) {
+          await fetch(`/projects/${project}/editor/file`, {
+            method: "POST",
+            headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+            body: "path=" + encodeURIComponent(path) + "&content=" + encodeURIComponent(content),
+          });
+        }
+      }, [project, [
+        ["tpl.twig", "<p class=\"lead\">{% if user %}{{ user.name|upper }}{% endif %}</p>\n"],
+        ["tpl.gohtml", "<p class=\"lead\">{{ if .User }}{{ .User.Name }}{{ end }}</p>\n"],
+      ]]);
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector('.editor-file[data-path="tpl.twig"]', { timeout: 8000 });
+      const tokens = async (path) => {
+        await page.click(`.editor-file[data-path="${path}"]`);
+        await page.waitForSelector(`${tabSel(path)}.active`, { timeout: 8000 });
+        let spans = [];
+        for (let i = 0; i < 30; i++) {
+          spans = await page.$$eval(".cm-line span[class]", (els) => els.map((e) => e.textContent));
+          if (spans.length) break;
+          await sleep(300);
+        }
+        await page.keyboard.down("Control"); await page.keyboard.down("Shift");
+        await page.keyboard.press("x");
+        await page.keyboard.up("Shift"); await page.keyboard.up("Control");
+        await page.waitForFunction((s) => !document.querySelector(s), tabSel(path), { timeout: 6000 });
+        return spans;
+      };
+      const twig = await tokens("tpl.twig");
+      assert(twig.includes("if") && twig.includes("endif"),
+        `twig tags not tokenized (jinja pack did not load): ${JSON.stringify(twig.slice(0, 12))}`);
+      const gohtml = await tokens("tpl.gohtml");
+      assert(gohtml.includes("p") && gohtml.some((t) => /lead/.test(t)),
+        `gohtml markup not tokenized (html pack did not load): ${JSON.stringify(gohtml.slice(0, 12))}`);
+      await page.click('.editor-file[data-path="icons.sh"]');
+      await page.waitForSelector(`${tabSel("icons.sh")}.active`, { timeout: 8000 });
+      return `${twig.length} twig tokens, ${gohtml.length} gohtml tokens`;
     });
 
     await run("dragging a file onto a folder moves it, the open tab follows", async () => {
