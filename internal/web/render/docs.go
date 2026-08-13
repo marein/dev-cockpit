@@ -456,7 +456,7 @@ func DocsTopics() []DocsTopic {
 			Items: []DocsItem{
 				{
 					Title: "Container chips",
-					Desc:  `Each compose container is a chip <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> on its project's row, named by its compose service. Green means running, gray means stopped, red means a failing healthcheck. The chips follow starts and stops live, also ones made from the command line.`,
+					Desc:  `Each compose container is a chip <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> on its project's row, named by its compose service. Green means running, gray means stopped, red means a failing healthcheck. They stand in that order, wherever they are listed: what is unwell first, then what runs, then what does not, so the one container that wants attention is at the front and never behind a fold. The chips follow starts and stops live, also ones made from the command line.`,
 				},
 				{
 					Title: "Container actions",
@@ -472,7 +472,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Compose actions",
-					Desc:  `A project with a compose file carries a compose button <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> next to its row actions, also while nothing runs yet. Its menu opens every address the project's containers answer on, so one is one click away without looking for its container first, follows the whole stack in one <em>Logs</em> terminal, and below that stands one entry per configured command, <em>Compose up</em>, <em>Compose down</em>, <em>Compose build</em> and a down that takes the volumes with it. Each one runs in the background; the chips follow along live, and a notification tells when the run finished or failed; opening the run's output reads it away. The run does not belong to the page that started it: it keeps going when the cockpit restarts, and the notification still arrives afterwards.`,
+					Desc:  `A project with a compose file carries a compose button <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> next to its row actions, also while nothing runs yet. Its menu opens every address the project's containers answer on, so one is one click away without looking for its container first, follows the whole stack in one <em>Logs</em> terminal, and below that stands one entry per configured command, <em>Compose up</em>, <em>Compose down</em>, <em>Compose build</em> and a down that takes the volumes with it. Each one runs in the background; the chips follow along live, the docker icon rides a wave for as long as the command runs, on the project's row and in the editor's statusbar alike, and a notification tells when the run finished or failed; opening the run's output reads it away. The run does not belong to the page that started it: it keeps going when the cockpit restarts, and the notification still arrives afterwards.`,
 				},
 				{
 					Title: "What a run wrote",

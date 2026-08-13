@@ -33,6 +33,14 @@ export function el(tag, props = {}, ...children) {
   return node;
 }
 
+export function syncAnimations(root) {
+  if (!root || typeof root.getAnimations !== "function") return;
+  for (const animation of root.getAnimations({ subtree: true })) {
+    if (animation.effect?.getTiming().iterations !== Infinity) continue;
+    animation.startTime = 0;
+  }
+}
+
 export function jumpTextEdge(event, input) {
   if (event.key !== "Home" && event.key !== "End") return false;
   if (!input || event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return false;

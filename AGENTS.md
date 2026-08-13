@@ -939,6 +939,33 @@ test. Update this file when a convention changes.
   (`row-deck`, `col-12 col-sm-6 col-lg-4`, one, two or three per line by the
   width, equal heights per line, no stylesheet of our own for it) and carry no
   buttons of their own, everything is in the menu.
+  **Every list of containers stands in one order, and `State.ForDir` decides
+  it**: unwell first, then running, then the rest, and stable inside a group so
+  the cache's own order (compose project, service, name) stands and a container
+  that neither started nor stopped never moves. Every surface reads the per
+  project list through that one call, the chips, the editor's grid and both
+  menus, so an order cannot be copied three times and drift apart. A list is
+  read from the top and the chip row folds after eight, which is the whole
+  point: the one thing that is wrong must not sit behind the fold.
+  **While a compose command runs the docker icon rides a wave**
+  (`.dc-docker-working`, translate plus rotate, a motion and not a blink),
+  fed on the project row by `ProjectDocker.Working()` and in the editor's
+  statusbar by the stacks' `busy`/`run.running`, and the run's own menu entry
+  carries the turning loader (`.dc-spin`). What kept that loader standing
+  still was simply that nothing ever animated it, `ti-loader-2` is a picture
+  of a spinner and no more. Both classes carry a `display` of their own
+  anyway: `.ti` sets none, so outside a flex row the icon is an inline box,
+  and an inline box ignores every transform, which makes a rotation on it
+  silently nothing.
+  **A swapped node brings a new animation with it**, starting at zero, so a
+  spinner jumps back and the wave restarts on every refresh of the projects
+  page. Every place that replaces server rendered markup pins what came in to
+  the document timeline afterwards (`syncAnimations` in `@dc/dom`,
+  `animation.startTime = 0`, which is where the document has been running
+  since): the chip swap, the row's actions, the whole row of an ajax submit
+  and the rebuilt list. The fresh animation then stands where the one it
+  replaced stood and they all run in step. That is a synchronisation and not
+  a morph, nothing is diffed and nothing is kept alive.
 - **Page headers:** one pattern everywhere: `page-header d-print-none mb-3`,
   inside it pretitle/breadcrumb plus `page-title`. Pages with a right side action
   wrap both in `d-flex align-items-center gap-2` with the title block as

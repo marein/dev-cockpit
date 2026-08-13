@@ -98,7 +98,7 @@ export function openMenu({ x, y, items, signal }) {
         role: "menuitem",
         title: item.title || null,
       },
-      item.icon ? el("i", { class: `ti ${item.icon} me-2`, "aria-hidden": "true" }) : null,
+      item.icon ? el("i", { class: `ti ${item.icon}${item.iconClass ? ` ${item.iconClass}` : ""} me-2`, "aria-hidden": "true" }) : null,
       ...labelNodes(item.label),
     );
     if (item.disabled) button.disabled = true;

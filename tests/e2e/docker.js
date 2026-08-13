@@ -26,6 +26,21 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // empty list and the way back; the host field is gone from /settings/general,
 // docker is unreleased and moves without a redirect).
 //
+// Wherever containers are listed they stand in one order, decided once on the
+// server (docker.State.ForDir): what is unwell first, then what runs, then the
+// rest, stable by name inside a group. The check brings up a stack of its own
+// whose names contradict that order, so a list that came back in the cache's
+// own order fails instead of passing by accident, and it reads both surfaces,
+// the chips on the projects page and the editor's grid.
+//
+// What a running compose command looks like is motion: the docker icon rides a
+// wave (.dc-docker-working) on the row and in the editor's statusbar, and the
+// run's own menu entry carries a turning loader (.dc-spin), which used to be a
+// picture of a spinner with no animation on it at all. Both are read as motion
+// and not as a class name, animation plus play state plus a display that can be
+// transformed, because an inline box ignores every transform and a rotation on
+// one is silently nothing.
+//
 // The two menus answer two different questions, which is what keeps the
 // project menu readable on a phone: the project menu says which container (one
 // entry each, the address itself when there is exactly one, otherwise the
@@ -163,6 +178,20 @@ async function apiClient() {
 // The scratch stack the delete check owns: the fixture image, so nothing is
 // pulled, and no published port, so it cannot collide with the fixture.
 const SCRATCH_COMPOSE = "services:\n  web:\n    image: nginx:alpine\n";
+// Two services out of the same local image, one of which is over before the
+// list is read: what the order check needs is a stopped container next to a
+// running one, in a project of its own.
+const SORT_COMPOSE = "services:\n  a-stopped:\n    image: nginx:alpine\n    entrypoint: [\"true\"]\n  z-running:\n    image: nginx:alpine\n";
+
+// READ_MOTION answers whether an element really animates: which keyframes
+// matched, whether one of them runs, and whether the box can be transformed at
+// all. The last one is not pedantry, an inline element ignores every transform,
+// so a rotation on a bare icon is silently nothing.
+const READ_MOTION = (el) => ({
+  name: getComputedStyle(el).animationName,
+  display: getComputedStyle(el).display,
+  running: el.getAnimations().filter((a) => a.playState === "running").length,
+});
 
 L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) => {
   await run("the fixture project shows its container chip and compose button", async () => {
@@ -192,6 +221,49 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     // The + chips belong to the terminals, the container row carries none.
     assert(await rows.nth(0).locator(".project-chip-new").count() === 2, "the new coder and shell chips left the terminal row");
     assert(await rows.nth(1).locator(".project-chip-new").count() === 0, "the container row carries a new chip");
+  });
+
+  // The order is one decision on the server (docker.State.ForDir) and every
+  // surface reads that one list, so the scratch stack proves both ends of it
+  // at once: the chips on the projects page and the editor's own grid. The
+  // service names are picked against the answer, "a-stopped" sorts before
+  // "z-running" by name, so a list that came back in the cache's own order
+  // fails here rather than passing by accident.
+  await run("a stopped container stands behind the running ones, everywhere", async () => {
+    const scratch = `dcsort-${Date.now().toString(36)}`;
+    await L.createProject(page, scratch);
+    try {
+      const wrote = await postAs(page, `/projects/${scratch}/editor/file`, { path: "compose.yaml", content: SORT_COMPOSE });
+      assert(wrote.ok, `writing the scratch compose file answered ${wrote.status}`);
+      const up = await postAs(page, `/projects/${scratch}/docker/compose`, { stack: "", action: "up" });
+      assert(up.ok, `compose up on the scratch project answered ${up.status}`);
+      const chips = page.locator(`#project-${scratch} [data-chip-kind="docker"]`);
+      await page.waitForFunction((id) => {
+        const list = document.querySelectorAll(`#project-${id} [data-chip-kind="docker"]`);
+        return list.length === 2 && Array.from(list).some((c) => c.classList.contains("is-idle"));
+      }, scratch, { timeout: 90000 });
+      const names = await chips.evaluateAll((list) => list.map((c) => c.dataset.chipName));
+      assert(names.join(",") === "z-running,a-stopped", `the chips stand as ${names.join(", ")}`);
+
+      await page.goto(`${BASE}/projects/${scratch}/editor`, { waitUntil: "domcontentloaded" });
+      await dismissUpdate(page);
+      await page.waitForSelector("[data-editor-docker-status]:not([hidden])", { timeout: 15000 });
+      await page.click("[data-editor-docker-status]");
+      await page.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 4000 });
+      const cells = await page.locator("[data-editor-docker-list] [data-docker-container]").allTextContents();
+      const first = cells.findIndex((t) => /z-running/.test(t));
+      const second = cells.findIndex((t) => /a-stopped/.test(t));
+      assert(first === 0 && second === 1, `the editor lists them as ${cells.map((t) => t.trim()).join(" | ")}`);
+      await page.keyboard.press("Escape");
+    } finally {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await dismissUpdate(page);
+      await page.locator(`#project-${scratch} form[action="/projects/delete"] button`).click();
+      await page.waitForSelector(".swal2-confirm", { state: "visible", timeout: 8000 });
+      await sleep(150);
+      await page.click(".swal2-confirm");
+      await page.waitForSelector(`#project-${scratch}`, { state: "detached", timeout: 180000 });
+    }
   });
 
   await run("the container menu carries ports, shells, logs, and lifecycle", async () => {
@@ -822,11 +894,24 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await menuItem(page, "E2E follow").click();
     await page.waitForSelector(".dc-toast", { timeout: 8000 }).catch(() => {});
     await sleep(1500);
+    // The icon says a command is going, and it says it by moving: the class
+    // alone would pass with keyframes nobody wrote, and a transform on an
+    // inline box renders nothing at all.
+    const waving = composeBtn(page).locator(".dc-docker-working");
+    await waving.waitFor({ state: "attached", timeout: 8000 });
+    const wave = await waving.evaluate(READ_MOTION);
+    assert(wave.name === "dc-docker-wave", `the docker icon carries no wave: ${wave.name}`);
+    assert(wave.running === 1, `the wave is not running: ${JSON.stringify(wave)}`);
+    assert(wave.display !== "inline", "the waving icon is inline, so nothing of it moves");
     await composeBtn(page).click();
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
     const running = menuItem(page, "E2E follow is running…");
     assert(await running.count() === 1, "the running command is not offered in the menu");
     assert(await menuItem(page, "Compose up").count() === 0, "the commands are offered while one is running");
+    const spin = await running.locator("i.ti-loader-2").evaluate(READ_MOTION);
+    assert(spin.name === "dc-spin", `the running command's spinner carries no animation: ${spin.name}`);
+    assert(spin.running === 1, `the spinner stands still: ${JSON.stringify(spin)}`);
+    assert(spin.display !== "inline", "the spinner is inline, so nothing of it turns");
     await Promise.all([
       page.waitForURL(/\/docker\/runs\/[^/]+$/, { timeout: 15000 }),
       running.click(),

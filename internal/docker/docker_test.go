@@ -25,6 +25,27 @@ func TestForDirMatchesWorkingDir(t *testing.T) {
 	}
 }
 
+func TestForDirOrdersByStatusAndKeepsTheRestStable(t *testing.T) {
+	dir := "/home/me/projects/app"
+	state := State{Containers: []Container{
+		{Name: "up-a", State: "running", WorkingDir: dir},
+		{Name: "gone", State: "exited", WorkingDir: dir},
+		{Name: "sick", State: "running", Health: "unhealthy", WorkingDir: dir},
+		{Name: "up-b", State: "running", WorkingDir: dir},
+		{Name: "dead", State: "dead", WorkingDir: dir},
+	}}
+	want := []string{"sick", "dead", "up-a", "up-b", "gone"}
+	got := state.ForDir(dir)
+	if len(got) != len(want) {
+		t.Fatalf("ForDir answered %d containers, want %d", len(got), len(want))
+	}
+	for i, name := range want {
+		if got[i].Name != name {
+			t.Fatalf("position %d is %q, want %q", i, got[i].Name, name)
+		}
+	}
+}
+
 func TestForDirFollowsSymlink(t *testing.T) {
 	dir := t.TempDir()
 	real := filepath.Join(dir, "real")

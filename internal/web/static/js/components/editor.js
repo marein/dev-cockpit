@@ -761,13 +761,17 @@ async function init(root) {
     }
     const running = data.containers.filter((c) => c.running).length;
     const unwell = data.containers.some((c) => c.unwell);
+    const working = (data.stacks || []).some((s) => s.busy || s.run?.running);
     dockerStatusText.textContent = data.containers.length ? `${running}/${data.containers.length}` : "";
-    dockerStatusBtn.title = data.containers.length
-      ? `Docker: ${running} of ${data.containers.length} running`
-      : "Docker: nothing running";
+    dockerStatusBtn.title = working
+      ? "Docker: a compose command is running"
+      : data.containers.length
+        ? `Docker: ${running} of ${data.containers.length} running`
+        : "Docker: nothing running";
     const icon = dockerStatusBtn.querySelector("i");
     icon.classList.toggle("text-danger", unwell);
     icon.classList.toggle("text-success", !unwell && running > 0);
+    icon.classList.toggle("dc-docker-working", working);
   }
 
   // sheetActionRow is one action line of a sheet, the shape the docker and
@@ -828,6 +832,7 @@ async function init(root) {
       }
       dockerListEl.appendChild(sheetActionRow({
         icon: item.icon || "ti-brand-docker",
+        iconClass: item.iconClass,
         label: item.label,
         title: item.title,
         disabled: item.disabled,

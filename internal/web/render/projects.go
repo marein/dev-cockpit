@@ -33,6 +33,19 @@ func (d ProjectDocker) AnyRunning() bool {
 	return false
 }
 
+// Working reports whether a compose command of this project is in flight,
+// which is what the row's docker icon rides the wave for. Both halves count:
+// a run this process started holds the stack busy, and a run adopted after a
+// restart is going without anybody holding anything.
+func (d ProjectDocker) Working() bool {
+	for _, s := range d.Stacks {
+		if s.Busy || s.RunGoing {
+			return true
+		}
+	}
+	return false
+}
+
 // DockerStack is one compose control point rendered as a chip. Busy marks a
 // compose run in flight, the menu then disables the actions. Run names the
 // newest run of that stack, the one whose output the menu leads to, whether it

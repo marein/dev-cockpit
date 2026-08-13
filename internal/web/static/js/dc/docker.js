@@ -249,6 +249,7 @@ function stackMenuItems(stack, project, actions, onLogs) {
     items.push({
       label: stack.run.running ? `${stack.run.action} is running…` : `Output of ${stack.run.action}`,
       icon: stack.run.running ? "ti-loader-2" : "ti-file-description",
+      iconClass: stack.run.running ? "dc-spin" : "",
       action: () => navigate(stack.run.url),
     });
   }

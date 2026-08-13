@@ -2740,6 +2740,28 @@ terminal-input { display: none; }
   40% { transform: rotate(-5deg); }
 }
 
+.dc-docker-working {
+  display: inline-flex;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .dc-docker-working { animation: dc-docker-wave 1.6s ease-in-out infinite; }
+}
+@keyframes dc-docker-wave {
+  0%, 100% { transform: translateY(0.2em) rotate(0deg); }
+  25% { transform: translateY(0) rotate(9deg); }
+  50% { transform: translateY(-0.2em) rotate(0deg); }
+  75% { transform: translateY(0) rotate(-9deg); }
+}
+
+.dc-spin { display: inline-block; }
+@media (prefers-reduced-motion: no-preference) {
+  .dc-spin { animation: dc-spin 0.9s linear infinite; }
+}
+@keyframes dc-spin {
+  to { transform: rotate(360deg); }
+}
+
 .projects-card .list-group-item.project-row { padding: 0.65rem 0.85rem; }
 .project-chips {
   display: flex;

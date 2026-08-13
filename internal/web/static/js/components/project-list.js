@@ -2,7 +2,7 @@ import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import * as docker from "@dc/docker";
 import { confirm, promptText } from "@dc/dialog";
-import { el } from "@dc/dom";
+import { el, syncAnimations } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import { applyFold } from "@dc/fold";
 import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
@@ -243,8 +243,9 @@ class ProjectList extends HTMLElement {
       command: span.dataset.actionCommand || "",
       confirm: Boolean(span.dataset.actionConfirm),
     }));
-    // The containers in the order the row renders them, which is the order the
-    // daemon's cache holds.
+    // The containers in the order the row renders them, which is the order
+    // every docker surface stands in: unwell first, then running, then the
+    // rest.
     const containers = Array.from(section?.querySelectorAll('[data-chip-kind="docker"]') || []).map((chip) => ({
       name: chip.dataset.chipName || "",
       links: chipLinks(chip),
@@ -423,7 +424,10 @@ class ProjectList extends HTMLElement {
       // for nothing.
       const freshActions = fresh.querySelector(".btn-list");
       const actions = section.querySelector(".btn-list");
-      if (freshActions && actions && freshActions.outerHTML !== actions.outerHTML) actions.replaceWith(freshActions);
+      if (freshActions && actions && freshActions.outerHTML !== actions.outerHTML) {
+        actions.replaceWith(freshActions);
+        syncAnimations(freshActions);
+      }
     });
   }
 
@@ -464,6 +468,7 @@ class ProjectList extends HTMLElement {
         }
         this.replaceChildren(...fresh.childNodes);
         window.app.loadElements(this);
+        syncAnimations(this);
         this.querySelectorAll("[data-sessions-body]").forEach((body) => this.foldChips(body));
         this.setupSort();
         this.setupFilter();
@@ -489,6 +494,7 @@ class ProjectList extends HTMLElement {
     template.innerHTML = html;
     body.replaceChildren(...template.content.childNodes);
     window.app.loadElements(body);
+    syncAnimations(body);
     this.foldChips(body);
   }
 
@@ -505,6 +511,7 @@ class ProjectList extends HTMLElement {
         if (!fresh || !section) throw new Error("section not found");
         section.replaceWith(fresh);
         window.app.loadElements(fresh);
+        syncAnimations(fresh);
         const body = fresh.querySelector("[data-sessions-body]");
         if (body) this.foldChips(body);
         document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: fresh } }));

@@ -137,9 +137,11 @@ type State struct {
 }
 
 // ForDir answers the containers whose compose working directory lies in dir,
-// the per project view of the cache. The comparison also tries the resolved
-// path, because compose records the path the user stood in, which may reach
-// the same directory through a symlink.
+// the per project view of the cache and the one list every surface renders,
+// so the order below is the order the chips, the editor's grid and the menus
+// all stand in. The comparison also tries the resolved path, because compose
+// records the path the user stood in, which may reach the same directory
+// through a symlink.
 func (s State) ForDir(dir string) []Container {
 	if dir == "" {
 		return nil
@@ -163,7 +165,30 @@ func (s State) ForDir(dir string) []Container {
 			}
 		}
 	}
+	sortByStatus(out)
 	return out
+}
+
+// statusRank is how loudly a container asks to be looked at: something unwell
+// first, then what runs, then what does not. A project runs a dozen of them
+// and a list is read from the top, so the one thing that is wrong must never
+// sit below a fold of healthy neighbours.
+func statusRank(c Container) int {
+	switch {
+	case c.Unwell():
+		return 0
+	case c.Running():
+		return 1
+	default:
+		return 2
+	}
+}
+
+// sortByStatus puts the urgent ones on top and is deliberately stable: inside
+// a group the cache's own order (compose project, service, name) stands, so a
+// container that neither started nor stopped never moves.
+func sortByStatus(list []Container) {
+	sort.SliceStable(list, func(i, j int) bool { return statusRank(list[i]) < statusRank(list[j]) })
 }
 
 // composeFileNames are the file names the compose CLI looks up, in its order.

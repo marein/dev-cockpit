@@ -92,7 +92,7 @@
         {{else}}
         {{with index $.Docker .Name}}{{if .Stacks}}
         <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-docker-project-menu data-docker-project="{{$projectName}}" aria-label="Compose actions for project {{$projectName}}" title="Compose">
-          <span class="dc-term-icon{{if .AnyRunning}} running{{end}}" aria-hidden="true"><i class="ti ti-brand-docker"></i></span>
+          <span class="dc-term-icon{{if .AnyRunning}} running{{end}}{{if .Working}} dc-docker-working{{end}}" aria-hidden="true"><i class="ti ti-brand-docker"></i></span>
           {{range .Stacks}}<span hidden data-docker-stack data-stack-label="{{.Label}}" data-stack-running="{{.Running}}" data-stack-total="{{.Total}}"{{if .Busy}} data-stack-busy="1"{{end}}{{if .RunID}} data-stack-run="{{.RunID}}" data-stack-run-action="{{.RunAction}}"{{if .RunGoing}} data-stack-run-going="1"{{end}}{{end}}></span>{{end}}
           {{range $.DockerActions}}<span hidden data-docker-action data-action-id="{{.ID}}" data-action-icon="{{.Icon}}" data-action-label="{{.Label}}" data-action-command="{{.Command}}"{{if .Confirm}} data-action-confirm="1"{{end}}></span>{{end}}
         </button>
