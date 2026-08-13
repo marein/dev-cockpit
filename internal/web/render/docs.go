@@ -393,6 +393,10 @@ func DocsTopics() []DocsTopic {
 					Desc:  `The tree menu copies a file or a folder and pastes it into another folder; pasting into the folder it already sits in makes a numbered copy. The clipboard belongs to this browser, it is not shared with your other devices.`,
 				},
 				{
+					Title: "Copy a path or a file's text",
+					Desc:  `The tab menu and the tree menu of a file copy its path inside the project, and next to it its contents as text. What is unsaved in the editor is copied as it stands there, otherwise the file is read as it lies on disk. A file the editor does not open as text, an image or an archive, says so instead of copying anything.`,
+				},
+				{
 					Title: "Upload files",
 					Desc:  `Drop files or whole folders onto the file tree to upload them; dropping onto a folder puts them there, and a dropped folder keeps its structure. Pasting them into the editor does the same, into the folder that is selected in the tree. The tree context menu uploads files or a folder too, targeting the row's folder. A name that is already taken is listed before the upload starts, and replacing it needs one confirmation.`,
 				},

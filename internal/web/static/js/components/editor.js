@@ -1128,6 +1128,7 @@ async function init(root) {
       { label: "Copy file", icon: "ti-files", action: () => copyToClipboard(tab.path, false) },
       clipboard ? { label: `Paste "${baseName(clipboard.path)}"`, icon: "ti-clipboard", action: () => void pasteInto(parentDir(tab.path)) } : null,
       { label: "Copy path", icon: "ti-copy", action: () => copyPath(tab.path) },
+      { label: "Copy contents", icon: "ti-file-text", action: () => copyContents(tab.path) },
       { label: "Download", icon: "ti-download", action: () => startDownload(tab.path) },
       isArchive(tab.name) ? { label: "Extract here", icon: "ti-file-zip", action: () => void extractArchive(tab.path) } : null,
       { label: "Reveal in tree", icon: "ti-list-tree", action: () => revealInTree(tab.path) },
@@ -1402,6 +1403,9 @@ async function init(root) {
       action: () => copyToClipboard(entry.path, entry.isDir),
     });
     items.push({ label: "Copy path", icon: "ti-copy", action: () => copyPath(entry.path) });
+    if (!entry.isDir) {
+      items.push({ label: "Copy contents", icon: "ti-file-text", action: () => copyContents(entry.path) });
+    }
     items.push({
       label: entry.isDir ? "Download as tar.gz" : "Download",
       icon: "ti-download",
@@ -4257,6 +4261,40 @@ async function init(root) {
     try {
       await navigator.clipboard.writeText(path);
       status(`Copied ${path}`, "ok");
+    } catch {
+      status("Clipboard is not available.", "error");
+    }
+  }
+
+  const NOT_TEXT = "That file does not open as text, there is nothing to copy.";
+
+  async function copyContents(path) {
+    const tab = tabByPath(path);
+    if (tab && tab.kind) {
+      status(NOT_TEXT, "error");
+      return;
+    }
+    let text;
+    if (tab && tab.dirty) {
+      text = editor.valueOf(tab, tab.path === activePath);
+    } else {
+      status("Loading…");
+      try {
+        const data = await getJSON(`${base}/file?path=${encodeURIComponent(path)}`, { signal });
+        if (signal.aborted) return;
+        if (data.binary) {
+          status(NOT_TEXT, "error");
+          return;
+        }
+        text = data.content || "";
+      } catch (err) {
+        status(err.message, "error");
+        return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      status(`Copied the contents of ${path}`, "ok");
     } catch {
       status("Clipboard is not available.", "error");
     }

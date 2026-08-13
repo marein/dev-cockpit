@@ -59,11 +59,14 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // bootstrap dropdown does not need to be opened first. Tabs and tree rows carry a
 // context menu (@dc/contextmenu, body-mounted .dc-context-menu): right click on
 // fine pointers, long-press on touch, and on tabs also a tap on the already active
-// tab. Tab entries are the close variants, copy path, download, reveal in tree,
-// rename and delete. Tree entries are new file/new folder/upload (right click
-// selects the row, so they target the row's dir), copy path, download on files,
+// tab. Tab entries are the close variants, copy path, copy contents, download,
+// reveal in tree, rename and delete. Tree entries are new file/new folder/upload
+// (right click selects the row, so they target the row's dir), copy path, copy
+// contents on files, download on files,
 // rename and delete; the empty tree area clears the selection and targets the
-// project root, plus a refresh entry. The menu is the only create/upload path:
+// project root, plus a refresh entry. Copy contents takes the buffer while it is
+// unsaved and reads the disk otherwise, and a file the editor does not open as
+// text (an archive, an image) toasts instead of copying anything. The menu is the only create/upload path:
 // the per-row hover pencil/trash buttons are gone and the tree header keeps just
 // the refresh button (drag-drop upload still works).
 
@@ -976,7 +979,7 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
     await run("right click on a tab opens the context menu, Escape closes it", async () => {
       await openRowMenu(page, tabSel(noteFile));
       const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
-      for (const want of ["Close", "Close others", "Close to the right", "Close all", "Copy path", "Download", "Reveal in tree", "Rename", "Delete"]) {
+      for (const want of ["Close", "Close others", "Close to the right", "Close all", "Copy path", "Copy contents", "Download", "Reveal in tree", "Rename", "Delete"]) {
         assert(labels.includes(want), `menu misses '${want}': ${labels.join(", ")}`);
       }
       const disabled = await page.$$eval(".dc-context-menu .dropdown-item:disabled", (els) => els.map((e) => e.textContent.trim()));
@@ -994,6 +997,57 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
         const text = await page.evaluate(() => navigator.clipboard.readText());
         assert(text === noteFile, `clipboard '${text}' != '${noteFile}'`);
       }
+    });
+
+    await run("context menu Copy contents copies the file text, the unsaved buffer first", async () => {
+      const copyFile = `copy_${tag}.txt`;
+      assert((await outOfBand(copyFile, "on disk")) === 200, "the fixture for the copy check was not written");
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector(`.editor-file[data-path="${copyFile}"]`, { timeout: 8000 });
+      await sleep(300);
+      const copied = () => page.waitForFunction(
+        () => /Copied the contents of/.test(document.querySelector("[data-editor-status]").textContent),
+        null, { timeout: 6000 });
+      // The status line clears itself, so the second copy cannot pass on the
+      // message the first one left standing.
+      const statusCleared = () => page.waitForFunction(
+        () => document.querySelector("[data-editor-status]").textContent === "",
+        null, { timeout: 8000 });
+      // A file nobody opened is read from the disk, the way opening it would.
+      await openRowMenu(page, `.editor-file[data-path="${copyFile}"]`);
+      await menuItem(page, "Copy contents").click();
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+      await copied();
+      if (engine === "chromium") {
+        const text = await page.evaluate(() => navigator.clipboard.readText());
+        assert(text === "on disk", `clipboard '${text}' != 'on disk'`);
+      }
+      await statusCleared();
+      // Open it and type: what the buffer holds is what travels, not the disk.
+      await page.click(`.editor-file[data-path="${copyFile}"] .editor-item-name`);
+      await page.waitForSelector(`${tabSel(copyFile)}.active`, { timeout: 8000 });
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+End");
+      await page.keyboard.type(" plus buffer");
+      await waitDirty(copyFile, true);
+      await openRowMenu(page, tabSel(copyFile));
+      await menuItem(page, "Copy contents").click();
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+      await copied();
+      if (engine === "chromium") {
+        const text = await page.evaluate(() => navigator.clipboard.readText());
+        assert(text === "on disk plus buffer", `the buffer was not what got copied: '${text}'`);
+      }
+      assert((await diskText(copyFile)) === "on disk", "copying wrote the buffer to the disk");
+      // Leave the strip and the tree as they were.
+      await openRowMenu(page, tabSel(copyFile));
+      await menuItem(page, "Close").click();
+      await confirmSwal(page);
+      await page.waitForFunction((s) => !document.querySelector(s), tabSel(copyFile), { timeout: 6000 });
+      await openRowMenu(page, `.editor-file[data-path="${copyFile}"]`);
+      await menuItem(page, "Delete").click();
+      await confirmSwal(page);
+      await page.waitForFunction((f) => !document.querySelector(`.editor-file[data-path="${f}"]`), copyFile, { timeout: 8000 });
     });
 
     await run("context menu Reveal in tree expands the folder and selects the file", async () => {
@@ -1030,6 +1084,7 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
         assert(labels.includes(want), `dir menu misses '${want}': ${labels.join(", ")}`);
       }
       assert(!labels.includes("Download"), "dir menu offers Download");
+      assert(!labels.includes("Copy contents"), "dir menu offers Copy contents");
       assert(await page.$eval(dirSel, (e) => e.classList.contains("selected")), "right-click did not select the dir row");
       await menuItem(page, "New file").click();
       await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
@@ -1474,10 +1529,18 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.waitForSelector("[data-editor-viewer] [data-editor-extract]", { timeout: 8000 });
       await openRowMenu(page, tabSel("arch.tar.gz"));
       const tabLabels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
-      for (const want of ["Copy file", "Extract here", "Download", "Reveal in tree"]) {
+      for (const want of ["Copy file", "Copy contents", "Extract here", "Download", "Reveal in tree"]) {
         assert(tabLabels.includes(want), `archive tab menu misses ${want}: ${tabLabels.join(", ")}`);
       }
-      await page.keyboard.press("Escape");
+      // An archive is no text: the copy says so and the clipboard keeps what it
+      // had, rather than taking the bytes of a file the editor cannot read.
+      if (engine === "chromium") await page.evaluate(() => navigator.clipboard.writeText("keep me"));
+      await menuItem(page, "Copy contents").click();
+      await page.waitForSelector('.dc-toast:has-text("does not open as text")', { timeout: 6000 });
+      if (engine === "chromium") {
+        const kept = await page.evaluate(() => navigator.clipboard.readText());
+        assert(kept === "keep me", `the archive overwrote the clipboard: '${kept}'`);
+      }
       await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
       await page.click("[data-editor-viewer] [data-editor-extract]");
       await page.waitForSelector('.editor-dir[data-path="arch 3"]', { timeout: 10000 });
