@@ -2190,6 +2190,23 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       assert(await page.getAttribute(".swal2-popup input.swal2-input", "type") === "password",
         "the answer field is not masked");
 
+      // What the editor's own git deliberately does NOT do, unlike the
+      // `dev-cockpit git` proxy (tests/e2e/git-proxy.js): it shows no command
+      // block and raises no notification. This action was started on this
+      // page by the person looking at it, so there is nothing to identify and
+      // nowhere to send it; news would ring for what is already on screen.
+      assert(await page.locator("[data-gitprompt-command]").count() === 0,
+        "the editor's own question shows a command block");
+      // Unread only: a read entry is history and stays in the list on
+      // purpose, so a proxied question answered earlier, or one an older
+      // build wrote, must not count against this.
+      const promptNews = await page.evaluate(async () => {
+        const res = await fetch("/notifications", { headers: { Accept: "application/json" } });
+        const data = await res.json();
+        return (data.notifications || []).filter((n) => (n.targetId || "").startsWith("gitprompt:") && !n.read).length;
+      });
+      assert(promptNews === 0, `the editor's own question became news: ${promptNews} unread entries`);
+
       // One write at a time, and the running one holds the whole surface: the
       // statusbar carries the spinner in the branch's place, every sheet row
       // is out, and the commit button is out with them. Two locks side by side

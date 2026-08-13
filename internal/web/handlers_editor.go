@@ -17,6 +17,7 @@ import (
 	"github.com/local/dev-cockpit/internal/editorintelligence"
 	"github.com/local/dev-cockpit/internal/filesystem"
 	"github.com/local/dev-cockpit/internal/git"
+	"github.com/local/dev-cockpit/internal/notify"
 	"github.com/local/dev-cockpit/internal/project"
 	"github.com/local/dev-cockpit/internal/web/render"
 )
@@ -1017,11 +1018,33 @@ func gitWriteContext(c *gin.Context) context.Context {
 // it is an invariant guard, but it may not be worked past: running the action
 // anyway would leave it without a bridge, and every question would come back
 // as an authentication failure with nothing saying that it was never asked.
+// It opens the bridge through Begin and not BeginCommand, and that is the
+// whole difference to the proxy's helper below: somebody started this on a
+// page and is looking at it, so the question stays inside the app. Routing
+// both through one constructor with empty strings would tie that decision to
+// what the dialog renders again, which is exactly what askpass.Question.
+// External exists to keep apart.
 func (s *Server) promptAction(project, name string) (*askpass.Action, *git.Prompt, bool) {
+	return s.beginPrompt(func() *askpass.Action { return s.askpassBroker.Begin(project, name) })
+}
+
+// promptActionCommand is promptAction for the git proxy, which asks on behalf
+// of somebody who is not in the app: the command line and the working copy it
+// runs in travel with the question, so the dialog can show what is about to
+// run and where, and the question is the kind that leaves the app as news.
+// See askpass.Question.External.
+func (s *Server) promptActionCommand(project, name, command, dir string) (*askpass.Action, *git.Prompt, bool) {
+	return s.beginPrompt(func() *askpass.Action { return s.askpassBroker.BeginCommand(project, name, command, dir) })
+}
+
+// beginPrompt is what the two share: no bridge wired means every prompt keeps
+// failing fast and the call runs anyway, an open action carries the helper
+// environment into the call.
+func (s *Server) beginPrompt(begin func() *askpass.Action) (*askpass.Action, *git.Prompt, bool) {
 	if s.askpassBroker == nil {
 		return nil, nil, true
 	}
-	action := s.askpassBroker.Begin(project, name)
+	action := begin()
 	if action == nil {
 		return nil, nil, false
 	}
@@ -1421,11 +1444,37 @@ func (s *Server) handleEditorGitRevert(c *gin.Context) {
 // every signed-in page shows what is being asked. The session is the whole
 // authorization, single user by design.
 func (s *Server) handleGitPromptList(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"questions": s.gitPromptViews()})
+}
+
+// gitPromptView is one standing question the way the dialog needs it: the
+// broker's question, plus the notification entry it holds while it stands, or
+// nothing when it holds none.
+//
+// The target is worked out here and not in the browser. Which questions become
+// news is this server's rule (reconcileGitPromptNews) and the prefix is this
+// server's spelling (notify.GitPromptTarget); a client deciding it again would
+// be the same rule written a second time in another language, and a rename
+// here would quietly stop the dialog from ever reading its entry.
+type gitPromptView struct {
+	askpass.Question
+	Target string `json:"target,omitempty"`
+}
+
+func (s *Server) gitPromptViews() []gitPromptView {
 	if s.askpassBroker == nil {
-		c.JSON(http.StatusOK, gin.H{"questions": []askpass.Question{}})
-		return
+		return []gitPromptView{}
 	}
-	c.JSON(http.StatusOK, gin.H{"questions": s.askpassBroker.Questions()})
+	questions := s.askpassBroker.Questions()
+	views := make([]gitPromptView, 0, len(questions))
+	for _, q := range questions {
+		view := gitPromptView{Question: q}
+		if q.External {
+			view.Target = notify.GitPromptTarget(q.Project)
+		}
+		views = append(views, view)
+	}
+	return views
 }
 
 type gitPromptAnswer struct {

@@ -136,12 +136,37 @@ func shellQuote(value string) string {
 // say whose question it is. Project and Action are this server's own truth
 // from the handler that opened the bridge, while the prompt line is written
 // by ssh, git, or whatever program the repository put in their way; the
-// dialog keeps them visually apart for exactly that reason.
+// dialog keeps them visually apart for exactly that reason, and leaves the
+// line out where Command below already says the same in more detail.
+//
+// External separates the two kinds of asker, and it is the whole policy in one
+// field: an action somebody started in the app is a page they are looking at,
+// while a proxied call (`dev-cockpit git`) was typed in a terminal that cannot
+// answer anything, by a caller who may be a coding agent. Only an external
+// question has to leave the app to be seen at all, so only that one becomes a
+// notification and rides the push channels; ringing for a dialog the person is
+// already in front of is the one thing this may not do.
+//
+// It is its own field and not read off Command, which is the text below and
+// would carry the policy on a rendering detail: the day a second surface in
+// the app wants to show what it is about to run, setting Command would turn
+// the push channels on for it.
+//
+// Command is what the dialog shows a caller nobody in the browser can see:
+// the command line as it was typed, because somebody answering a passphrase
+// for them has to be able to read what is about to run. Dir rides along and is
+// the working copy it runs in, which is half of what somebody has to
+// recognise: the same `git push` means different things in two checkouts of
+// one repository, and the caller picked its project through a working
+// directory nobody in the browser can see.
 type Question struct {
-	ID      string `json:"id"`
-	Project string `json:"project"`
-	Action  string `json:"action"`
-	Prompt  string `json:"prompt"`
+	ID       string `json:"id"`
+	Project  string `json:"project"`
+	Action   string `json:"action"`
+	Prompt   string `json:"prompt"`
+	External bool   `json:"external,omitempty"`
+	Command  string `json:"command,omitempty"`
+	Dir      string `json:"dir,omitempty"`
 }
 
 type answer struct {
@@ -163,6 +188,12 @@ type Action struct {
 	token   string
 	project string
 	action  string
+	// external says the caller is not in the app, command is the proxied
+	// command line it was started with and dir the working copy it runs in;
+	// see Question.External for what hangs on the first of them.
+	external bool
+	command  string
+	dir      string
 
 	mu        sync.Mutex
 	pending   *question
@@ -224,11 +255,26 @@ func (b *Broker) notify() {
 // second action under the same name would answer questions to the wrong
 // caller and is the one thing this may never do silently.
 func (b *Broker) Begin(project, action string) *Action {
+	return b.begin(project, action, false, "", "")
+}
+
+// BeginCommand is Begin for a caller outside the app: its questions are the
+// ones that have to leave the app to be seen, and the command line and the
+// working copy travel with them for the dialog to show. Everything else is
+// Begin's, including the one action per project rule.
+func (b *Broker) BeginCommand(project, action, command, dir string) *Action {
+	return b.begin(project, action, true, command, dir)
+}
+
+func (b *Broker) begin(project, action string, external bool, command, dir string) *Action {
 	a := &Action{
 		broker:   b,
 		token:    randomToken(),
 		project:  project,
 		action:   action,
+		external: external,
+		command:  command,
+		dir:      dir,
 		done:     make(chan struct{}),
 		asked:    make(chan struct{}, 8),
 		answered: make(chan struct{}, 8),
@@ -280,6 +326,10 @@ func (b *Broker) Questions() []Question {
 	}
 	return questions
 }
+
+// Name answers what the action is called, the word the dialog and the
+// notification carry as this server's truth ("push", "pull").
+func (a *Action) Name() string { return a.action }
 
 // Env is what the spawned git call carries so its helpers can call home.
 func (a *Action) Env() []string {
@@ -369,9 +419,17 @@ func (a *Action) End() {
 // action's end. One question at a time per action, the way ssh asks.
 func (a *Action) ask(prompt string) (string, bool) {
 	q := &question{
-		Question: Question{ID: randomToken(), Project: a.project, Action: a.action, Prompt: prompt},
-		seq:      a.broker.seq.Add(1),
-		reply:    make(chan answer, 1),
+		Question: Question{
+			ID:       randomToken(),
+			Project:  a.project,
+			Action:   a.action,
+			Prompt:   prompt,
+			External: a.external,
+			Command:  a.command,
+			Dir:      a.dir,
+		},
+		seq:   a.broker.seq.Add(1),
+		reply: make(chan answer, 1),
 	}
 	a.mu.Lock()
 	if a.pending != nil {

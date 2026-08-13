@@ -1,4 +1,5 @@
 import { onServerEvent } from "@dc/events";
+import { windowSeen } from "@dc/dom";
 import { getJSON, postForm } from "@dc/http";
 import { playNotification } from "@dc/jingle";
 import { showToast } from "@dc/toast";
@@ -204,7 +205,7 @@ navigator.serviceWorker?.addEventListener("message", (event) => {
 // the device-local changed dot (markChanged) until it is activated. The
 // pathname match stays as the fallback for pages without islands.
 function shownTargets() {
-  if (document.visibilityState !== "visible" || !document.hasFocus()) return [];
+  if (!windowSeen()) return [];
   const shown = [...document.querySelectorAll("terminal-attach[terminal-id]")]
     .filter((el) => el.offsetParent !== null)
     .map((el) => el.getAttribute("terminal-id"))

@@ -216,6 +216,13 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/git/prompt", s.handleGitPromptList)
 	auth.POST("/git/prompt", s.handleGitPromptAnswer)
 
+	// The git proxy behind `dev-cockpit git`: one git command line, run in the
+	// working copy of the project the caller stands in, so the askpass bridge
+	// can ask the browser. It carries no project in its path because the
+	// caller cannot name one: it sends the directory it is in and this server
+	// resolves it, out of the projects root it alone is authoritative for.
+	auth.POST("/git", s.handleGitProxy)
+
 	auth.POST("/push/subscribe", s.handlePushSubscribe)
 	auth.POST("/push/unsubscribe", s.handlePushUnsubscribe)
 	auth.POST("/push/test", s.handlePushTest)

@@ -66,3 +66,13 @@ const ESCAPE = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#
 export function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ESCAPE[char]);
 }
+
+// Whether what this window shows counts as seen by somebody, the one test
+// behind every "they have read it" in the app: the notification center reads
+// its own targets on it, the git dialog reads the question's entry on it. A
+// visible but unfocused window is the browser on a second monitor or behind
+// another app, and nobody there has seen anything, which is why visibility
+// alone is not it.
+export function windowSeen() {
+  return document.visibilityState === "visible" && document.hasFocus();
+}

@@ -211,10 +211,12 @@ func (c *Client) request(method, path, contentType string, body []byte, timeout 
 	}
 	defer res.Body.Close()
 	// The bound only guards against a runaway answer. It has to hold every
-	// legitimate one whole, an activity reading with --full carries entire
-	// messages, so it is megabytes, not kilobytes: a truncated answer is not
-	// JSON any more and reads as a cockpit that answered garbage.
-	raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	// legitimate one whole, so it is megabytes, not kilobytes: an activity
+	// reading with --full carries entire messages, and the git proxy's answer
+	// carries both capped streams base64 encoded, which is the largest
+	// legitimate answer there is. A truncated answer is not JSON any more and
+	// reads as a cockpit that answered garbage.
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 32<<20))
 
 	var answer map[string]any
 	_ = json.Unmarshal(raw, &answer)

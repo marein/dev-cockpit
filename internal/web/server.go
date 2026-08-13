@@ -80,6 +80,11 @@ type Server struct {
 	// fast, which is also what the tests run with.
 	askpassBroker *askpass.Broker
 	askpassScript string
+	// gitPromptNoticed is which projects' standing askpass questions have an
+	// unread entry in the notification center right now, guarded by its own
+	// mutex because the broker's change hook fires from git's helpers.
+	gitPromptNoticedMu sync.Mutex
+	gitPromptNoticed   map[string]bool
 	// host reads load, memory and disk. It is read from the event stream, so
 	// an idle cockpit with no browser on it reads nothing at all.
 	host *hostinfo.Cache
@@ -290,9 +295,76 @@ func requestIsSecure(c *gin.Context) bool {
 // SetAskpass wires the bridge a user-triggered git action may ask the
 // browser through. Without it every prompt keeps failing fast. The broker's
 // change hook becomes the gitprompt event, which is how a parked, answered
-// or expired question reaches every open page at once.
+// or expired question reaches every open page at once, and it keeps the
+// notification center in step, which is how a question reaches somebody with
+// no page open at all.
+//
+// The boot sweep marks every unread git question entry read first: the
+// broker's questions live in memory, so after a restart none stands, and an
+// entry a killed process left unread would claim a question forever.
 func (s *Server) SetAskpass(broker *askpass.Broker, script string) {
-	broker.OnChange = s.publishGitPrompt
+	for target := range s.notifier.UnreadTargets() {
+		if notify.IsGitPromptTarget(target) {
+			s.notifier.MarkTargetRead(target)
+		}
+	}
+	s.gitPromptNoticed = map[string]bool{}
 	s.askpassBroker = broker
 	s.askpassScript = script
+	// The hook goes on last and reads the broker it was built from, not the
+	// field: a question parked between the two lines would have found the field
+	// still empty, and the field is written here while the broker's helper
+	// goroutines read it, which is a race whether or not it is ever lost.
+	broker.OnChange = func() {
+		s.publishGitPrompt()
+		s.reconcileGitPromptNews(broker)
+	}
+}
+
+// reconcileGitPromptNews keeps the notification center in step with the
+// standing askpass questions: a project whose first question was just parked
+// gets an unread entry, a project whose questions are gone gets it read
+// again. The tracking is per project like the bridge itself, so ssh asking a
+// second time inside one action writes news again only after the first
+// question left, which is exactly when the person did not answer it in time.
+//
+// Only the questions of an external caller count (askpass.Question.External).
+// Those were typed in a terminal or by a coding agent, so nobody is looking at
+// a page and the question has to leave the app to be seen at all, push
+// channels included. A question from the editor's own git surface is the
+// opposite case: somebody started it on a page and that page is showing the
+// dialog, so news about it would ring for something the person is already
+// looking at.
+//
+// Reading the questions and writing the entries is one step under one lock,
+// and that is what makes it right rather than tidy. Two hooks fire at the same
+// moment often enough — one for a question that was just parked, one for the
+// answer that took it away — and outside the lock the older of the two can
+// write its entry after the newer one cleared it. The bell would then claim a
+// question that no longer stands, forever, because the map that clears it no
+// longer holds the project, and the push channels would carry it to a phone
+// two seconds later. Nothing the broker calls takes this lock, and the broker
+// calls its hook outside its own locks, so this order has no other side.
+func (s *Server) reconcileGitPromptNews(broker *askpass.Broker) {
+	s.gitPromptNoticedMu.Lock()
+	defer s.gitPromptNoticedMu.Unlock()
+	standing := map[string]bool{}
+	for _, q := range broker.Questions() {
+		if !q.External {
+			continue
+		}
+		standing[q.Project] = true
+	}
+	for project := range standing {
+		if !s.gitPromptNoticed[project] {
+			s.gitPromptNoticed[project] = true
+			s.notifier.Add(notify.GitPromptTarget(project))
+		}
+	}
+	for project := range s.gitPromptNoticed {
+		if !standing[project] {
+			delete(s.gitPromptNoticed, project)
+			s.notifier.MarkTargetRead(notify.GitPromptTarget(project))
+		}
+	}
 }

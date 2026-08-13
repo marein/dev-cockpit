@@ -77,6 +77,32 @@ func DockerTargetProject(targetID string) string {
 	return strings.TrimPrefix(targetID, DockerTargetPrefix)
 }
 
+// GitPromptTargetPrefix names the targets of standing askpass questions, one
+// per project (`gitprompt:<project>`), under the same rules as the docker
+// targets: per project because a target holds at most one unread entry, and
+// two projects asking at the same moment are two pieces of news.
+//
+// The entry is how a question reaches somebody with no page open at all, the
+// phone in the pocket: the unread entry rides the push channels, and any page
+// it opens shows the app-wide dialog. A question that is answered, cancelled
+// or timed out marks its target read again, so the bell never claims a
+// question that no longer stands.
+const GitPromptTargetPrefix = "gitprompt:"
+
+// GitPromptTarget is the target id one project's standing questions report
+// under.
+func GitPromptTarget(project string) string { return GitPromptTargetPrefix + project }
+
+// IsGitPromptTarget reports whether an id is one of them.
+func IsGitPromptTarget(targetID string) bool {
+	return strings.HasPrefix(targetID, GitPromptTargetPrefix)
+}
+
+// GitPromptTargetProject answers the project such an id names.
+func GitPromptTargetProject(targetID string) string {
+	return strings.TrimPrefix(targetID, GitPromptTargetPrefix)
+}
+
 // TargetInfo carries display context resolved at ingest time.
 type TargetInfo struct {
 	Name    string
@@ -287,16 +313,16 @@ func (s *Service) MarkTargetRead(targetID string) int {
 // PruneTargets drops stored notifications whose target id is not in keep.
 // The startup terminal restore calls it for targets that stayed dead through
 // the restore pass, their entries would link nowhere forever. A compose run's
-// target is kept whatever the caller says: it names a project and a run, not a
-// terminal, so no terminal pass can know it. Returns how many entries were
-// removed.
+// target is kept whatever the caller says, and a git question's with it: both
+// name a project and not a terminal, so no terminal pass can know them.
+// Returns how many entries were removed.
 func (s *Service) PruneTargets(keep map[string]bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.load()
 	kept := list[:0]
 	for _, n := range list {
-		if keep[n.TargetID] || IsDockerTarget(n.TargetID) {
+		if keep[n.TargetID] || IsDockerTarget(n.TargetID) || IsGitPromptTarget(n.TargetID) {
 			kept = append(kept, n)
 		}
 	}

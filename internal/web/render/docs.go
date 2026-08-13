@@ -298,6 +298,12 @@ func DocsTopics() []DocsTopic {
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "Backspace"}}},
 					Desc:  `Closes the active pane and leaves the rest of the split standing, the same way the cross in its head does, and it asks first. This one is Ctrl even on a Mac, where the Cmd version belongs to the browser.`,
 				},
+				{
+					Title:    "Push and pull from a terminal",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `An ssh key with a passphrase has nobody to ask in a terminal, so <code>dev-cockpit git</code> runs any git command through the cockpit, <code>push</code> and <code>pull</code> like everything else: same directory, git's own output and exit code, and the question reaches you as a dialog in the browser and as a notification. Every installed coder gets a skill for it that the cockpit writes itself and removes again at stop, listed under Settings &rarr; Coder &rarr; Skills as <span class="badge bg-secondary-lt">Managed</span> and not editable there.`,
+				},
 			},
 		},
 		{
@@ -528,6 +534,10 @@ func DocsTopics() []DocsTopic {
 					Tag:      "Ownership",
 					TagClass: "bg-blue-lt",
 					Desc:     `While the assistant steers a job on a coder, that coder's own news rings nowhere: its report is what reaches you. The entry is still listed, already read.`,
+				},
+				{
+					Title: "A git question",
+					Desc:  `A <code>dev-cockpit git</code> command waiting for a passphrase or credentials is news like any other, one entry per place, the project name when the directory lies in a project and its absolute path otherwise, so the question reaches you with no cockpit page open, phone included. Opening any page shows the dialog, and the entry marks itself read once the dialog stands in front of you or the question is answered, cancelled or run out anywhere. The editor's own git actions raise none of this on purpose: you started them on a page that already shows the dialog.`,
 				},
 			},
 		},

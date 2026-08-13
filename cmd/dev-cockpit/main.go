@@ -107,7 +107,7 @@ func newRootCommand() *cobra.Command {
 			return errors.New("command required")
 		},
 	}
-	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newAssistantCommand(), newRunDetachedCommand(), newAskpassCommand())
+	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newGitCommand(), newAssistantCommand(), newRunDetachedCommand(), newAskpassCommand())
 	return cmd
 }
 
@@ -348,6 +348,21 @@ func runServe(opts serveOptions) error {
 			return conversations.Reserved(coderID, sessionID)
 		})
 	}
+	// The cockpit's own skill, the coder side of the git proxy, rendered from
+	// this instance's configuration the way the assistant instructions are:
+	// the next start rewrites it when the binary or the start flags moved. A
+	// coder whose home refuses the write keeps running, the skill is help and
+	// no requirement.
+	instance := coder.CockpitInstance{
+		Executable: executable,
+		StateDir:   cfg.StateDir,
+		Running:    cockpitServesFrom,
+	}
+	for _, c := range selected {
+		if err := coder.EnsureManagedSkills(c.SkillRepository(), instance); err != nil {
+			log.Printf("coder %s: the cockpit git skill could not be written: %v", c.ID(), err)
+		}
+	}
 
 	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
 	shells := shell.NewShells(cfg, tmuxClient, projectRepo, func() bool {
@@ -363,9 +378,14 @@ func runServe(opts serveOptions) error {
 		return settingsStore.Get(docker.HostSettingKey)
 	})
 
+	// The askpass broker exists before the notifier because the resolver names
+	// a standing question's action out of it; its socket and helper stub are
+	// wired further down with the server.
+	askBroker := askpass.New(cfg.StateDir)
+
 	notifier := notify.NewService(
 		notify.StorePath(cfg.StateDir),
-		notifyResolver(coders, shells, conversations, projectRepo, backups, dockerService),
+		notifyResolver(coders, shells, conversations, projectRepo, backups, dockerService, askBroker),
 	)
 	// The push channels subscribe before any watcher starts, so an inbox
 	// backlog ingested right after boot cannot slip past them.
@@ -435,6 +455,7 @@ func runServe(opts serveOptions) error {
 			log.Printf("received %s again, exiting now", sig)
 			os.Exit(1)
 		}()
+		removeManagedSkills(selected, instance)
 		intel.Close()
 		os.Exit(0)
 	}()
@@ -478,11 +499,10 @@ func runServe(opts serveOptions) error {
 		}
 	}()
 
-	// The askpass bridge: a socket of its own next to the local API's, plus
-	// the helper stub SSH_ASKPASS and GIT_ASKPASS of a user-triggered action
-	// point at. Only the editor's git handlers ever hand its environment to a
-	// call, everything else keeps failing prompts fast.
-	askBroker := askpass.New(cfg.StateDir)
+	// The askpass bridge's socket, next to the local API's, plus the helper
+	// stub SSH_ASKPASS and GIT_ASKPASS of a user-triggered action point at.
+	// Only the git handlers of the editor and the proxy ever hand its
+	// environment to a call, everything else keeps failing prompts fast.
 	askListener, err := askpass.Listen(cfg.StateDir)
 	if err != nil {
 		return fmt.Errorf("failed to open the askpass socket: %w", err)
@@ -559,6 +579,44 @@ func runServe(opts serveOptions) error {
 	return server.Serve(listener)
 }
 
+// removeManagedSkills takes the cockpit's own skills off the disk on the way
+// out, the counterpart of the start's EnsureManagedSkills. The skill points a
+// coder at the local API socket of a running instance, so one left behind
+// after the stop would send every coder down a path that cannot answer. It
+// runs before the language servers are closed, because it is a few file
+// removals while that close is bounded but not instant, and a second signal
+// may end the process during it.
+//
+// It is deliberately not the only thing keeping the disk clean: a SIGKILL and
+// the self-update's exec both walk past this, and both are covered by the
+// start rewriting the skill anyway.
+//
+// The state directory says which skill is this instance's. A coder home is
+// shared by every cockpit on the machine, and a throwaway stopping next to the
+// real instance may not take the running instance's skill with it.
+func removeManagedSkills(coders []coder.Coder, instance coder.CockpitInstance) {
+	for _, c := range coders {
+		if err := coder.RemoveManagedSkills(c.SkillRepository(), instance); err != nil {
+			log.Printf("coder %s: the cockpit git skill could not be removed: %v", c.ID(), err)
+		}
+	}
+}
+
+// cockpitServesFrom answers whether some cockpit is still listening on the
+// local API socket of a state directory. It is what keeps a second instance
+// from taking the managed skill away from the one that is running, and it is a
+// single connect with no retry on purpose: the answer is wanted at start, and
+// localapi.Dial waits out a budget for a cockpit that may still be coming up,
+// which is the opposite question.
+func cockpitServesFrom(stateDir string) bool {
+	conn, err := net.DialTimeout("unix", localapi.SocketPath(stateDir), time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
 // runningExecutable is the absolute path of this binary, handed to the
 // assistant so its inspection commands work regardless of PATH or of where
 // the server was started from. A binary replaced underneath a running process
@@ -595,9 +653,26 @@ func selectProviders(registry *coder.Registry) ([]coder.Coder, error) {
 // notifyResolver enriches notifications with the name, project, and target
 // page at ingest time, using the cached coder snapshots and shell list so a
 // burst of events never rescans coder state.
-func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, projects *project.Repository, backups *backup.Service, dockerService *docker.Service) notify.Resolver {
+func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, projects *project.Repository, backups *backup.Service, dockerService *docker.Service, askBroker *askpass.Broker) notify.Resolver {
 	return func(targetID string) notify.TargetInfo {
 		info := notify.TargetInfo{}
+		if notify.IsGitPromptTarget(targetID) {
+			project := notify.GitPromptTargetProject(targetID)
+			info.Name = "Git"
+			info.Project = project
+			// The dialog is app-wide, any signed-in page shows it, so the
+			// entry leads home instead of to a page that may be gone.
+			info.URL = "/projects"
+			// The entry is written while the question stands, so the project's
+			// running action is the one it is about; a question that vanished
+			// in between keeps the generic word.
+			actionName := "git"
+			if action := askBroker.Find(project); action != nil {
+				actionName = action.Name()
+			}
+			info.Title, info.Detail = gitPromptNews(actionName, project)
+			return info
+		}
 		if notify.IsDockerTarget(targetID) {
 			project := notify.DockerTargetProject(targetID)
 			info.Name = "Compose"
@@ -734,6 +809,14 @@ func backupNews(name string, ok bool) (title, detail string) {
 		title = "Backup ready."
 	}
 	return title, newsTarget(name, "")
+}
+
+// gitPromptNews is what a standing askpass question says: git is waiting for
+// an answer, and the line below names the action and the project it runs in.
+// The entry is marked read again the moment the question no longer stands,
+// however it went, so the title may speak in the present.
+func gitPromptNews(action, project string) (title, detail string) {
+	return "Git asks a question.", newsTarget(action, project)
 }
 
 // composeNews is what a finished docker compose run says: the command that

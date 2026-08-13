@@ -196,9 +196,50 @@ func (r *Repo) WorkingCopy(ctx context.Context) (string, bool, error) {
 
 // run executes one git call in the repository directory. args carry the
 // subcommand and its options, paths carry repository paths and always go behind
-// the "--" separator. There is no shell on this path, and the environment the
-// process gets differs from ours in the four values below.
+// the "--" separator. A non-zero exit comes back as an error in git's words,
+// which is what every reader and the short list of writes want; Exec is the
+// one caller that reads the exit code itself and goes to exec directly.
 func (r *Repo) run(ctx context.Context, args []string, paths []string) ([]byte, error) {
+	full := make([]string, 0, len(args)+len(paths)+3)
+	full = append(full, "-c", "core.quotepath=false")
+	full = append(full, args...)
+	if len(paths) > 0 {
+		full = append(full, "--")
+		full = append(full, paths...)
+	}
+	res, err := r.exec(ctx, args[0], full, 4096)
+	if err != nil {
+		return nil, err
+	}
+	if res.exitCode != 0 {
+		message := strings.TrimSpace(string(res.stderr))
+		if message == "" {
+			message = res.exitState
+		}
+		return nil, fmt.Errorf("git %s: %s", args[0], message)
+	}
+	return res.stdout, nil
+}
+
+// execResult is what one git process that ran to an end answered: both streams
+// and the exit code git decided on. exitState is the exec package's own
+// sentence about a non-zero end ("exit status 1", "signal: killed"), the
+// fallback for an error message when git wrote nothing to stderr.
+type execResult struct {
+	stdout    []byte
+	stderr    []byte
+	exitCode  int
+	exitState string
+}
+
+// exec starts one git process and is the one place the safety rules live.
+// argv travels as given; name is the word the failure sentences carry, because
+// argv may start with options. An exit code, whatever it is, is git deciding
+// something and therefore a result; the error covers the calls that produced
+// none, and every one of those carries ErrNoAnswer. There is no shell on this
+// path, and the environment the process gets differs from ours in the four
+// values below.
+func (r *Repo) exec(ctx context.Context, name string, argv []string, stderrCap int) (execResult, error) {
 	// With a prompt attached the deadline breathes instead of standing: the
 	// base budget as before, stretched to a human's window while a question
 	// is out and back to the full budget with every answer. Without one the
@@ -266,15 +307,7 @@ func (r *Repo) run(ctx context.Context, args []string, paths []string) ([]byte, 
 	}
 	defer cancel()
 
-	full := make([]string, 0, len(args)+len(paths)+3)
-	full = append(full, "-c", "core.quotepath=false")
-	full = append(full, args...)
-	if len(paths) > 0 {
-		full = append(full, "--")
-		full = append(full, paths...)
-	}
-
-	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd := exec.CommandContext(ctx, "git", argv...)
 	cmd.Dir = r.dir
 	// os/exec keeps the last value of a duplicated key, so these win over
 	// inherited ones. Without the first a status poll can take the index lock
@@ -315,7 +348,7 @@ func (r *Repo) run(ctx context.Context, args []string, paths []string) ([]byte, 
 	cmd.WaitDelay = waitDelay
 	killsWholeGroup(cmd)
 	out := &cappedBuffer{max: maxOutput}
-	errOut := &cappedBuffer{max: 4096}
+	errOut := &cappedBuffer{max: stderrCap}
 	cmd.Stdout = out
 	cmd.Stderr = errOut
 	// A survivor holding the pipes past the grace is not git failing: the
@@ -326,9 +359,9 @@ func (r *Repo) run(ctx context.Context, args []string, paths []string) ([]byte, 
 		if message != "" {
 			message = ": " + message
 		}
-		// Three ways to fail, and only the last one is git deciding
+		// Three ways to produce no answer, and none of them is git deciding
 		// something. "signal: killed" names the mechanism and not the
-		// reason, so each of the other two says its own, and what git wrote
+		// reason, so each of the first two says its own, and what git wrote
 		// before it died still travels along.
 		var watchdog deadlineCause
 		switch {
@@ -336,27 +369,29 @@ func (r *Repo) run(ctx context.Context, args []string, paths []string) ([]byte, 
 			// A breathing deadline ran out. It names the budget it was armed
 			// with, which is the action's own or a person's window while a
 			// question stood, and never the other one.
-			return nil, fmt.Errorf("git %s: %w within %s%s", args[0], ErrNoAnswer, watchdog.budget, message)
+			return execResult{}, fmt.Errorf("git %s: %w within %s%s", name, ErrNoAnswer, watchdog.budget, message)
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			return nil, fmt.Errorf("git %s: %w within %s%s", args[0], ErrNoAnswer, r.timeout, message)
+			return execResult{}, fmt.Errorf("git %s: %w within %s%s", name, ErrNoAnswer, r.timeout, message)
 		case ctx.Err() != nil:
 			// The deadline still stood, so somebody dropped this call: the
 			// server is shutting down, or a caller that hangs on a request
 			// lost it. Naming the timeout here would be a lie.
-			return nil, fmt.Errorf("git %s: %w, the call was cancelled%s", args[0], ErrNoAnswer, message)
+			return execResult{}, fmt.Errorf("git %s: %w, the call was cancelled%s", name, ErrNoAnswer, message)
 		}
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) {
 			// The process never ran: git is not on the path, the directory
 			// is gone, the fork failed. Nothing here is about the repository.
-			return nil, fmt.Errorf("git %s: %w: %s", args[0], ErrNoAnswer, err)
+			return execResult{}, fmt.Errorf("git %s: %w: %s", name, ErrNoAnswer, err)
 		}
-		if message == "" {
-			message = ": " + err.Error()
-		}
-		return nil, fmt.Errorf("git %s%s", args[0], message)
+		return execResult{
+			stdout:    out.buf.Bytes(),
+			stderr:    errOut.buf.Bytes(),
+			exitCode:  exit.ExitCode(),
+			exitState: exit.Error(),
+		}, nil
 	}
-	return out.buf.Bytes(), nil
+	return execResult{stdout: out.buf.Bytes(), stderr: errOut.buf.Bytes()}, nil
 }
 
 // cappedBuffer keeps at most max bytes and swallows the rest. It keeps

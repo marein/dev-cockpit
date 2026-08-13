@@ -390,6 +390,146 @@ test. Update this file when a convention changes.
   fetch are deliberately not on it. None of this reaches a coder on the
   command line: git's `index.lock` is the only thing between the two, and
   that is on purpose.
+- **`dev-cockpit git` is a proxy and decides nothing.** A coder in a terminal
+  cannot answer an ssh passphrase, and the passphrase has no business in a
+  coder session either, so the command hands the whole line to the running
+  cockpit (`POST /projects/:name/git`), which runs it in the project's
+  working copy with the askpass bridge attached. It is deliberately generic:
+  `git.Exec` takes the arguments **unchanged**, injects not even
+  `core.quotepath` (the one `-c` every other call carries, which is why
+  `run` builds its argv on top of `exec` and `Exec` goes to `exec`
+  directly), and answers both streams plus the exit code, which travel back
+  base64 in a 200 and out of the CLI onto its own streams and its own exit
+  status. **The one thing read out of the arguments before they travel** is
+  their shape (`git.CheckProxyArgs`): the git subcommand comes first and its
+  own options behind it, and the options of git itself, everything that would
+  stand in front of a subcommand, are not proxied. That is where the whole
+  danger sits and none of it is needed here, `-c core.sshCommand=…` and
+  `-c credential.helper=…` point git at a program of the caller's choosing
+  which then inherits the bridge environment, `--exec-path` moves where git
+  finds its own subcommands, `-C` and `--git-dir` move the call out of the
+  working copy the dialog names, and the first word is what the dialog shows as
+  this server's own truth (`git.Subcommand`, which therefore reads the first
+  argument and nothing behind it: walking past an option cannot tell an option
+  from its value). Refusing the *position* is what makes that complete, every
+  one of them is only valid in front of a subcommand. Behind it only
+  `--upload-pack` and `--receive-pack` are named, the transport's own program,
+  which reaches a local process through a `file:` remote. **That is the honest
+  bound**: it is what the cockpit accepts, and no wall against a coder that
+  means harm. A coder runs under the same user account as the server, so it can
+  read the bridge token out of the git child's environment in `/proc` and ask
+  the browser whatever it likes, and a repository it can write carries hooks
+  that run on push. The account is the trust boundary; what this path is for is
+  that the passphrase never travels into a coder session.
+  A non-zero exit is git deciding something and therefore a result;
+  the error case is the runner's own `ErrNoAnswer` alone, which is what a
+  refused or timed out question ends as, and it reaches the caller as a
+  failing command with the cockpit's sentence rather than a hang. Cancel is
+  the case that needs help: it denies the helper, so git fails in *its* words
+  about a key it could not use, and `cancelNote` appends the honest half to
+  stderr the way `promptRefusal` appends it to the editor's errors. It takes
+  no `gitWrites` lock on purpose, a proxied call is a coder's git and the
+  `index.lock` rule above is the whole arrangement between them; what it does
+  take is the bridge, so two dialogs of one scope can never interleave, and
+  that refusal reads like the editor's. The route stays off the editor group,
+  it is no editor action and must not count as one for the language server
+  lifetime.
+  **It is a proxy and no project surface.** One path, `POST /git`, with the
+  caller's own working directory in the body and no project anywhere: naming
+  a project would be a second way to say where the call runs, and a
+  `--projects-dir` on the caller would be a second copy of a value only the
+  server is authoritative for, which is exactly where the two disagreed the
+  moment one of them spelled it `~/projects`. git runs in that directory,
+  whether or not it lies under the projects root: a checkout in `/tmp` is an
+  ordinary thing to have, and refusing it would only send somebody back to the
+  plain git that cannot ask for the passphrase. That this is safe rests on
+  `CheckProxyArgs` alone: with `-C`, `-c` and `--git-dir` refused, the working
+  directory is the only thing that decides where git runs, so the dialog can
+  never name one place while the call runs in another. What was once a project
+  is now a **scope** (`gitProxyScope`), and it is what the dialog label, the
+  one-question-at-a-time bridge and the notification target hang on: the
+  project name inside a project, because that is what a person reads, and the
+  absolute path outside one. The two cannot collide, a project name is a
+  single segment and a path scope starts with a separator. The editor's git
+  surface is untouched by all of this and stays project bound. **The question is dropped when its caller is**
+  (`endWhenCallerGone`): a coder that pressed Ctrl-C leaves a question nobody
+  can answer for, so the request going away ends the action, which denies the
+  helper and frees the project's bridge instead of holding it for the two
+  minutes a person would have had. Only the question, not the operation, git
+  runs on its own context to its end like every write. The editor's routes do
+  the opposite on purpose, their dialog is app-wide and another device may
+  still answer it.
+  **A proxied question and an editor question are two different questions**,
+  and `askpass.Question.External` is the one fact that tells them apart, set
+  only by the proxy (`BeginCommand`, `promptActionCommand`). It is its own
+  field and not read off `Command` below, or the policy would ride on a
+  rendering detail: the day a second surface in the app wants to show what it
+  is about to run, setting `Command` would turn the push channels on for it.
+  Two things hang on it, both deliberately absent from the editor's own git
+  surface. The dialog **shows** `Command` and `Dir`, as the plain monospace
+  block the compose run output uses (`cwd:` then the command), because whoever
+  answers a passphrase here is answering for a caller they cannot see, a
+  terminal or a coding agent, and has to be able to read the whole picture: the
+  directory is half of it, the same `git push` means different things in two
+  checkouts of one repository, and the caller picked its project through a
+  working directory nobody in the browser can see. An argument that is not a
+  plain word is quoted (`commandLine`, `readableArg`), which is what keeps a
+  line break inside an argument from writing its own `cwd:` and `$ git …` lines
+  into a block that is rendered line by line; a runaway line is cut
+  (`maxCommandLine`) and never hides the subcommand, which stands first. It is
+  text to read and is never parsed back. And the question **leaves the app**:
+  it becomes the `gitprompt:<project>` notification and therefore rides the
+  push channels, which is the only way a question reaches somebody when the
+  call came from a terminal and no page is open. An editor action is the
+  opposite case, somebody started it on a page and that page is showing the
+  dialog, so it gets neither: news would ring for what is already on screen.
+  Which question holds an entry is decided **once, here**: the server hands the
+  target out with the question (`gitPromptView`), the client only reads it.
+  Deciding it again in the browser would be this rule written a second time in
+  another language, next to a prefix that only exists in Go.
+  `reconcileGitPromptNews` does the reading and the writing under one lock:
+  outside it, two hooks firing together (one for a parked question, one for the
+  answer taking it away) can land the entry after the clear, and the bell would
+  claim a question that no longer stands, forever.
+- **The cockpit writes one skill, keeps it current, and takes it away again.**
+  The coder side of the
+  proxy is not documentation somebody has to copy into an AGENTS.md: every
+  installed coder gets `dev-cockpit-git` written into its global skill
+  directory at start (`coder.EnsureManagedSkills`), **rendered from the
+  running configuration** the way the assistant's instructions are, so the
+  text carries this instance's own binary path, `--state-dir` and
+  `--projects-dir`, and changed start flags reach every coder with the next
+  start. An unchanged skill writes nothing, a tampered one is rewritten. The
+  stop removes it again (`RemoveManagedSkills`, from the signal handler before
+  the language servers close), because the skill points a coder at the local
+  API socket of a running instance: one left behind would send every coder
+  down a path that cannot answer. That is safe precisely because the skill is
+  rendered state and nobody's configuration, and it is not the only thing
+  keeping the disk clean, a SIGKILL and the self-update's exec both walk past
+  it and are covered by the start rewriting it. Removing what is not there is
+  no error.
+  **What it may write over is written in the file, never derived from the
+  name.** The text carries `managedSkillMark` and an owner line naming the
+  instance's state directory, and both are read back before anything is
+  touched. Somebody's own skill under that name has neither and is left exactly
+  as it is, with a log line saying so: taking it over would rename its
+  directory, replace its text, and the stop would then `RemoveAll` the folder
+  with everything else in it. A copy somebody edited still carries the mark and
+  is rewritten, which is what "kept current" means. The owner line is the
+  second slot problem: **a coder home is shared by every cockpit on the
+  machine** while the skill directory is one slot, so a throwaway started
+  beside the real instance would otherwise point every coder at its own socket
+  and delete the skill when it stops. It writes only when the owner is not
+  answering any more (`CockpitInstance.Running`, one connect on the owner's
+  local API socket), which is also what tells "another cockpit is running right
+  now" from "this same cockpit restarted with a different `--state-dir`", and
+  it removes only its own. Its
+  description names the operations and the condition, a passphrased key,
+  because that is what the coder matches a task against. `coder.IsManagedSkill`
+  is the marker: the skills list renders it locked with the note that the
+  cockpit manages it, and edit, save and delete refuse it (`managedSkillNote`),
+  including under the name another skill tries to take. A coder whose home
+  refuses the write keeps running, the skill is help and no requirement.
 - **Everything git cannot attribute is an answer, not a failure.** A repository
   without a first commit, a file git never heard of, a path that is not on the
   disk any more: `Blame` answers each of them empty with a 200, and the unborn
