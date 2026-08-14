@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,6 +37,19 @@ func cloneOf(t *testing.T, remote string) string {
 	runGit(t, work, "config", "user.name", "t2")
 	runGit(t, work, "config", "commit.gpgsign", "false")
 	return work
+}
+
+// gitConfig reads one configuration value, empty when it is not set at all:
+// what a refused push must not have written is exactly the absent case.
+func gitConfig(t *testing.T, dir, key string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	cmd := exec.Command("git", "config", "--get", key)
+	cmd.Dir = dir
+	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out))
 }
 
 func headOf(t *testing.T, dir string) string {
@@ -76,6 +90,135 @@ func TestPushSendsTheBranchToItsUpstream(t *testing.T) {
 	}
 	if strings.TrimSpace(string(out)) != "2" {
 		t.Fatalf("the upstream holds %s commits", strings.TrimSpace(string(out)))
+	}
+}
+
+// A branch the sheet just created has no upstream, and git refuses that push
+// with the line about setting one. The push sets it: the branch lands in the
+// bare repository, the configuration says where it came from, and every push
+// after it is an ordinary one.
+func TestPushSetsTheUpstreamOfANewBranch(t *testing.T) {
+	work, remote := remotePair(t)
+	runGit(t, work, "switch", "-qc", "feature")
+	writeAt(t, work, "f.txt", "f\n")
+	if _, err := New(work).Commit(context.Background(), "feature", []string{"f.txt"}, false); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	if err := New(work).Push(context.Background(), false); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
+	if got := gitOut(t, remote, "rev-parse", "refs/heads/feature"); got != headOf(t, work) {
+		t.Fatalf("the branch did not arrive: %s", got)
+	}
+	if got := gitConfig(t, work, "branch.feature.remote"); got != "origin" {
+		t.Fatalf("branch.feature.remote is %q", got)
+	}
+	if got := gitConfig(t, work, "branch.feature.merge"); got != "refs/heads/feature" {
+		t.Fatalf("branch.feature.merge is %q", got)
+	}
+
+	writeAt(t, work, "f.txt", "f2\n")
+	if _, err := New(work).Commit(context.Background(), "second", []string{"f.txt"}, false); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := New(work).Push(context.Background(), false); err != nil {
+		t.Fatalf("the second push: %v", err)
+	}
+	if got := gitOut(t, remote, "rev-parse", "refs/heads/feature"); got != headOf(t, work) {
+		t.Fatalf("the second push did not arrive: %s", got)
+	}
+}
+
+// The upstream is set where there is none and nowhere else, so what the two
+// cases put on the command line is the whole test: a branch that has one
+// pushes where it is configured to, and nothing of ours is added to that call.
+func TestPushSetsAnUpstreamOnlyWhereThereIsNone(t *testing.T) {
+	pushArgs := func(t *testing.T, upstream string) string {
+		t.Helper()
+		dir := t.TempDir()
+		args := filepath.Join(dir, "args")
+		// A git that answers the two reads this path makes and writes down how
+		// the push was called. The two leading arguments are the -c
+		// core.quotepath=false every call carries.
+		fakeGit(t, `shift 2
+case "$1" in
+  status) printf '# branch.head feature\000`+upstream+`' ;;
+  remote) echo origin ;;
+  push) echo "$@" > `+args+` ;;
+esac
+`)
+
+		if err := New(dir).Push(context.Background(), false); err != nil {
+			t.Fatalf("push: %v", err)
+		}
+		out, err := os.ReadFile(args)
+		if err != nil {
+			t.Fatalf("read the arguments: %v", err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	if got := pushArgs(t, ""); got != "push -u origin HEAD" {
+		t.Fatalf("a branch without an upstream must get one: %q", got)
+	}
+	if got := pushArgs(t, `# branch.upstream origin/feature\000`); got != "push" {
+		t.Fatalf("a branch that has an upstream pushes as it always did: %q", got)
+	}
+}
+
+// Which remote a new branch belongs on is a decision about where somebody's
+// work goes, so several remotes without an origin among them are left to git,
+// and a refused push has written nothing.
+func TestPushLeavesAnAmbiguousRemoteToGit(t *testing.T) {
+	work, remote := remotePair(t)
+	runGit(t, work, "remote", "rename", "origin", "first")
+	runGit(t, work, "remote", "add", "second", t.TempDir())
+	runGit(t, work, "switch", "-qc", "feature")
+	writeAt(t, work, "f.txt", "f\n")
+	if _, err := New(work).Commit(context.Background(), "feature", []string{"f.txt"}, false); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	if err := New(work).Push(context.Background(), false); err == nil {
+		t.Fatal("a branch without an upstream and without one remote to name must be refused")
+	}
+	if got := gitConfig(t, work, "branch.feature.remote"); got != "" {
+		t.Fatalf("the refused push configured %q", got)
+	}
+	if got := gitOut(t, remote, "rev-list", "--count", "--all"); got != "1" {
+		t.Fatalf("the refused push moved the remote: %s commits", got)
+	}
+
+	// origin among several is the one that is not a guess.
+	runGit(t, work, "remote", "add", "origin", remote)
+	if err := New(work).Push(context.Background(), false); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if got := gitOut(t, remote, "rev-parse", "refs/heads/feature"); got != headOf(t, work) {
+		t.Fatalf("the branch did not arrive: %s", got)
+	}
+	if got := gitConfig(t, work, "branch.feature.remote"); got != "origin" {
+		t.Fatalf("branch.feature.remote is %q", got)
+	}
+}
+
+// A detached HEAD is no branch, so there is nothing to configure and nothing
+// is: git refuses it in its own words like it always did.
+func TestPushOnADetachedHeadSetsNothing(t *testing.T) {
+	work, remote := remotePair(t)
+	runGit(t, work, "checkout", "-q", "--detach")
+	before := gitOut(t, work, "config", "--local", "--list")
+
+	if err := New(work).Push(context.Background(), false); err == nil {
+		t.Fatal("a detached HEAD must be refused")
+	}
+	if got := gitOut(t, work, "config", "--local", "--list"); got != before {
+		t.Fatalf("the refused push wrote configuration:\n%s", got)
+	}
+	if got := gitOut(t, remote, "rev-list", "--count", "--all"); got != "1" {
+		t.Fatalf("the refused push moved the remote: %s commits", got)
 	}
 }
 

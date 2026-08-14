@@ -1,11 +1,11 @@
 package git
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -45,10 +45,13 @@ func (r *Repo) Clone(ctx context.Context, url string) error {
 
 // Push sends the current branch to its upstream: where it goes, and whether
 // it may, is the repository's own configuration, and what git refuses comes
-// back in git's words, a missing upstream included. force is
-// --force-with-lease and nothing stronger: it overwrites an upstream that
-// moved away, and still refuses when the remote holds work this repository
-// has never seen.
+// back in git's words. The one thing it answers itself is the branch that has
+// no upstream yet, which is every branch the sheet's New branch just created:
+// git refuses that one with the line about setting one, and asking somebody
+// who has just tapped Push to go to a command line for it is a dead end, so
+// the push sets it on the way. force is --force-with-lease and nothing
+// stronger: it overwrites an upstream that moved away, and still refuses when
+// the remote holds work this repository has never seen.
 func (r *Repo) Push(ctx context.Context, force bool) error {
 	w := *r
 	w.timeout = remoteTimeout
@@ -56,8 +59,47 @@ func (r *Repo) Push(ctx context.Context, force bool) error {
 	if force {
 		args = append(args, "--force-with-lease")
 	}
+	// The reading happens on the ordinary read budget and not on the push's,
+	// it is a local call; the push itself keeps the minutes it needs.
+	if remote, ok := r.upstreamRemote(ctx); ok {
+		args = append(args, "-u", remote, "HEAD")
+	}
 	_, err := w.run(ctx, args, nil)
 	return err
+}
+
+// upstreamRemote names the remote a push has to set the current branch's
+// upstream on, and says whether there is one to name at all.
+//
+// Whether an upstream stands is read out of the status, the same answer the
+// statusbar shows, and not out of @{upstream}: a branch whose upstream is
+// configured while the remote tracking ref is gone still pushes where it is
+// configured to, and the status header says so where the ref lookup would
+// not. Three states therefore go to git exactly as they always did, each for
+// its own reason: a branch that has an upstream pushes there, a detached HEAD
+// has no branch to configure anything on, and a status git never answered
+// knows nothing, which is not the same as knowing there is no upstream.
+//
+// The remote has to be unambiguous, the single configured one or origin among
+// several. Picking one of several strangers is a decision about where
+// somebody's work goes, and this call does not make it: the push then runs
+// plain and git's own refusal stands.
+func (r *Repo) upstreamRemote(ctx context.Context) (string, bool) {
+	status, err := r.run(ctx, statusArgs, nil)
+	if err != nil {
+		return "", false
+	}
+	if branch := parseBranch(status); branch.Detached || branch.Name == "" || branch.Upstream != "" {
+		return "", false
+	}
+	remotes := r.remotes(ctx)
+	if len(remotes) == 1 {
+		return remotes[0], true
+	}
+	if slices.Contains(remotes, "origin") {
+		return "origin", true
+	}
+	return "", false
 }
 
 // Fetch brings what the remotes have up to date, which is what the ahead and
@@ -118,8 +160,24 @@ func (r *Repo) Pull(ctx context.Context) error {
 	return err
 }
 
+// remotes lists the configured remotes, in the order git names them. A call
+// that failed answers none: nothing here is worth a second opinion, the
+// callers either fetch nothing or leave the push to git.
+func (r *Repo) remotes(ctx context.Context) []string {
+	out, err := r.run(ctx, []string{"remote"}, nil)
+	if err != nil {
+		return nil
+	}
+	names := []string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 // hasRemote answers whether any remote is configured at all.
 func (r *Repo) hasRemote(ctx context.Context) bool {
-	out, err := r.run(ctx, []string{"remote"}, nil)
-	return err == nil && len(bytes.TrimSpace(out)) > 0
+	return len(r.remotes(ctx)) > 0
 }

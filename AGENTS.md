@@ -137,7 +137,11 @@ test. Update this file when a convention changes.
   could disarm. A directory without a repository answers "no repo" and never
   an error; only `Changes` keeps "git could not be asked" apart from it, so
   one stalled git does not put the clone where the repository's actions
-  were. The writes are `git.Commit`, `git.Push` (plain or force-with-lease),
+  were. The writes are `git.Commit`, `git.Push` (plain or force-with-lease,
+  and `--set-upstream` where the branch has none, to the repository's single
+  remote or to `origin` among several, because a branch created here would
+  otherwise be refused with git's line about setting one; several remotes
+  without an `origin` are a guess this does not make and stay git's refusal),
   `git.Fetch`, the fast forward `git.Pull`, `git.Checkout`,
   `git.CreateBranch`, `git.Clone` and `git.Revert`, the one deliberate
   discard: one path back to HEAD, staged edits included, found by asking

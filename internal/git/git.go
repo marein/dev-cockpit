@@ -1,6 +1,7 @@
 // Package git reads what a repository says about a project's working copy,
 // and writes it in a deliberately short list of places: Commit, Push (plain,
-// or force-with-lease), Fetch, the fast forward Pull, the two branch moves
+// or force-with-lease, setting the upstream where the branch has none),
+// Fetch, the fast forward Pull, the two branch moves
 // Checkout and CreateBranch, Clone into a directory that holds nothing
 // yet, and Revert, which takes one path back to HEAD. Staging, stashing,
 // merging and everything else that rewrites a repository stays with a coder
