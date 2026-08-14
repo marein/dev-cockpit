@@ -3,17 +3,23 @@ package editorintelligence
 import (
 	"encoding/json"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 )
 
-// Location is one navigation target inside the project, in editor
-// coordinates: Path is project relative, Line is 1-based, Character a
-// 0-based UTF-16 offset into that line, both as the server reported them.
+// Location is one navigation target in editor coordinates: Line is 1-based,
+// Character a 0-based UTF-16 offset into that line, both as the server
+// reported them. Path is project relative, or the absolute path of a file
+// under one of the language server's own source roots, which External
+// marks: a dependency's downloaded sources, the standard library, a stub.
+// Those open read only and through a route of their own, so a client can
+// never confuse one with a file of the project.
 type Location struct {
 	Path      string `json:"path"`
 	Line      int    `json:"line"`
 	Character int    `json:"character"`
+	External  bool   `json:"external,omitempty"`
 }
 
 // lspPosition, lspRange and lspLocation are the LSP wire shapes.
@@ -83,26 +89,30 @@ func decodeLocations(raw json.RawMessage) ([]lspLocation, error) {
 	return locs, nil
 }
 
-// projectLocations maps the server's URIs onto project relative paths,
-// deduplicated in server order. Targets outside the project root (a stub
-// inside the server's own install, a module cache) cannot be opened by this
-// editor and are only counted.
-func projectLocations(rootURI string, raw []lspLocation) (locs []Location, outside int) {
+// mapLocations maps the server's URIs onto the paths the editor opens,
+// deduplicated in server order: project relative inside the project root,
+// absolute and marked external inside one of the given source roots, where
+// the dependency sources, the standard library and the stubs live. Whatever
+// lies in neither cannot be opened by this editor and is only counted.
+func mapLocations(rootURI string, raw []lspLocation, roots []SourceRoot) (locs []Location, outside int) {
 	root := uriPath(rootURI)
 	locs = []Location{}
 	seen := map[Location]bool{}
 	for _, l := range raw {
 		target := uriPath(l.URI)
-		if target == "" || root == "" {
+		if target == "" {
 			outside++
 			continue
 		}
-		rel, ok := strings.CutPrefix(target, root+"/")
-		if !ok || rel == "" {
+		loc := Location{Line: l.Range.Start.Line + 1, Character: l.Range.Start.Character}
+		if rel, ok := strings.CutPrefix(target, root+"/"); root != "" && ok && rel != "" {
+			loc.Path = rel
+		} else if _, ok := FindSourceRoot(roots, target); ok {
+			loc.Path, loc.External = target, true
+		} else {
 			outside++
 			continue
 		}
-		loc := Location{Path: rel, Line: l.Range.Start.Line + 1, Character: l.Range.Start.Character}
 		if seen[loc] {
 			continue
 		}
@@ -112,6 +122,19 @@ func projectLocations(rootURI string, raw []lspLocation) (locs []Location, outsi
 	return locs, outside
 }
 
+// documentPath is the absolute path of one document the editor addresses:
+// a file of the project hangs under the workspace root, a source outside it
+// (a dependency, the standard library, a stub) is already absolute and is
+// the same path inside the container and out, which is what the cache bind
+// is for. Every place that turns an editor path into a file goes through
+// here, so there is one notion of a path and not two.
+func documentPath(root, p string) string {
+	if path.IsAbs(p) {
+		return p
+	}
+	return root + "/" + p
+}
+
 // atRequestPosition reports whether one of the answered ranges covers the
 // asked position in the asked document, which is what "the cursor already
 // sits on the declaration" means for a definition answer. The comparison is
@@ -119,10 +142,9 @@ func projectLocations(rootURI string, raw []lspLocation) (locs []Location, outsi
 // declaration body, docblock included, so a method's name line lies well
 // inside the range and never on its first line.
 func atRequestPosition(rootURI string, raw []lspLocation, req Request) bool {
-	root := uriPath(rootURI)
+	asked := documentPath(uriPath(rootURI), req.Path)
 	for _, l := range raw {
-		rel, ok := strings.CutPrefix(uriPath(l.URI), root+"/")
-		if !ok || rel != req.Path {
+		if uriPath(l.URI) != asked {
 			continue
 		}
 		r := l.Range
@@ -150,13 +172,18 @@ func uriPath(uri string) string {
 }
 
 // sortReferences orders a usages list for the panel: the file the question
-// was asked in first, then the other files alphabetically, each file top to
-// bottom.
+// was asked in first, then the other files of the project alphabetically,
+// and the ones outside it last, each file top to bottom. A usage in a
+// dependency is a usage in somebody else's code and belongs behind the
+// project's own.
 func sortReferences(locs []Location, activePath string) {
 	sort.SliceStable(locs, func(i, j int) bool {
 		a, b := locs[i], locs[j]
 		if (a.Path == activePath) != (b.Path == activePath) {
 			return a.Path == activePath
+		}
+		if a.External != b.External {
+			return b.External
 		}
 		if a.Path != b.Path {
 			return a.Path < b.Path

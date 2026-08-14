@@ -61,12 +61,28 @@ func (s *Server) lspDockerHost() string {
 	return s.docker.State().Host
 }
 
+// lspCacheRoot is where the language servers' per project cache
+// directories live, under this instance's state directory.
+func (s *Server) lspCacheRoot() string {
+	return editorintelligence.CacheRoot(s.cfg.StateDir)
+}
+
+// lspLauncher is the way a server runs, whatever the settings say about
+// the language. The routes that start a server ask lspProfileLauncher,
+// which answers nil for a language that is off; reading a file back out of
+// a server's own source directories asks this one, because a tab opened
+// before the switch is still on the screen and the paths it may read are
+// the same either way.
+func (s *Server) lspLauncher() editorintelligence.Launcher {
+	return editorintelligence.DockerLauncher(s.lspCacheRoot(), s.lspDockerHost)
+}
+
 // lspProfileOff reports whether the language's navigation is off right
 // now, explicitly or as the end of the automatic chain. The automatic
 // default needs both the reachable daemon and the Docker launcher's own
 // detection, the docker client; without them it is off.
 func (s *Server) lspProfileOff(p *editorintelligence.Profile) bool {
-	dockerOK := s.docker.State().Available && editorintelligence.DockerLauncher(s.lspDockerHost).Detect(p).Found
+	dockerOK := s.docker.State().Available && s.lspLauncher().Detect(p).Found
 	return resolveLSPMode(s.settings.Get(editorLSPServerKey(p.ID)), p.Command[0], dockerOK)
 }
 
@@ -76,7 +92,7 @@ func (s *Server) lspProfileLauncher(p *editorintelligence.Profile) editorintelli
 	if s.lspProfileOff(p) {
 		return nil
 	}
-	return editorintelligence.DockerLauncher(s.lspDockerHost)
+	return s.lspLauncher()
 }
 
 // editorSettings are the effective values, defaults filled in. Whether the

@@ -561,8 +561,12 @@ func (c *lspConn) closeDocument(client, rel string) {
 	})
 }
 
-func (c *lspConn) docURI(rel string) string {
-	return fileURI(c.rootPath + "/" + rel)
+// docURI is the URI of one document the editor addresses, project relative
+// or a source outside the project, see documentPath. A file the workspace
+// does not hold is one the server knows from its own index, and the paths
+// agree inside the container and out, which is what the cache bind is for.
+func (c *lspConn) docURI(p string) string {
+	return fileURI(documentPath(c.rootPath, p))
 }
 
 // startLocations sends one navigation request. method is

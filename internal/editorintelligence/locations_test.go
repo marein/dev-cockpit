@@ -32,24 +32,47 @@ func TestDecodeLocationsShapes(t *testing.T) {
 	}
 }
 
-func TestProjectLocations(t *testing.T) {
+func TestMapLocations(t *testing.T) {
+	roots := []SourceRoot{{Path: "/cache/mod"}, {Path: "/usr/lib/stubs", Image: "img:tag"}}
 	raw := []lspLocation{
 		{URI: "file:///r/proj/a.php", Range: lspRange{Start: lspPosition{Line: 2, Character: 4}}},
 		// A duplicate collapses.
 		{URI: "file:///r/proj/a.php", Range: lspRange{Start: lspPosition{Line: 2, Character: 4}}},
 		// Percent encoding unescapes.
 		{URI: "file:///r/proj/sp%20ace.php", Range: lspRange{Start: lspPosition{Line: 0, Character: 0}}},
-		// Outside the project and a sibling with the root as its name
-		// prefix both drop.
-		{URI: "file:///usr/lib/stubs/str.php"},
+		// Under a source root: openable, absolute and marked, whether the
+		// root lies on this host or inside an image.
+		{URI: "file:///cache/mod/example.com/dep@v1.2.3/dep.go", Range: lspRange{Start: lspPosition{Line: 9}}},
+		{URI: "file:///usr/lib/stubs/str.php", Range: lspRange{Start: lspPosition{Line: 1}}},
+		// Neither in the project nor under a root, and a sibling with a
+		// root's name as its prefix: both only counted.
+		{URI: "file:///etc/passwd"},
 		{URI: "file:///r/project-b/x.php"},
+		{URI: "file:///cache/module/x.go"},
 	}
-	locs, outside := projectLocations("file:///r/proj", raw)
-	if outside != 2 {
+	locs, outside := mapLocations("file:///r/proj", raw, roots)
+	if outside != 3 {
 		t.Fatalf("outside = %d", outside)
 	}
-	if len(locs) != 2 || locs[0] != (Location{Path: "a.php", Line: 3, Character: 4}) || locs[1] != (Location{Path: "sp ace.php", Line: 1}) {
+	want := []Location{
+		{Path: "a.php", Line: 3, Character: 4},
+		{Path: "sp ace.php", Line: 1},
+		{Path: "/cache/mod/example.com/dep@v1.2.3/dep.go", Line: 10, External: true},
+		{Path: "/usr/lib/stubs/str.php", Line: 2, External: true},
+	}
+	if len(locs) != len(want) {
 		t.Fatalf("locs %+v", locs)
+	}
+	for i := range want {
+		if locs[i] != want[i] {
+			t.Fatalf("loc %d = %+v, want %+v", i, locs[i], want[i])
+		}
+	}
+	// Without roots the same answer stays what it was: counted, never
+	// opened.
+	locs, outside = mapLocations("file:///r/proj", raw, nil)
+	if len(locs) != 2 || outside != 5 {
+		t.Fatalf("no roots: %d locs, %d outside", len(locs), outside)
 	}
 }
 

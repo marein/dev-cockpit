@@ -11,6 +11,18 @@
 # two calls in use.go, the declaration in lib.go, and one location outside
 # the project root that the server must drop and count.
 #
+# Two files of the runner ask for a target outside the project instead, and
+# which one is read off the asked document, so the rules above stand
+# unchanged: from `deps.go` the definition lies in the module cache the
+# cockpit binds (GOMODCACHE, written into the container's environment; the
+# fake writes the dependency file there itself on the first handshake), from
+# `stdlib.go` it lies in the image, under the standard library root.
+#
+# The chain continues out of those files, which is what a lookup inside a
+# read only tab asks for: from the dependency in the module cache on into
+# the standard library, and from there back into the project, which is the
+# rule above answering for every other document.
+#
 # The workspace root steers the indexing announcement, which is what the
 # lifetime and indicator checks stand on. A file `.fake-lsp-slow` in the root
 # makes the fake announce a slow indexing (~3s) with percentage reports, or
@@ -63,6 +75,28 @@ def progress(kind, pct):
     send({"jsonrpc": "2.0", "method": "$/progress", "params": {"token": "work", "value": value}})
 
 
+# The dependency the fake pretends the project downloaded: it lies in the
+# module cache the cockpit binds at the same path inside and outside, which
+# is what makes the read route able to answer it at all.
+DEP_REL = "example.com/dep@v1.0.0/dep.go"
+DEP_TEXT = "package dep\n\n// Target is the definition in a dependency.\nfunc Target() {}\n"
+STDLIB_FILE = "/usr/local/go/src/fmt/print.go"
+
+
+def write_dependency():
+    modcache = os.environ.get("GOMODCACHE", "")
+    if not modcache:
+        return ""
+    path = os.path.join(modcache, DEP_REL)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as out:
+            out.write(DEP_TEXT)
+    except OSError:
+        return ""
+    return path
+
+
 def loc(uri, line, character, length):
     return {
         "uri": uri,
@@ -86,6 +120,7 @@ def slow_index(with_pct):
 def main():
     stdin = sys.stdin.buffer
     root = ""
+    dependency = ""
     while True:
         msg = read_frame(stdin)
         if msg is None:
@@ -93,6 +128,7 @@ def main():
         method = msg.get("method")
         if method == "initialize":
             root = (msg.get("params") or {}).get("rootUri") or ""
+            dependency = write_dependency()
             send({"jsonrpc": "2.0", "id": msg["id"], "result": {"capabilities": {}}})
             root_dir = root.replace("file://", "", 1)
             def restart_watch(where):
@@ -120,7 +156,15 @@ def main():
                 progress("end", None)
         elif method == "textDocument/definition":
             line = msg["params"]["position"]["line"]
-            result = None if line == 0 else [loc(root + "/lib.go", 2, 5, 11)]
+            asked = (msg["params"].get("textDocument") or {}).get("uri") or ""
+            if line == 0:
+                result = None
+            elif asked.endswith("/deps.go") and dependency:
+                result = [loc("file://" + dependency, 3, 5, 6)]
+            elif asked.endswith("/stdlib.go") or (dependency and asked.endswith(dependency)):
+                result = [loc("file://" + STDLIB_FILE, 3, 5, 7)]
+            else:
+                result = [loc(root + "/lib.go", 2, 5, 11)]
             send({"jsonrpc": "2.0", "id": msg["id"], "result": result})
         elif method == "textDocument/references":
             locs = [loc(root + "/use.go", 3, 1, 11)]

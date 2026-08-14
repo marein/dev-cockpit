@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -43,18 +44,44 @@ type editorLSPLocation struct {
 	Preview string `json:"preview,omitempty"`
 }
 
-// validLSPTarget checks the client id and resolves the path against the
-// project root, writing the JSON error itself when invalid.
-func (s *Server) validLSPTarget(c *gin.Context, root, client, path string) bool {
+// lspSourceRoot finds the source root holding an absolute path, over every
+// profile's roots, and the launcher that can read it. This is the one place
+// the allowlist is asked: the read route serves out of it and the
+// navigation routes let a path through by it, so a file the editor may open
+// and a file it may look a symbol up in are the same set by construction.
+func (s *Server) lspSourceRoot(project, target string) (editorintelligence.Launcher, editorintelligence.SourceRoot, bool) {
+	launcher := s.lspLauncher()
+	for _, profile := range editorintelligence.Profiles() {
+		if root, ok := editorintelligence.FindSourceRoot(launcher.SourceRoots(project, profile), target); ok {
+			return launcher, root, true
+		}
+	}
+	return nil, editorintelligence.SourceRoot{}, false
+}
+
+// validLSPTarget checks the client id and where the path may point. A path
+// of the project resolves under its root; an absolute one is a source
+// outside the project and has to lie in one of the language servers' own
+// source directories, which is what the cursor standing in a read only tab
+// means. Everything else is refused here, before any of it reaches a
+// server. The JSON error is written by this call.
+func (s *Server) validLSPTarget(c *gin.Context, p project.Project, client, target string) bool {
 	if client == "" || len(client) > maxLSPClientIDLength {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "A client id is required."})
 		return false
 	}
-	if path == "" {
+	if target == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "A file path is required."})
 		return false
 	}
-	if _, err := filesystem.ResolveUnder(root, path); err != nil {
+	if path.IsAbs(target) {
+		if _, _, ok := s.lspSourceRoot(p.Name, target); !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": editorintelligence.ErrNoSourceRoot.Error()})
+			return false
+		}
+		return true
+	}
+	if _, err := filesystem.ResolveUnder(p.Path, target); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return false
 	}
@@ -73,7 +100,7 @@ func (s *Server) editorLSPRequest(c *gin.Context) (project.Project, editorintell
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body."})
 		return project.Project{}, editorintelligence.Request{}, false
 	}
-	if !s.validLSPTarget(c, p.Path, req.Client, req.Path) {
+	if !s.validLSPTarget(c, p, req.Client, req.Path) {
 		return project.Project{}, editorintelligence.Request{}, false
 	}
 	// A language switched off in the settings answers a status instead of
@@ -101,6 +128,33 @@ func (s *Server) editorLSPRequest(c *gin.Context) (project.Project, editorintell
 		Line:        req.Position.Line,
 		Character:   req.Position.Character,
 	}, true
+}
+
+// handleEditorLSPSource answers the text of one file a navigation pointed
+// at outside the project: a dependency's downloaded sources, the standard
+// library, one of a server's stubs. Which paths those are is not the
+// caller's to say, it is the allowlist the launchers answer with
+// (SourceRoot), and a path under none of the roots is refused here rather
+// than read. The answer is text and never bytes, capped and binary checked
+// like every editor buffer, and it carries no version: nothing on this
+// route can be written back.
+func (s *Server) handleEditorLSPSource(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	target := c.Query("path")
+	launcher, root, ok := s.lspSourceRoot(p.Name, target)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": editorintelligence.ErrNoSourceRoot.Error()})
+		return
+	}
+	content, err := launcher.ReadSource(c.Request.Context(), root, target)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"path": target, "content": content, "readOnly": true})
 }
 
 // handleEditorLSPStatus answers which of the project's language servers are
@@ -290,13 +344,21 @@ func (s *Server) answerLSP(c *gin.Context, p project.Project, req editorintellig
 // The asked document's text comes from the request, it may be unsaved;
 // every other file is read from disk, and one that cannot be read (binary,
 // too large, gone) leaves the preview empty rather than failing the answer.
+// A location outside the project is read at its own absolute path, which
+// the service only ever hands out for a file under an allowed source root;
+// a tree that lives in an image and not on this host answers nothing here
+// and shows its path alone, no container is started for a preview line.
 func lspPreviews(root, activePath, activeContent string, locs []editorintelligence.Location) []editorLSPLocation {
 	lines := map[string][]string{activePath: strings.Split(activeContent, "\n")}
 	out := make([]editorLSPLocation, 0, len(locs))
 	for _, loc := range locs {
 		content, ok := lines[loc.Path]
 		if !ok {
-			text, _, err := filesystem.ReadFileText(root, loc.Path)
+			readRoot, rel := root, loc.Path
+			if loc.External {
+				readRoot, rel = filepath.Dir(loc.Path), filepath.Base(loc.Path)
+			}
+			text, _, err := filesystem.ReadFileText(readRoot, rel)
 			if err != nil {
 				content = nil
 			} else {
@@ -345,7 +407,7 @@ func (s *Server) handleEditorLSPClose(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body."})
 		return
 	}
-	if !s.validLSPTarget(c, p.Path, req.Client, req.Path) {
+	if !s.validLSPTarget(c, p, req.Client, req.Path) {
 		return
 	}
 	s.intel.CloseDocument(req.Client, p.Name, req.Path)
@@ -353,11 +415,11 @@ func (s *Server) handleEditorLSPClose(c *gin.Context) {
 }
 
 // closeProjectLSP takes a deleted project's language servers and their
-// per-project cache volumes down, the one teardown both delete paths
-// share: the close is the graceful protocol, the volume removal retries
-// in the background past a container still draining its exit.
+// per-project caches down, the one teardown both delete paths share: the
+// close is the graceful protocol, the cache removal retries in the
+// background past a container still draining its exit.
 func (s *Server) closeProjectLSP(project string) {
 	s.intel.CloseProject(project)
-	host := s.lspDockerHost()
-	go editorintelligence.RemoveProjectVolumes(project, host)
+	cacheRoot, host := s.lspCacheRoot(), s.lspDockerHost()
+	go editorintelligence.RemoveProjectCaches(project, cacheRoot, host)
 }

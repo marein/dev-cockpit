@@ -113,6 +113,10 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
       ["lib.go", "package lib\n\nfunc IntelTarget() {}\n"],
       ["use.go", "package lib\n\nfunc use() {\n\tIntelTarget()\n\tIntelTarget()\n}\n"],
       ["notes.txt", "IntelTarget is documented here.\n"],
+      // The two files whose lookups land outside the project, see the
+      // fake's contract: one in the bound module cache, one in the image.
+      ["deps.go", "package lib\n\nfunc useDep() {\n\tTarget()\n}\n"],
+      ["stdlib.go", "package lib\n\nfunc useStd() {\n\tPrintln()\n}\n"],
     ]) {
       await post("/create", { path });
       await post("/file", { path, content });
@@ -255,7 +259,147 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     assert(!(await page.$(".dc-context-menu")), "the surface claims no context menu");
   });
 
+  // ---- targets outside the project ------------------------------------------
+
+  const tabState = () => page.evaluate(() => {
+    const tab = document.querySelector('.editor-tab[aria-selected="true"]');
+    return {
+      path: tab?.dataset.path || "",
+      title: tab?.title || "",
+      locked: !!tab?.querySelector(".ti-lock"),
+      // Real visibility, never the attribute: a display utility and the
+      // attribute on one element is exactly where that lies.
+      readOnly: document.querySelector("[data-editor-readonly]").getClientRects().length > 0,
+      readOnlyTitle: document.querySelector("[data-editor-readonly]").title,
+      readOnlyPath: document.querySelector("[data-editor-readonly-path]").textContent,
+      text: [...document.querySelectorAll(".cm-line")].map((l) => l.textContent).join("\n"),
+    };
+  });
+
+  await run("a definition in a dependency opens read only, at its own path", async () => {
+    await openFile("deps.go");
+    await page.waitForFunction(() => [...document.querySelectorAll(".cm-line")].some((l) => l.textContent.includes("Target(")), null, { timeout: 10000 });
+    await ctrlClick("Target(", "Target");
+    await page.waitForFunction(() => (document.querySelector('.editor-tab[aria-selected="true"]')?.dataset.path || "").endsWith("/dep.go"), null, { timeout: 20000 });
+    const state = await tabState();
+    // The path is the module cache the cockpit binds, which is the whole
+    // point: the same path inside the container and out here.
+    assert(/\/editor-lsp\/dev-cockpit-gopls-[^/]+\/mod\/example\.com\/dep@v1\.0\.0\/dep\.go$/.test(state.path), `module cache path, got "${state.path}"`);
+    assert(state.locked, "the tab carries the lock");
+    assert(state.title.endsWith("· read only"), `the tab tooltip says read only, got "${state.title}"`);
+    assert(state.readOnly, "the statusbar says read only");
+    assert(state.readOnlyPath === "…/example.com/dep@v1.0.0/dep.go", `the statusbar says where it comes from, got "${state.readOnlyPath}"`);
+    assert(state.readOnlyTitle === state.path, `and carries the whole path, got "${state.readOnlyTitle}"`);
+    assert(state.text.includes("func Target() {}"), `the dependency's source is in the buffer, got "${state.text}"`);
+    const pos = await editorPos();
+    assert(/^4:6$/.test(pos), `cursor on the definition, got "${pos}"`);
+  });
+
+  await run("the read only buffer refuses typing and offers no save", async () => {
+    await page.click(".cm-content");
+    await page.keyboard.type("xxx");
+    await sleep(200);
+    const state = await page.evaluate(() => ({
+      text: [...document.querySelectorAll(".cm-line")].map((l) => l.textContent).join("\n"),
+      save: !document.querySelector("[data-editor-save]").hidden,
+      dirty: !!document.querySelector('.editor-tab[aria-selected="true"]')?.classList.contains("dirty"),
+    }));
+    assert(!state.text.includes("xxx"), `typing must not reach the buffer, got "${state.text}"`);
+    assert(!state.save, "no save button on a file that cannot be saved");
+    assert(!state.dirty, "a read only tab never goes dirty");
+  });
+
+  await run("its tab menu keeps the close entries and the path, nothing that writes", async () => {
+    await page.click('.editor-tab[aria-selected="true"]', { button: "right" });
+    await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+    const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((el) => el.textContent.trim()));
+    await page.keyboard.press("Escape");
+    assert(labels.join(",") === "Close,Close others,Close to the right,Close all,Copy path", `menu entries, got ${labels.join(",")}`);
+  });
+
+  await run("the read only tab survives a reload", async () => {
+    const before = await editorPath();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await L.dismissUpdate(page);
+    await page.waitForFunction((p) => [...document.querySelectorAll(".editor-tab")].some((t) => t.dataset.path === p), before, { timeout: 15000 });
+    await page.click(`.editor-tab[data-path="${before.replace(/["\\]/g, "\\$&")}"]`);
+    await page.waitForFunction((p) => document.querySelector('.editor-tab[aria-selected="true"]')?.dataset.path === p, before, { timeout: 10000 });
+    const state = await tabState();
+    assert(state.locked && state.readOnly, "it comes back read only");
+    assert(state.text.includes("func Target() {}"), "and with its content");
+  });
+
+  // The chain: the cursor stands in a file outside the project, and the
+  // lookup goes on from there, into the next file outside and back in.
+  await run("chain: a lookup inside a read only tab leads to the next file outside", async () => {
+    const from = await editorPath();
+    await ctrlClick("func Target", "Target");
+    await page.waitForFunction(() => document.querySelector('.editor-tab[aria-selected="true"]')?.dataset.path === "/usr/local/go/src/fmt/print.go", null, { timeout: 20000 });
+    const state = await tabState();
+    assert(state.locked && state.readOnly, `the second file outside opens read only, got ${JSON.stringify(state)}`);
+    assert(state.text.includes("func Println(a ...any) {}"), `its content is the image's, got "${state.text}"`);
+    assert(await page.evaluate((p) => [...document.querySelectorAll(".editor-tab")].some((t) => t.dataset.path === p), from), "the tab it came from stays open");
+    return `${from} → /usr/local/go/src/fmt/print.go`;
+  });
+
+  await run("chain: find usages from outside the project lists the project's own", async () => {
+    const pt = await wordPoint("func Println", "Println");
+    await page.mouse.click(pt.x, pt.y);
+    await page.keyboard.press("Shift+F12");
+    await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden
+      && document.querySelectorAll(".editor-quickopen-item").length >= 3, null, { timeout: 20000 });
+    const panel = await page.evaluate(() => ({
+      titles: [...document.querySelectorAll(".editor-quickopen-item")].map((r) => r.title),
+      note: [...document.querySelectorAll(".editor-quickopen-empty")].map((n) => n.textContent).join(" "),
+    }));
+    assert(panel.titles.join(",") === "lib.go:3,use.go:4,use.go:5", `rows of the project, got ${panel.titles.join(",")}`);
+    assert(panel.note.includes("1 more outside the project."), `the outside note stands, got "${panel.note}"`);
+  });
+
+  await run("chain: a row of the project jumps back into it, and the marks go", async () => {
+    await page.click('.editor-quickopen-item[title="lib.go:3"]');
+    await page.waitForFunction(() => document.querySelector('.editor-tab[aria-selected="true"]')?.dataset.path === "lib.go", null, { timeout: 15000 });
+    const state = await tabState();
+    assert(!state.locked && !state.readOnly, `a file of the project carries neither mark, got ${JSON.stringify(state)}`);
+    assert(/^3:6$/.test(await editorPos()), `the cursor lands on the declaration, got "${await editorPos()}"`);
+  });
+
+  await run("a definition in the standard library is read out of the image", async () => {
+    await openFile("stdlib.go");
+    await page.waitForFunction(() => [...document.querySelectorAll(".cm-line")].some((l) => l.textContent.includes("Println(")), null, { timeout: 10000 });
+    await ctrlClick("Println(", "Println");
+    await page.waitForFunction(() => document.querySelector('.editor-tab[aria-selected="true"]')?.dataset.path === "/usr/local/go/src/fmt/print.go", null, { timeout: 20000 });
+    const state = await tabState();
+    assert(state.locked && state.readOnly, "the standard library opens read only too");
+    assert(state.text.includes("func Println(a ...any) {}"), `the image's source is in the buffer, got "${state.text}"`);
+    // And the mark goes with the tab: back on a file of the project the
+    // statusbar says nothing about reading.
+    await page.evaluate(() => document.querySelector('.editor-tab[aria-selected="true"] .editor-tab-close').click());
+    await openFile("use.go");
+    const back = await tabState();
+    assert(!back.readOnly && !back.locked, `a project file carries neither mark, got ${JSON.stringify(back)}`);
+  });
+
+  await run("the source route serves the source roots and nothing else", async () => {
+    const answers = await page.evaluate(async (url) => {
+      const ask = async (path) => {
+        const res = await fetch(`${url}?path=${encodeURIComponent(path)}`, { credentials: "same-origin", headers: { Accept: "application/json" } });
+        return res.status;
+      };
+      return {
+        stdlib: await ask("/usr/local/go/src/fmt/print.go"),
+        passwd: await ask("/etc/passwd"),
+        traversal: await ask("/usr/local/go/src/../../../../etc/passwd"),
+        relative: await ask("lib.go"),
+      };
+    }, `${base}/lsp/source`);
+    assert(answers.stdlib === 200, `a source root answers, got ${answers.stdlib}`);
+    assert(answers.passwd === 400 && answers.traversal === 400 && answers.relative === 400,
+      `everything else is refused, got ${JSON.stringify(answers)}`);
+  });
+
   await run("a word without a definition says so in the statusbar", async () => {
+    await openFile("use.go");
     await ctrlClick("package lib", "package");
     await page.waitForFunction(() => (document.querySelector("[data-editor-status]")?.textContent || "") === "No definition found.", null, { timeout: 20000 });
     return await statusText();

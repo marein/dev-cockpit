@@ -67,8 +67,11 @@ type Request struct {
 	ProjectName string
 	ProjectRoot string
 	Launcher    Launcher
-	// Path is the project relative file path, already validated by the
-	// caller.
+	// Path is the file the cursor stands in, already validated by the
+	// caller: project relative, or the absolute path of a source outside
+	// the project the caller checked against the allowlist, which is what
+	// a lookup from inside a read only tab asks with. Both travel the same
+	// way from here, see documentPath.
 	Path    string
 	Content string
 	// Line and Character are the 0-based LSP position, Character in UTF-16
@@ -132,6 +135,10 @@ type managedConn struct {
 // container, at its own path, so file URIs match inside and outside.
 type Service struct {
 	projectsRoot string
+	// cacheRoot is where the per project cache directories live, the binds
+	// that carry a server's index and the sources it downloaded. It is
+	// this process's own state directory, see CacheRoot.
+	cacheRoot string
 	// dockerHost answers the daemon the cockpit is configured for, the
 	// same one the availability gate reads; nil or empty means the ambient
 	// one. It reaches every docker CLI call of the feature as DOCKER_HOST.
@@ -182,15 +189,17 @@ func (s *Service) notifyChange(project string) {
 	}
 }
 
-// New returns a running service. dockerHost names the configured daemon,
-// nil for the ambient one.
-func New(projectsRoot string, dockerHost func() string) *Service {
+// New returns a running service. cacheRoot is where the per project cache
+// directories live, CacheRoot of the serve process's state directory.
+// dockerHost names the configured daemon, nil for the ambient one.
+func New(projectsRoot, cacheRoot string, dockerHost func() string) *Service {
 	ctx, cancel := context.WithCancel(context.Background())
 	prepCtx, prepCancel := context.WithCancel(context.Background())
 	swept := make(chan struct{})
 	close(swept)
 	s := &Service{
 		projectsRoot: projectsRoot,
+		cacheRoot:    cacheRoot,
 		dockerHost:   dockerHost,
 		ctx:          ctx,
 		cancel:       cancel,
@@ -412,7 +421,7 @@ func (s *Service) navigate(ctx context.Context, req Request, method string) (Res
 
 	if err == nil {
 		s.touch(mc)
-		locs, outside := projectLocations(mc.conn.rootURI, raw)
+		locs, outside := mapLocations(mc.conn.rootURI, raw, mc.launcher.SourceRoots(req.ProjectName, profile))
 		declaration := false
 		if method == methodDefinition {
 			declaration = atRequestPosition(mc.conn.rootURI, raw, req)
@@ -601,7 +610,7 @@ func (mc *managedConn) endCall(client, path string, token *inflightToken) {
 // available.
 func (s *Service) connFor(ctx context.Context, project, root string, profile *Profile, launcher Launcher) (*managedConn, string) {
 	if launcher == nil {
-		launcher = DockerLauncher(s.dockerHost)
+		launcher = DockerLauncher(s.cacheRoot, s.dockerHost)
 	}
 	key := connKey{project: project, profile: profile.ID}
 	s.mu.Lock()

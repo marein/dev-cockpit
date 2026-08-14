@@ -139,11 +139,18 @@ func runFakeLSP(mode string) {
 				} `json:"textDocument"`
 			}
 			_ = json.Unmarshal(msg.Params, &params)
+			// A document outside the workspace is answered with its own
+			// URI, so a test can read back which file the request really
+			// named; everything inside answers the one definition file.
+			answer := rootURI + "/def.go"
+			if !strings.HasPrefix(params.TextDocument.URI, rootURI+"/") {
+				answer = params.TextDocument.URI
+			}
 			// The document version travels as the start line, the open count
 			// as the start character; the range spans a word's width so a
 			// request at a covered position reads as the declaration.
 			respond(msg.ID, []map[string]any{{
-				"uri": rootURI + "/def.go",
+				"uri": answer,
 				"range": map[string]any{
 					"start": map[string]any{"line": docs[params.TextDocument.URI], "character": len(docs)},
 					"end":   map[string]any{"line": docs[params.TextDocument.URI], "character": len(docs) + 11},
@@ -225,15 +232,24 @@ func installFakeLSP(t *testing.T, mode string, commands ...string) {
 
 func newTestService(t *testing.T) *Service {
 	t.Helper()
+	s, _ := newTestServiceWithCache(t)
+	return s
+}
+
+// newTestServiceWithCache answers the service and the cache root it runs
+// with, which is what a test needs to build a path inside a source root.
+func newTestServiceWithCache(t *testing.T) (*Service, string) {
+	t.Helper()
 	work := t.TempDir()
 	marker := filepath.Join(work, "image-built")
 	if err := os.WriteFile(marker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	installFakeDocker(t, filepath.Join(work, "docker-args"), marker, "", "")
-	s := New(t.TempDir(), nil)
+	cacheRoot := t.TempDir()
+	s := New(t.TempDir(), cacheRoot, nil)
 	t.Cleanup(s.Close)
-	return s
+	return s, cacheRoot
 }
 
 func goRequest(t *testing.T) Request {
@@ -603,7 +619,7 @@ func TestServiceCloseShutsProcessesDown(t *testing.T) {
 	}
 	installFakeDocker(t, filepath.Join(work, "docker-args"), marker, "", "")
 	installFakeLSP(t, "normal", "gopls")
-	s := New(t.TempDir(), nil)
+	s := New(t.TempDir(), t.TempDir(), nil)
 
 	if res, _ := s.Definition(context.Background(), goRequest(t)); !res.Available {
 		t.Fatal("setup request failed")
@@ -769,16 +785,73 @@ esac
 }
 
 // The boot sweep takes exactly the containers wearing the cockpit's LSP
-// scheme, leaves every other name alone, coder containers included, and
-// removes the LSP volumes whose project no longer exists on disk.
+// scheme, leaves every other name alone, coder containers included,
+// removes the cache directories whose project no longer exists on disk,
+// and clears out the named cache volumes of the previous scheme, which
+// nothing creates anymore.
+// Deleting a project takes its caches with it, both servers, and only
+// its own; the named volume an older release may still hold goes too.
+func TestRemoveProjectCachesTakesTheProjectAndNothingElse(t *testing.T) {
+	work := t.TempDir()
+	argsFile := filepath.Join(work, "args")
+	installFakeDocker(t, argsFile, filepath.Join(work, "image-built"), "", "")
+	cacheRoot := t.TempDir()
+	for _, name := range []string{
+		"dev-cockpit-gopls-gone",
+		"dev-cockpit-intelephense-gone",
+		"dev-cockpit-gopls-kept",
+	} {
+		if err := os.MkdirAll(filepath.Join(cacheRoot, name, "mod"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	RemoveProjectCaches("gone", cacheRoot, "")
+	for name, want := range map[string]bool{
+		"dev-cockpit-gopls-gone":        false,
+		"dev-cockpit-intelephense-gone": false,
+		"dev-cockpit-gopls-kept":        true,
+	} {
+		if _, err := os.Stat(filepath.Join(cacheRoot, name)); (err == nil) != want {
+			t.Errorf("%s: still there = %v, want %v", name, err == nil, want)
+		}
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "volume rm dev-cockpit-gopls-gone") {
+		t.Fatalf("the legacy volume of the project was not removed: %s", raw)
+	}
+}
+
 func TestSweepStaleMatchesOnlyTheScheme(t *testing.T) {
 	work := t.TempDir()
 	argsFile := filepath.Join(work, "args")
 	psFile := filepath.Join(work, "names")
 	volsFile := filepath.Join(work, "vols")
 	projectsRoot := t.TempDir()
+	cacheRoot := t.TempDir()
 	if err := os.Mkdir(filepath.Join(projectsRoot, "alive"), 0o755); err != nil {
 		t.Fatal(err)
+	}
+	// One cache directory of a living project, one of a project that left
+	// the disk, and one directory that is none of ours. The orphan is
+	// written the way a module cache is, read only, which is what a plain
+	// removal stumbles over.
+	orphan := filepath.Join(cacheRoot, "dev-cockpit-gopls-gone-project")
+	if err := os.MkdirAll(filepath.Join(orphan, "mod", "example.com"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "mod", "example.com", "dep.go"), []byte("package dep\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(orphan, "mod", "example.com"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	for _, keep := range []string{"dev-cockpit-gopls-alive", "somebody-elses-folder"} {
+		if err := os.Mkdir(filepath.Join(cacheRoot, keep), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(psFile, []byte(strings.Join([]string{
 		"dev-cockpit-gopls-old-project",
@@ -800,7 +873,16 @@ func TestSweepStaleMatchesOnlyTheScheme(t *testing.T) {
 		t.Fatal(err)
 	}
 	installFakeDocker(t, argsFile, filepath.Join(work, "image-built"), psFile, volsFile)
-	sweepStale(context.Background(), projectsRoot, nil)
+	sweepStale(context.Background(), projectsRoot, cacheRoot, nil)
+	for dir, want := range map[string]bool{
+		"dev-cockpit-gopls-gone-project": false,
+		"dev-cockpit-gopls-alive":        true,
+		"somebody-elses-folder":          true,
+	} {
+		if _, err := os.Stat(filepath.Join(cacheRoot, dir)); (err == nil) != want {
+			t.Fatalf("cache directory %s: still there = %v, want %v", dir, err == nil, want)
+		}
+	}
 	raw, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatal(err)
@@ -818,8 +900,12 @@ func TestSweepStaleMatchesOnlyTheScheme(t *testing.T) {
 	if strings.Join(rms, ",") != want {
 		t.Fatalf("swept %v, want %s", rms, want)
 	}
-	if strings.Join(volRms, ",") != "dev-cockpit-gopls-gone-project" {
-		t.Fatalf("volume sweep took %v, want only the orphan", volRms)
+	// Every volume of the scheme goes, whether its project lives or not:
+	// the caches are directories now and no volume of that name will ever
+	// be started against again.
+	wantVols := "dev-cockpit-gopls-alive,dev-cockpit-gopls-gone-project,dev-cockpit-intelephense-alive"
+	if strings.Join(volRms, ",") != wantVols {
+		t.Fatalf("volume sweep took %v, want %s", volRms, wantVols)
 	}
 }
 
@@ -829,11 +915,12 @@ func TestServiceDockerModeBuildsOnceAndMountsTheContract(t *testing.T) {
 	installFakeDocker(t, argsFile, filepath.Join(work, "image-built"), "", "")
 	installFakeLSP(t, "normal", "gopls")
 	projectsRoot := t.TempDir()
-	s := New(projectsRoot, nil)
+	cacheRoot := t.TempDir()
+	s := New(projectsRoot, cacheRoot, nil)
 	t.Cleanup(s.Close)
 
 	req := goRequest(t)
-	req.Launcher = DockerLauncher(nil)
+	req.Launcher = DockerLauncher(cacheRoot, nil)
 	res, err := s.Definition(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -847,7 +934,7 @@ func TestServiceDockerModeBuildsOnceAndMountsTheContract(t *testing.T) {
 	goImageRef := imageRef(goProfile)
 	req2 := goRequest(t)
 	req2.ProjectName = "proj2"
-	req2.Launcher = DockerLauncher(nil)
+	req2.Launcher = DockerLauncher(cacheRoot, nil)
 	if res, _ := s.Definition(context.Background(), req2); !res.Available {
 		t.Fatalf("second docker project failed: %+v", res)
 	}
@@ -883,34 +970,46 @@ func TestServiceDockerModeBuildsOnceAndMountsTheContract(t *testing.T) {
 	}
 	// The run carries the wrapper contract: reaped, interactive, a speaking
 	// name with the project in it, projects dir at its own path, the cache
-	// volume, the workspace as workdir, the built image, the server command.
+	// directory at the very path it has outside, the module downloads and
+	// the file cache pointed into it, the workspace as workdir, the built
+	// image, the server command.
+	cache := filepath.Join(cacheRoot, "dev-cockpit-gopls-"+req2.ProjectName)
 	for _, want := range []string{
 		"--rm", "-i", "--init",
 		"--name dev-cockpit-gopls-" + req2.ProjectName,
 		"--label " + lspRootLabel + "=" + projectsRoot,
 		"-v " + projectsRoot + ":" + projectsRoot,
-		"-v dev-cockpit-gopls-" + req2.ProjectName + ":/go/pkg/mod",
+		"-v " + cache + ":" + cache,
 		"-w " + req2.ProjectRoot,
-		"-e XDG_CACHE_HOME=/go/pkg/mod/.cache",
+		"-e GOMODCACHE=" + cache + "/mod",
+		"-e GOFLAGS=-modcacherw",
+		"-e XDG_CACHE_HOME=" + cache + "/cache",
 		goImageRef + " gopls",
 	} {
 		if !strings.Contains(runLine, want) {
 			t.Fatalf("run line misses %q: %s", want, runLine)
 		}
 	}
+	// And it stands there before the server starts, or docker would make
+	// it itself, as root and with a mode nobody chose.
+	if info, err := os.Stat(cache); err != nil || !info.IsDir() {
+		t.Fatalf("cache directory not prepared: %v", err)
+	}
 }
 
 // The launchers' initializationOptions: the container way points the PHP
-// server's index storage into its cache mount, everything else stays nil,
-// the PATH way most of all.
+// server's index storage into the project's own cache directory, which is
+// the same path inside and outside, and everything else stays nil.
 func TestLauncherInitOptions(t *testing.T) {
 	php, _, _ := ProfileForPath("index.php")
 	goProfile, _, _ := ProfileForPath("main.go")
-	opts, ok := DockerLauncher(nil).InitOptions("my-app", php).(map[string]any)
-	if !ok || opts["storagePath"] != "/tmp/intelephense/storage" || opts["globalStoragePath"] != "/tmp/intelephense/global" {
+	cacheRoot := t.TempDir()
+	cache := filepath.Join(cacheRoot, "dev-cockpit-intelephense-my-app")
+	opts, ok := DockerLauncher(cacheRoot, nil).InitOptions("my-app", php).(map[string]any)
+	if !ok || opts["storagePath"] != cache+"/storage" || opts["globalStoragePath"] != cache+"/global" {
 		t.Fatalf("php docker init options: %#v", opts)
 	}
-	if DockerLauncher(nil).InitOptions("proj", goProfile) != nil {
+	if DockerLauncher(cacheRoot, nil).InitOptions("proj", goProfile) != nil {
 		t.Fatalf("go docker init options must be nil")
 	}
 }
@@ -964,6 +1063,42 @@ func TestContainerNames(t *testing.T) {
 		if len(name) > 63 {
 			t.Fatalf("name %q is longer than 63", name)
 		}
+	}
+}
+
+// A lookup asked from inside a file outside the project: the request
+// travels as the absolute path and the server sees exactly that document
+// (the fake answers a file outside the workspace with its own URI), the
+// answer comes back marked external with that path, and the declaration
+// rule holds out there like it does in the project.
+func TestServiceDefinitionFromOutsideTheProject(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s, cacheRoot := newTestServiceWithCache(t)
+
+	req := goRequest(t)
+	req.Launcher = DockerLauncher(cacheRoot, nil)
+	goProfile, _, _ := ProfileForPath("main.go")
+	roots := dockerSourceRoots(cacheRoot, req.ProjectName, goProfile)
+	req.Path = roots[0].Path + "/example.com/dep@v1.0.0/dep.go"
+	req.Content = "package dep\nfunc Target() {}\n"
+	req.Line = 1
+	req.Character = 5
+
+	res, err := s.Definition(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Available || len(res.Locations) != 1 {
+		t.Fatalf("answer: %+v", res)
+	}
+	if got := res.Locations[0]; got.Path != req.Path || !got.External {
+		t.Fatalf("the target must be the asked file, external and absolute: %+v", got)
+	}
+	if res.Outside != 0 {
+		t.Fatalf("a file under a source root is opened, never counted: %+v", res)
+	}
+	if !res.Declaration {
+		t.Fatalf("a covered position reads as the declaration outside the project too: %+v", res)
 	}
 }
 

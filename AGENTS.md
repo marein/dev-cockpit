@@ -771,19 +771,82 @@ test. Update this file when a convention changes.
   named `dev-cockpit-<server>-<project>` (the project part sanitized to
   docker's charset, the whole name capped at 63, a short hash of the raw name
   joining once anything was rewritten), the projects directory mounted at its
-  own path so file URIs match inside and outside, and one cache volume per
-  project and server wearing the container's name, which makes the volume the
-  project boundary. The servers are pointed into their mount explicitly
-  (intelephense's storagePath through the launcher's InitOptions, gopls'
-  XDG_CACHE_HOME through the container env), or the index would die with the
-  container. **The projects root label is the ownership boundary**: the boot
-  sweep and the orphan sweeps only ever touch containers, volumes and image
-  tags carrying this serve process's own root, because the throwaway test
-  instance shares the daemon and must not lose the live one's servers. A name
-  that outlived an unclean death is removed right before the next start. The
-  image is built on this host from the shipped build file, on first use, and
-  never pulled prebuilt: whoever builds holds the licenses. Deleting a project
-  closes its servers and removes its volumes.
+  own path so file URIs match inside and outside, and one cache directory per
+  project and server wearing the container's name, which makes the directory
+  the project boundary. **That cache is a host bind and no named volume, and
+  it is mounted at the very path it has outside**, under
+  `<state-dir>/editor-lsp/` (`CacheRoot`), because a module cache is not only
+  a cache: it is where the sources of every dependency lie, and a definition
+  in one of them comes back as the path the server sees. Only an equal path
+  on both sides lets the cockpit read that file back, which is the same trick
+  the workspace mount uses; a bind wants a daemon on this machine, which the
+  workspace mount wants anyway. The servers are pointed into that directory
+  explicitly (intelephense's storagePath through the launcher's InitOptions,
+  gopls' GOMODCACHE and XDG_CACHE_HOME through the container env), or the
+  index would die with the container, and gopls also gets `-modcacherw`,
+  because a module cache is written read only and the cockpit has to be able
+  to delete it again (`removeCacheDir` hands the modes back for the
+  directories an older release wrote). **The projects root label is the
+  ownership boundary**: the boot sweep and the orphan sweeps only ever touch
+  containers and image tags carrying this serve process's own root, because
+  the throwaway test instance shares the daemon and must not lose the live
+  one's servers; the cache directories are swept by name under this
+  instance's own state directory. A name that outlived an unclean death is
+  removed right before the next start. The image is built on this host from
+  the shipped build file, on first use, and never pulled prebuilt: whoever
+  builds holds the licenses. Deleting a project closes its servers and
+  removes its caches. The named cache volumes of the release before the bind
+  are removed by the boot sweep and by a project delete, both marked
+  TODO(v2.0.0): nothing creates one anymore, so a volume of the scheme is a
+  warm index nobody can reach.
+  **A target outside the project is opened, not counted, while it lies in a
+  source root** (`SourceRoot`, `internal/editorintelligence/sources.go`).
+  Those roots are the whole allowlist and they are the launcher's answer,
+  never a setting and never a client's word: the readable parts of the
+  project's own cache directory (the module downloads, deliberately not the
+  file cache beside them, which holds no source) and the trees that live in
+  the image, the Go standard library and intelephense's stubs. `Holds` takes
+  a path that is absolute and already clean and refuses everything else
+  rather than repairing it, because a repaired path is a second spelling of
+  a file and the check would then be about a path nobody asked for.
+  `mapLocations` marks such a target `external` with its absolute path, and
+  `GET .../editor/lsp/source` reads it: a root on this host through
+  `filesystem.ReadFileText`, whose root is the boundary a symlink cannot
+  walk out of, and a root inside the image through a throwaway container of
+  the same pinned image with `cat` as its whole command, no mount, no
+  network and no name.
+  **The lookups go on inside such a file**, so a jump chains: on into the
+  next dependency, or back into the project. The navigation request
+  therefore carries either kind of path, project relative or the absolute
+  one of a source outside, and `validLSPTarget` is where that is decided
+  for every navigation route at once: a relative path resolves under the
+  project, an absolute one has to be in a source root, and it is the same
+  `lspSourceRoot` call the read route serves from, so what may be opened
+  and what may be looked a symbol up in are one set by construction.
+  Below that there is one notion of a path and not two: `documentPath`
+  turns it into the file, and `docURI` into the URI the server sees.
+  **The document is opened on the server like any other, and that is not a
+  formality**: asked of the real servers, gopls without a `didOpen` drops
+  the usages that sit in the asked file itself, and intelephense answers
+  nothing at all for a stub it was not handed. The same `ensureDocument`
+  path therefore carries these files, holders and `didClose` included, and
+  the text it sends is what the read route answered. Deliberately not an exec into the running server: a
+  read has to work when the server has idled out, must not depend on which
+  container happens to be up, and must reach nothing a workspace mount
+  would carry. The route answers text and never bytes, capped and binary
+  checked like every editor buffer, and it carries no version, because
+  nothing read there can be written back. A usages preview of such a
+  location is read from the disk where that is possible and left empty
+  where the file lives in an image: a preview line is not worth a container
+  start. Client side the answer becomes a read only tab (`tab.external`,
+  the CodeMirror state carries `EditorState.readOnly`, the surface stays
+  fully readable): the tab wears a lock and the folder it came from, the
+  statusbar says Read only with the whole path as its tooltip, its menu
+  keeps the close entries plus Copy path, and every path that acts on a
+  file of the project (save, git, diff, blame, preview, revert, rename, the
+  tree selection, the lookup itself) steps around it. A save is the one
+  that must never find a way in: the write route would take the absolute
+  path for a relative one and create it inside the project.
   **The container watches its workspace**: the entrypoint, one block appended
   in Go to both build files so the exit code contract cannot drift apart, runs
   the server next to a recursive inotify watcher (.git excluded, settle window,
@@ -823,11 +886,11 @@ test. Update this file when a convention changes.
   editor's menu stops the project's servers and warms them again over a fresh
   scan, the project is the unit.
   **The lookup routes stay off the editor group**
-  (`.../editor/lsp/{definition,references,close}`): its middleware drops the
-  quick open index after a write, and a lookup writes nothing. The answer is
-  editor coordinates plus a preview cut by the search snippet rule
+  (`.../editor/lsp/{definition,references,close,source}`): its middleware
+  drops the quick open index after a write, and a lookup writes nothing. The
+  answer is editor coordinates plus a preview cut by the search snippet rule
   (`filesystem.SnippetAround`) around the usage's own column, so both lists
-  share one cutting rule; a target outside the project root is counted, never
+  share one cutting rule; a target under no source root is counted, never
   opened. A definition whose range covers the asked position carries
   `declaration` and the client shows the usages instead, and the check is range
   containment, never the start line, because one server answers the whole
@@ -843,8 +906,10 @@ test. Update this file when a convention changes.
   pointerdown resets the bare modifier double tap machines, or two modifier
   clicks in a row read as a double tap. The usages list is the quick open panel
   from `md` up and the editor's bottom sheet below. There is deliberately no
-  jump history. Beyond the settings key nothing here persists, and that key
-  lives in the shared settings store the backup already carries.
+  jump history. What persists is the settings key, which lives in the shared
+  settings store the backup already carries, and the cache directories, which
+  are deliberately not in the backup: a server rebuilds an index and downloads
+  a dependency again, and no answer of the cockpit is lost with them.
 - **Backup archives are a compat surface.** `internal/backup` maps archive
   paths `data/<section id>/<source name>` onto host paths through the current
   registry, and the manifest identifies the file (`app`, `format`). Old

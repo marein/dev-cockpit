@@ -1,4 +1,4 @@
-import { csrfHeaders, postJSON } from "@dc/http";
+import { csrfHeaders, getJSON, postJSON } from "@dc/http";
 
 export function createClient(base, spec) {
   const langs = new Map();
@@ -47,6 +47,10 @@ export function createClient(base, spec) {
     },
     definition: (payload, signal) => post("definition", payload, signal),
     references: (payload, signal) => post("references", payload, signal),
+    // The file behind a target outside the project, out of the source
+    // directories the servers themselves work from. It answers text and
+    // no version: nothing read here can be written back.
+    source: (path, signal) => getJSON(`${base}/lsp/source?path=${encodeURIComponent(path)}`, { signal }),
     reindex() {
       return postJSON(`${base}/lsp/reindex`, {}).catch(() => {});
     },

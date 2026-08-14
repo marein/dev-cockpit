@@ -39,9 +39,19 @@ type Launcher interface {
 	ProcEnv() []string
 	// InitOptions are the initializationOptions this way hands the server
 	// for the project, nil for none. The container way points the server's
-	// index storage into its cache mount, whose per-project volume is the
-	// project boundary.
+	// index storage into its cache mount, whose per-project directory is
+	// the project boundary.
 	InitOptions(project string, p *Profile) any
+	// SourceRoots are the directories outside the project this way lets a
+	// definition land in and read back: the dependency sources the server
+	// downloaded, the standard library, the server's stubs. They are the
+	// whole allowlist, an answer pointing anywhere else stays counted and
+	// unopened.
+	SourceRoots(project string, p *Profile) []SourceRoot
+	// ReadSource answers the text of one file under one of its own roots.
+	// The caller has checked that the root holds the path; whether the
+	// file can be read at all, and how, is this way's business.
+	ReadSource(ctx context.Context, root SourceRoot, path string) (string, error)
 	// WantsRestart reads a dead server's exit code: true means the way
 	// asks for an immediate fresh start (the container's workspace watcher
 	// ends the container with an agreed code on a relevant change), every
@@ -50,10 +60,12 @@ type Launcher interface {
 }
 
 // DockerLauncher runs the server inside a container the cockpit builds
-// and names itself. dockerHost answers the configured daemon, nil or empty
-// for the ambient one.
-func DockerLauncher(dockerHost func() string) Launcher {
-	return dockerLauncher{host: dockerHost}
+// and names itself. cacheRoot is where the per project cache directories
+// live, the binds that make a dependency's sources readable from both
+// sides. dockerHost answers the configured daemon, nil or empty for the
+// ambient one.
+func DockerLauncher(cacheRoot string, dockerHost func() string) Launcher {
+	return dockerLauncher{cacheRoot: cacheRoot, host: dockerHost}
 }
 
 // lookPath is the detection primitive every launcher shares.
@@ -66,7 +78,8 @@ func lookPath(name string) Detection {
 }
 
 type dockerLauncher struct {
-	host func() string
+	cacheRoot string
+	host      func() string
 }
 
 func (l dockerLauncher) hostValue() string {
@@ -88,21 +101,42 @@ func (l dockerLauncher) Prepare(ctx context.Context, projectsRoot, project strin
 	if err := ensureImage(ctx, dockerPath, env, p); err != nil {
 		return err
 	}
-	name := containerName(p.Command[0], project)
-	ensureVolume(ctx, dockerPath, env, name, projectsRoot)
-	removeStaleContainer(ctx, dockerPath, env, name)
+	if err := ensureCacheDir(l.cacheDir(project, p)); err != nil {
+		return err
+	}
+	removeStaleContainer(ctx, dockerPath, env, containerName(p.Command[0], project))
 	return nil
 }
 
 func (l dockerLauncher) Argv(projectsRoot, project, root string, p *Profile) []string {
-	return dockerArgv(l.Detect(p).Path, projectsRoot, root, containerName(p.Command[0], project), p)
+	name := containerName(p.Command[0], project)
+	return dockerArgv(l.Detect(p).Path, projectsRoot, l.cacheDir(project, p), root, name, p)
 }
 
-func (dockerLauncher) InitOptions(project string, p *Profile) any {
+func (l dockerLauncher) InitOptions(project string, p *Profile) any {
 	if p.container.InitOptions == nil {
 		return nil
 	}
-	return p.container.InitOptions(project)
+	return p.container.InitOptions(l.cacheDir(project, p))
+}
+
+func (l dockerLauncher) SourceRoots(project string, p *Profile) []SourceRoot {
+	return dockerSourceRoots(l.cacheRoot, project, p)
+}
+
+func (l dockerLauncher) ReadSource(ctx context.Context, root SourceRoot, path string) (string, error) {
+	if root.Image == "" {
+		return readHostSource(root, path)
+	}
+	dockerPath, err := lookDocker()
+	if err != nil {
+		return "", err
+	}
+	return readImageSource(ctx, dockerPath, l.ProcEnv(), root.Image, path)
+}
+
+func (l dockerLauncher) cacheDir(project string, p *Profile) string {
+	return cacheDir(l.cacheRoot, p.Command[0], project)
 }
 
 // dockerHostEnv is the environment a configured daemon travels in, nil for

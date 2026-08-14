@@ -436,10 +436,10 @@ func runServe(opts serveOptions) error {
 	// stop signal they are shut down along the protocol before exit; the
 	// self-update exec path needs no hook because the pipe ends close on
 	// exec and the servers exit on stdin EOF. Containers a previous process
-	// left behind, and volumes of projects that left the disk, are swept in
+	// left behind, and caches of projects that left the disk, are swept in
 	// the background; the first server start waits the sweep out, and the
 	// root label keeps other live instances' servers untouched.
-	intel := editorintelligence.New(cfg.ProjectsRoot, func() string {
+	intel := editorintelligence.New(cfg.ProjectsRoot, editorintelligence.CacheRoot(cfg.StateDir), func() string {
 		return dockerService.State().Host
 	})
 	intel.SweepStale()

@@ -46,12 +46,26 @@ var profiles = []*Profile{
 		languageIDs: map[string]string{"go": "go"},
 		container: container{
 			Image:      "dev-cockpit-gopls",
-			CacheMount: "/go/pkg/mod",
 			Dockerfile: goplsDockerfile + entrypointDockerfile,
-			// The file cache would die with the container under its default
-			// XDG_CACHE_HOME: pointed into the volume, next to the module
-			// downloads it indexes.
-			Env: []string{"XDG_CACHE_HOME=/go/pkg/mod/.cache"},
+			// The module downloads are what a jump into a dependency lands
+			// in, so they lie in the cache directory and are readable from
+			// the host under the very path the server names them by. The
+			// file cache would die with the container under its default
+			// XDG_CACHE_HOME and sits beside them, deliberately not among
+			// the sources: it holds no source and the read route reaches
+			// nothing it does not have to.
+			// -modcacherw is what keeps the downloads deletable: the module
+			// cache is written read only by default, and the cockpit has to
+			// be able to take a deleted project's cache away again.
+			CacheEnv: func(dir string) []string {
+				return []string{
+					"GOMODCACHE=" + dir + "/mod",
+					"GOFLAGS=-modcacherw",
+					"XDG_CACHE_HOME=" + dir + "/cache",
+				}
+			},
+			CacheSources: []string{"mod"},
+			ImageRoots:   []string{"/usr/local/go/src"},
 		},
 	},
 	{
@@ -62,19 +76,21 @@ var profiles = []*Profile{
 		languageIDs: map[string]string{"php": "php"},
 		container: container{
 			Image:      "dev-cockpit-intelephense",
-			CacheMount: "/tmp",
 			Dockerfile: intelephenseDockerfile + entrypointDockerfile,
 			// The server stores its index under its own storage paths, not
-			// under os.tmpdir: without pointing them into the mount the
-			// index died with the container and every start ran cold. The
-			// per-project volume is the project boundary, the paths inside
-			// it stay plain.
-			InitOptions: func(string) map[string]any {
+			// under os.tmpdir: without pointing them into the cache mount
+			// the index died with the container and every start ran cold.
+			// The per-project directory is the project boundary, the paths
+			// inside it stay plain. A dependency of a PHP project lies in
+			// its own vendor folder and therefore inside the project, so
+			// only the server's stubs stand outside it.
+			InitOptions: func(dir string) map[string]any {
 				return map[string]any{
-					"storagePath":       "/tmp/intelephense/storage",
-					"globalStoragePath": "/tmp/intelephense/global",
+					"storagePath":       dir + "/storage",
+					"globalStoragePath": dir + "/global",
 				}
 			},
+			ImageRoots: []string{"/usr/local/lib/node_modules/intelephense/lib/stub"},
 		},
 	},
 }

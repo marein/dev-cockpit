@@ -150,7 +150,13 @@ Extra instances:
   executable `gopls` wrapper that execs `python3 <repo>/tests/e2e/fake-lsp.py`,
   prepended to the instance's `PATH`. The same directory holds an executable
   fake `docker`: `image inspect` always fails, `build` sleeps three seconds,
-  `run` execs the fake server, everything else exits quietly. The build
+  `run` execs the fake server (walking the run's options, `-w` as its
+  working directory and every `-e` into its environment, which is how the
+  fake server learns the bound module cache; `--pull=*` is skipped like the
+  other flags), a `run` carrying
+  `--entrypoint cat` prints a fixed Go source for a path under
+  `/usr/local/go/src/` and fails for anything else, which is how the read
+  out of an image is answered, and everything else exits quietly. The build
   phase check picks the Docker option against it, so the preparing indicator
   is visible and deterministic with no daemon involved. Without the fakes
   the runner reaches whatever real tools the host has and the answers stop

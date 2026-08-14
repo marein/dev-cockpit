@@ -82,6 +82,8 @@ async function init(root) {
   const lspIndexEl = root.querySelector("[data-editor-lsp-index]");
   const lspIndexLabel = root.querySelector("[data-editor-lsp-index-label]");
   const lspIndexBar = root.querySelector("[data-editor-lsp-index-bar]");
+  const readOnlyEl = root.querySelector("[data-editor-readonly]");
+  const readOnlyPathEl = root.querySelector("[data-editor-readonly-path]");
   const saveAllItem = root.querySelector("[data-editor-save-all]");
   const mergeEl = root.querySelector("[data-editor-merge]");
   const viewerEl = root.querySelector("[data-editor-viewer]");
@@ -310,6 +312,10 @@ async function init(root) {
 
   let lspAbort = null;
 
+  // A read only tab is a source the server has in its index, so looking up
+  // works in it exactly as it does in a file of the project: the path
+  // travels absolute and the answer may lead back into the project, into
+  // the next dependency, or nowhere.
   function lspUsable() {
     const tab = activeTab();
     return !!(lsp && tab && !tab.kind && !tab.compare && lsp.usable(tab.path));
@@ -410,9 +416,40 @@ async function init(root) {
   }
 
   async function goToLocation(loc) {
-    if (activePath !== loc.path) await openPath(loc.path);
+    if (activePath !== loc.path) {
+      if (loc.external) await openExternal(loc.path);
+      else await openPath(loc.path);
+    }
     const tab = activeTab();
     if (tab && tab.path === loc.path && !tab.kind) editor.jumpTo(loc.line, loc.character);
+  }
+
+  // A target the language server answered from outside the project: a
+  // dependency it downloaded, the standard library, one of its stubs. It
+  // opens as a tab like any file and is read only, because nothing in
+  // there is this project's to change and a save would have nowhere to go.
+  // Its path is absolute, which no path of the project ever is, so the one
+  // tab list holds both without a second key.
+  async function openExternal(path) {
+    closeDrawer();
+    if (tabByPath(path)) {
+      activateTab(path);
+      return;
+    }
+    if (opening.has(path)) return;
+    opening.add(path);
+    status("Loading…");
+    try {
+      const data = await lsp.source(path, signal);
+      if (signal.aborted || tabByPath(path)) return;
+      tabs.push(await externalTabFor(path, data));
+      activateTab(path);
+      status("");
+    } catch (err) {
+      status(err.message, "error");
+    } finally {
+      opening.delete(path);
+    }
   }
 
   // ---- tabs ------------------------------------------------------------------
@@ -429,14 +466,28 @@ async function init(root) {
     // A comparison's path is synthetic and encoded, so it names the two files
     // instead: what stands in the tab is what the tooltip should spell out.
     btn.title = tab.compare ? `${tab.compare.left} ⇄ ${tab.compare.right}` : tab.path;
+    // A file from outside the project says so where the git mark of a file
+    // of the project stands, and for the same reason: what a tab is has to
+    // be readable on the tab.
+    if (tab.external) {
+      const lockEl = document.createElement("i");
+      lockEl.className = "ti ti-lock small flex-shrink-0";
+      lockEl.setAttribute("aria-hidden", "true");
+      btn.appendChild(lockEl);
+      btn.title = `${tab.path} · read only`;
+    }
     const nameEl = document.createElement("span");
     nameEl.className = "editor-tab-name";
     nameEl.textContent = tab.name;
     btn.appendChild(nameEl);
+    // The hint tells two tabs of one name apart, and it lives on the room
+    // the name leaves, which on a tab is next to nothing. Where a file
+    // comes from is therefore the statusbar's job for a file outside the
+    // project, see syncReadOnly.
     if (tabs.some((t) => t !== tab && t.name === tab.name)) {
       const hintEl = document.createElement("span");
       hintEl.className = "editor-tab-hint";
-      hintEl.textContent = parentDir(tab.path) || "/";
+      hintEl.textContent = tab.external ? externalHint(tab.path) : parentDir(tab.path) || "/";
       btn.appendChild(hintEl);
     }
     const stateEl = document.createElement("span");
@@ -475,9 +526,11 @@ async function init(root) {
   // buffer against the disk; the git mark means the disk against the
   // repository. Two statements, two places.
   function markGitTab(btn) {
-    // A comparison carries no git mark and no path of its own, so its tooltip,
-    // set where the tab is built, is left alone here.
-    if (btn.dataset.path.startsWith("//compare/")) return;
+    // A path starting with a separator is not a path of this project, and
+    // git has nothing to say about it: a comparison's synthetic path and
+    // the absolute one of a file outside the project. Their tooltip is set
+    // where the tab is built and is left alone here.
+    if (btn.dataset.path.startsWith("/")) return;
     const kind = fileKind(btn.dataset.path);
     const nameEl = btn.querySelector(".editor-tab-name");
     if (!nameEl) return;
@@ -660,7 +713,7 @@ async function init(root) {
     const open = document.createElement("button");
     open.type = "button";
     open.className = "editor-sheet-open";
-    const kind = tab.compare || tab.kind ? undefined : fileKind(tab.path);
+    const kind = tab.compare || tab.kind || tab.external ? undefined : fileKind(tab.path);
     if (kind) {
       const mark = document.createElement("span");
       mark.className = `small fw-bold flex-shrink-0 ${GIT_MARKS[kind].cls}`;
@@ -676,7 +729,7 @@ async function init(root) {
     if (kind) nameEl.classList.add(GIT_MARKS[kind].cls);
     const dirEl = document.createElement("span");
     dirEl.className = "editor-sheet-dir text-truncate";
-    dirEl.textContent = tab.compare ? tab.compare.left : parentDir(tab.path) || "/";
+    dirEl.textContent = tab.compare ? tab.compare.left : tab.external ? externalHint(tab.path) : parentDir(tab.path) || "/";
     col.append(nameEl, dirEl);
     open.appendChild(col);
     if (tab.dirty) {
@@ -956,8 +1009,9 @@ async function init(root) {
     const tab = activeTab();
     const textTab = tab && !tab.kind ? tab : null;
     // A comparison has two buffers and two save buttons of its own, so the one
-    // in the toolbar has nothing to act on.
-    const fileTab = textTab && !textTab.compare ? textTab : null;
+    // in the toolbar has nothing to act on, and a file from outside the
+    // project has no save at all.
+    const fileTab = textTab && !textTab.compare && !textTab.external ? textTab : null;
     saveBtn.disabled = !fileTab || !fileTab.dirty;
     // Save shows up when there is something to save instead of standing there
     // greyed out, on every width: the room belongs to the tab strip.
@@ -984,7 +1038,10 @@ async function init(root) {
     syncSwipeZone();
     syncIndentControl();
     syncPreview();
-    if (tab && !tab.compare) markTreeSelection(tab.path);
+    syncReadOnly();
+    // A file from outside the project stands in no tree of ours, and its
+    // path must not become the folder a new file is created in.
+    if (tab && !tab.compare && !tab.external) markTreeSelection(tab.path);
     persistTabs();
   }
 
@@ -1012,7 +1069,7 @@ async function init(root) {
     afterActiveChanged();
     if (tab.compare) void showCompare(tab);
     // The tab carries its own diff mode, so switching back into one restores it.
-    else if (!tab.kind) void applyTabDiff(tab);
+    else if (!tab.kind && !tab.external) void applyTabDiff(tab);
   }
 
   function stepTab(direction) {
@@ -1120,8 +1177,13 @@ async function init(root) {
       { label: "Close all", icon: "ti-circle-x", action: () => closeMany(tabs) },
     ];
     // A comparison stands for two files, so it keeps only what a tab as such
-    // can do.
+    // can do. A file from outside the project keeps its path on top of
+    // that: it is the one thing about it worth taking away, and every
+    // other entry here acts on a file this project owns.
     if (tab.compare) return closing;
+    if (tab.external) {
+      return [...closing, { divider: true }, { label: "Copy path", icon: "ti-copy", action: () => copyPath(tab.path) }];
+    }
     return [
       ...closing,
       { divider: true },
@@ -1157,6 +1219,31 @@ async function init(root) {
     openMenu({ x, y, items: tabMenuItems(tab), signal });
   }
 
+  // externalHint cuts an absolute path from the front, never from the end:
+  // what says which file this is, the module and its version, stands at
+  // the end of it, and that is exactly what an ellipsis on the right would
+  // eat. The whole path stays on the tab as its tooltip.
+  function externalHint(path) {
+    const parts = parentDir(path).split("/").filter(Boolean);
+    const tail = parts.slice(-2).join("/");
+    return parts.length > 2 ? `…/${tail}` : `/${tail}`;
+  }
+
+  // syncReadOnly says on the statusbar that the file in front of you is
+  // not yours to change, and where it comes from: the tab shows a name
+  // that means nothing on its own, print.go exists a hundred times over,
+  // and this is the one place with room for the folder it came from. The
+  // whole path is the tooltip, the line only carries its end. This is the
+  // one path the statusbar shows, and it is here because it is the only
+  // place it can be read at all, unlike a project file's, which the tree
+  // and the tab already say.
+  function syncReadOnly() {
+    const tab = activeTab();
+    readOnlyEl.hidden = !(tab && tab.external);
+    readOnlyEl.title = tab && tab.external ? tab.path : "";
+    readOnlyPathEl.textContent = tab && tab.external ? `${externalHint(tab.path)}/${tab.name}` : "";
+  }
+
   function markDirty(tab, on) {
     if (tab.dirty === on) return;
     tab.dirty = on;
@@ -1190,6 +1277,7 @@ async function init(root) {
   function persistTabs() {
     const open = tabs.map((t) => {
       if (t.compare) return { type: "compare", left: t.compare.left, right: t.compare.right };
+      if (t.external) return { type: "external", path: t.path };
       if (!t.diffRev && !t.blameOn && !t.previewOn) return t.path;
       const entry = { type: "file", path: t.path };
       if (t.diffRev) entry.diff = t.diffRev;
@@ -1215,6 +1303,8 @@ async function init(root) {
         entries.push({ type: "file", path: e, diff: old && old.mode && old.mode !== "off" ? DIFF_REV : "", blame: false, preview: false });
       } else if (e && typeof e === "object" && e.type === "compare" && typeof e.left === "string" && typeof e.right === "string") {
         entries.push(e);
+      } else if (e && typeof e === "object" && e.type === "external" && typeof e.path === "string" && e.path) {
+        entries.push(e);
       } else if (e && typeof e === "object" && typeof e.path === "string" && e.path) {
         entries.push({
           type: "file",
@@ -1232,9 +1322,14 @@ async function init(root) {
     const saved = store.getJSON(tabsKey, null);
     if (!saved || !Array.isArray(saved.open) || saved.open.length === 0) return;
     const entries = savedEntries(saved);
-    const results = await Promise.allSettled(entries.map((entry) => (entry.type === "compare"
-      ? compareTabFor(entry.left, entry.right)
-      : getJSON(`${base}/file?path=${encodeURIComponent(entry.path)}`, { signal }).then((data) => tabFor(entry.path, data)))));
+    const results = await Promise.allSettled(entries.map((entry) => {
+      if (entry.type === "compare") return compareTabFor(entry.left, entry.right);
+      // A file outside the project comes back through its own route: the
+      // one the tree serves would take its absolute path for a relative
+      // one and answer about a file inside the project.
+      if (entry.type === "external") return lsp ? lsp.source(entry.path, signal).then((data) => externalTabFor(entry.path, data)) : Promise.reject(new Error("no language server"));
+      return getJSON(`${base}/file?path=${encodeURIComponent(entry.path)}`, { signal }).then((data) => tabFor(entry.path, data));
+    }));
     for (let i = 0; i < results.length; i++) {
       if (results[i].status !== "fulfilled" || !results[i].value || tabByPath(results[i].value.path)) continue;
       const tab = results[i].value;
@@ -1269,6 +1364,22 @@ async function init(root) {
       // so the write can refuse to land on a file somebody else has written
       // since, and every save answers with the version of what it wrote.
       version: data.version || "",
+      dirty: false,
+    };
+  }
+
+  // externalTabFor builds the read only tab of a file outside the project.
+  // It carries no version, and its document refuses every change, so no
+  // save path can ever address it: the buffer is what the disk answered
+  // and stays that way.
+  async function externalTabFor(path, data) {
+    const name = baseName(path);
+    return {
+      path,
+      name,
+      external: true,
+      handle: await editor.createDoc(data.content || "", name, { readOnly: true }),
+      editorConfig: {},
       dirty: false,
     };
   }
@@ -2617,7 +2728,7 @@ async function init(root) {
       open.title = "Diff the open file against this commit";
       open.addEventListener("click", () => {
         const tab = activeTab();
-        if (tab && !tab.kind && !tab.compare) {
+        if (tab && !tab.kind && !tab.compare && !tab.external) {
           closeSheet();
           void diffAgainst(tab.path, commit.sha);
           return;
@@ -2714,7 +2825,7 @@ async function init(root) {
       await openPath(path);
       tab = tabByPath(path);
     }
-    if (!tab || tab.kind || tab.compare) return;
+    if (!tab || tab.kind || tab.compare || tab.external) return;
     // The comparison is what this click is about, so the drawer goes on every
     // way out, not only when openPath opened the file fresh.
     closeDrawer();
@@ -3175,7 +3286,7 @@ async function init(root) {
 
   async function reloadCleanTabs() {
     for (const tab of [...tabs]) {
-      if (tab.kind || tab.compare || tab.dirty) continue;
+      if (tab.kind || tab.compare || tab.external || tab.dirty) continue;
       let data;
       try {
         data = await getJSON(`${base}/file?path=${encodeURIComponent(tab.path)}`, { signal });
@@ -3286,7 +3397,7 @@ async function init(root) {
         await closeTab(tab.path, true);
         continue;
       }
-      if (tab.kind || !under(tab.path)) continue;
+      if (tab.kind || tab.external || !under(tab.path)) continue;
       let data;
       try {
         data = await getJSON(`${base}/file?path=${encodeURIComponent(tab.path)}`, { signal });
@@ -3391,7 +3502,7 @@ async function init(root) {
   // tree row, beside the blame gutter's: both are statements about one file,
   // so they live where the file is, not in the editor menu.
   function diffMenuItem(tab) {
-    if (!gitRepo || !editor.canDiff || !tab || tab.kind || tab.compare) return null;
+    if (!gitRepo || !editor.canDiff || !tab || tab.kind || tab.compare || tab.external) return null;
     return {
       label: tab.diffRev ? "Hide git diff" : "Show git diff",
       icon: "ti-git-compare",
@@ -3428,7 +3539,7 @@ async function init(root) {
       await openPath(path);
       tab = tabByPath(path);
     }
-    if (!tab || tab.kind || tab.compare) return;
+    if (!tab || tab.kind || tab.compare || tab.external) return;
     await toggleTabDiff(tab);
   }
 
@@ -3437,7 +3548,7 @@ async function init(root) {
   // the size question.
   async function applyDiff(rev, { ask = true } = {}) {
     const tab = activeTab();
-    if (!tab || tab.kind || tab.compare || !editor.canDiff) return;
+    if (!tab || tab.kind || tab.compare || tab.external || !editor.canDiff) return;
     const seq = ++diffSeq;
     const current = () => seq === diffSeq && activeTab() === tab;
     tab.diffRev = "";
@@ -3550,7 +3661,7 @@ async function init(root) {
   // it, and the dirty marker and the undo history stay untouched.
   async function refreshDiffHead() {
     const tab = activeTab();
-    if (!tab || tab.kind || tab.compare || !tab.diffRev || tab.diffOriginal == null) return;
+    if (!tab || tab.kind || tab.compare || tab.external || !tab.diffRev || tab.diffOriginal == null) return;
     const seq = diffSeq;
     try {
       const data = await fetchRev(tab.path, tab.diffRev);
@@ -3580,7 +3691,7 @@ async function init(root) {
 
   async function applyChangeBars() {
     const tab = activeTab();
-    const textTab = tab && !tab.kind && !tab.compare ? tab : null;
+    const textTab = tab && !tab.kind && !tab.compare && !tab.external ? tab : null;
     const seq = ++changesSeq;
     const valid = () => seq === changesSeq && activeTab() === tab;
     if (!textTab || !gitRepo || !editor.canChanges || textTab.diffRev) {
@@ -3631,7 +3742,7 @@ async function init(root) {
   let blameSeq = 0;
 
   function blameMenuItem(tab) {
-    if (!gitRepo || !editor.canBlame || !tab || tab.kind || tab.compare) return null;
+    if (!gitRepo || !editor.canBlame || !tab || tab.kind || tab.compare || tab.external) return null;
     return {
       label: tab.blameOn ? "Hide git blame" : "Show git blame",
       icon: "ti-user-code",
@@ -3654,7 +3765,7 @@ async function init(root) {
       await openPath(path);
       tab = tabByPath(path);
     }
-    if (!tab || tab.kind || tab.compare) return;
+    if (!tab || tab.kind || tab.compare || tab.external) return;
     toggleTabBlame(tab);
   }
 
@@ -3663,7 +3774,7 @@ async function init(root) {
   // belongs to a different commit than it did before.
   async function applyBlame(force = false) {
     const tab = activeTab();
-    const textTab = tab && !tab.kind && !tab.compare ? tab : null;
+    const textTab = tab && !tab.kind && !tab.compare && !tab.external ? tab : null;
     // The gutter says what git has, and git has what is on disk. An unsaved
     // buffer no longer lines up with it line for line, so it goes away rather
     // than pointing at the wrong commits, and comes back with the save.
@@ -3967,6 +4078,11 @@ async function init(root) {
   // untouched. Only a real failure throws.
   async function saveTab(tab) {
     if (tab.compare) return await saveCompareTab(tab);
+    // A file outside the project has no write route and its buffer cannot
+    // move anyway. The guard stands because a save is the one thing that
+    // must never find a way in: the write path would take the absolute
+    // path for a relative one and create it inside the project.
+    if (tab.external) return "kept";
     const content = editor.valueOf(tab, tab.path === activePath);
     let version;
     try {
@@ -4765,11 +4881,11 @@ async function init(root) {
   // reached from the file's own context menu.
   function previewVisible() {
     const tab = activeTab();
-    return !!(tab && !tab.kind && !tab.compare && tab.previewOn && hasPreview(tab.name));
+    return !!(tab && !tab.kind && !tab.compare && !tab.external && tab.previewOn && hasPreview(tab.name));
   }
 
   function previewMenuItem(tab) {
-    if (!tab || tab.kind || tab.compare || !hasPreview(tab.name)) return null;
+    if (!tab || tab.kind || tab.compare || tab.external || !hasPreview(tab.name)) return null;
     return {
       label: tab.previewOn ? "Hide preview" : "Show preview",
       icon: tab.previewOn ? "ti-eye-off" : "ti-eye",
@@ -4794,7 +4910,7 @@ async function init(root) {
       await openPath(path);
       tab = tabByPath(path);
     }
-    if (!tab || tab.kind || tab.compare) return;
+    if (!tab || tab.kind || tab.compare || tab.external) return;
     togglePreviewFor(tab);
   }
 
@@ -5062,7 +5178,10 @@ async function init(root) {
       item.title = `${match.path}:${match.line}`;
       const head = document.createElement("div");
       head.className = "editor-quickopen-match-head";
-      head.innerHTML = `<i class="ti ti-file"></i><span class="editor-quickopen-name">${escapeHtml(baseName(match.path))}:${match.line}</span><span class="editor-quickopen-dir">${escapeHtml(parentDir(match.path))}</span>`;
+      // A usage outside the project carries an absolute path, and its end
+      // is what says which file it is, so it is cut like the tab's hint.
+      const dir = match.external ? externalHint(match.path) : parentDir(match.path);
+      head.innerHTML = `<i class="ti ti-${match.external ? "lock" : "file"}"></i><span class="editor-quickopen-name">${escapeHtml(baseName(match.path))}:${match.line}</span><span class="editor-quickopen-dir">${escapeHtml(dir)}</span>`;
       const text = document.createElement("div");
       text.className = "editor-quickopen-match-text";
       text.append(...markedFragments(match.text, searchQuery));
@@ -5121,7 +5240,9 @@ async function init(root) {
     quickOpenInput.value = "";
     quickOpenInput.placeholder = title;
     searchQuery = word;
-    usagesAll = locations.map((l) => ({ path: l.path, line: l.line, character: l.character, text: l.preview || "" }));
+    // external travels along: it is what the row's jump reads to know
+    // which of the two ways of opening a file it takes.
+    usagesAll = locations.map((l) => ({ path: l.path, line: l.line, character: l.character, external: l.external, text: l.preview || "" }));
     usagesNoteText = usagesNote(locations, res);
     paintUsages(usagesAll, true);
     quickOpenInput.focus();
@@ -5176,7 +5297,7 @@ async function init(root) {
     nameEl.textContent = `${baseName(loc.path)}:${loc.line}`;
     const dirEl = document.createElement("span");
     dirEl.className = "editor-sheet-dir text-truncate";
-    dirEl.textContent = parentDir(loc.path) || "/";
+    dirEl.textContent = loc.external ? externalHint(loc.path) : parentDir(loc.path) || "/";
     col.append(nameEl, dirEl);
     if (loc.preview) {
       const text = document.createElement("span");
@@ -7757,9 +7878,15 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       tab.compare.leftDoc = mergeView.a.state.doc.toString();
       tab.compare.rightDoc = mergeView.b.state.doc.toString();
     },
-    async createDoc(content, filename) {
+    // readOnly is the document of a file outside the project. It keeps the
+    // whole surface, cursor, search and go to line included, and refuses
+    // only the writing, which is what EditorState.readOnly says and
+    // EditorView.editable would say too much of: a buffer nobody can focus
+    // cannot be read with the keyboard either.
+    async createDoc(content, filename, { readOnly = false } = {}) {
       const langExt = await langFor(filename, (content || "").split("\n", 1)[0]);
-      const state = EditorState.create({ doc: content, extensions: baseExtensions(langExt) });
+      const extensions = readOnly ? [baseExtensions(langExt), EditorState.readOnly.of(true)] : baseExtensions(langExt);
+      const state = EditorState.create({ doc: content, extensions });
       return { state, saved: state.doc };
     },
     showDoc(tab) {
@@ -7933,12 +8060,13 @@ function createTextarea(host, hooks, settings) {
     ta.addEventListener(type, reportCursor);
   }
   return {
-    async createDoc(content) {
-      return { value: content, saved: content };
+    async createDoc(content, filename, { readOnly = false } = {}) {
+      return { value: content, saved: content, readOnly };
     },
     showDoc(tab) {
       fileConfig = tab.editorConfig || {};
       ta.value = tab.handle.value;
+      ta.readOnly = !!tab.handle.readOnly;
       applyTabWidth();
       ta.scrollTop = tab.handle.scrollTop || 0;
       reportCursor();

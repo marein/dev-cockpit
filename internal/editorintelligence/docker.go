@@ -6,12 +6,16 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/local/dev-cockpit/internal/filesystem"
 )
 
 //go:embed dockerfiles/gopls.Dockerfile
@@ -68,23 +72,38 @@ const lspRootLabel = "dev-cockpit.lsp-projects-root"
 
 // container describes how a profile's server runs over the Docker option:
 // the image the cockpit builds locally from the shipped build file, and the
-// cache volume whose mount keeps the server's index warm across container
-// starts. The volumes are the ones hand-rolled wrappers used before the
-// option existed, so an index survives the cutover.
+// cache directory whose mount keeps the server's index and its downloads
+// warm across container starts.
+//
+// That directory is a host bind and no named volume, and the mount puts it
+// at the very path it has outside, because a module cache is not only a
+// cache: it is where the sources of every dependency lie, and a definition
+// in one of them is answered as the path the server sees. Only an equal
+// path on both sides lets the cockpit read that file back and open it, and
+// it is the same trick the workspace mount already uses. A bind wants a
+// daemon on this machine, which the workspace mount wants anyway.
 type container struct {
 	Image      string
-	CacheMount string
 	Dockerfile string
-	// Env rides into the container run; the Go way persists its file
-	// cache through it, next to the module downloads in the volume.
-	Env []string
+	// CacheEnv is the environment that points the server at its cache
+	// directory, built from the directory's host path. Nil for a server
+	// that takes its storage through InitOptions instead.
+	CacheEnv func(cacheDir string) []string
+	// CacheSources are the subdirectories of the cache directory that hold
+	// readable source, the module downloads for the Go way; empty for a
+	// server whose cache holds nothing but its own index.
+	CacheSources []string
+	// ImageRoots are the directories inside the image a definition may
+	// point into, the standard library and the server's own stubs. They
+	// live in no filesystem of this host, so they are read through a
+	// container of the same image, see dockerLauncher.ReadSource.
+	ImageRoots []string
 	// InitOptions builds the server's initializationOptions for one
 	// container run: a server that stores its index outside the mount
 	// would lose it with the container, so the storage is pointed into
-	// the mount explicitly, into a per-project directory the cockpit
-	// names, which keeps a later per-project cleanup exact. Nil for
-	// servers without such options.
-	InitOptions func(project string) map[string]any
+	// the cache directory explicitly, which keeps a per-project cleanup
+	// exact. Nil for servers without such options.
+	InitOptions func(cacheDir string) map[string]any
 }
 
 // dockerCmd builds one docker CLI call carrying the launcher's extra
@@ -143,34 +162,48 @@ func ensureImage(ctx context.Context, dockerPath string, env []string, p *Profil
 	return nil
 }
 
-// ensureVolume makes the cache volume exist with the root label before the
-// run auto-creates it bare: the label is what the boot sweep scopes its
-// ownership by. An existing volume is left as it is, the hand-rolled ones
-// from before the option and every already labeled one alike.
-func ensureVolume(ctx context.Context, dockerPath string, env []string, name, projectsRoot string) {
-	if dockerCmd(ctx, dockerPath, env, "volume", "inspect", name).Run() == nil {
-		return
+// CacheRoot is where the per project cache directories live, one place
+// under the state directory this serve process owns. Resolved, because the
+// path travels into a container as a mount and comes back out inside the
+// file URIs the server answers.
+func CacheRoot(stateDir string) string {
+	return filepath.Join(filesystem.AbsDir(stateDir), "editor-lsp")
+}
+
+// cacheDir is one server's cache directory for one project. It wears the
+// container's name, so what the naming rule keeps apart stays apart here
+// too and the orphan sweep can read a project back out of it.
+func cacheDir(cacheRoot, server, project string) string {
+	return filepath.Join(cacheRoot, containerName(server, project))
+}
+
+// ensureCacheDir makes the directory exist before the run binds it: docker
+// would create a missing bind source itself, owned by root and with no say
+// in the mode.
+func ensureCacheDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("cache directory %s: %w", dir, err)
 	}
-	_ = dockerCmd(ctx, dockerPath, env, "volume", "create", "--label", lspRootLabel+"="+projectsRoot, name).Run()
+	return nil
 }
 
 // dockerArgv is the container run of a profile's server: stdin carries the
-// protocol, --init reaps, the projects directory mounts at its own path so
-// file URIs match inside and outside, the workspace is the working
-// directory, the name says in docker ps who runs what for whom, and the
-// root label says which serve process owns it. The cache volume carries
-// the container's name too, one volume per project and server: the volume
-// is the project boundary, so a per-project cleanup is exact.
-func dockerArgv(dockerPath, projectsRoot, root, name string, p *Profile) []string {
+// protocol, --init reaps, the projects directory and the cache directory
+// mount at their own paths so file URIs match inside and outside, the
+// workspace is the working directory, the name says in docker ps who runs
+// what for whom, and the root label says which serve process owns it.
+func dockerArgv(dockerPath, projectsRoot, cache, root, name string, p *Profile) []string {
 	argv := []string{dockerPath, "run", "--rm", "-i", "--init",
 		"--name", name,
 		"--label", lspRootLabel + "=" + projectsRoot,
 		"-v", projectsRoot + ":" + projectsRoot,
-		"-v", name + ":" + p.container.CacheMount,
+		"-v", cache + ":" + cache,
 		"-w", root,
 	}
-	for _, env := range p.container.Env {
-		argv = append(argv, "-e", env)
+	if p.container.CacheEnv != nil {
+		for _, env := range p.container.CacheEnv(cache) {
+			argv = append(argv, "-e", env)
+		}
 	}
 	argv = append(argv, imageRef(p))
 	return append(argv, p.Command...)
@@ -230,13 +263,13 @@ func containerName(server, project string) string {
 
 // SweepStale starts the boot sweep in the background and gates the first
 // server starts behind it. It removes every container of the LSP naming
-// scheme labeled with this service's own projects root, and every such
-// volume whose project no longer exists on disk: at serve start none of
+// scheme labeled with this service's own projects root, and every cache
+// directory whose project no longer exists on disk: at serve start none of
 // them has a living owner, the previous process and its pipes are gone,
 // while the lazy removal before a start only ever covers the same project
 // and language starting again. The root label is the ownership boundary,
-// so another live instance's servers and caches on the same daemon are
-// never touched. Call once, right after New.
+// so another live instance's servers on the same daemon are never touched.
+// Call once, right after New.
 func (s *Service) SweepStale() {
 	done := make(chan struct{})
 	s.mu.Lock()
@@ -246,7 +279,7 @@ func (s *Service) SweepStale() {
 	go func() {
 		defer s.wg.Done()
 		defer close(done)
-		sweepStale(s.prepCtx, s.projectsRoot, dockerHostEnv(hostOf(s.dockerHost)))
+		sweepStale(s.prepCtx, s.projectsRoot, s.cacheRoot, dockerHostEnv(hostOf(s.dockerHost)))
 	}()
 }
 
@@ -257,7 +290,10 @@ func hostOf(host func() string) string {
 	return host()
 }
 
-func sweepStale(ctx context.Context, projectsRoot string, env []string) {
+func sweepStale(ctx context.Context, projectsRoot, cacheRoot string, env []string) {
+	// The cache directories are this process's own files and are swept
+	// whether or not there is a docker client to talk to.
+	sweepCacheDirs(projectsRoot, cacheRoot)
 	dockerPath, err := exec.LookPath("docker")
 	if err != nil {
 		return
@@ -279,33 +315,7 @@ func sweepStale(ctx context.Context, projectsRoot string, env []string) {
 	if removed > 0 {
 		log.Printf("editor intelligence: swept %d stale server container(s)", removed)
 	}
-	// The volumes: one per project and server, wearing the container's
-	// name and the root label, so a volume whose name no living project
-	// would produce is a leftover of a delete the cockpit did not see.
-	valid := map[string]bool{}
-	if entries, err := os.ReadDir(projectsRoot); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				for _, p := range profiles {
-					valid[containerName(p.Command[0], entry.Name())] = true
-				}
-			}
-		}
-	}
-	out, err = dockerCmd(ctx, dockerPath, env, "volume", "ls", "--filter", ownLabel, "--format", "{{.Name}}").Output()
-	if err != nil {
-		return
-	}
-	orphans := 0
-	for _, name := range strings.Fields(string(out)) {
-		if lspSchemeName(name) && !valid[name] {
-			_ = dockerCmd(ctx, dockerPath, env, "volume", "rm", name).Run()
-			orphans++
-		}
-	}
-	if orphans > 0 {
-		log.Printf("editor intelligence: swept %d orphaned server volume(s)", orphans)
-	}
+	sweepLegacyVolumes(ctx, dockerPath, env)
 	// Image tags of the scheme that no shipped build file produces
 	// anymore: a release changed the file, its hash tag moved on, the old
 	// tag is dead weight nothing will ever start again. Images are shared
@@ -338,8 +348,87 @@ func sweepStale(ctx context.Context, projectsRoot string, env []string) {
 	}
 }
 
+// sweepCacheDirs takes the cache directories of projects that are no longer
+// on the disk away: they wear the container's name, so a name no living
+// project would produce is the leftover of a delete the cockpit did not
+// see. Anything else in that directory is left alone, it is not ours.
+func sweepCacheDirs(projectsRoot, cacheRoot string) {
+	entries, err := os.ReadDir(cacheRoot)
+	if err != nil {
+		return
+	}
+	valid := map[string]bool{}
+	if projects, err := os.ReadDir(projectsRoot); err == nil {
+		for _, project := range projects {
+			if project.IsDir() {
+				for _, p := range profiles {
+					valid[containerName(p.Command[0], project.Name())] = true
+				}
+			}
+		}
+	}
+	orphans := 0
+	for _, entry := range entries {
+		if !entry.IsDir() || !lspSchemeName(entry.Name()) || valid[entry.Name()] {
+			continue
+		}
+		if removeCacheDir(filepath.Join(cacheRoot, entry.Name())) == nil {
+			orphans++
+		}
+	}
+	if orphans > 0 {
+		log.Printf("editor intelligence: swept %d orphaned server cache director(ies)", orphans)
+	}
+}
+
+// sweepLegacyVolumes removes the named cache volumes the Docker option used
+// before the caches became host directories. Every volume of the scheme is
+// one, because nothing creates one anymore: a warm index no server will
+// ever be started against again. This is the one sweep that reads names
+// alone and not the root label, which the others are scoped by. It can:
+// the volumes the label protected from another instance are as dead for
+// that instance as for this one, and the ones created before the label
+// existed carry none at all, which is exactly the pile this is here to
+// clear. TODO(v2.0.0): drop once no install can still carry one.
+func sweepLegacyVolumes(ctx context.Context, dockerPath string, env []string) {
+	out, err := dockerCmd(ctx, dockerPath, env, "volume", "ls", "--format", "{{.Name}}").Output()
+	if err != nil {
+		return
+	}
+	removed := 0
+	for _, name := range strings.Fields(string(out)) {
+		if lspSchemeName(name) && dockerCmd(ctx, dockerPath, env, "volume", "rm", name).Run() == nil {
+			removed++
+		}
+	}
+	if removed > 0 {
+		log.Printf("editor intelligence: removed %d server cache volume(s) of the previous scheme", removed)
+	}
+}
+
+// removeCacheDir takes one cache directory away. A module cache is written
+// read only unless the toolchain was told otherwise (-modcacherw), and a
+// directory without the write bit refuses to give its entries up, so the
+// walk hands the modes back before the removal. Directories written by an
+// older release are exactly that case.
+func removeCacheDir(dir string) error {
+	if err := os.RemoveAll(dir); err == nil {
+		return nil
+	}
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			_ = os.Chmod(path, 0o700)
+		}
+		return nil
+	})
+	return os.RemoveAll(dir)
+}
+
 // lspSchemeName reports whether the name belongs to the LSP naming scheme,
-// container and volume alike.
+// container, cache directory and legacy volume alike.
 func lspSchemeName(name string) bool {
 	for _, p := range profiles {
 		if strings.HasPrefix(name, containerPrefix(p.Command[0])) {
@@ -349,36 +438,46 @@ func lspSchemeName(name string) bool {
 	return false
 }
 
-// RemoveProjectVolumes takes the project's per-server volumes away, close
-// its servers first: the delete owns the whole project, index and module
-// caches included. dockerHost names the configured daemon, empty for the
-// ambient one. Removal is retried briefly, a container still draining
-// its exit holds the volume for a moment; a volume that never existed is
-// skipped without a wait.
-func RemoveProjectVolumes(project, dockerHost string) {
+// RemoveProjectCaches takes the project's per-server cache directories
+// away, close its servers first: the delete owns the whole project, index
+// and module downloads included. Removal is retried briefly, a container
+// still draining its exit writes into the directory for a moment; a
+// directory that is already gone is skipped without a wait.
+//
+// dockerHost names the configured daemon, empty for the ambient one; it is
+// what the removal of a volume an older release left behind travels on.
+func RemoveProjectCaches(project, cacheRoot, dockerHost string) {
+	for _, p := range profiles {
+		dir := cacheDir(cacheRoot, p.Command[0], project)
+		for attempt := 0; attempt < 15; attempt++ {
+			if _, err := os.Stat(dir); err != nil {
+				break
+			}
+			if err := removeCacheDir(dir); err == nil {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}
+	removeLegacyProjectVolumes(project, dockerHost)
+}
+
+// removeLegacyProjectVolumes takes the named cache volumes of the previous
+// scheme with the project, for an install that has not been through a boot
+// sweep since the caches became directories. TODO(v2.0.0): drop with
+// sweepLegacyVolumes.
+func removeLegacyProjectVolumes(project, dockerHost string) {
 	dockerPath, err := exec.LookPath("docker")
 	if err != nil {
 		return
 	}
 	env := dockerHostEnv(dockerHost)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	for _, p := range profiles {
 		name := containerName(p.Command[0], project)
-		// The dying container drains its exit for a few seconds and holds
-		// the volume meanwhile, the watcher subshell included; the budget
-		// is generous, the caller runs in the background.
-		for attempt := 0; attempt < 15; attempt++ {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			exists := dockerCmd(ctx, dockerPath, env, "volume", "inspect", name).Run() == nil
-			if !exists {
-				cancel()
-				break
-			}
-			err := dockerCmd(ctx, dockerPath, env, "volume", "rm", name).Run()
-			cancel()
-			if err == nil {
-				break
-			}
-			time.Sleep(2 * time.Second)
+		if dockerCmd(ctx, dockerPath, env, "volume", "inspect", name).Run() == nil {
+			_ = dockerCmd(ctx, dockerPath, env, "volume", "rm", name).Run()
 		}
 	}
 }
