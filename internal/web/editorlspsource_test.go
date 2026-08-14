@@ -105,6 +105,7 @@ func TestValidLSPTargetTakesProjectPathsAndSourceRoots(t *testing.T) {
 	s := &Server{cfg: config.Config{StateDir: stateDir}, projects: project.NewRepository(projectsRoot, nil)}
 	p := project.Project{Name: "demo", Path: filepath.Join(projectsRoot, "demo")}
 	cache := filepath.Join(editorintelligence.CacheRoot(stateDir), "dev-cockpit-gopls-demo")
+	tsCache := filepath.Join(editorintelligence.CacheRoot(stateDir), "dev-cockpit-tsgo-demo")
 
 	cases := []struct {
 		name   string
@@ -116,8 +117,11 @@ func TestValidLSPTargetTakesProjectPathsAndSourceRoots(t *testing.T) {
 		{"a dependency's sources", cache + "/mod/example.com/dep@v1.0.0/dep.go", "c1", true},
 		{"the standard library", "/usr/local/go/src/strings/strings.go", "c1", true},
 		{"a stub", "/usr/local/lib/node_modules/intelephense/lib/stub/standard/standard_1.php", "c1", true},
+		{"a typescript library file", "/usr/local/lib/node_modules/@typescript/native-preview/node_modules/@typescript/native-preview-linux-x64/lib/lib.es5.d.ts", "c1", true},
+		{"downloaded typings", tsCache + "/cache/typescript/5.9/node_modules/@types/lodash/common/array.d.ts", "c1", true},
 		{"a file of this machine", "/etc/passwd", "c1", false},
 		{"the server's own file cache beside the sources", cache + "/cache/gopls/x.go", "c1", false},
+		{"what npm wrote beside the typings", tsCache + "/cache/_npx/x.js", "c1", false},
 		{"another project's cache", filepath.Join(editorintelligence.CacheRoot(stateDir), "dev-cockpit-gopls-other", "mod", "x.go"), "c1", false},
 		{"a traversal out of a root", cache + "/mod/../../../../etc/passwd", "c1", false},
 		{"a path that walks out of the project", "../../etc/passwd", "c1", false},

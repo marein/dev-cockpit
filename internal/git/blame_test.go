@@ -74,6 +74,50 @@ func TestParseBlameMarksTheUncommittedCommitAsPending(t *testing.T) {
 	}
 }
 
+// The porcelain format costs a multiple of the file it describes, a header
+// line per line of it, so a file the editor still opens can outgrow the output
+// cap. Truncated output must not become a blame: the head of the file would
+// carry its commits and the rest would read like a part nobody ever touched.
+func TestBlameOverTheOutputCapAnswersLargeAndNoLines(t *testing.T) {
+	dir := t.TempDir()
+	commitRepo(t, dir)
+	line := strings.Repeat("x", 40) + "\n"
+	writeAt(t, dir, "big.txt", strings.Repeat(line, 120000))
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-qm", "big")
+
+	blame, err := New(dir).Blame(context.Background(), "big.txt")
+
+	if err != nil {
+		t.Fatalf("blame: %v", err)
+	}
+	if !blame.Large {
+		t.Fatal("a blame that filled the output cap must say so")
+	}
+	if len(blame.Lines) != 0 || len(blame.Commits) != 0 {
+		t.Fatalf("half a blame must not travel: %d lines, %d commits", len(blame.Lines), len(blame.Commits))
+	}
+}
+
+// And a file that stays under it answers the whole blame, so the cap is a
+// ceiling and not a second limit on what the gutter shows.
+func TestBlameUnderTheOutputCapIsWholeAndNotLarge(t *testing.T) {
+	dir := t.TempDir()
+	commitRepo(t, dir)
+	writeAt(t, dir, "small.txt", "one\ntwo\nthree\n")
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-qm", "small")
+
+	blame, err := New(dir).Blame(context.Background(), "small.txt")
+
+	if err != nil {
+		t.Fatalf("blame: %v", err)
+	}
+	if blame.Large || len(blame.Lines) != 3 || len(blame.Commits) != 1 {
+		t.Fatalf("blame: %+v", blame)
+	}
+}
+
 func TestBlameWithoutRepositoryIsEmptyAndNoError(t *testing.T) {
 	dir := t.TempDir()
 

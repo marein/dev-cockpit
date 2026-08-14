@@ -142,6 +142,22 @@ func TestDockerSourceRoots(t *testing.T) {
 	if len(phpRoots) != 1 || phpRoots[0].Image == "" || !strings.HasSuffix(phpRoots[0].Path, "/stub") {
 		t.Fatalf("php roots: %+v", phpRoots)
 	}
+	// A node dependency lies in the project's own node_modules, so what
+	// stands outside the project is the typings the server downloaded
+	// itself, in the project's cache directory, and the lib.*.d.ts files of
+	// the typescript inside the image.
+	ts, _, _ := ProfileForPath("src/index.ts")
+	tsRoots := dockerSourceRoots(cacheRoot, "my-app", ts)
+	wantTypings := filepath.Join(cacheRoot, "dev-cockpit-tsgo-my-app") + "/cache/typescript"
+	if len(tsRoots) != 2 {
+		t.Fatalf("typescript roots: %+v", tsRoots)
+	}
+	if tsRoots[0].Path != wantTypings || tsRoots[0].Image != "" {
+		t.Fatalf("typings cache root %+v, want %s on this host", tsRoots[0], wantTypings)
+	}
+	if tsRoots[1].Path != "/usr/local/lib/node_modules/@typescript" || !strings.HasPrefix(tsRoots[1].Image, "dev-cockpit-tsgo:") {
+		t.Fatalf("typescript library root %+v", tsRoots[1])
+	}
 	// Two projects never share a root.
 	other := dockerSourceRoots(cacheRoot, "other-app", goProfile)
 	if other[0].Path == roots[0].Path {

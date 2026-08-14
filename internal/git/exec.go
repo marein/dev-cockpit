@@ -33,7 +33,7 @@ type ExecResult struct {
 func (r *Repo) Exec(ctx context.Context, args []string) (ExecResult, error) {
 	w := *r
 	w.timeout = remoteTimeout
-	res, err := w.exec(ctx, Subcommand(args), args, maxOutput)
+	res, err := w.exec(ctx, Subcommand(args), args, MaxOutput)
 	if err != nil {
 		return ExecResult{}, err
 	}

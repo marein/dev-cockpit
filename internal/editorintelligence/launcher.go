@@ -104,12 +104,12 @@ func (l dockerLauncher) Prepare(ctx context.Context, projectsRoot, project strin
 	if err := ensureCacheDir(l.cacheDir(project, p)); err != nil {
 		return err
 	}
-	removeStaleContainer(ctx, dockerPath, env, containerName(p.Command[0], project))
+	removeStaleContainer(ctx, dockerPath, env, containerName(p.Server, project))
 	return nil
 }
 
 func (l dockerLauncher) Argv(projectsRoot, project, root string, p *Profile) []string {
-	name := containerName(p.Command[0], project)
+	name := containerName(p.Server, project)
 	return dockerArgv(l.Detect(p).Path, projectsRoot, l.cacheDir(project, p), root, name, p)
 }
 
@@ -136,7 +136,7 @@ func (l dockerLauncher) ReadSource(ctx context.Context, root SourceRoot, path st
 }
 
 func (l dockerLauncher) cacheDir(project string, p *Profile) string {
-	return cacheDir(l.cacheRoot, p.Command[0], project)
+	return cacheDir(l.cacheRoot, p.Server, project)
 }
 
 // dockerHostEnv is the environment a configured daemon travels in, nil for

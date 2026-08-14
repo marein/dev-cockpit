@@ -52,9 +52,12 @@ import (
 // after which the caller gets an error instead of a hanging request.
 const DefaultTimeout = 5 * time.Second
 
-// maxOutput caps what one call keeps in memory. A repository with an
+// MaxOutput caps what one call keeps in memory. A repository with an
 // implausible number of changed files truncates instead of filling the heap.
-const maxOutput = 8 << 20
+// It is exported because truncation is silent, and a caller that needs a
+// complete answer, reading a whole file at a revision, can only know it by
+// the size: an answer that reaches this may be the head of a larger one.
+const MaxOutput = 8 << 20
 
 // promptWait is a person's window for one question of the askpass bridge:
 // once a prompt reached the browser, the watchdog waits this long for the
@@ -347,7 +350,7 @@ func (r *Repo) exec(ctx context.Context, name string, argv []string, stderrCap i
 	// instead of orphaning an ssh that still waits for its passphrase.
 	cmd.WaitDelay = waitDelay
 	killsWholeGroup(cmd)
-	out := &cappedBuffer{max: maxOutput}
+	out := &cappedBuffer{max: MaxOutput}
 	errOut := &cappedBuffer{max: stderrCap}
 	cmd.Stdout = out
 	cmd.Stderr = errOut

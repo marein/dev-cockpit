@@ -361,7 +361,7 @@ func (s *Server) handleSettingsEditorLSP(c *gin.Context) {
 			ID:       p.ID,
 			Label:    p.Label,
 			Command:  strings.Join(p.Command, " "),
-			Server:   p.Command[0],
+			Server:   p.Server,
 			Selected: selected,
 			DockerOK: dockerOK,
 		})
@@ -402,8 +402,8 @@ func (s *Server) handleSettingsEditorSearchSave(c *gin.Context) {
 // value instead of dropping to a default the person never chose.
 func (s *Server) handleSettingsEditorGitSave(c *gin.Context) {
 	s.storeInt(editorGitPollSecondsKey, c.PostForm("git_poll_seconds"), 0, 60)
-	s.storeInt(editorDiffMaxLinesKey, c.PostForm("diff_max_lines"), 0, 200000)
-	s.storeInt(editorDiffMaxKiBKey, c.PostForm("diff_max_kib"), 0, 2048)
+	s.storeInt(editorDiffMaxLinesKey, c.PostForm("diff_max_lines"), 0, 500000)
+	s.storeInt(editorDiffMaxKiBKey, c.PostForm("diff_max_kib"), 0, 16384)
 	s.redirectWithFlash(c, editorGitSettingsPath, "Settings saved.", "")
 }
 

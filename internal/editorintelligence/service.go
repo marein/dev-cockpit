@@ -240,8 +240,8 @@ func (s *Service) Close() {
 
 // CloseProject shuts the project's language servers down the graceful way
 // and forgets their slots, so the next warm starts fresh servers over a
-// fresh scan; the manual reindex is the caller. Nil-receiver-safe like the
-// other web-facing entry points.
+// fresh scan; the manual reindex and a project delete are the callers.
+// Nil-receiver-safe like the other web-facing entry points.
 func (s *Service) CloseProject(project string) {
 	if s == nil {
 		return
@@ -409,7 +409,11 @@ func (s *Service) navigate(ctx context.Context, req Request, method string) (Res
 		if err != nil || len(raw) > 0 {
 			break
 		}
-		if attempt >= warmupRetries || callCtx.Err() != nil || time.Since(mc.conn.startedAt) >= s.warmupGrace {
+		// An empty answer is retried only while the server may still be
+		// getting going, which is the same stretch the wait above sits out
+		// and therefore the same question: past it an empty answer is the
+		// truth, and retrying it only keeps the reader in front of a spinner.
+		if attempt >= warmupRetries || callCtx.Err() != nil || !mc.conn.warming(s.warmupGrace) {
 			break
 		}
 		select {
@@ -534,6 +538,14 @@ type IndexState struct {
 // announced nothing counts as indexing for the warming window, because the
 // announcement itself arrives seconds after the handshake and the indicator
 // must not flicker off in that gap.
+//
+// That last rule is about the gap between a handshake and the work it
+// started, so it holds only for the servers that work there. A
+// `SilentStart` server has no such gap: it is ready when it answers, so
+// counting its silence as indexing would put a bar on the screen for work
+// that is not happening, waiting for an end that is not coming. Its silence
+// is readiness and is reported as such; the work it does announce later,
+// fetching types for an untyped dependency, shows like anybody else's.
 func (s *Service) IndexStatus(project string) []IndexState {
 	if s == nil {
 		return []IndexState{}
@@ -562,7 +574,7 @@ func (s *Service) IndexStatus(project string) []IndexState {
 				if sn.mc.conn != nil && sn.mc.conn.alive() {
 					var seen bool
 					state.Indexing, seen, state.Percentage = sn.mc.conn.progress()
-					if !state.Indexing && !seen && time.Since(sn.mc.conn.startedAt) < s.warmupGrace {
+					if !state.Indexing && !seen && sn.mc.conn.warming(s.warmupGrace) {
 						state.Indexing = true
 					}
 					if !state.Indexing {
@@ -700,9 +712,37 @@ func (s *Service) connFor(ctx context.Context, project, root string, profile *Pr
 	}
 	s.wg.Add(1)
 	go s.watchRestart(key, mc, project, root, profile, launcher)
+	if !profile.SilentStart {
+		s.wg.Add(1)
+		go s.endSilentWindow(project, mc)
+	}
 	// The handshake ended: preparing hands over to the announced indexing.
 	s.notifyChange(project)
 	return mc, ""
+}
+
+// endSilentWindow publishes the one moment a connection stops counting as
+// indexing merely because its announcement had not arrived yet. Nothing
+// else ever looks at that clock again: the indicator is event driven, so
+// without this the bar of a server that announces late, or never announces
+// at all, stands until some unrelated move of the picture happens to take
+// it down, which for an idle project is never. One timer per connection,
+// bounded by the warming window, and the death of the server is the other
+// way out, which reports itself.
+func (s *Service) endSilentWindow(project string, mc *managedConn) {
+	defer s.wg.Done()
+	left := s.warmupGrace - time.Since(mc.conn.startedAt)
+	if left <= 0 {
+		return
+	}
+	timer := time.NewTimer(left)
+	defer timer.Stop()
+	select {
+	case <-s.ctx.Done():
+	case <-mc.conn.exited:
+	case <-timer.C:
+		s.notifyChange(project)
+	}
 }
 
 // watchRestart waits a running server out. A death whose exit code the

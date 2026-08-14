@@ -29,10 +29,17 @@ const (
 // lspConn is one running language server process with its stdio JSON-RPC
 // session and the documents opened on it.
 type lspConn struct {
-	profile     *Profile
-	rootPath    string
-	rootURI     string
-	initOptions any
+	profile  *Profile
+	rootPath string
+	rootURI  string
+	// workspaceURI is what the handshake announces. It is the project for
+	// every server, and the directory above it for one the cockpit hands a
+	// configuration file: that file lies there, and a server only looks for
+	// a configuration inside its workspace. Everything the editor is
+	// answered with still goes through rootPath and rootURI, which stay the
+	// project, or a location would come back relative to the wrong root.
+	workspaceURI string
+	initOptions  any
 	// exit is the process exit code, written by the Wait owner before
 	// exited closes, read only after.
 	exit      int
@@ -110,6 +117,7 @@ func startLSPConn(ctx context.Context, profile *Profile, argv, env []string, roo
 		profile:        profile,
 		rootPath:       root,
 		rootURI:        fileURI(root),
+		workspaceURI:   workspaceURI(profile, root),
 		initOptions:    initOptions,
 		onChange:       notify,
 		cmd:            cmd,
@@ -151,6 +159,15 @@ func startLSPConn(ctx context.Context, profile *Profile, argv, env []string, roo
 	return c, nil
 }
 
+// workspaceURI answers what the handshake announces as the workspace root,
+// see lspConn.workspaceURI.
+func workspaceURI(p *Profile, root string) string {
+	if !p.container.DefaultConfig {
+		return fileURI(root)
+	}
+	return fileURI(workspaceDir(root))
+}
+
 // fileURI builds a file:// URI with the path percent encoded, so a name
 // carrying '#', '?', '%' or a space stays one path on the server's side;
 // uriPath is the decoding counterpart.
@@ -173,9 +190,9 @@ func (c *lspConn) initialize(ctx context.Context) error {
 	// plain Locations; LocationLinks are still decoded defensively.
 	params := map[string]any{
 		"processId": nil,
-		"rootUri":   c.rootURI,
+		"rootUri":   c.workspaceURI,
 		"workspaceFolders": []map[string]any{
-			{"uri": c.rootURI, "name": "workspace"},
+			{"uri": c.workspaceURI, "name": "workspace"},
 		},
 		"capabilities": map[string]any{
 			"textDocument": map[string]any{
@@ -408,6 +425,23 @@ func (c *lspConn) trackProgress(params json.RawMessage) {
 	}
 }
 
+// warming reports whether the connection is still in the stretch where an
+// answer may be short because the server has not got going yet: it indexes
+// the workspace at the handshake and announces that run seconds late, so
+// until the announcement arrives its silence cannot be told from a server
+// already deep in a run and is waited out.
+//
+// A server that announces no startup work (Profile.SilentStart) has no such
+// stretch: it is ready when it answers, and waiting its silence out would
+// hold every lookup for the whole window against an announcement that is
+// never coming.
+func (c *lspConn) warming(grace time.Duration) bool {
+	if c.profile.SilentStart {
+		return false
+	}
+	return time.Since(c.startedAt) < grace
+}
+
 // progress answers whether announced work is running, whether any begin was
 // ever seen, and the last percentage it reported, -1 while it reports none.
 func (c *lspConn) progress() (busy, seen bool, pct int) {
@@ -424,15 +458,19 @@ func (c *lspConn) progress() (busy, seen bool, pct int) {
 // arrives only seconds after the handshake, and on a loaded host later
 // still, so the whole warming window doubles as the wait for it: a
 // connection that has announced nothing counts as warming for `grace` after
-// process start. Both supported servers announce, and the test fakes
+// process start. Every supported server announces, and the test fakes
 // announce an already finished run right after the handshake, so only a
 // truly silent server ever sits this wait out. Past the budget the request
 // goes out and answers what is indexed by then.
+//
+// Announced work is waited out whoever announces it: a server that reports
+// none at startup can still announce a run of its own later, and a lookup
+// during it would be answered out of half a picture.
 func (c *lspConn) waitIndexed(ctx context.Context, grace, budget time.Duration) error {
 	deadline := c.startedAt.Add(budget)
 	for {
 		busy, seen, _ := c.progress()
-		if !busy && (seen || time.Since(c.startedAt) > grace) {
+		if !busy && (seen || !c.warming(grace)) {
 			return nil
 		}
 		if time.Now().After(deadline) {

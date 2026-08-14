@@ -7,6 +7,10 @@ type EditorData struct {
 	Page
 	Project    project.Project
 	MaxEditKiB int64
+	// MaxEditSize is the same limit as the file tree writes its sizes, so the
+	// sentence in the empty editor reads like the rows next to it rather than
+	// as a five digit KiB number.
+	MaxEditSize string
 	// Return is the safe in-app URL the header back button leads to, passed by
 	// the linking page as ?return like the create forms' Cancel.
 	Return string

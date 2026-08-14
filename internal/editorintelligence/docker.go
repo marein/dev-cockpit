@@ -24,6 +24,9 @@ var goplsDockerfile string
 //go:embed dockerfiles/intelephense.Dockerfile
 var intelephenseDockerfile string
 
+//go:embed dockerfiles/tsgo.Dockerfile
+var typescriptDockerfile string
+
 // entrypointDockerfile is the tail both build files share: the entrypoint
 // runs the server next to a recursive workspace watcher, .git excluded,
 // with a settle window so a checkout is one shove, and ends the container
@@ -104,6 +107,20 @@ type container struct {
 	// the cache directory explicitly, which keeps a per-project cleanup
 	// exact. Nil for servers without such options.
 	InitOptions func(cacheDir string) map[string]any
+	// DefaultConfig marks a server whose image writes a configuration file
+	// for a project that brings none of its own, because without one it
+	// sees only the file it was handed and whatever that file imports: a
+	// usages list then answers a fraction and reads like the whole.
+	//
+	// Nothing of ours may appear in the working copy, so the file goes into
+	// the directory above the project. That directory belongs to the
+	// container only because such a profile has its project mounted alone
+	// instead of the whole projects directory, and it is what the handshake
+	// announces as the workspace (workspaceDir), because a server looks for
+	// a configuration inside its workspace and nowhere else. Which file,
+	// with what in it, and whether the project already brought one is the
+	// image's business, see the profile's build file.
+	DefaultConfig bool
 }
 
 // dockerCmd builds one docker CLI call carrying the launcher's extra
@@ -196,10 +213,21 @@ func dockerArgv(dockerPath, projectsRoot, cache, root, name string, p *Profile) 
 	argv := []string{dockerPath, "run", "--rm", "-i", "--init",
 		"--name", name,
 		"--label", lspRootLabel + "=" + projectsRoot,
-		"-v", projectsRoot + ":" + projectsRoot,
-		"-v", cache + ":" + cache,
-		"-w", root,
 	}
+	if p.container.DefaultConfig {
+		// The project alone, so the directory above it belongs to the
+		// container and the image may write its default configuration
+		// there. It travels as the environment the image writes into, and
+		// the handshake announces the very same directory, so the place the
+		// file lands and the place the server looks for it cannot drift.
+		argv = append(argv, "-v", root+":"+root, "-e", "DC_WORKSPACE="+workspaceDir(root))
+	} else {
+		argv = append(argv, "-v", projectsRoot+":"+projectsRoot)
+	}
+	argv = append(argv,
+		"-v", cache+":"+cache,
+		"-w", root,
+	)
 	if p.container.CacheEnv != nil {
 		for _, env := range p.container.CacheEnv(cache) {
 			argv = append(argv, "-e", env)
@@ -207,6 +235,14 @@ func dockerArgv(dockerPath, projectsRoot, cache, root, name string, p *Profile) 
 	}
 	argv = append(argv, imageRef(p))
 	return append(argv, p.Command...)
+}
+
+// workspaceDir is the directory a server with a default configuration works
+// from: the one above the project. The handshake announces it and the image
+// writes into it, and both take it from here, so the place the file lands
+// and the place the server looks cannot drift apart.
+func workspaceDir(root string) string {
+	return filepath.Dir(root)
 }
 
 // containerPrefix is the naming scheme's per-server start; the name
@@ -362,7 +398,7 @@ func sweepCacheDirs(projectsRoot, cacheRoot string) {
 		for _, project := range projects {
 			if project.IsDir() {
 				for _, p := range profiles {
-					valid[containerName(p.Command[0], project.Name())] = true
+					valid[containerName(p.Server, project.Name())] = true
 				}
 			}
 		}
@@ -431,7 +467,7 @@ func removeCacheDir(dir string) error {
 // container, cache directory and legacy volume alike.
 func lspSchemeName(name string) bool {
 	for _, p := range profiles {
-		if strings.HasPrefix(name, containerPrefix(p.Command[0])) {
+		if strings.HasPrefix(name, containerPrefix(p.Server)) {
 			return true
 		}
 	}
@@ -448,7 +484,7 @@ func lspSchemeName(name string) bool {
 // what the removal of a volume an older release left behind travels on.
 func RemoveProjectCaches(project, cacheRoot, dockerHost string) {
 	for _, p := range profiles {
-		dir := cacheDir(cacheRoot, p.Command[0], project)
+		dir := cacheDir(cacheRoot, p.Server, project)
 		for attempt := 0; attempt < 15; attempt++ {
 			if _, err := os.Stat(dir); err != nil {
 				break
@@ -475,7 +511,7 @@ func removeLegacyProjectVolumes(project, dockerHost string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	for _, p := range profiles {
-		name := containerName(p.Command[0], project)
+		name := containerName(p.Server, project)
 		if dockerCmd(ctx, dockerPath, env, "volume", "inspect", name).Run() == nil {
 			_ = dockerCmd(ctx, dockerPath, env, "volume", "rm", name).Run()
 		}

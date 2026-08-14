@@ -568,7 +568,11 @@ test. Update this file when a convention changes.
   entries; the gutter shows what git has, so a dirty buffer drops it until the
   save catches up rather than attributing moved lines to the wrong commits, and
   a file git has never seen answers empty, which the status line says instead of
-  an empty gutter. The editor's cross-device settings live in the shared settings store
+  an empty gutter. The porcelain format costs a multiple of the file it
+  describes, so a file the editor still opens can fill git's output cap: that
+  answer carries `large` and no lines at all, because half a blame would
+  attribute the head of the file and leave the rest looking untouched.
+  The editor's cross-device settings live in the shared settings store
   under `editor-*` keys (`internal/web/editorsettings.go`); every default lives
   there, so an install with an empty store behaves like one that saved the
   defaults. They are edited on `/settings/editor/git`, one form behind a
@@ -589,7 +593,13 @@ test. Update this file when a convention changes.
 - **No route ever answers a diff.** `@codemirror/merge` computes it in the
   browser; the server only serves the file at HEAD
   (`.../editor/git/file?path=`), with the same binary and too large markers the
-  plain read route uses. The diff is a mode of a normal file tab and never a
+  plain read route uses. **git's own output cap (`git.MaxOutput`) counts as
+  too large there, and everywhere else a whole answer is the point**: the cap
+  truncates silently, so an answer that reaches it is the head of a larger
+  one, and a head diffed against the whole of it claims everything past the
+  cut was deleted. The cap sits below the edit limit, so a revision between
+  the two ends here, and the blame above says `large` for the same reason.
+  The diff is a mode of a normal file tab and never a
   tab of its own, because the working copy side **is** that file's buffer
   (`workView()` answers the merge view's right editor while one is up): save,
   the dirty marker, undo, search, go to line and the blame gutter all address
@@ -759,7 +769,9 @@ test. Update this file when a convention changes.
 - **Code navigation asks a language server, and the server processes belong
   to the cockpit.** `internal/editorintelligence` keeps a fixed profile
   registry, only the languages the navigation is verified against (gopls,
-  intelephense); the commands and the container recipe are compiled in, so
+  intelephense, tsgo, which owns TypeScript and JavaScript alike and tells
+  them apart by the language id of the `didOpen`);
+  the commands and the container recipe are compiled in, so
   no setting can become a command execution surface. A way to run a server
   is a `Launcher`, Docker the only one today: it owns detection, preparation,
   argv and what a death means, so the service carries no flavor branches and
@@ -776,19 +788,28 @@ test. Update this file when a convention changes.
   named `dev-cockpit-<server>-<project>` (the project part sanitized to
   docker's charset, the whole name capped at 63, a short hash of the raw name
   joining once anything was rewritten), the projects directory mounted at its
-  own path so file URIs match inside and outside, and one cache directory per
-  project and server wearing the container's name, which makes the directory
-  the project boundary. **That cache is a host bind and no named volume, and
-  it is mounted at the very path it has outside**, under
-  `<state-dir>/editor-lsp/` (`CacheRoot`), because a module cache is not only
-  a cache: it is where the sources of every dependency lie, and a definition
-  in one of them comes back as the path the server sees. Only an equal path
+  own path so file URIs match inside and outside (a profile with a default
+  configuration mounts its project alone instead, see below), and one cache
+  directory per project and server wearing the container's name, which makes
+  the directory the project boundary. **The server in those names is the
+  profile's own short `Server` field and never the command's leading token**:
+  a program name may be long enough to eat the room the cap leaves for the
+  project, so the TypeScript server is `tsgo` everywhere the cockpit names
+  something itself, the image, the container, the cache directory and the
+  stored setting value, while the command it runs stays what it is. **That
+  cache is a host bind and no named volume, and it is mounted at the very
+  path it has outside**, under `<state-dir>/editor-lsp/` (`CacheRoot`),
+  because a module cache is not only a cache: it is where the sources of
+  every dependency lie, and a definition in one of them comes back as the
+  path the server sees. Only an equal path
   on both sides lets the cockpit read that file back, which is the same trick
   the workspace mount uses; a bind wants a daemon on this machine, which the
   workspace mount wants anyway. The servers are pointed into that directory
   explicitly (intelephense's storagePath through the launcher's InitOptions,
-  gopls' GOMODCACHE and XDG_CACHE_HOME through the container env), or the
-  index would die with the container, and gopls also gets `-modcacherw`,
+  gopls' GOMODCACHE and XDG_CACHE_HOME and tsgo's XDG_CACHE_HOME through
+  the container env), or the index, and with it what a plain JavaScript
+  project's automatic type acquisition downloaded, would die with the
+  container, and gopls also gets `-modcacherw`,
   because a module cache is written read only and the cockpit has to be able
   to delete it again (`removeCacheDir` hands the modes back for the
   directories an older release wrote). **The projects root label is the
@@ -808,10 +829,15 @@ test. Update this file when a convention changes.
   source root** (`SourceRoot`, `internal/editorintelligence/sources.go`).
   Those roots are the whole allowlist and they are the launcher's answer,
   never a setting and never a client's word: the readable parts of the
-  project's own cache directory (the module downloads, deliberately not the
-  file cache beside them, which holds no source) and the trees that live in
-  the image, the Go standard library and intelephense's stubs. `Holds` takes
-  a path that is absolute and already clean and refuses everything else
+  project's own cache directory (the module downloads and the typings the
+  server fetched itself, deliberately not the file cache or the npm cache
+  beside them, which hold no source) and the trees that live in the image,
+  the Go standard library, intelephense's stubs and the `lib.*.d.ts` of the
+  typescript the image carries. Which languages need which is what the
+  profile says, and it is the language that decides, not the pattern: a PHP
+  dependency lies in `vendor` and a node one in `node_modules`, both inside
+  the project, so for those two only the image side is ever needed. `Holds`
+  takes a path that is absolute and already clean and refuses everything else
   rather than repairing it, because a repaired path is a second spelling of
   a file and the check would then be about a path nobody asked for.
   `mapLocations` marks such a target `external` with its absolute path, and
@@ -882,14 +908,51 @@ test. Update this file when a convention changes.
   is not empty, so no empty-answer retry ever catches it, that was the missed
   usages bug. The announcement itself arrives seconds after the handshake, so a
   connection that announced nothing counts as warming for `warmupWindow` after
-  start. **No poll stands behind the indicator**: the service tells one listener
-  about every move of the picture, the web layer publishes it as the `lsp` event
+  start. **A server that announces no startup work is exempt from all of
+  that** and carries `Profile.SilentStart`: it has the workspace ready before
+  it answers the first request, so there is nothing to wait out and the
+  waiting was pure delay. It is the profile that says so and never the
+  timing, and the zero value is the careful behaviour, so a profile that says
+  nothing keeps waiting. **No poll stands behind the indicator**: the service
+  tells one listener about every move of the picture, the web layer publishes
+  it as the `lsp` event
   naming the project, and every open editor pulls `.../editor/lsp/status`
   itself; the connect snapshot carries a bare signal for a page that opened
   mid-indexing. The status marks the stretch before the server answers as
-  preparing, which is where the first-use image build lives. Reindex in the
-  editor's menu stops the project's servers and warms them again over a fresh
-  scan, the project is the unit.
+  preparing, which is where the first-use image build lives.
+  **Because no poll stands behind it, every reason the indicator is up needs
+  an event that takes it down again.** There are three, and each has one: the
+  announced work ends with the server's own `end`; the preparing stretch ends
+  with the handshake; and the warming window, the stretch where a silent
+  connection is counted as indexing because its announcement may still be on
+  the way, publishes its own expiry (`endSilentWindow`, one timer per
+  connection). That third one is the trap, a clock nobody would look at
+  twice: without the timer a server that announces late, or never announces,
+  leaves a bar standing that only an unrelated move of the picture would ever
+  take down, which on an idle project is never.
+  **A `SilentStart` server has no such window at all** and is never counted
+  as indexing while it is quiet: it announces no startup work because it has
+  none, it is ready by the time it answers, and claiming otherwise would put
+  a bar on the screen waiting for an end that is not coming. That one fact
+  is also what keeps its lookups from waiting: counted as warming, every
+  lookup in a project the server had nothing to announce for sat the whole
+  window out, 45 seconds of spinner for an answer that stood at once, and an
+  empty answer was retried on top. What such a server does announce later,
+  fetching types for an untyped dependency, is waited out and shown like
+  anybody else's work. Reindex in the
+  editor's menu stops the project's servers and warms them again over a
+  fresh scan, the project is the unit.
+  **A project without a configuration of its own gets one from the image**
+  (`container.DefaultConfig`): without it the server builds a project out of
+  the opened file and what it imports, and a usages list answers a fraction
+  that reads like the whole. Nothing may land in the working copy, so such a
+  profile mounts its project alone and the file goes into the directory above
+  it, which is then the container's own; `workspaceDir` is that directory,
+  and it travels both as the `DC_WORKSPACE` the image writes into and as the
+  workspace the handshake announces (`lspConn.workspaceURI`, while `rootPath`
+  and `rootURI` stay the project), so the two cannot drift. Which file, what
+  is in it and whether the project already brought one is the build file's,
+  which puts the check where it can only run per container start.
   **The lookup routes stay off the editor group**
   (`.../editor/lsp/{definition,references,close,source}`): its middleware
   drops the quick open index after a write, and a lookup writes nothing. The

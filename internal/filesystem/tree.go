@@ -17,7 +17,7 @@ import (
 )
 
 // MaxEditableBytes caps how large a file may be to be read into the editor.
-const MaxEditableBytes = 2 << 20 // 2 MiB
+const MaxEditableBytes = 16 << 20 // 16 MiB
 
 // Entry is one item (file or directory) inside a project tree. RelPath is the
 // slash-separated path relative to the tree root and is what the client sends

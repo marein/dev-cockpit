@@ -35,7 +35,7 @@ func editorLSPServerKey(profileID string) string {
 // lives in this one place.
 func lspChoice(stored string, p *editorintelligence.Profile) string {
 	switch stored {
-	case "off", p.Command[0] + "-docker":
+	case "off", p.Server + "-docker":
 		return stored
 	}
 	return "auto"
@@ -83,7 +83,7 @@ func (s *Server) lspLauncher() editorintelligence.Launcher {
 // detection, the docker client; without them it is off.
 func (s *Server) lspProfileOff(p *editorintelligence.Profile) bool {
 	dockerOK := s.docker.State().Available && s.lspLauncher().Detect(p).Found
-	return resolveLSPMode(s.settings.Get(editorLSPServerKey(p.ID)), p.Command[0], dockerOK)
+	return resolveLSPMode(s.settings.Get(editorLSPServerKey(p.ID)), p.Server, dockerOK)
 }
 
 // lspProfileLauncher is the resolved mode as the launcher the intelligence
@@ -121,8 +121,8 @@ type editorSettings struct {
 func (s *Server) editorSettings() editorSettings {
 	return editorSettings{
 		GitPollSeconds: s.settingInt(editorGitPollSecondsKey, 2, 0, 60),
-		DiffMaxLines:   s.settingInt(editorDiffMaxLinesKey, 5000, 0, 200000),
-		DiffMaxKiB:     s.settingInt(editorDiffMaxKiBKey, 512, 0, 2048),
+		DiffMaxLines:   s.settingInt(editorDiffMaxLinesKey, 50000, 0, 500000),
+		DiffMaxKiB:     s.settingInt(editorDiffMaxKiBKey, 4096, 0, 16384),
 		Exclusions:     s.exclusions(),
 	}
 }

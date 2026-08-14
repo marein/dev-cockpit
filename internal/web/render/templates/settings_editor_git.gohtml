@@ -22,7 +22,7 @@
     <div class="col-12 col-sm-7 col-lg-5">
       <label class="form-label" for="editor-diff-max-lines">Ask before diffing more than</label>
       <div class="input-group">
-        <input class="form-control" type="number" id="editor-diff-max-lines" name="diff_max_lines" min="0" max="200000" step="1" value="{{.DiffMaxLines}}">
+        <input class="form-control" type="number" id="editor-diff-max-lines" name="diff_max_lines" min="0" max="500000" step="1" value="{{.DiffMaxLines}}">
         <span class="input-group-text">lines</span>
       </div>
     </div>
@@ -31,7 +31,7 @@
     <div class="col-12 col-sm-7 col-lg-5">
       <label class="form-label" for="editor-diff-max-kib">Ask before diffing more than</label>
       <div class="input-group">
-        <input class="form-control" type="number" id="editor-diff-max-kib" name="diff_max_kib" min="0" max="2048" step="1" value="{{.DiffMaxKiB}}">
+        <input class="form-control" type="number" id="editor-diff-max-kib" name="diff_max_kib" min="0" max="16384" step="1" value="{{.DiffMaxKiB}}">
         <span class="input-group-text">KiB</span>
       </div>
     </div>

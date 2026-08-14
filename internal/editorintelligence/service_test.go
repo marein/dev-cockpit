@@ -79,11 +79,15 @@ func runFakeLSP(mode string) {
 			// handshake finishes: the initialize response only goes out
 			// once the client answered workspace/configuration, so the
 			// order is deterministic for the assertions.
-			var params struct {
-				RootURI string `json:"rootUri"`
+			//
+			// The answers are built from the working directory, not from the
+			// announced workspace: the workspace is the project for most
+			// servers and the directory above it for one the cockpit hands a
+			// configuration, while the working directory is the project for
+			// every one of them, which is what an answer names.
+			if wd, err := os.Getwd(); err == nil {
+				rootURI = "file://" + wd
 			}
-			_ = json.Unmarshal(msg.Params, &params)
-			rootURI = params.RootURI
 			initID = msg.ID
 			id := json.RawMessage("9001")
 			req := rpcMessage{JSONRPC: "2.0", ID: &id, Method: "workspace/configuration",
@@ -454,6 +458,86 @@ func TestServiceChangeEvents(t *testing.T) {
 	}
 }
 
+// A server that announces no startup work has no warming stretch to sit
+// out: its silence is readiness, not a late announcement. Waiting it out
+// cost 45 seconds of spinner for an answer that stood at once. The servers
+// that index at the handshake keep that wait, their complete answers hang
+// on it, which is TestServiceWarmingGraceForSilentServer further down.
+func TestSilentStartServerIsNotWaitedOut(t *testing.T) {
+	installFakeLSP(t, "mute", "tsgo")
+	s := newTestService(t)
+	s.warmupGrace = 3 * time.Second
+
+	req := goRequest(t)
+	req.Path = "src/index.ts"
+	start := time.Now()
+	res, err := s.Definition(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Available || len(res.Locations) == 0 {
+		t.Fatalf("the answer must come back: %+v", res)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("a silent-start server must not be waited out, took %v", took)
+	}
+}
+
+// And an empty answer from such a server is the truth rather than a warming
+// artifact, so it comes back instead of being retried into a longer
+// spinner. The handshake servers keep their retries, see
+// TestServiceEmptyAnswerRetriesThenReturns.
+func TestEmptyAnswerFromSilentStartServerIsNotRetried(t *testing.T) {
+	installFakeLSP(t, "empty", "tsgo")
+	s := newTestService(t)
+
+	req := goRequest(t)
+	req.Path = "src/index.ts"
+	start := time.Now()
+	res, err := s.Definition(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Available || len(res.Locations) != 0 {
+		t.Fatalf("an empty answer is still an answer: %+v", res)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("an empty answer must not be retried into a long wait, took %v", took)
+	}
+}
+
+// The warming window is a clock nobody looks at twice, so its end has to
+// travel as an event: without it the indicator of a server that announces
+// nothing keeps a bar up that only an unrelated move would ever take down.
+func TestSilentWarmingWindowPublishesItsEnd(t *testing.T) {
+	installFakeLSP(t, "mute", "gopls")
+	s := newTestService(t)
+	s.warmupGrace = 700 * time.Millisecond
+	moves := make(chan struct{}, 32)
+	s.OnChange(func(string) {
+		select {
+		case moves <- struct{}{}:
+		default:
+		}
+	})
+
+	req := goRequest(t)
+	s.Warm(req.ProjectName, req.ProjectRoot, []WarmMode{{ProfileID: "go"}})
+	// Wait the window out through the events alone, the way the browser
+	// does: no status is pulled until one arrives.
+	deadline := time.After(6 * time.Second)
+	for {
+		select {
+		case <-moves:
+			if states := s.IndexStatus(req.ProjectName); len(states) == 1 && !states[0].Indexing {
+				return
+			}
+		case <-deadline:
+			t.Fatal("the end of the warming window was never published")
+		}
+	}
+}
+
 func TestServiceIndexStatus(t *testing.T) {
 	installFakeLSP(t, "indexing", "gopls")
 	s := newTestService(t)
@@ -771,7 +855,7 @@ case "$1" in
   run)
     prev=""
     for a in "$@"; do
-      case "$prev" in dev-cockpit-gopls:*|dev-cockpit-intelephense:*) exec "$a" ;; esac
+      case "$prev" in dev-cockpit-gopls:*|dev-cockpit-intelephense:*|dev-cockpit-tsgo:*) exec "$a" ;; esac
       prev="$a"
     done
     exit 1 ;;
@@ -997,6 +1081,60 @@ func TestServiceDockerModeBuildsOnceAndMountsTheContract(t *testing.T) {
 	}
 }
 
+// What the cockpit still owns for a server whose image writes a default
+// configuration: the project is mounted alone, so the directory above it
+// belongs to the container and nothing of ours can reach the working copy,
+// and that directory travels to the image as the environment it writes into.
+// It is the very directory the handshake announces, or the file would land
+// where the server does not look. Which file, and whether the project
+// already brought one, is the image's, and the container start proves it.
+func TestDefaultConfigMountsTheProjectAloneAndNamesTheWorkspace(t *testing.T) {
+	ts, _, _ := ProfileForPath("index.ts")
+	goProfile, _, _ := ProfileForPath("main.go")
+	projectsRoot := t.TempDir()
+	root := filepath.Join(projectsRoot, "app")
+	launcher := DockerLauncher(t.TempDir(), nil)
+
+	line := strings.Join(launcher.Argv(projectsRoot, "app", root, ts), " ")
+	if !strings.Contains(line, "-v "+root+":"+root) || strings.Contains(line, "-v "+projectsRoot+":"+projectsRoot) {
+		t.Fatalf("the project is mounted alone: %s", line)
+	}
+	if !strings.Contains(line, "-e DC_WORKSPACE="+projectsRoot) {
+		t.Fatalf("the image is told where to write: %s", line)
+	}
+	if got := workspaceURI(ts, root); got != fileURI(projectsRoot) {
+		t.Fatalf("the handshake announces the same directory, got %s", got)
+	}
+	// The working directory stays the project, so the container's watcher
+	// keeps watching it and a configuration added there restarts the server,
+	// which is what makes the image's check run again.
+	if !strings.Contains(line, "-w "+root) {
+		t.Fatalf("the workspace stays the working directory: %s", line)
+	}
+
+	// Go and PHP know none of this and keep the projects directory.
+	goLine := strings.Join(launcher.Argv(projectsRoot, "app", root, goProfile), " ")
+	if !strings.Contains(goLine, "-v "+projectsRoot+":"+projectsRoot) || strings.Contains(goLine, "DC_WORKSPACE") {
+		t.Fatalf("go is untouched: %s", goLine)
+	}
+	if got := workspaceURI(goProfile, root); got != fileURI(root) {
+		t.Fatalf("go announces its project, got %s", got)
+	}
+}
+
+// The handshake announces the directory the configuration lies in, while
+// everything the editor is answered with stays relative to the project.
+func TestWorkspaceURIFollowsTheConfiguration(t *testing.T) {
+	ts, _, _ := ProfileForPath("index.ts")
+	goProfile, _, _ := ProfileForPath("main.go")
+	if got := workspaceURI(ts, "/projects/app"); got != "file:///projects" {
+		t.Fatalf("typescript announces the directory above, got %s", got)
+	}
+	if got := workspaceURI(goProfile, "/projects/app"); got != "file:///projects/app" {
+		t.Fatalf("go announces its project, got %s", got)
+	}
+}
+
 // The launchers' initializationOptions: the container way points the PHP
 // server's index storage into the project's own cache directory, which is
 // the same path inside and outside, and everything else stays nil.
@@ -1012,6 +1150,31 @@ func TestLauncherInitOptions(t *testing.T) {
 	if DockerLauncher(cacheRoot, nil).InitOptions("proj", goProfile) != nil {
 		t.Fatalf("go docker init options must be nil")
 	}
+	ts, _, _ := ProfileForPath("index.ts")
+	if DockerLauncher(cacheRoot, nil).InitOptions("proj", ts) != nil {
+		t.Fatalf("typescript docker init options must be nil")
+	}
+}
+
+// The container run of the typescript way: the cache directory carries what
+// the server downloads itself, so its environment points there and at the
+// very path the directory has outside, which is what lets the read route
+// answer a definition that lands in it.
+func TestTypescriptDockerArgvPointsTheCacheIn(t *testing.T) {
+	ts, _, _ := ProfileForPath("index.ts")
+	cacheRoot := t.TempDir()
+	cache := filepath.Join(cacheRoot, "dev-cockpit-tsgo-my-app")
+	argv := DockerLauncher(cacheRoot, nil).Argv("/projects", "my-app", "/projects/my-app", ts)
+	line := strings.Join(argv, " ")
+	for _, want := range []string{
+		"-v " + cache + ":" + cache,
+		"-e XDG_CACHE_HOME=" + cache + "/cache",
+		imageRef(ts) + " tsgo --lsp -stdio",
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("run line misses %q: %s", want, line)
+		}
+	}
 }
 
 // The image tag is a stable hash of the shipped build file: same content,
@@ -1020,15 +1183,19 @@ func TestLauncherInitOptions(t *testing.T) {
 func TestImageRefFollowsTheBuildFile(t *testing.T) {
 	goProfile, _, _ := ProfileForPath("main.go")
 	php, _, _ := ProfileForPath("index.php")
-	goRef, phpRef := imageRef(goProfile), imageRef(php)
+	ts, _, _ := ProfileForPath("index.ts")
+	goRef, phpRef, tsRef := imageRef(goProfile), imageRef(php), imageRef(ts)
 	if goRef != imageRef(goProfile) {
 		t.Fatal("the tag is not deterministic")
 	}
-	if !strings.HasPrefix(goRef, "dev-cockpit-gopls:") || !strings.HasPrefix(phpRef, "dev-cockpit-intelephense:") {
-		t.Fatalf("refs: %s / %s", goRef, phpRef)
+	if !strings.HasPrefix(goRef, "dev-cockpit-gopls:") || !strings.HasPrefix(phpRef, "dev-cockpit-intelephense:") ||
+		!strings.HasPrefix(tsRef, "dev-cockpit-tsgo:") {
+		t.Fatalf("refs: %s / %s / %s", goRef, phpRef, tsRef)
 	}
-	if !regexp.MustCompile(`^[a-z0-9-]+:[0-9a-f]{12}$`).MatchString(goRef) {
-		t.Fatalf("tag shape: %s", goRef)
+	for _, ref := range []string{goRef, phpRef, tsRef} {
+		if !regexp.MustCompile(`^[a-z0-9-]+:[0-9a-f]{12}$`).MatchString(ref) {
+			t.Fatalf("tag shape: %s", ref)
+		}
 	}
 }
 
@@ -1056,7 +1223,17 @@ func TestContainerNames(t *testing.T) {
 	if got := containerName("gopls", ""); got != containerName("gopls", "") || !strings.HasPrefix(got, "dev-cockpit-gopls-") {
 		t.Fatalf("empty project name: %s", got)
 	}
-	for _, name := range []string{spaced, containerName("gopls", "über app"), containerName("gopls", long), containerName("intelephense", longer)} {
+	// The longest server name of the registry leaves the least room for the
+	// project, which is where a cap that forgot the prefix would show.
+	tsPlain := containerName("tsgo", "my-app")
+	if tsPlain != "dev-cockpit-tsgo-my-app" {
+		t.Fatalf("typescript name: %s", tsPlain)
+	}
+	if containerName("tsgo", long) == containerName("tsgo", longer) {
+		t.Fatal("capping collided behind the short server name")
+	}
+	for _, name := range []string{spaced, containerName("gopls", "über app"), containerName("gopls", long), containerName("intelephense", longer),
+		tsPlain, containerName("tsgo", long), containerName("tsgo", "my app")} {
 		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`).MatchString(name) {
 			t.Fatalf("name %q is not a valid container name", name)
 		}

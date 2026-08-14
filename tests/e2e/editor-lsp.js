@@ -98,11 +98,12 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     await page.goto(`${BASE}/settings/editor/lsp`, { waitUntil: "domcontentloaded" });
     await L.dismissUpdate(page);
     const picked = await page.$$eval("#settings-editor-lsp select", (els) => els.map((sel) => `${sel.name}=${sel.value}`).join(","));
-    const fresh = picked === "server_go=auto,server_php=auto";
-    const pinned = picked === "server_go=gopls-docker,server_php=intelephense-docker";
+    const fresh = picked === "server_go=auto,server_php=auto,server_typescript=auto";
+    const pinned = picked === "server_go=gopls-docker,server_php=intelephense-docker,server_typescript=tsgo-docker";
     assert(fresh || pinned, `Automatic on a fresh instance or the earlier engine's pin, got ${picked} (the runner needs a fresh throwaway)`);
     await page.selectOption('select[name="server_go"]', "gopls-docker");
     await page.selectOption('select[name="server_php"]', "intelephense-docker");
+    await page.selectOption('select[name="server_typescript"]', "tsgo-docker");
     await saveLSPSettings();
     return fresh ? "fresh instance, Automatic was the default" : "pin from the earlier engine pass held";
   });
@@ -560,6 +561,7 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     const byName = Object.fromEntries(selects.map((sel) => [sel.name, sel.options]));
     assert(byName.server_go === "auto,gopls-docker,off", `go select options, got ${byName.server_go}`);
     assert(byName.server_php === "auto,intelephense-docker,off", `php select options, got ${byName.server_php}`);
+    assert(byName.server_typescript === "auto,tsgo-docker,off", `typescript select options, got ${byName.server_typescript}`);
     await page.selectOption('select[name="server_go"]', "auto");
     await saveLSPSettings();
     await page.reload({ waitUntil: "domcontentloaded" });

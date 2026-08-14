@@ -103,6 +103,26 @@ func TestProfileForPath(t *testing.T) {
 	if p, lang, ok := ProfileForPath("src/Kernel.php"); !ok || p.ID != "php" || lang != "php" {
 		t.Fatalf("php: %v %v %v", p, lang, ok)
 	}
+	// One server owns both languages, so the profile is the same for every
+	// one of its extensions and only the language id tells them apart, which
+	// is what didOpen carries.
+	for path, want := range map[string]string{
+		"src/index.ts":     "typescript",
+		"src/index.mts":    "typescript",
+		"src/index.cts":    "typescript",
+		"src/App.tsx":      "typescriptreact",
+		"src/index.js":     "javascript",
+		"src/index.mjs":    "javascript",
+		"src/index.cjs":    "javascript",
+		"src/App.jsx":      "javascriptreact",
+		"src/INDEX.TS":     "typescript",
+		"vite.config.mts":  "typescript",
+		"eslint.config.js": "javascript",
+	} {
+		if p, lang, ok := ProfileForPath(path); !ok || p.ID != "typescript" || lang != want {
+			t.Errorf("%s: %v %v %v, want typescript/%s", path, p, lang, ok, want)
+		}
+	}
 	if _, _, ok := ProfileForPath("README.md"); ok {
 		t.Fatal("md must have no profile")
 	}

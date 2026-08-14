@@ -30,6 +30,11 @@ type Blame struct {
 	Path    string   `json:"path"`
 	Commits []Commit `json:"commits"`
 	Lines   []int    `json:"lines"`
+	// Large marks a file whose blame outgrew what one call keeps in memory
+	// (MaxOutput). The lines are empty then, because half a blame is worse
+	// than none: the head of the file would carry its commits and everything
+	// past the cut would read like a part nobody ever touched.
+	Large bool `json:"large,omitempty"`
 }
 
 // blameHeader is the line that opens every blame entry: the commit, the line it
@@ -66,6 +71,16 @@ func (r *Repo) Blame(ctx context.Context, file string) (Blame, error) {
 			return blame, nil
 		}
 		return blame, err
+	}
+	// The output cap truncates silently, and the porcelain format costs a
+	// multiple of the file it describes, so a file well inside the edit limit
+	// can still fill it. An answer that reached the cap is the head of a
+	// larger one and says so instead of attributing what it has; a blame that
+	// happens to end exactly there is called too large with it, which is the
+	// safe way to be wrong.
+	if len(out) >= MaxOutput {
+		blame.Large = true
+		return blame, nil
 	}
 	blame.Commits, blame.Lines = parseBlame(out)
 	return blame, nil

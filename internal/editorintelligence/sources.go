@@ -131,7 +131,7 @@ func lastLine(s string) string {
 // for a project: the readable parts of the project's cache directory, then
 // the trees inside the image.
 func dockerSourceRoots(cacheRoot, project string, p *Profile) []SourceRoot {
-	dir := cacheDir(cacheRoot, p.Command[0], project)
+	dir := cacheDir(cacheRoot, p.Server, project)
 	roots := make([]SourceRoot, 0, len(p.container.CacheSources)+len(p.container.ImageRoots))
 	for _, sub := range p.container.CacheSources {
 		roots = append(roots, SourceRoot{Path: dir + "/" + sub})

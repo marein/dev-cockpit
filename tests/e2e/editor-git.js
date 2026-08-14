@@ -343,8 +343,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
 
       const values = await editorValues();
       assert(values.git_poll_seconds === "2", `poll seconds: ${values.git_poll_seconds}`);
-      assert(values.diff_max_lines === "5000", `diff max lines: ${values.diff_max_lines}`);
-      assert(values.diff_max_kib === "512", `diff max KiB: ${values.diff_max_kib}`);
+      assert(values.diff_max_lines === "50000", `diff max lines: ${values.diff_max_lines}`);
+      assert(values.diff_max_kib === "4096", `diff max KiB: ${values.diff_max_kib}`);
       // How a comparison looks belongs to the screen, not to the install:
       // neither the view nor the folding is on this page, and the server stores
       // nothing about them. The limits stay, they are a house rule.
@@ -360,7 +360,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       assert(stored.diff_max_lines === "4000", `diff max lines after save: ${stored.diff_max_lines}`);
 
       // Back to the defaults, the diff checks further down read these.
-      await page.fill('#settings-editor-git [name="diff_max_lines"]', "5000");
+      await page.fill('#settings-editor-git [name="diff_max_lines"]', "50000");
       await saveEditorSettings();
       return "search tab first, git next to it, one POST, three values";
     });
@@ -897,7 +897,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await page.waitForSelector(".cm-mergeView", { state: "detached", timeout: 20000 });
 
       await openEditorSettings();
-      await page.fill('#settings-editor-git [name="diff_max_lines"]', "5000");
+      await page.fill('#settings-editor-git [name="diff_max_lines"]', "50000");
       await saveEditorSettings();
       return "asked, declined, asked again, confirmed";
     });
@@ -3190,9 +3190,11 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     await run("a revision that is too large says that, not that it is binary", async () => {
       // Large in the commit, small on the disk: a file over the edit limit has
       // no tab at all, so the only way to meet this message is a revision that
-      // outgrew what the editor reads.
+      // outgrew what the editor reads. Over the edit limit is over git's own
+      // output cap too, and the route answers the same sentence for both: a
+      // truncated blob is no more diffable than one that is too large.
       assert(await runInShell(
-        "yes abcdefghijklmnopqrstuvwxyz | head -c 2200000 > heavy.txt && "
+        "yes abcdefghijklmnopqrstuvwxyz | head -c 17000000 > heavy.txt && "
         + `git add -A && git ${author} commit -qm heavy && printf 'small now\\n' > heavy.txt\r`,
       ) === 200, "the shell refused to write the large file");
       const deadline = Date.now() + 45000;

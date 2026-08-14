@@ -78,6 +78,7 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		Page:         s.page(c, "Editor - "+p.Name, "projects"),
 		Project:      p,
 		MaxEditKiB:   filesystem.MaxEditableBytes / 1024,
+		MaxEditSize:  filesystem.HumanSize(filesystem.MaxEditableBytes),
 		Return:       ret,
 		Projects:     switcher,
 		DiffMaxLines: set.DiffMaxLines,
@@ -675,11 +676,17 @@ func (s *Server) handleEditorGitFile(c *gin.Context) {
 		return
 	}
 	// Binary and too large both mean "not something to diff", but they are not
-	// the same sentence to read, so the reason travels with the answer.
-	if err := filesystem.CheckEditableText(content); err != nil {
-		reason := "binary"
-		if errors.Is(err, filesystem.ErrTooLarge) {
-			reason = "large"
+	// the same sentence to read, so the reason travels with the answer. A blob
+	// that fills git's own output cap counts as too large as well: git
+	// truncates silently, and the head of a file diffed against the whole of it
+	// claims everything past the cut was deleted. The cap sits below the edit
+	// limit, so this is the answer for a revision between the two; a file that
+	// happens to be exactly the cap is called too large with it, which is the
+	// safe way to be wrong here.
+	if err := filesystem.CheckEditableText(content); err != nil || len(content) >= git.MaxOutput {
+		reason := "large"
+		if errors.Is(err, filesystem.ErrBinary) {
+			reason = "binary"
 		}
 		c.JSON(http.StatusOK, gin.H{"path": rel, "exists": true, "binary": true, "reason": reason, "size": len(content)})
 		return

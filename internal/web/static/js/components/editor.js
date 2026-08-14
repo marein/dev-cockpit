@@ -3791,7 +3791,11 @@ async function init(root) {
       blameFor = textTab.path;
       const has = !!data.repo && (data.lines || []).length > 0;
       editor.setBlame(has ? data : null);
-      if (!has) status("Nothing to blame in this file, git does not know it yet.");
+      if (!has) {
+        status(data.large
+          ? "This file is too large to blame."
+          : "Nothing to blame in this file, git does not know it yet.");
+      }
     } catch (err) {
       // A file git has never seen has no blame, and that is not an error worth
       // a toast: the gutter simply stays away. The same check as above first,
@@ -6872,6 +6876,7 @@ const langUrl = (pkg) => `https://cdn.jsdelivr.net/npm/@codemirror/${pkg}/dist/i
 const FILE_ICONS = {
   js: "ti-file-type-js", mjs: "ti-file-type-js", cjs: "ti-file-type-js",
   jsx: "ti-file-type-jsx", ts: "ti-file-type-ts", tsx: "ti-file-type-tsx",
+  mts: "ti-file-type-ts", cts: "ti-file-type-ts",
   css: "ti-file-type-css", scss: "ti-file-type-css", less: "ti-file-type-css",
   html: "ti-file-type-html", htm: "ti-file-type-html", vue: "ti-file-type-vue",
   php: "ti-file-type-php", xml: "ti-file-type-xml", svg: "ti-file-type-svg",
@@ -6946,6 +6951,8 @@ const LANGS = {
   mjs: ["lang-javascript@6.2.2", "javascript", {}],
   cjs: ["lang-javascript@6.2.2", "javascript", {}],
   ts: ["lang-javascript@6.2.2", "javascript", { typescript: true }],
+  mts: ["lang-javascript@6.2.2", "javascript", { typescript: true }],
+  cts: ["lang-javascript@6.2.2", "javascript", { typescript: true }],
   tsx: ["lang-javascript@6.2.2", "javascript", { typescript: true, jsx: true }],
   go: ["lang-go@6.0.0", "go", null],
   html: ["lang-html@6.4.9", "html", null],
