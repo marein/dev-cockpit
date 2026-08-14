@@ -153,7 +153,7 @@ async function init(root) {
   // onCursor runs from inside createEditor's first update, before the const
   // below is bound, so anything of ours that reads the editor waits for this.
   let editorReady = false;
-  const editor = await createEditor(surfaceEl, { onChange, onCursor, lspUsable, onLSPClick: goToDefinition, onFindUsages: findUsages, onGoToDefinition: goToDefinitionAtCursor }, editorSettings, signal, mergeEl);
+  const editor = await createEditor(surfaceEl, { onChange, onCursor, onFocusChange: syncSwipeZone, lspUsable, onLSPClick: goToDefinition, onFindUsages: findUsages, onGoToDefinition: goToDefinitionAtCursor }, editorSettings, signal, mergeEl);
   editorReady = true;
   setupSettingsUI(root, editor, editorSettings, (key) => {
     if (key === "diff_view" || key === "diff_collapse") void reapplyComparison(key);
@@ -5610,8 +5610,10 @@ async function init(root) {
   //
   // It applies only while lines wrap. With wrapping off the surface itself
   // scrolls sideways, and then the gesture belongs to the code: taking it away
-  // there would make a long line unreadable. A mouse never swipes, and a
-  // gesture that starts on a selection is the selection's.
+  // there would make a long line unreadable. A mouse never swipes, a gesture
+  // that starts on a selection is the selection's, and one in a focused editor
+  // is the cursor's: dragging it along the line has to keep working while
+  // someone types.
   const SWIPE_AXIS_LOCK_PX = 12;
   const SWIPE_COMMIT_PX = 72;
   const SWIPE_FLING_VX = 0.5;
@@ -5637,11 +5639,13 @@ async function init(root) {
   // Only while lines wrap and never in a comparison: with wrapping off the
   // surface scrolls sideways itself, and a comparison has two scrollers side by
   // side. A selection hands the surface back as well, so its handles keep the
-  // gesture the browser gives them.
+  // gesture the browser gives them, and so does a focused editor: while someone
+  // works in the text, a sideways drag is the cursor's, not the file strip's.
   function syncSwipeZone() {
     if (!editorReady) return;
     const tab = activeTab();
-    const on = !!editorSettings.line_wrap && !!tab && !tab.compare && !editor.hasSelection();
+    const on = !!editorSettings.line_wrap && !!tab && !tab.compare
+      && !editor.hasSelection() && !editor.hasFocus();
     surfaceEl.classList.toggle("editor-swipe-zone", on);
   }
 
@@ -7197,10 +7201,18 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   }
   const lspExtension = [lspHintField, lspTheme, lspMouse, lspPillField, lspPillTouch];
 
+  // The swipe zone asks whether the text has the focus, so every view says when
+  // that changes. It rides in the shared extensions because a side by side view
+  // has two of them and either one can hold the focus.
+  const focusReporter = EditorView.updateListener.of((u) => {
+    if (u.focusChanged) hooks.onFocusChange?.();
+  });
+
   // Everything both sides share. The compartments live in both, so a font or
   // theme change reaches the read only side of a diff as well.
   const sharedExtensions = (langExt) => [
     basicSetup,
+    focusReporter,
     themeConf.of(schemeTheme()),
     langConf.of(langExt),
     tabSizeConf.of(EditorState.tabSize.of(userTabSize)),
@@ -7974,10 +7986,14 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       });
       return true;
     },
-    // The swipe zone asks this one: a gesture must not take a selection's
-    // place.
+    // The swipe zone asks these two: a gesture must not take a selection's
+    // place, nor the cursor's while someone is working in the text. Either side
+    // of a comparison counts, whichever the finger last landed in.
     hasSelection() {
       return !workView().state.selection.main.empty;
+    },
+    hasFocus() {
+      return liveViews().some((v) => v.hasFocus);
     },
     lspPosition() {
       const st = workView().state;
@@ -8059,6 +8075,9 @@ function createTextarea(host, hooks, settings) {
   for (const type of ["input", "click", "keyup"]) {
     ta.addEventListener(type, reportCursor);
   }
+  for (const type of ["focus", "blur"]) {
+    ta.addEventListener(type, () => hooks.onFocusChange?.());
+  }
   return {
     async createDoc(content, filename, { readOnly = false } = {}) {
       return { value: content, saved: content, readOnly };
@@ -8095,6 +8114,9 @@ function createTextarea(host, hooks, settings) {
     },
     hasSelection() {
       return ta.selectionStart !== ta.selectionEnd;
+    },
+    hasFocus() {
+      return document.activeElement === ta;
     },
     refreshLanguage() {},
     // Without CodeMirror there is no diff and no comparison either: the

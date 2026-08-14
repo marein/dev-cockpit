@@ -2355,6 +2355,26 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
       return `${names.join(" / ")}, wrapping at both ends`;
     });
 
+    // Dragging the cursor along a line is a horizontal drag as well, so while
+    // the text has the focus the gesture is the cursor's. The strip gets it
+    // back the moment the editor loses the focus, keyboard away, nothing else.
+    await run("mobile: a focused editor keeps the horizontal gesture, losing the focus gives it back", async () => {
+      const mp = await mobilePage();
+      await setWrap(mp, true);
+      const before = await activeName(mp);
+      await mp.click(".cm-content", { force: true });
+      await mp.waitForFunction(() => !document.querySelector("[data-editor-surface]").classList.contains("editor-swipe-zone"), null, { timeout: 6000 });
+      const takenFocused = await swipeSurface(mp, -180);
+      assert(!takenFocused, "the editor took the horizontal gesture away from the cursor while the text had the focus");
+      assert(await activeName(mp) === before, `the swipe switched to ${await activeName(mp)} while the text had the focus`);
+      await mp.evaluate(() => document.activeElement?.blur());
+      await mp.waitForFunction(() => document.querySelector("[data-editor-surface]").classList.contains("editor-swipe-zone"), null, { timeout: 6000 });
+      const takenBlurred = await swipeSurface(mp, -180);
+      assert(takenBlurred, "the swipe did not come back after the editor lost the focus");
+      assert(await activeName(mp) !== before, "the swipe after the lost focus did not change the file");
+      return `${before} kept while the cursor was in it, ${await activeName(mp)} after the focus went`;
+    });
+
     // One pill for both swipes: same class, same place. The editor's sits where
     // the terminal's sits, fixed near the top of the viewport, not at the
     // bottom edge of the surface it belongs to.

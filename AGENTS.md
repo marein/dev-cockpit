@@ -719,7 +719,9 @@ test. Update this file when a convention changes.
   both ends like `stepTab` and the terminal swipe do, and only while
   `line_wrap` is on: with wrapping off the surface scrolls sideways and the
   gesture is the code's. Touch only, never with a selection, never in a
-  comparison. It does what the terminal's `terminal-scroll-zone` does rather
+  comparison, never while the text has the focus: dragging the cursor along a
+  line is a sideways drag too, and it has to keep working while someone types.
+  It does what the terminal's `terminal-scroll-zone` does rather
   than listening harder: every pan is taken from the browser (`touch-action:
   pinch-zoom` while wrapping is on, set through `.editor-swipe-zone`, and it
   has to sit on `.cm-scroller` as well, because a pan reads the value from the
@@ -731,8 +733,11 @@ test. Update this file when a convention changes.
   The price is that scrolling the text is ours too, finger 1:1 plus a fling
   that decays; what a scroller cannot take chains on to the page. The zone
   class is therefore off wherever we do not want that job: with wrapping off,
-  in a comparison, and while a selection stands (`syncSwipeZone`, called from
-  `afterActiveChanged` and `onCursor`). The pill naming the target is one thing app wide,
+  in a comparison, while a selection stands and while the editor holds the
+  focus (`syncSwipeZone`, called from `afterActiveChanged`, `onCursor` and
+  `onFocusChange`). That last hook is an `updateListener` on `focusChanged` in
+  the shared extensions, so both editors of a side by side view report it, not
+  a listener on the document. The pill naming the target is one thing app wide,
   `.dc-swipe-pill`, shared with the terminal swipe and fixed near the top of
   the viewport; only the terminal adds the pulsing pending state, because only
   it waits for a navigation. A tree row is `draggable` on a fine pointer only:
