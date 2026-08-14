@@ -1,0 +1,5 @@
+{{define "editor_projects.gohtml"}}
+{{range .Projects}}
+<a class="dropdown-item{{if .Current}} active{{end}}" href="{{.URL}}" data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">{{.Name}}</a>
+{{end}}
+{{end}}

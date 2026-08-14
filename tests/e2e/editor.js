@@ -70,7 +70,7 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // the per-row hover pencil/trash buttons are gone and the tree header keeps just
 // the refresh button (drag-drop upload still works).
 
-L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) => {
+L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag }) => {
   const tag = `edit-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   const projectB = `zztc-a-${tag}`;
@@ -2023,6 +2023,72 @@ L.runFeature("EDITOR", async ({ engine, browser, page, run, mobilePage, bag }) =
         const el = document.querySelector(".editor-project-switch");
         return el && el.textContent.includes(p);
       }, projectB, { timeout: 8000 });
+    });
+
+    await run("project switcher: shortcut, search, arrows, and a project set that moves live", async () => {
+      const projectC = `zztc-c-${tag}`;
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+      const shown = () => page.$$eval("[data-editor-project-list] .dropdown-item",
+        (els) => els.filter((el) => !el.hidden).map((el) => el.dataset.projectName));
+      const marked = () => page.evaluate(() =>
+        document.querySelector("[data-editor-project-list] .dropdown-item.selected")?.dataset.projectName || "");
+
+      await page.keyboard.press("Control+Shift+P");
+      await page.waitForSelector(".editor-project-menu.show", { timeout: 4000 });
+      assert(await page.evaluate(() => document.activeElement.matches("[data-editor-project-filter]")),
+        "the search field did not take the focus");
+      assert(await marked() === project, `the open menu marks ${await marked()} instead of the current project`);
+
+      await page.keyboard.type(projectB);
+      await sleep(200);
+      let names = await shown();
+      assert(names.length === 1 && names[0] === projectB, `typing did not narrow the list: ${names.join(", ")}`);
+      assert(await marked() === projectB, `the first hit is not marked: ${await marked()}`);
+      assert(await page.isVisible("[data-editor-project-empty]") === false, "the empty note shows while something matches");
+
+      await page.keyboard.type("zzz");
+      await sleep(200);
+      assert((await shown()).length === 0 && await page.isVisible("[data-editor-project-empty]"),
+        "a query nothing matches must say so");
+      assert(await marked() === "", "a list with no hits must mark nothing");
+      for (let i = 0; i < 3; i += 1) await page.keyboard.press("Backspace");
+      await sleep(200);
+
+      await page.keyboard.press("Enter");
+      await page.waitForFunction((p) => decodeURIComponent(location.pathname) === `/projects/${p}/editor`, projectB, { timeout: 8000 });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+
+      await page.keyboard.press("Control+Shift+P");
+      await page.waitForSelector(".editor-project-menu.show", { timeout: 4000 });
+      const before = await marked();
+      await page.keyboard.press("ArrowDown");
+      await sleep(150);
+      const after = await marked();
+      assert(before === projectB && after !== "" && after !== projectB, `the arrow did not move the mark: ${before} -> ${after}`);
+      assert(await page.evaluate(() => document.activeElement.matches("[data-editor-project-filter]")),
+        "an arrow moved the focus out of the search field");
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".editor-project-menu.show", { state: "detached", timeout: 4000 });
+
+      const other = await ctx.newPage();
+      L.wirePage(other, bag);
+      try {
+        await L.createProject(other, projectC);
+        await page.waitForFunction((p) => [...document.querySelectorAll("[data-editor-project-list] .dropdown-item")]
+          .some((el) => el.dataset.projectName === p), projectC, { timeout: 8000 });
+        await L.deleteProject(other, projectC);
+        await page.waitForFunction((p) => ![...document.querySelectorAll("[data-editor-project-list] .dropdown-item")]
+          .some((el) => el.dataset.projectName === p), projectC, { timeout: 8000 });
+      } finally {
+        await other.close().catch(() => {});
+      }
+
+      await page.click(".editor-project-switch");
+      await page.waitForSelector(".editor-project-menu.show", { timeout: 4000 });
+      assert(await marked() === "", `a mouse open marked ${await marked()}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".editor-project-menu.show", { state: "detached", timeout: 4000 });
     });
 
     await run("mobile: tree is a drawer, auto-open without tabs, closes on open", async () => {

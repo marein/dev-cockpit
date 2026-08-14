@@ -29,6 +29,13 @@ type EditorData struct {
 	LSPExts string
 }
 
+// EditorProjectsData feeds the switcher fragment, the very rows the editor
+// page renders inside its dropdown. The client pulls it when the project set
+// changes instead of building the markup a second time in the browser.
+type EditorProjectsData struct {
+	Projects []EditorProject
+}
+
 // EditorProject is one project switcher entry in the editor's tree header. The
 // entries render with the data-project-* attributes @dc/project-sort reads, so
 // the client orders the menu like every other project listing.

@@ -900,12 +900,14 @@ test. Update this file when a convention changes.
   (a containerized server lives in another PID namespace and would exit
   believing its parent dead), and lives until the project saw no editor action
   for ten minutes: every route under the editor group counts through the
-  middleware's `Touch`, the indexing status pull deliberately does not. A full
-  table evicts the least recently used idle connection, busy is the answer only
-  when every slot works. Because the connection is shared, a document carries
-  the server's own version counter and its set of holders (didClose on the last
-  one, cancellation per client and document), and a lookup re-syncs and sends
-  under one lock, so no other instance's didChange slips between the text and
+  middleware's `Touch`, the indexing status pull and the project switcher's
+  row fragment deliberately do not, both being pulls nobody working in this
+  project started. A full table evicts the least recently used idle
+  connection, busy is the answer only when every slot works. Because the
+  connection is shared, a document carries the server's own version counter
+  and its set of holders (didClose on the last one, cancellation per client
+  and document), and a lookup re-syncs and sends under one lock, so no other
+  instance's didChange slips between the text and
   the position describing it.
   **A request waits out the announced workspace indexing**, bounded: answers
   during it are real but partial, references most of all, and a partial answer

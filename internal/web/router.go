@@ -248,6 +248,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// else. It is a read like the lookups above and belongs beside them.
 	auth.GET("/projects/:name/editor/lsp/source", s.handleEditorLSPSource)
 	auth.POST("/projects/:name/editor/lsp/reindex", s.handleEditorLSPReindex)
+	// The switcher's rows stay off the group for the same reason: an open
+	// editor pulls them whenever a project changes anywhere in the app, which
+	// is the app moving and not somebody working in this project.
+	auth.GET("/projects/:name/editor/projects", s.handleEditorProjects)
 	auth.POST("/projects/:name/docker/compose", s.handleDockerCompose)
 	auth.POST("/projects/:name/docker/logs", s.handleDockerComposeLogs)
 	// A compose run outlives the request that started it, so its output is a

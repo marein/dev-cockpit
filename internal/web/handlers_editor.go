@@ -62,17 +62,6 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 	s.intel.Touch(p.Name)
 	go s.warmLSPServers(p)
 	ret := s.formReturn(c)
-	list := s.projectsWithRunners()
-	switcher := make([]render.EditorProject, 0, len(list))
-	for _, q := range list {
-		switcher = append(switcher, render.EditorProject{
-			Name:         q.Name,
-			URL:          "/projects/" + url.PathEscape(q.Name) + "/editor?return=" + url.QueryEscape(ret),
-			Current:      q.Name == p.Name,
-			Active:       len(q.ActiveCoderRefs) > 0 || len(q.ShellRefs) > 0,
-			LastUsedUnix: q.LastUsedUnix,
-		})
-	}
 	set := s.editorSettings()
 	c.HTML(http.StatusOK, "project_editor.gohtml", render.EditorData{
 		Page:         s.page(c, "Editor - "+p.Name, "projects"),
@@ -80,10 +69,43 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		MaxEditKiB:   filesystem.MaxEditableBytes / 1024,
 		MaxEditSize:  filesystem.HumanSize(filesystem.MaxEditableBytes),
 		Return:       ret,
-		Projects:     switcher,
+		Projects:     s.editorSwitcher(p.Name, ret),
 		DiffMaxLines: set.DiffMaxLines,
 		DiffMaxKiB:   set.DiffMaxKiB,
 		LSPExts:      s.lspSpec(),
+	})
+}
+
+// editorSwitcher is the project list behind the tree header's switcher, one
+// entry per project linking to its editor. current marks the project the page
+// belongs to, and the back target rides along so a switch keeps the way out
+// the reader arrived with.
+func (s *Server) editorSwitcher(current, ret string) []render.EditorProject {
+	list := s.projectsWithRunners()
+	entries := make([]render.EditorProject, 0, len(list))
+	for _, q := range list {
+		entries = append(entries, render.EditorProject{
+			Name:         q.Name,
+			URL:          "/projects/" + url.PathEscape(q.Name) + "/editor?return=" + url.QueryEscape(ret),
+			Current:      q.Name == current,
+			Active:       len(q.ActiveCoderRefs) > 0 || len(q.ShellRefs) > 0,
+			LastUsedUnix: q.LastUsedUnix,
+		})
+	}
+	return entries
+}
+
+// handleEditorProjects re-renders the switcher's rows alone, which is what an
+// open editor pulls when a project is created, renamed or deleted somewhere
+// else. It answers the same markup the page carries, so the browser never
+// holds a second copy of those rows; the project this editor belongs to comes
+// from the route and the back target from ?return, exactly as the page built
+// them. A project that has just been deleted under this page is no error here:
+// the switcher simply loses its row, and where that leaves the editor is the
+// page's own business.
+func (s *Server) handleEditorProjects(c *gin.Context) {
+	c.HTML(http.StatusOK, "editor_projects.gohtml", render.EditorProjectsData{
+		Projects: s.editorSwitcher(c.Param("name"), s.formReturn(c)),
 	})
 }
 

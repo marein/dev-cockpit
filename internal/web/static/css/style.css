@@ -1681,6 +1681,18 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
 .editor-project-menu {
   max-height: 60vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-top: 0;
+}
+.editor-project-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.5rem;
+  background: var(--tblr-dropdown-bg, var(--tblr-bg-surface));
+}
+.editor-project-menu .dropdown-item.selected {
+  background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18));
 }
 .editor-tabs {
   display: flex;

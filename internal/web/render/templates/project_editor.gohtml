@@ -25,15 +25,19 @@
     <div class="editor-tree-col">
       <div class="editor-pane-header d-flex align-items-center gap-2 px-2 py-2 border-bottom">
         <div class="dropdown min-w-0 flex-fill">
-          <button type="button" class="editor-project-switch d-flex align-items-center gap-2 min-w-0 w-100" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Switch project" title="Switch project">
+          <button type="button" class="editor-project-switch d-flex align-items-center gap-2 min-w-0 w-100" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Switch project" title="Switch project (Ctrl+Shift+P)">
             <i class="ti ti-folder"></i>
             <span class="text-truncate small fw-medium">{{.Project.Name}}</span>
             <i class="ti ti-chevron-down editor-project-caret"></i>
           </button>
           <div class="dropdown-menu editor-project-menu">
-            {{range .Projects}}
-            <a class="dropdown-item{{if .Current}} active{{end}}" href="{{.URL}}" data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">{{.Name}}</a>
-            {{end}}
+            <div class="editor-project-search">
+              <input type="search" class="form-control form-control-sm" data-editor-project-filter placeholder="Search projects" aria-label="Search projects" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+            </div>
+            <div data-editor-project-list>
+              {{template "editor_projects.gohtml" .}}
+            </div>
+            <div class="dropdown-item-text text-secondary small" data-editor-project-empty hidden>No matches</div>
           </div>
         </div>
         <button type="button" class="btn btn-sm btn-ghost-secondary p-1" data-editor-commit-toggle aria-pressed="false" aria-label="Commit changes" title="Commit changes" hidden>
@@ -185,6 +189,8 @@
             <kbd>Ctrl</kbd>+<kbd>F</kbd> find in file
             <span class="mx-1">·</span>
             <kbd>Ctrl</kbd>+<kbd>Tab</kbd> next tab
+            <span class="mx-1 d-none d-md-inline">·</span>
+            <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> switch project</span>
             <span class="mx-1 d-none d-md-inline">·</span>
             <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>B</kbd> go to definition</span>
             <span class="mx-1 d-none d-md-inline">·</span>

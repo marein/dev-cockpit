@@ -6001,8 +6001,138 @@ async function init(root) {
     if (sheetKind !== "settings" && sheetKind !== "docker" && sheetKind !== "git" && e.target.closest(".dropdown-item")) closeSheet();
   }, { signal });
 
-  const projectMenuEl = root.querySelector(".editor-project-menu");
-  if (projectMenuEl) projectSort.sort(projectMenuEl);
+  const projectSwitchEl = root.querySelector(".editor-project-switch");
+  const projectDropEl = projectSwitchEl?.closest(".dropdown");
+  const projectListEl = root.querySelector("[data-editor-project-list]");
+  const projectFilterEl = root.querySelector("[data-editor-project-filter]");
+  const projectEmptyEl = root.querySelector("[data-editor-project-empty]");
+  let projectMenuOpen = false;
+  let projectMenuIndex = -1;
+  let projectMenuFromKey = false;
+  let projectsInFlight = false;
+  let projectsDirty = false;
+  if (projectListEl) projectSort.sort(projectListEl);
+
+  const projectRows = () => (projectListEl
+    ? Array.from(projectListEl.querySelectorAll(".dropdown-item")).filter((row) => !row.hidden)
+    : []);
+
+  function paintProjectMenu() {
+    if (!projectListEl) return;
+    for (const row of projectListEl.querySelectorAll(".dropdown-item.selected")) {
+      row.classList.remove("selected");
+      row.removeAttribute("aria-current");
+    }
+    const rows = projectRows();
+    if (!projectMenuOpen || projectMenuIndex < 0 || !rows.length) return;
+    projectMenuIndex = Math.min(projectMenuIndex, rows.length - 1);
+    const selected = rows[projectMenuIndex];
+    selected.classList.add("selected");
+    selected.setAttribute("aria-current", "true");
+    const menu = projectListEl.closest(".editor-project-menu");
+    if (!menu) return;
+    const top = selected.offsetTop;
+    const bottom = top + selected.offsetHeight;
+    if (top < menu.scrollTop) menu.scrollTop = top;
+    else if (bottom > menu.scrollTop + menu.clientHeight) menu.scrollTop = bottom - menu.clientHeight;
+  }
+
+  function applyProjectFilter(fromInput) {
+    if (!projectListEl) return;
+    const query = (projectFilterEl?.value || "").trim().toLowerCase();
+    const marked = projectRows()[projectMenuIndex];
+    for (const row of projectListEl.querySelectorAll(".dropdown-item")) {
+      row.hidden = Boolean(query) && !(row.dataset.projectName || "").toLowerCase().includes(query);
+    }
+    const rows = projectRows();
+    if (projectEmptyEl) projectEmptyEl.hidden = rows.length > 0;
+    if (fromInput) projectMenuIndex = rows.length ? 0 : -1;
+    else projectMenuIndex = rows.indexOf(marked);
+    paintProjectMenu();
+  }
+
+  function moveProjectMenuSelection(delta) {
+    const rows = projectRows();
+    if (!rows.length) return;
+    if (projectMenuIndex < 0) projectMenuIndex = delta > 0 ? 0 : rows.length - 1;
+    else projectMenuIndex = (projectMenuIndex + delta + rows.length) % rows.length;
+    paintProjectMenu();
+  }
+
+  function commitProjectMenuSelection() {
+    const selected = projectRows()[projectMenuIndex];
+    if (selected) selected.click();
+  }
+
+  function openProjectMenu() {
+    if (!projectSwitchEl || !window.bootstrap?.Dropdown) return;
+    projectMenuFromKey = true;
+    window.bootstrap.Dropdown.getOrCreateInstance(projectSwitchEl).show();
+  }
+
+  function closeProjectMenu() {
+    if (projectSwitchEl) window.bootstrap?.Dropdown.getInstance(projectSwitchEl)?.hide();
+  }
+
+  projectDropEl?.addEventListener("shown.bs.dropdown", () => {
+    projectMenuOpen = true;
+    const rows = projectRows();
+    projectMenuIndex = projectMenuFromKey ? Math.max(rows.findIndex((row) => row.classList.contains("active")), 0) : -1;
+    projectMenuFromKey = false;
+    paintProjectMenu();
+    if (pointerMedia.matches) projectFilterEl?.focus();
+    else projectSwitchEl?.blur();
+  }, { signal });
+  projectDropEl?.addEventListener("hidden.bs.dropdown", () => {
+    projectMenuOpen = false;
+    projectMenuIndex = -1;
+    projectMenuFromKey = false;
+    if (projectFilterEl) projectFilterEl.value = "";
+    applyProjectFilter(false);
+  }, { signal });
+  projectFilterEl?.addEventListener("input", () => applyProjectFilter(true), { signal });
+  window.addEventListener("keydown", (e) => {
+    if (!projectMenuOpen) return;
+    const actions = {
+      ArrowDown: () => moveProjectMenuSelection(1),
+      ArrowUp: () => moveProjectMenuSelection(-1),
+      Enter: () => commitProjectMenuSelection(),
+      Escape: () => closeProjectMenu(),
+    };
+    const action = actions[e.key];
+    if (!action) return;
+    e.preventDefault();
+    e.stopPropagation();
+    action();
+  }, { capture: true, signal });
+
+  async function refreshProjects() {
+    if (!projectListEl) return;
+    if (projectsInFlight) {
+      projectsDirty = true;
+      return;
+    }
+    projectsInFlight = true;
+    const ret = new URLSearchParams(window.location.search).get("return") || "";
+    const html = await getText(`${base}/projects?return=${encodeURIComponent(ret)}`, { signal }).catch(() => "");
+    if (html) {
+      const marked = projectRows()[projectMenuIndex]?.dataset.projectName || "";
+      projectListEl.innerHTML = html;
+      projectSort.sort(projectListEl);
+      applyProjectFilter(false);
+      const kept = marked ? projectRows().findIndex((row) => row.dataset.projectName === marked) : -1;
+      if (kept !== -1) {
+        projectMenuIndex = kept;
+        paintProjectMenu();
+      }
+    }
+    projectsInFlight = false;
+    if (projectsDirty) {
+      projectsDirty = false;
+      void refreshProjects();
+    }
+  }
+  onServerEvent("projects", () => void refreshProjects(), { signal });
 
   const fullscreenBtn = root.querySelector("[data-editor-fullscreen]");
   let fullscreenOn = store.get(FULLSCREEN_KEY, "") === "1";
@@ -6766,6 +6896,11 @@ async function init(root) {
         e.preventDefault();
         toggleCommit();
       }
+    } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && !e.repeat
+      && e.key.toLowerCase() === "p" && quickOpenEl.hidden) {
+      e.preventDefault();
+      if (projectMenuOpen) closeProjectMenu();
+      else openProjectMenu();
     } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && !e.repeat
       && e.key.toLowerCase() === "g" && quickOpenEl.hidden) {
       if (gitSurface()) {
