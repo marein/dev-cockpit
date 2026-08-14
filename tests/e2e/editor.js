@@ -2091,6 +2091,40 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.waitForSelector(".editor-project-menu.show", { state: "detached", timeout: 4000 });
     });
 
+    await run("the menu's last entry opens the keyboard shortcuts", async () => {
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+      const last = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll("[data-editor-menu-list] .dropdown-item")];
+        return rows[rows.length - 1]?.textContent.trim();
+      });
+      assert(last === "Keyboard shortcuts", `the last menu entry is ${last}`);
+
+      await page.click("[data-editor-menu]");
+      await page.waitForSelector("[data-editor-menu-list].show", { timeout: 4000 });
+      await page.click('[data-editor-menu-list] [data-bs-target="#editor-shortcuts-modal"]');
+      await L.modalShown(page, "editor-shortcuts-modal");
+      await sleep(400);
+      const modal = await page.evaluate(() => {
+        const el = document.querySelector("#editor-shortcuts-modal");
+        return {
+          rows: el.querySelectorAll(".dc-shortcuts-row").length,
+          caps: el.querySelectorAll("kbd").length,
+          text: el.textContent.replace(/\s+/g, " "),
+          menuOpen: Boolean(document.querySelector("[data-editor-menu-list].show")),
+          link: el.querySelector("a[href]")?.getAttribute("href"),
+        };
+      });
+      assert(modal.rows >= 13 && modal.caps > 20, `the list is thin: ${modal.rows} rows, ${modal.caps} caps`);
+      assert(modal.text.includes("Switch project") && modal.text.includes("Go to file"), "the list misses entries");
+      assert(!modal.menuOpen, "the menu stayed open behind the modal");
+      assert(modal.link === "/docs#editor", `the footer link is ${modal.link}`);
+
+      await page.click('#editor-shortcuts-modal [data-bs-dismiss="modal"]');
+      await page.waitForFunction(() => !document.querySelector("#editor-shortcuts-modal.show"), null, { timeout: 4000 });
+      return `${modal.rows} rows, ${modal.caps} caps`;
+    });
+
     await run("mobile: tree is a drawer, auto-open without tabs, closes on open", async () => {
       const mp = await mobilePage();
       await mp.goto(editorURL, { waitUntil: "domcontentloaded" });

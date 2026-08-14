@@ -373,7 +373,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "One menu for everything else",
-					Desc:  `Next to the tabs the toolbar keeps only the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> and, while the open file is unsaved, Save. Everything else is in that menu and reads the same on a phone and on a wide screen: the list of open files, go to file, find in the file and in the project, go to line, the editor settings, save all and the git sheet. Fullscreen is the one entry a phone does not get, there is no window there to grow out of. What does not apply is not in the list, rather than in it and dead.`,
+					Desc:  `Next to the tabs the toolbar keeps only the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> and, while the open file is unsaved, Save. Everything else is in that menu and reads the same on a phone and on a wide screen: the list of open files, go to file, find in the file and in the project, go to line, the editor settings, save all, the git sheet, and last the keyboard shortcuts, which open as a list to read. Fullscreen is the one entry a phone does not get, there is no window there to grow out of. What does not apply is not in the list, rather than in it and dead.`,
 				},
 				{
 					Title: "The sheets take the keyboard",

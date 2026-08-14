@@ -1,0 +1,80 @@
+{{define "editor_shortcuts_modal.gohtml"}}
+<div class="modal modal-blur fade" id="editor-shortcuts-modal" tabindex="-1" aria-labelledby="editor-shortcuts-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title" id="editor-shortcuts-modal-title">Keyboard shortcuts</h3>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="dc-shortcuts">
+          <div class="dc-shortcuts-row">
+            <span>Go to file</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>O</kbd></span>
+          </div>
+          <div class="dc-shortcuts-note">Tapping bare Shift twice opens it too.</div>
+          <div class="dc-shortcuts-row">
+            <span>Find in files</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></span>
+          </div>
+          <div class="dc-shortcuts-row">
+            <span>Find in the file</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>F</kbd></span>
+          </div>
+          <div class="dc-shortcuts-row">
+            <span>Switch project</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd></span>
+          </div>
+          <div class="dc-shortcuts-note">Type to narrow the list, the arrow keys walk it.</div>
+          <div class="dc-shortcuts-row">
+            <span>Next / previous file</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></span>
+          </div>
+          <div class="dc-shortcuts-row">
+            <span>Close the current file</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd></span>
+          </div>
+          <div class="dc-shortcuts-note">An unsaved file asks first.</div>
+          <div class="dc-shortcuts-row">
+            <span>Save</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>S</kbd></span>
+          </div>
+          <div class="dc-shortcuts-row">
+            <span>Go to definition</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>B</kbd></span>
+          </div>
+          <div class="dc-shortcuts-row">
+            <span>Find usages</span>
+            <span class="dc-shortcuts-keys"><kbd>Shift</kbd>+<kbd>F12</kbd></span>
+          </div>
+          <div class="dc-shortcuts-row">
+            <span>Commit</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span>
+          </div>
+          <div class="dc-shortcuts-note">In the message field <kbd>Ctrl</kbd>+<kbd>Enter</kbd> commits.</div>
+          <div class="dc-shortcuts-row">
+            <span>Git</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd></span>
+          </div>
+          <div class="dc-shortcuts-row">
+            <span>Terminal panel</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>J</kbd></span>
+          </div>
+          <div class="dc-shortcuts-row">
+            <span>Docker</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd></span>
+          </div>
+          <div class="dc-shortcuts-row">
+            <span>Fullscreen</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd></span>
+          </div>
+          <div class="dc-shortcuts-note">A double click on free tab strip space toggles it too.</div>
+        </div>
+        <div class="mt-3">
+          <a href="/docs#editor" class="btn btn-outline-secondary w-100">All shortcuts and gestures</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

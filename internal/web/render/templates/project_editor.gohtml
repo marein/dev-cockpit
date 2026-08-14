@@ -148,6 +148,10 @@
               <button type="button" class="dropdown-item" data-editor-save-all disabled>
                 <i class="ti ti-device-floppy me-2"></i>Save all
               </button>
+              <div class="dropdown-divider"></div>
+              <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#editor-shortcuts-modal">
+                <i class="ti ti-keyboard me-2"></i>Keyboard shortcuts
+              </button>
             </div>
           </div>
           <a class="btn btn-sm btn-icon btn-ghost-secondary editor-back" href="{{.Return}}" aria-label="Back" title="Back">
@@ -368,6 +372,8 @@
   </div>
   <div data-editor-term-modals-host></div>
 </dc-editor>
+
+{{template "editor_shortcuts_modal.gohtml"}}
 
 {{template "app_end.gohtml" .}}
 {{end}}

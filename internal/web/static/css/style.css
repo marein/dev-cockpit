@@ -205,22 +205,22 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
     gap: 0.5rem;
   }
 }
-.terminal-shortcuts {
+.dc-shortcuts {
   display: flex;
   flex-direction: column;
   gap: 0.625rem;
 }
-.terminal-shortcuts-row {
+.dc-shortcuts-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 1rem;
 }
-.terminal-shortcuts-keys {
+.dc-shortcuts-keys {
   text-align: right;
   color: var(--tblr-secondary);
 }
-.terminal-shortcuts-note {
+.dc-shortcuts-note {
   margin-top: -0.375rem;
   color: var(--tblr-secondary);
   font-size: 0.8125rem;
