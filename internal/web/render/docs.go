@@ -314,7 +314,8 @@ func DocsTopics() []DocsTopic {
 			Items: []DocsItem{
 				{
 					Title: "Switch projects",
-					Desc:  `The project name above the file tree switches to another project's editor.`,
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "P"}}},
+					Desc:  `The project name above the file tree opens the projects, ordered like the projects page: type to narrow, arrows and Enter to open one. A project created or deleted anywhere comes and goes here without a reload.`,
 				},
 				{
 					Title: "The file tree",
@@ -324,11 +325,6 @@ func DocsTopics() []DocsTopic {
 					Title: "Quick open",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "O"}}},
 					Desc:  `Open any project file by name. Pressing bare Shift twice does the same.`,
-				},
-				{
-					Title: "Switch project",
-					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "P"}}},
-					Desc:  `The project name above the file tree opens the list of projects, and the shortcut opens it with the search field ready: type to narrow it, the arrows move through what is left, Enter opens that project's editor and Escape closes. The order follows the sort of the projects page, your own project is marked, and a project created or deleted in the cockpit comes and goes here at once, on every open editor, without a reload.`,
 				},
 				{
 					Title: "Go to definition and usages",
@@ -359,7 +355,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Branch, push and pull",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "G"}}},
-					Desc:  `In a git repository the branch stands in the statusbar, with arrows for how many commits it is ahead <span class="text-secondary">↑</span> and behind <span class="text-secondary">↓</span> its upstream. Tapping it, or <em>Git</em> in the editor menu, opens the git sheet: <em>Switch branch</em> leads to the branch list with a Back on top, remote branches included, and checking one of those out creates the local branch that tracks it, and typing there searches the repository's branches rather than the visible list; <em>New branch</em> starts from the current state and normalizes what you type into a name git accepts, shown before anything is created; then commit, push, pull and fetch, and the recent commits, where a tap puts the open file next to that commit and the copy control carries the hash away. <em>Pull</em> only fast forwards, and <em>Force push</em> asks first and runs as force-with-lease, so work this copy has never fetched is not overwritten. There is no stash and no merge here on purpose: whatever git refuses is shown in git's own words and the working copy stays as it is. After a switch or a pull the tree, the marks and every saved tab follow the new state on their own; unsaved work is never touched. A remote that wants a passphrase or credentials asks you in a dialog that names the project and the action above ssh's or git's own question; it appears on every open cockpit page, survives a reload, and closes everywhere as soon as one device answers or cancels, so the phone can answer what the laptop started; the masked answer goes back and the action carries on; cancelling ends it with the reason in the message, and background refreshes never ask anything. While an action runs, the row you tapped carries a spinner, the statusbar shows one in the branch's place, the other rows wait, and a second tap starts nothing twice. In a project that is no repository yet the statusbar says so, and the sheet offers one action instead: clone a repository straight into the project folder, with whatever authentication git on the host can already do.`,
+					Desc:  `In a git repository the branch stands in the statusbar, with arrows for how many commits it is ahead <span class="text-secondary">↑</span> and behind <span class="text-secondary">↓</span> its upstream. Tapping it, or <em>Git</em> in the editor menu, opens the git sheet: <em>Switch branch</em> leads to the branch list with a Back on top, remote branches included, and checking one of those out creates the local branch that tracks it, and typing there searches the repository's branches rather than the visible list; <em>New branch</em> starts from the current state and normalizes what you type into a name git accepts, shown before anything is created; then commit, push, pull and fetch, and the recent commits with their tags. A tap on a commit offers the diff against it, its hash, and a tag: a message makes that tag annotated, the box below pushes it. A tag it carries can be pushed later or deleted, on the remote too. An existing tag is never moved. <em>Pull</em> only fast forwards, and <em>Force push</em> asks first and runs as force-with-lease, so work this copy has never fetched is not overwritten. There is no stash and no merge here on purpose: whatever git refuses is shown in git's own words and the working copy stays as it is. After a switch or a pull the tree, the marks and every saved tab follow the new state on their own; unsaved work is never touched. A remote that wants a passphrase or credentials asks you in a dialog that names the project and the action above ssh's or git's own question; it appears on every open cockpit page, survives a reload, and closes everywhere as soon as one device answers or cancels, so the phone can answer what the laptop started; the masked answer goes back and the action carries on; cancelling ends it with the reason in the message, and background refreshes never ask anything. While an action runs, the row you tapped carries a spinner, the statusbar shows one in the branch's place, the other rows wait, and a second tap starts nothing twice. In a project that is no repository yet the statusbar says so, and the sheet offers one action instead: clone a repository straight into the project folder, with whatever authentication git on the host can already do.`,
 				},
 				{
 					Title:    "File and tab menus",
@@ -373,7 +369,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "One menu for everything else",
-					Desc:  `Next to the tabs the toolbar keeps only the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> and, while the open file is unsaved, Save. Everything else is in that menu and reads the same on a phone and on a wide screen: the list of open files, go to file, find in the file and in the project, go to line, the editor settings, save all, the git sheet, and last the keyboard shortcuts, which open as a list to read. Fullscreen is the one entry a phone does not get, there is no window there to grow out of. What does not apply is not in the list, rather than in it and dead.`,
+					Desc:  `Next to the tabs the toolbar keeps only the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> and, while the open file is unsaved, Save. Everything else is in that menu and reads the same on a phone and on a wide screen: the list of open files, go to file, find in the file and in the project, go to line, the editor settings, save all, the git sheet, and the keyboard shortcuts. Fullscreen is the one entry a phone does not get, there is no window there to grow out of.`,
 				},
 				{
 					Title: "The sheets take the keyboard",

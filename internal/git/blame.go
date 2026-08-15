@@ -18,7 +18,11 @@ type Commit struct {
 	Author  string `json:"author"`
 	Time    int64  `json:"time"`
 	Summary string `json:"summary"`
-	Pending bool   `json:"pending,omitempty"`
+	// Tags are the tag names pointing at this commit, in git's own order, and
+	// nothing else the commit is decorated with: a branch says where the
+	// repository stands, a tag says what this commit is.
+	Tags    []string `json:"tags,omitempty"`
+	Pending bool     `json:"pending,omitempty"`
 }
 
 // Blame is who last touched each line of a file. The commits are listed once

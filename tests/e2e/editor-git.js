@@ -1848,6 +1848,70 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       return "↑1 shown, push delivered, arrows gone";
     });
 
+    await run("a commit's menu names it, pushes that tag later, and deletes it on both sides", async () => {
+      const name = `v0.0.${tag}`;
+      const openCommitMenu = async () => {
+        if (!await page.isVisible("[data-git-commit]")) await openGitSheet(page);
+        const cell = page.locator("[data-editor-sheet-body] [data-git-commit]").first();
+        await cell.waitFor({ state: "visible", timeout: 10000 });
+        await cell.click();
+        await page.waitForSelector(".dc-context-menu", { timeout: 6000 });
+      };
+      const menuRow = (text) => page.locator(".dc-context-menu .dropdown-item", { hasText: text }).first();
+      const toast = (pattern) => page.waitForFunction((p) =>
+        [...document.querySelectorAll(".dc-toast")].some((t) => new RegExp(p).test(t.textContent)), pattern, { timeout: 20000 });
+      const shellText = async (command) => {
+        await post(page, `${editorBase}/delete`, { path: "out.txt" }).catch(() => {});
+        assert(await runInShell(`{ ${command} ; printf END ; } > out.txt\r`) === 200, "the shell refused the read");
+        const deadline = Date.now() + 20000;
+        while (Date.now() < deadline) {
+          const data = await page.evaluate((b) => fetch(`${b}/file?path=out.txt`, { headers: { Accept: "application/json" } })
+            .then((r) => (r.ok ? r.json() : null)).catch(() => null), editorBase);
+          if (data && /END$/.test(data.content || "")) return data.content.replace(/END$/, "").trim();
+          await sleep(500);
+        }
+        throw new Error(`the shell never answered "${command}"`);
+      };
+
+      await openEditor(page);
+      await diffReady(page);
+      await openCommitMenu();
+      // The history keeps standing behind the menu: no level, nothing to come
+      // back from, and the list stays where it was scrolled to.
+      assert(await page.locator("[data-git-commit]").count() > 0, "the menu took the history away");
+
+      await menuRow("Tag this commit").click();
+      await page.waitForSelector(".swal2-input", { timeout: 6000 });
+      await page.fill(".swal2-input", name);
+      await page.fill("[data-tag-message]", "tagged by the runner");
+      await page.uncheck("[data-tag-push]");
+      await page.click(".swal2-confirm");
+      await toast("Tagged");
+      const beforePush = await shellText(`git --git-dir ${surfaceRemote} tag -l`);
+      assert(beforePush === "", `the unpushed tag reached the remote: ${beforePush}`);
+      // The row took the tag without a reload of the list.
+      await page.waitForFunction((n) => [...document.querySelectorAll("[data-git-commit] .badge")]
+        .some((b) => b.textContent.trim() === n), name, { timeout: 8000 });
+
+      await openCommitMenu();
+      await menuRow(`Push ${name}`).click();
+      await toast("Pushed");
+      assert(await shellText(`git --git-dir ${surfaceRemote} tag -l`) === name, "the tag did not reach the remote");
+
+      await openCommitMenu();
+      await menuRow(`Delete ${name}`).click();
+      await page.waitForSelector("[data-tag-remote]", { timeout: 6000 });
+      assert(await page.isChecked("[data-tag-remote]"), "the remote box does not start ticked");
+      await page.click(".swal2-confirm");
+      await toast("Deleted");
+      assert(await shellText("git tag -l") === "", "the tag stands here after the deletion");
+      assert(await shellText(`git --git-dir ${surfaceRemote} tag -l`) === "", "the tag stands on the remote after the deletion");
+      await page.waitForFunction(() => document.querySelectorAll("[data-git-commit] .badge").length === 0, null, { timeout: 8000 });
+      assert(await post(page, `${editorBase}/delete`, { path: "out.txt" }) === 200, "the probe file could not be removed");
+      await page.keyboard.press("Escape");
+      return "created without pushing, pushed later, deleted here and there";
+    });
+
     await run("the git sheet fetches on open, and pull only fast forwards", async () => {
       await openEditor(page);
       await diffReady(page);
@@ -2305,8 +2369,12 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
       await menuItem("File history").first().click();
       await page.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 8000 });
-      await page.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-row").length > 0, null, { timeout: 15000 });
-      await page.locator("[data-editor-sheet-body] .editor-sheet-row .editor-sheet-open").first().click();
+      await page.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] [data-git-commit]").length > 0, null, { timeout: 15000 });
+      // A commit is a menu now, like a container in the docker sheet: the row
+      // opens it and the diff is its first entry.
+      await page.locator("[data-editor-sheet-body] [data-git-commit]").first().click();
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+      await page.locator(".dc-context-menu .dropdown-item", { hasText: "against this" }).first().click();
       await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 8000 });
       await page.waitForSelector(".cm-mergeView", { state: "attached", timeout: 20000 });
       // The tab stores the picked commit in the same field the HEAD switch
@@ -2439,8 +2507,10 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         await page.click(".editor-tab.active", { button: "right" });
         await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
         await menuItem("File history").first().click();
-        await page.waitForSelector("[data-editor-sheet-body] .editor-sheet-row", { timeout: 15000 });
-        await page.locator("[data-editor-sheet-body] .editor-sheet-row", { hasText: revBeta }).first().locator(".editor-sheet-open").first().click();
+        await page.waitForSelector("[data-editor-sheet-body] [data-git-commit]", { timeout: 15000 });
+        await page.locator("[data-editor-sheet-body] [data-git-commit]", { hasText: revBeta }).first().click();
+        await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+        await page.locator(".dc-context-menu .dropdown-item", { hasText: "against this" }).first().click();
         await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 8000 });
         await waitRevision("two", "one").catch(async () => {
           throw new Error(`${view}: the file history did not move the comparison, it still reads ${await revisionText()}`);

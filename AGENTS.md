@@ -143,7 +143,12 @@ test. Update this file when a convention changes.
   otherwise be refused with git's line about setting one; several remotes
   without an `origin` are a guess this does not make and stay git's refusal),
   `git.Fetch`, the fast forward `git.Pull`, `git.Checkout`,
-  `git.CreateBranch`, `git.Clone` and `git.Revert`, the one deliberate
+  `git.CreateBranch`, `git.Tag` (a message makes it annotated, without one it
+  stays lightweight, and a name that is taken is git's refusal: nothing here
+  ever moves an existing tag) with the `git.PushTag` that sends **that one
+  tag** to the same unambiguous remote, `git.DeleteTag` and the
+  `git.DeleteRemoteTag` that is never implied by it, because what a remote
+  holds is what everybody else sees, `git.Clone` and `git.Revert`, the one deliberate
   discard: one path back to HEAD, staged edits included, found by asking
   status itself (what HEAD knows goes through restore, what it does not is
   deleted through clean, a rename's source joins like it joins the commit),
@@ -358,7 +363,30 @@ test. Update this file when a convention changes.
   every clean tab (`reloadCleanTabs`; only the server's own 4xx closes a
   tab, a transport error must not take the open set away), and a dirty
   buffer is never touched by a branch move. `git/log` answers one page of
-  history (`?skip=`, the file's with `?path=`). A project that is no
+  history (`?skip=`, the file's with `?path=`), and every commit carries the
+  tags pointing at it, read out of the same `log` call's ref names (`%D`,
+  `parseTags`, branches and HEAD dropped: they say where the repository
+  stands, a tag says what the commit is). **The history is built like the
+  docker sheet's containers**: one cell per commit in a grid (`gitLogCell`,
+  `row row-deck`, two per line from `lg` up and one below it, one grid for
+  every page so a later one joins the lines that stand), the whole cell is
+  the control, and a click on it opens **the app's menu** over it
+  (`commitMenuItems` through `@dc/contextmenu`, the same menu a tab and a
+  tree row open), anchored at the click or at the cell when the keyboard got
+  there. No controls on the cell and no level of the sheet: controls left a
+  phone's subject truncated with nowhere for a tag to go, and a drilled level
+  costs a Back that re-renders the history and puts the reader at the top of
+  it. The menu holds the diff, the hash and the three tag routes; a created
+  or deleted tag repaints that cell's chips alone (`paintChips`). `git/tag` creates one, one write and one bridge like
+  the commit's ride-along push: the tag is created, then pushed when the
+  dialog's box is ticked (`git.PushTag`, that tag alone), and a tag whose
+  push is refused stands as a tag, so the answer is a 200 carrying `pushed`
+  and `pushError`. `git/tag/push` publishes one that already exists, which is
+  the only way to reach a tag a coder made on the command line, and
+  `git/tag/delete` takes one away, the remote half when the dialog's box says
+  so, which it does by default because a tag deleted only here comes back with
+  the next fetch, and reported beside a 200 the same way. Nothing
+  there moves HEAD, so the event says the base stood. A project that is no
   repository yet gets the same segment saying so and a sheet whose one
   action is `git/clone`, straight into the project directory, which git
   itself refuses unless it holds nothing.

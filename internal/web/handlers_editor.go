@@ -1423,6 +1423,151 @@ func (s *Server) handleEditorGitBranch(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"branch": req.Branch})
 }
 
+type editorTagRequest struct {
+	SHA     string `json:"sha"`
+	Tag     string `json:"tag"`
+	Message string `json:"message"`
+	Push    bool   `json:"push"`
+}
+
+// handleEditorGitTag names a commit and, when asked, sends that tag to the
+// remote. The two are one write and one bridge, like the commit and its
+// ride-along push: the bridge is opened before the tag is created, because a
+// refused bridge has to refuse the whole request, and a tag whose push is
+// refused stands as a tag, so the answer stays a 200 and carries `pushed`
+// with `pushError` beside it. Nothing here moves the working copy or HEAD, so
+// the event says the base stood; what moved is a name every open editor shows
+// in its history.
+func (s *Server) handleEditorGitTag(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorTagRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	writeKeys, ok := s.takeGitWrite(c, p)
+	if !ok {
+		return
+	}
+	defer s.gitWrites.release(writeKeys...)
+	var action *askpass.Action
+	var prompt *git.Prompt
+	if req.Push {
+		var open bool
+		if action, prompt, open = s.promptAction(p.Name, "push tag"); !open {
+			c.JSON(http.StatusConflict, gin.H{"error": gitInUse})
+			return
+		}
+		if action != nil {
+			defer action.End()
+		}
+	}
+	if err := git.New(p.Path).Tag(gitWriteContext(c), req.Tag, req.SHA, req.Message); err != nil {
+		log.Printf("editor git tag %s: %v", p.Path, err)
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	response := gin.H{"tag": req.Tag, "pushed": false}
+	if req.Push {
+		repo := git.New(p.Path)
+		if prompt != nil {
+			repo = repo.WithPrompt(prompt)
+		}
+		if err := repo.PushTag(gitWriteContext(c), req.Tag); err != nil {
+			log.Printf("editor git push tag %s: %v", p.Path, err)
+			response["pushError"] = promptRefusal(action, err)
+		} else {
+			response["pushed"] = true
+		}
+	}
+	s.publishGit(p.Name, false)
+	c.JSON(http.StatusOK, response)
+}
+
+type editorTagNameRequest struct {
+	Tag string `json:"tag"`
+	// Remote says whether the deletion reaches past this repository. It is
+	// never implied: what a remote holds is what everybody else sees.
+	Remote bool `json:"remote"`
+}
+
+// handleEditorGitTagPush sends a tag that already exists, which is the half
+// the create dialog leaves behind when its box stays unticked, and the only
+// way to publish a tag a coder made on the command line.
+func (s *Server) handleEditorGitTagPush(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorTagNameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	if !s.gitWrite(c, p, "push tag", func(repo *git.Repo) error {
+		return repo.PushTag(gitWriteContext(c), req.Tag)
+	}) {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"tag": req.Tag, "pushed": true})
+}
+
+// handleEditorGitTagDelete takes a tag away here, and on the remote when that
+// was asked for. The two are one write and one bridge: the local deletion
+// stands whatever the remote answers, so a refused remote deletion comes back
+// beside a 200 like the commit's push does, and the client says both halves.
+func (s *Server) handleEditorGitTagDelete(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorTagNameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	writeKeys, ok := s.takeGitWrite(c, p)
+	if !ok {
+		return
+	}
+	defer s.gitWrites.release(writeKeys...)
+	var action *askpass.Action
+	var prompt *git.Prompt
+	if req.Remote {
+		var open bool
+		if action, prompt, open = s.promptAction(p.Name, "delete tag"); !open {
+			c.JSON(http.StatusConflict, gin.H{"error": gitInUse})
+			return
+		}
+		if action != nil {
+			defer action.End()
+		}
+	}
+	if err := git.New(p.Path).DeleteTag(gitWriteContext(c), req.Tag); err != nil {
+		log.Printf("editor git tag delete %s: %v", p.Path, err)
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	response := gin.H{"tag": req.Tag, "remote": false}
+	if req.Remote {
+		repo := git.New(p.Path)
+		if prompt != nil {
+			repo = repo.WithPrompt(prompt)
+		}
+		if err := repo.DeleteRemoteTag(gitWriteContext(c), req.Tag); err != nil {
+			log.Printf("editor git tag delete remote %s: %v", p.Path, err)
+			response["remoteError"] = promptRefusal(action, err)
+		} else {
+			response["remote"] = true
+		}
+	}
+	s.publishGit(p.Name, false)
+	c.JSON(http.StatusOK, response)
+}
+
 type editorRevertRequest struct {
 	Path string `json:"path"`
 }

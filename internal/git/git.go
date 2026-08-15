@@ -2,7 +2,8 @@
 // and writes it in a deliberately short list of places: Commit, Push (plain,
 // or force-with-lease, setting the upstream where the branch has none),
 // Fetch, the fast forward Pull, the two branch moves
-// Checkout and CreateBranch, Clone into a directory that holds nothing
+// Checkout and CreateBranch, Tag and the PushTag that sends one tag,
+// Clone into a directory that holds nothing
 // yet, and Revert, which takes one path back to HEAD. Staging, stashing,
 // merging and everything else that rewrites a repository stays with a coder
 // or the command line, and a refused write leaves the working copy as it was.

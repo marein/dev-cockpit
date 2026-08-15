@@ -69,7 +69,8 @@ func (r *Repo) Push(ctx context.Context, force bool) error {
 }
 
 // upstreamRemote names the remote a push has to set the current branch's
-// upstream on, and says whether there is one to name at all.
+// upstream on, and says whether there is one to name at all. The remote itself
+// is pickRemote's answer, the same one a tag push uses.
 //
 // Whether an upstream stands is read out of the status, the same answer the
 // statusbar shows, and not out of @{upstream}: a branch whose upstream is
@@ -78,12 +79,9 @@ func (r *Repo) Push(ctx context.Context, force bool) error {
 // not. Three states therefore go to git exactly as they always did, each for
 // its own reason: a branch that has an upstream pushes there, a detached HEAD
 // has no branch to configure anything on, and a status git never answered
-// knows nothing, which is not the same as knowing there is no upstream.
-//
-// The remote has to be unambiguous, the single configured one or origin among
-// several. Picking one of several strangers is a decision about where
-// somebody's work goes, and this call does not make it: the push then runs
-// plain and git's own refusal stands.
+// knows nothing, which is not the same as knowing there is no upstream. And
+// where no remote can be named the push runs plain, so git's own refusal
+// stands.
 func (r *Repo) upstreamRemote(ctx context.Context) (string, bool) {
 	status, err := r.run(ctx, statusArgs, nil)
 	if err != nil {
@@ -92,6 +90,13 @@ func (r *Repo) upstreamRemote(ctx context.Context) (string, bool) {
 	if branch := parseBranch(status); branch.Detached || branch.Name == "" || branch.Upstream != "" {
 		return "", false
 	}
+	return r.pickRemote(ctx)
+}
+
+// pickRemote answers the one remote a call may name on its own: the single
+// configured one, or origin among several. Picking one of several strangers is
+// a decision about where somebody's work goes, and no call here makes it.
+func (r *Repo) pickRemote(ctx context.Context) (string, bool) {
 	remotes := r.remotes(ctx)
 	if len(remotes) == 1 {
 		return remotes[0], true

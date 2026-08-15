@@ -9,8 +9,10 @@ import (
 // commitFormat is how every call here asks for a commit, so the history, the
 // revision picker's search and a single resolved hash all answer the same
 // shape. NUL between the fields, because a subject may hold anything but a
-// newline.
-const commitFormat = "--format=%H%x00%an%x00%at%x00%s"
+// newline, and the subject stays last for the same reason. The ref names ride
+// along (%D), which is where the tags come from: asking git for the tags of a
+// page of commits separately would be a second call and a second moment.
+const commitFormat = "--format=%H%x00%an%x00%at%x00%D%x00%s"
 
 // parseCommits reads what commitFormat wrote, one commit per line.
 func parseCommits(out []byte) []Commit {
@@ -19,15 +21,32 @@ func parseCommits(out []byte) []Commit {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\x00", 4)
-		if len(parts) < 4 {
+		parts := strings.SplitN(line, "\x00", 5)
+		if len(parts) < 5 {
 			continue
 		}
-		commit := Commit{SHA: parts[0], Short: shortSHA(parts[0]), Author: parts[1], Summary: parts[3]}
+		commit := Commit{SHA: parts[0], Short: shortSHA(parts[0]), Author: parts[1], Summary: parts[4], Tags: parseTags(parts[3])}
 		commit.Time, _ = strconv.ParseInt(parts[2], 10, 64)
 		commits = append(commits, commit)
 	}
 	return commits
+}
+
+// parseTags reads the tag names out of the ref names git decorated a commit
+// with. That list also carries the branches and HEAD, which say where the
+// repository stands right now and not what this commit is; a tag is the one
+// name that belongs to the commit itself, so it is the only one kept.
+func parseTags(decoration string) []string {
+	tags := []string{}
+	for _, ref := range strings.Split(decoration, ", ") {
+		if name := strings.TrimPrefix(ref, "tag: "); name != ref && name != "" {
+			tags = append(tags, name)
+		}
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	return tags
 }
 
 // LogPage is one page of history: the commits, and whether older ones exist

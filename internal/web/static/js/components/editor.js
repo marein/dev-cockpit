@@ -830,7 +830,7 @@ async function init(root) {
   // sheetActionRow is one action line of a sheet, the shape the docker and
   // git sheets share: an icon, a label that may keep its tail, a quiet second
   // line, and one click.
-  function sheetActionRow({ icon, iconClass, label, title, sub, disabled, busy, onClick }) {
+  function sheetActionRow({ icon, iconClass, label, title, sub, subNodes, disabled, busy, onClick }) {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "dropdown-item d-flex align-items-center gap-2";
@@ -861,7 +861,12 @@ async function init(root) {
     nameEl.className = "d-flex min-w-0";
     nameEl.append(...labelNodes(label));
     col.appendChild(nameEl);
-    if (sub) {
+    if (subNodes) {
+      const subEl = document.createElement("span");
+      subEl.className = "small text-secondary d-flex align-items-center gap-1 min-w-0";
+      subEl.append(...subNodes);
+      col.appendChild(subEl);
+    } else if (sub) {
       const subEl = document.createElement("span");
       subEl.className = "small text-secondary text-truncate";
       subEl.textContent = sub;
@@ -2529,6 +2534,7 @@ async function init(root) {
     if (!show) return;
     gitIconEl.hidden = gitBusy;
     gitSpinEl.hidden = !gitBusy;
+    paintGitLogBusy();
     if (!gitRepo) {
       gitBranchEl.textContent = "No repository";
       gitAbEl.hidden = true;
@@ -2590,6 +2596,13 @@ async function init(root) {
 
   function renderGitSheet() {
     repaintSheet(gitSheetEls ? gitSheetEls.actions : sheetBodyEl, paintGitSheet);
+  }
+
+  // The history is painted once and then stands, so the write that disables
+  // every action row has to reach its cells here: one live row in a sheet
+  // that is otherwise waiting is a second write one tap away.
+  function paintGitLogBusy() {
+    for (const cell of sheetBodyEl.querySelectorAll("[data-git-commit]")) cell.disabled = gitBusy || commitBusy;
   }
 
   function paintGitSheet() {
@@ -2695,56 +2708,161 @@ async function init(root) {
     }
   }
 
-  // gitLogRow is one commit of a history: with a path it opens the file's
-  // diff against that commit, without one it stands for the project's history
-  // and a click copies the hash, which the copy control on every row does
-  // anyway.
-  function gitLogRow(commit, path) {
-    const row = document.createElement("div");
-    row.className = "editor-sheet-row";
-    const open = document.createElement("button");
-    open.type = "button";
-    open.className = "editor-sheet-open";
-    const icon = document.createElement("i");
-    icon.className = "ti ti-git-commit flex-shrink-0";
-    icon.setAttribute("aria-hidden", "true");
-    const col = document.createElement("span");
-    col.className = "d-flex flex-column min-w-0";
-    const nameEl = document.createElement("span");
-    nameEl.className = "editor-sheet-name text-truncate";
-    nameEl.textContent = commit.summary || commit.short;
-    const subEl = document.createElement("span");
-    subEl.className = "editor-sheet-dir text-truncate";
-    subEl.textContent = [commit.short, commit.author, logDate(commit.time)].filter(Boolean).join(" · ");
-    col.append(nameEl, subEl);
-    open.append(icon, col);
-    if (path) {
-      open.title = "Diff against this commit";
-      open.addEventListener("click", () => {
-        closeSheet();
-        void diffAgainst(path, commit.sha);
-      }, { signal });
-    } else {
-      open.title = "Diff the open file against this commit";
-      open.addEventListener("click", () => {
-        const tab = activeTab();
-        if (tab && !tab.kind && !tab.compare && !tab.external) {
+  // gitLogCell is one commit of a history, built like a container of the
+  // docker sheet: the whole cell is the control, a click on it opens the
+  // commit's menu, and the cells stand next to each other where the width
+  // allows it. What the commit can do lives in that menu alone, so the cell
+  // carries no controls of its own and the keyboard reaches everything by
+  // walking the rows and pressing Enter.
+  function gitLogCell(commit, path) {
+    const chipsEl = document.createElement("span");
+    chipsEl.className = "d-flex align-items-center gap-1";
+    const factsEl = document.createElement("span");
+    factsEl.className = "text-truncate";
+    factsEl.textContent = [commit.short, commit.author, logDate(commit.time)].filter(Boolean).join(" · ");
+    const paintChips = () => chipsEl.replaceChildren(...(commit.tags || []).map(tagChip));
+    paintChips();
+    const cell = sheetActionRow({
+      icon: "ti-git-commit",
+      label: commit.summary || commit.short,
+      subNodes: [chipsEl, factsEl],
+      title: commit.summary || commit.short,
+      onClick: (event) => {
+        // A row reached with the keyboard clicks at no point at all, so the
+        // row itself is the anchor then, like the docker sheet's cells.
+        const rect = event.currentTarget.getBoundingClientRect();
+        openMenu({
+          x: Math.round(event.clientX || rect.left),
+          y: Math.round(event.clientY || rect.bottom + 4),
+          items: commitMenuItems(commit, path, paintChips),
+          signal,
+        });
+      },
+    });
+    cell.dataset.gitCommit = commit.sha;
+    const col = document.createElement("div");
+    col.className = "col-12 col-lg-6";
+    col.appendChild(cell);
+    return col;
+  }
+
+  // commitMenuItems is what one commit can do, the app's own menu over the row
+  // it belongs to: the history keeps standing where it was scrolled to, which
+  // a drilled sheet level could not do, it renders itself and its Back put
+  // the reader back at the top of a freshly loaded list.
+  function commitMenuItems(commit, path, paintChips) {
+    const diffTab = path ? null : activeTab();
+    const diffPath = path || (diffTab && !diffTab.kind && !diffTab.compare && !diffTab.external ? diffTab.path : "");
+    const items = [
+      {
+        label: diffPath ? `Diff ${baseName(diffPath)} against this` : "Show the diff",
+        icon: "ti-git-compare",
+        disabled: !diffPath,
+        action: () => {
           closeSheet();
-          void diffAgainst(tab.path, commit.sha);
-          return;
-        }
-        void copyHash(commit.sha);
-      }, { signal });
+          void diffAgainst(diffPath, commit.sha);
+        },
+      },
+      { label: "Copy the hash", icon: "ti-copy", action: () => void copyHash(commit.sha) },
+      { divider: true },
+      { label: "Tag this commit", icon: "ti-tag", action: () => void tagDialog(commit, paintChips) },
+    ];
+    for (const name of commit.tags || []) {
+      items.push({ label: `Push ${name}`, icon: "ti-upload", action: () => void pushTag(name) });
+      items.push({ label: `Delete ${name}`, icon: "ti-trash", danger: true, action: () => void deleteTagDialog(commit, name, paintChips) });
     }
-    const copy = document.createElement("button");
-    copy.type = "button";
-    copy.className = "editor-sheet-close";
-    copy.title = "Copy the hash";
-    copy.setAttribute("aria-label", `Copy ${commit.short}`);
-    copy.innerHTML = `<i class="ti ti-copy"></i>`;
-    copy.addEventListener("click", () => void copyHash(commit.sha), { signal });
-    row.append(open, copy);
-    return row;
+    return items;
+  }
+
+  function tagChip(name) {
+    const chip = document.createElement("span");
+    chip.className = "badge bg-blue-lt flex-shrink-0";
+    chip.textContent = name;
+    return chip;
+  }
+
+  async function pushTag(name) {
+    const data = await gitRun("tag/push", { tag: name }, `Pushing "${name}"…`, "tag");
+    if (!data) return;
+    notifySuccess(`Pushed "${name}".`);
+  }
+
+  async function deleteTagDialog(commit, name, paintChips) {
+    let remote = false;
+    if (dialogAvailable()) {
+      const result = await fireDialog({
+        title: `Delete "${name}"?`,
+        html: `<div class="text-secondary small">The tag goes, the commit stays.</div>`
+          + `<label class="form-check text-start mt-3 mb-0"><input class="form-check-input" type="checkbox" data-tag-remote checked>`
+          + `<span class="form-check-label">Delete it on the remote too</span></label>`,
+        showCancelButton: true,
+        confirmButtonText: "Delete tag",
+        cancelButtonText: "Cancel",
+        reverseButtons: true,
+        preConfirm: () => ({ remote: window.Swal.getHtmlContainer().querySelector("[data-tag-remote]").checked }),
+      });
+      if (!result.isConfirmed || !result.value) return;
+      ({ remote } = result.value);
+    } else if (!await confirmDialog({ title: `Delete "${name}"?`, confirmText: "Delete tag" })) {
+      return;
+    }
+    const data = await gitRun("tag/delete", { tag: name, remote }, `Deleting "${name}"…`, "tag");
+    if (!data) return;
+    commit.tags = (commit.tags || []).filter((each) => each !== name);
+    paintChips?.();
+    if (data.remoteError) notifyError(data.remoteError);
+    else notifySuccess(data.remote ? `Deleted "${name}" here and on the remote.` : `Deleted "${name}".`);
+  }
+
+  async function tagDialog(commit, paintChips) {
+    const published = Boolean(gitBranch && gitBranch.upstream);
+    let name = "";
+    let message = "";
+    let push = published;
+    if (dialogAvailable()) {
+      const result = await fireDialog({
+        title: "Tag this commit",
+        input: "text",
+        inputPlaceholder: "v1.0.0",
+        html: `<div class="text-secondary small text-truncate">${escapeHtml(commit.short)} · ${escapeHtml(commit.summary || "")}</div>`
+          + `<input class="form-control mt-3" data-tag-message placeholder="Message, optional" aria-label="Tag message">`
+          + `<div class="text-secondary small mt-1 text-start">A message makes it an annotated tag, which is what a release is.</div>`
+          + `<label class="form-check text-start mt-3 mb-0"><input class="form-check-input" type="checkbox" data-tag-push${push ? " checked" : ""}>`
+          + `<span class="form-check-label">Push the tag</span></label>`,
+        showCancelButton: true,
+        confirmButtonText: "Create tag",
+        cancelButtonText: "Cancel",
+        reverseButtons: true,
+        preConfirm: (value) => {
+          const normalized = normalizeBranchName(value);
+          if (!normalized) {
+            window.Swal.showValidationMessage("A tag name is required.");
+            return false;
+          }
+          const box = window.Swal.getHtmlContainer();
+          return {
+            name: normalized,
+            message: box.querySelector("[data-tag-message]").value.trim(),
+            push: box.querySelector("[data-tag-push]").checked,
+          };
+        },
+      });
+      if (!result.isConfirmed || !result.value) return;
+      ({ name, message, push } = result.value);
+    } else {
+      name = normalizeBranchName(await promptText({
+        title: "Tag this commit",
+        placeholder: "v1.0.0",
+        confirmText: "Create tag",
+      }) || "");
+      if (!name) return;
+    }
+    const data = await gitRun("tag", { sha: commit.sha, tag: name, message, push }, `Tagging "${name}"…`, "tag");
+    if (!data) return;
+    commit.tags = [...(commit.tags || []), name];
+    paintChips?.();
+    if (data.pushError) notifyError(data.pushError);
+    else notifySuccess(data.pushed ? `Tagged "${name}" and pushed it.` : `Tagged "${name}".`);
   }
 
   // appendGitLog fills one page of history into the sheet and hangs an
@@ -2781,7 +2899,17 @@ async function init(root) {
         return;
       }
     }
-    for (const commit of page.commits) host.appendChild(gitLogRow(commit, path));
+    // One grid for the whole history, so a page asked for later joins the
+    // lines that already stand instead of starting a second one.
+    let grid = host.querySelector("[data-git-log-grid]");
+    if (!grid) {
+      grid = document.createElement("div");
+      grid.className = "row row-deck g-0";
+      grid.setAttribute("data-git-log-grid", "");
+      host.appendChild(grid);
+    }
+    for (const commit of page.commits) grid.appendChild(gitLogCell(commit, path));
+    paintGitLogBusy();
     // A history that is the whole sheet arrives after it opened, so the first
     // row takes the focus here; the git sheet's own actions already have it and
     // focusSheetTop leaves a sheet that holds the focus alone.
