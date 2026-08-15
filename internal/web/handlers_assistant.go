@@ -898,6 +898,15 @@ func (s *Server) handleAssistantMedia(c *gin.Context) {
 	c.File(target)
 }
 
+// assistantPingInterval is how often the conversation stream proves it is
+// alive with a frame the browser can see. The keepalive beside it is an SSE
+// comment on a much shorter beat, which holds the socket open but tells the
+// page nothing, and a visible frame every second would be noise on a phone.
+// Same 15 seconds as the ping on /events, and the client judges it the same
+// way: silent past 45 seconds means the socket died, which leaves room for one
+// missed ping. A variable so a test does not have to wait out the beat.
+var assistantPingInterval = 15 * time.Second
+
 // handleAssistantStream is the conversation's own SSE channel. Answer text
 // never travels the app wide event stream.
 func (s *Server) handleAssistantStream(c *gin.Context) {
@@ -929,6 +938,8 @@ func (s *Server) handleAssistantStream(c *gin.Context) {
 
 	heartbeat := time.NewTicker(s.cfg.StreamHeartbeatInterval)
 	defer heartbeat.Stop()
+	ping := time.NewTicker(assistantPingInterval)
+	defer ping.Stop()
 	ctx := c.Request.Context()
 	for {
 		select {
@@ -943,6 +954,10 @@ func (s *Server) handleAssistantStream(c *gin.Context) {
 			}
 		case <-heartbeat.C:
 			if err := writeSSEKeepalive(w); err != nil {
+				return
+			}
+		case <-ping.C:
+			if err := writeConversationEvent(w, assistant.StreamEvent{Kind: assistant.FramePing}); err != nil {
 				return
 			}
 		}

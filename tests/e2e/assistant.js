@@ -18,7 +18,8 @@ const { assert, BASE, sleep } = L;
 // steer the fakes: MAGIC (a fixed answer), SLOW (a turn that keeps running),
 // FAIL (a failing turn), MARKDOWN (markup and an injection attempt), TOOL (a
 // tool signal), CONTEXT_HIGH (a turn that reports a nearly full context
-// window; both fakes otherwise report 68 percent of it).
+// window; both fakes otherwise report 68 percent of it), PAUSE_CHAT (an answer
+// with twelve silent seconds in the middle of it).
 //
 // One check restarts the instance: the RESTART_CHAT prompt makes the fake kill
 // the cockpit mid answer and start it again, which is how the run proves that a
@@ -40,6 +41,11 @@ const { assert, BASE, sleep } = L;
 // - one conversation is live at a time and starting a new one archives the
 //   previous for good (its provider session is dropped), so a check that opens
 //   a new conversation has to keep working in that one,
+// - silence in the middle of an answer costs nothing: the stream says it is
+//   alive with a ping frame every 15s, only a missing ping rebuilds it, and the
+//   message is pulled after a break alone (a rebuilt stream, a page coming
+//   back), never on a quiet tick; a pull that lands mid answer must leave the
+//   bubble alone, the store holds an answer only once the turn settled,
 // - the composer never locks: a send during a running turn queues the message
 //   (bubble with data-state="queued", Waiting badge, Don't send button) and
 //   the end of the turn flushes the queue as one new turn, so a check that
@@ -365,6 +371,57 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       button.getAttribute("form") || button.getAttribute("data-bs-toggle"));
     assert(posts, "the new conversation button lost its form or its dropdown");
     return "68, live to 96, rendered on load";
+  });
+
+  // Frames stop in the middle of every real answer: thinking sends nothing at
+  // all and a tool run one frame at its start. The page pulls the message when
+  // that silence outlasts its watchdog, and the store holds an answer only
+  // once the turn settled, so a pull landing mid answer has to leave the
+  // bubble alone. It used to put the store's empty bubble on screen instead,
+  // which wiped the streamed words until the next frame brought them back. And
+  // silence must cost nothing at all: not a rebuilt stream, the ping says it is
+  // alive, and not a pull either, a half hour of tool work would be hundreds of
+  // requests whose answer is thrown away.
+  await run("a silent gap in the middle of an answer leaves the streamed text standing", async () => {
+    const opened = [];
+    const pulled = [];
+    const watch = (request) => {
+      if (/\/assistant\/[^/]+\/stream/.test(request.url())) opened.push(request.url());
+      if (/\/assistant\/[^/]+\/messages\//.test(request.url())) pulled.push(request.url());
+    };
+    page.on("request", watch);
+    try {
+      await send(page, "PAUSE_CHAT hold in the middle");
+      const answer = page.locator('[data-role="assistant"]').last();
+      await page.waitForFunction(() => {
+        const nodes = document.querySelectorAll('[data-role="assistant"]');
+        return nodes[nodes.length - 1]?.innerText.includes("before the pause");
+      }, null, { timeout: 20000 });
+      const connects = opened.length;
+      const pulls = pulled.length;
+
+      // The fake says nothing for twelve seconds. A watchdog round lands within
+      // six of them at the latest, so the words are watched well past the first
+      // two rounds: every one of them has to leave them where they are.
+      for (let i = 0; i < 10; i += 1) {
+        await sleep(1000);
+        const during = await answer.innerText();
+        assert(during.includes("before the pause"),
+          `the streamed text was wiped after ${i + 1}s of silence: ${during}`);
+      }
+      assert(opened.length === connects,
+        `the silence cost ${opened.length - connects} reconnects of the conversation stream`);
+      assert(pulled.length === pulls,
+        `the silence cost ${pulled.length - pulls} pulls of the message`);
+
+      await waitSettled(page, 30000);
+      const text = await answer.innerText();
+      assert(text.includes("before the pause") && text.includes("and after it"),
+        `the finished answer lost a half: ${text}`);
+      return text.trim();
+    } finally {
+      page.off("request", watch);
+    }
   });
 
   // The cross on a chip read a data attribute that no longer exists, so the

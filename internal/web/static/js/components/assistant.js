@@ -7,6 +7,11 @@ const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
 const ATTACH_ICONS = { image: "ti-photo", video: "ti-video", audio: "ti-microphone", file: "ti-paperclip" };
 
+// The conversation stream sends a ping frame every 15s, the same life sign
+// /events carries, because the SSE keepalive is a comment and fires no event
+// here. Past this the stream counts as dead, with room for one missed ping.
+const STALE_MS = 45000;
+
 const MEDIA_EXT = {
   image: ["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "svg"],
   video: ["mp4", "webm", "ogv", "mov", "m4v"],
@@ -113,7 +118,10 @@ class Assistant extends HTMLElement {
         void this.discard(discard.getAttribute("data-assistant-discard"));
       }
     }, { signal });
-    document.addEventListener("visibilitychange", () => this.checkStream(), { signal });
+    document.addEventListener("visibilitychange", () => {
+      this.checkStream();
+      void this.catchUp();
+    }, { signal });
     onServerEvent("draft", (event) => this.onDraftEvent(event.detail), { signal });
     this.scroller?.addEventListener("scroll", () => this.trackPin(), { signal, passive: true });
 
@@ -403,7 +411,16 @@ class Assistant extends HTMLElement {
 
   openStream() {
     if (!this.streamUrl || this.source) return;
+    this.lastFrameAt = Date.now();
     this.source = new EventSource(this.streamUrl);
+    // Every connection that had to be established again is a break, whether
+    // this element built it or the browser retried on its own, and a break is
+    // where a frame goes missing. That is the moment to catch up, and the only
+    // one besides a page coming back.
+    this.source.addEventListener("open", () => {
+      this.lastFrameAt = Date.now();
+      void this.catchUp();
+    });
     this.source.addEventListener("assistant", (event) => {
       let frame;
       try {
@@ -422,17 +439,26 @@ class Assistant extends HTMLElement {
     this.source = null;
   }
 
+  // A socket that hangs open and silent, the classic phone that just woke up,
+  // never reports itself closed, and silence alone says nothing: an answer is
+  // silent while the model thinks. The ping is what separates the two, so the
+  // stream is only torn down and built again once that life sign stops.
   checkStream() {
+    if (!this.source) return;
+    if (this.source.readyState === EventSource.CLOSED || Date.now() - this.lastFrameAt > STALE_MS) this.restartStream();
+  }
+
+  restartStream() {
     if (document.visibilityState !== "visible") return;
-    if (this.source && this.source.readyState === EventSource.CLOSED) {
-      this.closeStream();
-      this.openStream();
-    }
+    this.closeStream();
+    this.openStream();
   }
 
   onFrame(frame) {
-    if (!frame || !frame.messageId) return;
+    if (!frame) return;
     this.lastFrameAt = Date.now();
+    if (frame.kind === "ping") return;
+    if (!frame.messageId) return;
     switch (frame.kind) {
       case "start":
         this.pending = { runId: frame.runId, messageId: frame.messageId };
@@ -652,33 +678,47 @@ class Assistant extends HTMLElement {
     this.watchdog = null;
   }
 
-  async resync() {
+  // The watchdog watches the socket, nothing else. Frames stopping is the
+  // normal middle of an answer, thinking is complete silence and a tool run
+  // emits one frame at its start, so silence must cost neither a rebuilt
+  // stream nor a request: a half hour of tool work would otherwise be hundreds
+  // of pulls whose answer is thrown away.
+  resync() {
     if (!this.pendingMessageId) {
       this.stopWatchdog();
       return;
     }
     this.checkStream();
-    if (Date.now() - this.lastFrameAt < 3000) return;
+  }
+
+  // The one pull that repairs a break, after the stream was established again
+  // and when the page comes back in front. It may only ever finish a message:
+  // the pull is a snapshot of the past and the store holds the answer once the
+  // turn settled, so a fragment that still says streaming is the empty bubble,
+  // and putting it on screen would wipe every streamed word.
+  async catchUp() {
     const messageId = this.pendingMessageId;
+    if (!messageId || this.catching) return;
+    this.catching = true;
     try {
       const html = await getText(this.messageUrl + encodeURIComponent(messageId));
       const holder = document.createElement("div");
       holder.innerHTML = html;
       const fresh = holder.firstElementChild;
-      if (!fresh) return;
-      const settled = fresh.getAttribute("data-state") !== "streaming";
+      if (!fresh || fresh.getAttribute("data-state") === "streaming") return;
+      if (this.pendingMessageId !== messageId) return;
       const node = this.bubble(messageId);
       if (node) node.replaceWith(fresh);
       else this.log.append(fresh);
       window.app?.loadElements?.(fresh);
-      if (settled) {
-        this.pendingMessageId = null;
-        this.stopWatchdog();
-        this.setRunning(false);
-      }
+      this.pendingMessageId = null;
+      this.stopWatchdog();
+      this.setRunning(false);
       this.stickToEnd();
     } catch {
       void 0;
+    } finally {
+      this.catching = false;
     }
   }
 

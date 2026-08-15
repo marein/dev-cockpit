@@ -30,6 +30,13 @@ const (
 	// FrameGone announces a message that was removed while it waited, so every
 	// open page drops its bubble.
 	FrameGone = "gone"
+	// FramePing proves the stream is alive to a browser that cannot see the SSE
+	// keepalive, which is a comment and fires no event. Silence in the middle
+	// of an answer is the normal case, thinking sends nothing at all, so only a
+	// missing life sign says the socket died. It carries nothing, the client
+	// stamps it and drops it, and it never travels the hub: the stream handler
+	// writes it on a beat of its own.
+	FramePing = "ping"
 )
 
 // StreamEvent is one frame on a conversation's own SSE stream. Conversation text never goes to

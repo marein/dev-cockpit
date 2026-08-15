@@ -1610,7 +1610,17 @@ stands on what it saw before the socket went down until something happens to
 move: the editor's docker segment is exactly that. Then a `ping` frame every
 15s; the client forces a reconnect when the
 stream stays silent past 45s (interval timer plus visibilitychange), because a
-dead socket does not reliably fire an error. `Server.publishTerminals(project)`
+dead socket does not reliably fire an error. The conversation's own stream
+(`/assistant/:id/stream`) carries the same ping on the same beat and is judged
+by the same 45s, and it needs it more than any other surface: an answer is
+silent while the model thinks, so without a life sign the page would have to
+read that silence as a dead socket and rebuild the stream over and over, each
+time paying for the whole rendered prefix the hub sends on subscribe. Silence
+costs the page nothing else either: the running message is pulled after a break
+alone, when a connection was established again or the page came back in front,
+never on a timer, and such a pull is only ever allowed to finish a message,
+because the store holds an answer once the turn settled and a fragment that
+still says streaming would wipe the streamed words off the screen. `Server.publishTerminals(project)`
 emits a `terminals` event on every live coder/shell change (create, stop,
 resume, delete, rename, reorder, project delete, out-of-band end); an empty
 project means "refresh everything". Surfaces react by pulling their own

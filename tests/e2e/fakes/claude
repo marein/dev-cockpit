@@ -260,6 +260,14 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     sleep 3
     answer="FLUGHAFEN"
     ;;
+  *PAUSE_CHAT*)
+    # Half the answer, then nothing at all for longer than the page's watchdog
+    # waits, then the rest. That gap is what thinking and a running tool look
+    # like on the stream, and what stands on screen has to survive it.
+    emit "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"before the pause \"}}}"
+    sleep 12
+    answer="and after it"
+    ;;
   *RESTART_CHAT*)
     # Half the answer, then the server that started this turn is killed and
     # started again. The turn keeps writing, which is the whole point.
