@@ -48,6 +48,18 @@ func resultLine(id string) string {
 	return `{"type":"result","subtype":"success","is_error":false,"session_id":"` + id + `"}`
 }
 
+func textBlockStart() string {
+	return `{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}`
+}
+
+func toolBlockStart(name string) string {
+	return `{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","name":"` + name + `"}}}`
+}
+
+func blockStop() string {
+	return `{"type":"stream_event","event":{"type":"content_block_stop","index":0}}`
+}
+
 // commandOf builds the process one turn runs, which is what the runner decides
 // now: the assistant package starts it and reads its file.
 func commandOf(t *testing.T, resume bool, prompt string) assistant.Command {
@@ -165,6 +177,68 @@ func TestTurnAssemblesDeltas(t *testing.T) {
 	}
 	if got := textOf(events); got != "Hello" {
 		t.Fatalf("want the deltas assembled without the thinking block, got %q", got)
+	}
+}
+
+// A turn that works with a tool answers in several content blocks: what it says
+// before the call, and the answer after it. The stream names every one of those
+// boundaries, so the blank line between two markdown blocks is read from the
+// output. Without it the two blocks are appended into one word, which is what
+// "coder.Projekt tetris steht" was.
+func TestSeparateTextBlocksKeepTheirBlankLine(t *testing.T) {
+	fixture := strings.Join([]string{
+		initLine(`"Bash"`),
+		`{"type":"stream_event","event":{"type":"message_start"}}`,
+		textBlockStart(),
+		deltaLine("Ich schaue beim coder"),
+		deltaLine("."),
+		blockStop(),
+		toolBlockStart("Bash"),
+		blockStop(),
+		`{"type":"stream_event","event":{"type":"message_start"}}`,
+		textBlockStart(),
+		deltaLine("Projekt tetris steht"),
+		blockStop(),
+		resultLine(sessionID),
+	}, "\n")
+
+	events := runTurn(t, fixture)
+	if err := errorOf(events); err != nil {
+		t.Fatalf("want a clean turn, got %v", err)
+	}
+	if got := textOf(events); got != "Ich schaue beim coder.\n\nProjekt tetris steht" {
+		t.Fatalf("want the two blocks apart, got %q", got)
+	}
+}
+
+// Inside one block nothing is inserted at all: the deltas are pieces of one
+// markdown block. Nothing goes in front of the first block of a turn and
+// nothing behind its last either, so the stored answer keeps its own ends.
+func TestDeltasOfOneBlockAreJoinedUntouched(t *testing.T) {
+	fixture := strings.Join([]string{
+		`{"type":"stream_event","event":{"type":"message_start"}}`,
+		textBlockStart(),
+		deltaLine("Wasser"),
+		deltaLine(" trägt"),
+		deltaLine(" Leben"),
+		deltaLine("."),
+		blockStop(),
+		resultLine(sessionID),
+	}, "\n")
+
+	if got := textOf(runTurn(t, fixture)); got != "Wasser trägt Leben." {
+		t.Fatalf("want the deltas of one block joined and the answer untouched at both ends, got %q", got)
+	}
+}
+
+// The fallback that reads the assembled message needs the same seam, or the
+// blocks stick together there whenever the delta stream stays silent.
+func TestAssembledBlocksKeepTheirBlankLine(t *testing.T) {
+	fixture := `{"type":"assistant","message":{"content":[{"type":"text","text":"Ich schaue beim coder."},{"type":"tool_use","name":"Bash"},{"type":"text","text":"Projekt tetris steht"}]}}` +
+		"\n" + resultLine(sessionID)
+
+	if got := textOf(runTurn(t, fixture)); got != "Ich schaue beim coder.\n\nProjekt tetris steht" {
+		t.Fatalf("want the assembled blocks apart, got %q", got)
 	}
 }
 

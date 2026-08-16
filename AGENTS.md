@@ -126,6 +126,19 @@ test. Update this file when a convention changes.
   jobs (the head, the button and the empty state say steered coders); code,
   routes, state values, the `dev-cockpit assistant` commands and the
   notification titles keep job.
+- **A turn's answer is blocks, and the seam between two of them is read, never
+  guessed.** An answer that works with tools arrives in several text blocks, and
+  every runner hands them over as one stream of deltas the turn appends as it
+  goes, so a runner writes `assistant.BlockSeparator` between two of them or the
+  last word of one is welded onto the first of the next. Where that boundary is
+  comes out of the provider's own output and out of nothing else: claude has the
+  content block records (`content_block_start`, and the assembled message's
+  content is a block per entry), copilot moves the `messageId` on every record
+  of a new message. Nothing looks at the text that is already there, no last
+  character, no punctuation, no suffix check. It is written only between two
+  blocks, never in front of a turn's first and never behind its last, so the
+  stored answer keeps its own ends, and a provider version that stops naming its
+  boundaries falls back to the plain appended answer.
 - **The editor reads git, and writes it through a deliberately short list of
   actions.** `internal/git` is the only place that runs the binary, and every
   call goes through its one helper:

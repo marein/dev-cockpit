@@ -129,6 +129,13 @@ type claudeParser struct {
 	// on this machine. It is remembered instead of reported at once, because the
 	// record that closes the turn is where a turn's outcome is decided.
 	authFailed bool
+	// sentText is whether this turn has put any text out, and blockPending
+	// whether a content block boundary stands between that text and whatever
+	// comes next. The stream names those boundaries itself, so the separator
+	// between two markdown blocks is read out of the output and never derived
+	// from the text.
+	sentText     bool
+	blockPending bool
 }
 
 // claudeHead is the first pass over a record: only what routes it. Everything
@@ -236,9 +243,14 @@ func (p *claudeParser) Line(line []byte) error {
 		case "content_block_delta":
 			if rec.Event.Delta.Type == "text_delta" && rec.Event.Delta.Text != "" {
 				p.sawDelta = true
-				p.events <- assistant.Event{Kind: assistant.EventDelta, Text: rec.Event.Delta.Text}
+				p.emitText(rec.Event.Delta.Text)
 			}
 		case "content_block_start":
+			// A block began, so whatever text comes next belongs to another one
+			// than what went out before it. Which block it is does not matter,
+			// a thinking or tool block between two text blocks is a boundary
+			// all the same.
+			p.blockPending = true
 			if rec.Event.ContentBlock.Type == "tool_use" {
 				p.events <- assistant.Event{Kind: assistant.EventTool, Text: rec.Event.ContentBlock.Name}
 			}
@@ -275,8 +287,11 @@ func (p *claudeParser) Line(line []byte) error {
 			return nil
 		}
 		for _, part := range blocks {
+			// Every entry of the assembled content is a block of its own, the
+			// same seam content_block_start marks on the streaming path.
+			p.blockPending = true
 			if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
-				p.events <- assistant.Event{Kind: assistant.EventDelta, Text: part.Text}
+				p.emitText(part.Text)
 			}
 		}
 		return nil
@@ -307,6 +322,21 @@ func (p *claudeParser) Line(line []byte) error {
 		return nil
 	}
 	return nil
+}
+
+// emitText sends one piece of assistant text, with the block separator in front
+// of it when a block boundary stands between it and the text that went out
+// before. The boundary is the stream's own, so the first block of a turn gets
+// nothing in front of it, the last gets nothing behind it, and a block that
+// carried no text at all (a tool call, a thinking block) leaves one seam and
+// not two.
+func (p *claudeParser) emitText(text string) {
+	if p.sentText && p.blockPending {
+		p.events <- assistant.Event{Kind: assistant.EventDelta, Text: assistant.BlockSeparator}
+	}
+	p.blockPending = false
+	p.sentText = true
+	p.events <- assistant.Event{Kind: assistant.EventDelta, Text: text}
 }
 
 // skipUnreadable notes a line this parser could not decode and lets the turn

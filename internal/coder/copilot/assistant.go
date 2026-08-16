@@ -124,6 +124,12 @@ type copilotParser struct {
 	// version that stops sending deltas still produces the complete answer.
 	delivered map[string]bool
 	sawResult bool
+	// sentText is whether this turn has put any text out, and lastMessageID
+	// which message that text belonged to. copilot carries the id on every
+	// record and moves it when it starts a new message, so the seam between two
+	// markdown blocks is read out of the output and never derived from the text.
+	sentText      bool
+	lastMessageID string
 }
 
 // copilotHead is the first pass over a record: only what routes it. Everything
@@ -169,13 +175,13 @@ func (p *copilotParser) Line(line []byte) error {
 				return nil
 			}
 			p.delivered[rec.Data.MessageID] = true
-			p.events <- assistant.Event{Kind: assistant.EventDelta, Text: rec.Data.DeltaContent}
+			p.emitText(rec.Data.MessageID, rec.Data.DeltaContent)
 		case "assistant.message":
 			if rec.Data.Content == "" || p.delivered[rec.Data.MessageID] {
 				return nil
 			}
 			p.delivered[rec.Data.MessageID] = true
-			p.events <- assistant.Event{Kind: assistant.EventDelta, Text: rec.Data.Content}
+			p.emitText(rec.Data.MessageID, rec.Data.Content)
 		case "tool.execution_start":
 			p.events <- assistant.Event{Kind: assistant.EventTool, Text: rec.Data.ToolName}
 		}
@@ -198,6 +204,20 @@ func (p *copilotParser) Line(line []byte) error {
 		}
 	}
 	return nil
+}
+
+// emitText sends one piece of assistant text, with the block separator in front
+// of it when it belongs to another message than the text that went out before.
+// The first message of a turn gets nothing in front of it and the last gets
+// nothing behind it, and a version that stops carrying the id keeps the plain
+// appended answer it had.
+func (p *copilotParser) emitText(messageID, text string) {
+	if p.sentText && messageID != p.lastMessageID {
+		p.events <- assistant.Event{Kind: assistant.EventDelta, Text: assistant.BlockSeparator}
+	}
+	p.lastMessageID = messageID
+	p.sentText = true
+	p.events <- assistant.Event{Kind: assistant.EventDelta, Text: text}
 }
 
 // skipUnreadable notes a line this parser could not decode and lets the turn

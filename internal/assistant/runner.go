@@ -59,6 +59,16 @@ const (
 	EventError EventKind = "error"
 )
 
+// BlockSeparator stands between two text blocks of one turn. A turn that works
+// with tools answers in several blocks, what it says before a call and the
+// answer after it, and every runner hands those over as one stream of deltas
+// that is appended as it arrives, so without it the end of one block and the
+// start of the next are welded into one word. It is the blank line markdown
+// needs between two blocks, and a runner writes it only where the provider's
+// own output says a block ended: never in front of a turn's first block, never
+// behind its last, and never guessed from the text that is already there.
+const BlockSeparator = "\n\n"
+
 // Event is one structured message from a provider run. The channel closing
 // without an EventError means the turn completed.
 type Event struct {
