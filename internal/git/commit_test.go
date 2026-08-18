@@ -3,6 +3,8 @@ package git
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -15,6 +17,24 @@ func commitRepo(t *testing.T, dir string) {
 	runGit(t, dir, "config", "user.email", "t@example.com")
 	runGit(t, dir, "config", "user.name", "t")
 	runGit(t, dir, "config", "commit.gpgsign", "false")
+}
+
+// signedRepo is commitRepo with every commit signed and log.showSignature on,
+// the setup in which git log prints the signature check in front of a format.
+func signedRepo(t *testing.T, dir string) {
+	t.Helper()
+	if _, err := exec.LookPath("ssh-keygen"); err != nil {
+		t.Skip("ssh-keygen is not installed")
+	}
+	key := filepath.Join(t.TempDir(), "key")
+	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
+		t.Fatalf("ssh-keygen: %v: %s", err, out)
+	}
+	commitRepo(t, dir)
+	runGit(t, dir, "config", "gpg.format", "ssh")
+	runGit(t, dir, "config", "user.signingkey", key)
+	runGit(t, dir, "config", "commit.gpgsign", "true")
+	runGit(t, dir, "config", "log.showSignature", "true")
 }
 
 func worktreeByPath(t *testing.T, dir string) map[string]FileStatus {
@@ -250,6 +270,37 @@ func TestCommitInfoNamesBranchAndLastMessage(t *testing.T) {
 	}
 	if without.Repo {
 		t.Fatalf("no repository: %+v", without)
+	}
+}
+
+func TestCommitInfoReadsTheLastMessageOfASignedCommitWithShowSignature(t *testing.T) {
+	dir := t.TempDir()
+	signedRepo(t, dir)
+	runGit(t, dir, "commit", "-q", "--allow-empty", "-m", "the last words")
+
+	info, err := New(dir).CommitInfo(context.Background())
+
+	if err != nil {
+		t.Fatalf("info: %v", err)
+	}
+	if info.LastMessage != "the last words" {
+		t.Fatalf("LastMessage = %q, want %q", info.LastMessage, "the last words")
+	}
+}
+
+func TestCommitNamesASignedCommitWithShowSignature(t *testing.T) {
+	dir := t.TempDir()
+	signedRepo(t, dir)
+	runGit(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	writeAt(t, dir, "a.txt", "a\n")
+
+	result, err := New(dir).Commit(context.Background(), "signed pick", []string{"a.txt"}, false)
+
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if want := gitOut(t, dir, "rev-parse", "--short", "HEAD"); result.Hash != want || result.Subject != "signed pick" {
+		t.Fatalf("result = %+v, want hash %s and subject %q", result, want, "signed pick")
 	}
 }
 

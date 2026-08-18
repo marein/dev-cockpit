@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/coder/claude/statusline"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/settings"
@@ -45,7 +47,8 @@ type Coder struct {
 // New builds the claude coder. notifyInbox is the directory the injected
 // Stop/Notification hooks drop their event files into; empty disables the
 // hook injection. store is where the model repository keeps the names it
-// was told to remember; nil keeps them in memory.
+// was told to remember and where the status line mode is read; nil keeps the
+// names in memory and the status line on its default.
 func New(stateDir, notifyInbox string, store *settings.Store, launcher *ollama.Client) *Coder {
 	home, err := filesystem.HomeDir()
 	if err != nil {
@@ -63,7 +66,18 @@ func New(stateDir, notifyInbox string, store *settings.Store, launcher *ollama.C
 		launcher:     launcher,
 		launched:     launched,
 	}
-	c.runtime = runtime{notifyInbox: notifyInbox, launcher: launcher, sessions: launched}
+	run := runtime{
+		notifyInbox:  notifyInbox,
+		statusLine:   statusline.ConfigPath(stateDir),
+		userSettings: filepath.Join(home, ".claude", "settings.json"),
+		store:        store,
+		launcher:     launcher,
+		sessions:     launched,
+	}
+	if binary := clirun.Executable(); binary != "" {
+		run.statusLineCommand = statusline.Command(binary, stateDir)
+	}
+	c.runtime = run
 	c.models = modelRepository{ModelRepository: coder.NewModelRepository(store, "claude", claudeModelsNote, c.cliModels), launcher: launcher}
 	c.assistantProbe = coder.NewCapabilityProbe(c.probeAssistant, 10*time.Second)
 	return c

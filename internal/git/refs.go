@@ -262,7 +262,7 @@ func (r *Repo) searchCommits(ctx context.Context, text string, limit int) ([]Com
 		}
 	}
 	out, err := r.run(ctx, []string{
-		"log", "--all", commitFormat,
+		"log", "--all", "--no-show-signature", commitFormat,
 		"--regexp-ignore-case", "--fixed-strings", "--grep=" + text,
 		"-n", strconv.Itoa(limit),
 	}, nil)
@@ -285,7 +285,7 @@ func (r *Repo) searchCommits(ctx context.Context, text string, limit int) ([]Com
 // commitByHash reads the one commit a resolved hash names, in the same shape
 // the history answers.
 func (r *Repo) commitByHash(ctx context.Context, sha string) (Commit, error) {
-	out, err := r.run(ctx, []string{"log", "-n", "1", commitFormat, sha}, nil)
+	out, err := r.run(ctx, []string{"log", "-n", "1", "--no-show-signature", commitFormat, sha}, nil)
 	if err != nil {
 		return Commit{}, err
 	}

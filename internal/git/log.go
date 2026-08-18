@@ -87,6 +87,7 @@ func (r *Repo) Log(ctx context.Context, file string, skip, limit int) (LogPage, 
 	}
 	args := []string{
 		"log",
+		"--no-show-signature",
 		commitFormat,
 		"--skip=" + strconv.Itoa(skip),
 		"-n", strconv.Itoa(limit + 1),

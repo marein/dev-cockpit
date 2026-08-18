@@ -1,0 +1,161 @@
+{{/* The page is its own work surface, so the bar with the preview and Save
+     stands under the scrolling body like the foot of the tags page and never
+     covers a row or a focused field. */}}
+{{define "statusline_form.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+<dc-claude-statusline class="dc-work" role="main" values="{{.ValuesJSON}}" colors="{{.ColorsJSON}}" state-url="{{.Base}}/statusline/state">
+  <div class="dc-work-head">
+    {{template "coder_sections.gohtml" .}}
+  </div>
+  <div class="dc-work-body dc-work-pad">
+    {{template "flash.gohtml" .}}
+    <div class="dc-narrow" id="settings-statusline">
+      {{if and (eq $.FlashProject "settings-statusline") $.Flash.Message}}<div data-statusline-flash>{{template "settings_section_flash" $}}</div>{{end}}
+      {{/* novalidate: a field past its maxlength may stand in a folded entry,
+           where the browser blocks the submit without a word. The server
+           judges the list, a refusal answers at the entry or in the flash. */}}
+      <form method="post" action="{{.Base}}/statusline" id="statusline-form" novalidate>
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <div class="mb-3">
+          <label class="form-label" for="statusline-mode">Show this line</label>
+          <select class="form-select" id="statusline-mode" name="mode" data-statusline-mode>
+            {{range .Modes}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+          </select>
+          <div class="form-text">The mode is read when a coder starts or resumes, the list at its next redraw. The fallback checks only <code>~/.claude/settings.json</code>.</div>
+        </div>
+        <div class="mb-3 dropdown" data-statusline-presets>
+          <label class="form-label" id="statusline-presets-label">Preset</label>
+          <button type="button" class="form-select d-flex align-items-center gap-2 text-start" id="statusline-presets-toggle" data-bs-toggle="dropdown" aria-expanded="false" aria-labelledby="statusline-presets-label statusline-presets-toggle" data-statusline-presets-toggle data-statusline-live="toggle">{{template "statusline_toggle" .State}}</button>
+          <div class="dropdown-menu w-100" data-statusline-live="menu">{{template "statusline_menu" .State}}</div>
+        </div>
+        <div class="text-secondary small mb-2">A value without an answer leaves the line with the separator before it. The preview shows sample values.</div>
+        <div class="d-flex align-items-center gap-1 mb-2">
+          <span class="form-label mb-0 me-auto">Entries</span>
+          <button type="button" class="btn btn-sm btn-ghost-secondary" data-entries-collapse><i class="ti ti-chevrons-up me-1" aria-hidden="true"></i>Collapse all</button>
+          <button type="button" class="btn btn-sm btn-ghost-secondary" data-entries-expand><i class="ti ti-chevrons-down me-1" aria-hidden="true"></i>Expand all</button>
+        </div>
+        <div data-entry-rows>
+          {{range .RowViews}}{{template "statusline_row" .}}{{end}}
+        </div>
+        {{if not .Rows}}<div class="text-secondary small mb-2" data-entries-empty>No entries.</div>{{end}}
+        <div data-entries-error></div>
+        <button type="button" class="btn btn-sm btn-ghost-secondary" data-entry-add><i class="ti ti-plus me-1"></i>Add entry</button>
+      </form>
+      <template data-entry-template>{{template "statusline_row" .BlankRow}}</template>
+      <template data-threshold-template>{{template "statusline_bound" .BlankBound}}</template>
+    </div>
+  </div>
+  <div class="dc-work-foot dc-statusline-foot" data-statusline-bar>
+    <pre class="flex-fill min-w-0 align-self-stretch d-flex flex-column mb-0 px-2 py-1 overflow-auto" aria-label="Preview with sample values" data-statusline-preview><samp class="my-auto" data-statusline-line></samp></pre>
+    <button type="submit" class="btn btn-primary" form="statusline-form" data-statusline-save>Save</button>
+  </div>
+</dc-claude-statusline>
+{{template "app_close.gohtml" .}}
+{{end}}
+
+{{/* What the page says about the list as it stands. An error that names its
+     entry is said at that entry, any other under the list. */}}
+{{define "statusline_state.gohtml"}}
+<div data-statusline-live="toggle">{{template "statusline_toggle" .}}</div>
+<div data-statusline-live="menu">{{template "statusline_menu" .}}</div>
+{{with .Error}}<div class="invalid-feedback d-block" data-statusline-error{{if ge $.ErrorRow 0}} data-error-row="{{$.ErrorRow}}"{{end}}>{{.}}</div>{{end}}
+{{end}}
+
+{{define "statusline_toggle"}}{{with .Picked}}<span>{{.Title}}</span>{{else}}<span class="text-secondary">Your own line</span>{{end}} {{template "statusline_badge" .Saved}}{{end}}
+
+{{define "statusline_menu"}}
+{{range .Presets}}
+<a class="dropdown-item d-block text-wrap{{if .Matched}} active{{end}}" href="{{.URL}}" data-statusline-preset="{{.ID}}"{{if .Matched}} aria-current="true"{{end}}>
+  <span class="d-flex align-items-center gap-2"><span class="fw-medium">{{.Title}}</span> {{if .Current}}{{template "statusline_badge" true}}{{else if .Matched}}{{template "statusline_badge" false}}{{end}}{{if .Matched}}<i class="ti ti-check ms-auto" aria-hidden="true"></i>{{end}}</span>
+  <span class="d-block text-secondary small">{{.Description}}</span>
+  <pre class="mb-0 mt-1 px-2 py-1 small overflow-auto" data-preset-preview data-entries="{{.EntriesJSON}}"></pre>
+</a>
+{{end}}
+{{end}}
+
+{{define "statusline_badge"}}{{if .}}<span class="badge bg-green-lt" data-badge="saved">Saved</span>{{else}}<span class="badge bg-primary-lt" data-badge="unsaved">Not saved</span>{{end}}{{end}}
+
+{{define "statusline_row"}}
+{{$row := .Row}}
+<div class="border rounded p-2 mb-2" data-entry-row data-drag-row data-entry-numeric="{{if $row.Numeric}}1{{else}}0{{end}}">
+  <div class="d-flex align-items-center gap-1">
+    <button type="button" class="d-flex align-items-center gap-2 flex-fill min-w-0 p-1 border-0 rounded bg-transparent text-body text-start" aria-expanded="true" data-entry-toggle>
+      <i class="ti ti-chevron-down text-secondary" aria-hidden="true"></i>
+      <span class="text-truncate min-w-0"><span class="fw-medium" data-entry-name>{{if $row.IsValue}}{{$row.ValueLabel}}{{else if $row.IsSeparator}}Separator{{else}}Line break{{end}}</span> <span class="text-secondary" data-entry-detail>{{if $row.IsValue}}{{$row.Label}}{{else if $row.IsSeparator}}{{$row.Text}}{{end}}</span></span>
+    </button>
+    <button type="button" class="btn btn-sm btn-ghost-secondary dc-drag-grip px-3" data-entry-grip aria-label="Drag to reorder" title="Drag to reorder"><i class="ti ti-grip-vertical"></i></button>
+  </div>
+  <div class="mt-2" data-entry-body>
+    <div class="row g-2">
+      <div class="col-6 col-sm-3">
+        <label class="form-label small mb-1">Entry</label>
+        <select class="form-select" name="entry_kind" data-entry-kind>
+          <option value="value"{{if $row.IsValue}} selected{{end}}>Value</option>
+          <option value="separator"{{if $row.IsSeparator}} selected{{end}}>Separator</option>
+          <option value="break"{{if $row.IsBreak}} selected{{end}}>Line break</option>
+        </select>
+      </div>
+      <div class="col-12 col-sm-4" data-entry-part="value"{{if not $row.IsValue}} hidden{{end}}>
+        <label class="form-label small mb-1">Value</label>
+        <select class="form-select" name="entry_value" data-entry-value>
+          {{$picked := $row.Value}}
+          {{range .Groups}}<optgroup label="{{.Label}}">{{range .Values}}<option value="{{.ID}}"{{if eq .ID $picked}} selected{{end}}>{{.Label}}</option>{{end}}</optgroup>{{end}}
+        </select>
+      </div>
+      <div class="col-6 col-sm-2" data-entry-part="value"{{if not $row.IsValue}} hidden{{end}}>
+        <label class="form-label small mb-1">Label</label>
+        <input type="text" class="form-control" name="entry_label" value="{{$row.Label}}" maxlength="24" autocomplete="off" placeholder="none">
+      </div>
+      <div class="col-6 col-sm-3" data-entry-part="value"{{if not $row.IsValue}} hidden{{end}}>
+        <label class="form-label small mb-1">Label color</label>
+        <select class="form-select" name="entry_label_color" data-entry-label-color>
+          {{$labelColor := $row.LabelColor}}
+          {{range .Colors}}<option value="{{.Name}}"{{if eq .Name $labelColor}} selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+      </div>
+      <div class="col-6 col-sm-3" data-entry-part="text"{{if not $row.HasText}} hidden{{end}}>
+        <label class="form-label small mb-1" data-entry-text-label>{{$row.TextLabel}}</label>
+        <input type="text" class="form-control" name="entry_text" value="{{$row.Text}}" data-text-max="{{$row.ShownTextMax}}" data-text-cap="{{$row.TextCap}}" maxlength="{{$row.MaxText}}" autocomplete="off" placeholder="·">
+      </div>
+      <div class="col-6 col-sm-3" data-entry-part="color"{{if or (not $row.IsValue) $row.Numeric}} hidden{{end}}>
+        <label class="form-label small mb-1">Color</label>
+        <select class="form-select" name="entry_color" data-entry-color>
+          {{$fixed := $row.Color}}
+          {{range .Colors}}<option value="{{.Name}}"{{if eq .Name $fixed}} selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+      </div>
+    </div>
+    <div class="form-text mt-1" data-entry-part="value" data-entry-hint{{if not $row.IsValue}} hidden{{end}}>{{$row.Hint}}</div>
+    <div class="mt-2" data-entry-part="thresholds"{{if or (not $row.IsValue) (not $row.Numeric)}} hidden{{end}}>
+      <label class="form-label small mb-1">Color from</label>
+      <input type="hidden" name="entry_thresholds" value="{{len $row.Thresholds}}" data-threshold-count>
+      <div data-threshold-rows>
+        {{range .Bounds}}{{template "statusline_bound" .}}{{end}}
+      </div>
+      <button type="button" class="btn btn-sm btn-ghost-secondary" data-threshold-add><i class="ti ti-plus me-1"></i>Add bound</button>
+    </div>
+    <div class="d-flex mt-2">
+      <button type="button" class="btn btn-sm btn-ghost-danger ms-auto" data-entry-remove><i class="ti ti-trash me-1"></i>Remove</button>
+    </div>
+  </div>
+  <div data-entry-error></div>
+</div>
+{{end}}
+
+{{define "statusline_bound"}}
+<div class="row g-2 mb-1" data-threshold-row>
+  <div class="col-5 col-sm-3">
+    <input type="text" class="form-control" name="threshold_at" value="{{.Bound.At}}" maxlength="{{.MaxLength}}" autocomplete="off" inputmode="decimal" aria-label="From">
+  </div>
+  <div class="col-5 col-sm-3">
+    <select class="form-select" name="threshold_color" aria-label="Color">
+      {{$picked := .Bound.Color}}
+      {{range .Colors}}<option value="{{.Name}}"{{if eq .Name $picked}} selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+  </div>
+  <div class="col-2">
+    <button type="button" class="btn btn-icon btn-ghost-danger" data-threshold-remove aria-label="Remove bound"><i class="ti ti-x"></i></button>
+  </div>
+</div>
+{{end}}

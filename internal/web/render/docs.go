@@ -765,6 +765,12 @@ func DocsTopics() []DocsTopic {
 					Desc:     `Settings &rarr; Coder &rarr; Ollama, shown once ollama is installed, sets the Ollama host and lists the server's cloud models, Ollama's catalog and names added by hand.`,
 				},
 				{
+					Title:    "The claude status line",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Settings &rarr; Coder &rarr; Status line builds the line under claude's prompt from a list of values, separators and line breaks. A preset fills the list, Save keeps it. A number is colored by bounds, the highest one reached wins. A value without an answer leaves the line with the separator before it. A command runs in the coder's folder without a shell, gets claude's status JSON on stdin and is dropped after five seconds. Only <em>Weekly, one model</em> calls the usage API. The mode is read when a coder starts or resumes, the list at its next redraw. <em>If ~/.claude/settings.json sets none</em>, the default, checks only that file. Claude's own settings files are never written.`,
+				},
+				{
 					Title:    "Back up and move your setup",
 					Tag:      "Data",
 					TagClass: "bg-secondary-lt",

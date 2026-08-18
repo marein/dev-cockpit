@@ -2,18 +2,25 @@
      coder picked in it, the section tabs in the work head, and the coder's name
      at the head's end while more than one coder is active. */}}
 {{define "coder_page_start.gohtml"}}
-{{$nav := .SettingsNav}}
 {{template "settings_ctx.gohtml" .}}
 {{template "work_start.gohtml" .}}
+{{template "coder_sections.gohtml" .}}
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
+{{end}}
+
+{{/* The head of a coder settings page, apart for a page that is its own work
+     surface and closes it with a foot. */}}
+{{define "coder_sections.gohtml"}}
+{{$nav := .SettingsNav}}
 <nav class="nav nav-bordered dc-work-tabs" aria-label="Sections" data-coder-sections>
   <a class="nav-link{{if eq $nav.Section "instructions"}} active{{end}}" href="{{.Base}}/instructions"><i class="ti ti-file-description me-1 dc-hide-xs"></i>Instructions</a>
   <a class="nav-link{{if eq $nav.Section "agents"}} active{{end}}" href="{{.Base}}/agents"><i class="ti ti-robot me-1 dc-hide-xs"></i>Agents</a>
   <a class="nav-link{{if eq $nav.Section "skills"}} active{{end}}" href="{{.Base}}/skills"><i class="ti ti-tool me-1 dc-hide-xs"></i>Skills</a>
   <a class="nav-link{{if eq $nav.Section "models"}} active{{end}}" href="{{.Base}}/models"><i class="ti ti-cpu me-1 dc-hide-xs"></i>Models</a>
+  {{if $nav.StatusLine}}<a class="nav-link{{if eq $nav.Section "statusline"}} active{{end}}" href="{{.Base}}/statusline"><i class="ti ti-layout-bottombar me-1 dc-hide-xs"></i>Status line</a>{{end}}
 </nav>
 {{if .MultiCoder}}{{template "coder_head_badge.gohtml" (dict "ID" $nav.Selected "Label" (coderLabel $nav.Selected))}}{{end}}
-{{template "work_body.gohtml" .}}
-<div class="dc-narrow">
 {{end}}
 
 {{define "coder_head_badge.gohtml"}}<span class="ms-auto d-flex align-items-center gap-2 text-secondary small flex-shrink-0" data-coder-head><span class="dc-term-icon" aria-hidden="true">{{template "coder_icon.gohtml" (dict "ID" .ID)}}</span><span class="dc-hide-xs">{{.Label}}</span></span>{{end}}

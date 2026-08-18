@@ -198,6 +198,12 @@ dc-theme-cycle { display: contents; }
 }
 .dc-work-body { flex: 1; min-height: 0; overflow: auto; }
 .dc-work-pad { --dc-work-pad: 16px; padding: var(--dc-work-pad); }
+.dc-work-foot {
+  display: flex; flex: none; align-items: center; gap: 0.5rem; padding: 0.625rem var(--dc-work-pad, 16px);
+  border-top: var(--tblr-border-width) solid var(--tblr-border-color); background: var(--tblr-bg-surface);
+}
+.dc-statusline-foot { max-height: 50%; }
+.dc-work-body:has(+ .dc-statusline-foot) { scroll-padding-block: var(--dc-work-pad); }
 .dc-work-fill { display: flex; flex-direction: column; }
 .dc-narrow { max-width: 56rem; }
 .dc-form-width { max-width: 40rem; }
@@ -1190,8 +1196,8 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
 .dc-folded { display: none !important; }
 [data-assistant-job-fold] .ti, [data-assistant-trigger-fold] .ti { transition: transform 0.15s ease; }
 [data-assistant-job-fold][aria-expanded="true"] .ti, [data-assistant-trigger-fold][aria-expanded="true"] .ti { transform: rotate(180deg); }
-[data-assistant-note-fold] > .ti, [data-assistant-held-more] > .ti, [data-assistant-held-note] > .ti { transition: transform 0.15s ease; }
-[data-assistant-note-fold][aria-expanded="true"] > .ti, [data-assistant-held-more][aria-expanded="true"] > .ti, [data-assistant-held-note][aria-expanded="true"] > .ti { transform: rotate(180deg); }
+[data-assistant-note-fold] > .ti, [data-assistant-held-more] > .ti, [data-assistant-held-note] > .ti, [data-entry-toggle] > .ti { transition: transform 0.15s ease; }
+[data-assistant-note-fold][aria-expanded="true"] > .ti, [data-assistant-held-more][aria-expanded="true"] > .ti, [data-assistant-held-note][aria-expanded="true"] > .ti, [data-entry-toggle][aria-expanded="true"] > .ti { transform: rotate(180deg); }
 [data-assistant-held-note], [data-assistant-held-more] {
   --tblr-btn-hover-color: var(--tblr-btn-color);
   --tblr-btn-hover-bg: var(--tblr-btn-bg);
@@ -3030,14 +3036,14 @@ dc-notify-volume { display: block; max-width: 24rem; }
   transition: opacity 0.25s ease 0.2s;
   opacity: 0;
 }
-.dc-action-grip {
+.dc-drag-grip {
   touch-action: none;
   cursor: grab;
 }
-dc-docker-actions.dc-actions-dragging [data-action-row] {
+.dc-drag-list [data-drag-row] {
   transition: transform 0.12s ease;
 }
-dc-docker-actions.dc-actions-dragging [data-action-row].dc-action-drag {
+.dc-drag-list [data-drag-row].dc-drag-lift {
   position: relative;
   z-index: 2;
   transition: none;

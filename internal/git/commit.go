@@ -89,7 +89,7 @@ func (r *Repo) CommitInfo(ctx context.Context) (CommitInfo, error) {
 	}
 	info.HasCommit = r.hasCommit(ctx)
 	if info.HasCommit {
-		if out, err := r.run(ctx, []string{"log", "-1", "--format=%B"}, nil); err == nil {
+		if out, err := r.run(ctx, []string{"log", "-1", "--no-show-signature", "--format=%B"}, nil); err == nil {
 			info.LastMessage = strings.TrimRight(string(out), "\n")
 		}
 	}
@@ -207,7 +207,7 @@ func (r *Repo) Commit(ctx context.Context, message string, paths []string, amend
 // stands either way, only its stamp would be missing.
 func (r *Repo) tipResult(ctx context.Context) CommitResult {
 	result := CommitResult{}
-	if out, err := r.run(ctx, []string{"log", "-1", "--format=%h%x00%s"}, nil); err == nil {
+	if out, err := r.run(ctx, []string{"log", "-1", "--no-show-signature", "--format=%h%x00%s"}, nil); err == nil {
 		if hash, subject, found := strings.Cut(strings.TrimRight(string(out), "\n"), "\x00"); found {
 			result.Hash, result.Subject = hash, subject
 		}
