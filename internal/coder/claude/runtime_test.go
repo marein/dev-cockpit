@@ -2,11 +2,15 @@ package claude
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/coder/claude/statusline"
+	"github.com/marein/dev-cockpit/internal/settings"
 )
 
 func TestSessionSettings(t *testing.T) {
@@ -56,6 +60,119 @@ func TestStartCommandCarriesTheModelAndAResumeNever(t *testing.T) {
 	resume := r.ResumeCommand("sid", "/work", true)
 	if strings.Contains(resume, "--model") {
 		t.Errorf("a resume must never carry a model: %s", resume)
+	}
+}
+
+// The status line rides the same blob, and only while the rendered line is
+// really there: an install that never put one together must not have its own
+// statusLine replaced by a command that draws nothing.
+func TestSessionSettingsCarryTheStatusLineOnlyWithTheLine(t *testing.T) {
+	line := filepath.Join(t.TempDir(), "claude-statusline.json")
+	r := runtime{statusLine: line, statusLineCommand: "'/bin/dev-cockpit' claude status-line --state-dir '/state'"}
+	var values map[string]any
+	if err := json.Unmarshal([]byte(r.sessionSettings()), &values); err != nil {
+		t.Fatalf("settings are not valid JSON: %v", err)
+	}
+	if _, ok := values["statusLine"]; ok {
+		t.Fatal("a status line is injected without the line")
+	}
+	if err := os.WriteFile(line, []byte(`{"entries":[]}`), 0o600); err != nil {
+		t.Fatalf("write the line: %v", err)
+	}
+	if err := json.Unmarshal([]byte(r.sessionSettings()), &values); err != nil {
+		t.Fatalf("settings are not valid JSON: %v", err)
+	}
+	object, ok := values["statusLine"].(map[string]any)
+	if !ok {
+		t.Fatalf("statusLine = %v, want the command object", values["statusLine"])
+	}
+	if object["type"] != "command" || object["command"] != r.statusLineCommand {
+		t.Fatalf("statusLine = %v, want the renderer as the command", object)
+	}
+	// Without a refresh interval claude draws the line on its own state changes
+	// alone, and the clock, the age of the last commit and the time left on a
+	// limit stand still between two answers.
+	if object["refreshInterval"] != float64(statusLineRefreshSeconds) {
+		t.Fatalf("statusLine refreshInterval = %v, want %d seconds", object["refreshInterval"], statusLineRefreshSeconds)
+	}
+	// A binary whose path could not be read has no command to hand over.
+	r.statusLineCommand = ""
+	if strings.Contains(r.sessionSettings(), "statusLine") {
+		t.Fatal("a status line is injected without a command to draw it")
+	}
+}
+
+// The fallback steps back from a line the global settings set, and from one it
+// cannot read; always does not.
+func TestSessionSettingsStatusLineFollowsTheMode(t *testing.T) {
+	dir := t.TempDir()
+	line := filepath.Join(dir, "claude-statusline.json")
+	if err := os.WriteFile(line, []byte(`{"entries":[]}`), 0o600); err != nil {
+		t.Fatalf("write the line: %v", err)
+	}
+	own := filepath.Join(dir, "settings.json")
+	store := settings.New(filepath.Join(dir, "cockpit.json"))
+	r := runtime{statusLine: line, statusLineCommand: "draw", userSettings: own, store: store}
+	carries := func() bool {
+		var values map[string]any
+		if err := json.Unmarshal([]byte(r.sessionSettings()), &values); err != nil {
+			t.Fatalf("settings are not valid JSON: %v", err)
+		}
+		_, ok := values["statusLine"]
+		return ok
+	}
+	cases := []struct {
+		name string
+		mode statusline.Mode
+		file string
+		want bool
+	}{
+		{"fallback without a settings file", statusline.ModeFallback, "", true},
+		{"fallback with settings that set no line", statusline.ModeFallback, `{"theme":"dark","statusLine":null}`, true},
+		{"fallback with a line of the user's own", statusline.ModeFallback, `{"statusLine":{"type":"command","command":"x"}}`, false},
+		{"fallback with settings it cannot read", statusline.ModeFallback, `{`, false},
+		{"always over a line of the user's own", statusline.ModeAlways, `{"statusLine":{"type":"command","command":"x"}}`, true},
+		{"off without a settings file", statusline.ModeOff, "", false},
+		{"off with settings that set no line", statusline.ModeOff, `{"statusLine":null}`, false},
+	}
+	for _, c := range cases {
+		_ = os.Remove(own)
+		if c.file != "" {
+			if err := os.WriteFile(own, []byte(c.file), 0o600); err != nil {
+				t.Fatalf("write the user settings: %v", err)
+			}
+		}
+		store.Set(statusline.SettingKey, statusline.Encode(statusline.Config{Mode: c.mode}))
+		if got := carries(); got != c.want {
+			t.Errorf("%s: statusLine carried = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// Off writes the line like every mode, for the sessions that started with it,
+// and a session that starts while it is off gets no statusLine all the same.
+// Switching back needs no save of the list: the next session carries it.
+func TestOffGivesANewSessionNoStatusLineOverAWrittenLine(t *testing.T) {
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, "state")
+	store := settings.New(filepath.Join(dir, "cockpit.json"))
+	store.Set(statusline.SettingKey, statusline.Encode(statusline.Config{Mode: statusline.ModeOff, Entries: statusline.Defaults()}))
+	if err := statusline.Sync(stateDir, store.Get(statusline.SettingKey)); err != nil {
+		t.Fatalf("sync with the mode off: %v", err)
+	}
+	if _, ok := statusline.Load(stateDir); !ok {
+		t.Fatal("off wrote no line")
+	}
+	r := runtime{statusLine: statusline.ConfigPath(stateDir), statusLineCommand: "draw", store: store}
+	if strings.Contains(r.sessionSettings(), "statusLine") {
+		t.Fatal("a session started while off carries a statusLine")
+	}
+	if strings.Contains(r.ResumeCommand("sid", "/work", false), "statusLine") {
+		t.Fatal("a session resumed while off carries a statusLine")
+	}
+	store.Set(statusline.SettingKey, statusline.Encode(statusline.Config{Mode: statusline.ModeFallback, Entries: statusline.Defaults()}))
+	if !strings.Contains(r.sessionSettings(), "statusLine") {
+		t.Fatal("the fallback after off gives a new session no statusLine")
 	}
 }
 

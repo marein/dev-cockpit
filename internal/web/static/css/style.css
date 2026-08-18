@@ -198,6 +198,12 @@ dc-theme-cycle { display: contents; }
 }
 .dc-work-body { flex: 1; min-height: 0; overflow: auto; }
 .dc-work-pad { --dc-work-pad: 16px; padding: var(--dc-work-pad); }
+.dc-save-bar {
+  bottom: calc(-1 * var(--dc-work-pad));
+  margin: 0 calc(-1 * var(--dc-work-pad)) calc(-1 * var(--dc-work-pad));
+  padding: 0.5rem var(--dc-work-pad) var(--dc-work-pad);
+}
+.dc-work-body:has(.dc-save-bar) { scroll-padding-bottom: 5rem; }
 .dc-work-fill { display: flex; flex-direction: column; }
 .dc-narrow { max-width: 56rem; }
 .dc-form-width { max-width: 40rem; }
@@ -3015,14 +3021,14 @@ dc-notify-volume { display: block; max-width: 24rem; }
   transition: opacity 0.25s ease 0.2s;
   opacity: 0;
 }
-.dc-action-grip {
+.dc-drag-grip {
   touch-action: none;
   cursor: grab;
 }
-dc-docker-actions.dc-actions-dragging [data-action-row] {
+.dc-drag-list [data-drag-row] {
   transition: transform 0.12s ease;
 }
-dc-docker-actions.dc-actions-dragging [data-action-row].dc-action-drag {
+.dc-drag-list [data-drag-row].dc-drag-lift {
   position: relative;
   z-index: 2;
   transition: none;

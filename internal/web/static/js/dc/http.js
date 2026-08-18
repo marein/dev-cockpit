@@ -37,11 +37,12 @@ export async function ensureOk(response, fallback) {
   throw error;
 }
 
-export function postForm(url, fields, { accept = "application/json" } = {}) {
+export function postForm(url, fields, { accept = "application/json", signal } = {}) {
   return fetch(url, {
     method: "POST",
     headers: csrfHeaders({ "Content-Type": "application/x-www-form-urlencoded", Accept: accept }),
     body: new URLSearchParams(fields).toString(),
+    signal,
   });
 }
 

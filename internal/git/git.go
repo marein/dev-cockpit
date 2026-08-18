@@ -47,6 +47,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/marein/dev-cockpit/internal/clirun"
 )
 
 // DefaultTimeout caps one git process. Status on a normal repository answers in
@@ -351,7 +353,7 @@ func (r *Repo) exec(ctx context.Context, name string, argv []string, stderrCap i
 	// the platforms that have one) takes the survivors with the timeout
 	// instead of orphaning an ssh that still waits for its passphrase.
 	cmd.WaitDelay = waitDelay
-	killsWholeGroup(cmd)
+	clirun.KillsWholeGroup(cmd)
 	out := &cappedBuffer{max: MaxOutput}
 	errOut := &cappedBuffer{max: stderrCap}
 	cmd.Stdout = out

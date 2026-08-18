@@ -42,7 +42,9 @@ cannot show stays at that function, within the comment rule below.
 - **One writer per state directory.** All state lives under one
   `--state-dir`, which belongs to one serve process. Other processes,
   including the assistant, never write state files, they call the server
-  over the local API.
+  over the local API. A helper of the cockpit's own binary that a coder
+  runs (claude's status line) may keep derived readings, never state, in
+  a folder of its own below the coder's (`claude/status-line`).
 - **User visible behavior is documented.** A changed route, control, key,
   setting or workflow updates `/docs` (`render/docs.go`) in one change.
 - **No source file grows beyond 800 lines.** Split it by responsibility
