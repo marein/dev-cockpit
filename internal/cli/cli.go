@@ -181,7 +181,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 	cmd.SetVersionTemplate(versionTemplate(repoURL, updateFeedFormat, updateFeedURL))
-	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newGitCommand(), newAssistantCommand(), newDockerCommand(), newRunDetachedCommand(), newAskpassCommand())
+	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newGitCommand(), newAssistantCommand(), newDockerCommand(), newClaudeCommand(), newRunDetachedCommand(), newAskpassCommand())
 	return cmd
 }
 
@@ -476,7 +476,7 @@ func runServe(opts serveOptions) error {
 	// The assistant owns the browser side conversations. Its reservation filter
 	// goes into every manager before the first snapshot, otherwise a
 	// conversation's provider session would also be listed as a resumable coder.
-	executable := runningExecutable()
+	executable := clirun.Executable()
 	conversations, assistantService, err := newAssistant(cfg.StateDir, assistantCoders{coders: selected, store: settingsStore}, assistant.Cockpit{
 		Executable:  executable,
 		StateDir:    cfg.StateDir,
@@ -508,6 +508,7 @@ func runServe(opts serveOptions) error {
 			log.Printf("coder %s: the cockpit git skill could not be written: %v", c.ID(), err)
 		}
 	}
+	syncClaudeStatusLine(cfg.StateDir, settingsStore)
 
 	// The cost books stand before anything can delete a session: the startup
 	// sweep below already removes check sessions, and each delete books what
@@ -882,19 +883,6 @@ func cockpitServesFrom(stateDir string) bool {
 	}
 	_ = conn.Close()
 	return true
-}
-
-// runningExecutable is the absolute path of this binary, handed to the
-// assistant so its inspection commands work regardless of PATH or of where
-// the server was started from. A binary replaced underneath a running process
-// (a self-update between the swap and the re-exec) reads back with a
-// " (deleted)" marker, which would land in the generated instructions.
-func runningExecutable() string {
-	path, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSuffix(path, " (deleted)")
 }
 
 // selectProviders resolves which coders this instance serves: every registered

@@ -99,6 +99,14 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		base.POST("/models", s.handleCoderModelsSave(co))
 		base.POST("/models/add", s.handleCoderModelAdd(co))
 		base.POST("/models/delete", s.handleCoderModelDelete(co))
+		// The status line is claude's own section, so only that coder has the
+		// pair. It is deliberately not in coderPagePaths: the page was born
+		// under the settings and never lived at one of the two older shapes,
+		// so a redirect for it would invent a URL nobody ever linked.
+		if coderHasStatusLine(co) {
+			base.GET("/"+statusLineSection, s.handleStatusLine(co))
+			base.POST("/"+statusLineSection, s.handleStatusLineSave(co))
+		}
 	}
 
 	// TODO(v2.0.0): drop the pre-settings coder pages, canonical is

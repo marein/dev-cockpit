@@ -6,46 +6,16 @@ import (
 	"strings"
 	"testing"
 	"time"
-)
 
-func TestSplitCommandGroupsWithoutInterpreting(t *testing.T) {
-	cases := []struct {
-		line string
-		want []string
-	}{
-		{"docker compose up -d", []string{"docker", "compose", "up", "-d"}},
-		{"  docker   compose\tdown  ", []string{"docker", "compose", "down"}},
-		{`docker compose -f "my stack.yml" up`, []string{"docker", "compose", "-f", "my stack.yml", "up"}},
-		{`sh -c 'echo hi'`, []string{"sh", "-c", "echo hi"}},
-		{`echo a\ b`, []string{"echo", "a b"}},
-		// Nothing is expanded, so a variable and a pattern travel as text.
-		{"echo $HOME *.yml", []string{"echo", "$HOME", "*.yml"}},
-		// An empty argument is a real one.
-		{`echo "" x`, []string{"echo", "", "x"}},
-		{"", nil},
-	}
-	for _, c := range cases {
-		got, err := SplitCommand(c.line)
-		if err != nil {
-			t.Fatalf("%q answered %v", c.line, err)
-		}
-		if strings.Join(got, "\x00") != strings.Join(c.want, "\x00") {
-			t.Fatalf("%q split into %q, wanted %q", c.line, got, c.want)
-		}
-	}
-	for _, line := range []string{`docker "up`, `docker 'up`, `docker up\`} {
-		if _, err := SplitCommand(line); err == nil {
-			t.Fatalf("%q was accepted", line)
-		}
-	}
-}
+	"github.com/marein/dev-cockpit/internal/clirun"
+)
 
 // What shellQuote writes has to come back out of the splitter unchanged,
 // otherwise the deletion's own down would name a different project than it
 // was given.
 func TestQuotingRoundTrips(t *testing.T) {
 	for _, name := range []string{"plain", "with space", "it's", `back\slash`} {
-		got, err := SplitCommand("docker compose -p " + shellQuote(name) + " down -v")
+		got, err := clirun.SplitCommand("docker compose -p " + shellQuote(name) + " down -v")
 		if err != nil {
 			t.Fatalf("%q answered %v", name, err)
 		}

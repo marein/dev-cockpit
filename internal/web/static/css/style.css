@@ -3015,14 +3015,14 @@ dc-notify-volume { display: block; max-width: 24rem; }
   transition: opacity 0.25s ease 0.2s;
   opacity: 0;
 }
-.dc-action-grip {
+.dc-drag-grip {
   touch-action: none;
   cursor: grab;
 }
-dc-docker-actions.dc-actions-dragging [data-action-row] {
+.dc-drag-list [data-drag-row] {
   transition: transform 0.12s ease;
 }
-dc-docker-actions.dc-actions-dragging [data-action-row].dc-action-drag {
+.dc-drag-list [data-drag-row].dc-drag-lift {
   position: relative;
   z-index: 2;
   transition: none;

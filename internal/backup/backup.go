@@ -185,7 +185,7 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 	// cost/prices.json is rebuilt by the next refresh.
 	return []Section{
 		{ID: "settings", Group: "Cockpit", Label: "Settings",
-			Description: "General settings, the configured compose actions, the notification jingle and the worktree post script.",
+			Description: "General settings, the configured compose actions, the claude status line, the notification jingle and the worktree post script.",
 			Sources: []Source{
 				{Name: "settings.json", Path: st("settings.json")},
 				{Name: "worktree-post-script", Path: st("worktree-post-script")}}},

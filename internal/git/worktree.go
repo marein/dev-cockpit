@@ -3,7 +3,6 @@ package git
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -13,13 +12,6 @@ import (
 // tree the branch stands on, which is the same order of work as a branch move
 // and not a read, so it gets the same budget a checkout has.
 const WorktreeTimeout = 2 * time.Minute
-
-// KillsWholeGroup makes the timeout of cmd kill its whole process group, the
-// way every git call here ends. A worktree's post script starts children of
-// its own and is ended the same way.
-func KillsWholeGroup(cmd *exec.Cmd) {
-	killsWholeGroup(cmd)
-}
 
 // Worktree is one working copy of a repository: the main one and every linked
 // worktree, in the order git lists them. Branch is the short name of what is

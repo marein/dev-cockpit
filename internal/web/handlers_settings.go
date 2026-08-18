@@ -11,6 +11,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/eventbus"
@@ -255,7 +256,7 @@ func composeActionsFromForm(c *gin.Context) ([]docker.Action, error) {
 		if action.Label == "" {
 			return nil, fmt.Errorf("Every compose action needs a label (%q has none).", action.Command)
 		}
-		argv, err := docker.SplitCommand(action.Command)
+		argv, err := clirun.SplitCommand(action.Command)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %s.", action.Label, err)
 		}

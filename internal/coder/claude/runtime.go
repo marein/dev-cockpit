@@ -2,18 +2,35 @@ package claude
 
 import (
 	"encoding/json"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/coder/claude/statusline"
 	"github.com/marein/dev-cockpit/internal/ollama"
+	"github.com/marein/dev-cockpit/internal/settings"
 )
+
+// statusLineRefreshSeconds is how often claude draws the status line again on
+// its own. A minute is what a clock on the line needs to be right and what the
+// renderer costs nothing at: the whole default line is a few milliseconds and
+// asks the network at most once every two minutes, see usageMaxAge.
+const statusLineRefreshSeconds = 60
 
 type runtime struct {
 	notifyInbox string
-	launcher    *ollama.Client
-	sessions    *ollamaSessions
+	// statusLine is the rendered status line, there in every mode but off,
+	// and statusLineCommand the renderer claude runs to draw it.
+	statusLine        string
+	statusLineCommand string
+	// userSettings is claude's global settings file, the one place the
+	// fallback mode looks for a status line of the user's own.
+	userSettings string
+	store        *settings.Store
+	launcher     *ollama.Client
+	sessions     *ollamaSessions
 }
 
 func (runtime) UsesProvidedSessionID() bool { return true }
@@ -109,8 +126,19 @@ func (r runtime) flags(agentID string, automaticApproval bool) string {
 // no longer resume. It also wires the Stop and Notification hooks: each hook
 // streams its stdin JSON into the notify inbox; the write goes to a .tmp
 // name first so the poller only ever reads complete .json files.
+//
+// The status line joins it the same way, as a command claude runs, see
+// wantsStatusLine for when. It carries a refresh interval, because without one
+// claude draws the line on its own state changes alone: the clock, the age of
+// the last commit and the time left on a limit would then stand still between
+// two answers, which is exactly the number somebody put them on the line for.
 func (r runtime) sessionSettings() string {
 	values := map[string]any{"theme": "auto", "disableAgentView": true}
+	if r.wantsStatusLine() {
+		values["statusLine"] = map[string]any{
+			"type": "command", "command": r.statusLineCommand, "refreshInterval": statusLineRefreshSeconds,
+		}
+	}
 	if r.notifyInbox != "" {
 		dir := clirun.ShellQuote(r.notifyInbox)
 		command := "d=" + dir + ` && mkdir -p "$d" && f="$d"/$(date +%s%N)-$$ && cat > "$f.tmp" && mv "$f.tmp" "$f.json"`
@@ -124,4 +152,46 @@ func (r runtime) sessionSettings() string {
 		return ""
 	}
 	return string(settings)
+}
+
+// wantsStatusLine decides per session start, so a line somebody sets in their
+// own settings later wins from the next session on without a visit to the
+// cockpit. Only a line that is really written counts, never a command that
+// draws nothing.
+func (r runtime) wantsStatusLine() bool {
+	if r.statusLine == "" || r.statusLineCommand == "" {
+		return false
+	}
+	if info, err := os.Stat(r.statusLine); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	if r.store != nil {
+		if config, err := statusline.Decode(r.store.Get(statusline.SettingKey)); err == nil && config.Mode == statusline.ModeAlways {
+			return true
+		}
+	}
+	return !hasOwnStatusLine(r.userSettings)
+}
+
+// hasOwnStatusLine reports whether claude's global settings set a status line.
+// A file that cannot be read or parsed counts as one: the cockpit steps back
+// rather than replace a line it could not see.
+func hasOwnStatusLine(path string) bool {
+	if path == "" {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false
+	}
+	if err != nil {
+		return true
+	}
+	var own struct {
+		StatusLine any `json:"statusLine"`
+	}
+	if err := json.Unmarshal(data, &own); err != nil {
+		return true
+	}
+	return own.StatusLine != nil
 }

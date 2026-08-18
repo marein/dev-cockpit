@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marein/dev-cockpit/internal/git"
+	"github.com/marein/dev-cockpit/internal/clirun"
 )
 
 // PostScriptTimeout bounds a worktree's post script. The create request waits
@@ -145,7 +145,7 @@ func RunPostScript(ctx context.Context, path, dir string, vars PostScriptVars) *
 	cmd.Stdout = out
 	cmd.Stderr = out
 	cmd.WaitDelay = postScriptWaitDelay
-	git.KillsWholeGroup(cmd)
+	clirun.KillsWholeGroup(cmd)
 	err = cmd.Run()
 	run.Output = out.String()
 	switch {

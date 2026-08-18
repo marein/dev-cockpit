@@ -4,6 +4,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/docker"
 )
 
@@ -142,7 +143,7 @@ func DockerActionRows(actions []docker.Action) []DockerActionRow {
 	rows := make([]DockerActionRow, 0, len(actions))
 	for _, action := range actions {
 		row := DockerActionRow{Action: action}
-		argv, err := docker.SplitCommand(action.Command)
+		argv, err := clirun.SplitCommand(action.Command)
 		if err != nil {
 			row.Error = upperFirst(err.Error()) + "."
 		} else {

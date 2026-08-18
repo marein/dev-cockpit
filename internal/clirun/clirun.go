@@ -3,6 +3,7 @@ package clirun
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -76,4 +77,17 @@ func MissingTools(tools []string) []string {
 // ShellQuote wraps a string in POSIX-safe single quotes.
 func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+// Executable is the absolute path of this binary, for whatever has to run it
+// again from outside: the assistant's inspection commands, the cockpit skill,
+// claude's status line. A binary replaced underneath a running process (a
+// self-update between the swap and the re-exec) reads back with a " (deleted)"
+// marker, which would land in every command line built from it.
+func Executable() string {
+	path, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(path, " (deleted)")
 }

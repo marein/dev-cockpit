@@ -10,6 +10,7 @@
   <a class="nav-link{{if eq $nav.Section "agents"}} active{{end}}" href="{{.Base}}/agents"><i class="ti ti-robot me-1 dc-hide-xs"></i>Agents</a>
   <a class="nav-link{{if eq $nav.Section "skills"}} active{{end}}" href="{{.Base}}/skills"><i class="ti ti-tool me-1 dc-hide-xs"></i>Skills</a>
   <a class="nav-link{{if eq $nav.Section "models"}} active{{end}}" href="{{.Base}}/models"><i class="ti ti-cpu me-1 dc-hide-xs"></i>Models</a>
+  {{if $nav.StatusLine}}<a class="nav-link{{if eq $nav.Section "statusline"}} active{{end}}" href="{{.Base}}/statusline"><i class="ti ti-layout-bottombar me-1 dc-hide-xs"></i>Status line</a>{{end}}
 </nav>
 {{if .MultiCoder}}{{template "coder_head_badge.gohtml" (dict "ID" $nav.Selected "Label" (coderLabel $nav.Selected))}}{{end}}
 {{template "work_body.gohtml" .}}
