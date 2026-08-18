@@ -51,6 +51,11 @@ type Cockpit struct {
 	// with its commit. Named in the instructions, so an answer about the
 	// software is about the software that is actually running.
 	Version string
+	// RepoURL is the web page of the repository this software lives in, a
+	// full URL. The instructions name it, so a question about the
+	// implementation has somewhere to go when the source is not on the
+	// machine it answers from.
+	RepoURL string
 }
 
 // Workspace owns the assistant's directories and its memory. The

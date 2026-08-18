@@ -111,7 +111,7 @@ type localCallKeyType struct{}
 var localCallKey localCallKeyType
 
 // NewServer constructs a Server serving the given coders.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, version string) (*Server, error) {
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, version, updateFeedURL, updateFeedFormat string, devBuild bool) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
@@ -119,7 +119,14 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 	if err != nil {
 		return nil, err
 	}
-	updater, err := update.New(version)
+	// An unknown update feed format is a build configuration error and fails
+	// the start; only a binary that cannot resolve its own path degrades to a
+	// server without self-update.
+	feedFormat, err := update.ParseFeedFormat(updateFeedFormat)
+	if err != nil {
+		return nil, err
+	}
+	updater, err := update.New(version, updateFeedURL, feedFormat, devBuild)
 	if err != nil {
 		log.Printf("self-update disabled: %v", err)
 		updater = nil

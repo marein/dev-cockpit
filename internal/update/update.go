@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,15 +26,15 @@ import (
 )
 
 const (
-	repo        = "marein/dev-cockpit"
 	checkTTL    = 5 * time.Minute
 	httpTimeout = 60 * time.Second
 	userAgent   = "dev-cockpit-updater"
 	maxDownload = 256 << 20
 )
 
-const defaultAPIURL = "https://api.github.com/repos/" + repo + "/releases?per_page=100"
-
+// apiURLEnv overrides the release feed of a dev build, so the e2e suite can
+// point a throwaway instance at a stub. A release build ignores it: its feed
+// is pinned at build time and a stray environment must not move it.
 const apiURLEnv = "DEV_COCKPIT_UPDATE_API_URL"
 
 var (
@@ -51,11 +50,12 @@ type Updater struct {
 	current string
 	exePath string
 	apiURL  string
+	format  FeedFormat
 	client  *http.Client
 
 	mu        sync.Mutex
 	etag      string
-	cached    []ghRelease
+	cached    []release
 	checkedAt time.Time
 }
 
@@ -75,22 +75,11 @@ type Release struct {
 	Date      string `json:"date"`
 }
 
-type ghRelease struct {
-	TagName     string  `json:"tag_name"`
-	Name        string  `json:"name"`
-	Body        string  `json:"body"`
-	PublishedAt string  `json:"published_at"`
-	Draft       bool    `json:"draft"`
-	Prerelease  bool    `json:"prerelease"`
-	Assets      []asset `json:"assets"`
-}
-
-type asset struct {
-	Name string `json:"name"`
-	URL  string `json:"browser_download_url"`
-}
-
-func New(current string) (*Updater, error) {
+// New builds the updater for the running binary. feedURL is the release feed
+// exactly as injected at build time, nothing here derives a URL from anything.
+// format is the feed's dialect from ParseFeedFormat, and dev says whether this
+// is a dev build, the only build the env override reaches, see resolveFeedURL.
+func New(current, feedURL string, format FeedFormat, dev bool) (*Updater, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("resolve executable: %w", err)
@@ -98,16 +87,24 @@ func New(current string) (*Updater, error) {
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
-	apiURL := defaultAPIURL
-	if override := os.Getenv(apiURLEnv); override != "" {
-		apiURL = override
-	}
 	return &Updater{
 		current: current,
 		exePath: exe,
-		apiURL:  apiURL,
+		apiURL:  resolveFeedURL(feedURL, dev),
+		format:  format,
 		client:  &http.Client{Timeout: httpTimeout},
 	}, nil
+}
+
+// resolveFeedURL applies the env override of a dev build. A release build
+// takes the injected feed as it is, see apiURLEnv.
+func resolveFeedURL(injected string, dev bool) string {
+	if dev {
+		if override := os.Getenv(apiURLEnv); override != "" {
+			return override
+		}
+	}
+	return injected
 }
 
 func (u *Updater) ExePath() string { return u.exePath }
@@ -122,16 +119,16 @@ func (u *Updater) Status(ctx context.Context, force bool) Status {
 	st.Releases = make([]Release, 0, len(pending))
 	for _, r := range pending {
 		st.Releases = append(st.Releases, Release{
-			Version:   strings.TrimPrefix(r.TagName, "v"),
+			Version:   strings.TrimPrefix(r.Tag, "v"),
 			Name:      r.Name,
-			Notes:     r.Body,
-			NotesHTML: renderNotes(r.Body),
-			Date:      r.PublishedAt,
+			Notes:     r.Notes,
+			NotesHTML: renderNotes(r.Notes),
+			Date:      r.Date,
 		})
 	}
 	if len(pending) > 0 {
 		st.Available = true
-		st.Latest = strings.TrimPrefix(pending[len(pending)-1].TagName, "v")
+		st.Latest = strings.TrimPrefix(pending[len(pending)-1].Tag, "v")
 	}
 	return st
 }
@@ -149,18 +146,18 @@ func (u *Updater) Apply(ctx context.Context, version string) error {
 		return ErrUpToDate
 	}
 	newest := pending[len(pending)-1]
-	if version != "" && !sameVersion(newest.TagName, version) {
+	if version != "" && !sameVersion(newest.Tag, version) {
 		return fmt.Errorf("version %s was requested but %s is the newest release: %w",
-			strings.TrimPrefix(version, "v"), strings.TrimPrefix(newest.TagName, "v"), ErrSuperseded)
+			strings.TrimPrefix(version, "v"), strings.TrimPrefix(newest.Tag, "v"), ErrSuperseded)
 	}
 
 	binAsset, ok := findAsset(newest.Assets, platformAssetSuffix())
 	if !ok {
-		return fmt.Errorf("release %s has no asset for %s/%s", newest.TagName, runtime.GOOS, runtime.GOARCH)
+		return fmt.Errorf("release %s has no asset for %s/%s", newest.Tag, runtime.GOOS, runtime.GOARCH)
 	}
 	sumAsset, ok := findAsset(newest.Assets, checksumsSuffix)
 	if !ok {
-		return fmt.Errorf("release %s has no checksums file", newest.TagName)
+		return fmt.Errorf("release %s has no checksums file", newest.Tag)
 	}
 
 	sums, err := u.downloadChecksums(ctx, sumAsset.URL)
@@ -191,23 +188,23 @@ func (u *Updater) Restart() error {
 	return syscall.Exec(u.exePath, os.Args, os.Environ())
 }
 
-func (u *Updater) pending(rels []ghRelease) []ghRelease {
-	var out []ghRelease
+func (u *Updater) pending(rels []release) []release {
+	var out []release
 	for _, r := range rels {
-		if r.Draft || r.Prerelease || parseSemver(r.TagName) == nil {
+		if r.Prerelease || parseSemver(r.Tag) == nil {
 			continue
 		}
-		if isNewer(u.current, r.TagName) && assetsReady(r) {
+		if isNewer(u.current, r.Tag) && assetsReady(r) {
 			out = append(out, r)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return compareSemver(parseSemver(out[i].TagName), parseSemver(out[j].TagName)) < 0
+		return compareSemver(parseSemver(out[i].Tag), parseSemver(out[j].Tag)) < 0
 	})
 	return out
 }
 
-func (u *Updater) releases(ctx context.Context, force bool) ([]ghRelease, error) {
+func (u *Updater) releases(ctx context.Context, force bool) ([]release, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if !force && !u.checkedAt.IsZero() && time.Since(u.checkedAt) < checkTTL {
@@ -218,9 +215,11 @@ func (u *Updater) releases(ctx context.Context, force bool) ([]ghRelease, error)
 	if err != nil {
 		return u.cached, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", userAgent)
+	u.format.prepare(req)
+	// The conditional request is plain HTTP, not one dialect's: a feed that
+	// answered with an ETag is asked with If-None-Match the next round, one
+	// that never sends one is asked plainly.
 	if u.etag != "" {
 		req.Header.Set("If-None-Match", u.etag)
 	}
@@ -236,8 +235,8 @@ func (u *Updater) releases(ctx context.Context, force bool) ([]ghRelease, error)
 		u.checkedAt = time.Now()
 		return u.cached, nil
 	case http.StatusOK:
-		var rels []ghRelease
-		if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&rels); err != nil {
+		rels, err := u.format.decode(io.LimitReader(resp.Body, 8<<20))
+		if err != nil {
 			return u.cached, fmt.Errorf("decode releases: %w", err)
 		}
 		u.cached = rels
@@ -246,7 +245,7 @@ func (u *Updater) releases(ctx context.Context, force bool) ([]ghRelease, error)
 		return u.cached, nil
 	default:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return u.cached, fmt.Errorf("github releases: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return u.cached, fmt.Errorf("%s releases: %s: %s", u.format.name, resp.Status, strings.TrimSpace(string(body)))
 	}
 }
 
@@ -378,7 +377,7 @@ func platformAssetSuffix() string {
 // published the build workflow has not uploaded these yet, so gating on them
 // keeps a half published release from showing as available and from failing an
 // apply until the assets land.
-func assetsReady(r ghRelease) bool {
+func assetsReady(r release) bool {
 	if _, ok := findAsset(r.Assets, platformAssetSuffix()); !ok {
 		return false
 	}
@@ -386,13 +385,13 @@ func assetsReady(r ghRelease) bool {
 	return ok
 }
 
-func findAsset(assets []asset, suffix string) (asset, bool) {
+func findAsset(assets []releaseAsset, suffix string) (releaseAsset, bool) {
 	for _, a := range assets {
 		if strings.HasSuffix(a.Name, suffix) {
 			return a, true
 		}
 	}
-	return asset{}, false
+	return releaseAsset{}, false
 }
 
 func isNewer(current, tag string) bool {

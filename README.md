@@ -168,3 +168,21 @@ openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
 Behind a reverse proxy that terminates TLS, drop the TLS flags, bind locally
 (e.g. `--addr 127.0.0.1:3000`), and set `--trusted-proxies` to your proxy's
 address.
+
+## Custom distributions
+
+A fork ships its own source link and update feed via build time variables:
+
+```bash
+go build -trimpath -ldflags="-s -w \
+  -X main.version=1.2.3 \
+  -X main.repoURL=https://example.com/you/your-fork \
+  -X main.updateFeedURL=https://gitlab.example.com/api/v4/projects/42/releases?per_page=100 \
+  -X main.updateFeedFormat=gitlab" ./cmd/dev-cockpit
+```
+
+`updateFeedFormat` is `github` or `gitlab`. The feed must follow this
+repository's release conventions: semver tags,
+`dev-cockpit_<version>_<os>_<arch>.tar.gz` containing `dev-cockpit`, plus
+`dev-cockpit_<version>_checksums.txt`. `dev-cockpit --version` prints what a
+binary was built with.

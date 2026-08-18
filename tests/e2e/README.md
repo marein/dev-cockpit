@@ -60,7 +60,7 @@ it; there is no stdlib equivalent that also covers WebKit/Safari).
 | `notifications.js` | bell + center (dc-notifications, desktop + mobile), SSE badge/toast/title counter, blue-dot markers on projects list + quick nav, settings volume bar + jingle picker, dedupe window, focus-gated auto-read (only the focused visible window counts as seen; a visible but unfocused window toasts and pushes, regaining window focus reconciles the open target read), live toast dismissal, shell command completion (real `sleep`, OSC 133 marks, /shells link), mark read/all, push channels (dc-push-settings render state, webhook add + duplicate reject + per-row test button against a local stub server (the test message names the channel), unread news delivered to the webhook after the 2s re-check while auto-read news stays silent); event injection needs the instance's notify dir mounted (`-v <state-dir>/notification-inbox:/inbox -e NOTIFY_DIR=/inbox`), otherwise those checks soft-skip; the runner needs `--network host` for the webhook stub |
 | `live-updates.js` | the shared server event stream (`@dc/events` over `GET /events`): two desktop clients on one instance, a coder/shell started, renamed, reordered or stopped in one client updates the other's tab strip live, and an open quick nav refreshes; the "terminals" event carries no data, clients pull the fresh fragment |
 | `host-status.js` | server status in the header on both widths (dc-host-status, one instance per header breakpoint like the bell, so every selector is scoped to a header): the button and its panel, CPU/RAM/disk shape (percent, plain-numbers label, bar width matching and capped at 100 while the number may pass it), repaint from a `dc:host` event including the threshold colors (80 yellow, 95 red), a metric the machine cannot answer dropping its row, nothing readable hiding the whole status, the panel staying inside a 390 wide screen, the Float button lifting the values into dc-host-float (draggable one-row card of ring gauges, value inside the ring and the plain numbers as name-prefixed tooltips; below md the rings give way to mini bars with the value underneath and no label row, the whole card at most 44px tall, mounted outside the swapped region: boosted navigation keeps the element identity, position and open state ride localStorage across reloads, a shrinking window clamps it back inside, z 1045 over the assistant panel and the fullscreen views while a body:has duck rule drops it under everything the moment a dropdown, modal, dialog, context menu, switcher or quick open is open, the cross closes it for good), and the header squash around it: the update moved into the burger menu as a small primary button naming the version, the wordmark stayed, logout is the icon alone in the wide header and keeps its words in the menu |
-| `update.js` | complete self update: check shape, daily auto modal (once per day per version via localStorage, new version prompts again), badge + link, changelog dialog, real non-destructive apply (`MODE=available`); no-update (`MODE=uptodate`) |
+| `update.js` | complete self update: check shape, daily auto modal (once per day per version via localStorage, new version prompts again), badge + link, changelog dialog, real non-destructive apply (`MODE=available`); no-update (`MODE=uptodate`); the same available flow against a GitLab shaped feed on an instance built with `-X main.updateFeedFormat=gitlab` (`MODE=gitlab`) |
 | `coder-claude.js` | coder create/attach/prompt with the claude coder picked in the form (needs the claude CLI on the host), Shift+Enter inserts a newline in the prompt box instead of submitting, also for claude launched by hand inside a shell session (and the same pane falls back to plain Enter after claude exits) |
 | `multi-coder.js` | coder select on new session, the settings sidebar's coder rows + the section tabs on agents/skills/instructions (canonical `/settings/coders/<coder>/...`, both older shapes 308), coder badges, quicknav labels; `MODE=single` asserts the adaptive parts stay off (only applies on hosts with a single coder CLI) |
 | `backup.js` | `/settings/backup`: export tab backup list (empty state, icon download/delete, plus button to `/settings/backup/new`), create form with adaptive groups (unavailable sections disabled) and dependency enforcement (dc-backup-sections, terminal restore and the assistant each pull projects in and back out), no-selection flash, background job (started flash, list flips to done live over the `backups` SSE event without a reload, notification titled `Backup ready.` naming the archive below it, that reads itself on a page visit), delete with confirm, upload + manifest inspect (only contained sections listed), apply restores state with the restart checkbox off, overwrite review (clashing file listed with its .dc-pre-import copy, merge page side by side with a read only previous pane, keep resolves, restore brings the previous file back and re-execs for cockpit files), encrypted `.dcbackup` roundtrip (wrong password rejected, discard resets), plain tar accepted (Safari auto gunzip), foreign file rejected; MUST run against an instance whose `HOME` is a scratch directory, and the runner creates a scratch project for the recency dependent checks |
@@ -74,17 +74,30 @@ CLI is installed on the host. Most scripts run against the instance on `:3010`
 Extra instances:
 
 - one on `:3012` started with `DEV_COCKPIT_UPDATE_API_URL` pointing at a stub
-  returning a `v999.0.0` release whose asset is this tree built with
-  `-ldflags "-X main.version=999.0.0"`, packaged as
+  returning a GitHub shaped `v999.0.0` release whose asset is this tree built
+  with `-ldflags "-X main.version=999.0.0"`, packaged as
   `dev-cockpit_v999.0.0_linux_amd64.tar.gz` (tar.gz with a file named `dev-cockpit`)
   plus `dev-cockpit_v999.0.0_checksums.txt` (`<sha256>  <asset name>`), for
-  `update.js MODE=available`. The release body has to carry the words
-  `Stub release`, the changelog check reads the notes out of the dialog and
-  matches them against `/Stub release/i`. The apply test asserts that the
-  instance re-execs as `999.0.0`, so the version must really be baked in. Apply
-  swaps the binary in place, the instance must run its own copy, never the repo
-  build.
+  `update.js MODE=available`. The env var reaches only a dev build, one whose
+  `main.version` stayed `dev`: a release build ignores it and reads the feed
+  URL baked in at build time, so the serving instance must be a plain dev
+  build. The `999.0.0` asset binary is a release build by that rule and
+  ignores the env var after the swap, which the runner tolerates, it only
+  reads `current` from the re-execed instance. The release body has to carry
+  the words `Stub release`, the changelog check reads the notes out of the
+  dialog and matches them against `/Stub release/i`. The apply test asserts
+  that the instance re-execs as `999.0.0`, so the version must really be baked
+  in. Apply swaps the binary in place, the instance must run its own copy,
+  never the repo build.
 - one on `:3013` with the stub URL returning `[]`, for `update.js MODE=uptodate`.
+- one on `:3017` for `update.js MODE=gitlab`: the same shape as `:3012`, but
+  the instance binary is built with `-ldflags "-X main.updateFeedFormat=gitlab"` (and
+  no `-X main.version`, it has to stay a dev build for the env var) and the
+  stub answers the GitLab releases JSON instead: an array of objects with
+  `tag_name`, `name`, `description` (the notes, carrying `Stub release`),
+  `released_at`, `upcoming_release` and `assets.links[]` entries with `name`
+  and `direct_asset_url` pointing at the same `v999.0.0` archive and checksums
+  files.
 - `assistant.js` and `wake.js` need their own instance with `tests/e2e/fakes`
   ahead of the real CLIs on `PATH` and `HOME` pointing at a scratch directory.
   Only those two runners belong on it: the fakes never persist an interactive

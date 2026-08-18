@@ -20,11 +20,6 @@ import (
 // directly is lost, and the header says so.
 const generatedHeader = "<!-- Written by dev-cockpit from the memory directory. Edit the memory files, not this one. -->"
 
-// cockpitRepo is where this software lives. The assistant is told, so a
-// question about the implementation has somewhere to go when the source is not
-// on the machine it answers from.
-const cockpitRepo = "marein/dev-cockpit"
-
 // instructionFiles are the per coder names of the generated file. Both coders
 // read their file from the working directory at startup, which is how the
 // memory reaches a turn without spending prompt space on it.
@@ -193,13 +188,18 @@ func (s *Workspace) instructions() string {
 
 	b.WriteString("## This cockpit\n\n")
 	if v := strings.TrimSpace(s.cockpit.Version); v != "" {
-		fmt.Fprintf(&b, "You are running inside dev-cockpit %s. ", v)
+		fmt.Fprintf(&b, "You are running inside dev-cockpit %s.", v)
 	} else {
-		b.WriteString("You are running inside dev-cockpit. ")
+		b.WriteString("You are running inside dev-cockpit.")
 	}
-	fmt.Fprintf(&b, "It is open source at https://github.com/%s, and the version above is the release tag or the commit this build came from.\n\n", cockpitRepo)
-	b.WriteString("When a question is about how the cockpit works, read the code there, at that version, instead of answering from behavior. ")
-	b.WriteString("The state on this machine answers what is happening; the repository answers why.\n\n")
+	if repo := strings.TrimSpace(s.cockpit.RepoURL); repo != "" {
+		fmt.Fprintf(&b, " It is open source at %s, and the version above is the release tag or the commit this build came from.\n\n", repo)
+		b.WriteString("When a question is about how the cockpit works, read the code there, at that version, instead of answering from behavior. ")
+		b.WriteString("The state on this machine answers what is happening; the repository answers why.\n\n")
+	} else {
+		// A build without a repository still has to close the paragraph.
+		b.WriteString("\n\n")
+	}
 
 	if strings.TrimSpace(s.cockpit.Executable) != "" {
 		b.WriteString("## Looking at the cockpit\n\n")

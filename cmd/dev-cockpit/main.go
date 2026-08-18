@@ -40,6 +40,7 @@ import (
 	"github.com/local/dev-cockpit/internal/settings"
 	"github.com/local/dev-cockpit/internal/shell"
 	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/local/dev-cockpit/internal/update"
 	"github.com/local/dev-cockpit/internal/web"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
@@ -51,8 +52,27 @@ import (
 const uploadGrace = time.Hour
 
 // version is the release tag, injected at build time via
-// -ldflags "-X main.version=...". Empty/"dev" for non-release builds.
+// -ldflags "-X main.version=...". A build where it stayed exactly "dev" is a
+// dev build, the only kind that honors the DEV_COCKPIT_UPDATE_API_URL
+// override; any other value, the empty string included, counts as a release.
 var version = "dev"
+
+// repoURL is the web page of the repository this build belongs to, a full
+// URL, injected at build time via -ldflags "-X main.repoURL=...". A fork
+// injects its own URL and gets its own source link.
+var repoURL = "https://github.com/marein/dev-cockpit"
+
+// updateFeedURL is the release feed this build checks for updates, a full URL
+// taken exactly as given, injected at build time via
+// -ldflags "-X main.updateFeedURL=...". Only a dev build (version stayed
+// "dev") honors the DEV_COCKPIT_UPDATE_API_URL override on top of it.
+var updateFeedURL = "https://api.github.com/repos/marein/dev-cockpit/releases?per_page=100"
+
+// updateFeedFormat names the JSON dialect of the release feed, github or
+// gitlab, injected at build time via -ldflags "-X main.updateFeedFormat=...".
+// An unknown value fails every invocation instead of guessing a mapping, see
+// the check in main.
+var updateFeedFormat = "github"
 
 type serveOptions struct {
 	config.Options
@@ -89,6 +109,16 @@ func resolveVersion() string {
 }
 
 func main() {
+	// The update feed format is validated before cobra runs: a binary built
+	// with an unknown -X main.updateFeedFormat value must fail every
+	// invocation, --version included, because the smoke test a running
+	// updater gives a downloaded binary before the swap is exactly that call,
+	// and its exit code is the whole contract. Inside cobra would be too
+	// late, the version template prints before any PersistentPreRun hook.
+	if _, err := update.ParseFeedFormat(updateFeedFormat); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := newRootCommand().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -107,8 +137,24 @@ func newRootCommand() *cobra.Command {
 			return errors.New("command required")
 		},
 	}
+	cmd.SetVersionTemplate(versionTemplate(repoURL, updateFeedFormat, updateFeedURL))
 	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newGitCommand(), newAssistantCommand(), newRunDetachedCommand(), newAskpassCommand())
 	return cmd
+}
+
+// versionTemplate builds the --version text: the version line, then the
+// distribution below it, where the source lives and which feed updates come
+// from, the values injected at build time. Nothing parses this output, the
+// updater's smoke test only reads the exit code, so the format is for people.
+// The keys are the exact build var names, so every line maps onto the
+// -X main.<name> flag that sets it.
+// Each injected value is embedded as a quoted template string literal via %q,
+// so a value carrying template syntax such as {{ prints literally instead of
+// breaking the parse, and --version keeps exiting zero.
+func versionTemplate(repo, format, feed string) string {
+	return fmt.Sprintf(
+		"dev-cockpit version {{.Version}}\n  repoURL: {{%q}}\n  updateFeedFormat: {{%q}}\n  updateFeedURL: {{%q}}\n",
+		repo, format, feed)
 }
 
 // newAskpassCommand is what SSH_ASKPASS and GIT_ASKPASS of a user-triggered
@@ -338,6 +384,7 @@ func runServe(opts serveOptions) error {
 		StateDir:    cfg.StateDir,
 		ProjectsDir: cfg.ProjectsRoot,
 		Version:     resolveVersion(),
+		RepoURL:     repoURL,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize the assistant: %w", err)
@@ -460,7 +507,10 @@ func runServe(opts serveOptions) error {
 		os.Exit(0)
 	}()
 
-	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, dockerService, intel, resolveVersion())
+	// version stays the raw build var here on purpose: only a build without an
+	// injected release version is a dev build, and only a dev build may have
+	// its release feed moved by the environment.
+	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, dockerService, intel, resolveVersion(), updateFeedURL, updateFeedFormat, version == "dev")
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}

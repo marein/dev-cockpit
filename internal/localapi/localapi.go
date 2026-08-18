@@ -117,8 +117,8 @@ const (
 )
 
 // dialBudgetEnv overrides the budget, the way DEV_COCKPIT_UPDATE_API_URL
-// overrides the release feed: a test that proves the "no cockpit" message must
-// not sleep the real budget out.
+// overrides the release feed of a dev build: a test that proves the "no
+// cockpit" message must not sleep the real budget out.
 const dialBudgetEnv = "DEV_COCKPIT_DIAL_BUDGET"
 
 func budget() time.Duration {

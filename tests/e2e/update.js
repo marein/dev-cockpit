@@ -5,9 +5,12 @@
 // version pin (superseded version -> 409 + fresh status) -> real apply through
 // the dialog, proven by current flipping to the stub version after the re-exec.
 // MODE=uptodate expects a stub returning [] and checks the no-update state plus
-// the 409 on apply. The page is parked on about:blank right after the apply is
-// on the wire (the handler runs on a background context, the disconnect does not
-// cancel it) so the restart gap does not gate the run with console noise.
+// the 409 on apply. MODE=gitlab runs the same checks as available against an
+// instance built with -X main.updateFeedFormat=gitlab and a stub speaking the GitLab
+// releases JSON, so the whole flow is proven per feed dialect while the page
+// side stays identical. The page is parked on about:blank right after the apply
+// is on the wire (the handler runs on a background context, the disconnect does
+// not cancel it) so the restart gap does not gate the run with console noise.
 const { chromium } = require("playwright-core");
 const L = require("./lib");
 const { assert, sleep } = L;
@@ -30,8 +33,8 @@ const MODE = process.env.MODE || "available";
       assert(res.status() === 200, `status ${res.status()}`);
       const j = await res.json();
       for (const k of ["supported", "current", "latest", "available", "writable", "releases"]) assert(k in j, `missing key ${k}`);
-      if (MODE === "available") assert(j.available === true && j.latest, `expected available update, got ${JSON.stringify(j)}`);
-      else assert(j.available === false, `expected no update, got available=${j.available}`);
+      if (MODE === "uptodate") assert(j.available === false, `expected no update, got available=${j.available}`);
+      else assert(j.available === true && j.latest, `expected available update, got ${JSON.stringify(j)}`);
       return `available=${j.available} latest=${j.latest} writable=${j.writable}`;
     });
 
