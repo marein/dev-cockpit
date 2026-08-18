@@ -11,8 +11,12 @@ type SettingsNav struct {
 	Active   string
 	Coders   []SettingsCoder
 	Selected string // coder id the page is scoped to, empty off the coder pages
-	Section  string // active coder section: "instructions" | "agents" | "skills"
-	Reviews  int    // open backup overwrite reviews, badge on the backup entry
+	Section  string // active coder section: "instructions" | "agents" | "skills" | "statusline"
+	// StatusLine says whether the coder this page is scoped to carries the
+	// status line section, which only claude does. A section not every coder
+	// has is a tab not every coder shows.
+	StatusLine bool
+	Reviews    int // open backup overwrite reviews, badge on the backup entry
 }
 
 // SettingsCoder is one coder row in the settings sidebar. URL keeps the

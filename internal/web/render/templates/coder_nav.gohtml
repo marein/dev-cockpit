@@ -27,6 +27,11 @@
           <li class="nav-item">
             <a class="nav-link{{if eq $nav.Section "skills"}} active{{end}}" href="{{.Base}}/skills"><i class="ti ti-tool me-1 d-none d-sm-inline-block"></i>Skills</a>
           </li>
+          {{if $nav.StatusLine}}
+          <li class="nav-item">
+            <a class="nav-link{{if eq $nav.Section "statusline"}} active{{end}}" href="{{.Base}}/statusline"><i class="ti ti-layout-bottombar me-1 d-none d-sm-inline-block"></i>Status line</a>
+          </li>
+          {{end}}
         </ul>
       </div>
       <div class="card-body">

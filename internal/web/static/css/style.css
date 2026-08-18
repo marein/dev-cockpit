@@ -2985,14 +2985,20 @@ dc-notify-volume { display: block; max-width: 24rem; }
   opacity: 0;
 }
 
-.dc-action-grip {
+/* A list of rows somebody drags by a grip. The hooks are deliberately named
+   after the gesture and not after one element (they used to say docker), so
+   every list that carries the gesture wears the same lift: the host gets
+   .dc-drag-list while a drag runs, every row carries [data-drag-row], and the
+   row being carried gets .dc-drag-lift. Without the surface underneath it the
+   carried row is see-through and the rows below read through it. */
+.dc-drag-grip {
   touch-action: none;
   cursor: grab;
 }
-dc-docker-actions.dc-actions-dragging [data-action-row] {
+.dc-drag-list [data-drag-row] {
   transition: transform 0.12s ease;
 }
-dc-docker-actions.dc-actions-dragging [data-action-row].dc-action-drag {
+.dc-drag-list [data-drag-row].dc-drag-lift {
   position: relative;
   z-index: 2;
   transition: none;

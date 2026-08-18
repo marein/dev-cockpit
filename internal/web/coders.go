@@ -69,15 +69,23 @@ func (s *Server) coderSettingsNav(active string, co *coder.Manager, section stri
 	}
 	if co != nil {
 		nav.Selected = co.ID()
+		nav.StatusLine = coderHasStatusLine(co)
 	}
 	target := section
 	if target == "" {
 		target = "instructions"
 	}
 	for i := range s.coders {
+		// A section only one coder has cannot be kept when the coder changes,
+		// so such a row leads to the instructions instead of a page that coder
+		// does not have.
+		row := target
+		if row == statusLineSection && !coderHasStatusLine(s.coders[i]) {
+			row = "instructions"
+		}
 		nav.Coders = append(nav.Coders, render.SettingsCoder{
 			ID:  s.coders[i].ID(),
-			URL: s.coderBase(s.coders[i]) + "/" + target,
+			URL: s.coderBase(s.coders[i]) + "/" + row,
 		})
 	}
 	return nav

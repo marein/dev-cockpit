@@ -611,6 +611,12 @@ func DocsTopics() []DocsTopic {
 					Desc:     `Settings &rarr; Coder edits a coder's own files: its global instructions, its agents, and its skills. With more than one coder installed, the sidebar lists them and picks whose files you edit.`,
 				},
 				{
+					Title:    "The claude status line",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Settings &rarr; Coder &rarr; Status line puts the line under claude's prompt together as one list: every entry is a value, a separator or a line break, and the order of the list is the order of the line, dragged into place by the grip on the right. The values stand in groups: the coder itself, its context, its tokens (both the last request's and the sums over the whole conversation, for whoever pays per token), its cost with the burn rate per hour and what the last turn cost, the limits, git, the place on disk, the machine, plus a free text. A value carries a label if you give it one, a color for that label, and, where the value is a number, the bounds its own color follows, the highest one it reaches winning; a bound of a length of time is counted in minutes. A value nothing can answer right now, a git one outside a repository for example, quietly leaves the line together with the separator in front of it. The preview above the list follows every change before anything is saved. The checkbox at the top is the switch: on, the cockpit writes a small script and hands it to every claude it starts from then on; off, claude keeps whatever your own claude settings ask for and the list stays stored for the next time you switch it on. Your own claude settings files are never written.`,
+				},
+				{
 					Title:    "Back up and move your setup",
 					Tag:      "Data",
 					TagClass: "bg-secondary-lt",

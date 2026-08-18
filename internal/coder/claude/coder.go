@@ -37,8 +37,9 @@ type Coder struct {
 
 // New builds the claude coder. notifyInbox is the directory the injected
 // Stop/Notification hooks drop their event files into; empty disables the
-// hook injection.
-func New(notifyInbox string) *Coder {
+// hook injection. statusLine is the generated status line script, injected as
+// a statusLine command while that file exists; empty never injects one.
+func New(notifyInbox, statusLine string) *Coder {
 	home, err := filesystem.HomeDir()
 	if err != nil {
 		home = "/root"
@@ -50,7 +51,7 @@ func New(notifyInbox string) *Coder {
 		sessions:     &sessionRepository{stateRoot: stateRoot},
 		skills:       coder.NewStandardSkillRepository(filepath.Join(home, ".claude", "skills")),
 		instructions: coder.NewFileGlobalInstructions(filepath.Join(home, ".claude", "CLAUDE.md")),
-		runtime:      runtime{notifyInbox: notifyInbox},
+		runtime:      runtime{notifyInbox: notifyInbox, statusLine: statusLine},
 		controls:     controlMapper{base: terminal.DefaultControlMapper()},
 	}
 	c.assistantProbe = coder.NewCapabilityProbe(c.probeAssistant, 10*time.Second)

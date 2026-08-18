@@ -2,6 +2,8 @@ package claude
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,6 +25,43 @@ func TestSessionSettings(t *testing.T) {
 	}
 	if _, ok := values["hooks"]; !ok {
 		t.Error("hooks missing with notify inbox set")
+	}
+}
+
+// The status line rides the same blob, and only while the generated script is
+// really there: an install that never put one together must not have its own
+// statusLine replaced by a command that points at nothing.
+func TestSessionSettingsCarryTheStatusLineOnlyWithTheScript(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "claude-statusline.sh")
+	r := runtime{statusLine: script}
+	var values map[string]any
+	if err := json.Unmarshal([]byte(r.sessionSettings()), &values); err != nil {
+		t.Fatalf("settings are not valid JSON: %v", err)
+	}
+	if _, ok := values["statusLine"]; ok {
+		t.Fatal("a status line is injected without the script")
+	}
+	if err := os.WriteFile(script, []byte("#!/bin/bash\n"), 0o700); err != nil {
+		t.Fatalf("write the script: %v", err)
+	}
+	if err := json.Unmarshal([]byte(r.sessionSettings()), &values); err != nil {
+		t.Fatalf("settings are not valid JSON: %v", err)
+	}
+	line, ok := values["statusLine"].(map[string]any)
+	if !ok {
+		t.Fatalf("statusLine = %v, want the command object", values["statusLine"])
+	}
+	if line["type"] != "command" || line["command"] != script {
+		t.Fatalf("statusLine = %v, want the script as a command", line)
+	}
+	// Without a refresh interval claude draws the line on its own state changes
+	// alone, and the clock, the age of the last commit and the time left on a
+	// limit stand still between two answers.
+	if line["refreshInterval"] != float64(statusLineRefreshSeconds) {
+		t.Fatalf("statusLine refreshInterval = %v, want %d seconds", line["refreshInterval"], statusLineRefreshSeconds)
+	}
+	if (runtime{}).sessionSettings() == r.sessionSettings() {
+		t.Fatal("a coder without a script carries the same settings as one with it")
 	}
 }
 

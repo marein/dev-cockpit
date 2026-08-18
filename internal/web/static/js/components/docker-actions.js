@@ -88,8 +88,8 @@ class DockerActions extends HTMLElement {
       if (!drag) return;
       if (drag.active) {
         window.cancelAnimationFrame(drag.raf);
-        this.classList.remove("dc-actions-dragging");
-        drag.row.classList.remove("dc-action-drag");
+        this.classList.remove("dc-drag-list");
+        drag.row.classList.remove("dc-drag-lift");
         for (const el of drag.els) el.style.transform = "";
       }
       drag = null;
@@ -126,8 +126,8 @@ class DockerActions extends HTMLElement {
           return box.top + box.height / 2 + window.scrollY;
         });
         drag.startDocY = docY(event.clientY);
-        this.classList.add("dc-actions-dragging");
-        drag.row.classList.add("dc-action-drag");
+        this.classList.add("dc-drag-list");
+        drag.row.classList.add("dc-drag-lift");
         try {
           drag.grip.setPointerCapture(event.pointerId);
         } catch (error) {

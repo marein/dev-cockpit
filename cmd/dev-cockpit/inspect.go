@@ -16,6 +16,7 @@ import (
 	"github.com/local/dev-cockpit/internal/clirun"
 	"github.com/local/dev-cockpit/internal/coder"
 	coderclaude "github.com/local/dev-cockpit/internal/coder/claude"
+	"github.com/local/dev-cockpit/internal/coder/claude/statusline"
 	codercopilot "github.com/local/dev-cockpit/internal/coder/copilot"
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/filesystem"
@@ -955,7 +956,8 @@ func openTerminals(opts inspectOptions) (terminals, error) {
 	hidden := reservedSessions(cfg.StateDir)
 
 	out := terminals{cfg: cfg, projects: projectRepo}
-	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude")))
+	registry := coder.NewRegistry(codercopilot.New(),
+		coderclaude.New(notify.InboxDir(cfg.StateDir, "claude"), statusline.ScriptPath(cfg.StateDir)))
 	for _, c := range registry.All() {
 		if len(clirun.MissingTools(c.RequiredTools())) > 0 {
 			continue

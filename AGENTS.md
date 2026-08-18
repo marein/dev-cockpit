@@ -68,6 +68,108 @@ test. Update this file when a convention changes.
   send-keys, tmux never swallows Ctrl+B as prefix, so without the flag an
   accidental Ctrl+B or a left arrow into the agent view turns the session
   into a background agent the cockpit can no longer resume.
+- **The claude status line is one list, and the list is the line.**
+  `internal/coder/claude/statusline` owns it, edited on
+  `/settings/coders/claude/statusline`: an entry is a value, a separator or a
+  line break, all three in the same list, so several lines cost no layout
+  section of their own. A value entry says four things and no more: which
+  value, whether a label runs in front of it and how it reads, that label's
+  color, and, for a number, the bounds its own color follows, the highest one
+  the number reaches winning; a value that is no number carries one fixed
+  color instead. What a value is sits in one table (`statusline.Values`),
+  grouped the way the select offers it, saying where it is read and how it is
+  rendered, so a new one is a row there plus, where it needs one, its line in
+  the generated script. **Where the payload already carries a number, that is
+  where it is read**: the weekly limits and both reset times stand in
+  `rate_limits`, so a line of them asks no network at all, and the one value
+  the payload does not know, the weekly limit that belongs to a single model
+  rather than to all of them, is the only thing left on the usage API. The
+  token counts are the payload's too, which
+  makes them the last request's, and **what the payload cannot say is what the
+  transcript is for**: the four sums over every turn of the conversation, one
+  jq pass over the file, which is the number somebody paying per token reads.
+  **A turn there is a request and not a line**: claude writes one record per
+  content block of an answer, thinking, text and every tool call, and every one
+  of them repeats the same usage object, so the request id is what tells one
+  turn from the next and adding the records up counts a turn as often as it had
+  blocks. The same pass survives a half written last record, which is what a
+  file claude is appending to right now always has, and answers nothing at all
+  where no record carries usage yet, because four zeroes nobody measured are no
+  answer. A length of time is a number like any other, its bound counted in
+  minutes, an amount of money is always written to the cent, and the free text
+  value is the one whose content is the entry's own. What stands in the context
+  window is **the input side alone** (`total_input_tokens`, which is claude's
+  three input counts added up and exactly what its `used_percentage` is a
+  percentage of), because a count that added the last answer's output tokens to
+  it would contradict the percentage beside it on the same line. A bound is
+  compared against **the number that is printed**, rounded the way the
+  rendering rounds it, so two amounts that read the same wear the same color.
+  A terminal width is deliberately absent, and not for want of a source:
+  claude puts `COLUMNS` and `LINES` into the script's environment itself
+  (2.1.153 and up, measured), nothing on the line adapts to either. **One
+  value remembers**: the cost of the last turn is the rise against what the
+  run before wrote down, kept per coder in `<state-dir>/claude-statusline-cost/`
+  as whole millionths of a dollar plus the last rise, so the shell never
+  divides a fraction and a line drawn twice inside one turn does not wipe the
+  number off the screen. Without a reading to compare it says nothing, and the
+  burn rate says nothing under a minute of running time, where the division
+  would invent a number.
+  **The switch and the list are two answers, and only one of them is the
+  switch**: the checkbox at the top of the page writes
+  `<state-dir>/claude-statusline.sh`, the runtime injects `statusLine` as a
+  command **only while that file is there**, with a refresh interval, because
+  without one claude draws the line on its own state changes alone and a clock
+  on it stands still between two answers; off removes the file and
+  keeps every entry in the settings store, so switching back on costs no
+  clicking. That store value carries both (`statusline.Config`), which is what
+  carries them into a backup together; a fresh install is off, because taking
+  over a status line somebody else set is not a default anybody asked for. The
+  start renders the script again from the stored answer (`statusline.Sync`),
+  the way the managed skill is rewritten, so a restored state directory or a
+  changed generator lands on disk; the user's own claude settings files are
+  never written. The script computes only what the line shows: no jq call
+  without a payload value, no git process without a repository entry, no shell
+  command nobody reads, no network call without that one entry. **What it asks
+  git is asked the way the answer is meant**: the branch through
+  `branch --show-current`, which names the branch of a repository without a
+  first commit and answers nothing on a detached head, where `rev-parse
+  --abbrev-ref` writes the word `HEAD` in both cases; the changed files through
+  `--untracked-files=all`, or a folder somebody just wrote twelve files into
+  would stand as one; and the counting is written out rather than taken from
+  `mapfile`, a bash 4 builtin macOS does not have, where the missing one would
+  report a clean tree and say so on stderr. A missing tool
+  or a value nobody answered drops its own entry and the separator that would
+  then lead nowhere, never the line, and stdout carries the line alone, with
+  **nothing beside it**: the payload is read with the shell's own `read` rather
+  than with `cat`, and every write the script makes carries its silence as a
+  group around it (`{ … ; } 2>/dev/null`), because a redirection that fails
+  reports itself on the stderr that was in effect when it ran and a trailing
+  `2>/dev/null` on the same command comes too late. **What reaches the line is
+  one line of text**: every value is read through a `txt` that drops the C0
+  controls and DEL, since the fields travel to the shell as one line split on
+  the unit separator and a value carrying that separator or a line break would
+  hand the values behind it to the wrong names, and a label, a separator and
+  the free text are cut the same way on the way into the store (`oneLine`),
+  because an escape from either side would reach the terminal as a command
+  rather than as text. Quotes, dollars and backticks stay exactly as typed,
+  the script quotes them and never runs them. The
+  page is a coder section like instructions, agents and skills and lives under
+  the coder's base, the first one not every coder has: the sidebar's other
+  coder rows therefore fall back to the instructions, and it is deliberately
+  not in `coderPagePaths`, which replays the pages that once lived elsewhere
+  and this one never did. Its rows are added, removed and dragged with the
+  compose actions' gesture, grip handle included, and **the lift both lists paint is
+  one set of rules on shared hooks** (`.dc-drag-list` on the host,
+  `[data-drag-row]` on every row, `.dc-drag-lift` on the row being carried,
+  `.dc-drag-grip` on the handle): a selector naming one element leaves the
+  second list's carried row without its surface, which reads as a see through
+  row with the rows below showing through it. **And a select is what makes
+  this page scroll sideways on a phone**: WebKit keeps a select's widest
+  option as its intrinsic width and reports it as overflow even though the box
+  itself was shrunk into its column, so the value select gets the full width
+  below `sm` and the longest option stays short enough for the column it sits
+  in from `sm` up. Chromium clips that overflow, so the cross browser pass is
+  what sees it at all.
 - **v2.0.0 markers:** legacy compatibility code that may be removed once
   breaking changes are allowed carries a `TODO(v2.0.0)` comment. Grep for it
   when preparing a 2.0.0 release.

@@ -25,6 +25,7 @@ import (
 	"github.com/local/dev-cockpit/internal/clirun"
 	"github.com/local/dev-cockpit/internal/coder"
 	coderclaude "github.com/local/dev-cockpit/internal/coder/claude"
+	"github.com/local/dev-cockpit/internal/coder/claude/statusline"
 	codercopilot "github.com/local/dev-cockpit/internal/coder/copilot"
 	"github.com/local/dev-cockpit/internal/config"
 	"github.com/local/dev-cockpit/internal/detach"
@@ -315,7 +316,8 @@ func runServe(opts serveOptions) error {
 	}
 	tmuxClient := tmux.New()
 	projectRepo := project.NewRepository(cfg.ProjectsRoot, recent.New(filepath.Join(cfg.StateDir, "recent-projects.json")))
-	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude")))
+	registry := coder.NewRegistry(codercopilot.New(),
+		coderclaude.New(notify.InboxDir(cfg.StateDir, "claude"), statusline.ScriptPath(cfg.StateDir)))
 	selected, err := selectProviders(registry)
 	if err != nil {
 		return err
@@ -365,6 +367,14 @@ func runServe(opts serveOptions) error {
 	}
 
 	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
+	// The status line script is rendered state, like the managed skill: the
+	// start writes it again from the stored entries, so a state directory that
+	// came out of a backup, or one whose generator changed with an update,
+	// carries a script that matches this version.
+	statusLineRaw, statusLineSet := settingsStore.Lookup(statusline.SettingKey)
+	if err := statusline.Sync(cfg.StateDir, statusLineRaw, statusLineSet); err != nil {
+		log.Printf("the claude status line script could not be written: %v", err)
+	}
 	shells := shell.NewShells(cfg, tmuxClient, projectRepo, func() bool {
 		return settingsStore.Get(shell.HistorySettingKey) == "on"
 	})

@@ -3,14 +3,25 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/local/dev-cockpit/internal/clirun"
 	"github.com/local/dev-cockpit/internal/coder"
 )
 
+// statusLineRefreshSeconds is how often claude draws the status line again on
+// its own. A minute is what a clock on the line needs to be right and what the
+// generated script costs nothing at: the whole default line is a few
+// milliseconds and asks no network of its own.
+const statusLineRefreshSeconds = 60
+
 type runtime struct {
 	notifyInbox string
+	// statusLine is the generated status line script. Whether that file is
+	// there is the whole state of the feature: no script, no statusLine in the
+	// settings blob, so a claude with a status line of its own keeps it.
+	statusLine string
 }
 
 func (runtime) UsesProvidedSessionID() bool { return true }
@@ -64,8 +75,23 @@ func (r runtime) flags(agentID string, automaticApproval bool) string {
 // no longer resume. It also wires the Stop and Notification hooks: each hook
 // streams its stdin JSON into the notify inbox; the write goes to a .tmp
 // name first so the poller only ever reads complete .json files.
+//
+// The status line joins it the same way, as a command claude runs, and only
+// when the generated script is on disk: an install that never put one
+// together keeps whatever status line the user's own settings ask for. It
+// carries a refresh interval, because without one claude draws the line on its
+// own state changes alone: the clock, the age of the last commit and the time
+// left on a limit would then stand still between two answers, which is exactly
+// the number somebody put them on the line for.
 func (r runtime) sessionSettings() string {
 	values := map[string]any{"theme": "auto", "disableAgentView": true}
+	if r.statusLine != "" {
+		if info, err := os.Stat(r.statusLine); err == nil && info.Mode().IsRegular() {
+			values["statusLine"] = map[string]any{
+				"type": "command", "command": r.statusLine, "refreshInterval": statusLineRefreshSeconds,
+			}
+		}
+	}
 	if r.notifyInbox != "" {
 		dir := clirun.ShellQuote(r.notifyInbox)
 		command := "d=" + dir + ` && mkdir -p "$d" && f="$d"/$(date +%s%N)-$$ && cat > "$f.tmp" && mv "$f.tmp" "$f.json"`

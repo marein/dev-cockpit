@@ -1,0 +1,110 @@
+{{define "statusline_form.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "coder_page_start.gohtml" .}}
+<dc-claude-statusline class="d-block" id="settings-statusline" values="{{.ValuesJSON}}" colors="{{.ColorsJSON}}">
+  {{if and (eq $.FlashProject "settings-statusline") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+  <form method="post" action="{{.Base}}/statusline">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <div class="mb-3">
+      <label class="form-check">
+        <input class="form-check-input" type="checkbox" name="enabled" value="on" data-statusline-enabled{{if .Enabled}} checked{{end}}>
+        <span class="form-check-label">Set the status line of every claude the cockpit starts</span>
+      </label>
+      <div class="text-secondary small mt-1">Off leaves it to claude: whatever your own claude settings ask for still applies, and the list below is kept for the next time it goes on.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Preview</label>
+      <pre class="mb-0 overflow-auto" data-statusline-preview></pre>
+      <div class="form-text">Stand-in values, so the color bounds can be seen working. It follows the list as you edit.</div>
+    </div>
+    <div class="text-secondary small mb-2">One list, and the list is the line: every entry is a value, a separator or a line break, in this order. A value the coder cannot answer yet, the context and the limits before its first answer for example, simply leaves the line, together with the separator in front of it. Your claude settings files are never written.</div>
+    <div data-entry-rows>
+      {{range .RowViews}}{{template "statusline_row" .}}{{end}}
+    </div>
+    {{if not .Rows}}<div class="text-secondary small mb-2" data-entries-empty>No entries. The status line stays empty.</div>{{end}}
+    <button type="button" class="btn btn-sm btn-ghost-secondary mb-3" data-entry-add><i class="ti ti-plus me-1"></i>Add entry</button>
+    <div>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+  </form>
+  <template data-entry-template>{{template "statusline_row" .BlankRow}}</template>
+  <template data-threshold-template>{{template "statusline_bound" .BlankBound}}</template>
+</dc-claude-statusline>
+{{template "coder_page_end.gohtml"}}
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{define "statusline_row"}}
+{{$row := .Row}}
+<div class="border rounded p-2 mb-2" data-entry-row data-drag-row data-entry-numeric="{{if $row.Numeric}}1{{else}}0{{end}}">
+  <div class="row g-2">
+    <div class="col-6 col-sm-3">
+      <label class="form-label small mb-1">Entry</label>
+      <select class="form-select" name="entry_kind" data-entry-kind>
+        <option value="value"{{if $row.IsValue}} selected{{end}}>Value</option>
+        <option value="separator"{{if $row.IsSeparator}} selected{{end}}>Separator</option>
+        <option value="break"{{if $row.IsBreak}} selected{{end}}>Line break</option>
+      </select>
+    </div>
+    <div class="col-12 col-sm-4" data-entry-part="value"{{if not $row.IsValue}} hidden{{end}}>
+      <label class="form-label small mb-1">Value</label>
+      <select class="form-select" name="entry_value" data-entry-value>
+        {{$picked := $row.Value}}
+        {{range .Groups}}<optgroup label="{{.Label}}">{{range .Values}}<option value="{{.ID}}"{{if eq .ID $picked}} selected{{end}}>{{.Label}}</option>{{end}}</optgroup>{{end}}
+      </select>
+    </div>
+    <div class="col-6 col-sm-2" data-entry-part="value"{{if not $row.IsValue}} hidden{{end}}>
+      <label class="form-label small mb-1">Label</label>
+      <input type="text" class="form-control" name="entry_label" value="{{$row.Label}}" maxlength="24" autocomplete="off" placeholder="none">
+    </div>
+    <div class="col-6 col-sm-3" data-entry-part="value"{{if not $row.IsValue}} hidden{{end}}>
+      <label class="form-label small mb-1">Label color</label>
+      <select class="form-select" name="entry_label_color" data-entry-label-color>
+        {{$labelColor := $row.LabelColor}}
+        {{range .Colors}}<option value="{{.Name}}"{{if eq .Name $labelColor}} selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </div>
+    <div class="col-6 col-sm-3" data-entry-part="text"{{if not $row.HasText}} hidden{{end}}>
+      <label class="form-label small mb-1" data-entry-text-label>{{if $row.IsSeparator}}Separator{{else}}Text{{end}}</label>
+      <input type="text" class="form-control" name="entry_text" value="{{$row.Text}}" maxlength="24" autocomplete="off" placeholder="·">
+    </div>
+    <div class="col-6 col-sm-3" data-entry-part="color"{{if or (not $row.IsValue) $row.Numeric}} hidden{{end}}>
+      <label class="form-label small mb-1">Color</label>
+      <select class="form-select" name="entry_color" data-entry-color>
+        {{$fixed := $row.Color}}
+        {{range .Colors}}<option value="{{.Name}}"{{if eq .Name $fixed}} selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </div>
+  </div>
+  <div class="form-text mt-1" data-entry-part="value" data-entry-hint{{if not $row.IsValue}} hidden{{end}}>{{$row.Hint}}</div>
+  <div class="mt-2" data-entry-part="thresholds"{{if or (not $row.IsValue) (not $row.Numeric)}} hidden{{end}}>
+    <label class="form-label small mb-1">Color from</label>
+    <input type="hidden" name="entry_thresholds" value="{{len $row.Thresholds}}" data-threshold-count>
+    <div data-threshold-rows>
+      {{range .Bounds}}{{template "statusline_bound" .}}{{end}}
+    </div>
+    <button type="button" class="btn btn-sm btn-ghost-secondary" data-threshold-add><i class="ti ti-plus me-1"></i>Add bound</button>
+  </div>
+  <div class="d-flex align-items-center mt-2">
+    <button type="button" class="btn btn-sm btn-ghost-danger ms-auto" data-entry-remove><i class="ti ti-trash me-1"></i>Remove</button>
+    <button type="button" class="btn btn-sm btn-ghost-secondary dc-drag-grip ms-1 px-3" data-entry-grip aria-label="Drag to reorder" title="Drag to reorder"><i class="ti ti-grip-vertical"></i></button>
+  </div>
+</div>
+{{end}}
+
+{{define "statusline_bound"}}
+<div class="row g-2 mb-1" data-threshold-row>
+  <div class="col-5 col-sm-3">
+    <input type="text" class="form-control" name="threshold_at" value="{{.Bound.At}}" autocomplete="off" inputmode="decimal" aria-label="From">
+  </div>
+  <div class="col-5 col-sm-3">
+    <select class="form-select" name="threshold_color" aria-label="Color">
+      {{$picked := .Bound.Color}}
+      {{range .Colors}}<option value="{{.Name}}"{{if eq .Name $picked}} selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+  </div>
+  <div class="col-2">
+    <button type="button" class="btn btn-icon btn-ghost-danger" data-threshold-remove aria-label="Remove the bound"><i class="ti ti-x"></i></button>
+  </div>
+</div>
+{{end}}
