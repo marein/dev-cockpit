@@ -4562,7 +4562,11 @@ async function init(root) {
       const row = treeEl.querySelector(`.editor-file[data-path="${CSS.escape(path)}"]`);
       if (row) {
         setSelected(path, false, row);
-        row.scrollIntoView({ block: "nearest" });
+        const box = treeEl.getBoundingClientRect();
+        const rect = row.getBoundingClientRect();
+        if (rect.top < box.top || rect.bottom > box.top + treeEl.clientHeight) {
+          row.scrollIntoView({ block: "center" });
+        }
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
