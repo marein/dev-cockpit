@@ -490,6 +490,47 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     assert(/^4:/.test(pos), `the row jump lands on its line, got "${pos}"`);
   });
 
+  await run("mobile: typing in the sheet's filter narrows the rows live", async () => {
+    const mp = await mobilePage();
+    await mOpenFile(mp, "lib.go");
+    const pt = await pressPoint(mp, "func IntelTarget", "IntelTarget");
+    await tapAt(mp, pt);
+    await mp.waitForSelector("[data-editor-lsp-pill]", { state: "visible", timeout: 8000 });
+    await mp.tap("[data-pill-action]");
+    await mp.waitForFunction(() => {
+      const el = document.querySelector("[data-editor-sheet]");
+      return !!el && el.getClientRects().length > 0
+        && document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-open").length >= 3;
+    }, null, { timeout: 20000 });
+    const input = mp.locator("[data-editor-sheet-body] input");
+    assert(!(await mp.evaluate(() => document.activeElement?.tagName === "INPUT")), "the filter does not steal the focus on open");
+    await input.fill("use");
+    let rows = await mp.$$eval("[data-editor-sheet-body] .editor-sheet-open", (els) => els.map((r) => r.title));
+    assert(rows.join(",") === "use.go:4,use.go:5", `path filter, got ${rows.join(",")}`);
+    let note = await mp.evaluate(() => [...document.querySelectorAll("[data-editor-sheet-body] .text-secondary")].map((n) => n.textContent).join(" "));
+    assert(!note.includes("outside the project"), `the note stands only unfiltered, got "${note}"`);
+    await input.fill("func");
+    rows = await mp.$$eval("[data-editor-sheet-body] .editor-sheet-open", (els) => els.map((r) => r.title));
+    assert(rows.join(",") === "lib.go:3", `preview filter, got ${rows.join(",")}`);
+    await input.fill("zzz");
+    rows = await mp.$$eval("[data-editor-sheet-body] .editor-sheet-open", (els) => els.map((r) => r.title));
+    assert(rows.length === 0, `an unmatched filter empties the list, got ${rows.join(",")}`);
+    assert(await sheetShowing(mp), "filtering never closes the sheet");
+    await input.fill("");
+    const state = await mp.evaluate(() => ({
+      rows: document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-open").length,
+      note: [...document.querySelectorAll("[data-editor-sheet-body] .text-secondary")].map((n) => n.textContent).join(" "),
+    }));
+    assert(state.rows === 3, `an emptied box shows everything, got ${state.rows}`);
+    assert(state.note.includes("1 more outside the project."), `the note returns with the whole answer, got "${state.note}"`);
+    await mp.tap("[data-editor-sheet-close]");
+    await mp.waitForFunction(() => {
+      const el = document.querySelector("[data-editor-sheet]");
+      return !el || el.getClientRects().length === 0;
+    }, null, { timeout: 5000 });
+    await mOpenFile(mp, "use.go");
+  });
+
   await run("mobile: a tap off a word raises no pill and leaves the selection alone", async () => {
     const mp = await mobilePage();
     const pt = await mp.evaluate(() => {

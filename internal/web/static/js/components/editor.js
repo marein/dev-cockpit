@@ -5404,7 +5404,7 @@ async function init(root) {
   }
 
   function usageHaystack(m) {
-    return `${m.path}:${m.line} ${m.text || ""}`;
+    return `${m.path}:${m.line} ${m.text || m.preview || ""}`;
   }
 
   function filterUsages() {
@@ -5419,14 +5419,32 @@ async function init(root) {
   function openUsagesSheet(word, locations, res, title) {
     closeDrawer();
     openSheet("usages", title);
-    sheetBodyEl.replaceChildren(...locations.map((loc) => usagesSheetRow(word, loc)));
+    const wrap = document.createElement("div");
+    wrap.className = "p-2 border-bottom position-sticky top-0 bg-surface";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "form-control form-control-sm";
+    input.placeholder = "Filter usages";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.setAttribute("aria-label", "Filter usages");
+    wrap.appendChild(input);
+    const listEl = document.createElement("div");
     const note = usagesNote(locations, res);
-    if (note) {
-      const el = document.createElement("div");
-      el.className = "text-secondary small px-3 py-2";
-      el.textContent = note;
-      sheetBodyEl.appendChild(el);
-    }
+    const paint = () => {
+      const q = input.value.trim();
+      const rows = q ? locations.filter((loc) => matchesTokens(usageHaystack(loc), q)) : locations;
+      listEl.replaceChildren(...rows.map((loc) => usagesSheetRow(word, loc)));
+      if (!q && note) {
+        const el = document.createElement("div");
+        el.className = "text-secondary small px-3 py-2";
+        el.textContent = note;
+        listEl.appendChild(el);
+      }
+    };
+    input.addEventListener("input", paint, { signal });
+    paint();
+    sheetBodyEl.append(wrap, listEl);
     focusSheetTop();
   }
 

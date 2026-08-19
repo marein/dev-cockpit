@@ -20,7 +20,7 @@ function isCdnNoise(t) {
 // app defect, so it joins the non-gating noise bucket. The filter stays narrow
 // so a real access control failure on an app route still gates.
 function isWebkitAbortNoise(t) {
-  return /\/(events|update\/check|editor\/(terminals|docker|lsp\/status|list|file|git\/changes))\b.*due to access control checks/.test(t);
+  return /\/(events|update\/check|git\/prompt|editor\/(terminals|docker|lsp\/(status|source)|list|file|git\/changes))\b.*due to access control checks/.test(t);
 }
 function wirePage(page, bag) {
   bag.cdnNoise = bag.cdnNoise || [];
