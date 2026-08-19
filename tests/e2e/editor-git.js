@@ -288,7 +288,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await sleep(400);
       return null;
     }
-    const label = (await item.count()) ? (await item.first().textContent()).trim() : null;
+    const label = (await item.count()) ? (await item.first().locator(".dc-menu-label-head").textContent()).trim() : null;
     await target.keyboard.press("Escape");
     await sleep(200);
     return label;
@@ -309,7 +309,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     await page.click(row, { button: "right" });
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
     const item = menuItem(label);
-    const value = (await item.count()) ? (await item.first().textContent()).trim() : null;
+    const value = (await item.count()) ? (await item.first().locator(".dc-menu-label-head").textContent()).trim() : null;
     await page.keyboard.press("Escape");
     await sleep(200);
     return value;

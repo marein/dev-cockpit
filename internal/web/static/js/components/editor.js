@@ -1198,7 +1198,7 @@ async function init(root) {
       { label: "Copy contents", icon: "ti-file-text", action: () => copyContents(tab.path) },
       { label: "Download", icon: "ti-download", action: () => startDownload(tab.path) },
       isArchive(tab.name) ? { label: "Extract here", icon: "ti-file-zip", action: () => void extractArchive(tab.path) } : null,
-      { label: "Reveal in tree", icon: "ti-list-tree", action: () => revealInTree(tab.path) },
+      { label: "Reveal in tree", icon: "ti-list-tree", hint: "Ctrl+Alt+R", action: () => revealInTree(tab.path) },
       { divider: true },
       previewMenuItem(tab),
       diffMenuItem(tab),
@@ -1213,7 +1213,7 @@ async function init(root) {
       } : null,
       revertMenuItem(tab.path, false),
       { divider: true },
-      { label: "Rename", icon: "ti-pencil", action: () => renameEntry({ path: tab.path, name: tab.name, isDir: false }) },
+      { label: "Rename", icon: "ti-pencil", hint: "F2", action: () => renameEntry({ path: tab.path, name: tab.name, isDir: false }) },
       { label: "Delete", icon: "ti-trash", danger: true, action: () => deletePath(tab.path) },
     ].filter(Boolean);
   }
@@ -1540,6 +1540,7 @@ async function init(root) {
         items.push({
           label: tab && tab.previewOn ? "Hide preview" : "Show preview",
           icon: tab && tab.previewOn ? "ti-eye-off" : "ti-eye",
+          hint: "Ctrl+Alt+P",
           action: () => void previewFromTree(entry.path),
         });
       }
@@ -1547,6 +1548,7 @@ async function init(root) {
         items.push({
           label: tab && tab.diffRev ? "Hide git diff" : "Show git diff",
           icon: "ti-git-compare",
+          hint: "Ctrl+Alt+D",
           action: () => void diffFromTree(entry.path),
         });
       }
@@ -1558,6 +1560,7 @@ async function init(root) {
         items.push({
           label: tab && tab.blameOn ? "Hide git blame" : "Show git blame",
           icon: "ti-user-code",
+          hint: "Ctrl+Alt+B",
           action: () => void blameFromTree(entry.path),
         });
       }
@@ -1582,6 +1585,7 @@ async function init(root) {
     items.push({
       label: "Rename",
       icon: "ti-pencil",
+      hint: entry.isDir ? undefined : "F2",
       action: () => renameEntry({ path: entry.path, name: baseName(entry.path), isDir: entry.isDir }),
     });
     items.push({ label: "Delete", icon: "ti-trash", danger: true, action: () => deletePath(entry.path) });
@@ -3634,6 +3638,7 @@ async function init(root) {
     return {
       label: tab.diffRev ? "Hide git diff" : "Show git diff",
       icon: "ti-git-compare",
+      hint: "Ctrl+Alt+D",
       action: () => void toggleTabDiff(tab),
     };
   }
@@ -3874,6 +3879,7 @@ async function init(root) {
     return {
       label: tab.blameOn ? "Hide git blame" : "Show git blame",
       icon: "ti-user-code",
+      hint: "Ctrl+Alt+B",
       action: () => toggleTabBlame(tab),
     };
   }
@@ -5021,6 +5027,7 @@ async function init(root) {
     return {
       label: tab.previewOn ? "Hide preview" : "Show preview",
       icon: tab.previewOn ? "ti-eye-off" : "ti-eye",
+      hint: "Ctrl+Alt+P",
       action: () => togglePreviewFor(tab),
     };
   }
@@ -7035,6 +7042,41 @@ async function init(root) {
         e.preventDefault();
         if (sheetKind === "git") closeSheet();
         else openGitSheet();
+      }
+    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
+      && e.code === "KeyD" && quickOpenEl.hidden) {
+      const tab = activeTab();
+      if (gitRepo && editor.canDiff && tab && !tab.kind && !tab.compare && !tab.external) {
+        e.preventDefault();
+        void toggleTabDiff(tab);
+      }
+    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
+      && e.code === "KeyB" && quickOpenEl.hidden) {
+      const tab = activeTab();
+      if (gitRepo && editor.canBlame && tab && !tab.kind && !tab.compare && !tab.external) {
+        e.preventDefault();
+        toggleTabBlame(tab);
+      }
+    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
+      && e.code === "KeyR" && quickOpenEl.hidden) {
+      const tab = activeTab();
+      if (tab && !tab.compare && !tab.external) {
+        e.preventDefault();
+        void revealInTree(tab.path);
+      }
+    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
+      && e.code === "KeyP" && quickOpenEl.hidden) {
+      const tab = activeTab();
+      if (tab && !tab.kind && !tab.compare && !tab.external && hasPreview(tab.name)) {
+        e.preventDefault();
+        togglePreviewFor(tab);
+      }
+    } else if (e.key === "F2" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+      && !e.repeat && quickOpenEl.hidden) {
+      const tab = activeTab();
+      if (tab && !tab.compare && !tab.external) {
+        e.preventDefault();
+        void renameEntry({ path: tab.path, name: tab.name, isDir: false });
       }
     } else if (sheetKind && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       sheetArrow(e);

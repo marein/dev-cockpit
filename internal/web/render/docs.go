@@ -341,7 +341,8 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Diff and blame a file",
-					Desc:  `Right-click a file, on its tab or its tree row: <em>Show git diff</em> puts it next to the last commit, <em>Show git blame</em> writes the commit and the author next to every line. <em>Diff against revision</em> compares it with any branch, tag or commit instead: type to search, and the list offers the branches, the remote branches and the tags whose name matches plus the commits whose subject or hash does, each with its author and date; a name or hash typed past the list works too. <em>File history</em> lists the commits that touched the file, each one opening the diff against exactly that state, and picking another revision in an open diff switches it in place. All of it is per file, the diff and the blame come back after a reload. To put two files on disk side by side instead, pick <em>Select for compare</em> on one and <em>Compare with</em> on the other.`,
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Alt", "D"}}, {Caps: []string{"Ctrl", "Alt", "B"}}},
+					Desc:  `Right-click a file, on its tab or its tree row: <em>Show git diff</em> puts it next to the last commit, <em>Show git blame</em> writes the commit and the author next to every line. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd> toggles the diff and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd> the blame for the open file. <em>Diff against revision</em> compares it with any branch, tag or commit instead: type to search, and the list offers the branches, the remote branches and the tags whose name matches plus the commits whose subject or hash does, each with its author and date; a name or hash typed past the list works too. <em>File history</em> lists the commits that touched the file, each one opening the diff against exactly that state, and picking another revision in an open diff switches it in place. All of it is per file, the diff and the blame come back after a reload. To put two files on disk side by side instead, pick <em>Select for compare</em> on one and <em>Compare with</em> on the other.`,
 				},
 				{
 					Title: "Commit from the editor",
@@ -361,7 +362,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "File and tab menus",
 					Tag:      "Editor",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Right-click a tab or a tree row for everything that acts on that one file: copy, download, extract, rename, revert, delete, and how you want to look at it, the preview, the git diff, the diff against a revision, the file history, the git blame and the two compare entries. On touch, long-press; tapping the already active tab also opens its menu. The editor menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> keeps only what acts on the editor as a whole.`,
+					Desc:     `Right-click a tab or a tree row for everything that acts on that one file: copy, download, extract, rename, revert, delete, and how you want to look at it, the preview, the git diff, the diff against a revision, the file history, the git blame and the two compare entries. On touch, long-press; tapping the already active tab also opens its menu. <kbd>F2</kbd> renames the open file, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd> reveals it in the tree. The editor menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> keeps only what acts on the editor as a whole.`,
 				},
 				{
 					Title: "Reorder tabs",
@@ -435,7 +436,8 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Preview files",
-					Desc:  `<em>Show preview</em> <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i> in a file's context menu puts a markdown or an SVG file next to its rendered form and follows what you type. It is per file and comes back after a reload. Images open in a viewer, video and audio in a player, everything else offers a download.`,
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Alt", "P"}}},
+					Desc:  `<em>Show preview</em> <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i> in a file's context menu puts a markdown or an SVG file next to its rendered form and follows what you type. The shortcut toggles it for the open file. It is per file and comes back after a reload. Images open in a viewer, video and audio in a player, everything else offers a download.`,
 				},
 				{
 					Title: "Editor settings",

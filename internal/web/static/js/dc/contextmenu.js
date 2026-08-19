@@ -100,6 +100,7 @@ export function openMenu({ x, y, items, signal }) {
       },
       item.icon ? el("i", { class: `ti ${item.icon}${item.iconClass ? ` ${item.iconClass}` : ""} me-2`, "aria-hidden": "true" }) : null,
       ...labelNodes(item.label),
+      item.hint ? el("span", { class: "dc-menu-hint ms-auto ps-3 small text-secondary text-nowrap" }, item.hint) : null,
     );
     if (item.disabled) button.disabled = true;
     button.addEventListener("click", (event) => {

@@ -130,7 +130,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       const el = document.querySelector(sel);
       return !!el && el.classList.contains("dirty") === want;
     }, [tabSel(path), on], { timeout: 6000 });
-  const menuItem = (p, label) => p.locator(".dc-context-menu .dropdown-item", { hasText: new RegExp(`^${label}$`) });
+  const menuItem = (p, label) => p.locator(".dc-context-menu .dropdown-item", { has: p.locator(".dc-menu-label-head", { hasText: new RegExp(`^${label}$`) }) });
   const tabOrder = () => page.$$eval("[data-editor-tabs] .editor-tab", (els) => els.map((el) => el.dataset.path));
   const dragLastTabToFront = async (order) => {
     const from = await page.locator(tabSel(order[order.length - 1])).boundingBox();
@@ -978,7 +978,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
 
     await run("right click on a tab opens the context menu, Escape closes it", async () => {
       await openRowMenu(page, tabSel(noteFile));
-      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       for (const want of ["Close", "Close others", "Close to the right", "Close all", "Copy path", "Copy contents", "Download", "Reveal in tree", "Rename", "Delete"]) {
         assert(labels.includes(want), `menu misses '${want}': ${labels.join(", ")}`);
       }
@@ -1079,7 +1079,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       const dirSel = `.editor-dir[data-path="keep_${tag}"]`;
       const inmenu = `keep_${tag}/inmenu.txt`;
       await openRowMenu(page, dirSel);
-      let labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      let labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       for (const want of ["New file", "New folder", "Upload files", "Copy path", "Rename", "Delete"]) {
         assert(labels.includes(want), `dir menu misses '${want}': ${labels.join(", ")}`);
       }
@@ -1094,7 +1094,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
       await sleep(800);
       await openRowMenu(page, `.editor-file[data-path="${inmenu}"]`);
-      labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       assert(labels.includes("Download"), `file menu misses Download: ${labels.join(", ")}`);
       await menuItem(page, "Delete").click();
       await confirmSwal(page);
@@ -1104,7 +1104,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       const box = await page.locator("[data-editor-tree]").boundingBox();
       await page.mouse.click(box.x + box.width / 2, box.y + box.height - 12, { button: "right" });
       await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
-      labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       for (const want of ["New file", "New folder", "Upload files", "Refresh"]) {
         assert(labels.includes(want), `empty-area menu misses '${want}': ${labels.join(", ")}`);
       }
@@ -1426,7 +1426,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await openRowMenu(page, '.editor-file[data-path="cpfile.txt"]');
       await menuItem(page, "Copy file").click();
       await openRowMenu(page, '.editor-dir[data-path="cpdest"]');
-      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       assert(labels.some((l) => l === 'Paste "cpfile.txt"'), `paste entry missing: ${labels.join(", ")}`);
       await page.click('.dc-context-menu .dropdown-item:has-text("Paste")');
       await page.waitForSelector('.editor-file[data-path="cpdest/cpfile.txt"]', { timeout: 8000 });
@@ -1473,7 +1473,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.click("[data-editor-refresh]");
       await page.waitForSelector('.editor-dir[data-path="arch"]', { timeout: 8000 });
       await openRowMenu(page, '.editor-dir[data-path="arch"]');
-      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       assert(labels.includes("Download as tar.gz"), `folder menu: ${labels.join(", ")}`);
       const [download] = await Promise.all([
         page.waitForEvent("download", { timeout: 10000 }),
@@ -1510,7 +1510,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 8000 });
       await page.waitForSelector('.editor-file[data-path="arch.tar.gz"]', { timeout: 8000 });
       await openRowMenu(page, '.editor-file[data-path="arch.tar.gz"]');
-      const archiveLabels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      const archiveLabels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       assert(archiveLabels.includes("Extract here"), `archive menu: ${archiveLabels.join(", ")}`);
       await page.click('.dc-context-menu .dropdown-item:has-text("Extract here")');
       // The folder name arch is taken, so the unpacked one gets a free name.
@@ -1519,7 +1519,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.waitForSelector('.editor-dir[data-path="arch 2/arch"]', { timeout: 8000 });
       // A plain file offers no extraction.
       await openRowMenu(page, '.editor-file[data-path="icons.json"]');
-      const plainLabels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      const plainLabels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       assert(!plainLabels.includes("Extract here"), "a plain file offers Extract here");
       await page.keyboard.press("Escape");
       await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
@@ -1528,7 +1528,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.click('.editor-file[data-path="arch.tar.gz"] .editor-item-name');
       await page.waitForSelector("[data-editor-viewer] [data-editor-extract]", { timeout: 8000 });
       await openRowMenu(page, tabSel("arch.tar.gz"));
-      const tabLabels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      const tabLabels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       for (const want of ["Copy file", "Copy contents", "Extract here", "Download", "Reveal in tree"]) {
         assert(tabLabels.includes(want), `archive tab menu misses ${want}: ${tabLabels.join(", ")}`);
       }
@@ -2199,7 +2199,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
             clientX: rect.left + 12, clientY: rect.top + 12,
           }));
         }, tabSel(qoFile));
-        const labels = await tp.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+        const labels = await tp.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
         assert(labels.includes("Close all"), `long-press menu misses entries: ${labels.join(", ")}`);
         await tp.keyboard.press("Escape");
         await tp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
@@ -2230,7 +2230,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
           clientX: rect.left + 20, clientY: rect.top + rect.height / 2,
         }));
       }, `.editor-file[data-path="${noteFile}"]`);
-      const labels = await mp.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      const labels = await mp.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       for (const want of ["New file", "Upload files", "Rename", "Delete"]) {
         assert(labels.includes(want), `tree long-press menu misses '${want}': ${labels.join(", ")}`);
       }
@@ -2732,7 +2732,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
         return "pointer";
       }, `.editor-file[data-path="${noteFile}"]`);
       await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
-      const touchLabels = await mp.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      const touchLabels = await mp.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       await mp.keyboard.press("Escape");
       await mp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
       // The same entries the mouse gets on the wide screen, from a page of this
@@ -2743,7 +2743,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.waitForSelector(`.editor-file[data-path="${noteFile}"]`, { timeout: 10000 });
       await sleep(800);
       await openRowMenu(page, `.editor-file[data-path="${noteFile}"]`);
-      const mouseLabels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      const mouseLabels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       await page.keyboard.press("Escape");
       await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
       assert(JSON.stringify(touchLabels) === JSON.stringify(mouseLabels),
