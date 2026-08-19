@@ -3,6 +3,7 @@ import { confirm, promptText } from "@dc/dialog";
 import { el } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { onServerEvent } from "@dc/events";
+import { matchesTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
 import { ensureOk, getText, landingURL, postForm, postJSON } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
@@ -1143,14 +1144,14 @@ class TerminalTabs extends HTMLElement {
   applyFilter(fromInput) {
     const sw = this.switcher;
     if (!sw) return;
-    const query = sw.input.value.trim().toLowerCase();
+    const query = sw.input.value.trim();
     const selected = sw.visible[sw.index];
     sw.visible = sw.rows.filter((row) => {
       let show;
       if (row.dataset.switcherToggle) {
         show = !query && !sw.expanded.has(row.dataset.switcherToggle);
       } else {
-        show = !query || row.dataset.switcherName.toLowerCase().includes(query);
+        show = !query || matchesTokens(row.dataset.switcherName, query);
         if (show && row.dataset.switcherFolded && !query && !sw.expanded.has(row.dataset.switcherFolded)) {
           show = false;
         }

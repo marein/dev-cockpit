@@ -4,6 +4,7 @@ import * as docker from "@dc/docker";
 import { confirm, promptText } from "@dc/dialog";
 import { el, syncAnimations } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
+import { matchesTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
 import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
 import { ensureOk, postForm } from "@dc/http";
@@ -555,11 +556,11 @@ class ProjectList extends HTMLElement {
     const xBtn = this.querySelector(".input-icon [data-project-filter-clear]");
 
     const apply = (query) => {
-      const needle = query.trim().toLowerCase();
+      const needle = query.trim();
       const cards = this.querySelectorAll(".projects-card [data-project-name]");
       let visible = 0;
       cards.forEach((card) => {
-        const hit = needle === "" || card.dataset.projectName.toLowerCase().includes(needle);
+        const hit = needle === "" || matchesTokens(card.dataset.projectName, needle);
         card.classList.toggle("d-none", !hit);
         if (hit) visible += 1;
       });

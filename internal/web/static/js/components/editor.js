@@ -10,6 +10,7 @@ import { available as dialogAvailable, confirm as confirmDialog, fire as fireDia
 import { applyFold } from "@dc/fold";
 import { escapeHtml } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
+import { matchesTokens } from "@dc/filter";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { releaseCoder, steerCoder } from "@dc/steer";
 import * as dockerApi from "@dc/docker";
@@ -5402,14 +5403,17 @@ async function init(root) {
     }
   }
 
+  function usageHaystack(m) {
+    return `${m.path}:${m.line} ${m.text || ""}`;
+  }
+
   function filterUsages() {
-    const q = quickOpenInput.value.trim().toLowerCase();
+    const q = quickOpenInput.value.trim();
     if (!q) {
       paintUsages(usagesAll, true);
       return;
     }
-    paintUsages(usagesAll.filter((m) => `${m.path}:${m.line}`.toLowerCase().includes(q)
-      || (m.text || "").toLowerCase().includes(q)), false);
+    paintUsages(usagesAll.filter((m) => matchesTokens(usageHaystack(m), q)), false);
   }
 
   function openUsagesSheet(word, locations, res, title) {
@@ -6178,10 +6182,10 @@ async function init(root) {
 
   function applyProjectFilter(fromInput) {
     if (!projectListEl) return;
-    const query = (projectFilterEl?.value || "").trim().toLowerCase();
+    const query = (projectFilterEl?.value || "").trim();
     const marked = projectRows()[projectMenuIndex];
     for (const row of projectListEl.querySelectorAll(".dropdown-item")) {
-      row.hidden = Boolean(query) && !(row.dataset.projectName || "").toLowerCase().includes(query);
+      row.hidden = Boolean(query) && !matchesTokens(row.dataset.projectName || "", query);
     }
     const rows = projectRows();
     if (projectEmptyEl) projectEmptyEl.hidden = rows.length > 0;
