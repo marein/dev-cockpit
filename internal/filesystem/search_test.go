@@ -33,7 +33,7 @@ func TestSearchFindsMatchesPastTheOldFileLimit(t *testing.T) {
 	}
 	writeFile(t, root, "src/ConnectFour/Domain/Game/Game.php", "<?php\nfinal class Game\n{\n}\n")
 
-	matches, truncated, err := SearchFiles(root, "final class Game", DefaultExclusionSet())
+	matches, truncated, err := SearchFiles(root, "final class Game", false, DefaultExclusionSet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,13 +55,13 @@ func TestSearchIsCaseInsensitiveAndReportsLines(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "src/a.php", "first\nSECOND needle here\nthird\nand NeEdLe again\n")
 
-	matches, _, err := SearchFiles(root, "NEEDLE", DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "NEEDLE", false, DefaultExclusionSet())
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []SearchMatch{
-		{Path: "src/a.php", Line: 2, Text: "SECOND needle here"},
-		{Path: "src/a.php", Line: 4, Text: "and NeEdLe again"},
+		{Path: "src/a.php", Line: 2, Text: "SECOND needle here", MatchStart: 7, MatchLen: 6},
+		{Path: "src/a.php", Line: 4, Text: "and NeEdLe again", MatchStart: 4, MatchLen: 6},
 	}
 	if !reflect.DeepEqual(matches, want) {
 		t.Errorf("matches = %#v\nwant %#v", matches, want)
@@ -74,7 +74,7 @@ func TestSearchReportsOneMatchPerLine(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "needle and needle on one line\nplain\nneedle\n")
 
-	matches, _, err := SearchFiles(root, "needle", DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestSearchReportsOneMatchPerLine(t *testing.T) {
 func TestSearchLineNumbersWithoutTrailingNewline(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "one\ntwo\nneedle")
-	matches, _, err := SearchFiles(root, "needle", DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestSearchCapsTheAnswerAndReportsTruncation(t *testing.T) {
 		}
 		writeFile(t, root, "src/f"+strconv.Itoa(f)+".txt", b.String())
 	}
-	matches, truncated, err := SearchFiles(root, "needle", DefaultExclusionSet())
+	matches, truncated, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,12 +129,12 @@ func TestSearchIsDeterministic(t *testing.T) {
 		writeFile(t, root, "src/dir"+strconv.Itoa(f%7)+"/f"+strconv.Itoa(f)+".txt",
 			"pad\nneedle one\npad\nneedle two\n")
 	}
-	first, _, err := SearchFiles(root, "needle", DefaultExclusionSet())
+	first, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 6; i++ {
-		again, _, err := SearchFiles(root, "needle", DefaultExclusionSet())
+		again, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,7 +163,7 @@ func TestSearchMatchesSerialScan(t *testing.T) {
 		}
 		writeFile(t, root, "d"+strconv.Itoa(f%11)+"/f"+strconv.Itoa(f)+".txt", body)
 	}
-	got, gotTrunc, err := SearchFiles(root, "needle", DefaultExclusionSet())
+	got, gotTrunc, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,10 +202,12 @@ func serialSearchReference(t *testing.T, root, query string) ([]SearchMatch, boo
 			return nil
 		}
 		for i, line := range strings.Split(string(data), "\n") {
-			if !strings.Contains(strings.ToLower(line), needle) {
+			idx := strings.Index(strings.ToLower(line), needle)
+			if idx < 0 {
 				continue
 			}
-			out = append(out, SearchMatch{Path: relTo(root, path), Line: i + 1, Text: searchSnippet([]byte(line), needle)})
+			text, ms, ml := searchSnippet([]byte(line), idx, idx+len(needle))
+			out = append(out, SearchMatch{Path: relTo(root, path), Line: i + 1, Text: text, MatchStart: ms, MatchLen: ml})
 			if len(out) >= MaxSearchMatches {
 				truncated = true
 				return filepath.SkipAll
@@ -226,7 +228,7 @@ func TestSearchSkipsBinaryAndOversizedFiles(t *testing.T) {
 	big := strings.Repeat("x", maxSearchFileBytes+1024) + "needle\n"
 	writeFile(t, root, "big.txt", big)
 
-	matches, _, err := SearchFiles(root, "needle", DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +243,7 @@ func TestSearchSkipsExcludedDirs(t *testing.T) {
 	for _, dir := range DefaultExclusions {
 		writeFile(t, root, dir+"/hidden.php", "needle\n")
 	}
-	matches, _, err := SearchFiles(root, "needle", DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +255,7 @@ func TestSearchSkipsExcludedDirs(t *testing.T) {
 func TestSearchEmptyQuery(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "anything\n")
-	matches, truncated, err := SearchFiles(root, "   ", DefaultExclusionSet())
+	matches, truncated, err := SearchFiles(root, "   ", false, DefaultExclusionSet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +268,7 @@ func TestSearchSnippetTrimsLongLines(t *testing.T) {
 	root := t.TempDir()
 	long := strings.Repeat("a", 400) + "needle" + strings.Repeat("b", 400)
 	writeFile(t, root, "long.txt", long+"\n")
-	matches, _, err := SearchFiles(root, "needle", DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,5 +280,157 @@ func TestSearchSnippetTrimsLongLines(t *testing.T) {
 	}
 	if !strings.Contains(matches[0].Text, "needle") {
 		t.Error("snippet lost the needle it was cut around")
+	}
+	m := matches[0]
+	if got := m.Text[m.MatchStart : m.MatchStart+m.MatchLen]; got != "needle" {
+		t.Errorf("bounds mark %q inside the cut snippet, want the needle", got)
+	}
+}
+
+// TestSearchReportsMatchBounds pins the coordinates the palette marks by:
+// counted inside the snippet, so a trimmed line shifts them, and in UTF-16
+// units, so a character outside the basic plane counts twice.
+func TestSearchReportsMatchBounds(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.txt", "  Ärger needle kommt\n🙂 needle\n")
+
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SearchMatch{
+		{Path: "a.txt", Line: 1, Text: "Ärger needle kommt", MatchStart: 6, MatchLen: 6},
+		{Path: "a.txt", Line: 2, Text: "🙂 needle", MatchStart: 3, MatchLen: 6},
+	}
+	if !reflect.DeepEqual(matches, want) {
+		t.Errorf("matches = %#v\nwant %#v", matches, want)
+	}
+}
+
+func TestSearchRegexIsCaseInsensitiveAndReportsLines(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "src/a.php", "first\nSECOND needle here\nthird\nand NeEdLe again\n")
+
+	matches, _, err := SearchFiles(root, `ne.d\w+`, true, DefaultExclusionSet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SearchMatch{
+		{Path: "src/a.php", Line: 2, Text: "SECOND needle here", MatchStart: 7, MatchLen: 6},
+		{Path: "src/a.php", Line: 4, Text: "and NeEdLe again", MatchStart: 4, MatchLen: 6},
+	}
+	if !reflect.DeepEqual(matches, want) {
+		t.Errorf("matches = %#v\nwant %#v", matches, want)
+	}
+}
+
+// TestSearchRegexBoundsCoverTheWholeMatch is the case position marking exists
+// for: a variable length match has no needle the client could re-search.
+func TestSearchRegexBoundsCoverTheWholeMatch(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.txt", "my needleXY here, needle again on the same line\n")
+
+	matches, _, err := SearchFiles(root, `needle\w*`, true, DefaultExclusionSet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("matches = %#v, want one entry per line", matches)
+	}
+	m := matches[0]
+	if got := m.Text[m.MatchStart : m.MatchStart+m.MatchLen]; got != "needleXY" {
+		t.Errorf("bounds mark %q, want the first whole match", got)
+	}
+}
+
+func TestSearchRegexBrokenPatternFails(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.txt", "anything\n")
+
+	_, _, err := SearchFiles(root, "(needle", true, DefaultExclusionSet())
+	if err == nil {
+		t.Fatal("a broken pattern must fail the search")
+	}
+	if !strings.Contains(err.Error(), "regexp") {
+		t.Errorf("error = %q, want the compile message", err)
+	}
+}
+
+// TestSearchRegexEmptyMatchTerminates is the guard against an offset that
+// stands still: a pattern matching the empty string answers one hit per line,
+// the trailing empty line after a final newline included, and returns.
+func TestSearchRegexEmptyMatchTerminates(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.txt", "a\nb\n")
+
+	matches, _, err := SearchFiles(root, "x*", true, DefaultExclusionSet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SearchMatch{
+		{Path: "a.txt", Line: 1, Text: "a"},
+		{Path: "a.txt", Line: 2, Text: "b"},
+		{Path: "a.txt", Line: 3, Text: ""},
+	}
+	if !reflect.DeepEqual(matches, want) {
+		t.Errorf("matches = %#v\nwant %#v", matches, want)
+	}
+}
+
+// TestSearchRegexAnchorsMeanLineBoundaries pins the (?m) in the compiled
+// pattern: matching continues from an offset, and without the flag ^ would
+// anchor at that offset instead of at line starts.
+func TestSearchRegexAnchorsMeanLineBoundaries(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.txt", "abc\nbcd\nxbc\nbcx\n")
+
+	matches, _, err := SearchFiles(root, "^bc", true, DefaultExclusionSet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 || matches[0].Line != 2 || matches[1].Line != 4 {
+		t.Errorf("matches = %#v, want lines 2 and 4", matches)
+	}
+}
+
+// TestSearchRegexDotStaysOnTheLine pins RE2's default: the dot does not cross
+// newlines, so the one match per line model stands.
+func TestSearchRegexDotStaysOnTheLine(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.txt", "a\nc\nabc\n")
+
+	matches, _, err := SearchFiles(root, "a.c", true, DefaultExclusionSet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Line != 3 {
+		t.Errorf("matches = %#v, want only the single line hit", matches)
+	}
+}
+
+// TestSearchRegexFindsMatchesPastTheOldFileLimit is the literal path's
+// regression test again, through the regex path.
+func TestSearchRegexFindsMatchesPastTheOldFileLimit(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 5001; i++ {
+		writeFile(t, root, "aaa/pad"+strconv.Itoa(i)+".php", "<?php // nothing here\n")
+	}
+	writeFile(t, root, "src/ConnectFour/Domain/Game/Game.php", "<?php\nfinal class Game\n{\n}\n")
+
+	matches, truncated, err := SearchFiles(root, `final\s+class\s+\w+`, true, DefaultExclusionSet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("matches = %v, want exactly one", matches)
+	}
+	if matches[0].Path != "src/ConnectFour/Domain/Game/Game.php" || matches[0].Line != 2 {
+		t.Errorf("match = %#v", matches[0])
+	}
+	if got := matches[0].Text[matches[0].MatchStart : matches[0].MatchStart+matches[0].MatchLen]; got != "final class Game" {
+		t.Errorf("bounds mark %q", got)
+	}
+	if truncated {
+		t.Error("a single match must not be reported as truncated")
 	}
 }

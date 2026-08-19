@@ -2676,13 +2676,15 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   animation: coder-files-upload-icon-pulse 1s ease-in-out infinite;
 }
 [data-shell-ctrl].active,
-[data-terminal-copy].active {
+[data-terminal-copy].active,
+[data-editor-quickopen-regex].active {
   --tblr-btn-active-bg: var(--tblr-success);
   --tblr-btn-active-border-color: var(--tblr-success);
   --tblr-btn-active-color: #fff;
 }
 @media (hover: none) {
-  .attach-mobile .btn {
+  .attach-mobile .btn,
+  .btn[data-editor-quickopen-regex] {
     --tblr-btn-hover-color: var(--tblr-btn-color);
     --tblr-btn-hover-bg: var(--tblr-btn-bg);
     --tblr-btn-hover-border-color: var(--tblr-btn-border-color);

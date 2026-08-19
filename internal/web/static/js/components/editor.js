@@ -95,6 +95,7 @@ async function init(root) {
   const quickOpenEl = root.querySelector("[data-editor-quickopen]");
   const quickOpenInput = root.querySelector("[data-editor-quickopen-input]");
   const quickOpenList = root.querySelector("[data-editor-quickopen-list]");
+  const quickOpenRegexBtn = root.querySelector("[data-editor-quickopen-regex]");
   const filesItem = root.querySelector("[data-editor-files-item]");
   const filesCountEl = root.querySelector("[data-editor-files-count]");
   const settingsMenuEl = root.querySelector("[data-editor-settings-menu]");
@@ -5198,6 +5199,7 @@ async function init(root) {
     quickOpenInput.value = "";
     quickOpenInput.placeholder = mode === "search" ? "Find in files…" : "Go to file…";
     quickOpenMatches = [];
+    syncQuickOpenRegex();
     quickOpenInput.focus();
     if (mode === "search") {
       quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-secondary small">Type at least 2 characters to search file contents.</div>`;
@@ -5280,6 +5282,25 @@ async function init(root) {
     }
   }
 
+  function syncQuickOpenRegex() {
+    const show = quickOpenMode === "search";
+    quickOpenRegexBtn.hidden = !show;
+    quickOpenInput.classList.toggle("pe-5", show);
+    quickOpenRegexBtn.classList.toggle("active", !!editorSettings.search_regex);
+    quickOpenRegexBtn.setAttribute("aria-pressed", editorSettings.search_regex ? "true" : "false");
+  }
+
+  function toggleSearchRegex() {
+    editorSettings.search_regex = !editorSettings.search_regex;
+    saveEditorSettings(editorSettings);
+    syncQuickOpenRegex();
+    quickOpenInput.focus();
+    clearTimeout(searchTimer);
+    const q = quickOpenInput.value.trim();
+    if (q.length >= 2) runSearch(q);
+    else scheduleSearch();
+  }
+
   function scheduleSearch() {
     clearTimeout(searchTimer);
     const q = quickOpenInput.value.trim();
@@ -5296,7 +5317,8 @@ async function init(root) {
     const seq = ++searchSeq;
     quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-secondary small">Searching…</div>`;
     try {
-      const data = await getJSON(`${base}/search?q=${encodeURIComponent(q)}`, { signal });
+      const re = editorSettings.search_regex ? "&re=1" : "";
+      const data = await getJSON(`${base}/search?q=${encodeURIComponent(q)}${re}`, { signal });
       if (seq !== searchSeq || quickOpenEl.hidden || quickOpenMode !== "search") return;
       searchQuery = q;
       renderSearchResults(data.matches || [], !!data.truncated);
@@ -5328,7 +5350,9 @@ async function init(root) {
       head.innerHTML = `<i class="ti ti-${match.external ? "lock" : "file"}"></i><span class="editor-quickopen-name">${escapeHtml(baseName(match.path))}:${match.line}</span><span class="editor-quickopen-dir">${escapeHtml(dir)}</span>`;
       const text = document.createElement("div");
       text.className = "editor-quickopen-match-text";
-      text.append(...markedFragments(match.text, searchQuery));
+      text.append(...(typeof match.start === "number"
+        ? markedRange(match.text, match.start, match.len)
+        : markedFragments(match.text, searchQuery)));
       item.append(head, text);
       item.addEventListener("click", () => chooseQuickOpen(match));
       quickOpenList.appendChild(item);
@@ -5339,6 +5363,18 @@ async function init(root) {
       note.textContent = "Results are truncated, narrow the search.";
       quickOpenList.appendChild(note);
     }
+  }
+
+  function markedRange(text, start, len) {
+    const out = [];
+    if (start > 0) out.push(document.createTextNode(text.slice(0, start)));
+    if (len > 0) {
+      const mark = document.createElement("mark");
+      mark.textContent = text.slice(start, start + len);
+      out.push(mark);
+    }
+    if (start + len < text.length) out.push(document.createTextNode(text.slice(start + len)));
+    return out;
   }
 
   function markedFragments(text, q) {
@@ -5383,6 +5419,7 @@ async function init(root) {
     quickOpenEl.hidden = false;
     quickOpenInput.value = "";
     quickOpenInput.placeholder = title;
+    syncQuickOpenRegex();
     searchQuery = word;
     // external travels along: it is what the row's jump reads to know
     // which of the two ways of opening a file it takes.
@@ -5517,6 +5554,7 @@ async function init(root) {
   function wireQuickOpen() {
     quickOpenItem.addEventListener("click", () => openQuickOpen("files"), { signal });
     searchProjectItem.addEventListener("click", () => openQuickOpen("search"), { signal });
+    quickOpenRegexBtn.addEventListener("click", toggleSearchRegex, { signal });
     quickOpenInput.addEventListener("input", () => {
       // A usages list is an answer, not a query.
       if (quickOpenMode === "usages") {
@@ -8498,7 +8536,7 @@ function createTextarea(host, hooks, settings) {
 const EDITOR_SETTINGS_KEY = "dc-editor-settings";
 
 function loadEditorSettings() {
-  const def = { tab_size: 4, indent: "tab", line_wrap: false, font_size: 14, diff_view: "auto", diff_collapse: true };
+  const def = { tab_size: 4, indent: "tab", line_wrap: false, font_size: 14, diff_view: "auto", diff_collapse: true, search_regex: false };
   let stored = {};
   try {
     stored = store.getJSON(EDITOR_SETTINGS_KEY, {}) || {};
@@ -8512,6 +8550,7 @@ function loadEditorSettings() {
   if (!(s.font_size >= 10 && s.font_size <= 24)) s.font_size = def.font_size;
   if (!["auto", "side", "inline"].includes(s.diff_view)) s.diff_view = def.diff_view;
   if (typeof s.diff_collapse !== "boolean") s.diff_collapse = def.diff_collapse;
+  if (typeof s.search_regex !== "boolean") s.search_regex = def.search_regex;
   return s;
 }
 

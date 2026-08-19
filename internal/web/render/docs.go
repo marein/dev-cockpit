@@ -432,7 +432,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Find in files",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "F"}}},
-					Desc:  `Search the contents of every project file and jump to a match.`,
+					Desc:  `Search the contents of every project file and jump to a match. The query matches literally; the <em>.*</em> control in the search field switches to regular expressions. Patterns come without delimiters, match case insensitively, and <code>^</code> and <code>$</code> anchor at line boundaries.`,
 				},
 				{
 					Title: "Preview files",

@@ -493,6 +493,34 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       assert(/^1:1$/.test(pos || ""), `cursor not on the match line: ${pos}`);
     });
 
+    await run("find in files: the .* toggle switches to regex, survives a reopen, and a broken pattern shows the error", async () => {
+      await clickItem("[data-editor-search-project-item]");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.waitForSelector("[data-editor-quickopen-regex]", { state: "visible", timeout: 4000 });
+      await page.click("[data-editor-quickopen-regex]");
+      await page.waitForSelector("[data-editor-quickopen-regex].active", { timeout: 4000 });
+      await page.fill("[data-editor-quickopen-input]", `hel+o\\s${tag}`);
+      await page.waitForSelector(".editor-quickopen-match", { timeout: 8000 });
+      const marked = await page.textContent(".editor-quickopen-match mark");
+      assert(marked === `hello ${tag}`, `the regex mark covers ${JSON.stringify(marked)}`);
+      await page.fill("[data-editor-quickopen-input]", "hel+o(");
+      await page.waitForSelector(".editor-quickopen-empty.text-danger", { timeout: 8000 });
+      const err = await page.textContent(".editor-quickopen-empty.text-danger");
+      assert(/regexp/.test(err || ""), `the compile error is not shown: ${err}`);
+      assert(!/\(\?im\)/.test(err || ""), `the error leaks the injected flags: ${err}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      await clickItem("[data-editor-search-project-item]");
+      await page.waitForSelector("[data-editor-quickopen-regex].active", { timeout: 4000 });
+      await page.click("[data-editor-quickopen-regex]");
+      await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen-regex].active"), null, { timeout: 4000 });
+      await page.fill("[data-editor-quickopen-input]", "hello " + tag);
+      await page.waitForSelector(".editor-quickopen-match", { timeout: 8000 });
+      assert(await page.$(".editor-quickopen-match mark"), "literal search lost its mark after the toggle round trip");
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+    });
+
     await run("a hit far down the file scrolls it into view, from the content search and from name:line", async () => {
       // The check above matches on line 1, where there is nothing to scroll to.
       // This one puts the hit at line 300 of 400, which is what caught the

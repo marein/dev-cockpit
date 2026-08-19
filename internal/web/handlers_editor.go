@@ -494,8 +494,10 @@ func (s *Server) invalidateQuickOpenAfterWrite(c *gin.Context) {
 	s.quickOpen.Invalidate(p.Path)
 }
 
-// handleEditorSearch greps the project for the ?q= substring and returns the
-// matching lines, feeding the find in files palette.
+// handleEditorSearch greps the project for the ?q= substring, or with ?re=1
+// for the regex, and returns the matching lines, feeding the find in files
+// palette. A pattern that does not compile answers a 400 with the compile
+// message, which the palette shows like any other search error.
 func (s *Server) handleEditorSearch(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -506,7 +508,7 @@ func (s *Server) handleEditorSearch(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"matches": []filesystem.SearchMatch{}, "truncated": false})
 		return
 	}
-	matches, truncated, err := filesystem.SearchFiles(p.Path, q, s.exclusions())
+	matches, truncated, err := filesystem.SearchFiles(p.Path, q, c.Query("re") == "1", s.exclusions())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return

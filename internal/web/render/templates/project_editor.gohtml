@@ -365,7 +365,10 @@
 
     <div class="editor-quickopen" data-editor-quickopen hidden>
       <div class="editor-quickopen-panel">
-        <input type="text" class="form-control" placeholder="Go to file…" data-editor-quickopen-input autocomplete="off" spellcheck="false" aria-label="Go to file">
+        <div class="position-relative flex-shrink-0">
+          <input type="text" class="form-control" placeholder="Go to file…" data-editor-quickopen-input autocomplete="off" spellcheck="false" aria-label="Go to file">
+          <button type="button" class="btn btn-sm btn-ghost-secondary px-2 font-monospace position-absolute top-50 end-0 translate-middle-y me-2" data-editor-quickopen-regex title="Regular expression" aria-pressed="false" hidden>.*</button>
+        </div>
         <div class="editor-quickopen-list" data-editor-quickopen-list role="listbox"></div>
       </div>
     </div>

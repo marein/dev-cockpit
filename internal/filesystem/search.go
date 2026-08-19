@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -34,16 +35,94 @@ const maxSnippetBytes = 200
 // cap was already reached.
 const searchBatchFiles = 256
 
-// SearchMatch is one matching line of a project wide text search.
+// SearchMatch is one matching line of a project wide text search. MatchStart
+// and MatchLen locate the hit inside Text, in UTF-16 units, the coordinate the
+// browser slices strings in, so the palette can mark the hit by position
+// instead of searching the snippet again.
 type SearchMatch struct {
-	Path string `json:"path"`
-	Line int    `json:"line"`
-	Text string `json:"text"`
+	Path       string `json:"path"`
+	Line       int    `json:"line"`
+	Text       string `json:"text"`
+	MatchStart int    `json:"start"`
+	MatchLen   int    `json:"len"`
+}
+
+// A matcher is one strategy for finding hits in a file. enter hands it the
+// next file's bytes, find answers the next hit at or after from as a
+// [start, end) pair in those bytes, start -1 when nothing further matches.
+// Matchers may keep buffers, so every worker holds one of its own.
+type matcher interface {
+	enter(data []byte)
+	find(from int) (start, end int)
+}
+
+// literalMatcher finds a case insensitive substring. It lowercases each file
+// into a reusable buffer; lowering ASCII preserves length, which is what lets
+// offsets in the lowered copy address the original bytes.
+type literalMatcher struct {
+	needle  []byte
+	lowered []byte
+}
+
+func (m *literalMatcher) enter(data []byte) {
+	m.lowered = appendLowerBytes(m.lowered[:0], data)
+}
+
+func (m *literalMatcher) find(from int) (int, int) {
+	idx := bytes.Index(m.lowered[from:], m.needle)
+	if idx < 0 {
+		return -1, -1
+	}
+	return from + idx, from + idx + len(m.needle)
+}
+
+// regexpMatcher finds RE2 matches on the original bytes, (?i) covers the case
+// folding there. The dot does not cross newlines by default, so the line model
+// of the search stands.
+type regexpMatcher struct {
+	re   *regexp.Regexp
+	data []byte
+}
+
+func (m *regexpMatcher) enter(data []byte) {
+	m.data = data
+}
+
+func (m *regexpMatcher) find(from int) (int, int) {
+	loc := m.re.FindIndex(m.data[from:])
+	if loc == nil {
+		return -1, -1
+	}
+	return from + loc[0], from + loc[1]
+}
+
+// newMatcherFactory answers a constructor for per worker matchers. A regex
+// pattern is compiled once here, so a broken one fails the search before any
+// file is read, with the compile message worth showing in the palette. (?m)
+// joins (?i) because find continues from an offset behind the previous hit's
+// line: without it ^ and $ would anchor at whatever offset that left behind
+// instead of at line boundaries, which is what a line oriented search means
+// by them.
+func newMatcherFactory(query string, useRegex bool) (func() matcher, error) {
+	if useRegex {
+		re, err := regexp.Compile("(?im)" + query)
+		if err != nil {
+			// The message quotes the pattern, so the error of a bare compile
+			// is the one to show: nobody typed the injected flags.
+			if _, bare := regexp.Compile(query); bare != nil {
+				return nil, bare
+			}
+			return nil, err
+		}
+		return func() matcher { return &regexpMatcher{re: re} }, nil
+	}
+	needle := []byte(strings.ToLower(query))
+	return func() matcher { return &literalMatcher{needle: needle} }, nil
 }
 
 // SearchFiles scans every regular file under root for a case insensitive
-// substring match, staying out of the excluded directories and ignoring binary
-// and oversized files.
+// substring match, or with useRegex for a case insensitive RE2 match, staying
+// out of the excluded directories and ignoring binary and oversized files.
 //
 // It used to stop after the first 5000 files as well as after 200 matches, which
 // meant a search could report "no matches" while the file it was looking for sat
@@ -56,13 +135,16 @@ type SearchMatch struct {
 // of thousands of files rather than by matching bytes. The result is still the
 // first MaxSearchMatches matches in path order, exactly what a single threaded
 // in-order scan would have returned.
-func SearchFiles(root, query string, ex Exclusions) ([]SearchMatch, bool, error) {
+func SearchFiles(root, query string, useRegex bool, ex Exclusions) ([]SearchMatch, bool, error) {
 	matches := []SearchMatch{}
-	needle := strings.ToLower(strings.TrimSpace(query))
-	if needle == "" {
+	query = strings.TrimSpace(query)
+	if query == "" {
 		return matches, false, nil
 	}
-	needleBytes := []byte(needle)
+	newMatcher, err := newMatcherFactory(query, useRegex)
+	if err != nil {
+		return nil, false, err
+	}
 	workers := runtime.NumCPU()
 
 	batch := make([]string, 0, searchBatchFiles)
@@ -74,12 +156,12 @@ func SearchFiles(root, query string, ex Exclusions) ([]SearchMatch, bool, error)
 		if len(batch) == 0 {
 			return false
 		}
-		matches = append(matches, scanBatch(root, batch, needleBytes, workers)...)
+		matches = append(matches, scanBatch(root, batch, newMatcher, workers)...)
 		batch = batch[:0]
 		return len(matches) >= MaxSearchMatches
 	}
 
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if path == root {
 				return walkErr
@@ -135,7 +217,7 @@ func SearchFiles(root, query string, ex Exclusions) ([]SearchMatch, bool, error)
 
 // scanBatch reads and scans the given files across workers and returns every
 // match found in them.
-func scanBatch(root string, paths []string, needle []byte, workers int) []SearchMatch {
+func scanBatch(root string, paths []string, newMatcher func() matcher, workers int) []SearchMatch {
 	if workers < 1 {
 		workers = 1
 	}
@@ -152,9 +234,10 @@ func scanBatch(root string, paths []string, needle []byte, workers int) []Search
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// One reusable read buffer and one reusable lowercase buffer per
-			// worker, rather than two fresh copies of every file scanned.
-			var data, lowered []byte
+			// One reusable read buffer per worker, plus whatever buffers the
+			// matcher keeps, rather than fresh copies of every file scanned.
+			var data []byte
+			m := newMatcher()
 			local := make([]SearchMatch, 0, 8)
 			for {
 				i := int(next.Add(1)) - 1
@@ -170,11 +253,8 @@ func scanBatch(root string, paths []string, needle []byte, workers int) []Search
 				if bytes.IndexByte(data, 0) >= 0 {
 					continue // binary
 				}
-				lowered = appendLowerBytes(lowered[:0], data)
-				if !bytes.Contains(lowered, needle) {
-					continue
-				}
-				local = appendFileMatches(local, data, lowered, relTo(root, path), needle)
+				m.enter(data)
+				local = appendFileMatches(local, data, relTo(root, path), m)
 			}
 			if len(local) > 0 {
 				mu.Lock()
@@ -217,34 +297,33 @@ func readInto(path string, buf []byte) ([]byte, error) {
 }
 
 // appendFileMatches records one match per matching line, which is what the
-// palette lists. lowered is data lowercased, so the two share offsets: the
-// search runs over the lowercased copy while the line is cut out of the
-// original bytes.
-func appendFileMatches(into []SearchMatch, data, lowered []byte, rel string, needle []byte) []SearchMatch {
+// palette lists: the scan continues behind the hit's line. That jump is also
+// what keeps an empty regex match like a* from standing still, the offset
+// always leaves the line it hit.
+func appendFileMatches(into []SearchMatch, data []byte, rel string, m matcher) []SearchMatch {
 	line := 1
 	counted := 0 // offset up to which newlines have already been counted
 	from := 0
-	for from <= len(lowered) {
-		idx := bytes.Index(lowered[from:], needle)
-		if idx < 0 {
+	for from <= len(data) {
+		start, end := m.find(from)
+		if start < 0 {
 			return into
 		}
-		idx += from
-		line += bytes.Count(lowered[counted:idx], newline)
-		counted = idx
+		line += bytes.Count(data[counted:start], newline)
+		counted = start
 
-		start := bytes.LastIndexByte(data[:idx], '\n') + 1
-		end := len(data)
-		if nl := bytes.IndexByte(data[idx:], '\n'); nl >= 0 {
-			end = idx + nl
+		lineStart := bytes.LastIndexByte(data[:start], '\n') + 1
+		lineEnd := len(data)
+		if nl := bytes.IndexByte(data[start:], '\n'); nl >= 0 {
+			lineEnd = start + nl
 		}
-		into = append(into, SearchMatch{Path: rel, Line: line, Text: searchSnippet(data[start:end], string(needle))})
+		text, markStart, markLen := searchSnippet(data[lineStart:lineEnd], start-lineStart, end-lineStart)
+		into = append(into, SearchMatch{Path: rel, Line: line, Text: text, MatchStart: markStart, MatchLen: markLen})
 
-		// One hit per line: carry on after the end of this one.
-		if end >= len(data) {
+		if lineEnd >= len(data) {
 			return into
 		}
-		from = end + 1
+		from = lineEnd + 1
 	}
 	return into
 }
@@ -267,15 +346,30 @@ func appendLowerBytes(dst, src []byte) []byte {
 	return dst
 }
 
-// searchSnippet trims a matching line for transport, keeping a window around
-// the first match when the line is longer than maxSnippetBytes.
-func searchSnippet(line []byte, needle string) string {
-	text := strings.TrimSpace(string(line))
-	idx := strings.Index(strings.ToLower(text), needle)
-	if idx < 0 {
-		idx = 0
+// searchSnippet trims a matching line for transport and answers where the
+// match [start, end) landed inside the snippet, in UTF-16 units, the
+// coordinate the browser slices strings in. The pieces around the match are
+// sanitized one by one so the mapping survives bytes that are not valid UTF-8.
+func searchSnippet(line []byte, start, end int) (string, int, int) {
+	cut, dropped := snippetCut(string(line), start)
+	start -= dropped
+	end -= dropped
+	if start < 0 {
+		start = 0
 	}
-	return SnippetAround(text, idx)
+	if start > len(cut) {
+		start = len(cut)
+	}
+	if end < start {
+		end = start
+	}
+	if end > len(cut) {
+		end = len(cut)
+	}
+	prefix := strings.ToValidUTF8(cut[:start], "�")
+	marked := strings.ToValidUTF8(cut[start:end], "�")
+	suffix := strings.ToValidUTF8(cut[end:], "�")
+	return prefix + marked + suffix, utf16Len(prefix), utf16Len(marked)
 }
 
 // SnippetAround trims a line for transport, keeping a window around the byte
@@ -284,26 +378,50 @@ func searchSnippet(line []byte, needle string) string {
 // the two lists that share one look share one cutting rule; idx counts into
 // the given text, leading whitespace included, and is clamped.
 func SnippetAround(text string, idx int) string {
+	cut, _ := snippetCut(text, idx)
+	return strings.ToValidUTF8(cut, "�")
+}
+
+// snippetCut cuts the snippet window around the byte offset idx and reports
+// how many bytes of the line fell away in front of it, which is what maps
+// offsets in the line onto offsets in the snippet.
+func snippetCut(text string, idx int) (string, int) {
 	trimmed := strings.TrimSpace(text)
-	idx -= strings.Index(text, trimmed)
+	dropped := strings.Index(text, trimmed)
+	idx -= dropped
 	text = trimmed
-	if len(text) > maxSnippetBytes {
-		if idx < 0 {
-			idx = 0
-		}
-		if idx > len(text) {
-			idx = len(text)
-		}
-		start := idx - 60
-		if start < 0 {
-			start = 0
-		}
-		end := start + maxSnippetBytes
-		if end > len(text) {
-			end = len(text)
-			start = end - maxSnippetBytes
-		}
-		text = strings.TrimSpace(text[start:end])
+	if len(text) <= maxSnippetBytes {
+		return text, dropped
 	}
-	return strings.ToValidUTF8(text, "�")
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > len(text) {
+		idx = len(text)
+	}
+	start := idx - 60
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxSnippetBytes
+	if end > len(text) {
+		end = len(text)
+		start = end - maxSnippetBytes
+	}
+	window := text[start:end]
+	windowTrimmed := strings.TrimSpace(window)
+	return windowTrimmed, dropped + start + strings.Index(window, windowTrimmed)
+}
+
+// utf16Len counts UTF-16 units, the coordinate system the browser addresses
+// string positions in.
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		n++
+		if r > 0xFFFF {
+			n++
+		}
+	}
+	return n
 }
