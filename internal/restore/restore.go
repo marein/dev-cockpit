@@ -61,15 +61,18 @@ type Service struct {
 	tmux     *tmux.Client
 	notifier *notify.Service
 	jobs     Jobs
+	projects func() []string
 
 	mu   sync.Mutex
 	last []Entry // last written entries, skips no-change rewrites
 }
 
 // New wires up the service. path is the snapshot file, enabled reads the
-// setting on every call.
-func New(path string, enabled func() bool, coders []*coder.Manager, shells *shell.Shells, t *tmux.Client, notifier *notify.Service, jobs Jobs) *Service {
-	return &Service{path: path, enabled: enabled, coders: coders, shells: shells, tmux: t, notifier: notifier, jobs: jobs}
+// setting on every call. projects lists the names of the existing projects,
+// injected as a function so restore needs no import on project: the prune
+// keeps the per project notification targets of exactly these.
+func New(path string, enabled func() bool, coders []*coder.Manager, shells *shell.Shells, t *tmux.Client, notifier *notify.Service, jobs Jobs, projects func() []string) *Service {
+	return &Service{path: path, enabled: enabled, coders: coders, shells: shells, tmux: t, notifier: notifier, jobs: jobs, projects: projects}
 }
 
 // Write rewrites the snapshot from the live terminals. Called on every
@@ -189,10 +192,12 @@ func (s *Service) applyTabGroup(e Entry) {
 
 // pruneDeadTargets drops what a target that stayed dead through the restore
 // pass left behind (a shell whose directory is gone, a coder without a store
-// entry): its notification entries, whose links would resolve to nothing
-// forever, and the job it was steered under, which nothing can ever move
-// again. Both files are read whole on every look at them, so what is left in
-// them is paid for again and again.
+// entry, a project that was deleted): its notification entries, whose links
+// would resolve to nothing forever, and the job it was steered under, which
+// nothing can ever move again. Both files are read whole on every look at
+// them, so what is left in them is paid for again and again. The compose and
+// git prompt targets name a project and not a terminal, so the keep set
+// carries them per existing project.
 func (s *Service) pruneDeadTargets() {
 	valid := map[string]bool{}
 	for _, m := range s.coders {
@@ -208,6 +213,10 @@ func (s *Service) pruneDeadTargets() {
 		valid[sh.Identifier] = true
 	}
 	valid[notify.BackupTarget] = true
+	for _, name := range s.projects() {
+		valid[notify.DockerTarget(name)] = true
+		valid[notify.GitPromptTarget(name)] = true
+	}
 	if removed := s.notifier.PruneTargets(valid); removed > 0 {
 		log.Printf("terminal restore: pruned %d notification(s) without a live target", removed)
 	}

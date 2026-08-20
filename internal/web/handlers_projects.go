@@ -326,7 +326,10 @@ func (s *Server) startProjectDelete(c *gin.Context, p project.Project) {
 // purgeProjectRunners tears down everything a project has running before the
 // project directory is removed: live sessions are stopped, every stored
 // (resumable) session under the project is deleted, and live shells are killed.
-// Best-effort — individual failures don't block project removal.
+// Best-effort — individual failures don't block project removal. Every
+// terminal it takes marks its notifications read on the spot, the same call
+// the single stop and delete handlers make: their pages are gone with the
+// project, so their news has nobody left to ring for.
 func (s *Server) purgeProjectRunners(path string) {
 	for i := range s.coders {
 		sessions := s.coders[i]
@@ -334,6 +337,7 @@ func (s *Server) purgeProjectRunners(path string) {
 		for _, r := range snap.Running {
 			if filesystem.IsUnder(r.CWD, path) {
 				_, _ = sessions.Stop(r.Identifier)
+				s.notifier.MarkTargetRead(r.Identifier)
 				// The terminal is gone with the project, so its job is too:
 				// nothing will ever report on it again.
 				s.jobCalledOff(r.Identifier)
@@ -342,6 +346,7 @@ func (s *Server) purgeProjectRunners(path string) {
 		for _, r := range snap.Resumable {
 			if filesystem.IsUnder(r.CWD, path) {
 				_, _ = sessions.DeleteResumable(r.SessionID)
+				s.notifier.MarkTargetRead(r.SessionID)
 				s.jobCalledOff(r.SessionID)
 			}
 		}
@@ -349,6 +354,7 @@ func (s *Server) purgeProjectRunners(path string) {
 	for _, sh := range s.shells.List() {
 		if filesystem.IsUnder(sh.CWD, path) {
 			_, _ = s.shells.Delete(sh.Identifier)
+			s.notifier.MarkTargetRead(sh.Identifier)
 		}
 	}
 }

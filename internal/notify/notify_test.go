@@ -216,20 +216,31 @@ func TestUrgentNewsPassesTheDedupeWindow(t *testing.T) {
 	}
 }
 
-// A compose target names a project and a run, not a terminal, so the terminal
-// restore's prune cannot know it and must not take it.
-func TestPruneKeepsComposeNews(t *testing.T) {
+// A compose target names a project, and a git question's does too. The
+// restore pass puts the targets of every existing project into the keep set,
+// so the prune is a plain membership check: what belongs to a project that
+// still exists stays, what belongs to a deleted one goes with it, like a dead
+// terminal's entries do.
+func TestPruneDropsTheTargetsOfDeletedProjects(t *testing.T) {
 	s := testService(t)
-	s.Add(DockerTarget("one"))
-	s.Add("11111111-1111-4111-8111-111111111111")
-	if removed := s.PruneTargets(map[string]bool{}); removed != 1 {
+	s.Add(DockerTarget("alive"))
+	s.Add(GitPromptTarget("alive"))
+	s.Add(DockerTarget("deleted"))
+	s.Add(GitPromptTarget("deleted"))
+	keep := map[string]bool{
+		DockerTarget("alive"):    true,
+		GitPromptTarget("alive"): true,
+	}
+	if removed := s.PruneTargets(keep); removed != 2 {
 		t.Fatalf("the prune removed %d entries", removed)
 	}
 	list := s.List(0)
-	if len(list) != 1 || !IsDockerTarget(list[0].TargetID) {
+	if len(list) != 2 {
 		t.Fatalf("the prune left %+v", list)
 	}
-	if DockerTargetProject(list[0].TargetID) != "one" {
-		t.Fatalf("the target lost its project: %q", list[0].TargetID)
+	for _, n := range list {
+		if n.TargetID != DockerTarget("alive") && n.TargetID != GitPromptTarget("alive") {
+			t.Fatalf("the prune kept %q", n.TargetID)
+		}
 	}
 }

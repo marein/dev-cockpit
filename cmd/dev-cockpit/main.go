@@ -453,6 +453,13 @@ func runServe(opts serveOptions) error {
 		filepath.Join(cfg.StateDir, "terminal-restore.json"),
 		func() bool { return settingsStore.Get(restore.SettingKey) == "on" },
 		coders, shells, tmuxClient, notifier, jobs,
+		func() []string {
+			var names []string
+			for _, p := range projectRepo.List() {
+				names = append(names, p.Name)
+			}
+			return names
+		},
 	)
 	restorer.RunStartup()
 	go restorer.RunPeriodic(30 * time.Second)

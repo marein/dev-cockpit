@@ -311,18 +311,18 @@ func (s *Service) MarkTargetRead(targetID string) int {
 }
 
 // PruneTargets drops stored notifications whose target id is not in keep.
-// The startup terminal restore calls it for targets that stayed dead through
-// the restore pass, their entries would link nowhere forever. A compose run's
-// target is kept whatever the caller says, and a git question's with it: both
-// name a project and not a terminal, so no terminal pass can know them.
-// Returns how many entries were removed.
+// The startup terminal restore calls it with everything that still resolves:
+// the live and resumable terminals, the backup target, and the docker and git
+// prompt targets of every project that still exists. What is not in the set
+// would link nowhere forever, a dead terminal's entry and a deleted project's
+// compose run alike. Returns how many entries were removed.
 func (s *Service) PruneTargets(keep map[string]bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.load()
 	kept := list[:0]
 	for _, n := range list {
-		if keep[n.TargetID] || IsDockerTarget(n.TargetID) || IsGitPromptTarget(n.TargetID) {
+		if keep[n.TargetID] {
 			kept = append(kept, n)
 		}
 	}

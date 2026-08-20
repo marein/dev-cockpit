@@ -250,7 +250,9 @@ func dockerRunPath(project, id string) string {
 
 // composeRun resolves the run a request names and refuses one that belongs to
 // another project, so a run is only ever reachable through the project it ran
-// for.
+// for. It serves the fetch endpoints under the run page, output and stop,
+// whose caller is the page's own script, so a refusal is JSON. The page route
+// checks for itself, see handleDockerRun.
 func (s *Server) composeRun(c *gin.Context) (project.Project, docker.RunView, bool) {
 	p, err := s.projects.FindByName(c.Param("name"))
 	if err != nil {
@@ -268,9 +270,20 @@ func (s *Server) composeRun(c *gin.Context) (project.Project, docker.RunView, bo
 // handleDockerRun renders the output of one run, the page a notification
 // links at. The run is detached, so this page is not watching a process: it
 // reads the file the run writes into, while it runs and after it ended.
+//
+// It is a page route, so it checks project and run itself and refuses the way
+// the pages do, a redirect with a flash: a JSON refusal here reaches pe.js,
+// which treats every answer as a page, finds none in it, and the person who
+// clicked the notification of a deleted project reads the literal word null.
 func (s *Server) handleDockerRun(c *gin.Context) {
-	p, run, ok := s.composeRun(c)
-	if !ok {
+	p, err := s.projects.FindByName(c.Param("name"))
+	if err != nil {
+		s.redirectWithFlash(c, "/projects", "", "Unknown project.")
+		return
+	}
+	run, ok := s.docker.ComposeRunByID(c.Param("id"))
+	if !ok || run.Project != p.Name {
+		s.redirectWithFlash(c, "/projects", "", "Unknown compose run.")
 		return
 	}
 	// Being here is seeing a run's outcome, so the project's compose

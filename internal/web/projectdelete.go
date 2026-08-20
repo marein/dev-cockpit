@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/local/dev-cockpit/internal/docker"
+	"github.com/local/dev-cockpit/internal/notify"
 	"github.com/local/dev-cockpit/internal/project"
 	"github.com/local/dev-cockpit/internal/statefile"
 	"github.com/local/dev-cockpit/internal/web/render"
@@ -231,6 +232,12 @@ func (s *Server) deleteProjectWithCompose(p project.Project) {
 	} else {
 		s.commitDrafts.Delete(p.Name)
 		s.quickOpen.Forget(p.Path)
+		// The project's compose and askpass news read themselves with it, and
+		// deliberately only on success: an aborted deletion keeps its compose
+		// failure notification unread, that is the one word about why nothing
+		// was removed.
+		s.notifier.MarkTargetRead(notify.DockerTarget(p.Name))
+		s.notifier.MarkTargetRead(notify.GitPromptTarget(p.Name))
 	}
 	s.deletes.finish(p.Name, failure)
 	s.publishProjects()
