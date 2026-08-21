@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -34,10 +35,12 @@ var typescriptDockerfile string
 // the cockpit reads exactly that code as a restart wish). A refused watch
 // (inotify limit) is loud on stderr and never a silently blind watcher.
 // One copy here, or the exit code contract and the watch rules could
-// drift apart between the languages.
+// drift apart between the languages. The flag lives under /tmp, because
+// the server runs as the cockpit's own user and /run inside the images is
+// root's: a flag it cannot write is a restart that never happens.
 const entrypointDockerfile = `RUN printf '%s\n' \
   '#!/bin/sh' \
-  'flag=/run/dev-cockpit-restart' \
+  'flag=/tmp/dev-cockpit-restart' \
   'rm -f "$flag"' \
   '# The async list would hand the server /dev/null as stdin; the real' \
   '# one survives on fd 3, the protocol pipe must reach the server.' \
@@ -194,11 +197,21 @@ func cacheDir(cacheRoot, server, project string) string {
 	return filepath.Join(cacheRoot, containerName(server, project))
 }
 
+// processUID and processGID are the identity the server containers run as,
+// this process's own ids: what a server writes into the cache bind then
+// belongs to the cockpit and comes off the disk without help. A root
+// cockpit reads 0:0, exactly the previous behavior. Variables, because a
+// test cannot create another user's files without being root, so faking
+// the foreign cache the migration looks for means shifting the uid here.
+var processUID, processGID = os.Getuid(), os.Getgid()
+
 // ensureCacheDir makes the directory exist before the run binds it: docker
 // would create a missing bind source itself, owned by root and with no say
-// in the mode.
+// in the mode. The home subdirectory comes with it, HOME points there
+// inside the container, so a server writing dotfiles lands in the mount
+// instead of a home directory its uid does not have in the image.
 func ensureCacheDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "home"), 0o755); err != nil {
 		return fmt.Errorf("cache directory %s: %w", dir, err)
 	}
 	return nil
@@ -208,11 +221,16 @@ func ensureCacheDir(dir string) error {
 // protocol, --init reaps, the projects directory and the cache directory
 // mount at their own paths so file URIs match inside and outside, the
 // workspace is the working directory, the name says in docker ps who runs
-// what for whom, and the root label says which serve process owns it.
+// what for whom, and the root label says which serve process owns it. The
+// server runs as the cockpit's own user, never as the image's root: what
+// it writes into the cache bind stays the cockpit's to remove, and HOME
+// points into that bind, because the uid has no passwd entry in the image
+// and -e wins over the home such an entry would name.
 func dockerArgv(dockerPath, projectsRoot, cache, root, name string, p *Profile) []string {
 	argv := []string{dockerPath, "run", "--rm", "-i", "--init",
 		"--name", name,
 		"--label", lspRootLabel + "=" + projectsRoot,
+		"--user", fmt.Sprintf("%d:%d", processUID, processGID),
 	}
 	if p.container.DefaultConfig {
 		// The project alone, so the directory above it belongs to the
@@ -220,13 +238,17 @@ func dockerArgv(dockerPath, projectsRoot, cache, root, name string, p *Profile) 
 		// there. It travels as the environment the image writes into, and
 		// the handshake announces the very same directory, so the place the
 		// file lands and the place the server looks for it cannot drift.
-		argv = append(argv, "-v", root+":"+root, "-e", "DC_WORKSPACE="+workspaceDir(root))
+		// The tmpfs makes that directory writable for the cockpit's uid,
+		// docker's default mode there is 1777, and docker mounts the
+		// shorter path first, so the project bind below stays what it is.
+		argv = append(argv, "-v", root+":"+root, "--tmpfs", workspaceDir(root), "-e", "DC_WORKSPACE="+workspaceDir(root))
 	} else {
 		argv = append(argv, "-v", projectsRoot+":"+projectsRoot)
 	}
 	argv = append(argv,
 		"-v", cache+":"+cache,
 		"-w", root,
+		"-e", "HOME="+cache+"/home",
 	)
 	if p.container.CacheEnv != nil {
 		for _, env := range p.container.CacheEnv(cache) {
@@ -328,10 +350,16 @@ func hostOf(host func() string) string {
 
 func sweepStale(ctx context.Context, projectsRoot, cacheRoot string, env []string) {
 	// The cache directories are this process's own files and are swept
-	// whether or not there is a docker client to talk to.
-	sweepCacheDirs(projectsRoot, cacheRoot)
-	dockerPath, err := exec.LookPath("docker")
-	if err != nil {
+	// whether or not there is a docker client to talk to; with one, the
+	// removal can fall back to a container for a cache a server wrote as
+	// root, see removeCacheDir. Deliberately ahead of the tag sweep below,
+	// an outdated tag is still a removal candidate here.
+	dockerPath, lookErr := exec.LookPath("docker")
+	if lookErr != nil {
+		dockerPath = ""
+	}
+	sweepCacheDirs(projectsRoot, cacheRoot, dockerPath, env)
+	if lookErr != nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -388,7 +416,9 @@ func sweepStale(ctx context.Context, projectsRoot, cacheRoot string, env []strin
 // on the disk away: they wear the container's name, so a name no living
 // project would produce is the leftover of a delete the cockpit did not
 // see. Anything else in that directory is left alone, it is not ours.
-func sweepCacheDirs(projectsRoot, cacheRoot string) {
+// dockerPath and env carry the docker client for removeCacheDir's
+// container fallback, dockerPath empty without one.
+func sweepCacheDirs(projectsRoot, cacheRoot, dockerPath string, env []string) {
 	entries, err := os.ReadDir(cacheRoot)
 	if err != nil {
 		return
@@ -408,7 +438,7 @@ func sweepCacheDirs(projectsRoot, cacheRoot string) {
 		if !entry.IsDir() || !lspSchemeName(entry.Name()) || valid[entry.Name()] {
 			continue
 		}
-		if removeCacheDir(filepath.Join(cacheRoot, entry.Name())) == nil {
+		if removeCacheDir(filepath.Join(cacheRoot, entry.Name()), dockerPath, env) == nil {
 			orphans++
 		}
 	}
@@ -442,13 +472,25 @@ func sweepLegacyVolumes(ctx context.Context, dockerPath string, env []string) {
 	}
 }
 
+// removeAll is a seam for the fallback test alone: a local removal that
+// fails cannot be staged on a plain filesystem, the suite may run as root
+// and root deletes anything.
+var removeAll = os.RemoveAll
+
 // removeCacheDir takes one cache directory away. A module cache is written
 // read only unless the toolchain was told otherwise (-modcacherw), and a
 // directory without the write bit refuses to give its entries up, so the
 // walk hands the modes back before the removal. Directories written by an
-// older release are exactly that case.
-func removeCacheDir(dir string) error {
-	if err := os.RemoveAll(dir); err == nil {
+// older release are exactly that case. What the walk cannot repair is a
+// cache a container wrote as root on a host where the cockpit is not:
+// chmod on another user's files is forbidden. Whoever wrote those files
+// can take them away, so the content is deleted through a container of a
+// cockpit built image, root inside, and os.Remove clears the then empty
+// top level, which ensureCacheDir made and the cockpit owns. An empty
+// dockerPath means no docker client, the local error then stands as it
+// always has.
+func removeCacheDir(dir, dockerPath string, env []string) error {
+	if err := removeAll(dir); err == nil {
 		return nil
 	}
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -460,18 +502,160 @@ func removeCacheDir(dir string) error {
 		}
 		return nil
 	})
-	return os.RemoveAll(dir)
+	err := removeAll(dir)
+	if err == nil || dockerPath == "" {
+		return err
+	}
+	p := cacheDirProfile(dir)
+	if p == nil {
+		return err
+	}
+	if cErr := emptyCacheDirInContainer(dockerPath, env, p, dir); cErr != nil {
+		// No image at all is a state, not a failure: the first start
+		// builds one, so the directory simply waits for a later sweep,
+		// and the sentinel's own words are the whole message.
+		if errors.Is(cErr, errImageNotBuilt) {
+			log.Printf("editor intelligence: cache %s stays for a later sweep, %v", dir, cErr)
+		} else {
+			log.Printf("editor intelligence: emptying %s through a container failed: %v", dir, cErr)
+		}
+		return err
+	}
+	return os.Remove(dir)
+}
+
+// cacheDirProfile reads the profile back out of the directory's name,
+// which wears the container's name and with it the server's prefix, so
+// the matching image is known without any state. It takes a bare name as
+// well, which is what lspSchemeName stands on.
+func cacheDirProfile(dir string) *Profile {
+	base := filepath.Base(dir)
+	for _, p := range profiles {
+		if strings.HasPrefix(base, containerPrefix(p.Server)) {
+			return p
+		}
+	}
+	return nil
+}
+
+// cacheRemoveTimeout bounds the container run that empties one cache
+// directory. Minutes, not seconds: a module cache holds tens of thousands
+// of files.
+const cacheRemoveTimeout = 5 * time.Minute
+
+// errImageNotBuilt says the fallback found no image at all to run: any
+// cockpit built image does for the removal, find is in every one, so only
+// a host that has never built one is out of candidates. An expected state
+// the caller reports calmly, never a failure.
+var errImageNotBuilt = errors.New("no cockpit built image exists on this host yet")
+
+// removalImage picks the image the cache removal runs through. Any of the
+// cockpit's own images does, find is in every one and root inside is the
+// whole point, so the matching profile's current tag is only the first
+// choice: a release that touched the build file moved the hash tags, at
+// boot the new tag does not exist yet, and an orphan of a language this
+// host never opens again must not wait forever. Preferred next is any tag
+// of the profile's own repository, then another profile's image. The local
+// images are listed once, the same call the tag sweep reads.
+func removalImage(ctx context.Context, dockerPath string, env []string, p *Profile) (string, error) {
+	out, err := dockerCmd(ctx, dockerPath, env, "images", "--format", "{{.Repository}}:{{.Tag}}").Output()
+	if err != nil {
+		return "", fmt.Errorf("list images: %w", err)
+	}
+	repos := map[string]bool{}
+	for _, other := range profiles {
+		repos[other.container.Image] = true
+	}
+	current := imageRef(p)
+	ownRepo, other := "", ""
+	for _, ref := range strings.Fields(string(out)) {
+		repo, _, found := strings.Cut(ref, ":")
+		if !found || !repos[repo] {
+			continue
+		}
+		if ref == current {
+			return ref, nil
+		}
+		if repo == p.container.Image {
+			if ownRepo == "" {
+				ownRepo = ref
+			}
+		} else if other == "" {
+			other = ref
+		}
+	}
+	if ownRepo != "" {
+		return ownRepo, nil
+	}
+	if other != "" {
+		return other, nil
+	}
+	return "", errImageNotBuilt
+}
+
+// emptyCacheDirInContainer deletes the directory's content through a
+// throwaway container of a cockpit built image, the profile's own
+// preferred (removalImage), started like the image source read:
+// --pull=never, because the tags are this host's own builds and a missing
+// one is an answer, never a registry round trip; no network; the
+// entrypoint overridden, find below the mount is the whole command. The
+// directory is the container's only mount, so nothing else of the host
+// stands in it.
+func emptyCacheDirInContainer(dockerPath string, env []string, p *Profile, dir string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), cacheRemoveTimeout)
+	defer cancel()
+	ref, err := removalImage(ctx, dockerPath, env, p)
+	if err != nil {
+		return err
+	}
+	out, err := dockerCmd(ctx, dockerPath, env, "run", "--rm", "--pull=never", "--network", "none",
+		"--entrypoint", "find", "-v", dir+":"+dir, ref,
+		dir, "-mindepth", "1", "-delete").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, firstLine(string(out)))
+	}
+	return nil
+}
+
+// firstLine keeps an error message to docker's own reason, which stands
+// first in its output; the trailing help hint line must never reach a log.
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(line)
+}
+
+// migrateForeignCacheDir clears a cache whose content another user wrote:
+// the releases before the --user flag ran the server as the image's root,
+// and a root owned index refuses the server that now runs as the cockpit's
+// user its own storage. The check reads one level below the top, because
+// the top level itself is ensureCacheDir's and always the cockpit's own,
+// foreign ownership begins at the entries the container wrote. A removed
+// cache means the server starts cold once.
+func migrateForeignCacheDir(dir, dockerPath string, env []string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		uid, ok := fileUID(info)
+		if !ok || uid == processUID {
+			continue
+		}
+		log.Printf("editor intelligence: cache %s belongs to uid %d, removing it for one cold start", dir, uid)
+		return removeCacheDir(dir, dockerPath, env)
+	}
+	return nil
 }
 
 // lspSchemeName reports whether the name belongs to the LSP naming scheme,
-// container, cache directory and legacy volume alike.
+// container, cache directory and legacy volume alike: the scheme is the
+// same server prefixes cacheDirProfile reads.
 func lspSchemeName(name string) bool {
-	for _, p := range profiles {
-		if strings.HasPrefix(name, containerPrefix(p.Server)) {
-			return true
-		}
-	}
-	return false
+	return cacheDirProfile(name) != nil
 }
 
 // RemoveProjectCaches takes the project's per-server cache directories
@@ -481,15 +665,21 @@ func lspSchemeName(name string) bool {
 // directory that is already gone is skipped without a wait.
 //
 // dockerHost names the configured daemon, empty for the ambient one; it is
-// what the removal of a volume an older release left behind travels on.
+// what removeCacheDir's container fallback and the removal of a volume an
+// older release left behind travel on.
 func RemoveProjectCaches(project, cacheRoot, dockerHost string) {
+	dockerPath, err := exec.LookPath("docker")
+	if err != nil {
+		dockerPath = ""
+	}
+	env := dockerHostEnv(dockerHost)
 	for _, p := range profiles {
 		dir := cacheDir(cacheRoot, p.Server, project)
 		for attempt := 0; attempt < 15; attempt++ {
 			if _, err := os.Stat(dir); err != nil {
 				break
 			}
-			if err := removeCacheDir(dir); err == nil {
+			if err := removeCacheDir(dir, dockerPath, env); err == nil {
 				break
 			}
 			time.Sleep(2 * time.Second)

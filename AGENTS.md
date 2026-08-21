@@ -857,7 +857,31 @@ test. Update this file when a convention changes.
   container, and gopls also gets `-modcacherw`,
   because a module cache is written read only and the cockpit has to be able
   to delete it again (`removeCacheDir` hands the modes back for the
-  directories an older release wrote). **The projects root label is the
+  directories an older release wrote). **The server runs as the cockpit's
+  own user, never as the image's root** (`--user` with this process's uid
+  and gid, a root cockpit reads 0:0 and nothing changes): what it writes
+  into the cache bind stays the cockpit's to remove. HOME points into the
+  cache mount (`-e HOME=<cache>/home`, the directory stands before the bind
+  via `ensureCacheDir`), because the uid has no passwd entry in the image
+  and `-e` wins over the home such an entry would name; the entrypoint's
+  restart flag lives under `/tmp`, `/run` inside the images is root's; and
+  the default configuration profile gets a tmpfs on its workspace
+  directory, docker mounts the shorter path first, so the project bind
+  below stays what it is. What an older release's root server wrote,
+  chmod cannot repair on a host where the cockpit is not root, so
+  `removeCacheDir` falls back to a throwaway container of a cockpit built
+  image, picked with preference (`removalImage`): the profile's current
+  tag, then any tag of its repository, then another profile's, because
+  find is in every image and the hash tags a release moved must not park
+  an orphan forever (`--pull=never`, no network, the directory as its only
+  mount, `find -mindepth 1 -delete` inside, `os.Remove` for the then empty
+  top level); only a host without any cockpit built image logs calmly and
+  leaves the directory for a later sweep, and without a docker client the
+  local error stands. Before a
+  start the launcher reads the ownership one level below the cache
+  directory's top, the top is `ensureCacheDir`'s and always the cockpit's
+  own; a foreign owned cache is removed the same way and the server starts
+  cold once. **The projects root label is the
   ownership boundary**: the boot sweep and the orphan sweeps only ever touch
   containers and image tags carrying this serve process's own root, because
   the throwaway test instance shares the daemon and must not lose the live

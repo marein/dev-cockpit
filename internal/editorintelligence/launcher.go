@@ -101,7 +101,15 @@ func (l dockerLauncher) Prepare(ctx context.Context, projectsRoot, project strin
 	if err := ensureImage(ctx, dockerPath, env, p); err != nil {
 		return err
 	}
-	if err := ensureCacheDir(l.cacheDir(project, p)); err != nil {
+	dir := l.cacheDir(project, p)
+	// A cache another user wrote is unusable for the server that runs as
+	// the cockpit's user now, so it goes before the start and the server
+	// runs cold once, see migrateForeignCacheDir. Checked behind the
+	// image, whose container the removal may need.
+	if err := migrateForeignCacheDir(dir, dockerPath, env); err != nil {
+		return err
+	}
+	if err := ensureCacheDir(dir); err != nil {
 		return err
 	}
 	removeStaleContainer(ctx, dockerPath, env, containerName(p.Server, project))

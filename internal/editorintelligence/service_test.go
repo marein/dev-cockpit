@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -830,14 +833,21 @@ func TestServiceWarmingGraceForSilentServer(t *testing.T) {
 
 // installFakeDocker puts a fake docker client on PATH: it records every
 // call into argsFile, answers `image inspect` by whether markerFile
-// exists, creates it on `build`, lists psFile's lines on `ps` and
-// volsFile's on `volume ls` (none when empty), and on `run` execs the
-// server command that follows the image token, which resolves to the fake
-// language server wrapper on PATH, mode included. The Docker way runs end
-// to end without a daemon.
+// exists, creates it on `build`, lists psFile's lines on `ps`, volsFile's
+// on `volume ls` (none when empty) and the current profile refs on
+// `images` once markerFile exists, and on `run` execs the server command
+// that follows the image token, which resolves to the fake language server
+// wrapper on PATH, mode included. A run with an overridden entrypoint
+// execs that program with everything behind the image token instead, so
+// the cache removal fallback really empties its directory. The Docker way
+// runs end to end without a daemon.
 func installFakeDocker(t *testing.T, argsFile, markerFile, psFile, volsFile string) {
 	t.Helper()
 	dir := t.TempDir()
+	var refs []string
+	for _, p := range profiles {
+		refs = append(refs, imageRef(p))
+	}
 	script := fmt.Sprintf(`#!/bin/sh
 echo "$@" >> %q
 case "$1" in
@@ -850,18 +860,24 @@ case "$1" in
       *) exit 0 ;;
     esac ;;
   rm) exit 0 ;;
-  images) exit 0 ;;
+  images) [ -f %q ] && printf '%%s\n' %s; exit 0 ;;
   rmi) exit 0 ;;
   run)
-    prev=""
-    for a in "$@"; do
-      case "$prev" in dev-cockpit-gopls:*|dev-cockpit-intelephense:*|dev-cockpit-tsgo:*) exec "$a" ;; esac
-      prev="$a"
+    shift
+    ep=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --entrypoint) ep="$2"; shift ;;
+        dev-cockpit-gopls:*|dev-cockpit-intelephense:*|dev-cockpit-tsgo:*)
+          shift
+          if [ -n "$ep" ]; then exec "$ep" "$@"; else exec "$1"; fi ;;
+      esac
+      shift
     done
     exit 1 ;;
   *) exit 1 ;;
 esac
-`, argsFile, markerFile, markerFile, psFile, psFile, volsFile, volsFile)
+`, argsFile, markerFile, markerFile, psFile, psFile, volsFile, volsFile, markerFile, strings.Join(refs, " "))
 	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -905,6 +921,245 @@ func TestRemoveProjectCachesTakesTheProjectAndNothingElse(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "volume rm dev-cockpit-gopls-gone") {
 		t.Fatalf("the legacy volume of the project was not removed: %s", raw)
+	}
+}
+
+// A local removal that will not go through, the files of a server that ran
+// as the image's root, falls back to a container of the matching profile's
+// own image: never pulled, no network, the directory as its only mount,
+// find emptying it from inside, and the empty user owned top level goes
+// with os.Remove. Without a docker client the local error stands the way
+// it does today.
+func TestRemoveCacheDirFallsBackToAContainer(t *testing.T) {
+	work := t.TempDir()
+	argsFile := filepath.Join(work, "args")
+	marker := filepath.Join(work, "image-built")
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installFakeDocker(t, argsFile, marker, "", "")
+	dockerPath, err := exec.LookPath("docker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Files another user owns cannot be staged by a suite that may run as
+	// root, root deletes anything, so the seam stands in for them.
+	removeAll = func(string) error { return errors.New("operation not permitted") }
+	t.Cleanup(func() { removeAll = os.RemoveAll })
+
+	cacheRoot := t.TempDir()
+	dir := filepath.Join(cacheRoot, "dev-cockpit-gopls-app")
+	if err := os.MkdirAll(filepath.Join(dir, "mod", "example.com"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mod", "example.com", "dep.go"), []byte("package dep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeCacheDir(dir, dockerPath, nil); err != nil {
+		t.Fatalf("fallback removal: %v", err)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Fatal("the cache directory is still there")
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goProfile, _, _ := ProfileForPath("main.go")
+	for _, want := range []string{
+		"run --rm --pull=never --network none --entrypoint find",
+		"-v " + dir + ":" + dir,
+		imageRef(goProfile) + " " + dir + " -mindepth 1 -delete",
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("container call misses %q: %s", want, raw)
+		}
+	}
+
+	other := filepath.Join(cacheRoot, "dev-cockpit-tsgo-app")
+	if err := os.MkdirAll(filepath.Join(other, "cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeCacheDir(other, "", nil); err == nil {
+		t.Fatal("no docker client must keep the local error")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatal("the directory must stand until the next attempt")
+	}
+}
+
+// What the fallback logs when the container run fails is docker's own
+// reason, which stands first in its output; the trailing help hint line
+// must never reach the log.
+func TestRemoveCacheDirLogsDockersReasonNotTheHelpHint(t *testing.T) {
+	dir := t.TempDir()
+	goProfile, _, _ := ProfileForPath("main.go")
+	script := fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  images) echo %q; exit 0 ;;
+  run)
+    echo "docker: Error response from daemon: something broke." >&2
+    echo "" >&2
+    echo "Run 'docker run --help' for more information" >&2
+    exit 125 ;;
+esac
+exit 0
+`, imageRef(goProfile))
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	removeAll = func(string) error { return errors.New("operation not permitted") }
+	t.Cleanup(func() { removeAll = os.RemoveAll })
+	var logBuf strings.Builder
+	log.SetOutput(&logBuf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	cache := filepath.Join(t.TempDir(), "dev-cockpit-gopls-app")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeCacheDir(cache, filepath.Join(dir, "docker"), nil); err == nil {
+		t.Fatal("the removal must keep failing")
+	}
+	logged := logBuf.String()
+	if !strings.Contains(logged, "Error response from daemon: something broke.") {
+		t.Fatalf("the log misses docker's reason: %s", logged)
+	}
+	if strings.Contains(logged, "--help") {
+		t.Fatalf("the help hint must never reach the log: %s", logged)
+	}
+}
+
+// A host without a single cockpit built image is a state of its own: the
+// first start builds one, so the sweep says so calmly, leaves the
+// directory for a later run, and never puts an exit status into the log
+// or starts a container.
+func TestRemoveCacheDirMissingImageIsLoggedCalmly(t *testing.T) {
+	work := t.TempDir()
+	argsFile := filepath.Join(work, "args")
+	installFakeDocker(t, argsFile, filepath.Join(work, "never-built"), "", "")
+	dockerPath, err := exec.LookPath("docker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	removeAll = func(string) error { return errors.New("operation not permitted") }
+	t.Cleanup(func() { removeAll = os.RemoveAll })
+	var logBuf strings.Builder
+	log.SetOutput(&logBuf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	cache := filepath.Join(t.TempDir(), "dev-cockpit-gopls-app")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeCacheDir(cache, dockerPath, nil); err == nil {
+		t.Fatal("the removal must report the local error")
+	}
+	if _, err := os.Stat(cache); err != nil {
+		t.Fatal("the directory must stay for a later sweep")
+	}
+	logged := logBuf.String()
+	if !strings.Contains(logged, "stays for a later sweep") || !strings.Contains(logged, "no cockpit built image exists on this host yet") {
+		t.Fatalf("the empty candidate list must be its own calm case: %s", logged)
+	}
+	if strings.Contains(logged, "exit status") {
+		t.Fatalf("no exit status for an expected state: %s", logged)
+	}
+	if raw, _ := os.ReadFile(argsFile); strings.Contains(string(raw), "run ") {
+		t.Fatalf("no container may run without an image: %s", raw)
+	}
+}
+
+// The removal image is picked with preference: the matching profile's
+// current tag first, then any tag of its repository, then another
+// profile's image, and images outside the cockpit's three repositories
+// are never candidates.
+func TestRemovalImagePrefersTheMatchingProfile(t *testing.T) {
+	dir := t.TempDir()
+	listFile := filepath.Join(dir, "list")
+	script := fmt.Sprintf(`#!/bin/sh
+[ "$1" = images ] && { cat %q 2>/dev/null; exit 0; }
+exit 1
+`, listFile)
+	dockerBin := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerBin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	list := func(refs ...string) {
+		if err := os.WriteFile(listFile, []byte(strings.Join(refs, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	goProfile, _, _ := ProfileForPath("main.go")
+	ts, _, _ := ProfileForPath("index.ts")
+	current, tsRef := imageRef(goProfile), imageRef(ts)
+	oldTag := "dev-cockpit-gopls:000000000000"
+
+	list("golang:1.26", tsRef, oldTag, current)
+	if ref, err := removalImage(context.Background(), dockerBin, nil, goProfile); err != nil || ref != current {
+		t.Fatalf("the current tag must win: %q %v", ref, err)
+	}
+	list("golang:1.26", tsRef, oldTag)
+	if ref, err := removalImage(context.Background(), dockerBin, nil, goProfile); err != nil || ref != oldTag {
+		t.Fatalf("the own repository must beat another profile's: %q %v", ref, err)
+	}
+	list("golang:1.26", tsRef)
+	if ref, err := removalImage(context.Background(), dockerBin, nil, goProfile); err != nil || ref != tsRef {
+		t.Fatalf("any cockpit built image beats none: %q %v", ref, err)
+	}
+	list("golang:1.26", "gopls-standalone:latest")
+	if _, err := removalImage(context.Background(), dockerBin, nil, goProfile); !errors.Is(err, errImageNotBuilt) {
+		t.Fatalf("a stranger's image is no candidate: %v", err)
+	}
+}
+
+// The migration before a start: a cache whose entries another user wrote,
+// the releases that ran the server as root, is taken away and the server
+// starts cold once, while the cockpit's own cache stays. The check reads
+// one level below the top, the top level is ensureCacheDir's and always
+// the cockpit's own.
+func TestPrepareRemovesAForeignOwnedCache(t *testing.T) {
+	work := t.TempDir()
+	argsFile := filepath.Join(work, "args")
+	marker := filepath.Join(work, "image-built")
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installFakeDocker(t, argsFile, marker, "", "")
+	cacheRoot := t.TempDir()
+	launcher := DockerLauncher(cacheRoot, nil)
+	goProfile, _, _ := ProfileForPath("main.go")
+
+	own := filepath.Join(cacheRoot, "dev-cockpit-gopls-own")
+	if err := os.MkdirAll(filepath.Join(own, "mod"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(own, "mod", "keep.go"), []byte("package dep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := launcher.Prepare(context.Background(), t.TempDir(), "own", goProfile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(own, "mod", "keep.go")); err != nil {
+		t.Fatal("the cockpit's own cache must stay")
+	}
+
+	// Creating another user's files needs root, so the shifted uid makes
+	// the same entries read as somebody else's.
+	foreign := filepath.Join(cacheRoot, "dev-cockpit-gopls-taken")
+	if err := os.MkdirAll(filepath.Join(foreign, "mod"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	processUID = os.Getuid() + 1
+	t.Cleanup(func() { processUID = os.Getuid() })
+	if err := launcher.Prepare(context.Background(), t.TempDir(), "taken", goProfile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(foreign, "mod")); err == nil {
+		t.Fatal("the foreign cache must be gone")
+	}
+	if info, err := os.Stat(filepath.Join(foreign, "home")); err != nil || !info.IsDir() {
+		t.Fatalf("the cold start still gets its cache directory: %v", err)
 	}
 }
 
@@ -1062,9 +1317,11 @@ func TestServiceDockerModeBuildsOnceAndMountsTheContract(t *testing.T) {
 		"--rm", "-i", "--init",
 		"--name dev-cockpit-gopls-" + req2.ProjectName,
 		"--label " + lspRootLabel + "=" + projectsRoot,
+		fmt.Sprintf("--user %d:%d", os.Getuid(), os.Getgid()),
 		"-v " + projectsRoot + ":" + projectsRoot,
 		"-v " + cache + ":" + cache,
 		"-w " + req2.ProjectRoot,
+		"-e HOME=" + cache + "/home",
 		"-e GOMODCACHE=" + cache + "/mod",
 		"-e GOFLAGS=-modcacherw",
 		"-e XDG_CACHE_HOME=" + cache + "/cache",
@@ -1174,6 +1431,57 @@ func TestTypescriptDockerArgvPointsTheCacheIn(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Fatalf("run line misses %q: %s", want, line)
 		}
+	}
+}
+
+// The server runs as the cockpit's own user, with HOME pointed into the
+// cache mount, whose home directory ensureCacheDir stands up before the
+// bind; the profile whose image writes a default configuration gets a
+// tmpfs on the workspace directory, or that directory, container
+// filesystem and root's, would refuse the config file.
+func TestDockerArgvRunsAsTheCockpitUser(t *testing.T) {
+	goProfile, _, _ := ProfileForPath("main.go")
+	ts, _, _ := ProfileForPath("index.ts")
+	cacheRoot := t.TempDir()
+	launcher := DockerLauncher(cacheRoot, nil)
+	user := fmt.Sprintf("--user %d:%d", os.Getuid(), os.Getgid())
+
+	goCache := filepath.Join(cacheRoot, "dev-cockpit-gopls-my-app")
+	goLine := strings.Join(launcher.Argv("/projects", "my-app", "/projects/my-app", goProfile), " ")
+	for _, want := range []string{user, "-e HOME=" + goCache + "/home"} {
+		if !strings.Contains(goLine, want) {
+			t.Fatalf("run line misses %q: %s", want, goLine)
+		}
+	}
+	if strings.Contains(goLine, "--tmpfs") {
+		t.Fatalf("only the default config profile needs a tmpfs: %s", goLine)
+	}
+
+	tsCache := filepath.Join(cacheRoot, "dev-cockpit-tsgo-my-app")
+	tsLine := strings.Join(launcher.Argv("/projects", "my-app", "/projects/my-app", ts), " ")
+	for _, want := range []string{user, "-e HOME=" + tsCache + "/home", "--tmpfs /projects "} {
+		if !strings.Contains(tsLine, want) {
+			t.Fatalf("run line misses %q: %s", want, tsLine)
+		}
+	}
+
+	if err := ensureCacheDir(goCache); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Join(goCache, "home")); err != nil || !info.IsDir() {
+		t.Fatalf("the home directory must stand before the bind: %v", err)
+	}
+}
+
+// The restart flag lives under /tmp: the server runs as the cockpit's
+// user, and /run inside the images is root's, so a flag there would be a
+// restart that never happens.
+func TestEntrypointRestartFlagLivesInTmp(t *testing.T) {
+	if !strings.Contains(entrypointDockerfile, "flag=/tmp/dev-cockpit-restart") {
+		t.Fatalf("the restart flag must live under /tmp:\n%s", entrypointDockerfile)
+	}
+	if strings.Contains(entrypointDockerfile, "/run") {
+		t.Fatalf("no /run in the entrypoint:\n%s", entrypointDockerfile)
 	}
 }
 

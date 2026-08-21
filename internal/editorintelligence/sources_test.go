@@ -181,7 +181,7 @@ func TestRemoveCacheDirTakesAReadOnlyModuleCache(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := removeCacheDir(dir); err != nil {
+	if err := removeCacheDir(dir, "", nil); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	if _, err := os.Stat(dir); err == nil {
