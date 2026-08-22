@@ -1,6 +1,6 @@
 package render
 
-import "github.com/local/dev-cockpit/internal/coder"
+import "github.com/marein/dev-cockpit/internal/coder"
 
 // AgentsListData is the model for the agents list.
 type AgentsListData struct {

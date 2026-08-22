@@ -1,8 +1,8 @@
 package render
 
 import (
-	"github.com/local/dev-cockpit/internal/coder"
-	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
 // CoderChoice is one selectable coder in the new-coder form together with its

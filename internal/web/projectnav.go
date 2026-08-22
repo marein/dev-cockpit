@@ -3,7 +3,7 @@ package web
 import (
 	"net/url"
 
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // projectBrowser maps the shared projectsWithRunners model into the quick nav's

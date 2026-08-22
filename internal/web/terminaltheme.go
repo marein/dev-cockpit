@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // terminalTheme holds the web terminal's current colors, posted by the attach

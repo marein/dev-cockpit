@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/terminalstate"
+	"github.com/marein/dev-cockpit/internal/terminalstate"
 )
 
 // The input routes are shared: a browser types into them and the assistant

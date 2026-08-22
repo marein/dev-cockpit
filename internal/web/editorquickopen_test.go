@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/filesystem"
-	"github.com/local/dev-cockpit/internal/project"
-	"github.com/local/dev-cockpit/internal/settings"
+	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/settings"
 )
 
 // quickOpenServer builds a server over a throwaway projects root holding one

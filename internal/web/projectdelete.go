@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/docker"
-	"github.com/local/dev-cockpit/internal/notify"
-	"github.com/local/dev-cockpit/internal/project"
-	"github.com/local/dev-cockpit/internal/statefile"
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/docker"
+	"github.com/marein/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // composeIdlePoll is how often a wait on a running compose run looks again.

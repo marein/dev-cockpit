@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/config"
-	"github.com/local/dev-cockpit/internal/editorintelligence"
-	"github.com/local/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/editorintelligence"
+	"github.com/marein/dev-cockpit/internal/project"
 )
 
 // lspSourceServer builds a server over a throwaway projects root and state

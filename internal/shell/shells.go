@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/config"
-	"github.com/local/dev-cockpit/internal/project"
-	"github.com/local/dev-cockpit/internal/terminal"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // HistorySettingKey is the settings store key that switches per-shell command

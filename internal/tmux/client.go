@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/clirun"
+	"github.com/marein/dev-cockpit/internal/clirun"
 )
 
 // RequiredTools lists external binaries tmux relies on.

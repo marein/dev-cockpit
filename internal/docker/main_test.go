@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/detach"
+	"github.com/marein/dev-cockpit/internal/detach"
 )
 
 // TestMain lets the test binary stand in as the hold process: a compose run is

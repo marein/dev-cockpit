@@ -1,6 +1,6 @@
 package render
 
-import "github.com/local/dev-cockpit/internal/project"
+import "github.com/marein/dev-cockpit/internal/project"
 
 // EditorData is the model for the per-project code editor page.
 type EditorData struct {

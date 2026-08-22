@@ -11,7 +11,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/local/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 // idPattern guards every id that becomes a path component. Conversation ids are UUID

@@ -3,7 +3,7 @@ package terminal
 import (
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 type recordingTarget struct {

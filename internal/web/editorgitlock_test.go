@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/eventbus"
-	"github.com/local/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/eventbus"
+	"github.com/marein/dev-cockpit/internal/project"
 )
 
 // gitWriteServer builds a server over a throwaway projects root holding one

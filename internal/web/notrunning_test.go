@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/terminalstate"
+	"github.com/marein/dev-cockpit/internal/terminalstate"
 )
 
 // The one thing the wording must never mix up: the assistant is told which

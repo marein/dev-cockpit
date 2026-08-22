@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/config"
-	"github.com/local/dev-cockpit/internal/project"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // withoutTmux makes the tmux call these tests rely on fail, whatever the

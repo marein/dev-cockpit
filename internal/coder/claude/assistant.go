@@ -6,9 +6,9 @@ import (
 	"log"
 	"strings"
 
-	"github.com/local/dev-cockpit/internal/assistant"
-	"github.com/local/dev-cockpit/internal/clirun"
-	"github.com/local/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/clirun"
+	"github.com/marein/dev-cockpit/internal/coder"
 )
 
 // assistantFlags are the flags this runner cannot work without. Their presence is

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/config"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // scrollLineStep is how many history lines one "line-up"/"line-down" scroll

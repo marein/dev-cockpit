@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/tmux"
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // terminalTabs collects every live coder and shell for the attach page tab

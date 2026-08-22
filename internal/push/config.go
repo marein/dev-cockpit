@@ -3,7 +3,7 @@ package push
 import (
 	"sync"
 
-	"github.com/local/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 // channelsState is the per-channel configuration, one key per channel so new

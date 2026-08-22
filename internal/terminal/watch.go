@@ -3,7 +3,7 @@ package terminal
 import (
 	"time"
 
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // BellCooldown coalesces bell bursts: one event rings one bell, but nothing

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // userFacingError converts an internal error into a message safe to return to

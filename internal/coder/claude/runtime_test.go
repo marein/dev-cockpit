@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/clirun"
-	"github.com/local/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/clirun"
+	"github.com/marein/dev-cockpit/internal/coder"
 )
 
 func TestSessionSettings(t *testing.T) {

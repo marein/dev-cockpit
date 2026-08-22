@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 // Backups are created by a background job, one archive per run under

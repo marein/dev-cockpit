@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"html/template"
 
-	"github.com/local/dev-cockpit/internal/hostinfo"
+	"github.com/marein/dev-cockpit/internal/hostinfo"
 )
 
 // The host status is colored in two places, here for the first paint and in

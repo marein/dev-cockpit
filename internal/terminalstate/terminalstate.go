@@ -9,7 +9,7 @@
 // browser must never be, so every surface words the state it gets itself.
 package terminalstate
 
-import "github.com/local/dev-cockpit/internal/coder"
+import "github.com/marein/dev-cockpit/internal/coder"
 
 // State is what the cockpit knows about a terminal id.
 type State int

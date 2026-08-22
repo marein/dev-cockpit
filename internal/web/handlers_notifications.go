@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/eventbus"
-	"github.com/local/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/eventbus"
+	"github.com/marein/dev-cockpit/internal/notify"
 )
 
 // notificationListLimit caps how many entries the center fetches at once.

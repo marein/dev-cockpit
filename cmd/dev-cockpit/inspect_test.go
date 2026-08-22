@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/assistant"
-	"github.com/local/dev-cockpit/internal/clirun"
-	"github.com/local/dev-cockpit/internal/coder"
-	"github.com/local/dev-cockpit/internal/notify"
-	"github.com/local/dev-cockpit/internal/terminalstate"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/clirun"
+	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/terminalstate"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 func TestStatusOutputCarriesWhatAnAnswerNeeds(t *testing.T) {

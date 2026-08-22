@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 // A compose run outlives the server that started it. Its process is detached

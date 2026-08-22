@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/docker"
-	"github.com/local/dev-cockpit/internal/editorintelligence"
-	"github.com/local/dev-cockpit/internal/eventbus"
-	"github.com/local/dev-cockpit/internal/restore"
-	"github.com/local/dev-cockpit/internal/settings"
-	"github.com/local/dev-cockpit/internal/shell"
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/docker"
+	"github.com/marein/dev-cockpit/internal/editorintelligence"
+	"github.com/marein/dev-cockpit/internal/eventbus"
+	"github.com/marein/dev-cockpit/internal/restore"
+	"github.com/marein/dev-cockpit/internal/settings"
+	"github.com/marein/dev-cockpit/internal/shell"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // jingleSettingKey holds the cross-device notification jingle selection in

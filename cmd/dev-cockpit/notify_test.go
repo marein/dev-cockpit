@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/assistant"
 )
 
 // A coder's signal is not classified: whether it finished, asks something or

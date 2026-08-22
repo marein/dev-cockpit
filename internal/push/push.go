@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/notify"
 )
 
 // deliverDelay mirrors the client's grace window: a target page open in a

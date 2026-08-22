@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/backup"
-	"github.com/local/dev-cockpit/internal/eventbus"
-	"github.com/local/dev-cockpit/internal/notify"
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/backup"
+	"github.com/marein/dev-cockpit/internal/eventbus"
+	"github.com/marein/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 func (s *Server) backupRows() []render.BackupRow {

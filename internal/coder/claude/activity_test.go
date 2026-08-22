@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/coder"
 )
 
 const (

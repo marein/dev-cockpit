@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // gateClock is a clock the gate can be run against without waiting: sleeping

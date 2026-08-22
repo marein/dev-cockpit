@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/detach"
+	"github.com/marein/dev-cockpit/internal/detach"
 )
 
 func TestComposeFileFindsTheCLIOrder(t *testing.T) {

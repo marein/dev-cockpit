@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 const maxStored = 100

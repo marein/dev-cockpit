@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
 // trustFlag is the key claude keeps its answer to the workspace trust dialog

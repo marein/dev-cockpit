@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/detach"
+	"github.com/marein/dev-cockpit/internal/detach"
 )
 
 // maxLineBytes bounds one structured output line. A provider packs a complete

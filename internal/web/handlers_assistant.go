@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/local/dev-cockpit/internal/eventbus"
+	"github.com/marein/dev-cockpit/internal/eventbus"
 	"html/template"
 	"net/http"
 	"path"
@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/assistant"
-	"github.com/local/dev-cockpit/internal/filesystem"
-	"github.com/local/dev-cockpit/internal/markdown"
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/markdown"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // uploadEnvelope is what a multipart request costs on top of the file itself:

@@ -33,7 +33,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
 // Name is what the surface is called in the UI.

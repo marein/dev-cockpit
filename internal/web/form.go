@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
 // AlphaNumDashString normalizes user-entered slug fields during Gin form binding.

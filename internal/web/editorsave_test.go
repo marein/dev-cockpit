@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/project"
 )
 
 // editorFileServer builds a server over a throwaway projects root holding one

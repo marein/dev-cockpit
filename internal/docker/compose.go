@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/detach"
-	"github.com/local/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/detach"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 const (

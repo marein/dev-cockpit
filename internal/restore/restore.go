@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/coder"
-	"github.com/local/dev-cockpit/internal/notify"
-	"github.com/local/dev-cockpit/internal/shell"
-	"github.com/local/dev-cockpit/internal/statefile"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/shell"
+	"github.com/marein/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // SettingKey is the settings store key that switches the startup restore on

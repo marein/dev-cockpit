@@ -35,7 +35,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
 // The socket lives in a directory of its own that carries the permission,

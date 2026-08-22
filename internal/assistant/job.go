@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 // A job is a coder the assistant keeps an eye on. The signal a coder produces

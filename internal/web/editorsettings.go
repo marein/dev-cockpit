@@ -3,8 +3,8 @@ package web
 import (
 	"strconv"
 
-	"github.com/local/dev-cockpit/internal/editorintelligence"
-	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/editorintelligence"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
 // The editor's cross-device settings, edited on the tabs of /settings/editor and

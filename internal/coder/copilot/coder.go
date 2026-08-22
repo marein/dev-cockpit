@@ -4,9 +4,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/coder"
-	"github.com/local/dev-cockpit/internal/filesystem"
-	"github.com/local/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
 type Coder struct {

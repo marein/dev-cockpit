@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/detach"
-	"github.com/local/dev-cockpit/internal/statefile"
-	"github.com/local/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/detach"
+	"github.com/marein/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
 // fakeSessions is the coder a check asks about the session its job steers: what it

@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/local/dev-cockpit/internal/update"
+	"github.com/marein/dev-cockpit/internal/update"
 )
 
 func updateStatusJSON(st update.Status) gin.H {

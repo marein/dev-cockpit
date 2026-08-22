@@ -5,8 +5,8 @@ import (
 	"sort"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/coder"
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 type skillForm struct {

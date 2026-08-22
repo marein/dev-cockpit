@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/statefile"
-	"github.com/local/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
 // maxConcurrentRuns bounds the chat turns across every conversation, the ones a

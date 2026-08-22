@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // members builds a group in @dc_tab_gpos order out of "<id>:<column>" pairs, a

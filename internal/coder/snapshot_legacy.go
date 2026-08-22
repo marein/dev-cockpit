@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/local/dev-cockpit/internal/proctree"
-	"github.com/local/dev-cockpit/internal/terminal"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/proctree"
+	"github.com/marein/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // legacyEnvVar is the variable older binaries injected into every coder pane.

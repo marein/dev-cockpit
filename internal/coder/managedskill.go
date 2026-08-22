@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
 // CockpitGitSkillID names the one skill the cockpit writes itself: the coder

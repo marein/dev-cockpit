@@ -13,7 +13,7 @@ import (
 
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/web/render"
 	"golang.org/x/crypto/bcrypt"
 )
 

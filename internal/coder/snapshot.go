@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // snapshotCache memoises Snapshot for a short TTL to soak up bursts of

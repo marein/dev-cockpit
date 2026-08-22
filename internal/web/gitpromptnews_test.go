@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/askpass"
-	"github.com/local/dev-cockpit/internal/eventbus"
-	"github.com/local/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/askpass"
+	"github.com/marein/dev-cockpit/internal/eventbus"
+	"github.com/marein/dev-cockpit/internal/notify"
 )
 
 // promptNewsServer is a server with nothing but the two things this path

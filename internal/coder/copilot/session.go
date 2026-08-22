@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/local/dev-cockpit/internal/coder"
-	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
 type sessionRepository struct {

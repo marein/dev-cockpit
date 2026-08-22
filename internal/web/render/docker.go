@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/local/dev-cockpit/internal/docker"
+	"github.com/marein/dev-cockpit/internal/docker"
 )
 
 // DockerRunData feeds the output page of one compose run. The page is not

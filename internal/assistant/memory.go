@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/markdown"
+	"github.com/marein/dev-cockpit/internal/markdown"
 	"gopkg.in/yaml.v3"
 )
 

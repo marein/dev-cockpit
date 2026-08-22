@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/filesystem"
-	"github.com/local/dev-cockpit/internal/project"
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 type projectCreateForm struct {

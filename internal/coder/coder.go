@@ -1,8 +1,8 @@
 package coder
 
 import (
-	"github.com/local/dev-cockpit/internal/assistant"
-	"github.com/local/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
 // Coder is a dependency bag for coder-specific collaborators.

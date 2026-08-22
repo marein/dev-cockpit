@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 // commitDrafts keeps the editor's commit panel per project: the message and

@@ -1,8 +1,8 @@
 package render
 
 import (
-	"github.com/local/dev-cockpit/internal/docker"
-	"github.com/local/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/docker"
+	"github.com/marein/dev-cockpit/internal/project"
 )
 
 // ProjectDocker is one project's docker presence: the compose stacks it can

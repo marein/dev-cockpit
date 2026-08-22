@@ -6,8 +6,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/local/dev-cockpit/internal/assistant"
-	"github.com/local/dev-cockpit/internal/clirun"
+	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/clirun"
 )
 
 // assistantFlags are the flags this runner cannot work without.

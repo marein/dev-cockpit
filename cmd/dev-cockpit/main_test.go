@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/update"
+	"github.com/marein/dev-cockpit/internal/update"
 )
 
 // The compiled default of the updateFeedFormat build var must resolve, because

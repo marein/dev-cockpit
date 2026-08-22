@@ -11,8 +11,8 @@ import (
 	"unicode"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/askpass"
-	"github.com/local/dev-cockpit/internal/git"
+	"github.com/marein/dev-cockpit/internal/askpass"
+	"github.com/marein/dev-cockpit/internal/git"
 )
 
 // gitProxyRequest is one proxied git command line: the arguments exactly as

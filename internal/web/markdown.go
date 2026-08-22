@@ -1,6 +1,6 @@
 package web
 
-import "github.com/local/dev-cockpit/internal/markdown"
+import "github.com/marein/dev-cockpit/internal/markdown"
 
 // renderMarkdownPreview renders editor buffers and chat answers (GitHub
 // Flavored Markdown) to HTML. The renderer lives in internal/markdown with raw

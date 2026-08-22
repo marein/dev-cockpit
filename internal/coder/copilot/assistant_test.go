@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/assistant"
 )
 
 const sessionID = "11111111-2222-4333-8444-555555555555"

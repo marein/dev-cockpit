@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/local/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/assistant"
 )
 
 // copilot keeps how full its context stands out of its output entirely. It

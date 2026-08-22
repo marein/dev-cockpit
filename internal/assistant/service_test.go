@@ -12,8 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/local/dev-cockpit/internal/detach"
-	"github.com/local/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/detach"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 // fakeRunner scripts one provider. A turn is a real detached process writing

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/local/dev-cockpit/internal/keys"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/keys"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // Input is one queued user action; exactly one of the payload fields is

@@ -3,7 +3,7 @@ package web
 import (
 	"sort"
 
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // maxSplitRows bounds the grid's row tracks. The count is the least common

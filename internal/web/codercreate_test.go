@@ -9,13 +9,13 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/assistant"
-	"github.com/local/dev-cockpit/internal/coder"
-	codercopilot "github.com/local/dev-cockpit/internal/coder/copilot"
-	"github.com/local/dev-cockpit/internal/config"
-	"github.com/local/dev-cockpit/internal/project"
-	"github.com/local/dev-cockpit/internal/recent"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/coder"
+	codercopilot "github.com/marein/dev-cockpit/internal/coder/copilot"
+	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/recent"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // createCoder posts the create form the way the local API does, JSON accepted.

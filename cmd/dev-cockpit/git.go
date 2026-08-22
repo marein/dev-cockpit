@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/config"
-	"github.com/local/dev-cockpit/internal/localapi"
+	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/spf13/cobra"
 )
 

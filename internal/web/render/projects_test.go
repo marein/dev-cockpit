@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/project"
 )
 
 // renderProjects executes the real projects list with one row.

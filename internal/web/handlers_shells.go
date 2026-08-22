@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/shell"
-	"github.com/local/dev-cockpit/internal/terminal"
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/shell"
+	"github.com/marein/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 func (s *Server) handleShellNew(c *gin.Context) {

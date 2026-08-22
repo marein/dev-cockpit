@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
 // SourceRoot is one directory outside the project a navigation answer may

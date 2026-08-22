@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/push"
+	"github.com/marein/dev-cockpit/internal/push"
 )
 
 // maxURLLength bounds every user supplied URL: the push endpoint, a webhook,

@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/local/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 // maxWebhooks bounds the webhook list of this single-user cockpit.

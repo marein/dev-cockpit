@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/detach"
+	"github.com/marein/dev-cockpit/internal/detach"
 )
 
 // progressInterval is how often the register records how far the output file

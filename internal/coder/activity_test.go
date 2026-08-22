@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/config"
-	"github.com/local/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // The fallback is for a coder that keeps no record of its sessions: then the

@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/terminal"
-	"github.com/local/dev-cockpit/internal/tmux"
-	"github.com/local/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/tmux"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // maxGroupNameLength bounds a split view's display name.

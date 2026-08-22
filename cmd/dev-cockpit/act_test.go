@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/localapi"
-	"github.com/local/dev-cockpit/internal/web"
+	"github.com/marein/dev-cockpit/internal/localapi"
+	"github.com/marein/dev-cockpit/internal/web"
 )
 
 // cockpit stands in for a running server: it answers on the local socket of a

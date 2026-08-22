@@ -1,6 +1,6 @@
 package render
 
-import "github.com/local/dev-cockpit/internal/coder"
+import "github.com/marein/dev-cockpit/internal/coder"
 
 // SkillRow is one skill of the list plus what the cockpit knows about it:
 // a managed skill is the cockpit's own, written at start and kept current,

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
 const (

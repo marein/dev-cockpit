@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/git"
-	"github.com/local/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/git"
+	"github.com/marein/dev-cockpit/internal/project"
 )
 
 // gitWatchWindow is how long one client's watch keeps a project's poller alive.

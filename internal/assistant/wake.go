@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/statefile"
-	"github.com/local/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
 // wakeTimeout bounds one check. Ten minutes was the first guess, from a check

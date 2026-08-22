@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/detach"
+	"github.com/marein/dev-cockpit/internal/detach"
 )
 
 // A server of the previous version execs this binary with the argv it knows,

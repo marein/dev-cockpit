@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/coder"
 )
 
 // The manager only pre-trusts a directory when the runtime says it can.

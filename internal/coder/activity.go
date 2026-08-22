@@ -3,7 +3,7 @@ package coder
 import (
 	"time"
 
-	"github.com/local/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
 // Asking a coder what one of its sessions is doing is a coder question, not a

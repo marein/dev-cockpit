@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/local/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/coder"
 )
 
 // claude keeps every session as a transcript on disk, so it can say what a

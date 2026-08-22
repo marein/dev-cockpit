@@ -31,7 +31,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
 // The socket lives in a directory of its own, and that directory carries the

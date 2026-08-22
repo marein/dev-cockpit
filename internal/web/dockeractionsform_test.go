@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/docker"
+	"github.com/marein/dev-cockpit/internal/docker"
 )
 
 // actionsForm posts the docker settings form the way the page does.

@@ -1,4 +1,4 @@
-module github.com/local/dev-cockpit
+module github.com/marein/dev-cockpit
 
 go 1.26.3
 

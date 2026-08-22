@@ -3,7 +3,7 @@ package claude
 import (
 	"strings"
 
-	"github.com/local/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
 type controlMapper struct {

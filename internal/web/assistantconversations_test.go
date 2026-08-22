@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/local/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/assistant"
 )
 
 // The two conversation routes exist for the assistant's own CLI: the index and

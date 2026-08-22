@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/assistant"
 )
 
 // noCoders is an assistant with nothing installed: these tests never run a

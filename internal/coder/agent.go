@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/local/dev-cockpit/internal/filesystem"
-	"github.com/local/dev-cockpit/internal/markdown"
+	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/markdown"
 	"gopkg.in/yaml.v3"
 )
 

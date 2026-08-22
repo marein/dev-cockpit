@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/local/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/coder"
 )
 
 // fakeCoder is one coder manager as the classifier sees it: a set of live

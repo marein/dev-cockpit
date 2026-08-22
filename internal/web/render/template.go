@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/hostinfo"
+	"github.com/marein/dev-cockpit/internal/hostinfo"
 )
 
 //go:embed templates/*.gohtml

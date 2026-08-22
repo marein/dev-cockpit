@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
 // Prompt marks injected into every shell via shellMarkEnv: PS0 fires when

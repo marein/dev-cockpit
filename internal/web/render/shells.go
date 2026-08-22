@@ -1,6 +1,6 @@
 package render
 
-import "github.com/local/dev-cockpit/internal/shell"
+import "github.com/marein/dev-cockpit/internal/shell"
 
 // ShellNewData is the model for the new-shell form. Project is chosen from a
 // select (preselected to DefaultPath, e.g. the project you came from).

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/statefile"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 // maxStoredSubscriptions bounds the file as a safety net. The business cap

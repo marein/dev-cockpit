@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"time"
 
-	"github.com/local/dev-cockpit/internal/terminal"
+	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
 // RunBellWatch watches every running coder of this manager and
