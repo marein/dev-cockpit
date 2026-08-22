@@ -432,7 +432,7 @@ const (
 	// promptGateMax bounds the whole wait. A pane that never shows the coder's
 	// TUI (the CLI crashed at startup) is sent to anyway, exactly as before the
 	// gate existed. It stays under the 10s the CLI gives the whole input
-	// request (cmd/dev-cockpit/act.go), so even that case answers instead of
+	// request (internal/cli/act.go), so even that case answers instead of
 	// timing out.
 	promptGateMax = 8 * time.Second
 )

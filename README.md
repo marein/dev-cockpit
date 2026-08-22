@@ -9,39 +9,20 @@ but not on every change. **Run it only on machines and networks you trust.**
 
 ## What it is
 
-Manage your projects from the browser, including your phone: run coding agents,
-open shells, and edit files. Each project lives under one directory; for each one
-you can start CLI coding agents (GitHub Copilot CLI, Claude Code, or both), open
-shell sessions, and edit files in a small built-in editor. Coders and shells run in
-tmux on the host, and the browser attaches to their terminals over a live stream.
-The terminal UIs are colorful and fully usable from the browser.
+Manage your projects from the browser, including your phone: run CLI coding
+agents (GitHub Copilot CLI, Claude Code, or both), open shells, and edit files
+in a small built-in editor. Everything runs in tmux on the host, the browser
+attaches over a live stream, so sessions survive dropped connections and you
+can start on your phone and continue on your laptop. It is the persistence
+tmux already gives you over SSH, with a web UI in front of it.
 
-You can reach the same sessions and shells from any device, so you can start on
-your phone and continue on your laptop. Connections drop at times, on mobile and
-over some VPNs in particular. When that happens the tmux session keeps running on
-the host, and you continue by reopening the page.
-
-This is the persistence tmux already gives you over SSH. dev-cockpit only puts a
-web UI in front of it, so you can use it from any device with a browser, without
-the need to install a terminal or an SSH client.
-
-## What you can do
-
-Create projects from the UI; git repos show their branch and remote.
-
-In a project you can:
-
-- Start coder sessions and attach to them in the browser.
-- Resume earlier coder sessions from their saved state.
+- Create projects from the UI; git repos show their branch and remote.
+- Start coder sessions, attach in the browser, resume earlier ones.
 - Open shell sessions, rename them, run several at once.
-- Edit files in a minimal code editor (browse, create, rename, delete).
-- Upload and download files.
+- Edit files (browse, create, rename, delete), upload and download.
+- Edit each coder's global config: instructions, custom agents, skills.
 
-Across the server you can also edit each coder's global config from the UI:
-custom agents, skills, and the global instructions file.
-
-One server instance serves every coder whose CLI is installed on the host, so a
-single instance drives Copilot and Claude side by side.
+One server instance serves every coder whose CLI is installed on the host.
 
 ## Requirements
 
@@ -49,18 +30,14 @@ single instance drives Copilot and Claude side by side.
 - `tmux` on the host.
 - At least one coder CLI installed and logged in: `copilot` or `claude`.
 
-The server checks `tmux` on startup and refuses to start if it is missing, or if
-no coder CLI is found. A coder whose CLI is missing is skipped, the rest stay
-available.
-
-The UI edits each coder's config under your home directory:
+The server refuses to start without tmux or without any coder CLI; a coder
+whose CLI is missing is skipped. The UI edits each coder's config under your
+home directory:
 
 | Coder     | Instructions file                    | Agents dir          | Skills dir          |
 |-----------|--------------------------------------|---------------------|---------------------|
 | `copilot` | `~/.copilot/copilot-instructions.md` | `~/.copilot/agents` | `~/.copilot/skills` |
 | `claude`  | `~/.claude/CLAUDE.md`                | `~/.claude/agents`  | `~/.claude/skills`  |
-
-Only these two coders exist for now, but others can be added when needed.
 
 ## Install
 
@@ -130,14 +107,14 @@ See all options with `./dev-cockpit serve --help`. The main ones:
 ./dev-cockpit serve --addr 0.0.0.0:3000 --projects-dir ~/projects
 ```
 
-The default `--addr` uses port 80, which needs root; the examples use 3000. Then
-open the server address in your browser and log in.
+The default `--addr` uses port 80, which needs root; the examples use 3000.
+Then open the server address in your browser and log in.
 
 ### Login
 
-The default login is `admin` / `password`. Change it before exposing the server.
-Generate a bcrypt hash with `./dev-cockpit hash-password`, then pass it along with
-a random cookie key:
+The default login is `admin` / `password`. Change it before exposing the
+server. Generate a bcrypt hash with `./dev-cockpit hash-password`, then pass
+it along with a random cookie key:
 
 ```bash
 ./dev-cockpit serve --addr 0.0.0.0:3000 \
@@ -148,9 +125,14 @@ a random cookie key:
 
 ### HTTPS
 
-Serve TLS directly, or terminate it in a reverse proxy and serve plain HTTP.
+Serve TLS directly, or terminate it in a reverse proxy: drop the TLS flags,
+bind locally (e.g. `--addr 127.0.0.1:3000`), and set `--trusted-proxies` to
+your proxy's address.
 
-Create a certificate (adjust `CN`/`subjectAltName` for a real domain or IP):
+<details>
+<summary>Self-signed certificate and TLS flags</summary>
+
+Adjust `CN`/`subjectAltName` for a real domain or IP:
 
 ```bash
 mkdir -p ~/.config/dev-cockpit/tls
@@ -165,23 +147,30 @@ openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
   --tls-key-file ~/.config/dev-cockpit/tls/dev-cockpit.key
 ```
 
-Behind a reverse proxy that terminates TLS, drop the TLS flags, bind locally
-(e.g. `--addr 127.0.0.1:3000`), and set `--trusted-proxies` to your proxy's
-address.
+</details>
 
 ## Custom distributions
 
-A fork ships its own source link and update feed via build time variables:
+A distribution ships its own version, source link, and update feed. It is a
+module of your own (`go mod init`, `go get github.com/marein/dev-cockpit`)
+with a `main.go` (example below). An empty field keeps the default of a plain build.
 
-```bash
-go build -trimpath -ldflags="-s -w \
-  -X main.version=1.2.3 \
-  -X main.repoURL=https://example.com/you/your-fork \
-  -X main.updateFeedURL=https://gitlab.example.com/api/v4/projects/42/releases?per_page=100 \
-  -X main.updateFeedFormat=gitlab" ./cmd/dev-cockpit
+```go
+package main
+
+import "github.com/marein/dev-cockpit/distro"
+
+func main() {
+	distro.Main(distro.Build{
+		Version:          "1.2.3",
+		RepoURL:          "https://example.com/you/your-distribution",
+		UpdateFeedURL:    "https://gitlab.example.com/api/v4/projects/42/releases?per_page=100",
+		UpdateFeedFormat: "gitlab",
+	})
+}
 ```
 
-`updateFeedFormat` is `github` or `gitlab`. The feed must follow this
+`UpdateFeedFormat` is `github` or `gitlab`. The feed must follow this
 repository's release conventions: semver tags,
 `dev-cockpit_<version>_<os>_<arch>.tar.gz` containing `dev-cockpit`, plus
 `dev-cockpit_<version>_checksums.txt`. `dev-cockpit --version` prints what a
