@@ -31,6 +31,7 @@ class HostFloat extends HTMLElement {
         if (toggle) window.bootstrap?.Dropdown.getInstance(toggle)?.hide();
         this.show(getJSON(KEY, {}) || {});
         this.persist();
+        this.flash();
         return;
       }
       if (event.target.closest("[data-host-float-close]")) {
@@ -61,6 +62,12 @@ class HostFloat extends HTMLElement {
   show(state) {
     this.hidden = false;
     this.place(state.x, state.y);
+  }
+
+  flash() {
+    this.classList.remove("dc-host-float-flash");
+    void this.offsetWidth;
+    this.classList.add("dc-host-float-flash");
   }
 
   // place clamps the wanted position into the viewport. A missing x lands the
