@@ -291,7 +291,16 @@ func (r *Repository) Label(path string) string {
 	return path
 }
 
-// Create makes a new project directory under the root.
+// ErrExists is what Create answers for a name whose directory already holds
+// content. It is a sentinel so a caller can tell the taken name apart from a
+// name that cannot be used at all.
+var ErrExists = errors.New("A project with that name already exists.")
+
+// Create makes a new project directory under the root. A directory that
+// already exists but is empty is adopted and answered like a fresh one, a
+// leftover of an earlier attempt is a place to fill and not a refusal;
+// anything with content in it, and anything that is not a plain directory,
+// is somebody's data and answers ErrExists.
 func (r *Repository) Create(rawName string) (string, error) {
 	root, err := r.EnsureRoot()
 	if err != nil {
@@ -302,8 +311,19 @@ func (r *Repository) Create(rawName string) (string, error) {
 		return "", err
 	}
 	dir := filepath.Join(root, name)
-	if _, err := os.Lstat(dir); err == nil {
-		return "", fmt.Errorf("Project directory already exists: %s", dir)
+	if info, err := os.Lstat(dir); err == nil {
+		if info.IsDir() {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				return "", err
+			}
+			if len(entries) == 0 {
+				return filepath.EvalSymlinks(dir)
+			}
+		}
+		return "", ErrExists
+	} else if !os.IsNotExist(err) {
+		return "", err
 	}
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		return "", err

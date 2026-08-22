@@ -5,9 +5,11 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/pluginhost"
 )
 
 // coderPagePaths are a coder's scoped pages relative to their base. The
@@ -189,6 +191,17 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/settings/backup/merge", s.handleSettingsBackupMerge)
 	auth.POST("/settings/backup/merge", s.handleSettingsBackupMergeSave)
 
+	// Every plugin serves its whole subtree behind one wildcard route: the
+	// assets and the generated starter out of the manifest, everything else
+	// through its own handler. The routes sit in the auth group, so a
+	// plugin page is signed in and CSRF protected like any app route.
+	for _, p := range s.plugins {
+		if !pluginhost.ServesHTTP(p) {
+			continue
+		}
+		auth.Any("/plugins/"+p.ID()+"/*path", s.servePlugin(p))
+	}
+
 	auth.GET("/notifications", s.handleNotificationsList)
 	auth.POST("/notifications/read", s.handleNotificationsRead)
 
@@ -306,9 +319,39 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 
 func (s *Server) registerStaticRoutes(r *gin.Engine) {
 	for assetURL, asset := range s.assets.byURL {
+		// Plugin assets live in the manifest too, but their subtree is one
+		// wildcard route in the auth group; registering them here would
+		// collide with it and serve them without the session.
+		if strings.HasPrefix(assetURL, "/plugins/") {
+			continue
+		}
 		assetURL, asset := assetURL, asset
 		r.GET(assetURL, func(c *gin.Context) { serveStaticAsset(c, asset) })
 		r.HEAD(assetURL, func(c *gin.Context) { serveStaticAsset(c, asset) })
+	}
+}
+
+// servePlugin serves one plugin's subtree: the hashed and raw asset URLs and
+// the generated starter out of the asset manifest with the same cache
+// headers as every other asset, everything else through the added routes.
+// The manifest is asked first, so a plugin's own handler can never shadow
+// its assets or the starter.
+func (s *Server) servePlugin(p *pluginhost.Serve) gin.HandlerFunc {
+	base := "/plugins/" + p.ID()
+	var routes http.Handler
+	if added := p.Handler(); added != nil {
+		routes = http.StripPrefix(base, added)
+	}
+	return func(c *gin.Context) {
+		if asset, ok := s.assets.byURL[c.Request.URL.Path]; ok {
+			serveStaticAsset(c, asset)
+			return
+		}
+		if strings.HasPrefix(c.Request.URL.Path, base+"/assets/") || routes == nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		routes.ServeHTTP(c.Writer, c.Request)
 	}
 }
 

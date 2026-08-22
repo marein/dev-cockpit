@@ -122,6 +122,8 @@
       "crelt": "https://cdn.jsdelivr.net/npm/crelt@1.0.6/index.js",
       "style-mod": "https://cdn.jsdelivr.net/npm/style-mod@4.1.3/src/style-mod.js",
       "w3c-keyname": "https://cdn.jsdelivr.net/npm/w3c-keyname@2.2.8/index.js"
+      {{- range pluginElements}},
+      "{{.Name}}": "{{.URL}}"{{end}}
     }
   }
   </script>

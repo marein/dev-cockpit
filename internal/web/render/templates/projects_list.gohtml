@@ -3,8 +3,8 @@
 <div class="page-header d-print-none mb-3">
   <div class="d-flex align-items-center">
     <h2 class="page-title mb-0">Projects</h2>
-    <div class="ms-auto">
-      <a href="/projects/new" class="btn btn-primary btn-icon" aria-label="Create project" title="Create project">
+    <div class="ms-auto{{if pluginSlot "projects-actions"}} d-flex align-items-center gap-2{{end}}">
+      {{pluginSlot "projects-actions"}}<a href="/projects/new" class="btn btn-primary btn-icon" aria-label="Create project" title="Create project">
         <i class="ti ti-plus"></i>
       </a>
     </div>
@@ -68,7 +68,7 @@
     </div>
     {{end}}
     <div class="d-flex align-items-start gap-2">
-      <div class="flex-fill min-w-0 d-flex align-items-baseline flex-wrap column-gap-3 row-gap-1">
+      <div class="flex-fill min-w-0 d-flex align-items-baseline flex-wrap column-gap-3 row-gap-1" data-project-meta>
         <span class="fw-medium text-break">{{.Name}} <span class="status-dot status-dot-animated status-blue ms-1{{if not .HasNews}} d-none{{end}}" data-notify-project-dot aria-label="Something new in this project"></span></span>
         {{if and .GitRepo .GitBranch}}
         <span class="text-secondary small text-break"><i class="ti ti-git-branch" aria-hidden="true"></i> {{.GitBranch}}</span>
@@ -199,8 +199,9 @@
 <div class="empty">
   <div class="empty-icon"><i class="ti ti-folder fs-1"></i></div>
   <p class="empty-title">No projects yet</p>
-  <div class="empty-action">
-    <a href="/projects/new" class="btn btn-primary"><i class="ti ti-plus me-1"></i> Create project</a>
+  <div class="empty-action{{if pluginSlot "projects-empty-actions"}} btn-list justify-content-center{{end}}">
+    <a href="/projects/new" class="btn btn-primary"><i class="ti ti-plus me-1"></i> Create project</a>{{with pluginSlot "projects-empty-actions"}}
+    {{.}}{{end}}
   </div>
 </div>
 {{end}}

@@ -10,18 +10,25 @@ import (
 	"time"
 
 	"github.com/marein/dev-cockpit/internal/hostinfo"
+	"github.com/marein/dev-cockpit/internal/pluginhost"
 )
 
 //go:embed templates/*.gohtml
 var templatesFS embed.FS
 
 // HTMLTemplate returns the parsed template set used by Gin's HTML renderer.
-func HTMLTemplate(assetPath func(string) string, version, assetBuild string) *template.Template {
+// plugins feeds the two plugin funcs: pluginElements binds every final
+// element name to its plugin's starter module in the import map, which is
+// how the lazy element loader finds plugin code; pluginSlot is the markup
+// the plugins added for a named slot.
+func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plugins []*pluginhost.Serve) *template.Template {
 	funcMap := template.FuncMap{
-		"asset":      assetPath,
-		"assetBuild": func() string { return assetBuild },
-		"appVersion": func() string { return version },
-		"coderLabel": CoderLabel,
+		"asset":          assetPath,
+		"assetBuild":     func() string { return assetBuild },
+		"appVersion":     func() string { return version },
+		"pluginElements": func() []pluginhost.Element { return pluginhost.Elements(plugins, assetPath) },
+		"pluginSlot":     func(slot string) template.HTML { return pluginhost.SlotHTML(plugins, slot) },
+		"coderLabel":     CoderLabel,
 		"projectName": func(path string) string {
 			p := strings.TrimSpace(path)
 			if p == "" {

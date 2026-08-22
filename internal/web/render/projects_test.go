@@ -10,7 +10,7 @@ import (
 // renderProjects executes the real projects list with one row.
 func renderProjects(t *testing.T, data ProjectsListData) string {
 	t.Helper()
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test")
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
 	var out strings.Builder
 	if err := tmpl.ExecuteTemplate(&out, "projects_list.gohtml", data); err != nil {
 		t.Fatalf("render projects list: %v", err)

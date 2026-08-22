@@ -55,7 +55,7 @@ func TestThePanelChatFetchLeavesTheNotificationUnread(t *testing.T) {
 	// session, so the engine carries the embedded templates and the session
 	// middleware, nothing else.
 	r := gin.New()
-	r.SetHTMLTemplate(render.HTMLTemplate(func(p string) string { return p }, "test", "test"))
+	r.SetHTMLTemplate(render.HTMLTemplate(func(p string) string { return p }, "test", "test", nil))
 	r.Use(ginsessions.Sessions("session", cookie.NewStore([]byte("test-key"))))
 	r.GET("/assistant/panel", s.handleAssistantPanel)
 

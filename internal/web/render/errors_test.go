@@ -11,7 +11,7 @@ import (
 // head without a counterpart on ErrorPage breaks every HTML error response,
 // this test catches that at build time.
 func TestErrorPageRenders(t *testing.T) {
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test")
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
 	var out strings.Builder
 	err := tmpl.ExecuteTemplate(&out, "error.gohtml", ErrorPage{
 		Title:   "404 Page not found",

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/marein/dev-cockpit/internal/pluginhost"
 )
 
 type staticAssetManifest struct {
@@ -23,7 +25,7 @@ type staticAsset struct {
 	immutable bool
 }
 
-func newStaticAssetManifest() (staticAssetManifest, error) {
+func newStaticAssetManifest(plugins []*pluginhost.Serve) (staticAssetManifest, error) {
 	staticFiles, err := fs.Sub(staticAssets, "static")
 	if err != nil {
 		return staticAssetManifest{}, err
@@ -67,11 +69,60 @@ func newStaticAssetManifest() (staticAssetManifest, error) {
 		}
 	}
 
+	// Plugin assets ride the same pipeline under their mount paths, so the
+	// digest below covers them and a plugin asset change reads as a build
+	// change like any other.
+	for _, p := range plugins {
+		if err := manifest.addPluginAssets(p); err != nil {
+			return staticAssetManifest{}, err
+		}
+	}
+
 	// A build id over the whole hashed asset set. It changes on any asset change,
 	// so a long lived tab can tell its head (which pe.js never swaps) is stale.
 	manifest.digest = assetDigest(manifest.assetURL)
 
 	return manifest, nil
+}
+
+// addPluginAssets puts one plugin's added assets through the pipeline:
+// every file gets a hashed URL under the plugin's mount path, references to
+// assets that already have a hashed URL are rewritten (files are added in
+// name order, so a reference to an alphabetically earlier sibling is
+// rewritten, everything else keeps its raw no-cache URL), and the generated
+// starter module that defines the plugin's custom elements joins last, with
+// the hashed module URLs already in it. The rewrite is a plain substring
+// replace over the whole file, so a raw house asset path inside a plugin
+// file turns into its hashed URL as well. These URLs are not registered as
+// their own routes: the plugin's subtree handler serves them out of the
+// manifest, behind the same session as the rest of the subtree.
+func (m *staticAssetManifest) addPluginAssets(p *pluginhost.Serve) error {
+	if files := p.Assets(); files != nil {
+		var names []string
+		if err := fs.WalkDir(files, ".", func(name string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !entry.IsDir() {
+				names = append(names, name)
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("read the assets of plugin %s: %w", p.ID(), err)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			content, err := fs.ReadFile(files, name)
+			if err != nil {
+				return fmt.Errorf("read the assets of plugin %s: %w", p.ID(), err)
+			}
+			m.add(pluginhost.AssetPrefix(p)+name, rewriteAssetRefs(content, m.assetURL))
+		}
+	}
+	if starter, ok := pluginhost.Starter(p, m.assetPath); ok {
+		m.add(strings.TrimPrefix(pluginhost.StarterPath(p), "/"), []byte(starter))
+	}
+	return nil
 }
 
 func assetDigest(assetURL map[string]string) string {

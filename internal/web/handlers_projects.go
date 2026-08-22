@@ -1,16 +1,54 @@
 package web
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/web/render"
+	"github.com/marein/dev-cockpit/plugin"
 )
+
+// NewProjectCreator is the one project creation path of the cockpit: the
+// repository makes the directory (or adopts an existing empty one, see
+// project.Repository.Create), the projects event tells every open page. The
+// projects page handler runs it, and so does the plugin package's Projects
+// facade, which is what makes a project created by a plugin exactly a
+// project created on the page. A name whose directory holds content answers
+// plugin.ErrProjectExists, the one sentinel both surfaces word their refusal
+// from. It stands apart from the Server because the plugins configure before
+// the server is built, on the same bus the server is then given.
+func NewProjectCreator(projects *project.Repository, bus *eventbus.Bus) func(ctx context.Context, name string) (string, error) {
+	return func(ctx context.Context, name string) (string, error) {
+		path, err := projects.Create(name)
+		if err != nil {
+			if errors.Is(err, project.ErrExists) {
+				return "", plugin.ErrProjectExists
+			}
+			return "", err
+		}
+		bus.Publish(eventbus.Event{Type: "projects"})
+		return path, nil
+	}
+}
+
+// NewProjectChanged is what a plugin's Project.Changed runs: the same
+// projects event NewProjectCreator publishes, so every open list pulls the
+// project's fresh state. It cannot fail today, the error is the facade's
+// room to grow.
+func NewProjectChanged(bus *eventbus.Bus) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		bus.Publish(eventbus.Event{Type: "projects"})
+		return nil
+	}
+}
 
 type projectCreateForm struct {
 	Name AlphaNumDashString `form:"project_name" binding:"required"`
@@ -246,7 +284,7 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 	if !s.decodeForm(c, &form, "/projects/new") {
 		return
 	}
-	path, err := s.projects.Create(form.Name.String())
+	path, err := s.createProject(c.Request.Context(), form.Name.String())
 	if err != nil {
 		if wantsJSON(c.Request) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -256,7 +294,6 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 		return
 	}
 	name := filepath.Base(path)
-	s.publishProjects()
 	if wantsJSON(c.Request) {
 		c.JSON(http.StatusOK, gin.H{"name": name, "path": path})
 		return

@@ -32,9 +32,11 @@ import (
 	"github.com/marein/dev-cockpit/internal/detach"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
+	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/markdown"
 	"github.com/marein/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/pluginhost"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/push"
 	"github.com/marein/dev-cockpit/internal/recent"
@@ -44,6 +46,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/tmux"
 	"github.com/marein/dev-cockpit/internal/update"
 	"github.com/marein/dev-cockpit/internal/web"
+	"github.com/marein/dev-cockpit/plugin"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
@@ -72,6 +75,11 @@ var updateFeedURL = "https://api.github.com/repos/marein/dev-cockpit/releases?pe
 // gitlab, handed in through Main. An unknown value fails every invocation
 // instead of guessing a mapping, see the check in Main.
 var updateFeedFormat = "github"
+
+// servePlugins are the compiled in plugins as ordered named pairs, handed in
+// through Main. distro.Main validated the wiring before it delegates; the
+// plugins themselves configure at serve start, see runServe.
+var servePlugins []plugin.Named[plugin.ServePlugin]
 
 type serveOptions struct {
 	config.Options
@@ -114,6 +122,7 @@ type Build struct {
 	RepoURL          string
 	UpdateFeedURL    string
 	UpdateFeedFormat string
+	ServePlugins     []plugin.Named[plugin.ServePlugin]
 }
 
 // Main runs the dev-cockpit CLI and exits the process on an error.
@@ -130,6 +139,7 @@ func Main(b Build) {
 	if b.UpdateFeedFormat != "" {
 		updateFeedFormat = b.UpdateFeedFormat
 	}
+	servePlugins = b.ServePlugins
 	// The update feed format is validated before cobra runs: a binary built
 	// with an unknown feed format must fail every invocation, --version
 	// included, because the smoke test a running updater gives a downloaded
@@ -382,6 +392,17 @@ func runServe(opts serveOptions) error {
 	}
 	tmuxClient := tmux.New()
 	projectRepo := project.NewRepository(cfg.ProjectsRoot, recent.New(filepath.Join(cfg.StateDir, "recent-projects.json")))
+	// The plugins configure here, with the configuration loaded and before
+	// anything listens: everything their Serve answers is real, and what they
+	// add becomes part of the server built below. The bus exists this early
+	// so the Projects facade delegates to the web UI's own creation path,
+	// which announces on it; the server below is built on the same bus. A
+	// plugin that cannot configure aborts the start with its id on the error.
+	bus := eventbus.New()
+	serves, err := pluginhost.ConfigureServe(servePlugins, cfg.ProjectsRoot, cfg.StateDir, web.NewProjectCreator(projectRepo, bus), web.NewProjectChanged(bus))
+	if err != nil {
+		return err
+	}
 	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude")))
 	selected, err := selectProviders(registry)
 	if err != nil {
@@ -538,7 +559,7 @@ func runServe(opts serveOptions) error {
 	// version stays the raw build var here on purpose: only a build without an
 	// injected release version is a dev build, and only a dev build may have
 	// its release feed moved by the environment.
-	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, dockerService, intel, resolveVersion(), updateFeedURL, updateFeedFormat, version == "dev")
+	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, dockerService, intel, serves, bus, resolveVersion(), updateFeedURL, updateFeedFormat, version == "dev")
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}

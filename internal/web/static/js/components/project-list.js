@@ -403,7 +403,7 @@ class ProjectList extends HTMLElement {
   }
 
   // applySections swaps what a row carries without rebuilding the list: its chip
-  // list and its actions, for the named rows or for all of them. The row itself
+  // list, its actions and its title line, for the named rows or for all of them. The row itself
   // stays in the DOM, which is what keeps the unfold flag, the filter and the
   // scroll where they were.
   applySections(doc, wanted) {
@@ -428,6 +428,12 @@ class ProjectList extends HTMLElement {
       if (freshActions && actions && freshActions.outerHTML !== actions.outerHTML) {
         actions.replaceWith(freshActions);
         syncAnimations(freshActions);
+      }
+      const freshMeta = fresh.querySelector("[data-project-meta]");
+      const meta = section.querySelector("[data-project-meta]");
+      if (freshMeta && meta && freshMeta.outerHTML !== meta.outerHTML) {
+        meta.replaceWith(freshMeta);
+        syncAnimations(freshMeta);
       }
     });
   }

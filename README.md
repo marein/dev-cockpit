@@ -175,3 +175,11 @@ repository's release conventions: semver tags,
 `dev-cockpit_<version>_<os>_<arch>.tar.gz` containing `dev-cockpit`, plus
 `dev-cockpit_<version>_checksums.txt`. `dev-cockpit --version` prints what a
 binary was built with.
+
+### Plugins
+
+Plugins are highly experimental and not yet part of the stable contract,
+examples will follow. A distribution adds them through the `ServePlugins`
+field on `distro.Build`. See the
+[plugin package](https://github.com/marein/dev-cockpit/tree/master/plugin)
+for what a plugin can contribute.

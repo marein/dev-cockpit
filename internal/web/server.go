@@ -25,6 +25,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/hostinfo"
 	"github.com/marein/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/pluginhost"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/push"
 	"github.com/marein/dev-cockpit/internal/restore"
@@ -94,6 +95,13 @@ type Server struct {
 	// intel owns the language server connections behind the editor's code
 	// navigation.
 	intel *editorintelligence.Service
+	// plugins carry what the compiled in plugins added at ConfigureServe,
+	// empty on a plain build. The router mounts their subtrees, the templates
+	// render their modules and slot markup.
+	plugins []*pluginhost.Serve
+	// createProject is the one project creation path, shared with the plugin
+	// facade; see NewProjectCreator.
+	createProject func(ctx context.Context, name string) (string, error)
 	// lspWalks caches the per project language detection walk, guarded by
 	// lspWalksMu; see lspWalkLanguages.
 	lspWalksMu sync.Mutex
@@ -110,12 +118,14 @@ type localCallKeyType struct{}
 
 var localCallKey localCallKeyType
 
-// NewServer constructs a Server serving the given coders.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, version, updateFeedURL, updateFeedFormat string, devBuild bool) (*Server, error) {
+// NewServer constructs a Server serving the given coders. bus is the app
+// wide event stream; it is built by the caller because the plugins configure
+// before this server exists, against the same bus.
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, plugins []*pluginhost.Serve, bus *eventbus.Bus, version, updateFeedURL, updateFeedFormat string, devBuild bool) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
-	assets, err := newStaticAssetManifest()
+	assets, err := newStaticAssetManifest(plugins)
 	if err != nil {
 		return nil, err
 	}
@@ -139,9 +149,10 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		assistant:     workspace,
 		watcher:       watcher,
 		projects:      projects,
+		createProject: NewProjectCreator(projects, bus),
 		quickOpen:     filesystem.NewQuickOpenCache(),
 		notifier:      notifier,
-		bus:           eventbus.New(),
+		bus:           bus,
 		settings:      settingsStore,
 		pusher:        pusher,
 		restorer:      restorer,
@@ -155,6 +166,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		host:          hostinfo.NewCache(cfg.ProjectsRoot, hostSampleTTL),
 		docker:        dockerService,
 		intel:         intel,
+		plugins:       plugins,
 		deletes:       newProjectDeletes(cfg.StateDir),
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
@@ -209,7 +221,7 @@ func (s *Server) newHandler() (http.Handler, error) {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.HandleMethodNotAllowed = true
-	r.SetHTMLTemplate(render.HTMLTemplate(s.assets.assetPath, s.version, s.assets.digest))
+	r.SetHTMLTemplate(render.HTMLTemplate(s.assets.assetPath, s.version, s.assets.digest, s.plugins))
 	if err := r.SetTrustedProxies(s.cfg.TrustedProxies); err != nil {
 		return nil, fmt.Errorf("set trusted proxies: %w", err)
 	}
