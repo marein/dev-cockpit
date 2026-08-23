@@ -30,3 +30,19 @@ func TestPlainKeepsABareLink(t *testing.T) {
 		t.Fatalf("want the address kept, got %q", got)
 	}
 }
+
+// A voice reads the words and the inline commands, never a code block and
+// never an address.
+func TestSpeechDropsCodeBlocksAndAddresses(t *testing.T) {
+	got := Speech("Run `make build` first, see [the docs](https://example.test/docs):\n\n```go\nfunc main() {}\n```\n\nThen open https://example.test/run and check.\n")
+	for _, want := range []string{"make build", "the docs", "Then open", "and check"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("want %q in the speech text, got %q", want, got)
+		}
+	}
+	for _, gone := range []string{"func main", "https://example.test"} {
+		if strings.Contains(got, gone) {
+			t.Fatalf("want %q gone from the speech text, got %q", gone, got)
+		}
+	}
+}

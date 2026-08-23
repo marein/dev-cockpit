@@ -56,12 +56,25 @@
     <button type="button" class="btn btn-icon btn-ghost-secondary flex-shrink-0" aria-label="Attach a file" title="Attach a file, or drop it anywhere on the page" data-assistant-attach>
       <i class="ti ti-paperclip"></i>
     </button>
-    <div class="flex-fill min-w-0">
+    <div class="flex-fill min-w-0 position-relative">
       <textarea class="form-control" name="message" rows="1" data-assistant-input placeholder="What to do?" aria-label="Message" autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true">{{.Draft}}</textarea>
+      {{if .SttURL}}
+      <div class="position-absolute top-0 start-0 w-100 h-100 d-none align-items-center justify-content-center bg-body rounded pe-none" data-assistant-talk-hint aria-live="polite">
+        <span class="d-inline-flex align-items-center gap-2 text-secondary" data-assistant-talk-slide>
+          <i class="ti ti-arrow-left" aria-hidden="true"></i><span data-assistant-talk-hint-text>Slide to cancel</span>
+        </span>
+      </div>
+      {{end}}
     </div>
+    {{if .SttURL}}
+    <button type="submit" class="btn btn-icon btn-primary flex-shrink-0" aria-label="Send message, hold to talk" aria-pressed="false" title="Tap to send. Hold to talk, release to send what you said; Alt Alt starts and stops from anywhere" data-assistant-send>
+      <i class="ti ti-send"></i>
+    </button>
+    {{else}}
     <button type="submit" class="btn btn-icon btn-primary flex-shrink-0" aria-label="Send message" data-assistant-send>
       <i class="ti ti-send"></i>
     </button>
+    {{end}}
     <button type="button" class="btn btn-icon btn-outline-danger flex-shrink-0 d-none" aria-label="Stop answering" data-assistant-cancel>
       <i class="ti ti-player-stop"></i>
     </button>
@@ -147,6 +160,23 @@
   {{if eq .View "chat"}}
   <span class="dc-term-icon assistant me-1" aria-hidden="true"><i class="ti ti-sparkles"></i></span>
   <span class="fw-medium flex-fill min-w-0 text-truncate">Assistant{{if gt (len .Coders) 1}} <span class="text-secondary fw-normal">· {{.CoderLabel}}</span>{{end}}</span>
+  {{if .TTS}}
+  {{/* The speaker opens the voice menu instead of switching on its own: the
+       icon alone says whether answers read themselves aloud, so the button
+       never wears a colour for it. Both choices are per device and live in
+       localStorage, the way the terminal keeps its own settings. */}}
+  <div class="dropdown">
+    <button type="button" class="btn btn-icon btn-ghost-secondary" data-assistant-voice data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Voice" title="Voice"><i class="ti ti-volume-off"></i></button>
+    <div class="dropdown-menu dropdown-menu-end p-3 dc-voice-menu">
+      <div class="form-check form-switch mb-3">
+        <input class="form-check-input" type="checkbox" role="switch" id="assistant-voice-autoplay" data-assistant-autoplay>
+        <label class="form-check-label" for="assistant-voice-autoplay">Autoplay</label>
+      </div>
+      <div class="form-label mb-1">Volume</div>
+      <dc-assistant-volume></dc-assistant-volume>
+    </div>
+  </div>
+  {{end}}
   {{template "assistant_jobs_button.gohtml" .}}
   <button type="button" class="btn btn-icon btn-ghost-secondary" data-assistant-view-open="history" aria-label="Earlier conversations" title="Earlier conversations"><i class="ti ti-history"></i></button>
   <button type="button" class="btn btn-icon btn-ghost-secondary" data-assistant-view-open="memory" aria-label="Memory" title="What the assistant knows about you"><i class="ti ti-brain"></i></button>
@@ -160,7 +190,7 @@
 
 {{define "assistant_panel_content.gohtml"}}
 {{if eq .View "chat"}}
-<dc-assistant internal-scroll data-assistant-coder="{{.CoderID}}" conversation-id="{{.ID}}" coder-label="{{.CoderLabel}}" stream-url="{{.StreamURL}}" post-url="{{.PostURL}}" message-url="{{.MessageURL}}" upload-url="{{.UploadURL}}" max-bytes="{{.MaxPromptBytes}}" max-file-bytes="{{.MaxUploadBytes}}" draft-url="{{.DraftURL}}" draft-files="{{.DraftFiles}}"{{if .Running}} running{{end}}{{if .Blocked}} blocked{{end}}>
+<dc-assistant internal-scroll data-assistant-coder="{{.CoderID}}" conversation-id="{{.ID}}" coder-label="{{.CoderLabel}}" stream-url="{{.StreamURL}}" post-url="{{.PostURL}}" message-url="{{.MessageURL}}" upload-url="{{.UploadURL}}" stt-url="{{.SttURL}}"{{if .TTS}} tts{{end}} max-bytes="{{.MaxPromptBytes}}" max-file-bytes="{{.MaxUploadBytes}}" draft-url="{{.DraftURL}}" draft-files="{{.DraftFiles}}"{{if .Running}} running{{end}}{{if .Blocked}} blocked{{end}}>
   {{template "assistant_panel_head.gohtml" .}}
   <div class="dc-assistant-scroll" data-assistant-scroll>
     {{template "assistant_thread.gohtml" .}}

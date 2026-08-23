@@ -26,14 +26,18 @@ func ValidID(id string) bool { return idPattern.MatchString(id) }
 //	<index-path>                                     index, no messages
 //	<dir>/<conversation-id>.json                     one transcript
 //	<upload-root>/<conversation-id>/<name>           what a prompt carried
+//	<dir>/../audio/<conversation-id>/<message>-<voice>.wav  the spoken answers
 //
 // Index and transcripts go through internal/statefile, so reads pick up outside
 // changes, writes are atomic and a corrupt file is quarantined instead of
-// overwritten.
+// overwritten. The audio cache sits next to the transcripts and is
+// deliberately not in the backup: it is rendered from the answer whenever it
+// is missing, no word of the cockpit is lost with it.
 type Store struct {
 	indexPath  string
 	dir        string
 	uploadRoot string
+	audioRoot  string
 	mu         sync.Mutex
 }
 
@@ -44,7 +48,7 @@ func NewStore(stateDir string) *Store { return NewStoreAt(Paths(stateDir)) }
 // NewStoreAt returns a store over explicit paths, so the layout stays in one
 // place: the caller decides where index, transcripts and uploads live.
 func NewStoreAt(indexPath, dir, uploadRoot string) *Store {
-	return &Store{indexPath: indexPath, dir: dir, uploadRoot: uploadRoot}
+	return &Store{indexPath: indexPath, dir: dir, uploadRoot: uploadRoot, audioRoot: filepath.Join(filepath.Dir(dir), "audio")}
 }
 
 // UploadRoot is the directory holding one upload subdirectory per conversation.
@@ -131,8 +135,9 @@ func (s *Store) Delete(id string) error {
 		log.Printf("assistant: remove transcript %s: %v", id, err)
 		return errors.New("The conversation could not be deleted.")
 	}
-	// The uploads go with the transcript. A failure here is logged and does not
-	// keep the conversation alive: the index entry is what the user sees.
+	// The uploads and the spoken answers go with the transcript. A failure here
+	// is logged and does not keep the conversation alive: the index entry is
+	// what the user sees.
 	if err := os.RemoveAll(filepath.Join(s.uploadRoot, id)); err != nil {
 		log.Printf("assistant: remove uploads of %s: %v", id, err)
 	}

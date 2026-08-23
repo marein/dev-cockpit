@@ -2776,6 +2776,36 @@ terminal-input { display: none; }
   75% { transform: translateY(0) rotate(-9deg); }
 }
 
+/* The assistant's voice menu: wide enough that the volume slider is worth
+   dragging, and the reading beside it keeps a fixed width so the row does not
+   twitch while the value counts up. */
+.dc-voice-menu { min-width: 18rem; }
+
+/* Turns an icon into a spinner while something runs. It is added to the icon
+   and never replaces it, which is what keeps the layout still: the glyph
+   stays and only goes invisible, so the element keeps its box and its text
+   baseline, and a row aligned on baselines does not move, where a bare
+   spinner box would push it down, because an inline box with no text takes
+   its baseline from its bottom edge. The ring is drawn from a border rather
+   than rotated as a glyph: a rotating icon font shimmers, the rasteriser
+   hints the outline again on every frame. */
+.dc-icon-spinner {
+  visibility: hidden;
+  position: relative;
+}
+.dc-icon-spinner::after {
+  visibility: visible;
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 0.15em solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .dc-icon-spinner::after { animation: dc-spin 0.9s linear infinite; }
+}
+
 .dc-spin { display: inline-block; }
 @media (prefers-reduced-motion: no-preference) {
   .dc-spin { animation: dc-spin 0.9s linear infinite; }

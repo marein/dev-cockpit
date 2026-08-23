@@ -32,6 +32,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/settings"
 	"github.com/marein/dev-cockpit/internal/shell"
 	"github.com/marein/dev-cockpit/internal/update"
+	"github.com/marein/dev-cockpit/internal/voice"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
@@ -95,6 +96,14 @@ type Server struct {
 	// intel owns the language server connections behind the editor's code
 	// navigation.
 	intel *editorintelligence.Service
+	// voice owns the speech engine containers behind the assistant's talk
+	// button and spoken answers.
+	voice *voice.Service
+	// audioBusy holds the answers being spoken right now, one entry per
+	// answer and voice, so concurrent asks share one synthesis instead of
+	// paying for two; guarded by audioMu.
+	audioMu   sync.Mutex
+	audioBusy map[string]*spokenAnswer
 	// plugins carry what the compiled in plugins added at ConfigureServe,
 	// empty on a plain build. The router mounts their subtrees, the templates
 	// render their modules and slot markup.
@@ -121,7 +130,7 @@ var localCallKey localCallKeyType
 // NewServer constructs a Server serving the given coders. bus is the app
 // wide event stream; it is built by the caller because the plugins configure
 // before this server exists, against the same bus.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, plugins []*pluginhost.Serve, bus *eventbus.Bus, version, updateFeedURL, updateFeedFormat string, devBuild bool) (*Server, error) {
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, voiceService *voice.Service, plugins []*pluginhost.Serve, bus *eventbus.Bus, version, updateFeedURL, updateFeedFormat string, devBuild bool) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
@@ -166,6 +175,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		host:          hostinfo.NewCache(cfg.ProjectsRoot, hostSampleTTL),
 		docker:        dockerService,
 		intel:         intel,
+		voice:         voiceService,
 		plugins:       plugins,
 		deletes:       newProjectDeletes(cfg.StateDir),
 		loginLimiter: newLoggingLoginLimiter(

@@ -139,6 +139,18 @@ func DocsTopics() []DocsTopic {
 					Desc:     `Drop files onto the assistant or paste them into the message box; the paperclip <i class="ti ti-paperclip align-text-bottom" aria-hidden="true"></i> does the same.`,
 				},
 				{
+					Title:    "Talk to it",
+					Tag:      "Voice",
+					TagClass: "bg-blue-lt",
+					Desc:     `Hold the send button <i class="ti ti-send align-text-bottom" aria-hidden="true"></i>: after a moment it turns red and records, speak, release, and what you said is transcribed and sent right away, anything already typed going in front of it. Sliding left while holding cancels, nothing is sent, the way messengers do it; the hint over the message box shows the way. A short tap sends what you typed, as always. On a keyboard, tap <kbd>Alt</kbd> twice to start recording from anywhere, the assistant opens first when it is closed, and tap <kbd>Alt</kbd> twice again to stop and send. German and English both work without a language setting. The transcription runs locally in a container the cockpit builds on this host on first use; the first hold waits for that once.`,
+				},
+				{
+					Title:    "It talks back",
+					Tag:      "Voice",
+					TagClass: "bg-blue-lt",
+					Desc:     `The speaker <i class="ti ti-volume align-text-bottom" aria-hidden="true"></i> on an answer reads it aloud, code blocks left out, German answers in a German voice and English ones in an English voice. Voice mode <i class="ti ti-volume align-text-bottom" aria-hidden="true"></i> in the assistant's head reads every finished answer on its own; the choice stays on this device. Under Settings &rsaquo; Assistant &rsaquo; Voice each engine picks how it runs, Automatic, in Docker, or Off.`,
+				},
+				{
 					Title: "Starting over",
 					Desc:  `The new-conversation button <i class="ti ti-message-plus align-text-bottom" aria-hidden="true"></i> starts fresh, and with more than one coder installed it asks which one answers. One conversation is live at a time, the earlier ones stay read-only under the clock icon <i class="ti ti-history align-text-bottom" aria-hidden="true"></i>.`,
 				},

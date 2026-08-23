@@ -45,6 +45,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/shell"
 	"github.com/marein/dev-cockpit/internal/tmux"
 	"github.com/marein/dev-cockpit/internal/update"
+	"github.com/marein/dev-cockpit/internal/voice"
 	"github.com/marein/dev-cockpit/internal/web"
 	"github.com/marein/dev-cockpit/plugin"
 	"github.com/spf13/cobra"
@@ -539,6 +540,15 @@ func runServe(opts serveOptions) error {
 		return dockerService.State().Host
 	})
 	intel.SweepStale()
+	// The voice service owns the speech engine containers the same way:
+	// warmed on first use, stopped after the idle timeout, leftovers of a
+	// previous process swept at boot behind the state root label.
+	voiceService := voice.New(cfg.StateDir, func() string {
+		return dockerService.State().Host
+	}, settingsStore.Get, func(engineID string) {
+		bus.Publish(eventbus.Event{Type: "voice-warming", Data: map[string]string{"engine": engineID}})
+	})
+	voiceService.SweepStale()
 	stop := make(chan os.Signal, 2)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -553,13 +563,14 @@ func runServe(opts serveOptions) error {
 		}()
 		removeManagedSkills(selected, instance)
 		intel.Close()
+		voiceService.Close()
 		os.Exit(0)
 	}()
 
 	// version stays the raw build var here on purpose: only a build without an
 	// injected release version is a dev build, and only a dev build may have
 	// its release feed moved by the environment.
-	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, dockerService, intel, serves, bus, resolveVersion(), updateFeedURL, updateFeedFormat, version == "dev")
+	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, dockerService, intel, voiceService, serves, bus, resolveVersion(), updateFeedURL, updateFeedFormat, version == "dev")
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}

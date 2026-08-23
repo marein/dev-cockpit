@@ -71,3 +71,37 @@ func Plain(src string) string {
 	})
 	return strings.TrimSpace(b.String())
 }
+
+// Speech reduces Markdown to what a voice should read out, for the spoken
+// answers. It is Plain with the parts no listener wants taken away: a code
+// block falls out entirely, a program is not prose, and a bare link address
+// says nothing a voice can say. Inline code stays, a spoken sentence may name
+// a command; a link's words stay while its destination goes, which the walk
+// gives for free because the destination is no child of the link.
+func Speech(src string) string {
+	source := []byte(src)
+	var b strings.Builder
+	_ = ast.Walk(gfm.Parser().Parse(text.NewReader(source)), func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		switch node := n.(type) {
+		case *ast.Text:
+			if entering {
+				b.Write(node.Segment.Value(source))
+				if node.SoftLineBreak() || node.HardLineBreak() {
+					b.WriteByte('\n')
+				}
+			}
+		case *ast.String:
+			if entering {
+				b.Write(node.Value)
+			}
+		case *ast.FencedCodeBlock, *ast.CodeBlock, *ast.AutoLink:
+			return ast.WalkSkipChildren, nil
+		default:
+			if !entering && n.Type() == ast.TypeBlock {
+				b.WriteByte('\n')
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	return strings.TrimSpace(b.String())
+}

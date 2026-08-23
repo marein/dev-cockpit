@@ -119,6 +119,12 @@ func (s *Server) assistantData(current assistant.Conversation, all, panel bool) 
 		currentURL = "/assistant/" + id
 		streamURL = ""
 	}
+	// An empty stt URL is how the page knows the talk button has no engine
+	// behind it; the route itself refuses a stale page as the backstop.
+	sttURL := ""
+	if !s.voiceSTTOff() {
+		sttURL = base + "/stt"
+	}
 	return render.AssistantData{
 		ID:             current.ID,
 		Panel:          panel,
@@ -140,6 +146,8 @@ func (s *Server) assistantData(current assistant.Conversation, all, panel bool) 
 		PostURL:        base,
 		MessageURL:     base + "/messages/",
 		UploadURL:      base + "/user-upload",
+		SttURL:         sttURL,
+		TTS:            !s.voiceTTSOff(),
 		MaxPromptBytes: assistant.MaxPromptBytes,
 		MaxUploadBytes: s.maxUploadBytes(),
 		MemoryCount:    len(s.assistant.Memory()),
@@ -414,6 +422,12 @@ func (s *Server) assistantMessageView(conversationID string, m assistant.Message
 		view.HTML = plainTextHTML(m.Content)
 	} else if m.Content != "" {
 		view.HTML = s.assistantMarkdown(conversationID, m.Content)
+	}
+	// The speaker renders only on a finished answer with words in it, and
+	// only while text to speech is on; the audio route repeats those checks
+	// for a page from before a settings change.
+	if !view.User && m.Content != "" && m.State == assistant.StateComplete && !s.voiceTTSOff() {
+		view.AudioURL = "/assistant/" + conversationID + "/messages/" + m.ID + "/audio"
 	}
 	return view
 }

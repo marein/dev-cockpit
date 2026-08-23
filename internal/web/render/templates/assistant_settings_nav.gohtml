@@ -1,0 +1,33 @@
+{{define "assistant_settings_start.gohtml"}}
+<div class="page-header d-print-none mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <div class="flex-fill min-w-0">
+      <h2 class="page-title text-truncate mb-0">Settings</h2>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row g-0">
+    <div class="col-12 col-md-3 border-end">
+      <div class="card-body">
+        {{template "settings_nav" .SettingsNav}}
+      </div>
+    </div>
+    <div class="col-12 col-md-9">
+      <div class="card-header">
+        <ul class="nav nav-tabs card-header-tabs" data-assistant-sections>
+          <li class="nav-item">
+            <a class="nav-link{{if eq .Section "voice"}} active{{end}}" href="/settings/assistant/voice"><i class="ti ti-microphone me-1 d-none d-sm-inline-block"></i>Voice</a>
+          </li>
+        </ul>
+      </div>
+      <div class="card-body">
+{{end}}
+
+{{define "assistant_settings_end.gohtml"}}
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

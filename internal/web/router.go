@@ -153,6 +153,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/assistant/:id/messages/:messageId", s.handleAssistantMessage)
 	auth.GET("/assistant/:id/draft", s.handleAssistantDraft)
 	auth.POST("/assistant/:id/user-upload", s.handleAssistantUpload)
+	// The two voice routes: a recorded clip in and its transcript out, and
+	// one answer spoken, synthesized per request.
+	auth.POST("/assistant/:id/stt", s.handleAssistantSTT)
+	auth.GET("/assistant/:id/messages/:messageId/audio", s.handleAssistantMessageAudio)
 	auth.GET("/assistant/:id/media/*path", s.handleAssistantMedia)
 
 	auth.GET("/shells/new", s.handleShellNew)
@@ -177,6 +181,11 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/editor/lsp", s.handleSettingsEditorLSPSave)
 	auth.GET("/settings/notifications", s.handleSettingsNotifications)
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
+	// The assistant's settings sit behind a tab like the editor's, so the page
+	// can grow more of them; the bare path leads to the one there is.
+	auth.GET("/settings/assistant", s.handleSettingsAssistant)
+	auth.GET("/settings/assistant/voice", s.handleSettingsVoice)
+	auth.POST("/settings/assistant/voice", s.handleSettingsVoiceSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
 	auth.POST("/settings/general", s.handleSettingsGeneralSave)
 	// Docker is a section of its own: the daemon and the compose commands.
