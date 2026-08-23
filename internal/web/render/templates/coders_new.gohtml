@@ -7,7 +7,7 @@
   <h2 class="page-title">Start coder</h2>
 </div>
 <div class="card">
-  <form method="post" action="/coders/new?return={{urlquery .Return}}">
+  <form method="post" action="/coders/new?return={{urlquery .Return}}{{if .Panel}}&amp;panel=1{{end}}">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     {{if .SplitGroup}}<input type="hidden" name="group" value="{{.SplitGroup}}">
     <input type="hidden" name="column" value="{{.SplitColumn}}">{{end}}

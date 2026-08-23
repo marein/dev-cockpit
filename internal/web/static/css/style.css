@@ -1010,8 +1010,13 @@ dc-assistant-panel:not([hidden]) { display: block; }
   body.dc-assistant-docked .page {
     margin-right: var(--dc-assistant-w);
   }
-  /* On a desktop the assistant's corner button replaces the floating quick
-     nav; phones and tablets keep the quick nav as their primary navigation. */
+}
+/* The assistant's corner button replaces the floating quick nav exactly where
+   the editor's terminal panel exists (the complement of the panel's hide rule
+   below), so a screen either navigates through the quick nav and opens coders
+   on their own pages, or has the corner and the panel; phones, tablets and low
+   windows keep the quick nav as their primary navigation. */
+@media (min-width: 768px) and (min-height: 500.02px) and (hover: hover) and (pointer: fine) {
   .quicknav { display: none; }
 }
 @media (min-width: 992px) {
@@ -1056,7 +1061,7 @@ dc-assistant-panel:not([hidden]) { display: block; }
 body:not(:has(.attach-footer)) .dc-assistant-corner {
   bottom: calc(1.5rem + env(safe-area-inset-bottom));
 }
-@media (min-width: 992px) {
+@media (min-width: 768px) and (min-height: 500.02px) and (hover: hover) and (pointer: fine) {
   .dc-assistant-corner { display: inline-flex; }
 }
 body.dc-assistant-docked .dc-assistant-corner { display: none !important; }

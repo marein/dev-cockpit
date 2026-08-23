@@ -92,6 +92,7 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 		SelectedCoder:     selected.ID(),
 		AutomaticApproval: true,
 		Return:            s.formReturn(c),
+		Panel:             c.Query("panel") == "1",
 		SplitGroup:        target.Group,
 		SplitColumn:       target.Column,
 	})
@@ -213,10 +214,14 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		c.JSON(http.StatusOK, answer)
 		return
 	}
-	// A create that came from an editor's terminal panel goes back there: the
-	// form action carries the return target through the POST, and the editor
-	// picks the new session up via ?terminal and activates its tab.
-	if ret := s.formReturn(c); editorReturnPath.MatchString(ret) {
+	// A create that came from the editor terminal panel's + menu goes back
+	// there: the form action carries the return target and the panel marker
+	// through the POST, and the editor page hands the id back to its client as
+	// data-editor-terminal to activate that tab. Only the marker earns the
+	// comeback; every other caller, the quick nav on an editor page included,
+	// lands on the coder's own page like a created shell does, and its editor
+	// return serves the form's Cancel alone.
+	if ret := s.formReturn(c); c.Query("panel") == "1" && editorReturnPath.MatchString(ret) {
 		c.Redirect(http.StatusSeeOther, ret+"?terminal="+url.QueryEscape(res.Identifier))
 		return
 	}

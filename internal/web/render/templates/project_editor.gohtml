@@ -20,7 +20,8 @@
      data-editor-max-kib="{{.MaxEditKiB}}"
      data-editor-diff-max-lines="{{.DiffMaxLines}}"
      data-editor-diff-max-kib="{{.DiffMaxKiB}}"
-     data-editor-lsp="{{.LSPExts}}">
+     data-editor-lsp="{{.LSPExts}}"
+     data-editor-terminal="{{.Terminal}}">
   <div class="editor-body">
     <div class="editor-tree-col">
       <div class="editor-pane-header d-flex align-items-center gap-2 px-2 py-2 border-bottom">
@@ -229,7 +230,7 @@
                 <i class="ti ti-plus"></i>
               </button>
               <div class="dropdown-menu dropdown-menu-end editor-term-new-menu">
-                <a class="dropdown-item" href="/coders/new?project={{urlquery .Project.Name}}&amp;return=/projects/{{urlquery .Project.Name}}/editor">
+                <a class="dropdown-item" href="/coders/new?project={{urlquery .Project.Name}}&amp;return=/projects/{{urlquery .Project.Name}}/editor&amp;panel=1">
                   <i class="ti ti-robot me-2"></i>New coder
                 </a>
                 <button type="button" class="dropdown-item" data-editor-term-new>

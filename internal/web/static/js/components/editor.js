@@ -7044,9 +7044,9 @@ async function init(root) {
   void loadDocker();
   void pullLSPIndex();
   document.body.appendChild(termModalsHostEl);
-  const urlTerminal = new URLSearchParams(window.location.search).get("terminal");
-  if (urlTerminal && termApplies()) {
-    termActiveId = urlTerminal;
+  const pageTerminal = root.dataset.editorTerminal || "";
+  if (pageTerminal && termApplies()) {
+    termActiveId = pageTerminal;
     void openTermPanel({ focus: true });
   } else if (termOpen) {
     void openTermPanel({ focus: false });
@@ -7197,7 +7197,7 @@ async function init(root) {
   editor.setVisible(false);
   await Promise.all([loadTree(), restoreTabs(), loadGitStatus()]);
   if (tabs.length === 0 && mobileMedia.matches) openDrawer();
-  if (urlTerminal && termOpen && termApplies()) void activateTermPane(urlTerminal, { focus: true });
+  if (pageTerminal && termOpen && termApplies()) void activateTermPane(pageTerminal, { focus: true });
 
   return () => {
     ac.abort();

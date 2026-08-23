@@ -73,6 +73,7 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		DiffMaxLines: set.DiffMaxLines,
 		DiffMaxKiB:   set.DiffMaxKiB,
 		LSPExts:      s.lspSpec(),
+		Terminal:     strings.TrimSpace(c.Query("terminal")),
 	})
 }
 

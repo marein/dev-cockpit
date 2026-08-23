@@ -24,7 +24,10 @@ const { assert, sleep, BASE } = L;
 // end. Detail rows swipe too, reorder stays active-list only: active coders
 // reveal stop plus delete, inactive coders reveal delete (POST
 // /coders/:id/delete, projects page confirm wording), shells reveal rename plus
-// delete.
+// delete. A coder created through the quick nav lands on the coder's own page
+// even while standing on the editor page: the editor comeback belongs to the
+// panel + menu's panel=1 marker alone, the quick nav's editor return serves
+// only the form's Cancel.
 
 L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
   const tag = `qn-${Date.now().toString(36)}`;
@@ -32,6 +35,7 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
   const shellUrls = [];
   let dragIds = [];
   let dragUrls = [];
+  let retCoderPath = null;
   // Synthetic touch swipe left on a row's anchor, shared by the swipe checks in
   // both quick nav tabs. Long enough to fling past the widest action reveal.
   const swipeRow = (pg, sel) => pg.evaluate(async (sel) => {
@@ -52,9 +56,11 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
     await L.confirmSwal(pg);
   };
   try {
-    // The quick nav shows below lg only, the assistant's corner button replaces
-    // it on a desktop, so this whole runner drives it in a narrower window.
-    await page.setViewportSize({ width: 960, height: 900 });
+    // The quick nav shows exactly where the editor's terminal panel does not
+    // (below md, low windows, coarse pointers); the assistant's corner button
+    // replaces it everywhere else, so this whole runner drives it in a window
+    // below md.
+    await page.setViewportSize({ width: 750, height: 900 });
     await L.createProject(page, project);
 
     await run("toggle opens, lazy loads tabs, drill + back", async () => {
@@ -343,6 +349,21 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       assert(!(await mp.$(inactiveItem)), "the deleted coder came back as an inactive row");
     });
 
+    await run("mobile: quicknav coder create from the editor lands on the coder page", async () => {
+      const mp = await mobilePage();
+      const name = `qnret-${tag.slice(-4)}`;
+      await mp.goto(`${BASE}/projects/${encodeURIComponent(project)}/editor`, { waitUntil: "domcontentloaded" });
+      await mp.click(".quicknav-toggle");
+      await mp.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 });
+      const newCoder = mp.locator('.quicknav-context a[href^="/coders/new"]').first();
+      await newCoder.waitFor({ state: "visible", timeout: 6000 });
+      await Promise.all([mp.waitForURL(/\/coders\/new/, { timeout: 10000 }), newCoder.click()]);
+      const f = mp.locator('form:has(select[name="agent"])').first();
+      await f.locator('input[name="name"]').fill(name);
+      await Promise.all([mp.waitForURL(/\/coders\/(?!new)[^/]+$/, { timeout: 30000 }), f.locator('button[type="submit"]').first().click()]);
+      retCoderPath = new URL(mp.url()).pathname;
+    });
+
     await run("context bar reflects the current project on a scoped page", async () => {
       await page.goto(`${BASE}/projects/${encodeURIComponent(project)}/editor`, { waitUntil: "domcontentloaded" });
       await page.click(".quicknav-toggle");
@@ -377,6 +398,16 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       assert(tail[0] === "New coder" && tail[1] === "New shell", `expected New coder/New shell last, got ${tail.join(", ")}`);
     });
   } finally {
+    if (retCoderPath) {
+      await L.stopSession(page, `${BASE}${retCoderPath}`).catch(() => {});
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" }).catch(() => {});
+      const d = page.locator(`#project-${project} form[action^="/coders/"][action$="/delete"]`).first();
+      if (await d.count().catch(() => 0)) {
+        await d.locator("button").first().click().catch(() => {});
+        await L.confirmSwal(page).catch(() => {});
+        await sleep(500);
+      }
+    }
     for (const u of shellUrls) await L.deleteShell(page, u).catch(() => {});
     await L.deleteProject(page, project).catch(() => {});
   }

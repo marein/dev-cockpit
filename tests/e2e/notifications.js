@@ -243,9 +243,9 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
         const badge = document.querySelector(".quicknav-toggle [data-notify-count]");
         return badge && !badge.classList.contains("d-none") && parseInt(badge.textContent, 10) >= 1;
       }, null, { timeout: 6000 });
-      // The quick nav shows below lg only, the assistant's corner button
-      // replaces it on a desktop, so opening it needs a narrower window.
-      await page.setViewportSize({ width: 960, height: 900 });
+      // The quick nav shows where the editor's terminal panel does not (below
+      // md on a fine pointer), so opening it needs a window below md.
+      await page.setViewportSize({ width: 750, height: 900 });
       await page.click(".quicknav-toggle");
       // News shows as the ringing coder/shell icon now (dc-term-icon.news), not a
       // separate status dot; the project-level dot above stays a status dot.

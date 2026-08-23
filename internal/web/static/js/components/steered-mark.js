@@ -16,6 +16,7 @@ class SteeredMark extends HTMLElement {
   }
 
   refresh() {
+    if (!this.ac) return;
     const src = this.getAttribute("src");
     if (!src) return;
     if (this.inFlight) {

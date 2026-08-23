@@ -27,6 +27,12 @@ type EditorData struct {
 	// pairs of the enabled language server profiles, so the client never
 	// mirrors the registry and a disabled profile leaves no surface.
 	LSPExts string
+	// Terminal is the session id a panel-marked coder create handed back via
+	// ?terminal=, rendered into the page because the client must not read it
+	// from the URL: a boosted navigation swaps the body before it pushes the
+	// URL, so the editor's init still sees the previous address. The terminal
+	// panel activates that session's tab.
+	Terminal string
 }
 
 // EditorProjectsData feeds the switcher fragment, the very rows the editor

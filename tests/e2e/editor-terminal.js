@@ -35,8 +35,10 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // terminal, and the panel owns the terminal keys once it was clicked anywhere
 // (a focus-owner flag, because a click on the bare strip focuses nothing).
 // A coder created through the + menu comes back to the editor: the create
-// form's action carries the return target, the server redirects to
-// .../editor?terminal=<id> and the panel activates that tab. Coder panes get
+// form's action carries the return target plus the panel=1 marker, the server
+// redirects to .../editor?terminal=<id> and the panel activates that tab
+// (without the marker, e.g. from the quick nav, a create lands on the coder's
+// own page). Coder panes get
 // the attach page's files modal (fragment-rendered per coder, kept alive
 // across refreshes like the panes) behind a [data-terminal-footer] button the
 // active island unhides, so drop and paste uploads run through

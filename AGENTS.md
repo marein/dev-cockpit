@@ -1520,10 +1520,17 @@ free floating page scripts.
   owns them as long as the last click landed inside it, a focus-owner flag,
   because a click on the bare strip focuses nothing. The editor's own
   shortcuts skip events from inside the panel. A coder created through the +
-  menu comes back: the create form's action carries the return target
-  through the POST, an editor return redirects to `.../editor?terminal=<id>`,
-  and the panel activates that tab **after** the tab restore, whose own
-  `editor.focus()` lands later. A coder pane gets the attach page's files
+  menu comes back: the create form's action carries the return target **and
+  the `panel=1` marker** through the POST, that pair redirects to
+  `.../editor?terminal=<id>`, and the panel activates that tab **after** the
+  tab restore, whose own `editor.focus()` lands later. The marker is what
+  earns the comeback, the return alone cannot: the quick nav's create links
+  on an editor page carry the same editor return for their Cancel, and
+  without the marker a create lands on the coder's own page like a created
+  shell does, which is the correct place wherever the panel does not exist.
+  The id reaches the client as `data-editor-terminal` on the page, never out
+  of the URL: a boosted navigation swaps the body before it pushes the
+  address, so the editor's init still reads the previous one. A coder pane gets the attach page's files
   modal, a `[data-terminal-footer]` button block the island's activation
   unhides, and `coder-file-upload` is re-inserted after the mount so its drop
   zone finds the terminal. The modals host and `dc-host-float` both meet the
