@@ -6394,17 +6394,31 @@ async function init(root) {
   const termIds = () => [...termBodyEl.querySelectorAll("[data-term-pane]")].map((el) => el.getAttribute("data-term-pane"));
   const termTabIds = () => [...termTabsHostEl.querySelectorAll("[data-term-tab]")].map((el) => el.getAttribute("data-term-tab"));
 
+  function revealTermTab(tab) {
+    if (!tab) return;
+    const strip = tab.closest("[data-editor-term-tabs]");
+    if (!strip || strip.clientWidth === 0) return;
+    const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft;
+    if (left < strip.scrollLeft || left + tab.offsetWidth > strip.scrollLeft + strip.clientWidth) {
+      strip.scrollLeft = left - (strip.clientWidth - tab.offsetWidth) / 2;
+    }
+  }
+
   function paintTermTabs() {
     for (const tab of termTabsHostEl.querySelectorAll("[data-term-tab]")) {
       const on = tab.getAttribute("data-term-tab") === termActiveId;
       tab.classList.toggle("active", on);
       tab.setAttribute("aria-selected", on ? "true" : "false");
     }
+    revealTermTab(termTabFor(termActiveId));
     for (const pane of termBodyEl.querySelectorAll("[data-term-pane]")) {
       pane.classList.toggle("active", pane.getAttribute("data-term-pane") === termActiveId);
     }
     termEmptyEl.hidden = termIds().length > 0;
   }
+
+  const termStripResize = new ResizeObserver(() => revealTermTab(termTabFor(termActiveId)));
+  termStripResize.observe(termTabsHostEl);
 
   async function mountTermIsland(pane) {
     for (const other of document.querySelectorAll("terminal-attach[active]")) other.removeAttribute("active");
@@ -6438,12 +6452,18 @@ async function init(root) {
     void postForm("/notifications/read", { target: id });
   }
 
+  // A terminal that has no pane is not a terminal this page can activate, and
+  // half applying that leaves the strip with nothing marked and stores the dead
+  // id as the project's active one. The URL's ?terminal= is where such an id
+  // comes from: the session it names may be gone by the time the page is
+  // reloaded. So the pane decides first, and this either activates or does
+  // nothing; who is active then stays whatever the fragment settled on.
   async function activateTermPane(id, { focus = true } = {}) {
+    const pane = termPaneFor(id);
+    if (!pane) return;
     termActiveId = id;
     store.set(termActiveKey, id || "");
     paintTermTabs();
-    const pane = termPaneFor(id);
-    if (!pane) return;
     if (!pane.querySelector("terminal-attach")) await mountTermIsland(pane);
     if (focus) document.dispatchEvent(new CustomEvent("dc:activate-pane", { detail: { id } }));
     markTermRead(id);
@@ -7201,6 +7221,7 @@ async function init(root) {
 
   return () => {
     ac.abort();
+    termStripResize.disconnect();
     clearTimeout(statusTimer);
     clearTimeout(previewTimer);
     clearTimeout(searchTimer);

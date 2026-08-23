@@ -193,6 +193,66 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       assert(visiblePanes === 1, `${visiblePanes} panes visible at once`);
     });
 
+    await run("desktop: an overflowing strip scrolls the active tab into view on switch and after a refresh", async () => {
+      const tabState = (id) => page.evaluate((tid) => {
+        const strip = document.querySelector("[data-editor-term-panel] [data-editor-term-tabs]");
+        const tab = strip && strip.querySelector(`[data-term-tab="${tid}"]`);
+        if (!tab) return null;
+        const s = strip.getBoundingClientRect();
+        const t = tab.getBoundingClientRect();
+        return { inside: t.left >= s.left - 1 && t.right <= s.right + 1, scrollLeft: strip.scrollLeft };
+      }, id);
+      const switchTo = async (id) => {
+        await page.evaluate((tid) => {
+          document.querySelector(`[data-editor-term-panel] [data-term-tab="${tid}"]`).click();
+        }, id);
+        await sleep(300);
+      };
+      const ids = await page.evaluate(() => [...document.querySelectorAll("[data-editor-term-panel] [data-term-tab]")].map((t) => t.getAttribute("data-term-tab")));
+      assert(ids.length >= 2, `need two tabs, have ${ids.length}`);
+      const first = ids[0];
+      const last = ids[ids.length - 1];
+      let extraShellUrl = null;
+      try {
+        const overflows = await page.evaluate(() => {
+          const strip = document.querySelector("[data-editor-term-panel] [data-editor-term-tabs]");
+          const widest = Math.max(...[...strip.querySelectorAll("[data-term-tab]")].map((t) => t.getBoundingClientRect().width));
+          const host = document.querySelector("[data-editor-term-panel] [data-editor-term-tabs-host]");
+          host.style.maxWidth = `${Math.ceil(widest) + 40}px`;
+          return strip.scrollWidth > strip.clientWidth;
+        });
+        assert(overflows, "the squeezed strip does not overflow");
+        await switchTo(first);
+        let state = await tabState(first);
+        assert(state && state.inside, "the first tab is not in view after switching to it");
+        await switchTo(last);
+        state = await tabState(last);
+        assert(state && state.inside, "the last tab did not scroll into view on switch");
+        assert(state.scrollLeft > 0, "the strip did not scroll at all");
+        const before = await tabCount();
+        const page2 = await page.context().newPage();
+        try {
+          extraShellUrl = await L.createShell(page2, project);
+        } finally {
+          await page2.close().catch(() => {});
+        }
+        let count = before;
+        for (let i = 0; i < 20; i++) { count = await tabCount(); if (count === before + 1) break; await sleep(400); }
+        assert(count === before + 1, `the extra shell never reached the panel (${count} tabs)`);
+        await sleep(300);
+        state = await tabState(last);
+        assert(state && state.inside, "the refresh dropped the active tab out of view");
+      } finally {
+        await page.evaluate(() => {
+          document.querySelector("[data-editor-term-panel] [data-editor-term-tabs-host]").style.maxWidth = "";
+        }).catch(() => {});
+        if (extraShellUrl) await L.deleteShell(page, extraShellUrl).catch(() => {});
+        await openEditor().catch(() => {});
+        await page.waitForSelector(`${panel} [data-term-tab]`, { timeout: 10000 }).catch(() => {});
+        await page.evaluate(() => document.querySelector("[data-editor-term-panel] [data-term-tab]")?.click()).catch(() => {});
+      }
+    });
+
     await run("desktop: both editor tab strips hide their scrollbars", async () => {
       const widths = await page.evaluate(() => ({
         files: getComputedStyle(document.querySelector("[data-editor-tabs]")).scrollbarWidth,
@@ -454,6 +514,30 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
         await sleep(400);
       }
       assert(active === target, `the reload lost the last tab (${active} instead of ${target})`);
+    });
+
+    // The id in a ?terminal= may name a session that is gone by the time the
+    // URL is opened again: a coder created from the panel is stopped, its tab
+    // goes, and the address in the tab bar keeps the id. What the panel must
+    // never do is end up with nothing marked at all, which is what a half
+    // applied activation left behind.
+    await run("desktop: a ?terminal= naming a session that is gone leaves a live tab active", async () => {
+      const dead = "00000000-0000-4000-8000-000000000000";
+      await page.goto(`${BASE}/projects/${project}/editor?terminal=${dead}`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
+      await page.waitForSelector(`${panel} [data-term-tab]`, { timeout: 15000 });
+      await sleep(1200);
+      const state = await page.evaluate(() => {
+        const tabs = [...document.querySelectorAll("[data-editor-term-panel] [data-term-tab]")];
+        return {
+          tabs: tabs.length,
+          activeTabs: tabs.filter((t) => t.classList.contains("active")).length,
+          activePanes: document.querySelectorAll("[data-editor-term-panel] .editor-term-pane.active").length,
+        };
+      });
+      assert(state.tabs > 0, "no tab left to fall back to");
+      assert(state.activeTabs === 1, `${state.activeTabs} tabs marked active instead of one`);
+      assert(state.activePanes === 1, `${state.activePanes} panes active instead of one`);
     });
 
     await run("desktop: closing the active tab hands focus to the neighbor terminal", async () => {
