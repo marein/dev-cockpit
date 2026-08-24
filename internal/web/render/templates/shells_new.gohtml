@@ -12,12 +12,12 @@
     {{if .SplitGroup}}<input type="hidden" name="group" value="{{.SplitGroup}}">
     <input type="hidden" name="column" value="{{.SplitColumn}}">{{end}}
     <div class="card-body">
-      <div class="mb-3">
+      <dc-project-select class="d-block mb-3">
         <label class="form-label required" for="project">Project</label>
         <select class="form-select" id="project" name="project" required>
-          {{range .Projects}}<option value="{{.}}" {{if eq . $.DefaultPath}}selected{{end}}>{{projectName .}}</option>{{end}}
+          {{range .Projects}}<option value="{{.Path}}" {{if eq .Path $.DefaultPath}}selected{{end}} data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">{{.Name}}</option>{{end}}
         </select>
-      </div>
+      </dc-project-select>
     </div>
     <div class="card-footer">
       <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">

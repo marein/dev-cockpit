@@ -32,3 +32,31 @@ type ProjectNavItem struct {
 	Coder   string // owning coder id, shown when several coders run
 	HasNews bool
 }
+
+// ProjectOption is one project in the project select of a create form. The
+// select is server rendered alphabetically and put into the user's order in the
+// browser, so an option carries everything @dc/project-sort compares: the name,
+// whether the project runs something, and when it was last opened.
+type ProjectOption struct {
+	Name         string
+	Path         string
+	Active       bool
+	LastUsedUnix int64
+}
+
+// ProjectOptions turns the quick nav's project browser into that select. Both
+// list every project with the same marks, and the quick nav is built for every
+// page render anyway, so a create form takes its projects from there instead of
+// scanning the coders and shells a second time.
+func ProjectOptions(nav []ProjectNav) []ProjectOption {
+	out := make([]ProjectOption, 0, len(nav))
+	for _, p := range nav {
+		out = append(out, ProjectOption{
+			Name:         p.Name,
+			Path:         p.Path,
+			Active:       p.Active,
+			LastUsedUnix: p.LastUsedUnix,
+		})
+	}
+	return out
+}

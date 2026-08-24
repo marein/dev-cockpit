@@ -3,7 +3,8 @@ const { assert, sleep, submitBtn, confirmSwal, modalShown, BASE } = L;
 
 // Sessions: the provider agent runtime, plus resumable sessions and session files.
 // Custom elements terminal-attach, terminal-input, terminal-scroll-zone,
-// terminal-direction-pad, coder-file-upload, terminal-setting-select. The
+// terminal-direction-pad, coder-file-upload, terminal-setting-select,
+// dc-project-select. The
 // shared terminal interaction is in terminal.js. The prompt modal is session only and
 // diverges by pointer: desktop opens it from .attach-desktop, mobile from
 // .attach-mobile; both submit as one whole prompt to /input (Ctrl/Cmd+Enter). Routes:
@@ -29,6 +30,35 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       assert(Object.values(has).every(Boolean), `missing fields: ${JSON.stringify(has)}`);
       const agentOption = await page.evaluate((id) => [...document.querySelectorAll('select[name="agent"] option')].some((o) => o.value === id || o.textContent.includes(id)), agentId);
       assert(agentOption, "created agent not in the agent select");
+    });
+
+    // The project select stands in the order the projects page is in, out of the
+    // shared "dc-project-sort" key, and the preselection follows that order,
+    // unless the form was opened from a project. Same select as in shells.js.
+    await run("project select follows the projects page sort order", async () => {
+      await page.goto(`${BASE}/coders/new`, { waitUntil: "domcontentloaded" });
+      await page.evaluate(() => localStorage.setItem("dc-project-sort", "recent"));
+      try {
+        await page.goto(`${BASE}/coders/new`, { waitUntil: "domcontentloaded" });
+        assert((await L.waitUpgraded(page, ["dc-project-select"], 8000)).length === 0, "dc-project-select not upgraded");
+        const options = await page.evaluate(() => [...document.querySelectorAll('select[name="project"] option')]
+          .map((o) => ({ name: o.dataset.projectName || "", used: Number(o.dataset.projectUsed) || 0, value: o.value })));
+        assert(options.length > 0, "the select carries no projects");
+        for (let i = 1; i < options.length; i++) {
+          const a = options[i - 1];
+          const b = options[i];
+          const ok = a.used > b.used || (a.used === b.used && a.name.toLowerCase() <= b.name.toLowerCase());
+          assert(ok, `not in recent order: ${a.name}(${a.used}) before ${b.name}(${b.used})`);
+        }
+        const first = await page.$eval('select[name="project"]', (sel) => sel.value);
+        assert(first === options[0].value, `preselection ${first} is not the first option ${options[0].value}`);
+        await page.goto(`${BASE}/coders/new?project=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
+        await L.waitUpgraded(page, ["dc-project-select"], 8000);
+        const pinned = await page.$eval('select[name="project"]', (sel) => sel.value);
+        assert(pinned.split("/").pop() === project, `opened from ${project}, but ${pinned} is selected`);
+      } finally {
+        await page.evaluate(() => localStorage.removeItem("dc-project-sort"));
+      }
     });
 
     await run("create -> attach elements + canvas", async () => {

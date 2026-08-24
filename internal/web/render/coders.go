@@ -14,10 +14,12 @@ type CoderChoice struct {
 }
 
 // CoderNewData is the model for the new-coder form. Project is chosen from a
-// select (preselected to DefaultPath, e.g. the project you came from).
+// select that stands in the order the projects page is in; DefaultPath holds
+// the project the form was opened from and is empty without one, then the first
+// project of that order is the preselection.
 type CoderNewData struct {
 	Page
-	Projects          []string
+	Projects          []ProjectOption
 	DefaultPath       string
 	Coders            []CoderChoice
 	SelectedCoder     string

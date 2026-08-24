@@ -12,7 +12,10 @@ import (
 )
 
 func (s *Server) handleShellNew(c *gin.Context) {
-	defaultPath := s.projects.DefaultPath()
+	// Only the project the form was opened from preselects an option. Without
+	// one the server marks none, so the browser takes the first one, which the
+	// select ends up with in the order the projects page is in.
+	defaultPath := ""
 	if name := strings.TrimSpace(c.Query("project")); name != "" {
 		if p, err := s.projects.FindByName(name); err == nil {
 			defaultPath = p.Path
@@ -21,9 +24,10 @@ func (s *Server) handleShellNew(c *gin.Context) {
 	// A split scoped create opens this form prefilled and carries the group
 	// target through as hidden fields, like the coder create does.
 	target := splitTargetFromRequest(c)
+	page := s.page(c, "New Shell", "projects")
 	c.HTML(http.StatusOK, "shells_new.gohtml", render.ShellNewData{
-		Page:        s.page(c, "New Shell", "projects"),
-		Projects:    s.projects.SelectablePaths(),
+		Page:        page,
+		Projects:    render.ProjectOptions(page.QuickNav.AllProjects),
 		DefaultPath: defaultPath,
 		Return:      s.formReturn(c),
 		SplitGroup:  target.Group,

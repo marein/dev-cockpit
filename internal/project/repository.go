@@ -137,15 +137,6 @@ func (r *Repository) SelectablePaths() []string {
 	return out
 }
 
-// DefaultPath returns the first selectable project (for new-session defaults).
-func (r *Repository) DefaultPath() string {
-	p := r.SelectablePaths()
-	if len(p) == 0 {
-		return ""
-	}
-	return p[0]
-}
-
 // List returns all selectable projects as Project records.
 func (r *Repository) List() []Project {
 	root := r.resolvedRoot()

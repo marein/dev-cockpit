@@ -58,7 +58,10 @@ type terminalResizeForm struct {
 }
 
 func (s *Server) handleCoderNew(c *gin.Context) {
-	defaultPath := s.projects.DefaultPath()
+	// Only the project the form was opened from preselects an option. Without
+	// one the server marks none, so the browser takes the first one, which the
+	// select ends up with in the order the projects page is in.
+	defaultPath := ""
 	if name := strings.TrimSpace(c.Query("project")); name != "" {
 		if p, err := s.projects.FindByName(name); err == nil {
 			defaultPath = p.Path
@@ -84,9 +87,10 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 	// A coder needs its whole form, so a split scoped create opens it
 	// prefilled and carries the group target through as hidden fields.
 	target := splitTargetFromRequest(c)
+	page := s.page(c, "New Coder", "projects")
 	c.HTML(http.StatusOK, "coders_new.gohtml", render.CoderNewData{
-		Page:              s.page(c, "New Coder", "projects"),
-		Projects:          s.projects.SelectablePaths(),
+		Page:              page,
+		Projects:          render.ProjectOptions(page.QuickNav.AllProjects),
 		DefaultPath:       defaultPath,
 		Coders:            coders,
 		SelectedCoder:     selected.ID(),

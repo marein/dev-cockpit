@@ -2,7 +2,7 @@ const L = require("./lib");
 const { assert, sleep, confirmSwal, BASE } = L;
 
 // Shells: plain throwaway terminals, the safe target. Custom elements terminal-attach,
-// terminal-input, terminal-setting-select, dc-inline-rename. The shared
+// terminal-input, terminal-setting-select, dc-inline-rename, dc-project-select. The shared
 // terminal interaction (typing, controls, copy, scroll) is in terminal.js; this
 // covers what is shell specific. Routes: GET /shells/new, POST /shells/new,
 // GET /shells/:id, POST /shells/:id/{delete,rename,input,resize}, GET .../stream.
@@ -13,6 +13,35 @@ L.runFeature("SHELLS", async ({ page, run }) => {
   let shellUrl = null;
   try {
     await L.createProject(page, project);
+
+    // The project select stands in the order the projects page is in, out of the
+    // shared "dc-project-sort" key, and the preselection follows that order. A
+    // form opened from a project keeps that project wherever it ends up.
+    await run("project select follows the projects page sort order", async () => {
+      await page.goto(`${BASE}/shells/new`, { waitUntil: "domcontentloaded" });
+      await page.evaluate(() => localStorage.setItem("dc-project-sort", "recent"));
+      try {
+        await page.goto(`${BASE}/shells/new`, { waitUntil: "domcontentloaded" });
+        assert((await L.waitUpgraded(page, ["dc-project-select"], 8000)).length === 0, "dc-project-select not upgraded");
+        const options = await page.evaluate(() => [...document.querySelectorAll('select[name="project"] option')]
+          .map((o) => ({ name: o.dataset.projectName || "", used: Number(o.dataset.projectUsed) || 0, value: o.value })));
+        assert(options.length > 0, "the select carries no projects");
+        for (let i = 1; i < options.length; i++) {
+          const a = options[i - 1];
+          const b = options[i];
+          const ok = a.used > b.used || (a.used === b.used && a.name.toLowerCase() <= b.name.toLowerCase());
+          assert(ok, `not in recent order: ${a.name}(${a.used}) before ${b.name}(${b.used})`);
+        }
+        const first = await page.$eval('select[name="project"]', (sel) => sel.value);
+        assert(first === options[0].value, `preselection ${first} is not the first option ${options[0].value}`);
+        await page.goto(`${BASE}/shells/new?project=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
+        await L.waitUpgraded(page, ["dc-project-select"], 8000);
+        const pinned = await page.$eval('select[name="project"]', (sel) => sel.value);
+        assert(pinned.split("/").pop() === project, `opened from ${project}, but ${pinned} is selected`);
+      } finally {
+        await page.evaluate(() => localStorage.removeItem("dc-project-sort"));
+      }
+    });
 
     await run("create shell -> attach page + dc-inline-rename upgraded", async () => {
       shellUrl = await L.createShell(page, project);

@@ -3,10 +3,12 @@ package render
 import "github.com/marein/dev-cockpit/internal/shell"
 
 // ShellNewData is the model for the new-shell form. Project is chosen from a
-// select (preselected to DefaultPath, e.g. the project you came from).
+// select that stands in the order the projects page is in; DefaultPath holds
+// the project the form was opened from and is empty without one, then the first
+// project of that order is the preselection.
 type ShellNewData struct {
 	Page
-	Projects    []string
+	Projects    []ProjectOption
 	DefaultPath string
 	Return      string // where Cancel goes back to (the page you came from)
 	// SplitGroup and SplitColumn carry a split view the new shell joins right
