@@ -24,7 +24,12 @@ const progressInterval = 5 * time.Second
 type activeRun struct {
 	rec  RunRecord
 	proc detach.Process
-	done chan struct{}
+	// launched says proc is real. A chat turn is registered before its
+	// process exists, so a send in the launch window queues and a stop is
+	// kept; both read this under the service lock, which is also where
+	// launchAndFollow sets it.
+	launched bool
+	done     chan struct{}
 	// cancelled is set by a stop and read when the turn ends, so a killed
 	// process is reported as a stop and not as a coder that fell over.
 	cancelled atomic.Bool
@@ -80,16 +85,20 @@ func (s *slots) release() {
 
 // launch starts one turn and writes it into the register. From this moment the
 // turn exists outside this process: the entry and the file it points at are
-// enough for any later server to finish it.
-func (s *Service) launch(runner Runner, req TurnRequest, rec RunRecord) (*activeRun, error) {
+// enough for any later server to finish it. It fills the record it was handed
+// and answers the process; the caller wires both into its run. Deliberately
+// never under the service lock: building the command is the runner's own work
+// and may take seconds (opencode's first turn creates its provider session
+// through a server it boots for it), see launchAndFollow.
+func (s *Service) launch(rec *RunRecord, runner Runner, req TurnRequest) (detach.Process, error) {
 	cmd, err := runner.Command(req)
 	if err != nil {
-		return nil, err
+		return detach.Process{}, err
 	}
 	out, errs, lock, err := s.runs.Files(rec.ID)
 	if err != nil {
 		log.Printf("assistant: no place for the output of turn %s: %v", rec.ID, err)
-		return nil, errors.New("The coder could not be started.")
+		return detach.Process{}, errors.New("The coder could not be started.")
 	}
 	rec.Output, rec.Errors, rec.Lock = out, errs, lock
 	rec.StartedAt = s.now().UTC()
@@ -98,11 +107,38 @@ func (s *Service) launch(runner Runner, req TurnRequest, rec RunRecord) (*active
 		remove(out)
 		remove(errs)
 		remove(lock)
-		return nil, err
+		return detach.Process{}, err
 	}
 	rec.PID = p.PID()
-	s.runs.Save(rec)
-	return &activeRun{rec: rec, proc: p, done: make(chan struct{})}, nil
+	s.runs.Save(*rec)
+	return p, nil
+}
+
+// launchAndFollow is the second half of a chat turn's start, off the service
+// lock: the run in the register of running turns already says the turn
+// exists, this makes it true. With the run registered first, a send in the
+// launch window queues instead of starting a second turn, and a stop in that
+// window is kept: the process is killed the moment it begins. The register
+// entry is only written when the process starts, so a stop from the window
+// writes its mark here, where the entry finally exists.
+func (s *Service) launchAndFollow(a *activeRun, runner Runner, req TurnRequest) {
+	p, err := s.launch(&a.rec, runner, req)
+	if err != nil {
+		// The placeholder becomes the failed turn, in the same shape as any
+		// other failure, so the page offers the same retry.
+		close(a.done)
+		s.settleChat(a, "", nil, err)
+		return
+	}
+	s.mu.Lock()
+	a.proc = p
+	a.launched = true
+	s.mu.Unlock()
+	if a.cancelled.Load() {
+		s.runs.Update(a.rec.ID, func(rec *RunRecord) { rec.Cancelled = true })
+		p.Kill()
+	}
+	s.follow(a, runner)
 }
 
 // follow reads one turn to its end and settles it. It is the same code for a
@@ -467,7 +503,7 @@ func (s *Service) Recover() []AdoptedCheck {
 			continue
 		}
 
-		a := &activeRun{rec: rec, proc: detach.Adopt(rec.PID, rec.Lock), done: make(chan struct{}), orphaned: !alive}
+		a := &activeRun{rec: rec, proc: detach.Adopt(rec.PID, rec.Lock), launched: true, done: make(chan struct{}), orphaned: !alive}
 		a.cancelled.Store(rec.Cancelled)
 
 		s.mu.Lock()

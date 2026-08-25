@@ -28,6 +28,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/coder"
 	coderclaude "github.com/marein/dev-cockpit/internal/coder/claude"
 	codercopilot "github.com/marein/dev-cockpit/internal/coder/copilot"
+	coderopencode "github.com/marein/dev-cockpit/internal/coder/opencode"
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/detach"
 	"github.com/marein/dev-cockpit/internal/docker"
@@ -47,6 +48,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/update"
 	"github.com/marein/dev-cockpit/internal/voice"
 	"github.com/marein/dev-cockpit/internal/web"
+	"github.com/marein/dev-cockpit/internal/web/render"
 	"github.com/marein/dev-cockpit/plugin"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
@@ -404,7 +406,7 @@ func runServe(opts serveOptions) error {
 	if err != nil {
 		return err
 	}
-	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude")))
+	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude")), coderopencode.New(notify.InboxDir(cfg.StateDir, "opencode")))
 	selected, err := selectProviders(registry)
 	if err != nil {
 		return err
@@ -1018,7 +1020,7 @@ func (c assistantCoders) Available() []assistant.CoderInfo {
 			continue
 		}
 		id := co.ID()
-		out = append(out, assistant.CoderInfo{ID: id, Label: strings.ToUpper(id[:1]) + id[1:], Runner: runner})
+		out = append(out, assistant.CoderInfo{ID: id, Label: render.CoderLabel(id), Runner: runner})
 	}
 	return out
 }

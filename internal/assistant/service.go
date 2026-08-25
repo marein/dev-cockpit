@@ -446,18 +446,27 @@ func (s *Service) archiveActiveLocked() {
 // dropSessionLocked removes the provider session of a conversation nothing can
 // continue. A session that refuses to go keeps its reservation, so it cannot
 // turn up as a resumable coder that resumes a conversation the cockpit no
-// longer drives.
+// longer drives. The removal itself runs off this goroutine: it goes through
+// the provider's own CLI, which for opencode boots a JavaScript runtime
+// first, and this is called under the service lock on the way to a new
+// conversation, so a blocking delete made the switch away from an opencode
+// conversation hang for that boot. The reservation stands until the delete
+// succeeded, which is what keeps the session invisible in the window, and a
+// refused delete keeps it reserved exactly as before; the reservations carry
+// their own lock, so the release needs nothing this caller holds.
 func (s *Service) dropSessionLocked(c Conversation) {
 	co, ok := s.coder(c.CoderID)
 	if !ok || !co.Runner.SessionExists(c.NativeSessionID) {
 		s.release(c.CoderID, c.NativeSessionID)
 		return
 	}
-	if err := co.Runner.DeleteSession(c.NativeSessionID); err != nil {
-		log.Printf("assistant: drop provider session %s: %v", c.NativeSessionID, err)
-		return
-	}
-	s.release(c.CoderID, c.NativeSessionID)
+	go func() {
+		if err := co.Runner.DeleteSession(c.NativeSessionID); err != nil {
+			log.Printf("assistant: drop provider session %s: %v", c.NativeSessionID, err)
+			return
+		}
+		s.release(c.CoderID, c.NativeSessionID)
+	}()
 }
 
 // Send appends a prompt and starts a generation. Attachments are already on
@@ -598,11 +607,15 @@ func (s *Service) prepareLocked(id string) (Conversation, CoderInfo, error) {
 	return c, co, nil
 }
 
-// startLocked persists the pending turn and launches the provider process.
-// The assistant placeholder is written before the process starts, so a crash
-// leaves a visible interrupted turn instead of a lost prompt, and the register
-// entry is written before the process exists, so a turn is never running
-// unregistered.
+// startLocked persists the pending turn and registers it as running; the
+// launch itself happens off the lock, in launchAndFollow. The assistant
+// placeholder is written before anything starts, so a crash leaves a visible
+// interrupted turn instead of a lost prompt (the recovery sweep settles a
+// streaming message no register entry covers), and the run is registered
+// before the launch begins, so a second send queues behind it and a stop
+// finds it, however long the runner's own preparation takes: opencode's
+// first turn boots a server to create its provider session, and held under
+// the lock that boot stalled every assistant surface for seconds.
 //
 // announce names the user messages this turn takes with it. They go out on the
 // stream after the save and before the start frame, so a page that never saw
@@ -644,18 +657,9 @@ func (s *Service) startLocked(c *Conversation, co CoderInfo, prompt string, anno
 	}
 	s.hub.publish(c.ID, StreamEvent{Kind: FrameStart, RunID: runID, MessageID: msg.ID, State: string(StateStreaming)})
 
-	a, err := s.launch(co.Runner, req, rec)
-	if err != nil {
-		// The placeholder becomes the failed turn, in the same shape as any
-		// other failure, so the page offers the same retry. It runs on its own
-		// goroutine because this holds the service lock.
-		failed := &activeRun{rec: rec, done: make(chan struct{})}
-		close(failed.done)
-		go s.settleChat(failed, "", nil, err)
-		return Run{RunID: runID, MessageID: msg.ID, Title: c.Title}, nil
-	}
+	a := &activeRun{rec: rec, done: make(chan struct{})}
 	s.running[runID] = a
-	go s.follow(a, co.Runner)
+	go s.launchAndFollow(a, co.Runner, req)
 	return Run{RunID: runID, MessageID: msg.ID, Title: c.Title}, nil
 }
 
@@ -670,11 +674,15 @@ func (s *Service) Cancel(id string) error {
 		return errors.New("This conversation is not working on anything.")
 	}
 	a.cancelled.Store(true)
-	id, proc := a.rec.ID, a.proc
+	id, proc, launched := a.rec.ID, a.proc, a.launched
 	s.mu.Unlock()
 
 	s.runs.Update(id, func(rec *RunRecord) { rec.Cancelled = true })
-	proc.Kill()
+	// A turn still launching has no process yet: the cancelled mark is what
+	// launchAndFollow reads, and it kills the process the moment it begins.
+	if launched {
+		proc.Kill()
+	}
 	return nil
 }
 

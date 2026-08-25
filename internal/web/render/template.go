@@ -54,9 +54,13 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plu
 	return template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.gohtml"))
 }
 
-// CoderLabel capitalizes a coder id for display. One implementation for the
-// templates and the handlers, so a label never differs by surface.
+// CoderLabel names a coder id for display. One implementation for the
+// templates and the handlers, so a label never differs by surface. A brand
+// casing the plain capitalization cannot produce is special cased.
 func CoderLabel(id string) string {
+	if id == "opencode" {
+		return "OpenCode"
+	}
 	if id == "" {
 		return ""
 	}

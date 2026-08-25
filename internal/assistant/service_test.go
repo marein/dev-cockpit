@@ -45,6 +45,10 @@ type fakeRunner struct {
 	deleteFn   func(string) error
 	requests   []TurnRequest
 	commandErr error
+	// commandGate makes Command wait, the way opencode's first turn does
+	// while it boots a server to create its provider session: a test holds
+	// the gate to look at the service mid launch.
+	commandGate chan struct{}
 	// dir holds the scripts and the files a turn is played back from, set by
 	// newTestService, and over is closed when the test ends so nothing writes
 	// into a directory that is already being removed. done says the same under
@@ -95,10 +99,14 @@ func (r *fakeRunner) Command(req TurnRequest) (Command, error) {
 	unfinished := r.unfinished
 	stderr := r.stderr
 	commandErr := r.commandErr
+	gate := r.commandGate
 	r.seq++
 	seq := r.seq
 	dir := r.dir
 	r.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
 	if commandErr != nil {
 		return Command{}, commandErr
 	}
@@ -347,10 +355,18 @@ func quiesce(t *testing.T, svc *Service, w *Watcher) {
 		}
 		// A turn a test left open never ends on its own: the fake waits for a
 		// release that is not coming. Ending it is what lets its goroutine
-		// write the last of it while the directories are still there.
+		// write the last of it while the directories are still there. The
+		// process is read back under the lock: a turn still launching gets
+		// one the moment its launcher finishes, and the cancelled mark is
+		// what makes the launcher kill it right then.
 		for _, a := range open {
 			a.cancelled.Store(true)
-			a.proc.Kill()
+			svc.mu.Lock()
+			proc, launched := a.proc, a.launched
+			svc.mu.Unlock()
+			if launched {
+				proc.Kill()
+			}
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -960,11 +976,10 @@ func orphanTurn(t *testing.T, svc *Service, conversationID string, runner *fakeR
 		State:     StateStreaming,
 	})
 	svc.store.Save(c)
-	a, err := svc.launch(runner, TurnRequest{SessionID: c.NativeSessionID, Workdir: c.ProjectPath, Prompt: "hello"}, rec)
-	if err != nil {
+	if _, err := svc.launch(&rec, runner, TurnRequest{SessionID: c.NativeSessionID, Workdir: c.ProjectPath, Prompt: "hello"}); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	return a.rec
+	return rec
 }
 
 // A started turn describes itself on disk. Everything the recovery works from
@@ -979,6 +994,9 @@ func TestAStartedTurnIsInTheRegister(t *testing.T) {
 		t.Fatalf("send: %v", err)
 	}
 
+	// The entry lands when the launch does, off the send: the send answers
+	// before the runner built its command.
+	waitFor(t, "the registered turn", func() bool { return len(runs.List()) == 1 })
 	list := runs.List()
 	if len(list) != 1 {
 		t.Fatalf("want one registered turn, got %d", len(list))
@@ -1382,11 +1400,20 @@ func TestANewConversationArchivesTheOneBeforeIt(t *testing.T) {
 	if len(archived.Messages) != 2 {
 		t.Fatalf("want the transcript kept, got %d messages", len(archived.Messages))
 	}
-	if len(runner.deleted) != 1 || runner.deleted[0] != first.ID {
-		t.Fatalf("want the provider session of the earlier conversation deleted, got %v", runner.deleted)
-	}
-	if svc.Reserved("claude", first.ID) {
-		t.Fatal("want the reservation of the earlier conversation released")
+	// The drop runs off the archiving request, so the switch never waits a
+	// provider CLI boot out; the delete and the released reservation follow.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		runner.mu.Lock()
+		dropped := len(runner.deleted) == 1 && runner.deleted[0] == first.ID
+		runner.mu.Unlock()
+		if dropped && !svc.Reserved("claude", first.ID) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("want the provider session of the earlier conversation dropped, got %v", runner.deleted)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if !svc.Reserved("claude", second.ID) {
 		t.Fatal("want the new conversation reserved")
@@ -1977,5 +2004,56 @@ func TestTranscriptWindowsAndCutsVisibly(t *testing.T) {
 	}
 	if _, _, err := svc.Transcript("99999999-9999-4999-8999-999999999999", 0, 0); err == nil {
 		t.Fatal("an unknown conversation has to be refused")
+	}
+}
+
+// The runner may work seconds building its command, the way opencode's first
+// turn does while it boots a server to create its provider session. The send
+// answers before that work begins, and the service stands open: a second send
+// queues behind the launching turn instead of starting a second one.
+func TestASendAnswersWhileTheCommandIsStillBuilt(t *testing.T) {
+	gate := make(chan struct{})
+	runner := &fakeRunner{commandGate: gate, events: []Event{{Kind: EventDelta, Text: "hi"}}}
+	svc, _, _ := newTestService(t, runner)
+	created, _ := svc.create("claude", "/projects/demo")
+
+	run, err := svc.Send(created.ID, "hello", nil)
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if run.Queued {
+		t.Fatal("the first send starts a turn, it does not queue")
+	}
+	second, err := svc.Send(created.ID, "more", nil)
+	if err != nil {
+		t.Fatalf("a send during the launch: %v", err)
+	}
+	if !second.Queued {
+		t.Fatal("a send during the launch has to queue behind the turn")
+	}
+	close(gate)
+	waitIdle(t, svc, created.ID)
+	waitIdle(t, svc, created.ID)
+}
+
+// A stop that lands while the turn is still launching has no process to kill
+// yet. It is kept: the launcher kills the process the moment it begins, and
+// the answer settles as the stop it was.
+func TestAStopInTheLaunchWindowStopsTheTurn(t *testing.T) {
+	gate := make(chan struct{})
+	runner := &fakeRunner{commandGate: gate, block: make(chan struct{}), events: []Event{{Kind: EventDelta, Text: "hi"}}}
+	svc, _, _ := newTestService(t, runner)
+	created, _ := svc.create("claude", "/projects/demo")
+
+	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if err := svc.Cancel(created.ID); err != nil {
+		t.Fatalf("cancel during the launch: %v", err)
+	}
+	close(gate)
+	msg := waitIdle(t, svc, created.ID)
+	if msg.State != StateCancelled {
+		t.Fatalf("want the launched turn settled as a stop, got %q", msg.State)
 	}
 }

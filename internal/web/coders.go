@@ -89,8 +89,7 @@ func (s *Server) coderTitle(co *coder.Manager, section string) string {
 	if !s.multiCoder() {
 		return section
 	}
-	id := co.ID()
-	return strings.ToUpper(id[:1]) + id[1:] + " " + section
+	return render.CoderLabel(co.ID()) + " " + section
 }
 
 // redirectMovedCoderPath forwards a coder page URL from before the pages moved

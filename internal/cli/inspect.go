@@ -17,6 +17,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/coder"
 	coderclaude "github.com/marein/dev-cockpit/internal/coder/claude"
 	codercopilot "github.com/marein/dev-cockpit/internal/coder/copilot"
+	coderopencode "github.com/marein/dev-cockpit/internal/coder/opencode"
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/localapi"
@@ -955,7 +956,7 @@ func openTerminals(opts inspectOptions) (terminals, error) {
 	hidden := reservedSessions(cfg.StateDir)
 
 	out := terminals{cfg: cfg, projects: projectRepo}
-	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude")))
+	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude")), coderopencode.New(notify.InboxDir(cfg.StateDir, "opencode")))
 	for _, c := range registry.All() {
 		if len(clirun.MissingTools(c.RequiredTools())) > 0 {
 			continue

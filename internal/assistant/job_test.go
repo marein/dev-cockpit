@@ -1255,11 +1255,7 @@ func orphanCheck(t *testing.T, svc *Service, conversationID, terminalID string, 
 		t.Fatalf("session id: %v", err)
 	}
 	svc.reserve(c.CoderID, sessionID)
-	a, err := svc.launch(runner, TurnRequest{
-		SessionID: sessionID,
-		Workdir:   c.ProjectPath,
-		Prompt:    "A coder you are steering is not moving.",
-	}, RunRecord{
+	rec := RunRecord{
 		ID:        statefile.NewID(),
 		Kind:      RunCheck,
 		MessageID: statefile.NewID(),
@@ -1267,11 +1263,15 @@ func orphanCheck(t *testing.T, svc *Service, conversationID, terminalID string, 
 		SessionID: sessionID,
 		Terminal:  terminalID,
 		Deadline:  time.Now().UTC().Add(wakeTimeout),
-	})
-	if err != nil {
+	}
+	if _, err := svc.launch(&rec, runner, TurnRequest{
+		SessionID: sessionID,
+		Workdir:   c.ProjectPath,
+		Prompt:    "A coder you are steering is not moving.",
+	}); err != nil {
 		t.Fatalf("launch the check: %v", err)
 	}
-	return a.rec
+	return rec
 }
 
 // A check outlives a restart the same way a chat turn does: the turn keeps

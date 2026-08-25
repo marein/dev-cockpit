@@ -1722,13 +1722,26 @@ free floating page scripts.
   or a resize on a differently themed device recovers on its own. The server
   mirrors the colors onto every session as the tmux pane style (tmux answers a
   program's OSC 11 background query from it; the control mode client never does)
-  and sends claude the mode 2031 color scheme report so it switches live. The
-  report only reaches interactive claude panes (foreground `claude` on the
-  alternate screen; other programs would read it as keystrokes). New sessions
-  get the pane style on create/resume so a fresh claude detects at startup, and
-  claude sessions get `"theme": "auto"` pinned via the injected `--settings`
+  and sends the subscribed TUIs (claude and opencode, `schemeReportCoder`) the
+  mode 2031 color scheme report so a running one switches live: claude reads
+  the reported value, opencode answers a report by re-querying OSC 10/11 and
+  reads the fresh pane style back. The report only reaches interactive panes
+  of those coders (their foreground command on the alternate screen; other
+  programs would read it as keystrokes). New sessions get the pane style on
+  create/resume so a fresh coder detects at startup, and claude sessions get
+  `"theme": "auto"` pinned via the injected `--settings`
   (`internal/coder/claude/runtime.go`) so detection works despite a fixed theme
-  in the user's global config.
+  in the user's global config. opencode's TUI paints its own theme colors over
+  the pane, so the cockpit pins its sessions to a generated theme instead
+  (`internal/coder/opencode/theme.go`): a static `dev-cockpit` theme of ANSI
+  slot references and `"none"` backgrounds under opencode's themes folder,
+  selected by a pin config that reaches only cockpit sessions through
+  `OPENCODE_CONFIG` in the tmux environment. The TUI then renders the
+  terminal's own palette, follows a palette change live like copilot and the
+  mode report picks the dark or light diff tints; both files are generated
+  like the notify plugin (rewritten unconditionally at every session start,
+  instance free, no removal at stop), and the theme stays a compiled constant
+  because an unresolved color reference crashes opencode's TUI at start.
 - **CSRF:** the per session token is rendered once into `<meta name="csrf-token">`;
   `@dc/http` reads it and attaches the `X-CSRF-Token` header to every POST, so
   components never read or thread the token. Server rendered forms keep their
@@ -1770,7 +1783,19 @@ Signals are coder-native, no pane-content parsing: claude sessions get
 Stop/Notification hooks injected via `--settings`, copilot sessions ring BEL
 through the CLI's global `beep` setting (enabled at startup when copilot is
 active), which a read-only control-mode bell watcher per running session
-picks up (`internal/coder/bellwatch.go`; it never resizes panes). Shells get
+picks up (`internal/coder/bellwatch.go`; it never resizes panes). opencode
+sessions get a plugin (`internal/coder/opencode/notify.go`): the runtime
+writes it into opencode's config plugin directory at every session start and
+carries the notify inbox in the tmux session environment, the plugin hears
+the server's event bus and drops claude-shaped event files into that inbox,
+a finished turn (`session.idle`, only after a busy report, so a TUI opening
+an idle session stays silent) and an asked permission. A subagent's child
+session is skipped, a handed-over conversation reports under the cockpit id
+its metadata carries, and without the environment variable the plugin writes
+nothing at all, which is what keeps the assistant's own opencode runs and
+sessions started outside the cockpit silent. The file is instance-free, its
+path carries the cockpit's own name and is rewritten unconditionally, and
+nothing removes it at stop. Shells get
 OSC 133 prompt marks injected via `PS0`/`PROMPT_COMMAND`
 (`internal/shell/shellwatch.go`): a foreground command counts as news when
 the prompt returns and the command ran at least `minCommandDuration` (2s),

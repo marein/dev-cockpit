@@ -532,7 +532,7 @@ func DocsTopics() []DocsTopic {
 			Items: []DocsItem{
 				{
 					Title: "Coders",
-					Desc:  `Claude reports completed turns, questions, and permission requests through its injected hooks. Copilot emits a terminal bell.`,
+					Desc:  `Claude reports completed turns, questions, and permission requests through its injected hooks. Copilot emits a terminal bell. OpenCode reports completed turns and permission requests through a plugin the cockpit keeps in its config directory, which stays silent for sessions the cockpit did not start.`,
 				},
 				{
 					Title: "Shells",

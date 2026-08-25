@@ -562,6 +562,15 @@ func (s *Manager) tagCoderPane(name, displayName, workdir string) error {
 }
 
 func (s *Manager) promoteSessionKey(tempKey string, before []Session, workdir, displayName string) string {
+	// A CLI that cannot carry the cockpit's name into its session record
+	// (coder.SessionNaming answering false) never produces a name match, so
+	// its fresh session is the one that appeared in the working directory
+	// after the start. The other guards stay: it must be new, it must be in
+	// this project, and the window is short.
+	named := true
+	if naming, ok := s.coder.SessionRuntime().(SessionNaming); ok {
+		named = naming.NamesSessions()
+	}
 	beforeIDs := map[string]bool{}
 	for _, r := range before {
 		beforeIDs[r.SessionID] = true
@@ -569,7 +578,10 @@ func (s *Manager) promoteSessionKey(tempKey string, before []Session, workdir, d
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		for _, r := range s.coder.SessionRepository().List() {
-			if beforeIDs[r.SessionID] || r.CWD != workdir || strings.TrimSpace(r.Name) != displayName {
+			if beforeIDs[r.SessionID] || r.CWD != workdir {
+				continue
+			}
+			if named && strings.TrimSpace(r.Name) != displayName {
 				continue
 			}
 			if _, err := terminal.ValidateIdentifier(r.SessionID); err != nil {

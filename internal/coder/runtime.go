@@ -20,3 +20,14 @@ type SessionRuntime interface {
 	ResumeCommand(sessionID, workdir string, automaticApproval bool) string
 	Env() map[string]string
 }
+
+// SessionNaming is the optional answer to whether the CLI carries the
+// cockpit's chosen name into the session record it creates. A runtime that
+// does not implement it is taken to name its sessions, which is what every
+// coder before opencode did: copilot has --name, claude takes the whole id.
+// A runtime that answers false has a CLI with no name flag and no id flag,
+// so the promote step can never find the fresh session by its name and
+// matches it on the working directory alone.
+type SessionNaming interface {
+	NamesSessions() bool
+}

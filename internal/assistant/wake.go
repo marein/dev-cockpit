@@ -95,12 +95,7 @@ func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
 	}
 	s.reserve(c.CoderID, sessionID)
 
-	a, err := s.launch(co.Runner, TurnRequest{
-		SessionID: sessionID,
-		Title:     wakeSessionName(c.Title),
-		Workdir:   c.ProjectPath,
-		Prompt:    spec.Prompt,
-	}, RunRecord{
+	a := &activeRun{rec: RunRecord{
 		ID:   statefile.NewID(),
 		Kind: RunCheck,
 		// The report this check may write carries its id from here, so a check
@@ -112,6 +107,12 @@ func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
 		Terminal: spec.Terminal,
 		Context:  spec.Context,
 		Deadline: s.now().UTC().Add(wakeTimeout),
+	}, done: make(chan struct{})}
+	p, err := s.launch(&a.rec, co.Runner, TurnRequest{
+		SessionID: sessionID,
+		Title:     wakeSessionName(c.Title),
+		Workdir:   c.ProjectPath,
+		Prompt:    spec.Prompt,
 	})
 	if err != nil {
 		s.mu.Lock()
@@ -121,6 +122,8 @@ func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
 	}
 
 	s.mu.Lock()
+	a.proc = p
+	a.launched = true
 	s.running[a.rec.ID] = a
 	s.mu.Unlock()
 

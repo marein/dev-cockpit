@@ -74,12 +74,12 @@ func (s *Server) styleSessionPane(name string) {
 }
 
 // applyTerminalThemeLocked restyles every running session and additionally
-// sends claude the mode 2031 color scheme report (CSI ? 997 ; 1/2 n), which
-// claude subscribes to, so a running claude switches its theme live. The
-// report goes to claude coder sessions and to shell panes running the
-// interactive claude TUI (foreground command claude on the alternate screen,
-// a manual claude run inside a cockpit shell). Other programs, including
-// non interactive runs like `claude -p`, never get it injected, whoever did
+// sends the mode 2031 color scheme report (CSI ? 997 ; 1/2 n) to the TUIs
+// that subscribe to it, so a running coder switches its theme live. The
+// report goes to the sessions of those coders and to shell panes running one
+// of their interactive TUIs (foreground command on the alternate screen, a
+// manual run inside a cockpit shell). Other programs, including non
+// interactive runs like `claude -p`, never get it injected, whoever did
 // not enable the mode would read the bytes as keyboard input. The whole
 // change costs two tmux spawns (one list-panes, one batched apply),
 // independent of the session count. A failed apply clears the stored theme,
@@ -95,7 +95,7 @@ func (s *Server) applyTerminalThemeLocked() {
 	foregrounds := client.PaneForegrounds()
 	var themes []tmux.PaneTheme
 	for i := range s.coders {
-		notify := s.coders[i].ID() == "claude"
+		notify := schemeReportCoder(s.coders[i].ID())
 		for _, r := range s.coders[i].Snapshot().Running {
 			t := tmux.PaneTheme{Name: r.Identifier, Style: style}
 			if notify {
@@ -106,7 +106,7 @@ func (s *Server) applyTerminalThemeLocked() {
 	}
 	for _, sh := range s.shells.List() {
 		t := tmux.PaneTheme{Name: sh.Identifier, Style: style}
-		if fg := foregrounds[sh.Identifier]; fg.Command == "claude" && fg.AltScreen {
+		if fg := foregrounds[sh.Identifier]; schemeReportCoder(fg.Command) && fg.AltScreen {
 			t.Report = report
 		}
 		themes = append(themes, t)
@@ -116,6 +116,15 @@ func (s *Server) applyTerminalThemeLocked() {
 		s.termTheme.fg = ""
 	}
 }
+
+// schemeReportCoder reports whether a coder's TUI subscribes to the mode 2031
+// color scheme reports, which doubles as the check on a shell pane's
+// foreground command because the ids match the binaries. claude reads the
+// reported value itself; opencode answers a report by re-querying OSC 10/11,
+// which tmux serves from the pane style the same batched apply just set
+// (verified on opencode 1.18.23). copilot never enables the mode and themes
+// itself over the ANSI palette instead.
+func schemeReportCoder(id string) bool { return id == "claude" || id == "opencode" }
 
 func paneStyle(bg, fg string) string { return "bg=" + bg + ",fg=" + fg }
 
