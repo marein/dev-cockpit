@@ -1,0 +1,37 @@
+{{define "settings_assistant_voice.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "assistant_settings_start.gohtml" .}}
+<form method="post" action="/settings/assistant/voice" id="settings-assistant-voice">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <div class="text-secondary small mb-3">The assistant listens and speaks: holding the send button records and sends what you said, and an answer can be read aloud. Each engine runs in a container, its image built on this host on first use; the language is detected per utterance and per answer, so nothing has to be set for it. Automatic runs an engine while the Docker daemon answers and stays off otherwise; Off takes its controls away.</div>
+  <div class="mb-3 row">
+    <div class="col-12 col-lg-6">
+      {{range $engine := .Engines}}
+      <div class="mb-3">
+        <label class="form-label" for="voice-{{.Key}}">{{.Label}}</label>
+        <select class="form-select" id="voice-{{.Key}}" name="{{.Key}}">
+          <option value="auto"{{if eq .Selected "auto"}} selected{{end}}>Automatic</option>
+          <option value="{{.Server}}-docker"{{if eq .Selected (printf "%s-docker" .Server)}} selected{{end}}>{{.Server}} (Docker)</option>
+          <option value="off"{{if eq .Selected "off"}} selected{{end}}>Off</option>
+        </select>
+        <div class="form-text">{{.Detail}}; {{if $.DockerOK}}the daemon answers{{else}}no daemon answers right now{{end}}.</div>
+      </div>
+      {{if .OptionKey}}
+      <div class="mb-3">
+        <label class="form-label" for="voice-{{.OptionKey}}">{{.OptionLabel}}</label>
+        <select class="form-select" id="voice-{{.OptionKey}}" name="{{.OptionKey}}">
+          {{range .Options}}
+          <option value="{{.ID}}"{{if eq $engine.OptionSelected .ID}} selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
+        <div class="form-text">{{.OptionDetail}}</div>
+      </div>
+      {{end}}
+      {{end}}
+    </div>
+  </div>
+  <button type="submit" class="btn btn-primary">Save</button>
+</form>
+{{template "assistant_settings_end.gohtml"}}
+{{template "app_end.gohtml" .}}
+{{end}}

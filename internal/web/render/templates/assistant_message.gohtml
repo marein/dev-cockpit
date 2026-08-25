@@ -14,6 +14,11 @@
     {{if .Time}}<dc-time datetime="{{.Time}}" class="text-secondary small flex-shrink-0"></dc-time>{{end}}
     {{if .Streaming}}<span class="spinner-border spinner-border-sm text-secondary ms-auto flex-shrink-0" role="status" aria-label="Answering"></span>{{end}}
     {{if .Queued}}<span class="badge bg-secondary-lt ms-auto flex-shrink-0" data-assistant-queued>{{if .CanDiscard}}Waiting{{else}}Not sent{{end}}</span>{{end}}
+    {{/* The speaker keeps the small button's visible height so the answer
+         layout never moves; px-2 widens it a little, and the absolutely
+         positioned overlay is the touch target, 8px past the box on every
+         side without any layout impact. */}}
+    {{if .AudioURL}}<button type="button" class="btn btn-icon btn-sm btn-ghost-secondary px-2 position-relative ms-auto flex-shrink-0" aria-label="Read this answer aloud" title="Read aloud" data-assistant-speak="{{.AudioURL}}"><span class="position-absolute" style="inset:-.5rem" aria-hidden="true"></span><i class="ti ti-volume"></i></button>{{end}}
   </div>
   <div class="text-break{{if not .User}} markdown{{end}}" data-assistant-text>{{.HTML}}</div>
   {{if .Attachments}}

@@ -1,7 +1,8 @@
 import { postForm, ensureOk, getText, getJSON, csrfHeaders } from "@dc/http";
-import { notifyError } from "@dc/toast";
+import { notifyError, showToast } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
 import { jumpTextEdge } from "@dc/dom";
+import { gainFor } from "@dc/volume-slider";
 
 const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
@@ -11,6 +12,27 @@ const ATTACH_ICONS = { image: "ti-photo", video: "ti-video", audio: "ti-micropho
 // /events carries, because the SSE keepalive is a comment and fires no event
 // here. Past this the stream counts as dead, with room for one missed ping.
 const STALE_MS = 45000;
+
+// Voice mode is a per device choice, like the terminal theme: whether a
+// finished answer is read aloud on this screen. The volume sits beside it,
+// also per device, as a whole percent.
+const VOICE_MODE_KEY = "dc-assistant-voice-mode";
+const VOICE_VOLUME_KEY = "dc-assistant-voice-volume";
+const VOICE_VOLUME_DEFAULT = 100;
+
+// How long the send button has to be held before the press means talking
+// instead of sending; a shorter press stays the plain send it always was.
+const SEND_HOLD_MS = 250;
+
+// How far left the holding finger or mouse has to slide to cancel the
+// recording, the messenger gesture: past this nothing is transcribed and
+// nothing is sent.
+const TALK_CANCEL_PX = 80;
+
+// One silent sample. Played muted inside the push to talk press or the voice
+// mode toggle, the two user gestures, it unlocks the audio element for the
+// programmatic play a finished answer asks for later.
+const SILENT_WAV = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
 const MEDIA_EXT = {
   image: ["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "svg"],
@@ -100,6 +122,11 @@ class Assistant extends HTMLElement {
 
     this.form?.addEventListener("submit", (event) => {
       event.preventDefault();
+      // Releasing a talk hold raises the button's ordinary click and with it
+      // this submit, which would send the composer while the clip is still
+      // transcribing; a submit right after a hold's release is that click
+      // and is spent here.
+      if (this.swallowSubmitUntil && Date.now() < this.swallowSubmitUntil) return;
       void this.send();
     }, { signal });
     this.input?.addEventListener("keydown", (event) => this.onKeydown(event), { signal });
@@ -112,17 +139,29 @@ class Assistant extends HTMLElement {
         void this.retry();
         return;
       }
+      const speak = event.target.closest("[data-assistant-speak]");
+      if (speak) {
+        event.preventDefault();
+        this.toggleSpeak(speak);
+        return;
+      }
       const discard = event.target.closest("[data-assistant-discard]");
       if (discard) {
         event.preventDefault();
         void this.discard(discard.getAttribute("data-assistant-discard"));
       }
     }, { signal });
+    this.setupVoice(signal);
     document.addEventListener("visibilitychange", () => {
       this.checkStream();
       void this.catchUp();
     }, { signal });
     onServerEvent("draft", (event) => this.onDraftEvent(event.detail), { signal });
+    // A speech engine's very first start builds its container and downloads
+    // its model, minutes rather than seconds. The server announces such a
+    // start the moment it begins, and the toast is what keeps that one wait
+    // from reading as a hang.
+    onServerEvent("voice-warming", (event) => this.onVoiceWarming(event.detail), { signal });
     this.scroller?.addEventListener("scroll", () => this.trackPin(), { signal, passive: true });
 
     if (this.uploadUrl) {
@@ -240,10 +279,20 @@ class Assistant extends HTMLElement {
 
   disconnectedCallback() {
     window.clearTimeout(this.draftTimer);
+    window.clearTimeout(this.holdTimer);
+    window.clearTimeout(this.hintTimer);
+    this.holdTimer = null;
+    this.holdFired = false;
+    this.holdCancelled = false;
+    this.hintLinger = false;
     this.removeAttribute("ready");
     this.sizer?.disconnect();
     this.sizer = null;
     this.stopWatchdog();
+    this.stopTalk(true);
+    this.disarmTalkEscape();
+    this.speech?.pause();
+    this.speech = null;
     this.ac?.abort();
     this.ac = null;
     this.closeStream();
@@ -494,6 +543,12 @@ class Assistant extends HTMLElement {
         // the streamed text is still the partial one until the fragment lands,
         // and a bubble that says "complete" over half an answer is a lie.
         void this.replaceMessage(frame.messageId, frame.state || "complete");
+        // Voice mode: a finished answer reads itself aloud. The play stands
+        // on the unlock the push to talk press bought; a refused autoplay
+        // stays quiet, the speaker on the answer is the way to it then.
+        if ((frame.state || "complete") === "complete" && this.hasAttribute("tts") && this.voiceModeOn()) {
+          void this.playSpeech(this.messageUrl + encodeURIComponent(frame.messageId) + "/audio");
+        }
         break;
     }
   }
@@ -619,6 +674,9 @@ class Assistant extends HTMLElement {
       if (node) node.replaceWith(fresh);
       else this.log.append(fresh);
       window.app?.loadElements?.(fresh);
+      // The fresh fragment's speaker renders in the resting state; while
+      // this very answer is being spoken it has to show that instead.
+      this.syncSpeakButtons();
       this.stickToEnd();
     } catch {
       const node = this.bubble(messageId);
@@ -719,6 +777,492 @@ class Assistant extends HTMLElement {
       void 0;
     } finally {
       this.catching = false;
+    }
+  }
+
+  // Push to talk and the spoken answers. Holding the talk button records;
+  // releasing transcribes and sends the result right away, existing composer
+  // text prepended, so a spoken exchange costs no extra tap. The keyboard
+  // way is the Alt Alt double tap, wired in the panel element because it
+  // works with the overlay closed too; it lands here as toggleTalk. A
+  // finished answer then reads itself aloud while voice mode is on, and the
+  // speaker on every answer replays it.
+  setupVoice(signal) {
+    this.sttUrl = this.getAttribute("stt-url");
+    this.voiceButton = this.querySelector("[data-assistant-voice]");
+    this.autoplayInput = this.querySelector("[data-assistant-autoplay]");
+    if (this.voiceButton) {
+      this.applyVoiceMode(this.voiceModeOn());
+    }
+    // Switching it on is the gesture the audio element needs to be allowed to
+    // start an answer by itself later, so the unlock is spent right here.
+    this.autoplayInput?.addEventListener("change", () => {
+      const on = this.autoplayInput.checked;
+      try {
+        localStorage.setItem(VOICE_MODE_KEY, on ? "on" : "off");
+      } catch {
+        void 0;
+      }
+      this.applyVoiceMode(on);
+      if (on) this.unlockSpeech();
+    }, { signal });
+    // The volume follows the drag, so what you hear while an answer plays is
+    // what the slider says. The slider stored it already, this only moves the
+    // sound.
+    this.addEventListener("dc-volume-change", (event) => {
+      const value = event.detail?.value;
+      if (Number.isFinite(value)) this.applyVoiceVolume(value);
+    }, { signal });
+    if (!this.sttUrl || !this.sendButton) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return;
+    this.talkReady = true;
+    this.talkHint = this.querySelector("[data-assistant-talk-hint]");
+    // Push to talk lives on the send button: a press held past the threshold
+    // records, its release stops and sends the transcript, and a shorter
+    // press stays the plain send it always was, decided by nothing but the
+    // clock. The capture keeps the release on the button wherever the finger
+    // drifted, and the long press must never become a scroll, a text
+    // selection or the context menu.
+    this.sendButton.style.touchAction = "none";
+    this.sendButton.addEventListener("contextmenu", (event) => event.preventDefault(), { signal });
+    this.sendButton.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      this.sendButton.setPointerCapture?.(event.pointerId);
+      this.holdStartX = event.clientX;
+      window.clearTimeout(this.holdTimer);
+      this.holdTimer = window.setTimeout(() => {
+        this.holdTimer = null;
+        this.holdFired = true;
+        this.unlockSpeech();
+        void this.startTalk();
+      }, SEND_HOLD_MS);
+    }, { signal });
+    // The capture routes the moves here wherever the pointer drifts, finger
+    // and mouse alike: sliding left past the threshold cancels the recording
+    // mid hold, the messenger gesture, and the hint follows the slide so the
+    // way out is readable before it is taken.
+    this.sendButton.addEventListener("pointermove", (event) => {
+      if (!this.holdFired || this.holdCancelled) return;
+      const pull = Math.min(0, event.clientX - this.holdStartX);
+      this.slideTalkHint(pull);
+      if (pull <= -TALK_CANCEL_PX) this.cancelTalk();
+    }, { signal });
+    this.sendButton.addEventListener("pointerup", () => this.endHold(false), { signal });
+    this.sendButton.addEventListener("pointercancel", () => this.endHold(true), { signal });
+  }
+
+  // endHold settles one press on the send button. A press the timer never
+  // turned into a recording is a plain send and the following click carries
+  // it; one that recorded ends the recording instead, and the click that
+  // still follows the release is marked to be swallowed. A press that was
+  // cancelled by the slide already ended its recording, so the release only
+  // spends the click: without that the finger lifting off a cancelled hold
+  // would send the typed text nobody asked to send.
+  endHold(abort) {
+    window.clearTimeout(this.holdTimer);
+    this.holdTimer = null;
+    if (this.holdCancelled) {
+      this.holdCancelled = false;
+      this.swallowSubmitUntil = Date.now() + 350;
+      return;
+    }
+    if (!this.holdFired) return;
+    this.holdFired = false;
+    this.swallowSubmitUntil = Date.now() + 350;
+    this.stopTalk(abort);
+  }
+
+  // cancelTalk ends a held recording without sending: the clip is thrown
+  // away, the hint confirms it, and the cancel is final for this press, a
+  // slide back to the right resumes nothing.
+  cancelTalk() {
+    if (!this.holdFired) return;
+    this.holdFired = false;
+    this.holdCancelled = true;
+    this.stopTalk(true);
+    this.confirmTalkCancel();
+  }
+
+  // The hint sits over the message box while a recording runs: an arrow and
+  // the words, sliding along with the pull and thinning towards the
+  // threshold, so the gesture reads before it triggers.
+  slideTalkHint(pull) {
+    const slide = this.talkHint?.querySelector("[data-assistant-talk-slide]");
+    if (!slide) return;
+    slide.style.transform = pull ? `translateX(${Math.round(pull / 2)}px)` : "";
+    slide.style.opacity = pull ? String(Math.max(0.3, 1 + pull / (TALK_CANCEL_PX * 2))) : "";
+  }
+
+  showTalkHint(mode = "slide") {
+    const hint = this.talkHint;
+    if (!hint) return;
+    window.clearTimeout(this.hintTimer);
+    this.hintLinger = false;
+    const slide = hint.querySelector("[data-assistant-talk-slide]");
+    if (slide) {
+      slide.classList.remove("text-danger");
+      slide.style.transform = "";
+      slide.style.opacity = "";
+    }
+    const icon = hint.querySelector("i");
+    if (icon) icon.className = mode === "escape" ? "ti ti-keyboard" : "ti ti-arrow-left";
+    const text = hint.querySelector("[data-assistant-talk-hint-text]");
+    if (text) text.textContent = mode === "escape" ? "Esc to cancel" : "Slide to cancel";
+    hint.classList.remove("d-none");
+    hint.classList.add("d-flex");
+  }
+
+  // While a recording runs, Escape throws it away. The listener goes on the
+  // document in the capture phase and is taken off again the moment the
+  // recording ends, so nothing else in the app ever sees a press that meant
+  // cancel, and every press outside a recording reaches whatever owns Escape
+  // there, a dialog, the editor, the terminal.
+  armTalkEscape() {
+    if (this.talkEscape) return;
+    this.talkEscape = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.escapeTalk();
+    };
+    document.addEventListener("keydown", this.talkEscape, { capture: true });
+  }
+
+  disarmTalkEscape() {
+    if (!this.talkEscape) return;
+    document.removeEventListener("keydown", this.talkEscape, { capture: true });
+    this.talkEscape = null;
+  }
+
+  // escapeTalk throws the clip away whichever way the recording was started.
+  // A held press takes the slide's own path, so the release that still
+  // follows only spends its click instead of sending; a hands free recording
+  // ends right here and says so where the hint stands.
+  escapeTalk() {
+    if (this.holdFired) {
+      this.cancelTalk();
+      return;
+    }
+    if (!this.talkActive()) return;
+    this.stopTalk(true);
+    this.showTalkHint("escape");
+    this.confirmTalkCancel();
+  }
+
+  // hideTalkHint steps aside while the cancel confirmation still stands: the
+  // recorder's stop resets the button right away, but the person who slid
+  // left has to read that the cancel took.
+  hideTalkHint() {
+    if (this.hintLinger) return;
+    window.clearTimeout(this.hintTimer);
+    this.talkHint?.classList.add("d-none");
+    this.talkHint?.classList.remove("d-flex");
+  }
+
+  confirmTalkCancel() {
+    const hint = this.talkHint;
+    if (!hint) return;
+    const slide = hint.querySelector("[data-assistant-talk-slide]");
+    if (slide) {
+      slide.classList.add("text-danger");
+      slide.style.transform = "";
+      slide.style.opacity = "";
+    }
+    const icon = hint.querySelector("i");
+    if (icon) icon.className = "ti ti-x";
+    const text = hint.querySelector("[data-assistant-talk-hint-text]");
+    if (text) text.textContent = "Recording cancelled";
+    this.hintLinger = true;
+    this.hintTimer = window.setTimeout(() => {
+      this.hintLinger = false;
+      this.hideTalkHint();
+    }, 900);
+  }
+
+  // talkActive reports a recording or a pending microphone grab; the panel's
+  // Alt Alt gesture asks before it decides between start and stop.
+  talkActive() {
+    return Boolean(this.recorder || this.talkHeld);
+  }
+
+  // toggleTalk is push to talk without the hold, for the Alt Alt gesture:
+  // the first call starts recording, the second stops and sends, the same
+  // path the button's release takes. A call while the microphone permission
+  // prompt still stands takes the grab back instead of recording into a
+  // conversation nobody watches.
+  toggleTalk() {
+    if (!this.talkReady) return;
+    if (this.talkActive()) {
+      this.stopTalk(false);
+      return;
+    }
+    this.unlockSpeech();
+    void this.startTalk();
+  }
+
+  onVoiceWarming(data) {
+    const engine = data?.engine === "piper" ? "text to speech" : "speech to text";
+    showToast({
+      icon: "info",
+      title: "Preparing the " + engine + " engine",
+      detail: "The first use builds its container and downloads the model, which can take a few minutes. Afterwards it answers in seconds.",
+      timer: 15000,
+    });
+  }
+
+  async startTalk() {
+    if (this.talkHeld || this.recorder || this.transcribing) return;
+    this.talkHeld = true;
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      this.talkHeld = false;
+      notifyError("The microphone is not available.");
+      return;
+    }
+    // Released while the permission prompt stood: nothing to record.
+    if (!this.talkHeld) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    // webm/opus where the browser has it; Safari records mp4/aac instead,
+    // and the engine decodes either, so the default is good enough there.
+    const preferred = "audio/webm;codecs=opus";
+    let recorder;
+    try {
+      recorder = MediaRecorder.isTypeSupported?.(preferred)
+        ? new MediaRecorder(stream, { mimeType: preferred })
+        : new MediaRecorder(stream);
+    } catch {
+      stream.getTracks().forEach((track) => track.stop());
+      this.talkHeld = false;
+      notifyError("Recording is not supported here.");
+      return;
+    }
+    const chunks = [];
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data?.size) chunks.push(event.data);
+    });
+    recorder.addEventListener("stop", () => {
+      stream.getTracks().forEach((track) => track.stop());
+      const type = recorder.mimeType || "audio/webm";
+      const send = this.talkSend;
+      this.recorder = null;
+      this.setTalkState("");
+      const clip = new Blob(chunks, { type });
+      if (!send || !clip.size) return;
+      void this.transcribe(clip);
+    });
+    this.recorder = recorder;
+    this.talkSend = false;
+    recorder.start();
+    this.setTalkState("recording");
+  }
+
+  stopTalk(abort) {
+    this.talkHeld = false;
+    if (!this.recorder) return;
+    this.talkSend = !abort;
+    if (this.recorder.state !== "inactive") this.recorder.stop();
+  }
+
+  // The recording state has to be readable at arm's length: the send button
+  // goes solid red and wears the microphone while it records, the spinner
+  // while the clip transcribes, and its plain blue send face otherwise. The
+  // reset hands the disabled flag back to the length rule the composer's
+  // input applies.
+  setTalkState(state) {
+    if (!this.sendButton) return;
+    this.sendButton.classList.toggle("btn-danger", state === "recording");
+    this.sendButton.classList.toggle("btn-primary", state !== "recording");
+    this.sendButton.setAttribute("aria-pressed", state === "recording" ? "true" : "false");
+    const icon = this.sendButton.querySelector("i");
+    if (icon) icon.className = state === "recording" ? "ti ti-microphone" : state === "busy" ? "ti ti-send dc-icon-spinner" : "ti ti-send";
+    // Each way of recording gets the way out it can actually take: a held
+    // press slides, a hands free recording has no press to slide, so it is
+    // told about Escape instead.
+    if (state === "recording") this.showTalkHint(this.holdFired ? "slide" : "escape");
+    else this.hideTalkHint();
+    // Escape only means cancel while a recording runs. The listener lives
+    // exactly as long as the recording, so the key keeps every other meaning
+    // it has in the app the rest of the time.
+    if (state === "recording") this.armTalkEscape();
+    else this.disarmTalkEscape();
+    if (state === "busy") this.sendButton.disabled = true;
+    else this.onInput();
+  }
+
+  // The released clip becomes the message: transcribed, prepended with what
+  // already stood in the box, and sent right away, so what was understood
+  // stands in the transcript instead of waiting in the composer.
+  async transcribe(clip) {
+    this.transcribing = true;
+    this.setTalkState("busy");
+    try {
+      const data = new FormData();
+      data.append("audio", clip, clip.type.includes("mp4") ? "clip.mp4" : "clip.webm");
+      const response = await fetch(this.sttUrl, {
+        method: "POST",
+        headers: csrfHeaders({ Accept: "application/json" }),
+        body: data,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "The recording could not be transcribed.");
+      const text = (payload.text || "").trim();
+      if (!text) return;
+      if (this.input) {
+        const current = this.input.value.trim();
+        this.input.value = current ? `${current} ${text}` : text;
+      }
+      await this.send();
+    } catch (error) {
+      notifyError(error.message || "The recording could not be transcribed.");
+    } finally {
+      this.transcribing = false;
+      this.setTalkState("");
+    }
+  }
+
+  voiceModeOn() {
+    try {
+      return localStorage.getItem(VOICE_MODE_KEY) === "on";
+    } catch {
+      return false;
+    }
+  }
+
+  // The stored volume as a fraction for the audio element. Anything unreadable
+  // or out of range reads as full, so a broken value never leaves a screen
+  // silent with no way to tell.
+  voiceVolume() {
+    let stored = null;
+    try {
+      stored = localStorage.getItem(VOICE_VOLUME_KEY);
+    } catch {
+      stored = null;
+    }
+    const percent = Number(stored);
+    if (stored === null || !Number.isFinite(percent) || percent < 0 || percent > 100) {
+      return VOICE_VOLUME_DEFAULT / 100;
+    }
+    return percent / 100;
+  }
+
+  // The icon is the whole state display: a speaker while answers read
+  // themselves aloud, a crossed one while they do not. No colour on the
+  // button, the icon swap already says it.
+  applyVoiceMode(on) {
+    if (this.autoplayInput) this.autoplayInput.checked = on;
+    if (!this.voiceButton) return;
+    const icon = this.voiceButton.querySelector("i");
+    if (icon) icon.className = on ? "ti ti-volume" : "ti ti-volume-off";
+  }
+
+  // The slider is `dc-assistant-volume`, which owns the row and the stored
+  // value and says when it moved. Here only the sound follows, through the
+  // same base the notification sound runs on, so a percentage means one
+  // loudness in the whole product.
+  applyVoiceVolume(fraction) {
+    if (this.speech) this.speech.volume = gainFor(fraction);
+  }
+
+  // The volume rides on the element's own volume, and deliberately not on a
+  // gain node the way the notification jingles do: an element routed through
+  // Web Audio only sounds through its graph, and iOS suspends an audio
+  // context when the page goes to the background, so a spoken answer would
+  // stop the moment the app is put away, while a plain element keeps playing.
+  // A graph also runs a beat behind the element's clock and clips the first
+  // and last words of an answer. The price is that iOS ignores a volume set
+  // from script, the hardware buttons own it there, and the slider disables
+  // itself on such devices. Should the slider ever have to work there, the
+  // level belongs in the wav the server renders, not in a graph in front of
+  // the speaker.
+  ensureSpeech() {
+    if (this.speech) return this.speech;
+    this.speech = new Audio();
+    this.speech.preload = "auto";
+    this.speech.volume = gainFor(this.voiceVolume());
+    this.speech.addEventListener("ended", () => {
+      this.speechUrl = null;
+      this.syncSpeakButtons();
+    });
+    return this.speech;
+  }
+
+  // unlockSpeech spends a user gesture on the audio element: one muted play
+  // inside the press, and the element may later start an answer on its own.
+  unlockSpeech() {
+    if (this.speechUnlocked || !this.hasAttribute("tts")) return;
+    const speech = this.ensureSpeech();
+    speech.muted = true;
+    speech.src = SILENT_WAV;
+    speech.play().then(() => {
+      speech.pause();
+      speech.muted = false;
+      this.speechUnlocked = true;
+    }).catch(() => {
+      speech.muted = false;
+    });
+  }
+
+  toggleSpeak(button) {
+    const url = button.getAttribute("data-assistant-speak");
+    if (!url) return;
+    if (this.speech && this.speechUrl === url && !this.speech.paused) {
+      this.stopSpeech();
+      return;
+    }
+    void this.playSpeech(url, { announce: true });
+  }
+
+  // playSpeech starts one answer. The first ask renders the audio server
+  // side, so the spinner may stand a while; play() resolves when sound
+  // actually starts. An autoplay that the browser or the route refuses stays
+  // quiet, a clicked speaker says what happened.
+  async playSpeech(url, { announce } = {}) {
+    const speech = this.ensureSpeech();
+    // The volume is applied again here, so a slider moved while nothing
+    // played still decides how loud this answer comes out.
+    this.applyVoiceVolume(this.voiceVolume());
+    speech.pause();
+    this.speechUrl = url;
+    this.speechLoading = url;
+    this.syncSpeakButtons();
+    speech.muted = false;
+    speech.src = url;
+    try {
+      await speech.play();
+      this.speechUnlocked = true;
+    } catch {
+      if (this.speechUrl === url) {
+        this.speechUrl = null;
+        if (announce) notifyError("The answer could not be spoken.");
+      }
+    } finally {
+      if (this.speechLoading === url) this.speechLoading = null;
+      this.syncSpeakButtons();
+    }
+  }
+
+  stopSpeech() {
+    if (!this.speech) return;
+    this.speech.pause();
+    this.speech.currentTime = 0;
+    this.speechUrl = null;
+    this.syncSpeakButtons();
+  }
+
+  // One painter for every speaker button, off the current playback state, so
+  // a replaced message fragment falls back into the right picture too.
+  syncSpeakButtons() {
+    for (const button of this.querySelectorAll("[data-assistant-speak]")) {
+      const url = button.getAttribute("data-assistant-speak");
+      const icon = button.querySelector("i");
+      if (!icon) continue;
+      if (this.speechLoading && url === this.speechLoading) icon.className = "ti ti-volume dc-icon-spinner";
+      else if (this.speech && url === this.speechUrl && !this.speech.paused) icon.className = "ti ti-player-stop";
+      else icon.className = "ti ti-volume";
     }
   }
 

@@ -2,7 +2,7 @@ package render
 
 // SettingsNav feeds the settings sidebar, the one navigation every settings
 // page shares (`settings_nav.gohtml`). Active names the entry to mark
-// ("general", "editor", "docker", "notifications", "coder", "backup"). The coder pages are
+// ("general", "editor", "docker", "notifications", "assistant", "coder", "backup"). The coder pages are
 // settings of one coder, so the sidebar picks the coder first and the page
 // then shows that coder's sections: with several coders active the entry
 // becomes one row per coder (Selected marks it), a single coder host keeps
@@ -116,6 +116,50 @@ type EditorLSPProfile struct {
 	Server   string
 	Selected string
 	DockerOK bool
+}
+
+// SettingsVoiceData feeds the assistant settings page's voice tab: one select
+// per speech engine, the same three way choice the editor LSP page offers.
+// Section marks the open tab the way the editor pages mark theirs, so the
+// page can grow more of them.
+type SettingsVoiceData struct {
+	Page
+	SettingsNav SettingsNav
+	Section     string
+	// Engines are the speech engines, each with its select. Selected carries
+	// the stored pick, "auto" while nothing explicit is stored.
+	Engines []VoiceEngine
+	// DockerOK is whether the local daemon answers right now, named in the
+	// description under each select.
+	DockerOK bool
+}
+
+// VoiceEngine is one engine on the voice page.
+type VoiceEngine struct {
+	// Key is the form field and settings suffix ("stt", "tts").
+	Key string
+	// Label names what the engine does, Detail what runs behind it.
+	Label  string
+	Detail string
+	// Server is the engine's short name, the value scheme's Docker option.
+	Server   string
+	Selected string
+	// OptionKey is the form field of the engine's second select, empty for an
+	// engine with nothing to pick; OptionLabel names it, OptionDetail stands
+	// under it, Options are the fixed choices and OptionSelected the one in
+	// force, which is the engine's own default while nothing is stored.
+	OptionKey      string
+	OptionLabel    string
+	OptionDetail   string
+	Options        []VoiceOption
+	OptionSelected string
+}
+
+// VoiceOption is one choice of an engine's second select: the stored id and
+// what the page calls it.
+type VoiceOption struct {
+	ID    string
+	Label string
 }
 
 // BackupSection is one selectable export section on the backup form.

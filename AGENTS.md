@@ -1049,6 +1049,144 @@ test. Update this file when a convention changes.
   settings store the backup already carries, and the cache directories, which
   are deliberately not in the backup: a server rebuilds an index and downloads
   a dependency again, and no answer of the cockpit is lost with them.
+- **The assistant's voice runs in engine containers the cockpit owns.**
+  `internal/voice` follows the editor intelligence Docker pattern with two
+  fixed profiles, whisper (speech to text, faster-whisper) and piper (text to
+  speech): the recipe is compiled in, the image is built locally from the
+  embedded build file under a content hash tag and never pulled prebuilt, the
+  container runs as the cockpit's own user with HOME inside its cache bind
+  (`<state-dir>/voice/dev-cockpit-<engine>`, a host bind at its own path, so
+  the model downloads survive the container and land owned by the cockpit;
+  deliberately not in the backup), and the boot sweep removes leftovers
+  behind the state root label (`dev-cockpit.voice-state-root`), which is the
+  ownership boundary here: an engine is per instance, not per project, so the
+  container name carries a short hash of the state root and two serve
+  processes on one daemon never fight over one name. An engine warms on first
+  use behind a small HTTP API inside the container, published on loopback
+  under an ephemeral host port (one profile, one fixed inner port), and stops
+  after an idle timeout; a transport error drops the container and retries
+  once, an answer the engine gave is never retried. The very first warm also
+  pays the image build and the model download, minutes rather than seconds,
+  so a start that still owes either (`firstUse`: image tag missing, or the
+  model cache empty) is announced over the event bus (`voice-warming`, the
+  profile id as `engine`) and the assistant surface answers it with a toast
+  saying the first use downloads the model. Container writes end at
+  the cache bind: clip and text travel over the API, and the cockpit process
+  itself writes transcripts and rendered audio, so no container ever touches
+  the conversation directories. The settings live on the Assistant settings
+  page's Voice tab (`/settings/assistant/voice`, the bare `/settings/assistant`
+  redirects there; the same tabbed shape the editor page uses, so the page can
+  grow more tabs), one key per engine (`voice-stt`, `voice-tts`) with the LSP
+  value scheme (`auto`, `<engine>-docker`, `off`; absent and unknown read as
+  auto). The short-lived top level `/settings/voice` never shipped in a
+  release and went away without a redirect.
+  What a profile runs with is a second key each, `voice-stt-model` (`tiny`,
+  `base`, `small` (the default), `medium`, `large`) and `voice-tts-voice`
+  (`male`, the default, or `female`), one speaker for every language on
+  purpose, so an answer never changes gender when it changes language. Both
+  store a generic id, a size and a gender, never a model or voice file name:
+  which files a size or a gender means is decided in the build file
+  (`large` is faster-whisper's large-v3-turbo, `male` speaks thorsten and
+  ryan, `female` kerstin and amy), so a better model of the same size never
+  touches a stored setting. small is the default because it is the size that
+  still answers a push to talk press quickly on a CPU only host. The recipe
+  still is not configurable: the value is an id out of the profile's own
+  `Options` and travels into the container in its `EnvVar`
+  (`DC_WHISPER_MODEL`, `DC_PIPER_VOICE`), `Profile.Normalize` reads absent and
+  unknown as the profile's `Default`, the build file's own mapping is the same
+  allowlist and falls back the same way (an unknown whisper model would
+  otherwise read as a repository to go and download), and only the picked
+  piper pair downloads. A model loads before the port binds, so a changed option cannot
+  reach a warm engine: `ensureRunning` compares the running container's option
+  against the current one and starts over when they differ.
+  Speech to text is `POST /assistant/:id/stt`: the clip is whatever
+  MediaRecorder produced, webm/opus mostly and mp4/aac on Safari, the engine
+  decodes either, and whisper detects the language per utterance, so German,
+  English and mixed input work without a language setting. Push to talk lives
+  on the send button, deliberately no button of its own in the composer's
+  width: a press held past `SEND_HOLD_MS` records (the button goes solid red
+  and wears the microphone), releasing transcribes and sends right away with
+  existing composer text prepended, and a shorter press stays the plain send,
+  decided by nothing but the clock; the click a hold's release still raises
+  is swallowed (`swallowSubmitUntil`) or it would send the empty composer
+  beside the clip. Sliding left past `TALK_CANCEL_PX` while holding cancels,
+  the messenger gesture, finger and mouse alike through the captured
+  pointermove: the clip is discarded, nothing is sent, and the cancel is
+  final for that press. While a held recording runs, a slide-to-cancel hint
+  overlays the message box (Bootstrap position utilities, `pe-none`, no
+  stylesheet rule), follows the pull, and lingers briefly as the cancel
+  confirmation; the release after a cancel only spends the click
+  (`holdCancelled` in `endHold`), or lifting the finger off a cancelled hold
+  would send the typed text. Escape cancels a running recording either way, and only
+  then: the listener sits on the document in the capture phase, is armed with
+  the recording state and taken off with it, so no other Escape in the app
+  ever sees a press that meant cancel and every press outside a recording
+  still reaches the dialog, the editor or the terminal that owns it. A held
+  press takes the slide's own cancel path, so its release only spends the
+  click. The hint says which way out this recording has, the slide arrow under
+  a held press and Esc under a hands free one. The keyboard way is
+  Alt Alt through the `@dc/doubletap` machine, wired in the panel element
+  because the first double tap must work with the overlay closed (it opens
+  the chat first) while the surface owns what start and stop mean
+  (`toggleTalk`): the first double tap starts recording, the second stops
+  and sends. Only a bare Alt counts, so Alt+<key> combos never half-arm it
+  and nothing leaks into a terminal or an editable field, where a bare Alt
+  types nothing; the default is taken off every clean tap's keyup, because
+  Firefox on Windows otherwise hands a bare Alt keyup to its menu bar and
+  parks the focus outside the page. Text to speech is
+  `GET /assistant/:id/messages/:messageId/audio`, synthesized per request and
+  never stored: a spoken answer is a couple of seconds of engine time and
+  megabytes of uncompressed audio, so saying it again is cheaper than keeping
+  it, and nothing of a conversation then lies outside its transcript, with no
+  stale copy to invalidate when the voice changes. Concurrent asks for the same
+  answer in the same voice share one synthesis (`spokenAnswer` behind
+  `audioBusy`), and the wav goes out through `http.ServeContent` off a byte
+  reader, so a range request is still answered. The text comes from
+  `markdown.Speech` (code blocks and bare addresses dropped, inline code kept)
+  and the language `voice.DetectLanguage` reads off that spoken text
+  (whatlanggo restricted to German against English, English the fallback;
+  deliberately not lingua-go, whose embedded models more than tripled the
+  binary the self-update ships). The speaker button on
+  a finished answer replays it; it keeps the small button's visible height
+  so the answer layout never moves, and its touch target is an absolutely
+  positioned overlay reaching 8px past the box on every side (a `btn-lg` was
+  tried and pushed the message rows apart). While a spoken answer renders, the
+  speaker and the send button wear `.dc-icon-spinner`, which is added to the
+  icon rather than replacing it: the glyph stays and only turns invisible, so
+  the element keeps its box and its text baseline and the baseline aligned
+  header does not move, and the ring is drawn from a border because a rotating
+  icon font glyph shimmers.
+  The speaker in the assistant's head opens the voice menu, it never toggles
+  on its own and wears no colour, the icon swap (`ti-volume` against
+  `ti-volume-off`) is the whole state display. The menu holds the two per
+  device choices, both in localStorage like the terminal's settings: autoplay
+  (`dc-assistant-voice-mode`) reads a finished answer aloud by itself,
+  standing on the muted play the push to talk press spends on the audio
+  element, because autoplay needs a user gesture once, and switching it on is
+  itself that gesture; and the volume (`dc-assistant-voice-volume`, whole
+  percent, unreadable or out of range reads as full). The volume rides on the
+  audio element's own `volume`, and deliberately not on a gain node the way
+  the notification jingles do: an element routed through Web Audio only
+  sounds through its graph, and iOS suspends an audio context when the page
+  goes to the background, so a spoken answer would stop the moment the app is
+  put away, while a plain element keeps playing; a graph also runs a beat
+  behind the element's clock and clips the first and last words. The price is
+  that iOS ignores a volume set from script, the hardware buttons own it
+  there, and it cannot be probed: the property takes the value and reads it
+  back while playback ignores it, so `dc-assistant-volume` runs a platform
+  check instead (user agent plus the Mac-with-touch shape iPadOS reports) and
+  puts a quiet line under its row saying the loudness follows the hardware
+  buttons, the slider itself stays. Should the slider ever have to work there,
+  the level belongs in the wav the server renders, not in a graph in front of
+  the speaker. Both volume rows are one control, `@dc/volume-slider`: the shared
+  element carries the markup, the icon steps and the reading, a subclass says
+  only where the value lives and what a move does (`dc-notify-volume` onto
+  scriptune's master volume with a jingle preview, `dc-assistant-volume` into
+  localStorage plus a bubbling `dc-volume-change` the surface listens for).
+  The module also owns `GAIN_BASE`, the one number both features attenuate by:
+  scriptune keeps its master gain at a tenth of the stored value, and the
+  speech follows it through `gainFor`, or the same percentage would mean two
+  different loudnesses in one product.
 - **Backup archives are a compat surface.** `internal/backup` maps archive
   paths `data/<section id>/<source name>` onto host paths through the current
   registry, and the manifest identifies the file (`app`, `format`). Old

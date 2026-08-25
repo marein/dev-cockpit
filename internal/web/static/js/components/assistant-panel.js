@@ -1,6 +1,7 @@
 import { getText } from "@dc/http";
 import { onServerEvent } from "@dc/events";
 import * as store from "@dc/store";
+import { DoubleTap } from "@dc/doubletap";
 
 // The assistant overlay, the assistant's only surface. It lives in the layout
 // next to the swapped page region, never in it, so an open surface, a streaming
@@ -139,6 +140,17 @@ class AssistantPanel extends HTMLElement {
     // answer and words being typed stay untouched.
     onServerEvent("assistant", () => void this.syncConversation(), { signal });
 
+    // Alt Alt toggles push to talk, wired here and not in the surface: the
+    // first double tap has to work with the overlay closed, and this element
+    // is what can open it. The machine is the terminal switcher's, on a key
+    // no gesture uses yet, and the listeners ride the document's capture
+    // phase like the switcher's, so the gesture works with the focus in a
+    // terminal or an editable field too; a bare Alt types nothing there, so
+    // nothing leaks in.
+    this.talkTap = new DoubleTap();
+    document.addEventListener("keydown", (event) => this.onTalkTapKeydown(event), { signal, capture: true });
+    document.addEventListener("keyup", (event) => this.onTalkTapKeyup(event), { signal, capture: true });
+
     this.wireResize(signal);
     this.syncCornerTarget();
     window.addEventListener("dc:navigated", () => this.onNavigated(), { signal });
@@ -158,6 +170,49 @@ class AssistantPanel extends HTMLElement {
 
   trigger(node) {
     return node?.closest?.("[data-assistant-link], [data-quicknav-assistant], [data-tabs-assistant]") || null;
+  }
+
+  // Only a bare Alt counts as a tap, everything else resets the machine, so
+  // an Alt+<key> combo never half-arms it; event.repeat covers a held key's
+  // auto repeat.
+  onTalkTapKeydown(event) {
+    if (event.key !== "Alt" || event.repeat || event.ctrlKey || event.metaKey || event.shiftKey) {
+      this.talkTap.reset();
+      return;
+    }
+    this.talkTap.keydown(event.key);
+  }
+
+  onTalkTapKeyup(event) {
+    const fired = this.talkTap.keyup(event.key);
+    // Firefox on Windows hands a bare Alt keyup to its menu bar, which would
+    // swallow the second tap and park the focus outside the page. The
+    // default is taken off every clean tap's keyup, the arming first one and
+    // the firing second one alike, and never off the keyup that ends an
+    // Alt+<key> combo, which the machine already refused as a tap.
+    if (event.key === "Alt" && (fired || this.talkTap.armed === "Alt")) event.preventDefault();
+    if (!fired) return;
+    event.stopPropagation();
+    void this.toggleTalk();
+  }
+
+  // The first double tap starts recording, opening the overlay on the live
+  // chat first when it is closed or showing another view; the second stops
+  // and sends. The surface decides what start and stop mean, this only
+  // brings it on screen and hands the toggle over.
+  async toggleTalk() {
+    if (this.hidden) return;
+    const current = this.body?.querySelector("dc-assistant[ready]");
+    if (current?.talkActive?.()) {
+      current.toggleTalk();
+      return;
+    }
+    if (!this.open) this.openPanel();
+    else if (this.view !== "chat" || !current) {
+      this.conversation = "";
+      await this.load({ view: "chat", focus: true });
+    }
+    (await this.readySurface())?.toggleTalk?.();
   }
 
   get open() {

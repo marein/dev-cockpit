@@ -90,12 +90,18 @@ type AssistantData struct {
 	// EarlierCount is how many messages are held back above the rendered
 	// window, and AllURL renders the whole transcript, anchored at the oldest
 	// message that was already on the page.
-	EarlierCount   int
-	AllURL         string
-	StreamURL      string
-	PostURL        string
-	MessageURL     string
-	UploadURL      string
+	EarlierCount int
+	AllURL       string
+	StreamURL    string
+	PostURL      string
+	MessageURL   string
+	UploadURL    string
+	// SttURL takes a recorded clip and answers its transcript. Empty while
+	// speech to text is off, which is what takes the talk button away.
+	SttURL string
+	// TTS says the spoken answers are on: the messages carry their audio
+	// routes and the composer offers the voice mode toggle.
+	TTS            bool
 	MaxPromptBytes int
 	MaxUploadBytes int64
 	// MemoryCount is what the assistant knows about the user, shown as a
@@ -190,6 +196,9 @@ type AssistantMessageView struct {
 	Queued     bool
 	CanDiscard bool
 	Time       string
+	// AudioURL serves this answer spoken, set only while text to speech is on
+	// and the answer is complete; the speaker button renders from it.
+	AudioURL string
 }
 
 // AssistantWakeView describes the check a message came from.

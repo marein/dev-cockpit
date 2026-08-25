@@ -4,6 +4,7 @@ go 1.26.3
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
+	github.com/abadojack/whatlanggo v1.0.1
 	github.com/editorconfig/editorconfig-core-go/v2 v2.6.4
 	github.com/gin-contrib/gzip v1.2.6
 	github.com/gin-contrib/sessions v1.1.0
