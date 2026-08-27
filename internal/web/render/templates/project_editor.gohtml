@@ -139,8 +139,11 @@
               <button type="button" class="dropdown-item" data-editor-docker-item hidden>
                 <i class="ti ti-brand-docker me-2"></i>Docker
               </button>
+              <button type="button" class="dropdown-item" data-editor-comments-item>
+                <i class="ti ti-messages me-2"></i>Line comments<span class="badge bg-secondary-lt ms-2" data-editor-comments-count hidden></span>
+              </button>
               <button type="button" class="dropdown-item" data-editor-git-item hidden>
-                <i class="ti ti-git-branch me-2"></i>Git<span class="badge bg-secondary-lt ms-2" data-editor-git-item-count></span>
+                <i class="ti ti-git-branch me-2"></i>Git<span class="badge bg-secondary-lt ms-2" data-editor-git-item-count hidden></span>
               </button>
               <button type="button" class="dropdown-item" data-editor-fullscreen aria-pressed="false" hidden>
                 <i class="ti ti-maximize me-2"></i>Fullscreen
@@ -375,6 +378,29 @@
     </div>
   </div>
   <div data-editor-term-modals-host></div>
+  <div data-editor-comment-modal-host>
+    <div class="modal modal-blur fade" data-editor-comment-modal tabindex="-1" aria-labelledby="editor-comment-modal-title" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 class="modal-title" id="editor-comment-modal-title" data-editor-comment-title>Line comment</h3>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="text-secondary small text-truncate" data-editor-comment-place></div>
+            <div class="text-secondary small font-monospace text-truncate mt-1" data-editor-comment-code hidden></div>
+            <textarea class="form-control mt-3" rows="4" data-editor-comment-text placeholder="What about this line?" aria-label="Comment"></textarea>
+            <div class="invalid-feedback">A comment is required.</div>
+            <small class="form-hint mt-2">The comment follows this line as the file changes, but works best when the line keeps its content. The assistant can read and manage all line comments.</small>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal" data-editor-comment-cancel>Cancel</button>
+            <button type="button" class="btn btn-primary" data-editor-comment-save>Add</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </dc-editor>
 
 {{template "editor_shortcuts_modal.gohtml"}}

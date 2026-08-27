@@ -80,6 +80,15 @@ async function init(root) {
   const searchProjectItem = root.querySelector("[data-editor-search-project-item]");
   const findItem = root.querySelector("[data-editor-find-item]");
   const gotoItem = root.querySelector("[data-editor-goto]");
+  const commentsItem = root.querySelector("[data-editor-comments-item]");
+  const commentsCountEl = root.querySelector("[data-editor-comments-count]");
+  const commentModalHostEl = root.querySelector("[data-editor-comment-modal-host]");
+  const commentModalEl = root.querySelector("[data-editor-comment-modal]");
+  const commentModalTitleEl = root.querySelector("[data-editor-comment-title]");
+  const commentModalPlaceEl = root.querySelector("[data-editor-comment-place]");
+  const commentModalCodeEl = root.querySelector("[data-editor-comment-code]");
+  const commentModalTextEl = root.querySelector("[data-editor-comment-text]");
+  const commentModalSaveBtn = root.querySelector("[data-editor-comment-save]");
   const lspIndexEl = root.querySelector("[data-editor-lsp-index]");
   const lspIndexLabel = root.querySelector("[data-editor-lsp-index-label]");
   const lspIndexBar = root.querySelector("[data-editor-lsp-index-bar]");
@@ -155,7 +164,7 @@ async function init(root) {
   // onCursor runs from inside createEditor's first update, before the const
   // below is bound, so anything of ours that reads the editor waits for this.
   let editorReady = false;
-  const editor = await createEditor(surfaceEl, { onChange, onCursor, onFocusChange: syncSwipeZone, lspUsable, onLSPClick: goToDefinition, onFindUsages: findUsages, onGoToDefinition: goToDefinitionAtCursor }, editorSettings, signal, mergeEl);
+  const editor = await createEditor(surfaceEl, { onChange, onCursor, onFocusChange: syncSwipeZone, lspUsable, onLSPClick: goToDefinition, onFindUsages: findUsages, onGoToDefinition: goToDefinitionAtCursor, onDocChanged }, editorSettings, signal, mergeEl);
   editorReady = true;
   setupSettingsUI(root, editor, editorSettings, (key) => {
     if (key === "diff_view" || key === "diff_collapse") void reapplyComparison(key);
@@ -229,6 +238,8 @@ async function init(root) {
   let commitDraftSaved = { message: "", paths: "", amend: false, amendMessage: "" };
   let commitGrouped = store.get(COMMIT_GROUP_KEY, "") !== "0";
   const commitMsgKey = `dc-editor-commit-msg:${name}`;
+  let comments = [];
+  let cursorLine = 1;
 
   const activeTab = () => tabs.find((t) => t.path === activePath) || null;
   const tabByPath = (path) => tabs.find((t) => t.path === path) || null;
@@ -270,6 +281,7 @@ async function init(root) {
   }
 
   function onCursor(line, col) {
+    cursorLine = line;
     posEl.textContent = `${line}:${col}`;
     syncSwipeZone();
   }
@@ -1046,6 +1058,7 @@ async function init(root) {
     syncIndentControl();
     syncPreview();
     syncReadOnly();
+    paintComments();
     // A file from outside the project stands in no tree of ours, and its
     // path must not become the folder a new file is created in.
     if (tab && !tab.compare && !tab.external) markTreeSelection(tab.path);
@@ -1155,6 +1168,7 @@ async function init(root) {
     }
     tabs.splice(i, 1);
     if (lsp && !tab.kind && !tab.compare) lsp.closeDocument(tab.path);
+    if (tab.dirty && !tab.kind && !tab.compare && !tab.external && commentsFor(path).length) void loadComments();
     if (activePath === path) {
       activePath = null;
       const next = tabs[i] || tabs[i - 1];
@@ -2174,6 +2188,7 @@ async function init(root) {
     commitToggleBtn.hidden = !gitRepo;
     gitItem.hidden = !gitSurface();
     gitItemCount.textContent = commitChanges.length ? String(commitChanges.length) : "";
+    gitItemCount.hidden = commitChanges.length === 0;
     commitToggleBtn.title = commitChanges.length
       ? `Commit changes (${commitChanges.length})`
       : "Commit changes";
@@ -3409,12 +3424,16 @@ async function init(root) {
     tab.handle = await editor.createDoc(data.content || "", tab.name);
     tab.editorConfig = data.editorConfig || {};
     tab.version = data.version || "";
+    tab.commentPos = null;
+    tab.commentChanges = null;
+    if (commentsFor(tab.path).length) void loadComments();
     markDirty(tab, false);
     if (isActive) {
       editor.showDoc(tab);
       void applyTabDiff(tab);
       void applyBlame(true);
       void applyChangeBars();
+      paintComments();
     }
   }
 
@@ -3944,6 +3963,446 @@ async function init(root) {
     }
   }
 
+  const commentableTab = (tab) => (tab && !tab.kind && !tab.compare && !tab.external ? tab : null);
+  const commentsFor = (path) => comments.filter((c) => c.path === path);
+  const commentAt = (path, line) => comments.find((c) => c.path === path && c.line === line) || null;
+
+  function sortedComments() {
+    return [...comments].sort((a, b) => (a.path === b.path ? a.line - b.line : a.path < b.path ? -1 : 1));
+  }
+
+  function paintComments() {
+    commentsCountEl.textContent = comments.length ? String(comments.length) : "";
+    commentsCountEl.hidden = comments.length === 0;
+    if (editor.canComments) {
+      const tab = commentableTab(activeTab());
+      editor.setComments(tab ? commentsFor(tab.path).map((c) => ({ line: c.line, outdated: !!c.outdated })) : null);
+    }
+    if (sheetKind === "comments") renderCommentsSheet();
+  }
+
+  async function loadComments() {
+    let data;
+    try {
+      data = await getJSON(`${base}/comments`, { signal });
+    } catch (err) {
+      void err;
+      return;
+    }
+    const fresh = Array.isArray(data.comments) ? data.comments : [];
+    for (const c of fresh) {
+      const tab = commentableTab(tabByPath(c.path));
+      if (!tab || !tab.dirty) continue;
+      const held = comments.find((old) => old.id === c.id);
+      if (held) {
+        c.line = held.line;
+        c.lineText = held.lineText;
+        c.outdated = held.outdated;
+        continue;
+      }
+      if (!tab.commentChanges || c.outdated) continue;
+      const mapped = editor.mapSavedLine(tab, tab.path === activePath, c.line, tab.commentChanges);
+      if (!mapped) continue;
+      if (mapped.removed) {
+        c.outdated = true;
+        continue;
+      }
+      c.line = mapped.line;
+      c.lineText = mapped.text;
+    }
+    comments = fresh;
+    paintComments();
+  }
+
+  function findUniqueQuoteLine(doc, quote) {
+    if (!quote) return 0;
+    let at = 0;
+    for (let n = 1; n <= doc.lines; n++) {
+      if (doc.line(n).text === quote) {
+        if (at) return 0;
+        at = n;
+      }
+    }
+    return at;
+  }
+
+  function onDocChanged(update) {
+    const tab = commentableTab(activeTab());
+    if (!tab) return;
+    tab.commentChanges = tab.commentChanges ? tab.commentChanges.composeDesc(update.changes.desc) : update.changes.desc;
+    const list = commentsFor(tab.path);
+    if (!list.length) return;
+    if (!tab.commentPos) tab.commentPos = new Map();
+    const startDoc = update.startState.doc;
+    const doc = update.state.doc;
+    let repaint = false;
+    let insertedText = null;
+    const insertedHolds = (quote) => {
+      if (!quote) return false;
+      if (insertedText === null) {
+        const parts = [];
+        update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => parts.push(inserted.toString()));
+        insertedText = parts.join("\n");
+      }
+      return insertedText.includes(quote);
+    };
+    const rebindTo = (c, at) => {
+      c.outdated = false;
+      c.line = at;
+      tab.commentPos.set(c.id, doc.line(at).from);
+      repaint = true;
+    };
+    for (const c of list) {
+      if (c.outdated) {
+        if (c.line >= 1 && c.line <= doc.lines && doc.line(c.line).text === (c.lineText || "")) {
+          rebindTo(c, c.line);
+        } else if (insertedHolds(c.lineText || "")) {
+          const at = findUniqueQuoteLine(doc, c.lineText || "");
+          if (at) rebindTo(c, at);
+        }
+        continue;
+      }
+      let pos = tab.commentPos.get(c.id);
+      if (pos === undefined) pos = startDoc.line(Math.max(1, Math.min(c.line, startDoc.lines))).from;
+      const oldLine = startDoc.lineAt(Math.min(pos, startDoc.length));
+      let removed = false;
+      update.changes.iterChangedRanges((fromA, toA) => {
+        if (toA > fromA && fromA <= oldLine.from && toA >= oldLine.to) removed = true;
+      });
+      if (removed) {
+        const at = findUniqueQuoteLine(doc, c.lineText || "");
+        if (at) {
+          rebindTo(c, at);
+          continue;
+        }
+        c.outdated = true;
+        tab.commentPos.delete(c.id);
+        repaint = true;
+        continue;
+      }
+      const mapped = doc.lineAt(Math.min(update.changes.mapPos(pos, 1), doc.length));
+      tab.commentPos.set(c.id, mapped.from);
+      if (c.line !== mapped.number) {
+        c.line = mapped.number;
+        repaint = true;
+      }
+      if ((c.lineText || "") !== mapped.text) {
+        c.lineText = mapped.text;
+      }
+    }
+    if (repaint) paintComments();
+  }
+
+  async function syncCommentMoves(path) {
+    const positions = commentsFor(path).filter((c) => !c.outdated).map((c) => ({ id: c.id, line: c.line, lineText: c.lineText || "" }));
+    if (positions.length) {
+      try {
+        const res = await postJSON(`${base}/comments/move`, { path, comments: positions });
+        if (!res.ok) throw new Error("refused");
+      } catch (err) {
+        void err;
+      }
+    }
+    void loadComments();
+  }
+
+  function currentLineText(path, line, existing) {
+    const tab = commentableTab(tabByPath(path));
+    if (tab) {
+      const lines = editor.valueOf(tab, tab.path === activePath).split("\n");
+      if (line >= 1 && line <= lines.length) return lines[line - 1];
+    }
+    return existing && existing.lineText ? existing.lineText : "";
+  }
+
+  async function saveComment(payload) {
+    try {
+      const res = await postJSON(`${base}/comments`, payload);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "The comment could not be saved.");
+      if (data.gone || !data.comment) {
+        await loadComments();
+        return;
+      }
+      const idx = comments.findIndex((c) => c.id === data.comment.id);
+      if (idx >= 0) comments[idx] = data.comment;
+      else comments.push(data.comment);
+      paintComments();
+    } catch (err) {
+      notifyError(err.message || "The comment could not be saved.");
+    }
+  }
+
+  async function deleteComments(ids, { all = false } = {}) {
+    try {
+      const res = await postJSON(`${base}/comments/delete`, all ? { all: true } : { ids });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "The comment could not be deleted.");
+      }
+      comments = all ? [] : comments.filter((c) => !ids.includes(c.id));
+      paintComments();
+    } catch (err) {
+      notifyError(err.message || "The comment could not be deleted.");
+    }
+  }
+
+  function openCommentModal({ existing, path, line, lineText }) {
+    commentModalTitleEl.textContent = existing ? "Edit line comment" : "Line comment";
+    commentModalPlaceEl.textContent = `${path}:${line}`;
+    const code = (lineText || "").trim();
+    commentModalCodeEl.textContent = code;
+    commentModalCodeEl.hidden = !code;
+    commentModalTextEl.value = existing ? existing.text : "";
+    commentModalTextEl.classList.remove("is-invalid");
+    commentModalSaveBtn.textContent = existing ? "Save" : "Add";
+    return new Promise((resolve) => {
+      const modal = window.bootstrap.Modal.getOrCreateInstance(commentModalEl);
+      const wires = new AbortController();
+      let result = null;
+      const submit = () => {
+        const text = commentModalTextEl.value.trim();
+        if (!text) {
+          commentModalTextEl.classList.add("is-invalid");
+          commentModalTextEl.focus();
+          return;
+        }
+        result = { text };
+        modal.hide();
+      };
+      commentModalSaveBtn.addEventListener("click", submit, { signal: wires.signal });
+      commentModalTextEl.addEventListener("input", () => commentModalTextEl.classList.remove("is-invalid"), { signal: wires.signal });
+      commentModalTextEl.addEventListener("keydown", (ev) => {
+        if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key === "Enter") {
+          ev.preventDefault();
+          ev.stopPropagation();
+          submit();
+        }
+      }, { signal: wires.signal });
+      commentModalEl.addEventListener("shown.bs.modal", () => commentModalTextEl.focus(), { once: true, signal: wires.signal });
+      commentModalEl.addEventListener("hidden.bs.modal", () => {
+        wires.abort();
+        resolve(result);
+      }, { once: true });
+      modal.show();
+    });
+  }
+
+  async function editLineComment(path, line) {
+    const existing = commentAt(path, line);
+    const lineText = currentLineText(path, line, existing);
+    const outcome = await openCommentModal({ existing, path, line, lineText });
+    if (!outcome) return;
+    if (existing && outcome.text === existing.text) return;
+    await saveComment({ id: existing ? existing.id : "", path, line, lineText, text: outcome.text });
+  }
+
+  function openLineCommentAt(line) {
+    const tab = commentableTab(activeTab());
+    if (!tab) return;
+    void editLineComment(tab.path, line);
+  }
+
+  async function copyPathLine(path, line) {
+    try {
+      await navigator.clipboard.writeText(`${path}:${line}`);
+      status(`Copied ${path}:${line}`, "ok");
+    } catch {
+      status("Clipboard is not available.", "error");
+    }
+  }
+
+  function openGutterMenu(tab, line, x, y) {
+    const existing = commentAt(tab.path, line);
+    openMenu({
+      x,
+      y,
+      signal,
+      items: [
+        existing
+          ? { label: "Edit comment", icon: "ti-message-circle", hint: "Ctrl+Alt+C", action: () => void editLineComment(tab.path, line) }
+          : { label: "Add line comment", icon: "ti-message-plus", hint: "Ctrl+Alt+C", action: () => void editLineComment(tab.path, line) },
+        existing ? { label: "Delete comment", icon: "ti-trash", danger: true, action: () => void deleteCommentDialog(existing) } : null,
+        { label: "Copy path:line", icon: "ti-copy", action: () => void copyPathLine(tab.path, line) },
+        blameMenuItem(tab),
+      ],
+    });
+  }
+
+  function lineNumberMenu(row, x, y) {
+    if (!row) return false;
+    const tab = commentableTab(activeTab());
+    if (!tab) return false;
+    const rect = row.getBoundingClientRect();
+    const line = editor.lineAtGutter(row, rect.top + rect.height / 2);
+    if (!line) return false;
+    openGutterMenu(tab, line, x, y);
+    return true;
+  }
+
+  function gutterClick(e) {
+    if (e.defaultPrevented || !(e.target instanceof Element)) return;
+    const gutters = e.target.closest(".cm-gutters");
+    if (!gutters) return;
+    const foldCell = e.target.closest(".cm-foldGutter .cm-gutterElement");
+    if (foldCell && foldCell.childElementCount > 0) return;
+    const tab = commentableTab(activeTab());
+    if (!tab || menuJustClosed()) return;
+    const cell = e.target.closest(".cm-gutterElement");
+    const rect = cell ? cell.getBoundingClientRect() : null;
+    const line = editor.lineAtGutter(gutters, rect ? rect.top + rect.height / 2 : e.clientY);
+    if (!line) return;
+    openGutterMenu(tab, line, e.clientX, e.clientY);
+  }
+
+  function commentsMarkdown() {
+    const parts = [`Line comments in ${name}:`];
+    for (const comment of sortedComments()) {
+      const quote = (comment.lineText || "").trim();
+      const lines = [`${comment.path}:${comment.line}${comment.outdated ? " (outdated)" : ""}`, comment.text];
+      if (quote) lines.push(`> ${quote}`);
+      parts.push(lines.join("\n"));
+    }
+    return parts.join("\n\n");
+  }
+
+  async function copyCommentsMarkdown() {
+    if (!comments.length) return;
+    try {
+      await navigator.clipboard.writeText(commentsMarkdown());
+      notifySuccess("Copied the line comments as Markdown.");
+    } catch {
+      notifyError("Clipboard is not available.");
+    }
+  }
+
+  async function clearCommentsDialog() {
+    const count = comments.length;
+    if (!count) return;
+    if (!(await confirmDialog({
+      title: "Delete all comments?",
+      text: count === 1 ? "This removes the one comment of this project." : `This removes all ${count} comments of this project.`,
+      confirmText: "Delete",
+    }))) return;
+    await deleteComments([], { all: true });
+  }
+
+  async function jumpToComment(comment) {
+    closeSheet();
+    await openPath(comment.path);
+    const tab = commentableTab(tabByPath(comment.path));
+    if (!tab) return;
+    editor.jumpTo(comment.line, 0);
+  }
+
+  function openCommentsSheet() {
+    openSheet("comments", "Line comments");
+    renderCommentsSheet();
+    focusSheetTop();
+  }
+
+  function renderCommentsSheet() {
+    if (sheetKind !== "comments") return;
+    repaintSheet(sheetBodyEl, paintCommentsSheet);
+  }
+
+  function commentCellMenuItems(comment) {
+    return [
+      { label: "Go to line", icon: "ti-arrow-right", action: () => void jumpToComment(comment) },
+      { label: "Edit", icon: "ti-pencil", action: () => void editLineComment(comment.path, comment.line) },
+      { label: "Delete", icon: "ti-trash", danger: true, action: () => void deleteCommentDialog(comment) },
+    ];
+  }
+
+  async function deleteCommentDialog(comment) {
+    if (!(await confirmDialog({
+      title: "Delete this comment?",
+      html: `<div>${escapeHtml(`${comment.path}:${comment.line}`)}</div><div class="text-secondary">${escapeHtml(comment.text)}</div>`,
+      confirmText: "Delete",
+    }))) return;
+    await deleteComments([comment.id]);
+  }
+
+  function commentCell(comment) {
+    let sub = comment.text;
+    let subNodes;
+    let title = comment.text;
+    if (comment.outdated) {
+      sub = undefined;
+      const wrap = document.createElement("span");
+      wrap.className = "d-flex flex-column min-w-0";
+      const textEl = document.createElement("span");
+      textEl.className = "text-truncate";
+      textEl.textContent = comment.text;
+      const oldEl = document.createElement("span");
+      oldEl.className = "text-orange text-truncate";
+      const quote = (comment.lineText || "").trim();
+      oldEl.textContent = quote ? `Outdated · was: ${quote}` : "Outdated";
+      wrap.append(textEl, oldEl);
+      subNodes = [wrap];
+      title = `${comment.text}\n${oldEl.textContent}`;
+    }
+    const cell = sheetActionRow({
+      icon: "ti-message-circle",
+      iconClass: comment.outdated ? "text-orange" : undefined,
+      label: { head: comment.path, tail: `:${comment.line}` },
+      sub,
+      subNodes,
+      title,
+      onClick: (event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        openMenu({
+          x: Math.round(event.clientX || rect.left),
+          y: Math.round(event.clientY || rect.bottom + 4),
+          items: commentCellMenuItems(comment),
+          signal,
+        });
+      },
+    });
+    const col = document.createElement("div");
+    col.className = "col-12 col-lg-6";
+    col.appendChild(cell);
+    return col;
+  }
+
+  function paintCommentsSheet() {
+    if (sheetKind !== "comments") return;
+    sheetBodyEl.replaceChildren();
+    const list = sortedComments();
+    sheetBodyEl.appendChild(sheetActionRow({
+      icon: "ti-copy",
+      label: "Copy as Markdown",
+      sub: "file, line and comment, the code line quoted",
+      disabled: !list.length,
+      onClick: () => {
+        closeSheet();
+        void copyCommentsMarkdown();
+      },
+    }));
+    sheetBodyEl.appendChild(sheetActionRow({
+      icon: "ti-trash",
+      iconClass: "text-danger",
+      label: "Delete all comments",
+      disabled: !list.length,
+      onClick: () => {
+        closeSheet();
+        void clearCommentsDialog();
+      },
+    }));
+    sheetBodyEl.appendChild(gitDivider());
+    if (!list.length) {
+      const empty = document.createElement("div");
+      empty.className = "text-secondary small px-3 py-2";
+      empty.textContent = "No comments yet. Click a line number to add one.";
+      sheetBodyEl.appendChild(empty);
+      return;
+    }
+    const grid = document.createElement("div");
+    grid.className = "row row-deck g-0";
+    for (const comment of list) grid.appendChild(commentCell(comment));
+    sheetBodyEl.appendChild(grid);
+  }
+
   // ---- file comparison -------------------------------------------------------
 
   // Two files on the disk against each other. It is the one comparison where
@@ -4243,6 +4702,8 @@ async function init(root) {
     tab.version = version;
     editor.markSaved(tab, tab.path === activePath);
     markDirty(tab, false);
+    tab.commentChanges = null;
+    if (commentsFor(tab.path).length) void syncCommentMoves(tab.path);
     return "saved";
   }
 
@@ -4302,6 +4763,8 @@ async function init(root) {
       }
       // Nothing may stay picked for a comparison that cannot be built any more.
       if (compareSelection && gone(compareSelection)) compareSelection = null;
+      const goneComments = comments.filter((c) => gone(c.path)).map((c) => c.id);
+      if (goneComments.length) void deleteComments(goneComments);
       // Drop the deleted dir (and its descendants) from the kept-open set.
       for (const p of [...expanded]) {
         if (p === targetPath || p.startsWith(targetPath + "/")) expanded.delete(p);
@@ -4375,6 +4838,15 @@ async function init(root) {
       }
     }
     persistExpanded();
+    let movedComments = false;
+    for (const c of comments) {
+      const next = moved(c.path);
+      if (next !== c.path) {
+        c.path = next;
+        movedComments = true;
+      }
+    }
+    if (movedComments) paintComments();
     const tab = activeTab();
     if (tab && !tab.compare && tab.path.startsWith(newPath)) {
       if (tab.kind) renderViewer(tab);
@@ -5621,6 +6093,10 @@ async function init(root) {
     if (event.detail && event.detail.project && event.detail.project !== name) return;
     void pullCommitDraft();
   }, { signal });
+  onServerEvent("linecomments", (event) => {
+    if (event.detail && event.detail.project && event.detail.project !== name) return;
+    void loadComments();
+  }, { signal });
   // The indexing picture moved; a bare signal (the snapshot after a
   // reconnect) covers a page that opened or came back mid-indexing.
   onServerEvent("lsp", (event) => {
@@ -6174,6 +6650,9 @@ async function init(root) {
 
   filesItem.addEventListener("click", openFilesSheet, { signal });
   settingsItem.addEventListener("click", openSettingsSheet, { signal });
+  commentsItem.addEventListener("click", openCommentsSheet, { signal });
+  wireRowMenus(root, ".cm-gutters .cm-gutterElement", lineNumberMenu, { signal });
+  root.addEventListener("click", gutterClick, { signal });
   reindexItem.hidden = !lsp;
   reindexItem.addEventListener("click", () => {
     void lsp?.reindex();
@@ -6197,7 +6676,7 @@ async function init(root) {
     // bubbles; closing then would close what just replaced it, which is how
     // the branch picker used to vanish the moment it opened.
     if (!sheetBodyEl.contains(e.target)) return;
-    if (sheetKind !== "settings" && sheetKind !== "docker" && sheetKind !== "git" && e.target.closest(".dropdown-item")) closeSheet();
+    if (sheetKind !== "settings" && sheetKind !== "docker" && sheetKind !== "git" && sheetKind !== "comments" && e.target.closest(".dropdown-item")) closeSheet();
   }, { signal });
 
   const projectSwitchEl = root.querySelector(".editor-project-switch");
@@ -7063,7 +7542,9 @@ async function init(root) {
   paintTermPanel();
   void loadDocker();
   void pullLSPIndex();
+  void loadComments();
   document.body.appendChild(termModalsHostEl);
+  document.body.appendChild(commentModalHostEl);
   const pageTerminal = root.dataset.editorTerminal || "";
   if (pageTerminal && termApplies()) {
     termActiveId = pageTerminal;
@@ -7127,6 +7608,11 @@ async function init(root) {
         if (sheetKind === "git") closeSheet();
         else openGitSheet();
       }
+    } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && !e.repeat
+      && e.key.toLowerCase() === "c" && quickOpenEl.hidden) {
+      e.preventDefault();
+      if (sheetKind === "comments") closeSheet();
+      else openCommentsSheet();
     } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
       && e.code === "KeyD" && quickOpenEl.hidden) {
       const tab = activeTab();
@@ -7140,6 +7626,12 @@ async function init(root) {
       if (gitRepo && editor.canBlame && tab && !tab.kind && !tab.compare && !tab.external) {
         e.preventDefault();
         toggleTabBlame(tab);
+      }
+    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
+      && e.code === "KeyC" && quickOpenEl.hidden) {
+      if (commentableTab(activeTab())) {
+        e.preventDefault();
+        openLineCommentAt(cursorLine);
       }
     } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
       && e.code === "KeyR" && quickOpenEl.hidden) {
@@ -7234,6 +7726,8 @@ async function init(root) {
     }
     document.documentElement.classList.remove("dc-editor-fullscreen");
     termModalsHostEl.remove();
+    window.bootstrap?.Modal?.getInstance(commentModalEl)?.dispose();
+    commentModalHostEl.remove();
     editor.destroy();
   };
 }
@@ -7678,6 +8172,61 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     });
   }
 
+  const commentsConf = new Compartment();
+  let commentData = null;
+
+  class CommentLineMarker extends view.GutterMarker {
+    constructor(outdated) {
+      super();
+      this.outdated = outdated;
+      this.elementClass = outdated ? "cm-comment-line cm-comment-line-outdated" : "cm-comment-line";
+    }
+
+    eq(other) {
+      return other.outdated === this.outdated;
+    }
+  }
+
+  const commentLineMarker = new CommentLineMarker(false);
+  const commentLineOutdatedMarker = new CommentLineMarker(true);
+
+  const commentsTheme = EditorView.theme({
+    ".cm-gutters": { cursor: "pointer" },
+    ".cm-gutters .cm-comment-line": {
+      color: "var(--tblr-yellow, #f59f00)",
+      fontWeight: "700",
+      backgroundColor: "rgba(245, 159, 0, 0.18)",
+    },
+    ".cm-gutters .cm-comment-line.cm-comment-line-outdated": {
+      color: "var(--tblr-orange, #f76707)",
+      backgroundColor: "rgba(247, 103, 7, 0.18)",
+      textDecoration: "line-through",
+    },
+  });
+
+  function commentsExtension(data) {
+    if (!data) return [];
+    if (data.length === 0) return [commentsTheme];
+    const build = (doc) => {
+      const byLine = new Map();
+      for (const c of data) {
+        if (c.line < 1 || c.line > doc.lines) continue;
+        byLine.set(c.line, byLine.get(c.line) || !!c.outdated);
+      }
+      const ranges = [];
+      for (const [line, outdated] of byLine) {
+        ranges.push((outdated ? commentLineOutdatedMarker : commentLineMarker).range(doc.line(line).from));
+      }
+      return state.RangeSet.of(ranges, true);
+    };
+    const field = state.StateField.define({
+      create: (st) => build(st.doc),
+      update: (set, tr) => (tr.docChanged ? set.map(tr.changes) : set),
+      provide: (f) => view.gutterLineClass.from(f),
+    });
+    return [commentsTheme, field];
+  }
+
   // ---- change bars -----------------------------------------------------------
 
   // The gutter bars mark what the buffer holds against HEAD: a blue bar on
@@ -7893,7 +8442,9 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     lspExtension,
     mergeConf.of([]),
     blameConf.of(blameExtension(blameData)),
+    commentsConf.of(commentsExtension(commentData)),
     EditorView.updateListener.of((u) => {
+      if (u.docChanged) hooks.onDocChanged?.(u);
       if (u.docChanged) hooks.onChange();
       if (u.docChanged || u.selectionSet) reportCursor(u.state);
       if (u.docChanged) lastSurfaceTouch = 0;
@@ -8259,6 +8810,11 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       blameData = data;
       workView().dispatch({ effects: blameConf.reconfigure(blameExtension(data)) });
     },
+    canComments: true,
+    setComments(data) {
+      commentData = data;
+      workView().dispatch({ effects: commentsConf.reconfigure(commentsExtension(data)) });
+    },
     canChanges: true,
     // setChanges puts the bars for the given HEAD text on the plain editor, or
     // takes them off with null. It always reaches the plain editor, never a
@@ -8392,6 +8948,27 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     hasFocus() {
       return liveViews().some((v) => v.hasFocus);
     },
+    lineAtGutter(node, y) {
+      const v = workView();
+      if (!v.dom.contains(node)) return 0;
+      const docY = y - v.documentTop;
+      const block = v.lineBlockAtHeight(docY);
+      if (!block || docY < block.top - 2 || docY > block.bottom + 2) return 0;
+      return v.state.doc.lineAt(block.from).number;
+    },
+    mapSavedLine(tab, isActive, line, changes) {
+      const saved = tab.handle.saved;
+      if (line < 1 || line > saved.lines) return { line, removed: true, text: "" };
+      const savedLine = saved.line(line);
+      let removed = false;
+      changes.iterChangedRanges((fromA, toA) => {
+        if (toA > fromA && fromA <= savedLine.from && toA >= savedLine.to) removed = true;
+      });
+      if (removed) return { line, removed: true, text: "" };
+      const doc = isActive ? workView().state.doc : tab.handle.state.doc;
+      const mapped = doc.lineAt(Math.min(changes.mapPos(savedLine.from, 1), doc.length));
+      return { line: mapped.number, removed: false, text: mapped.text };
+    },
     lspPosition() {
       const st = workView().state;
       const head = st.selection.main.head;
@@ -8515,6 +9092,12 @@ function createTextarea(host, hooks, settings) {
     hasFocus() {
       return document.activeElement === ta;
     },
+    lineAtGutter() {
+      return 0;
+    },
+    mapSavedLine() {
+      return null;
+    },
     refreshLanguage() {},
     // Without CodeMirror there is no diff and no comparison either: the
     // fallback exists so a failed CDN still lets you read and write files.
@@ -8527,6 +9110,8 @@ function createTextarea(host, hooks, settings) {
     },
     canBlame: false,
     setBlame() {},
+    canComments: false,
+    setComments() {},
     canChanges: false,
     async setChanges() {},
     comparing: () => false,

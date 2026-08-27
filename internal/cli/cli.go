@@ -264,6 +264,7 @@ func newAssistantCommand() *cobra.Command {
 		newJobsCommand(opts), newJobCommand(opts),
 		newNotificationsCommand(opts),
 		newProjectCommand(opts), newDeleteProjectCommand(opts),
+		newLineCommentListCommand(opts), newLineCommentAddCommand(opts), newLineCommentRemoveCommand(opts),
 		newOutputCommand(opts),
 		newRunTurnCommand(),
 	)

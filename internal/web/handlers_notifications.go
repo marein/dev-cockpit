@@ -111,6 +111,11 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "commitdraft", Data: map[string]string{"project": ""}}); err != nil {
 		return
 	}
+	// The line comments the same way: a bare linecomments signal, no project
+	// named, and every open editor pulls its own project's list.
+	if err := writeEnvelope(w, eventbus.Event{Type: "linecomments", Data: map[string]string{"project": ""}}); err != nil {
+		return
+	}
 	// And a bare git signal, no project named. The git event is otherwise only
 	// published when something moves, and a move that fell into a gap is
 	// published never again: the same file changing further does not move the
@@ -219,6 +224,14 @@ func (s *Server) publishGit(projectName string, base bool) {
 // movement and never the state, every open panel pulls the draft itself.
 func (s *Server) publishCommitDraft(projectName string) {
 	s.bus.Publish(eventbus.Event{Type: "commitdraft", Data: map[string]string{"project": projectName}})
+}
+
+// publishLineComments signals that one project's line comments moved: a
+// note was written, moved along with an edit, or cleared. Like the commit
+// draft it carries the movement and never the state, every open editor pulls
+// the list itself.
+func (s *Server) publishLineComments(projectName string) {
+	s.bus.Publish(eventbus.Event{Type: "linecomments", Data: map[string]string{"project": projectName}})
 }
 
 // publishGitPrompt signals that the standing askpass questions moved: one was

@@ -231,6 +231,7 @@ func (s *Server) deleteProjectWithCompose(p project.Project) {
 		failure = err.Error()
 	} else {
 		s.commitDrafts.Delete(p.Name)
+		s.lineComments.Clear(p.Name)
 		s.quickOpen.Forget(p.Path)
 		// The project's compose and askpass news read themselves with it, and
 		// deliberately only on success: an aborted deletion keeps its compose

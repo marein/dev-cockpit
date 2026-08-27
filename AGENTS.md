@@ -635,6 +635,151 @@ test. Update this file when a convention changes.
   rule against a slow device. The rule for a new one is the question, not the
   mechanism: does it describe this repository and everybody looking at it, or
   this screen?
+- **A line comment is one note on one line, and the notes are project
+  state.** One note on one line of one file, kept per project in
+  `<state-dir>/line-comments/<project>.json` through `internal/statefile`,
+  the notification inbox layout: deleting a project is `lineComments.Clear`,
+  which removes that project's file, an emptied list takes its file with it,
+  and the backup carries the whole directory as a `line-comments` source of
+  the `projects` section, no section of its own (the earlier own section
+  never shipped in a release, so no archive holds its id). The pre-release
+  single `editor-line-comments.json`
+  was never migrated, nothing reads or writes it any more. The routes sit in
+  the editor group: `GET/POST .../editor/comments` (the list, and one
+  upsert; the quote in a save is the sender's buffer line, stored untouched
+  even when empty — a note born in a dirty buffer deliberately reads
+  outdated to other readers until the save catches the disk up — while a
+  request without the field, the CLI's add, gets the code line read from
+  the disk),
+  `.../comments/delete` (ids, whole files through `paths`, the orphans
+  through `outdated` — narrowed by `paths` when both are given — or `all`;
+  the answer counts what fell) and `.../comments/move`, which is
+  how an edited buffer's anchors land — and only with the save: while a
+  buffer is dirty the mapping is a local overlay (`onDocChanged`, line and
+  quoted code line follow the buffer), no move request leaves the client, so
+  the server only ever knows saved states. Another reader therefore sees no
+  phantom outdated from a buffer the disk never saw, and a discard only
+  drops the overlay while the stored anchors still match the disk (the
+  reload from disk and a discarded close pull the list fresh). A successful
+  save posts the file's lines and quotes in one move (outdated comments send
+  nothing) and then pulls the reconciled answer, which is also where the
+  server's own rebind repairs what a failed post left behind.
+  **The quote is the anchor, and every read judges it**
+  (`reconcileLineComments`, behind every answer of the list): the stored
+  quote is held against the file's current line, reading only the commented
+  files. A quote that stands where its line says is fine; one that moved and
+  stands in the file exactly once is rebound in the same read, persisted
+  through `Move` and published, so the answer never lags its own repair; the
+  rest is honestly `outdated` in the view — quote gone or ambiguous, file
+  missing or unreadable as text, and an empty quote never rebinds, every
+  empty line would match it. Outdated is judged fresh per read and never
+  stored, so a file that comes back heals its comments; deliberately no
+  fuzzy matching, no git mapping and no watcher behind it. An open dirty
+  buffer keeps its live mapping, the server judges the saved state, and the
+  client's local array is the one source its three consumers read — the
+  gutter repaint, the sheet and the jump. A pull therefore never overwrites
+  the line, quote or outdated mark of a comment whose tab is dirty
+  (`loadComments` keeps the held values per id): the server's answer is the
+  disk's view, and taking that in mid-edit is how the sheet once jumped to
+  the wrong line while the gutter stood right. A comment that arrives new
+  for a dirty tab — another device pinned it against the saved state — is
+  neither painted at its raw disk line nor held back: the tab accumulates
+  its changes since the last save (`tab.commentChanges`, a composed
+  `ChangeDesc`, reset by the save and the disk reload),
+  `editor.mapSavedLine` maps the disk anchor through that overlay onto the
+  shifted line, a line the overlay deleted makes it locally outdated, and
+  the next save persists the mapping for everyone, the new comment
+  included. The save reconciles both sides on the next read. The
+  live mapping carries the same anchor rule as the server, the quote is the
+  truth and the position only a hint: a change that covers the whole
+  commented line (`iterChangedRanges`, a real deletion spanning both of the
+  line's ends) never remaps the anchor onto the neighbour line — that would
+  rewrite the quote with foreign text and make the orphan look legitimate
+  forever. The comment freezes with its old quote and reads as outdated at
+  once, in gutter and sheet, and the move sync skips outdated comments
+  entirely, so no orphan ever writes a new quote. It heals in place the
+  moment its line carries the exact quote again, which is what an undo does;
+  past that, the server's rebind after the save is the way back. Typing
+  inside the commented line stays what it was: anchor follows, quote
+  follows. Every
+  movement publishes the `linecomments` event (project named, bare in the
+  connect snapshot), and every open editor pulls the list itself. The surface
+  is the gutter itself, deliberately no column of its own: a commented line
+  highlights its whole gutter row (`cm-comment-line` through
+  `gutterLineClass`, a StateField in a compartment beside the blame gutter,
+  its RangeSet mapped through every change so the mark follows the buffer
+  between repaints; `lineNumberMarkers` colored only the number cell and
+  left the fold gutter white beside it). The line's menu opens on a plain
+  click anywhere in the gutter (`gutterClick`, skipping only a fold gutter
+  cell that carries a marker so folding keeps working, and asking
+  `menuJustClosed` so a second click closes; the gutter wears the pointer
+  cursor on a commentable tab, part of `commentsTheme`), on a right click and on a
+  touch long press (`wireRowMenus` from `@dc/contextmenu` over the CM gutter
+  cells, delegated from the editor root because the cells are rebuilt while
+  scrolling); the line comes from `editor.lineAtGutter` (workView only, so a
+  diff's revision side answers nothing), and the menu holds, in this order:
+  add or edit the comment, on a commented line the danger `Delete comment`,
+  `Copy path:line`, and the blame toggle (`blameMenuItem`); deleting lives
+  only in the menus, the dialog itself only creates and edits.
+  The dialog is a Bootstrap modal, deliberately not SweetAlert
+  (`data-editor-comment-modal`, the one exception the feature carries):
+  path:line and the code line above a textarea, a dimmed `form-hint` under
+  the field saying the comment follows the line and the assistant can read
+  and manage the notes, Cancel and Save or Add,
+  an empty save marks the field `is-invalid`
+  instead of writing, Ctrl/Cmd+Enter saves it the way the commit message
+  commits, and its host div moves to `document.body` like the terminal
+  panel's modals, so the fullscreen editor's fixed context cannot put it
+  under its own backdrop. The delete confirms (the gutter menu's `Delete
+  comment`, a cell's `Delete`, both through `deleteCommentDialog`, and
+  `Delete all`) stay SweetAlert like every other confirm.
+  Ctrl+Alt+C comments the cursor line,
+  opening an existing note; Ctrl+Shift+C opens and closes the comments
+  sheet; both stand in the editor's shortcuts modal and the docs row, and
+  there is deliberately no `Line comment` entry in the editor menu any more.
+  The kebab's `Line comments` entry stands directly above `Git`, and the
+  two menu badges (`Line comments`, `Git`) hide at zero instead of standing
+  as an empty pill. An outdated note shows itself everywhere the note shows: the
+  gutter mark turns orange with the number struck through
+  (`cm-comment-line-outdated`), the sheet cell carries the orange
+  `Outdated · was:` line with the old quote, the Markdown export appends
+  `(outdated)` to the `path:line` head, and the CLI list marks the entry.
+  A last known line past the file's end paints no gutter mark at all (the
+  extension drops out-of-range lines instead of clamping, the stored note
+  stays untouched), so the sheet is the only place then, the same as a
+  deleted file.
+  The assistant reaches the same routes over the local API
+  (`internal/cli/linecomments.go`): `line-comment-list` (capped like the
+  other list commands, filters before the cap) and `line-comment-remove`
+  take `--outdated` beside `--path`, ids stay their own case, and
+  `line-comment-add`'s quote is the server's disk read; announced in the
+  generated instructions (`internal/assistant/memory.go`). `--path` is the same filter on list and
+  remove, repeatable and ored, each value an exact file, a folder prefix, or
+  a glob where `*` stays inside a segment and `**` crosses them; the one
+  matcher is the server's (`matchCommentPath`, the list route takes it as
+  `?path=`, the delete route as `paths`), so the CLI never grows a second
+  spelling of it. Because everything lands in the editor's own handlers,
+  every open editor follows an add or a remove live, badge and sheet
+  without a reload. `Line comments` in the menu opens a
+  sheet built like the git sheet, its notes in the history's own shape: one
+  cell per note in a `row row-deck` grid (`commentCell`, `col-12 col-lg-6`,
+  two per line from `lg` up), the whole cell is the control, and a click on
+  it opens the app's menu over it, anchored at the click or at the cell when
+  the keyboard got there — `Go to line`, `Edit` and the
+  danger `Delete`, which asks first: the confirm stacks path:line and the
+  note's text dimmed on lines of their own under the title, no separator;
+  the sheet stands behind the menu, so
+  it is in the keep-open list of the row-click auto-close. Above the grid the two
+  actions, `Copy as Markdown` (heading `Line comments in <project>:`, then
+  path:line, the comment, the code line as quote; the comments reach the
+  assistant through the CLI or pasted as a message, the sheet sends nothing
+  itself) and `Delete all`, both closing the sheet themselves the way the
+  auto-close used to. A file deleted in the editor takes its notes with
+  it, and a rename or a tree move carries them along on the server, the one
+  moment it knows both names (`lineComments.Rename` in the rename and move
+  handlers, exact file or folder prefix, publishing the event); the client
+  only remaps its local list, it re-posts nothing. One project's list is
+  capped (`maxLineCommentsPerProject`) so the state file stays a state file.
 - **No route ever answers a diff.** `@codemirror/merge` computes it in the
   browser; the server only serves the file at HEAD
   (`.../editor/git/file?path=`), with the same binary and too large markers the

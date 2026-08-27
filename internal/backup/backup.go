@@ -191,7 +191,6 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 				{Name: "terminal-restore.json", Path: st("terminal-restore.json")},
 				{Name: "shell-history", Path: st("shell-history")}},
 			Requires: []string{"projects", "claude-sessions", "copilot-sessions"}},
-
 		{ID: "assistant", Group: "Cockpit", Label: "Assistant",
 			Description: "Its memory, its conversations, the jobs it steers and the files a message carried. The generated instruction files stay out, the next start writes them from the memory again.",
 			Sources: []Source{
@@ -240,10 +239,11 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 				{Name: "command-history-state.json", Path: hm(".copilot/command-history-state.json")}}},
 
 		{ID: "projects", Group: "Host", Label: "Projects",
-			Description: "The complete projects directory, every working copy as it sits on disk. Imports into the current projects dir. Can be large. The recent projects order travels along.",
+			Description: "The complete projects directory, every working copy as it sits on disk. Imports into the current projects dir. Can be large. The recent projects order and the editor's line comments travel along.",
 			Sources: []Source{
 				{Name: "projects", Path: projectsDir},
-				{Name: "recent-projects.json", Path: st("recent-projects.json")}}},
+				{Name: "recent-projects.json", Path: st("recent-projects.json")},
+				{Name: "line-comments", Path: st("line-comments")}}},
 		{ID: "ssh", Group: "Host", Label: "SSH keys",
 			Description: "The complete ~/.ssh, keys, config, known_hosts, authorized_keys. File modes are preserved.",
 			Sources:     []Source{{Name: "ssh", Path: hm(".ssh")}}},

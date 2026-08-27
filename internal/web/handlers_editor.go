@@ -337,6 +337,11 @@ func (s *Server) handleEditorRename(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
+	// The one moment the server knows the old and the new name: the file's
+	// line comments move along instead of orphaning, folders included.
+	if s.lineComments.Rename(p.Name, form.Path, entry.RelPath) {
+		s.publishLineComments(p.Name)
+	}
 	c.JSON(http.StatusOK, gin.H{"entry": entry})
 }
 
@@ -367,6 +372,9 @@ func (s *Server) handleEditorMove(c *gin.Context) {
 	if err != nil {
 		editorWriteError(c, err)
 		return
+	}
+	if s.lineComments.Rename(p.Name, form.Path, entry.RelPath) {
+		s.publishLineComments(p.Name)
 	}
 	c.JSON(http.StatusOK, gin.H{"entry": entry})
 }

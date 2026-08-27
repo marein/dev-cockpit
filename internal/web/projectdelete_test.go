@@ -120,6 +120,7 @@ func deletionServer(t *testing.T, stateDir string, projects *project.Repository)
 		bus:          eventbus.New(),
 		quickOpen:    filesystem.NewQuickOpenCache(),
 		commitDrafts: newCommitDrafts(stateDir),
+		lineComments: newLineComments(stateDir),
 		deletes:      newProjectDeletes(stateDir),
 	}
 	s.restorer = restore.New(filepath.Join(stateDir, "terminal-restore.json"), func() bool { return false },
