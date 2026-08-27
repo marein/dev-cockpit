@@ -1,7 +1,9 @@
 package opencode
 
 import (
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,7 +68,7 @@ func TestEnsureNotifyPluginWritesTheFile(t *testing.T) {
 	if string(content) != notifyPlugin {
 		t.Fatal("plugin file differs from the source")
 	}
-	for _, want := range []string{notifyEnv, "session.idle", "permission.asked", `"Stop"`, `"Notification"`, ".tmp"} {
+	for _, want := range []string{notifyEnv, "session.idle", "permission.asked", "permission.replied", `"Stop"`, `"Notification"`, ".tmp"} {
 		if !strings.Contains(string(content), want) {
 			t.Errorf("plugin misses %q", want)
 		}
@@ -119,4 +121,104 @@ func TestEnsureNotifyPluginLeavesAnUnchangedFileAlone(t *testing.T) {
 
 func notifyPluginPath() string {
 	return filepath.Join(configDir(), "plugin", notifyPluginFile)
+}
+
+// The behavior tests run the real plugin under node in a container, the
+// image the LSP build files already use, and skip where docker is missing,
+// like the voice tests. The harness stands in for opencode's plugin host:
+// it loads the module, hands it a client whose session lookup answers a
+// plain parent session, and feeds events into the returned hook. The inbox
+// is a bind mount, so the Go side reads what the plugin wrote.
+func runNotifyHarness(t *testing.T, harness string) string {
+	t.Helper()
+	dockerPath, err := exec.LookPath("docker")
+	if err != nil {
+		t.Skip("docker is not available on this host")
+	}
+	if err := exec.Command(dockerPath, "info").Run(); err != nil {
+		t.Skip("the docker daemon does not answer")
+	}
+	work := t.TempDir()
+	if err := os.WriteFile(filepath.Join(work, "plugin.mjs"), []byte(notifyPlugin), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "harness.mjs"), []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(work, "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(dockerPath, "run", "--rm", "--network", "none",
+		"-e", notifyEnv+"=/work/inbox",
+		"-v", work+":/work",
+		"node:lts-alpine", "node", "/work/harness.mjs").CombinedOutput()
+	if err != nil {
+		t.Fatalf("harness failed: %v\n%s", err, out)
+	}
+	return filepath.Join(work, "inbox")
+}
+
+const notifyHarnessHead = `import { DevCockpitNotify } from "/work/plugin.mjs"
+import { readdirSync } from "node:fs"
+const client = { session: { get: async () => ({ data: { metadata: {} } }) } }
+const hooks = await DevCockpitNotify({ client })
+const send = (type, properties) => hooks.event({ event: { type, properties } })
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+`
+
+// An ask the TUI answers itself, the way every --auto session does, is
+// nobody's news: the reply lands inside the grace and no file is written.
+// The v1 and the v2 names travel through the same pending map.
+func TestAnAnsweredAskInsideTheGraceWritesNothing(t *testing.T) {
+	inbox := runNotifyHarness(t, notifyHarnessHead+`await send("permission.asked", { id: "per_1", sessionID: "ses_1" })
+await send("permission.replied", { requestID: "per_1", sessionID: "ses_1", reply: "once" })
+await send("permission.v2.asked", { id: "per_2", sessionID: "ses_1" })
+await send("permission.v2.replied", { requestID: "per_2", sessionID: "ses_1", reply: "once" })
+await wait(2600)
+`)
+	entries, err := os.ReadDir(inbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("an answered ask must write nothing, the inbox holds %v", entries)
+	}
+}
+
+// An ask nobody answers becomes exactly one file, and only after the grace:
+// the harness proves the inbox still empty right after the ask.
+func TestAnUnansweredAskWritesOneFileAfterTheGrace(t *testing.T) {
+	inbox := runNotifyHarness(t, notifyHarnessHead+`await send("permission.asked", { id: "per_1", sessionID: "ses_1" })
+await wait(300)
+if (readdirSync("/work/inbox").length !== 0) {
+  console.error("a file landed inside the grace")
+  process.exit(1)
+}
+await wait(2600)
+`)
+	entries, err := os.ReadDir(inbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("an unanswered ask must write exactly one file, the inbox holds %d", len(entries))
+	}
+	name := entries[0].Name()
+	if !strings.HasSuffix(name, ".json") {
+		t.Fatalf("the file has to be renamed to .json, got %q", name)
+	}
+	content, err := os.ReadFile(filepath.Join(inbox, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		SessionID string `json:"session_id"`
+		HookEvent string `json:"hook_event_name"`
+	}
+	if err := json.Unmarshal(content, &payload); err != nil {
+		t.Fatalf("payload is no JSON: %v\n%s", err, content)
+	}
+	if payload.SessionID != "ses_1" || payload.HookEvent != "Notification" {
+		t.Fatalf("payload misses the claude hook shape: %s", content)
+	}
 }

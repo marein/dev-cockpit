@@ -28,14 +28,23 @@ const notifyPluginFile = "dev-cockpit-notify.js"
 // inbox poller consumes, written to a .tmp name first and renamed to .json
 // so the poller only ever reads complete files.
 //
-// Two readings make the raw events usable. The busy guard: `session.idle`
+// Three readings make the raw events usable. The busy guard: `session.idle`
 // says a session is idle, not that work ended, so it only counts after a
 // `session.status` reported the session busy, or a TUI opening an idle
 // session would ring for nothing. The session lookup: a subagent's child
 // session idles too and is nobody's news (skipped via parentID), and a
 // conversation handed over to a terminal is listed under the cockpit's own
 // id, which its metadata carries (the same mapping session.go reads out of
-// the database).
+// the database). The reply grace: a session the cockpit starts with --auto
+// answers its own permissions, the TUI replies once a few milliseconds
+// after the ask (external_directory and doom_loop are the everyday cases),
+// and the server publishes the ask anyway, so an ask nobody was going to
+// see would ring in the middle of a turn. The plugin therefore holds every
+// ask for two seconds before it becomes news: the ask carries the request
+// id as `id`, the reply carries it as `requestID` (verified on 1.18.23,
+// the v2 events share both shapes), so a reply arriving inside the grace
+// clears the pending timer and nothing is written, and an ask without one
+// drops exactly one file, after the wait.
 const notifyPlugin = `export const DevCockpitNotify = async ({ client }) => {
   const inbox = process.env["` + notifyEnv + `"]
   if (!inbox) return {}
@@ -43,6 +52,7 @@ const notifyPlugin = `export const DevCockpitNotify = async ({ client }) => {
   const path = await import("node:path")
   let counter = 0
   const busy = new Set()
+  const pending = new Map()
   const drop = (sessionID, name, message) => {
     const payload = JSON.stringify({ session_id: sessionID, hook_event_name: name, message: message })
     const file = path.join(inbox, Date.now() + "-" + process.pid + "-" + counter++)
@@ -80,8 +90,22 @@ const notifyPlugin = `export const DevCockpitNotify = async ({ client }) => {
         return
       }
       if (type === "permission.asked" || type === "permission.v2.asked") {
-        const id = await target(sessionID)
-        if (id) drop(id, "Notification", "Permission requested")
+        const requestID = properties.id
+        const timer = setTimeout(async () => {
+          pending.delete(requestID)
+          const id = await target(sessionID)
+          if (id) drop(id, "Notification", "Permission requested")
+        }, 2000)
+        if (timer.unref) timer.unref()
+        if (requestID) pending.set(requestID, timer)
+        return
+      }
+      if (type === "permission.replied" || type === "permission.v2.replied") {
+        const timer = pending.get(properties.requestID)
+        if (timer !== undefined) {
+          clearTimeout(timer)
+          pending.delete(properties.requestID)
+        }
       }
     },
   }
