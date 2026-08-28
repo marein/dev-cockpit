@@ -23,12 +23,15 @@ var templatesFS embed.FS
 // the plugins added for a named slot.
 func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plugins []*pluginhost.Serve) *template.Template {
 	funcMap := template.FuncMap{
-		"asset":          assetPath,
-		"assetBuild":     func() string { return assetBuild },
-		"appVersion":     func() string { return version },
-		"pluginElements": func() []pluginhost.Element { return pluginhost.Elements(plugins, assetPath) },
-		"pluginSlot":     func(slot string) template.HTML { return pluginhost.SlotHTML(plugins, slot) },
-		"coderLabel":     CoderLabel,
+		"asset":              assetPath,
+		"assetBuild":         func() string { return assetBuild },
+		"appVersion":         func() string { return version },
+		"pluginElements":     func() []pluginhost.Element { return pluginhost.Elements(plugins, assetPath) },
+		"pluginSlot":         func(slot string) template.HTML { return pluginhost.SlotHTML(plugins, slot) },
+		"coderLabel":         CoderLabel,
+		"deleteWorktreeNote": DeleteWorktreeNote,
+		"originIcon":         OriginIcon,
+		"worktreeChoice":     WorktreeChoice,
 		"projectName": func(path string) string {
 			p := strings.TrimSpace(path)
 			if p == "" {

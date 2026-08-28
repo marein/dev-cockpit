@@ -366,7 +366,9 @@ func newDeleteProjectCommand(opts *inspectOptions) *cobra.Command {
 		Use:   "project-delete <name> --yes",
 		Short: "Delete a project and everything in it",
 		Long: "Delete a project the same way the projects page does: its coders and shells " +
-			"are stopped and the directory is removed with everything in it. There is no " +
+			"are stopped and the directory is removed with everything in it. A project that " +
+			"is the main repository of linked worktree projects takes those with it, and the " +
+			"output names them. There is no " +
 			"undo, so only run this when the user asked for exactly this project. Because it " +
 			"cannot be undone, the call has to say so: `--yes`.",
 		Args: cobra.ExactArgs(1),
@@ -398,10 +400,29 @@ func runDeleteProject(out io.Writer, opts inspectOptions, name string, confirmed
 	// through, so the word here says what is true at this moment.
 	if running, _ := deleted["deleting"].(bool); running {
 		fmt.Fprintf(out, "project %s is being deleted, its containers go down first\n", text(deleted["name"]))
+		reportDeletedWorktrees(out, deleted)
 		return nil
 	}
 	fmt.Fprintf(out, "project %s deleted\n", text(deleted["name"]))
+	reportDeletedWorktrees(out, deleted)
 	return nil
+}
+
+// reportDeletedWorktrees names the worktree projects the cascade took with the
+// main, the handler lists them in the answer. Deleting more than was named is
+// how a directory disappears behind the user's back.
+func reportDeletedWorktrees(out io.Writer, deleted map[string]any) {
+	items, _ := deleted["worktrees"].([]any)
+	var names []string
+	for _, it := range items {
+		if s := text(it); s != "" {
+			names = append(names, s)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "its worktree projects went with it: %s\n", strings.Join(names, ", "))
 }
 
 // projectPath is what the create form expects: the absolute directory. A name

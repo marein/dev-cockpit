@@ -232,8 +232,16 @@ test. Update this file when a convention changes.
   apart. Nothing of the bridge outlives the process, so `<state-dir>/ask/`
   is deliberately no backup section. The editor's
   routes sit in the editor group (`/projects/:name/editor/git/...`); the
-  cheap facts on the projects page keep coming from `internal/project`, which
-  reads `.git` as files and starts no process. One route answers one round:
+  cheap facts on the projects page keep coming from `internal/project` over
+  `internal/gitfacts`, the passive half of the split: gitfacts reads `.git` as
+  files and starts no process, `internal/git` runs the binary, and the two do
+  not meet. The create form is the one git write outside the editor: a project
+  made as a worktree of another one (`projectworktree.go`) takes its directory
+  from the same `project.Repository.Create` every project is made with and
+  fills it with `git.AddWorktree`, holding the editor's own write lock
+  (`gitWriteKeys`) around both steps, so it never runs beside a checkout or a
+  commit in that repository, and a git that refuses takes the empty directory
+  with it. One route answers one round:
   the editor asks `.../git/changes` alone, which answers `repo`, the branch
   (name, upstream, ahead and behind, out of the same status call's
   `--branch` headers, read from the leading block alone, `parseBranch`,

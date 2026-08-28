@@ -211,7 +211,7 @@ func TestProjectCommandsPostTheBrowserForms(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		forms = append(forms, form)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"name":"demo","path":"/projects/demo"}`))
+		_, _ = w.Write([]byte(`{"name":"demo","path":"/projects/demo","worktrees":["demo-feature"]}`))
 	})
 
 	var out strings.Builder
@@ -229,6 +229,9 @@ func TestProjectCommandsPostTheBrowserForms(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "created at /projects/demo") || !strings.Contains(out.String(), "deleted") {
 		t.Fatalf("unexpected output %q", out.String())
+	}
+	if !strings.Contains(out.String(), "its worktree projects went with it: demo-feature") {
+		t.Fatalf("the cascade is not named in the output %q", out.String())
 	}
 }
 

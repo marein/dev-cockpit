@@ -48,7 +48,7 @@
 <div class="card projects-card">
   <div class="list-group list-group-flush list-group-hoverable">
   {{range .Projects}}
-  <div class="list-group-item project-row" id="project-{{.Name}}" data-project-name="{{.Name}}" data-project-active="{{if or .ActiveCoderRefs .ShellRefs}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
+  <div class="list-group-item project-row" id="project-{{.Name}}" data-project-name="{{.Name}}"{{if .GitWorktreeOf}} data-project-worktree-of="{{.GitWorktreeOf}}"{{end}} data-project-active="{{if or .ActiveCoderRefs .ShellRefs}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
     {{$delete := index $.Deleting .Name}}
     {{if $delete.Failed}}
     <div class="alert alert-danger mb-2" role="alert">
@@ -71,13 +71,15 @@
       <div class="flex-fill min-w-0 d-flex align-items-baseline flex-wrap column-gap-3 row-gap-1" data-project-meta>
         <span class="fw-medium text-break">{{.Name}} <span class="status-dot status-dot-animated status-blue ms-1{{if not .HasNews}} d-none{{end}}" data-notify-project-dot aria-label="Something new in this project"></span></span>
         {{if and .GitRepo .GitBranch}}
-        <span class="text-secondary small text-break"><i class="ti ti-git-branch" aria-hidden="true"></i> {{.GitBranch}}</span>
+        <span class="small text-break"><i class="ti ti-git-branch" aria-hidden="true"></i> {{.GitBranch}}</span>
         {{end}}
-        {{if .GitOrigin}}
+        {{if .GitWorktree}}
+        <span class="text-secondary small text-break" data-project-worktree title="Worktree of {{if .GitWorktreeOf}}{{.GitWorktreeOf}}{{else}}{{.GitWorktreeMain}}{{end}}"><i class="ti ti-git-fork" aria-hidden="true"></i> {{if .GitWorktreeOf}}<a href="/projects#project-{{.GitWorktreeOf}}" class="link-secondary">{{.GitWorktreeOf}}</a>{{else}}{{.GitWorktreeMain}}{{end}}</span>
+        {{else if .GitOrigin}}
         {{if .GitOriginURL}}
-        <a href="{{.GitOriginURL}}" target="_blank" rel="noopener" class="link-secondary small text-decoration-none text-break">{{.GitOrigin}}</a>
+        <a href="{{.GitOriginURL}}" target="_blank" rel="noopener" class="link-secondary small text-decoration-none text-break"><i class="ti {{originIcon .GitOrigin}}" aria-hidden="true"></i> {{.GitOrigin}}</a>
         {{else}}
-        <span class="text-secondary small text-break">{{.GitOrigin}}</span>
+        <span class="text-secondary small text-break"><i class="ti {{originIcon .GitOrigin}}" aria-hidden="true"></i> {{.GitOrigin}}</span>
         {{end}}
         {{else if ne .Label .Name}}
         <span class="text-secondary small text-break">{{.Label}}</span>
@@ -100,7 +102,8 @@
         <a href="/projects/{{.Name}}/editor?return={{urlquery (print "/projects#project-" .Name)}}" class="btn btn-sm btn-icon btn-ghost-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
           <i class="ti ti-code"></i>
         </a>
-        <form method="post" action="/projects/delete" data-project-delete data-ajax-refresh data-confirm="Delete project &quot;{{.Name}}&quot;?"{{with index $.Docker .Name}}{{if .Containers}} data-confirm-text="Its directory goes, and its containers are brought down with compose first, volumes included."{{end}}{{end}} data-confirm-button="Delete">
+        {{$wtNote := deleteWorktreeNote .}}{{$dockerNote := ""}}{{with index $.Docker .Name}}{{if .Containers}}{{$dockerNote = "Its directory goes, and its containers are brought down with compose first, volumes included."}}{{end}}{{end}}
+        <form method="post" action="/projects/delete" data-project-delete data-ajax-refresh data-confirm="Delete project &quot;{{.Name}}&quot;?"{{if or $dockerNote $wtNote}} data-confirm-text="{{$dockerNote}}{{if and $dockerNote $wtNote}} {{end}}{{$wtNote}}"{{end}} data-confirm-button="Delete">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="project" value="{{.Name}}">
           <button type="submit" class="btn btn-sm btn-icon btn-ghost-danger" aria-label="Delete project {{.Name}}" title="Delete">

@@ -43,7 +43,10 @@ type projectDeleteEntry struct {
 // failed. A deletion that brings compose stacks down first outlives its
 // request, so the row has to say so on every render until the project is gone,
 // and a failure has to keep standing there: the request that would have
-// flashed it is long answered.
+// flashed it is long answered. Every deletion enters itself here before the
+// first directory goes, the in-request ones included: for those the entry is
+// the crash marker alone, spent within the request, and their failure travels
+// inline as the flash it always was.
 //
 // The intent outlives the process too, through one flat state file. The
 // goroutine doing the work does not: it dies with the server, and what is left
@@ -244,6 +247,78 @@ func (s *Server) deleteProjectWithCompose(p project.Project) {
 	s.publishProjects()
 }
 
+// claimDeleteCascade enters a deletion in the deletes state before any work
+// starts: the main and every worktree project registered in its repository,
+// the cascade the delete confirm announced. The entry is the crash marker, a
+// server that dies mid-deletion takes every claimed project up again at the
+// next start, and the one publish here is what puts the working rows on every
+// open list before the first directory goes. ok is false when the main is
+// already being deleted, nothing was claimed then. names is what the answer
+// reports as going: it includes a worktree project some other request is
+// already deleting, that one is just not this request's to work on and is not
+// among the claimed children.
+func (s *Server) claimDeleteCascade(p project.Project) (children []project.Project, names []string, ok bool) {
+	if !s.deletes.start(p.Name, p.Path) {
+		return nil, nil, false
+	}
+	for _, wt := range p.GitWorktrees {
+		if wt.Project == "" || wt.Project == p.Name {
+			continue
+		}
+		child, err := s.projects.FindByName(wt.Project)
+		if err != nil {
+			continue
+		}
+		names = append(names, child.Name)
+		if s.deletes.start(child.Name, child.Path) {
+			children = append(children, child)
+		}
+	}
+	s.publishProjects()
+	return children, names, true
+}
+
+// runDeleteCascade works the claimed worktree projects off: one with compose
+// involved goes off the request in a goroutine of its own, which finishes its
+// entry itself, the rest go in place. A child that cannot be removed ends the
+// cascade, the main is more use alive than gone under a worktree that would
+// not go; the remaining claims are released then, the main's too, because no
+// work stands behind them any more, and the failure travels inline like every
+// sync delete error, so the entries carry none.
+func (s *Server) runDeleteCascade(p project.Project, children []project.Project) error {
+	for i, child := range children {
+		if len(s.composeStacksToStop(child.Path)) > 0 || s.docker.ComposeBusyUnder(child.Path) {
+			go s.deleteProjectWithCompose(child)
+			continue
+		}
+		if err := s.removeProjectNow(child); err != nil {
+			s.deletes.finish(child.Name, "")
+			for _, rest := range children[i+1:] {
+				s.deletes.finish(rest.Name, "")
+			}
+			s.deletes.finish(p.Name, "")
+			return fmt.Errorf("Deleting worktree project %q: %v", child.Name, err)
+		}
+		s.deletes.finish(child.Name, "")
+	}
+	return nil
+}
+
+// removeProjectNow is the in-request deletion: runners purged, language
+// servers closed, the directory removed, per project state cleared.
+// Publishing stays with the caller.
+func (s *Server) removeProjectNow(p project.Project) error {
+	s.purgeProjectRunners(p.Path)
+	s.closeProjectLSP(p.Name)
+	if err := s.projects.Remove(p); err != nil {
+		return err
+	}
+	s.commitDrafts.Delete(p.Name)
+	s.lineComments.Clear(p.Name)
+	s.quickOpen.Forget(p.Path)
+	return nil
+}
+
 // abortProjectDelete ends a deletion that could not bring the containers down.
 // The directory stays: removing it over a stack that is still up would leave
 // containers behind with no compose file left to reach them from. The reason
@@ -262,7 +337,9 @@ func (s *Server) abortProjectDelete(p project.Project, err error) {
 // It waits for the docker connection first: the deletion's whole point is that
 // the containers go before the directory does, and a cache that has not
 // answered yet would look exactly like a host without docker. A host that
-// really has none is not waited out for long.
+// really has none is not waited out for long. An in-request deletion the last
+// process died over resumes the same road and simply finds nothing to bring
+// down.
 func (s *Server) ResumeProjectDeletes() {
 	pending := s.deletes.pending()
 	if len(pending) == 0 {

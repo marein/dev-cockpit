@@ -1190,15 +1190,39 @@ func promptRefusal(action *askpass.Action, err error) string {
 // could ask and opens no bridge at all; and the quiet fetch holds a lock of
 // its own that a commit or a push must never meet.
 func (s *Server) gitWrite(c *gin.Context, p project.Project, name string, write func(*git.Repo) error) bool {
-	writeKeys, ok := s.takeGitWrite(c, p)
-	if !ok {
+	if err := s.runGitWrite(c, p, name, write); err != nil {
+		status := http.StatusConflict
+		if errors.Is(err, errGitUnknownCopy) {
+			status = http.StatusBadGateway
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return false
 	}
-	defer s.gitWrites.release(writeKeys...)
+	return true
+}
+
+// errGitUnknownCopy is the one refusal a caller has to tell apart from the
+// others: git could not say what is being written, which is the surfaces'
+// 502 and not the 409 every decided refusal is.
+var errGitUnknownCopy = errors.New(gitUnknownCopy)
+
+// runGitWrite is that same order without an answer: every refusal comes back
+// as an error, so a surface that does not speak JSON, the create form's
+// clone, can put it in a flash instead. gitWrite is this plus the status
+// codes.
+func (s *Server) runGitWrite(c *gin.Context, p project.Project, name string, write func(*git.Repo) error) error {
+	keys, ok := gitWriteKeys(c, p)
+	if !ok {
+		log.Printf("git write %s: the working copy could not be named", p.Path)
+		return errGitUnknownCopy
+	}
+	if !s.gitWrites.try(keys...) {
+		return errors.New(gitInUse)
+	}
+	defer s.gitWrites.release(keys...)
 	action, prompt, open := s.promptAction(p.Name, name)
 	if !open {
-		c.JSON(http.StatusConflict, gin.H{"error": gitInUse})
-		return false
+		return errors.New(gitInUse)
 	}
 	if action != nil {
 		defer action.End()
@@ -1208,11 +1232,10 @@ func (s *Server) gitWrite(c *gin.Context, p project.Project, name string, write 
 		repo = repo.WithPrompt(prompt)
 	}
 	if err := write(repo); err != nil {
-		log.Printf("editor git %s %s: %v", name, p.Path, err)
-		c.JSON(http.StatusConflict, gin.H{"error": promptRefusal(action, err)})
-		return false
+		log.Printf("git %s %s: %v", name, p.Path, err)
+		return errors.New(promptRefusal(action, err))
 	}
-	return true
+	return nil
 }
 
 type editorPushRequest struct {

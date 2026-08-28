@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,8 +17,8 @@ import (
 	"github.com/marein/dev-cockpit/plugin"
 )
 
-// NewProjectCreator is the one project creation path of the cockpit: the
-// repository makes the directory (or adopts an existing empty one, see
+// NewProjectCreator is the creation path of an empty project: the repository
+// makes the directory (or adopts an existing empty one, see
 // project.Repository.Create), the projects event tells every open page. The
 // projects page handler runs it, and so does the plugin package's Projects
 // facade, which is what makes a project created by a plugin exactly a
@@ -25,6 +26,11 @@ import (
 // plugin.ErrProjectExists, the one sentinel both surfaces word their refusal
 // from. It stands apart from the Server because the plugins configure before
 // the server is built, on the same bus the server is then given.
+//
+// A project that is a worktree of another one is created by
+// createWorktreeProject, which asks the same repository for its directory
+// and then fills it with a working copy, so the two ways end in the same
+// kind of project.
 func NewProjectCreator(projects *project.Repository, bus *eventbus.Bus) func(ctx context.Context, name string) (string, error) {
 	return func(ctx context.Context, name string) (string, error) {
 		path, err := projects.Create(name)
@@ -52,6 +58,16 @@ func NewProjectChanged(bus *eventbus.Bus) func(ctx context.Context) error {
 
 type projectCreateForm struct {
 	Name AlphaNumDashString `form:"project_name" binding:"required"`
+	// Create is the kind of project to make, the one select's value (see
+	// render.CreateRepository and render.CreateWorktree). Empty is the plain
+	// directory and nothing below is read then; for a worktree, BranchMode
+	// says which of the two branch fields counts.
+	Create     string `form:"create"`
+	CloneURL   string `form:"clone_url"`
+	BranchMode string `form:"branch_mode"`
+	Branch     string `form:"branch"`
+	NewBranch  string `form:"new_branch"`
+	Start      string `form:"start"`
 }
 
 type projectDeleteForm struct {
@@ -275,13 +291,36 @@ func mergedActiveRefs(p *project.Project) []project.TerminalRef {
 	return out
 }
 
+// handleProjectNew shows the create form. The query carries the select's
+// choice, which is what the select itself navigates to and what a link from
+// elsewhere can point at; without it the form is the plain create.
 func (s *Server) handleProjectNew(c *gin.Context) {
-	c.HTML(http.StatusOK, "projects_new.gohtml", s.page(c, "New Project", "projects"))
+	c.HTML(http.StatusOK, "projects_new.gohtml", s.projectNewData(c, c.Query("create")))
 }
 
 func (s *Server) handleProjectCreate(c *gin.Context) {
 	var form projectCreateForm
-	if !s.decodeForm(c, &form, "/projects/new") {
+	// The form's own values are read out of the request here and not out of
+	// the binding, because a binding that refused has none: a name that is
+	// missing or unusable is exactly the case that has to come back filled.
+	back := newProjectPath(projectCreateForm{
+		Create:     c.PostForm("create"),
+		CloneURL:   c.PostForm("clone_url"),
+		Name:       AlphaNumDashString(c.PostForm("project_name")),
+		BranchMode: c.PostForm("branch_mode"),
+		Branch:     c.PostForm("branch"),
+		NewBranch:  c.PostForm("new_branch"),
+		Start:      c.PostForm("start"),
+	})
+	if !s.decodeForm(c, &form, back) {
+		return
+	}
+	if render.WorktreeSource(form.Create) != "" {
+		s.createWorktree(c, form)
+		return
+	}
+	if form.Create == render.CreateClone {
+		s.createClone(c, form)
 		return
 	}
 	path, err := s.createProject(c.Request.Context(), form.Name.String())
@@ -290,7 +329,7 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		s.redirectWithFlash(c, "/projects/new", "", err.Error())
+		s.redirectWithFlash(c, newProjectPath(form), "", err.Error())
 		return
 	}
 	name := filepath.Base(path)
@@ -299,6 +338,49 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 		return
 	}
 	s.redirectWithProjectFlash(c, name, "Project \""+name+"\" created.", "")
+}
+
+// createWorktree answers the create form's worktree half: the project is made
+// and filled in one step, and a refusal goes back to the form it came from,
+// with the source still chosen, in git's own words.
+func (s *Server) createWorktree(c *gin.Context, form projectCreateForm) {
+	src, plan, err := s.createWorktreeProject(c, form)
+	if err != nil {
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		s.redirectWithFlash(c, newProjectPath(form), "", err.Error())
+		return
+	}
+	name := filepath.Base(plan.Dir)
+	if wantsJSON(c.Request) {
+		c.JSON(http.StatusOK, gin.H{"name": name, "path": plan.Dir, "worktree_of": src.Name, "branch": plan.Branch})
+		return
+	}
+	s.redirectWithProjectFlash(c, name, worktreeCreatedMessage(name, src, plan), "")
+}
+
+// createClone answers the create form's second choice: a project filled from
+// a repository that already exists somewhere else. The clone may take
+// minutes and may have to ask for a passphrase, which is why it runs through
+// the same write path the editor's own clone does.
+func (s *Server) createClone(c *gin.Context, form projectCreateForm) {
+	path, err := s.createCloneProject(c, form.Name.String(), form.CloneURL)
+	if err != nil {
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		s.redirectWithFlash(c, newProjectPath(form), "", err.Error())
+		return
+	}
+	name := filepath.Base(path)
+	if wantsJSON(c.Request) {
+		c.JSON(http.StatusOK, gin.H{"name": name, "path": path, "cloned": strings.TrimSpace(form.CloneURL)})
+		return
+	}
+	s.redirectWithProjectFlash(c, name, "Project \""+name+"\" cloned from "+strings.TrimSpace(form.CloneURL)+".", "")
 }
 
 func (s *Server) handleProjectDelete(c *gin.Context) {
@@ -315,18 +397,26 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
-	// A project that runs containers is deleted off the request: compose down
-	// takes as long as it takes and no page may wait on it. A project that runs
-	// no containers but has a compose run under way goes the same road, because
-	// that run has to be waited out before the directory can go, and waiting is
-	// exactly what a request must not do.
-	if len(s.composeStacksToStop(p.Path)) > 0 || s.docker.ComposeBusyUnder(p.Path) {
-		s.startProjectDelete(c, p)
+	// Every deletion is claimed before any work starts, the main and its
+	// worktree projects alike: the entries are the crash markers the next start
+	// resumes from, and the publish inside the claim puts the working rows on
+	// every open list. A main that is already being deleted claims nothing and
+	// is answered like the running deletion it is.
+	children, worktrees, ok := s.claimDeleteCascade(p)
+	if !ok {
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusAccepted, gin.H{"name": p.Name, "path": p.Path, "deleting": true})
+			return
+		}
+		c.Redirect(http.StatusSeeOther, "/projects")
 		return
 	}
-	s.purgeProjectRunners(p.Path)
-	s.closeProjectLSP(p.Name)
-	if err := s.projects.Remove(p); err != nil {
+	// The worktree projects go first, the cascade the confirm announced: they
+	// are dead without the main. A failure still publishes, part of the cascade
+	// may already be gone.
+	if err := s.runDeleteCascade(p, children); err != nil {
+		s.publishTerminals("")
+		s.publishProjects()
 		if wantsJSON(c.Request) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -334,28 +424,40 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
-	s.commitDrafts.Delete(p.Name)
-	s.lineComments.Clear(p.Name)
-	s.quickOpen.Forget(p.Path)
-	s.publishTerminals("") // the purge removed this project's coders and shells everywhere
-	s.publishProjects()
-	if wantsJSON(c.Request) {
-		c.JSON(http.StatusOK, gin.H{"name": p.Name, "path": p.Path})
+	// A project that runs containers is deleted off the request: compose down
+	// takes as long as it takes and no page may wait on it. A project that runs
+	// no containers but has a compose run under way goes the same road, because
+	// that run has to be waited out before the directory can go, and waiting is
+	// exactly what a request must not do. The claim is already held, the
+	// goroutine finishes it.
+	if len(s.composeStacksToStop(p.Path)) > 0 || s.docker.ComposeBusyUnder(p.Path) {
+		s.publishTerminals("") // a worktree cascade may have purged coders and shells
+		go s.deleteProjectWithCompose(p)
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusAccepted, gin.H{"name": p.Name, "path": p.Path, "deleting": true, "worktrees": worktrees})
+			return
+		}
+		c.Redirect(http.StatusSeeOther, "/projects")
 		return
 	}
-	c.Redirect(http.StatusSeeOther, "/projects")
-}
-
-// startProjectDelete answers the request at once and leaves the work to the
-// goroutine behind it. The projects event is what puts the working row on every
-// open list, this client's own included.
-func (s *Server) startProjectDelete(c *gin.Context, p project.Project) {
-	if s.deletes.start(p.Name, p.Path) {
-		go s.deleteProjectWithCompose(p)
+	if err := s.removeProjectNow(p); err != nil {
+		// The failure travels inline like before, the entry carries none: the
+		// flash is the one word, a second alert on the row would say it twice.
+		s.deletes.finish(p.Name, "")
+		s.publishTerminals("")
 		s.publishProjects()
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		s.redirectWithFlash(c, "/projects", "", err.Error())
+		return
 	}
+	s.deletes.finish(p.Name, "")
+	s.publishTerminals("") // the purges removed the coders and shells everywhere
+	s.publishProjects()
 	if wantsJSON(c.Request) {
-		c.JSON(http.StatusAccepted, gin.H{"name": p.Name, "path": p.Path, "deleting": true})
+		c.JSON(http.StatusOK, gin.H{"name": p.Name, "path": p.Path, "worktrees": worktrees})
 		return
 	}
 	c.Redirect(http.StatusSeeOther, "/projects")

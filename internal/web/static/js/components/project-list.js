@@ -25,6 +25,11 @@ function chipLinks(chip) {
   }));
 }
 
+function filterHaystack(card) {
+  const main = card.dataset.projectWorktreeOf || "";
+  return main ? `${card.dataset.projectName} ${main}` : card.dataset.projectName;
+}
+
 // What each chip row calls the things it hides, for the fold toggle's label.
 const CHIP_WORDS = {
   terminals: { more: (count) => `Show ${count} more sessions`, fewer: "Show fewer sessions" },
@@ -566,7 +571,7 @@ class ProjectList extends HTMLElement {
       const cards = this.querySelectorAll(".projects-card [data-project-name]");
       let visible = 0;
       cards.forEach((card) => {
-        const hit = needle === "" || matchesTokens(card.dataset.projectName, needle);
+        const hit = needle === "" || matchesTokens(filterHaystack(card), needle);
         card.classList.toggle("d-none", !hit);
         if (hit) visible += 1;
       });

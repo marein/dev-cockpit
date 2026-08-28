@@ -311,7 +311,7 @@ func (s *Workspace) instructions() string {
 		b.WriteString("```bash\n")
 		fmt.Fprintf(&b, "%s <project> <name> --prompt \"<the task>\" [--done-when \"<criterion>\"]\n", s.CockpitCommand("coder-new"))
 		fmt.Fprintf(&b, "%s <name>          # a fresh project directory\n", s.CockpitCommand("project-new"))
-		fmt.Fprintf(&b, "%s <name> --yes # stops its terminals, removes the directory, no way back\n", s.CockpitCommand("project-delete"))
+		fmt.Fprintf(&b, "%s <name> --yes # stops its terminals, removes the directory and its worktree projects, no way back\n", s.CockpitCommand("project-delete"))
 		b.WriteString("```\n\n")
 		b.WriteString("A coder session is also yours to manage once it exists:\n\n")
 		b.WriteString("```bash\n")
@@ -334,7 +334,8 @@ func (s *Workspace) instructions() string {
 		b.WriteString("and where it stands is read with `job-list`.\n\n")
 		b.WriteString("`project-delete` removes a directory with everything in it and cannot be undone, so like ")
 		b.WriteString("`coder-delete` it refuses to run without `--yes`: run it only for the project the user named, ")
-		b.WriteString("and say what you deleted.\n\n")
+		b.WriteString("and say what you deleted. A project that is the main repository of linked worktrees takes ")
+		b.WriteString("the worktree projects with it; the output names them, so name them to the user too.\n\n")
 
 		b.WriteString("## Line comments\n\n")
 		b.WriteString("In the editor the user pins line comments to single lines. You can read and manage them:\n\n")

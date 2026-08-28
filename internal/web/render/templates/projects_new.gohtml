@@ -1,24 +1,97 @@
 {{define "projects_new.gohtml"}}
 {{template "app_start.gohtml" .}}
 <div class="page-header d-print-none mb-3">
+  <div class="page-pretitle">
+    <a href="/projects" class="link-secondary text-decoration-none"><i class="ti ti-arrow-left me-1"></i>Projects</a>
+  </div>
   <h2 class="page-title">Create project</h2>
 </div>
 <div class="card">
+  <dc-project-new class="d-block">
   <form method="post" action="/projects">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <div class="card-body">
+      <dc-project-select class="d-block mb-3">
+        <label class="form-label" for="create">Create</label>
+        <select class="form-select" id="create" name="create" data-project-source>
+          <option value=""{{if not .Create}} selected{{end}}>An empty project</option>
+          <option value="clone"{{if eq .Create "clone"}} selected{{end}}>An existing repository</option>
+          {{range .Sources}}<option value="{{worktreeChoice .Name}}"{{if eq .Name $.Source}} selected{{end}} data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">{{.Name}} (new worktree)</option>{{end}}
+        </select>
+      </dc-project-select>
+      {{if eq .Create "clone"}}
+      <div class="mb-3">
+        <label class="form-label required" for="clone_url">Repository URL</label>
+        <input class="form-control" id="clone_url" name="clone_url" value="{{.Fill.CloneURL}}" required maxlength="500" autofocus autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="https://github.com/you/project.git" data-clone-url>
+        <small class="form-hint">It is cloned straight into the project directory. A remote that wants a passphrase or credentials asks you in a dialog.</small>
+      </div>
+      {{end}}
+      {{if .Source}}
+      {{if .Branches}}
+      <div class="mb-3">
+        <div class="form-label">Branch</div>
+        <div class="form-selectgroup">
+          <label class="form-selectgroup-item">
+            <input type="radio" class="form-selectgroup-input" name="branch_mode" value="existing" data-branch-mode{{if eq .DefaultMode "existing"}} checked{{end}}>
+            <span class="form-selectgroup-label">Existing branch</span>
+          </label>
+          <label class="form-selectgroup-item">
+            <input type="radio" class="form-selectgroup-input" name="branch_mode" value="new" data-branch-mode{{if eq .DefaultMode "new"}} checked{{end}}>
+            <span class="form-selectgroup-label">New branch</span>
+          </label>
+        </div>
+      </div>
+      <div class="mb-3" data-branch-block="existing"{{if ne .DefaultMode "existing"}} hidden{{end}}>
+        <label class="form-label" for="branch">Check out</label>
+        <select class="form-select" id="branch" name="branch" data-branch-existing{{if ne .DefaultMode "existing"}} disabled{{end}}>
+          {{range .Locals}}<option value="{{.Ref}}" data-branch-name="{{.Name}}"{{if .Taken}} disabled{{end}}{{if eq .Ref $.DefaultBranch}} selected{{end}}>{{.Name}}{{if .Taken}} (in {{.Taken}}){{end}}</option>{{end}}
+          {{with .Remotes}}
+          <optgroup label="On a remote">
+            {{range .}}<option value="{{.Ref}}" data-branch-name="{{.Name}}"{{if eq .Ref $.DefaultBranch}} selected{{end}}>{{.Ref}}</option>{{end}}
+          </optgroup>
+          {{end}}
+        </select>
+        {{if .AnyTaken}}<small class="form-hint">A branch that stands in another working copy cannot be checked out a second time. A branch from a remote is created here as the local branch that follows it.</small>
+        {{else}}<small class="form-hint">A branch from a remote is created here as the local branch that follows it.</small>{{end}}
+      </div>
+      <div class="mb-3" data-branch-block="new"{{if ne .DefaultMode "new"}} hidden{{end}}>
+        <label class="form-label required" for="new_branch">New branch</label>
+        <input class="form-control" id="new_branch" name="new_branch" value="{{$.Fill.NewBranch}}" maxlength="200" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="feature/name" data-branch-new{{if ne .DefaultMode "new"}} disabled{{end}} required>
+        <label class="form-label mt-3" for="start">Starting at</label>
+        <select class="form-select" id="start" name="start"{{if ne .DefaultMode "new"}} disabled{{end}}>
+          {{range .Locals}}<option value="{{.Ref}}"{{if eq .Ref $.DefaultStart}} selected{{end}}>{{.Name}}</option>{{end}}
+          {{with .Remotes}}
+          <optgroup label="On a remote">
+            {{range .}}<option value="{{.Ref}}"{{if eq .Ref $.DefaultStart}} selected{{end}}>{{.Ref}}</option>{{end}}
+          </optgroup>
+          {{end}}
+        </select>
+        <small class="form-hint">The branch is created in the new working copy, the source project stays where it is.</small>
+      </div>
+      {{else}}
+      <div class="alert alert-warning" role="alert">
+        <div class="d-flex">
+          <i class="ti ti-alert-circle me-2 fs-3"></i>
+          <div class="text-break min-w-0">"{{.Source}}" has no branch yet, so there is nothing a worktree could stand on. Make a commit in it first.</div>
+        </div>
+      </div>
+      {{end}}
+      {{end}}
       <div class="mb-0">
         <label class="form-label required" for="project_name">Project name</label>
-        <input class="form-control" id="project_name" name="project_name" required maxlength="120" autofocus autocomplete="off">
+        <input class="form-control" id="project_name" name="project_name" value="{{.Fill.Name}}" required maxlength="120"{{if not .Create}} autofocus{{end}} autocomplete="off" data-project-name-field>
+        {{if .Source}}<small class="form-hint">The directory the working copy gets, under the projects root.</small>
+        {{else if eq .Create "clone"}}<small class="form-hint">The directory the clone goes into, under the projects root.</small>{{end}}
       </div>
     </div>
     <div class="card-footer">
       <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
         <a class="btn btn-ghost-secondary" href="/projects">Cancel</a>
-        <button type="submit" class="btn btn-primary">Create project</button>
+        <button type="submit" class="btn btn-primary"{{if and .Source (not .Branches)}} disabled{{end}}>Create project</button>
       </div>
     </div>
   </form>
+  </dc-project-new>
 </div>
 {{template "app_end.gohtml" .}}
 {{end}}
