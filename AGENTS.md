@@ -1865,13 +1865,25 @@ free floating page scripts.
   timers, and dispose xterm (`term.dispose`) and CodeMirror (`view.destroy`). The
   heavy islands (`terminal-attach`, `terminal-input`, `dc-editor`) run their setup
   in a function that returns a teardown the element stores and calls on disconnect.
-- **Theming:** the color theme follows the OS, no manual toggle.
-  `layout.gohtml`'s inline head script sets `data-bs-theme` before first paint,
-  `app.js` updates it live. Custom CSS must work in both themes: use `--tblr-*`
+- **Theming:** the color theme follows the OS by default, and the theme
+  switcher in the header (`dc-theme-switch` from `theme_switch.gohtml`, in the
+  burger navigation on mobile) forces light or dark per device (`dc-theme` in
+  localStorage, absent means auto). `@dc/theme` is the one source of the
+  effective scheme: it sets `data-bs-theme`, keeps the `theme-color` metas in
+  step, follows the OS while the preference is auto, follows a change made in
+  another tab over the storage event, and publishes every move as a `dc:theme`
+  event on `document`. Everything scheme dependent listens to that event and
+  asks `isDark()`, never `prefers-color-scheme` directly, or a forced theme
+  would pass it by. A user toggle rides a short `dc-theme-flip` transition
+  class on the root element; an OS flip in auto mode deliberately does not,
+  the e2e checks measure colors right after `emulateMedia`.
+  `layout.gohtml`'s inline head script reads the stored choice and sets
+  `data-bs-theme` before first paint, so a forced theme never flashes.
+  Custom CSS must work in both themes: use `--tblr-*`
   variables (`rgba(var(--tblr-emphasis-color-rgb), …)` for hover/overlay tints),
   never hardcode palette colors. The terminal screen has its own palette, picked
   in the settings menu (`dc-terminal-theme` in localStorage, every scheme
-  follows the OS between a light and dark variant), defined in
+  follows the effective theme between a light and dark variant), defined in
   `terminal-attach.js`. The tab strip follows the page theme, only the active
   tab keeps the dark frame via a `[data-bs-theme="dark"]` override. SweetAlert
   serves dialogs only, and is themed in `style.css` by setting its

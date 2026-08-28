@@ -13,6 +13,7 @@ import { DoubleTap } from "@dc/doubletap";
 import { matchesTokens } from "@dc/filter";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { releaseCoder, steerCoder } from "@dc/steer";
+import { isDark } from "@dc/theme";
 import * as dockerApi from "@dc/docker";
 import * as editorLSP from "@dc/editor-lsp";
 import * as projectSort from "@dc/project-sort";
@@ -7893,8 +7894,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   // and the working copy keeps its history. Side by side is a widget of its
   // own, see setDiff.
   const mergeConf = new Compartment();
-  const darkScheme = window.matchMedia("(prefers-color-scheme: dark)");
-  const schemeTheme = () => (darkScheme.matches ? theme.oneDark : []);
+  const schemeTheme = () => (isDark() ? theme.oneDark : []);
   let langSeq = 0;
   let mergeMod = null;
   let mergeView = null;
@@ -8488,7 +8488,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     mergeHost.style.visibility = surfaceOn ? "" : "hidden";
   }
 
-  darkScheme.addEventListener("change", () => {
+  document.addEventListener("dc:theme", () => {
     for (const view of liveViews()) view.dispatch({ effects: themeConf.reconfigure(schemeTheme()) });
   }, { signal });
 

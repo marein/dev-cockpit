@@ -76,7 +76,7 @@ func (i DocsItem) HasKeys() bool { return len(i.Keys) > 0 }
 func (t DocsTopic) Count() int { return len(t.Items) }
 
 // DocsLead is the note above the topics.
-const DocsLead = "The whole app follows the OS light and dark mode. Shortcuts use Ctrl; where supported, Cmd (on Mac) works too. Some shortcuts are reserved by the browser and only work in the installed web app. Where the desktop right-clicks for a menu, touch long-presses, and scrolling cancels the press."
+const DocsLead = "The whole app is light or dark: by default it follows the OS, the theme switcher in the header (on a phone in the navigation menu) forces one. Shortcuts use Ctrl; where supported, Cmd (on Mac) works too. Some shortcuts are reserved by the browser and only work in the installed web app. Where the desktop right-clicks for a menu, touch long-presses, and scrolling cancels the press."
 
 // DocsTopics returns the documentation content.
 func DocsTopics() []DocsTopic {
@@ -596,8 +596,10 @@ func DocsTopics() []DocsTopic {
 			LinkText: "Open settings",
 			Items: []DocsItem{
 				{
-					Title: "Light and dark mode",
-					Desc:  `Page, editor, and terminal follow the OS scheme, there is no manual switch. Coders may take up to two seconds to apply a theme change.`,
+					Title:    "Light and dark mode",
+					Tag:      "Header",
+					TagClass: "bg-secondary-lt",
+					Desc:     `The theme switcher in the header, on a phone in the navigation menu, picks between auto <i class="ti ti-contrast align-text-bottom" aria-hidden="true"></i>, light <i class="ti ti-sun align-text-bottom" aria-hidden="true"></i>, and dark <i class="ti ti-moon align-text-bottom" aria-hidden="true"></i>. Auto follows the OS scheme, light and dark force one. The choice is stored per device. Page, editor, and terminal follow it together; coders may take up to two seconds to apply a theme change.`,
 				},
 				{
 					Title:    "How the machine is doing",

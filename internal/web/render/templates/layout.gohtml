@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f9fafb">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111827">
-  <script>window.matchMedia("(prefers-color-scheme:dark)").matches && document.documentElement.setAttribute('data-bs-theme', 'dark');</script>
+  <script>(()=>{let s="";try{s=window.localStorage.getItem("dc-theme")||""}catch(e){}const f=s==="light"||s==="dark"?s:"";(f?f==="dark":window.matchMedia("(prefers-color-scheme:dark)").matches)&&document.documentElement.setAttribute("data-bs-theme","dark");if(!f)return;const m=document.querySelector('meta[name="theme-color"][media*="'+f+'"]');m&&document.querySelectorAll('meta[name="theme-color"]').forEach((t)=>t.setAttribute("content",m.getAttribute("content")))})();</script>
   <meta name="csrf-token" content="{{.CSRFToken}}">
   <meta name="dc-jingle" content="{{.Jingle}}">
   <meta name="dc-build" content="{{assetBuild}}">
@@ -29,6 +29,7 @@
       "@dc/dom": "{{asset "/js/dc/dom.js"}}",
       "@dc/events": "{{asset "/js/dc/events.js"}}",
       "@dc/store": "{{asset "/js/dc/store.js"}}",
+      "@dc/theme": "{{asset "/js/dc/theme.js"}}",
       "@dc/repeater": "{{asset "/js/dc/repeater.js"}}",
       "@dc/project-sort": "{{asset "/js/dc/project-sort.js"}}",
       "@dc/fold": "{{asset "/js/dc/fold.js"}}",
@@ -64,6 +65,7 @@
       "dc-coder-select": "{{asset "/js/components/coder-select.js"}}",
       "dc-inline-rename": "{{asset "/js/components/inline-rename.js"}}",
       "dc-time": "{{asset "/js/components/dc-time.js"}}",
+      "dc-theme-switch": "{{asset "/js/components/theme-switch.js"}}",
       "dc-editor": "{{asset "/js/components/editor.js"}}",
       "dc-jingle-picker": "{{asset "/js/components/jingle-picker.js"}}",
       "dc-notify-volume": "{{asset "/js/components/notify-volume.js"}}",
@@ -231,6 +233,15 @@
                   <li class="nav-item d-md-none">
                     <hr class="my-2">
                   </li>
+                  <li class="nav-item d-md-none">
+                    <div class="d-flex align-items-center justify-content-between nav-link dc-theme-row">
+                      <span class="d-inline-flex align-items-center">
+                        <span class="nav-link-icon"><i class="ti ti-brightness-half"></i></span>
+                        <span class="nav-link-title">Theme</span>
+                      </span>
+                      {{template "theme_switch.gohtml"}}
+                    </div>
+                  </li>
                   {{/* No divider of its own: the entry is hidden until an update
                        exists, and two rules with nothing between them look like
                        a mistake. It is a button, not a row: an update is the one
@@ -257,6 +268,7 @@
               {{if .User}}
               <div class="col-auto d-none d-md-block">
                 <div class="d-flex align-items-center gap-1">
+                  {{template "theme_switch.gohtml"}}
                   <button type="button" class="js-update-flag d-none btn btn-sm btn-outline-primary" data-update-open title="Update available">
                     <i class="ti ti-arrow-up-circle me-1"></i><span class="nav-link-title js-update-version">Update</span>
                   </button>

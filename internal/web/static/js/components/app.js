@@ -1,5 +1,6 @@
 import { confirm } from "@dc/dialog";
 import { notifyError } from "@dc/toast";
+import "@dc/theme";
 
 // The glue around pe.js: a lazy custom element loader, the loading bar and the
 // pe:* hooks. Every page is server rendered HTML, custom elements enhance it.
@@ -45,11 +46,6 @@ function syncJingle(dom) {
 }
 
 window.app.peInit();
-
-window.matchMedia("(prefers-color-scheme:dark)").addEventListener(
-  "change",
-  (e) => document.documentElement.setAttribute("data-bs-theme", e.matches ? "dark" : "light"),
-);
 
 // data-no-pe opts a link or form out of boosting into a native load.
 window.addEventListener("pe:click", (e) => e.detail.a.closest("[data-no-pe]") && e.preventDefault());

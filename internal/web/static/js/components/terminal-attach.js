@@ -1,6 +1,7 @@
 import { notifyError, notifySuccess, notifyInfo } from "@dc/toast";
 import { postForm, postJSON } from "@dc/http";
 import { get, set } from "@dc/store";
+import { isDark } from "@dc/theme";
 import { fire as fireDialog, isVisible as dialogVisible } from "@dc/dialog";
 
 const TERMINAL_THEMES = {
@@ -580,13 +581,12 @@ function initTerminalAttach(host) {
   const DEFAULT_FONT_SIZE = 14;
   const DEFAULT_ROWS = 30;
   const DEFAULT_THEME = "auto";
-  const darkSchemeMedia = window.matchMedia("(prefers-color-scheme: dark)");
   let themeOverride = themeSetting
     ? (get(themeSetting.getAttribute("storage-key") || "", "") || themeSetting.getAttribute("default-value") || DEFAULT_THEME)
     : DEFAULT_THEME;
   const resolveTheme = () => {
     const auto = AUTO_THEMES[themeOverride];
-    const name = auto ? auto[darkSchemeMedia.matches ? "dark" : "light"] : themeOverride;
+    const name = auto ? auto[isDark() ? "dark" : "light"] : themeOverride;
     return TERMINAL_THEMES[name] || TERMINAL_THEMES.dark;
   };
   // The current scheme colors ride every server request (theme POST, resize
@@ -1677,7 +1677,7 @@ function initTerminalAttach(host) {
     if (!initial) scheduleResize();
   });
   widthObserver.observe(host);
-  listen(darkSchemeMedia, "change", () => {
+  listen(document, "dc:theme", () => {
     if (AUTO_THEMES[themeOverride]) {
       applyTheme();
       pushTheme();
