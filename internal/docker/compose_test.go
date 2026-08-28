@@ -56,9 +56,19 @@ func TestExecAndLogsCommands(t *testing.T) {
 	if !strings.HasPrefix(exec, "docker exec -it app-web-1 sh -c ") || strings.Contains(exec, "DOCKER_HOST") {
 		t.Fatalf("exec answered %q", exec)
 	}
-	logs := LogsCommand("tcp://box:2375", "app-web-1")
-	if !strings.HasPrefix(logs, "DOCKER_HOST=tcp://box:2375 docker logs -f --tail 200 app-web-1") {
+	logs := LogsCommand("tcp://box:2375", "app-web-1", "")
+	if !strings.HasPrefix(logs, "DOCKER_HOST=tcp://box:2375 docker logs -f --tail 200 app-web-1 2>&1 | ") ||
+		!strings.HasSuffix(logs, " docker log-formatter") {
 		t.Fatalf("logs answered %q", logs)
+	}
+	filtered := LogsCommand(defaultSocketHost, "app-web-1", "boom.*went")
+	if !strings.HasSuffix(filtered, " docker log-formatter --grep 'boom.*went'") {
+		t.Fatalf("filtered logs answered %q", filtered)
+	}
+	stack := ComposeLogsCommand(defaultSocketHost, "")
+	if !strings.HasPrefix(stack, "docker compose logs -f --tail 200 2>&1 | ") ||
+		!strings.HasSuffix(stack, " docker log-formatter") {
+		t.Fatalf("stack logs answered %q", stack)
 	}
 	if quoted := shellQuote("unix:///a dir/s.sock"); quoted != "'unix:///a dir/s.sock'" {
 		t.Fatalf("quote answered %q", quoted)

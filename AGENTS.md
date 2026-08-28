@@ -1538,11 +1538,25 @@ test. Update this file when a convention changes.
   right click and the long press. That chip and the project's compose button
   both ask `menuJustClosed()` before they open anything, the shared window that
   makes a second click on a toggle close its menu instead of reopening it.
-  **Logs are a terminal, never a dialog**, and there is one entry for them:
-  `Logs` with the logs icon, opening what `Log terminal` used to
-  (`POST /docker/:id/logs-shell`). A whole stack has the same, project scoped
+  **Logs are a terminal, never a dialog**, and two entries open one: `Logs`
+  with the logs icon, opening what `Log terminal` used to
+  (`POST /docker/:id/logs-shell`), and `Filter logs…`, the same terminal after
+  asking for a pattern. A whole stack has the same pair, project scoped
   (`POST /projects/:name/docker/logs`, `docker.ComposeLogsCommand`), so nobody
-  has to find the container that is talking first. A stack's logs terminal is
+  has to find the container that is talking first. Every log shell pipes
+  through this binary's own formatter (`dev-cockpit docker log-formatter`,
+  under a hidden `docker` group like the assistant's, engine in
+  `internal/docker/logformat.go`), with stderr merged into the pipe by 2>&1:
+  a severity gutter block per line (red for errors, yellow for warnings, read
+  case insensitively from tokens, logfmt `level=` and a JSON level field,
+  behind the compose prefix when one stands), a stable tint per compose
+  service hashed from its name, and with `--grep` only the matching lines
+  pass plus `--context` lines around them (default 2), matches inverted and
+  groups separated the way grep does it. The filter travels as the `filter`
+  form field, a pattern that does not compile is refused where it was typed
+  (`docker.CompileLogPattern`, one compile rule for the handlers and the
+  formatter), and the shell name carries target plus filter (`app-1 logs:
+  foo`, `docker logs: foo`). A stack's logs terminal is
   called `docker logs` (`dockerLogsName`) and not after the project: it is every
   service of one compose directory, and its first line says which. A
   container's keeps its own name. Both menus, the projects

@@ -216,7 +216,7 @@ class ProjectList extends HTMLElement {
       running: chip.dataset.dockerRunning === "1",
     };
     const items = docker.containerMenuItems(info, {
-      onShell: (target, kind) => this.openContainerShell(target, kind),
+      onShell: (target, kind, filter) => this.openContainerShell(target, kind, filter),
     });
     openMenu({ x, y, items, signal: this.ac.signal });
   }
@@ -266,7 +266,7 @@ class ProjectList extends HTMLElement {
         stacks,
         containers,
         actions,
-        onLogs: (stack) => this.openComposeLogs(project, stack),
+        onLogs: (stack, filter) => this.openComposeLogs(project, stack, filter),
         onDrill: open,
       });
       if (!list.length) return;
@@ -275,8 +275,8 @@ class ProjectList extends HTMLElement {
     open(null);
   }
 
-  async openContainerShell(info, kind) {
-    const data = await docker.openShell(info.id, kind, info.name);
+  async openContainerShell(info, kind, filter) {
+    const data = await docker.openShell(info.id, kind, info.name, filter);
     if (data && data.url) docker.navigate(data.url);
   }
 
@@ -284,8 +284,8 @@ class ProjectList extends HTMLElement {
     await this.openContainerShell({ id, name }, "logs-shell");
   }
 
-  async openComposeLogs(project, stack) {
-    const data = await docker.composeLogs(project, stack.label, stack.label || project);
+  async openComposeLogs(project, stack, filter) {
+    const data = await docker.composeLogs(project, stack.label, stack.label || project, filter);
     if (data && data.url) docker.navigate(data.url);
   }
 

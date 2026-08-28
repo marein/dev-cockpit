@@ -1,4 +1,4 @@
-import { confirm } from "@dc/dialog";
+import { confirm, promptText } from "@dc/dialog";
 import { ensureOk, postForm } from "@dc/http";
 import { notifyError, notifySuccess } from "@dc/toast";
 
@@ -18,9 +18,9 @@ export async function lifecycleAction(id, action, name) {
   }
 }
 
-export async function openShell(id, kind, name) {
+export async function openShell(id, kind, name, filter) {
   try {
-    const response = await postForm(`/docker/${id}/${kind}`, {});
+    const response = await postForm(`/docker/${id}/${kind}`, filter ? { filter } : {});
     await ensureOk(response, `Could not open a shell for "${name}".`);
     return await response.json();
   } catch (error) {
@@ -29,15 +29,24 @@ export async function openShell(id, kind, name) {
   }
 }
 
+function promptLogsFilter(name) {
+  return promptText({
+    title: `Filter the logs of "${name}"`,
+    placeholder: "case insensitive regex",
+    confirmText: "Open",
+    validatorMessage: "Please enter a pattern.",
+  });
+}
+
 // composeLogs opens a terminal following a whole stack, every service of it in
 // one stream. Logs are a terminal everywhere, never a dialog: a dialog holds a
 // dead copy of a few hundred lines, a terminal keeps talking and is a tab like
 // any other.
-export async function composeLogs(project, stack, name) {
+export async function composeLogs(project, stack, name, filter) {
   try {
     const response = await postForm(
       `/projects/${encodeURIComponent(project)}/docker/logs`,
-      { stack: stack || "" },
+      filter ? { stack: stack || "", filter } : { stack: stack || "" },
     );
     await ensureOk(response, `Could not open the logs of "${name || project}".`);
     return await response.json();
@@ -178,6 +187,14 @@ export function containerMenuItems(info, { onShell } = {}) {
   if (info.running && info.cli !== false && onShell) {
     items.push({ label: "Shell", icon: "ti-terminal-2", action: () => void onShell(info, "shell") });
     items.push({ label: "Logs", icon: "ti-file-text", action: () => void onShell(info, "logs-shell") });
+    items.push({
+      label: "Filter logs…",
+      icon: "ti-filter",
+      action: async () => {
+        const filter = await promptLogsFilter(info.name);
+        if (filter) void onShell(info, "logs-shell", filter);
+      },
+    });
   }
   items.push({ divider: true });
   if (info.running) {
@@ -244,6 +261,14 @@ function stackMenuItems(stack, project, actions, onLogs) {
   });
   if (stack.total && onLogs) {
     items.push({ label: `Logs${suffix}`, icon: "ti-file-text", action: () => void onLogs(stack) });
+    items.push({
+      label: `Filter logs${suffix}…`,
+      icon: "ti-filter",
+      action: async () => {
+        const filter = await promptLogsFilter(stack.label || project);
+        if (filter) void onLogs(stack, filter);
+      },
+    });
   }
   if (stack.run) {
     items.push({

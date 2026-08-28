@@ -493,16 +493,38 @@ func ExecCommand(host, container string) string {
 }
 
 // LogsCommand is the line a shell types to follow a container's output; when
-// the container stops, the follow ends and the shell prompt is back.
-func LogsCommand(host, container string) string {
-	return dockerCLILine(host, "logs -f --tail 200 "+shellQuote(container))
+// the container stops, the follow ends and the shell prompt is back. The
+// stream runs through this binary's own log formatter, and a filter narrows
+// it to the matching lines plus their context.
+func LogsCommand(host, container, filter string) string {
+	return dockerCLILine(host, "logs -f --tail 200 "+shellQuote(container)) + logFormatterPipe(filter)
 }
 
 // ComposeLogsCommand is the same for a whole stack: every service of the
 // compose project in one stream, run from the stack's own directory, which is
 // how compose knows which project it is about.
-func ComposeLogsCommand(host string) string {
-	return dockerCLILine(host, "compose logs -f --tail 200")
+func ComposeLogsCommand(host, filter string) string {
+	return dockerCLILine(host, "compose logs -f --tail 200") + logFormatterPipe(filter)
+}
+
+// logFormatterPipe hands the log stream to the formatter of the binary that
+// serves this cockpit, so the terminal needs nothing installed. The stderr
+// merge stands before the pipe: the daemon keeps a container's two streams
+// apart, and the error stream would otherwise land unformatted behind the
+// pipeline. A binary that cannot name its own path leaves the logs plain
+// rather than break the follow; the " (deleted)" marker is what a path reads
+// back with while a self update has swapped the file underneath this process.
+func logFormatterPipe(filter string) string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	exe = strings.TrimSuffix(exe, " (deleted)")
+	pipe := " 2>&1 | " + shellQuote(exe) + " docker log-formatter"
+	if filter != "" {
+		pipe += " --grep " + shellQuote(filter)
+	}
+	return pipe
 }
 
 func dockerCLILine(host, rest string) string {

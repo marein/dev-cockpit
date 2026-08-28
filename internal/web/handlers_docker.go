@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -113,8 +114,15 @@ func (s *Server) dockerShell(c *gin.Context, logs bool) {
 	name := container.DisplayName()
 	command := docker.ExecCommand(host, container.Name)
 	if logs {
+		filter, ok := s.logFilter(c)
+		if !ok {
+			return
+		}
 		name += " logs"
-		command = docker.LogsCommand(host, container.Name)
+		if filter != "" {
+			name += ": " + filter
+		}
+		command = docker.LogsCommand(host, container.Name, filter)
 	}
 	id, err := s.shells.StartCommand(dir, name, command+"; exec bash -il")
 	if err != nil {
@@ -141,7 +149,15 @@ func (s *Server) handleDockerComposeLogs(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "The docker CLI is not installed."})
 		return
 	}
-	id, err := s.shells.StartCommand(dir, dockerLogsName, docker.ComposeLogsCommand(s.docker.State().Host)+"; exec bash -il")
+	filter, ok := s.logFilter(c)
+	if !ok {
+		return
+	}
+	name := dockerLogsName
+	if filter != "" {
+		name += ": " + filter
+	}
+	id, err := s.shells.StartCommand(dir, name, docker.ComposeLogsCommand(s.docker.State().Host, filter)+"; exec bash -il")
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -149,6 +165,18 @@ func (s *Server) handleDockerComposeLogs(c *gin.Context) {
 	s.styleSessionPane(id)
 	s.publishTerminals(p.Name)
 	c.JSON(http.StatusOK, gin.H{"id": id, "url": "/shells/" + id})
+}
+
+// logFilter reads the optional pattern a log shell is started with. A pattern
+// the formatter could not compile is refused here, where it was typed, instead
+// of failing inside the spawned pipeline where nobody reads the error.
+func (s *Server) logFilter(c *gin.Context) (string, bool) {
+	filter := strings.TrimSpace(c.PostForm("filter"))
+	if _, err := docker.CompileLogPattern(filter); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The filter is not a valid regular expression."})
+		return "", false
+	}
+	return filter, true
 }
 
 // composeStack resolves the project and the compose stack a request names,

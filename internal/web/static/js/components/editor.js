@@ -942,7 +942,7 @@ async function init(root) {
         stacks: data.stacks,
         containers,
         actions: data.actions || [],
-        onLogs: (stack) => void composeLogsFromEditor(stack),
+        onLogs: (stack, filter) => void composeLogsFromEditor(stack, filter),
         onDrill: drill,
       })
       : dockerApi.projectMenuItems({ project: name, containers, onDrill: drill });
@@ -993,14 +993,14 @@ async function init(root) {
 
   // The stack's logs are a terminal like a container's, so they land in the
   // editor's own panel on a desktop and on the shell page otherwise.
-  async function composeLogsFromEditor(stack) {
-    const data = await dockerApi.composeLogs(name, stack.label, stack.label || name);
+  async function composeLogsFromEditor(stack, filter) {
+    const data = await dockerApi.composeLogs(name, stack.label, stack.label || name, filter);
     if (!data) return;
     await openShellFromEditor(data);
   }
 
-  async function dockerShellFromEditor(info, kind) {
-    const data = await dockerApi.openShell(info.id, kind, info.name);
+  async function dockerShellFromEditor(info, kind, filter) {
+    const data = await dockerApi.openShell(info.id, kind, info.name, filter);
     if (!data) return;
     await openShellFromEditor(data);
   }

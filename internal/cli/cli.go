@@ -172,7 +172,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 	cmd.SetVersionTemplate(versionTemplate(repoURL, updateFeedFormat, updateFeedURL))
-	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newGitCommand(), newAssistantCommand(), newRunDetachedCommand(), newAskpassCommand())
+	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newGitCommand(), newAssistantCommand(), newDockerCommand(), newRunDetachedCommand(), newAskpassCommand())
 	return cmd
 }
 
