@@ -7869,6 +7869,10 @@ const LANGS = {
   java: ["lang-java@6.0.1", "java", null],
 };
 
+const COLOR_FUNCTIONS = new Set([
+  "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color", "color-mix",
+]);
+
 async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   const [cm, state, view, commands, language, search, theme] = await Promise.all([
     import("codemirror"),
@@ -8099,11 +8103,106 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     if (u.focusChanged) hooks.onFocusChange?.();
   });
 
+  class ColorSwatchWidget extends view.WidgetType {
+    constructor(color) {
+      super();
+      this.color = color;
+    }
+
+    eq(other) {
+      return other.color === this.color;
+    }
+
+    toDOM() {
+      const swatch = document.createElement("span");
+      swatch.className = "cm-dc-color-swatch";
+      const fill = document.createElement("span");
+      fill.style.backgroundColor = this.color;
+      swatch.appendChild(fill);
+      return swatch;
+    }
+
+    ignoreEvent() {
+      return false;
+    }
+  }
+
+  const colorSwatchTheme = EditorView.baseTheme({
+    ".cm-dc-color-swatch": {
+      display: "inline-block",
+      width: "0.72em",
+      height: "0.72em",
+      marginRight: "0.32em",
+      verticalAlign: "-0.03em",
+      borderRadius: "2px",
+      overflow: "hidden",
+      backgroundSize: "50% 50%",
+    },
+    ".cm-dc-color-swatch > span": {
+      display: "block",
+      width: "100%",
+      height: "100%",
+      borderRadius: "inherit",
+    },
+    "&light .cm-dc-color-swatch": {
+      backgroundImage: "conic-gradient(#a6a6a6 25%, #fff 25% 50%, #a6a6a6 50% 75%, #fff 75%)",
+    },
+    "&dark .cm-dc-color-swatch": {
+      backgroundImage: "conic-gradient(#767c88 25%, #c6cad2 25% 50%, #767c88 50% 75%, #c6cad2 75%)",
+    },
+    "&light .cm-dc-color-swatch > span": {
+      boxShadow: "inset 0 0 0 1px rgba(0, 0, 0, 0.28)",
+    },
+    "&dark .cm-dc-color-swatch > span": {
+      boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.33)",
+    },
+  });
+
+  function swatchColorAt(docState, ref) {
+    if (ref.name === "ColorLiteral") return docState.sliceDoc(ref.from, ref.to);
+    if (ref.name !== "CallExpression" || ref.to - ref.from > 160) return null;
+    const callee = ref.node.getChild("Callee");
+    if (!callee || !COLOR_FUNCTIONS.has(docState.sliceDoc(callee.from, callee.to).toLowerCase())) return null;
+    return docState.sliceDoc(ref.from, ref.to);
+  }
+
+  function buildColorSwatches(v) {
+    const swatches = [];
+    for (const range of v.visibleRanges) {
+      language.syntaxTree(v.state).iterate({
+        from: range.from,
+        to: range.to,
+        enter: (ref) => {
+          const color = swatchColorAt(v.state, ref);
+          if (color && !color.includes("var(") && CSS.supports("color", color)) {
+            swatches.push(Decoration.widget({ widget: new ColorSwatchWidget(color), side: 1 }).range(ref.from));
+          }
+        },
+      });
+    }
+    return Decoration.set(swatches, true);
+  }
+
+  const colorSwatchPlugin = view.ViewPlugin.fromClass(class {
+    constructor(v) {
+      this.decorations = buildColorSwatches(v);
+    }
+
+    update(u) {
+      if (u.docChanged || u.viewportChanged || language.syntaxTree(u.state) !== language.syntaxTree(u.startState)) {
+        this.decorations = buildColorSwatches(u.view);
+      }
+    }
+  }, { decorations: (p) => p.decorations });
+
+  const colorSwatchExtension = [colorSwatchPlugin, colorSwatchTheme];
+
   // Everything both sides share. The compartments live in both, so a font or
   // theme change reaches the read only side of a diff as well.
   const sharedExtensions = (langExt) => [
     basicSetup,
     focusReporter,
+    colorSwatchExtension,
     themeConf.of(schemeTheme()),
     langConf.of(langExt),
     tabSizeConf.of(EditorState.tabSize.of(userTabSize)),
