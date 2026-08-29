@@ -201,17 +201,18 @@ func inToolCall(tail []transcriptLine) bool {
 // turnFinished reads the end of the conversation. A turn that is over ends with
 // the coder's own answer; anything else, a tool call it still has to run, a tool
 // result it has not answered yet, a prompt it just received, means it is
-// working. The one exception is the `!` shell escape, recorded as user entries
-// although it is the user's own command outside any turn: its output coming
-// back ends the exchange, and no answer has to follow it, so a transcript
-// ending on the echoed output is over, not working.
+// working. The exceptions are the exchanges that never were a turn: the `!`
+// shell escape, recorded as user entries although it is the user's own command,
+// and the slash commands claude answers itself. Their output coming back ends
+// the exchange, and no answer has to follow it, so a transcript ending on it is
+// over, not working.
 func turnFinished(tail []transcriptLine) bool {
 	if len(tail) == 0 {
 		return false
 	}
 	last := tail[len(tail)-1]
 	if last.Type != "assistant" {
-		return bashEcho(last) || interrupted(last)
+		return bashEcho(last) || localCommand(last) || interrupted(last)
 	}
 	for _, block := range blocks(last) {
 		if block.Type == "tool_use" {
@@ -225,6 +226,17 @@ func turnFinished(tail []transcriptLine) bool {
 // the <bash-stdout> echo claude writes as a user entry.
 func bashEcho(entry transcriptLine) bool {
 	return userEntryWithPrefix(entry, "<bash-stdout>")
+}
+
+// localCommand reports whether an entry is claude answering a slash command of
+// its own, `/model` or `/theme`: the command never reaches a turn, and claude
+// records what it printed as a user entry. A command that does start a turn, a
+// skill or a project command, records the prompt it expands to instead, so it
+// is not caught here and stays a turn like any other.
+func localCommand(entry transcriptLine) bool {
+	return userEntryWithPrefix(entry, "<local-command-stdout>") ||
+		userEntryWithPrefix(entry, "<local-command-stderr>") ||
+		userEntryWithPrefix(entry, "<local-command-caveat>")
 }
 
 // interrupted reports whether an entry is the marker claude records when the
