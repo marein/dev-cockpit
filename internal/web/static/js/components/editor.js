@@ -5624,6 +5624,7 @@ async function init(root) {
   function wireSplitter() {
     applyTreeWidth(parseInt(store.get(TREE_WIDTH_KEY, "0"), 10) || 0);
     let dragging = false;
+    splitterEl.addEventListener("mousedown", (e) => e.preventDefault(), { signal });
     splitterEl.addEventListener("pointerdown", (e) => {
       dragging = true;
       splitterEl.classList.add("active");
@@ -7056,6 +7057,7 @@ async function init(root) {
   function wireTermSplitter() {
     applyTermHeight(parseInt(store.get(TERM_HEIGHT_KEY, "0"), 10) || 0);
     let dragging = false;
+    termSplitterEl.addEventListener("mousedown", (e) => e.preventDefault(), { signal });
     termSplitterEl.addEventListener("pointerdown", (e) => {
       dragging = true;
       termSplitterEl.classList.add("active");
