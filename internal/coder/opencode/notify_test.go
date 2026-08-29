@@ -20,8 +20,8 @@ func TestEnvCarriesTheNotifyInbox(t *testing.T) {
 	if env[notifyEnv] != "/state/notification-inbox/opencode" {
 		t.Errorf("session environment misses the inbox: %v", env)
 	}
-	if plain := (runtime{}).Env(); plain != nil {
-		t.Errorf("without an inbox the environment stays empty: %v", plain)
+	if _, ok := (runtime{}).Env()[notifyEnv]; ok {
+		t.Error("without an inbox no inbox travels")
 	}
 }
 

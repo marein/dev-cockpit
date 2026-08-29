@@ -57,14 +57,25 @@ func (runtime) UsesProvidedSessionID() bool { return false }
 // working directory, see coder.SessionNaming.
 func (runtime) NamesSessions() bool { return false }
 
-// Env carries the notify inbox and the terminal theme's pin config into the
-// session. Both ride the tmux session environment and nothing else, so an
-// opencode the cockpit did not start never sees them: the plugin stays inert
-// and the user's own theme stands. The theme files are ensured here because
+// explicitWidthEnv switches OpenTUI's explicit width off. OpenTUI probes once
+// at start whether the terminal understands OSC 66 and asks the cursor
+// position for the answer; under boot load render output slips between the
+// probe and that query, the answer reads as column 2 or 3, and the process
+// keeps explicit width on for its whole life, there is no second check. Every
+// non-ASCII grapheme then leaves as an OSC 66 sequence, tmux does not know it
+// and drops it, so the cell stays empty and umlauts disappear. The cockpit
+// runs every session through tmux, where explicit width buys nothing anyway.
+const explicitWidthEnv = "OPENTUI_FORCE_EXPLICIT_WIDTH"
+
+// Env carries the notify inbox, the terminal theme's pin config and the
+// explicit width switch into the session. All of them ride the tmux session
+// environment and nothing else, so an opencode the cockpit did not start
+// never sees them: the plugin stays inert, the user's own theme stands and
+// the probe runs as it always did. The theme files are ensured here because
 // the pin path must not travel unless both files landed on the disk, and a
 // failed write costs the theming alone, never the session.
 func (r runtime) Env() map[string]string {
-	env := map[string]string{}
+	env := map[string]string{explicitWidthEnv: "0"}
 	if r.notifyInbox != "" {
 		env[notifyEnv] = r.notifyInbox
 	}
@@ -75,9 +86,6 @@ func (r runtime) Env() map[string]string {
 		} else {
 			log.Printf("opencode: the session config could not be written, sessions keep opencode's own: %v", err)
 		}
-	}
-	if len(env) == 0 {
-		return nil
 	}
 	return env
 }

@@ -2,12 +2,29 @@ package opencode
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/coder"
 )
+
+// The explicit width switch is unconditional: it stands even when there is no
+// inbox and the config write fails, because it is what keeps umlauts on the
+// screen and nothing else in the environment has a say in it.
+func TestEnvAlwaysSwitchesExplicitWidthOff(t *testing.T) {
+	for name, r := range map[string]runtime{
+		"a bare runtime": {},
+		"no inbox and a refused config write": {
+			ensureConfig: func() (string, string, error) { return "", "", os.ErrPermission },
+		},
+	} {
+		if env := r.Env(); env[explicitWidthEnv] != "0" {
+			t.Errorf("%s: explicit width is not switched off: %v", name, env)
+		}
+	}
+}
 
 // A task reaches opencode through --prompt, which the TUI's home screen
 // submits on mount. Typing it into the pane afterwards is what would lose it.
