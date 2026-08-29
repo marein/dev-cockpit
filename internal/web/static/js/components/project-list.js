@@ -13,6 +13,7 @@ import { releaseCoder, steerCoder } from "@dc/steer";
 
 const FILTER_KEY = "dc-project-filter";
 const CHIP_LIMIT = 8;
+const FLASH_MS = 1600;
 // chipLinks reads the addresses a container chip carries, one hidden span per
 // address: a proxy route names a host and maybe a path, a published port names
 // only the port, and an empty scheme means the one this page was reached over.
@@ -52,6 +53,7 @@ class ProjectList extends HTMLElement {
     this.setupSort();
     this.setupFilter();
     this.querySelectorAll("[data-sessions-body]").forEach((body) => this.foldChips(body));
+    this.setupReveal();
     this.addEventListener("submit", (event) => this.onAjaxSubmit(event), { signal: this.ac.signal });
     this.addEventListener("click", (event) => {
       const logsBtn = event.target.closest("[data-docker-logs]");
@@ -103,6 +105,31 @@ class ProjectList extends HTMLElement {
   disconnectedCallback() {
     this.ac?.abort();
     this.ac = null;
+    clearTimeout(this.flashTimer);
+  }
+
+  setupReveal() {
+    const reveal = () => this.revealHashTarget();
+    reveal();
+    window.addEventListener("dc:navigated", reveal, { signal: this.ac.signal });
+    window.addEventListener("hashchange", reveal, { signal: this.ac.signal });
+  }
+
+  revealHashTarget() {
+    if (!location.hash.startsWith("#project-")) return;
+    const row = document.getElementById(location.hash.slice(1));
+    if (!row || !this.contains(row)) return;
+    if (row.classList.contains("d-none")) this.setFilter?.("");
+    this.reveal(row);
+  }
+
+  reveal(row) {
+    row.scrollIntoView({ block: "center" });
+    clearTimeout(this.flashTimer);
+    this.querySelectorAll(".project-row-flash").forEach((node) => node.classList.remove("project-row-flash"));
+    void row.offsetWidth;
+    row.classList.add("project-row-flash");
+    this.flashTimer = setTimeout(() => row.classList.remove("project-row-flash"), FLASH_MS);
   }
 
   // Stop/Delete chip forms and project deletion act in place.
@@ -588,21 +615,10 @@ class ProjectList extends HTMLElement {
       store.set(FILTER_KEY, value);
       apply(value);
     };
+    this.setFilter = set;
 
     input.value = store.get(FILTER_KEY, "");
     apply(input.value);
-
-    const revealHashTarget = () => {
-      if (!location.hash.startsWith("#project-")) return;
-      const target = document.getElementById(location.hash.slice(1));
-      const needle = input.value.trim().toLowerCase();
-      if (target && needle && !(target.dataset.projectName || "").toLowerCase().includes(needle)) {
-        set("");
-        target.scrollIntoView();
-      }
-    };
-    revealHashTarget();
-    window.addEventListener("dc:navigated", revealHashTarget, { signal: this.ac.signal });
 
     const signal = this.ac.signal;
     input.addEventListener("input", () => set(input.value), { signal });
