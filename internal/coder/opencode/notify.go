@@ -31,7 +31,10 @@ const notifyPluginFile = "dev-cockpit-notify.js"
 // Three readings make the raw events usable. The busy guard: `session.idle`
 // says a session is idle, not that work ended, so it only counts after a
 // `session.status` reported the session busy, or a TUI opening an idle
-// session would ring for nothing. The session lookup: a subagent's child
+// session would ring for nothing. The first busy of a run also drops a
+// `TurnStart` file: it is no news and the inbox never rings for it, it is
+// the raw fact the working mark listens to, opencode's record living behind
+// its CLI where the record watcher cannot stat it. The session lookup: a subagent's child
 // session idles too and is nobody's news (skipped via parentID), and a
 // conversation handed over to a terminal is listed under the cockpit's own
 // id, which its metadata carries (the same mapping session.go reads out of
@@ -44,7 +47,11 @@ const notifyPluginFile = "dev-cockpit-notify.js"
 // id as `id`, the reply carries it as `requestID` (verified on 1.18.23,
 // the v2 events share both shapes), so a reply arriving inside the grace
 // clears the pending timer and nothing is written, and an ask without one
-// drops exactly one file, after the wait.
+// drops exactly one file, after the wait. A reply past the grace answers an
+// ask that did become news, and that news set the working mark to waiting;
+// the session is still busy, so the reply drops one more TurnStart to say
+// the turn is running again, or an approved coder would finish its work
+// unmarked.
 const notifyPlugin = `export const DevCockpitNotify = async ({ client }) => {
   const inbox = process.env["` + notifyEnv + `"]
   if (!inbox) return {}
@@ -80,7 +87,11 @@ const notifyPlugin = `export const DevCockpitNotify = async ({ client }) => {
       const sessionID = properties.sessionID
       if (!sessionID) return
       if (type === "session.status") {
-        if (properties.status && properties.status.type === "busy") busy.add(sessionID)
+        if (properties.status && properties.status.type === "busy" && !busy.has(sessionID)) {
+          busy.add(sessionID)
+          const id = await target(sessionID)
+          if (id) drop(id, "TurnStart", "")
+        }
         return
       }
       if (type === "session.idle") {
@@ -105,6 +116,9 @@ const notifyPlugin = `export const DevCockpitNotify = async ({ client }) => {
         if (timer !== undefined) {
           clearTimeout(timer)
           pending.delete(properties.requestID)
+        } else if (busy.has(sessionID)) {
+          const id = await target(sessionID)
+          if (id) drop(id, "TurnStart", "")
         }
       }
     },

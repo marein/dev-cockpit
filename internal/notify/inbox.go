@@ -68,5 +68,12 @@ func (s *Service) ingestInboxEvent(data []byte) {
 			return
 		}
 		s.Signal(targetID)
+	case "TurnStart":
+		// The opposite raw fact, a coder starting to work, dropped by a
+		// coder whose record only its own process can read. It is nobody's
+		// news, so it only reaches the listener, see SetTurnOpen.
+		if s.turnOpen != nil {
+			s.turnOpen(targetID)
+		}
 	}
 }

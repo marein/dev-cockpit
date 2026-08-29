@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/filesystem"
@@ -60,8 +61,9 @@ func activityBounds(entries, budget int) (keep, line int) {
 type eventLine struct {
 	Type string `json:"type"`
 	Data struct {
-		Content  string `json:"content"`
-		ToolName string `json:"toolName"`
+		Content         string `json:"content"`
+		ToolName        string `json:"toolName"`
+		IsUserRequested bool   `json:"isUserRequested"`
 	} `json:"data"`
 }
 
@@ -69,6 +71,20 @@ type eventLine struct {
 // read from that session's event log.
 func (p *Coder) SessionActivity(sessionID string, entries, budget int) (coder.Activity, error) {
 	return p.sessions.activity(sessionID, entries, budget)
+}
+
+// SessionActivityStamp answers when a session's event log last moved, so the
+// record watcher only re-reads a log that did.
+func (p *Coder) SessionActivityStamp(sessionID string) (time.Time, error) {
+	path, err := p.sessions.eventsFile(sessionID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
 }
 
 func (r *sessionRepository) activity(sessionID string, entries, budget int) (coder.Activity, error) {
@@ -120,7 +136,10 @@ func (r *sessionRepository) eventsFile(sessionID string) (string, error) {
 // runes on the reading (zero or less means unlimited). A turn's end is
 // copilot's own record: assistant.turn_end closes it, and anything that opens
 // or feeds a turn afterwards, a user message, a turn start, means the coder is
-// working.
+// working. The log also marks the two states that look like work but are
+// waiting: an unanswered permission ask (permission.requested with no answer
+// after it), and a turn cut off by the process ending, which a later
+// session.shutdown or session.resume line proves.
 func readActivity(source io.Reader, entries, budget int) (coder.Activity, error) {
 	keep, line := activityBounds(entries, budget)
 	var lines []string
@@ -138,7 +157,12 @@ func readActivity(source io.Reader, entries, budget int) (coder.Activity, error)
 		tools = nil
 		trim()
 	}
-	finished := false
+	// A log holds session bookkeeping before any turn, and a turn that was
+	// never recorded is not open: the reading starts finished and only what
+	// opens a turn below takes that back. The claude reader answers the same
+	// through its transcript, which does not exist before the first exchange.
+	finished := true
+	awaiting := false
 
 	scanner := bufio.NewScanner(source)
 	scanner.Buffer(make([]byte, 64*1024), activityTailBytes+4096)
@@ -167,15 +191,41 @@ func readActivity(source io.Reader, entries, budget int) (coder.Activity, error)
 			}
 		case "assistant.turn_start":
 			finished = false
+			awaiting = false
 		case "assistant.turn_end":
 			finished = true
+			awaiting = false
+		case "tool.user_requested":
+			// A `!` shell escape: the user's own command, run outside any
+			// turn, so no turn_end will ever close it. It opens here and its
+			// completion below closes it, or a session whose last action was
+			// an escape would read as working forever.
+			finished = false
+		case "tool.execution_complete":
+			awaiting = false
+			if event.Data.IsUserRequested {
+				finished = true
+			}
+		case "permission.requested":
+			// The coder asked its person and stands still until the answer:
+			// an unanswered ask at the end of the log is a session waiting,
+			// not working.
+			awaiting = true
+		case "permission.completed":
+			awaiting = false
+		case "session.shutdown", "session.resume":
+			// A turn does not survive its process: whatever the log left
+			// open before a shutdown, and whatever a resumed session boots
+			// on top of, ended with the process that ran it.
+			finished = true
+			awaiting = false
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return coder.Activity{}, err
 	}
 	flushTools()
-	return coder.Activity{Text: spendBudget(lines, line, budget), Finished: finished}, nil
+	return coder.Activity{Text: spendBudget(lines, line, budget), Finished: finished, AwaitingApproval: awaiting}, nil
 }
 
 // spendBudget spends the budget asymmetrically on the rendered lines, the

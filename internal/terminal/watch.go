@@ -43,6 +43,12 @@ func RunWatch(interval time.Duration, alive func() map[string]string, start func
 // feeds every output chunk to scan: the OSC-filtered bytes plus the payloads
 // of completed OSC sequences. It never resizes, so pane geometry stays
 // untouched. The returned channel stops the watcher when closed.
+//
+// Only output from after the attach is reported. The connect hands over the
+// pane's accumulated history as one flood of chunks, and a watcher that
+// scanned it would report a burst of movement for a session where nothing is
+// happening; every reattach, a serve restart above running sessions included,
+// would repeat it. The snapshot moves the offset past all of that.
 func WatchOutput(tmuxName string, scan func(out []byte, marks []string)) (chan struct{}, error) {
 	ctl, err := tmux.StartControl(tmuxName)
 	if err != nil {
@@ -53,6 +59,9 @@ func WatchOutput(tmuxName string, scan func(out []byte, marks []string)) (chan s
 		defer ctl.Close()
 		var filter tmux.OSCFilter
 		var offset int64
+		if _, fresh, err := ctl.Snapshot(); err == nil {
+			offset = fresh
+		}
 		for {
 			updated := ctl.Updated()
 			if ctl.Exited() {

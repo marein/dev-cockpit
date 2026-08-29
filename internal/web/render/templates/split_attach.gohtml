@@ -44,7 +44,7 @@
 <div class="attach-page min-w-0">
   <div class="attach-settings">
     {{range .Members}}
-    {{if .Coder}}<span class="dc-term-icon running{{if index $.Steered .ID}} steered{{end}}" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{else}}<span class="dc-term-icon running" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i></span>{{end}}
+    {{if .Coder}}<span class="dc-term-icon running{{if index $.Working .ID}} working{{end}}{{if index $.Steered .ID}} steered{{end}}" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>{{else}}<span class="dc-term-icon running" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i></span>{{end}}
     {{end}}
     <div class="dropdown ms-auto">
       <button type="button" class="btn btn-sm btn-icon btn-outline-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
@@ -62,7 +62,7 @@
       <div class="attach-split-pane min-w-0" data-pane-id="{{.ID}}" data-pane-kind="{{.Kind}}" data-pane-name="{{.Name}}" data-pane-project="{{.Project}}" data-pane-col="{{.Col}}" style="order: {{.Order}}; grid-column: {{.Col}}; grid-row: {{.Row}} / span {{.RowSpan}};"{{if .Coder}}{{with index $.SteerPrefill .ID}} data-pane-steer-prefill="{{.}}"{{end}}{{end}}>
         <div class="attach-split-head" data-pane-head title="Drag to reorder, right click for actions">
           {{if .Coder}}<dc-steered-mark class="d-inline-flex" src="/coders/{{.ID}}/steered">
-            {{- template "steered_icon.gohtml" (dict "ID" .ID "Coder" .Coder "Steered" (index $.Steered .ID)) -}}
+            {{- template "steered_icon.gohtml" (dict "ID" .ID "Coder" .Coder "Steered" (index $.Steered .ID) "Working" (index $.Working .ID)) -}}
           </dc-steered-mark>{{else}}<span class="dc-term-icon running" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i></span>{{end}}
           <span class="attach-split-text">
             <span class="attach-split-name text-truncate" data-pane-label>{{.Name}}</span>

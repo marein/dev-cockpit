@@ -74,6 +74,21 @@ func (p *Coder) GlobalInstructions() coder.GlobalInstructions { return p.instruc
 func (p *Coder) SessionRuntime() coder.SessionRuntime         { return p.runtime }
 func (p *Coder) ControlMapper() terminal.ControlMapper        { return p.controls }
 
+// ActivityProfile: the record lives behind opencode's CLI, so there is
+// nothing to watch; the injected plugin reports the turns instead (busy and
+// idle events through the inbox). Interrupt keys stay off deliberately: an
+// Escape here does not reliably mean abort, and with no readable record
+// there is nothing to withdraw a wrong hint. The cap is the backstop for a
+// lost plugin event.
+func (p *Coder) ActivityProfile() coder.ActivityProfile {
+	return coder.ActivityProfile{
+		WatchRecord:        false,
+		InterruptKeys:      false,
+		OpenTurnCap:        30 * time.Minute,
+		MovementStartGrace: 20 * time.Second,
+	}
+}
+
 // configDir resolves opencode's configuration directory the way opencode
 // does: $XDG_CONFIG_HOME/opencode, or ~/.config/opencode without the
 // variable.

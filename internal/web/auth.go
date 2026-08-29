@@ -164,6 +164,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		BackupReviewCount: s.backups.PendingReviewCount(),
 		Steered:           steered,
 		SteerPrefill:      prefill,
+		Working:           s.activity.Working(),
 		Host:              s.host.Stats(),
 	}
 }

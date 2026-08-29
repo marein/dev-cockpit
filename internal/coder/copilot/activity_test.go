@@ -71,7 +71,6 @@ func TestAnEventLogSaysWhenTheCoderIsStillWorking(t *testing.T) {
 		{"a prompt it just received", []string{sessionStartEvent, turnEndEvent, userEvent}},
 		{"a turn it just started", []string{sessionStartEvent, userEvent, turnStartEvent}},
 		{"a tool it is still running", []string{sessionStartEvent, userEvent, turnStartEvent, toolEvent}},
-		{"nothing recorded yet", []string{sessionStartEvent}},
 	}
 	for _, tc := range cases {
 		writeEvents(t, root, "s1", tc.lines...)
@@ -255,5 +254,106 @@ func TestOnlyTheEndOfALongEventLogIsRead(t *testing.T) {
 	}
 	if !strings.Contains(activity.Text, "user: write the README") {
 		t.Fatalf("want the last exchange kept:\n%s", activity.Text)
+	}
+}
+
+// A `!` shell escape runs outside any turn, so no turn_end will ever close
+// it: the completion of the user requested tool is its end. A completion of
+// an ordinary turn tool closes nothing.
+func TestAShellEscapeEndsWithItsCompletion(t *testing.T) {
+	bangRequested := `{"type":"tool.user_requested","data":{"toolCallId":"c9","toolName":"local_shell"},"id":"e7"}`
+	bangComplete := `{"type":"tool.execution_complete","data":{"toolCallId":"c9","isUserRequested":true,"success":true},"id":"e8"}`
+	root := t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+
+	writeEvents(t, root, "s1", sessionStartEvent, bangRequested, bangComplete)
+	activity, err := r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if !activity.Finished {
+		t.Fatal("the completed escape ends the session's activity")
+	}
+
+	writeEvents(t, root, "s1", sessionStartEvent, bangRequested)
+	activity, err = r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if activity.Finished {
+		t.Fatal("a running escape is still running")
+	}
+
+	writeEvents(t, root, "s1", userEvent, turnStartEvent, toolEvent, toolDoneEvent)
+	activity, err = r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if activity.Finished {
+		t.Fatal("an ordinary tool completion inside a turn closes nothing")
+	}
+}
+
+// Before any turn the log holds only session bookkeeping, and a turn that
+// was never recorded is not open. The record watcher relies on this: a fresh
+// session must not read as working.
+func TestALogWithoutAnyTurnIsOver(t *testing.T) {
+	root := t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+	writeEvents(t, root, "s1", sessionStartEvent)
+	activity, err := r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if !activity.Finished {
+		t.Fatal("a log without any turn has no open turn")
+	}
+}
+
+// An unanswered permission ask at the end of the log is a session waiting on
+// its person, and the answer arriving takes that back: the tool then runs
+// inside the still open turn.
+func TestAnUnansweredAskIsAwaitingApproval(t *testing.T) {
+	askEvent := `{"type":"permission.requested","data":{},"id":"e9"}`
+	askDoneEvent := `{"type":"permission.completed","data":{},"id":"e10"}`
+	root := t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+
+	writeEvents(t, root, "s1", sessionStartEvent, userEvent, turnStartEvent, toolEvent, askEvent)
+	activity, err := r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if activity.Finished || !activity.AwaitingApproval {
+		t.Fatal("an unanswered ask is an open turn waiting on its person")
+	}
+
+	writeEvents(t, root, "s1", sessionStartEvent, userEvent, turnStartEvent, toolEvent, askEvent, askDoneEvent)
+	activity, err = r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if activity.Finished || activity.AwaitingApproval {
+		t.Fatal("the answered ask leaves an open turn that is working again")
+	}
+}
+
+// A turn does not survive its process: a log whose open turn is followed by a
+// shutdown or a resume reads as over, or every session stopped mid turn would
+// wear the working mark from the moment it is resumed.
+func TestAProcessBoundaryClosesAnOpenTurn(t *testing.T) {
+	shutdownEvent := `{"type":"session.shutdown","data":{},"id":"e11"}`
+	resumeEvent := `{"type":"session.resume","data":{},"id":"e12"}`
+	root := t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+	for _, boundary := range []string{shutdownEvent, resumeEvent} {
+		writeEvents(t, root, "s1", sessionStartEvent, userEvent, turnStartEvent, toolEvent, boundary)
+		activity, err := r.activity("s1", 0, coder.ActivityBudget)
+		if err != nil {
+			t.Fatalf("activity: %v", err)
+		}
+		if !activity.Finished {
+			t.Fatal("a turn cut off by the process ending is over")
+		}
 	}
 }

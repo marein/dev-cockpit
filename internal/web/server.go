@@ -14,6 +14,7 @@ import (
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/backup"
@@ -54,8 +55,11 @@ type Server struct {
 	projects *project.Repository
 	// quickOpen keeps one file path index per project so the quick open palette
 	// can reach every file without walking the tree on every keystroke.
-	quickOpen    *filesystem.QuickOpenCache
-	notifier     *notify.Service
+	quickOpen *filesystem.QuickOpenCache
+	notifier  *notify.Service
+	// activity holds which sessions are being worked in right now, the
+	// signal behind the working mark on the terminal icons.
+	activity     *activity.Tracker
 	bus          *eventbus.Bus
 	settings     *settings.Store
 	pusher       *push.Service
@@ -134,7 +138,7 @@ var localCallKey localCallKeyType
 // NewServer constructs a Server serving the given coders. bus is the app
 // wide event stream; it is built by the caller because the plugins configure
 // before this server exists, against the same bus.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, voiceService *voice.Service, plugins []*pluginhost.Serve, bus *eventbus.Bus, version, updateFeedURL, updateFeedFormat string, devBuild bool) (*Server, error) {
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, tracker *activity.Tracker, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, voiceService *voice.Service, plugins []*pluginhost.Serve, bus *eventbus.Bus, version, updateFeedURL, updateFeedFormat string, devBuild bool) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
@@ -165,6 +169,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		createProject: NewProjectCreator(projects, bus),
 		quickOpen:     filesystem.NewQuickOpenCache(),
 		notifier:      notifier,
+		activity:      tracker,
 		bus:           bus,
 		settings:      settingsStore,
 		pusher:        pusher,

@@ -6,8 +6,8 @@
   this one in dc-steered-mark, which pulls it from /coders/:id/steered on the
   same event. No badge logic lives in the client.
 
-  Dict: ID (terminal), Coder (coder id), Steered (bool).
+  Dict: ID (terminal), Coder (coder id), Steered (bool), Working (bool).
 */}}
 {{define "steered_icon.gohtml"}}
-<span class="dc-term-icon running{{if .Steered}} steered{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
+<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .Steered}} steered{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
 {{end}}

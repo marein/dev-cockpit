@@ -19,6 +19,7 @@ import (
 // oldest first.
 func (s *Server) terminalTabs() []render.TerminalTab {
 	news := s.notifier.UnreadTargets()
+	working := s.activity.Working()
 	var tabs []render.TerminalTab
 	for i := range s.coders {
 		coderID := s.coders[i].ID()
@@ -31,6 +32,7 @@ func (s *Server) terminalTabs() []render.TerminalTab {
 				Coder:     coderID,
 				Kind:      "coder",
 				HasNews:   news[r.Identifier],
+				Working:   working[r.Identifier],
 				StartedAt: r.StartedAt,
 				TabPos:    r.TabPos,
 				Group:     r.TabGroup,
@@ -94,6 +96,7 @@ func foldStripTabs(tabs []render.TerminalTab) []render.StripTab {
 		entry := &out[idx]
 		entry.Members = append(entry.Members, t)
 		entry.HasNews = entry.HasNews || t.HasNews
+		entry.Working = entry.Working || t.Working
 	}
 	for _, idx := range grouped {
 		entry := &out[idx]
@@ -190,6 +193,7 @@ func (s *Server) handleTerminalTabsFragment(c *gin.Context) {
 		AssistantNews: assistantNews,
 		Steered:       steered,
 		SteerPrefill:  prefill,
+		Working:       s.activity.Working(),
 	})
 }
 

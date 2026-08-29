@@ -121,7 +121,7 @@
         <div class="project-chip" data-chip data-chip-kind="coder" data-chip-id="{{.ID}}" data-chip-name="{{.Name}}"
              {{- if index $.Steered .ID}} data-chip-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-chip-steer-prefill="{{.}}"{{end}}>
           <a href="/coders/{{.ID}}" class="project-chip-main" title="Attach to coder {{.Name}}" data-chip-main>
-            <span class="dc-term-icon running{{if .HasNews}} news{{end}}{{if index $.Steered .ID}} steered{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
+            <span class="dc-term-icon running{{if index $.Working .ID}} working{{end}}{{if .HasNews}} news{{end}}{{if index $.Steered .ID}} steered{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
             <span class="project-chip-name">{{.Name}}</span>
           </a>
           <form method="post" action="/coders/{{.ID}}/stop" data-confirm="Stop coder &quot;{{.Name}}&quot;?" data-confirm-button="Stop" data-ajax-refresh data-chip-x>

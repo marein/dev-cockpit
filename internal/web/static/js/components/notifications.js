@@ -95,6 +95,8 @@ const channel = {
 // every reconnect, so a woken background tab reconciles from here too.
 onServerEvent("notifications", (event) => channel.receive(event.detail));
 
+onServerEvent("activity", (event) => decorateWorking((event.detail && event.detail.targets) || []));
+
 // On becoming visible or focused again, re-check whether the target whose
 // page is open should mark itself read. Focus is the desktop comeback signal,
 // the window stays visible while the browser sits behind another app. The
@@ -153,6 +155,17 @@ function decorateNews(targetIds) {
     const any = [...scope.querySelectorAll("[data-notify-target]")]
       .some((el) => ids.has(el.getAttribute("data-notify-target")));
     dot.classList.toggle("d-none", !any);
+  });
+}
+
+function decorateWorking(targetIds) {
+  const ids = new Set(targetIds || []);
+  document.querySelectorAll("[data-notify-target]").forEach((icon) => {
+    icon.classList.toggle("working", ids.has(icon.getAttribute("data-notify-target")));
+  });
+  document.querySelectorAll("[data-notify-targets]").forEach((icon) => {
+    const targets = (icon.getAttribute("data-notify-targets") || "").split(" ");
+    icon.classList.toggle("working", targets.some((id) => ids.has(id)));
   });
 }
 

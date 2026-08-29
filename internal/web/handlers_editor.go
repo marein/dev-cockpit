@@ -613,6 +613,7 @@ func (s *Server) handleEditorTerminals(c *gin.Context) {
 			InputURL:      t.URL + "/input",
 			ScrollHistory: t.Kind == "shell",
 			HasNews:       t.HasNews,
+			Working:       t.Working,
 			Steered:       steered[t.ID],
 			SteerPrefill:  prefill[t.ID],
 		}

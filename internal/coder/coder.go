@@ -15,6 +15,12 @@ type Coder interface {
 	GlobalInstructions() GlobalInstructions
 	SessionRuntime() SessionRuntime
 	ControlMapper() terminal.ControlMapper
+	// ActivityProfile is the coder's own, deliberate choice of the shared
+	// working-mark heuristics, see the type. It is a required method on
+	// purpose: which heuristic may touch which coder is a per-coder
+	// decision, and a new coder has to make it in the open rather than
+	// inherit whatever happened to be wired.
+	ActivityProfile() ActivityProfile
 }
 
 // AssistantCapable is the optional conversation capability. A coder implements

@@ -72,3 +72,28 @@ var errTest = errTestType{}
 type errTestType struct{}
 
 func (errTestType) Error() string { return "test error" }
+
+func TestInputInterrupts(t *testing.T) {
+	cases := []struct {
+		label     string
+		items     []Input
+		interrupt bool
+	}{
+		{"escape control", []Input{{Control: "escape"}}, true},
+		{"raw escape byte", []Input{{Raw: "\x1b"}}, true},
+		{"raw ctrl-c byte", []Input{{Raw: "\x03"}}, true},
+		{"raw escape sequence is not the key", []Input{{Raw: "\x1b[A"}}, false},
+		{"raw bracketed paste is not the key", []Input{{Raw: "\x1b[200~hello\x1b[201~"}}, false},
+		{"typed escape", []Input{{Text: "\x1b"}}, true},
+		{"ctrl-c control", []Input{{Control: "ctrl-c"}}, true},
+		{"typed ctrl-c", []Input{{Text: "\x03"}}, true},
+		{"plain typing", []Input{{Text: "hello\r"}}, false},
+		{"a prompt", []Input{{Prompt: "do the thing"}}, false},
+		{"arrows are escape sequences, not Escape", []Input{{Text: "\x1b[A"}}, false},
+	}
+	for _, c := range cases {
+		if got := InputInterrupts(c.items); got != c.interrupt {
+			t.Fatalf("%s: got %v, want %v", c.label, got, c.interrupt)
+		}
+	}
+}

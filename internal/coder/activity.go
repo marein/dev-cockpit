@@ -31,6 +31,23 @@ type Activity struct {
 	// stands in it. A reader has to be told that, because a draft is not a
 	// message.
 	Screen bool
+	// InToolCall says the record ends inside a tool call the coder still
+	// owes a result to. It refines an unfinished turn for the interrupt
+	// heuristic, see ActivityProfile.InterruptKeys; a reader that cannot
+	// tell leaves it false.
+	InToolCall bool
+	// AwaitingApproval says the record ends on a permission ask nobody has
+	// answered yet: the turn is not over, but the coder is waiting on its
+	// person, not working. A reader whose record does not mark the ask
+	// leaves it false; claude's transcript is such a record, its ask is
+	// heard as a hook signal instead.
+	AwaitingApproval bool
+	// LastMessageAt is when the newest recorded message was written, zero
+	// when the reader cannot say. The record watcher needs it to tell a
+	// message of the running terminal's life from one a previous life left
+	// behind: a coder touches its record with bookkeeping at boot and exit,
+	// so the file moving proves nothing about the conversation moving.
+	LastMessageAt time.Time
 }
 
 // ActivityBudget is how many runes a whole activity reading may cost by
@@ -50,6 +67,47 @@ const ActivityBudget = 4000
 // ellipsis. Fewer entries leave more room per message within the same budget.
 type ActivityReporter interface {
 	SessionActivity(sessionID string, entries, budget int) (Activity, error)
+}
+
+// ActivityStamper is the optional capability of a coder to say when a
+// session's record last moved, without reading it. It is what lets the
+// record watcher (RunTurnWatch) follow every running session cheaply: a
+// stamp per tick, a real reading only when the stamp moved. A coder whose
+// record cannot be statted, opencode's lives behind its CLI, simply does not
+// implement it and is followed by its own push events instead.
+type ActivityStamper interface {
+	SessionActivityStamp(sessionID string) (time.Time, error)
+}
+
+// ActivityProfile is a coder's choice among the shared working-mark
+// heuristics. The heuristics themselves live once, in internal/activity and
+// the watchers; whether one applies to a coder is decided here and nowhere
+// else, because a rule that saves one coder can break another: an interrupt
+// key means abort to claude and may mean nothing of the sort elsewhere.
+// Every coder answers this through the required Coder.ActivityProfile.
+type ActivityProfile struct {
+	// WatchRecord follows the session's record through RunTurnWatch. A
+	// coder setting it must implement ActivityReporter and ActivityStamper;
+	// a coder without a readable record leaves it off and reports its turns
+	// itself (opencode's plugin events).
+	WatchRecord bool
+	// InterruptKeys takes a typed Escape or Ctrl+C as the hint that a turn
+	// was aborted, for a coder whose aborts may leave no written trace. The
+	// hint never applies inside a tool call (see Activity.InToolCall): an
+	// abort there writes its own marker, while the same key may just be
+	// closing a dialog over the running turn.
+	InterruptKeys bool
+	// OpenTurnCap ends an open turn whose record and signals have said
+	// nothing at all for this long, the backstop against an end that was
+	// never written anywhere; zero or less disables it. Generous on
+	// purpose: a quiet tool call is a legitimate long silence.
+	OpenTurnCap time.Duration
+	// MovementStartGrace mutes the movement shelf for a session's first
+	// moments: a freshly started TUI paints its whole boot without anybody
+	// working, and after a reboot every restored session boots at once. A
+	// real first turn is visible through the account regardless; zero or
+	// less mutes nothing.
+	MovementStartGrace time.Duration
 }
 
 // activityLines is how much of a terminal the screen fallback reads. Enough to

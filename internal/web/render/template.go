@@ -117,6 +117,11 @@ type Page struct {
 	// so the marks stay current without client logic.
 	Steered      map[string]bool
 	SteerPrefill map[string]string
+	// Working marks the sessions somebody is working in right now, keyed by
+	// terminal id, read the same way (`{{index $.Working .ID}}`). It is the
+	// state at render time; the client keeps it live from the activity
+	// event, toggling the same class on the same icons.
+	Working map[string]bool
 	// Host is the machine's load, memory and disk at render time, so the status
 	// in the header is right before the first event arrives. It refreshes over
 	// the event stream from there.
@@ -178,6 +183,7 @@ type TerminalTab struct {
 	Coder     string // owning coder id, empty for shells
 	Kind      string // "coder" or "shell"
 	HasNews   bool
+	Working   bool // somebody is working in there right now, see Page.Working
 	StartedAt time.Time
 	TabPos    int    // strip position from @dc_tab_pos, 0 when unset
 	Group     string // split view group id from @dc_tab_group, empty when ungrouped

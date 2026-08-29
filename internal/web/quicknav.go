@@ -40,6 +40,7 @@ func (s *Server) handleQuickNav(c *gin.Context) {
 		AssistantNews: assistantID != "" && s.notifier.UnreadTargets()[assistantID],
 		Steered:       steered,
 		SteerPrefill:  prefill,
+		Working:       s.activity.Working(),
 	})
 }
 

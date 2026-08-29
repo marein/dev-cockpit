@@ -34,8 +34,8 @@
        aria-selected="{{if .IsActive $.QuickNav.CurrentID}}true{{else}}false{{end}}"
        data-tab-id="{{.ID}}" data-tab-kind="split" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}" data-tab-members="{{.MemberIDs}}" data-tab-member-kinds="{{.MemberKinds}}" data-tab-member-cols="{{.MemberCols}}"
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
-      <span class="terminal-tab-icon dc-term-icon running{{if .HasNews}} news{{end}}" data-tab-icon data-notify-targets="{{.MemberIDs}}" aria-hidden="true"><i class="ti ti-layout"></i></span>
-      {{$t := .}}<span class="d-none" aria-hidden="true">{{range $t.Members}}<span class="dc-term-icon running{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" data-member-name="{{.Name}}" data-member-url="/splits/{{$t.ID}}?focus={{.ID}}">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>{{end}}</span>
+      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}" data-tab-icon data-notify-targets="{{.MemberIDs}}" aria-hidden="true"><i class="ti ti-layout"></i></span>
+      {{$t := .}}<span class="d-none" aria-hidden="true">{{range $t.Members}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" data-member-name="{{.Name}}" data-member-url="/splits/{{$t.ID}}?focus={{.ID}}">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>{{end}}</span>
       <span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
         <span class="terminal-tab-project">{{if .Project}}{{.Project}} · {{end}}{{len .Members}} terminals</span>
@@ -51,7 +51,7 @@
        data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"
        {{- if .Coder}}{{if index $.Steered .ID}} data-tab-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-tab-steer-prefill="{{.}}"{{end}}{{end}}
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
-      <span class="terminal-tab-icon dc-term-icon running{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}" data-tab-icon data-notify-target="{{.ID}}" aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}" data-tab-icon data-notify-target="{{.ID}}" aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
       <span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
         {{if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}

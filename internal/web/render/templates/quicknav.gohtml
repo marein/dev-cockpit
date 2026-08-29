@@ -54,7 +54,7 @@
         <div class="quicknav-swipe-row" data-qn-group="{{.ID}}">
           <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if .IsActive $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
              data-tab-id="{{.ID}}" data-tab-kind="split" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}" data-tab-members="{{.MemberIDs}}" data-tab-member-kinds="{{.MemberKinds}}"{{if .IsActive $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-            <span class="dc-term-icon running{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-targets="{{.MemberIDs}}" aria-hidden="true"><i class="ti ti-layout"></i></span>
+            <span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}} flex-shrink-0" data-notify-targets="{{.MemberIDs}}" aria-hidden="true"><i class="ti ti-layout"></i></span>
             <span class="d-flex flex-column min-w-0">
               <span class="text-truncate">{{.Name}}</span>
               <span class="text-secondary small text-truncate">{{if .Project}}{{.Project}} · {{end}}{{len .Members}} terminals</span>
@@ -75,7 +75,7 @@
         <div class="quicknav-swipe-row quicknav-group-row" data-qn-group-member="{{$g.ID}}">
           <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if and (eq .ID $.QuickNav.Focus) (eq $g.ID $.QuickNav.CurrentID)}}active{{end}}" href="{{.URL}}" draggable="false"
              data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"{{if and (eq .ID $.QuickNav.Focus) (eq $g.ID $.QuickNav.CurrentID)}} aria-current="true"{{end}}>
-            <span class="dc-term-icon running{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+            <span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
             <span class="d-flex flex-column min-w-0">
               <span class="text-truncate">{{.Name}}</span>
               {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
@@ -118,7 +118,7 @@
       <div class="quicknav-swipe-row">
         <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
            data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-          <span class="dc-term-icon running{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+          <span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
           <span class="d-flex flex-column min-w-0">
             <span class="text-truncate">{{.Name}}</span>
             {{if .Project}}<span class="text-secondary small text-truncate">{{.Project}}</span>{{end}}
@@ -190,7 +190,7 @@
         <div class="quicknav-swipe-row">
           <a class="dropdown-item quicknav-active-item d-flex align-items-center gap-2 {{if eq .ID $.QuickNav.CurrentID}}active{{end}}" href="{{.URL}}" draggable="false"
              data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}"{{if eq .ID $.QuickNav.CurrentID}} aria-current="true"{{end}}>
-            <span class="dc-term-icon running{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span><span class="text-truncate">{{.Name}}</span>          </a>
+            <span class="dc-term-icon running{{if index $.Working .ID}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}} flex-shrink-0" data-notify-target="{{.ID}}"{{if .Coder}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}"{{else}} aria-hidden="true"{{end}}>{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span><span class="text-truncate">{{.Name}}</span>          </a>
           {{if eq .Kind "shell"}}
           <button type="button" class="quicknav-swipe-delete quicknav-swipe-rename" data-qn-rename aria-label="Rename shell {{.Name}}" title="Rename shell">
             <i class="ti ti-pencil" aria-hidden="true"></i>

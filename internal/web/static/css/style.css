@@ -2752,6 +2752,27 @@ terminal-input { display: none; }
   line-height: 1.15rem;
   text-align: center;
 }
+.dc-term-icon.working { position: relative; }
+.dc-term-icon.working:not(.news)::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1.55em;
+  height: 1.55em;
+  margin: -0.775em 0 0 -0.775em;
+  border-radius: 50%;
+  border: 0.09em solid currentColor;
+  border-right-color: transparent;
+  opacity: 0.75;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .dc-term-icon.working:not(.news)::before { animation: dc-working-spin 1.2s linear infinite; }
+}
+@keyframes dc-working-spin {
+  to { transform: rotate(1turn); }
+}
 .dc-term-icon.news, .dc-term-icon.changed { color: var(--tblr-blue); }
 @media (prefers-reduced-motion: no-preference) {
   .dc-term-icon.news, .dc-term-icon.changed {

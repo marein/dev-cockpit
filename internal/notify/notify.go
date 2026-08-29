@@ -139,6 +139,8 @@ type Service struct {
 	now      func() time.Time
 	// signal hears every ingested signal, see SetSignal.
 	signal func(targetID string)
+	// turnOpen hears a target starting to work, see SetTurnOpen.
+	turnOpen func(targetID string)
 	// silent decides whether a target's news is written quietly, see SetSilent.
 	silent func(targetID string) bool
 
@@ -164,6 +166,13 @@ func NewService(path string, resolver Resolver) *Service {
 // not know what the listener does with it and must not: it classifies nothing.
 // Set it before the pollers start.
 func (s *Service) SetSignal(listen func(targetID string)) { s.signal = listen }
+
+// SetTurnOpen installs the listener that hears a target starting to work.
+// The inbox is the one channel a coder's own process can drop that fact
+// into, which is the only reason it passes through here: it is no news, it
+// makes no entry, and this service still classifies nothing. Set it before
+// the pollers start.
+func (s *Service) SetTurnOpen(listen func(targetID string)) { s.turnOpen = listen }
 
 // SetSilent installs the predicate that decides whether a target's news is
 // written read from the start. It exists for the one case where somebody else

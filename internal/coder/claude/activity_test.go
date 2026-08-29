@@ -3,6 +3,7 @@ package claude
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/marein/dev-cockpit/internal/coder"
 )
@@ -329,5 +330,70 @@ func TestAnOpenQuestionIsNotVisibleInTheTranscript(t *testing.T) {
 	}
 	if !activity.Finished {
 		t.Fatal("the transcript is expected to look finished here, that is the whole problem")
+	}
+}
+
+// A `!` shell escape is recorded as user entries, the command and its echoed
+// output, although it is the user's own shell and no answer has to follow it.
+// A transcript ending on the echo is over; one ending on the command still
+// waits for the output.
+func TestAShellEscapeEndsWithItsEcho(t *testing.T) {
+	bangInput := `{"type":"user","sessionId":"s1","cwd":"/projects/demo","timestamp":"2026-07-26T10:00:06Z","message":{"role":"user","content":"<bash-input>sleep 10</bash-input>"}}`
+	bangOutput := `{"type":"user","sessionId":"s1","cwd":"/projects/demo","timestamp":"2026-07-26T10:00:16Z","message":{"role":"user","content":"<bash-stdout></bash-stdout><bash-stderr></bash-stderr>"}}`
+	root := t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+
+	writeTranscript(t, root, "demo", "s1", answerLine, bangInput, bangOutput)
+	activity, err := r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if !activity.Finished {
+		t.Fatalf("the echoed output ends the escape:\n%s", activity.Text)
+	}
+
+	writeTranscript(t, root, "demo", "s1", answerLine, bangInput)
+	activity, err = r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if activity.Finished {
+		t.Fatalf("a command without its output is still running:\n%s", activity.Text)
+	}
+}
+
+// An aborted turn ends without a stop hook; the interrupt marker claude
+// records is the only written trace, so a transcript ending on it is over.
+func TestAnAbortedTurnIsOver(t *testing.T) {
+	interruptLine := `{"type":"user","sessionId":"s1","cwd":"/projects/demo","timestamp":"2026-07-26T10:00:07Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}`
+	root := t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+
+	writeTranscript(t, root, "demo", "s1", userLine, toolUseLine, interruptLine)
+	activity, err := r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if !activity.Finished {
+		t.Fatalf("the interrupt marker ends the turn:\n%s", activity.Text)
+	}
+}
+
+// The reading dates the newest message, because claude also touches the
+// transcript with bookkeeping at boot and exit: the record watcher must be
+// able to tell the conversation moving from the file moving, or a resumed
+// session would wear a previous life's open turn.
+func TestAReadingDatesTheNewestMessage(t *testing.T) {
+	root := t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+
+	writeTranscript(t, root, "demo", "s1", userLine)
+	activity, err := r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	want := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
+	if !activity.LastMessageAt.Equal(want) {
+		t.Fatalf("LastMessageAt = %v, want %v", activity.LastMessageAt, want)
 	}
 }

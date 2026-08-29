@@ -20,7 +20,7 @@
 <div class="attach-page min-w-0">
   <div class="attach-settings">
     <dc-steered-mark class="d-inline-flex me-auto" src="/coders/{{.Running.Identifier}}/steered">
-      {{- template "steered_icon.gohtml" (dict "ID" .Running.Identifier "Coder" .Coder "Steered" (index $.Steered .Running.Identifier)) -}}
+      {{- template "steered_icon.gohtml" (dict "ID" .Running.Identifier "Coder" .Coder "Steered" (index $.Steered .Running.Identifier) "Working" (index $.Working .Running.Identifier)) -}}
     </dc-steered-mark>
     <div class="dropdown">
       <button type="button" class="btn btn-sm btn-icon btn-outline-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">

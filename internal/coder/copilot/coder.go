@@ -50,3 +50,16 @@ func (p *Coder) SkillRepository() coder.SkillRepository       { return p.skills 
 func (p *Coder) GlobalInstructions() coder.GlobalInstructions { return p.instructions }
 func (p *Coder) SessionRuntime() coder.SessionRuntime         { return p.runtime }
 func (p *Coder) ControlMapper() terminal.ControlMapper        { return p.controls }
+
+// ActivityProfile: the event log is a readable record, so it is watched.
+// Interrupt keys stay off: copilot writes its log densely enough that an
+// abort speaks for itself, and the bell closes finished turns besides. The
+// cap is the backstop for a lost bell or log entry.
+func (p *Coder) ActivityProfile() coder.ActivityProfile {
+	return coder.ActivityProfile{
+		WatchRecord:        true,
+		InterruptKeys:      false,
+		OpenTurnCap:        30 * time.Minute,
+		MovementStartGrace: 20 * time.Second,
+	}
+}

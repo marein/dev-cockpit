@@ -84,6 +84,7 @@ type EditorTerminal struct {
 	InputURL      string
 	ScrollHistory bool
 	HasNews       bool
+	Working       bool
 	Steered       bool
 	SteerPrefill  string
 	// FilesData feeds a coder's files modal, the same one the attach pages

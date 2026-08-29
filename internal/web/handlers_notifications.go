@@ -85,6 +85,12 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "terminals"}); err != nil {
 		return
 	}
+	// The working marks as a snapshot, the same shape every change publishes:
+	// the icons are decorated from the full set, so a page that connects
+	// mid-turn shows the mark without waiting for the next transition.
+	if err := writeEnvelope(w, eventbus.Event{Type: "activity", Data: map[string]any{"targets": s.activity.WorkingIDs()}}); err != nil {
+		return
+	}
 	// The project set too: the terminals signal only reconciles the sections of
 	// the rows a page already has, so a row created or removed while the socket
 	// was down would stand there until the next navigation. A deletion that

@@ -61,6 +61,35 @@ func (c ControlInput) SendLiteral(name, text string) error {
 }
 func (c ControlInput) PasteLiteral(name, text string) error { return c.CLI.PasteLiteral(name, text) }
 
+// InputInterrupts reads whether a batch of input items carries an interrupt
+// key, Escape or Ctrl+C: the keys that abort a coder's running turn. The
+// activity tracker takes it as a hint, not a verdict, see its Interrupt. It
+// reads the items exactly the way SendInput dispatches them, which is why it
+// lives next to it; a bare Escape is a key of its own while an arrow is an
+// escape sequence, the same distinction keys.Decode draws.
+func InputInterrupts(items []Input) bool {
+	for _, item := range items {
+		switch strings.ToLower(strings.TrimSpace(item.Control)) {
+		case "escape", "ctrl-c":
+			return true
+		}
+		// The desktop terminal sends its keystrokes as raw bytes: the bare
+		// key is exactly one byte, while an escape sequence or a bracketed
+		// paste is longer, so only the exact byte counts.
+		if item.Raw == "\x1b" || item.Raw == "\x03" {
+			return true
+		}
+		if item.Text != "" {
+			for _, ev := range keys.Decode(item.Text) {
+				if ev.Key == "Escape" || strings.ContainsRune(ev.Text, 0x03) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // SendInput dispatches one queued user action to a tmux target. Exactly one
 // field of item is non-empty.
 func SendInput(t Target, mapper ControlMapper, target string, item Input) error {

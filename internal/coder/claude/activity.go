@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/marein/dev-cockpit/internal/coder"
 )
@@ -59,10 +60,14 @@ func activityBounds(entries, budget int) (keep, line int) {
 // transcriptLine is the part of one recorded line an activity reading needs.
 // Everything else claude writes into the transcript, its draft for the next
 // prompt (`last-prompt`), queued input, modes, attachments, is not a message
-// and is not read here: only entries that carry a message count.
+// and is not read here: only entries that carry a message count. The
+// timestamp dates the message itself, which matters because claude also
+// touches the file with bookkeeping at boot and exit: the file moving
+// proves nothing about the conversation moving.
 type transcriptLine struct {
 	Type        string `json:"type"`
 	IsSidechain bool   `json:"isSidechain"`
+	Timestamp   string `json:"timestamp"`
 	Message     struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
@@ -80,6 +85,20 @@ type contentBlock struct {
 // read from that session's transcript.
 func (p *Coder) SessionActivity(sessionID string, entries, budget int) (coder.Activity, error) {
 	return p.sessions.activity(sessionID, entries, budget)
+}
+
+// SessionActivityStamp answers when a session's transcript last moved, so
+// the record watcher only re-reads a transcript that did.
+func (p *Coder) SessionActivityStamp(sessionID string) (time.Time, error) {
+	path, err := p.sessions.transcriptFile(sessionID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
 }
 
 func (r *sessionRepository) activity(sessionID string, entries, budget int) (coder.Activity, error) {
@@ -138,14 +157,32 @@ func readActivity(source io.Reader, entries, budget int) (coder.Activity, error)
 	if err := scanner.Err(); err != nil {
 		return coder.Activity{}, err
 	}
-	return coder.Activity{Text: renderTranscript(tail, line, budget), Finished: turnFinished(tail)}, nil
+	return coder.Activity{
+		Text:          renderTranscript(tail, line, budget),
+		Finished:      turnFinished(tail),
+		InToolCall:    inToolCall(tail),
+		LastMessageAt: lastMessageAt(tail),
+	}, nil
 }
 
-// turnFinished reads the end of the conversation. A turn that is over ends with
-// the coder's own answer; anything else, a tool call it still has to run, a tool
-// result it has not answered yet, a prompt it just received, means it is
-// working.
-func turnFinished(tail []transcriptLine) bool {
+// lastMessageAt dates the newest recorded message, zero when there is none
+// or the entry carries no readable timestamp.
+func lastMessageAt(tail []transcriptLine) time.Time {
+	if len(tail) == 0 {
+		return time.Time{}
+	}
+	at, err := time.Parse(time.RFC3339Nano, tail[len(tail)-1].Timestamp)
+	if err != nil {
+		return time.Time{}
+	}
+	return at
+}
+
+// inToolCall reports whether the record ends inside a tool call: the last
+// entry is the coder calling a tool it still owes a result to. The phase
+// matters to the interrupt heuristic alone, because an abort in it provably
+// writes its own marker while an abort elsewhere may write nothing.
+func inToolCall(tail []transcriptLine) bool {
 	if len(tail) == 0 {
 		return false
 	}
@@ -155,10 +192,56 @@ func turnFinished(tail []transcriptLine) bool {
 	}
 	for _, block := range blocks(last) {
 		if block.Type == "tool_use" {
+			return true
+		}
+	}
+	return false
+}
+
+// turnFinished reads the end of the conversation. A turn that is over ends with
+// the coder's own answer; anything else, a tool call it still has to run, a tool
+// result it has not answered yet, a prompt it just received, means it is
+// working. The one exception is the `!` shell escape, recorded as user entries
+// although it is the user's own command outside any turn: its output coming
+// back ends the exchange, and no answer has to follow it, so a transcript
+// ending on the echoed output is over, not working.
+func turnFinished(tail []transcriptLine) bool {
+	if len(tail) == 0 {
+		return false
+	}
+	last := tail[len(tail)-1]
+	if last.Type != "assistant" {
+		return bashEcho(last) || interrupted(last)
+	}
+	for _, block := range blocks(last) {
+		if block.Type == "tool_use" {
 			return false
 		}
 	}
 	return true
+}
+
+// bashEcho reports whether an entry is the recorded output of a `!` command,
+// the <bash-stdout> echo claude writes as a user entry.
+func bashEcho(entry transcriptLine) bool {
+	return userEntryWithPrefix(entry, "<bash-stdout>")
+}
+
+// interrupted reports whether an entry is the marker claude records when the
+// user aborts a turn (Escape, Ctrl+C). The stop hook does not fire for an
+// abort, so this line is the only written trace that the turn is over.
+func interrupted(entry transcriptLine) bool {
+	return userEntryWithPrefix(entry, "[Request interrupted by user")
+}
+
+func userEntryWithPrefix(entry transcriptLine, prefix string) bool {
+	if entry.Type != "user" {
+		return false
+	}
+	for _, block := range blocks(entry) {
+		return strings.HasPrefix(strings.TrimSpace(block.Text), prefix)
+	}
+	return false
 }
 
 // renderTranscript turns the recorded messages into the lines a reader judges,

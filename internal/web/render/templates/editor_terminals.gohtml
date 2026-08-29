@@ -5,7 +5,7 @@
           data-term-tab="{{.ID}}" data-term-kind="{{.Kind}}" data-term-name="{{.Name}}" data-term-url="{{.URL}}"
           {{- if .Steered}} data-term-steered="1"{{end}}{{with .SteerPrefill}} data-term-steer-prefill="{{.}}"{{end}}
           title="{{.Name}}">
-    <span class="dc-term-icon running{{if .HasNews}} news{{end}}{{if .Steered}} steered{{end}}" data-notify-target="{{.ID}}" aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+    <span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if .Steered}} steered{{end}}" data-notify-target="{{.ID}}" aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
     <span class="editor-term-tab-name text-truncate">{{.Name}}</span>
     <span class="editor-term-tab-close" data-term-close role="button" tabindex="-1" aria-label="{{if .Coder}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if .Coder}}Stop coder{{else}}Delete shell{{end}}">
       <i class="ti ti-x" aria-hidden="true"></i>

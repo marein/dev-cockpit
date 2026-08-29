@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/backup"
@@ -532,6 +533,18 @@ func runServe(opts serveOptions) error {
 		jobs,
 		coderSessions{coders: coders},
 	)
+	// The working marks. The tracker holds the shelves, everything below only
+	// feeds it: the record watchers report each coder's own account of its
+	// turn (RunTurnWatch further down), the turn-end hooks and bells close it
+	// (the SetSignal wrap), opencode's plugin opens it (SetTurnOpen), and the
+	// session watchers deliver the raw screen movement the fallback shelf
+	// reads. Every change goes out as one activity snapshot on the event bus,
+	// the shape the icons decorate from.
+	tracker := activity.NewTracker()
+	tracker.SetOnChange(func(ids []string) {
+		bus.Publish(eventbus.Event{Type: "activity", Data: map[string]any{"targets": ids}})
+	})
+	go tracker.Run(time.Second)
 	// Editor intelligence owns the language server child processes. On a
 	// stop signal they are shut down along the protocol before exit; the
 	// self-update exec path needs no hook because the pipe ends close on
@@ -573,7 +586,7 @@ func runServe(opts serveOptions) error {
 	// version stays the raw build var here on purpose: only a build without an
 	// injected release version is a dev build, and only a dev build may have
 	// its release feed moved by the environment.
-	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, settingsStore, pushService, restorer, backups, dockerService, intel, voiceService, serves, bus, resolveVersion(), updateFeedURL, updateFeedFormat, version == "dev")
+	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, tracker, settingsStore, pushService, restorer, backups, dockerService, intel, voiceService, serves, bus, resolveVersion(), updateFeedURL, updateFeedFormat, version == "dev")
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}
@@ -582,7 +595,19 @@ func runServe(opts serveOptions) error {
 	// called after it is released.
 	conversations.SetHooks(srv.PublishConversations, notifier.Add)
 	conversations.SetRenderer(markdown.RenderGFM)
-	notifier.SetSignal(watcher.Handle)
+	// The same raw signal closes the working mark's turn: a coder that
+	// reports has stopped to say so, whether it finished or waits on a
+	// question. The record watcher reopens it the moment the record moves
+	// again.
+	notifier.SetSignal(func(targetID string) {
+		watcher.Handle(targetID)
+		tracker.SetTurn(targetID, false, false, time.Now())
+	})
+	// And the opposite fact from the one coder whose record arrives as push
+	// events instead of a readable file.
+	notifier.SetTurnOpen(func(targetID string) {
+		tracker.SetTurn(targetID, true, false, time.Now())
+	})
 	// A coder somebody steers has the assistant looking at it, so its own news
 	// stays quiet and the assistant's report is what the user hears. The
 	// notification center knows nothing about jobs, it only asks this.
@@ -671,16 +696,32 @@ func runServe(opts serveOptions) error {
 	// this is the work behind them starting again, and it waits for the docker
 	// connection above, which is why it comes after it and in its own goroutine.
 	go srv.ResumeProjectDeletes()
+	// Every coder feeds the working marks with two watches. The turn watch
+	// follows each session's own record and is the account the tracker
+	// trusts first; its gone reports are what drop a dead session's mark.
+	// The session watch delivers the raw screen output the fallback shelf
+	// reads; only copilot's also listens for the bell, its turn-end signal,
+	// where claude and opencode report through the inbox instead.
 	for _, m := range coders {
-		if m.ID() != "copilot" {
-			continue
+		var onBell func(targetID string)
+		if m.ID() == "copilot" {
+			if err := codercopilot.EnsureBeepSetting(); err != nil {
+				log.Printf("copilot beep setting: %v", err)
+			}
+			onBell = func(targetID string) {
+				notifier.Signal(targetID)
+			}
 		}
-		if err := codercopilot.EnsureBeepSetting(); err != nil {
-			log.Printf("copilot beep setting: %v", err)
+		// A session entering the running set brings its coder's chosen
+		// policy along, so the tracker never guesses what applies to it.
+		profile := m.Coder().ActivityProfile()
+		policy := activity.Policy{
+			OpenTurnCap:        profile.OpenTurnCap,
+			MovementStartGrace: profile.MovementStartGrace,
 		}
-		go m.RunBellWatch(3*time.Second, func(targetID string) {
-			notifier.Signal(targetID)
-		})
+		onSeen := func(id string, startedAt time.Time) { tracker.Configure(id, policy, startedAt) }
+		go m.RunTurnWatch(time.Second, onSeen, tracker.SetTurn, tracker.Forget)
+		go m.RunSessionWatch(3*time.Second, tracker.Output, onBell)
 	}
 
 	server := &http.Server{Handler: srv.Handler()}
@@ -1059,12 +1100,19 @@ func sameDir(a, b string) bool {
 // the one that owns the session answers.
 type coderSessions struct{ coders []*coder.Manager }
 
+// toAssistantActivity maps the coder reading onto the assistant's own twin
+// type, field by field on purpose: the two packages stay uncoupled, and the
+// coder side may grow fields (the tool call phase) the job checks never read.
+func toAssistantActivity(a coder.Activity) assistant.Activity {
+	return assistant.Activity{Text: a.Text, Finished: a.Finished, Screen: a.Screen}
+}
+
 func (c coderSessions) Activity(coderID, terminal string) (assistant.Activity, error) {
 	if coderID != "" {
 		for _, m := range c.coders {
 			if m.ID() == coderID {
 				activity, err := m.Activity(terminal, 0, coder.ActivityBudget)
-				return assistant.Activity(activity), err
+				return toAssistantActivity(activity), err
 			}
 		}
 	}
@@ -1076,7 +1124,7 @@ func (c coderSessions) Activity(coderID, terminal string) (assistant.Activity, e
 	for _, m := range c.coders {
 		activity, err := m.Activity(terminal, 0, coder.ActivityBudget)
 		if err == nil {
-			return assistant.Activity(activity), nil
+			return toAssistantActivity(activity), nil
 		}
 		lastErr = err
 	}
