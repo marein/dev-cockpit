@@ -15,7 +15,9 @@ class ProjectNew extends HTMLElement {
     if (source) {
       source.addEventListener("change", () => {
         const picked = source.value;
-        location.assign(picked ? `/projects/new?create=${encodeURIComponent(picked)}` : "/projects/new");
+        const url = picked ? `/projects/new?create=${encodeURIComponent(picked)}` : "/projects/new";
+        if (window.app?.navigate) Promise.resolve(window.app.navigate(url)).catch(() => {});
+        else window.location.href = url;
       }, { signal });
     }
     const name = this.querySelector("[data-project-name-field]");
