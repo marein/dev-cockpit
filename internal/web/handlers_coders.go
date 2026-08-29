@@ -139,6 +139,21 @@ func (s *Server) handleCoderAttach(c *gin.Context) {
 	})
 }
 
+// handleCoderName returns just the current coder name as plain text, the
+// counterpart of handleShellName. The attach header pulls it on a terminals
+// event, so a rename made inside the coder CLI lands in the heading and the
+// browser title without a navigation. A dedicated endpoint and not the tab
+// strip fragment: the header wants one name, not the whole strip, and it must
+// not have to know how a tab is built to find it.
+func (s *Server) handleCoderName(c *gin.Context) {
+	_, running, err := s.resolveRunning(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusGone, err.Error())
+		return
+	}
+	c.String(http.StatusOK, running.Name)
+}
+
 func (s *Server) handleCoderCreate(c *gin.Context) {
 	var form coderCreateForm
 	if !s.decodeForm(c, &form, "/coders/new") {

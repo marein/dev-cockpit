@@ -2009,7 +2009,13 @@ because the store holds an answer once the turn settled and a fragment that
 still says streaming would wipe the streamed words off the screen. `Server.publishTerminals(project)`
 emits a `terminals` event on every live coder/shell change (create, stop,
 resume, delete, rename, reorder, project delete, out-of-band end); an empty
-project means "refresh everything". Surfaces react by pulling their own
+project means "refresh everything". A coder renames its own sessions, so that
+one change reaches no handler: the turn watch (`RunTurnWatch`, which reads the
+snapshot every second anyway) compares the display names between two ticks and
+reports a moved one through the exported `Server.PublishTerminals`, wired in
+`runServe`. It is the same event, so no surface knows that renames exist, and
+a session seen for the first time is only taken in, or every start would
+announce a rename. Surfaces react by pulling their own
 fragment (per client, so path, CSRF and element state like unfold or filter
 stay correct), coalesce bursts behind one in-flight fetch, and show a
 `.dc-loading-bar` (zero-height sticky first child: no layout shift, the line
@@ -2023,7 +2029,12 @@ two: the terminals with the two new chips, and below them the containers, each
 its own `[data-chip-fold]` with its own "+N", because a project with a dozen
 containers must not push its coders behind a fold and the other way round. The
 shell attach header (`dc-inline-rename`) re-pulls
-`GET /shells/:id/name` into heading and page title. A state dir belongs to one
+`GET /shells/:id/name` into heading and page title; the coder attach header
+does the same read-only, `dc-live-name` on `GET /coders/:id/name`, because a
+coder is never renamed from here. The split page pulls no second name for
+either: its pane labels, its desktop title and the coarse header of the
+focused member (`[data-pane-title]`) are mirrored out of the strip fragment
+the page already refreshes. A state dir belongs to one
 serve process, a second process on the same dir would miss live pushes. The
 `dc-notifications` element owns bell, badge, center, toasts, and the title
 counter; unread state is module scope because the element mounts once per

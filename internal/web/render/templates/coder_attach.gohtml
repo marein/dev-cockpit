@@ -4,7 +4,9 @@
   <div class="d-flex align-items-center gap-2">
     <div class="flex-fill min-w-0">
       {{template "project_breadcrumb.gohtml" .ProjectName}}
-      <h2 class="page-title text-truncate mb-0">{{.Running.Name}}</h2>
+      <dc-live-name class="d-block min-w-0" name-url="/coders/{{.Running.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">
+        <h2 class="page-title text-truncate mb-0" data-name-label>{{.Running.Name}}</h2>
+      </dc-live-name>
     </div>
     <div class="flex-shrink-0 dc-coarse-only">
       <form method="post" action="/coders/{{.Running.Identifier}}/stop" data-confirm="Stop coder &quot;{{.Running.Name}}&quot;?" data-confirm-button="Stop">

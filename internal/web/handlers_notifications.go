@@ -209,6 +209,18 @@ func (s *Server) publishTerminals(projectName string) {
 	s.bus.Publish(eventbus.Event{Type: "terminals", Data: map[string]string{"project": projectName}})
 }
 
+// PublishTerminals is the same announcement for a terminal change the cockpit
+// did not make itself. A coder names its own sessions, so a rename happens
+// inside the CLI and never reaches a handler; the turn watch sees it on its
+// next tick and reports it here. It takes the one terminals event and nothing
+// of its own, so every surface follows a rename exactly the way it follows a
+// start or a stop, restore snapshot included: the snapshot carries the display
+// name, and a name it wrote before the rename would come back on the next
+// restore.
+func (s *Server) PublishTerminals(projectName string) {
+	s.publishTerminals(projectName)
+}
+
 // publishProjects signals that the project set changed. The projects page pulls
 // its own server-rendered list, including rows created or removed by the assistant.
 func (s *Server) publishProjects() {

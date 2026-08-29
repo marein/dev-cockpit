@@ -17,7 +17,7 @@
         <input type="text" class="form-control d-none" data-rename-input maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Shell name" value="{{.Name}}">
       </dc-inline-rename>
       {{else}}
-      <h2 class="page-title text-truncate mb-0">{{.Name}}</h2>
+      <h2 class="page-title text-truncate mb-0" data-pane-title="{{.ID}}">{{.Name}}</h2>
       {{end}}
     </div>
     <div class="flex-shrink-0">

@@ -702,6 +702,16 @@ func runServe(opts serveOptions) error {
 	// The session watch delivers the raw screen output the fallback shelf
 	// reads; only copilot's also listens for the bell, its turn-end signal,
 	// where claude and opencode report through the inbox instead.
+	//
+	// The turn watch carries one thing that is not about working marks: it
+	// reads the snapshot every second, and the snapshot holds the session
+	// names the CLIs write themselves. A rename inside a coder therefore
+	// only has to be handed to the same announcement every other terminal
+	// change makes, and every surface follows it without a page of its own
+	// asking anybody. The event names the project and nothing else, the way
+	// a start or a stop does, so the moved name itself travels no further
+	// than here: every surface pulls its own fragment and reads it there.
+	onRenamed := func(id, name, cwd string) { srv.PublishTerminals(projectRepo.ProjectNameFor(cwd)) }
 	for _, m := range coders {
 		var onBell func(targetID string)
 		if m.ID() == "copilot" {
@@ -720,7 +730,7 @@ func runServe(opts serveOptions) error {
 			MovementStartGrace: profile.MovementStartGrace,
 		}
 		onSeen := func(id string, startedAt time.Time) { tracker.Configure(id, policy, startedAt) }
-		go m.RunTurnWatch(time.Second, onSeen, tracker.SetTurn, tracker.Forget)
+		go m.RunTurnWatch(time.Second, onSeen, tracker.SetTurn, tracker.Forget, onRenamed)
 		go m.RunSessionWatch(3*time.Second, tracker.Output, onBell)
 	}
 

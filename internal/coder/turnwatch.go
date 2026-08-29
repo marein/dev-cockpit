@@ -17,38 +17,56 @@ const turnReadBudget = 200
 // own account whenever it moved: whether a turn is open, whether it stands
 // inside a tool call, and the record's stamp as the word's own time.
 //
+// onRenamed reports a session whose display name moved since the last tick.
+// A coder names its own sessions, so a rename happens inside the CLI and
+// reaches no handler that could announce it; the name is in the snapshot this
+// loop reads anyway, so it costs one string compare. It is compared above the
+// record section on purpose: a coder without WatchRecord leaves there, and its
+// sessions get renamed like everybody else's.
+//
 // A stamp is taken per session per tick and the record is only read when the
 // stamp moved, so an idle session costs one stat per tick. A session whose
 // record cannot be stamped or read yet reports nothing at all: no account is
 // exactly what the movement fallback is for. Blocks; run it in a goroutine.
-func (s *Manager) RunTurnWatch(interval time.Duration, onSeen func(id string, startedAt time.Time), onTurn func(id string, open, inTool bool, at time.Time), onGone func(id string)) {
+func (s *Manager) RunTurnWatch(interval time.Duration, onSeen func(id string, startedAt time.Time), onTurn func(id string, open, inTool bool, at time.Time), onGone func(id string), onRenamed func(id, name, cwd string)) {
 	watchRecord := s.coder.ActivityProfile().WatchRecord
 	stamper, _ := s.coder.(ActivityStamper)
 	reporter, _ := s.coder.(ActivityReporter)
 	stamps := map[string]time.Time{}
+	names := map[string]string{}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
-		running := map[string]time.Time{}
+		running := map[string]Running{}
 		for _, r := range s.Snapshot().Running {
-			running[r.Identifier] = r.StartedAt
+			running[r.Identifier] = r
 		}
 		for id := range stamps {
 			if _, ok := running[id]; !ok {
 				delete(stamps, id)
+				delete(names, id)
 				onGone(id)
 			}
 		}
-		for id, startedAt := range running {
+		for id, r := range running {
 			if _, ok := stamps[id]; !ok {
 				stamps[id] = time.Time{}
-				onSeen(id, startedAt)
+				names[id] = r.Name
+				onSeen(id, r.StartedAt)
+				continue
+			}
+			// Only a name that moved between two ticks is a rename. A session
+			// seen for the first time above brought its name, and one that
+			// left forgot it, so a start and a return announce nothing.
+			if names[id] != r.Name {
+				names[id] = r.Name
+				onRenamed(id, r.Name, r.CWD)
 			}
 		}
 		if !watchRecord || stamper == nil || reporter == nil {
 			continue
 		}
-		for id, startedAt := range running {
+		for id, r := range running {
 			stamp, err := stamper.SessionActivityStamp(id)
 			if err != nil {
 				// No record yet; the movement fallback carries the session.
@@ -62,7 +80,7 @@ func (s *Manager) RunTurnWatch(interval time.Duration, onSeen func(id string, st
 			if err != nil {
 				continue
 			}
-			onTurn(id, openTurn(activity, stamp, startedAt), activity.InToolCall, stamp)
+			onTurn(id, openTurn(activity, stamp, r.StartedAt), activity.InToolCall, stamp)
 		}
 	}
 }

@@ -203,8 +203,9 @@ func inToolCall(tail []transcriptLine) bool {
 // result it has not answered yet, a prompt it just received, means it is
 // working. The exceptions are the exchanges that never were a turn: the `!`
 // shell escape, recorded as user entries although it is the user's own command,
-// and the slash commands claude answers itself. Their output coming back ends
-// the exchange, and no answer has to follow it, so a transcript ending on it is
+// the slash commands claude answers itself, and the notes claude writes into
+// the conversation in the user's role. Their output coming back ends the
+// exchange, and no answer has to follow it, so a transcript ending on it is
 // over, not working.
 func turnFinished(tail []transcriptLine) bool {
 	if len(tail) == 0 {
@@ -212,7 +213,7 @@ func turnFinished(tail []transcriptLine) bool {
 	}
 	last := tail[len(tail)-1]
 	if last.Type != "assistant" {
-		return bashEcho(last) || localCommand(last) || interrupted(last)
+		return bashEcho(last) || localCommand(last) || sessionNote(last) || interrupted(last)
 	}
 	for _, block := range blocks(last) {
 		if block.Type == "tool_use" {
@@ -228,15 +229,38 @@ func bashEcho(entry transcriptLine) bool {
 	return userEntryWithPrefix(entry, "<bash-stdout>")
 }
 
-// localCommand reports whether an entry is claude answering a slash command of
-// its own, `/model` or `/theme`: the command never reaches a turn, and claude
-// records what it printed as a user entry. A command that does start a turn, a
-// skill or a project command, records the prompt it expands to instead, so it
-// is not caught here and stays a turn like any other.
+// localCommand reports whether an entry is a slash command claude answers
+// itself, `/agents` or `/model`: no turn ever starts, so nothing is owed an
+// answer. Both halves count, the command line and the output, because which of
+// them ends the transcript depends on the claude version: the output used to be
+// a user entry and is now a `system` entry that readActivity drops, which
+// leaves the command line as the last word forever, and a turn that is never
+// over is a ring that spins to the cap.
+//
+// The command line is deliberately counted although a skill and a project
+// command carry the same tag and do expand into a real prompt afterwards. That
+// costs at most the moment between two adjacent writes, and the expansion is
+// the very next line; leaving it out costs a session that ran `/agents` its
+// ring for half an hour. A short false idle is the cheaper of the two.
 func localCommand(entry transcriptLine) bool {
-	return userEntryWithPrefix(entry, "<local-command-stdout>") ||
+	return userEntryWithPrefix(entry, "<command-name>") ||
+		userEntryWithPrefix(entry, "<command-message>") ||
+		userEntryWithPrefix(entry, "<local-command-stdout>") ||
 		userEntryWithPrefix(entry, "<local-command-stderr>") ||
 		userEntryWithPrefix(entry, "<local-command-caveat>")
+}
+
+// sessionNote reports whether an entry is a note claude wrote into the
+// conversation itself, wearing the user's role although nobody said it: the
+// reminder a rename leaves behind is the one that ends a transcript, because
+// no answer to it ever follows. It is matched on the tag and not on claude's
+// `isMeta` mark, although that mark sits on exactly these notes: it also sits
+// on a skill's expanded prompt, on the continuation after a compaction and on
+// an attached image, which are the conversation itself. Read past the mark
+// they would be dropped from what a check judges, and a check that never sees
+// the skill it is checking on judges the wrong thing.
+func sessionNote(entry transcriptLine) bool {
+	return userEntryWithPrefix(entry, "<system-reminder>")
 }
 
 // interrupted reports whether an entry is the marker claude records when the

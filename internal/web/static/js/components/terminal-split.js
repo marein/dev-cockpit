@@ -165,6 +165,12 @@ class TerminalSplit extends HTMLElement {
         label.textContent = name;
         pane.dataset.paneName = name;
       }
+      // On a coarse pointer the page header carries the focused member's own
+      // name instead of the group's, and a coder cannot be renamed here, so it
+      // has no rename element pulling for itself. It rides the same mirror: the
+      // strip already knows the new name.
+      const own = document.querySelector(`[data-pane-title="${CSS.escape(id)}"]`);
+      if (own && name && own.textContent !== name) own.textContent = name;
     }
     // The page heading and the browser title carry the group name, which the
     // server derives from the member names when the split has none of its own.
