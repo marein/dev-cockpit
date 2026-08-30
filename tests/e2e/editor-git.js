@@ -328,14 +328,15 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
 
     await run("settings: the git tab, one form, and only what describes the install", async () => {
       // The bare path leads to the leftmost tab, like a coder's base path leads
-      // to its first section. That is Search; git is the tab next to it.
+      // to its first section. That is Search; Files, Git and LSP follow it, and
+      // the interval on the Files tab is its own value, not this one.
       await page.goto(`${BASE}/settings/editor`, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(page);
       assert(/\/settings\/editor\/search$/.test(page.url()), `the bare path landed on ${page.url()}`);
       await page.goto(`${BASE}/settings/editor/git`, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(page);
       const tabs = await page.locator("[data-editor-sections] .nav-link").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
-      assert(tabs.join() === "/settings/editor/search,/settings/editor/git,/settings/editor/lsp", `the tabs are ${tabs.join(", ")}`);
+      assert(tabs.join() === "/settings/editor/search,/settings/editor/files,/settings/editor/git,/settings/editor/lsp", `the tabs are ${tabs.join(", ")}`);
       const active = await page.locator("[data-editor-sections] .nav-link.active").getAttribute("href");
       assert(active === "/settings/editor/git", `the marked tab is ${active}`);
       assert(await page.$('[data-settings-nav] a[href="/settings/editor/search"].active'), "the Editor row is not marked in the settings nav");
@@ -1033,6 +1034,58 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         body: JSON.stringify({ items: [{ raw: cmd }] }),
       }).then((r) => r.status);
     }, [new URL(shellUrl).pathname, command]);
+
+    // The case the git event cannot carry, and the reason the editor watches the
+    // disk on top of it: a status hash moves when a file is modified for the
+    // first time and stands still for every write after that, while the line
+    // stays "M path". A coder writing into an open file all afternoon is that
+    // case the whole time.
+    await run("a second write to an already modified file reaches the editor although git status stands still", async () => {
+      const editorBase = `/projects/${encodeURIComponent(project)}/editor`;
+      // Only the porcelain codes and the paths, which is what the fingerprint
+      // the poller compares is a hash over. The line counts beside them are the
+      // route's own second call and are not in it.
+      const statusShape = async () => ((await gitChanges(page, project)).worktree || [])
+        .map((entry) => `${entry.index || "."}${entry.worktree || "."} ${entry.path}`).sort().join("\n");
+      const writeBehindTheBack = (path, content) => post(page, `${editorBase}/file`, { path, content });
+
+      await page.goto(`${BASE}${editorBase}`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
+      await L.waitUpgraded(page, ["dc-editor"]);
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 15000 });
+      await page.waitForSelector('[data-editor-tree][data-git-repo], .editor-tree[data-git-repo]', { timeout: 15000 }).catch(() => {});
+      await page.click(`.editor-file[data-path="root.txt"]`);
+      await page.waitForSelector(`.editor-tab[data-path="root.txt"]`, { timeout: 8000 });
+
+      // First write: this one the git event would carry too, the status moves
+      // from nothing to "M root.txt".
+      assert(await writeBehindTheBack("root.txt", "step one\n") === 200, "the first out of band write failed");
+      await page.waitForFunction(
+        () => (document.querySelector(".cm-content")?.textContent || "").includes("step one"),
+        null, { timeout: 20000 },
+      );
+      await page.waitForFunction(
+        () => document.querySelector('.editor-tab[data-path="root.txt"]')?.dataset.gitStatus === "modified",
+        null, { timeout: 20000 },
+      );
+      const before = await statusShape();
+
+      // Second write: the status output is the same text it already was, so the
+      // fingerprint does not move and no git event is published at all. The
+      // file watch is the only thing left that can see this.
+      assert(await writeBehindTheBack("root.txt", "step two\n") === 200, "the second out of band write failed");
+      await page.waitForFunction(
+        () => (document.querySelector(".cm-content")?.textContent || "").includes("step two"),
+        null, { timeout: 20000 },
+      );
+      const after = await statusShape();
+      assert(before === after, `git status moved after all:\n${before}\n---\n${after}`);
+      assert(
+        await page.$eval('.editor-tab[data-path="root.txt"]', (el) => el.dataset.gitStatus) === "modified",
+        "the tab lost its modified mark",
+      );
+      return "status unchanged, buffer followed";
+    });
 
     // A tab remembers the switch it was in, and a project without a repository
     // has nothing to compare against: HEAD would answer "not in there", the

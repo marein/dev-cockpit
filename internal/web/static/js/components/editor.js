@@ -223,6 +223,32 @@ async function init(root) {
   let gitRepo = false;
   let gitErrorSaid = false;
   let gitRetryTimer = 0;
+  // The file watch is the git watch's twin and asks the other half of the one
+  // question. Git says what the repository thinks, and it stops saying anything
+  // as soon as a file is modified: a coder writing into the same file for an
+  // hour leaves the status line at "M path" the whole time, and an ignored file
+  // or a project without a repository never moves it at all. This one asks the
+  // disk about exactly what is on this screen, the open tabs and the unfolded
+  // folders, and the server answers with the paths that moved.
+  let fileWatchTimer = 0;
+  let fileWatching = false;
+  let fileWatchGen = 0;
+  let fileScopeTimer = 0;
+  // This screen's name in the server's union. Two browsers on one project are
+  // one tick over both their scopes, and without a name of its own each
+  // renewal would overwrite the other's.
+  const fileWatchClient = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  // What a moved folder redraws: one entry per unfolded folder, so the tree
+  // corrects the rows of that one folder instead of rebuilding itself around
+  // them and dropping the scroll position, the selection and every open menu.
+  const dirReloaders = new Map();
+  const movedDirs = new Set();
+  let dirReloadTimer = 0;
+  // When the tree last read itself, counted from the moment this editor was
+  // built. The bare files signal asks every page to catch up on what fell into
+  // a gap, and it also arrives on the very first connect, where the page is
+  // doing exactly that already.
+  let treeLoadedAt = Date.now();
   // Two status requests can be in flight at once (an event and a click on
   // refresh); the one started last is the one that describes the repository
   // now, whichever order the answers arrive in.
@@ -521,6 +547,16 @@ async function init(root) {
       hintEl.textContent = tab.external ? externalHint(tab.path) : parentDir(tab.path) || "/";
       btn.appendChild(hintEl);
     }
+    // What the disk did to this file behind the editor's back, in the one case
+    // where it could not simply be followed: a buffer with unsaved work whose
+    // file moved is stale, a file that is gone is missing. Both are a mark and
+    // never an action, the buffer belongs to the person in front of it.
+    if (tab.diskState) {
+      const diskEl = document.createElement("i");
+      diskEl.className = `ti ${tab.diskState === "missing" ? "ti-file-off text-danger" : "ti-alert-triangle text-warning"} small flex-shrink-0`;
+      diskEl.setAttribute("aria-hidden", "true");
+      btn.appendChild(diskEl);
+    }
     const stateEl = document.createElement("span");
     stateEl.className = "editor-tab-state";
     stateEl.setAttribute("aria-label", `Close ${tab.name}`);
@@ -545,7 +581,25 @@ async function init(root) {
       }
     });
     markGitTab(btn);
+    markDiskTab(btn);
     return btn;
+  }
+
+  // markDiskTab is the tooltip half of that mark. markGitTab composes the title
+  // out of the path and what git says, so what the disk did is appended after
+  // it and appended again whenever that runs again.
+  function markDiskTab(btn) {
+    const tab = tabByPath(btn.dataset.path);
+    const state = tab && tab.diskState;
+    if (!state) {
+      delete btn.dataset.diskState;
+      return;
+    }
+    btn.dataset.diskState = state;
+    const said = state === "missing"
+      ? "gone from disk, the next save creates it again"
+      : "changed on disk, this buffer is older";
+    btn.title = `${btn.title} · ${said}`;
   }
 
   // markGitTab says the same thing about a tab that markGitRow says about a
@@ -1325,10 +1379,15 @@ async function init(root) {
       return entry;
     });
     store.setJSON(tabsKey, { open, active: activePath });
+    // The open tabs are half of what the server watches, so the scope goes with
+    // them.
+    scheduleFileWatch();
   }
 
   function persistExpanded() {
     store.setJSON(treeKey, [...expanded].slice(0, MAX_SAVED_TREE_DIRS));
+    // And the unfolded folders are the other half.
+    scheduleFileWatch();
   }
 
   // savedEntries reads a stored set, whatever age it is: bare strings are file
@@ -1484,14 +1543,55 @@ async function init(root) {
     return selected.isDir ? selected.path : parentDir(selected.path);
   }
 
+  // The signature of what a listing answered, kept per folder. It goes back to
+  // the server with the watch, which is how the tick can tell that the rows on
+  // this screen are not the ones on the disk any more, rather than only that
+  // something moved since it started looking.
+  const dirSigs = new Map();
+
+  // Which listing of a folder is the current question. Two rounds of the tick
+  // can put two listings of one folder in flight, and a slower answer to the
+  // older one says nothing about the folder as it is now: drawing it would put
+  // the folder back as it was, and the tick would never report it again,
+  // because its own stamp already describes the newer state. The same guard
+  // the git status stands on, one counter per folder.
+  const dirSeq = new Map();
+
+  // listDirFresh answers null when a newer request for the same folder started
+  // while this one was on the wire. Every redraw of a folder goes through it,
+  // the ones a person asked for included: those have to invalidate a background
+  // answer that is still coming.
+  async function listDirFresh(path) {
+    const seq = (dirSeq.get(path) || 0) + 1;
+    dirSeq.set(path, seq);
+    const entries = await listDir(path);
+    return dirSeq.get(path) === seq ? entries : null;
+  }
+
   async function listDir(path) {
-    return (await getJSON(`${base}/list?path=${encodeURIComponent(path)}`, { signal })).entries || [];
+    const data = await getJSON(`${base}/list?path=${encodeURIComponent(path)}`, { signal });
+    dirSigs.set(path, data.sig || "");
+    // A folder whose signature only arrives now has to reach the server before
+    // the tick looks at that folder for the first time, or the tick's own first
+    // reading becomes the baseline and whatever happened in between is never
+    // reported. The renewal is debounced, so a whole tree load is one message.
+    scheduleFileWatch();
+    return data.entries || [];
   }
 
   // Folders that were open before a rebuild fetch their children after the first
   // paint. loadTree waits for them, otherwise the tree is still short when the
   // scroll position is put back.
   const pendingDirLoads = [];
+
+  // Nested folders queue more loads while the outer ones settle, so whoever
+  // renders a folder's rows waits for the folders inside it before it counts
+  // the tree as standing.
+  async function drainDirLoads() {
+    for (let round = 0; round < 12 && pendingDirLoads.length; round += 1) {
+      await Promise.allSettled(pendingDirLoads.splice(0));
+    }
+  }
 
   function renderEntries(container, entries, depth) {
     container.innerHTML = "";
@@ -1505,6 +1605,55 @@ async function init(root) {
     }
     for (const entry of entries) {
       container.appendChild(entry.isDir ? dirNode(entry, depth) : fileNode(entry, depth));
+    }
+  }
+
+  // reconcileEntries is renderEntries for a redraw nobody asked for. It changes
+  // as little as it can: a row that is still there stays, and a folder keeps its
+  // whole subtree with it, its open children, the rows a pointer is over and the
+  // hidden ones a fold left standing. Replacing the lot instead would be correct
+  // about the disk and wrong about everything the person was doing to the tree,
+  // and a tree that redraws itself every couple of seconds does that constantly.
+  // A file row is always rebuilt, it carries nothing but its own name and size.
+  function reconcileEntries(container, entries, depth) {
+    if (entries.length === 0) {
+      renderEntries(container, entries, depth);
+      return;
+    }
+    const held = new Map();
+    for (const node of Array.from(container.children)) {
+      // A file is its row; a folder is a wrapper whose first child is the row.
+      const isDir = !node.classList.contains("editor-item");
+      const row = isDir ? node.firstElementChild : node;
+      const path = row && row.dataset ? row.dataset.path : "";
+      if (path) held.set(path, { node, isDir });
+      else node.remove();
+    }
+    let previous = null;
+    for (const entry of entries) {
+      const kept = held.get(entry.path);
+      let node;
+      if (kept && kept.isDir === !!entry.isDir) {
+        held.delete(entry.path);
+        node = kept.node;
+        // The row stands, only what it says about itself is read again.
+        if (!entry.isDir) {
+          node.dataset.title = entry.sizeText ? `${entry.path} · ${entry.sizeText}` : entry.path;
+          markGitRow(node);
+        }
+      } else {
+        // A path that is a folder now and was a file before is a different
+        // thing under one name; the old node leaves with the rest below.
+        node = entry.isDir ? dirNode(entry, depth) : fileNode(entry, depth);
+      }
+      if (previous ? previous.nextSibling !== node : container.firstChild !== node) {
+        container.insertBefore(node, previous ? previous.nextSibling : container.firstChild);
+      }
+      previous = node;
+    }
+    for (const [path, kept] of held) {
+      if (kept.isDir) dirReloaders.delete(path);
+      kept.node.remove();
     }
   }
 
@@ -1715,6 +1864,22 @@ async function init(root) {
       }
     }
 
+    // What the file tick calls when this one folder moved: its rows are read
+    // again and nothing around them is touched. A folded folder has no rows to
+    // correct, it only forgets that it ever loaded, so opening it reads fresh.
+    dirReloaders.set(entry.path, async () => {
+      if (!children.isConnected) return;
+      if (children.hidden) {
+        loaded = false;
+        return;
+      }
+      const entries = await listDirFresh(entry.path);
+      if (entries === null) return;
+      if (!children.isConnected || children.hidden) return;
+      reconcileEntries(children, entries, depth + 1);
+      await drainDirLoads();
+      loaded = true;
+    });
     row.addEventListener("click", () => {
       setSelected(entry.path, true, row);
       setOpen(children.hidden);
@@ -1742,6 +1907,10 @@ async function init(root) {
   // Every file action rebuilds the tree, so it also has to put the scroll
   // position back; landing at the top after a rename or an upload loses the
   // place you were working in.
+  //
+  // loadTree is the rebuild somebody asked for, and it is the only one: a file
+  // action, the refresh button, a branch move. What the disk does on its own
+  // goes through reconcileEntries instead and takes the tree apart for nothing.
   async function loadTree() {
     const top = treeEl.scrollTop;
     selected = null; // rebuilding the DOM drops the highlight; keep state in sync
@@ -1750,13 +1919,15 @@ async function init(root) {
     treeEl.innerHTML = `<div class="text-secondary small p-3">Loading…</div>`;
     try {
       pendingDirLoads.length = 0;
-      renderEntries(treeEl, await listDir(""), 0);
+      // Every row is built again, so the per folder reloaders are too.
+      dirReloaders.clear();
+      const fresh = await listDirFresh("");
+      if (fresh === null) return;
+      renderEntries(treeEl, fresh, 0);
       if (activePath) markTreeSelection(activePath);
-      // Nested folders queue more loads while the outer ones settle.
-      for (let round = 0; round < 12 && pendingDirLoads.length; round += 1) {
-        await Promise.allSettled(pendingDirLoads.splice(0));
-      }
+      await drainDirLoads();
       treeEl.scrollTop = top;
+      treeLoadedAt = Date.now();
     } catch (err) {
       treeEl.innerHTML = `<div class="text-danger small p-3">${escapeHtml(err.message)}</div>`;
     }
@@ -1818,7 +1989,10 @@ async function init(root) {
     for (const row of treeEl.querySelectorAll(".editor-item[data-path]")) markGitRow(row);
     // The open tabs say the same thing, so a change from outside has to reach
     // them too, not only the tree.
-    for (const btn of tabsEl.querySelectorAll(".editor-tab[data-path]")) markGitTab(btn);
+    for (const btn of tabsEl.querySelectorAll(".editor-tab[data-path]")) {
+      markGitTab(btn);
+      markDiskTab(btn);
+    }
     syncFilesItem();
     if (sheetKind === "files") renderFilesSheet();
     commitChanges = ((changes && changes.worktree) || []).slice();
@@ -1984,6 +2158,202 @@ async function init(root) {
     void refreshDiffHead();
     void pullCommitDraft();
     renewGitWatchNow();
+  }
+
+  // ---- the disk ---------------------------------------------------------------
+
+  // fileWatchScope is what this screen is showing, which is the whole of what
+  // the server may look at for it: the open tabs and the unfolded folders. The
+  // project root rides along as a folder like any other, a file created next to
+  // the project's own README moves it and nothing else. A comparison and a file
+  // from outside the project stay out, neither has a path inside this project.
+  // Every path travels with the token this screen holds for it, the version the
+  // file was read with and the signature the folder was listed with. A path
+  // without one (a viewer's file, a folder that is in the saved set but has
+  // never been listed here) sends an empty token and is a plain baseline.
+  function fileWatchScope() {
+    const files = [];
+    for (const tab of tabs) {
+      if (tab.compare || tab.external || !tab.path || tab.path.startsWith("/")) continue;
+      files.push({ path: tab.path, token: tab.version || "" });
+    }
+    const dirs = ["", ...expanded].map((path) => ({ path, token: dirSigs.get(path) || "" }));
+    return { files, dirs };
+  }
+
+  // The server ticks a project only while a client says it is watching, so the
+  // page renews for as long as it is open and lets the window lapse when the
+  // element goes away. The scope travels with every renewal: it is the whole
+  // message, and a tab that was closed leaves the server's union only because
+  // the next renewal no longer names it.
+  function startFileWatch() {
+    if (fileWatching) return;
+    fileWatching = true;
+    void renewFileWatch(++fileWatchGen);
+  }
+
+  function renewFileWatchNow() {
+    if (!fileWatching) return;
+    clearTimeout(fileWatchTimer);
+    void renewFileWatch(++fileWatchGen);
+  }
+
+  // scheduleFileWatch is what a changed scope asks for: a tab opened or closed,
+  // a folder unfolded or folded. Debounced, because closing four tabs is one
+  // scope and not four, and the renewal is a whole message either way.
+  function scheduleFileWatch() {
+    if (!fileWatching) return;
+    clearTimeout(fileScopeTimer);
+    fileScopeTimer = setTimeout(() => renewFileWatchNow(), 400);
+  }
+
+  async function renewFileWatch(gen) {
+    if (signal.aborted || gen !== fileWatchGen) return;
+    let next = 15000;
+    try {
+      const scope = fileWatchScope();
+      const res = await postJSON(`${base}/watch`, { client: fileWatchClient, files: scope.files, dirs: scope.dirs });
+      const data = await res.json();
+      if (!data.watching) { // following the disk is off, nothing to renew
+        fileWatching = false;
+        return;
+      }
+      next = Math.max(5000, (Number(data.seconds) || 30) * 500);
+    } catch {
+      // The next attempt tries again; a lapsed window only means the tick stops
+      // until this page renews it.
+    }
+    if (signal.aborted || gen !== fileWatchGen) return;
+    fileWatchTimer = setTimeout(() => renewFileWatch(gen), next);
+  }
+
+  // followDiskFile is what one moved path means for the tab that has it open,
+  // and the three answers are not one answer. A clean buffer takes the disk
+  // silently: nobody typed in it, so there is no question with two sides to it,
+  // and the cursor and the scroll position survive the swap so the file does not
+  // jump away under somebody reading it. A buffer with unsaved work is never
+  // touched, it is marked, and the save dialog stays the one place the two
+  // versions are told apart. A file that is gone marks the tab too and keeps it
+  // open: the next save is then the create path, which already exists.
+  async function followDiskFile(path) {
+    const tab = tabByPath(path);
+    if (!tab || tab.compare || tab.external) return;
+    let data;
+    try {
+      data = await getJSON(`${base}/file?path=${encodeURIComponent(path)}`, { signal });
+    } catch (err) {
+      if (signal.aborted) return;
+      // Only the server's own no says the file is gone. A request that never
+      // arrived says nothing about the disk, and marking on it would put a
+      // warning on every tab over one hiccup on a bad line.
+      if (err.status >= 400 && err.status < 500) markTabDisk(tab, "missing");
+      return;
+    }
+    if (signal.aborted || !tabs.includes(tab)) return;
+    markTabDisk(tab, "");
+    // A viewer reads its bytes from the raw route and holds no buffer at all,
+    // so there is nothing here to put anywhere; that its file still exists is
+    // what the round just established.
+    if (data.binary) return;
+    // The token is over the content, so the same text is the same token whatever
+    // the timestamps did. Identical means there is nothing to repaint.
+    if ((data.version || "") === tab.version) return;
+    if (tab.dirty) {
+      markTabDisk(tab, "stale");
+      return;
+    }
+    await applyDiskContent(tab, data);
+  }
+
+  // markTabDisk records what the disk did to a tab behind the editor's back and
+  // repaints the strip. Empty is the ordinary state, the buffer and the file
+  // agree or the buffer is simply ahead of it by unsaved work of its own.
+  function markTabDisk(tab, state) {
+    if ((tab.diskState || "") === state) return;
+    tab.diskState = state;
+    renderTabs();
+  }
+
+  // reloadDirSoon collects the folders one round reported and redraws them once.
+  // A folder nobody unfolded has no rows to correct, and an install that
+  // unpacks a hundred files into one folder is one redraw, not a hundred.
+  function reloadDirSoon(path) {
+    if (path !== "" && !expanded.has(path)) return;
+    movedDirs.add(path);
+    clearTimeout(dirReloadTimer);
+    dirReloadTimer = setTimeout(() => void reloadMovedDirs(), 250);
+  }
+
+  async function reloadMovedDirs() {
+    // A drag owns the tree while it lasts: it holds rows and a drop target, and
+    // a redraw underneath it would leave the pointer over a node nobody is
+    // listening to any more. The disk waits, it is not going anywhere.
+    if (dragging) {
+      dirReloadTimer = setTimeout(() => void reloadMovedDirs(), 400);
+      return;
+    }
+    const paths = [...movedDirs];
+    movedDirs.clear();
+    // The palette's choices come out of the same tree, so they are stale now.
+    // Not while the palette stands open though: a chooser somebody is reading
+    // would empty itself and come back as "Loading…". It reads them again the
+    // next time it opens, which is a moment away.
+    if (quickOpenEl.hidden) filterFacts = null;
+    for (const path of paths) {
+      try {
+        await reloadDirRows(path);
+      } catch {
+        // A folder that went with its own parent takes its rows along; the
+        // parent is in this same round and redraws over it.
+        continue;
+      }
+    }
+    if (activePath) markTreeSelection(activePath);
+  }
+
+  // reloadDirRows redraws one folder's rows. The project root is the tree box
+  // itself and every other folder is the children box of its own row, and both
+  // reconcile rather than replace.
+  async function reloadDirRows(path) {
+    if (path !== "") {
+      const reload = dirReloaders.get(path);
+      if (reload) await reload();
+      return;
+    }
+    const entries = await listDirFresh("");
+    if (entries === null) return;
+    reconcileEntries(treeEl, entries, 0);
+    await drainDirLoads();
+  }
+
+  // catchUpFiles is what a page does when it has been away, and what the bare
+  // files signal after a reconnect asks for: while the socket was down the watch
+  // lapsed, the tick ended, and everything the disk did in that gap was
+  // published to nobody and comes never again. A tree that has only just read
+  // itself is left alone, because the very first connect lands in the middle of
+  // exactly that.
+  function catchUpFiles() {
+    if (Date.now() - treeLoadedAt > 3000) void catchUpTree();
+    for (const tab of tabs) {
+      if (tab.compare || tab.external || !tab.path || tab.path.startsWith("/")) continue;
+      void followDiskFile(tab.path);
+    }
+    renewFileWatchNow();
+  }
+
+  // catchUpTree reads every folder that is on the screen again, the root and
+  // each unfolded one. It reconciles like every other refresh nobody asked for
+  // and never rebuilds: a catch-up is not a reason to take the tree apart.
+  async function catchUpTree() {
+    if (dragging) return;
+    for (const path of ["", ...expanded]) {
+      try {
+        await reloadDirRows(path);
+      } catch {
+        continue;
+      }
+    }
+    treeLoadedAt = Date.now();
   }
 
   // ---- commit ----------------------------------------------------------------
@@ -3475,10 +3845,20 @@ async function init(root) {
   // applyDiskContent puts what the disk answered into a tab: a fresh document,
   // the version those very bytes carry, and the views that read the buffer. It
   // is the one place a tab takes the disk over, so the version can never be
-  // left behind by one of them.
+  // left behind by one of them, and the mark that says the disk ran away goes
+  // with it.
+  //
+  // Where the cursor stands and how far the file is scrolled belong to the
+  // person reading and not to the bytes: a coder writing into an open file must
+  // not throw somebody back to line one every couple of seconds. Both are taken
+  // before the swap and put onto the fresh document after it, clamped, so a
+  // file that got shorter still lands somewhere that exists.
   async function applyDiskContent(tab, data) {
     const isActive = tab.path === activePath;
+    const view = editor.captureView(tab, isActive);
     tab.handle = await editor.createDoc(data.content || "", tab.name);
+    editor.restoreView(tab, view);
+    markTabDisk(tab, "");
     tab.editorConfig = data.editorConfig || {};
     tab.version = data.version || "";
     tab.commentPos = null;
@@ -4757,6 +5137,9 @@ async function init(root) {
       }
     }
     tab.version = version;
+    // The buffer and the file agree again, whichever of the two ways out of the
+    // dialog got here, so whatever the disk did before is over.
+    markTabDisk(tab, "");
     editor.markSaved(tab, tab.path === activePath);
     markDirty(tab, false);
     tab.commentChanges = null;
@@ -7094,6 +7477,21 @@ async function init(root) {
     void loadGitStatus();
     if (event.detail.base) void refreshDiffHead();
   }, { signal });
+  // What the disk did to what this page has on the screen. The paths say where
+  // to look and carry no content: an open tab reads the file itself and decides
+  // against its own buffer, an unfolded folder reads its own rows. A bare signal
+  // is the snapshot after a reconnect, where nothing was published for as long
+  // as the socket was down.
+  onServerEvent("files", (event) => {
+    const moved = event.detail;
+    if (!moved || !moved.project) {
+      catchUpFiles();
+      return;
+    }
+    if (moved.project !== name) return;
+    for (const path of moved.files || []) void followDiskFile(path);
+    for (const path of moved.dirs || []) reloadDirSoon(path);
+  }, { signal });
   // Another device saved the commit panel or a commit spent it; a bare signal
   // (the snapshot after a reconnect) means catch up too.
   onServerEvent("commitdraft", (event) => {
@@ -7118,6 +7516,7 @@ async function init(root) {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       catchUpGit();
+      catchUpFiles();
       void pullLSPIndex();
     }
   }, { signal });
@@ -8722,6 +9121,13 @@ async function init(root) {
   document.addEventListener("submit", (e) => guard(e, e.target), { capture: true, signal });
 
   editor.setVisible(false);
+  // Before the first load, not after it: every scope change renews the watch,
+  // and a renewal before the watch runs at all is a renewal nobody sends. A tab
+  // restored or opened in the next moment would then wait out a whole renewal
+  // interval before the server ever heard about it. Every project follows the
+  // disk, repository or not: that a project without one has no git event at all
+  // is half of why this exists.
+  startFileWatch();
   await Promise.all([loadTree(), restoreTabs(), loadGitStatus()]);
   if (tabs.length === 0 && mobileMedia.matches) openDrawer();
   if (pageTerminal && termOpen && termApplies()) void activateTermPane(pageTerminal, { focus: true });
@@ -8733,6 +9139,9 @@ async function init(root) {
     clearTimeout(previewTimer);
     clearTimeout(searchTimer);
     clearTimeout(gitWatchTimer);
+    clearTimeout(fileWatchTimer);
+    clearTimeout(fileScopeTimer);
+    clearTimeout(dirReloadTimer);
     if (svgPreviewUrl) URL.revokeObjectURL(svgPreviewUrl);
     if (lsp) {
       for (const tab of tabs) {
@@ -10026,6 +10435,40 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
         editorView.requestMeasure();
       });
     },
+    // captureView and restoreView carry the cursor and the scroll position
+    // across a document the tab did not ask for: the disk moved under a clean
+    // buffer and it reads it back. They travel as a line and a column, not as
+    // an offset into the text: a coder writing three words into line twelve
+    // moves every offset after it, and a cursor put back by offset would slide
+    // backwards through the file for no reason anybody could see. The line and
+    // the column are also what the statusbar says, so what is put back is what
+    // was read there. Both are clamped onto the fresh document, so a file that
+    // got shorter still lands somewhere that exists.
+    captureView(tab, isActive) {
+      const view = isActive ? workView() : null;
+      const state = view ? view.state : tab.handle.state;
+      const selection = state.selection.main;
+      const place = (pos) => {
+        const line = state.doc.lineAt(pos);
+        return { line: line.number, column: pos - line.from };
+      };
+      return {
+        anchor: place(selection.anchor),
+        head: place(selection.head),
+        scrollTop: view ? view.scrollDOM.scrollTop : (tab.handle.scrollTop || 0),
+      };
+    },
+    restoreView(tab, view) {
+      const doc = tab.handle.state.doc;
+      const at = (place) => {
+        const line = doc.line(Math.max(1, Math.min(place.line, doc.lines)));
+        return line.from + Math.max(0, Math.min(place.column, line.length));
+      };
+      tab.handle.state = tab.handle.state.update({
+        selection: { anchor: at(view.anchor), head: at(view.head) },
+      }).state;
+      tab.handle.scrollTop = view.scrollTop;
+    },
     captureDoc(tab) {
       // The side by side editor's state carries the merge machinery, it cannot
       // be handed back to the plain editor. Its text can, so the tab keeps that
@@ -10201,7 +10644,24 @@ function createTextarea(host, hooks, settings) {
       ta.readOnly = !!tab.handle.readOnly;
       applyTabWidth();
       ta.scrollTop = tab.handle.scrollTop || 0;
+      if (tab.handle.selectionStart != null) {
+        ta.selectionStart = tab.handle.selectionStart;
+        ta.selectionEnd = tab.handle.selectionEnd ?? tab.handle.selectionStart;
+      }
       reportCursor();
+    },
+    // The fallback keeps plain offsets: it exists for the minutes the CDN is
+    // down, and a textarea has no line index to map through anyway.
+    captureView(tab, isActive) {
+      if (!isActive) return { anchor: 0, head: 0, scrollTop: tab.handle.scrollTop || 0 };
+      return { anchor: ta.selectionStart, head: ta.selectionEnd, scrollTop: ta.scrollTop };
+    },
+    restoreView(tab, view) {
+      const length = (tab.handle.value || "").length;
+      const at = (n) => Math.max(0, Math.min(n || 0, length));
+      tab.handle.selectionStart = at(view.anchor);
+      tab.handle.selectionEnd = at(view.head);
+      tab.handle.scrollTop = view.scrollTop;
     },
     captureDoc(tab) {
       tab.handle.value = ta.value;

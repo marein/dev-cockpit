@@ -301,7 +301,73 @@ test. Update this file when a convention changes.
   carries its own version, and every path that puts the disk into a tab goes
   through one place (`applyDiskContent`), so a reload can never leave the old
   token behind.
+- **The editor follows the disk, and the scope of that is what is on the
+  screen.** The `git` event is not enough and cannot be made enough:
+  `Fingerprint.Worktree` is a hash over `git status`, which moves when a file
+  is created, deleted or modified for the **first** time and stands still when
+  an already modified file is written again, which is the everyday case here
+  because a coder writes into the same open file for an hour. Ignored files
+  and projects without a repository never move it at all. So a second watch
+  asks the disk, and it asks only about what somebody can see: the open tabs
+  and the unfolded folders, sent by the client (`POST .../editor/watch`, JSON,
+  `client` plus `files` and `dirs` as `{path, token}`, the project root as the
+  empty path), because the client is the only party that knows. The server
+  holds the **union** over every client of a project (`fileWatchers`),
+  refcounted like `gitWatchers`: two browsers on one project are one tick over
+  both their scopes, a renewal replaces that one client's scope whole so a
+  closed tab leaves the union, and the round after the last window lapsed is
+  the round that ends the tick. Every client needs a name of its own or two of
+  them overwrite each other.
+  **The tokens are what make it a comparison instead of a baseline**, and that
+  is not a detail: a path that joins the watch and is written a moment later is
+  written into the tick's very first reading of it, and a difference nobody
+  ever recorded is a difference nobody will ever report. So a client hands back
+  the server's own answers, a file's `version` from `/editor/file` and a
+  folder's `sig` from `/editor/list` (`filesystem.DirSignature`, which is why
+  the listing route answers one), the watch seeds the stamp of every path it
+  holds none for (`filesystem.SeedStamp`, a token with a deliberately empty
+  stat so the next round cannot take the prefilter's word for it), and the
+  first round then answers "the disk is not what you are showing". Every read
+  of a listing renews the watch for that reason (`listDir`), not only a changed
+  scope. The interval is its own setting (`editor-file-poll-seconds`, Settings,
+  Editor, Files) and deliberately not `GitPollSeconds`: one `git status` walks
+  the working copy and may take the index lock from a coder, fifty `stat` calls
+  cost nothing, and one number would force one of them into the wrong
+  frequency. Both are read again before every round, and both watch renewals
+  are marked `editorPoll` so they leave the quick open index alone; a poll every
+  few seconds would otherwise rebuild it around the clock. One round is one
+  `stat` per path (`filesystem.Stamp`): a file is **read** and a folder is
+  **listed** only where its stat moved, and the token decides whether anything
+  happened, the same token the save stands on, so a `git checkout` of identical
+  bytes wakes nobody. A directory's mtime is the sharper prefilter, the kernel
+  moves it on a create, a delete and a rename inside it and on nothing else,
+  which is exactly what a lazily loaded tree needs and why a folder is no
+  special case. What goes out is the bare `files` event, project plus the moved
+  paths, files and directories apart, no content: the client pulls
+  `/editor/file` or `/editor/list` itself. Only a moved **directory** drops the
+  quick open index (`quickOpen.Invalidate`), and that is not a detail either:
+  the index knows paths and nothing about contents, and more hangs on it by now
+  than the file palette. In the browser the three answers are not one answer: a
+  clean buffer takes the disk silently, with the cursor and the scroll position
+  carried across the swap (`captureView`/`restoreView`, as a **line and a
+  column** and never an offset, because a coder writing three words into line
+  twelve moves every offset after it and a cursor put back by offset slides
+  backwards for no reason anybody could see), because a file nobody typed in
+  poses no question with two sides and must not jump away under whoever is
+  reading it; a buffer with unsaved work is never touched but marked stale on
+  its tab, JetBrains style, and the existing save dialog stays the one place
+  the two versions are told apart; a file that is gone marks its tab and keeps
+  it open, because the next save is then the create path that already exists,
+  and a rename is a delete plus a create from outside, which a tree can follow
+  and a tab cannot, so it is marked rather than guessed after. **A refresh
+  nobody asked for reconciles, it never rebuilds** (`reconcileEntries`): a row
+  that is still there stays, with its subtree, its open folders and whatever a
+  pointer is doing to it, and a drag holds the tree off until it ends. Only a
+  person asking rebuilds (`loadTree`). The bare `files` signal in the connect
+  snapshot is the catch-up after a gap, where the watch had lapsed and nothing
+  was published to anybody.
 - **A commit takes the checked paths and nothing else.** `git.Commit` is the
+  one call in `internal/git` that records a commit, one write out of the short
   one call in `internal/git` that records a commit, one write out of the short
   list further up, and it has the editor's commit route pair to itself
   (`GET`/`POST /projects/:name/editor/git/commit`; the GET answers branch,

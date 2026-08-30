@@ -316,6 +316,7 @@ const (
 	// leads to its first section.
 	editorSettingsPath       = editorSearchSettingsPath
 	editorSearchSettingsPath = "/settings/editor/search"
+	editorFilesSettingsPath  = "/settings/editor/files"
 	editorGitSettingsPath    = "/settings/editor/git"
 	editorLSPSettingsPath    = "/settings/editor/lsp"
 )
@@ -334,6 +335,26 @@ func (s *Server) handleSettingsEditorGit(c *gin.Context) {
 		DiffMaxLines:   set.DiffMaxLines,
 		DiffMaxKiB:     set.DiffMaxKiB,
 	})
+}
+
+// handleSettingsEditorFiles renders the Files tab: how often an open editor
+// looks at what it has on the screen. It is a tab of its own because it is
+// neither git nor search: it is the editor following the disk.
+func (s *Server) handleSettingsEditorFiles(c *gin.Context) {
+	set := s.editorSettings()
+	c.HTML(http.StatusOK, "settings_editor_files.gohtml", render.SettingsEditorData{
+		Page:            s.page(c, "Settings", "settings"),
+		SettingsNav:     s.settingsNav("editor"),
+		Section:         "files",
+		FilePollSeconds: set.FilePollSeconds,
+	})
+}
+
+// handleSettingsEditorFilesSave stores that interval. Zero is a real answer and
+// means the editor stops following the disk on its own.
+func (s *Server) handleSettingsEditorFilesSave(c *gin.Context) {
+	s.storeInt(editorFilePollSecondsKey, c.PostForm("file_poll_seconds"), 0, 60)
+	s.redirectWithFlash(c, editorFilesSettingsPath, "Settings saved.", "")
 }
 
 func (s *Server) handleSettingsEditorSearch(c *gin.Context) {

@@ -95,8 +95,12 @@ type SettingsEditorData struct {
 	SettingsNav    SettingsNav
 	Section        string
 	GitPollSeconds int
-	DiffMaxLines   int
-	DiffMaxKiB     int
+	// FilePollSeconds is the Files tab's own interval, how often an open
+	// editor's tabs and unfolded folders are looked at on disk. Deliberately
+	// not the git one: the two cost different things.
+	FilePollSeconds int
+	DiffMaxLines    int
+	DiffMaxKiB      int
 	// Exclusions is the newline joined folder list the search tab edits.
 	Exclusions string
 	// LSPProfiles are the code navigation's language server profiles the
