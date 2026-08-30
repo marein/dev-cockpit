@@ -12,11 +12,18 @@ class ThemeSwitch extends HTMLElement {
     }, { signal });
     document.addEventListener("dc:theme", () => this.sync(), { signal });
     this.sync();
+    this.settle();
   }
 
   disconnectedCallback() {
     this.ac?.abort();
     this.ac = null;
+  }
+
+  settle() {
+    if (!this.hasAttribute("data-boot")) return;
+    void getComputedStyle(this, "::before").translate;
+    this.removeAttribute("data-boot");
   }
 
   sync() {

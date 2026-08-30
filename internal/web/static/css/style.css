@@ -3225,6 +3225,10 @@ dc-docker-actions.dc-actions-dragging [data-action-row].dc-action-drag {
   opacity: 0;
   transition: translate 0.18s ease, opacity 0.18s ease;
 }
+.dc-theme-switch[data-boot]::before,
+.dc-theme-switch[data-boot] .dc-theme-switch-btn {
+  transition: none;
+}
 .dc-theme-switch:has([data-theme-option="light"].active)::before {
   opacity: 1;
   translate: 0 0;
