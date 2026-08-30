@@ -2461,7 +2461,10 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   display: flex;
   flex-direction: column;
   width: min(36rem, 100%);
-  max-height: min(26rem, 100%);
+  /* A height rather than a cap: the list swaps between the hits and the two
+     choosers, and a panel that resized with it would move the context line and
+     the rows under the pointer every time. */
+  height: min(26rem, 100%);
   background: var(--tblr-bg-surface);
   border: 1px solid var(--tblr-border-color);
   border-radius: 6px;
@@ -2475,7 +2478,54 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   border-radius: 0;
   box-shadow: none;
 }
+.editor-quickopen-context {
+  flex: 0 0 auto;
+}
+.editor-quickopen-slot {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.editor-quickopen-slot:hover {
+  color: var(--tblr-body-color);
+}
+/* Tab walks these two, so where it stands has to be visible. */
+.editor-quickopen-slot:focus {
+  outline: 2px solid var(--tblr-primary);
+  outline-offset: 1px;
+  color: var(--tblr-body-color);
+}
+/* The slot a chooser was opened from stays lit while it stands, and a second
+   click on it is the way back. */
+.editor-quickopen-slot.active {
+  background: rgba(var(--tblr-primary-rgb), 0.14);
+  color: var(--tblr-body-color);
+}
+.editor-quickopen-slot .badge {
+  min-width: 0;
+  max-width: 14rem;
+}
+.editor-quickopen-chip-remove {
+  cursor: pointer;
+  opacity: 0.6;
+}
+.editor-quickopen-chip-remove:hover {
+  opacity: 1;
+}
+.editor-quickopen-foot {
+  flex: 0 0 auto;
+  min-height: 1.75rem;
+}
 .editor-quickopen-list {
+  /* The list is the one part that gives way: without min-height it keeps its
+     content height and the flex shrink lands on the context line instead, which
+     then stands there as a zero pixel row. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -2511,6 +2561,13 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* A chooser row is aimed at with a thumb, so it keeps a floor no font size can
+   undercut. */
+.editor-quickopen-pick {
+  min-height: 2.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .editor-quickopen-match {
   display: block;

@@ -503,10 +503,34 @@ func (s *Server) invalidateQuickOpenAfterWrite(c *gin.Context) {
 	s.quickOpen.Invalidate(p.Path)
 }
 
+// handleEditorFilters answers what the palette's two filters can be set to in
+// this project: the folders to scope to with the number of files under each,
+// and the file name patterns that actually occur, the most common first. Both
+// come out of the quick open index the palette already stands on, so this is
+// one pass over paths that are in memory and never a walk of its own. The
+// browser holds the answer and filters it while somebody types, which is why
+// there is one route here and not one request per keystroke.
+func (s *Server) handleEditorFilters(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	facts, err := s.quickOpen.Facts(p.Path, s.exclusions())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+		return
+	}
+	c.JSON(http.StatusOK, facts)
+}
+
 // handleEditorSearch greps the project for the ?q= substring, or with ?re=1
 // for the regex, and returns the matching lines, feeding the find in files
-// palette. A pattern that does not compile answers a 400 with the compile
-// message, which the palette shows like any other search error.
+// palette. ?path= keeps the walk inside one project relative folder and ?file=
+// filters the file names; a request carrying neither searches the whole project
+// the way it always did, and the paths in the answer stay relative to the
+// project root either way. A pattern that does not compile, and a folder that
+// is not one, answer a 400 with the message, which the palette shows like any
+// other search error.
 func (s *Server) handleEditorSearch(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -517,7 +541,8 @@ func (s *Server) handleEditorSearch(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"matches": []filesystem.SearchMatch{}, "truncated": false})
 		return
 	}
-	matches, truncated, err := filesystem.SearchFiles(p.Path, q, c.Query("re") == "1", s.exclusions())
+	opt := filesystem.SearchOptions{Folder: c.Query("path"), Mask: filesystem.ParseFileMask(c.Query("file"))}
+	matches, truncated, err := filesystem.SearchFiles(p.Path, q, c.Query("re") == "1", s.exclusions(), opt)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,7 +34,7 @@ func TestSearchFindsMatchesPastTheOldFileLimit(t *testing.T) {
 	}
 	writeFile(t, root, "src/ConnectFour/Domain/Game/Game.php", "<?php\nfinal class Game\n{\n}\n")
 
-	matches, truncated, err := SearchFiles(root, "final class Game", false, DefaultExclusionSet())
+	matches, truncated, err := SearchFiles(root, "final class Game", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestSearchIsCaseInsensitiveAndReportsLines(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "src/a.php", "first\nSECOND needle here\nthird\nand NeEdLe again\n")
 
-	matches, _, err := SearchFiles(root, "NEEDLE", false, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "NEEDLE", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestSearchReportsOneMatchPerLine(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "needle and needle on one line\nplain\nneedle\n")
 
-	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +90,7 @@ func TestSearchReportsOneMatchPerLine(t *testing.T) {
 func TestSearchLineNumbersWithoutTrailingNewline(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "one\ntwo\nneedle")
-	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func TestSearchCapsTheAnswerAndReportsTruncation(t *testing.T) {
 		}
 		writeFile(t, root, "src/f"+strconv.Itoa(f)+".txt", b.String())
 	}
-	matches, truncated, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
+	matches, truncated, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,12 +130,12 @@ func TestSearchIsDeterministic(t *testing.T) {
 		writeFile(t, root, "src/dir"+strconv.Itoa(f%7)+"/f"+strconv.Itoa(f)+".txt",
 			"pad\nneedle one\npad\nneedle two\n")
 	}
-	first, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
+	first, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 6; i++ {
-		again, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
+		again, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,7 +164,7 @@ func TestSearchMatchesSerialScan(t *testing.T) {
 		}
 		writeFile(t, root, "d"+strconv.Itoa(f%11)+"/f"+strconv.Itoa(f)+".txt", body)
 	}
-	got, gotTrunc, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
+	got, gotTrunc, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +229,7 @@ func TestSearchSkipsBinaryAndOversizedFiles(t *testing.T) {
 	big := strings.Repeat("x", maxSearchFileBytes+1024) + "needle\n"
 	writeFile(t, root, "big.txt", big)
 
-	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +244,7 @@ func TestSearchSkipsExcludedDirs(t *testing.T) {
 	for _, dir := range DefaultExclusions {
 		writeFile(t, root, dir+"/hidden.php", "needle\n")
 	}
-	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +256,7 @@ func TestSearchSkipsExcludedDirs(t *testing.T) {
 func TestSearchEmptyQuery(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "anything\n")
-	matches, truncated, err := SearchFiles(root, "   ", false, DefaultExclusionSet())
+	matches, truncated, err := SearchFiles(root, "   ", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +269,7 @@ func TestSearchSnippetTrimsLongLines(t *testing.T) {
 	root := t.TempDir()
 	long := strings.Repeat("a", 400) + "needle" + strings.Repeat("b", 400)
 	writeFile(t, root, "long.txt", long+"\n")
-	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +295,7 @@ func TestSearchReportsMatchBounds(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "  Ärger needle kommt\n🙂 needle\n")
 
-	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +312,7 @@ func TestSearchRegexIsCaseInsensitiveAndReportsLines(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "src/a.php", "first\nSECOND needle here\nthird\nand NeEdLe again\n")
 
-	matches, _, err := SearchFiles(root, `ne.d\w+`, true, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, `ne.d\w+`, true, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +331,7 @@ func TestSearchRegexBoundsCoverTheWholeMatch(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "my needleXY here, needle again on the same line\n")
 
-	matches, _, err := SearchFiles(root, `needle\w*`, true, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, `needle\w*`, true, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +348,7 @@ func TestSearchRegexBrokenPatternFails(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "anything\n")
 
-	_, _, err := SearchFiles(root, "(needle", true, DefaultExclusionSet())
+	_, _, err := SearchFiles(root, "(needle", true, DefaultExclusionSet(), SearchOptions{})
 	if err == nil {
 		t.Fatal("a broken pattern must fail the search")
 	}
@@ -363,7 +364,7 @@ func TestSearchRegexEmptyMatchTerminates(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "a\nb\n")
 
-	matches, _, err := SearchFiles(root, "x*", true, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "x*", true, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +385,7 @@ func TestSearchRegexAnchorsMeanLineBoundaries(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "abc\nbcd\nxbc\nbcx\n")
 
-	matches, _, err := SearchFiles(root, "^bc", true, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "^bc", true, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +400,7 @@ func TestSearchRegexDotStaysOnTheLine(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "a\nc\nabc\n")
 
-	matches, _, err := SearchFiles(root, "a.c", true, DefaultExclusionSet())
+	matches, _, err := SearchFiles(root, "a.c", true, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +418,7 @@ func TestSearchRegexFindsMatchesPastTheOldFileLimit(t *testing.T) {
 	}
 	writeFile(t, root, "src/ConnectFour/Domain/Game/Game.php", "<?php\nfinal class Game\n{\n}\n")
 
-	matches, truncated, err := SearchFiles(root, `final\s+class\s+\w+`, true, DefaultExclusionSet())
+	matches, truncated, err := SearchFiles(root, `final\s+class\s+\w+`, true, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,5 +433,179 @@ func TestSearchRegexFindsMatchesPastTheOldFileLimit(t *testing.T) {
 	}
 	if truncated {
 		t.Error("a single match must not be reported as truncated")
+	}
+}
+
+// TestSearchFileMaskFiltersByName covers the mask's semantics one rule at a
+// time: base name patterns, path patterns, the case fold, the trimming around a
+// pattern, the or between inclusions and the exclusions taking files back out.
+func TestSearchFileMaskFiltersByName(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{
+		"main.go", "main_test.go", "app.js", "readme.md",
+		"src/deep.go", "src/deep.js", "src/nested/deeper.go",
+		"assets/App.JS",
+	} {
+		writeFile(t, root, rel, "needle here\n")
+	}
+
+	paths := func(mask string) []string {
+		t.Helper()
+		matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(),
+			SearchOptions{Mask: ParseFileMask(mask)})
+		if err != nil {
+			t.Fatalf("mask %q: %v", mask, err)
+		}
+		out := make([]string, 0, len(matches))
+		for _, m := range matches {
+			out = append(out, m.Path)
+		}
+		return out
+	}
+
+	cases := []struct {
+		mask string
+		want []string
+	}{
+		{"", []string{"app.js", "assets/App.JS", "main.go", "main_test.go", "readme.md", "src/deep.go", "src/deep.js", "src/nested/deeper.go"}},
+		// A base name pattern reaches every depth.
+		{"*.go", []string{"main.go", "main_test.go", "src/deep.go", "src/nested/deeper.go"}},
+		// Whitespace around the patterns is trimmed, and they are an or.
+		{" *.go ,  *.md ", []string{"main.go", "main_test.go", "readme.md", "src/nested/deeper.go", "src/deep.go"}},
+		// Matching ignores case on both sides.
+		{"*.JS", []string{"app.js", "assets/App.JS", "src/deep.js"}},
+		// A pattern with a slash is about the whole path, and * stays inside
+		// one segment of it.
+		{"src/*.go", []string{"src/deep.go"}},
+		{"src/*/*.go", []string{"src/nested/deeper.go"}},
+		// ? is one character.
+		{"?ain.go", []string{"main.go"}},
+		// An exclusion narrows what the inclusions let through.
+		{"*.go, !*_test.go", []string{"main.go", "src/deep.go", "src/nested/deeper.go"}},
+		// Exclusions alone mean everything else, and they fold case too, so
+		// App.JS goes with the rest of the JavaScript.
+		{"!*.go, !*.js", []string{"readme.md"}},
+		// An exclusion may name a path too.
+		{"!src/*", []string{"app.js", "assets/App.JS", "main.go", "main_test.go", "readme.md", "src/nested/deeper.go"}},
+		// Nothing matches is an empty answer, not everything.
+		{"*.php", nil},
+	}
+	for _, tc := range cases {
+		got := paths(tc.mask)
+		want := append([]string{}, tc.want...)
+		sort.Strings(want)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("mask %q = %v, want %v", tc.mask, got, want)
+		}
+	}
+}
+
+// TestSearchFileMaskSkipsFilesBeforeReadingThem is what the mask is for: it
+// filters in the walk, not on the way out. The noise file sorts first and holds
+// far more matches than the answer may carry, so a mask applied to the result
+// would have spent the whole cap on it, stopped the walk and never reached the
+// one file that was asked for.
+func TestSearchFileMaskSkipsFilesBeforeReadingThem(t *testing.T) {
+	root := t.TempDir()
+	var noise strings.Builder
+	for i := 0; i < MaxSearchMatches*2; i++ {
+		noise.WriteString("needle line\n")
+	}
+	writeFile(t, root, "aaa_noise.txt", noise.String())
+	writeFile(t, root, "zzz.go", "needle in the file that was asked for\n")
+
+	matches, truncated, err := SearchFiles(root, "needle", false, DefaultExclusionSet(),
+		SearchOptions{Mask: ParseFileMask("*.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Path != "zzz.go" {
+		t.Fatalf("matches = %#v, want only zzz.go", matches)
+	}
+	if truncated {
+		t.Error("the masked out file must not count towards the cap")
+	}
+}
+
+// TestSearchFolderScopeNarrowsTheWalk pins both halves of the scope: only the
+// folder is searched, and the paths that come back are still relative to the
+// project root, because that is what opens a file.
+func TestSearchFolderScopeNarrowsTheWalk(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "top.txt", "needle at the top\n")
+	writeFile(t, root, "src/a.txt", "needle in src\n")
+	writeFile(t, root, "src/deep/b.txt", "needle deeper down\n")
+	writeFile(t, root, "other/c.txt", "needle elsewhere\n")
+
+	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(),
+		SearchOptions{Folder: "src"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{}
+	for _, m := range matches {
+		got = append(got, m.Path)
+	}
+	want := []string{"src/a.txt", "src/deep/b.txt"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("paths = %v, want %v", got, want)
+	}
+
+	// A scope and a mask narrow the same search together.
+	writeFile(t, root, "src/a.go", "needle in go\n")
+	matches, _, err = SearchFiles(root, "needle", false, DefaultExclusionSet(),
+		SearchOptions{Folder: "src", Mask: ParseFileMask("*.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Path != "src/a.go" {
+		t.Errorf("scope plus mask = %#v, want only src/a.go", matches)
+	}
+}
+
+// TestSearchFolderScopeStillExcludes keeps the two filters apart: the skip list
+// applies inside a scope, and the scoped folder itself is searched even when
+// the list names it, the way the project root is.
+func TestSearchFolderScopeStillExcludes(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "src/a.txt", "needle in src\n")
+	writeFile(t, root, "src/vendor/lib.txt", "needle in a vendored file\n")
+
+	ex := ParseExclusions("vendor")
+	matches, _, err := SearchFiles(root, "needle", false, ex, SearchOptions{Folder: "src"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Path != "src/a.txt" {
+		t.Errorf("matches = %#v, want only src/a.txt", matches)
+	}
+
+	matches, _, err = SearchFiles(root, "needle", false, ex, SearchOptions{Folder: "src/vendor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Path != "src/vendor/lib.txt" {
+		t.Errorf("a folder asked for by name = %#v, want it searched", matches)
+	}
+}
+
+// TestSearchFolderScopeRefusesWhatIsNotAFolder covers the three ways the scope
+// can be wrong. Each is an error rather than an empty answer: "no matches" for
+// a typo reads like a result.
+func TestSearchFolderScopeRefusesWhatIsNotAFolder(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "src/a.txt", "needle\n")
+
+	for _, folder := range []string{"../..", "../etc", "src/../../elsewhere", "nosuchfolder", "src/a.txt"} {
+		if _, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{Folder: folder}); err == nil {
+			t.Errorf("folder %q was accepted", folder)
+		}
+	}
+
+	// A path that stays inside is fine, leading and trailing slashes included.
+	for _, folder := range []string{"", "  ", "src", "/src", "src/"} {
+		if _, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{Folder: folder}); err != nil {
+			t.Errorf("folder %q was refused: %v", folder, err)
+		}
 	}
 }

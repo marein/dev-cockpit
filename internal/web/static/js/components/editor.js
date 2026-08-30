@@ -106,6 +106,11 @@ async function init(root) {
   const quickOpenInput = root.querySelector("[data-editor-quickopen-input]");
   const quickOpenList = root.querySelector("[data-editor-quickopen-list]");
   const quickOpenRegexBtn = root.querySelector("[data-editor-quickopen-regex]");
+  const quickOpenContextEl = root.querySelector("[data-editor-quickopen-context]");
+  const quickOpenFolderSlot = root.querySelector("[data-editor-quickopen-folder-slot]");
+  const quickOpenMaskSlot = root.querySelector("[data-editor-quickopen-mask-slot]");
+  const quickOpenFootLeft = root.querySelector("[data-editor-quickopen-foot-left]");
+  const quickOpenFootRight = root.querySelector("[data-editor-quickopen-foot-right]");
   const filesItem = root.querySelector("[data-editor-files-item]");
   const filesCountEl = root.querySelector("[data-editor-files-count]");
   const settingsMenuEl = root.querySelector("[data-editor-settings-menu]");
@@ -1544,6 +1549,18 @@ async function init(root) {
       icon: "ti-download",
       action: () => (entry.isDir ? startDownload(entry.path, true) : startDownload(entry.path)),
     });
+    if (entry.isDir) {
+      items.push({
+        label: "Find in files",
+        icon: "ti-list-search",
+        action: () => openQuickOpen("search", entry.path),
+      });
+      items.push({
+        label: "Go to file",
+        icon: "ti-file-search",
+        action: () => openQuickOpen("files", entry.path),
+      });
+    }
     if (!entry.isDir && isArchive(baseName(entry.path))) {
       items.push({ label: "Extract here", icon: "ti-file-zip", action: () => void extractArchive(entry.path) });
     }
@@ -1691,6 +1708,8 @@ async function init(root) {
   async function loadTree() {
     const top = treeEl.scrollTop;
     selected = null; // rebuilding the DOM drops the highlight; keep state in sync
+    // The palette's choices are drawn from the same tree, so they are stale now.
+    filterFacts = null;
     treeEl.innerHTML = `<div class="text-secondary small p-3">Loading…</div>`;
     try {
       pendingDirLoads.length = 0;
@@ -5656,6 +5675,10 @@ async function init(root) {
   // and jumps to the matched line. Both ask the server, which answers from an
   // index of the whole project.
   let quickOpenMode = "files";
+  // Which list stands under the search field: the hits, or one of the two
+  // choosers the context line opens. There is only ever one list, in one place,
+  // so the keys, the mouse and a finger keep working in every state.
+  let quickOpenView = "results";
   let quickOpenFiles = null;
   let quickOpenMatches = [];
   let quickOpenActive = 0;
@@ -5664,37 +5687,167 @@ async function init(root) {
   let searchTimer = 0;
   let filesSeq = 0;
   let filesTimer = 0;
+  let lastSearch = { matches: [], truncated: false };
+  // What the two filters stand on. They live on this page, not on the server:
+  // they survive the palette closing and go with the tab.
+  let scopeFolder = "";
+  let maskPatterns = [];
+  // The query the hits belong to, parked while a chooser borrows the field.
+  let parkedQuery = "";
+  // Every folder and extension of the project, fetched once and filtered here,
+  // so typing in a chooser costs no request.
+  let filterFacts = null;
+  let filterFactsPending = null;
 
-  async function openQuickOpen(mode = "files") {
+  const pathExtension = (path) => {
+    const name = baseName(path || "");
+    const dot = name.lastIndexOf(".");
+    return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1) : "";
+  };
+
+  const resultsPlaceholder = () => (quickOpenMode === "search" ? "Find in files…" : "Go to file…");
+
+  async function openQuickOpen(mode = "files", folder = null) {
     closeDrawer();
     closeSheet();
     quickOpenMode = mode;
+    quickOpenView = "results";
     quickOpenEl.hidden = false;
     quickOpenInput.value = "";
-    quickOpenInput.placeholder = mode === "search" ? "Find in files…" : "Go to file…";
+    quickOpenInput.placeholder = resultsPlaceholder();
     quickOpenMatches = [];
+    if (folder !== null) scopeFolder = folder;
     syncQuickOpenRegex();
+    renderQuickOpenContext();
     quickOpenInput.focus();
     if (mode === "search") {
-      quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-secondary small">Type at least 2 characters to search file contents.</div>`;
+      showQuickOpenNote("Type at least 2 characters to search file contents.");
+      setQuickOpenFoot("", "");
       return;
     }
-    quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-secondary small">Loading…</div>`;
+    showQuickOpenNote("Loading…");
     runFileQuery("");
   }
 
   // Every way out lands here; the surface takes the focus back.
   function closeQuickOpen() {
     if (quickOpenEl.hidden) return;
+    // A chooser is a step, not a place to come back into: the field belongs to
+    // the query again the next time the palette opens.
+    quickOpenView = "results";
     quickOpenEl.hidden = true;
     editor.focus();
+  }
+
+  function showQuickOpenNote(text, danger = false) {
+    quickOpenMatches = [];
+    quickOpenActive = 0;
+    quickOpenList.innerHTML = `<div class="editor-quickopen-empty ${danger ? "text-danger" : "text-secondary"} small">${escapeHtml(text)}</div>`;
+  }
+
+  // The line under the field carries the state of the search: what is counted on
+  // the left, what is left in on the right. Left plain, the two words for
+  // everything; set, a chip that names it and takes it back off.
+  function setQuickOpenFoot(left, right) {
+    quickOpenFootLeft.textContent = left || "";
+    quickOpenFootRight.textContent = right || "";
+  }
+
+  function renderQuickOpenContext() {
+    const showFolder = quickOpenMode !== "usages";
+    const showMask = quickOpenMode === "search";
+    quickOpenContextEl.hidden = !showFolder && !showMask;
+    quickOpenFolderSlot.hidden = !showFolder;
+    quickOpenMaskSlot.hidden = !showMask;
+    // The slot a chooser was opened from stays standing and marked, and a
+    // second click on it is the way back: without a keyboard that is the one
+    // control that is certainly still there.
+    markQuickOpenSlot(quickOpenFolderSlot, quickOpenView === "folders");
+    markQuickOpenSlot(quickOpenMaskSlot, quickOpenView === "masks");
+    quickOpenFolderSlot.replaceChildren(scopeFolder
+      ? filterChip(scopeFolder, () => setScopeFolder(""))
+      : plainSlotLabel("Whole project"));
+    quickOpenMaskSlot.replaceChildren(...(maskPatterns.length
+      ? maskPatterns.map((pattern) => filterChip(pattern, () => toggleMaskPattern(pattern)))
+      : [plainSlotLabel("All files")]));
+    // The tooltip is state like the chips and the marks, so it is written here
+    // and nowhere else; left behind, it named a filter that was long gone.
+    quickOpenFolderSlot.title = scopeFolder ? `Folder to search: ${scopeFolder}` : "Folder to search: whole project";
+    quickOpenMaskSlot.title = maskPatterns.length
+      ? `Files to search: ${maskPatterns.join(", ")}`
+      : "Files to search: all files";
+  }
+
+  function markQuickOpenSlot(slot, open) {
+    slot.classList.toggle("active", open);
+    slot.setAttribute("aria-pressed", open ? "true" : "false");
+  }
+
+  function plainSlotLabel(text) {
+    const label = document.createElement("span");
+    label.className = "text-truncate";
+    label.textContent = text;
+    return label;
+  }
+
+  function filterChip(text, remove) {
+    const chip = document.createElement("span");
+    chip.className = "badge bg-secondary-lt d-inline-flex align-items-center gap-1";
+    const label = document.createElement("span");
+    label.className = "text-truncate";
+    label.textContent = text;
+    const close = document.createElement("i");
+    close.className = "ti ti-x editor-quickopen-chip-remove";
+    close.title = `Remove ${text}`;
+    close.addEventListener("click", (event) => {
+      // The chip itself opens the chooser, its cross only takes this one off.
+      event.stopPropagation();
+      remove();
+    });
+    chip.append(label, close);
+    return chip;
+  }
+
+  function setScopeFolder(folder) {
+    scopeFolder = folder;
+    filterChanged();
+  }
+
+  function toggleMaskPattern(pattern) {
+    maskPatterns = maskPatterns.includes(pattern)
+      ? maskPatterns.filter((entry) => entry !== pattern)
+      : [...maskPatterns, pattern];
+    filterChanged();
+  }
+
+  // The chips and the rows of a chooser are two views on the same two values,
+  // so every change repaints both. A chooser standing open while a chip is
+  // taken off is exactly where the two used to drift apart.
+  function filterChanged() {
+    renderQuickOpenContext();
+    runQuickOpenQuery();
+    if (quickOpenView !== "results") renderQuickOpenPicker(true);
+  }
+
+  // A filter changed, so the answer on screen is about the old question: ask the
+  // new one at once, through the debounce that already guards the ordering.
+  function runQuickOpenQuery() {
+    if (quickOpenMode === "usages") return;
+    if (quickOpenMode === "search") scheduleSearch(0);
+    else scheduleFileQuery(0);
+  }
+
+  // While a chooser stands the field is its filter, so the query it is about
+  // waits in parkedQuery.
+  function currentQuery() {
+    return quickOpenView === "results" ? quickOpenInput.value : parkedQuery;
   }
 
   // The palette used to receive every path in the project and rank them here,
   // which capped the list server side and made anything past the cap
   // unreachable. Ranking now happens on the server against an index of the whole
   // tree; this only debounces the keystrokes and draws what comes back.
-  function scheduleFileQuery() {
+  function scheduleFileQuery(delay = 40) {
     clearTimeout(filesTimer);
     // The rendered rows must never belong to an older query than what stands in
     // the box: filtering used to be synchronous, so pressing Enter right after
@@ -5706,23 +5859,35 @@ async function init(root) {
     // a file the query never matched. The debounce stays short because the
     // answer comes out of an index in single digit milliseconds.
     filesSeq++;
-    quickOpenMatches = [];
-    quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-secondary small">Searching…</div>`;
-    filesTimer = setTimeout(() => runFileQuery(quickOpenInput.value), 40);
+    if (quickOpenView === "results") showQuickOpenNote("Searching…");
+    filesTimer = setTimeout(() => runFileQuery(currentQuery()), delay);
+  }
+
+  // Both filters travel only when they hold something, so a palette nobody
+  // narrowed asks the same question it always did.
+  function folderParam() {
+    return scopeFolder ? `&path=${encodeURIComponent(scopeFolder)}` : "";
+  }
+
+  function maskParam() {
+    return maskPatterns.length ? `&file=${encodeURIComponent(maskPatterns.join(", "))}` : "";
   }
 
   async function runFileQuery(q) {
     const seq = ++filesSeq;
     try {
-      const data = await getJSON(`${base}/files?q=${encodeURIComponent(splitLineSuffix(q).query)}`, { signal });
+      const data = await getJSON(`${base}/files?q=${encodeURIComponent(splitLineSuffix(q).query)}${folderParam()}`, { signal });
       // A slower answer to an older keystroke must not overwrite a newer one.
       if (seq !== filesSeq || quickOpenEl.hidden || quickOpenMode !== "files") return;
       quickOpenFiles = { files: data.files || [], truncated: !!data.truncated, total: data.total || 0 };
-      renderQuickOpen();
+      if (quickOpenView === "results") renderQuickOpen();
     } catch (err) {
       if (seq !== filesSeq || quickOpenMode !== "files") return;
       quickOpenFiles = null;
-      quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-danger small">${escapeHtml(err.message)}</div>`;
+      if (quickOpenView === "results") {
+        showQuickOpenNote(err.message, true);
+        setQuickOpenFoot("", "");
+      }
     }
   }
 
@@ -5732,7 +5897,8 @@ async function init(root) {
     quickOpenActive = 0;
     quickOpenList.innerHTML = "";
     if (quickOpenMatches.length === 0) {
-      quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-secondary small">No matching files.</div>`;
+      showQuickOpenNote("No matching files.");
+      setQuickOpenFoot("0 files", "");
       return;
     }
     quickOpenMatches.forEach((path, i) => {
@@ -5742,22 +5908,25 @@ async function init(root) {
       item.setAttribute("role", "option");
       item.dataset.path = path;
       item.title = path;
-      item.innerHTML = `<i class="ti ti-file"></i><span class="editor-quickopen-name">${escapeHtml(baseName(path))}</span><span class="editor-quickopen-dir">${escapeHtml(parentDir(path))}</span>`;
+      item.innerHTML = `<i class="ti ${fileIcon(baseName(path))}"></i><span class="editor-quickopen-name">${escapeHtml(baseName(path))}</span><span class="editor-quickopen-dir">${escapeHtml(parentDir(path))}</span>`;
       item.addEventListener("click", () => chooseQuickOpen(path));
       quickOpenList.appendChild(item);
     });
-    if (quickOpenFiles.truncated) {
-      const note = document.createElement("div");
-      note.className = "editor-quickopen-empty text-secondary small";
-      note.textContent = quickOpenFiles.total
-        ? `Showing ${quickOpenMatches.length} of ${quickOpenFiles.total} matches, narrow the search.`
-        : "Results are truncated, narrow the search.";
-      quickOpenList.appendChild(note);
-    }
+    setQuickOpenFoot(countLabel(quickOpenMatches.length, "file", "files"), quickOpenFiles.truncated
+      ? (quickOpenFiles.total
+        ? `of ${quickOpenFiles.total} matches, narrow the search`
+        : "truncated, narrow the search")
+      : "");
+  }
+
+  function countLabel(n, one, many) {
+    return `${n} ${n === 1 ? one : many}`;
   }
 
   function syncQuickOpenRegex() {
-    const show = quickOpenMode === "search";
+    // The toggle is about the query, so it steps aside while the field filters a
+    // chooser instead.
+    const show = quickOpenMode === "search" && quickOpenView === "results";
     quickOpenRegexBtn.hidden = !show;
     quickOpenInput.classList.toggle("pe-5", show);
     quickOpenRegexBtn.classList.toggle("active", !!editorSettings.search_regex);
@@ -5770,35 +5939,42 @@ async function init(root) {
     syncQuickOpenRegex();
     quickOpenInput.focus();
     clearTimeout(searchTimer);
-    const q = quickOpenInput.value.trim();
+    const q = currentQuery().trim();
     if (q.length >= 2) runSearch(q);
     else scheduleSearch();
   }
 
-  function scheduleSearch() {
+  function scheduleSearch(delay = 250) {
     clearTimeout(searchTimer);
-    const q = quickOpenInput.value.trim();
+    const q = currentQuery().trim();
     if (q.length < 2) {
       searchSeq++;
-      quickOpenMatches = [];
-      quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-secondary small">Type at least 2 characters to search file contents.</div>`;
+      lastSearch = { matches: [], truncated: false };
+      if (quickOpenView === "results") {
+        showQuickOpenNote("Type at least 2 characters to search file contents.");
+        setQuickOpenFoot("", "");
+      }
       return;
     }
-    searchTimer = setTimeout(() => runSearch(q), 250);
+    searchTimer = setTimeout(() => runSearch(q), delay);
   }
 
   async function runSearch(q) {
     const seq = ++searchSeq;
-    quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-secondary small">Searching…</div>`;
+    if (quickOpenView === "results") showQuickOpenNote("Searching…");
     try {
       const re = editorSettings.search_regex ? "&re=1" : "";
-      const data = await getJSON(`${base}/search?q=${encodeURIComponent(q)}${re}`, { signal });
+      const data = await getJSON(`${base}/search?q=${encodeURIComponent(q)}${re}${maskParam()}${folderParam()}`, { signal });
       if (seq !== searchSeq || quickOpenEl.hidden || quickOpenMode !== "search") return;
       searchQuery = q;
-      renderSearchResults(data.matches || [], !!data.truncated);
+      lastSearch = { matches: data.matches || [], truncated: !!data.truncated };
+      if (quickOpenView === "results") renderSearchResults(lastSearch.matches, lastSearch.truncated);
     } catch (err) {
       if (seq !== searchSeq) return;
-      quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-danger small">${escapeHtml(err.message)}</div>`;
+      if (quickOpenView === "results") {
+        showQuickOpenNote(err.message, true);
+        setQuickOpenFoot("", "");
+      }
     }
   }
 
@@ -5807,7 +5983,8 @@ async function init(root) {
     quickOpenActive = 0;
     quickOpenList.innerHTML = "";
     if (matches.length === 0) {
-      quickOpenList.innerHTML = `<div class="editor-quickopen-empty text-secondary small">No matches.</div>`;
+      showQuickOpenNote("No matches.");
+      setQuickOpenFoot("0 matches", "");
       return;
     }
     matches.forEach((match, i) => {
@@ -5821,7 +5998,10 @@ async function init(root) {
       // A usage outside the project carries an absolute path, and its end
       // is what says which file it is, so it is cut like the tab's hint.
       const dir = match.external ? externalHint(match.path) : parentDir(match.path);
-      head.innerHTML = `<i class="ti ti-${match.external ? "lock" : "file"}"></i><span class="editor-quickopen-name">${escapeHtml(baseName(match.path))}:${match.line}</span><span class="editor-quickopen-dir">${escapeHtml(dir)}</span>`;
+      // A file outside the project keeps its lock: there it says more than the
+      // type does.
+      const icon = match.external ? "ti-lock" : fileIcon(baseName(match.path));
+      head.innerHTML = `<i class="ti ${icon}"></i><span class="editor-quickopen-name">${escapeHtml(baseName(match.path))}:${match.line}</span><span class="editor-quickopen-dir">${escapeHtml(dir)}</span>`;
       const text = document.createElement("div");
       text.className = "editor-quickopen-match-text";
       text.append(...(typeof match.start === "number"
@@ -5831,12 +6011,312 @@ async function init(root) {
       item.addEventListener("click", () => chooseQuickOpen(match));
       quickOpenList.appendChild(item);
     });
-    if (truncated) {
-      const note = document.createElement("div");
-      note.className = "editor-quickopen-empty text-secondary small";
-      note.textContent = "Results are truncated, narrow the search.";
-      quickOpenList.appendChild(note);
+    // What is on screen, in the two numbers a filter moves: that is how the
+    // effect of narrowing is read off without counting rows.
+    const files = new Set(matches.map((match) => match.path)).size;
+    setQuickOpenFoot(`${countLabel(matches.length, "match", "matches")} in ${countLabel(files, "file", "files")}`,
+      truncated ? "truncated, narrow the search" : "");
+  }
+
+  // ---- the two choosers ------------------------------------------------------
+
+  // Both borrow the list under the search field instead of opening a second
+  // surface: the rows, the arrow keys and the Enter that were already there
+  // carry them, and a phone gets them without a special case.
+  function openQuickOpenPicker(view) {
+    if (quickOpenMode === "usages") return;
+    if (view === "masks" && quickOpenMode !== "search") return;
+    // The same slot again is the way back out, so the control that opened a
+    // chooser is also the one that closes it.
+    if (quickOpenView === view) {
+      closeQuickOpenPicker();
+      return;
     }
+    if (quickOpenView === "results") parkedQuery = quickOpenInput.value;
+    quickOpenView = view;
+    quickOpenInput.value = "";
+    quickOpenInput.placeholder = view === "folders" ? "Filter folders" : "*.php, *.js, *.go";
+    syncQuickOpenRegex();
+    renderQuickOpenContext();
+    quickOpenInput.focus();
+    renderQuickOpenPicker();
+    void loadFilterFacts(view);
+  }
+
+  function closeQuickOpenPicker() {
+    if (quickOpenView === "results") return;
+    quickOpenView = "results";
+    quickOpenInput.value = parkedQuery;
+    quickOpenInput.placeholder = resultsPlaceholder();
+    syncQuickOpenRegex();
+    renderQuickOpenContext();
+    quickOpenInput.focus();
+    repaintQuickOpenResults();
+  }
+
+  // The hits as they stood before a chooser borrowed the list. Coming back is
+  // not a reason to ask the server again; a filter that changed asks by itself.
+  function repaintQuickOpenResults() {
+    if (quickOpenMode === "usages") {
+      paintUsages(usagesAll, true);
+      return;
+    }
+    if (quickOpenMode === "search") {
+      if (currentQuery().trim().length < 2) {
+        showQuickOpenNote("Type at least 2 characters to search file contents.");
+        setQuickOpenFoot("", "");
+        return;
+      }
+      renderSearchResults(lastSearch.matches, lastSearch.truncated);
+      return;
+    }
+    renderQuickOpen();
+  }
+
+  // One request per project, held here and filtered locally. The tree reload
+  // drops it, which is what a created or deleted file goes through.
+  async function loadFilterFacts(view) {
+    if (filterFacts) return;
+    if (!filterFactsPending) {
+      filterFactsPending = getJSON(`${base}/filters`, { signal })
+        .then((data) => {
+          filterFacts = {
+            folders: data.folders || [],
+            extensions: data.extensions || [],
+            files: data.files || 0,
+          };
+        })
+        .finally(() => {
+          filterFactsPending = null;
+        });
+    }
+    try {
+      await filterFactsPending;
+    } catch (err) {
+      if (quickOpenView === view) {
+        showQuickOpenNote(err.message, true);
+        setQuickOpenFoot("", "");
+      }
+      return;
+    }
+    if (quickOpenView === view) renderQuickOpenPicker();
+  }
+
+  function renderQuickOpenPicker(keepActive = false) {
+    const previous = quickOpenActive;
+    const rows = quickOpenView === "folders" ? folderRows() : maskRows();
+    if (rows === null) {
+      showQuickOpenNote("Loading…");
+      setQuickOpenFoot("", "");
+      return;
+    }
+    paintQuickOpenRows(rows);
+    if (keepActive && rows.length) {
+      quickOpenActive = Math.min(previous, rows.length - 1);
+      markQuickOpenActive();
+    }
+    setQuickOpenFoot(quickOpenView === "folders"
+      ? "A row takes the folder for the search"
+      : "A row switches a pattern on and off", "");
+  }
+
+  // The first row of a chooser leads back to the hits, so there is a way out in
+  // the list itself and not only on the keyboard.
+  function backRow() {
+    return {
+      kind: "back",
+      value: "",
+      icon: "ti-arrow-left",
+      label: "Back to matches",
+      hint: "",
+      count: "",
+      title: "Back to matches",
+    };
+  }
+
+  function paintQuickOpenRows(rows) {
+    quickOpenMatches = rows;
+    // The way back stands first but is not what Enter means: the mark starts on
+    // the first row that is a choice.
+    quickOpenActive = Math.max(0, rows.findIndex((row) => row.kind !== "back"));
+    quickOpenList.innerHTML = "";
+    if (rows.length === 0) {
+      showQuickOpenNote(quickOpenView === "folders" ? "No matching folder." : "No matching pattern.");
+      return;
+    }
+    rows.forEach((row, i) => {
+      const item = document.createElement("div");
+      item.className = "editor-quickopen-item editor-quickopen-pick";
+      item.classList.toggle("active", i === quickOpenActive);
+      item.setAttribute("role", "option");
+      item.dataset.pick = row.value;
+      item.dataset.kind = row.kind;
+      item.title = row.title || row.label;
+      item.innerHTML = `<i class="ti ${row.icon}"></i><span class="editor-quickopen-name">${escapeHtml(row.label)}</span><span class="editor-quickopen-dir">${escapeHtml(row.hint || "")}</span><span class="editor-quickopen-count text-secondary">${escapeHtml(row.count || "")}</span>`;
+      item.addEventListener("click", () => activateQuickOpenRow(i));
+      quickOpenList.appendChild(item);
+    });
+  }
+
+  // The folder list is the project's own, with the number of files each one
+  // would leave in the search. There is no walking of levels here: typing
+  // matches every folder of the project at once, which is the shorter way to
+  // the same place, and Tab writes a path into the field for the rare case
+  // where somebody wants to narrow from there.
+  function folderRows() {
+    if (!filterFacts) return null;
+    const typed = quickOpenInput.value.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+    const tokens = typed.toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) {
+      const rows = [backRow(), wholeProjectRow()];
+      const here = parentDir(activeTab()?.path || "");
+      const current = here ? filterFacts.folders.find((folder) => folder.path === here) : null;
+      if (current) rows.push(folderRow(current, "ti-folder-open"));
+      for (const folder of filterFacts.folders) {
+        if (!current || folder.path !== current.path) rows.push(folderRow(folder));
+      }
+      return rows;
+    }
+    const scored = [];
+    for (const folder of filterFacts.folders) {
+      const rank = rankFolder(folder.path, tokens);
+      if (rank >= 0) scored.push({ folder, rank });
+    }
+    // The order quick open answers in: better rank, then the shorter path, then
+    // alphabetically.
+    scored.sort((a, b) => a.rank - b.rank
+      || a.folder.path.length - b.folder.path.length
+      || (a.folder.path < b.folder.path ? -1 : 1));
+    return [backRow(), ...scored.map((entry) => folderRow(entry.folder))];
+  }
+
+  // Every token has to occur somewhere in the path, and the first one decides:
+  // a name prefix beats a name substring beats a hit anywhere in the path. That
+  // is what makes "web" find "internal/web" without walking the levels.
+  function rankFolder(path, tokens) {
+    const lower = path.toLowerCase();
+    for (const token of tokens) {
+      if (!lower.includes(token)) return -1;
+    }
+    const name = lower.slice(lower.lastIndexOf("/") + 1);
+    if (name.startsWith(tokens[0])) return 0;
+    if (name.includes(tokens[0])) return 1;
+    return 2;
+  }
+
+  function folderRow(folder, icon = "ti-folder") {
+    return {
+      kind: "folder",
+      value: folder.path,
+      // What the chip says and what the row says are one state: the folder the
+      // search stands on carries the mark here too.
+      icon: scopeFolder === folder.path ? "ti-check" : icon,
+      label: baseName(folder.path),
+      hint: parentDir(folder.path),
+      count: String(folder.files),
+      title: folder.path,
+    };
+  }
+
+  function wholeProjectRow() {
+    return {
+      kind: "folder",
+      value: "",
+      icon: scopeFolder === "" ? "ti-check" : "ti-folders",
+      label: "Whole project",
+      hint: "",
+      count: String(filterFacts.files),
+      title: "Whole project",
+    };
+  }
+
+  // The patterns are this project's own extensions, the most common first, and
+  // what is typed stands on top so a free pattern or an exclusion goes in too.
+  function maskRows() {
+    if (!filterFacts) return null;
+    const typed = quickOpenInput.value.trim();
+    const rows = [backRow()];
+    const seen = new Set();
+    const push = (pattern, files, hint) => {
+      if (seen.has(pattern)) return;
+      seen.add(pattern);
+      rows.push(maskRow(pattern, files, hint));
+    };
+    if (typed) {
+      push(typed, 0, "use as typed");
+    } else {
+      rows.push({
+        kind: "mask",
+        value: "",
+        // Everything is not a file type, so this one row stays neutral.
+        icon: maskPatterns.length ? "ti-files" : "ti-check",
+        label: "All files",
+        hint: "",
+        count: String(filterFacts.files),
+        title: "All files",
+      });
+      // The open file's extension is lifted to the front, and it is the same
+      // row as every other pattern: it used to be built apart, with an icon the
+      // set has no glyph for, and stood there without one.
+      const ext = pathExtension(activeTab()?.path || "");
+      if (ext) push(`*.${ext}`, extensionCount(`*.${ext}`));
+    }
+    const needle = typed.toLowerCase();
+    for (const entry of filterFacts.extensions) {
+      if (needle && !entry.pattern.toLowerCase().includes(needle)) continue;
+      push(entry.pattern, entry.files);
+    }
+    return rows;
+  }
+
+  function extensionCount(pattern) {
+    const found = filterFacts.extensions.find((entry) => entry.pattern === pattern);
+    return found ? found.files : 0;
+  }
+
+  function maskRow(pattern, files, hint) {
+    const on = maskPatterns.includes(pattern);
+    return {
+      kind: "mask",
+      value: pattern,
+      // A pattern wears the icon of the files it lets through, the tree's own,
+      // and the mark when it is on. fileIcon splits at the last dot, so "*.go"
+      // lands on the Go icon and a pattern without an extension on the plain
+      // file.
+      icon: on ? "ti-check" : fileIcon(pattern),
+      label: pattern,
+      hint: hint || "",
+      count: files ? String(files) : "",
+      title: pattern,
+    };
+  }
+
+  function activateQuickOpenRow(index) {
+    const row = quickOpenMatches[index];
+    if (!row) return;
+    if (row.kind === "back") {
+      closeQuickOpenPicker();
+      return;
+    }
+    if (quickOpenView === "folders") {
+      const folder = row.value;
+      closeQuickOpenPicker();
+      setScopeFolder(folder);
+      return;
+    }
+    if (quickOpenView === "masks") {
+      if (row.value === "") maskPatterns = [];
+      else maskPatterns = maskPatterns.includes(row.value)
+        ? maskPatterns.filter((entry) => entry !== row.value)
+        : [...maskPatterns, row.value];
+      renderQuickOpenContext();
+      runQuickOpenQuery();
+      // Several patterns at once is the point here, so the chooser stays and
+      // only the marks change; the row under the pointer keeps its place.
+      renderQuickOpenPicker(true);
+      return;
+    }
+    chooseQuickOpen(row);
   }
 
   function markedRange(text, start, len) {
@@ -5890,10 +6370,12 @@ async function init(root) {
     closeDrawer();
     closeSheet();
     quickOpenMode = "usages";
+    quickOpenView = "results";
     quickOpenEl.hidden = false;
     quickOpenInput.value = "";
     quickOpenInput.placeholder = title;
     syncQuickOpenRegex();
+    renderQuickOpenContext();
     searchQuery = word;
     // external travels along: it is what the row's jump reads to know
     // which of the two ways of opening a file it takes.
@@ -5906,12 +6388,7 @@ async function init(root) {
   // The note describes the whole answer, so it only stands unfiltered.
   function paintUsages(rows, withNote) {
     renderSearchResults(rows, false);
-    if (withNote && usagesNoteText) {
-      const el = document.createElement("div");
-      el.className = "editor-quickopen-empty text-secondary small";
-      el.textContent = usagesNoteText;
-      quickOpenList.appendChild(el);
-    }
+    setQuickOpenFoot(countLabel(rows.length, "usage", "usages"), withNote ? usagesNoteText : "");
   }
 
   function usageHaystack(m) {
@@ -5990,13 +6467,17 @@ async function init(root) {
     return row;
   }
 
-  function moveQuickOpenActive(delta) {
-    if (quickOpenMatches.length === 0) return;
-    quickOpenActive = (quickOpenActive + delta + quickOpenMatches.length) % quickOpenMatches.length;
+  function markQuickOpenActive() {
     quickOpenList.querySelectorAll(".editor-quickopen-item").forEach((el, i) => {
       el.classList.toggle("active", i === quickOpenActive);
       if (i === quickOpenActive) el.scrollIntoView({ block: "nearest" });
     });
+  }
+
+  function moveQuickOpenActive(delta) {
+    if (quickOpenMatches.length === 0) return;
+    quickOpenActive = (quickOpenActive + delta + quickOpenMatches.length) % quickOpenMatches.length;
+    markQuickOpenActive();
   }
 
   // A trailing :line, optionally :line:column, is how editors everywhere say
@@ -6025,12 +6506,73 @@ async function init(root) {
     if (tab && tab.path === path && !tab.kind) editor.jumpTo(line, fromSearch ? entry.character || 0 : 0);
   }
 
+  // What Tab walks: the field, then the filters this mode shows, then the field
+  // again. The palette stands over the page, so the order must not lead into
+  // what is behind it.
+  function quickOpenTabRing() {
+    const ring = [quickOpenInput];
+    if (!quickOpenFolderSlot.hidden) ring.push(quickOpenFolderSlot);
+    if (!quickOpenMaskSlot.hidden) ring.push(quickOpenMaskSlot);
+    return ring;
+  }
+
+  function stepQuickOpenFocus(back) {
+    const ring = quickOpenTabRing();
+    const at = ring.indexOf(document.activeElement);
+    const from = at < 0 ? 0 : at;
+    ring[(from + (back ? -1 : 1) + ring.length) % ring.length].focus();
+  }
+
+  // Out of a chooser first: the palette itself only closes from the hits.
+  function quickOpenEscape() {
+    if (quickOpenView === "results") closeQuickOpen();
+    else closeQuickOpenPicker();
+  }
+
+  function quickOpenKeydown(e) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      moveQuickOpenActive(1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      moveQuickOpenActive(-1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      activateQuickOpenRow(quickOpenActive);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      // The page has an Escape of its own that closes the palette, and it would
+      // run right behind this one: leaving a chooser would land in the hits and
+      // close them in the same keystroke.
+      e.stopPropagation();
+      quickOpenEscape();
+    }
+  }
+
   function wireQuickOpen() {
     quickOpenItem.addEventListener("click", () => openQuickOpen("files"), { signal });
     searchProjectItem.addEventListener("click", () => openQuickOpen("search"), { signal });
     quickOpenRegexBtn.addEventListener("click", toggleSearchRegex, { signal });
+    for (const [slot, view] of [[quickOpenFolderSlot, "folders"], [quickOpenMaskSlot, "masks"]]) {
+      slot.addEventListener("click", () => openQuickOpenPicker(view), { signal });
+      slot.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openQuickOpenPicker(view);
+          return;
+        }
+        // The list stays the arrows' business from here too, and Escape is what
+        // it always was.
+        if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Escape") quickOpenKeydown(event);
+      }, { signal });
+    }
     quickOpenInput.addEventListener("input", () => {
-      // A usages list is an answer, not a query.
+      // A chooser filters its own rows, and a usages list is an answer, not a
+      // query.
+      if (quickOpenView !== "results") {
+        renderQuickOpenPicker();
+        return;
+      }
       if (quickOpenMode === "usages") {
         filterUsages();
         return;
@@ -6038,20 +6580,11 @@ async function init(root) {
       if (quickOpenMode === "search") scheduleSearch();
       else scheduleFileQuery();
     }, { signal });
-    quickOpenInput.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        moveQuickOpenActive(1);
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        moveQuickOpenActive(-1);
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        if (quickOpenMatches[quickOpenActive]) chooseQuickOpen(quickOpenMatches[quickOpenActive]);
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        closeQuickOpen();
-      }
+    quickOpenInput.addEventListener("keydown", quickOpenKeydown, { signal });
+    quickOpenEl.addEventListener("keydown", (e) => {
+      if (e.key !== "Tab") return;
+      e.preventDefault();
+      stepQuickOpenFocus(e.shiftKey);
     }, { signal });
     quickOpenEl.addEventListener("click", (e) => {
       if (e.target === quickOpenEl) closeQuickOpen();
@@ -7660,7 +8193,7 @@ async function init(root) {
     } else if (sheetKind && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       sheetArrow(e);
     } else if (e.key === "Escape") {
-      if (!quickOpenEl.hidden) closeQuickOpen();
+      if (!quickOpenEl.hidden) quickOpenEscape();
       else if (sheetKind) sheetEscape();
       else if (commitOn && commitEl.contains(document.activeElement)) closeCommit();
       else closeDrawer();

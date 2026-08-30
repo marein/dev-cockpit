@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -203,5 +204,63 @@ func TestExclusionsDefaultUntilSaved(t *testing.T) {
 	s.storeExclusions("")
 	if got := s.exclusions().Len(); got != 0 {
 		t.Errorf("after saving an empty list Len() = %d, want 0", got)
+	}
+}
+
+// quickOpenGetScoped is quickOpenGet with the folder the palette now sends.
+func quickOpenGetScoped(t *testing.T, r *gin.Engine, query, scope string) quickOpenResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/projects/demo/editor/files?q="+query+"&path="+url.QueryEscape(scope), nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET files (q=%q, path=%q) = %d: %s", query, scope, rec.Code, rec.Body.String())
+	}
+	var got quickOpenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	return got
+}
+
+// TestQuickOpenTakesAFolderScope is the endpoint's half of the palette's folder
+// field: the answer holds only what lives under the folder, and the paths stay
+// relative to the project root. The scope filters the index rather than
+// resolving a path on disk, so a folder that climbs out of the project or is
+// not there simply matches nothing.
+func TestQuickOpenTakesAFolderScope(t *testing.T) {
+	r, _, _ := quickOpenServer(t, []string{"app.php", "src/app.php", "src/deep/app.php", "other/app.php"})
+
+	got := quickOpenGetScoped(t, r, "app", "src")
+	want := []string{"src/app.php", "src/deep/app.php"}
+	if len(got.Files) != len(want) {
+		t.Fatalf("files = %v, want %v", got.Files, want)
+	}
+	for i, path := range want {
+		if got.Files[i] != path {
+			t.Fatalf("files = %v, want %v", got.Files, want)
+		}
+	}
+
+	// Slashes around the folder are trimmed, so what the tree hands over and
+	// what somebody types both work.
+	if got := quickOpenGetScoped(t, r, "app", "/src/"); len(got.Files) != 2 {
+		t.Errorf("files = %v, want the two under src", got.Files)
+	}
+
+	// An empty query in a scope lists that folder rather than the project.
+	if got := quickOpenGetScoped(t, r, "", "other"); len(got.Files) != 1 || got.Files[0] != "other/app.php" {
+		t.Errorf("empty query in a scope = %v, want only other/app.php", got.Files)
+	}
+
+	for _, scope := range []string{"..", "../..", "src/../../demo", "nosuchfolder"} {
+		if got := quickOpenGetScoped(t, r, "app", scope); len(got.Files) != 0 {
+			t.Errorf("scope %q = %v, want nothing", scope, got.Files)
+		}
+	}
+
+	// Without the folder the whole project is listed, as before.
+	if got := quickOpenGet(t, r, "app"); len(got.Files) != 4 {
+		t.Errorf("unscoped = %v, want all four", got.Files)
 	}
 }

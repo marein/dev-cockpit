@@ -303,6 +303,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	editor.GET("/terminals", s.handleEditorTerminals)
 	editor.GET("/docker", s.handleEditorDocker)
 	editor.GET("/search", s.handleEditorSearch)
+	editor.GET("/filters", s.handleEditorFilters)
 	editor.POST("/upload", s.handleEditorUpload)
 	editor.POST("/preview", s.handleEditorPreview)
 	editor.GET("/comments", s.handleEditorComments)

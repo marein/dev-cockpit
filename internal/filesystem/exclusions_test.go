@@ -147,7 +147,7 @@ func TestSearchRespectsConfiguredExclusions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	matches, _, err := SearchFiles(root, "needle", false, ParseExclusions("vendor\ntests/_output"))
+	matches, _, err := SearchFiles(root, "needle", false, ParseExclusions("vendor\ntests/_output"), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

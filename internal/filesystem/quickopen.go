@@ -110,6 +110,104 @@ func (ix *quickOpenIndex) query(query, scope string, limit int) QuickOpenMatches
 	return QuickOpenMatches{Paths: keep.sorted(), Total: total, Indexed: len(ix.paths)}
 }
 
+// FolderCount is one folder of a project and how many files sit under it, at
+// any depth. The scope is recursive, so that is the number that says what
+// picking this folder would cover.
+type FolderCount struct {
+	Path  string `json:"path"`
+	Files int    `json:"files"`
+}
+
+// ExtensionCount is one file name pattern of a project and how many files carry
+// it, written the way the mask takes it.
+type ExtensionCount struct {
+	Pattern string `json:"pattern"`
+	Files   int    `json:"files"`
+}
+
+// FilterFacts is what a project offers the palette's two filters: the folders
+// to scope to and the file name patterns that actually occur in it. Both fall
+// out of the quick open index, so the choices cost no walk of their own.
+type FilterFacts struct {
+	Folders    []FolderCount    `json:"folders"`
+	Extensions []ExtensionCount `json:"extensions"`
+	Files      int              `json:"files"`
+}
+
+const (
+	// maxFilterFolders bounds what travels to the browser, which holds the
+	// whole answer and filters it locally. Shallow folders are kept first:
+	// they are the ones a scope is usually set to, and a project that needs
+	// more than this many has folders it does not want indexed either.
+	maxFilterFolders = 2000
+	// maxFilterExtensions is the same bound on the other list, where the tail
+	// is one-off extensions nobody scopes by.
+	maxFilterExtensions = 100
+)
+
+// facts counts the folders and the extensions of one index in a single pass.
+func (ix *quickOpenIndex) facts() FilterFacts {
+	folders := map[string]int{}
+	extensions := map[string]int{}
+	for _, p := range ix.paths {
+		// Every ancestor counts the file, which is what makes the number the
+		// size of the scope rather than of one directory listing.
+		for i := 0; i < len(p); i++ {
+			if p[i] == '/' {
+				folders[p[:i]]++
+			}
+		}
+		if ext := pathExtension(p); ext != "" {
+			extensions["*."+ext]++
+		}
+	}
+
+	out := FilterFacts{Folders: []FolderCount{}, Extensions: []ExtensionCount{}, Files: len(ix.paths)}
+	for path, files := range folders {
+		out.Folders = append(out.Folders, FolderCount{Path: path, Files: files})
+	}
+	// Shallow first, then alphabetically: that is the order somebody clicks
+	// their way down in, and it puts the useful scopes on the first screen.
+	sort.Slice(out.Folders, func(i, j int) bool {
+		a, b := out.Folders[i], out.Folders[j]
+		da, db := strings.Count(a.Path, "/"), strings.Count(b.Path, "/")
+		if da != db {
+			return da < db
+		}
+		return a.Path < b.Path
+	})
+	if len(out.Folders) > maxFilterFolders {
+		out.Folders = out.Folders[:maxFilterFolders]
+	}
+
+	for pattern, files := range extensions {
+		out.Extensions = append(out.Extensions, ExtensionCount{Pattern: pattern, Files: files})
+	}
+	sort.Slice(out.Extensions, func(i, j int) bool {
+		a, b := out.Extensions[i], out.Extensions[j]
+		if a.Files != b.Files {
+			return a.Files > b.Files
+		}
+		return a.Pattern < b.Pattern
+	})
+	if len(out.Extensions) > maxFilterExtensions {
+		out.Extensions = out.Extensions[:maxFilterExtensions]
+	}
+	return out
+}
+
+// pathExtension answers the extension of the file at a slash separated path,
+// empty when it has none. A leading dot is a name and not an extension, so
+// ".gitignore" has none, and neither has a name ending in a dot.
+func pathExtension(p string) string {
+	name := p[strings.LastIndexByte(p, '/')+1:]
+	dot := strings.LastIndexByte(name, '.')
+	if dot <= 0 || dot == len(name)-1 {
+		return ""
+	}
+	return name[dot+1:]
+}
+
 // quickOpenMatch is one scored candidate.
 type quickOpenMatch struct {
 	path string
@@ -355,6 +453,27 @@ func NewQuickOpenCache() *QuickOpenCache {
 // Query answers a quick open query for the project at root, building or
 // refreshing the index as needed.
 func (c *QuickOpenCache) Query(root, query, scope string, ex Exclusions, limit int) (QuickOpenMatches, error) {
+	ix, err := c.indexFor(root, ex)
+	if err != nil {
+		return QuickOpenMatches{}, err
+	}
+	return ix.query(query, scope, limit), nil
+}
+
+// Facts answers what the palette's filters can be set to in the project at
+// root. It is the same lookup Query makes with a different question at the end.
+func (c *QuickOpenCache) Facts(root string, ex Exclusions) (FilterFacts, error) {
+	ix, err := c.indexFor(root, ex)
+	if err != nil {
+		return FilterFacts{}, err
+	}
+	return ix.facts(), nil
+}
+
+// indexFor answers a usable index for root, building one when nothing is
+// cached and refreshing a stale one in the background. A built index never
+// changes again, so the questions are asked outside the build lock.
+func (c *QuickOpenCache) indexFor(root string, ex Exclusions) (*quickOpenIndex, error) {
 	now := c.now()
 	entry := c.entryFor(root, now)
 
@@ -364,21 +483,21 @@ func (c *QuickOpenCache) Query(root, query, scope string, ex Exclusions, limit i
 		if now.Sub(ix.built) > quickOpenTTL {
 			c.refreshInBackground(root, ex, entry)
 		}
-		return ix.query(query, scope, limit), nil
+		return ix, nil
 	}
 
 	// Nothing usable cached: this is the one query that pays for the walk.
 	entry.build.Lock()
 	defer entry.build.Unlock()
 	if ix := entry.index.Load(); ix != nil && ix.ex.Equal(ex) {
-		return ix.query(query, scope, limit), nil
+		return ix, nil
 	}
 	ix, err := buildQuickOpenIndex(root, ex, c.now())
 	if err != nil {
-		return QuickOpenMatches{}, err
+		return nil, err
 	}
 	entry.index.Store(ix)
-	return ix.query(query, scope, limit), nil
+	return ix, nil
 }
 
 // Invalidate drops the index for root so the next query rebuilds it. The

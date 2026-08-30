@@ -204,11 +204,15 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
       placeholder: document.querySelector("[data-editor-quickopen-input]").placeholder,
       titles: [...document.querySelectorAll(".editor-quickopen-item")].map((r) => r.title),
       marked: !!document.querySelector(".editor-quickopen-item mark"),
-      note: [...document.querySelectorAll(".editor-quickopen-empty")].map((n) => n.textContent).join(" "),
+      // The panel's foot carries what is shown and the note about the rest,
+      // the same line the searches count in.
+      count: document.querySelector("[data-editor-quickopen-foot-left]").textContent,
+      note: document.querySelector("[data-editor-quickopen-foot-right]").textContent,
     }));
     assert(state.placeholder === '3 usages of "IntelTarget"', `placeholder, got "${state.placeholder}"`);
     assert(state.titles.join(",") === "use.go:4,use.go:5,lib.go:3", `rows sorted asked-file first, got ${state.titles.join(",")}`);
     assert(state.marked, "the symbol is highlighted in the preview");
+    assert(state.count === "3 usages", `usage count, got "${state.count}"`);
     assert(state.note.includes("1 more outside the project."), `outside note, got "${state.note}"`);
   });
 
@@ -226,7 +230,7 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     await page.fill("[data-editor-quickopen-input]", "");
     const state = await page.evaluate(() => ({
       rows: document.querySelectorAll(".editor-quickopen-item").length,
-      note: [...document.querySelectorAll(".editor-quickopen-empty")].map((n) => n.textContent).join(" "),
+      note: document.querySelector("[data-editor-quickopen-foot-right]").textContent,
     }));
     assert(state.rows === 3, `an emptied box shows everything, got ${state.rows}`);
     assert(state.note.includes("1 more outside the project."), `the note returns with the whole answer, got "${state.note}"`);
@@ -351,7 +355,7 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
       && document.querySelectorAll(".editor-quickopen-item").length >= 3, null, { timeout: 20000 });
     const panel = await page.evaluate(() => ({
       titles: [...document.querySelectorAll(".editor-quickopen-item")].map((r) => r.title),
-      note: [...document.querySelectorAll(".editor-quickopen-empty")].map((n) => n.textContent).join(" "),
+      note: document.querySelector("[data-editor-quickopen-foot-right]").textContent,
     }));
     assert(panel.titles.join(",") === "lib.go:3,use.go:4,use.go:5", `rows of the project, got ${panel.titles.join(",")}`);
     assert(panel.note.includes("1 more outside the project."), `the outside note stands, got "${panel.note}"`);

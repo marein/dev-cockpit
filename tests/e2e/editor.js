@@ -598,6 +598,484 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       return `content search to line ${hitLine}, palette to line ${askLine}, both scrolled`;
     });
 
+    await run("the context line says what the search stands on, and both choosers swap the list in place", async () => {
+      const dir = `qsf_${tag}`;
+      const needle = `scopedneedle${tag}`;
+      const made = [`${dir}/alpha.go`, `${dir}/beta.go`, `${dir}/notes.md`, `${dir}/deep/gamma.go`];
+      await page.evaluate(async ([proj, list, text]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const post = (url, form) => fetch(url, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+        });
+        for (const path of list) {
+          await post(`/projects/${proj}/editor/create`, "path=" + encodeURIComponent(path));
+          await post(`/projects/${proj}/editor/file`, "path=" + encodeURIComponent(path) + "&content=" + encodeURIComponent(text));
+        }
+      }, [project, made, `${needle} in this file`]);
+
+      const folderSlot = "[data-editor-quickopen-folder-slot]";
+      const maskSlot = "[data-editor-quickopen-mask-slot]";
+      const slots = () => page.evaluate(() => ({
+        folder: document.querySelector("[data-editor-quickopen-folder-slot]").textContent.trim(),
+        mask: document.querySelector("[data-editor-quickopen-mask-slot]").textContent.trim(),
+      }));
+      const foot = () => page.evaluate(() => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim());
+      const picks = () => page.$$eval(".editor-quickopen-item", (els) => els.map((el) => ({
+        kind: el.dataset.kind || "",
+        pick: el.dataset.pick,
+        label: el.querySelector(".editor-quickopen-name").textContent,
+        count: el.querySelector(".editor-quickopen-count")?.textContent || "",
+        icon: el.querySelector("i").className,
+        // An icon class the set does not carry computes to no content at all,
+        // which is how one row once stood there without any icon.
+        glyph: getComputedStyle(el.querySelector("i"), "::before").content,
+      })));
+      // The palette must not resize or move its context line when the list
+      // swaps, so both are measured in every state.
+      const shape = () => page.evaluate(() => {
+        const panel = document.querySelector(".editor-quickopen-panel").getBoundingClientRect();
+        const context = document.querySelector("[data-editor-quickopen-context]").getBoundingClientRect();
+        return `${Math.round(panel.height)}/${Math.round(context.top)}`;
+      });
+      // The way back is a row of the list, so a count of choices carries it.
+      const waitPicks = (n) => page.waitForFunction(
+        (want) => document.querySelectorAll(".editor-quickopen-item").length === want + 1, n, { timeout: 8000 });
+
+      await clickItem("[data-editor-search-project-item]");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      let seen = await slots();
+      assert(seen.folder === "Whole project" && seen.mask === "All files", `context line reads ${JSON.stringify(seen)}`);
+      await page.fill("[data-editor-quickopen-input]", needle);
+      await page.waitForSelector(".editor-quickopen-match", { timeout: 8000 });
+      await page.waitForFunction(() => /^4 matches in 4 files$/.test(document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim()), null, { timeout: 8000 });
+      // A hit carries the icon of its own file, the tree's own mapping.
+      let hits = await picks();
+      assert(hits.find((row) => /alpha\.go/.test(row.label)).icon.includes("ti-brand-golang"),
+        `a go hit wears ${hits.find((row) => /alpha\.go/.test(row.label)).icon}`);
+      assert(hits.find((row) => /notes\.md/.test(row.label)).icon.includes("ti-markdown"),
+        "a markdown hit does not wear its own icon");
+      const resultsShape = await shape();
+
+      await page.click(folderSlot);
+      await page.waitForSelector(`.editor-quickopen-item[data-pick="${dir}"]`, { timeout: 8000 });
+      assert((await shape()) === resultsShape, `the chooser moved the panel: ${resultsShape} -> ${await shape()}`);
+      let rows = await picks();
+      assert(rows[0].kind === "back", `the way back is not the first row: ${JSON.stringify(rows[0])}`);
+      assert(rows[1].label === "Whole project" && Number(rows[1].count) > 0, `first choice is ${JSON.stringify(rows[1])}`);
+      const mine = rows.find((row) => row.pick === dir);
+      assert(mine && mine.count === "4", `the folder row does not count its files: ${JSON.stringify(mine)}`);
+      assert(rows.find((row) => row.pick === `${dir}/deep`).count === "1", "the nested folder counts wrong");
+
+      // Fuzzy over the whole project, not level by level. The mark sits on the
+      // first choice, the way back never takes an Enter meant for a folder.
+      await page.fill("[data-editor-quickopen-input]", "deep");
+      await page.waitForFunction((want) => {
+        const marked = document.querySelector(".editor-quickopen-item.active");
+        return marked && marked.dataset.pick === want;
+      }, `${dir}/deep`, { timeout: 6000 });
+
+      // The mark skips the way back, so Enter always takes a choice.
+      await page.fill("[data-editor-quickopen-input]", "deep");
+      await waitPicks(1);
+      assert(await page.$eval(".editor-quickopen-item.active", (el) => el.dataset.pick) === `${dir}/deep`,
+        "the mark landed on the way back instead of a folder");
+      await page.fill("[data-editor-quickopen-input]", dir);
+      await waitPicks(2);
+
+      // Escape leaves the chooser, not the palette, and the query comes back.
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".editor-quickopen-match", { timeout: 6000 });
+      assert(!(await page.$eval("[data-editor-quickopen]", (el) => el.hidden)), "Escape closed the palette instead of the chooser");
+      assert((await page.inputValue("[data-editor-quickopen-input]")) === needle, "the query did not come back");
+      assert((await foot()) === "4 matches in 4 files", `the hits did not come back: ${await foot()}`);
+
+      // Enter applies the folder and the search runs again at once.
+      await page.click(folderSlot);
+      await page.waitForSelector(`.editor-quickopen-item[data-pick="${dir}/deep"]`, { timeout: 8000 });
+      await page.fill("[data-editor-quickopen-input]", "deep");
+      await page.waitForFunction((want) => {
+        const marked = document.querySelector(".editor-quickopen-item.active");
+        return marked && marked.dataset.pick === want;
+      }, `${dir}/deep`, { timeout: 6000 });
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(() => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim() === "1 match in 1 file", null, { timeout: 8000 });
+      seen = await slots();
+      assert(seen.folder === `${dir}/deep`, `the folder chip reads ${seen.folder}`);
+
+      // The mask chooser is this project's own extensions, the most common
+      // first, and it takes several patterns at once.
+      await page.click(maskSlot);
+      await page.waitForSelector('.editor-quickopen-item[data-pick="*.go"]', { timeout: 8000 });
+      assert((await shape()) === resultsShape, "the mask chooser moved the panel");
+      rows = await picks();
+      assert(rows[0].kind === "back", `the way back is not the first mask row: ${JSON.stringify(rows[0])}`);
+      rows = rows.slice(1);
+      assert(rows[0].label === "All files", `first mask choice is ${rows[0].label}`);
+      // Everything is not a file type, so that one row stays neutral; every
+      // pattern wears the icon of its extension and every row really renders
+      // one. The row lifted to the front used to be built apart, with a name
+      // the icon set has no glyph for, and stood there empty.
+      assert(/ti-check|ti-files/.test(rows[0].icon), `All files wears ${rows[0].icon}`);
+      assert(rows.find((row) => row.pick === "*.go").icon.includes("ti-brand-golang"),
+        `the go pattern wears ${rows.find((row) => row.pick === "*.go").icon}`);
+      const blank = rows.filter((row) => !row.glyph || row.glyph === "none");
+      assert(blank.length === 0, `pattern rows without an icon: ${JSON.stringify(blank.map((row) => [row.label, row.icon]))}`);
+      // The open file's extension is lifted in front of the frequency order, so
+      // the list starts where the person already is; the rest is the project's,
+      // the most common first.
+      const openExt = await page.evaluate(() => {
+        const name = (document.querySelector(".editor-tab.active")?.dataset.path || "").split("/").pop();
+        const dot = name.lastIndexOf(".");
+        return dot > 0 ? name.slice(dot + 1) : "";
+      });
+      if (openExt) {
+        assert(rows[1].pick === `*.${openExt}`, `the open file's extension is not offered first: ${rows[1].pick}`);
+      }
+      const counts = rows.slice(openExt ? 2 : 1).filter((row) => row.count).map((row) => Number(row.count));
+      assert(counts.every((n, i) => i === 0 || counts[i - 1] >= n), `the patterns are not the most common first: ${counts}`);
+      await page.click('.editor-quickopen-item[data-pick="*.go"]');
+      await page.waitForFunction(() => document.querySelector("[data-editor-quickopen-mask-slot]").textContent.trim() === "*.go", null, { timeout: 6000 });
+      assert(/ti-check/.test((await picks()).find((row) => row.pick === "*.go").icon), "the chosen pattern is not marked in the list");
+      // The chips and the rows are one truth, in both directions and while the
+      // chooser stands: taking the chip off takes its mark with it.
+      await page.click(`${maskSlot} .editor-quickopen-chip-remove`);
+      await page.waitForFunction(() => document.querySelector("[data-editor-quickopen-mask-slot]").textContent.trim() === "All files", null, { timeout: 6000 });
+      await page.waitForFunction(() => {
+        const icon = document.querySelector('.editor-quickopen-item[data-pick="*.go"] i');
+        return icon && !icon.className.includes("ti-check");
+      }, null, { timeout: 6000 });
+      await page.click('.editor-quickopen-item[data-pick="*.go"]');
+      await page.waitForFunction(() => document.querySelector("[data-editor-quickopen-mask-slot]").textContent.trim() === "*.go", null, { timeout: 6000 });
+
+      // A pattern nobody offered goes in as typed, and both stand as chips.
+      await page.fill("[data-editor-quickopen-input]", "!*beta*");
+      await page.waitForFunction(() => {
+        const marked = document.querySelector(".editor-quickopen-item.active");
+        return marked && marked.dataset.pick === "!*beta*";
+      }, null, { timeout: 6000 });
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(() => document.querySelector("[data-editor-quickopen-mask-slot]").textContent.trim() === "*.go!*beta*", null, { timeout: 6000 });
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".editor-quickopen-match", { timeout: 6000 });
+
+      // The folder half of the same rule: the scope carries the mark in its own
+      // list, and taking the chip off while that list stands moves the mark to
+      // Whole project. The lit slot is then the way back out, without a key.
+      await page.click(folderSlot);
+      await page.waitForSelector(`.editor-quickopen-item[data-pick="${dir}/deep"]`, { timeout: 8000 });
+      assert(await page.$eval(folderSlot, (el) => el.classList.contains("active")), "the open chooser's slot is not marked");
+      assert(/ti-check/.test(await page.getAttribute(`.editor-quickopen-item[data-pick="${dir}/deep"] i`, "class")),
+        "the scoped folder is not marked in its own list");
+      await page.click(`${folderSlot} .editor-quickopen-chip-remove`);
+      await page.waitForFunction(() => {
+        const icon = document.querySelector('.editor-quickopen-item[data-kind="folder"][data-pick=""] i');
+        return icon && icon.className.includes("ti-check");
+      }, null, { timeout: 6000 });
+      await page.click(folderSlot);
+      await page.waitForSelector(".editor-quickopen-match", { timeout: 6000 });
+      assert(!(await page.$eval(folderSlot, (el) => el.classList.contains("active"))), "the slot stayed marked after the way back");
+
+      // Whole project again, so the two masks are what narrows: alpha and gamma
+      // are the .go files that are not beta.
+      await page.waitForFunction(() => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim() === "2 matches in 2 files", null, { timeout: 8000 });
+      const marks = await page.$$eval(".editor-quickopen-match", (els) => els.map((el) => el.title.replace(/:\d+$/, "")));
+      assert(marks.sort().join(", ") === [`${dir}/alpha.go`, `${dir}/deep/gamma.go`].join(", "), `the two masks left ${marks.join(", ")}`);
+
+      // One chip's cross takes only that pattern off.
+      await page.click(`${maskSlot} .editor-quickopen-chip-remove`);
+      await page.waitForFunction(() => document.querySelector("[data-editor-quickopen-mask-slot]").textContent.trim() === "!*beta*", null, { timeout: 6000 });
+      await page.waitForFunction(() => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim() === "3 matches in 3 files", null, { timeout: 8000 });
+
+      // The filters survive the palette closing, and quick open shows the
+      // folder alone, never the mask.
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      await page.keyboard.press("Control+O");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.waitForSelector(maskSlot, { state: "hidden", timeout: 4000 });
+      await page.waitForSelector(folderSlot, { state: "visible", timeout: 4000 });
+      await page.click(folderSlot);
+      await page.waitForSelector(`.editor-quickopen-item[data-pick="${dir}"]`, { timeout: 8000 });
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 4000 });
+
+      // Leave nothing behind: the checks below open files through this palette.
+      await clickItem("[data-editor-search-project-item]");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.click(`${maskSlot} .editor-quickopen-chip-remove`);
+      await page.waitForFunction(() => {
+        const slot = document.querySelector("[data-editor-quickopen-mask-slot]").textContent.trim();
+        return slot === "All files";
+      }, null, { timeout: 6000 });
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      return "counts, fuzzy folders, file type icons, chips, and the panel never moved";
+    });
+
+    await run("a folder row offers both searches, and the palette fits a phone", async () => {
+      const dir = `qsf_${tag}`;
+      const needle = `scopedneedle${tag}`;
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector(`.editor-dir[data-path="${dir}"]`, { timeout: 8000 });
+      await openRowMenu(page, `.editor-dir[data-path="${dir}"]`);
+      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
+      for (const want of ["Find in files", "Go to file"]) {
+        assert(labels.includes(want), `the folder menu misses '${want}': ${labels.join(", ")}`);
+      }
+      await menuItem(page, "Go to file").click();
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      assert((await page.textContent("[data-editor-quickopen-folder-slot]")).trim() === dir, "Go to file did not set the folder");
+      await page.waitForSelector("[data-editor-quickopen-mask-slot]", { state: "hidden", timeout: 4000 });
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+
+      await openRowMenu(page, `.editor-dir[data-path="${dir}"]`);
+      await menuItem(page, "Find in files").click();
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.waitForSelector("[data-editor-quickopen-mask-slot]", { state: "visible", timeout: 4000 });
+      assert((await page.textContent("[data-editor-quickopen-folder-slot]")).trim() === dir, "Find in files did not set the folder");
+      await page.fill("[data-editor-quickopen-input]", needle);
+      await page.waitForFunction(() => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim() === "4 matches in 4 files", null, { timeout: 8000 });
+
+      const desktop = page.viewportSize();
+      await page.setViewportSize({ width: 390, height: desktop.height });
+      await sleep(400);
+      const fit = await page.evaluate(() => {
+        const panel = document.querySelector(".editor-quickopen-panel").getBoundingClientRect();
+        const overlay = document.querySelector("[data-editor-quickopen]").getBoundingClientRect();
+        const context = document.querySelector("[data-editor-quickopen-context]");
+        const rows = new Set([...context.children].filter((el) => !el.hidden).map((el) => Math.round(el.getBoundingClientRect().top)));
+        return {
+          over: Math.round(panel.width - overlay.width),
+          contextRows: rows.size,
+          contextInside: Math.round(context.scrollWidth - context.clientWidth),
+          body: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        };
+      });
+      assert(fit.over <= 0 && fit.contextRows === 1 && fit.contextInside <= 1 && fit.body <= 1,
+        `the palette does not fit 390px: ${JSON.stringify(fit)}`);
+      // The chooser works on the phone too, it is the same list.
+      await page.click("[data-editor-quickopen-folder-slot]");
+      await page.waitForSelector(`.editor-quickopen-item[data-pick="${dir}/deep"]`, { timeout: 8000 });
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".editor-quickopen-match", { timeout: 6000 });
+      await page.click("[data-editor-quickopen-folder-slot] .editor-quickopen-chip-remove");
+      await page.waitForFunction(() => document.querySelector("[data-editor-quickopen-folder-slot]").textContent.trim() === "Whole project", null, { timeout: 6000 });
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      await page.setViewportSize(desktop);
+      await sleep(300);
+      if (await page.$(".editor.editor-drawer-open")) {
+        await page.evaluate(() => document.querySelector("[data-editor-backdrop]").click());
+      }
+
+      await page.evaluate(async ([proj, path]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/projects/${proj}/editor/delete`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: "path=" + encodeURIComponent(path),
+        });
+      }, [project, dir]);
+      await page.click("[data-editor-refresh]");
+      await page.waitForFunction((d) => !document.querySelector(`.editor-dir[data-path="${d}"]`), dir, { timeout: 8000 });
+      return "both entries, the folder set from the tree, and one row of context at 390px";
+    });
+
+    await run("Tab walks the palette's own controls and never leaves the overlay", async () => {
+      const focused = () => page.evaluate(() => {
+        const el = document.activeElement;
+        return {
+          name: el.getAttributeNames().find((n) => n.startsWith("data-editor")) || el.tagName,
+          inside: !!el.closest("[data-editor-quickopen]"),
+          outline: getComputedStyle(el).outlineWidth,
+        };
+      });
+      const step = async (key) => {
+        await page.keyboard.press(key);
+        return focused();
+      };
+
+      await clickItem("[data-editor-search-project-item]");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.fill("[data-editor-quickopen-input]", "hello " + tag);
+      await page.waitForSelector(".editor-quickopen-match", { timeout: 8000 });
+
+      // The field, then the two filters, then the field again, and back the
+      // other way. Nothing in the ring leads into the page behind the overlay.
+      let at = await step("Tab");
+      assert(at.name === "data-editor-quickopen-folder-slot", `Tab went to ${at.name}`);
+      assert(at.outline !== "0px", "the focused filter carries no ring");
+      at = await step("Tab");
+      assert(at.name === "data-editor-quickopen-mask-slot", `the second Tab went to ${at.name}`);
+      at = await step("Tab");
+      assert(at.name === "data-editor-quickopen-input", `Tab did not come back to the field, it went to ${at.name}`);
+      at = await step("Shift+Tab");
+      assert(at.name === "data-editor-quickopen-mask-slot", `Shift+Tab went to ${at.name}`);
+      at = await step("Shift+Tab");
+      assert(at.name === "data-editor-quickopen-folder-slot", `Shift+Tab went to ${at.name}`);
+      for (const key of ["Tab", "Tab", "Tab", "Shift+Tab"]) {
+        assert((await step(key)).inside, "the focus left the overlay");
+      }
+
+      // Enter opens the chooser the way a click does. The field is where a click
+      // puts the focus, so one Tab from there stands on the folder filter no
+      // matter what ran before.
+      await page.click("[data-editor-quickopen-input]");
+      at = await step("Tab");
+      assert(at.name === "data-editor-quickopen-folder-slot", `expected the folder filter, stood on ${at.name}`);
+      await page.keyboard.press("Enter");
+      await page.waitForSelector('.editor-quickopen-item[data-kind="folder"]', { timeout: 8000 });
+      assert(await page.$eval("[data-editor-quickopen-folder-slot]", (el) => el.classList.contains("active")),
+        "Enter opened the chooser without lighting its filter");
+      assert((await focused()).name === "data-editor-quickopen-input", "the field did not take the focus for filtering");
+
+      // The arrows stay the list's from a filter, and Escape leaves from there
+      // too. The chooser is the list with rows to spare for it.
+      at = await step("Tab");
+      assert(at.name === "data-editor-quickopen-folder-slot", `expected the folder filter, stood on ${at.name}`);
+      const first = await page.$eval(".editor-quickopen-item.active", (el) => el.title);
+      await page.keyboard.press("ArrowDown");
+      assert((await page.$eval(".editor-quickopen-item.active", (el) => el.title)) !== first,
+        "the arrows stopped moving the list from a filter");
+      assert((await focused()).name === "data-editor-quickopen-folder-slot", "an arrow moved the focus");
+
+      // Go to file has no mask, so the ring is one shorter.
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".editor-quickopen-match", { timeout: 6000 });
+      assert(!(await page.$eval("[data-editor-quickopen-folder-slot]", (el) => el.classList.contains("active"))),
+        "Escape from a filter did not leave the chooser");
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      await page.keyboard.press("Control+O");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      at = await step("Tab");
+      assert(at.name === "data-editor-quickopen-folder-slot", `Tab went to ${at.name}`);
+      at = await step("Tab");
+      assert(at.name === "data-editor-quickopen-input", `without a mask the ring is the field and the folder, Tab went to ${at.name}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      return "field, folder, mask, field, and one shorter without a mask";
+    });
+
+    await run("mobile: the whole search runs on taps alone, no key but the text", async () => {
+      const mp = await mobilePage();
+      const dir = `qtap_${tag}`;
+      const needle = `tapneedle${tag}`;
+      const made = [`${dir}/app.go`, `${dir}/lib/a.go`, `${dir}/lib/b.md`];
+      await page.evaluate(async ([proj, list, text]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const post = (url, form) => fetch(url, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+        });
+        for (const path of list) {
+          await post(`/projects/${proj}/editor/create`, "path=" + encodeURIComponent(path));
+          await post(`/projects/${proj}/editor/file`, "path=" + encodeURIComponent(path) + "&content=" + encodeURIComponent(text));
+        }
+      }, [project, made, `${needle} in this file`]);
+
+      const folderSlot = "[data-editor-quickopen-folder-slot]";
+      const maskSlot = "[data-editor-quickopen-mask-slot]";
+      const rowsOf = () => mp.$$eval(".editor-quickopen-item", (els) => els.map((el) => ({
+        kind: el.dataset.kind || "",
+        pick: el.dataset.pick,
+        icon: el.querySelector("i").className,
+        into: !!el.querySelector(".editor-quickopen-into"),
+        h: Math.round(el.getBoundingClientRect().height),
+      })));
+      const slotText = (sel) => mp.evaluate((s) => document.querySelector(s).textContent.trim(), sel);
+      const footText = () => mp.evaluate(() => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim());
+      const waitFoot = (want) => mp.waitForFunction(
+        (text) => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim() === text, want, { timeout: 10000 });
+
+      await mp.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await mp.waitForSelector(".cm-editor", { state: "attached", timeout: 15000 });
+      await sleep(800);
+      // The backdrop swallows a tap on the tree column, and the drawer is not
+      // what this check is about.
+      if (await mp.$(".editor.editor-drawer-open")) {
+        await mp.evaluate(() => document.querySelector("[data-editor-backdrop]").click());
+        await mp.waitForFunction(() => !document.querySelector(".editor.editor-drawer-open"), null, { timeout: 6000 });
+      }
+
+      await mp.tap("[data-editor-menu]");
+      await mp.waitForSelector("[data-editor-menu-list].show", { timeout: 6000 });
+      await mp.tap("[data-editor-search-project-item]");
+      await mp.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 8000 });
+      await mp.fill("[data-editor-quickopen-input]", needle);
+      await mp.waitForSelector(".editor-quickopen-match", { timeout: 10000 });
+      await waitFoot("3 matches in 3 files");
+
+      // Into the folder chooser, and the slot that opened it stays lit.
+      await mp.tap(folderSlot);
+      await mp.waitForSelector(`.editor-quickopen-item[data-pick="${dir}"]`, { timeout: 8000 });
+      assert(await mp.$eval(folderSlot, (el) => el.classList.contains("active")), "the open chooser's slot is not lit");
+      let rows = await rowsOf();
+      assert(rows[0].kind === "back", "no way back in the list");
+      const small = rows.filter((row) => row.h < 32);
+      assert(small.length === 0, `rows a thumb cannot hit: ${JSON.stringify(small)}`);
+
+      // Typing reaches a folder at any depth, so there is nothing to click
+      // through: the nested one stands in the list from four letters.
+      await mp.fill("[data-editor-quickopen-input]", "lib");
+      await mp.waitForSelector(`.editor-quickopen-item[data-pick="${dir}/lib"]`, { timeout: 6000 });
+      rows = await rowsOf();
+      assert(rows.every((row) => !row.into), "a row still carries a chevron");
+      assert(rows.filter((row) => row.kind === "folder").every((row) => row.pick.includes("lib")),
+        `typing did not narrow the list: ${JSON.stringify(rows.map((r) => r.pick))}`);
+      await mp.tap(`.editor-quickopen-item[data-pick="${dir}/lib"]`);
+      await mp.waitForSelector(".editor-quickopen-match", { timeout: 8000 });
+      assert((await slotText(folderSlot)) === `${dir}/lib`, `the tapped row did not take the folder: ${await slotText(folderSlot)}`);
+      await waitFoot("2 matches in 2 files");
+
+      // A pattern on and off again, and a chip taken off while the chooser
+      // stands takes its mark with it.
+      await mp.tap(maskSlot);
+      await mp.waitForSelector('.editor-quickopen-item[data-pick="*.go"]', { timeout: 8000 });
+      await mp.tap('.editor-quickopen-item[data-pick="*.go"]');
+      await mp.waitForFunction(() => document.querySelector("[data-editor-quickopen-mask-slot]").textContent.trim() === "*.go", null, { timeout: 6000 });
+      assert(/ti-check/.test((await rowsOf()).find((row) => row.pick === "*.go").icon), "the pattern is not marked in the list");
+      await mp.tap('.editor-quickopen-item[data-pick="*.go"]');
+      await mp.waitForFunction(() => document.querySelector("[data-editor-quickopen-mask-slot]").textContent.trim() === "All files", null, { timeout: 6000 });
+      await mp.tap('.editor-quickopen-item[data-pick="*.go"]');
+      await mp.waitForFunction(() => document.querySelector("[data-editor-quickopen-mask-slot]").textContent.trim() === "*.go", null, { timeout: 6000 });
+      await mp.tap(`${maskSlot} .editor-quickopen-chip-remove`);
+      await mp.waitForFunction(() => {
+        const icon = document.querySelector('.editor-quickopen-item[data-pick="*.go"] i');
+        return icon && !icon.className.includes("ti-check");
+      }, { timeout: 6000 });
+
+      // Back to the hits through the first row, the folder off through its
+      // cross, and a hit opened with a tap.
+      await mp.tap('.editor-quickopen-item[data-kind="back"]');
+      await mp.waitForSelector(".editor-quickopen-match", { timeout: 8000 });
+      await waitFoot("2 matches in 2 files");
+      await mp.tap(`${folderSlot} .editor-quickopen-chip-remove`);
+      await waitFoot("3 matches in 3 files");
+      assert((await slotText(folderSlot)) === "Whole project", `the folder chip did not go: ${await slotText(folderSlot)}`);
+      const opening = await mp.$eval(".editor-quickopen-match", (el) => el.title.replace(/:\d+$/, ""));
+      await mp.tap(".editor-quickopen-match");
+      await mp.waitForSelector(`.editor-tab[data-path="${opening}"].active`, { state: "attached", timeout: 10000 });
+      assert(await mp.$eval("[data-editor-quickopen]", (el) => el.hidden), "the palette stayed open behind the file");
+
+      // Leave the page as it was found; the checks below count tabs and rows.
+      await mp.evaluate((sel) => document.querySelector(`${sel} .editor-tab-state`)?.click(), `.editor-tab[data-path="${opening}"]`);
+      await mp.waitForFunction((sel) => !document.querySelector(sel), `.editor-tab[data-path="${opening}"]`, { timeout: 6000 });
+      await page.evaluate(async ([proj, path]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/projects/${proj}/editor/delete`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: "path=" + encodeURIComponent(path),
+        });
+      }, [project, dir]);
+      return `${(await footText())} left, every step a tap`;
+    });
+
     await run("open tabs, active tab and expanded tree dirs survive a reload", async () => {
       await treeRootMenu();
       await menuItem(page, "New folder").click();

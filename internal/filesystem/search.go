@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -120,6 +121,38 @@ func newMatcherFactory(query string, useRegex bool) (func() matcher, error) {
 	return func() matcher { return &literalMatcher{needle: needle} }, nil
 }
 
+// SearchOptions narrows a search below the project. Folder is a project
+// relative directory the walk stays inside, empty meaning the whole project,
+// and Mask decides which files are read at all. The zero value searches every
+// file under the project root, which is what a request carrying neither of the
+// two asks for.
+type SearchOptions struct {
+	Folder string
+	Mask   FileMask
+}
+
+// searchFolder answers the directory the walk starts at. The folder comes from
+// the client, so it goes through ResolveUnder like every other path a browser
+// sends, and it has to be a folder that is there: searching nothing would
+// otherwise answer "no matches" for a typo, which reads like an answer.
+func searchFolder(root, folder string) (string, error) {
+	if strings.TrimSpace(folder) == "" {
+		return root, nil
+	}
+	dir, err := ResolveUnder(root, folder)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", errors.New("Folder not found.")
+	}
+	if !info.IsDir() {
+		return "", errors.New("Not a folder.")
+	}
+	return dir, nil
+}
+
 // SearchFiles scans every regular file under root for a case insensitive
 // substring match, or with useRegex for a case insensitive RE2 match, staying
 // out of the excluded directories and ignoring binary and oversized files.
@@ -135,8 +168,16 @@ func newMatcherFactory(query string, useRegex bool) (func() matcher, error) {
 // of thousands of files rather than by matching bytes. The result is still the
 // first MaxSearchMatches matches in path order, exactly what a single threaded
 // in-order scan would have returned.
-func SearchFiles(root, query string, useRegex bool, ex Exclusions) ([]SearchMatch, bool, error) {
+//
+// opt narrows what is searched without changing what comes back: the paths stay
+// relative to the project root even when the walk starts in a folder below it,
+// so a match names the same file whether or not a scope was set.
+func SearchFiles(root, query string, useRegex bool, ex Exclusions, opt SearchOptions) ([]SearchMatch, bool, error) {
 	matches := []SearchMatch{}
+	dir, err := searchFolder(root, opt.Folder)
+	if err != nil {
+		return nil, false, err
+	}
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return matches, false, nil
@@ -161,20 +202,29 @@ func SearchFiles(root, query string, useRegex bool, ex Exclusions) ([]SearchMatc
 		return len(matches) >= MaxSearchMatches
 	}
 
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			if path == root {
+			if path == dir {
 				return walkErr
 			}
 			return nil
 		}
 		if d.IsDir() {
-			if path != root && ex.SkipDir(relTo(root, path), d.Name()) {
+			// The folder a search was pointed at is searched even when the skip
+			// list names it, the same way the project root itself is: asking
+			// for it by name is the more specific wish.
+			if path != dir && ex.SkipDir(relTo(root, path), d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		if !d.Type().IsRegular() {
+			return nil
+		}
+		// The mask filters here rather than on the way out, so a file nobody
+		// asked for is never opened: a mask makes the scan cheaper and not only
+		// the answer shorter.
+		if !opt.Mask.Empty() && !opt.Mask.Match(relTo(root, path)) {
 			return nil
 		}
 		info, err := d.Info()

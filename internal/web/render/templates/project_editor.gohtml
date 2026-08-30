@@ -373,7 +373,15 @@
           <input type="text" class="form-control" placeholder="Go to file…" data-editor-quickopen-input autocomplete="off" spellcheck="false" aria-label="Go to file">
           <button type="button" class="btn btn-sm btn-ghost-secondary px-2 font-monospace position-absolute top-50 end-0 translate-middle-y me-2" data-editor-quickopen-regex title="Regular expression" aria-pressed="false" hidden>.*</button>
         </div>
+        <div class="editor-quickopen-context d-flex align-items-center gap-2 px-3 py-1 small text-secondary border-bottom" data-editor-quickopen-context hidden>
+          <span class="editor-quickopen-slot" role="button" tabindex="0" data-editor-quickopen-folder-slot title="Folder to search: whole project"></span>
+          <span class="editor-quickopen-slot ms-auto justify-content-end" role="button" tabindex="0" data-editor-quickopen-mask-slot title="Files to search: all files"></span>
+        </div>
         <div class="editor-quickopen-list" data-editor-quickopen-list role="listbox"></div>
+        <div class="editor-quickopen-foot d-flex align-items-center gap-2 px-3 py-1 small text-secondary border-top" data-editor-quickopen-foot>
+          <span data-editor-quickopen-foot-left></span>
+          <span class="ms-auto text-end" data-editor-quickopen-foot-right></span>
+        </div>
       </div>
     </div>
   </div>
