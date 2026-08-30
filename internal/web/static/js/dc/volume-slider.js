@@ -1,17 +1,3 @@
-// The audio gain one full row means. scriptune keeps its master gain at a
-// tenth of the value it stores, so a jingle at full does not tear anyone's
-// ears off, and the assistant's speech goes through the same base: otherwise
-// the same percentage would mean two very different loudnesses inside one
-// product. Speech arrives peak normalised (measured: peak 0 dB, mean -15 dB),
-// so this base puts a full row at -20 dB below that. It is one number, in one
-// place, for both controls.
-export const GAIN_BASE = 0.1;
-
-// gainFor maps a row's value onto the gain an audio node should carry.
-export function gainFor(value) {
-  return value * GAIN_BASE;
-}
-
 // The volume row every volume control in the cockpit wears: an icon that
 // follows the level, a range, and the reading beside it. Where the value comes
 // from and what a move does with it is the subclass's business, the look and

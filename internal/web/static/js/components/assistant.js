@@ -2,7 +2,6 @@ import { postForm, ensureOk, getText, getJSON, csrfHeaders } from "@dc/http";
 import { notifyError, showToast } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
 import { jumpTextEdge } from "@dc/dom";
-import { gainFor } from "@dc/volume-slider";
 
 const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
@@ -1160,11 +1159,13 @@ class Assistant extends HTMLElement {
   }
 
   // The slider is `dc-assistant-volume`, which owns the row and the stored
-  // value and says when it moved. Here only the sound follows, through the
-  // same base the notification sound runs on, so a percentage means one
-  // loudness in the whole product.
+  // value and says when it moved. Here only the sound follows. The row is the
+  // element's own volume, no base under it: speech arrives peak normalised
+  // (measured: peak 0 dB, mean -15 dB), so a full row is the file's own level.
+  // The notification sound carries its own scale, scriptune keeps its master
+  // gain at a tenth of the value it stores.
   applyVoiceVolume(fraction) {
-    if (this.speech) this.speech.volume = gainFor(fraction);
+    if (this.speech) this.speech.volume = fraction;
   }
 
   // The volume rides on the element's own volume, and deliberately not on a
@@ -1182,7 +1183,7 @@ class Assistant extends HTMLElement {
     if (this.speech) return this.speech;
     this.speech = new Audio();
     this.speech.preload = "auto";
-    this.speech.volume = gainFor(this.voiceVolume());
+    this.speech.volume = this.voiceVolume();
     this.speech.addEventListener("ended", () => {
       this.speechUrl = null;
       this.syncSpeakButtons();
