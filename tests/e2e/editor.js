@@ -54,6 +54,22 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // Create again / Cancel). There is no force save. A save with no version at all
 // is the create path, which is what a file created in the editor takes on its
 // first save, and what the checks here write behind the editor's back with.
+// An open editor follows the disk while it is open: it tells the server what it
+// has on the screen (POST .../editor/watch, JSON, a client id plus files and
+// dirs as {path, token}, the project root as the empty path), and the token is
+// the server's own answer handed back, a file's version and a folder's listing
+// signature, so the first round compares the disk against this screen instead
+// of against itself. The server stats exactly those paths and publishes the
+// "files" event with the ones that moved. A clean tab reloads
+// silently and keeps its cursor and scroll position, a dirty one is only marked
+// (.editor-tab[data-disk-state="stale"]), a deleted one is marked missing and
+// stays open so the next save is the create path. The tree gains, loses and
+// renames rows in place, and a moved folder drops the quick open index, so a
+// new folder is findable at once. The interval is its own setting behind the
+// Files tab (/settings/editor/files), not the git one. The checks below write
+// behind the editor's back through the save route with no version, which is
+// what a coder's write looks like from here, and then wait for the editor to
+// notice on its own: nothing in them clicks refresh.
 // The toolbar buttons are wired only after init() awaits the CDN, so wait for
 // .cm-editor before driving them; kebab menu items are clicked via evaluate so the
 // bootstrap dropdown does not need to be opened first. Tabs and tree rows carry a
@@ -1917,12 +1933,12 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       });
 
       // The bare path and the sidebar's Editor row lead to the leftmost tab,
-      // which is Search; Git is the tab next to it.
+      // which is Search; Files, Git and LSP follow it.
       await page.goto(`${BASE}/settings/editor`, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(page);
       assert(/\/settings\/editor\/search$/.test(page.url()), `the bare path landed on ${page.url()}`);
       const tabs = await page.locator("[data-editor-sections] .nav-link").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
-      assert(tabs.join() === "/settings/editor/search,/settings/editor/git,/settings/editor/lsp", `the tabs are ${tabs.join(", ")}`);
+      assert(tabs.join() === "/settings/editor/search,/settings/editor/files,/settings/editor/git,/settings/editor/lsp", `the tabs are ${tabs.join(", ")}`);
       const active = await page.locator("[data-editor-sections] .nav-link.active").getAttribute("href");
       assert(active === "/settings/editor/search", `the marked tab is ${active}`);
       assert(await page.$('[data-settings-nav] a[href="/settings/editor/search"].active'), "the Editor row is not marked in the settings nav");
@@ -2113,12 +2129,192 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.keyboard.press("Control+S");
       await waitDirty(conflictFile, false);
       assert(!(await page.$(".swal2-confirm")), "the save after the recreate asked again");
-      // The tree never heard about the out of band delete, so its row is the
-      // one the recreate made valid again.
+      // The tree does hear about the out of band delete now, and about the
+      // recreate right after it, so the row may have gone and come back; what
+      // matters is that it stands again once the file does.
+      await page.waitForSelector(`.editor-file[data-path="${conflictFile}"]`, { timeout: 8000 });
       await openRowMenu(page, `.editor-file[data-path="${conflictFile}"]`);
       await menuItem(page, "Delete").click();
       await confirmSwal(page);
       await page.waitForFunction((f) => !document.querySelector(`.editor-file[data-path="${f}"]`), conflictFile, { timeout: 8000 });
+    });
+
+    // ---- the editor follows the disk ------------------------------------
+    //
+    // Everything below changes the disk without the editor being told, then
+    // waits for the editor to notice by itself. The writes go through the save
+    // route with no version, the create path, which is what a coder's write
+    // looks like from here: the page's own state is untouched by them.
+    const liveFile = `live_${tag}.txt`;
+    const liveDir = `livedir_${tag}`;
+    const diskState = (path) => page.$eval(tabSel(path), (el) => el.dataset.diskState || "");
+    const waitDiskState = (path, want) => page.waitForFunction(([sel, state]) => {
+      const el = document.querySelector(sel);
+      return !!el && (el.dataset.diskState || "") === state;
+    }, [tabSel(path), want], { timeout: 15000 });
+    const waitText = (needle) => page.waitForFunction(
+      (want) => (document.querySelector(".cm-content")?.textContent || "").includes(want),
+      needle,
+      { timeout: 15000 },
+    );
+    // The save route refuses a path whose folder is not there, so a nested
+    // write makes the folder first. The mkdir is behind the editor's back too:
+    // it goes through fetch, the page is told nothing.
+    const outOfBandMkdir = (path) => page.evaluate(async ([base, p]) => {
+      const token = document.querySelector('meta[name="csrf-token"]').getAttribute("content");
+      const res = await fetch(`${base}/mkdir`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-Token": token, Accept: "application/json" },
+        body: new URLSearchParams({ path: p }).toString(),
+      });
+      return res.status;
+    }, [`/projects/${encodeURIComponent(project)}/editor`, path]);
+    const outOfBandDelete = (path) => page.evaluate(async ([base, p]) => {
+      const token = document.querySelector('meta[name="csrf-token"]').getAttribute("content");
+      const res = await fetch(`${base}/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-Token": token, Accept: "application/json" },
+        body: new URLSearchParams({ path: p }).toString(),
+      });
+      return res.status;
+    }, [`/projects/${encodeURIComponent(project)}/editor`, path]);
+
+    await run("a clean tab follows a write behind its back and keeps cursor and scroll", async () => {
+      // A file long enough to scroll. The write below changes its last line
+      // instead of adding one, so the line count stands and the scroll offset
+      // is comparable to the pixel; where the changed text lands is also where
+      // the reader is looking, which is the case worth being sure about.
+      const lines = (last) => Array.from({ length: 200 }, (_, i) => (i === 199 ? last : `line ${i + 1}`)).join("\n");
+      assert((await outOfBand(liveFile, lines("line 200"))) === 200, "the file was not created");
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+      await page.click(`.editor-file[data-path="${liveFile}"]`);
+      await page.waitForSelector(tabSel(liveFile), { timeout: 8000 });
+      // Park the cursor deep in the file and scroll there, so both have
+      // somewhere to be lost from.
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+End");
+      await sleep(400);
+      const before = await page.evaluate(() => ({
+        scroll: document.querySelector(".cm-scroller").scrollTop,
+        line: document.querySelector("[data-editor-pos]").textContent,
+      }));
+      assert(/\d+:\d+/.test(before.line), `the statusbar shows no position: ${before.line}`);
+      assert(before.scroll > 0, `the file was not scrolled: ${before.scroll}`);
+      // A coder writes into the open file. Nothing here clicks anything.
+      assert((await outOfBand(liveFile, lines("line 200 written from outside"))) === 200, "the out of band write failed");
+      await waitText("written from outside");
+      await waitDirty(liveFile, false);
+      const after = await page.evaluate(() => ({
+        scroll: document.querySelector(".cm-scroller").scrollTop,
+        line: document.querySelector("[data-editor-pos]")?.textContent || "",
+      }));
+      assert(after.line === before.line, `the cursor moved from ${before.line} to ${after.line}`);
+      assert(Math.abs(after.scroll - before.scroll) < 60, `the view jumped from ${before.scroll} to ${after.scroll}`);
+      assert((await diskState(liveFile)) === "", "a silent reload left a mark on the tab");
+      return `cursor ${after.line}, scroll ${after.scroll}`;
+    });
+
+    await run("a dirty buffer is marked stale and never touched", async () => {
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+End");
+      await page.keyboard.type("\nmine and unsaved");
+      await waitDirty(liveFile, true);
+      assert((await outOfBand(liveFile, "theirs, and the whole file")) === 200, "the out of band write failed");
+      await waitDiskState(liveFile, "stale");
+      assert((await page.textContent(".cm-content")).includes("mine and unsaved"), "the marked buffer was overwritten");
+      // The save dialog is still the one place the two are told apart, and
+      // Cancel writes nothing.
+      await page.keyboard.press("Control+S");
+      await page.waitForSelector(".swal2-confirm", { state: "visible", timeout: 8000 });
+      assert(/changed on disk/.test((await page.textContent(".swal2-title")) || ""), "the stale save asked something else");
+      await page.click(".swal2-cancel");
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      // Reload takes the disk, and the mark goes with it.
+      await page.keyboard.press("Control+S");
+      await confirmSwal(page);
+      await waitText("theirs, and the whole file");
+      await waitDiskState(liveFile, "");
+      await waitDirty(liveFile, false);
+    });
+
+    await run("a deleted file marks its tab, keeps it open, and the next save writes it back", async () => {
+      assert((await outOfBandDelete(liveFile)) === 200, "the out of band delete failed");
+      await waitDiskState(liveFile, "missing");
+      assert(!!(await page.$(tabSel(liveFile))), "the tab of the deleted file was closed");
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+End");
+      await page.keyboard.type(" back again");
+      await page.keyboard.press("Control+S");
+      // The save is refused as deleted and Create again is the way out; the
+      // mark goes when the file is there again.
+      await page.waitForSelector(".swal2-confirm", { state: "visible", timeout: 8000 });
+      assert(/no longer exists/.test((await page.textContent(".swal2-title")) || ""), "the deleted save asked something else");
+      await page.click(".swal2-confirm");
+      await waitDirty(liveFile, false);
+      await waitDiskState(liveFile, "");
+      assert(/back again$/.test(await diskText(liveFile)), "the recreated file holds something else");
+    });
+
+    await run("the tree gains a created file, loses a deleted one, and shows a rename as both", async () => {
+      const born = `born_${tag}.txt`;
+      assert((await outOfBand(born, "hello")) === 200, "the file was not created");
+      await page.waitForSelector(`.editor-file[data-path="${born}"]`, { timeout: 15000 });
+      // A rename from outside is a delete plus a create, and the tree shows
+      // exactly that.
+      const renamed = `reborn_${tag}.txt`;
+      assert((await outOfBand(renamed, "hello")) === 200, "the rename target was not written");
+      assert((await outOfBandDelete(born)) === 200, "the rename source was not removed");
+      await page.waitForSelector(`.editor-file[data-path="${renamed}"]`, { timeout: 15000 });
+      await page.waitForFunction((f) => !document.querySelector(`.editor-file[data-path="${f}"]`), born, { timeout: 15000 });
+      assert((await outOfBandDelete(renamed)) === 200, "the delete failed");
+      await page.waitForFunction((f) => !document.querySelector(`.editor-file[data-path="${f}"]`), renamed, { timeout: 15000 });
+    });
+
+    await run("a file created in an unfolded folder shows up, one in a folded folder does not cost a request", async () => {
+      const inner = `${liveDir}/inner_${tag}.txt`;
+      assert((await outOfBandMkdir(liveDir)) === 200, "the folder was not created");
+      assert((await outOfBand(inner, "one")) === 200, "the nested file was not created");
+      await page.waitForSelector(`.editor-dir[data-path="${liveDir}"]`, { timeout: 15000 })
+        .catch(() => { throw new Error("the created folder never got a row"); });
+      await page.click(`.editor-dir[data-path="${liveDir}"]`);
+      await page.waitForSelector(`.editor-file[data-path="${inner}"]`, { timeout: 8000 })
+        .catch(() => { throw new Error("the folder did not open onto its file"); });
+      const second = `${liveDir}/second_${tag}.txt`;
+      assert((await outOfBand(second, "two")) === 200, "the second nested file was not created");
+      await page.waitForSelector(`.editor-file[data-path="${second}"]`, { timeout: 15000 })
+        .catch(() => { throw new Error("the second file never reached the unfolded folder"); });
+      // The unfolded folder redraws its own rows: the folder above it keeps
+      // standing open around them.
+      assert(!!(await page.$(`.editor-file[data-path="${inner}"]`)), "the folder lost its other row");
+    });
+
+    await run("a folder that appears is in Go to file at once, not after a TTL", async () => {
+      const fresh = `fresh_${tag}/deep_${tag}.txt`;
+      assert((await outOfBandMkdir(`fresh_${tag}`)) === 200, "the fresh folder was not created");
+      assert((await outOfBand(fresh, "deep")) === 200, "the deep file was not created");
+      await page.waitForSelector(`.editor-dir[data-path="fresh_${tag}"]`, { timeout: 15000 });
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+O");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.fill("[data-editor-quickopen-input]", `deep_${tag}`);
+      // The index is a cache with a staleness bound of its own; the point here
+      // is that nothing waits for that bound, the moved folder dropped it.
+      await page.waitForFunction(
+        (want) => [...document.querySelectorAll(".editor-quickopen-item")].some((el) => el.dataset.path === want),
+        fresh,
+        { timeout: 8000 },
+      );
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 6000 });
+      // Leave the strip and the tree as this block found them: the checks after
+      // it count the open tabs and read the rows.
+      await page.evaluate((sel) => document.querySelector(`${sel} .editor-tab-state`).click(), tabSel(liveFile));
+      await page.waitForFunction((sel) => !document.querySelector(sel), tabSel(liveFile), { timeout: 6000 });
+      for (const path of [liveFile, liveDir, `fresh_${tag}`]) await outOfBandDelete(path);
+      for (const path of [liveFile, liveDir, `fresh_${tag}`]) {
+        await page.waitForFunction((p) => !document.querySelector(`[data-path="${p}"]`), path, { timeout: 15000 });
+      }
     });
 
     await run("right click on a tab opens the context menu, Escape closes it", async () => {

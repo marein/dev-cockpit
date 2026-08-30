@@ -428,6 +428,10 @@ func DocsTopics() []DocsTopic {
 					Desc:  `A <code>.tar</code>, <code>.tar.gz</code> or <code>.zip</code> carries an extract entry in its tree menu, and opening it offers the same next to the download. It unpacks into a new folder beside the archive, so nothing existing is overwritten.`,
 				},
 				{
+					Title: "The editor follows the disk",
+					Desc:  `While an editor is open it watches what is on its screen, the open tabs and the unfolded folders, and follows what happens to them outside the editor. A file a coder writes into reloads in its tab without anything to click, and the cursor and the scroll position stay where they were. A file with unsaved changes of your own is never touched: its tab is marked <i class="ti ti-alert-triangle align-text-bottom text-warning" aria-hidden="true"></i> instead, and the save dialog stays the place the two versions are told apart. A file that is deleted marks its tab <i class="ti ti-file-off align-text-bottom text-danger" aria-hidden="true"></i> and stays open, so the next save writes it again; a rename looks like exactly that from outside, a file gone and a file appeared, so the tab is marked rather than guessed after. In the tree a new file shows up, a deleted one goes, and a new folder is findable in <em>Go to file</em> straight away. It works in a project that is no git repository too. Settings &rarr; Editor &rarr; Files sets how often, and turns it off.`,
+				},
+				{
 					Title: "A save never overwrites newer work",
 					Desc:  `A file you opened is saved onto exactly that file. If a coder or git wrote it in the meantime, nothing is written and a dialog says so: <em>Reload</em> takes the version on disk into the editor and your unsaved changes are gone, <em>Cancel</em> keeps them and writes nothing. If the file was deleted instead, the dialog offers <em>Create again</em>, which writes what is in the editor as a new file, or <em>Cancel</em>. There is no way to force the save, and a file you created in the editor saves normally.`,
 				},
@@ -638,7 +642,13 @@ func DocsTopics() []DocsTopic {
 					Title:    "Git in the editor",
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Settings &rarr; Editor sets how often the server looks for a change, in seconds, and when a file is big enough to ask before it is diffed. How a diff looks is not here, that one is per device in the editor's own settings.`,
+					Desc:     `Settings &rarr; Editor &rarr; Git sets how often the server asks git for a change, in seconds, and when a file is big enough to ask before it is diffed. How a diff looks is not here, that one is per device in the editor's own settings.`,
+				},
+				{
+					Title:    "The editor following the disk",
+					Tag:      "Setting",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Settings &rarr; Editor &rarr; Files sets how often an open editor looks at what it has on the screen, in seconds; zero turns it off. It is its own number and not the git one next to it: looking at a few open files costs nothing, asking git costs a walk of the whole working copy.`,
 				},
 				{
 					Title:    "Coder instructions, agents and skills",

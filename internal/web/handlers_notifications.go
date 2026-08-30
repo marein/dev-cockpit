@@ -135,6 +135,13 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "git", Data: map[string]any{"project": "", "base": true}}); err != nil {
 		return
 	}
+	// The same for the file watch: while the socket was down the watch lapsed,
+	// its tick ended, and everything the disk did in that gap was published to
+	// nobody. A bare files signal, no project and no paths, is what tells every
+	// open editor to look at all of its own again.
+	if err := writeEnvelope(w, eventbus.Event{Type: "files", Data: map[string]any{"project": ""}}); err != nil {
+		return
+	}
 	// A bare lsp signal for the same reason: indexing moves published into a
 	// gap come never again, and a page opened mid-indexing has seen none of
 	// them, so every open editor pulls its project's indexing status.
@@ -241,6 +248,21 @@ func (s *Server) publishProjects() {
 // open diff nothing.
 func (s *Server) publishGit(projectName string, base bool) {
 	s.bus.Publish(eventbus.Event{Type: "git", Data: map[string]any{"project": projectName, "base": base}})
+}
+
+// publishFiles signals that paths of one project moved on disk while an editor
+// had them on the screen. Like the git event it carries the movement and never
+// the state: the paths say where to look, the client pulls the directory
+// listing or the file itself and decides what that means for its own buffer.
+// Files and directories travel apart because what they ask for is not the same
+// request, /editor/file against /editor/list, and because only a directory can
+// have made the quick open index wrong.
+func (s *Server) publishFiles(projectName string, files, dirs []string) {
+	s.bus.Publish(eventbus.Event{Type: "files", Data: map[string]any{
+		"project": projectName,
+		"files":   files,
+		"dirs":    dirs,
+	}})
 }
 
 // publishCommitDraft signals that one project's commit draft moved: a device

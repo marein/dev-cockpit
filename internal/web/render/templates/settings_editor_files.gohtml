@@ -1,0 +1,21 @@
+{{define "settings_editor_files.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "editor_page_start.gohtml" .}}
+<form method="post" action="/settings/editor/files" id="settings-editor-files">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <div class="text-secondary small mb-3">An open editor follows the disk: a file a coder writes into reloads in its tab, and a file that appears, goes or is renamed shows up in the tree. Only what is on the screen is looked at, the open tabs and the unfolded folders.</div>
+  <div class="mb-3 row">
+    <div class="col-12 col-sm-7 col-lg-5">
+      <label class="form-label" for="editor-file-poll">Follow the disk every</label>
+      <div class="input-group">
+        <input class="form-control" type="number" id="editor-file-poll" name="file_poll_seconds" min="0" max="60" step="1" value="{{.FilePollSeconds}}">
+        <span class="input-group-text">seconds</span>
+      </div>
+      <div class="form-text">Only while an editor of that project is open. Zero turns it off, the refresh button above the file tree still brings a fresh tree. This is its own number and not the git one on the Git tab: looking at a few open files costs nothing, asking git costs a walk of the whole working copy.</div>
+    </div>
+  </div>
+  <button type="submit" class="btn btn-primary">Save</button>
+</form>
+{{template "editor_page_end.gohtml"}}
+{{template "app_end.gohtml" .}}
+{{end}}

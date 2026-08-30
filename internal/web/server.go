@@ -73,6 +73,10 @@ type Server struct {
 	// gitWatchers keeps the editor's per-project git poller alive only while a
 	// client says it is watching.
 	gitWatchers *gitWatchers
+	// fileWatchers keeps the editor's per-project file tick alive only while a
+	// client says it is watching, and holds the union of what those clients
+	// have on the screen.
+	fileWatchers *fileWatchers
 	// gitWrites serializes the editor's git writes per working copy. The
 	// editor's own lock is one page's, and a working copy has more than one
 	// page on it.
@@ -183,6 +187,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		backups:       backups,
 		assets:        assets,
 		gitWatchers:   newGitWatchers(),
+		fileWatchers:  newFileWatchers(),
 		gitWrites:     newGitWrites(),
 		commitDrafts:  newCommitDrafts(cfg.StateDir),
 		searchDrafts:  newSearchDrafts(cfg.StateDir),

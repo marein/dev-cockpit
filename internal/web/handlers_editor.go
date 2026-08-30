@@ -138,7 +138,10 @@ func (s *Server) handleEditorList(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"path": c.Query("path"), "entries": entries})
+	// The signature travels with the listing so the client can hand it back on
+	// its watch: it is how the server tells whether the rows a browser shows are
+	// still the ones on the disk, without the browser hashing anything itself.
+	c.JSON(http.StatusOK, gin.H{"path": c.Query("path"), "entries": entries, "sig": filesystem.DirSignature(entries)})
 }
 
 // handleEditorReadFile returns a file's text content at ?path= as JSON, with
@@ -481,16 +484,30 @@ func (s *Server) handleEditorFiles(c *gin.Context) {
 	})
 }
 
+// editorPollKey marks a POST below /editor that writes nothing. The two watch
+// renewals are exactly that, a poll that carries a body, and they run every few
+// seconds for as long as an editor is open: dropping the quick open index on
+// them would rebuild it around the clock and defeat the one thing the file tick
+// is careful about, which is to touch that index only where a directory really
+// moved.
+const editorPollKey = "editorPoll"
+
+func editorPoll(c *gin.Context) { c.Set(editorPollKey, true) }
+
 // invalidateQuickOpenAfterWrite drops the project's quick open index after a
 // request that changed the tree, so a file is findable the moment it exists
 // instead of after the staleness bound expires. Reads pass straight through.
 func (s *Server) invalidateQuickOpenAfterWrite(c *gin.Context) {
 	// Every route below /editor is editor action for the project, which is
 	// what the language server lifetime measures; the lsp routes stay off
-	// this group so their status poll never counts.
+	// this group so their status poll never counts. A watch renewal counts
+	// too: the page it comes from is open in front of somebody.
 	s.intel.Touch(c.Param("name"))
 	c.Next()
 	if c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead {
+		return
+	}
+	if c.GetBool(editorPollKey) {
 		return
 	}
 	if c.Writer.Status() >= http.StatusMultipleChoices {
@@ -1894,6 +1911,39 @@ func (s *Server) handleEditorGitWatch(c *gin.Context) {
 	}
 	watching := s.watchProjectGit(p, s.editorSettings())
 	c.JSON(http.StatusOK, gin.H{"watching": watching, "seconds": int(gitWatchWindow / time.Second)})
+}
+
+// editorWatchRequest is what one client says it has on the screen: the open
+// tabs and the unfolded folders, each with the token this client holds for it,
+// plus the id of that screen. The id is what makes the union a union: without
+// it two browsers on one project would overwrite each other's scope and each
+// would only ever be watched for as long as it was the last one to renew. The
+// tokens are the server's own answers handed back, a file's version and a
+// folder's listing signature, and they are what lets the first round compare
+// the disk against the screen instead of against itself.
+type editorWatchRequest struct {
+	Client string        `json:"client"`
+	Files  []watchedPath `json:"files"`
+	Dirs   []watchedPath `json:"dirs"`
+}
+
+// handleEditorWatch registers one client's scope for a short window, the way
+// the git watch registers its interest. That window is what keeps the project's
+// file tick running, so a page renews it while it is open and the tick ends
+// once the last editor is gone. Watching false means there is nothing to renew,
+// because the poll is turned off.
+func (s *Server) handleEditorWatch(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorWatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The watch could not be read."})
+		return
+	}
+	watching := s.watchProjectFiles(p, req.Client, req.Files, req.Dirs, s.editorSettings())
+	c.JSON(http.StatusOK, gin.H{"watching": watching, "seconds": int(fileWatchWindow / time.Second)})
 }
 
 // editorProject resolves the project for a JSON editor request, writing a JSON

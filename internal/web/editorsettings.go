@@ -14,10 +14,11 @@ import (
 // The keys are hyphenated like every other one in that file; the form fields
 // they are written from keep the underscores every form in the app uses.
 const (
-	editorGitPollSecondsKey = "editor-git-poll-seconds"
-	editorExclusionsKey     = "editor-search-exclusions"
-	editorDiffMaxLinesKey   = "editor-diff-max-lines"
-	editorDiffMaxKiBKey     = "editor-diff-max-kib"
+	editorGitPollSecondsKey  = "editor-git-poll-seconds"
+	editorFilePollSecondsKey = "editor-file-poll-seconds"
+	editorExclusionsKey      = "editor-search-exclusions"
+	editorDiffMaxLinesKey    = "editor-diff-max-lines"
+	editorDiffMaxKiBKey      = "editor-diff-max-kib"
 )
 
 // editorLSPServerKey holds how a language's LSP server runs, one key per
@@ -107,6 +108,14 @@ type editorSettings struct {
 	// one editor is watching. Zero means it never does, and the refresh button
 	// above the file tree is the only way to a fresh status.
 	GitPollSeconds int
+	// FilePollSeconds is how often the server looks at the paths an editor has
+	// on the screen. It is deliberately its own value and not the one above:
+	// the two measure different work. One git status walks the whole working
+	// copy and may take a hand off the index, so it has to be rare; fifty stat
+	// calls on the open tabs and the unfolded folders cost nothing, so they may
+	// be frequent. Hanging both on one number would force one of them into the
+	// wrong frequency. Zero turns the watch off.
+	FilePollSeconds int
 	// The rest is read by the diff.
 	DiffMaxLines int
 	DiffMaxKiB   int
@@ -120,10 +129,11 @@ type editorSettings struct {
 // editorSettings reads the effective editor settings.
 func (s *Server) editorSettings() editorSettings {
 	return editorSettings{
-		GitPollSeconds: s.settingInt(editorGitPollSecondsKey, 2, 0, 60),
-		DiffMaxLines:   s.settingInt(editorDiffMaxLinesKey, 50000, 0, 500000),
-		DiffMaxKiB:     s.settingInt(editorDiffMaxKiBKey, 4096, 0, 16384),
-		Exclusions:     s.exclusions(),
+		GitPollSeconds:  s.settingInt(editorGitPollSecondsKey, 2, 0, 60),
+		FilePollSeconds: s.settingInt(editorFilePollSecondsKey, 2, 0, 60),
+		DiffMaxLines:    s.settingInt(editorDiffMaxLinesKey, 50000, 0, 500000),
+		DiffMaxKiB:      s.settingInt(editorDiffMaxKiBKey, 4096, 0, 16384),
+		Exclusions:      s.exclusions(),
 	}
 }
 

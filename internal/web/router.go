@@ -174,6 +174,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// The editor settings sit behind a tab, like a coder's sections, so the page
 	// can grow more of them; the bare path leads to the one there is.
 	auth.GET("/settings/editor", s.handleSettingsEditor)
+	auth.GET("/settings/editor/files", s.handleSettingsEditorFiles)
+	auth.POST("/settings/editor/files", s.handleSettingsEditorFilesSave)
 	auth.GET("/settings/editor/git", s.handleSettingsEditorGit)
 	auth.POST("/settings/editor/git", s.handleSettingsEditorGitSave)
 	auth.GET("/settings/editor/search", s.handleSettingsEditorSearch)
@@ -332,7 +334,13 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	editor.POST("/git/tag/delete", s.handleEditorGitTagDelete)
 	editor.POST("/git/revert", s.handleEditorGitRevert)
 	editor.POST("/git/clone", s.handleEditorGitClone)
-	editor.POST("/git/watch", s.handleEditorGitWatch)
+	// The two watch renewals write nothing, so they are marked as the polls
+	// they are and leave the quick open index alone, see editorPoll. The file
+	// watch is what makes an open editor follow the disk without a reload: the
+	// git event moves for a first modification and stands still for every write
+	// after it, which is the everyday case when a coder works in an open file.
+	editor.POST("/git/watch", editorPoll, s.handleEditorGitWatch)
+	editor.POST("/watch", editorPoll, s.handleEditorWatch)
 }
 
 func (s *Server) registerStaticRoutes(r *gin.Engine) {
