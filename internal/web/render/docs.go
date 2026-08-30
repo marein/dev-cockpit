@@ -449,7 +449,22 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Find in files",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "F"}}},
-					Desc:  `Search the contents of every project file and jump to a match. The query matches literally; the <em>.*</em> control in the search field switches to regular expressions. Patterns come without delimiters, match case insensitively, and <code>^</code> and <code>$</code> anchor at line boundaries.`,
+					Desc:  `Search the contents of every project file and jump to a match. The query matches literally; the <em>.*</em> control in the search field switches to regular expressions, and <em>Aa</em> next to it makes the search mind case. Patterns come without delimiters and <code>^</code> and <code>$</code> anchor at line boundaries.`,
+				},
+				{
+					Title: "Replace in files",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "H"}}},
+					Desc:  `<em>Replace in files</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the shortcut, or a folder's context menu in the tree. It is the same search with a second field: every row shows the line as it would read afterwards and carries a control that writes just that line, while the button names the whole job before it asks. A file you are holding unsaved stops the job with nothing written.`,
+				},
+				{
+					Title: "Replace the marked match",
+					Keys:  []DocsKeys{{Caps: []string{"Shift", "Enter"}}},
+					Desc:  `Writes that one match in the replace list. The row leaves, the mark steps to the next one, and the palette stays open where it stood.`,
+				},
+				{
+					Title: "Open a row without leaving the palette",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Enter"}}},
+					Desc:  `The marked file opens in front, at the line a plain <kbd>Enter</kbd> would have opened it on, while the field, the focus and the palette stay as they are and the mark steps on. A Ctrl-click on a row does the same. Plain <kbd>Enter</kbd> jumps and closes.`,
 				},
 				{
 					Title: "Preview files",

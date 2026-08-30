@@ -211,3 +211,20 @@ func TestEditorSearchRefusesAFolderThatSymlinksOut(t *testing.T) {
 		t.Fatalf("a symlinked folder = %d, want 400 (%v)", code, searchPaths(res))
 	}
 }
+
+// TestEditorSearchMindsCaseOnRequest carries the palette's Aa switch to the
+// scan, and leaves the answer folded without it.
+func TestEditorSearchMindsCaseOnRequest(t *testing.T) {
+	r := searchServer(t, map[string]string{"a.go": "GetName\ngetname\n"})
+
+	if _, res := searchGet(t, r, url.Values{"q": {"getname"}}); len(res.Matches) != 2 {
+		t.Errorf("without the switch both lines match, got %d", len(res.Matches))
+	}
+	code, res := searchGet(t, r, url.Values{"q": {"getname"}, "case": {"1"}})
+	if code != http.StatusOK {
+		t.Fatalf("status = %d: %s", code, res.Error)
+	}
+	if len(res.Matches) != 1 || res.Matches[0].Text != "getname" {
+		t.Errorf("with the switch = %v, want only the line that was typed", searchPaths(res))
+	}
+}

@@ -525,8 +525,9 @@ func (s *Server) handleEditorFilters(c *gin.Context) {
 
 // handleEditorSearch greps the project for the ?q= substring, or with ?re=1
 // for the regex, and returns the matching lines, feeding the find in files
-// palette. ?path= keeps the walk inside one project relative folder and ?file=
-// filters the file names; a request carrying neither searches the whole project
+// palette. ?path= keeps the walk inside one project relative folder, ?file=
+// filters the file names and ?case=1 makes the match mind its case; a request
+// carrying none of them searches the whole project
 // the way it always did, and the paths in the answer stay relative to the
 // project root either way. A pattern that does not compile, and a folder that
 // is not one, answer a 400 with the message, which the palette shows like any
@@ -541,13 +542,152 @@ func (s *Server) handleEditorSearch(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"matches": []filesystem.SearchMatch{}, "truncated": false})
 		return
 	}
-	opt := filesystem.SearchOptions{Folder: c.Query("path"), Mask: filesystem.ParseFileMask(c.Query("file"))}
+	opt := filesystem.SearchOptions{
+		Folder:        c.Query("path"),
+		Mask:          filesystem.ParseFileMask(c.Query("file")),
+		CaseSensitive: c.Query("case") == "1",
+	}
 	matches, truncated, err := filesystem.SearchFiles(p.Path, q, c.Query("re") == "1", s.exclusions(), opt)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"matches": matches, "truncated": truncated})
+}
+
+// maxSearchDraftField bounds one stored palette field. It is far beyond any
+// query somebody types and only refuses a body that cannot be one.
+const maxSearchDraftField = 4 << 10
+
+// handleEditorSearchDraft serves the palette's stored inputs, so a search
+// survives a jump into a hit, a reload and the walk from a phone to a desktop.
+// It is also what a device catching up after the searchdraft event pulls.
+// A project that never had one answers empty with no timestamp, which is what
+// tells the palette to leave what it holds alone.
+func (s *Server) handleEditorSearchDraft(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	draft := s.searchDrafts.Get(p.Name)
+	updated := ""
+	if !draft.UpdatedAt.IsZero() {
+		updated = draft.UpdatedAt.Format(time.RFC3339Nano)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"query":     draft.Query,
+		"replace":   draft.Replace,
+		"folder":    draft.Folder,
+		"mask":      draft.Mask,
+		"regex":     draft.Regex,
+		"case":      draft.Case,
+		"updatedAt": updated,
+	})
+}
+
+type editorSearchDraftRequest struct {
+	Query   string `json:"query"`
+	Replace string `json:"replace"`
+	Folder  string `json:"folder"`
+	Mask    string `json:"mask"`
+	Regex   bool   `json:"regex"`
+	Case    bool   `json:"case"`
+}
+
+// handleEditorSearchDraftSave stores what the palette holds. The client sends
+// it in bundles and once more when the palette closes, never per keystroke.
+// A save that moved something is published as the searchdraft event, so the
+// palette standing open on another device follows along.
+func (s *Server) handleEditorSearchDraftSave(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorSearchDraftRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	for _, field := range []string{req.Query, req.Replace, req.Folder, req.Mask} {
+		if len(field) > maxSearchDraftField {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "That is too long to keep."})
+			return
+		}
+	}
+	draft, changed := s.searchDrafts.Save(p.Name, searchDraft{
+		Query:   req.Query,
+		Replace: req.Replace,
+		Folder:  req.Folder,
+		Mask:    req.Mask,
+		Regex:   req.Regex,
+		Case:    req.Case,
+	})
+	if changed {
+		s.publishSearchDraft(p.Name)
+	}
+	response := gin.H{"saved": true}
+	if !draft.UpdatedAt.IsZero() {
+		response["updatedAt"] = draft.UpdatedAt.Format(time.RFC3339Nano)
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+// handleEditorReplace answers what a replacement would change, and with
+// ?apply=1 performs it. It stands on the search's own machinery: the same
+// folder through ResolveUnder, the same mask, the same regex option, so a
+// replacement can never reach what the search in front of it did not show.
+//
+// The answer counts every occurrence in the scope, not only the ones the
+// preview carries: the button says what pressing it costs, and a list capped at
+// MaxSearchMatches must never be mistaken for the size of the job. A file the
+// browser holds unsaved stops the whole job before anything is written, which
+// is a 409 naming those files.
+func (s *Server) handleEditorReplace(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	q := strings.TrimSpace(c.PostForm("q"))
+	if len(q) < 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Type at least 2 characters to replace."})
+		return
+	}
+	line, _ := strconv.Atoi(c.PostForm("line"))
+	req := filesystem.ReplaceRequest{
+		Query:       q,
+		Replacement: c.PostForm("to"),
+		UseRegex:    c.PostForm("re") == "1",
+		Options: filesystem.SearchOptions{
+			Folder:        c.PostForm("path"),
+			Mask:          filesystem.ParseFileMask(c.PostForm("file")),
+			CaseSensitive: c.PostForm("case") == "1",
+		},
+		OnlyPath: c.PostForm("only"),
+		OnlyLine: line,
+		Dirty:    strings.Split(c.PostForm("dirty"), "\n"),
+	}
+	if c.PostForm("apply") != "1" {
+		report, err := filesystem.PreviewReplace(p.Path, req, s.exclusions())
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+			return
+		}
+		c.JSON(http.StatusOK, report)
+		return
+	}
+	report, err := filesystem.ApplyReplace(p.Path, req, s.exclusions())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+		return
+	}
+	if len(report.Blocked) > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":   "Save or close these files first, nothing was replaced: " + strings.Join(report.Blocked, ", "),
+			"blocked": report.Blocked,
+		})
+		return
+	}
+	c.JSON(http.StatusOK, report)
 }
 
 // handleEditorUpload stores multipart file uploads into the directory at the

@@ -2481,6 +2481,9 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
 .editor-quickopen-context {
   flex: 0 0 auto;
 }
+.editor-quickopen-actions {
+  display: flex;
+}
 .editor-quickopen-slot {
   display: flex;
   align-items: center;
@@ -2518,6 +2521,7 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
 }
 .editor-quickopen-foot {
   flex: 0 0 auto;
+  flex-wrap: wrap;
   min-height: 1.75rem;
 }
 .editor-quickopen-list {
@@ -2571,6 +2575,38 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
 }
 .editor-quickopen-match {
   display: block;
+}
+/* A replace row carries what the line would become under what it is, and its
+   own control to write exactly that one line. */
+.editor-quickopen-match-replace {
+  display: flex;
+  align-items: stretch;
+  padding-right: 0;
+}
+.editor-quickopen-match-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.editor-quickopen-match-after mark {
+  background: rgba(47, 179, 68, 0.28);
+}
+.editor-quickopen-match-apply {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  flex: 0 0 auto;
+  min-width: 2.75rem;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--tblr-border-color);
+  background: none;
+  color: var(--tblr-secondary);
+}
+.editor-quickopen-match-apply:hover,
+.editor-quickopen-match-apply:focus {
+  color: var(--tblr-primary);
+  background: rgba(var(--tblr-emphasis-color-rgb), 0.08);
 }
 .editor-quickopen-match-head {
   display: flex;
@@ -2769,14 +2805,16 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
 }
 [data-shell-ctrl].active,
 [data-terminal-copy].active,
-[data-editor-quickopen-regex].active {
+[data-editor-quickopen-regex].active,
+[data-editor-quickopen-case].active {
   --tblr-btn-active-bg: var(--tblr-success);
   --tblr-btn-active-border-color: var(--tblr-success);
   --tblr-btn-active-color: #fff;
 }
 @media (hover: none) {
   .attach-mobile .btn,
-  .btn[data-editor-quickopen-regex] {
+  .btn[data-editor-quickopen-regex],
+  .btn[data-editor-quickopen-case] {
     --tblr-btn-hover-color: var(--tblr-btn-color);
     --tblr-btn-hover-bg: var(--tblr-btn-bg);
     --tblr-btn-hover-border-color: var(--tblr-btn-border-color);

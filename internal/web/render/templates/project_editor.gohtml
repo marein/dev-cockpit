@@ -123,6 +123,9 @@
               <button type="button" class="dropdown-item" data-editor-search-project-item>
                 <i class="ti ti-list-search me-2"></i>Find in files
               </button>
+              <button type="button" class="dropdown-item" data-editor-replace-project-item>
+                <i class="ti ti-replace me-2"></i>Replace in files
+              </button>
               <button type="button" class="dropdown-item" data-editor-goto disabled>
                 <i class="ti ti-arrow-bar-to-down me-2"></i>Go to line
               </button>
@@ -371,8 +374,12 @@
       <div class="editor-quickopen-panel">
         <div class="position-relative flex-shrink-0">
           <input type="text" class="form-control" placeholder="Go to file…" data-editor-quickopen-input autocomplete="off" spellcheck="false" aria-label="Go to file">
-          <button type="button" class="btn btn-sm btn-ghost-secondary px-2 font-monospace position-absolute top-50 end-0 translate-middle-y me-2" data-editor-quickopen-regex title="Regular expression" aria-pressed="false" hidden>.*</button>
+          <div class="editor-quickopen-actions position-absolute top-50 end-0 translate-middle-y me-2" data-editor-quickopen-actions>
+            <button type="button" class="btn btn-sm btn-ghost-secondary px-2" data-editor-quickopen-case title="Match case" aria-label="Match case" aria-pressed="false" hidden>Aa</button>
+            <button type="button" class="btn btn-sm btn-ghost-secondary px-2 font-monospace" data-editor-quickopen-regex title="Regular expression" aria-pressed="false" hidden>.*</button>
+          </div>
         </div>
+        <input type="text" class="form-control" placeholder="Replace with…" data-editor-quickopen-replace autocomplete="off" spellcheck="false" aria-label="Replace with" hidden>
         <div class="editor-quickopen-context d-flex align-items-center gap-2 px-3 py-1 small text-secondary border-bottom" data-editor-quickopen-context hidden>
           <span class="editor-quickopen-slot" role="button" tabindex="0" data-editor-quickopen-folder-slot title="Folder to search: whole project"></span>
           <span class="editor-quickopen-slot ms-auto justify-content-end" role="button" tabindex="0" data-editor-quickopen-mask-slot title="Files to search: all files"></span>
@@ -381,6 +388,7 @@
         <div class="editor-quickopen-foot d-flex align-items-center gap-2 px-3 py-1 small text-secondary border-top" data-editor-quickopen-foot>
           <span data-editor-quickopen-foot-left></span>
           <span class="ms-auto text-end" data-editor-quickopen-foot-right></span>
+          <button type="button" class="btn btn-sm btn-primary py-0" data-editor-quickopen-replace-all hidden></button>
         </div>
       </div>
     </div>

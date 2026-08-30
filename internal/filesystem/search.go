@@ -57,29 +57,37 @@ type matcher interface {
 	find(from int) (start, end int)
 }
 
-// literalMatcher finds a case insensitive substring. It lowercases each file
-// into a reusable buffer; lowering ASCII preserves length, which is what lets
-// offsets in the lowered copy address the original bytes.
+// literalMatcher finds a substring, by default without regard for case: it
+// lowercases each file into a reusable buffer, and lowering ASCII preserves
+// length, which is what lets offsets in the lowered copy address the original
+// bytes. Asked for case, it compares the file's own bytes and keeps no copy.
 type literalMatcher struct {
 	needle  []byte
+	fold    bool
+	data    []byte
 	lowered []byte
 }
 
 func (m *literalMatcher) enter(data []byte) {
+	if !m.fold {
+		m.data = data
+		return
+	}
 	m.lowered = appendLowerBytes(m.lowered[:0], data)
+	m.data = m.lowered
 }
 
 func (m *literalMatcher) find(from int) (int, int) {
-	idx := bytes.Index(m.lowered[from:], m.needle)
+	idx := bytes.Index(m.data[from:], m.needle)
 	if idx < 0 {
 		return -1, -1
 	}
 	return from + idx, from + idx + len(m.needle)
 }
 
-// regexpMatcher finds RE2 matches on the original bytes, (?i) covers the case
-// folding there. The dot does not cross newlines by default, so the line model
-// of the search stands.
+// regexpMatcher finds RE2 matches on the original bytes; whether case counts is
+// decided by the flags the pattern was compiled with. The dot does not cross
+// newlines by default, so the line model of the search stands.
 type regexpMatcher struct {
 	re   *regexp.Regexp
 	data []byte
@@ -97,28 +105,49 @@ func (m *regexpMatcher) find(from int) (int, int) {
 	return from + loc[0], from + loc[1]
 }
 
+// searchFlags are the flags a pattern is compiled with. (?m) is always there
+// because find continues from an offset behind the previous hit's line: without
+// it ^ and $ would anchor at whatever offset that left behind instead of at
+// line boundaries, which is what a line oriented search means by them. (?i)
+// joins it unless case was asked for, and a pattern may still say (?-i) or (?i)
+// of its own, which then wins from where it stands.
+func searchFlags(caseSensitive bool) string {
+	if caseSensitive {
+		return "(?m)"
+	}
+	return "(?im)"
+}
+
+// compilePattern compiles what somebody typed with those flags in front of it.
+func compilePattern(query string, caseSensitive bool) (*regexp.Regexp, error) {
+	re, err := regexp.Compile(searchFlags(caseSensitive) + query)
+	if err != nil {
+		// The message quotes the pattern, so the error of a bare compile is the
+		// one to show: nobody typed the injected flags.
+		if _, bare := regexp.Compile(query); bare != nil {
+			return nil, bare
+		}
+		return nil, err
+	}
+	return re, nil
+}
+
 // newMatcherFactory answers a constructor for per worker matchers. A regex
 // pattern is compiled once here, so a broken one fails the search before any
-// file is read, with the compile message worth showing in the palette. (?m)
-// joins (?i) because find continues from an offset behind the previous hit's
-// line: without it ^ and $ would anchor at whatever offset that left behind
-// instead of at line boundaries, which is what a line oriented search means
-// by them.
-func newMatcherFactory(query string, useRegex bool) (func() matcher, error) {
+// file is read, with the compile message worth showing in the palette.
+func newMatcherFactory(query string, useRegex, caseSensitive bool) (func() matcher, error) {
 	if useRegex {
-		re, err := regexp.Compile("(?im)" + query)
+		re, err := compilePattern(query, caseSensitive)
 		if err != nil {
-			// The message quotes the pattern, so the error of a bare compile
-			// is the one to show: nobody typed the injected flags.
-			if _, bare := regexp.Compile(query); bare != nil {
-				return nil, bare
-			}
 			return nil, err
 		}
 		return func() matcher { return &regexpMatcher{re: re} }, nil
 	}
-	needle := []byte(strings.ToLower(query))
-	return func() matcher { return &literalMatcher{needle: needle} }, nil
+	needle := []byte(query)
+	if !caseSensitive {
+		needle = []byte(strings.ToLower(query))
+	}
+	return func() matcher { return &literalMatcher{needle: needle, fold: !caseSensitive} }, nil
 }
 
 // SearchOptions narrows a search below the project. Folder is a project
@@ -129,6 +158,9 @@ func newMatcherFactory(query string, useRegex bool) (func() matcher, error) {
 type SearchOptions struct {
 	Folder string
 	Mask   FileMask
+	// CaseSensitive turns off the case folding both kinds of match do by
+	// default. The zero value is what the palette has always done.
+	CaseSensitive bool
 }
 
 // searchFolder answers the directory the walk starts at. The folder comes from
@@ -151,6 +183,43 @@ func searchFolder(root, folder string) (string, error) {
 		return "", errors.New("Not a folder.")
 	}
 	return dir, nil
+}
+
+// walkScope hands every file of the scope to visit, in the walk's own order:
+// the skip list, the mask and the size cap are applied here and nowhere else,
+// so a search and a replacement can never end up looking at two different sets
+// of files. The mask filters before anything is opened, which is what makes a
+// mask cheaper and not only the answer shorter.
+func walkScope(root, dir string, ex Exclusions, mask FileMask, visit func(path, rel string) error) error {
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if path == dir {
+				return walkErr
+			}
+			return nil
+		}
+		if d.IsDir() {
+			// The folder that was pointed at is walked even when the skip list
+			// names it, the same way the project root itself is: asking for it
+			// by name is the more specific wish.
+			if path != dir && ex.SkipDir(relTo(root, path), d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		rel := relTo(root, path)
+		if !mask.Empty() && !mask.Match(rel) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.Size() > maxSearchFileBytes {
+			return nil
+		}
+		return visit(path, rel)
+	})
 }
 
 // SearchFiles scans every regular file under root for a case insensitive
@@ -182,7 +251,7 @@ func SearchFiles(root, query string, useRegex bool, ex Exclusions, opt SearchOpt
 	if query == "" {
 		return matches, false, nil
 	}
-	newMatcher, err := newMatcherFactory(query, useRegex)
+	newMatcher, err := newMatcherFactory(query, useRegex, opt.CaseSensitive)
 	if err != nil {
 		return nil, false, err
 	}
@@ -202,35 +271,7 @@ func SearchFiles(root, query string, useRegex bool, ex Exclusions, opt SearchOpt
 		return len(matches) >= MaxSearchMatches
 	}
 
-	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			if path == dir {
-				return walkErr
-			}
-			return nil
-		}
-		if d.IsDir() {
-			// The folder a search was pointed at is searched even when the skip
-			// list names it, the same way the project root itself is: asking
-			// for it by name is the more specific wish.
-			if path != dir && ex.SkipDir(relTo(root, path), d.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		// The mask filters here rather than on the way out, so a file nobody
-		// asked for is never opened: a mask makes the scan cheaper and not only
-		// the answer shorter.
-		if !opt.Mask.Empty() && !opt.Mask.Match(relTo(root, path)) {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil || info.Size() > maxSearchFileBytes {
-			return nil
-		}
+	err = walkScope(root, dir, ex, opt.Mask, func(path, _ string) error {
 		batch = append(batch, path)
 		if len(batch) < searchBatchFiles {
 			return nil
@@ -346,18 +387,27 @@ func readInto(path string, buf []byte) ([]byte, error) {
 	return buf, nil
 }
 
-// appendFileMatches records one match per matching line, which is what the
-// palette lists: the scan continues behind the hit's line. That jump is also
-// what keeps an empty regex match like a* from standing still, the offset
-// always leaves the line it hit.
-func appendFileMatches(into []SearchMatch, data []byte, rel string, m matcher) []SearchMatch {
+// lineFinder is what one loop over the matching lines needs of a matcher: the
+// file has been handed over with enter, and find answers the next hit at or
+// after an offset. The search's matcher and the replacement's replacer both
+// answer it, which is what lets the two lists be built by the same walk.
+type lineFinder interface {
+	find(from int) (start, end int)
+}
+
+// eachMatchingLine hands every line that holds a hit to row, once per line,
+// with the line's own bytes and where the hit sits inside them. The scan
+// continues behind the hit's line, which is also what keeps an empty regex
+// match like a* from standing still: the offset always leaves the line it hit.
+// row answers whether the walk goes on.
+func eachMatchingLine(data []byte, m lineFinder, row func(line int, text []byte, start, end int) bool) {
 	line := 1
 	counted := 0 // offset up to which newlines have already been counted
 	from := 0
 	for from <= len(data) {
 		start, end := m.find(from)
 		if start < 0 {
-			return into
+			return
 		}
 		line += bytes.Count(data[counted:start], newline)
 		counted = start
@@ -367,14 +417,24 @@ func appendFileMatches(into []SearchMatch, data []byte, rel string, m matcher) [
 		if nl := bytes.IndexByte(data[start:], '\n'); nl >= 0 {
 			lineEnd = start + nl
 		}
-		text, markStart, markLen := searchSnippet(data[lineStart:lineEnd], start-lineStart, end-lineStart)
-		into = append(into, SearchMatch{Path: rel, Line: line, Text: text, MatchStart: markStart, MatchLen: markLen})
-
+		if !row(line, data[lineStart:lineEnd], start-lineStart, end-lineStart) {
+			return
+		}
 		if lineEnd >= len(data) {
-			return into
+			return
 		}
 		from = lineEnd + 1
 	}
+}
+
+// appendFileMatches records one match per matching line, which is what the
+// palette lists.
+func appendFileMatches(into []SearchMatch, data []byte, rel string, m matcher) []SearchMatch {
+	eachMatchingLine(data, m, func(line int, text []byte, start, end int) bool {
+		snippet, markStart, markLen := searchSnippet(text, start, end)
+		into = append(into, SearchMatch{Path: rel, Line: line, Text: snippet, MatchStart: markStart, MatchLen: markLen})
+		return true
+	})
 	return into
 }
 

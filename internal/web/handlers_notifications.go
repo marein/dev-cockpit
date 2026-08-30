@@ -117,6 +117,12 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "commitdraft", Data: map[string]string{"project": ""}}); err != nil {
 		return
 	}
+	// And the same for the editor palette: a bare searchdraft signal, no
+	// project named, so a palette that sat through a gap opens on the search
+	// the other device left rather than on the one from before the gap.
+	if err := writeEnvelope(w, eventbus.Event{Type: "searchdraft", Data: map[string]string{"project": ""}}); err != nil {
+		return
+	}
 	// The line comments the same way: a bare linecomments signal, no project
 	// named, and every open editor pulls its own project's list.
 	if err := writeEnvelope(w, eventbus.Event{Type: "linecomments", Data: map[string]string{"project": ""}}); err != nil {
@@ -242,6 +248,14 @@ func (s *Server) publishGit(projectName string, base bool) {
 // movement and never the state, every open panel pulls the draft itself.
 func (s *Server) publishCommitDraft(projectName string) {
 	s.bus.Publish(eventbus.Event{Type: "commitdraft", Data: map[string]string{"project": projectName}})
+}
+
+// publishSearchDraft signals that one project's palette moved: a device typed
+// in the search, picked a folder or a mask, or threw a switch. Like the commit
+// draft it carries the movement and never the state, every open palette pulls
+// the draft itself.
+func (s *Server) publishSearchDraft(projectName string) {
+	s.bus.Publish(eventbus.Event{Type: "searchdraft", Data: map[string]string{"project": projectName}})
 }
 
 // publishLineComments signals that one project's line comments moved: a

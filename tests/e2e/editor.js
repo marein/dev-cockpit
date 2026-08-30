@@ -521,6 +521,79 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
     });
 
+    await run("find in files: the Aa switch minds case and rides the draft into replace in files", async () => {
+      const dir = `qcase_${tag}`;
+      const needle = `casehit${tag}`;
+      const shouty = needle.toUpperCase();
+      await page.evaluate(async ([proj, files]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const post = (url, form) => fetch(url, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+        });
+        for (const [path, body] of Object.entries(files)) {
+          await post(`/projects/${proj}/editor/create`, "path=" + encodeURIComponent(path));
+          await post(`/projects/${proj}/editor/file`, "path=" + encodeURIComponent(path) + "&content=" + encodeURIComponent(body));
+        }
+      }, [project, { [`${dir}/mixed.txt`]: `${needle} lower\n${shouty} upper\n` }]);
+
+      const footLeft = () => page.evaluate(() => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim());
+      const waitFoot = (want) => page.waitForFunction(
+        (t) => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim() === t,
+        want, { timeout: 10000 });
+      const dropFixture = async () => {
+        await page.evaluate(async ([proj, path]) => {
+          const token = document.querySelector('meta[name="csrf-token"]').content;
+          await fetch(`/projects/${proj}/editor/delete`, {
+            method: "POST",
+            headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+            body: "path=" + encodeURIComponent(path),
+          });
+        }, [project, dir]);
+        await page.click("[data-editor-refresh]");
+        await page.waitForFunction((d) => !document.querySelector(`.editor-dir[data-path="${d}"]`), dir, { timeout: 8000 });
+      };
+
+      try {
+        await clickItem("[data-editor-search-project-item]");
+        await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+        await page.waitForSelector("[data-editor-quickopen-case]", { state: "visible", timeout: 4000 });
+        assert(!(await page.$("[data-editor-quickopen-case].active")), "the switch starts on, folded is the default");
+        await page.fill("[data-editor-quickopen-input]", needle);
+        await waitFoot("2 matches in 1 file");
+
+        // On, the second spelling drops out.
+        await page.click("[data-editor-quickopen-case]");
+        await page.waitForSelector("[data-editor-quickopen-case].active", { timeout: 4000 });
+        await waitFoot("1 match in 1 file");
+        const marked = await page.$$eval(".editor-quickopen-match mark", (els) => els.map((el) => el.textContent));
+        assert(marked.length === 1 && marked[0] === needle, `the case switch kept ${JSON.stringify(marked)}`);
+
+        // The switch is one of the fields the project holds, so it stands in
+        // replace in files too, together with the query it was typed with.
+        await page.keyboard.press("Escape");
+        await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+        await page.click(".cm-content");
+        await page.keyboard.press("Control+Shift+H");
+        await page.waitForSelector("[data-editor-quickopen-replace]", { state: "visible", timeout: 4000 });
+        await page.waitForSelector("[data-editor-quickopen-case].active", { timeout: 4000 });
+        assert((await page.inputValue("[data-editor-quickopen-input]")) === needle,
+          `the query did not ride along: ${await page.inputValue("[data-editor-quickopen-input]")}`);
+        await waitFoot("1 match in 1 file");
+        await page.click("[data-editor-quickopen-case]");
+        await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen-case].active"), null, { timeout: 4000 });
+        await waitFoot("2 matches in 1 file");
+
+        await page.fill("[data-editor-quickopen-input]", "");
+        await page.keyboard.press("Escape");
+        await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      } finally {
+        await dropFixture().catch(() => {});
+      }
+      return "folded by default, 2 hits, one with Aa on, and the switch stands in both modes";
+    });
+
     await run("a hit far down the file scrolls it into view, from the content search and from name:line", async () => {
       // The check above matches on line 1, where there is nothing to scroll to.
       // This one puts the hit at line 300 of 400, which is what caught the
@@ -821,7 +894,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.waitForSelector(`.editor-dir[data-path="${dir}"]`, { timeout: 8000 });
       await openRowMenu(page, `.editor-dir[data-path="${dir}"]`);
       const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
-      for (const want of ["Find in files", "Go to file"]) {
+      for (const want of ["Find in files", "Go to file", "Replace in files"]) {
         assert(labels.includes(want), `the folder menu misses '${want}': ${labels.join(", ")}`);
       }
       await menuItem(page, "Go to file").click();
@@ -958,6 +1031,572 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.keyboard.press("Escape");
       await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
       return "field, folder, mask, field, and one shorter without a mask";
+    });
+
+    await run("replace in files previews every line and counts the whole scope", async () => {
+      const dir = `qrep_${tag}`;
+      const needle = `repneedle${tag}`;
+      await page.evaluate(async ([proj, files]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const post = (url, form) => fetch(url, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+        });
+        for (const [path, body] of Object.entries(files)) {
+          await post(`/projects/${proj}/editor/create`, "path=" + encodeURIComponent(path));
+          await post(`/projects/${proj}/editor/file`, "path=" + encodeURIComponent(path) + "&content=" + encodeURIComponent(body));
+        }
+      }, [project, {
+        [`${dir}/one.go`]: `call ${needle}()\nand ${needle} again\n`,
+        [`${dir}/two.go`]: `call ${needle}()\n`,
+        [`${dir}/note.md`]: `about ${needle}\n`,
+        // More than the list can show, which is the whole point of the button.
+        [`${dir}/many.txt`]: `${needle} line\n`.repeat(210),
+      }]);
+
+      const footLeft = () => page.evaluate(() => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim());
+      const button = () => page.evaluate(() => {
+        const el = document.querySelector("[data-editor-quickopen-replace-all]");
+        return el.hidden ? "" : el.textContent.trim();
+      });
+      const waitButton = (text) => page.waitForFunction((want) => {
+        const el = document.querySelector("[data-editor-quickopen-replace-all]");
+        return !el.hidden && el.textContent.trim() === want;
+      }, text, { timeout: 10000 });
+
+      // The shortcut is one of the three ways in, and the mode keeps the search's
+      // own chrome: the filters, the regex switch, the context line.
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+Shift+H");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.waitForSelector("[data-editor-quickopen-replace]", { state: "visible", timeout: 4000 });
+      await page.waitForSelector("[data-editor-quickopen-mask-slot]", { state: "visible", timeout: 4000 });
+      await page.waitForSelector("[data-editor-quickopen-regex]", { state: "visible", timeout: 4000 });
+
+      // The query alone already asks the replace route, before anything is
+      // typed into the second field: the preview stands with an empty
+      // replacement, which is the line with the match taken out.
+      await page.fill("[data-editor-quickopen-input]", needle);
+      await page.waitForSelector(".editor-quickopen-match-after", { timeout: 10000 });
+      await page.fill("[data-editor-quickopen-replace]", "found");
+      // The counts do not move when only the replacement changes, so the wait
+      // is on the previewed text itself.
+      await page.waitForFunction(
+        () => /found/.test(document.querySelector(".editor-quickopen-match-after")?.textContent || ""),
+        null, { timeout: 10000 });
+      await waitButton("Replace 214 matches in 4 files");
+      // The list is capped, the button is not: that difference is the promise.
+      // The 200 rows that fit all come out of the one file with 210 lines in it,
+      // so the foot and the button really do count two different things.
+      const shownCount = Number(/^(\d+) matches/.exec(await footLeft())[1]);
+      const shown = await page.$$eval(".editor-quickopen-match", (els) => els.length);
+      assert(shownCount === 200 && shown === 200, `the foot says ${await footLeft()} over ${shown} rows`);
+
+      // Every row says what it would become, and carries its own way to write it.
+      const row = await page.evaluate(() => {
+        const el = document.querySelector(".editor-quickopen-match");
+        const texts = [...el.querySelectorAll(".editor-quickopen-match-text")].map((t) => t.textContent);
+        const apply = el.querySelector(".editor-quickopen-match-apply");
+        return {
+          before: texts[0],
+          after: el.querySelector(".editor-quickopen-match-after")?.textContent,
+          marked: el.querySelector(".editor-quickopen-match-after mark")?.textContent,
+          apply: apply ? Math.round(apply.getBoundingClientRect().width) : 0,
+          height: Math.round(el.getBoundingClientRect().height),
+        };
+      });
+      assert(row.before.includes(needle) && row.after.includes("found") && !row.after.includes(needle),
+        `the row does not show the replacement: ${JSON.stringify(row)}`);
+      assert(row.marked === "found", `the new text is not marked: ${row.marked}`);
+      assert(row.apply >= 32 && row.height >= 32, `the row's own replace is too small to hit: ${JSON.stringify(row)}`);
+
+      // The filters narrow a replacement exactly as they narrow a search.
+      await page.click("[data-editor-quickopen-mask-slot]");
+      await page.waitForSelector('.editor-quickopen-item[data-pick="*.go"]', { timeout: 8000 });
+      await page.click('.editor-quickopen-item[data-pick="*.go"]');
+      await page.keyboard.press("Escape");
+      await waitButton("Replace 3 matches in 2 files");
+      await page.click("[data-editor-quickopen-mask-slot] .editor-quickopen-chip-remove");
+      await waitButton("Replace 214 matches in 4 files");
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      return "200 rows shown, 214 matches named, mask narrows both";
+    });
+
+    await run("replace writes one row or the whole scope, and refuses over an unsaved buffer", async () => {
+      const dir = `qrep_${tag}`;
+      const needle = `repneedle${tag}`;
+      const diskOf = (path) => page.evaluate(async ([proj, rel]) => {
+        const res = await fetch(`/projects/${proj}/editor/file?path=${encodeURIComponent(rel)}`);
+        return (await res.json()).content;
+      }, [project, path]);
+      const openReplace = async () => {
+        await page.click(".cm-content");
+        await page.keyboard.press("Control+Shift+H");
+        await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+        await page.fill("[data-editor-quickopen-input]", needle);
+        await page.fill("[data-editor-quickopen-replace]", "found");
+        await page.waitForSelector("[data-editor-quickopen-replace-all]:not([hidden])", { timeout: 10000 });
+      };
+
+      const waitButton = (text) => page.waitForFunction((want) => {
+        const el = document.querySelector("[data-editor-quickopen-replace-all]");
+        return !el.hidden && el.textContent.trim() === want;
+      }, text, { timeout: 10000 });
+
+      // A row replaces exactly its own line, nothing else in the file. The
+      // mask brings that file into the shown list first, which is what somebody
+      // aiming at one line does too.
+      await openReplace();
+      await page.click("[data-editor-quickopen-mask-slot]");
+      await page.waitForSelector('.editor-quickopen-item[data-pick="*.go"]', { timeout: 8000 });
+      await page.click('.editor-quickopen-item[data-pick="*.go"]');
+      await page.keyboard.press("Escape");
+      await waitButton("Replace 3 matches in 2 files");
+      await page.evaluate(() => {
+        const el = [...document.querySelectorAll(".editor-quickopen-match")]
+          .find((item) => /one\.go:1/.test(item.title));
+        el.querySelector(".editor-quickopen-match-apply").click();
+      });
+      await waitButton("Replace 2 matches in 2 files");
+      const one = await diskOf(`${dir}/one.go`);
+      assert(one.includes("call found()") && one.includes(`and ${needle} again`),
+        `a row replaced more than its line: ${JSON.stringify(one)}`);
+
+      // A row still opens its file, which is how the next file gets into the
+      // editor without walking the tree.
+      await page.evaluate(() => {
+        const el = [...document.querySelectorAll(".editor-quickopen-match")]
+          .find((item) => /two\.go/.test(item.title));
+        el.querySelector(".editor-quickopen-match-body").click();
+      });
+      await page.waitForSelector(`.editor-tab[data-path="${dir}/two.go"].active`, { timeout: 8000 });
+
+      // An unsaved buffer of an affected file stops the whole job.
+      await page.click(".cm-content");
+      await page.keyboard.type("x");
+      await waitDirty(`${dir}/two.go`, true);
+      await openReplace();
+      await page.click("[data-editor-quickopen-mask-slot] .editor-quickopen-chip-remove");
+      await waitButton("Replace 213 matches in 4 files");
+      await page.click("[data-editor-quickopen-replace-all]");
+      await confirmSwal(page);
+      // The refusal is a second dialog behind the confirm, so it is waited for
+      // by name and not by the one selector both of them answer to.
+      await page.waitForFunction(
+        () => /Unsaved files/.test(document.querySelector(".swal2-title")?.textContent || ""),
+        null, { timeout: 10000 });
+      const refusal = await page.textContent(".swal2-html-container");
+      assert(refusal.includes(`${dir}/two.go`), `the refusal does not name the file: ${refusal}`);
+      await confirmSwal(page);
+      assert((await diskOf(`${dir}/two.go`)).includes(needle), "a file was written although a buffer was unsaved");
+      assert((await diskOf(`${dir}/note.md`)).includes(needle), "another file was written while the job was refused");
+
+      // Saved, the same press writes everything and the open tab follows the
+      // disk without a reload.
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      await page.click(`.editor-tab[data-path="${dir}/two.go"]`);
+      await page.keyboard.press("Control+S");
+      await waitDirty(`${dir}/two.go`, false);
+      await openReplace();
+      await page.click("[data-editor-quickopen-replace-all]");
+      await confirmSwal(page);
+      await page.waitForFunction(() => {
+        const el = document.querySelector("[data-editor-quickopen-foot-left]");
+        return el && el.textContent.trim() === "0 matches";
+      }, null, { timeout: 20000 });
+      for (const rel of [`${dir}/one.go`, `${dir}/two.go`, `${dir}/note.md`, `${dir}/many.txt`]) {
+        assert(!(await diskOf(rel)).includes(needle), `${rel} still holds a match`);
+      }
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      const buffer = await page.$eval(".cm-content", (el) => el.textContent);
+      assert(buffer.includes("found") && !buffer.includes(needle),
+        `the open tab kept the old content: ${JSON.stringify(buffer.slice(0, 60))}`);
+
+      // Leave the strip and the tree as they were found.
+      await page.evaluate((sel) => document.querySelector(`${sel} .editor-tab-state`)?.click(), `.editor-tab[data-path="${dir}/two.go"]`);
+      await page.waitForFunction((sel) => !document.querySelector(sel), `.editor-tab[data-path="${dir}/two.go"]`, { timeout: 6000 });
+      await page.evaluate(async ([proj, path]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/projects/${proj}/editor/delete`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: "path=" + encodeURIComponent(path),
+        });
+      }, [project, dir]);
+      await page.click("[data-editor-refresh]");
+      await page.waitForFunction((d) => !document.querySelector(`.editor-dir[data-path="${d}"]`), dir, { timeout: 8000 });
+      return "one row, then 213 in four files, and nothing while a buffer stood open";
+    });
+
+    await run("the palette's inputs are kept per project, across a jump into a hit and a reload", async () => {
+      const dir = `qkeep_${tag}`;
+      const needle = `keepneedle${tag}`;
+      await page.evaluate(async ([proj, files]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const post = (url, form) => fetch(url, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+        });
+        for (const [path, body] of Object.entries(files)) {
+          await post(`/projects/${proj}/editor/create`, "path=" + encodeURIComponent(path));
+          await post(`/projects/${proj}/editor/file`, "path=" + encodeURIComponent(path) + "&content=" + encodeURIComponent(body));
+        }
+      }, [project, {
+        [`${dir}/one.go`]: `${needle} here\n`,
+        [`${dir}/two.md`]: `${needle} there\n`,
+        [`${dir}_other/three.go`]: `${needle} elsewhere\n`,
+      }]);
+
+      const held = () => page.evaluate(() => ({
+        query: document.querySelector("[data-editor-quickopen-input]").value,
+        replace: document.querySelector("[data-editor-quickopen-replace]").value,
+        folder: document.querySelector("[data-editor-quickopen-folder-slot]").textContent.trim(),
+        mask: document.querySelector("[data-editor-quickopen-mask-slot]").textContent.trim(),
+        regex: document.querySelector("[data-editor-quickopen-regex]").classList.contains("active"),
+      }));
+      const openReplace = async () => {
+        await page.click(".cm-content");
+        await page.keyboard.press("Control+Shift+H");
+        await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      };
+
+      // One storage for both modes: what is typed in find in files stands in
+      // replace in files, even when the bundled write has not run yet.
+      await clickItem("[data-editor-search-project-item]");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.fill("[data-editor-quickopen-input]", needle);
+      await page.keyboard.press("Control+Shift+H");
+      await page.waitForSelector("[data-editor-quickopen-replace]", { state: "visible", timeout: 4000 });
+      assert((await page.inputValue("[data-editor-quickopen-input]")) === needle,
+        `the query did not travel from find to replace: ${await page.inputValue("[data-editor-quickopen-input]")}`);
+      await page.fill("[data-editor-quickopen-replace]", "kept");
+      await page.click("[data-editor-quickopen-folder-slot]");
+      await page.waitForSelector(`.editor-quickopen-item[data-pick="${dir}"]`, { timeout: 8000 });
+      await page.click(`.editor-quickopen-item[data-pick="${dir}"]`);
+      await page.waitForSelector(".editor-quickopen-match", { timeout: 8000 });
+      await page.click("[data-editor-quickopen-mask-slot]");
+      await page.waitForSelector('.editor-quickopen-item[data-pick="*.go"]', { timeout: 8000 });
+      await page.click('.editor-quickopen-item[data-pick="*.go"]');
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => {
+        const el = document.querySelector("[data-editor-quickopen-foot-left]");
+        return el && el.textContent.trim() === "1 match in 1 file";
+      }, null, { timeout: 10000 });
+      const before = await held();
+
+      // The jump into a hit closes the palette, and coming back lands on the
+      // same search.
+      await page.click(".editor-quickopen-match");
+      await page.waitForSelector(`.editor-tab[data-path="${dir}/one.go"].active`, { timeout: 10000 });
+      await openReplace();
+      await page.waitForFunction((want) => document.querySelector("[data-editor-quickopen-input]").value === want, needle, { timeout: 8000 });
+      let now = await held();
+      assert(JSON.stringify(now) === JSON.stringify(before), `after a jump the palette holds ${JSON.stringify(now)}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+
+      // And it is the server that holds it, so a reload brings it back too.
+      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 15000 });
+      await sleep(800);
+      await openReplace();
+      await page.waitForFunction((want) => document.querySelector("[data-editor-quickopen-input]").value === want, needle, { timeout: 8000 });
+      now = await held();
+      assert(JSON.stringify(now) === JSON.stringify(before), `after a reload the palette holds ${JSON.stringify(now)}`);
+
+      // The mode is never restored, it belongs to the way the palette opened,
+      // and quick open keeps the folder without the content query.
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      await page.keyboard.press("Control+O");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.waitForSelector("[data-editor-quickopen-replace]", { state: "hidden", timeout: 4000 });
+      assert((await page.inputValue("[data-editor-quickopen-input]")) === "", "quick open opened on the content query");
+      assert((await page.textContent("[data-editor-quickopen-folder-slot]")).trim() === dir, "quick open lost the folder");
+
+      // A folder set from the tree outranks the stored one.
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector(`.editor-dir[data-path="${dir}"]`, { timeout: 8000 });
+      await page.waitForSelector(`.editor-dir[data-path="${dir}_other"]`, { timeout: 8000 });
+      await openRowMenu(page, `.editor-dir[data-path="${dir}_other"]`);
+      await menuItem(page, "Find in files").click();
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      assert((await page.textContent("[data-editor-quickopen-folder-slot]")).trim() === `${dir}_other`,
+        `the tree's folder lost against the stored one: ${await page.textContent("[data-editor-quickopen-folder-slot]")}`);
+
+      // Leave the palette and the project as they were found. The second field
+      // only stands in replace mode, so the clearing happens there.
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      await openReplace();
+      await page.waitForSelector("[data-editor-quickopen-replace]", { state: "visible", timeout: 4000 });
+      for (const slot of ["[data-editor-quickopen-folder-slot]", "[data-editor-quickopen-mask-slot]"]) {
+        if (await page.$(`${slot} .editor-quickopen-chip-remove`)) {
+          await page.click(`${slot} .editor-quickopen-chip-remove`);
+          await sleep(300);
+        }
+      }
+      await page.fill("[data-editor-quickopen-input]", "");
+      await page.fill("[data-editor-quickopen-replace]", "");
+      await sleep(1200);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      await page.evaluate((sel) => document.querySelector(`${sel} .editor-tab-state`)?.click(), `.editor-tab[data-path="${dir}/one.go"]`);
+      await page.evaluate(async ([proj, path]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/projects/${proj}/editor/delete`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: "path=" + encodeURIComponent(path),
+        });
+      }, [project, dir]);
+      await page.evaluate(async ([proj, path]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/projects/${proj}/editor/delete`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: "path=" + encodeURIComponent(path),
+        });
+      }, [project, `${dir}_other`]);
+      await page.click("[data-editor-refresh]");
+      await page.waitForFunction((d) => !document.querySelector(`.editor-dir[data-path="${d}"]`), dir, { timeout: 8000 });
+      return "query, replacement, folder, mask and the switch, across a hit and a reload";
+    });
+
+    await run("the palette follows the same project on another device, open or closed", async () => {
+      const dir = `qlive_${tag}`;
+      const one = `liveone${tag}`;
+      const two = `livetwo${tag}`;
+      const three = `livethree${tag}`;
+      await page.evaluate(async ([proj, files]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const post = (url, form) => fetch(url, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+        });
+        for (const [path, body] of Object.entries(files)) {
+          await post(`/projects/${proj}/editor/create`, "path=" + encodeURIComponent(path));
+          await post(`/projects/${proj}/editor/file`, "path=" + encodeURIComponent(path) + "&content=" + encodeURIComponent(body));
+        }
+      }, [project, {
+        [`${dir}/one.txt`]: `${one} here\n`,
+        [`${dir}/two.txt`]: `${two} there\n`,
+        [`${dir}/three.txt`]: `${three} elsewhere\n`,
+      }]);
+
+      const waitQuery = (pg, want) => pg.waitForFunction(
+        (q) => document.querySelector("[data-editor-quickopen-input]").value === q, want, { timeout: 15000 });
+      const waitHit = (pg, path) => pg.waitForFunction(
+        (p) => [...document.querySelectorAll(".editor-quickopen-match")]
+          .some((el) => (el.title || "").startsWith(p)), path, { timeout: 15000 });
+      const dropFixture = async () => {
+        await page.evaluate(async ([proj, path]) => {
+          const token = document.querySelector('meta[name="csrf-token"]').content;
+          await fetch(`/projects/${proj}/editor/delete`, {
+            method: "POST",
+            headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+            body: "path=" + encodeURIComponent(path),
+          });
+        }, [project, dir]);
+        await page.click("[data-editor-refresh]");
+        await page.waitForFunction((d) => !document.querySelector(`.editor-dir[data-path="${d}"]`), dir, { timeout: 8000 });
+      };
+
+      try {
+        await clickItem("[data-editor-search-project-item]");
+        await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+        await page.fill("[data-editor-quickopen-input]", one);
+        await waitHit(page, `${dir}/one.txt`);
+
+        const other = await ctx.newPage();
+        L.wirePage(other, bag);
+        try {
+          await other.goto(editorURL, { waitUntil: "domcontentloaded" });
+          await other.waitForSelector(".cm-editor", { state: "attached", timeout: 20000 });
+          await other.evaluate(() => document.querySelector("[data-editor-search-project-item]").click());
+          await other.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+          await waitQuery(other, one);
+
+          // The open palette follows what the other one writes, field and hits,
+          // without anybody reopening anything.
+          await other.fill("[data-editor-quickopen-input]", two);
+          await waitHit(other, `${dir}/two.txt`);
+          await waitQuery(page, two);
+          await waitHit(page, `${dir}/two.txt`);
+
+          // And a closed one is not left behind: it takes what arrived while it
+          // was away, without asking the server again on the way in.
+          await page.keyboard.press("Escape");
+          await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+          await other.fill("[data-editor-quickopen-input]", three);
+          await waitHit(other, `${dir}/three.txt`);
+          await sleep(1200);
+          await clickItem("[data-editor-search-project-item]");
+          await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+          await waitQuery(page, three);
+          await waitHit(page, `${dir}/three.txt`);
+
+          await other.fill("[data-editor-quickopen-input]", "");
+          await other.keyboard.press("Escape");
+          await sleep(600);
+        } finally {
+          await other.close().catch(() => {});
+        }
+
+        await page.fill("[data-editor-quickopen-input]", "");
+        await sleep(600);
+        await page.keyboard.press("Escape");
+        await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      } finally {
+        await dropFixture().catch(() => {});
+      }
+      return "the open palette followed the other device, the closed one caught up on its next open";
+    });
+
+    await run("Ctrl+Enter and Ctrl+click open a row behind the palette", async () => {
+      const dir = `qbg_${tag}`;
+      const needle = `bgneedle${tag}`;
+      await page.evaluate(async ([proj, files]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const post = (url, form) => fetch(url, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+        });
+        for (const [path, body] of Object.entries(files)) {
+          await post(`/projects/${proj}/editor/create`, "path=" + encodeURIComponent(path));
+          await post(`/projects/${proj}/editor/file`, "path=" + encodeURIComponent(path) + "&content=" + encodeURIComponent(body));
+        }
+      }, [project, { [`${dir}/one.go`]: `pad\npad\n${needle} here\n`, [`${dir}/two.go`]: `${needle} there\n` }]);
+
+      const marked = () => page.$eval(".editor-quickopen-item.active", (el) => el.title);
+      const openState = () => page.evaluate(() => !document.querySelector("[data-editor-quickopen]").hidden);
+      const tabState = (path) => page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        return el ? (el.classList.contains("active") ? "active" : "behind") : "none";
+      }, `.editor-tab[data-path="${path}"]`);
+
+      await clickItem("[data-editor-search-project-item]");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.fill("[data-editor-quickopen-input]", needle);
+      await page.waitForFunction(() => document.querySelectorAll(".editor-quickopen-match").length === 2, null, { timeout: 10000 });
+      assert((await marked()) === `${dir}/one.go:3`, `the mark starts on ${await marked()}`);
+
+      // The file stands behind the palette at its own line, while the field and
+      // the focus stay where they are and the mark walks on.
+      await page.keyboard.press("Control+Enter");
+      await page.waitForFunction((sel) => document.querySelector(sel)?.classList.contains("active"), `.editor-tab[data-path="${dir}/one.go"]`, { timeout: 8000 });
+      await page.waitForFunction(() => /^3:/.test(document.querySelector("[data-editor-pos]")?.textContent || ""), null, { timeout: 6000 });
+      assert(await openState(), "the palette closed on Ctrl+Enter");
+      assert((await page.evaluate(() => document.activeElement.getAttributeNames().find((n) => n.startsWith("data-editor")) || "")) === "data-editor-quickopen-input",
+        "the focus left the palette");
+      assert((await marked()) === `${dir}/two.go:1`, `the mark stayed on ${await marked()}`);
+
+      // The mouse says the same thing, on the row that is still to be opened.
+      await page.click(`.editor-quickopen-match[title="${dir}/two.go:1"]`, { modifiers: ["Control"] });
+      await page.waitForFunction((sel) => document.querySelector(sel)?.classList.contains("active"), `.editor-tab[data-path="${dir}/two.go"]`, { timeout: 8000 });
+      assert(await openState(), "a Ctrl-click closed the palette");
+      assert((await tabState(`${dir}/one.go`)) === "behind", "the first file did not step aside for the second");
+
+      // Closing the palette leaves somebody standing in the last one opened.
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      assert((await tabState(`${dir}/two.go`)) === "active", "the last file opened is not the one in front");
+
+      for (const rel of [`${dir}/one.go`, `${dir}/two.go`]) {
+        await page.evaluate((sel) => document.querySelector(`${sel} .editor-tab-state`)?.click(), `.editor-tab[data-path="${rel}"]`);
+        await page.waitForFunction((sel) => !document.querySelector(sel), `.editor-tab[data-path="${rel}"]`, { timeout: 6000 });
+      }
+      await page.evaluate(async ([proj, path]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/projects/${proj}/editor/delete`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: "path=" + encodeURIComponent(path),
+        });
+      }, [project, dir]);
+      return "two files read behind the palette, each at its line, the field never left";
+    });
+
+    await run("Shift+Enter writes the marked match and steps to the next one", async () => {
+      const dir = `qkb_${tag}`;
+      const needle = `kbneedle${tag}`;
+      await page.evaluate(async ([proj, files]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const post = (url, form) => fetch(url, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+        });
+        for (const [path, body] of Object.entries(files)) {
+          await post(`/projects/${proj}/editor/create`, "path=" + encodeURIComponent(path));
+          await post(`/projects/${proj}/editor/file`, "path=" + encodeURIComponent(path) + "&content=" + encodeURIComponent(body));
+        }
+      }, [project, {
+        [`${dir}/a.go`]: `${needle} one\n`,
+        [`${dir}/b.go`]: `${needle} two\n`,
+        [`${dir}/c.go`]: `${needle} three\n`,
+      }]);
+
+      const marked = () => page.$eval(".editor-quickopen-item.active", (el) => el.title);
+      const waitFoot = (want) => page.waitForFunction(
+        (text) => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim() === text,
+        want, { timeout: 12000 });
+
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+Shift+H");
+      await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
+      await page.fill("[data-editor-quickopen-input]", needle);
+      await page.fill("[data-editor-quickopen-replace]", "written");
+      await page.waitForSelector(".editor-quickopen-match-after", { timeout: 10000 });
+      await waitFoot("3 matches in 3 files");
+      assert(/Shift\+Enter/.test(await page.getAttribute(".editor-quickopen-match-apply", "title")),
+        `the row's button does not name the key: ${await page.getAttribute(".editor-quickopen-match-apply", "title")}`);
+      assert((await marked()) === `${dir}/a.go:1`, `the mark starts on ${await marked()}`);
+
+      // One keystroke writes one match, the row leaves and the mark slides on;
+      // the list never goes back to its first entry.
+      await page.keyboard.press("Shift+Enter");
+      await waitFoot("2 matches in 2 files");
+      assert((await marked()) === `${dir}/b.go:1`, `the mark went to ${await marked()}`);
+      assert(!(await page.$eval("[data-editor-quickopen]", (el) => el.hidden)), "the palette closed on Shift+Enter");
+      await page.keyboard.press("Shift+Enter");
+      await waitFoot("1 match in 1 file");
+      assert((await marked()) === `${dir}/c.go:1`, `the mark went to ${await marked()}`);
+      await page.keyboard.press("Shift+Enter");
+      await waitFoot("0 matches");
+      const empty = await page.textContent(".editor-quickopen-empty");
+      assert(/no matches/i.test(empty || ""), `an emptied list says nothing: ${empty}`);
+
+      for (const rel of ["a.go", "b.go", "c.go"]) {
+        const body = await page.evaluate(async ([proj, path]) => {
+          const res = await fetch(`/projects/${proj}/editor/file?path=${encodeURIComponent(path)}`);
+          return (await res.json()).content;
+        }, [project, `${dir}/${rel}`]);
+        assert(body.includes("written") && !body.includes(needle), `${rel} holds ${JSON.stringify(body)}`);
+      }
+
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
+      await page.evaluate(async ([proj, path]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/projects/${proj}/editor/delete`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: "path=" + encodeURIComponent(path),
+        });
+      }, [project, dir]);
+      await page.click("[data-editor-refresh]");
+      await page.waitForFunction((d) => !document.querySelector(`.editor-dir[data-path="${d}"]`), dir, { timeout: 8000 });
+      return "three matches written one keystroke at a time, the mark following";
     });
 
     await run("mobile: the whole search runs on taps alone, no key but the text", async () => {

@@ -20,6 +20,12 @@ import * as projectSort from "@dc/project-sort";
 import * as store from "@dc/store";
 
 const MAX_SAVED_TREE_DIRS = 200;
+// How long the palette's draft waits after the last keystroke. Short, because
+// the write is five short fields and the cost of losing them is not: somebody
+// jumps into a hit or switches modes a moment after typing. The commit panel
+// and the assistant's composer keep their longer waits, they rewrite a whole
+// file per pause and neither serialises its writes.
+const SEARCH_DRAFT_DEBOUNCE_MS = 200;
 const PREVIEW_DEBOUNCE_MS = 500;
 const DIFF_REV = "HEAD";
 const TREE_WIDTH_KEY = "dc-editor-tree-width";
@@ -106,6 +112,11 @@ async function init(root) {
   const quickOpenInput = root.querySelector("[data-editor-quickopen-input]");
   const quickOpenList = root.querySelector("[data-editor-quickopen-list]");
   const quickOpenRegexBtn = root.querySelector("[data-editor-quickopen-regex]");
+  const quickOpenCaseBtn = root.querySelector("[data-editor-quickopen-case]");
+  const quickOpenActionsEl = root.querySelector("[data-editor-quickopen-actions]");
+  const replaceProjectItem = root.querySelector("[data-editor-replace-project-item]");
+  const quickOpenReplaceInput = root.querySelector("[data-editor-quickopen-replace]");
+  const quickOpenReplaceAllBtn = root.querySelector("[data-editor-quickopen-replace-all]");
   const quickOpenContextEl = root.querySelector("[data-editor-quickopen-context]");
   const quickOpenFolderSlot = root.querySelector("[data-editor-quickopen-folder-slot]");
   const quickOpenMaskSlot = root.querySelector("[data-editor-quickopen-mask-slot]");
@@ -450,10 +461,10 @@ async function init(root) {
   // there is this project's to change and a save would have nowhere to go.
   // Its path is absolute, which no path of the project ever is, so the one
   // tab list holds both without a second key.
-  async function openExternal(path) {
+  async function openExternal(path, { jump = null } = {}) {
     closeDrawer();
     if (tabByPath(path)) {
-      activateTab(path);
+      placeTab(path, jump);
       return;
     }
     if (opening.has(path)) return;
@@ -463,7 +474,7 @@ async function init(root) {
       const data = await lsp.source(path, signal);
       if (signal.aborted || tabByPath(path)) return;
       tabs.push(await externalTabFor(path, data));
-      activateTab(path);
+      placeTab(path, jump);
       status("");
     } catch (err) {
       status(err.message, "error");
@@ -1093,6 +1104,7 @@ async function init(root) {
       if (pointerMedia.matches) editor.focus();
     }
     afterActiveChanged();
+    applyPendingJump(tab);
     if (tab.compare) void showCompare(tab);
     // The tab carries its own diff mode, so switching back into one restores it.
     else if (!tab.kind && !tab.external) void applyTabDiff(tab);
@@ -1411,10 +1423,12 @@ async function init(root) {
     };
   }
 
-  async function openPath(path, { keepDrawer = false } = {}) {
+  // jump is the line the tab should stand on once it is up, which is what the
+  // palette hands over: a hit opens where it was found.
+  async function openPath(path, { keepDrawer = false, jump = null } = {}) {
     if (!keepDrawer) closeDrawer();
     if (tabByPath(path)) {
-      activateTab(path);
+      placeTab(path, jump);
       return;
     }
     if (opening.has(path)) return;
@@ -1424,13 +1438,31 @@ async function init(root) {
       const data = await getJSON(`${base}/file?path=${encodeURIComponent(path)}`, { signal });
       if (signal.aborted || tabByPath(path)) return;
       tabs.push(await tabFor(path, data));
-      activateTab(path);
+      placeTab(path, jump);
       status("");
     } catch (err) {
       status(err.message, "error");
     } finally {
       opening.delete(path);
     }
+  }
+
+  // Where a freshly opened tab lands. The jump rides in the tab, because a file
+  // that is already the active one gives activateTab nothing to do while two
+  // hits in it are still two different lines.
+  function placeTab(path, jump) {
+    const tab = tabByPath(path);
+    if (!tab) return;
+    if (jump && jump.line) tab.pendingJump = jump;
+    activateTab(path);
+    applyPendingJump(tab);
+  }
+
+  function applyPendingJump(tab) {
+    const jump = tab.pendingJump;
+    if (!jump || tab.kind || tab.compare) return;
+    tab.pendingJump = null;
+    editor.jumpTo(jump.line, jump.character || 0);
   }
 
   // ---- tree ------------------------------------------------------------------
@@ -1559,6 +1591,11 @@ async function init(root) {
         label: "Go to file",
         icon: "ti-file-search",
         action: () => openQuickOpen("files", entry.path),
+      });
+      items.push({
+        label: "Replace in files",
+        icon: "ti-replace",
+        action: () => openQuickOpen("replace", entry.path),
       });
     }
     if (!entry.isDir && isArchive(baseName(entry.path))) {
@@ -5687,7 +5724,9 @@ async function init(root) {
   let searchTimer = 0;
   let filesSeq = 0;
   let filesTimer = 0;
-  let lastSearch = { matches: [], truncated: false };
+  // total and files count the whole scope, which is what a replacement acts on;
+  // matches is only what the list shows.
+  let lastSearch = { matches: [], truncated: false, total: 0, files: 0 };
   // What the two filters stand on. They live on this page, not on the server:
   // they survive the palette closing and go with the tab.
   let scopeFolder = "";
@@ -5698,6 +5737,20 @@ async function init(root) {
   // so typing in a chooser costs no request.
   let filterFacts = null;
   let filterFactsPending = null;
+  // What the palette held last, kept per project on the server. It is fetched
+  // once per page and written back in bundles, never per keystroke.
+  let searchDraft = null;
+  let searchDraftPending = null;
+  let searchDraftTimer = 0;
+  let searchDraftSaving = false;
+  // Every open gets a number, so an answer that arrives after the palette moved
+  // on cannot write into it, and touched says whether somebody was faster than
+  // the answer: what a person typed always beats what the server held.
+  let quickOpenGeneration = 0;
+  let quickOpenTouched = false;
+  // Where the mark goes when the next answer paints, so a written row does not
+  // send the list back to its first entry.
+  let quickOpenKeepActive = -1;
 
   const pathExtension = (path) => {
     const name = baseName(path || "");
@@ -5705,9 +5758,156 @@ async function init(root) {
     return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1) : "";
   };
 
-  const resultsPlaceholder = () => (quickOpenMode === "search" ? "Find in files…" : "Go to file…");
+  // Replace is find in files with one field more: the same scope, the same
+  // mask, the same regex switch, and a preview of what it would write.
+  const findsInFiles = () => quickOpenMode === "search" || quickOpenMode === "replace";
+  // The palette's inputs live on the server, one entry per project: somebody
+  // jumps into a hit, reads, comes back, and the search is where they left it,
+  // on this device and on the next one. Two things never come from here: the
+  // mode belongs to the way the palette was opened, and a folder the tree menu
+  // just set outranks the stored one.
+  async function loadSearchDraft() {
+    if (searchDraft) return searchDraft;
+    if (!searchDraftPending) {
+      searchDraftPending = getJSON(`${base}/search-draft`, { signal })
+        .then((data) => {
+          searchDraft = data || {};
+          return searchDraft;
+        })
+        .finally(() => {
+          searchDraftPending = null;
+        });
+    }
+    return await searchDraftPending;
+  }
+
+  // A draft without a timestamp was never stored, and then the palette keeps
+  // what it holds rather than being emptied by a project that has no state.
+  function applySearchDraft(draft, keepFolder) {
+    if (!draft || !draft.updatedAt) return false;
+    // The two texts belong to searching in files; quick open matches paths and
+    // a content query in its box would only answer "no matching files". The
+    // folder, the mask and the switch are the shared ground and always apply.
+    if (findsInFiles()) {
+      if (quickOpenView === "results") quickOpenInput.value = draft.query || "";
+      else parkedQuery = draft.query || "";
+      quickOpenReplaceInput.value = draft.replace || "";
+    }
+    if (!keepFolder) scopeFolder = draft.folder || "";
+    maskPatterns = String(draft.mask || "").split(",").map((entry) => entry.trim()).filter(Boolean);
+    if (!!draft.regex !== !!editorSettings.search_regex || !!draft.case !== !!editorSettings.search_case) {
+      editorSettings.search_regex = !!draft.regex;
+      editorSettings.search_case = !!draft.case;
+      saveEditorSettings(editorSettings);
+    }
+    return true;
+  }
+
+  function scheduleSearchDraftSave() {
+    quickOpenTouched = true;
+    clearTimeout(searchDraftTimer);
+    searchDraftTimer = setTimeout(saveSearchDraft, SEARCH_DRAFT_DEBOUNCE_MS);
+  }
+
+  // What the palette holds, into the cache, without touching the wire. It has
+  // to be right the moment somebody switches modes or jumps into a hit, both of
+  // which read the cache back, so this half is synchronous.
+  function paletteDraft() {
+    return {
+      // While a chooser borrows the field, the query is the parked one: the
+      // chooser's filter is nobody's search.
+      query: currentQuery(),
+      replace: quickOpenReplaceInput.value,
+      folder: scopeFolder,
+      mask: maskPatterns.join(", "),
+      regex: !!editorSettings.search_regex,
+      case: !!editorSettings.search_case,
+    };
+  }
+
+  const searchDraftKey = (draft) => [
+    (draft && draft.query) || "",
+    (draft && draft.replace) || "",
+    (draft && draft.folder) || "",
+    (draft && draft.mask) || "",
+    draft && draft.regex ? "1" : "",
+    draft && draft.case ? "1" : "",
+  ].join("\n");
+
+  function captureSearchDraft() {
+    const next = paletteDraft();
+    if (!searchDraft && searchDraftKey(next) === searchDraftKey(null)) return false;
+    searchDraft = { ...next, updatedAt: (searchDraft && searchDraft.updatedAt) || new Date().toISOString() };
+    return true;
+  }
+
+  // One write at a time, always carrying what the cache holds when it goes out.
+  // The answer only ever brings the stamp back, and only onto the cache it was
+  // written for, so a slow one can never speak for values that moved on.
+  const flushSearchDraft = singleFlight(async () => {
+    const sent = searchDraft;
+    if (!sent) return;
+    searchDraftSaving = true;
+    try {
+      const res = await postJSON(`${base}/search-draft`, {
+        query: sent.query,
+        replace: sent.replace,
+        folder: sent.folder,
+        mask: sent.mask,
+        regex: sent.regex,
+        case: sent.case,
+      });
+      const data = await res.json().catch(() => null);
+      if (data && data.updatedAt && searchDraft === sent) searchDraft.updatedAt = data.updatedAt;
+    } catch (err) {
+      void err; // A palette that could not be kept is not worth a toast.
+    } finally {
+      searchDraftSaving = false;
+    }
+    await pullSearchDraft();
+  });
+
+  async function pullSearchDraft() {
+    if (searchDraftSaving) return;
+    let draft;
+    try {
+      draft = await getJSON(`${base}/search-draft`, { signal });
+    } catch (err) {
+      void err;
+      return;
+    }
+    if (!draft || !draft.updatedAt) return;
+    const held = searchDraft;
+    if (held && held.updatedAt && draft.updatedAt <= held.updatedAt) return;
+    if (quickOpenEl.hidden) {
+      searchDraft = draft;
+      return;
+    }
+    if (searchDraftKey(paletteDraft()) !== searchDraftKey(held)) return;
+    searchDraft = draft;
+    if (!applySearchDraft(draft, false)) return;
+    syncQuickOpenSwitches();
+    renderQuickOpenContext();
+    runQuickOpenQuery();
+    if (quickOpenView !== "results") renderQuickOpenPicker(true);
+  }
+
+  function saveSearchDraft() {
+    clearTimeout(searchDraftTimer);
+    if (captureSearchDraft()) void flushSearchDraft();
+  }
+
+  const resultsPlaceholder = () => {
+    if (quickOpenMode === "replace") return "Replace in files…";
+    return quickOpenMode === "search" ? "Find in files…" : "Go to file…";
+  };
 
   async function openQuickOpen(mode = "files", folder = null) {
+    // Switching modes does not close the palette, so the bundled write has not
+    // run yet: what stands in the fields goes into the draft before the draft
+    // is read back, or a query typed a moment ago is replaced by the one before
+    // it on the way from find to replace.
+    if (!quickOpenEl.hidden) saveSearchDraft();
     closeDrawer();
     closeSheet();
     quickOpenMode = mode;
@@ -5716,22 +5916,54 @@ async function init(root) {
     quickOpenInput.value = "";
     quickOpenInput.placeholder = resultsPlaceholder();
     quickOpenMatches = [];
-    if (folder !== null) scopeFolder = folder;
-    syncQuickOpenRegex();
+    quickOpenReplaceInput.hidden = mode !== "replace";
+    lastSearch = { matches: [], truncated: false, total: 0, files: 0 };
+    // A folder that was just picked in the tree outranks the stored one, or
+    // somebody clicks a folder and searches in the one from yesterday.
+    const keepFolder = folder !== null;
+    if (keepFolder) scopeFolder = folder;
+    const generation = ++quickOpenGeneration;
+    quickOpenTouched = false;
+    const held = searchDraft;
+    if (held) applySearchDraft(held, keepFolder);
+    syncQuickOpenSwitches();
     renderQuickOpenContext();
     quickOpenInput.focus();
-    if (mode === "search") {
-      showQuickOpenNote("Type at least 2 characters to search file contents.");
-      setQuickOpenFoot("", "");
+    startQuickOpenQuery();
+    if (held) return;
+    // The first open of a page pays for the fetch; what it brings only lands
+    // when the palette is still the one that asked for it.
+    void loadSearchDraft().then((draft) => {
+      if (generation !== quickOpenGeneration || quickOpenEl.hidden || quickOpenTouched) return;
+      if (!applySearchDraft(draft, keepFolder)) return;
+      syncQuickOpenSwitches();
+      renderQuickOpenContext();
+      startQuickOpenQuery();
+    }).catch(() => {});
+  }
+
+  // What the palette asks the moment it stands, with whatever the draft put in
+  // the field.
+  function startQuickOpenQuery() {
+    if (findsInFiles()) {
+      if (currentQuery().trim().length < 2) {
+        showQuickOpenNote("Type at least 2 characters to search file contents.");
+        setQuickOpenFoot("", "");
+        return;
+      }
+      scheduleSearch(0);
       return;
     }
     showQuickOpenNote("Loading…");
-    runFileQuery("");
+    runFileQuery(quickOpenInput.value);
   }
 
   // Every way out lands here; the surface takes the focus back.
   function closeQuickOpen() {
     if (quickOpenEl.hidden) return;
+    // The jump into a hit closes the palette, so this is the save that makes
+    // coming back land on the same search.
+    saveSearchDraft();
     // A chooser is a step, not a place to come back into: the field belongs to
     // the query again the next time the palette opens.
     quickOpenView = "results";
@@ -5751,11 +5983,12 @@ async function init(root) {
   function setQuickOpenFoot(left, right) {
     quickOpenFootLeft.textContent = left || "";
     quickOpenFootRight.textContent = right || "";
+    syncReplaceButton();
   }
 
   function renderQuickOpenContext() {
     const showFolder = quickOpenMode !== "usages";
-    const showMask = quickOpenMode === "search";
+    const showMask = findsInFiles();
     quickOpenContextEl.hidden = !showFolder && !showMask;
     quickOpenFolderSlot.hidden = !showFolder;
     quickOpenMaskSlot.hidden = !showMask;
@@ -5825,6 +6058,7 @@ async function init(root) {
   // taken off is exactly where the two used to drift apart.
   function filterChanged() {
     renderQuickOpenContext();
+    scheduleSearchDraftSave();
     runQuickOpenQuery();
     if (quickOpenView !== "results") renderQuickOpenPicker(true);
   }
@@ -5833,7 +6067,7 @@ async function init(root) {
   // new one at once, through the debounce that already guards the ordering.
   function runQuickOpenQuery() {
     if (quickOpenMode === "usages") return;
-    if (quickOpenMode === "search") scheduleSearch(0);
+    if (findsInFiles()) scheduleSearch(0);
     else scheduleFileQuery(0);
   }
 
@@ -5909,7 +6143,15 @@ async function init(root) {
       item.dataset.path = path;
       item.title = path;
       item.innerHTML = `<i class="ti ${fileIcon(baseName(path))}"></i><span class="editor-quickopen-name">${escapeHtml(baseName(path))}</span><span class="editor-quickopen-dir">${escapeHtml(parentDir(path))}</span>`;
-      item.addEventListener("click", () => chooseQuickOpen(path));
+      item.addEventListener("click", (event) => {
+        if (event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          const rendered = [...quickOpenList.querySelectorAll(".editor-quickopen-item")];
+          void openRowBehind(rendered.indexOf(item));
+          return;
+        }
+        chooseQuickOpen(path);
+      });
       quickOpenList.appendChild(item);
     });
     setQuickOpenFoot(countLabel(quickOpenMatches.length, "file", "files"), quickOpenFiles.truncated
@@ -5923,20 +6165,27 @@ async function init(root) {
     return `${n} ${n === 1 ? one : many}`;
   }
 
-  function syncQuickOpenRegex() {
-    // The toggle is about the query, so it steps aside while the field filters a
-    // chooser instead.
-    const show = quickOpenMode === "search" && quickOpenView === "results";
-    quickOpenRegexBtn.hidden = !show;
-    quickOpenInput.classList.toggle("pe-5", show);
-    quickOpenRegexBtn.classList.toggle("active", !!editorSettings.search_regex);
-    quickOpenRegexBtn.setAttribute("aria-pressed", editorSettings.search_regex ? "true" : "false");
+  // Both switches are about the query, so they step aside while the field
+  // filters a chooser instead, and the field's padding follows how many of them
+  // stand there.
+  function syncQuickOpenSwitches() {
+    const show = findsInFiles() && quickOpenView === "results";
+    for (const [button, on] of [[quickOpenCaseBtn, !!editorSettings.search_case],
+      [quickOpenRegexBtn, !!editorSettings.search_regex]]) {
+      button.hidden = !show;
+      button.classList.toggle("active", on);
+      button.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    const width = quickOpenActionsEl.offsetWidth;
+    quickOpenInput.style.paddingRight = width ? `${width + 16}px` : "";
   }
 
-  function toggleSearchRegex() {
-    editorSettings.search_regex = !editorSettings.search_regex;
+  // A switch changes what the query means, so the search runs again at once.
+  function toggleSearchSwitch(key) {
+    editorSettings[key] = !editorSettings[key];
     saveEditorSettings(editorSettings);
-    syncQuickOpenRegex();
+    scheduleSearchDraftSave();
+    syncQuickOpenSwitches();
     quickOpenInput.focus();
     clearTimeout(searchTimer);
     const q = currentQuery().trim();
@@ -5944,7 +6193,7 @@ async function init(root) {
     else scheduleSearch();
   }
 
-  function scheduleSearch(delay = 250) {
+  function scheduleSearch(delay = 250, quiet = false) {
     clearTimeout(searchTimer);
     const q = currentQuery().trim();
     if (q.length < 2) {
@@ -5956,18 +6205,38 @@ async function init(root) {
       }
       return;
     }
-    searchTimer = setTimeout(() => runSearch(q), delay);
+    // The rows standing here belong to the query that fetched them, and the
+    // palette now opens with the last one already in the box: without this the
+    // first Enter after a fresh query opens a file that query never matched.
+    // It is the rule the file list follows, for the same reason.
+    searchSeq++;
+    // A quiet refresh runs behind a list that is already right, a row having
+    // just been taken out of it: clearing it would blink away what somebody is
+    // working through.
+    if (quickOpenView === "results" && !quiet) {
+      showQuickOpenNote("Searching…");
+      setQuickOpenFoot("", "");
+    }
+    searchTimer = setTimeout(() => runSearch(q, quiet), delay);
   }
 
-  async function runSearch(q) {
+  async function runSearch(q, quiet = false) {
     const seq = ++searchSeq;
-    if (quickOpenView === "results") showQuickOpenNote("Searching…");
+    if (quickOpenView === "results" && !quiet) showQuickOpenNote("Searching…");
     try {
-      const re = editorSettings.search_regex ? "&re=1" : "";
-      const data = await getJSON(`${base}/search?q=${encodeURIComponent(q)}${re}${maskParam()}${folderParam()}`, { signal });
-      if (seq !== searchSeq || quickOpenEl.hidden || quickOpenMode !== "search") return;
+      const data = quickOpenMode === "replace"
+        ? await previewReplace(q)
+        : await getJSON(`${base}/search?q=${encodeURIComponent(q)}${editorSettings.search_regex ? "&re=1" : ""}${editorSettings.search_case ? "&case=1" : ""}${maskParam()}${folderParam()}`, { signal });
+      if (seq !== searchSeq || quickOpenEl.hidden || !findsInFiles()) return;
       searchQuery = q;
-      lastSearch = { matches: data.matches || [], truncated: !!data.truncated };
+      lastSearch = {
+        matches: data.matches || [],
+        truncated: !!data.truncated,
+        // The preview is capped, these two are not: they are what a
+        // replacement would take, and what its button has to say.
+        total: data.total || 0,
+        files: data.files || 0,
+      };
       if (quickOpenView === "results") renderSearchResults(lastSearch.matches, lastSearch.truncated);
     } catch (err) {
       if (seq !== searchSeq) return;
@@ -5978,7 +6247,127 @@ async function init(root) {
     }
   }
 
+  // ---- replace ---------------------------------------------------------------
+
+  // One route answers both questions, so what the preview counted and what the
+  // replacement takes can never be two different scopes.
+  function replaceFields(extra) {
+    return {
+      q: currentQuery().trim(),
+      to: quickOpenReplaceInput.value,
+      re: editorSettings.search_regex ? "1" : "",
+      case: editorSettings.search_case ? "1" : "",
+      path: scopeFolder,
+      file: maskPatterns.join(", "),
+      ...extra,
+    };
+  }
+
+  async function previewReplace(q) {
+    const res = await postForm(`${base}/replace`, replaceFields({ q }));
+    await ensureOk(res, "Replace failed.");
+    return await res.json();
+  }
+
+  // The unsaved buffers travel with the request: the server refuses the whole
+  // job when it would touch one of them, so a file on disk and a buffer in
+  // front of somebody never part ways.
+  async function applyReplace(extra) {
+    const dirty = tabs
+      .filter((tab) => tab.dirty && !tab.kind && !tab.compare && !tab.external)
+      .map((tab) => tab.path);
+    const res = await postForm(`${base}/replace`, replaceFields({ apply: "1", dirty: dirty.join("\n"), ...extra }));
+    if (res.status === 409) {
+      const data = await res.json().catch(() => null);
+      const err = new Error((data && data.error) || "Some of the files are unsaved.");
+      err.blocked = (data && data.blocked) || [];
+      throw err;
+    }
+    await ensureOk(res, "Replace failed.");
+    return await res.json();
+  }
+
+  // The one way a single match is written, from the row's button and from the
+  // keyboard alike: the row leaves the list at once and the mark slides onto
+  // the next one, so a run of Ctrl+Enter works through the matches without the
+  // list moving under the hand.
+  async function replaceRow(index) {
+    const row = quickOpenMatches[index];
+    if (quickOpenMode !== "replace" || quickOpenView !== "results") return;
+    if (!row || !row.path || !row.line) return;
+    dropReplacedRow(index);
+    await runReplace({ only: row.path, line: String(row.line) }, index);
+  }
+
+  function dropReplacedRow(index) {
+    const rendered = [...quickOpenList.querySelectorAll(".editor-quickopen-item")];
+    if (rendered[index]) rendered[index].remove();
+    quickOpenMatches = quickOpenMatches.filter((_, at) => at !== index);
+    if (quickOpenMatches.length === 0) {
+      // An empty list says why it is empty; the refresh behind this settles
+      // whether more matches stood below the shown ones.
+      showQuickOpenNote("No matches left.");
+      return;
+    }
+    quickOpenActive = Math.min(index, quickOpenMatches.length - 1);
+    markQuickOpenActive();
+  }
+
+  async function runReplace(extra, keepAt) {
+    try {
+      const data = await applyReplace(extra);
+      const changed = data.changed || [];
+      notifySuccess(`Replaced ${countLabel(data.replaced || 0, "match", "matches")} in ${countLabel(changed.length, "file", "files")}.`);
+      // What is open shows what is on disk again, without anybody reloading
+      // the page.
+      for (const tab of tabs) {
+        if (!changed.includes(tab.path) || tab.kind || tab.compare || tab.external) continue;
+        await reloadTabFromDisk(tab).catch(() => {});
+      }
+      if (changed.length) void loadTree();
+      // A single row was already taken out of the list, so the refresh behind
+      // it keeps what stands and only reconciles the counts.
+      const single = typeof keepAt === "number";
+      quickOpenKeepActive = single ? keepAt : -1;
+      scheduleSearch(0, single);
+    } catch (err) {
+      if (err.blocked && err.blocked.length) {
+        await fireDialog({
+          title: "Unsaved files stand in the way",
+          html: `<div class="text-secondary">Nothing was replaced. Save or close these first:<br><code>${escapeHtml(err.blocked.join(", "))}</code></div>`,
+          confirmText: "Got it",
+        });
+        return;
+      }
+      notifyError(err.message);
+    }
+  }
+
+  // The button names the whole scope, the dialog says it again, and the message
+  // afterwards reports what really fell.
+  async function replaceAll() {
+    if (!lastSearch.total) return;
+    const scope = `${countLabel(lastSearch.total, "match", "matches")} in ${countLabel(lastSearch.files, "file", "files")}`;
+    const ok = await confirmDialog({
+      title: `Replace ${scope}?`,
+      html: `<div class="text-secondary">Every match in the chosen folder and mask is written, the ones below the shown list included. This cannot be undone from here.</div>`,
+      confirmText: "Replace all",
+    });
+    if (!ok) return;
+    await runReplace({});
+  }
+
+  function syncReplaceButton() {
+    const on = quickOpenMode === "replace" && quickOpenView === "results" && lastSearch.total > 0;
+    quickOpenReplaceAllBtn.hidden = !on;
+    if (!on) return;
+    quickOpenReplaceAllBtn.textContent =
+      `Replace ${countLabel(lastSearch.total, "match", "matches")} in ${countLabel(lastSearch.files, "file", "files")}`;
+  }
+
   function renderSearchResults(matches, truncated) {
+    const keepAt = quickOpenKeepActive;
+    quickOpenKeepActive = -1;
     quickOpenMatches = matches;
     quickOpenActive = 0;
     quickOpenList.innerHTML = "";
@@ -6007,10 +6396,48 @@ async function init(root) {
       text.append(...(typeof match.start === "number"
         ? markedRange(match.text, match.start, match.len)
         : markedFragments(match.text, searchQuery)));
-      item.append(head, text);
-      item.addEventListener("click", () => chooseQuickOpen(match));
+      if (quickOpenMode === "replace" && typeof match.after === "string") {
+        // Nobody replaces in forty files blind: the line stands above the line
+        // it would become, and the row writes exactly that one.
+        const after = document.createElement("div");
+        after.className = "editor-quickopen-match-text editor-quickopen-match-after";
+        after.append(...markedRange(match.after, match.afterStart, match.afterLen));
+        const body = document.createElement("div");
+        body.className = "editor-quickopen-match-body";
+        body.append(head, text, after);
+        const one = document.createElement("button");
+        one.type = "button";
+        one.className = "editor-quickopen-match-apply";
+        one.title = `Replace this match in ${match.path} (Shift+Enter)`;
+        one.setAttribute("aria-label", `Replace this match in ${match.path}`);
+        one.innerHTML = `<i class="ti ti-replace"></i>`;
+        one.addEventListener("click", (event) => {
+          event.stopPropagation();
+          // The row's place in the list, read when it is pressed: rows above it
+          // may have left since it was drawn.
+          const rendered = [...quickOpenList.querySelectorAll(".editor-quickopen-item")];
+          void replaceRow(rendered.indexOf(item));
+        });
+        item.classList.add("editor-quickopen-match-replace");
+        item.append(body, one);
+      } else {
+        item.append(head, text);
+      }
+      item.addEventListener("click", (event) => {
+        if (event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          const rendered = [...quickOpenList.querySelectorAll(".editor-quickopen-item")];
+          void openRowBehind(rendered.indexOf(item));
+          return;
+        }
+        chooseQuickOpen(match);
+      });
       quickOpenList.appendChild(item);
     });
+    if (keepAt >= 0) {
+      quickOpenActive = Math.min(keepAt, matches.length - 1);
+      markQuickOpenActive();
+    }
     // What is on screen, in the two numbers a filter moves: that is how the
     // effect of narrowing is read off without counting rows.
     const files = new Set(matches.map((match) => match.path)).size;
@@ -6025,7 +6452,7 @@ async function init(root) {
   // carry them, and a phone gets them without a special case.
   function openQuickOpenPicker(view) {
     if (quickOpenMode === "usages") return;
-    if (view === "masks" && quickOpenMode !== "search") return;
+    if (view === "masks" && !findsInFiles()) return;
     // The same slot again is the way back out, so the control that opened a
     // chooser is also the one that closes it.
     if (quickOpenView === view) {
@@ -6036,7 +6463,7 @@ async function init(root) {
     quickOpenView = view;
     quickOpenInput.value = "";
     quickOpenInput.placeholder = view === "folders" ? "Filter folders" : "*.php, *.js, *.go";
-    syncQuickOpenRegex();
+    syncQuickOpenSwitches();
     renderQuickOpenContext();
     quickOpenInput.focus();
     renderQuickOpenPicker();
@@ -6048,7 +6475,7 @@ async function init(root) {
     quickOpenView = "results";
     quickOpenInput.value = parkedQuery;
     quickOpenInput.placeholder = resultsPlaceholder();
-    syncQuickOpenRegex();
+    syncQuickOpenSwitches();
     renderQuickOpenContext();
     quickOpenInput.focus();
     repaintQuickOpenResults();
@@ -6061,7 +6488,7 @@ async function init(root) {
       paintUsages(usagesAll, true);
       return;
     }
-    if (quickOpenMode === "search") {
+    if (findsInFiles()) {
       if (currentQuery().trim().length < 2) {
         showQuickOpenNote("Type at least 2 characters to search file contents.");
         setQuickOpenFoot("", "");
@@ -6374,7 +6801,7 @@ async function init(root) {
     quickOpenEl.hidden = false;
     quickOpenInput.value = "";
     quickOpenInput.placeholder = title;
-    syncQuickOpenRegex();
+    syncQuickOpenSwitches();
     renderQuickOpenContext();
     searchQuery = word;
     // external travels along: it is what the row's jump reads to know
@@ -6511,6 +6938,7 @@ async function init(root) {
   // what is behind it.
   function quickOpenTabRing() {
     const ring = [quickOpenInput];
+    if (!quickOpenReplaceInput.hidden) ring.push(quickOpenReplaceInput);
     if (!quickOpenFolderSlot.hidden) ring.push(quickOpenFolderSlot);
     if (!quickOpenMaskSlot.hidden) ring.push(quickOpenMaskSlot);
     return ring;
@@ -6529,6 +6957,29 @@ async function init(root) {
     else closeQuickOpenPicker();
   }
 
+  // Ctrl/Cmd+Enter and Ctrl/Cmd+click on a row: the file opens behind the
+  // palette, at the line a plain Enter would have opened it on, and the mark
+  // steps to the next row. Behind means the palette keeps the field and the
+  // focus while the file already stands there to be read, so walking the list
+  // reads the hits in passing and closing the palette leaves somebody in the
+  // last one. Every mode whose rows are files answers to it, usages among them.
+  async function openRowBehind(index) {
+    const entry = quickOpenMatches[index];
+    if (!entry || quickOpenView !== "results") return;
+    const fromRow = typeof entry !== "string";
+    const path = fromRow ? entry.path : entry;
+    if (!path) return;
+    const line = fromRow ? entry.line || 0 : splitLineSuffix(quickOpenInput.value).line;
+    const jump = line ? { line, character: fromRow ? entry.character || 0 : 0 } : null;
+    // The mark moves before the file is there, so a run of Ctrl+Enter never
+    // waits for a read.
+    moveQuickOpenActive(1);
+    if (fromRow && entry.external) await openExternal(path, { jump });
+    else await openPath(path, { jump });
+    // Showing a file takes the focus, and here it belongs to the palette.
+    if (!quickOpenEl.hidden) quickOpenInput.focus();
+  }
+
   function quickOpenKeydown(e) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -6536,6 +6987,18 @@ async function init(root) {
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       moveQuickOpenActive(-1);
+    } else if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && e.key === "Enter") {
+      // Enter opens the file, this writes the marked match and leaves the
+      // palette standing, so the next one is one keystroke away. Nothing that
+      // changes a file sits on the key somebody hits by reflex.
+      e.preventDefault();
+      void replaceRow(quickOpenActive);
+    } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "Enter") {
+      // What a Ctrl+click has meant on the web forever: it opens behind, the
+      // palette keeps the focus and the mark moves on, so a list is walked once
+      // and read afterwards.
+      e.preventDefault();
+      void openRowBehind(quickOpenActive);
     } else if (e.key === "Enter") {
       e.preventDefault();
       activateQuickOpenRow(quickOpenActive);
@@ -6552,7 +7015,15 @@ async function init(root) {
   function wireQuickOpen() {
     quickOpenItem.addEventListener("click", () => openQuickOpen("files"), { signal });
     searchProjectItem.addEventListener("click", () => openQuickOpen("search"), { signal });
-    quickOpenRegexBtn.addEventListener("click", toggleSearchRegex, { signal });
+    replaceProjectItem.addEventListener("click", () => openQuickOpen("replace"), { signal });
+    quickOpenReplaceInput.addEventListener("input", () => {
+      scheduleSearchDraftSave();
+      scheduleSearch();
+    }, { signal });
+    quickOpenReplaceInput.addEventListener("keydown", quickOpenKeydown, { signal });
+    quickOpenReplaceAllBtn.addEventListener("click", () => void replaceAll(), { signal });
+    quickOpenRegexBtn.addEventListener("click", () => toggleSearchSwitch("search_regex"), { signal });
+    quickOpenCaseBtn.addEventListener("click", () => toggleSearchSwitch("search_case"), { signal });
     for (const [slot, view] of [[quickOpenFolderSlot, "folders"], [quickOpenMaskSlot, "masks"]]) {
       slot.addEventListener("click", () => openQuickOpenPicker(view), { signal });
       slot.addEventListener("keydown", (event) => {
@@ -6577,7 +7048,8 @@ async function init(root) {
         filterUsages();
         return;
       }
-      if (quickOpenMode === "search") scheduleSearch();
+      scheduleSearchDraftSave();
+      if (findsInFiles()) scheduleSearch();
       else scheduleFileQuery();
     }, { signal });
     quickOpenInput.addEventListener("keydown", quickOpenKeydown, { signal });
@@ -6627,6 +7099,10 @@ async function init(root) {
   onServerEvent("commitdraft", (event) => {
     if (event.detail && event.detail.project && event.detail.project !== name) return;
     void pullCommitDraft();
+  }, { signal });
+  onServerEvent("searchdraft", (event) => {
+    if (event.detail && event.detail.project && event.detail.project !== name) return;
+    void pullSearchDraft();
   }, { signal });
   onServerEvent("linecomments", (event) => {
     if (event.detail && event.detail.project && event.detail.project !== name) return;
@@ -8119,6 +8595,9 @@ async function init(root) {
     } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
       openQuickOpen("search");
+    } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "h") {
+      e.preventDefault();
+      openQuickOpen("replace");
     } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && !e.repeat
       && e.key.toLowerCase() === "x" && quickOpenEl.hidden) {
       const tab = activeTab();
@@ -8328,6 +8807,32 @@ const NAME_ICONS = {
   ".gitmodules": "ti-brand-git",
   ".env": "ti-key",
 };
+
+// singleFlight makes the last word the one that stands: while a write is on the
+// wire the next is only remembered, and it goes out when the first is through
+// with whatever is current by then. Two writes can then never land in the wrong
+// order, however short the wait in front of them gets.
+function singleFlight(run) {
+  let running = false;
+  let again = false;
+  const start = async () => {
+    if (running) {
+      again = true;
+      return;
+    }
+    running = true;
+    try {
+      await run();
+    } finally {
+      running = false;
+      if (again) {
+        again = false;
+        void start();
+      }
+    }
+  };
+  return start;
+}
 
 function fileIcon(name) {
   const lower = (name || "").toLowerCase();
@@ -9776,7 +10281,7 @@ function createTextarea(host, hooks, settings) {
 const EDITOR_SETTINGS_KEY = "dc-editor-settings";
 
 function loadEditorSettings() {
-  const def = { tab_size: 4, indent: "tab", line_wrap: false, font_size: 14, diff_view: "auto", diff_collapse: true, search_regex: false };
+  const def = { tab_size: 4, indent: "tab", line_wrap: false, font_size: 14, diff_view: "auto", diff_collapse: true, search_regex: false, search_case: false };
   let stored = {};
   try {
     stored = store.getJSON(EDITOR_SETTINGS_KEY, {}) || {};
@@ -9791,6 +10296,7 @@ function loadEditorSettings() {
   if (!["auto", "side", "inline"].includes(s.diff_view)) s.diff_view = def.diff_view;
   if (typeof s.diff_collapse !== "boolean") s.diff_collapse = def.diff_collapse;
   if (typeof s.search_regex !== "boolean") s.search_regex = def.search_regex;
+  if (typeof s.search_case !== "boolean") s.search_case = def.search_case;
   return s;
 }
 

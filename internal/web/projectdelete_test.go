@@ -120,6 +120,7 @@ func deletionServer(t *testing.T, stateDir string, projects *project.Repository)
 		bus:          eventbus.New(),
 		quickOpen:    filesystem.NewQuickOpenCache(),
 		commitDrafts: newCommitDrafts(stateDir),
+		searchDrafts: newSearchDrafts(stateDir),
 		lineComments: newLineComments(stateDir),
 		deletes:      newProjectDeletes(stateDir),
 	}

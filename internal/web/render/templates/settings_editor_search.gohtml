@@ -3,7 +3,7 @@
 {{template "editor_page_start.gohtml" .}}
 <form method="post" action="/settings/editor/search" id="settings-editor-search">
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <div class="text-secondary small mb-3">Go to file and Find in files read the whole project, so what they must not read is the only thing to configure. Both palettes answer from the same list.</div>
+  <div class="text-secondary small mb-3">Go to file, Find in files and Replace in files read the whole project, so what they must not read is the only thing to configure. All three answer from the same list.</div>
   <div class="mb-3 row">
     <div class="col-12 col-lg-8">
       <label class="form-label" for="editor-search-exclusions">Exclude these folders</label>
@@ -11,7 +11,7 @@
       <div class="form-text">
         One per line. A bare name like <code>vendor</code> excludes every folder with that name, wherever it sits.
         A path like <code>tests/_output</code> excludes only that one, counted from the project root.
-        An excluded folder is not descended into at all, so nothing inside it is found either.
+        An excluded folder is not descended into at all, so nothing inside it is found, and a replacement never reaches it either.
         Leave the box empty to search everything.
       </div>
     </div>

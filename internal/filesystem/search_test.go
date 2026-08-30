@@ -609,3 +609,45 @@ func TestSearchFolderScopeRefusesWhatIsNotAFolder(t *testing.T) {
 		}
 	}
 }
+
+// TestSearchMindsCaseWhenAskedTo covers both kinds of match: by default the
+// case is folded, and with the option only what was typed is found.
+func TestSearchMindsCaseWhenAskedTo(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.go", "GetName\ngetname\nGETNAME\n")
+
+	lines := func(useRegex, caseSensitive bool, query string) []string {
+		t.Helper()
+		matches, _, err := SearchFiles(root, query, useRegex, DefaultExclusionSet(),
+			SearchOptions{CaseSensitive: caseSensitive})
+		if err != nil {
+			t.Fatalf("%q (regex %v, case %v): %v", query, useRegex, caseSensitive, err)
+		}
+		out := []string{}
+		for _, m := range matches {
+			out = append(out, m.Text)
+		}
+		return out
+	}
+
+	cases := []struct {
+		name          string
+		useRegex      bool
+		caseSensitive bool
+		query         string
+		want          string
+	}{
+		{"literal folds by default", false, false, "getname", "GetName,getname,GETNAME"},
+		{"literal minds the case", false, true, "getname", "getname"},
+		{"literal minds it the other way", false, true, "GETNAME", "GETNAME"},
+		{"regex folds by default", true, false, `get\w+`, "GetName,getname,GETNAME"},
+		{"regex minds the case", true, true, `get\w+`, "getname"},
+		// A pattern may still say it itself, and what it says wins from there.
+		{"a pattern of its own still wins", true, true, `(?i)get\w+`, "GetName,getname,GETNAME"},
+	}
+	for _, tc := range cases {
+		if got := strings.Join(lines(tc.useRegex, tc.caseSensitive, tc.query), ","); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

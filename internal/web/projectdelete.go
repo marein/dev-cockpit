@@ -234,6 +234,7 @@ func (s *Server) deleteProjectWithCompose(p project.Project) {
 		failure = err.Error()
 	} else {
 		s.commitDrafts.Delete(p.Name)
+		s.searchDrafts.Delete(p.Name)
 		s.lineComments.Clear(p.Name)
 		s.quickOpen.Forget(p.Path)
 		// The project's compose and askpass news read themselves with it, and
@@ -314,6 +315,7 @@ func (s *Server) removeProjectNow(p project.Project) error {
 		return err
 	}
 	s.commitDrafts.Delete(p.Name)
+	s.searchDrafts.Delete(p.Name)
 	s.lineComments.Clear(p.Name)
 	s.quickOpen.Forget(p.Path)
 	return nil

@@ -81,6 +81,10 @@ type Server struct {
 	// picked paths, so another device takes the panel over where this one left
 	// it.
 	commitDrafts *commitDrafts
+	// searchDrafts is the editor palette's inputs per project, so a search
+	// survives a jump into a hit, a reload and the walk from one device to
+	// the next.
+	searchDrafts *searchDrafts
 	// lineComments is the editor's line comments per project, one note per
 	// file line, so a pass over the code survives a reload and a device
 	// switch.
@@ -181,6 +185,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		gitWatchers:   newGitWatchers(),
 		gitWrites:     newGitWrites(),
 		commitDrafts:  newCommitDrafts(cfg.StateDir),
+		searchDrafts:  newSearchDrafts(cfg.StateDir),
 		lineComments:  newLineComments(cfg.StateDir),
 		host:          hostinfo.NewCache(cfg.ProjectsRoot, hostSampleTTL),
 		docker:        dockerService,
