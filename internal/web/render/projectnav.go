@@ -15,8 +15,9 @@ type ProjectNav struct {
 	Terminals      []ProjectNavItem
 	InactiveCoders []ProjectNavItem
 	// Active mirrors the projects page: a project counts as active when it has a
-	// running session or shell. LastUsedUnix is its last-opened timestamp. Both
-	// feed the project browser's client-side sort (same modes as the list page).
+	// running session, shell or container. LastUsedUnix is its last-opened
+	// timestamp. Both feed the project browser's client-side sort (same modes
+	// as the list page).
 	Active       bool
 	LastUsedUnix int64
 	HasNews      bool

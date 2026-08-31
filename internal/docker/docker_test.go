@@ -108,3 +108,18 @@ func TestRelevantEvent(t *testing.T) {
 		}
 	}
 }
+
+func TestRunningInSeesOnlyLiveContainers(t *testing.T) {
+	dir := "/home/me/projects/app"
+	state := State{Containers: []Container{{Name: "gone", State: "exited", WorkingDir: dir}}}
+	if state.RunningIn(dir) {
+		t.Fatal("a stopped container counts as running")
+	}
+	state.Containers = append(state.Containers, Container{Name: "up", State: "running", WorkingDir: dir + "/ops"})
+	if !state.RunningIn(dir) {
+		t.Fatal("a running container below the project was missed")
+	}
+	if state.RunningIn("/home/me/projects/other") {
+		t.Fatal("an unrelated project counts as running")
+	}
+}

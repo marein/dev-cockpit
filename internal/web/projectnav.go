@@ -24,7 +24,7 @@ func (s *Server) projectBrowser(currentPath string) []render.ProjectNav {
 			NewCoderURL:  "/coders/new?project=" + url.QueryEscape(p.Name) + "&return=" + ret,
 			NewShellURL:  "/shells/new?project=" + url.QueryEscape(p.Name) + "&return=" + ret,
 			LastUsedUnix: p.LastUsedUnix,
-			Active:       len(p.ActiveRefs) > 0,
+			Active:       p.Active(),
 			HasNews:      p.HasNews,
 		}
 		for _, r := range p.ActiveRefs {

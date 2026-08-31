@@ -191,6 +191,9 @@ func (s *Server) projectsWithRunners() []project.Project {
 	}
 
 	shells := s.shells.List()
+	// A running container is work in the project too, the same as a coder or a
+	// shell. One cache read for the whole list, nothing asks the daemon here.
+	state := s.docker.State()
 	for i := range projects {
 		for j := range shells {
 			if filesystem.IsUnder(shells[j].CWD, projects[i].Path) {
@@ -212,6 +215,7 @@ func (s *Server) projectsWithRunners() []project.Project {
 			return byTabOrder(refs[a].TabPos, refs[b].TabPos, refs[a].At, refs[b].At, refs[a].ID, refs[b].ID)
 		})
 		projects[i].ActiveRefs = mergedActiveRefs(&projects[i])
+		projects[i].ContainersRunning = state.RunningIn(projects[i].Path)
 	}
 	return projects
 }

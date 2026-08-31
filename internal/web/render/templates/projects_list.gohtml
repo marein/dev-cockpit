@@ -48,7 +48,7 @@
 <div class="card projects-card">
   <div class="list-group list-group-flush list-group-hoverable">
   {{range .Projects}}
-  <div class="list-group-item project-row" id="project-{{.Name}}" data-project-name="{{.Name}}"{{if .GitWorktreeOf}} data-project-worktree-of="{{.GitWorktreeOf}}"{{end}} data-project-active="{{if or .ActiveCoderRefs .ShellRefs}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
+  <div class="list-group-item project-row" id="project-{{.Name}}" data-project-name="{{.Name}}"{{if .GitWorktreeOf}} data-project-worktree-of="{{.GitWorktreeOf}}"{{end}} data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
     {{$delete := index $.Deleting .Name}}
     {{if $delete.Failed}}
     <div class="alert alert-danger mb-2" role="alert">

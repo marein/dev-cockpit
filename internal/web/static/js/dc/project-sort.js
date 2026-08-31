@@ -4,8 +4,8 @@
 // data-project-name, and for the non-alpha modes data-project-active
 // ("true"/"false") and data-project-used (a unix timestamp).
 //
-// Modes: "alpha" by name; "active" puts projects with a running session or shell
-// first (then alphabetical); "recent" by last opened, most recent first.
+// Modes: "alpha" by name; "active" puts projects with a running session, shell
+// or container first (then alphabetical); "recent" by last opened, most recent first.
 import { get } from "@dc/store";
 
 export const KEY = "dc-project-sort";

@@ -89,7 +89,7 @@ func (s *Server) editorSwitcher(current, ret string) []render.EditorProject {
 			Name:         q.Name,
 			URL:          "/projects/" + url.PathEscape(q.Name) + "/editor?return=" + url.QueryEscape(ret),
 			Current:      q.Name == current,
-			Active:       len(q.ActiveCoderRefs) > 0 || len(q.ShellRefs) > 0,
+			Active:       q.Active(),
 			LastUsedUnix: q.LastUsedUnix,
 		})
 	}

@@ -26,6 +26,16 @@ func projectsData(deleting map[string]ProjectDelete) ProjectsListData {
 	}
 }
 
+// A container is a runner too: a project whose only sign of life is one still
+// sorts with the active ones.
+func TestProjectRowCountsARunningContainerAsActive(t *testing.T) {
+	data := projectsData(nil)
+	data.Projects[0].ContainersRunning = true
+	if !strings.Contains(renderProjects(t, data), `data-project-active="true"`) {
+		t.Fatal("a project with a running container is not marked active")
+	}
+}
+
 // A deletion that runs past its request takes the row's actions: nothing there
 // can be pressed twice, and the row says what it is doing instead.
 func TestProjectRowSaysItIsBeingDeleted(t *testing.T) {

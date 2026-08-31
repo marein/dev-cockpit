@@ -37,6 +37,13 @@ type Project struct {
 	ActiveRefs        []TerminalRef // coders and shells merged in tab strip order
 	LastUsedUnix      int64         // last time the project was opened; 0 = never
 	HasNews           bool          // any coder or shell below has an unread notification
+	ContainersRunning bool          // a docker container of the project is up
+}
+
+// Active reports whether anything of the project is at work: a live coder or
+// shell, or a running container. Every project list sorts on this one answer.
+func (p Project) Active() bool {
+	return len(p.ActiveRefs) > 0 || p.ContainersRunning
 }
 
 type CoderRef struct {

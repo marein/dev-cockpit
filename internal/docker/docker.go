@@ -169,6 +169,18 @@ func (s State) ForDir(dir string) []Container {
 	return out
 }
 
+// RunningIn reports whether anything of the project in dir is up. It reads the
+// list the chips stand on, so a project the page paints a running container for
+// is exactly a project this calls running.
+func (s State) RunningIn(dir string) bool {
+	for _, c := range s.ForDir(dir) {
+		if c.Running() {
+			return true
+		}
+	}
+	return false
+}
+
 // statusRank is how loudly a container asks to be looked at: something unwell
 // first, then what runs, then what does not. A project runs a dozen of them
 // and a list is read from the top, so the one thing that is wrong must never
