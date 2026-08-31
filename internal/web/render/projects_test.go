@@ -244,24 +244,130 @@ func TestWorktreeChoiceRoundTrip(t *testing.T) {
 	}
 }
 
-// A branch another working copy holds is in the list, so it is clear it
-// exists, and cannot be picked, because git would refuse it.
-func TestCreateFormDisablesTakenBranchesAndNamesTheirHolder(t *testing.T) {
+// The two branch fields are autocompletes over the source repository, not
+// lists the page was rendered with: the form carries the picked value in a
+// hidden field, the visible one is the query, and the rows come from the
+// server round by round. What it does render is where the pickers open: the
+// first free branch, never a taken one.
+func TestCreateFormRendersTheBranchPickers(t *testing.T) {
 	out := renderProjectNew(t, worktreeFormData())
-	if !strings.Contains(out, "master (in app)") {
-		t.Fatalf("the taken branch does not name its holder:\n%s", out)
+	if strings.Contains(out, "<option value=\"feature\"") || strings.Contains(out, "On a remote") {
+		t.Fatalf("the branches are still rendered into the page:\n%s", out)
 	}
-	if !strings.Contains(out, `<option value="master" data-branch-name="master" disabled>`) {
-		t.Fatalf("the taken branch can be picked:\n%s", out)
+	if !strings.Contains(out, `data-branch-picker="branch" data-branch-source="app" data-branch-marks-taken="true"`) {
+		t.Fatalf("the checkout field is no picker:\n%s", out)
 	}
-	if !strings.Contains(out, `<option value="feature" data-branch-name="feature" selected>`) {
-		t.Fatalf("the form does not stand on the first free branch:\n%s", out)
+	if !strings.Contains(out, `name="branch" value="feature" data-branch-value data-branch-name="feature"`) {
+		t.Fatalf("the form does not post the first free branch:\n%s", out)
 	}
-	if !strings.Contains(out, `value="existing" data-branch-mode checked`) {
-		t.Fatal("the form does not open on the existing branch")
+	if !strings.Contains(out, `data-branch-picker="start"`) || !strings.Contains(out, `name="start" value="master" data-branch-value data-branch-name="master" disabled`) {
+		t.Fatalf("the starting point is no picker on the source's own branch:\n%s", out)
 	}
-	if !strings.Contains(out, `<option value="origin/shared" data-branch-name="shared">origin/shared</option>`) {
-		t.Fatalf("the remote branch is not offered:\n%s", out)
+	// No prose in the form: what the rows and the labels say is what there is.
+	if strings.Contains(out, "form-hint") {
+		t.Fatalf("the form still explains itself in paragraphs:\n%s", out)
+	}
+	// The two modes are one select, the same control the create choice above
+	// them is, and the names the POST carries are unchanged.
+	if !strings.Contains(out, `<select class="form-select" id="branch_mode" name="branch_mode" data-branch-mode>`) {
+		t.Fatalf("the branch mode is no select:\n%s", out)
+	}
+	if strings.Contains(out, "form-selectgroup") {
+		t.Fatalf("the branch mode is still a radio group:\n%s", out)
+	}
+	if !strings.Contains(out, `<option value="existing" selected>Existing branch</option>`) {
+		t.Fatalf("the form does not open on the existing branch:\n%s", out)
+	}
+	// The name field is the name and nothing else: no paragraph under it and no
+	// path in front of it either.
+	if !strings.Contains(out, `<input class="form-control" id="project_name" name="project_name"`) {
+		t.Fatalf("the name field is not a plain field:\n%s", out)
+	}
+	if strings.Contains(out, "input-group") {
+		t.Fatalf("the name field carries a directory prefix:\n%s", out)
+	}
+}
+
+// The resync belongs to the list it changes, so it is a row of each picker's
+// menu: its head, outside the part that scrolls, and there whether anything
+// matched or not. Both fields get one, and the plain create gets none.
+func TestCreateFormOffersTheResyncInsideBothPickers(t *testing.T) {
+	out := renderProjectNew(t, worktreeFormData())
+	if got := strings.Count(out, "data-branch-resync>"); got != 2 {
+		t.Fatalf("the pickers carry %d resync rows, want one each:\n%s", got, out)
+	}
+	if got := strings.Count(out, `data-branch-source="app"`); got != 2 {
+		t.Fatalf("a picker does not know the project it fetches:\n%s", out)
+	}
+	// The hits scroll, the row above them does not: only the list inside the
+	// menu is the scrolling box, so the row keeps its place however far
+	// somebody scrolled.
+	if got := strings.Count(out, `class="overflow-auto" style="max-height: min(14rem, 40vh)" data-branch-list`); got != 2 {
+		t.Fatalf("the hits and the resync scroll together:\n%s", out)
+	}
+	// It is the head of the menu, so it stands before the hits in both.
+	for _, menu := range strings.Split(out, "data-branch-menu>")[1:] {
+		row := strings.Index(menu, "data-branch-resync>")
+		list := strings.Index(menu, "data-branch-list")
+		if row < 0 || list < 0 || row > list {
+			t.Fatalf("the resync does not head its menu (row %d, list %d):\n%s", row, list, out)
+		}
+	}
+	// The running state is the icon turning, so the row carries the icon it
+	// spins and nothing that only exists while it runs: a node swapped in for
+	// the busy state brings a box of its own and moves the rows below it.
+	if !strings.Contains(out, `data-branch-resync-icon`) || strings.Contains(out, "spinner-border") {
+		t.Fatalf("the resync has no icon to turn, or still swaps a spinner in:\n%s", out)
+	}
+	if !strings.Contains(out, "data-branch-fetched") {
+		t.Fatalf("the resync does not say when it last fetched:\n%s", out)
+	}
+	// Nothing outside the menus explains the connection any more, the row is
+	// the connection.
+	if strings.Contains(out, "Resync fetches the remotes") {
+		t.Fatalf("the form still explains the resync in prose:\n%s", out)
+	}
+	plain := renderProjectNew(t, ProjectNewData{Page: Page{Title: "New Project"}, Sources: []ProjectOption{{Name: "app"}}})
+	if strings.Contains(plain, "data-branch-resync") {
+		t.Fatal("the plain create renders a resync")
+	}
+}
+
+// A new branch starts where the source project stands, except when standing
+// there only means standing behind: a head that has fallen behind its upstream
+// and holds nothing of its own starts at the upstream instead, because that is
+// the same history further along. The moment the head is ahead or has
+// diverged, its own commits exist nowhere else and it keeps the start, or
+// branching would drop them without a word.
+func TestDefaultStartLeavesAHeadThatOnlyFellBehind(t *testing.T) {
+	behind := func(ahead, behindBy int, upstream string) ProjectNewData {
+		return ProjectNewData{Branches: []BranchChoice{
+			{Ref: "master", Name: "master", Head: true, Upstream: upstream, Ahead: ahead, Behind: behindBy},
+			{Ref: "origin/master", Name: "master", Remote: true},
+		}}
+	}
+	for _, c := range []struct {
+		why  string
+		data ProjectNewData
+		want string
+	}{
+		{"purely behind starts at the upstream", behind(0, 3, "origin/master"), "origin/master"},
+		{"level stays on the branch", behind(0, 0, "origin/master"), "master"},
+		{"ahead keeps its own commits", behind(2, 0, "origin/master"), "master"},
+		{"diverged keeps its own commits", behind(2, 3, "origin/master"), "master"},
+		{"no upstream, nothing to compare", behind(0, 0, ""), "master"},
+	} {
+		if got := c.data.DefaultStart(); got != c.want {
+			t.Errorf("%s: DefaultStart() = %q, want %q", c.why, got, c.want)
+		}
+	}
+
+	// What somebody already typed outranks all of it, a refused create comes
+	// back on the start it was refused with.
+	filled := behind(0, 3, "origin/master")
+	filled.Fill = ProjectNewFill{Start: "master"}
+	if got := filled.DefaultStart(); got != "master" {
+		t.Fatalf("the refused form did not come back on its own start: %q", got)
 	}
 }
 
@@ -272,13 +378,18 @@ func TestCreateFormOpensOnANewBranchWhenEveryBranchIsTaken(t *testing.T) {
 	data := worktreeFormData()
 	data.Branches = []BranchChoice{{Ref: "master", Name: "master", Taken: "app", Head: true}}
 	out := renderProjectNew(t, data)
-	if !strings.Contains(out, `value="new" data-branch-mode checked`) {
+	if !strings.Contains(out, `<option value="new" selected>New branch</option>`) {
 		t.Fatalf("the form does not open on the new branch:\n%s", out)
+	}
+	// A select that offers a half with nothing behind it leads into an empty
+	// list, so that half is closed while every branch stands somewhere.
+	if !strings.Contains(out, `<option value="existing" disabled>Existing branch</option>`) {
+		t.Fatalf("the existing branch can be picked with nothing to check out:\n%s", out)
 	}
 	if !strings.Contains(out, `<div class="mb-3" data-branch-block="existing" hidden>`) {
 		t.Fatal("the branch list is not put away")
 	}
-	if !strings.Contains(out, `id="start"`) || !strings.Contains(out, `<option value="master" selected>master</option>`) {
+	if !strings.Contains(out, `id="start"`) || !strings.Contains(out, `name="start" value="master" data-branch-value`) {
 		t.Fatalf("the new branch does not start at the source's own branch:\n%s", out)
 	}
 }
@@ -296,10 +407,10 @@ func TestCreateFormComesBackFilled(t *testing.T) {
 	if !strings.Contains(out, `value="wip/one"`) {
 		t.Fatalf("the typed branch is gone:\n%s", out)
 	}
-	if !strings.Contains(out, `value="new" data-branch-mode checked`) {
+	if !strings.Contains(out, `<option value="new" selected>New branch</option>`) {
 		t.Fatal("the form came back on the other branch mode")
 	}
-	if !strings.Contains(out, `<option value="origin/shared" selected>origin/shared</option>`) {
+	if !strings.Contains(out, `name="start" value="origin/shared" data-branch-value`) {
 		t.Fatalf("the starting point is gone:\n%s", out)
 	}
 
@@ -310,7 +421,7 @@ func TestCreateFormComesBackFilled(t *testing.T) {
 
 	taken := worktreeFormData()
 	taken.Fill = ProjectNewFill{Mode: "existing", Branch: "master"}
-	if out := renderProjectNew(t, taken); !strings.Contains(out, `<option value="feature" data-branch-name="feature" selected>`) {
+	if out := renderProjectNew(t, taken); !strings.Contains(out, `name="branch" value="feature"`) {
 		t.Fatalf("a branch that is taken meanwhile was picked again:\n%s", out)
 	}
 }

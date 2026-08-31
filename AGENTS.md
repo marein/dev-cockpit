@@ -241,7 +241,15 @@ test. Update this file when a convention changes.
   fills it with `git.AddWorktree`, holding the editor's own write lock
   (`gitWriteKeys`) around both steps, so it never runs beside a checkout or a
   commit in that repository, and a git that refuses takes the empty directory
-  with it. One route answers one round:
+  with it. Its resync is the second one
+  (`POST /projects/:name/fetch`, `handleProjectFetch`): the editor's explicit
+  fetch itself (`fetchRemotes`, `git.Repo.Fetch` behind the write lock and the
+  askpass bridge) on a path of its own, because a branch nobody fetched is a
+  branch the pickers cannot offer, and a remote that asks for a passphrase has
+  to reach the one app-wide dialog. Both project scoped routes of that form,
+  the fetch and the branch read, sit **off** the editor group: the create form
+  is no editor and its rounds must not count as somebody working in that
+  project. One route answers one round:
   the editor asks `.../git/changes` alone, which answers `repo`, the branch
   (name, upstream, ahead and behind, out of the same status call's
   `--branch` headers, read from the leading block alone, `parseBranch`,
@@ -483,10 +491,88 @@ test. Update this file when a convention changes.
   does not cross slashes, commits through `log --all --regexp-ignore-case
   --fixed-strings --grep=…` plus a hex gated `rev-parse` for hashes. **The
   typed text travels into git arguments**: it rides in the attached
-  `--grep=` form, never as an option and never as a pattern. In the client
-  `openRefPicker` debounces, numbers its rounds so a slow answer never
-  paints over a newer one, and lets a raw name typed past the list through
-  on Enter.
+  `--grep=` form, never as an option and never as a pattern. The name match
+  is **the token search the whole app shares** (`namespaceRefs`, beside the
+  browser's `matchesTokens` and the file index's `scoreQuickOpen`):
+  lowercased, split on whitespace, every token contained somewhere, because a
+  ref name is a path and somebody types the pieces of it they remember rather
+  than one contiguous run. In the client `openRefPicker` debounces, numbers
+  its rounds so a slow answer never paints over a newer one, and lets a raw
+  name typed past the list through on Enter. **The create form's two branch
+  fields are the same picker on another page** (`project-new.js`,
+  `GET /projects/:name/branches?q=`, capped by `worktreeBranchPage`): the
+  hidden field beside each one is what the form posts, so `branch` and
+  `start` arrive as they always did, the visible field carries the choice and
+  is put back to it whenever the list is left without one, the query being
+  tracked apart from it.
+  The checkout field marks a branch another working copy holds and refuses
+  it, the starting point does not, a new branch may start where somebody else
+  stands. Whether a remote
+  branch is offered at all is decided against the **whole** local namespace
+  (`git.BranchNames`), never against the hits: under a search the local
+  branch a remote row would collide with need not have matched, and offering
+  both is offering a create git refuses. That rule is off for the starting
+  point (`?pick=start`), the one list where a local branch and the remote
+  branch it follows are two different places to begin, and where nothing is
+  created under either name. A picked name is resolved for the
+  create by searching for it (`worktreeRef`) and not by walking a capped
+  listing, or a branch found by typing it could not be created. **The resync
+  is a row of each menu**, its head, above the hits and outside the box that
+  scrolls, so it keeps its place however far somebody scrolled and is there
+  when nothing matched, which is the moment it is looked for; it says when
+  the repository last heard from a remote (`fetchedAt`, `git.LastFetch`,
+  FETCH_HEAD's mtime, one `rev-parse` for the git directory and one stat on
+  it), fetches in place and answers the list again without ever closing the
+  menu. A running fetch turns the row's own refresh icon (`dc-spin`) and
+  swaps in no spinner: a spinner's box is taller than the icon's and the row
+  would grow around it, moving every field below. **The arrows walk that row
+  and the branches as one list**, the resync first because it is the head of
+  the menu: Enter on it fetches instead of picking, and a freshly opened menu
+  marks the first branch and never the row, or Enter would fetch for somebody
+  who aimed at a branch (`RESYNC` and `NONE` are apart for the same reason, a
+  list that matched nothing has no entry to mark). The marked row is scrolled
+  into sight (`block: "nearest"`, so a list that already fits stays put), and
+  every row carries a scroll margin the height of the head above it, measured
+  from the two boxes rather than computed: the resync sits outside the
+  scrolling box and the browser knows nothing about it. A rebuild that only
+  moved the mark keeps the scroll position, every other render is a new answer
+  and belongs at the top. A click on a field that already holds the focus
+  opens the list again, because Escape leaves the focus where it is and no
+  focus event follows it. **A local branch row carries
+  its distance to its upstream** ("3 behind origin/master"), out of
+  `%(upstream:short)` and `%(upstream:track)` in the same `for-each-ref`
+  (`git.Ref.Upstream`, `Ahead`, `Behind`, no second call), because a name says
+  nothing about how old the place behind it is. That is also what moves the
+  default start (`DefaultStart`): a head that is **purely** behind starts at
+  its upstream, the same history further along, while an ahead or diverged
+  head keeps the local branch, because those commits exist nowhere else and
+  branching off the upstream would drop them without a word. **The form never
+  fetches by itself**, a remote with a passphrase would open a dialog nobody
+  asked for, so the checkout of a branch that is purely behind offers to catch
+  it up instead (`fast_forward`): a checkbox that appears only there, and a
+  `merge --ff-only` in the **new** working copy against a ref that is already
+  local, so it reaches no network and can be asked nothing. The box is a wish
+  and never an instruction, `catchUpWorktree` reads the distance again in the
+  copy that now exists and moves nothing that is ahead or diverged; a catch up
+  that fails is reported in the flash and takes no project with it, nobody
+  removes a finished working copy because a follow up did not run.
+- **The create form states, it does not explain.** No prose in it: what
+  somebody needs stands in the label, the placeholder, a row of a list, or
+  nowhere (`projects_new.gohtml` carries no `form-hint` at all). A row says
+  what picking it does, which local branch a remote one creates and which
+  project holds a taken one; the passphrase shows itself in the dialog when it
+  happens. The name field is the name and nothing else, no paragraph under it
+  and no path in front of it: where a project lands is the same place for every
+  project and belongs on none of them. What stays is what is not a leaflet:
+  the warning that a source has no branch yet. Nothing is checked in the
+  browser before the send either: the create answers what it refuses in its
+  own words and the form comes back carrying what was typed
+  (`newProjectPath`), which is the one place that judgement lives. The picked
+  value stays readable: focus **selects** rather than
+  empties, the checkout field shows the branch that will exist here with its
+  remote named beside the label while the starting point shows the ref it
+  begins at, the hidden field keeps the ref either way, and the query is
+  tracked apart from the text because the two stopped being the same thing.
 - **One write runs at a time, and that is two locks for two questions.** The
   page's own (`gitBusy`) is what a person sees: spinner on the tapped row
   and in the statusbar, every other row and the commit panel disabled with

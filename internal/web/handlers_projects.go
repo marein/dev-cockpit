@@ -68,6 +68,10 @@ type projectCreateForm struct {
 	Branch     string `form:"branch"`
 	NewBranch  string `form:"new_branch"`
 	Start      string `form:"start"`
+	// FastForward is the wish that the new working copy be brought up to the
+	// branch it follows right after it is made. It is read again on the
+	// server before anything moves, see catchUpWorktree.
+	FastForward CheckboxBool `form:"fast_forward"`
 }
 
 type projectDeleteForm struct {
@@ -344,7 +348,7 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 // and filled in one step, and a refusal goes back to the form it came from,
 // with the source still chosen, in git's own words.
 func (s *Server) createWorktree(c *gin.Context, form projectCreateForm) {
-	src, plan, err := s.createWorktreeProject(c, form)
+	made, err := s.createWorktreeProject(c, form)
 	if err != nil {
 		if wantsJSON(c.Request) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -353,12 +357,19 @@ func (s *Server) createWorktree(c *gin.Context, form projectCreateForm) {
 		s.redirectWithFlash(c, newProjectPath(form), "", err.Error())
 		return
 	}
-	name := filepath.Base(plan.Dir)
+	name := filepath.Base(made.Plan.Dir)
 	if wantsJSON(c.Request) {
-		c.JSON(http.StatusOK, gin.H{"name": name, "path": plan.Dir, "worktree_of": src.Name, "branch": plan.Branch})
+		c.JSON(http.StatusOK, gin.H{
+			"name":               name,
+			"path":               made.Plan.Dir,
+			"worktree_of":        made.Source.Name,
+			"branch":             made.Plan.Branch,
+			"fast_forwarded":     made.CaughtUp,
+			"fast_forward_error": made.CatchUpErr,
+		})
 		return
 	}
-	s.redirectWithProjectFlash(c, name, worktreeCreatedMessage(name, src, plan), "")
+	s.redirectWithProjectFlash(c, name, worktreeCreatedMessage(name, made), "")
 }
 
 // createClone answers the create form's second choice: a project filled from

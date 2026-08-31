@@ -1473,17 +1473,40 @@ func (s *Server) handleEditorGitFetch(c *gin.Context) {
 	fetched := false
 	if req.Auto {
 		fetched = s.quietFetch(c, p)
-	} else if !s.gitWrite(c, p, "fetch", func(repo *git.Repo) error {
+		if fetched {
+			s.publishGit(p.Name, false)
+		}
+	} else {
+		var ok bool
+		if fetched, ok = s.fetchRemotes(c, p); !ok {
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"fetched": fetched})
+}
+
+// fetchRemotes is the fetch somebody started: the write lock, the askpass
+// bridge and git's own words on a refusal, plus the event a fetch that
+// brought something owes every open page. It answers whether one ran and
+// whether the request is still the caller's to answer, a refusal has written
+// its own status by then.
+//
+// It is a function rather than one handler's body because the create form's
+// resync is the same act on another page (handleProjectFetch): one fetch,
+// asked for by a person, wherever the button stands.
+func (s *Server) fetchRemotes(c *gin.Context, p project.Project) (bool, bool) {
+	fetched := false
+	if !s.gitWrite(c, p, "fetch", func(repo *git.Repo) error {
 		var err error
 		fetched, err = repo.Fetch(gitWriteContext(c))
 		return err
 	}) {
-		return
+		return false, false
 	}
 	if fetched {
 		s.publishGit(p.Name, false)
 	}
-	c.JSON(http.StatusOK, gin.H{"fetched": fetched})
+	return fetched, true
 }
 
 // quietFetchKeys names what the fetch nobody asked for holds. They are the

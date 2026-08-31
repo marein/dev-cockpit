@@ -147,11 +147,40 @@ func (r *Repo) FetchIfStale(ctx context.Context, maxAge time.Duration) (bool, er
 	if !ok || !r.hasRemote(ctx) {
 		return false, nil
 	}
-	if stat, err := os.Stat(filepath.Join(info.gitDir, "FETCH_HEAD")); err == nil && time.Since(stat.ModTime()) < maxAge {
+	// The git directory is already resolved here, so the age is read straight
+	// off it: going through LastFetch would resolve it a second time, and this
+	// path is counted in processes, it runs uninvited behind every opening
+	// surface.
+	if at, ok := fetchHeadTime(info.gitDir); ok && time.Since(at) < maxAge {
 		return false, nil
 	}
 	// The remotes were asked for above, so this goes straight to the fetch.
 	return r.fetch(ctx, quietFetchTimeout)
+}
+
+// LastFetch answers when this repository last heard from a remote, and whether
+// it ever did.
+//
+// It is the same clock the quiet fetch ages against and no bookkeeping of our
+// own, which is why a surface may put it beside a list it reads anyway: a
+// person deciding whether to fetch wants to know how old the names in front of
+// them are.
+func (r *Repo) LastFetch(ctx context.Context) (time.Time, bool) {
+	info, ok := r.resolve(ctx)
+	if !ok {
+		return time.Time{}, false
+	}
+	return fetchHeadTime(info.gitDir)
+}
+
+// fetchHeadTime is FETCH_HEAD's modification time, which every fetch rewrites
+// and a repository that never fetched does not have. One stat, no process.
+func fetchHeadTime(gitDir string) (time.Time, bool) {
+	stat, err := os.Stat(filepath.Join(gitDir, "FETCH_HEAD"))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return stat.ModTime(), true
 }
 
 // Pull brings the current branch up to its upstream, fast forward only: a

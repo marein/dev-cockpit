@@ -277,6 +277,15 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// editor pulls them whenever a project changes anywhere in the app, which
 	// is the app moving and not somebody working in this project.
 	auth.GET("/projects/:name/editor/projects", s.handleEditorProjects)
+	// The create form's two branch pickers and their resync. They are the one
+	// project scoped pair outside the editor that asks git: a GET that reads
+	// the names a new worktree could stand on, matched server side like every
+	// other search here, and a POST that brings the remotes down first,
+	// because a branch nobody fetched is a branch the pickers cannot offer.
+	// They sit off the editor group on purpose, the create form is no editor
+	// and its reads must not count as somebody working in that project.
+	auth.GET("/projects/:name/branches", s.handleProjectBranches)
+	auth.POST("/projects/:name/fetch", s.handleProjectFetch)
 	auth.POST("/projects/:name/docker/compose", s.handleDockerCompose)
 	auth.POST("/projects/:name/docker/logs", s.handleDockerComposeLogs)
 	// A compose run outlives the request that started it, so its output is a

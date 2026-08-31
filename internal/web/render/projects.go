@@ -71,11 +71,19 @@ func OriginIcon(origin string) string {
 // or the directory whose working copy already holds this branch, which is the
 // one thing that makes a branch unavailable, and is empty while it is free.
 type BranchChoice struct {
-	Ref    string
-	Name   string
-	Remote bool
-	Taken  string
-	Head   bool
+	Ref    string `json:"ref"`
+	Name   string `json:"name"`
+	Remote bool   `json:"remote,omitempty"`
+	Taken  string `json:"taken,omitempty"`
+	Head   bool   `json:"head,omitempty"`
+	// Upstream, Ahead and Behind are how far this branch stands from the one
+	// it follows, straight out of git.Ref. A row wearing them says how old a
+	// starting point is, which is the one thing a branch name never shows and
+	// the reason a worktree can begin its life already out of date. They are
+	// empty for a remote branch and for a local one that follows nothing.
+	Upstream string `json:"upstream,omitempty"`
+	Ahead    int    `json:"ahead,omitempty"`
+	Behind   int    `json:"behind,omitempty"`
 }
 
 // The values the create form's one select carries. An empty value is the
@@ -144,29 +152,6 @@ func (d ProjectNewData) AnyTaken() bool {
 	return false
 }
 
-// Locals are the repository's own branches, Remotes the ones that so far
-// only exist on a remote. The form keeps them apart because they mean two
-// different things when picked, and a template cannot split a list.
-func (d ProjectNewData) Locals() []BranchChoice {
-	var out []BranchChoice
-	for _, b := range d.Branches {
-		if !b.Remote {
-			out = append(out, b)
-		}
-	}
-	return out
-}
-
-func (d ProjectNewData) Remotes() []BranchChoice {
-	var out []BranchChoice
-	for _, b := range d.Branches {
-		if b.Remote {
-			out = append(out, b)
-		}
-	}
-	return out
-}
-
 // DefaultBranch names the branch the form opens on: the first free one, never
 // a taken one, because a browser preselects the first option and a taken
 // branch is exactly the choice git would refuse.
@@ -189,9 +174,52 @@ func (d ProjectNewData) DefaultBranch() string {
 	return ""
 }
 
+// DefaultBranchName is the local branch the default choice ends up on: its
+// own name, and for a branch that so far only exists on a remote the name the
+// checkout creates here. The form suggests the project name from it, so it
+// travels beside the value the picker posts.
+func (d ProjectNewData) DefaultBranchName() string {
+	ref := d.DefaultBranch()
+	for _, b := range d.Branches {
+		if b.Ref == ref {
+			return b.Name
+		}
+	}
+	return ref
+}
+
+// DefaultBranchUpstream names what the default checkout could be caught up to:
+// the branch it follows, and only while it is purely behind that branch. Every
+// other state answers empty, so the form offers a catch up exactly where a
+// catch up is a fast forward and nothing else. A branch from a remote is
+// created here and is behind nothing.
+func (d ProjectNewData) DefaultBranchUpstream() string {
+	ref := d.DefaultBranch()
+	for _, b := range d.Branches {
+		if b.Ref != ref {
+			continue
+		}
+		if b.Remote || b.Upstream == "" || b.Behind == 0 || b.Ahead != 0 {
+			return ""
+		}
+		return b.Upstream
+	}
+	return ""
+}
+
 // DefaultStart is where a new branch begins by default: the branch the source
 // project stands on, which is the state somebody looking at that project has
-// in mind.
+// in mind — or that branch's upstream, when the local one has only fallen
+// behind it.
+//
+// The exchange is deliberate and one sided. A head that is purely behind
+// (behind above zero, ahead zero) holds nothing the remote does not, so
+// starting there only means starting older, by however long nobody pulled;
+// starting at the upstream is the same history, further along. The moment the
+// head is ahead or has diverged that stops being true: those commits exist
+// nowhere else, and quietly branching off the upstream instead would leave
+// them behind without a word. So ahead and diverged keep the local branch, and
+// so does a head with no upstream, which has nothing to compare against.
 func (d ProjectNewData) DefaultStart() string {
 	for _, b := range d.Branches {
 		if b.Ref == d.Fill.Start {
@@ -200,6 +228,9 @@ func (d ProjectNewData) DefaultStart() string {
 	}
 	for _, b := range d.Branches {
 		if b.Head {
+			if b.Upstream != "" && b.Behind > 0 && b.Ahead == 0 {
+				return b.Upstream
+			}
 			return b.Ref
 		}
 	}
@@ -214,11 +245,14 @@ func (d ProjectNewData) DefaultStart() string {
 // state of a project with one branch, has nothing to check out, and the form
 // opens on the new branch instead of on a list where everything is refused.
 func (d ProjectNewData) DefaultMode() string {
-	if d.Fill.Mode == "new" || d.Fill.Mode == "existing" {
-		return d.Fill.Mode
-	}
+	// Nothing to check out outranks what was filled in: the select disables
+	// that half in this state, and a form that came back standing on a
+	// disabled option would be standing on a choice it cannot make.
 	if d.DefaultBranch() == "" {
 		return "new"
+	}
+	if d.Fill.Mode == "new" || d.Fill.Mode == "existing" {
+		return d.Fill.Mode
 	}
 	return "existing"
 }

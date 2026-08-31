@@ -11,11 +11,23 @@ import (
 // one, or a tag. Branch carries the local name a checkout of a remote branch
 // would create, which is the remote branch's name without the remote in
 // front. Head marks the branch HEAD is on right now.
+//
+// Upstream, Ahead and Behind are the branch's distance to the branch it
+// follows, and they are empty for everything that follows nothing: a remote
+// branch, a tag, and a local branch without an upstream. They ride along out
+// of the same for-each-ref the names come from, so knowing how old a branch is
+// costs no second call. Both counts zero with an upstream set means the two
+// stand on the same commit, and an upstream whose remote branch is gone
+// carries the name with no counts, because git has nothing to compare against
+// any more.
 type Ref struct {
-	Name   string `json:"name"`
-	Kind   string `json:"kind"`
-	Branch string `json:"branch,omitempty"`
-	Head   bool   `json:"head,omitempty"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Branch   string `json:"branch,omitempty"`
+	Head     bool   `json:"head,omitempty"`
+	Upstream string `json:"upstream,omitempty"`
+	Ahead    int    `json:"ahead,omitempty"`
+	Behind   int    `json:"behind,omitempty"`
 }
 
 // The kinds a picker may ask for. The first three are names and come out of
@@ -144,7 +156,7 @@ func (r *Repo) Refs(ctx context.Context, search RefSearch) (RefMatches, error) {
 // pattern is a wildmatch over the full ref name and its "*" does not cross a
 // slash: "refs/heads/*alpha*" finds the branch "alpha" and never
 // "feature/alpha", which is the branch somebody typing "alpha" is looking for.
-// So git is asked for the namespace and the substring decides here, one round
+// So git is asked for the namespace and the match decides here, one round
 // trip either way.
 //
 // The count is git's while nothing is typed, and ours while something is: with
@@ -154,7 +166,10 @@ func (r *Repo) Refs(ctx context.Context, search RefSearch) (RefMatches, error) {
 func (r *Repo) namespaceRefs(ctx context.Context, namespace, text string, limit int) ([]Ref, error) {
 	args := []string{
 		"for-each-ref",
-		"--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(symref)",
+		// The two upstream fields ride along rather than being asked for
+		// separately: for-each-ref computes the distance while it walks the
+		// namespace anyway, so a branch's age costs no process of its own.
+		"--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(symref)%00%(upstream:short)%00%(upstream:track)",
 		// creatordate and not committerdate: an annotated tag is a tag object
 		// and carries no committer date at all, so it would sort by nothing and
 		// sink to the end whatever its age. creatordate answers for both, the
@@ -172,10 +187,10 @@ func (r *Repo) namespaceRefs(ctx context.Context, namespace, text string, limit 
 	}
 	refs := parseRefs(out)
 	if text != "" {
-		needle := strings.ToLower(text)
+		tokens := searchTokens(text)
 		kept := make([]Ref, 0, limit)
 		for _, ref := range refs {
-			if !strings.Contains(strings.ToLower(ref.Name), needle) {
+			if !matchesTokens(ref.Name, tokens) {
 				continue
 			}
 			kept = append(kept, ref)
@@ -186,6 +201,36 @@ func (r *Repo) namespaceRefs(ctx context.Context, namespace, text string, limit 
 		refs = kept
 	}
 	return refs, nil
+}
+
+// searchTokens cuts typed text into what has to be matched: lowercased and
+// split on whitespace, which is the one search the whole app shares (the
+// browser's matchesTokens, the file index's scoreQuickOpen).
+func searchTokens(text string) []string {
+	return strings.Fields(strings.ToLower(text))
+}
+
+// matchesTokens reports whether a name carries every token, in any order and
+// anywhere in it.
+//
+// A name is a path with slashes in it, and somebody looking for
+// "feature/2026/alpha-login" types the pieces they remember with spaces
+// between them, not one contiguous run of the name. A plain substring match
+// answers nothing for "alpha feature" and finds the branch for "alpha", which
+// makes typing more of what you know narrow the list to nothing. Every token
+// contained is the rule the palette and the project filter already follow, so
+// one way of typing works everywhere.
+//
+// No token is every name: the empty search is the caller's case and never
+// reaches here.
+func matchesTokens(name string, tokens []string) bool {
+	lower := strings.ToLower(name)
+	for _, token := range tokens {
+		if !strings.Contains(lower, token) {
+			return false
+		}
+	}
+	return len(tokens) > 0
 }
 
 // searchCommits answers the commits the text names: the one a hash prefix
@@ -251,6 +296,13 @@ func (r *Repo) commitByHash(ctx context.Context, sha string) (Commit, error) {
 	return list[0], nil
 }
 
+// trackCounts reads what %(upstream:track) says. git writes it bracketed and
+// only where there is something to say: "[ahead 1]", "[behind 2]",
+// "[ahead 1, behind 2]", "[gone]" for an upstream whose remote branch is no
+// longer there, and nothing at all for a branch that stands where its upstream
+// stands or follows none.
+var trackCounts = regexp.MustCompile(`(ahead|behind) (\d+)`)
+
 // parseRefs reads one namespace's worth of for-each-ref output.
 func parseRefs(out []byte) []Ref {
 	refs := []Ref{}
@@ -258,11 +310,24 @@ func parseRefs(out []byte) []Ref {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\x00", 4)
-		if len(parts) < 4 || parts[3] != "" {
+		// The symref field is what a remote's HEAD pointer is recognized by, so
+		// a line that carries no field for it is not a line this can read.
+		parts := strings.SplitN(line, "\x00", 6)
+		if len(parts) < 6 || parts[3] != "" {
 			continue
 		}
-		ref := Ref{Name: parts[1], Head: parts[2] == "*"}
+		ref := Ref{Name: parts[1], Head: parts[2] == "*", Upstream: parts[4]}
+		for _, m := range trackCounts.FindAllStringSubmatch(parts[5], -1) {
+			count, err := strconv.Atoi(m[2])
+			if err != nil {
+				continue
+			}
+			if m[1] == "ahead" {
+				ref.Ahead = count
+			} else {
+				ref.Behind = count
+			}
+		}
 		full := parts[0]
 		switch {
 		case strings.HasPrefix(full, "refs/heads/"):
@@ -282,4 +347,31 @@ func parseRefs(out []byte) []Ref {
 		refs = append(refs, ref)
 	}
 	return refs
+}
+
+// BranchNames answers every local branch of the repository, uncapped and in
+// git's own order.
+//
+// It is the one question a list of remote branches has to ask about each of
+// them, does this name already exist here, and neither a capped listing nor a
+// searched one can answer it: the local branch a remote hit would collide with
+// need not be among the hits. Offering both is offering a create git refuses,
+// so the answer has to come from the whole namespace.
+//
+// A directory without a repository answers none and no error, like Refs.
+func (r *Repo) BranchNames(ctx context.Context) ([]string, error) {
+	if _, ok := r.resolve(ctx); !ok {
+		return nil, nil
+	}
+	out, err := r.run(ctx, []string{"for-each-ref", "--format=%(refname:short)", "refs/heads"}, nil)
+	if err != nil {
+		return nil, err
+	}
+	names := []string{}
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line != "" {
+			names = append(names, line)
+		}
+	}
+	return names, nil
 }

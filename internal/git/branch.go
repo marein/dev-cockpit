@@ -52,3 +52,21 @@ func validBranchArg(name string) error {
 	}
 	return nil
 }
+
+// FastForward moves the current branch onto a ref it stands behind, and does
+// nothing else. --ff-only is the whole point: a branch that has drifted apart
+// is refused in git's words instead of merged, because a merge is a decision
+// and this call is made on somebody's behalf.
+//
+// It reaches no network. The ref has to be here already, which is what lets a
+// surface run it where a fetch would be out of the question: nothing can ask
+// for a passphrase.
+func (r *Repo) FastForward(ctx context.Context, ref string) error {
+	if err := validBranchArg(ref); err != nil {
+		return err
+	}
+	w := *r
+	w.timeout = checkoutTimeout
+	_, err := w.run(ctx, []string{"merge", "--ff-only", ref}, nil)
+	return err
+}

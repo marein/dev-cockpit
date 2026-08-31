@@ -23,50 +23,57 @@
       <div class="mb-3">
         <label class="form-label required" for="clone_url">Repository URL</label>
         <input class="form-control" id="clone_url" name="clone_url" value="{{.Fill.CloneURL}}" required maxlength="500" autofocus autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="https://github.com/you/project.git" data-clone-url>
-        <small class="form-hint">It is cloned straight into the project directory. A remote that wants a passphrase or credentials asks you in a dialog.</small>
       </div>
       {{end}}
       {{if .Source}}
       {{if .Branches}}
       <div class="mb-3">
-        <div class="form-label">Branch</div>
-        <div class="form-selectgroup">
-          <label class="form-selectgroup-item">
-            <input type="radio" class="form-selectgroup-input" name="branch_mode" value="existing" data-branch-mode{{if eq .DefaultMode "existing"}} checked{{end}}>
-            <span class="form-selectgroup-label">Existing branch</span>
-          </label>
-          <label class="form-selectgroup-item">
-            <input type="radio" class="form-selectgroup-input" name="branch_mode" value="new" data-branch-mode{{if eq .DefaultMode "new"}} checked{{end}}>
-            <span class="form-selectgroup-label">New branch</span>
-          </label>
-        </div>
+        <label class="form-label" for="branch_mode">Branch</label>
+        <select class="form-select" id="branch_mode" name="branch_mode" data-branch-mode>
+          <option value="existing"{{if not .DefaultBranch}} disabled{{end}}{{if eq .DefaultMode "existing"}} selected{{end}}>Existing branch</option>
+          <option value="new"{{if eq .DefaultMode "new"}} selected{{end}}>New branch</option>
+        </select>
       </div>
       <div class="mb-3" data-branch-block="existing"{{if ne .DefaultMode "existing"}} hidden{{end}}>
-        <label class="form-label" for="branch">Check out</label>
-        <select class="form-select" id="branch" name="branch" data-branch-existing{{if ne .DefaultMode "existing"}} disabled{{end}}>
-          {{range .Locals}}<option value="{{.Ref}}" data-branch-name="{{.Name}}"{{if .Taken}} disabled{{end}}{{if eq .Ref $.DefaultBranch}} selected{{end}}>{{.Name}}{{if .Taken}} (in {{.Taken}}){{end}}</option>{{end}}
-          {{with .Remotes}}
-          <optgroup label="On a remote">
-            {{range .}}<option value="{{.Ref}}" data-branch-name="{{.Name}}"{{if eq .Ref $.DefaultBranch}} selected{{end}}>{{.Ref}}</option>{{end}}
-          </optgroup>
-          {{end}}
-        </select>
-        {{if .AnyTaken}}<small class="form-hint">A branch that stands in another working copy cannot be checked out a second time. A branch from a remote is created here as the local branch that follows it.</small>
-        {{else}}<small class="form-hint">A branch from a remote is created here as the local branch that follows it.</small>{{end}}
+        <div class="d-flex align-items-center justify-content-between gap-2">
+          <label class="form-label mb-1" for="branch">Check out</label>
+          <span class="text-secondary small mb-1" data-branch-from hidden></span>
+        </div>
+        <div class="dropdown" data-branch-picker="branch" data-branch-source="{{.Source}}" data-branch-marks-taken="true">
+          <input type="hidden" name="branch" value="{{.DefaultBranch}}" data-branch-value data-branch-name="{{.DefaultBranchName}}" data-branch-upstream="{{.DefaultBranchUpstream}}"{{if ne .DefaultMode "existing"}} disabled{{end}}>
+          <input class="form-control" type="text" id="branch" value="{{.DefaultBranchName}}" placeholder="Branch…" role="combobox" aria-expanded="false" aria-autocomplete="list" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-branch-search{{if ne .DefaultMode "existing"}} disabled{{end}}>
+          <div class="dropdown-menu w-100" data-branch-menu>
+            <button type="button" class="dropdown-item d-flex align-items-center gap-2" data-branch-resync>
+              <i class="ti ti-refresh flex-shrink-0" data-branch-resync-icon aria-hidden="true"></i>
+              <span>Resync</span>
+              <span class="text-secondary small ms-auto flex-shrink-0" data-branch-fetched></span>
+            </button>
+            <div class="dropdown-divider my-1"></div>
+            <div class="overflow-auto" style="max-height: min(14rem, 40vh)" data-branch-list></div>
+          </div>
+        </div>
+        <label class="form-check mt-2 mb-0" data-branch-ff{{if not .DefaultBranchUpstream}} hidden{{end}}>
+          <input class="form-check-input" type="checkbox" name="fast_forward" value="1" data-branch-ff-input checked{{if or (not .DefaultBranchUpstream) (ne .DefaultMode "existing")}} disabled{{end}}>
+          <span class="form-check-label" data-branch-ff-label>Fast-forward to {{.DefaultBranchUpstream}} after creating</span>
+        </label>
       </div>
       <div class="mb-3" data-branch-block="new"{{if ne .DefaultMode "new"}} hidden{{end}}>
         <label class="form-label required" for="new_branch">New branch</label>
         <input class="form-control" id="new_branch" name="new_branch" value="{{$.Fill.NewBranch}}" maxlength="200" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="feature/name" data-branch-new{{if ne .DefaultMode "new"}} disabled{{end}} required>
         <label class="form-label mt-3" for="start">Starting at</label>
-        <select class="form-select" id="start" name="start"{{if ne .DefaultMode "new"}} disabled{{end}}>
-          {{range .Locals}}<option value="{{.Ref}}"{{if eq .Ref $.DefaultStart}} selected{{end}}>{{.Name}}</option>{{end}}
-          {{with .Remotes}}
-          <optgroup label="On a remote">
-            {{range .}}<option value="{{.Ref}}"{{if eq .Ref $.DefaultStart}} selected{{end}}>{{.Ref}}</option>{{end}}
-          </optgroup>
-          {{end}}
-        </select>
-        <small class="form-hint">The branch is created in the new working copy, the source project stays where it is.</small>
+        <div class="dropdown" data-branch-picker="start" data-branch-source="{{.Source}}">
+          <input type="hidden" name="start" value="{{.DefaultStart}}" data-branch-value data-branch-name="{{.DefaultStart}}"{{if ne .DefaultMode "new"}} disabled{{end}}>
+          <input class="form-control" type="text" id="start" value="{{.DefaultStart}}" placeholder="Branch…" role="combobox" aria-expanded="false" aria-autocomplete="list" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-branch-search{{if ne .DefaultMode "new"}} disabled{{end}}>
+          <div class="dropdown-menu w-100" data-branch-menu>
+            <button type="button" class="dropdown-item d-flex align-items-center gap-2" data-branch-resync>
+              <i class="ti ti-refresh flex-shrink-0" data-branch-resync-icon aria-hidden="true"></i>
+              <span>Resync</span>
+              <span class="text-secondary small ms-auto flex-shrink-0" data-branch-fetched></span>
+            </button>
+            <div class="dropdown-divider my-1"></div>
+            <div class="overflow-auto" style="max-height: min(14rem, 40vh)" data-branch-list></div>
+          </div>
+        </div>
       </div>
       {{else}}
       <div class="alert alert-warning" role="alert">
@@ -80,8 +87,6 @@
       <div class="mb-0">
         <label class="form-label required" for="project_name">Project name</label>
         <input class="form-control" id="project_name" name="project_name" value="{{.Fill.Name}}" required maxlength="120"{{if not .Create}} autofocus{{end}} autocomplete="off" data-project-name-field>
-        {{if .Source}}<small class="form-hint">The directory the working copy gets, under the projects root.</small>
-        {{else if eq .Create "clone"}}<small class="form-hint">The directory the clone goes into, under the projects root.</small>{{end}}
       </div>
     </div>
     <div class="card-footer">

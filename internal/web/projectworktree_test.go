@@ -72,7 +72,7 @@ func TestWorktreeBranchesNameTheProjectThatHoldsABranch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	choices := worktreeBranches(context.Background(), projects, src)
+	choices := worktreeBranches(context.Background(), projects, src, "", worktreeBranchLimit, false)
 	master, ok := choiceByRef(choices, "master")
 	if !ok {
 		t.Fatalf("master is not offered: %+v", choices)
@@ -105,7 +105,7 @@ func TestWorktreeBranchesNameAForeignWorktreeByItsPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	feature, ok := choiceByRef(worktreeBranches(context.Background(), projects, src), "feature")
+	feature, ok := choiceByRef(worktreeBranches(context.Background(), projects, src, "", worktreeBranchLimit, false), "feature")
 	if !ok {
 		t.Fatal("feature is not offered")
 	}
@@ -128,7 +128,7 @@ func TestWorktreeBranchesOfferARemoteBranchOnlyWithoutItsLocalOne(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	choices := worktreeBranches(context.Background(), projects, src)
+	choices := worktreeBranches(context.Background(), projects, src, "", worktreeBranchLimit, false)
 	shared, ok := choiceByRef(choices, "origin/shared")
 	if !ok {
 		t.Fatalf("the remote branch is not offered: %+v", choices)
@@ -138,6 +138,121 @@ func TestWorktreeBranchesOfferARemoteBranchOnlyWithoutItsLocalOne(t *testing.T) 
 	}
 	if _, ok := choiceByRef(choices, "origin/master"); ok {
 		t.Fatalf("a remote branch whose local branch exists is offered twice: %+v", choices)
+	}
+}
+
+// The pickers search on the server, and the match is the token search the
+// rest of the app uses: lowercased, split on whitespace, every token
+// somewhere in the name. A plain substring match answers nothing for the
+// pieces of a name typed in the order they are remembered.
+func TestWorktreeBranchesSearchMatchesEveryToken(t *testing.T) {
+	root := t.TempDir()
+	source := worktreeSourceRepo(t, root, "app")
+	worktreeGit(t, source, "branch", "topic/alpha-login")
+	worktreeGit(t, source, "branch", "topic/beta-logout")
+	projects := worktreeProjects(t, root)
+	src, err := projects.FindByName("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	hits := worktreeBranches(ctx, projects, src, "LOGIN topic", worktreeBranchPage, false)
+	if len(hits) != 1 || hits[0].Ref != "topic/alpha-login" {
+		t.Fatalf("the tokens must match in any order and any case: %+v", hits)
+	}
+	if got := worktreeBranches(ctx, projects, src, "alpha beta", worktreeBranchPage, false); len(got) != 0 {
+		t.Fatalf("every token has to be contained: %+v", got)
+	}
+	if got := worktreeBranches(ctx, projects, src, "topic", worktreeBranchPage, false); len(got) != 2 {
+		t.Fatalf("one token is a plain contains: %+v", got)
+	}
+}
+
+// The rule that keeps a remote branch out while its local one exists cannot be
+// read off the hits: under a search the local branch need not have matched,
+// and offering the remote would offer a create git refuses.
+func TestWorktreeBranchesSearchKeepsARemoteOutWhoseLocalBranchDidNotMatch(t *testing.T) {
+	root := t.TempDir()
+	origin := worktreeSourceRepo(t, t.TempDir(), "origin")
+	worktreeGit(t, origin, "branch", "shared")
+	worktreeGit(t, root, "clone", "-q", origin, "app")
+	app := filepath.Join(root, "app")
+	worktreeGit(t, app, "branch", "shared", "origin/shared")
+	projects := worktreeProjects(t, root)
+	src, err := projects.FindByName("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "origin/shared" matches the remote ref and never the local branch, which
+	// is exactly the query the rule has to survive.
+	hits := worktreeBranches(context.Background(), projects, src, "origin/shared", worktreeBranchPage, false)
+	if _, ok := choiceByRef(hits, "origin/shared"); ok {
+		t.Fatalf("the remote branch is offered beside a local branch of that name: %+v", hits)
+	}
+}
+
+// The starting point is the one list where a remote branch stands beside its
+// local one: the two can have drifted apart, and a new branch beginning at one
+// is not the same branch as one beginning at the other.
+func TestWorktreeBranchesKeepARemoteBesideItsLocalOneForAStart(t *testing.T) {
+	root := t.TempDir()
+	origin := worktreeSourceRepo(t, t.TempDir(), "origin")
+	worktreeGit(t, root, "clone", "-q", origin, "app")
+	projects := worktreeProjects(t, root)
+	src, err := projects.FindByName("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	checkout := worktreeBranches(ctx, projects, src, "master", worktreeBranchPage, false)
+	if _, ok := choiceByRef(checkout, "origin/master"); ok {
+		t.Fatalf("the checkout list offers a remote branch whose local one exists: %+v", checkout)
+	}
+	starts := worktreeBranches(ctx, projects, src, "master", worktreeBranchPage, true)
+	if _, ok := choiceByRef(starts, "origin/master"); !ok {
+		t.Fatalf("the start list drops the remote branch: %+v", starts)
+	}
+	if _, ok := choiceByRef(starts, "master"); !ok {
+		t.Fatalf("the start list drops the local branch: %+v", starts)
+	}
+}
+
+// A branch row carries how far it stands from the branch it follows, so a
+// starting point that is a week old says so before it is picked.
+func TestWorktreeBranchesCarryTheDistanceToTheUpstream(t *testing.T) {
+	root := t.TempDir()
+	origin := worktreeSourceRepo(t, t.TempDir(), "origin")
+	worktreeGit(t, root, "clone", "-q", origin, "app")
+	app := filepath.Join(root, "app")
+	// The remote moves on twice, this working copy fetches but never pulls.
+	worktreeGit(t, origin, "commit", "-q", "--allow-empty", "-m", "one")
+	worktreeGit(t, origin, "commit", "-q", "--allow-empty", "-m", "two")
+	worktreeGit(t, app, "fetch", "-q")
+	projects := worktreeProjects(t, root)
+	src, err := projects.FindByName("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	choices := worktreeBranches(context.Background(), projects, src, "", worktreeBranchLimit, false)
+	master, ok := choiceByRef(choices, "master")
+	if !ok {
+		t.Fatalf("master is not offered: %+v", choices)
+	}
+	if master.Upstream != "origin/master" || master.Behind != 2 || master.Ahead != 0 {
+		t.Fatalf("the distance to the upstream is wrong: %+v", master)
+	}
+	// A branch that follows nothing has nothing to say.
+	worktreeGit(t, app, "branch", "solo")
+	solo, ok := choiceByRef(worktreeBranches(context.Background(), projects, src, "solo", worktreeBranchPage, false), "solo")
+	if !ok {
+		t.Fatal("solo is not offered")
+	}
+	if solo.Upstream != "" || solo.Ahead != 0 || solo.Behind != 0 {
+		t.Fatalf("a branch without an upstream carries a distance: %+v", solo)
 	}
 }
 
@@ -194,6 +309,86 @@ func TestWorktreePlanRefusesWhatTheRepositoryDoesNotHave(t *testing.T) {
 			t.Fatalf("%+v was accepted as %+v", form, plan)
 		}
 	}
+}
+
+// The checkbox is a wish. A branch that is purely behind is caught up, and
+// every other state is left exactly where it is, because moving it would be a
+// merge and nobody decides a merge on a create form.
+func TestCatchUpWorktreeMovesOnlyABranchThatIsPurelyBehind(t *testing.T) {
+	build := func(t *testing.T) (string, string) {
+		t.Helper()
+		root := t.TempDir()
+		origin := worktreeSourceRepo(t, t.TempDir(), "origin")
+		worktreeGit(t, root, "clone", "-q", origin, "app")
+		app := filepath.Join(root, "app")
+		worktreeGit(t, app, "config", "user.email", "t@example.com")
+		worktreeGit(t, app, "config", "user.name", "t")
+		worktreeGit(t, app, "config", "commit.gpgsign", "false")
+		return origin, app
+	}
+	ctx := context.Background()
+
+	// Purely behind: the remote moved twice, this copy never pulled.
+	origin, app := build(t)
+	worktreeGit(t, origin, "commit", "-q", "--allow-empty", "-m", "one")
+	worktreeGit(t, origin, "commit", "-q", "--allow-empty", "-m", "two")
+	worktreeGit(t, app, "fetch", "-q")
+	want := strings.TrimSpace(gitOutput(t, app, "rev-parse", "origin/master"))
+	onto, err := catchUpWorktree(ctx, app, "master")
+	if err != nil || onto != "origin/master" {
+		t.Fatalf("a branch that only fell behind was not caught up: %q %v", onto, err)
+	}
+	if got := strings.TrimSpace(gitOutput(t, app, "rev-parse", "HEAD")); got != want {
+		t.Fatalf("the working copy stands at %s, want the upstream %s", got, want)
+	}
+
+	// The wish is set but there is nothing to do any more: level with the
+	// upstream, which is the state right after the catch up above.
+	onto, err = catchUpWorktree(ctx, app, "master")
+	if err != nil || onto != "" {
+		t.Fatalf("a branch that stands level was moved: %q %v", onto, err)
+	}
+
+	// Diverged and ahead both keep their own commits.
+	for _, c := range []struct {
+		why    string
+		remote int
+	}{{"ahead only", 0}, {"diverged", 2}} {
+		origin, app := build(t)
+		for i := 0; i < c.remote; i++ {
+			worktreeGit(t, origin, "commit", "-q", "--allow-empty", "-m", "theirs")
+		}
+		worktreeGit(t, app, "commit", "-q", "--allow-empty", "-m", "mine")
+		worktreeGit(t, app, "fetch", "-q")
+		before := strings.TrimSpace(gitOutput(t, app, "rev-parse", "HEAD"))
+		onto, err := catchUpWorktree(ctx, app, "master")
+		if err != nil || onto != "" {
+			t.Fatalf("%s: the branch was moved: %q %v", c.why, onto, err)
+		}
+		if got := strings.TrimSpace(gitOutput(t, app, "rev-parse", "HEAD")); got != before {
+			t.Fatalf("%s: the working copy moved from %s to %s", c.why, before, got)
+		}
+	}
+
+	// A branch that follows nothing has nothing to catch up to.
+	_, plain := build(t)
+	worktreeGit(t, plain, "branch", "solo")
+	worktreeGit(t, plain, "switch", "-q", "solo")
+	if onto, err := catchUpWorktree(ctx, plain, "solo"); err != nil || onto != "" {
+		t.Fatalf("a branch without an upstream was moved: %q %v", onto, err)
+	}
+}
+
+// gitOutput runs one read and answers what git printed.
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+	}
+	return string(out)
 }
 
 func TestNewProjectPathCarriesTheWholeForm(t *testing.T) {

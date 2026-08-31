@@ -19,8 +19,18 @@ function isCdnNoise(t) {
 // is a browser artifact of racing navigations on the throwaway instance, not an
 // app defect, so it joins the non-gating noise bucket. The filter stays narrow
 // so a real access control failure on an app route still gates.
+//
+// The bare `/projects` pull is the same artifact and gets its own pattern
+// rather than a path in the list above, because it has to be matched to the
+// **end** of the URL: dc-project-list answers a projects event by pulling the
+// page itself (`refreshProjectList`, a fetch that already carries its own
+// catch), and a runner navigating on while that pull is out leaves this error
+// behind. Naming it in the list would swallow every project scoped route under
+// it, `/projects/<name>/editor/…` included, which is exactly where a real
+// access control failure would have to gate.
 function isWebkitAbortNoise(t) {
-  return /\/(events|update\/check|git\/prompt|editor\/(terminals|docker|lsp\/(status|source)|list|file|git\/changes))\b.*due to access control checks/.test(t);
+  return /\/(events|update\/check|git\/prompt|editor\/(terminals|docker|lsp\/(status|source)|list|file|git\/changes))\b.*due to access control checks/.test(t)
+    || /\/projects(\?\S*)? due to access control checks/.test(t);
 }
 function wirePage(page, bag) {
   bag.cdnNoise = bag.cdnNoise || [];

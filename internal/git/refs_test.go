@@ -190,6 +190,53 @@ func TestRefsSearchFindsBeyondTheCap(t *testing.T) {
 	}
 }
 
+// The name match is the token search the whole app shares: lowercased, the
+// query split on whitespace, every token contained somewhere. A branch name is
+// a path, and somebody typing the pieces they remember must not be answered
+// with nothing because they typed them apart.
+func TestRefsSearchMatchesEveryToken(t *testing.T) {
+	dir := t.TempDir()
+	seedRepo(t, dir)
+	runGit(t, dir, "branch", "feature/alpha-login")
+	runGit(t, dir, "branch", "release/beta-logout")
+
+	found, err := New(dir).Refs(context.Background(), RefSearch{Text: "  LOGIN   feature ", Kinds: []string{KindBranch}, Limit: 20})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(found.Refs) != 1 || found.Refs[0].Name != "feature/alpha-login" {
+		t.Fatalf("the tokens must match in any order, any case, whatever the spacing: %+v", found.Refs)
+	}
+
+	// Every token has to be there. A query that only half fits is a miss, not
+	// the half that fits.
+	miss, err := New(dir).Refs(context.Background(), RefSearch{Text: "alpha logout", Kinds: []string{KindBranch}, Limit: 20})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(miss.Refs) != 0 {
+		t.Fatalf("a token that matches nothing must take the whole query with it: %+v", miss.Refs)
+	}
+}
+
+// The cap belongs to the matches and stays there with the token match: a
+// picker asks for a page of names and gets a page.
+func TestRefsSearchCapsTheMatches(t *testing.T) {
+	dir := t.TempDir()
+	seedRepo(t, dir)
+	for i := 0; i < 6; i++ {
+		runGit(t, dir, "branch", "wip/needle-"+strconv.Itoa(i))
+	}
+
+	found, err := New(dir).Refs(context.Background(), RefSearch{Text: "needle wip", Kinds: []string{KindBranch}, Limit: 4})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(found.Refs) != 4 {
+		t.Fatalf("the cap applies to the matches: %+v", found.Refs)
+	}
+}
+
 // A commit is the case the picker was missing: found by a piece of its
 // subject, found by its hash prefix, and answered with what a row shows.
 func TestRefsSearchFindsCommits(t *testing.T) {
@@ -255,5 +302,41 @@ func TestRefsSearchOnUnbornRepository(t *testing.T) {
 	}
 	if len(found.Refs) != 0 || len(found.Commits) != 0 {
 		t.Fatalf("an unborn repository answers empty: %+v", found)
+	}
+}
+
+// BranchNames answers the whole namespace and never a page of it: it is what
+// a caller has to know about every local branch, and a cap would make its
+// answer a maybe.
+func TestBranchNamesAnswersEveryLocalBranch(t *testing.T) {
+	dir := t.TempDir()
+	seedRepo(t, dir)
+	for _, name := range []string{"alpha", "wip/beta", "wip/gamma"} {
+		runGit(t, dir, "branch", name)
+	}
+
+	names, err := New(dir).BranchNames(context.Background())
+	if err != nil {
+		t.Fatalf("branch names: %v", err)
+	}
+	have := map[string]bool{}
+	for _, name := range names {
+		have[name] = true
+	}
+	for _, want := range []string{"alpha", "wip/beta", "wip/gamma"} {
+		if !have[want] {
+			t.Fatalf("%q is missing: %v", want, names)
+		}
+	}
+	// The branch the first commit landed on is in there too, whatever this
+	// git calls it.
+	if len(names) != 4 {
+		t.Fatalf("the head's own branch is missing: %v", names)
+	}
+
+	// A directory without a repository answers none and no error, like Refs.
+	none, err := New(t.TempDir()).BranchNames(context.Background())
+	if err != nil || len(none) != 0 {
+		t.Fatalf("a plain directory answered %v, %v", none, err)
 	}
 }

@@ -3,6 +3,7 @@ import { windowSeen } from "@dc/dom";
 import { getJSON, postForm } from "@dc/http";
 import { playNotification } from "@dc/jingle";
 import { showToast } from "@dc/toast";
+import { relativeTime } from "dc-time";
 import "@dc/gitprompt";
 
 // Notification bell + center. The element renders a bell with an unread badge
@@ -324,16 +325,6 @@ function toast(added) {
       }
     },
   });
-}
-
-function relativeTime(iso) {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return "";
-  const seconds = Math.max(0, (Date.now() - t) / 1000);
-  if (seconds < 45) return "just now";
-  if (seconds < 3600) return Math.round(seconds / 60) + "m ago";
-  if (seconds < 86400) return Math.round(seconds / 3600) + "h ago";
-  return Math.round(seconds / 86400) + "d ago";
 }
 
 class Notifications extends HTMLElement {
