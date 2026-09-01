@@ -209,7 +209,13 @@
                 <span>{{$appName}}</span>
               </a>
             </div>
-            <div class="row flex-column flex-md-row flex-fill align-items-center">
+            {{/* g-0 because below md Tabler zeroes the horizontal padding of
+                 the container inside the open menu, and a row's negative gutter
+                 margins would then have nothing to cancel them and push the page
+                 half a gutter wider than the viewport. Without gutters the
+                 columns sit flush with the container edge, which is where the
+                 grid put their content anyway, so the wide header stays put. */}}
+            <div class="row g-0 flex-column flex-md-row flex-fill align-items-center">
               <div class="col">
                 <ul class="navbar-nav">
                   <li class="nav-item">

@@ -1780,6 +1780,15 @@ test. Update this file when a convention changes.
   (close control and tab context menu), on touch the header is the direct way.
   The split page has no close-all in its header at all, that is the group tab's
   close control and the quick nav swipe.
+- **The open burger menu is its own box:** below md Tabler zeroes the horizontal
+  padding of the container inside `.navbar-collapse`, so nothing in that menu may
+  carry negative margins. The one `row` in there is `g-0` for that reason: with
+  gutters its negative margins have nothing left to cancel them and push the page
+  half a gutter past the viewport, which reads as the whole page rocking sideways
+  while the menu stands open. The columns sit flush with the container edge
+  without gutters, which is where the grid put their content anyway, so the wide
+  header does not move. `overflow.js` measures it: every page it covers gets the
+  menu opened and closed at 320, 375 and 390.
 
 ## Frontend
 
