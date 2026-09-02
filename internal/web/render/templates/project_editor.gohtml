@@ -61,12 +61,22 @@
             <i class="ti ti-x"></i>
           </button>
         </div>
+        <div class="editor-commit-filter" data-editor-commit-filter-row>
+          <i class="ti ti-search" aria-hidden="true"></i>
+          <input type="text" class="editor-commit-filter-input" data-editor-commit-filter placeholder="Filter changes" aria-label="Filter the changes" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
+          <span class="editor-commit-filter-side">
+            <span class="editor-commit-filter-count" data-editor-commit-filter-count></span>
+            <button type="button" class="editor-commit-filter-clear" data-editor-commit-filter-clear aria-label="Clear the filter" title="Clear the filter">
+              <i class="ti ti-x"></i>
+            </button>
+          </span>
+        </div>
         <label class="d-flex align-items-center gap-2 m-0 px-2 py-1 border-bottom small editor-commit-all">
           <input class="form-check-input m-0 flex-shrink-0" type="checkbox" data-editor-commit-all aria-label="Select all changes">
           <span class="text-secondary" data-editor-commit-summary></span>
         </label>
         <div class="editor-commit-list" data-editor-commit-list></div>
-        <div class="border-top p-2 d-flex flex-column gap-2">
+        <div class="editor-commit-foot border-top p-2 d-flex flex-column gap-2">
           <div class="alert alert-danger small mb-0 py-1 px-2 editor-commit-error" data-editor-commit-error hidden></div>
           <textarea class="form-control form-control-sm editor-commit-message" data-editor-commit-message rows="3" placeholder="Commit message" aria-label="Commit message" spellcheck="false"></textarea>
           <div class="d-flex align-items-center gap-2 flex-wrap">

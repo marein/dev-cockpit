@@ -33,6 +33,50 @@ const { assert, sleep, BASE } = L;
 //     branch and the last message): a pathspec commit of exactly the checked
 //     rows, untracked paths through intent-to-add, staged work on other paths
 //     untouched. Init, add, merge and everything else stay with the shell.
+//   - the commit panel carries its filter over every list, short or long,
+//     there is no threshold: one bar the width of the panel, flush with the
+//     rows, whose field never changes width because the hit count and the
+//     clear button float over its own padding. On a pointer device the field
+//     takes the focus when the view opens, on touch it must not (no keyboard).
+//     From the field the keyboard owns the list with its own focus: arrow
+//     down walks onto the rows (`.editor-commit-row.active`, the focused row),
+//     and the walk reaches every row with a checkbox, folder rows included,
+//     in screen order. Enter shows the focused file's diff and comes back to
+//     it (in the field it takes the first hit; on a folder row it does
+//     nothing at all), Space is the click on the focused row's checkbox, a
+//     file's pick or a folder's whole subtree, staying in place either way,
+//     arrow up over the first row and Escape in the list step back out into
+//     the field, and Escape in the field clears the query before the panel's
+//     own Escape closes the view. There is deliberately no
+//     key legend: the keys follow conventions the focus already carries. The
+//     walk clamps at the bottom and steps out at the top (never a wrap, which
+//     would build the whole list in one keystroke), a step past the built
+//     edge appends the next batch instead of rebuilding, and the scroll that
+//     follows the focus runs in a rAF: that is what keeps a held arrow key at
+//     thirty repeats a second from freezing a thirty thousand row list. The bulk
+//     check drives that for real: hundreds of presses in a row over the
+//     edge and back, plain and filtered, with a rAF gap monitor and a
+//     budget on the longest blocked frame. The
+//     filter is a view over the picks and never a change to them: the all box
+//     acts on the matches, everything picked outside stands and the summary
+//     names it ("3 of 7 matches · 40 picked in all"). The batch footer counts
+//     in the same words: built rows plus its rest is the hit count under a
+//     filter and the total without one, never tree rows. Nothing under the
+//     field moves when the list narrows, which the check measures rather than
+//     eyeballs: the list has a zero flex basis, so its length never decides
+//     how much room the composer gets. What a keystroke costs is measured too,
+//     on the ten thousand change fixture of the bulk check: keydown in the
+//     field to the new rows in the DOM, over a query that walks from the
+//     broadest hit set to a handful, with 100 ms as the budget for the median
+//     and for the widest keystroke of each run.
+//   - the commit panel builds its rows in batches: what a folder row says
+//     about its subtree comes out of one index built per status, and only the
+//     first batch of rows is built, the rest waits behind
+//     `[data-editor-commit-show-more]` with `[data-editor-commit-rest]`
+//     naming how many. A check about the whole change list therefore reads
+//     the summary and the folder count, never the number of rows, and the
+//     bulk check proves that the picks and the commit reach the changes that
+//     have no row at all.
 //   - nothing starts picked in the commit panel, and the panel's draft (the
 //     message, the picked paths and an amend in progress with its borrowed
 //     message) is server state per project
@@ -210,6 +254,39 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       body: new URLSearchParams(f).toString(),
     }).then((r) => r.status);
   }, [path, fields]);
+
+  // A throwaway instance without an update stub asks the real feed, and with a
+  // release pending the daily prompt pops once per fresh browser context plus
+  // whenever the five minute recheck finds reason to, which lands wherever the
+  // suite happens to stand: a swal nobody answers then blocks every click
+  // after it. The runner has to cope (see lib's dismissUpdate), so every page
+  // of this runner carries a watcher that cancels exactly that one dialog,
+  // recognized by its own title, whenever it shows. Nothing else is touched:
+  // every other dialog belongs to a check.
+  const armedUpdateCancel = new Set();
+  const armUpdateAutoCancel = async (target) => {
+    const install = () => {
+      if (window.__dcUpdateAutoCancel) return;
+      window.__dcUpdateAutoCancel = setInterval(() => {
+        const title = document.querySelector(".swal2-container .swal2-title");
+        if (!title || !/^Update to \S+\?$/.test((title.textContent || "").trim())) return;
+        const cancel = document.querySelector(".swal2-container .swal2-cancel");
+        if (cancel) cancel.click();
+      }, 500);
+    };
+    const context = target.context();
+    if (!armedUpdateCancel.has(context)) {
+      armedUpdateCancel.add(context);
+      await context.addInitScript(install);
+    }
+    await target.evaluate(install).catch(() => {});
+  };
+  const mobile = async () => {
+    const mp = await mobilePage();
+    await armUpdateAutoCancel(mp);
+    return mp;
+  };
+  await armUpdateAutoCancel(page);
 
   // The editor settings are one form behind one tab. It posts to the page it is
   // rendered on, so waiting for the URL would return before the request even
@@ -455,7 +532,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     // request fails, so the git event arrives here and its status pull dies —
     // which is also what a phone waking before its radio does.
     await run("a reconnect catches up on the git change the gap swallowed", async () => {
-      const mp = await mobilePage();
+      const mp = await mobile();
       try {
         await ctx.setOffline(true);
         try {
@@ -810,7 +887,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       })), "the editor page still renders it as page data");
 
       // A second device is unaffected, it keeps deciding by its own width.
-      const mp = await mobilePage();
+      const mp = await mobile();
       await mp.goto(editorURL, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(mp);
       await L.waitUpgraded(mp, ["dc-editor"]);
@@ -1129,17 +1206,34 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     await run("a poll interval of zero stops a poller that is already running", async () => {
       await setPollSeconds(1);
       await openEditor(page);
-      // Written through this page's own fetch, which tells it nothing: the mark
-      // can only leave over the poller's event. root.txt goes back to its
-      // committed content, which also proves the poller is running.
-      await writeHere("root.txt", "root\n");
-      await page.waitForSelector('.editor-item[data-path="root.txt"][data-git-status]', { state: "detached", timeout: 20000 });
-
-      await setPollSeconds(0);
-      await sleep(3000); // one round of the old interval is all it may take
-      await writeHere("root.txt", "root\nwhile the poll is off\n");
-      await sleep(12000);
-      assert(!(await page.$('.editor-item[data-path="root.txt"][data-git-status]')), "the poller kept publishing after the interval was set to zero");
+      // A container starting anywhere on this host is a network change to a
+      // browser on the host network: chromium drops its sockets, the /events
+      // stream dies, and the reconnect snapshot legitimately pulls the status,
+      // which marks the row without the poller having said a word. That is
+      // the stream's contract, not the poller's, so a silence window an
+      // /events reconnect fell into proves nothing about the poller and is
+      // run again on a fresh one.
+      for (let attempt = 0; ; attempt += 1) {
+        // Written through this page's own fetch, which tells it nothing: the
+        // mark can only leave over the poller's event. root.txt goes back to
+        // its committed content, which also proves the poller is running.
+        await writeHere("root.txt", "root\n");
+        await page.waitForSelector('.editor-item[data-path="root.txt"][data-git-status]', { state: "detached", timeout: 20000 });
+        await setPollSeconds(0);
+        await sleep(3000); // one round of the old interval is all it may take
+        let reconnects = 0;
+        const sawStream = (request) => {
+          if (request.url().endsWith("/events")) reconnects += 1;
+        };
+        page.on("request", sawStream);
+        await writeHere("root.txt", "root\nwhile the poll is off\n");
+        await sleep(12000);
+        page.off("request", sawStream);
+        if (!(await page.$('.editor-item[data-path="root.txt"][data-git-status]'))) break;
+        assert(reconnects > 0, "the poller kept publishing after the interval was set to zero");
+        assert(attempt < 2, `an /events reconnect polluted the silence window ${attempt + 1} times in a row`);
+        await setPollSeconds(1);
+      }
       return "the running poller took the new interval";
     });
 
@@ -1147,6 +1241,18 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     // the poller ends, and what happened in the meantime is never published to
     // anybody. The page asks for it itself when it is in front again.
     await run("a page that comes back to the front catches up on its own", async () => {
+      // An /events reconnect in the gap between the two checks pulls the
+      // status and eats the premise; the silent change is then laid out once
+      // more, exactly the way the check before did it.
+      if (await page.$('.editor-item[data-path="root.txt"][data-git-status]')) {
+        await setPollSeconds(1);
+        await writeHere("root.txt", "root\n");
+        await page.waitForSelector('.editor-item[data-path="root.txt"][data-git-status]', { state: "detached", timeout: 20000 });
+        await setPollSeconds(0);
+        await sleep(3000);
+        await writeHere("root.txt", "root\nwhile the poll is off\n");
+        await sleep(1500);
+      }
       // Still with the poll off, so nothing is published: whatever arrives now,
       // the page went and got it.
       assert(!(await page.$('.editor-item[data-path="root.txt"][data-git-status]')), "the change is marked before the page came back");
@@ -1714,7 +1820,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     });
 
     await run("commit: on the phone the view opens inside the drawer", async () => {
-      const mp = await mobilePage();
+      const mp = await mobile();
       await openEditor(mp);
       await diffReady(mp);
       // A phone with no tab open opens the drawer by itself, and its backdrop
@@ -1847,6 +1953,606 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await waitStored((d) => (d.message || "") === "", "after emptying the box");
       await page.click("[data-editor-commit-close]");
       return "stored on the server, handed off live with the amend, spent by the commit, pruned with the changes";
+    });
+
+    // The filter stands over every list, short or long, there is no threshold
+    // left: a panel that only sometimes carries a field is a panel nobody
+    // learns. It is one bar across the whole panel, flush with the rows under
+    // it, and its field never changes width, because the hit count and the
+    // clear button float over its own padding instead of standing beside it.
+    // From the field the keyboard owns the list with its own focus: the
+    // arrows walk onto every row with a checkbox, folders included, Enter
+    // shows a file's diff and does nothing on a folder, and Space is the
+    // click on the focused row's checkbox. The picks are the
+    // model and the filter is a view over it, so what a filter hides stays
+    // picked and the summary says so in the words of what the boxes act on.
+    await run("commit: the filter stands over every list and the keyboard walks its hits", async () => {
+      const geometry = () => page.evaluate(() => {
+        const box = (sel) => {
+          const r = document.querySelector(sel).getBoundingClientRect();
+          return { y: Math.round(r.y), h: Math.round(r.height), w: Math.round(r.width) };
+        };
+        return {
+          bar: box("[data-editor-commit-filter-row]"),
+          input: box("[data-editor-commit-filter]"),
+          all: box(".editor-commit-all"),
+          list: box("[data-editor-commit-list]"),
+          foot: box(".editor-commit-foot"),
+        };
+      });
+
+      await openEditor(page);
+      await diffReady(page);
+      await openCommitView(page);
+
+      // A short list carries the field like every other one does, and on a
+      // pointer device the field is where the view opens, the way the project
+      // switcher and the branch picker open on theirs.
+      let short = (await gitChanges(page, project)).worktree.length;
+      if (short === 0) {
+        // Earlier checks usually leave a handful of changes behind, but the
+        // claim must not depend on that: a clean tree gets one probe file.
+        await writeHere("filter-probe.txt", "probe\n");
+        const until = Date.now() + 30000;
+        while (short === 0 && Date.now() < until) {
+          await sleep(500);
+          short = (await gitChanges(page, project)).worktree.length;
+        }
+      }
+      assert(short > 0, "this check wants a working copy with a few changes in it");
+      assert(await page.locator("[data-editor-commit-filter]").isVisible(),
+        `a list of ${short} changes carries no filter`);
+      assert(await page.evaluate(() =>
+        document.activeElement === document.querySelector("[data-editor-commit-filter]")),
+      "the filter did not take the focus when the view opened");
+      // There is deliberately no key legend anywhere: the keys follow the
+      // conventions the focus already carries, nothing is rendered for them.
+      assert(await page.evaluate(() => !document.querySelector("[data-editor-commit-hint]")),
+        "a key hint line is rendered although none must exist");
+
+      // The bar runs the whole width of the panel, like the rows under it.
+      const flush = await page.evaluate(() => {
+        const bar = document.querySelector("[data-editor-commit-filter-row]").getBoundingClientRect();
+        const panel = document.querySelector("[data-editor-commit]").getBoundingClientRect();
+        const row = document.querySelector(".editor-commit-all").getBoundingClientRect();
+        return {
+          left: Math.round(bar.left - panel.left),
+          right: Math.round(panel.right - bar.right),
+          sameAsRow: Math.round(bar.width - row.width),
+        };
+      });
+      assert(flush.left === 0 && flush.right === 0 && flush.sameAsRow === 0,
+        `the filter bar does not span the panel: ${JSON.stringify(flush)}`);
+
+      assert(await runInShell(
+        "mkdir -p filt/deep && for f in $(seq 1 12); do echo one > filt/file$f.txt; done "
+        + "&& echo one > filt/deep/unique-marker.txt\r",
+      ) === 200, "the shell refused to write the filter fixture");
+      const written = 13;
+      const deadline = Date.now() + 60000;
+      let total = 0;
+      while (Date.now() < deadline) {
+        total = (await gitChanges(page, project)).worktree.length;
+        if (total >= short + written) break;
+        await sleep(500);
+      }
+      assert(total >= short + written, `git reports ${total} changes, the fixture writes ${written}`);
+      await page.waitForFunction((want) => {
+        const el = document.querySelector("[data-editor-commit-summary]");
+        return el && new RegExp(`of ${want} changes$`).test(el.textContent.trim());
+      }, total, { timeout: 30000 });
+
+      // Everything picked first, so the next steps can show what a filter does
+      // to picks it cannot see.
+      await clearPicks();
+      await page.setChecked("[data-editor-commit-all]", true);
+      await sleep(300);
+      const all = (await page.locator("[data-editor-commit-summary]").textContent()).trim();
+      const picked = Number((all.match(/^(\d+) of \d+ changes$/) || [])[1]);
+      assert(picked === total, `the summary reads "${all}" with everything picked`);
+      const before = await geometry();
+
+      // One keystroke run: the list narrows, the count says how far, and the
+      // summary switches to the words of the filter.
+      await page.fill("[data-editor-commit-filter]", "unique-marker");
+      await page.waitForFunction(() =>
+        document.querySelectorAll(".editor-commit-row[data-path]").length === 1, null, { timeout: 10000 });
+      const narrowed = await page.evaluate(() => ({
+        count: document.querySelector("[data-editor-commit-filter-count]").textContent.trim(),
+        summary: document.querySelector("[data-editor-commit-summary]").textContent.trim(),
+        path: document.querySelector(".editor-commit-row[data-path]").dataset.path,
+        clear: getComputedStyle(document.querySelector("[data-editor-commit-filter-clear]")).visibility,
+      }));
+      assert(narrowed.path === "filt/deep/unique-marker.txt", `the one hit is ${narrowed.path}`);
+      assert(narrowed.count === `1 of ${picked}`, `the hit count reads "${narrowed.count}"`);
+      assert(narrowed.clear === "visible", "a standing filter offers no way to clear it");
+      assert(new RegExp(`^1 of 1 match · ${picked} picked in all$`).test(narrowed.summary),
+        `the filtered summary reads "${narrowed.summary}"`);
+
+      // Nothing under the field moves when the list goes from thousands of
+      // rows to one, and the field itself keeps its width: the count and the
+      // clear button float over its padding instead of pushing it.
+      const after = await geometry();
+      assert(JSON.stringify(before) === JSON.stringify(after),
+        `filtering moved the panel\n  before ${JSON.stringify(before)}\n  after  ${JSON.stringify(after)}`);
+      await page.fill("[data-editor-commit-filter]", "zzzz-nothing-matches-this");
+      await page.waitForFunction(() =>
+        document.querySelectorAll(".editor-commit-row[data-path]").length === 0, null, { timeout: 10000 });
+      const empty = await geometry();
+      assert(JSON.stringify(before) === JSON.stringify(empty),
+        `an empty result moved the panel\n  before ${JSON.stringify(before)}\n  empty  ${JSON.stringify(empty)}`);
+      await page.fill("[data-editor-commit-filter]", "unique-marker");
+      await page.waitForFunction(() =>
+        document.querySelectorAll(".editor-commit-row[data-path]").length === 1, null, { timeout: 10000 });
+
+      // The all box under a filter is about the matches, and the picks it does
+      // not reach stand: dropping the one hit leaves every other pick alone.
+      await page.setChecked("[data-editor-commit-all]", false);
+      await sleep(300);
+      const dropped = (await page.locator("[data-editor-commit-summary]").textContent()).trim();
+      assert(dropped === `0 of 1 match · ${picked - 1} picked in all`,
+        `after dropping the match the summary reads "${dropped}"`);
+
+      // Escape gives the whole list back and the picks with it.
+      await page.focus("[data-editor-commit-filter]");
+      await page.keyboard.press("Escape");
+      await page.waitForFunction((want) => {
+        const el = document.querySelector("[data-editor-commit-summary]");
+        return el && el.textContent.trim() === want;
+      }, `${picked - 1} of ${picked} changes`, { timeout: 10000 });
+      assert((await page.inputValue("[data-editor-commit-filter]")) === "", "Escape left the field filled");
+      assert(await page.locator("[data-editor-commit]").isVisible(), "Escape closed the panel over the filter");
+
+      // The keyboard owns the list with its own focus: arrow down walks out of
+      // the field onto the rows, Enter shows the focused row's diff and comes
+      // back to it, Space toggles the pick the way it toggles any checkbox and
+      // stays where it is, arrow up over the first row steps back out into the
+      // field, and Escape in the list is the same way out. Nothing picked from
+      // here on, so the one pick the keyboard makes is the only one there is.
+      const focusIs = () => page.evaluate(() => {
+        const a = document.activeElement;
+        if (a === document.querySelector("[data-editor-commit-filter]")) return "field";
+        if (a && a.classList && a.classList.contains("editor-commit-row")) {
+          return a.dataset.path ? `f:${a.dataset.path}` : `g:${a.dataset.dir}`;
+        }
+        return a ? a.tagName : "none";
+      });
+      const markedId = () => page.evaluate(() => {
+        const el = document.querySelector(".editor-commit-row.active");
+        return el ? (el.dataset.path ? `f:${el.dataset.path}` : `g:${el.dataset.dir}`) : "";
+      });
+      await clearPicks();
+      // The folder rows this walk has to reach only exist in the grouped
+      // view, and the grouping is a device local switch an earlier check may
+      // have left on the flat list, so it is pinned here and put back after.
+      const kbWasGrouped = await page.evaluate(() =>
+        document.querySelector("[data-editor-commit-group]").getAttribute("aria-pressed") === "true");
+      if (!kbWasGrouped) {
+        await page.click("[data-editor-commit-group]");
+        await sleep(300);
+      }
+      await page.fill("[data-editor-commit-filter]", "filt/file");
+      await page.waitForFunction((want) =>
+        document.querySelectorAll(".editor-commit-row[data-path]").length === want, written - 1, { timeout: 10000 });
+      // The order the arrows walk is the order on the screen, every row with a
+      // checkbox, the folder rows included and nothing skipped.
+      const screenOrder = await page.evaluate(() =>
+        [...document.querySelectorAll(".editor-commit-row")].map((el) =>
+          (el.dataset.path ? `f:${el.dataset.path}` : `g:${el.dataset.dir}`)));
+      assert(screenOrder[0] === "g:filt" && screenOrder[1] === "f:filt/file1.txt",
+        `the filtered list does not lead with the folder row: ${screenOrder.slice(0, 2).join(", ")}`);
+      await page.focus("[data-editor-commit-filter]");
+      const walked = [];
+      for (let i = 0; i < 4; i += 1) {
+        await page.keyboard.press("ArrowDown");
+        walked.push(await markedId());
+      }
+      assert(walked.join("|") === screenOrder.slice(0, 4).join("|"),
+        `the walk skipped a row: walked ${walked.join(", ")} over ${screenOrder.slice(0, 4).join(", ")}`);
+      assert(await focusIs() === walked[3], `the walk left the focus on ${await focusIs()}`);
+
+      // Up over the first row is the way back out: the focus returns to the
+      // field, the mark stands, and nothing wraps to the far end of the list,
+      // which would build every row in between in one keystroke.
+      for (let i = 0; i < 3; i += 1) await page.keyboard.press("ArrowUp");
+      assert(await focusIs() === "g:filt", `three ups landed on ${await focusIs()}`);
+      await page.keyboard.press("ArrowUp");
+      assert(await focusIs() === "field", `up over the top landed on ${await focusIs()}`);
+      assert(await markedId() === "g:filt", "stepping out into the field lost the mark");
+      await page.keyboard.press("ArrowDown");
+      assert(await focusIs() === "g:filt", "down from the field did not return to the marked row");
+
+      // Enter is the file's diff and only the file's: on the folder row it
+      // does nothing at all, no tab, no state, the focus stands.
+      const tabsBefore = await page.locator(".editor-tab").count();
+      const summaryBefore = (await page.locator("[data-editor-commit-summary]").textContent()).trim();
+      await page.keyboard.press("Enter");
+      await sleep(600);
+      assert(await page.locator(".editor-tab").count() === tabsBefore,
+        "Enter on a folder row opened something");
+      assert((await page.locator("[data-editor-commit-summary]").textContent()).trim() === summaryBefore,
+        "Enter on a folder row changed the picks");
+      assert(await focusIs() === "g:filt", `Enter on a folder moved the focus to ${await focusIs()}`);
+
+      // Space on the folder row is the click on its checkbox: the whole
+      // subtree follows, and on the way back the half checked state does too.
+      await page.keyboard.press(" ");
+      await sleep(300);
+      assert(await page.evaluate((want) =>
+        [...document.querySelectorAll('.editor-commit-row[data-path^="filt/file"] input')]
+          .filter((el) => el.checked).length === want, written - 1),
+      "Space on the folder did not pick every file under it");
+      assert(await page.evaluate(() =>
+        document.querySelector('.editor-commit-grouprow[data-dir="filt"] input').checked),
+      "the folder checkbox does not read as checked after its Space");
+      assert(await focusIs() === "g:filt", "Space stepped off the folder row");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press(" ");
+      await sleep(300);
+      assert(await page.evaluate(() => {
+        const g = document.querySelector('.editor-commit-grouprow[data-dir="filt"] input');
+        return !g.checked && g.indeterminate;
+      }), "dropping one file did not leave the folder half checked");
+
+      // A file's Enter still opens its diff and hands the focus back to it,
+      // and its Space toggles in place.
+      const second = "filt/file1.txt";
+      assert(await focusIs() === `f:${second}`, `the walk stands on ${await focusIs()}, not the first file`);
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(`.editor-tab[data-path="${second}"].active`, { state: "attached", timeout: 20000 });
+      assert(await focusIs() === `f:${second}`,
+        `opening the diff moved the focus to ${await focusIs()} instead of back to the row`);
+      await page.keyboard.press(" ");
+      await sleep(300);
+      assert(await page.locator(`.editor-commit-row[data-path="${second}"] input`).isChecked(),
+        "Space did not pick the focused file back");
+      assert(await markedId() === `f:${second}`,
+        "Space stepped off the row instead of staying like a checkbox does");
+
+      // Escape in the list steps back out into the field with the query intact.
+      await page.keyboard.press("Escape");
+      assert(await focusIs() === "field", `Escape in the list landed on ${await focusIs()}`);
+      assert((await page.inputValue("[data-editor-commit-filter]")) === "filt/file",
+        "Escape out of the list took the query with it");
+      // A pick the keyboard made is a pick the commit takes: the button reads
+      // the whole list's number, not the rows the filter happens to show.
+      await page.fill("[data-editor-commit-message]", "keyboard pick");
+      await sleep(200);
+      assert(!(await page.locator("[data-editor-commit-button]").isDisabled()),
+        "picks from the keyboard left the commit button disabled");
+      await page.fill("[data-editor-commit-message]", "");
+      if (!kbWasGrouped) {
+        await page.click("[data-editor-commit-group]");
+        await sleep(300);
+      }
+
+      // A phone carries the same field and must not open its keyboard for it:
+      // the focus follows the pointer, not the width.
+      const mp = await mobile();
+      await openEditor(mp);
+      await diffReady(mp);
+      if (!(await mp.locator(".editor-drawer-open").count())) await mp.click("[data-editor-drawer-toggle]");
+      await mp.waitForSelector(".editor-drawer-open", { timeout: 8000 });
+      await mp.click("[data-editor-commit-toggle]");
+      await mp.waitForSelector("[data-editor-commit]:not([hidden])", { timeout: 10000 });
+      await sleep(500);
+      assert(await mp.locator("[data-editor-commit-filter]").isVisible(), "the phone carries no filter");
+      assert(await mp.evaluate(() =>
+        document.activeElement !== document.querySelector("[data-editor-commit-filter]")),
+      "the phone put the keyboard up by focusing the filter");
+      await mp.click("[data-editor-commit-close]");
+
+      // The fixture goes while the query stands: without a threshold the field
+      // stays, the query stays, and the list says that nothing matches it.
+      await clearPicks();
+      assert(await runInShell("rm -rf filt\r") === 200, "the shell refused the cleanup");
+      await page.waitForFunction(() =>
+        /No change matches/.test(document.querySelector("[data-editor-commit-list]").textContent),
+      null, { timeout: 60000 });
+      assert(await page.locator("[data-editor-commit-filter]").isVisible(),
+        "the field left with the fixture");
+      await page.click("[data-editor-commit-filter-clear]");
+      await sleep(300);
+      assert((await page.inputValue("[data-editor-commit-filter]")) === "", "the clear button left the query");
+      return "one bar over every list, nothing moves when it narrows, arrows and Enter walk the diffs";
+    });
+
+    // A working copy with thousands of changed paths is what a vendored tree
+    // or a generated folder leaves behind, and the panel used to answer every
+    // folder row by filtering the whole change list, once per row and once
+    // more per click: the view took seconds to open and a folder checkbox
+    // locked the tab for the better part of a minute. The counts now come out
+    // of one index built per status, and the rows are built in batches, so
+    // what is on the screen is bounded while the picks, the summary and the
+    // commit keep speaking for every change there is.
+    await run("commit: thousands of changes list in batches and still commit as one", async () => {
+      const packs = 100;
+      const perPack = 100;
+      const bulk = packs * perPack;
+      // COMMIT_ROWS_STEP in editor.js: how many changes one built batch adds,
+      // the folder rows over them ride along uncounted.
+      const COMMIT_ROWS_STEP = 500;
+      assert(await runInShell(
+        `for p in $(seq 0 ${packs - 1}); do mkdir -p bulk/pack$p; `
+        + `for f in $(seq 0 ${perPack - 1}); do echo one > bulk/pack$p/file$f.txt; done; done\r`,
+      ) === 200, "the shell refused to write the bulk");
+      const deadline = Date.now() + 60000;
+      let total = 0;
+      while (Date.now() < deadline) {
+        const changes = await gitChanges(page, project);
+        total = (changes.worktree || []).filter((e) => e.path.startsWith("bulk/")).length;
+        if (total === bulk) break;
+        await sleep(1000);
+      }
+      assert(total === bulk, `git reports ${total} of the ${bulk} written files`);
+
+      await openEditor(page);
+      await diffReady(page);
+      await openCommitView(page);
+      // The grouping is this device's own switch and an earlier check left it
+      // on the flat list, so this one turns it back on and puts it back after.
+      const wasGrouped = await page.evaluate(() =>
+        document.querySelector("[data-editor-commit-group]").getAttribute("aria-pressed") === "true");
+      if (!wasGrouped) {
+        await page.click("[data-editor-commit-group]");
+        await sleep(300);
+      }
+      await page.waitForSelector('.editor-commit-grouprow[data-dir="bulk"]', { timeout: 30000 });
+      await clearPicks();
+
+      // The list is capped, and it says so: what is not built is named as a
+      // number, never silently dropped.
+      const first = await page.evaluate(() => ({
+        rows: document.querySelectorAll(".editor-commit-row").length,
+        rest: Number((document.querySelector("[data-editor-commit-rest]") || { dataset: {} }).dataset.editorCommitRest || 0),
+        more: !!document.querySelector("[data-editor-commit-show-more]"),
+        summary: document.querySelector("[data-editor-commit-summary]").textContent.trim(),
+        bulkCount: document.querySelector('.editor-commit-grouprow[data-dir="bulk"] .ms-auto').textContent,
+      }));
+      assert(first.rows < bulk, `the panel built ${first.rows} rows for ${bulk} changes`);
+      assert(first.more && first.rest > 0, `nothing says how many rows are waiting: ${JSON.stringify(first)}`);
+      assert(first.bulkCount === String(bulk),
+        `the folder counts ${first.bulkCount} instead of the ${bulk} changes under it`);
+      const counted = Number((first.summary.match(/^0 of (\d+) /) || [])[1]);
+      assert(counted >= bulk, `the summary speaks for ${counted} changes, ${bulk} were written alone`);
+      assert(counted > first.rows, `the summary counts ${counted}, which is what the ${first.rows} rows already show`);
+
+      // The footer's arithmetic is checked as arithmetic: rendered hits plus
+      // its rest is the whole count over the list, the total without a filter
+      // and the hit count under one, and its words say changes or matches to
+      // match. Counting tree rows here once made three thousand hits read as
+      // five thousand missing.
+      const listMath = () => page.evaluate(() => ({
+        rendered: document.querySelectorAll(".editor-commit-row[data-path]").length,
+        rest: Number((document.querySelector("[data-editor-commit-rest]") || { dataset: {} }).dataset.editorCommitRest || 0),
+        note: ((document.querySelector("[data-editor-commit-rest]") || {}).textContent || ""),
+        button: ((document.querySelector("[data-editor-commit-show-more]") || {}).textContent || "").trim(),
+      }));
+      const plainMath = await listMath();
+      assert(plainMath.rendered + plainMath.rest === counted,
+        `unfiltered: ${plainMath.rendered} rendered plus ${plainMath.rest} waiting is not the ${counted} changes`);
+      assert(/more changes are not listed here\. The box above picks them with the rest\./.test(plainMath.note),
+        `the unfiltered footer reads "${plainMath.note}"`);
+      assert(plainMath.button === `Show ${COMMIT_ROWS_STEP} more`,
+        `the button offers "${plainMath.button}"`);
+      await page.fill("[data-editor-commit-filter]", "file1");
+      await page.waitForFunction(() =>
+        /^1100 of /.test(document.querySelector("[data-editor-commit-filter-count]").textContent.trim()),
+      null, { timeout: 10000 });
+      const filteredMath = await listMath();
+      assert(filteredMath.rendered + filteredMath.rest === 1100,
+        `filtered: ${filteredMath.rendered} rendered plus ${filteredMath.rest} waiting is not the 1100 matches`);
+      assert(/more matches are not listed here\. The box above picks them with the rest\./.test(filteredMath.note),
+        `the filtered footer reads "${filteredMath.note}"`);
+      await page.fill("[data-editor-commit-filter]", "");
+      await sleep(400);
+
+      // The filter has to stay usable on a list this long, and that is
+      // measured here rather than trusted: the clock runs from the keydown in
+      // the field to the moment the new rows stand in the DOM, which is the
+      // first thing a mutation observer sees after the handler that replaced
+      // them. The typed query walks from the broadest hit set there is, one
+      // letter every path carries, down to a handful, so the run covers both
+      // ends of the work.
+      await page.evaluate(() => {
+        window.__filterSamples = [];
+        let t0 = 0;
+        document.querySelector("[data-editor-commit-filter]")
+          .addEventListener("keydown", () => { t0 = performance.now(); }, true);
+        new MutationObserver(() => {
+          if (!t0) return;
+          window.__filterSamples.push(performance.now() - t0);
+          t0 = 0;
+        }).observe(document.querySelector("[data-editor-commit-list]"), { childList: true });
+      });
+      const typed = "bulk/pack99/file9";
+      const passes = [];
+      for (let round = 0; round < 3; round += 1) {
+        await page.fill("[data-editor-commit-filter]", "");
+        await sleep(300);
+        await page.evaluate(() => { window.__filterSamples = []; });
+        await page.focus("[data-editor-commit-filter]");
+        await page.keyboard.type(typed, { delay: 70 });
+        await sleep(300);
+        passes.push(await page.evaluate(() => window.__filterSamples));
+      }
+      await page.fill("[data-editor-commit-filter]", "");
+      await sleep(300);
+      const samples = passes.flat();
+      const median = (xs) => {
+        const sorted = [...xs].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+      };
+      assert(samples.length >= typed.length * 2,
+        `only ${samples.length} keystrokes were measured over ${typed.length * 3} typed`);
+      // The first keystroke of every run goes from an empty field to a letter
+      // every path carries, so it is the whole list rebuilt and rendered: the
+      // most expensive keystroke there is.
+      const broad = median(passes.map((run) => run[0]).filter((ms) => ms != null));
+      const all = median(samples);
+      const worst = Math.max(...samples);
+      assert(broad < 100,
+        `the widest keystroke needs ${broad.toFixed(0)} ms on ${bulk} changes, the budget is 100`);
+      assert(all < 100,
+        `a keystroke needs ${all.toFixed(0)} ms on ${bulk} changes, the budget is 100`);
+      // A ceiling far above the budget, so a machine that stalls for a moment
+      // does not fail the run while the regression this guards against, a
+      // filter that walks the folders per row again, costs seconds.
+      assert(worst < 400, `one keystroke needed ${worst.toFixed(0)} ms on ${bulk} changes`);
+      const timing = `filter ${broad.toFixed(0)}/${all.toFixed(0)}/${worst.toFixed(0)} ms widest/median/max`;
+
+      // Sustained movement is its own case, not many single steps: a held
+      // arrow key is thirty presses a second for many seconds, so the walk is
+      // driven hundreds of presses in a row without a pause, across the batch
+      // edge and back to the clamped start, plain and once more under a
+      // filter. The walk covers every row with a checkbox, folder rows and
+      // file rows alike, so the counted landing spots are rows of the screen
+      // order, not files alone. Three claims are pinned: the mark lands where the counted
+      // steps say and stands at the ends, the edge appends the next batch
+      // instead of rebuilding the rows that already exist (a probe stamped on
+      // the first row survives, a rebuild would replace the element), and a
+      // rAF gap monitor keeps the longest blocked frame under a budget that
+      // holds in the docker runner with the batch append included.
+      const holdBudget = 500;
+      const startGap = () => page.evaluate(() => {
+        window.__gap = { max: 0, frames: 0 };
+        let last = performance.now();
+        const tick = () => {
+          const now = performance.now();
+          if (window.__gap.frames > 2) window.__gap.max = Math.max(window.__gap.max, now - last);
+          last = now;
+          window.__gap.frames += 1;
+          if (window.__gapOn) requestAnimationFrame(tick);
+        };
+        window.__gapOn = true;
+        requestAnimationFrame(tick);
+      });
+      const stopGap = () => page.evaluate(() => {
+        window.__gapOn = false;
+        return Math.round(window.__gap.max);
+      });
+      const pressRun = async (key, n) => {
+        for (let i = 0; i < n; i += 1) await page.keyboard.press(key);
+      };
+      const markAt = () => page.evaluate(() => {
+        const el = document.querySelector(".editor-commit-row.active");
+        return el ? (el.dataset.path ? `f:${el.dataset.path}` : `g:${el.dataset.dir}`) : "";
+      });
+      // rowAt is the identity of the n-th row the arrows can stand on, folder
+      // rows and file rows alike, in screen order.
+      const rowAt = (at) => page.evaluate((i) => {
+        const rows = document.querySelectorAll(".editor-commit-row");
+        const el = rows[i < 0 ? rows.length + i : i];
+        return el ? (el.dataset.path ? `f:${el.dataset.path}` : `g:${el.dataset.dir}`) : "";
+      }, at);
+
+      const steps = 1100;
+      await page.evaluate(() => {
+        document.querySelector(".editor-commit-row[data-path]").dataset.holdProbe = "1";
+      });
+      await page.focus("[data-editor-commit-filter]");
+      await startGap();
+      await pressRun("ArrowDown", steps);
+      const downPlain = {
+        mark: await markAt(),
+        expected: await rowAt(steps - 1),
+        fileRows: await page.evaluate(() => document.querySelectorAll(".editor-commit-row[data-path]").length),
+        probe: await page.evaluate(() =>
+          document.querySelector(".editor-commit-row[data-path]").dataset.holdProbe === "1"),
+      };
+      await pressRun("ArrowUp", steps + 5);
+      const gapPlain = await stopGap();
+      const upPlain = { mark: await markAt(), expected: await rowAt(0) };
+      assert(downPlain.mark && downPlain.mark === downPlain.expected,
+        `${steps} held downs stand on ${downPlain.mark}, the counted row is ${downPlain.expected}`);
+      // 1100 walked rows cross the batch edge twice, so exactly three batches
+      // of changes stand, appended and counted in changes, never in tree rows.
+      assert(downPlain.fileRows === 3 * COMMIT_ROWS_STEP,
+        `crossing the edge left ${downPlain.fileRows} change rows, three batches are ${3 * COMMIT_ROWS_STEP}`);
+      assert(downPlain.probe, "the edge rebuilt the first batch instead of appending behind it");
+      assert(upPlain.mark === upPlain.expected,
+        `${steps + 5} held ups stand on ${upPlain.mark} instead of clamping at ${upPlain.expected}`);
+      assert(gapPlain < holdBudget,
+        `the held walk blocked a frame for ${gapPlain} ms, the budget is ${holdBudget}`);
+
+      // The same run under a filter, overshooting both ends on purpose: the
+      // walk has to clamp at the last hit and at the first.
+      await page.fill("[data-editor-commit-filter]", "bulk/pack9");
+      await page.waitForFunction(() =>
+        /^1100 of /.test(document.querySelector("[data-editor-commit-filter-count]").textContent.trim()),
+      null, { timeout: 10000 });
+      await page.focus("[data-editor-commit-filter]");
+      await startGap();
+      await pressRun("ArrowDown", 1150);
+      const downFiltered = {
+        mark: await markAt(),
+        expected: await rowAt(-1),
+        fileRows: await page.evaluate(() => document.querySelectorAll(".editor-commit-row[data-path]").length),
+        moreGone: await page.evaluate(() => !document.querySelector("[data-editor-commit-show-more]")),
+      };
+      await pressRun("ArrowUp", 1150);
+      const gapFiltered = await stopGap();
+      const upFiltered = { mark: await markAt(), expected: await rowAt(0) };
+      assert(downFiltered.mark && downFiltered.mark === downFiltered.expected,
+        `the filtered walk overshot to ${downFiltered.mark} instead of clamping at ${downFiltered.expected}`);
+      assert(downFiltered.fileRows === 1100 && downFiltered.moreGone,
+        `the filtered walk built ${downFiltered.fileRows} of 1100 rows, more button gone: ${downFiltered.moreGone}`);
+      assert(upFiltered.mark === upFiltered.expected,
+        `the filtered walk back stands on ${upFiltered.mark} instead of ${upFiltered.expected}`);
+      assert(gapFiltered < holdBudget,
+        `the filtered held walk blocked a frame for ${gapFiltered} ms, the budget is ${holdBudget}`);
+      const holdTiming = `hold ${gapPlain}/${gapFiltered} ms plain/filtered longest frame`;
+      await page.fill("[data-editor-commit-filter]", "");
+      await sleep(300);
+
+      // The folder's checkbox reaches every change under it, the ones with a
+      // row and the ones still waiting alike, and the summary counts them.
+      await page.setChecked('.editor-commit-grouprow[data-dir="bulk"] input', true);
+      await sleep(300);
+      const picked = await page.evaluate(() => ({
+        summary: document.querySelector("[data-editor-commit-summary]").textContent.trim(),
+        rows: document.querySelectorAll(".editor-commit-row[data-path]").length,
+      }));
+      assert(new RegExp(`^${bulk} of \\d+ changes$`).test(picked.summary),
+        `the folder picked "${picked.summary}" of the ${bulk} changes under it`);
+      assert(picked.rows < bulk,
+        `${picked.rows} of the ${bulk} files have a row, so nothing was picked without one`);
+
+      // The button builds the next batch, the rows before it stay, and what
+      // comes up comes up picked: the batch is drawn from the same counts.
+      await page.click("[data-editor-commit-show-more]");
+      await sleep(500);
+      const second = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('.editor-commit-row[data-path^="bulk/"]')];
+        return { rows: rows.length, checked: rows.filter((r) => r.querySelector("input").checked).length };
+      });
+      assert(second.rows > picked.rows, `the second batch left ${second.rows} rows behind the first ${picked.rows}`);
+      assert(second.checked === second.rows,
+        `${second.rows - second.checked} of the newly built rows came up unpicked`);
+
+      // And the commit takes all of them, the ones nobody ever saw included.
+      await page.fill("[data-editor-commit-message]", "the whole bulk");
+      await page.click("[data-editor-commit-button]");
+      await page.waitForSelector('.editor-commit-grouprow[data-dir="bulk"]', { state: "detached", timeout: 60000 });
+      const inHead = await shellCount("git ls-tree -r --name-only HEAD | grep -c '^bulk/'");
+      assert(inHead === bulk, `HEAD holds ${inHead} of the ${bulk} committed files`);
+      const after = await gitChanges(page, project);
+      assert(!(after.worktree || []).some((e) => e.path.startsWith("bulk/")),
+        "the commit left changes under the committed folder");
+
+      // The bulk was for this check alone; the rest of this runner works on a
+      // small repository again.
+      assert(await runInShell(`rm -rf bulk && git ${author} commit -qm "drop the bulk" -- bulk\r`) === 200,
+        "the shell refused to drop the bulk");
+      await page.waitForFunction(() =>
+        !document.querySelector('.editor-commit-row[data-path^="bulk/"]'), null, { timeout: 60000 });
+      if (!wasGrouped) {
+        await page.click("[data-editor-commit-group]");
+        await sleep(300);
+      }
+      await page.click("[data-editor-commit-close]");
+      return `${bulk} changes in one folder: capped rows, one folder pick, one commit, ${timing}, ${holdTiming}`;
     });
 
     // ---- the git surface -----------------------------------------------------
@@ -2707,7 +3413,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     });
 
     await run("the git surface fits the phone", async () => {
-      const mp = await mobilePage();
+      const mp = await mobile();
       await openEditor(mp);
       await diffReady(mp);
       // A phone with no tab open opens the drawer by itself, and its backdrop
@@ -3136,7 +3842,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     // the arrangement the phone depends on.
     await run("mobile: a finger panning one side takes the other with it (chromium)", async () => {
       if (engine !== "chromium") return "skipped, CDP is chromium only";
-      const mp = await mobilePage();
+      const mp = await mobile();
       const cdp = await mp.context().newCDPSession(mp);
       await openEditor(mp);
       await diffReady(mp);
@@ -3385,7 +4091,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     });
 
     await run("the phone keeps the file name in the strip beside one menu", async () => {
-      const mp = await mobilePage();
+      const mp = await mobile();
       await mp.goto(editorURL, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(mp);
       await L.waitUpgraded(mp, ["dc-editor"]);
@@ -3435,7 +4141,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     // wait for. The editor menu carries git only as the one Git entry.
     await run("the diff toggles from the file's menu and the editor menu carries git only as the sheet entry, on both widths", async () => {
       await writeHere("root.txt", "root\ndiff me\n");
-      for (const [where, target] of [["phone", await mobilePage()], ["desktop", page]]) {
+      for (const [where, target] of [["phone", await mobile()], ["desktop", page]]) {
         if (target === page) {
           await openEditor(target);
         } else {
@@ -3539,7 +4245,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       const placeholder = await boxOf(page, "[data-editor-placeholder]");
       assert(!placeholder.attribute && placeholder.height > 0, `the placeholder is not on screen: ${JSON.stringify(placeholder)}`);
 
-      const mp = await mobilePage();
+      const mp = await mobile();
       await emptyEditor(mp);
       for (const [name, selector] of Object.entries(FILE_CONTROLS)) {
         assertGone("mobile", name, await boxOf(mp, selector));

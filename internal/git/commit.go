@@ -3,6 +3,9 @@ package git
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -11,6 +14,46 @@ import (
 // programs of their own, so it gets more room than a read before the caller
 // hears a timeout instead of a result.
 const commitTimeout = 30 * time.Second
+
+// pathspecArgvLimit is how many bytes of pathspecs one call carries in its
+// argument list before they travel through a file instead. The kernel refuses
+// an exec whose whole argument block passes a quarter of the stack limit,
+// commonly two megabytes, and a working copy with tens of thousands of
+// changed paths reaches that on its own: at a hundred bytes per path it is
+// twenty thousand of them, and the answer is the exec's E2BIG and not
+// anything git could say. Everything below the bound goes as arguments the
+// way it always has, so an older git that never learned --pathspec-from-file
+// keeps serving every ordinary commit.
+const pathspecArgvLimit = 512 << 10
+
+// runPathspec runs one call whose pathspecs may be longer than an argument
+// list may be. Short lists are arguments, a long one is written NUL separated
+// into a file of its own outside the repository and read back with
+// --pathspec-from-file, which git takes without a limit. The file is this
+// call's own and goes with it.
+func (r *Repo) runPathspec(ctx context.Context, args []string, specs []string) ([]byte, error) {
+	size := 0
+	for _, spec := range specs {
+		size += len(spec) + 1
+	}
+	if size <= pathspecArgvLimit {
+		return r.run(ctx, args, specs)
+	}
+	file, err := os.CreateTemp("", "dev-cockpit-pathspec-*")
+	if err != nil {
+		return nil, fmt.Errorf("git %s: %w: %s", args[0], ErrNoAnswer, err)
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.WriteString(strings.Join(specs, "\x00") + "\x00"); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("git %s: %w: %s", args[0], ErrNoAnswer, err)
+	}
+	if err := file.Close(); err != nil {
+		return nil, fmt.Errorf("git %s: %w: %s", args[0], ErrNoAnswer, err)
+	}
+	full := append(slices.Clone(args), "--pathspec-from-file="+file.Name(), "--pathspec-file-nul")
+	return r.run(ctx, full, nil)
+}
 
 // CommitInfo is what the commit panel shows before anything is committed:
 // where the commit would go, and what the last one said, which is what an
@@ -138,7 +181,7 @@ func (r *Repo) Commit(ctx context.Context, message string, paths []string, amend
 		}
 	}
 	if len(intent) > 0 {
-		if _, err := w.run(ctx, []string{"add", "--intent-to-add"}, intent); err != nil {
+		if _, err := w.runPathspec(ctx, []string{"add", "--intent-to-add"}, intent); err != nil {
 			return CommitResult{}, err
 		}
 	}
@@ -147,12 +190,12 @@ func (r *Repo) Commit(ctx context.Context, message string, paths []string, amend
 	if amend {
 		args = append(args, "--amend")
 	}
-	if _, err := w.run(ctx, args, specs); err != nil {
+	if _, err := w.runPathspec(ctx, args, specs); err != nil {
 		// The intent entries were this call's own preparation, so a refused
 		// commit takes them back and the index reads as it did before. Best
 		// effort: what cannot be reset stays a visible change, never a loss.
 		if len(intent) > 0 {
-			_, _ = w.run(ctx, []string{"reset", "--quiet"}, intent)
+			_, _ = w.runPathspec(ctx, []string{"reset", "--quiet"}, intent)
 		}
 		return CommitResult{}, err
 	}

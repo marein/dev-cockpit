@@ -419,6 +419,80 @@ test. Update this file when a convention changes.
   only hands down to a single subfolder and has no files of its own merges
   into one row with the joined path as its label, a group's checkbox covers
   its whole subtree, and folders stay grouping and never the committed unit.
+  **The panel is built for a working copy with tens of thousands of changes**,
+  which a vendored tree or a generated folder makes an ordinary case. What a
+  folder row says about its subtree, how many changes sit under it and how
+  many of them are picked, comes out of one index built per status and moved
+  by the clicks from there on; asking that by filtering the change list costs
+  one pass per folder row and another per click, which is what made ten
+  thousand changes a panel that took seconds to open and a folder checkbox
+  that locked the tab for the better part of a minute. Only the first
+  `COMMIT_ROWS_STEP` **changes** have rows, their folder rows ride along
+  uncounted, and the rest waits behind a button whose numbers count the same
+  way: built rows plus the footer's rest is the whole count over the list, the
+  total without a filter and the hit count under one, and its words say
+  changes or matches to match. The footer once counted tree rows instead,
+  which made three thousand hits read as five thousand missing. Rows nobody
+  reads are the other half of the cost; the counts, the all box, the folder
+  checkboxes and the commit always speak for every change, never for the rows
+  that happen to exist. **The panel carries a
+  filter field over every list**, short or long and with no threshold, because
+  a field that is only sometimes there is one nobody learns. It is one bar the
+  width of the panel, flush with the rows under it, and the hit count and the
+  clear button float over the field's own right padding rather than standing
+  beside it: they appear with the first keystroke and change width with every
+  one after it, and a field that resized under that would be a field nobody
+  can type in. Nothing under it moves when the list narrows either, which is
+  what the list's zero flex basis buys: how long the list is must never decide
+  how much room the composer below it gets, or a filter that finds one file
+  reshapes the whole panel. Where the panel runs out of height, a phone with
+  its keyboard up, the list keeps a floor of a few rows and the panel scrolls
+  rather than crushing the list to nothing. On a pointer device the field
+  takes the focus when the view opens, the way every other filter in this app
+  does, and on touch it must not: that is `pointerMedia`, never the width, or
+  a phone answers the commit view with its keyboard. **A keystroke is budgeted
+  at 100 milliseconds** from the key going down to the new rows standing in
+  the DOM, measured on a working copy of thirty thousand changes and pinned by
+  the runner on ten thousand: the sort belongs to the status and not to the
+  keystroke, and the keystroke rebuilds the folder tree over what matches plus
+  one batch of rows, which is what keeps the widest query, the one every path
+  answers, inside the budget. The field is also where
+  the keyboard takes the list over,
+  and it does so with the real focus, because that is the only way the keys
+  can be what they look like: arrow down walks out of the field onto the rows
+  (`.editor-commit-row.active` is the focused row), and the walk reaches
+  **every row that carries a checkbox, folder rows and file rows alike**, in
+  the order they stand on the screen. Enter shows the focused file's diff and
+  hands the focus back to it (from the field it takes the first hit); on a
+  folder row Enter does nothing at all, no error and no state, because only a
+  file has a diff. **Space is the click on the focused row's checkbox**, a
+  file's pick or a folder's whole subtree with the half checked state
+  included, and like every checkbox it stays in place, stepping on is the
+  arrows' business. Arrow up over the first row and Escape in the list step
+  back out into the field, and Escape in the field clears a standing query
+  before the panel's own Escape closes the view. The walk survives a held key, thirty presses a
+  second, because nothing on that path costs what the list is long: the
+  marked row is remembered instead of swept for, the index is a map lookup,
+  the scroller follows once per frame in a rAF rather than once per press (a
+  geometry read per press is a forced layout of the whole list, which was a
+  hundred milliseconds per repeat at thirty thousand changes), a walk past
+  the built edge appends the next batch instead of rebuilding everything
+  before it, and the walk clamps at the bottom and steps out at the top,
+  never a wrap, which would build every row in between in one keystroke.
+  **There is deliberately no key legend anywhere in the panel**: a line under
+  the field lied about the keys as soon as the focus moved, and its focus
+  following replacement was more furniture than help, so the keys simply
+  follow the conventions the focus already carries and nothing is rendered
+  for them. **The filter is a
+  view over the picks and never a change to them**: it narrows what is shown
+  and what the boxes over it act on, the all box picks the matches, everything
+  picked outside stands, the summary switches to the words of what it acts on
+  and names the rest ("3 of 7 matches · 40 picked in all"), and the commit
+  takes every pick there is. A commit whose
+  pathspec passes `pathspecArgvLimit` travels through a file
+  (`--pathspec-from-file`, NUL separated) instead of the argument list, which
+  the kernel refuses with E2BIG past about two megabytes: without it, picking
+  a change of that size builds a commit no exec can carry.
   An amend with nothing picked commits anyway and rewrites only the message
   (`--only --amend`, the everyday typo fix; `--only` is what keeps a coder's
   staged work out of it), while without the amend flag an empty pick stays

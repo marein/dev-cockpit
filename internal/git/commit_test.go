@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -249,5 +250,60 @@ func TestCommitInfoNamesBranchAndLastMessage(t *testing.T) {
 	}
 	if without.Repo {
 		t.Fatalf("no repository: %+v", without)
+	}
+}
+
+// A working copy with tens of thousands of changed paths is what the editor's
+// commit panel meets in a vendored tree or after a generated folder landed,
+// and the pathspec it builds out of them is longer than an argument list may
+// be: the exec fails with E2BIG before git is even started, which is a commit
+// button answering something nobody can act on. The pathspecs travel through a
+// file above the bound, so the size of a change never decides whether it can
+// be committed. The paths here are long on purpose: the list has to pass what
+// the kernel carries (a quarter of the stack limit, commonly two megabytes)
+// and not only this package's own bound, or the check would pass with the
+// fallback removed again.
+func TestCommitTakesAPathspecLongerThanAnArgumentList(t *testing.T) {
+	dir := t.TempDir()
+	commitRepo(t, dir)
+	writeAt(t, dir, "kept.txt", "kept\n")
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-qm", "init")
+
+	deep := strings.Repeat("generated-sources-", 11) + "vendor"
+	folder := deep + "/" + deep + "/" + deep
+	paths := []string{}
+	size := 0
+	for i := 0; i < 3600; i++ {
+		rel := fmt.Sprintf("%s/a-file-with-a-name-long-enough-to-fill-a-line-%05d.txt", folder, i)
+		writeAt(t, dir, rel, "one\n")
+		paths = append(paths, rel)
+		size += len(":(top,literal)") + len(rel) + 1
+	}
+	// The point of the check is the size, so it is asserted and not assumed: a
+	// shorter list would go as arguments and prove nothing.
+	if size < 2<<20 {
+		t.Fatalf("the pathspec is %d bytes, which an argument list still carries", size)
+	}
+	writeAt(t, dir, "left-out.txt", "out\n")
+
+	result, err := New(dir).Commit(context.Background(), "the whole generated tree", paths, false)
+
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if result.Subject != "the whole generated tree" {
+		t.Fatalf("result: %+v", result)
+	}
+	left := worktreeByPath(t, dir)
+	if len(left) != 1 {
+		t.Fatalf("the commit left %d changes, only the unpicked file may stand", len(left))
+	}
+	if _, ok := left["left-out.txt"]; !ok {
+		t.Fatalf("the unpicked file is gone from the working copy: %v", left)
+	}
+	tree := gitOut(t, dir, "ls-tree", "-r", "--name-only", "HEAD")
+	if got := len(strings.Split(tree, "\n")); got != len(paths)+1 {
+		t.Fatalf("HEAD holds %d files, the commit was about %d plus the one from before", got, len(paths))
 	}
 }

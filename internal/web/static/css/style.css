@@ -1823,12 +1823,85 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   min-height: 0;
   min-width: 0;
 }
-.editor-commit-list {
+/* The filter is one bar across the whole panel, flush with the rows under it:
+   an inset field would sit in a box of its own while the list beside it runs
+   to the edge. The count and the clear button float over the field's own right
+   padding instead of standing beside it, so a hit count that appears with the
+   first keystroke, and changes width with every one after it, never resizes
+   the field somebody is typing in. */
+.editor-commit-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--tblr-border-color);
+}
+.editor-commit-filter > .ti {
+  flex: 0 0 auto;
+  color: var(--tblr-secondary);
+}
+.editor-commit-filter:focus-within {
+  background: var(--tblr-bg-surface-secondary);
+}
+.editor-commit-filter-input {
   flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tblr-body-color);
+  font-size: 0.875rem;
+  padding: 0.15rem 5.5rem 0.15rem 0;
+}
+.editor-commit-filter-input:focus {
+  outline: none;
+}
+.editor-commit-filter-side {
+  position: absolute;
+  right: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.editor-commit-filter-count {
+  font-size: 0.75rem;
+  color: var(--tblr-secondary);
+  white-space: nowrap;
+}
+.editor-commit-filter-clear {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--tblr-secondary);
+  padding: 0.1rem;
+  line-height: 1;
+}
+.editor-commit-filter-clear:hover {
+  color: var(--tblr-body-color);
+}
+.editor-commit-row:focus {
+  outline: none;
+}
+/* A panel that runs out of height must not crush the list to nothing, which is
+   what a phone with its keyboard up used to do: the composer gives way first,
+   the list keeps a few rows, and only when even that does not fit does the
+   panel itself scroll. */
+.editor-commit-list {
+  /* A zero basis, so how long the list is never decides how much room the
+     composer under it gets: without it a thousand rows shrink the message box
+     away and the panel changes shape the moment a filter narrows the list. */
+  flex: 1 1 0;
   overflow: auto;
-  min-height: 0;
+  min-height: 6rem;
   padding: 0.25rem 0;
   -webkit-overflow-scrolling: touch;
+}
+.editor-commit {
+  overflow-y: auto;
+}
+.editor-commit-foot {
+  flex: 0 1 auto;
 }
 .editor-commit-row {
   display: flex;
@@ -1852,6 +1925,9 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
 }
 .editor-commit-row:hover {
   background: var(--tblr-bg-surface-secondary);
+}
+.editor-commit-row.active {
+  background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18));
 }
 .editor-commit-open {
   display: flex;
@@ -1895,6 +1971,8 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
 .editor-commit-message {
   font-family: var(--tblr-font-monospace);
   resize: none;
+  flex: 1 1 auto;
+  min-height: 2.25rem;
 }
 .editor-item {
   display: flex;

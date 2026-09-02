@@ -39,6 +39,14 @@ const TREE_FOLD_KEY = "dc-editor-tree-folded";
 // Whether the commit view groups its list by folder. Per device for the same
 // reason, and for every project alike.
 const COMMIT_GROUP_KEY = "dc-editor-commit-grouped";
+// How many changes the commit view builds rows for in one go; the folder rows
+// over them ride along uncounted. A working copy with a few hundred changes is
+// one screen of scrolling and arrives whole; beyond that a button asks for the
+// next batch, because a list of thousands of rows costs more to build and lay
+// out than anybody spends reading it. The cap is about the rows alone: the
+// counts, the all box and the commit itself always speak for every change.
+const COMMIT_ROWS_STEP = 500;
+
 // How a changed path is marked in the tree: the letter at the end of the row and
 // the color both the name and that letter take. The colors are Tabler variables
 // through its text utilities, so they follow the light and dark theme. rank
@@ -144,6 +152,9 @@ async function init(root) {
   const commitToggleBtn = root.querySelector("[data-editor-commit-toggle]");
   const commitCloseBtn = root.querySelector("[data-editor-commit-close]");
   const commitListEl = root.querySelector("[data-editor-commit-list]");
+  const commitFilterEl = root.querySelector("[data-editor-commit-filter]");
+  const commitFilterCountEl = root.querySelector("[data-editor-commit-filter-count]");
+  const commitFilterClearBtn = root.querySelector("[data-editor-commit-filter-clear]");
   const commitAllEl = root.querySelector("[data-editor-commit-all]");
   const commitSummaryEl = root.querySelector("[data-editor-commit-summary]");
   const commitBranchEl = root.querySelector("[data-editor-commit-branch]");
@@ -273,6 +284,30 @@ async function init(root) {
   let commitInfo = null;
   let commitInfoSeq = 0;
   let commitChanges = [];
+  let commitSorted = [];
+  let commitQuery = "";
+  let commitIndex = emptyCommitIndex();
+  // How many of the shown changes may carry rows right now; it grows with the
+  // button and the walk and survives a re-render, so a status round never
+  // folds a list somebody grew back to its first batch.
+  let commitShown = COMMIT_ROWS_STEP;
+  // Which row the keyboard stands on, by path so it survives a rebuild, and
+  // the rendered order the arrows walk, every row of it and not only the built
+  // ones: walking into the batch behind the button builds it.
+  // The walk covers every row that carries a checkbox, folders and files
+  // alike, so the key is typed: "f:" plus the path for a file row, "g:" plus
+  // the directory for a folder row.
+  let commitActiveKey = "";
+  let commitOrder = [];
+  const commitOrderIndex = new Map();
+  let commitActiveRowEl = null;
+  let commitScrollRaf = 0;
+  let commitSpecList = [];
+  let commitBuilt = 0;
+  let commitBuiltFiles = 0;
+  let commitMoreEl = null;
+  const commitRowInputs = new Map();
+  const commitGroupInputs = new Map();
   const commitPicked = new Set();
   let commitStash = "";
   let commitDraftTimer = 0;
@@ -1235,6 +1270,12 @@ async function init(root) {
     const i = tabs.findIndex((t) => t.path === path);
     if (i < 0) return;
     const tab = tabs[i];
+    // A close that was asked for from the commit view's filter hands the focus
+    // back to it, the way opening a diff from there does: reading a changeset
+    // with the keyboard is arrow, Enter, close, arrow, and it would end at the
+    // close if the field lost the focus there.
+    const fromCommitFilter = commitOn && document.activeElement === commitFilterEl;
+    const fromCommitList = commitOn && commitListEl.contains(document.activeElement);
     if (!force && tab.dirty && !(await confirmDialog({ title: `Discard changes in "${tab.name}"?`, confirmText: "Discard" }))) {
       return;
     }
@@ -1250,6 +1291,11 @@ async function init(root) {
       renderTabs();
       updateActionStates();
       persistTabs();
+    }
+    if (commitOn && fromCommitList) {
+      if (!focusCommitRow()) commitFilterEl.focus();
+    } else if (commitOn && fromCommitFilter) {
+      commitFilterEl.focus();
     }
   }
 
@@ -1995,7 +2041,7 @@ async function init(root) {
     }
     syncFilesItem();
     if (sheetKind === "files") renderFilesSheet();
-    commitChanges = ((changes && changes.worktree) || []).slice();
+    setCommitChanges(((changes && changes.worktree) || []).slice());
     // A picked path that left the list was committed or reverted elsewhere; it
     // leaves the pick too, and the next save writes the pruned draft. Nothing
     // is saved for the pruning alone: a commit on another device clears the
@@ -2363,15 +2409,108 @@ async function init(root) {
   // it lives in the same drawer. What it commits is exactly the checked rows,
   // as a pathspec commit, so whatever a coder keeps staged next door stays
   // staged and stays out.
+  //
+  // What every folder row needs is counted once per status into commitIndex and
+  // moved by the clicks from there on: how many changes sit under it, how many
+  // of those can be picked and how many are. Answering that by filtering the
+  // change list instead costs one pass per folder row and another per click,
+  // which is what made a working copy with ten thousand changes a panel nobody
+  // could open. The rendered checkboxes are held by path for the same reason.
+  // Only the first commitShown changes have rows, their folder rows ride
+  // along; the rest waits behind a button whose numbers count changes, and
+  // the picks, the summary and the commit always speak for the whole list.
 
-  function commitSelectable() {
-    return commitChanges.filter((entry) => gitKind(entry) !== "conflict");
+  function emptyCommitNode(dir, parent) {
+    return { dir, parent, dirs: new Map(), files: [], count: 0, selectable: 0, picked: 0 };
+  }
+
+  function emptyCommitIndex() {
+    const root = emptyCommitNode("", null);
+    return { shown: [], byPath: new Map(), nodes: new Map([["", root]]), root, total: 0, pickedAll: 0 };
+  }
+
+  // commitMatches is the filter, the shared token match every list in this app
+  // narrows with, over the path a row stands for.
+  function commitMatches(entry) {
+    return commitQuery === "" || matchesTokens(entry.path, commitQuery);
+  }
+
+  // setCommitChanges takes a fresh status. The sort is the expensive half and
+  // belongs to the status, not to a keystroke, so it is done here and the
+  // filter only rebuilds the tree over it.
+  function setCommitChanges(list) {
+    commitChanges = list;
+    commitSorted = [...list].sort((a, b) => a.path.localeCompare(b.path));
+    buildCommitIndex();
+  }
+
+  // buildCommitIndex counts what the rows need. byPath and the two totals are
+  // about every change there is, because a pick outside the filter is still a
+  // pick and must not be pruned or forgotten; the folder tree holds only what
+  // the filter shows, which is what makes every folder row, every count and
+  // every checkbox under it speak about the same set without a second path
+  // through the code.
+  function buildCommitIndex() {
+    const root = emptyCommitNode("", null);
+    const nodes = new Map([["", root]]);
+    const byPath = new Map();
+    const shown = [];
+    let pickedAll = 0;
+    for (const entry of commitSorted) {
+      byPath.set(entry.path, entry);
+      const selectable = gitKind(entry) !== "conflict";
+      const picked = selectable && commitPicked.has(entry.path);
+      if (picked) pickedAll += 1;
+      if (!commitMatches(entry)) continue;
+      shown.push(entry);
+      let node = root;
+      const dir = commitDir(entry);
+      if (dir) {
+        let prefix = "";
+        for (const segment of dir.split("/")) {
+          prefix = prefix ? `${prefix}/${segment}` : segment;
+          let child = node.dirs.get(segment);
+          if (!child) {
+            child = emptyCommitNode(prefix, node);
+            node.dirs.set(segment, child);
+            nodes.set(prefix, child);
+          }
+          node = child;
+        }
+      }
+      node.files.push(entry);
+      for (let n = node; n; n = n.parent) {
+        n.count += 1;
+        if (selectable) n.selectable += 1;
+        if (picked) n.picked += 1;
+      }
+    }
+    commitIndex = { shown, byPath, nodes, root, total: commitSorted.length, pickedAll };
+  }
+
+  // recountCommitPicks reads the picks back into the folder counts. The clicks
+  // move them one by one; this is for the moments a whole set arrives at once,
+  // the all box, a draft from another device and a spent commit.
+  function recountCommitPicks() {
+    for (const node of commitIndex.nodes.values()) node.picked = 0;
+    for (const entry of commitIndex.shown) {
+      if (gitKind(entry) === "conflict" || !commitPicked.has(entry.path)) continue;
+      for (let n = commitIndex.nodes.get(commitDir(entry)); n; n = n.parent) n.picked += 1;
+    }
+    let all = 0;
+    for (const entry of commitSorted) {
+      if (gitKind(entry) !== "conflict" && commitPicked.has(entry.path)) all += 1;
+    }
+    commitIndex.pickedAll = all;
   }
 
   function commitSelectedPaths() {
-    return commitSelectable()
-      .filter((entry) => commitPicked.has(entry.path))
-      .map((entry) => entry.path);
+    const paths = [];
+    for (const entry of commitChanges) {
+      if (gitKind(entry) === "conflict") continue;
+      if (commitPicked.has(entry.path)) paths.push(entry.path);
+    }
+    return paths;
   }
 
   // pruneCommitPicked drops picks the changes list no longer holds. Only a
@@ -2379,8 +2518,8 @@ async function init(root) {
   // is empty and pruning would eat the picks another device stored.
   function pruneCommitPicked() {
     if (!gitLoaded) return;
-    for (const path of [...commitPicked]) {
-      if (!commitChanges.some((entry) => entry.path === path)) commitPicked.delete(path);
+    for (const path of commitPicked) {
+      if (!commitIndex.byPath.has(path)) commitPicked.delete(path);
     }
   }
 
@@ -2390,11 +2529,27 @@ async function init(root) {
     return parentDir(entry.path.endsWith("/") ? entry.path.slice(0, -1) : entry.path);
   }
 
+  // setCommitPick is the one place a single row's pick moves, and it moves
+  // every number that counts it: the folders above the row, which is what
+  // their checkboxes read, and the whole list's, which is what the commit
+  // button and the summary's "picked in all" read. A pick that changed one of
+  // the two and not the other is a commit button that stands disabled over
+  // work somebody picked.
+  function setCommitPick(entry, on) {
+    if (on === commitPicked.has(entry.path)) return;
+    if (on) commitPicked.add(entry.path);
+    else commitPicked.delete(entry.path);
+    const delta = on ? 1 : -1;
+    commitIndex.pickedAll += delta;
+    for (let n = commitIndex.nodes.get(commitDir(entry)); n; n = n.parent) n.picked += delta;
+  }
+
   function commitRow(entry, nested, depth) {
     const kind = gitKind(entry);
     const info = GIT_MARKS[kind];
     const row = document.createElement("div");
     row.className = "editor-commit-row";
+    row.tabIndex = -1;
     if (nested) {
       row.classList.add("editor-commit-nested");
       row.style.paddingLeft = `${0.5 + (depth || 1) * 1.1}rem`;
@@ -2410,15 +2565,17 @@ async function init(root) {
     } else {
       check.checked = commitPicked.has(entry.path);
       check.addEventListener("change", () => {
-        if (check.checked) commitPicked.add(entry.path);
-        else commitPicked.delete(entry.path);
+        commitActiveKey = `f:${entry.path}`;
+        markCommitActive();
+        setCommitPick(entry, check.checked);
         // Every folder above carries this file in its subtree, so each of
         // their rows may have to move to or from the mixed state.
-        for (let dir = commitDir(entry); dir; dir = parentDir(dir)) syncGroupRow(dir);
+        for (let n = commitIndex.nodes.get(commitDir(entry)); n; n = n.parent) paintGroupRow(n);
         syncCommitControls();
         queueCommitDraft();
       });
     }
+    commitRowInputs.set(entry.path, check);
     const open = document.createElement("button");
     open.type = "button";
     open.className = "editor-commit-open";
@@ -2468,46 +2625,55 @@ async function init(root) {
     if (isDirEntry || kind === "deleted" || kind === "conflict") {
       open.disabled = true;
     } else {
-      open.addEventListener("click", () => void diffAgainst(entry.path, DIFF_REV));
+      open.addEventListener("click", () => {
+        commitActiveKey = `f:${entry.path}`;
+        markCommitActive();
+        void diffAgainst(entry.path, DIFF_REV);
+      });
     }
     row.append(check, open);
     return row;
   }
 
-  // commitSubtree is everything a folder holds, its own files and its
-  // subfolders' alike: that is what its checkbox and its count speak about.
-  function commitSubtree(dir) {
-    return commitChanges.filter((entry) => {
-      const d = commitDir(entry);
-      return d === dir || d.startsWith(`${dir}/`);
-    });
-  }
-
   // A group row is one folder's line over its whole subtree: the checkbox
   // picks and drops everything below it, a mixed pick reads as indeterminate.
   // The folder is only a grouping, what is committed are always the files.
-  function commitGroupRow(dir, label, depth) {
+  function commitGroupRow(node, label, depth) {
     const row = document.createElement("div");
     row.className = "editor-commit-row editor-commit-grouprow";
-    row.dataset.dir = dir;
+    row.tabIndex = -1;
+    row.dataset.dir = node.dir;
     if (depth) row.style.paddingLeft = `${0.5 + depth * 1.1}rem`;
     const check = document.createElement("input");
     check.type = "checkbox";
     check.className = "form-check-input m-0 flex-shrink-0";
-    check.setAttribute("aria-label", `Include everything in ${dir}`);
+    check.setAttribute("aria-label", `Include everything in ${node.dir}`);
     check.addEventListener("change", () => {
-      for (const entry of commitSubtree(dir)) {
-        if (gitKind(entry) === "conflict") continue;
-        if (check.checked) commitPicked.add(entry.path);
-        else commitPicked.delete(entry.path);
-        const fileCheck = commitListEl.querySelector(
-          `.editor-commit-row[data-path="${CSS.escape(entry.path)}"] input`);
-        if (fileCheck && !fileCheck.disabled) fileCheck.checked = check.checked;
+      commitActiveKey = `g:${node.dir}`;
+      markCommitActive();
+      const on = check.checked;
+      const before = node.picked;
+      const stack = [node];
+      while (stack.length > 0) {
+        const n = stack.pop();
+        for (const entry of n.files) {
+          if (gitKind(entry) === "conflict") continue;
+          if (on) commitPicked.add(entry.path);
+          else commitPicked.delete(entry.path);
+          const input = commitRowInputs.get(entry.path);
+          if (input && !input.disabled) input.checked = on;
+        }
+        n.picked = on ? n.selectable : 0;
+        paintGroupRow(n);
+        for (const child of n.dirs.values()) stack.push(child);
       }
+      // The whole list's number moves with the subtree, see setCommitPick.
+      commitIndex.pickedAll += node.picked - before;
       // A subtree toggle moves rows in both directions, the groups inside it
       // and the ones this folder sits in.
-      for (const groupRow of commitListEl.querySelectorAll(".editor-commit-grouprow")) {
-        syncGroupRow(groupRow.dataset.dir);
+      for (let n = node.parent; n; n = n.parent) {
+        n.picked += node.picked - before;
+        paintGroupRow(n);
       }
       syncCommitControls();
       queueCommitDraft();
@@ -2522,50 +2688,64 @@ async function init(root) {
     nameEl.textContent = label;
     const count = document.createElement("span");
     count.className = "small text-secondary ms-auto ps-2 flex-shrink-0";
-    count.textContent = String(commitSubtree(dir).length);
+    count.textContent = String(node.count);
     line.append(icon, nameEl, count);
-    row.title = dir;
+    row.title = node.dir;
     row.append(check, line);
+    commitGroupInputs.set(node.dir, check);
+    paintGroupRow(node);
     return row;
   }
 
-  // syncGroupRow reads a folder's pick state back onto its group row, so a
-  // single file's checkbox never costs a rebuild of the list.
-  function syncGroupRow(dir) {
-    if (!dir) return;
-    const input = commitListEl.querySelector(
-      `.editor-commit-grouprow[data-dir="${CSS.escape(dir)}"] input`);
+  // paintGroupRow reads a folder's counted pick state back onto its row, so a
+  // single file's checkbox never costs a rebuild of the list. A folder that
+  // has no row right now, because it is merged into a chain or waits behind
+  // the button, is counted all the same and simply has nothing to paint.
+  function paintGroupRow(node) {
+    if (!node) return;
+    const input = commitGroupInputs.get(node.dir);
     if (!input) return;
-    const selectable = commitSubtree(dir).filter((entry) => gitKind(entry) !== "conflict");
-    const picked = selectable.filter((entry) => commitPicked.has(entry.path));
-    input.disabled = selectable.length === 0;
-    input.checked = selectable.length > 0 && picked.length === selectable.length;
-    input.indeterminate = picked.length > 0 && picked.length < selectable.length;
+    input.disabled = node.selectable === 0;
+    input.checked = node.selectable > 0 && node.picked === node.selectable;
+    input.indeterminate = node.picked > 0 && node.picked < node.selectable;
   }
 
-  function renderCommitList() {
-    if (commitChanges.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "text-secondary small p-3";
-      const line = document.createElement("div");
-      line.textContent = "Nothing to commit, the working copy is clean.";
-      empty.append(line);
-      if (commitInfo && commitInfo.hasCommit && commitInfo.lastMessage) {
-        const last = document.createElement("div");
-        last.className = "mt-1 text-truncate";
-        last.title = commitInfo.lastMessage;
-        last.textContent = `Last commit: ${commitInfo.lastMessage.split("\n", 1)[0]}`;
-        empty.append(last);
-      }
-      commitListEl.replaceChildren(empty);
-      syncCommitControls();
-      return;
-    }
-    const entries = [...commitChanges].sort((a, b) => a.path.localeCompare(b.path));
+  // commitMoreRow is the end of a list that is longer than the panel builds at
+  // once. Its number is counted in what the list is showing, changes plainly
+  // and matches under a filter, never in tree rows: the folder rows are
+  // grouping and adding them in made three thousand hits read as five
+  // thousand missing. Built rows plus this rest is the count over the list,
+  // and the waiting ones are picked and committed with the rest regardless,
+  // because a row nobody can see must not read as a change nobody can commit.
+  function commitMoreRow(rest) {
+    const row = document.createElement("div");
+    row.className = "px-2 py-2 border-top";
+    row.dataset.editorCommitRest = String(rest);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-sm btn-ghost-secondary w-100";
+    btn.dataset.editorCommitShowMore = "";
+    btn.textContent = `Show ${Math.min(rest, COMMIT_ROWS_STEP)} more`;
+    btn.addEventListener("click", () => extendCommitList(), { signal });
+    const kind = commitQuery === "" ? ["change", "changes"] : ["match", "matches"];
+    const note = document.createElement("div");
+    note.className = "small text-secondary mt-1";
+    note.textContent = rest === 1
+      ? `One more ${kind[0]} is not listed here. The box above picks it with the rest.`
+      : `${rest} more ${kind[1]} are not listed here. The box above picks them with the rest.`;
+    row.append(btn, note);
+    return row;
+  }
+
+  // commitSpecs is the list the panel would render in full: one entry per row,
+  // folders first and files after them on every level in the grouped view, the
+  // sorted changes in the flat one. Building it is cheap, building its rows is
+  // not, which is what the cap is about.
+  function commitSpecs() {
+    const specs = [];
     if (!commitGrouped) {
-      commitListEl.replaceChildren(...entries.map((entry) => commitRow(entry, false)));
-      syncCommitControls();
-      return;
+      for (const entry of commitIndex.shown) specs.push({ entry, nested: false, depth: 0 });
+      return specs;
     }
     // Grouped by folder, the way an IDE's directory tree reads: folders
     // first and files after them, on every level. A folder becomes a row of
@@ -2573,20 +2753,7 @@ async function init(root) {
     // that only hands down to a single subfolder and has no files of its own
     // merges into one row with the joined path as its label. A group's
     // checkbox covers its whole subtree, see commitGroupRow.
-    const treeTop = { dirs: new Map(), files: [] };
-    for (const entry of entries) {
-      const dir = commitDir(entry);
-      let node = treeTop;
-      if (dir) {
-        for (const segment of dir.split("/")) {
-          if (!node.dirs.has(segment)) node.dirs.set(segment, { dirs: new Map(), files: [] });
-          node = node.dirs.get(segment);
-        }
-      }
-      node.files.push(entry);
-    }
-    const rows = [];
-    const emit = (node, prefix, depth) => {
+    const emit = (node, depth) => {
       for (const segment of [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
         let label = segment;
         let child = node.dirs.get(segment);
@@ -2595,20 +2762,265 @@ async function init(root) {
           label = `${label}/${next}`;
           child = child.dirs.get(next);
         }
-        const dir = prefix ? `${prefix}/${label}` : label;
-        rows.push(commitGroupRow(dir, label, depth));
-        emit(child, dir, depth + 1);
+        specs.push({ node: child, label, depth });
+        emit(child, depth + 1);
       }
-      for (const entry of node.files) {
-        rows.push(commitRow(entry, depth > 0, depth));
-      }
+      for (const entry of node.files) specs.push({ entry, nested: depth > 0, depth });
     };
-    emit(treeTop, "", 0);
-    commitListEl.replaceChildren(...rows);
-    for (const groupRow of commitListEl.querySelectorAll(".editor-commit-grouprow")) {
-      syncGroupRow(groupRow.dataset.dir);
+    emit(commitIndex.root, 0);
+    return specs;
+  }
+
+  function renderCommitList() {
+    const scrollTop = commitListEl.scrollTop;
+    commitRowInputs.clear();
+    commitGroupInputs.clear();
+    if (commitIndex.shown.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "text-secondary small p-3";
+      const line = document.createElement("div");
+      line.textContent = commitQuery === ""
+        ? "Nothing to commit, the working copy is clean."
+        : `No change matches "${commitQuery}".`;
+      empty.append(line);
+      if (commitQuery === "" && commitInfo && commitInfo.hasCommit && commitInfo.lastMessage) {
+        const last = document.createElement("div");
+        last.className = "mt-1 text-truncate";
+        last.title = commitInfo.lastMessage;
+        last.textContent = `Last commit: ${commitInfo.lastMessage.split("\n", 1)[0]}`;
+        empty.append(last);
+      }
+      commitOrder = [];
+      commitOrderIndex.clear();
+      commitSpecList = [];
+      commitBuilt = 0;
+      commitBuiltFiles = 0;
+      commitMoreEl = null;
+      commitListEl.replaceChildren(empty);
+      syncCommitControls();
+      return;
     }
+    const specs = commitSpecs();
+    commitSpecList = specs;
+    commitOrder = [];
+    commitOrderIndex.clear();
+    for (let i = 0; i < specs.length; i += 1) {
+      const key = specs[i].entry ? `f:${specs[i].entry.path}` : `g:${specs[i].node.dir}`;
+      commitOrderIndex.set(key, i);
+      commitOrder.push(key);
+    }
+    const quota = Math.max(commitShown, COMMIT_ROWS_STEP);
+    const rows = [];
+    commitBuilt = 0;
+    commitBuiltFiles = 0;
+    while (commitBuilt < specs.length && commitBuiltFiles < quota) {
+      const spec = specs[commitBuilt];
+      if (spec.entry) commitBuiltFiles += 1;
+      rows.push(spec.entry
+        ? commitRow(spec.entry, spec.nested, spec.depth)
+        : commitGroupRow(spec.node, spec.label, spec.depth));
+      commitBuilt += 1;
+    }
+    commitMoreEl = commitBuilt < specs.length
+      ? commitMoreRow(commitIndex.shown.length - commitBuiltFiles)
+      : null;
+    if (commitMoreEl) rows.push(commitMoreEl);
+    const listHadFocus = commitListEl.contains(document.activeElement);
+    commitListEl.replaceChildren(...rows);
+    commitListEl.scrollTop = scrollTop;
+    markCommitActive();
+    if (listHadFocus && !focusCommitRow()) commitFilterEl.focus();
     syncCommitControls();
+  }
+
+  // extendCommitList builds the next batch behind the rows that already
+  // stand, appended and never rebuilt: a full rebuild grows with everything
+  // built so far, so a walk that crossed its tenth batch edge would pay for
+  // ten thousand rows to gain one, and that once per edge. A batch is
+  // COMMIT_ROWS_STEP more changes, the folder rows over them ride along
+  // uncounted, and minSpec forces the walk to cover a row the arrows are
+  // about to stand on.
+  function extendCommitList(minSpec = -1) {
+    const specs = commitSpecList;
+    if (commitBuilt >= specs.length) return;
+    if (commitMoreEl) {
+      commitMoreEl.remove();
+      commitMoreEl = null;
+    }
+    const goal = commitBuiltFiles + COMMIT_ROWS_STEP;
+    const batch = document.createDocumentFragment();
+    while (commitBuilt < specs.length && (commitBuiltFiles < goal || commitBuilt <= minSpec)) {
+      const spec = specs[commitBuilt];
+      if (spec.entry) commitBuiltFiles += 1;
+      batch.append(spec.entry
+        ? commitRow(spec.entry, spec.nested, spec.depth)
+        : commitGroupRow(spec.node, spec.label, spec.depth));
+      commitBuilt += 1;
+    }
+    commitShown = Math.max(commitShown, commitBuiltFiles);
+    if (commitBuilt < specs.length) {
+      commitMoreEl = commitMoreRow(commitIndex.shown.length - commitBuiltFiles);
+      batch.append(commitMoreEl);
+    }
+    commitListEl.append(batch);
+  }
+
+  // ---- the filter and the keyboard walk over its hits ------------------------
+
+  // The filter stands over every list, short or long, and the keyboard owns
+  // the rows from there with the real focus: the arrows reach every row that
+  // carries a checkbox, folder rows and file rows alike, in the order they
+  // stand on the screen. Nothing here changes what a commit takes: the filter
+  // narrows what is shown and what the boxes over it act on, the picks
+  // themselves stand.
+
+  function commitActiveIndex() {
+    if (!commitActiveKey) return -1;
+    const at = commitOrderIndex.get(commitActiveKey);
+    return at === undefined ? -1 : at;
+  }
+
+  // commitActiveInput is the marked row's checkbox, whichever kind of row it
+  // is; the row itself is the checkbox's parent, for both kinds.
+  function commitActiveInput() {
+    if (!commitActiveKey) return null;
+    const id = commitActiveKey.slice(2);
+    return (commitActiveKey.startsWith("f:")
+      ? commitRowInputs.get(id)
+      : commitGroupInputs.get(id)) || null;
+  }
+
+  // The mark has to survive a held arrow key, thirty presses a second over a
+  // list of thousands of rows, so nothing here may cost what the list is
+  // long: the old row is remembered instead of swept for, the index is a map
+  // lookup, and the scroll runs once per frame in a rAF rather than once per
+  // press, because reading geometry after every press is a forced layout of
+  // the whole list and was the freeze itself. The mark moves at once; only
+  // following it with the scroller waits for the next frame.
+  function markCommitActive() {
+    if (commitActiveRowEl) commitActiveRowEl.classList.remove("active");
+    commitActiveRowEl = null;
+    if (!commitActiveKey) return;
+    const input = commitActiveInput();
+    const row = input && input.parentElement;
+    if (!row) return;
+    row.classList.add("active");
+    commitActiveRowEl = row;
+    if (commitScrollRaf) return;
+    commitScrollRaf = requestAnimationFrame(() => {
+      commitScrollRaf = 0;
+      const marked = commitActiveRowEl;
+      if (!marked || !marked.isConnected) return;
+      const box = commitListEl.getBoundingClientRect();
+      const rect = marked.getBoundingClientRect();
+      if (rect.top < box.top) commitListEl.scrollTop -= box.top - rect.top;
+      else if (rect.bottom > box.bottom) commitListEl.scrollTop += rect.bottom - box.bottom;
+    });
+  }
+
+  // focusCommitRow puts the real focus on the marked row, which is what makes
+  // the keys what they look like: the focused element is the one they act on.
+  // It reports whether there was a row to focus.
+  function focusCommitRow() {
+    const input = commitActiveInput();
+    const row = input && input.parentElement;
+    if (!row) return false;
+    row.focus({ preventScroll: true });
+    return true;
+  }
+
+  // enterCommitList is the field's arrow down: into the list at the mark, or
+  // at the first row when nothing is marked yet.
+  function enterCommitList() {
+    if (commitActiveKey && focusCommitRow()) return;
+    commitActiveKey = "";
+    moveCommitActive(1);
+  }
+
+  function moveCommitActive(step) {
+    if (commitOrder.length === 0) return;
+    const at = commitActiveIndex();
+    // The walk stands still at the bottom instead of wrapping: on a list of
+    // thirty thousand changes the wrap from the first row to the last would
+    // have to build every row in between in one keystroke, and a held key
+    // froze the page for two seconds exactly that way. Up past the first row
+    // steps back out into the field, the way it walked in.
+    const next = at < 0 ? 0 : at + step;
+    if (next < 0) {
+      commitFilterEl.focus();
+      return;
+    }
+    if (next >= commitOrder.length) return;
+    commitActiveKey = commitOrder[next];
+    // Walking into the batch that was not built appends it, so the arrows
+    // never run into a wall the button would have to be clicked for, and the
+    // rows that already stand are not built a second time. The order carries
+    // one key per spec, so the walk's index is the spec's.
+    if (next >= commitBuilt) extendCommitList(next);
+    markCommitActive();
+    focusCommitRow();
+  }
+
+  // Enter shows the marked file's diff, which only a file has: on a folder
+  // row it does nothing at all, no error, no state, the focus stands.
+  async function openCommitActive() {
+    const fromList = commitListEl.contains(document.activeElement);
+    // Enter in the field with nothing marked yet takes the first hit: type,
+    // Enter, and the top match's diff stands.
+    if (!commitActiveKey) {
+      const at = commitSpecList.findIndex((spec) => spec.entry);
+      if (at < 0) return;
+      commitActiveKey = commitOrder[at];
+      markCommitActive();
+    }
+    if (!commitActiveKey.startsWith("f:")) return;
+    const entry = commitIndex.byPath.get(commitActiveKey.slice(2));
+    if (!entry) return;
+    const kind = gitKind(entry);
+    if (entry.path.endsWith("/") || kind === "deleted" || kind === "conflict") {
+      status(`"${entry.path}" has nothing to compare.`);
+      return;
+    }
+    await diffAgainst(entry.path, DIFF_REV);
+    if (!commitOn) return;
+    if (fromList) focusCommitRow();
+    else commitFilterEl.focus();
+  }
+
+  // Space is a click on the marked row's checkbox, nothing else: a file row
+  // toggles its pick, a folder row its whole subtree, exactly what the mouse
+  // gets there, the half checked state included, and like every checkbox it
+  // stays where it is: stepping on is the arrows' business.
+  function pickCommitActive() {
+    const input = commitActiveInput();
+    if (input && !input.disabled) input.click();
+  }
+
+  function applyCommitFilter(query) {
+    if (query === commitQuery) return;
+    commitQuery = query;
+    buildCommitIndex();
+    // A changed filter is a changed list, so the walk starts at its top again
+    // instead of keeping a mark somewhere in a list nobody is looking at.
+    commitActiveKey = "";
+    commitShown = COMMIT_ROWS_STEP;
+    renderCommitList();
+  }
+
+  function clearCommitFilter() {
+    commitFilterEl.value = "";
+    applyCommitFilter("");
+  }
+
+  function syncCommitFilter() {
+    // The count and the clear button keep their place and only appear, because
+    // they float over the field's padding: what they must never do is change
+    // the width of the box somebody is typing in.
+    const asked = commitQuery !== "";
+    commitFilterClearBtn.style.visibility = asked ? "" : "hidden";
+    commitFilterCountEl.textContent = asked
+      ? `${commitIndex.shown.length} of ${commitIndex.total}`
+      : "";
   }
 
   function syncCommitUI() {
@@ -2625,14 +3037,29 @@ async function init(root) {
   }
 
   function syncCommitControls() {
-    const selectable = commitSelectable();
-    const picked = commitSelectedPaths();
-    commitSummaryEl.textContent = selectable.length === 0
-      ? "No changes"
-      : `${picked.length} of ${selectable.length} ${selectable.length === 1 ? "change" : "changes"}`;
-    commitAllEl.disabled = selectable.length === 0;
-    commitAllEl.checked = selectable.length > 0 && picked.length === selectable.length;
-    commitAllEl.indeterminate = picked.length > 0 && picked.length < selectable.length;
+    syncCommitFilter();
+    // Under a filter every box speaks for what is shown, and the summary says
+    // so in those words: the all box picks the matches, the picks it does not
+    // reach stand and are named beside it, because the commit takes those too.
+    const filtered = commitQuery !== "";
+    const selectable = commitIndex.root.selectable;
+    const picked = commitIndex.root.picked;
+    const rest = filtered && commitIndex.pickedAll > picked
+      ? ` · ${commitIndex.pickedAll} picked in all`
+      : "";
+    if (selectable === 0) {
+      commitSummaryEl.textContent = (filtered ? "No matches" : "No changes") + rest;
+    } else {
+      const unit = filtered
+        ? (selectable === 1 ? "match" : "matches")
+        : (selectable === 1 ? "change" : "changes");
+      commitSummaryEl.textContent = `${picked} of ${selectable} ${unit}${rest}`;
+    }
+    commitAllEl.title = filtered ? "Select every match" : "";
+    commitAllEl.setAttribute("aria-label", filtered ? "Select every match" : "Select all changes");
+    commitAllEl.disabled = selectable === 0;
+    commitAllEl.checked = selectable > 0 && picked === selectable;
+    commitAllEl.indeterminate = picked > 0 && picked < selectable;
     const firstLine = commitMsgEl.value.split("\n", 1)[0] || "";
     commitLengthEl.textContent = firstLine.length > 72 ? String(firstLine.length) : "";
     commitLengthEl.title = firstLine.length > 72 ? "The subject line is longer than 72 characters." : "";
@@ -2640,8 +3067,11 @@ async function init(root) {
     // the last commit and nothing else, the everyday typo fix.
     commitBtn.disabled = commitBusy
       || gitBusy
-      || (picked.length === 0 && !commitAmendEl.checked)
+      || (commitIndex.pickedAll === 0 && !commitAmendEl.checked)
       || commitMsgEl.value.trim() === "";
+    commitBtn.title = commitIndex.pickedAll
+      ? `Commit ${commitIndex.pickedAll} ${commitIndex.pickedAll === 1 ? "change" : "changes"}`
+      : "";
     commitMoreBtn.disabled = commitBtn.disabled;
     // The running commit spins on its own button, like every git action does.
     const spin = commitBtn.querySelector("[data-editor-commit-spin]");
@@ -2663,13 +3093,17 @@ async function init(root) {
       commitEl.hidden = false;
       commitToggleBtn.classList.add("active");
       commitToggleBtn.setAttribute("aria-pressed", "true");
+      commitShown = COMMIT_ROWS_STEP;
       renderCommitList();
       void loadCommitInfo();
       void pullCommitDraft();
     }
     if (mobileMedia.matches) openDrawer();
     else if (treeFolded) toggleDrawer();
-    if (pointerMedia.matches) commitMsgEl.focus();
+    // The panel opens where the work starts, the filter, like every other
+    // filter in this app. Touch keeps its keyboard down, which is the whole
+    // reason the pointer is asked and not the width.
+    if (pointerMedia.matches) commitFilterEl.focus();
   }
 
   function closeCommit() {
@@ -2826,6 +3260,7 @@ async function init(root) {
     commitPicked.clear();
     for (const path of paths) commitPicked.add(path);
     pruneCommitPicked();
+    recountCommitPicks();
     if (commitOn) renderCommitList();
     else syncCommitControls();
   }
@@ -2875,6 +3310,7 @@ async function init(root) {
       // The commit spent the draft; the server cleared its copy and published,
       // so the other devices empty themselves the same way.
       commitPicked.clear();
+      recountCommitPicks();
       window.clearTimeout(commitDraftTimer);
       commitDraftSaved = { message: "", paths: "", amend: false, amendMessage: "" };
       const stamp = data.hash ? ` ${data.hash} "${data.subject}"` : "";
@@ -2906,12 +3342,59 @@ async function init(root) {
     }
   }
 
+  commitFilterEl.addEventListener("input", () => applyCommitFilter(commitFilterEl.value.trim()), { signal });
+  commitFilterEl.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      enterCommitList();
+    } else if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      void openCommitActive();
+    } else if (e.key === "Escape") {
+      // A filter that stands is what Escape means here; the panel's own Escape
+      // takes over once the field is empty, so one key leads out step by step.
+      if (commitFilterEl.value === "") return;
+      e.preventDefault();
+      e.stopPropagation();
+      clearCommitFilter();
+    }
+  }, { signal });
+  // In the list the keys are the row's: the arrows move the focus itself, so
+  // Space is the checkbox convention every browser taught and Enter is the
+  // row's diff, and Escape steps back out into the field. The walk moves the
+  // real focus so every key acts on the element that visibly holds it.
+  commitListEl.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveCommitActive(e.key === "ArrowDown" ? 1 : -1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      void openCommitActive();
+    } else if (e.key === " " && !(e.target instanceof HTMLInputElement)) {
+      e.preventDefault();
+      pickCommitActive();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      commitFilterEl.focus();
+    }
+  }, { signal });
+  commitFilterClearBtn.addEventListener("click", () => {
+    clearCommitFilter();
+    commitFilterEl.focus();
+  }, { signal });
   commitToggleBtn.addEventListener("click", toggleCommit, { signal });
   gitItem.addEventListener("click", () => openGitSheet(), { signal });
   commitCloseBtn.addEventListener("click", closeCommit, { signal });
   commitAllEl.addEventListener("change", () => {
-    if (commitAllEl.checked) for (const entry of commitSelectable()) commitPicked.add(entry.path);
-    else commitPicked.clear();
+    const on = commitAllEl.checked;
+    for (const entry of commitIndex.shown) {
+      if (gitKind(entry) === "conflict") continue;
+      if (on) commitPicked.add(entry.path);
+      else commitPicked.delete(entry.path);
+    }
+    recountCommitPicks();
     renderCommitList();
     queueCommitDraft();
   }, { signal });
@@ -2955,6 +3438,7 @@ async function init(root) {
     commitGrouped = !commitGrouped;
     store.set(COMMIT_GROUP_KEY, commitGrouped ? "1" : "0");
     paintCommitGroup();
+    commitShown = COMMIT_ROWS_STEP;
     renderCommitList();
   }, { signal });
   paintCommitGroup();
