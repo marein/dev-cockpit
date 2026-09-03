@@ -329,6 +329,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	editor.GET("/git/file", s.handleEditorGitFile)
 	editor.GET("/git/log", s.handleEditorGitLog)
 	editor.GET("/git/refs", s.handleEditorGitRefs)
+	editor.GET("/git/compare", s.handleEditorGitCompare)
 	editor.GET("/git/commit", s.handleEditorGitCommitInfo)
 	editor.POST("/git/commit", s.handleEditorGitCommit)
 	editor.GET("/git/commit-draft", s.handleEditorGitCommitDraft)

@@ -559,6 +559,64 @@ test. Update this file when a convention changes.
   repository yet gets the same segment saying so and a sheet whose one
   action is `git/clone`, straight into the project directory, which git
   itself refuses unless it holds nothing.
+- **Two revisions against each other are one more face of the tree column,
+  and the list under it is the commit view's list.** `Compare revisions` in
+  the git sheet opens `[data-editor-revdiff]` where the commit view opens,
+  closing the other one, and the rows come out of `changeList`, the one
+  implementation both panels are built on: the index per list, the folder
+  tree over the hits, the batches of `COMMIT_ROWS_STEP` rows behind the
+  button, the filter with `matchesTokens`, the keyboard walk and the focus
+  handoff. What differs is handed in as options, whether the rows carry
+  checkboxes (`picks`), what a row's letter is (`kindOf`), what Enter opens
+  (`open`) and what an empty list says; a second copy of any of that is the
+  thing this rule forbids. The server side is `git.Compare`
+  (`GET .../git/compare?from=&to=&mode=`): both names go through
+  `git.Resolve` first, each on its own, so a refusal names its side
+  (`RevisionError`, a 400 carrying `side`); `mode=since` (the default) is
+  git's three dots, the merge base as the left side, and two revisions
+  without shared history answer `ErrNoSplit` as a 409, `mode=direct` is
+  git's two dots and needs no shared history. The list is one
+  `diff --name-status -z -M --relative` plus one `--numstat` over the same
+  pair, `--relative` because a project below the repository root sees its
+  own paths and nothing outside them, a rename from outside then reading as
+  an addition; an answer that reaches `git.MaxOutput` is marked `truncated`
+  and its cut record dropped. Empty names take `git.DefaultCompare`: the
+  branch by name (HEAD detached) against the main branch when it is not
+  the main branch (the remote's HEAD, else a local main or master), else
+  the newest tag before HEAD, else the commit before it, so the panel opens
+  on "what does this branch bring" or "what changed since the last
+  release". The client keeps the pair and the question per device in
+  `dc-editor-revdiff:<project>` and writes back what the server resolved,
+  so a suggestion becomes the next open's start. The select's two entries
+  are git's own syntax and nothing else, `a...b` and `a..b` with the two
+  names, three dots first like GitHub's default: a sentence beside it was
+  tried and a phone cut it to "What master changed since it s". A hash is
+  shortened to seven characters the way git does, a name past 28 characters
+  keeps its head and its tail (`shortRev`), in the select and on the two
+  buttons alike, the full name staying in the tooltip. Enter
+  opens the file at the two **hashes** the answer carries, never at the
+  names, through `fetchRev` on both sides (a side the revision does not
+  hold reads as empty, which is what an addition and a deletion look like;
+  a rename's left side is its old path): the tab is a compare tab with
+  `readOnly` set, the bar naming revision and path per side with its Save
+  buttons hidden, persisted as a `revdiff` entry with both hashes, paths and
+  labels and rebuilt from git on restore, and every path that acts on a
+  compare tab's files (rename, delete, revert, save) steps around a read
+  only one. It follows `diff_view` like every diff (`showRevdiff`): side by
+  side is `setCompare` with both sides through `readOnlyExtensions`, inline
+  is the plain editor holding the right revision as a read only document
+  (the tab carries a `handle` made with `createDoc(..., {readOnly: true})`)
+  under `setDiff`'s own inline path, `unifiedMergeView` against the left
+  revision, so there is one inline mechanism and not two; automatic means
+  side by side from `lg` up and inline below, which is what a phone gets,
+  and `reapplyComparison` rebuilds an open revision diff on a changed
+  setting or a crossed width the way it does for a file's diff. The
+  two-file comparison stays side by side by design, both of its sides are
+  writable. A moved base reloads
+  an open comparison, because a branch name may have moved with it, and a
+  reload that answers the same two commits renders in place: the batches
+  somebody walked into and the marked row stand, only a changed pair starts
+  the list over at its first batch.
 - **A picker asks git, it never filters a list it happens to hold.**
   `git/refs` (`?q=`, `?kinds=`) answers only the hits, capped per kind
   (`editorRefsCap`), the name match in Go because `for-each-ref`'s wildmatch

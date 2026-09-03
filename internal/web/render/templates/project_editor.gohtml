@@ -99,6 +99,52 @@
           </div>
         </div>
       </div>
+      <div class="editor-commit" data-editor-revdiff hidden>
+        <div class="d-flex align-items-center gap-2 px-2 py-2 border-bottom">
+          <span class="small fw-medium text-truncate flex-fill">Compare revisions</span>
+          <button type="button" class="btn btn-sm btn-ghost-secondary p-1 flex-shrink-0" data-editor-revdiff-group aria-pressed="false" aria-label="Group by folder" title="Group by folder">
+            <i class="ti ti-folders"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-ghost-secondary p-1 flex-shrink-0" data-editor-revdiff-close aria-label="Back to the files" title="Back to the files">
+            <i class="ti ti-x"></i>
+          </button>
+        </div>
+        <div class="d-flex flex-column gap-1 px-2 py-2 border-bottom">
+          <div class="d-flex align-items-center gap-1">
+            <button type="button" class="btn btn-sm btn-outline-secondary flex-fill min-w-0 d-flex align-items-center gap-2 px-2 text-start" data-editor-revdiff-pick="from" title="Pick the revision to compare from">
+              <i class="ti ti-git-branch flex-shrink-0" data-editor-revdiff-icon="from" aria-hidden="true"></i>
+              <span class="small opacity-75 flex-shrink-0">from</span>
+              <span class="text-truncate" data-editor-revdiff-name="from">…</span>
+            </button>
+          </div>
+          <div class="d-flex align-items-center gap-1">
+            <button type="button" class="btn btn-sm btn-outline-secondary flex-fill min-w-0 d-flex align-items-center gap-2 px-2 text-start" data-editor-revdiff-pick="to" title="Pick the revision to compare to">
+              <i class="ti ti-git-branch flex-shrink-0" data-editor-revdiff-icon="to" aria-hidden="true"></i>
+              <span class="small opacity-75 flex-shrink-0">to</span>
+              <span class="text-truncate" data-editor-revdiff-name="to">…</span>
+            </button>
+          </div>
+          <select class="form-select form-select-sm" data-editor-revdiff-mode aria-label="What to compare">
+            <option value="since">What the branch changed since it split</option>
+            <option value="direct">Everything that differs between the two</option>
+          </select>
+        </div>
+        <div class="editor-commit-filter" data-editor-revdiff-filter-row>
+          <i class="ti ti-search" aria-hidden="true"></i>
+          <input type="text" class="editor-commit-filter-input" data-editor-revdiff-filter placeholder="Filter changes" aria-label="Filter the changes" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
+          <span class="editor-commit-filter-side">
+            <span class="editor-commit-filter-count" data-editor-revdiff-filter-count></span>
+            <button type="button" class="editor-commit-filter-clear" data-editor-revdiff-filter-clear aria-label="Clear the filter" title="Clear the filter">
+              <i class="ti ti-x"></i>
+            </button>
+          </span>
+        </div>
+        <div class="d-flex align-items-center gap-2 px-2 py-1 border-bottom small">
+          <span class="text-secondary" data-editor-revdiff-summary></span>
+        </div>
+        <div class="alert alert-danger small mb-0 py-1 px-2 mx-2 mt-2 editor-commit-error" data-editor-revdiff-error hidden></div>
+        <div class="editor-commit-list" data-editor-revdiff-list></div>
+      </div>
       <div class="editor-drop-hint" data-editor-drop-hint hidden></div>
       <input type="file" data-editor-upload-input multiple hidden>
       <input type="file" data-editor-upload-dir-input webkitdirectory multiple hidden>

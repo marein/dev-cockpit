@@ -8,7 +8,8 @@ const { assert, sleep, BASE } = L;
 // branch with ahead/behind), GET .../git/file?path=&rev= (the file at a
 // revision, HEAD without one; no route ever answers a diff,
 // @codemirror/merge computes it in the browser), GET .../git/blame, GET
-// .../git/log, GET .../git/refs, POST .../git/watch, the write routes of
+// .../git/log, GET .../git/refs, GET .../git/compare (what differs between
+// two revisions, covered in its own section below), POST .../git/watch, the write routes of
 // the git surface (push, fetch, pull, checkout, branch, clone) and the app
 // level askpass pair (GET/POST /git/prompt, standing questions as server
 // state), covered in their
@@ -3591,6 +3592,722 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       assert(await runInShell(`rm -rf ${cloneSrc}\r`) === 200, "the shell refused the cleanup");
       await L.deleteProject(page, cloneProject).catch(() => {});
       return "no repository named in the statusbar, one clone later the branch is";
+    });
+
+    // ---- comparing two revisions ---------------------------------------------
+    //
+    // The revision comparison: GET git/compare?from=&to=&mode= lists what
+    // differs between two revisions, both names resolved and answered back,
+    // `since` (git's three dots, the merge base as the left side) or
+    // `direct` (git's two dots). The panel opens from the git sheet where the
+    // commit view opens and lists the answer through the commit view's own
+    // list, so the rows, the filter, the batches and the keys are the ones
+    // the commit checks above already pin; what is checked here is what the
+    // comparison adds. Gotchas:
+    //   - the fixture branches are built in a clone under /tmp and fetched
+    //     into the scratch repository as bare refs, so the working copy the
+    //     other checks stand on never moves; the thirty thousand files live
+    //     on one of those branches and cost the disk nothing after the run.
+    //   - the pair and the question are this device's state per project, so
+    //     a check that wants the suggestion clears the key first, and the
+    //     phone context, a browser of its own, seeds the pair it needs.
+    //   - a comparison tab folds unchanged lines like every merge view, so
+    //     the check that reads a side's whole text turns the folding off
+    //     first; the rows CodeMirror renders are otherwise not the document.
+    //   - `since` measures from the merge base, so with a from branch that
+    //     moved on after the split the left label names the split, not the
+    //     branch's tip.
+    const cmpClone = `/tmp/zzgit-revcmp-${tag}`;
+    const revdiffKey = `dc-editor-revdiff:${project}`;
+    const compareJSON = (from, to, mode) => page.evaluate(([b, f, t, m]) =>
+      fetch(`${b}/git/compare?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&mode=${m}`, { headers: { Accept: "application/json" } })
+        .then((r) => r.json().then((data) => ({ status: r.status, data }))), [editorBase, from, to, mode]);
+    const waitCompare = async (from, to, mode, want) => {
+      const deadline = Date.now() + 180000;
+      let last = null;
+      while (Date.now() < deadline) {
+        last = await compareJSON(from, to, mode).catch(() => null);
+        if (last && last.status === 200 && (last.data.files || []).length === want) return last.data;
+        await sleep(1000);
+      }
+      throw new Error(`the comparison ${from}..${to} never answered ${want} files: ${JSON.stringify(last && { status: last.status, files: (last.data.files || []).length, error: last.data.error })}`);
+    };
+    const openRevdiff = async (target) => {
+      await openGitSheet(target);
+      await sheetAction(target, /^Compare revisions/).first().click();
+      await target.waitForSelector("[data-editor-revdiff]:not([hidden])", { timeout: 10000 });
+    };
+    const revdiffSettled = (target) => target.waitForFunction(() => {
+      const el = document.querySelector("[data-editor-revdiff-summary]");
+      const error = document.querySelector("[data-editor-revdiff-error]");
+      const text = el ? el.textContent.trim() : "";
+      return (text !== "" && !/^Comparing/.test(text)) || (error && !error.hidden);
+    }, null, { timeout: 90000 });
+    const revdiffSummary = (target) => target.evaluate(() => document.querySelector("[data-editor-revdiff-summary]").textContent.trim());
+    const revdiffNames = (target) => target.evaluate(() => ({
+      from: document.querySelector('[data-editor-revdiff-name="from"]').textContent.trim(),
+      to: document.querySelector('[data-editor-revdiff-name="to"]').textContent.trim(),
+    }));
+    const revdiffOption = (target) => target.evaluate(() => {
+      const el = document.querySelector("[data-editor-revdiff-mode]");
+      return { value: el.value, text: el.options[el.selectedIndex].textContent };
+    });
+    const revdiffRows = (target) => target.evaluate(() => [...document.querySelectorAll("[data-editor-revdiff-list] .editor-commit-row[data-path]")]
+      .map((row) => ({
+        path: row.dataset.path,
+        mark: row.querySelector(".editor-commit-line > span").textContent.trim(),
+        sub: (row.querySelector(".editor-commit-path") || { textContent: "" }).textContent.trim(),
+      })));
+    const openSidePicker = async (target, side) => {
+      await target.click(`[data-editor-revdiff-pick="${side}"]`);
+      await target.waitForSelector("[data-editor-sheet-body] input", { timeout: 8000 });
+    };
+    const pickSide = async (target, side, name) => {
+      await openSidePicker(target, side);
+      await target.fill("[data-editor-sheet-body] input", name);
+      await target.waitForSelector("[data-picker-loading]", { state: "hidden", timeout: 20000 });
+      await target.click(`[data-editor-sheet] .editor-sheet-row:has(.editor-sheet-name:text-is("${name}")) .editor-sheet-open`);
+      await target.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      await revdiffSettled(target);
+    };
+    const typeSide = async (target, side, name) => {
+      await openSidePicker(target, side);
+      await target.fill("[data-editor-sheet-body] input", name);
+      await target.keyboard.press("Enter");
+      await target.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      await revdiffSettled(target);
+    };
+    const mergeSides = (target) => target.evaluate(() => [...document.querySelectorAll(".cm-mergeView .cm-content")].map((content) => ({
+      editable: content.getAttribute("contenteditable"),
+      text: [...content.querySelectorAll(".cm-line")].map((line) => line.textContent).join("\n").trim(),
+      changed: [...content.querySelectorAll(".cm-changedLine")].map((line) => line.textContent),
+    })));
+    const compareBar = (target) => target.evaluate(() => {
+      const box = (el) => {
+        const rect = el.getBoundingClientRect();
+        return { display: getComputedStyle(el).display, width: rect.width };
+      };
+      return {
+        left: document.querySelector('[data-editor-compare-name="left"]').textContent.trim(),
+        right: document.querySelector('[data-editor-compare-name="right"]').textContent.trim(),
+        saveLeft: box(document.querySelector('[data-editor-compare-save="left"]')),
+        saveRight: box(document.querySelector('[data-editor-compare-save="right"]')),
+      };
+    });
+    const closeRevdiffTabs = async (target) => {
+      while (await target.locator(".editor-tab[data-path^='//revdiff/']").count() > 0) {
+        await target.locator(".editor-tab[data-path^='//revdiff/'] .editor-tab-state").first().click();
+        await sleep(200);
+      }
+    };
+
+    await run("compare: the git sheet opens the panel with the repository's suggestion, and every status is one row, a rename included", async () => {
+      const build = [
+        `git clone -q . ${cmpClone}`,
+        `cd ${cmpClone}`,
+        "mkdir -p revcmp/keep",
+        "printf 'one\\ntwo\\nthree\\n' > revcmp/keep/mod.txt",
+        "printf 'gone\\n' > revcmp/keep/del.txt",
+        "printf 'same\\ncontent\\n' > revcmp/keep/same.txt",
+        "for i in $(seq 1 10); do echo \"line $i\"; done > revcmp/keep/edit.txt",
+        "printf 'base\\n' > revcmp/keep/only-a.txt",
+        `git add -A && git ${author} commit -qm "revcmp split"`,
+        "git tag revcmp-v1",
+        "git checkout -q -b revcmp-b",
+        "printf 'one\\ntwo changed\\nthree\\n' > revcmp/keep/mod.txt",
+        "git rm -q revcmp/keep/del.txt",
+        "mkdir -p revcmp/moved && git mv revcmp/keep/same.txt revcmp/moved/same.txt && git mv revcmp/keep/edit.txt revcmp/moved/edit.txt",
+        "sed -i 's/^line 10$/line 10 edited/' revcmp/moved/edit.txt",
+        "printf 'new\\n' > revcmp/new.txt",
+        `git add -A && git ${author} commit -qm "revcmp work"`,
+        "git checkout -q -b revcmp-30k",
+        "for d in $(seq 0 99); do mkdir -p revcmp/bulk/d$d; for f in $(seq 0 299); do echo \"bulk $d $f\" > revcmp/bulk/d$d/f$f.txt; done; done",
+        `git add -A && git ${author} commit -qm "revcmp bulk"`,
+        "git checkout -q -b revcmp-a revcmp-v1",
+        "printf 'base moved on\\n' > revcmp/keep/only-a.txt && printf 'only a\\n' > revcmp/a-new.txt",
+        `git add -A && git ${author} commit -qm "revcmp a moves on"`,
+        "cd - > /dev/null",
+        `git fetch -q ${cmpClone} refs/heads/revcmp-a:refs/heads/revcmp-a refs/heads/revcmp-b:refs/heads/revcmp-b refs/heads/revcmp-30k:refs/heads/revcmp-30k refs/tags/revcmp-v1:refs/tags/revcmp-v1`,
+      ].join(" && ");
+      assert(await runInShell(`${build}\r`) === 200, "the shell refused the fixture");
+      await waitCompare("revcmp-a", "revcmp-30k", "since", 30005);
+      const refused = await compareJSON("revcmp-a", "no-such-rev", "since");
+      assert(refused.status === 400 && refused.data.side === "to" && /"no-such-rev" is not known/.test(refused.data.error),
+        `an unknown name answers ${refused.status}: ${JSON.stringify(refused.data)}`);
+
+      await openEditor(page);
+      await diffReady(page);
+      await page.evaluate((key) => localStorage.removeItem(key), revdiffKey);
+      await openRevdiff(page);
+      await revdiffSettled(page);
+      const preset = await revdiffNames(page);
+      assert(preset.from === "master~1" && preset.to === "master",
+        `without a tag or another branch the suggestion is the commit before master to master, not ${JSON.stringify(preset)}`);
+      assert(await page.evaluate(() => document.activeElement === document.querySelector("[data-editor-revdiff-filter]")),
+        "the panel did not open on its filter");
+      assert(await page.locator("[data-editor-commit]").isHidden() && await page.locator("[data-editor-tree]").isHidden(),
+        "the panel did not take the tree's place");
+
+      await pickSide(page, "from", "revcmp-a");
+      await pickSide(page, "to", "revcmp-b");
+      const names = await revdiffNames(page);
+      assert(names.from === "revcmp-a" && names.to === "revcmp-b", `the sides read ${JSON.stringify(names)}`);
+      const summary = await revdiffSummary(page);
+      assert(/^5 changes · \+\d+ −\d+$/.test(summary), `the summary reads "${summary}"`);
+      const option = await revdiffOption(page);
+      assert(option.value === "since" && option.text === "revcmp-a...revcmp-b",
+        `the question reads ${JSON.stringify(option)}`);
+      const rows = await revdiffRows(page);
+      const byPath = Object.fromEntries(rows.map((r) => [r.path, r]));
+      assert(byPath["revcmp/keep/mod.txt"] && byPath["revcmp/keep/mod.txt"].mark === "M", `the modification: ${JSON.stringify(byPath["revcmp/keep/mod.txt"])}`);
+      assert(byPath["revcmp/keep/del.txt"] && byPath["revcmp/keep/del.txt"].mark === "D", `the deletion: ${JSON.stringify(byPath["revcmp/keep/del.txt"])}`);
+      assert(byPath["revcmp/new.txt"] && byPath["revcmp/new.txt"].mark === "A", `the addition: ${JSON.stringify(byPath["revcmp/new.txt"])}`);
+      assert(byPath["revcmp/moved/same.txt"] && byPath["revcmp/moved/same.txt"].mark === "R"
+        && byPath["revcmp/moved/same.txt"].sub === "revcmp/keep/same.txt → revcmp/moved/same.txt",
+      `the exact rename is not one row with its source: ${JSON.stringify(byPath["revcmp/moved/same.txt"])}`);
+      assert(byPath["revcmp/moved/edit.txt"] && byPath["revcmp/moved/edit.txt"].mark === "R"
+        && byPath["revcmp/moved/edit.txt"].sub === "revcmp/keep/edit.txt → revcmp/moved/edit.txt",
+      `the edited rename is not one row with its source: ${JSON.stringify(byPath["revcmp/moved/edit.txt"])}`);
+      assert(!byPath["revcmp/keep/same.txt"] && !byPath["revcmp/keep/edit.txt"], "a rename's source stands as a row of its own");
+      assert(rows.length === 5 && !byPath["revcmp/a-new.txt"], `${rows.length} rows, and what a did after the split is ${byPath["revcmp/a-new.txt"] ? "in" : "out"}`);
+      const stored = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) || "null"), revdiffKey);
+      assert(stored && stored.from === "revcmp-a" && stored.to === "revcmp-b" && stored.mode === "since",
+        `the device keeps ${JSON.stringify(stored)}`);
+      return "suggestion, two picks, five rows with M D A R R, the renames carrying their old names";
+    });
+
+    await run("compare: the two questions answer differently and the select says which in words", async () => {
+      const gitSince = await shellCount("git diff --name-only -M revcmp-a...revcmp-b | wc -l");
+      const gitDirect = await shellCount("git diff --name-only -M revcmp-a revcmp-b | wc -l");
+      assert(gitSince === 5 && gitDirect === 7, `git counts ${gitSince} since the split and ${gitDirect} in all`);
+      await openEditor(page);
+      await diffReady(page);
+      await openRevdiff(page);
+      await revdiffSettled(page);
+      assert(/^5 changes/.test(await revdiffSummary(page)), "the panel did not come back on the stored pair");
+
+      await page.selectOption("[data-editor-revdiff-mode]", "direct");
+      await revdiffSettled(page);
+      let summary = await revdiffSummary(page);
+      assert(/^7 changes/.test(summary), `everything that differs reads "${summary}"`);
+      let option = await revdiffOption(page);
+      assert(option.text === "revcmp-a..revcmp-b", `the question reads "${option.text}"`);
+      let rows = Object.fromEntries((await revdiffRows(page)).map((r) => [r.path, r.mark]));
+      assert(rows["revcmp/a-new.txt"] === "D" && rows["revcmp/keep/only-a.txt"] === "M",
+        `seen from a, a's own work reads ${JSON.stringify(rows)}`);
+
+      await pickSide(page, "from", "revcmp-b");
+      await pickSide(page, "to", "revcmp-a");
+      const reversed = await revdiffNames(page);
+      assert(reversed.from === "revcmp-b" && reversed.to === "revcmp-a", `the reversed pair reads ${JSON.stringify(reversed)}`);
+      summary = await revdiffSummary(page);
+      assert(/^7 changes/.test(summary), `reversed, everything that differs reads "${summary}"`);
+      rows = Object.fromEntries((await revdiffRows(page)).map((r) => [r.path, r.mark]));
+      assert(rows["revcmp/a-new.txt"] === "A" && rows["revcmp/keep/del.txt"] === "A" && rows["revcmp/new.txt"] === "D",
+        `seen from b, the letters flip: ${JSON.stringify(rows)}`);
+
+      await page.selectOption("[data-editor-revdiff-mode]", "since");
+      await revdiffSettled(page);
+      summary = await revdiffSummary(page);
+      assert(/^2 changes/.test(summary), `what a changed since the split reads "${summary}"`);
+      option = await revdiffOption(page);
+      assert(option.text === "revcmp-b...revcmp-a", `the question reads "${option.text}"`);
+      rows = Object.fromEntries((await revdiffRows(page)).map((r) => [r.path, r.mark]));
+      assert(rows["revcmp/a-new.txt"] === "A" && rows["revcmp/keep/only-a.txt"] === "M" && Object.keys(rows).length === 2,
+        `since the split from b, a did ${JSON.stringify(rows)}`);
+
+      await pickSide(page, "from", "revcmp-a");
+      await pickSide(page, "to", "revcmp-b");
+      assert(/^5 changes/.test(await revdiffSummary(page)), "picking the pair back did not restore the five");
+      return "since: 5 and 2, direct: 7 both ways, the entries carry git's syntax with the names";
+    });
+
+    await run("compare: Enter opens the file at exactly the two commits, read only on both sides and matching git, a rename as one file", async () => {
+      await setEditorSwitch(page, "diff_collapse", false);
+      try {
+        await openEditor(page);
+        await diffReady(page);
+        await openRevdiff(page);
+        await revdiffSettled(page);
+        const splitSha = (await compareJSON("revcmp-a", "revcmp-b", "since")).data.base;
+        const gitShow = (rev, path) => shellText(`git show ${rev}:${path}`);
+        const gitPlus = (paths) => shellText(`git diff revcmp-a revcmp-b -M -- ${paths} | grep '^+[^+]' | sed 's/^+//'`);
+        const gitMinus = (paths) => shellText(`git diff revcmp-a revcmp-b -M -- ${paths} | grep '^-[^-]' | sed 's/^-//'`);
+
+        const openRow = async (needle, want) => {
+          await page.fill("[data-editor-revdiff-filter]", needle);
+          await page.waitForFunction((n) => new RegExp(`^${n} of `).test(document.querySelector("[data-editor-revdiff-filter-count]").textContent.trim()), want, { timeout: 10000 });
+          await page.keyboard.press("Enter");
+          await page.waitForSelector(".editor-tab.active[data-path^='//revdiff/']", { timeout: 15000 });
+          await page.waitForSelector(".cm-mergeView .cm-content", { timeout: 15000 });
+          await sleep(400);
+        };
+
+        await openRow("keep/mod.txt", 1);
+        let sides = await mergeSides(page);
+        assert(sides.length === 2 && sides.every((s) => s.editable === "false"), `the sides are ${JSON.stringify(sides.map((s) => s.editable))}`);
+        assert(sides[0].text === await gitShow("revcmp-a", "revcmp/keep/mod.txt"), `the left side is not the file at revcmp-a: ${JSON.stringify(sides[0].text)}`);
+        assert(sides[1].text === await gitShow("revcmp-b", "revcmp/keep/mod.txt"), `the right side is not the file at revcmp-b: ${JSON.stringify(sides[1].text)}`);
+        assert(sides[1].changed.join("\n") === await gitPlus("revcmp/keep/mod.txt"), `the added lines are ${JSON.stringify(sides[1].changed)}`);
+        assert(sides[0].changed.join("\n") === await gitMinus("revcmp/keep/mod.txt"), `the removed lines are ${JSON.stringify(sides[0].changed)}`);
+        let bar = await compareBar(page);
+        assert(bar.left === `revcmp-a at the split (${splitSha.slice(0, 7)}) · revcmp/keep/mod.txt` && bar.right === "revcmp-b · revcmp/keep/mod.txt",
+          `the bar names ${JSON.stringify([bar.left, bar.right])}`);
+        assert(bar.saveLeft.display === "none" && bar.saveRight.display === "none", `a revision offers a save: ${JSON.stringify(bar)}`);
+        assert(await page.evaluate(() => document.activeElement === document.querySelector("[data-editor-revdiff-filter]")),
+          "Enter from the filter did not hand the focus back to it");
+
+        await openRow("same.txt", 1);
+        sides = await mergeSides(page);
+        assert(sides[0].text === await gitShow("revcmp-a", "revcmp/keep/same.txt") && sides[1].text === await gitShow("revcmp-b", "revcmp/moved/same.txt"),
+          `the exact rename's sides: ${JSON.stringify(sides.map((s) => s.text))}`);
+        assert(sides[0].changed.length === 0 && sides[1].changed.length === 0, "an exact rename shows changed lines");
+        bar = await compareBar(page);
+        assert(/· revcmp\/keep\/same\.txt$/.test(bar.left) && bar.right === "revcmp-b · revcmp/moved/same.txt",
+          `the rename's bar names ${JSON.stringify([bar.left, bar.right])}`);
+
+        await openRow("edit.txt", 1);
+        sides = await mergeSides(page);
+        assert(sides[0].text === await gitShow("revcmp-a", "revcmp/keep/edit.txt") && sides[1].text === await gitShow("revcmp-b", "revcmp/moved/edit.txt"),
+          `the edited rename's sides: ${JSON.stringify(sides.map((s) => s.text))}`);
+        assert(sides[1].changed.join("\n") === await gitPlus("revcmp/keep/edit.txt revcmp/moved/edit.txt")
+          && sides[0].changed.join("\n") === await gitMinus("revcmp/keep/edit.txt revcmp/moved/edit.txt"),
+          `the edited rename's changed lines: ${JSON.stringify([sides[0].changed, sides[1].changed])}`);
+
+        await openRow("del.txt", 1);
+        sides = await mergeSides(page);
+        assert(sides[0].text === "gone" && sides[1].text === "", `a deletion's sides: ${JSON.stringify(sides.map((s) => s.text))}`);
+        await openRow("new.txt", 1);
+        sides = await mergeSides(page);
+        assert(sides[0].text === "" && sides[1].text === "new", `an addition's sides: ${JSON.stringify(sides.map((s) => s.text))}`);
+        const title = await page.evaluate(() => document.querySelector(".editor-tab.active").title);
+        assert(/^revcmp-a at the split \([0-9a-f]{7}\): revcmp\/new\.txt ⇄ revcmp-b: revcmp\/new\.txt$/.test(title), `the tab's title reads "${title}"`);
+
+        const before = await page.locator(".editor-tab[data-path^='//revdiff/']").count();
+        assert(before === 5, `${before} comparison tabs stand`);
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await L.dismissUpdate(page);
+        await L.waitUpgraded(page, ["dc-editor"]);
+        await page.waitForSelector(".editor-tab.active[data-path^='//revdiff/']", { timeout: 20000 });
+        await page.waitForSelector(".cm-mergeView .cm-content", { timeout: 20000 });
+        await sleep(400);
+        assert(await page.locator(".editor-tab[data-path^='//revdiff/']").count() === before, "the reload lost a comparison tab");
+        sides = await mergeSides(page);
+        assert(sides[0].text === "" && sides[1].text === "new" && sides.every((s) => s.editable === "false"),
+          `after the reload the active comparison shows ${JSON.stringify(sides)}`);
+      } finally {
+        await closeRevdiffTabs(page).catch(() => {});
+        await setEditorSwitch(page, "diff_collapse", true).catch(() => {});
+      }
+      return "M, exact R, edited R, D and A each match git show and git diff, five tabs back after a reload";
+    });
+
+    await run("compare: thirty thousand changed files list in batches, open without a freeze and walk without one", async () => {
+      const bulk = 30000;
+      const COMMIT_ROWS_STEP = 500;
+      const holdBudget = 500;
+      await openEditor(page);
+      await diffReady(page);
+      await openRevdiff(page);
+      await revdiffSettled(page);
+      const wasGrouped = await page.evaluate(() =>
+        document.querySelector("[data-editor-revdiff-group]").getAttribute("aria-pressed") === "true");
+      if (!wasGrouped) {
+        await page.click("[data-editor-revdiff-group]");
+        await sleep(300);
+      }
+      const startGap = () => page.evaluate(() => {
+        window.__gap = { max: 0, frames: 0 };
+        let last = performance.now();
+        const tick = () => {
+          const now = performance.now();
+          if (window.__gap.frames > 2) window.__gap.max = Math.max(window.__gap.max, now - last);
+          last = now;
+          window.__gap.frames += 1;
+          if (window.__gapOn) requestAnimationFrame(tick);
+        };
+        window.__gapOn = true;
+        requestAnimationFrame(tick);
+      });
+      const stopGap = () => page.evaluate(() => {
+        window.__gapOn = false;
+        return Math.round(window.__gap.max);
+      });
+      const pressRun = async (key, n) => {
+        for (let i = 0; i < n; i += 1) await page.keyboard.press(key);
+      };
+      const markAt = () => page.evaluate(() => {
+        const el = document.querySelector("[data-editor-revdiff-list] .editor-commit-row.active");
+        return el ? (el.dataset.path ? `f:${el.dataset.path}` : `g:${el.dataset.dir}`) : "";
+      });
+      const rowAt = (at) => page.evaluate((i) => {
+        const rows = document.querySelectorAll("[data-editor-revdiff-list] .editor-commit-row");
+        const el = rows[i < 0 ? rows.length + i : i];
+        return el ? (el.dataset.path ? `f:${el.dataset.path}` : `g:${el.dataset.dir}`) : "";
+      }, at);
+      const fileRows = () => page.evaluate(() => document.querySelectorAll("[data-editor-revdiff-list] .editor-commit-row[data-path]").length);
+
+      await pickSide(page, "from", "revcmp-a");
+      await startGap();
+      const t0 = Date.now();
+      await pickSide(page, "to", "revcmp-30k");
+      const openMs = Date.now() - t0;
+      const gapOpen = await stopGap();
+      const summary = await revdiffSummary(page);
+      assert(new RegExp(`^${bulk + 5} changes · `).test(summary), `the summary reads "${summary}"`);
+      const first = await page.evaluate(() => ({
+        rows: document.querySelectorAll("[data-editor-revdiff-list] .editor-commit-row[data-path]").length,
+        rest: Number((document.querySelector("[data-editor-revdiff-list] [data-editor-commit-rest]") || { dataset: {} }).dataset.editorCommitRest || 0),
+        button: ((document.querySelector("[data-editor-revdiff-list] [data-editor-commit-show-more]") || {}).textContent || "").trim(),
+        note: ((document.querySelector("[data-editor-revdiff-list] [data-editor-commit-rest]") || {}).textContent || ""),
+        bulkCount: (document.querySelector('[data-editor-revdiff-list] .editor-commit-grouprow[data-dir="revcmp/bulk"] .ms-auto') || {}).textContent,
+      }));
+      assert(first.rows === COMMIT_ROWS_STEP && first.rows + first.rest === bulk + 5,
+        `${first.rows} rows plus ${first.rest} waiting is not the ${bulk + 5} changes`);
+      assert(first.button === `Show ${COMMIT_ROWS_STEP} more` && /more changes are not listed here\.$/.test(first.note.trim()),
+        `the footer reads ${JSON.stringify([first.button, first.note])}`);
+      assert(first.bulkCount === String(bulk), `the bulk folder counts ${first.bulkCount}`);
+      assert(gapOpen < 1500, `opening the comparison blocked a frame for ${gapOpen} ms`);
+
+      const steps = 1100;
+      await page.evaluate(() => {
+        document.querySelector("[data-editor-revdiff-list] .editor-commit-row[data-path]").dataset.holdProbe = "1";
+      });
+      await page.focus("[data-editor-revdiff-filter]");
+      await startGap();
+      await pressRun("ArrowDown", steps);
+      const downPlain = {
+        mark: await markAt(),
+        expected: await rowAt(steps - 1),
+        fileRows: await fileRows(),
+        probe: await page.evaluate(() =>
+          document.querySelector("[data-editor-revdiff-list] .editor-commit-row[data-path]").dataset.holdProbe === "1"),
+      };
+      await pressRun("ArrowUp", steps + 5);
+      const gapPlain = await stopGap();
+      const upPlain = { mark: await markAt(), expected: await rowAt(0) };
+      assert(downPlain.mark && downPlain.mark === downPlain.expected,
+        `${steps} held downs stand on ${downPlain.mark}, the counted row is ${downPlain.expected}`);
+      assert(downPlain.fileRows === 3 * COMMIT_ROWS_STEP,
+        `crossing the edge left ${downPlain.fileRows} change rows, three batches are ${3 * COMMIT_ROWS_STEP}`);
+      assert(downPlain.probe, "the edge rebuilt the first batch instead of appending behind it");
+      assert(upPlain.mark === upPlain.expected, `${steps + 5} held ups stand on ${upPlain.mark} instead of clamping at ${upPlain.expected}`);
+      assert(gapPlain < holdBudget, `the held walk blocked a frame for ${gapPlain} ms, the budget is ${holdBudget}`);
+
+      await page.fill("[data-editor-revdiff-filter]", "f29");
+      await page.waitForFunction(() =>
+        /^1100 of /.test(document.querySelector("[data-editor-revdiff-filter-count]").textContent.trim()), null, { timeout: 10000 });
+      await page.focus("[data-editor-revdiff-filter]");
+      await startGap();
+      await pressRun("ArrowDown", 1300);
+      const downFiltered = { mark: await markAt(), expected: await rowAt(-1), fileRows: await fileRows() };
+      await pressRun("ArrowUp", 1300);
+      const gapFiltered = await stopGap();
+      const upFiltered = { mark: await markAt(), expected: await rowAt(0) };
+      assert(downFiltered.mark && downFiltered.mark === downFiltered.expected,
+        `the filtered walk overshot to ${downFiltered.mark} instead of clamping at ${downFiltered.expected}`);
+      assert(downFiltered.fileRows === 1100, `the filtered walk built ${downFiltered.fileRows} of 1100 rows`);
+      assert(upFiltered.mark === upFiltered.expected, `the filtered walk back stands on ${upFiltered.mark} instead of ${upFiltered.expected}`);
+      assert(gapFiltered < holdBudget, `the filtered held walk blocked a frame for ${gapFiltered} ms, the budget is ${holdBudget}`);
+
+      await page.fill("[data-editor-revdiff-filter]", "bulk/d7/f7.txt");
+      await page.waitForFunction(() =>
+        /^1 of /.test(document.querySelector("[data-editor-revdiff-filter-count]").textContent.trim()), null, { timeout: 10000 });
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(".editor-tab.active[data-path^='//revdiff/']", { timeout: 15000 });
+      await page.waitForSelector(".cm-mergeView .cm-content", { timeout: 15000 });
+      await sleep(300);
+      const sides = await mergeSides(page);
+      assert(sides[0].text === "" && sides[1].text === "bulk 7 7", `a bulk file's sides: ${JSON.stringify(sides.map((s) => s.text))}`);
+      await closeRevdiffTabs(page);
+      await page.fill("[data-editor-revdiff-filter]", "");
+      await sleep(300);
+      if (!wasGrouped) {
+        await page.click("[data-editor-revdiff-group]");
+        await sleep(300);
+      }
+      return `${bulk + 5} changes: open ${openMs} ms wall with ${gapOpen} ms longest frame, hold ${gapPlain}/${gapFiltered} ms plain/filtered longest frame`;
+    });
+
+    await run("compare: a typed revision works and a name git cannot resolve is refused next to the fields", async () => {
+      await openEditor(page);
+      await diffReady(page);
+      await closeRevdiffTabs(page);
+      await openRevdiff(page);
+      await revdiffSettled(page);
+      await typeSide(page, "to", "revcmp-b");
+      await typeSide(page, "from", "revcmp-v1");
+      let names = await revdiffNames(page);
+      assert(names.from === "revcmp-v1" && names.to === "revcmp-b", `typed names read ${JSON.stringify(names)}`);
+      assert(/^5 changes/.test(await revdiffSummary(page)), `from the tag the summary reads "${await revdiffSummary(page)}"`);
+      const bar = await (async () => {
+        await page.fill("[data-editor-revdiff-filter]", "keep/mod.txt");
+        await page.waitForFunction(() => /^1 of /.test(document.querySelector("[data-editor-revdiff-filter-count]").textContent.trim()), null, { timeout: 10000 });
+        await page.keyboard.press("Enter");
+        await page.waitForSelector(".editor-tab.active[data-path^='//revdiff/']", { timeout: 15000 });
+        await page.waitForSelector(".cm-mergeView .cm-content", { timeout: 15000 });
+        return compareBar(page);
+      })();
+      assert(bar.left === "revcmp-v1 · revcmp/keep/mod.txt", `a tag that is the split names itself plainly, not ${JSON.stringify(bar.left)}`);
+      await closeRevdiffTabs(page);
+      await page.fill("[data-editor-revdiff-filter]", "");
+
+      await typeSide(page, "from", "HEAD~1");
+      await typeSide(page, "to", "master");
+      names = await revdiffNames(page);
+      assert(names.from === "HEAD~1" && names.to === "master", `HEAD~1 reads ${JSON.stringify(names)}`);
+      assert(/^\d+ changes?/.test(await revdiffSummary(page)), `HEAD~1 to master reads "${await revdiffSummary(page)}"`);
+
+      await typeSide(page, "to", "no-such-rev");
+      const error = await page.evaluate(() => {
+        const el = document.querySelector("[data-editor-revdiff-error]");
+        return { hidden: el.hidden, text: el.textContent.trim(), rows: document.querySelectorAll("[data-editor-revdiff-list] .editor-commit-row").length };
+      });
+      assert(!error.hidden && error.text === '"no-such-rev" is not known to this repository.' && error.rows === 0,
+        `the refusal reads ${JSON.stringify(error)}`);
+      names = await revdiffNames(page);
+      assert(names.to === "no-such-rev", "the refused name is not shown where it was typed");
+      await typeSide(page, "to", "revcmp-b");
+      await typeSide(page, "from", "revcmp-a");
+      assert(await page.evaluate(() => document.querySelector("[data-editor-revdiff-error]").hidden), "the refusal outlived the correction");
+      assert(/^5 changes/.test(await revdiffSummary(page)), "the corrected pair did not answer");
+      return "a tag and HEAD~1 typed past the list work, an unknown name is refused in the panel and corrected in place";
+    });
+
+    await run("compare: the revision diff follows the diff view like every diff, inline where the setting or the width says so", async () => {
+      await openEditor(page);
+      await diffReady(page);
+      await closeRevdiffTabs(page);
+      await openRevdiff(page);
+      await revdiffSettled(page);
+      await page.fill("[data-editor-revdiff-filter]", "keep/mod.txt");
+      await page.waitForFunction(() => /^1 of /.test(document.querySelector("[data-editor-revdiff-filter-count]").textContent.trim()), null, { timeout: 10000 });
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(".editor-tab.active[data-path^='//revdiff/']", { timeout: 15000 });
+      await page.waitForSelector(".cm-mergeView .cm-content", { timeout: 15000 });
+      const views = () => page.evaluate(() => ({
+        merge: document.querySelectorAll(".cm-mergeView").length,
+        unified: document.querySelectorAll(".editor-surface > .cm-editor .cm-deletedChunk, .editor-surface > .cm-editor .cm-changedLine").length,
+        editorShown: getComputedStyle(document.querySelector(".editor-surface > .cm-editor")).visibility !== "hidden",
+        bar: { hidden: document.querySelector("[data-editor-compare]").hidden, left: document.querySelector('[data-editor-compare-name="left"]').textContent.trim(), right: document.querySelector('[data-editor-compare-name="right"]').textContent.trim() },
+        text: [...document.querySelectorAll(".editor-surface > .cm-editor .cm-line")].map((l) => l.textContent).join("\n").trim(),
+      }));
+      let seen = await views();
+      assert(seen.merge === 1, "on a wide window the automatic view is not side by side");
+      await setDiffView(page, "inline");
+      await page.waitForSelector(".cm-mergeView", { state: "detached", timeout: 10000 });
+      await page.waitForSelector(".editor-surface > .cm-editor .cm-changedLine", { timeout: 10000 });
+      seen = await views();
+      assert(seen.merge === 0 && seen.unified > 0 && seen.editorShown, `the inline setting left ${JSON.stringify({ merge: seen.merge, unified: seen.unified, shown: seen.editorShown })}`);
+      assert(!seen.bar.hidden && /revcmp\/keep\/mod\.txt$/.test(seen.bar.left) && seen.bar.right === "revcmp-b · revcmp/keep/mod.txt",
+        `inline, the bar names ${JSON.stringify(seen.bar)}`);
+      assert(seen.text === "one\ntwo changed\nthree", `the inline view shows ${JSON.stringify(seen.text)}`);
+      await page.click(".editor-surface > .cm-editor .cm-content", { force: true });
+      await page.keyboard.type("zzz");
+      await sleep(200);
+      const after = await views();
+      assert(after.text === seen.text, `typing into the inline revision diff changed it to ${JSON.stringify(after.text)}`);
+      assert(await page.locator(".editor-tab.active.dirty").count() === 0, "the inline revision diff became dirty");
+      await setDiffView(page, "side");
+      await page.waitForSelector(".cm-mergeView .cm-content", { timeout: 10000 });
+      seen = await views();
+      assert(seen.merge === 1 && seen.bar.right === "revcmp-b · revcmp/keep/mod.txt", `side again reads ${JSON.stringify({ merge: seen.merge, bar: seen.bar })}`);
+      await setDiffView(page, "auto");
+      await sleep(400);
+      assert((await views()).merge === 1, "automatic on a wide window is not side by side");
+      await closeRevdiffTabs(page);
+      await page.fill("[data-editor-revdiff-filter]", "");
+      return "wide: side by side, inline on the setting and back at once, read only in both, both revisions named in both";
+    });
+
+    await run("compare: Tab walks from, to, the question, the filter and the list in order both ways, the rows stay the arrows' business, in the commit view too", async () => {
+      await openEditor(page);
+      await diffReady(page);
+      await closeRevdiffTabs(page);
+      await openRevdiff(page);
+      await revdiffSettled(page);
+      const focused = () => page.evaluate(() => {
+        const el = document.activeElement;
+        const attr = [...el.attributes].map((a) => a.name).find((n) => n.startsWith("data-editor-"));
+        if (attr) return attr.replace("data-editor-", "") + (el.getAttribute(attr) ? `=${el.getAttribute(attr)}` : "");
+        return `${el.tagName.toLowerCase()}.${(el.className || "").toString().split(" ")[0]}`;
+      });
+      const walk = async (key, n) => {
+        const seen = [];
+        for (let i = 0; i < n; i += 1) {
+          await page.keyboard.press(key);
+          seen.push(await focused());
+        }
+        return seen;
+      };
+      await page.focus('[data-editor-revdiff-pick="from"]');
+      const forward = await walk("Tab", 4);
+      assert(JSON.stringify(forward) === JSON.stringify(["revdiff-pick=to", "revdiff-mode", "revdiff-filter", "revdiff-list"]),
+        `Tab walks ${JSON.stringify(forward)}`);
+      const ring = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
+      assert(ring !== "none", "the list carries no visible focus");
+      await page.keyboard.press("ArrowDown");
+      assert(await page.evaluate(() => document.activeElement.classList.contains("editor-commit-row")), "ArrowDown on the list did not step onto a row");
+      await page.keyboard.press("Tab");
+      assert(await page.evaluate(() => !document.querySelector("[data-editor-revdiff-list]").contains(document.activeElement)),
+        `Tab from a row stayed inside the list, on ${await focused()}`);
+      await page.keyboard.press("Shift+Tab");
+      assert(await focused() === "revdiff-list", `Shift+Tab back lands on ${await focused()}`);
+      const backward = await walk("Shift+Tab", 4);
+      assert(JSON.stringify(backward) === JSON.stringify(["revdiff-filter", "revdiff-mode", "revdiff-pick=to", "revdiff-pick=from"]),
+        `Shift+Tab walks ${JSON.stringify(backward)}`);
+      const stops = await page.evaluate(() => {
+        const list = document.querySelector("[data-editor-revdiff-list]");
+        return [...list.querySelectorAll("button, input")].filter((el) => el.tabIndex >= 0).length;
+      });
+      assert(stops === 0, `${stops} controls inside the list are still tab stops`);
+
+      await page.click("[data-editor-commit-toggle]");
+      await page.waitForSelector("[data-editor-commit]:not([hidden])", { timeout: 10000 });
+      await page.waitForSelector("[data-editor-commit-list] .editor-commit-row", { timeout: 15000 });
+      await page.focus("[data-editor-commit-filter]");
+      const commitForward = await walk("Tab", 3);
+      assert(JSON.stringify(commitForward) === JSON.stringify(["commit-all", "commit-list", "commit-message"]),
+        `in the commit view Tab walks ${JSON.stringify(commitForward)}`);
+      const commitBack = await walk("Shift+Tab", 3);
+      assert(JSON.stringify(commitBack) === JSON.stringify(["commit-list", "commit-all", "commit-filter"]),
+        `in the commit view Shift+Tab walks ${JSON.stringify(commitBack)}`);
+      await page.click("[data-editor-commit-close]");
+      await page.waitForSelector("[data-editor-commit]", { state: "hidden", timeout: 5000 });
+      return "from, to, question, filter, list forward and back; rows off the tab order; commit view filter, all, list, message both ways";
+    });
+
+    await run("compare: the picker's marked row scrolls into view with the arrows, at both ends and around", async () => {
+      assert(await runInShell("for i in $(seq 10 49); do git branch -q scroll-$i; done\r") === 200, "the shell refused the branches");
+      const refsCount = () => page.evaluate((b) =>
+        fetch(`${b}/git/refs?q=scroll&kinds=branch`, { headers: { Accept: "application/json" } }).then((r) => r.json()).then((d) => (d.refs || []).length), editorBase);
+      const deadline = Date.now() + 60000;
+      while (Date.now() < deadline && await refsCount() < 40) await sleep(1000);
+      assert(await refsCount() === 40, "the forty branches never arrived");
+      await openEditor(page);
+      await diffReady(page);
+      await openRevdiff(page);
+      await revdiffSettled(page);
+      await page.click('[data-editor-revdiff-pick="from"]');
+      await page.waitForSelector("[data-editor-sheet-body] input", { timeout: 8000 });
+      await page.fill("[data-editor-sheet-body] input", "scroll");
+      await page.waitForSelector("[data-picker-loading]", { state: "hidden", timeout: 20000 });
+      await page.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-row").length === 40, null, { timeout: 10000 });
+      const geometry = () => page.evaluate(() => {
+        const body = document.querySelector("[data-editor-sheet-body]");
+        const rows = [...body.querySelectorAll(".editor-sheet-row")];
+        const row = body.querySelector(".editor-sheet-row.active");
+        const b = body.getBoundingClientRect();
+        const r = row.getBoundingClientRect();
+        return {
+          index: rows.indexOf(row),
+          inside: r.top >= b.top - 1 && r.bottom <= b.bottom + 1,
+          scrollTop: Math.round(body.scrollTop),
+          scrollable: body.scrollHeight > body.clientHeight + 100,
+          inField: document.activeElement === body.querySelector("input"),
+        };
+      });
+      const start = await geometry();
+      assert(start.scrollable && start.index === 0 && start.inside, `the list opens ${JSON.stringify(start)}`);
+      let last = start.scrollTop;
+      let stood = 0;
+      for (let i = 1; i < 40; i += 1) {
+        await page.keyboard.press("ArrowDown");
+        const g = await geometry();
+        assert(g.index === i && g.inside && g.inField, `after ${i} downs the mark is ${JSON.stringify(g)}`);
+        assert(g.scrollTop >= last, `the list jumped back from ${last} to ${g.scrollTop} on the way down`);
+        if (g.scrollTop === last) stood += 1;
+        last = g.scrollTop;
+      }
+      assert(stood > 0, "every step scrolled, the list follows the mark instead of keeping still while the row is in view");
+      await page.keyboard.press("ArrowDown");
+      let g = await geometry();
+      assert(g.index === 0 && g.inside && g.scrollTop < last, `past the last row the walk lands ${JSON.stringify(g)}`);
+      await page.keyboard.press("ArrowUp");
+      g = await geometry();
+      assert(g.index === 39 && g.inside, `up over the first row the walk lands ${JSON.stringify(g)}`);
+      for (let i = 38; i >= 0; i -= 1) {
+        await page.keyboard.press("ArrowUp");
+        g = await geometry();
+        assert(g.index === i && g.inside, `after walking up to ${i} the mark is ${JSON.stringify(g)}`);
+      }
+      assert(g.index === 0 && g.inside, `back at the top the mark is ${JSON.stringify(g)}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      assert(await runInShell("git branch -q -D $(git branch --list 'scroll-*' | tr -d ' ')\r") === 200, "the shell refused the cleanup");
+      return "forty rows: the mark stays in view down, around and back up, the list never jumps while the row is in view";
+    });
+
+    await run("compare: the phone reaches the panel, both pickers and the diff inside the drawer at 390", async () => {
+      const mp = await mobile();
+      await openEditor(mp);
+      await diffReady(mp);
+      await mp.keyboard.press("Escape");
+      await mp.waitForSelector("[data-editor-backdrop]", { state: "hidden", timeout: 5000 });
+      await mp.click("[data-editor-git-status]");
+      await mp.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 6000 });
+      await mp.locator("[data-editor-sheet-body] .dropdown-item", { hasText: /^Compare revisions/ }).first().click();
+      await mp.waitForSelector(".editor-drawer-open [data-editor-revdiff]:not([hidden])", { timeout: 10000 });
+      await revdiffSettled(mp);
+      await pickSide(mp, "from", "revcmp-a");
+      await pickSide(mp, "to", "revcmp-b");
+      const phoneState = { summary: await revdiffSummary(mp), names: await revdiffNames(mp), stored: await mp.evaluate((key) => localStorage.getItem(key), revdiffKey) };
+      assert(/^5 changes/.test(phoneState.summary), `the phone's panel reads ${JSON.stringify(phoneState)}`);
+      assert(await mp.locator(".editor-drawer-open [data-editor-revdiff]:not([hidden])").count() === 1, "a pick closed the drawer");
+      const fit = await mp.evaluate(() => {
+        const controls = [...document.querySelectorAll("[data-editor-revdiff-pick], [data-editor-revdiff-mode], [data-editor-revdiff-filter], [data-editor-revdiff-list] .editor-commit-row")];
+        return {
+          vw: window.innerWidth,
+          overflow: document.documentElement.scrollWidth > window.innerWidth,
+          focused: document.activeElement === document.querySelector("[data-editor-revdiff-filter]"),
+          boxes: controls.map((el) => {
+            const rect = el.getBoundingClientRect();
+            return { what: (el.dataset.editorRevdiffPick || el.tagName + (el.dataset.path ? ":" + el.dataset.path : "")).slice(0, 30), left: Math.round(rect.left), right: Math.round(rect.right), height: Math.round(rect.height) };
+          }),
+        };
+      });
+      assert(!fit.overflow, "the page scrolls sideways with the panel open");
+      assert(!fit.focused, "the filter took the focus on a touch screen");
+      for (const box of fit.boxes) {
+        assert(box.left >= 0 && box.right <= fit.vw + 1, `a control leaves the 390 viewport: ${JSON.stringify(box)}`);
+        assert(box.height >= 24, `a control is too small to tap: ${JSON.stringify(box)}`);
+      }
+
+      await mp.click('[data-editor-revdiff-pick="to"]');
+      await mp.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 6000 });
+      await mp.waitForSelector("[data-editor-sheet-body] input", { timeout: 6000 });
+      const over = await mp.evaluate(() => {
+        const input = document.querySelector("[data-editor-sheet-body] input");
+        const rect = input.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return hit === input;
+      });
+      assert(over, "the picker does not stand over the drawer");
+      await mp.fill("[data-editor-sheet-body] input", "revcmp-30k");
+      await mp.waitForSelector("[data-picker-loading]", { state: "hidden", timeout: 20000 });
+      await mp.click('[data-editor-sheet] .editor-sheet-row:has(.editor-sheet-name:text-is("revcmp-30k")) .editor-sheet-open');
+      await mp.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      await revdiffSettled(mp);
+      assert(/^30005 changes/.test(await revdiffSummary(mp)), `after the pick the phone reads "${await revdiffSummary(mp)}"`);
+      assert(await mp.locator(".editor-drawer-open [data-editor-revdiff]:not([hidden])").count() === 1, "the pick closed the drawer");
+
+      await mp.fill("[data-editor-revdiff-filter]", "keep/mod.txt");
+      await mp.waitForFunction(() => /^1 of /.test(document.querySelector("[data-editor-revdiff-filter-count]").textContent.trim()), null, { timeout: 10000 });
+      await mp.click('[data-editor-revdiff-list] .editor-commit-row[data-path="revcmp/keep/mod.txt"] .editor-commit-open');
+      await mp.waitForSelector(".editor.editor-drawer-open", { state: "detached", timeout: 8000 });
+      await mp.waitForSelector(".editor-tab.active[data-path^='//revdiff/']", { state: "attached", timeout: 15000 });
+      await mp.waitForSelector(".cm-deletedChunk, .cm-changedLine", { state: "attached", timeout: 20000 });
+      assert(await mp.locator(".cm-mergeView").count() === 0, "the phone opened the revision diff side by side");
+      const barFit = await mp.evaluate(() => {
+        const bar = document.querySelector("[data-editor-compare]");
+        const rect = bar.getBoundingClientRect();
+        return { hidden: bar.hidden, right: Math.round(rect.right), vw: window.innerWidth, overflow: document.documentElement.scrollWidth > window.innerWidth };
+      });
+      assert(!barFit.hidden && barFit.right <= barFit.vw + 1 && !barFit.overflow, `the comparison bar at 390: ${JSON.stringify(barFit)}`);
+      await closeRevdiffTabs(mp);
+      assert(await runInShell(`git branch -qD revcmp-a revcmp-b revcmp-30k && git tag -d revcmp-v1 > /dev/null && rm -rf ${cmpClone}\r`) === 200,
+        "the shell refused the cleanup");
+      return "sheet, panel in the drawer, picker over it, thirty thousand rows and the diff, all inside 390";
     });
 
     // ---- comparing two files -------------------------------------------------

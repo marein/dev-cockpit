@@ -1892,6 +1892,10 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
 .editor-commit-row:focus {
   outline: none;
 }
+.editor-commit-list:focus-visible {
+  outline: 2px solid var(--tblr-primary);
+  outline-offset: -2px;
+}
 /* A panel that runs out of height must not crush the list to nothing, which is
    what a phone with its keyboard up used to do: the composer gives way first,
    the list keeps a few rows, and only when even that does not fit does the

@@ -56,6 +56,14 @@ export function rowsOf(container, selector = MENU_ROW) {
 // stays where it is, because there is nothing to move.
 export function focusRow(container, row) {
   row.focus({ preventScroll: true });
+  return revealRow(container, row);
+}
+
+// revealRow is the scrolling half of focusRow on its own, for a list whose
+// keyboard focus stays in a field while a marked row moves: the container is
+// scrolled by exactly what brings the row inside it, and not at all when it
+// already is.
+export function revealRow(container, row) {
   const box = container.getBoundingClientRect();
   const rect = row.getBoundingClientRect();
   if (rect.top < box.top) container.scrollTop -= box.top - rect.top;
