@@ -2739,10 +2739,10 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       return "the spinner takes the icon's box, the label stands still";
     });
 
-    // The sheet is a list of rows, and the keyboard walks it: the first row
-    // takes the focus when it opens, the arrows step and wrap over the enabled
-    // rows, Enter runs the focused one, and Escape goes one level back before
-    // it closes. The repaint is where this gets hard: a write disables every
+    // The sheet is a list of rows, and the keyboard walks it: the filter in
+    // its head takes the focus when it opens, the first arrow leads onto the
+    // first row, the arrows step and wrap over the enabled rows, Enter runs
+    // the focused one, and Escape goes one level back before it closes. The repaint is where this gets hard: a write disables every
     // row while it runs, so the focus has nowhere to sit, and the repaint that
     // ends the write has to put it back where it stood.
     const sheetRows = (target) => target.evaluate(() =>
@@ -2762,6 +2762,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       return {
         text: (el.textContent || "").replace(/\s+/g, " ").trim(),
         tag: el.tagName.toLowerCase(),
+        filter: el === document.querySelector("[data-editor-sheet-filter]"),
         inSheet: !!el.closest("[data-editor-sheet-body]"),
         inside: !!box && rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1,
         paints: !transparent(style.backgroundColor) || !transparent(line.backgroundColor),
@@ -2772,6 +2773,15 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       };
     });
 
+    // What Enter in the field would run is marked while the field holds the
+    // focus: the first row, painted with the surface the walk paints.
+    const sheetMarked = (target) => target.evaluate(() => {
+      const el = document.querySelector("[data-editor-sheet-body] .selected");
+      if (!el) return null;
+      const bg = getComputedStyle(el).backgroundColor;
+      if (!bg || bg === "rgba(0, 0, 0, 0)" || bg === "transparent") return "unpainted";
+      return el.textContent.replace(/\s+/g, " ").trim();
+    });
     await run("the git sheet takes the keyboard: the arrows walk it, Enter runs a row, Escape steps back", async () => {
       await openEditor(page);
       await diffReady(page);
@@ -2779,8 +2789,16 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await sleep(300);
       const rows = await sheetRows(page);
       assert(rows.length > 2, `the sheet carries ${rows.length} rows`);
+      const start = await sheetFocus(page);
+      assert(start.filter, `the sheet opened with the focus on "${start.tag} ${start.text}" instead of its filter`);
+      // The first row is marked while the field holds the focus, it is what
+      // Enter would run, so the first arrow steps onto the second row.
+      const marked = await sheetMarked(page);
+      assert(marked === rows[0], `the marked row reads "${marked}" instead of "${rows[0]}"`);
+      await page.keyboard.press("ArrowDown");
       const opened = await sheetFocus(page);
-      assert(opened.inSheet && opened.text === rows[0], `the sheet opened with the focus on "${opened.text}"`);
+      assert(opened.inSheet && opened.text === rows[1], `the first arrow landed on "${opened.text}" instead of "${rows[1]}"`);
+      assert((await sheetMarked(page)) === null, "the mark stayed on the first row after the focus moved");
       // The row the keyboard stands on is marked by a surface and never by a
       // ring, the same surface the mouse paints, and it is dragged into view as
       // the focus walks past the fold without the page moving under it.
@@ -2792,7 +2810,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await page.setViewportSize({ width: 1200, height: 520 });
       await sleep(300);
       let scrolled = false;
-      for (let i = 1; i < rows.length; i += 1) {
+      for (let i = 2; i < rows.length; i += 1) {
         await page.keyboard.press("ArrowDown");
         const step = await sheetFocus(page);
         assert(step.inside, `the focused row "${step.text}" stands outside the sheet body`);
@@ -2840,7 +2858,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       }, null, { timeout: 20000 });
 
       // A drilled level is a level of its own: it opens on its own first stop,
-      // and Escape leads back to the row it was reached from, not out.
+      // and Escape leads back to the level it was reached from, not out, and
+      // that level starts on its filter again.
       await page.evaluate(() => [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item")]
         .find((el) => /^Switch branch/.test(el.textContent.trim())).focus());
       await page.keyboard.press("Enter");
@@ -2851,12 +2870,98 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await sleep(400);
       assert(await page.isVisible("[data-editor-sheet]:not([hidden])"), "Escape out of the picker closed the whole sheet");
       const back = await sheetFocus(page);
-      assert(back.inSheet && /^Switch branch/.test(back.text), `back on the git sheet the focus stands on "${back.text}"`);
+      assert(back.filter, `back on the git sheet the focus stands on "${back.tag} ${back.text}" instead of the filter`);
       await page.keyboard.press("Escape");
       await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
       await page.setViewportSize({ width: 1360, height: 900 });
       await sleep(300);
       return `${rows.length} rows walked on ${opened.surface}, focus survived the write, picker level stepped back`;
+    });
+
+    // Every sheet carries a filter in its head, built once in the shared hull
+    // and matching the way the commit view and the project switcher do
+    // (@dc/filter's matchesTokens): typing narrows the rows live, a divider
+    // stands only between two groups that both kept a hit, the arrows walk
+    // the hits alone, Enter in the field runs the first hit, the clear button
+    // and Escape in the field empty it before the sheet's own Escape takes
+    // over, and the next open starts with an empty field.
+    const shownSheetRows = (target) => target.evaluate(() =>
+      [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item, [data-editor-sheet-body] .editor-sheet-open")]
+        .filter((row) => row.getClientRects().length > 0)
+        .map((row) => row.textContent.replace(/\s+/g, " ").trim()));
+    const sheetFilterState = (target) => target.evaluate(() => ({
+      value: document.querySelector("[data-editor-sheet-filter]").value,
+      count: document.querySelector("[data-editor-sheet-filter-count]").textContent.trim(),
+      clear: getComputedStyle(document.querySelector("[data-editor-sheet-filter-clear]")).visibility,
+      empty: document.querySelector("[data-editor-sheet-empty]").getClientRects().length > 0,
+      dividers: [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-divider")].filter((el) => el.getClientRects().length > 0).length,
+    }));
+    await run("the git sheet filters its rows: typing narrows, the arrows walk the hits, Enter runs the first", async () => {
+      await openEditor(page);
+      await diffReady(page);
+      await openGitSheet(page);
+      await page.waitForSelector("[data-editor-sheet-body] [data-git-commit]", { timeout: 15000 });
+      await sleep(300);
+      const all = await shownSheetRows(page);
+      assert(all.length > 7, `the sheet carries ${all.length} rows`);
+      assert((await sheetFocus(page)).filter, "the sheet did not open on its filter");
+      await page.keyboard.type("push");
+      await sleep(250);
+      const hits = await shownSheetRows(page);
+      assert(hits.length >= 2 && hits.every((text) => /push/i.test(text)), `the filter left ${JSON.stringify(hits)} standing`);
+      assert(hits.some((t) => /^Push/.test(t)) && hits.some((t) => /^Force push/.test(t)), `Push and Force push are not both hits: ${JSON.stringify(hits)}`);
+      assert(!hits.some((t) => /^(Pull|Fetch|Switch branch|New branch|Commit)/.test(t)), `a row that is no hit stayed: ${JSON.stringify(hits)}`);
+      const state = await sheetFilterState(page);
+      assert(state.count === `${hits.length} of ${all.length}`, `the count reads "${state.count}" for ${hits.length} of ${all.length}`);
+      assert(state.clear === "visible", `the clear button is ${state.clear}`);
+      const commitHits = hits.filter((t) => !/^(Push|Force push)/.test(t)).length;
+      assert(state.dividers === 1 + (commitHits ? 1 : 0), `${state.dividers} dividers stand between the hits with ${commitHits} commits among them`);
+      assert(/^Push/.test((await sheetMarked(page)) || ""), `the first hit is not marked: "${await sheetMarked(page)}"`);
+      await page.keyboard.press("ArrowDown");
+      assert(/^Force push/.test((await sheetFocus(page)).text), `the first arrow landed on "${(await sheetFocus(page)).text}" instead of the second hit`);
+      await page.keyboard.press("ArrowUp");
+      assert(/^Push/.test((await sheetFocus(page)).text), `ArrowUp landed on "${(await sheetFocus(page)).text}"`);
+      // A heading is a group head: it goes with a group that kept no hit, and
+      // stays only while a row of its group stands, the paging row included.
+      await page.fill("[data-editor-sheet-filter]", "lease");
+      await sleep(250);
+      const lease = await shownSheetRows(page);
+      assert(lease.length >= 1 && lease.every((t) => /^Force push|Older commits/.test(t)), `"lease" left ${JSON.stringify(lease)}`);
+      const heading = await page.evaluate(() => ({
+        shown: [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-header")].some((el) => el.getClientRects().length > 0),
+        older: [...document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-open")].some((el) => /Older commits/.test(el.textContent) && el.getClientRects().length > 0),
+      }));
+      assert(heading.shown === heading.older, `the History heading is ${heading.shown ? "shown" : "hidden"} while the paging row is ${heading.older ? "shown" : "hidden"}`);
+      await page.fill("[data-editor-sheet-filter]", "push");
+      await sleep(250);
+      await page.click("[data-editor-sheet-filter]");
+      await page.keyboard.type(" zzz");
+      await sleep(250);
+      const none = await sheetFilterState(page);
+      assert(none.empty && none.count === `0 of ${all.length}`, `an empty result reads "${none.count}" with the note ${none.empty ? "shown" : "hidden"}`);
+      assert((await shownSheetRows(page)).length === 0, "a row survived a query nothing matches");
+      await page.keyboard.press("Escape");
+      await sleep(250);
+      const cleared = await sheetFilterState(page);
+      assert(cleared.value === "" && cleared.count === "" && cleared.clear === "hidden" && !cleared.empty, `Escape left ${JSON.stringify(cleared)}`);
+      assert(await page.isVisible("[data-editor-sheet]:not([hidden])"), "Escape closed the sheet instead of clearing the filter");
+      assert((await shownSheetRows(page)).length === all.length, "the rows did not come back with the cleared filter");
+      await page.keyboard.type("commit");
+      await sleep(250);
+      await page.keyboard.press("Enter");
+      await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      await page.waitForFunction(() => {
+        const el = document.querySelector("[data-editor-commit]");
+        return !!el && el.getClientRects().length > 0;
+      }, null, { timeout: 6000 });
+      await page.click("[data-editor-commit-close]");
+      await page.waitForSelector("[data-editor-commit]", { state: "hidden", timeout: 6000 });
+      await openGitSheet(page);
+      await sleep(250);
+      assert((await sheetFilterState(page)).value === "", "the query survived into the next open");
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      return `${hits.length} of ${all.length} rows on "push", Enter on "commit" opened the commit view`;
     });
 
     // The sheet is the editor's own panel: it docks to the right on a screen
@@ -3425,6 +3530,13 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await btn.click();
       await mp.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 6000 });
       await mp.waitForSelector("[data-editor-sheet-body] .dropdown-item", { timeout: 6000 });
+      // The filter stands on the phone too, but takes no focus there: the
+      // keyboard it would raise covers the very list it filters.
+      const field = await mp.evaluate(() => {
+        const el = document.querySelector("[data-editor-sheet-filter]");
+        return { shown: el.getClientRects().length > 0, focused: document.activeElement === el };
+      });
+      assert(field.shown && !field.focused, `the filter on the phone is ${field.shown ? "shown" : "hidden"} and ${field.focused ? "focused" : "not focused"}`);
       // Every action row is a real touch target inside the viewport.
       const rows = await mp.evaluate(() => [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item")]
         .map((el) => {

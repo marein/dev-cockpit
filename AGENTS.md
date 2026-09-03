@@ -1118,10 +1118,34 @@ test. Update this file when a convention changes.
   it.** The movement is `@dc/contextmenu`'s (`rowsOf`, `focusRow`,
   `stepRowFocus`), the
   same one the context menu's arrows use, with the sheet's own row selector
-  (`SHEET_ROW`, the action rows plus the list rows); a sheet opens on its
-  first row and a drilled level starts over on its own first row, both
-  through `focusSheetTop` and only on a fine pointer, because a marked row is
-  noise on a touch screen. **A row is reached only through `focusRow`**, which
+  (`SHEET_ROW`, the action rows plus the list rows); a sheet opens on the
+  filter in its head and a drilled level starts over on it, both through
+  `focusSheetTop` and only on a fine pointer, because a marked row is noise
+  on a touch screen and a raised keyboard would cover the list; a sheet
+  without a filter (the settings, the pickers with their own server search,
+  the usages with their own field) opens on its first row as before.
+  **Every sheet with text rows filters through that field**, built once in
+  the hull (`[data-editor-sheet-filter]`, `applySheetFilter`) with
+  `@dc/filter`'s `matchesTokens`, the same match the commit view and the
+  project switcher use, so the three feel alike: a row hides with its unit
+  (`sheetUnit`: the `.editor-sheet-row` line around a list row, the grid
+  column around a cell, else the row itself), a node marked
+  `data-editor-sheet-head` (the docker stack's status line, the git
+  history's `History` heading) follows its group, the siblings after it up
+  to the next divider with the containers of the body read as one list, and
+  stands only while its own text or a row of its group is a hit,
+  a row marked `data-editor-sheet-pin` (the history's `Older commits`) is
+  never filtered, and a `.dropdown-divider` stands only between two groups
+  that both kept a hit. `rowsOf` leaves rows inside a hidden node out, so
+  the arrows walk the hits alone; while the field holds the focus the first
+  hit carries the `selected` surface as what Enter would run
+  (`paintSheetMark`), so ArrowDown in the field steps onto the second hit,
+  Enter in the field runs the first, Escape in the field clears a
+  standing query before the sheet's own Escape chain (one level back, then
+  close) takes over, and `openSheet` and a level change (`drill`) empty the
+  field. Every repaint applies the filter again (`repaintSheet`, and
+  `appendGitLog` for the pages it adds), so the focus position it keeps is
+  a position among the hits. **A row is reached only through `focusRow`**, which
   focuses with `preventScroll` and then moves the container's own `scrollTop`
   by exactly what brings the row back inside it: the page behind a sheet or a
   menu must not move, and a row below the fold must not stay there. **What

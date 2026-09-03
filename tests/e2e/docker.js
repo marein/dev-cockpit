@@ -658,27 +658,38 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
   });
 
   // The sheet is a list of rows and the keyboard walks it: it opens with the
-  // first row focused, the arrows step over the rows, a drill in and the way
-  // back both start over on the first row of the level they land on, and a row
-  // pressed with Enter carries no click point, so a menu it opens takes the
-  // row's own rect as its anchor instead of the screen corner.
+  // filter in its head focused and the first row marked as what Enter would
+  // run, the first arrow leads onto the second row, the arrows step over the
+  // rows, a drill in and the way back both start over on the filter of the
+  // level they land on, and a row pressed with Enter carries no click point,
+  // so a menu it opens takes the row's own rect as its anchor instead of the
+  // screen corner.
   await run("the docker sheet takes the keyboard, into a drilled level and back out", async () => {
     const focus = () => page.evaluate(() => {
       const el = document.activeElement;
-      return { text: (el.textContent || "").replace(/\s+/g, " ").trim(), inSheet: !!el.closest("[data-editor-sheet-body]") };
+      return {
+        text: (el.textContent || "").replace(/\s+/g, " ").trim(),
+        inSheet: !!el.closest("[data-editor-sheet-body]"),
+        filter: el === document.querySelector("[data-editor-sheet-filter]"),
+      };
     });
     const rows = () => page.evaluate(() =>
       [...document.querySelectorAll("[data-editor-docker-list] .dropdown-item")]
         .filter((row) => !row.disabled)
         .map((row) => row.textContent.replace(/\s+/g, " ").trim()));
+    const marked = () => page.evaluate(() => {
+      const el = document.querySelector("[data-editor-sheet-body] .selected");
+      return el ? el.textContent.replace(/\s+/g, " ").trim() : null;
+    });
     await page.keyboard.press("Control+Shift+D");
     await page.waitForSelector("[data-editor-docker-list] .dropdown-item", { timeout: 8000 });
     await sleep(700);
     const list = await rows();
     const opened = await focus();
-    assert(opened.inSheet && opened.text === list[0], `the sheet opened with the focus on "${opened.text}"`);
+    assert(opened.filter, `the sheet opened with the focus on "${opened.text}" instead of its filter`);
+    assert((await marked()) === list[0], `the marked row reads "${await marked()}" instead of "${list[0]}"`);
     await page.keyboard.press("ArrowDown");
-    assert((await focus()).text === list[1], `ArrowDown landed on "${(await focus()).text}" instead of "${list[1]}"`);
+    assert((await focus()).text === list[1], `the first arrow landed on "${(await focus()).text}" instead of "${list[1]}"`);
 
     await page.evaluate(() => [...document.querySelectorAll("[data-editor-docker-list] .dropdown-item")]
       .find((row) => /^web \(2 addresses\)$/.test(row.textContent.trim())).focus());
@@ -686,10 +697,14 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await sleep(400);
     const drilled = await rows();
     assert(/^Back$/.test(drilled[0]), `the drilled level starts with "${drilled[0]}"`);
-    assert((await focus()).text === drilled[0], `the drilled level focused "${(await focus()).text}"`);
+    assert((await focus()).filter, `the drilled level focused "${(await focus()).text}" instead of its filter`);
+    assert((await marked()) === drilled[0], `the drilled level marks "${await marked()}" instead of "${drilled[0]}"`);
     await page.keyboard.press("Enter");
     await sleep(400);
-    assert((await focus()).text === list[0], `the way back focused "${(await focus()).text}" instead of "${list[0]}"`);
+    assert((await focus()).filter, `the way back focused "${(await focus()).text}" instead of the filter`);
+    assert((await marked()) === list[0], `the way back marks "${await marked()}" instead of "${list[0]}"`);
+    await page.keyboard.press("ArrowDown");
+    assert((await focus()).text === list[1], `the arrow after the way back landed on "${(await focus()).text}" instead of "${list[1]}"`);
 
     // The row the keyboard stands on carries a surface and no ring, and it is
     // the very surface the mouse paints: one state, whichever way a row is
@@ -723,6 +738,64 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     assert((await focus()).inSheet, "the closed menu left the focus outside the sheet");
     await page.keyboard.press("Escape");
     await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 4000 });
+  });
+
+  // The filter in the sheet's head, the same one every sheet carries: the hits
+  // stand alone, the stack's own status line follows its rows (it stays while
+  // one of them is a hit and goes when none is), a query nothing matches says
+  // so, the clear button empties the field, Enter in the field runs the first
+  // hit, and a drilled level starts on an empty field, the way back too.
+  await run("the docker sheet filters its rows, the stack line follows them, a drilled level starts clean", async () => {
+    const shown = () => page.evaluate(() =>
+      [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item")]
+        .filter((row) => row.getClientRects().length > 0)
+        .map((row) => row.textContent.replace(/\s+/g, " ").trim()));
+    const field = () => page.evaluate(() => ({
+      value: document.querySelector("[data-editor-sheet-filter]").value,
+      count: document.querySelector("[data-editor-sheet-filter-count]").textContent.trim(),
+      empty: document.querySelector("[data-editor-sheet-empty]").getClientRects().length > 0,
+      focused: document.activeElement === document.querySelector("[data-editor-sheet-filter]"),
+    }));
+    await page.keyboard.press("Control+Shift+D");
+    await page.waitForSelector("[data-editor-docker-list] .dropdown-item", { timeout: 8000 });
+    await sleep(700);
+    const all = await shown();
+    const head = all.find((t) => /running/.test(t));
+    assert(head, `the stack line is missing from ${JSON.stringify(all)}`);
+    assert((await field()).focused, "the sheet did not open on its filter");
+    await page.keyboard.type("logs");
+    await sleep(250);
+    let hits = await shown();
+    assert(hits.includes(head), `the stack line went although its rows are hits: ${JSON.stringify(hits)}`);
+    assert(hits.some((t) => /^Logs$/.test(t)) && hits.some((t) => /^Filter logs/.test(t)), `the logs rows are not the hits: ${JSON.stringify(hits)}`);
+    assert(!hits.some((t) => /^Compose up$/.test(t)) && !hits.some((t) => /^web/.test(t)), `a row that is no hit stayed: ${JSON.stringify(hits)}`);
+    assert((await field()).count === `2 of ${all.length - 1}`, `the count reads "${(await field()).count}"`);
+    await page.fill("[data-editor-sheet-filter]", "web");
+    await sleep(250);
+    hits = await shown();
+    assert(!hits.includes(head), `the stack line stayed without a hit under it: ${JSON.stringify(hits)}`);
+    assert(hits.some((t) => /^web \(2 addresses\)$/.test(t)) && hits.some((t) => /^web/.test(t) && !/addresses/.test(t)), `the container is not among the hits: ${JSON.stringify(hits)}`);
+    await page.fill("[data-editor-sheet-filter]", "zzz");
+    await sleep(250);
+    const none = await field();
+    assert(none.empty && (await shown()).length === 0, `a query nothing matches left rows standing or no note (${JSON.stringify(none)})`);
+    await page.click("[data-editor-sheet-filter-clear]");
+    await sleep(250);
+    assert((await field()).value === "" && (await shown()).length === all.length, "the clear button did not bring every row back");
+    await page.fill("[data-editor-sheet-filter]", "addresses");
+    await sleep(250);
+    await page.keyboard.press("Enter");
+    await sleep(400);
+    const drilled = await shown();
+    assert(/^Back$/.test(drilled[0]) && drilled.some((t) => /^Open :18088$/.test(t)), `Enter did not drill in: ${JSON.stringify(drilled)}`);
+    const fresh = await field();
+    assert(fresh.value === "" && fresh.focused, `the drilled level starts with "${fresh.value}" in the field, focused ${fresh.focused}`);
+    await page.keyboard.press("Enter");
+    await sleep(400);
+    assert((await shown()).length === all.length && (await field()).value === "", "the way back did not start clean");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 4000 });
+    return `${all.length} rows, "logs" kept the stack line, "web" dropped it, Enter drilled in and back`;
   });
 
   await run("Ctrl+Shift+D toggles the docker view, the statusbar terminal icon the panel", async () => {

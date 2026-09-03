@@ -43,10 +43,10 @@ export function labelNodes(label) {
 // their own, the movement below is the same one.
 const MENU_ROW = ".dropdown-item";
 
-// rowsOf answers a container's rows in document order, the disabled ones left
-// out, and stepRowFocus is one step down or up over them: both ends wrap.
+// rowsOf answers a container's rows in document order, the disabled ones and
+// the hidden ones left out, and stepRowFocus is one step down or up over them: both ends wrap.
 export function rowsOf(container, selector = MENU_ROW) {
-  return Array.from(container.querySelectorAll(selector)).filter((row) => !row.disabled);
+  return Array.from(container.querySelectorAll(selector)).filter((row) => !row.disabled && !row.closest("[hidden]"));
 }
 
 // focusRow is the one way a row is reached with the keyboard: the browser is

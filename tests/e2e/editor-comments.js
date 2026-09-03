@@ -454,6 +454,8 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, page, run, mobilePage }) => {
     await commentDialogGone(page);
     await waitMarked(page, "1,3");
     await openSheet(page);
+    // The sheet opens on its filter with the first head action marked, so
+    // the first arrow stands on the second one and the next on the first cell.
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
@@ -496,6 +498,65 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, page, run, mobilePage }) => {
     assert(data.comments.length === 1 && data.comments[0].text === "needs a guard", "the cell delete removed the wrong note");
     await page.keyboard.press("Control+Shift+C");
     await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+  });
+
+  // The filter every sheet carries in its head: typing narrows the cells, the
+  // head actions go when they are no hit, Enter in the field opens the first
+  // hit's menu, and Escape in the field clears the query before the sheet's
+  // own Escape closes it.
+  await run("the sheet's filter narrows the cells, Enter opens the first hit's menu", async () => {
+    await page.click(".cm-content");
+    await page.keyboard.press("Control+Home");
+    await page.keyboard.press("Control+Alt+C");
+    await commentDialogShown(page);
+    await page.fill("[data-editor-comment-text]", "second thought");
+    await page.click("[data-editor-comment-save]");
+    await commentDialogGone(page);
+    await waitMarked(page, "1,3");
+    await openSheet(page);
+    const shown = () => page.evaluate(() =>
+      [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item")]
+        .filter((row) => row.getClientRects().length > 0)
+        .map((row) => row.textContent.replace(/\s+/g, " ").trim()));
+    assert(await page.evaluate(() => document.activeElement === document.querySelector("[data-editor-sheet-filter]")), "the sheet did not open on its filter");
+    const all = await shown();
+    assert(all.length === 4, `the sheet carries ${all.length} rows: ${JSON.stringify(all)}`);
+    await page.keyboard.type("guard");
+    await sleep(250);
+    const hits = await shown();
+    assert(hits.length === 1 && /needs a guard/.test(hits[0]), `the filter left ${JSON.stringify(hits)}`);
+    const count = (await page.locator("[data-editor-sheet-filter-count]").textContent()).trim();
+    assert(count === "1 of 4", `the count reads "${count}"`);
+    const marked = await page.evaluate(() => document.querySelector("[data-editor-sheet-body] .selected")?.textContent.replace(/\s+/g, " ").trim() || null);
+    assert(marked && /needs a guard/.test(marked), `the hit is not marked: "${marked}"`);
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
+    const labels = await menuLabels(page);
+    assert(labels.join("|") === "Go to line|Edit|Delete", `Enter opened ${labels.join(", ")}`);
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+    await sleep(400);
+    await page.click("[data-editor-sheet-filter]");
+    await page.keyboard.press("Escape");
+    await sleep(250);
+    assert(await page.locator("[data-editor-sheet]:not([hidden])").count() === 1, "Escape closed the sheet instead of clearing the filter");
+    assert((await shown()).length === 4, "the cleared filter did not bring the rows back");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+    const data = await getComments(page);
+    const extra = data.comments.find((c) => c.text === "second thought");
+    assert(extra, "the second note is not stored");
+    const status = await page.evaluate(([p, id]) => fetch(p, {
+      method: "POST",
+      headers: {
+        "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ ids: [id] }),
+    }).then((r) => r.status), [`/projects/${encodeURIComponent(scratch)}/editor/comments/delete`, extra.id]);
+    assert(status === 200, `removing the second note answered ${status}`);
+    await waitMarked(page, "3");
   });
 
   await run("copy as Markdown puts path, comment and quoted line on the clipboard", async () => {

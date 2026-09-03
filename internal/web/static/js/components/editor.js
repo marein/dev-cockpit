@@ -141,6 +141,11 @@ async function init(root) {
   const sheetTitleEl = root.querySelector("[data-editor-sheet-title]");
   const sheetBodyEl = root.querySelector("[data-editor-sheet-body]");
   const sheetCloseBtn = root.querySelector("[data-editor-sheet-close]");
+  const sheetFilterRowEl = root.querySelector("[data-editor-sheet-filter-row]");
+  const sheetFilterEl = root.querySelector("[data-editor-sheet-filter]");
+  const sheetFilterCountEl = root.querySelector("[data-editor-sheet-filter-count]");
+  const sheetFilterClearBtn = root.querySelector("[data-editor-sheet-filter-clear]");
+  const sheetEmptyEl = root.querySelector("[data-editor-sheet-empty]");
   const paneColEl = root.querySelector(".editor-pane-col");
   const dockerItem = root.querySelector("[data-editor-docker-item]");
   const dockerMenuEl = root.querySelector("[data-editor-docker-menu]");
@@ -715,6 +720,109 @@ async function init(root) {
   // menu's, which is where the movement itself lives.
   const SHEET_ROW = ".dropdown-item, .editor-sheet-open";
   const sheetRows = () => rowsOf(sheetBodyEl, SHEET_ROW);
+  const FILTERED_SHEETS = new Set(["files", "docker", "git", "comments", "history"]);
+  let sheetQuery = "";
+  let sheetMarked = null;
+  const sheetRowText = (row) => (row.textContent || "").replace(/\s+/g, " ").trim();
+
+  function sheetUnit(row) {
+    const unit = row.closest(".editor-sheet-row, .row > *");
+    return unit && sheetBodyEl.contains(unit) ? unit : row;
+  }
+
+  function paintSheetMark() {
+    if (sheetMarked) sheetMarked.classList.remove("selected");
+    sheetMarked = null;
+    if (document.activeElement !== sheetFilterEl) return;
+    const [first] = sheetRows();
+    if (!first) return;
+    const line = first.closest(".editor-sheet-row");
+    sheetMarked = line && sheetBodyEl.contains(line) ? line : first;
+    sheetMarked.classList.add("selected");
+  }
+
+  function sheetHolds(node, shown) {
+    if (node.matches(SHEET_ROW)) return shown.has(node);
+    return Array.from(node.querySelectorAll(SHEET_ROW)).some((row) => shown.has(row));
+  }
+
+  function sheetSibling(el, next) {
+    const sibling = next ? el.nextElementSibling : el.previousElementSibling;
+    if (sibling || !el.parentElement || el.parentElement === sheetBodyEl) return sibling;
+    return sheetSibling(el.parentElement, next);
+  }
+
+  function sheetGroupHit(head, shown) {
+    for (let el = sheetSibling(head, true); el && !el.classList.contains("dropdown-divider"); el = sheetSibling(el, true)) {
+      if (sheetHolds(el, shown)) return true;
+    }
+    return false;
+  }
+
+  function sheetDividerNeeded(divider, shown) {
+    let before = false;
+    for (let el = sheetSibling(divider, false); el && !el.classList.contains("dropdown-divider"); el = sheetSibling(el, false)) {
+      if (sheetHolds(el, shown)) {
+        before = true;
+        break;
+      }
+    }
+    if (!before) return false;
+    for (let el = sheetSibling(divider, true); el; el = sheetSibling(el, true)) {
+      if (sheetHolds(el, shown)) return true;
+    }
+    return false;
+  }
+
+  function applySheetFilter() {
+    const query = sheetQuery;
+    const rows = Array.from(sheetBodyEl.querySelectorAll(SHEET_ROW));
+    const shown = new Set();
+    let total = 0;
+    let found = 0;
+    for (const row of rows) {
+      if (row.hasAttribute("data-editor-sheet-head")) continue;
+      let hit = true;
+      if (!row.hasAttribute("data-editor-sheet-pin")) {
+        total += 1;
+        hit = query === "" || matchesTokens(sheetRowText(row), query);
+        if (hit) found += 1;
+      }
+      sheetUnit(row).hidden = !hit;
+      if (hit) shown.add(row);
+    }
+    for (const head of sheetBodyEl.querySelectorAll("[data-editor-sheet-head]")) {
+      const hit = query === "" || matchesTokens(sheetRowText(head), query) || sheetGroupHit(head, shown);
+      sheetUnit(head).hidden = !hit;
+      if (hit) shown.add(head);
+    }
+    for (const divider of sheetBodyEl.querySelectorAll(".dropdown-divider")) {
+      divider.hidden = query !== "" && !sheetDividerNeeded(divider, shown);
+    }
+    sheetEmptyEl.textContent = `Nothing matches "${query}".`;
+    sheetEmptyEl.hidden = query === "" || found > 0;
+    sheetFilterCountEl.textContent = query === "" ? "" : `${found} of ${total}`;
+    sheetFilterClearBtn.style.visibility = query === "" ? "hidden" : "";
+    paintSheetMark();
+  }
+
+  function setSheetQuery(query) {
+    if (query === sheetQuery) return;
+    sheetQuery = query;
+    applySheetFilter();
+  }
+
+  function clearSheetFilter() {
+    sheetFilterEl.value = "";
+    setSheetQuery("");
+  }
+
+  function resetSheetFilter(kind) {
+    sheetFilterEl.value = "";
+    sheetQuery = "";
+    sheetFilterRowEl.hidden = !FILTERED_SHEETS.has(kind);
+    applySheetFilter();
+  }
   const typingTarget = (node) => node instanceof Element
     && (node.isContentEditable || !!node.closest("input, textarea, select"));
   // Where the keyboard stands while a repaint takes the row away, remembered
@@ -757,19 +865,22 @@ async function init(root) {
     focusRow(sheetBodyEl, rows[Math.min(index, rows.length - 1)]);
   }
 
-  // A sheet opens with its first row focused, so the arrows have somewhere to
-  // start; force is what a level change inside a sheet passes, where the focus
-  // stands on the row that led there and belongs back on top. What already
-  // holds the focus is left alone, the pickers' filter and the git sheet's
-  // actions while its history arrives, and that is the body alone: the close
-  // button in the head keeps the focus a click on it left behind, and a sheet
-  // opened after that one would find itself already focused. Only where there
-  // is a keyboard: on a touch screen the focus ring is noise, the same reason
-  // the pickers focus their filter only on a fine pointer.
+  // A sheet opens with its filter focused, or with its first row where it has
+  // no filter, so the arrows have somewhere to start; force is what a level
+  // change inside a sheet passes, where the focus stands on the row that led
+  // there and belongs back on top. What already holds the focus is left alone,
+  // the pickers' filter and the git sheet's actions while its history arrives,
+  // and that is the body and the filter alone: the close button in the head
+  // keeps the focus a click on it left behind, and a sheet opened after that
+  // one would find itself already focused. Only where there is a keyboard: on
+  // a touch screen the focus ring is noise, the same reason the pickers focus
+  // their filter only on a fine pointer.
   function focusSheetTop({ force = false } = {}) {
     if (!pointerMedia.matches) return;
-    if (!force && sheetBodyEl.contains(document.activeElement)) return;
-    focusSheetRow(0);
+    const active = document.activeElement;
+    if (!force && (sheetBodyEl.contains(active) || active === sheetFilterEl)) return;
+    if (!sheetFilterRowEl.hidden) sheetFilterEl.focus({ preventScroll: true });
+    else focusSheetRow(0);
   }
 
   // repaintSheet is what every repaint of a row list runs through: the rows are
@@ -784,10 +895,12 @@ async function init(root) {
     if (index < 0 && sheetFocus.host === host) index = sheetFocus.index;
     if (index < 0) {
       paint();
+      applySheetFilter();
       return;
     }
     sheetFocus = { host, index };
     paint();
+    applySheetFilter();
     keepSheetFocus(host, index);
   }
 
@@ -811,6 +924,7 @@ async function init(root) {
     sheetTitleEl.textContent = title;
     sheetPanelEl.setAttribute("aria-label", title);
     sheetBodyEl.replaceChildren();
+    resetSheetFilter(kind);
     sheetEl.hidden = false;
   }
 
@@ -1008,14 +1122,16 @@ async function init(root) {
         dockerListEl.appendChild(divider);
         continue;
       }
-      dockerListEl.appendChild(sheetActionRow({
+      const row = sheetActionRow({
         icon: item.icon || "ti-brand-docker",
         iconClass: item.iconClass,
         label: item.label,
         title: item.title,
         disabled: item.disabled,
         onClick: item.action,
-      }));
+      });
+      if (item.disabled) row.dataset.editorSheetHead = "";
+      dockerListEl.appendChild(row);
     }
   }
 
@@ -1033,6 +1149,7 @@ async function init(root) {
     // sheet then shows that one list, its first row leading back.
     const containers = data.containers;
     const drill = (items) => {
+      resetSheetFilter("docker");
       if (!items) {
         renderDockerSheet();
         focusSheetTop({ force: true });
@@ -3820,6 +3937,7 @@ async function init(root) {
         const head = document.createElement("div");
         head.className = "dropdown-header";
         head.style.padding = "0.5rem 0.75rem 0.25rem";
+        head.dataset.editorSheetHead = "";
         head.textContent = "History";
         host.appendChild(head);
       }
@@ -3852,6 +3970,7 @@ async function init(root) {
       const more = document.createElement("button");
       more.type = "button";
       more.className = "editor-sheet-open";
+      more.dataset.editorSheetPin = "";
       more.innerHTML = `<i class="ti ti-chevron-down" aria-hidden="true"></i><span class="text-secondary">Older commits</span>`;
       // Asking for a page takes the row that asked away, so the focus lands
       // where it stood, which is the first commit of the page that arrived.
@@ -3864,6 +3983,7 @@ async function init(root) {
       row.appendChild(more);
       host.appendChild(row);
     }
+    applySheetFilter();
   }
 
   // The file's history lives in the file's context menu, like the diff and
@@ -8449,7 +8569,7 @@ async function init(root) {
       sheetDrag = null;
     };
     sheetBodyEl.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0 || sheetDrag || sheetKind !== "files") return;
+      if (e.button !== 0 || sheetDrag || sheetKind !== "files" || sheetQuery !== "") return;
       // A new pointer voids a suppression the last gesture left behind: a
       // stream that ended without the click it expected must not swallow the
       // next tap.
@@ -8559,6 +8679,31 @@ async function init(root) {
   sheetCloseBtn.addEventListener("click", closeSheet, { signal });
   sheetEl.addEventListener("click", (e) => {
     if (e.target === sheetEl) closeSheet();
+  }, { signal });
+  sheetFilterEl.addEventListener("input", () => setSheetQuery(sheetFilterEl.value.trim()), { signal });
+  sheetFilterEl.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const rows = sheetRows();
+      if (!rows.length) return;
+      focusRow(sheetBodyEl, e.key === "ArrowDown" ? rows[Math.min(1, rows.length - 1)] : rows[rows.length - 1]);
+    } else if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      const [first] = sheetRows();
+      if (first) first.click();
+    } else if (e.key === "Escape") {
+      if (sheetFilterEl.value === "") return;
+      e.preventDefault();
+      e.stopPropagation();
+      clearSheetFilter();
+    }
+  }, { signal });
+  sheetFilterEl.addEventListener("focus", paintSheetMark, { signal });
+  sheetFilterEl.addEventListener("blur", paintSheetMark, { signal });
+  sheetFilterClearBtn.addEventListener("click", () => {
+    clearSheetFilter();
+    sheetFilterEl.focus();
   }, { signal });
   // A row of an adopted menu did what it says; the sheet has served its purpose
   // and gets out of the way so the answer is visible. The settings keep their

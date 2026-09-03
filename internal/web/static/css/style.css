@@ -1829,7 +1829,8 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
    padding instead of standing beside it, so a hit count that appears with the
    first keystroke, and changes width with every one after it, never resizes
    the field somebody is typing in. */
-.editor-commit-filter {
+.editor-commit-filter,
+.editor-sheet-filter {
   position: relative;
   display: flex;
   align-items: center;
@@ -1837,14 +1838,17 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   padding: 0.35rem 0.5rem;
   border-bottom: 1px solid var(--tblr-border-color);
 }
-.editor-commit-filter > .ti {
+.editor-commit-filter > .ti,
+.editor-sheet-filter > .ti {
   flex: 0 0 auto;
   color: var(--tblr-secondary);
 }
-.editor-commit-filter:focus-within {
+.editor-commit-filter:focus-within,
+.editor-sheet-filter:focus-within {
   background: var(--tblr-bg-surface-secondary);
 }
-.editor-commit-filter-input {
+.editor-commit-filter-input,
+.editor-sheet-filter-input {
   flex: 1 1 auto;
   min-width: 0;
   border: 0;
@@ -1853,22 +1857,26 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   font-size: 0.875rem;
   padding: 0.15rem 5.5rem 0.15rem 0;
 }
-.editor-commit-filter-input:focus {
+.editor-commit-filter-input:focus,
+.editor-sheet-filter-input:focus {
   outline: none;
 }
-.editor-commit-filter-side {
+.editor-commit-filter-side,
+.editor-sheet-filter-side {
   position: absolute;
   right: 0.4rem;
   display: flex;
   align-items: center;
   gap: 0.25rem;
 }
-.editor-commit-filter-count {
+.editor-commit-filter-count,
+.editor-sheet-filter-count {
   font-size: 0.75rem;
   color: var(--tblr-secondary);
   white-space: nowrap;
 }
-.editor-commit-filter-clear {
+.editor-commit-filter-clear,
+.editor-sheet-filter-clear {
   display: inline-flex;
   align-items: center;
   border: 0;
@@ -1877,7 +1885,8 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   padding: 0.1rem;
   line-height: 1;
 }
-.editor-commit-filter-clear:hover {
+.editor-commit-filter-clear:hover,
+.editor-sheet-filter-clear:hover {
   color: var(--tblr-body-color);
 }
 .editor-commit-row:focus {
@@ -2510,8 +2519,10 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
    comes off and this surface stands in its place; disabled rows stay flat. */
 .editor-sheet-body .dropdown-item:not(:disabled):hover,
 .editor-sheet-body .dropdown-item:not(:disabled):focus,
+.editor-sheet-body .dropdown-item.selected,
 .editor-sheet-body .editor-sheet-row:hover,
-.editor-sheet-body .editor-sheet-row:has(.editor-sheet-open:focus) {
+.editor-sheet-body .editor-sheet-row:has(.editor-sheet-open:focus),
+.editor-sheet-body .editor-sheet-row.selected {
   background: var(--tblr-active-bg);
 }
 .editor-sheet-body .dropdown-item:focus,

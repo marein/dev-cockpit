@@ -378,7 +378,18 @@
             <i class="ti ti-x"></i>
           </button>
         </div>
+        <div class="editor-sheet-filter" data-editor-sheet-filter-row hidden>
+          <i class="ti ti-search" aria-hidden="true"></i>
+          <input type="text" class="editor-sheet-filter-input" data-editor-sheet-filter placeholder="Filter" aria-label="Filter the list" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
+          <span class="editor-sheet-filter-side">
+            <span class="editor-sheet-filter-count" data-editor-sheet-filter-count></span>
+            <button type="button" class="editor-sheet-filter-clear" data-editor-sheet-filter-clear aria-label="Clear the filter" title="Clear the filter">
+              <i class="ti ti-x"></i>
+            </button>
+          </span>
+        </div>
         <div class="editor-sheet-body" data-editor-sheet-body></div>
+        <div class="text-secondary small px-3 py-2" data-editor-sheet-empty hidden></div>
       </div>
     </div>
 
