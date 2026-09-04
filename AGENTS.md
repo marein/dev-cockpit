@@ -2198,7 +2198,22 @@ free floating page scripts.
   `data-bs-theme` before first paint, so a forced theme never flashes.
   Custom CSS must work in both themes: use `--tblr-*`
   variables (`rgba(var(--tblr-emphasis-color-rgb), …)` for hover/overlay tints),
-  never hardcode palette colors. The terminal screen has its own palette, picked
+  never hardcode palette colors. **Marked text is one rule for the whole app**,
+  set once in `style.css` on `::selection` and `::-moz-selection` from
+  `--dc-selection-bg` / `--dc-selection-fg` (the Tabler primary and white, the
+  same in both schemes because Tabler defines them at the root for both). The
+  fill is opaque and the mark names its own foreground on purpose: a translucent
+  one would hand the contrast to whatever sits underneath, and what sits
+  underneath is a green or red diff row, a code block, a field. That pair is
+  #ffffff on #066fd1, 5.00:1, so no surface has to be measured on its own.
+  Two surfaces bring a mark of their own and are named where the rule is:
+  CodeMirror hides the native mark inside a `.cm-line` and paints
+  `.cm-selectionBackground` instead (and oneDark's own selection leaves a comment
+  at 2.7:1), so the rule is repeated for the layer and for the text inside
+  `.cm-content`, `!important` because the library's hiding rule is; and the
+  terminal's copy mode keeps its wash (`.attach-selection::selection`, a
+  translucent blue over `color: transparent`), because there the selectable text
+  is an invisible layer over the canvas that actually carries the glyphs. The terminal screen has its own palette, picked
   in the settings menu (`dc-terminal-theme` in localStorage, every scheme
   follows the effective theme between a light and dark variant), defined in
   `terminal-attach.js`. The tab strip follows the page theme, only the active

@@ -9,6 +9,36 @@ body {
   --swal2-color: var(--tblr-body-color);
 }
 
+:root {
+  --dc-selection-bg: var(--tblr-primary);
+  --dc-selection-fg: var(--tblr-white);
+}
+
+::selection {
+  background-color: var(--dc-selection-bg);
+  color: var(--dc-selection-fg);
+  text-shadow: none;
+}
+::-moz-selection {
+  background-color: var(--dc-selection-bg);
+  color: var(--dc-selection-fg);
+  text-shadow: none;
+}
+
+.cm-editor .cm-scroller .cm-content::selection,
+.cm-editor .cm-scroller .cm-content ::selection {
+  background-color: var(--dc-selection-bg) !important;
+  color: var(--dc-selection-fg) !important;
+}
+.cm-editor .cm-scroller .cm-content::-moz-selection,
+.cm-editor .cm-scroller .cm-content ::-moz-selection {
+  background-color: var(--dc-selection-bg) !important;
+  color: var(--dc-selection-fg) !important;
+}
+.cm-editor .cm-scroller .cm-selectionLayer .cm-selectionBackground {
+  background: var(--dc-selection-bg) !important;
+}
+
 .page {
   padding-top: env(safe-area-inset-top);
   padding-left: env(safe-area-inset-left);

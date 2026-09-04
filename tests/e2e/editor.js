@@ -440,6 +440,57 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await sleep(200);
     });
 
+    await run("the mark in the editor is the app's, not CodeMirror's", async () => {
+      // CodeMirror hides the native mark inside a .cm-line and paints its own
+      // .cm-selectionBackground layer instead, and oneDark brings a selection
+      // colour of its own that leaves a comment at 2.7:1 on the dark scheme.
+      // style.css repeats the app's rule for both halves, so the layer and the
+      // text agree and the pair is measurable: an opaque fill and a foreground
+      // of its own, over every token colour, in both schemes.
+      for (const scheme of ["light", "dark"]) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await sleep(400);
+        await page.click(".cm-content");
+        await page.keyboard.press("Control+Home");
+        await page.keyboard.press("Shift+End");
+        await sleep(300);
+        const m = await page.evaluate(() => {
+          const lin = (c) => { const v = c / 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+          const lum = (p) => 0.2126 * lin(p[0]) + 0.7152 * lin(p[1]) + 0.0722 * lin(p[2]);
+          const parts = (v) => (v.match(/[\d.]+/g) || []).map(Number);
+          const layer = document.querySelector(".cm-editor .cm-selectionBackground");
+          const line = document.querySelector(".cm-content .cm-line");
+          const cs = getComputedStyle(line, "::selection");
+          const own = getComputedStyle(line);
+          const bgp = parts(cs.backgroundColor), fgp = parts(cs.color);
+          const out = {
+            layer: layer ? getComputedStyle(layer).backgroundColor : null,
+            background: cs.backgroundColor,
+            color: cs.color,
+            sameAsOwn: cs.backgroundColor === own.backgroundColor && cs.color === own.color,
+          };
+          if (bgp.length >= 3 && fgp.length >= 3) {
+            out.alpha = bgp.length > 3 ? bgp[3] : 1;
+            const la = lum(bgp), lb = lum(fgp);
+            out.ratio = Math.round(((Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)) * 100) / 100;
+          }
+          return out;
+        });
+        assert(m.layer, `${scheme}: nothing marked, no .cm-selectionBackground`);
+        const lp = (m.layer.match(/[\d.]+/g) || []).map(Number);
+        assert(lp.length === 3 || lp[3] === 1, `${scheme}: the mark layer is translucent (${m.layer}), the diff tint under it decides the contrast`);
+        if (m.ratio === undefined || m.sameAsOwn) {
+          console.log("      (this engine does not resolve ::selection, only the layer asserted)");
+          continue;
+        }
+        assert(m.alpha === 1, `${scheme}: the mark on the text is translucent (${m.background})`);
+        assert(m.ratio >= 4.5, `${scheme}: marked code is ${m.color} on ${m.background}, ${m.ratio}:1, under 4.5:1`);
+        assert(m.layer === m.background, `${scheme}: the layer (${m.layer}) and the text mark (${m.background}) disagree`);
+      }
+      await page.emulateMedia({ colorScheme: null });
+      await sleep(200);
+    });
+
     await run("quick open palette opens a closed file", async () => {
       await newFile(qoFile);
       await page.evaluate((s) => document.querySelector(`${s} .editor-tab-state`).click(), tabSel(qoFile));
