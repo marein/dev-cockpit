@@ -127,6 +127,14 @@ async function deleteProject(page, name) {
   await dismissUpdate(page);
   const card = await page.$(`[data-project-name="${name}"]`);
   if (!card) return;
+  // A worktree project folded under its main repository is hidden until the
+  // main's count is clicked; the delete button is not clickable before that.
+  await page.evaluate((p) => {
+    const row = document.querySelector(`[data-project-name="${p}"]`);
+    const main = row && row.dataset.projectWorktreeOf;
+    const toggle = main && document.querySelector(`#project-${main} [data-worktrees-toggle][aria-expanded="false"]`);
+    if (toggle) toggle.click();
+  }, name);
   const btn = await page.evaluateHandle((p) => {
     const c = [...document.querySelectorAll("[data-project-name]")].find((e) => e.dataset.projectName === p);
     const scope = c.closest('[id^="project-"]') || c;

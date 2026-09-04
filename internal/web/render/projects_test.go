@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -480,5 +481,161 @@ func TestProjectRowCarriesTheGitMenuOnARepository(t *testing.T) {
 
 	if out := renderProjects(t, projectsData(nil)); strings.Contains(out, "data-git-project-menu") || strings.Contains(out, "/fetch") {
 		t.Fatal("a plain directory carries a git menu")
+	}
+}
+
+func groupedProjectsData() ProjectsListData {
+	return ProjectsListData{
+		Page: Page{Title: "Projects"},
+		Projects: []project.Project{
+			{Name: "app-feature", Path: "/p/app-feature", Label: "app-feature", GitRepo: true, GitWorktree: true, GitWorktreeOf: "app", GitWorktreeMain: "/p/app"},
+			{Name: "app", Path: "/p/app", Label: "app", GitRepo: true},
+			{Name: "lib", Path: "/p/lib", Label: "lib", GitRepo: true},
+			{Name: "stray", Path: "/p/stray", Label: "stray", GitRepo: true, GitWorktree: true, GitWorktreeMain: "/elsewhere/main"},
+			{Name: "zed", Path: "/p/zed", Label: "zed", GitRepo: true},
+			{Name: "app-fix", Path: "/p/app-fix", Label: "app-fix", GitRepo: true, GitWorktree: true, GitWorktreeOf: "app"},
+		},
+	}
+}
+
+// badgeOf cuts the one fold badge out of a rendered list.
+func badgeOf(t *testing.T, out string) string {
+	t.Helper()
+	start := strings.Index(out, "data-worktrees-toggle")
+	if start < 0 {
+		t.Fatal("no fold badge rendered")
+	}
+	open := strings.LastIndex(out[:start], "<button")
+	return out[open : start+strings.Index(out[start:], "</button>")]
+}
+
+// The badge carries a dot for the news of the worktrees folded under it, the
+// same dot the rows wear, naming the rows it collects from so the live
+// decoration finds them; the main's own dot stays its own. Without news in
+// any worktree the badge's dot is rendered hidden.
+func TestProjectRowBadgeCollectsTheWorktreesNews(t *testing.T) {
+	data := groupedProjectsData()
+	rows := data.Rows()
+	if rows[0].WorktreeNews {
+		t.Fatal("a group without news reports news")
+	}
+	quiet := badgeOf(t, renderProjects(t, data))
+	if !strings.Contains(quiet, `status-blue d-none" data-notify-project-dot data-notify-projects="project-app-feature project-app-fix"`) {
+		t.Fatalf("the quiet badge's dot is not hidden or names no rows: %q", quiet)
+	}
+	for i := range data.Projects {
+		if data.Projects[i].Name == "app-fix" {
+			data.Projects[i].HasNews = true
+		}
+	}
+	rows = data.Rows()
+	if !rows[0].WorktreeNews || rows[1].WorktreeNews || rows[2].WorktreeNews {
+		t.Fatalf("news in app-fix: main %v, rows %v %v", rows[0].WorktreeNews, rows[1].WorktreeNews, rows[2].WorktreeNews)
+	}
+	out := renderProjects(t, data)
+	loud := badgeOf(t, out)
+	if !strings.Contains(loud, `status-blue" data-notify-project-dot data-notify-projects="project-app-feature project-app-fix"`) {
+		t.Fatalf("the badge does not show the worktree's news: %q", loud)
+	}
+	main := out[strings.Index(out, `id="project-app"`):strings.Index(out, "data-worktrees-toggle")]
+	if !strings.Contains(main, `status-blue ms-1 d-none" data-notify-project-dot`) {
+		t.Fatalf("the main's own dot shows for a worktree's news: %q", main)
+	}
+}
+
+// A worktree at work greens the badge's fork the way a running chip's icon
+// is green, and the main's own row stays out of it.
+func TestProjectRowBadgeCollectsTheWorktreesWork(t *testing.T) {
+	data := groupedProjectsData()
+	for i := range data.Projects {
+		if data.Projects[i].Name == "app-feature" {
+			data.Projects[i].ActiveRefs = []project.TerminalRef{{ID: "s1", Name: "shell", Kind: "shell"}}
+		}
+	}
+	rows := data.Rows()
+	if !rows[0].WorktreeActive || rows[0].Active() {
+		t.Fatalf("work in app-feature: badge %v, main itself %v", rows[0].WorktreeActive, rows[0].Active())
+	}
+	if !strings.Contains(badgeOf(t, renderProjects(t, data)), ` data-worktrees-active `) {
+		t.Fatal("the badge does not mark the worktree's work")
+	}
+}
+
+// A worktree project folds under its main's row when that main is a project of
+// the list, in list order and right behind it; one whose main lies elsewhere
+// stands on its own line, and a row without worktrees of its own counts none.
+func TestProjectRowsGroupWorktreesUnderTheirMain(t *testing.T) {
+	rows := groupedProjectsData().Rows()
+	var got []string
+	for _, r := range rows {
+		got = append(got, fmt.Sprintf("%s:%d:%v", r.Name, len(r.Worktrees), r.Grouped))
+	}
+	want := []string{"app:2:false", "app-feature:0:true", "app-fix:0:true", "lib:0:false", "stray:0:false", "zed:0:false"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("rows = %v, want %v", got, want)
+	}
+	if rows[0].WorktreeCount() != "2 worktrees" || rows[0].WorktreeIDs() != "project-app-feature project-app-fix" {
+		t.Fatalf("badge = %q controls %q", rows[0].WorktreeCount(), rows[0].WorktreeIDs())
+	}
+	one := ProjectRow{Worktrees: []string{"a"}}
+	if one.WorktreeCount() != "1 worktree" {
+		t.Fatalf("one worktree reads %q", one.WorktreeCount())
+	}
+}
+
+// The rendered list carries the group: the main's row wears the count and
+// controls its worktree rows, which start folded; a worktree without a main
+// here starts visible like any other row.
+func TestProjectRowRendersTheFoldedGroup(t *testing.T) {
+	out := renderProjects(t, groupedProjectsData())
+	rowTag := func(name string) string {
+		start := strings.Index(out, `id="project-`+name+`"`)
+		if start < 0 {
+			t.Fatalf("row %q is missing", name)
+		}
+		open := strings.LastIndex(out[:start], "<div")
+		return out[open : strings.Index(out[start:], ">")+start]
+	}
+	main := rowTag("app")
+	if !strings.Contains(main, `data-project-worktrees="2"`) || strings.Contains(main, "hidden") {
+		t.Fatalf("the main's row reads %q", main)
+	}
+	badge := badgeOf(t, out)
+	for _, want := range []string{`data-worktrees-toggle="2 worktrees"`, `aria-expanded="false"`, `aria-controls="project-app-feature project-app-fix"`, `aria-label="Show its 2 worktrees"`, `title="Show its 2 worktrees"`, `</i>2<i class="ti ti-chevron-right" aria-hidden="true"></i><span class="status-dot`} {
+		if !strings.Contains(badge, want) {
+			t.Fatalf("the count badge lacks %q: %q", want, badge)
+		}
+	}
+	if strings.Contains(badge, "worktrees<") || strings.Contains(badge, "data-worktrees-active") {
+		t.Fatalf("the badge spells the count out or reports work in an idle group: %q", badge)
+	}
+	withBranch := groupedProjectsData()
+	withBranch.Projects[1].GitBranch = "main"
+	branched := renderProjects(t, withBranch)
+	row := branched[strings.Index(branched, `id="project-app"`):strings.Index(branched, `id="project-app-feature"`)]
+	if b, c := strings.Index(row, "data-worktrees-toggle"), strings.Index(row, "ti-git-branch"); b < 0 || c < 0 || b > c {
+		t.Fatalf("the badge does not stand before the branch: %d vs %d", b, c)
+	}
+	for _, name := range []string{"app-feature", "app-fix"} {
+		tag := rowTag(name)
+		if !strings.Contains(tag, "project-row-worktree") || !strings.Contains(tag, " data-project-grouped hidden") {
+			t.Fatalf("the worktree row %q is not folded: %q", name, tag)
+		}
+	}
+	stray := rowTag("stray")
+	if strings.Contains(stray, "hidden") || strings.Contains(stray, "data-project-grouped") || strings.Contains(stray, "data-project-worktrees") {
+		t.Fatalf("a worktree without a main here is grouped: %q", stray)
+	}
+	if !strings.Contains(out, "/elsewhere/main") {
+		t.Fatal("the stray worktree's row does not name its main's path")
+	}
+	order := []string{`id="project-app"`, `id="project-app-feature"`, `id="project-app-fix"`, `id="project-lib"`}
+	last := -1
+	for _, id := range order {
+		at := strings.Index(out, id)
+		if at <= last {
+			t.Fatalf("%s is out of order", id)
+		}
+		last = at
 	}
 }

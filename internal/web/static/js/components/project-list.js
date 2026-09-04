@@ -12,6 +12,7 @@ import { notifyError, notifyInfo, notifySuccess } from "@dc/toast";
 import { releaseCoder, steerCoder } from "@dc/steer";
 
 const FILTER_KEY = "dc-project-filter";
+const GROUPS_KEY = "dc-project-worktrees-open";
 const CHIP_LIMIT = 8;
 const FLASH_MS = 1600;
 // chipLinks reads the addresses a container chip carries, one hidden span per
@@ -52,10 +53,18 @@ class ProjectList extends HTMLElement {
     this.refreshWhole = false;
     this.setupSort();
     this.setupFilter();
+    this.revealAlerts();
     this.querySelectorAll("[data-sessions-body]").forEach((body) => this.foldChips(body));
     this.setupReveal();
     this.addEventListener("submit", (event) => this.onAjaxSubmit(event), { signal: this.ac.signal });
     this.addEventListener("click", (event) => {
+      const groupToggle = event.target.closest("[data-worktrees-toggle]");
+      if (groupToggle && this.contains(groupToggle)) {
+        event.preventDefault();
+        const row = groupToggle.closest("[data-project-name]");
+        if (row) this.setGroupOpen(row.dataset.projectName, !row.hasAttribute("data-worktrees-open"));
+        return;
+      }
       const logsBtn = event.target.closest("[data-docker-logs]");
       if (logsBtn && this.contains(logsBtn)) {
         const chip = logsBtn.closest("[data-chip]");
@@ -127,7 +136,70 @@ class ProjectList extends HTMLElement {
     const row = document.getElementById(location.hash.slice(1));
     if (!row || !this.contains(row)) return;
     if (row.classList.contains("d-none")) this.setFilter?.("");
+    const main = this.mainRowOf(row);
+    if (main && row.hidden) this.setGroupOpen(main.dataset.projectName, true);
     this.reveal(row);
+  }
+
+  rows() {
+    return Array.from(this.querySelectorAll(".projects-card [data-project-name]"));
+  }
+
+  mainRowOf(row) {
+    const of = row.dataset.projectWorktreeOf;
+    if (!of || of === row.dataset.projectName) return null;
+    const main = this.querySelector(`.projects-card #${CSS.escape("project-" + of)}`);
+    if (!main || main.dataset.projectWorktreeOf) return null;
+    return main;
+  }
+
+  openGroups() {
+    const stored = store.getJSON(GROUPS_KEY, []);
+    return new Set(Array.isArray(stored) ? stored.filter((name) => typeof name === "string") : []);
+  }
+
+  setGroupOpen(name, open) {
+    const groups = this.openGroups();
+    if (open) groups.add(name);
+    else groups.delete(name);
+    store.setJSON(GROUPS_KEY, Array.from(groups));
+    this.applyGroups();
+  }
+
+  applyGroups() {
+    const open = this.openGroups();
+    const filtering = this.filterActive === true;
+    this.rows().forEach((row) => {
+      const main = this.mainRowOf(row);
+      if (main) row.hidden = !(filtering || open.has(main.dataset.projectName));
+      const toggle = row.querySelector("[data-worktrees-toggle]");
+      if (!toggle) return;
+      const isOpen = open.has(row.dataset.projectName);
+      row.toggleAttribute("data-worktrees-open", isOpen);
+      toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      const label = `${isOpen ? "Hide" : "Show"} its ${toggle.dataset.worktreesToggle}`;
+      toggle.setAttribute("title", label);
+      toggle.setAttribute("aria-label", label);
+    });
+  }
+
+  revealAlerts() {
+    this.rows().forEach((row) => {
+      if (!row.querySelector(":scope > .alert")) return;
+      const main = this.mainRowOf(row);
+      if (main && row.hidden) this.setGroupOpen(main.dataset.projectName, true);
+    });
+  }
+
+  staticMeta(meta) {
+    const clone = meta.cloneNode(true);
+    const toggle = clone.querySelector("[data-worktrees-toggle]");
+    if (toggle) {
+      toggle.setAttribute("aria-expanded", "false");
+      toggle.setAttribute("title", `Show its ${toggle.dataset.worktreesToggle}`);
+      toggle.setAttribute("aria-label", `Show its ${toggle.dataset.worktreesToggle}`);
+    }
+    return clone.outerHTML;
   }
 
   reveal(row) {
@@ -463,7 +535,13 @@ class ProjectList extends HTMLElement {
     const card = this.querySelector(".projects-card");
     const bar = card && el("div", { class: "dc-loading-bar", role: "status", "aria-label": "Refreshing" });
     if (bar) card.prepend(bar);
-    const wanted = names && new Set(names.map((n) => `project-${n}`));
+    // A worktree's main wears its worktrees' state on the badge, so the main's
+    // row refreshes along with the worktree the event names.
+    const wanted = names && new Set(names.flatMap((n) => {
+      const row = this.querySelector(`.projects-card #${CSS.escape("project-" + n)}`);
+      const main = row && this.mainRowOf(row);
+      return main ? [`project-${n}`, main.id] : [`project-${n}`];
+    }));
     fetch("/projects", { credentials: "same-origin" })
       .then((response) => (response.ok ? response.text() : Promise.reject(new Error("refresh failed"))))
       .then((html) => this.applySections(new DOMParser().parseFromString(html, "text/html"), wanted))
@@ -510,11 +588,12 @@ class ProjectList extends HTMLElement {
       }
       const freshMeta = fresh.querySelector("[data-project-meta]");
       const meta = section.querySelector("[data-project-meta]");
-      if (freshMeta && meta && freshMeta.outerHTML !== meta.outerHTML) {
+      if (freshMeta && meta && freshMeta.outerHTML !== this.staticMeta(meta)) {
         meta.replaceWith(freshMeta);
         syncAnimations(freshMeta);
       }
     });
+    this.applyGroups();
   }
 
   // sameRows reports whether a fresh render carries exactly the rows this list
@@ -558,6 +637,7 @@ class ProjectList extends HTMLElement {
         this.querySelectorAll("[data-sessions-body]").forEach((body) => this.foldChips(body));
         this.setupSort();
         this.setupFilter();
+        this.revealAlerts();
       })
       // A pull that did not land says nothing: it is a background sync like the
       // section refresh above, every connect asks for it again, and the next one
@@ -600,6 +680,7 @@ class ProjectList extends HTMLElement {
         syncAnimations(fresh);
         const body = fresh.querySelector("[data-sessions-body]");
         if (body) this.foldChips(body);
+        this.applyGroups();
         document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: fresh } }));
       })
       .catch(() => window.pe.submit(form));
@@ -650,6 +731,8 @@ class ProjectList extends HTMLElement {
         if (hit) visible += 1;
       });
       const active = needle !== "";
+      this.filterActive = active;
+      this.applyGroups();
       input.classList.toggle("border-primary", active);
       if (empty) empty.classList.toggle("d-none", visible !== 0);
       if (xBtn) xBtn.classList.toggle("d-none", !active);

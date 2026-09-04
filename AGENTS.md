@@ -2418,7 +2418,13 @@ server-side and stay fresh because the projects page renders per navigation
 and the quick nav refetches on every open. On top of that, dc-notifications
 updates opted-in DOM live over its SSE channel: `[data-notify-count]` badges
 (the quick nav toggle), `[data-notify-target]` dots and
-`[data-notify-project-dot]` (the projects page). A toast also plays a jingle
+`[data-notify-project-dot]` (the projects page; a dot naming row ids in
+`data-notify-projects`, the badge of a folded worktree group, collects those
+rows' news instead of its own container's, and the open group hides it by
+CSS because the rows then show theirs; the badge's fork icon is green the
+same way while a folded worktree is at work, `data-worktrees-active`, which
+is server rendered and comes live because a worktree's terminals event
+refreshes its main's row along with it). A toast also plays a jingle
 from `@dc/jingle` (composed for `@marein/js-scriptune`, loaded via the import
 map from jsDelivr). Volume lives in scriptune's own localStorage
 key (`scriptune-master-volume`, default 100%, 0 = off, per device); the

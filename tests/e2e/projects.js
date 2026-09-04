@@ -864,6 +864,19 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert((await git(made, ["rev-parse", "--abbrev-ref", "HEAD"])).trim() === "catch/up", "the new working copy is on the wrong branch");
     });
 
+    await run("worktree group: one worktree reads as a bare 1 with its name in the singular", async () => {
+      await page.waitForSelector(`#project-${source} [data-worktrees-toggle]`, { state: "visible", timeout: 8000 });
+      // The create's flash stands on the new row, which opens the group, so
+      // the verb follows the state and the words stay in the singular.
+      const g = await page.evaluate((p) => {
+        const t = document.querySelector(`#project-${p} [data-worktrees-toggle]`);
+        return { label: t.textContent.trim(), name: t.getAttribute("aria-label"), title: t.getAttribute("title"), expanded: t.getAttribute("aria-expanded") };
+      }, source);
+      assert(g.label === "1", `the badge reads ${JSON.stringify(g.label)}`);
+      const words = `${g.expanded === "true" ? "Hide" : "Show"} its 1 worktree`;
+      assert(g.name === words && g.title === words, `the badge's name reads ${JSON.stringify([g.name, g.title])}, expected ${JSON.stringify(words)}`);
+    });
+
     await run("create a worktree on a picked existing branch", async () => {
       const name = `${source}-wt1`;
       await openCreateForm();
@@ -917,6 +930,208 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert(base.trim() === head.trim(), "the new branch does not start where it was told to");
     });
 
+    // The worktree projects of a repository fold under its row: the row wears
+    // a count, the group opens and closes on it, the choice survives a reload,
+    // the filter reaches into a closed group, every sort keeps the worktrees
+    // right behind their main, and a link onto a folded worktree opens it.
+    const groupOf = (name) => page.evaluate((p) => {
+      const rows = [...document.querySelectorAll(".projects-card [data-project-name]")];
+      const main = rows.findIndex((r) => r.dataset.projectName === p);
+      const toggle = main >= 0 ? rows[main].querySelector("[data-worktrees-toggle]") : null;
+      const dot = toggle && toggle.querySelector("[data-notify-project-dot]");
+      const kids = rows
+        .filter((r) => r.dataset.projectWorktreeOf === p)
+        .map((r) => ({ name: r.dataset.projectName, index: rows.indexOf(r), visible: r.offsetParent !== null, grouped: r.hasAttribute("data-project-grouped") }));
+      return {
+        main,
+        label: toggle ? toggle.textContent.trim() : null,
+        name: toggle ? toggle.getAttribute("aria-label") : null,
+        title: toggle ? toggle.getAttribute("title") : null,
+        expanded: toggle ? toggle.getAttribute("aria-expanded") : null,
+        dot: dot ? { shown: dot.offsetParent !== null, news: !dot.classList.contains("d-none") } : null,
+        kids,
+      };
+    }, name);
+    const contiguous = (g) => g.kids.map((k) => k.index).sort((a, b) => a - b).every((idx, i) => idx === g.main + 1 + i);
+    const clearGroups = (target) => target.evaluate(() => localStorage.removeItem("dc-project-worktrees-open"));
+    const openGroup = async (name) => {
+      const toggle = page.locator(`#project-${name} [data-worktrees-toggle][aria-expanded="false"]`);
+      if (await toggle.count()) await toggle.click();
+      await page.waitForSelector(`[data-project-worktree-of="${name}"]`, { state: "visible", timeout: 4000 });
+    };
+
+    await run("worktree group: the main row counts its worktrees and holds them folded", async () => {
+      await clearGroups(page);
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`#project-${source} [data-worktrees-toggle]`, { state: "visible", timeout: 8000 });
+      const g = await groupOf(source);
+      assert(g.label === String(worktrees.length), `the badge reads ${JSON.stringify(g.label)}`);
+      const words = `Show its ${worktrees.length} worktrees`;
+      assert(g.name === words && g.title === words, `the badge's name reads ${JSON.stringify([g.name, g.title])}`);
+      assert(g.dot && !g.dot.shown && !g.dot.news, `the badge's dot shows without news: ${JSON.stringify(g.dot)}`);
+      assert(g.expanded === "false", "the group opens by itself");
+      assert(g.kids.length === worktrees.length && g.kids.every((k) => k.grouped && !k.visible), `folded worktrees: ${JSON.stringify(g.kids)}`);
+      assert(contiguous(g), `the worktrees do not follow their main: ${JSON.stringify(g.kids)} after ${g.main}`);
+      // The plain project and the solo repository stand as they always did.
+      assert((await page.locator(`#project-${project} [data-worktrees-toggle], #project-${solo} [data-worktrees-toggle]`).count()) === 0, "a row without worktrees carries a count");
+    });
+
+    await run("worktree group: a click opens, a second closes, and the choice survives a reload", async () => {
+      await page.click(`#project-${source} [data-worktrees-toggle]`);
+      await page.waitForSelector(`#project-${source}-wt1`, { state: "visible", timeout: 4000 });
+      let g = await groupOf(source);
+      assert(g.expanded === "true" && g.kids.every((k) => k.visible), `open group: ${JSON.stringify(g)}`);
+      assert(g.label === String(worktrees.length) && g.name === `Hide its ${worktrees.length} worktrees` && g.title === g.name, `the open badge reads ${JSON.stringify([g.label, g.name, g.title])}`);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`#project-${source}-wt1`, { state: "visible", timeout: 8000 });
+      g = await groupOf(source);
+      assert(g.expanded === "true", "the open group did not survive the reload");
+      await page.click(`#project-${source} [data-worktrees-toggle]`);
+      await page.waitForSelector(`#project-${source}-wt1`, { state: "hidden", timeout: 4000 });
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`#project-${source} [data-worktrees-toggle]`, { state: "visible", timeout: 8000 });
+      g = await groupOf(source);
+      assert(g.expanded === "false" && g.kids.every((k) => !k.visible), `closed group: ${JSON.stringify(g)}`);
+    });
+
+    await run("worktree group: the filter finds a worktree inside a closed group", async () => {
+      const f = page.locator("[data-project-filter]");
+      await f.fill(`${source}-wt1`); await sleep(300);
+      let g = await groupOf(source);
+      const wt1 = g.kids.find((k) => k.name === `${source}-wt1`);
+      assert(wt1 && wt1.visible, "the filtered worktree stays folded");
+      assert(await page.isVisible(`#project-${source}-wt1 [data-project-worktree] a[href="/projects#project-${source}"]`), "the found worktree does not name its main");
+      await f.fill(""); await sleep(300);
+      g = await groupOf(source);
+      assert(g.kids.every((k) => !k.visible), "clearing the filter did not fold the group again");
+    });
+
+    await run("worktree group: every sort keeps the worktrees right behind their main", async () => {
+      for (const mode of ["active", "recent", "alpha"]) {
+        await page.click("[data-project-sort-toggle]");
+        await page.waitForSelector(`[data-project-sort-option="${mode}"]`, { state: "visible", timeout: 5000 });
+        await page.click(`[data-project-sort-option="${mode}"]`); await sleep(300);
+        const g = await groupOf(source);
+        assert(contiguous(g), `${mode}: the worktrees left their main: ${JSON.stringify(g.kids)} after ${g.main}`);
+      }
+    });
+
+    await run("worktree group: a link onto a folded worktree opens its group", async () => {
+      await page.goto(`${BASE}/projects#project-${source}-wt2`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`#project-${source}-wt2`, { state: "visible", timeout: 8000 });
+      const g = await groupOf(source);
+      assert(g.expanded === "true", "the group did not open for the link");
+    });
+
+    await run("worktree group: at 390px the badge stays on the row and a tap opens the group", async () => {
+      const mp = await mobilePage();
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await clearGroups(mp);
+      await mp.reload({ waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(mp);
+      const toggle = mp.locator(`#project-${source} [data-worktrees-toggle]`);
+      await toggle.waitFor({ state: "visible", timeout: 8000 });
+      await toggle.scrollIntoViewIfNeeded();
+      const fit = await mp.evaluate((p) => {
+        const r = document.querySelector(`#project-${p} [data-worktrees-toggle]`).getBoundingClientRect();
+        return {
+          inside: r.left >= 0 && r.right <= window.innerWidth,
+          overflow: document.documentElement.scrollWidth - window.innerWidth,
+          folded: document.querySelector(`#project-${p}-wt1`).offsetParent === null,
+        };
+      }, source);
+      assert(fit.inside && fit.overflow <= 0, `the badge leaves the viewport: ${JSON.stringify(fit)}`);
+      assert(fit.folded, "the group stands open on the phone");
+      await toggle.tap();
+      await mp.waitForSelector(`#project-${source}-wt1`, { state: "visible", timeout: 4000 });
+    });
+
+    // News in a folded worktree would vanish behind the badge, so the badge
+    // wears the worktrees' dot while the group is closed: the same dot a row
+    // wears, live over the one notification channel, server rendered on a
+    // load, gone while the group is open because the rows then show theirs,
+    // and away again live once the news is read. Work in a folded worktree
+    // greens the badge's fork the same way, and the open group hands that
+    // back to the rows' chips as well.
+    await run("worktree group: news in a folded worktree lights the badge, live and on a load", async () => {
+      await clearGroups(page);
+      const wt = `${source}-wt1`;
+      const badgeDot = `#project-${source} [data-worktrees-toggle] [data-notify-project-dot]`;
+      const ownDot = `#project-${source} [data-project-meta] > span > [data-notify-project-dot]`;
+      const rowDot = `#project-${wt} [data-notify-project-dot]`;
+      const shown = (sel) => page.evaluate((s) => { const el = document.querySelector(s); return el ? el.offsetParent !== null : null; }, sel);
+      const news = (sel) => page.evaluate((s) => { const el = document.querySelector(s); return el ? !el.classList.contains("d-none") : null; }, sel);
+      const shellUrl = await L.createShell(page, wt);
+      shellUrls.push(shellUrl);
+      const shellId = new URL(shellUrl).pathname.split("/").pop();
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
+      // The command watcher attaches on a 3s reconcile; give it time before
+      // the command starts, or the start mark fires unseen.
+      await sleep(4000);
+      await page.evaluate((href) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        return fetch(href + "/input", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
+          body: JSON.stringify({ items: [{ raw: "sleep 6\r" }] }),
+        });
+      }, new URL(shellUrl).pathname);
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`#project-${source} [data-worktrees-toggle]`, { state: "visible", timeout: 8000 });
+      assert((await news(badgeDot)) === false && (await shown(badgeDot)) === false, "the badge lights up before the command is through");
+      // The page loaded while the command still ran, so this dot can only
+      // have come through the live decoration.
+      await page.waitForSelector(`${badgeDot}:not(.d-none)`, { state: "attached", timeout: 40000 });
+      assert(await shown(badgeDot), "the badge's dot is not shown on the closed group");
+      assert((await news(rowDot)) === true, "the worktree's own row does not carry the news");
+      assert((await news(ownDot)) === false, "the main's own dot lit up for a worktree's news");
+      // The badge reads fork, count, chevron, dot, and the fork is the running
+      // chips' green (the shell's own chip icon is blue right now, its news
+      // wins there), because that worktree is at work.
+      const look = (p) => page.evaluate((p) => {
+        const t = document.querySelector(`#project-${p} [data-worktrees-toggle]`);
+        const probe = document.createElement("span");
+        probe.style.color = "var(--tblr-green)";
+        document.body.append(probe);
+        const green = getComputedStyle(probe).color;
+        probe.remove();
+        const kids = [...t.children].map((el) => (el.matches("[data-notify-project-dot]") ? "dot" : el.className.replace(/.*(ti-[\w-]+).*/, "$1")));
+        return { kids, active: t.hasAttribute("data-worktrees-active"), fork: getComputedStyle(t.querySelector(".ti-git-fork")).color, green, count: getComputedStyle(t).color };
+      }, p);
+      let l = await look(source);
+      assert(l.kids.join(" ") === "ti-git-fork ti-chevron-right dot", `the badge is built as ${JSON.stringify(l.kids)}`);
+      assert(l.active && l.green && l.fork === l.green, `the closed badge's fork is not the running green: ${JSON.stringify(l)}`);
+      const html = await page.evaluate(() => fetch("/projects", { credentials: "same-origin" }).then((r) => r.text()));
+      const row = html.indexOf(`id="project-${source}"`);
+      const start = html.indexOf("data-worktrees-toggle", row);
+      const badge = row >= 0 && start >= 0 ? html.slice(start, html.indexOf("</button>", start)) : "";
+      assert(/status-blue" data-notify-project-dot/.test(badge), `a load does not render the badge's dot: ${JSON.stringify(badge)}`);
+      await page.click(`#project-${source} [data-worktrees-toggle]`);
+      await page.waitForSelector(`#project-${wt}`, { state: "visible", timeout: 4000 });
+      assert((await shown(badgeDot)) === false && (await news(badgeDot)) === true, "the open group's badge still wears the dot");
+      assert(await shown(rowDot), "the open group's worktree row does not show its dot");
+      l = await look(source);
+      assert(l.active && l.fork !== l.green && l.fork === l.count, `the open badge's fork keeps the green: ${JSON.stringify(l)}`);
+      await page.click(`#project-${source} [data-worktrees-toggle]`);
+      await page.waitForSelector(`#project-${wt}`, { state: "hidden", timeout: 4000 });
+      assert(await shown(badgeDot), "closing the group does not bring the badge's dot back");
+      await page.evaluate((sid) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        return fetch("/notifications", { headers: { Accept: "application/json" } })
+          .then((r) => r.json())
+          .then((d) => {
+            const own = (d.notifications || []).find((n) => n.targetId === sid && !n.read);
+            return fetch("/notifications/read", {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-Token": token },
+              body: "id=" + encodeURIComponent(own.id),
+            });
+          });
+      }, shellId);
+      await page.waitForSelector(`${badgeDot}.d-none`, { state: "attached", timeout: 8000 });
+      assert((await shown(badgeDot)) === false && (await news(rowDot)) === false, "the read news still lights a dot");
+    });
+
     // The git menu on a row. The button comes out of the same cheap facts the
     // branch chip does, so a plain directory has none and a worktree row has no
     // worktree entry; every destination is rendered onto the button, the fetch
@@ -938,6 +1153,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
     await run("git menu: on a repository row, not on a plain directory, no worktree entry on a worktree", async () => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(`#project-${source} [data-git-project-menu]`, { state: "visible", timeout: 8000 });
+      await openGroup(source);
       assert((await page.locator(`#project-${project} [data-git-project-menu]`).count()) === 0, "a plain directory carries a git menu");
       await gitMenu(source);
       const labels = await menuLabels();

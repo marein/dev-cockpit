@@ -140,7 +140,9 @@ function updateCountBadges(unread) {
 // Server-rendered target lists opt into live news marks: a [data-notify-target]
 // coder or shell icon turns blue and dances while it has news, and
 // [data-notify-project-dot] shows while any target inside the same project
-// container has news.
+// container has news. A dot that names other containers in
+// data-notify-projects (their element ids, space separated: the worktree
+// rows folded under a main's badge) collects theirs instead of its own.
 function decorateNews(targetIds) {
   const ids = new Set(targetIds || []);
   document.querySelectorAll("[data-notify-target]").forEach((icon) => {
@@ -151,12 +153,19 @@ function decorateNews(targetIds) {
     icon.classList.toggle("news", targets.some((id) => ids.has(id)));
   });
   document.querySelectorAll("[data-notify-project-dot]").forEach((dot) => {
-    const scope = dot.closest("[data-project-name]");
-    if (!scope) return;
-    const any = [...scope.querySelectorAll("[data-notify-target]")]
-      .some((el) => ids.has(el.getAttribute("data-notify-target")));
+    const scopes = projectScopes(dot);
+    if (scopes.length === 0) return;
+    const any = scopes.some((scope) => [...scope.querySelectorAll("[data-notify-target]")]
+      .some((el) => ids.has(el.getAttribute("data-notify-target"))));
     dot.classList.toggle("d-none", !any);
   });
+}
+
+function projectScopes(dot) {
+  const named = (dot.getAttribute("data-notify-projects") || "").split(" ").filter(Boolean);
+  if (named.length > 0) return named.map((id) => document.getElementById(id)).filter(Boolean);
+  const scope = dot.closest("[data-project-name]");
+  return scope ? [scope] : [];
 }
 
 function decorateWorking(targetIds) {

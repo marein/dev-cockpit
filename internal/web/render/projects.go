@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/marein/dev-cockpit/internal/docker"
@@ -316,6 +317,89 @@ type DockerStack struct {
 type ProjectDelete struct {
 	Running bool
 	Failed  string
+}
+
+// ProjectRow is one line of the list. A main repository whose worktrees are
+// projects of this list folds them beneath itself: Worktrees names them in
+// list order and every one of those rows is Grouped. A worktree whose main is
+// no project here has nothing to fold under and stands on a line of its own,
+// its chip naming the main's path, and a main whose worktrees all lie outside
+// the list carries no count either, there is nothing to unfold. WorktreeNews
+// and WorktreeActive say whether one of the folded worktrees has news or is at
+// work: their rows are out of sight while the group is closed, so the badge
+// carries their dot and their green for them.
+type ProjectRow struct {
+	project.Project
+	Worktrees      []string
+	WorktreeNews   bool
+	WorktreeActive bool
+	Grouped        bool
+}
+
+// WorktreeIDs is the space separated list of row ids the fold button
+// controls, what aria-controls wants.
+func (r ProjectRow) WorktreeIDs() string {
+	ids := make([]string, 0, len(r.Worktrees))
+	for _, name := range r.Worktrees {
+		ids = append(ids, "project-"+name)
+	}
+	return strings.Join(ids, " ")
+}
+
+// WorktreeCount words the badge's name: "1 worktree", "5 worktrees". The
+// badge itself shows the bare number, the words go to its title and label.
+func (r ProjectRow) WorktreeCount() string {
+	if len(r.Worktrees) == 1 {
+		return "1 worktree"
+	}
+	return fmt.Sprintf("%d worktrees", len(r.Worktrees))
+}
+
+// Rows is the order the list renders: the projects as they came, with every
+// main repository followed at once by the worktree projects grouped under
+// it. A worktree is grouped when its main is a project of this list and is a
+// main itself, which is the same rule the client's sort groups by; the
+// client then puts the groups into its own order and this is what stands
+// before it runs. Building it is one pass over what is already in memory,
+// the list costs no extra read for it.
+func (d ProjectsListData) Rows() []ProjectRow {
+	index := make(map[string]int, len(d.Projects))
+	for i, p := range d.Projects {
+		index[p.Name] = i
+	}
+	mainOf := func(p project.Project) string {
+		if !p.GitWorktree || p.GitWorktreeOf == "" || p.GitWorktreeOf == p.Name {
+			return ""
+		}
+		i, ok := index[p.GitWorktreeOf]
+		if !ok || d.Projects[i].GitWorktree {
+			return ""
+		}
+		return p.GitWorktreeOf
+	}
+	children := map[string][]string{}
+	for _, p := range d.Projects {
+		if main := mainOf(p); main != "" {
+			children[main] = append(children[main], p.Name)
+		}
+	}
+	rows := make([]ProjectRow, 0, len(d.Projects))
+	for _, p := range d.Projects {
+		if mainOf(p) != "" {
+			continue
+		}
+		main := ProjectRow{Project: p, Worktrees: children[p.Name]}
+		for _, name := range children[p.Name] {
+			child := d.Projects[index[name]]
+			main.WorktreeNews = main.WorktreeNews || child.HasNews
+			main.WorktreeActive = main.WorktreeActive || child.Active()
+		}
+		rows = append(rows, main)
+		for _, name := range children[p.Name] {
+			rows = append(rows, ProjectRow{Project: d.Projects[index[name]], Grouped: true})
+		}
+	}
+	return rows
 }
 
 // ProjectsListData is the model for the projects list page.

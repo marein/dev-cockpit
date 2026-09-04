@@ -47,8 +47,8 @@
 </div>
 <div class="card projects-card">
   <div class="list-group list-group-flush list-group-hoverable">
-  {{range .Projects}}
-  <div class="list-group-item project-row" id="project-{{.Name}}" data-project-name="{{.Name}}"{{if .GitWorktreeOf}} data-project-worktree-of="{{.GitWorktreeOf}}"{{end}} data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
+  {{range .Rows}}
+  <div class="list-group-item project-row{{if .Grouped}} project-row-worktree{{end}}" id="project-{{.Name}}" data-project-name="{{.Name}}"{{if .GitWorktreeOf}} data-project-worktree-of="{{.GitWorktreeOf}}"{{end}}{{if .Grouped}} data-project-grouped hidden{{end}}{{if .Worktrees}} data-project-worktrees="{{len .Worktrees}}"{{end}} data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
     {{$delete := index $.Deleting .Name}}
     {{if $delete.Failed}}
     <div class="alert alert-danger mb-2" role="alert">
@@ -69,7 +69,10 @@
     {{end}}
     <div class="d-flex align-items-start gap-2">
       <div class="flex-fill min-w-0 d-flex align-items-baseline flex-wrap column-gap-3 row-gap-1" data-project-meta>
-        <span class="fw-medium text-break">{{.Name}} <span class="status-dot status-dot-animated status-blue ms-1{{if not .HasNews}} d-none{{end}}" data-notify-project-dot aria-label="Something new in this project"></span></span>
+        <span class="fw-medium text-break">{{if .Grouped}}<i class="ti ti-corner-down-right text-secondary" aria-hidden="true"></i> {{end}}{{.Name}} <span class="status-dot status-dot-animated status-blue ms-1{{if not .HasNews}} d-none{{end}}" data-notify-project-dot aria-label="Something new in this project"></span></span>
+        {{if .Worktrees}}
+        <button type="button" class="project-chip project-chip-more project-worktrees-toggle" data-worktrees-toggle="{{.WorktreeCount}}"{{if .WorktreeActive}} data-worktrees-active{{end}} aria-expanded="false" aria-controls="{{.WorktreeIDs}}" aria-label="Show its {{.WorktreeCount}}" title="Show its {{.WorktreeCount}}"><i class="ti ti-git-fork" aria-hidden="true"></i>{{len .Worktrees}}<i class="ti ti-chevron-right" aria-hidden="true"></i><span class="status-dot status-dot-animated status-blue{{if not .WorktreeNews}} d-none{{end}}" data-notify-project-dot data-notify-projects="{{.WorktreeIDs}}" aria-label="Something new in a worktree"></span></button>
+        {{end}}
         {{if and .GitRepo .GitBranch}}
         <span class="small text-break"><i class="ti ti-git-branch" aria-hidden="true"></i> {{.GitBranch}}</span>
         {{end}}
@@ -108,7 +111,7 @@
         <a href="/projects/{{.Name}}/editor?return={{urlquery (print "/projects#project-" .Name)}}" class="btn btn-sm btn-icon btn-ghost-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
           <i class="ti ti-code"></i>
         </a>
-        {{$wtNote := deleteWorktreeNote .}}{{$dockerNote := ""}}{{with index $.Docker .Name}}{{if .Containers}}{{$dockerNote = "Its directory goes, and its containers are brought down with compose first, volumes included."}}{{end}}{{end}}
+        {{$wtNote := deleteWorktreeNote .Project}}{{$dockerNote := ""}}{{with index $.Docker .Name}}{{if .Containers}}{{$dockerNote = "Its directory goes, and its containers are brought down with compose first, volumes included."}}{{end}}{{end}}
         <form method="post" action="/projects/delete" data-project-delete data-ajax-refresh data-confirm="Delete project &quot;{{.Name}}&quot;?"{{if or $dockerNote $wtNote}} data-confirm-text="{{$dockerNote}}{{if and $dockerNote $wtNote}} {{end}}{{$wtNote}}"{{end}} data-confirm-button="Delete">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="project" value="{{.Name}}">
