@@ -449,3 +449,36 @@ func TestCreateFormSaysWhenTheSourceHasNoBranch(t *testing.T) {
 		t.Fatalf("the create button is still offered:\n%s", out)
 	}
 }
+
+// The git button stands on every repository row and leads where the server
+// says: the create form with this project as the source only on a main
+// repository, the editor's two views on every repository, and nothing at all
+// on a plain directory.
+func TestProjectRowCarriesTheGitMenuOnARepository(t *testing.T) {
+	data := projectsData(nil)
+	data.Projects[0].GitRepo = true
+	data.Projects[0].GitBranch = "master"
+	out := renderProjects(t, data)
+	for _, want := range []string{
+		`data-git-project-menu`,
+		`data-git-worktree="/projects/new?create=worktree%3Aapp"`,
+		`data-git-commit="/projects/app/editor?return=%2Fprojects%23project-app&amp;view=commit"`,
+		`data-git-compare="/projects/app/editor?return=%2Fprojects%23project-app&amp;view=compare"`,
+		`data-git-fetch="/projects/app/fetch"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the repository row lacks %s:\n%s", want, out)
+		}
+	}
+
+	data.Projects[0].GitWorktree = true
+	data.Projects[0].GitWorktreeOf = "main"
+	out = renderProjects(t, data)
+	if !strings.Contains(out, "data-git-project-menu") || strings.Contains(out, "data-git-worktree=") {
+		t.Fatal("a worktree row must carry the menu without the worktree entry")
+	}
+
+	if out := renderProjects(t, projectsData(nil)); strings.Contains(out, "data-git-project-menu") || strings.Contains(out, "/fetch") {
+		t.Fatal("a plain directory carries a git menu")
+	}
+}

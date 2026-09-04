@@ -99,6 +99,12 @@
           {{range $.DockerActions}}<span hidden data-docker-action data-action-id="{{.ID}}" data-action-icon="{{.Icon}}" data-action-label="{{.Label}}" data-action-command="{{.Command}}"{{if .Confirm}} data-action-confirm="1"{{end}}></span>{{end}}
         </button>
         {{end}}{{end}}
+        {{if .GitRepo}}
+        {{$editorURL := print "/projects/" .Name "/editor?return=" (urlquery (print "/projects#project-" .Name))}}
+        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-git-project-menu data-git-project="{{$projectName}}"{{if not .GitWorktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{$editorURL}}&amp;view=commit" data-git-compare="{{$editorURL}}&amp;view=compare" aria-label="Git actions for project {{$projectName}}" title="Git">
+          <i class="ti ti-brand-git"></i>
+        </button>
+        {{end}}
         <a href="/projects/{{.Name}}/editor?return={{urlquery (print "/projects#project-" .Name)}}" class="btn btn-sm btn-icon btn-ghost-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
           <i class="ti ti-code"></i>
         </a>

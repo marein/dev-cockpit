@@ -10305,6 +10305,9 @@ async function init(root) {
   await Promise.all([loadTree(), restoreTabs(), loadGitStatus()]);
   if (tabs.length === 0 && mobileMedia.matches) openDrawer();
   if (pageTerminal && termOpen && termApplies()) void activateTermPane(pageTerminal, { focus: true });
+  const pageView = root.dataset.editorView || "";
+  if (pageView === "commit") openCommit();
+  else if (pageView === "compare") openRevdiff();
 
   return () => {
     ac.abort();

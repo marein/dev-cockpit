@@ -74,7 +74,21 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		DiffMaxKiB:   set.DiffMaxKiB,
 		LSPExts:      s.lspSpec(),
 		Terminal:     strings.TrimSpace(c.Query("terminal")),
+		View:         editorView(c.Query("view")),
 	})
+}
+
+// editorView reads the panel a deep link asks the editor to open on, the
+// commit view or the revision compare, which is where the projects page's git
+// menu leads. Anything else is nothing, so a stale link opens the plain
+// editor; the value rides into the page like the terminal id and is never read
+// out of the URL there.
+func editorView(raw string) string {
+	switch view := strings.TrimSpace(raw); view {
+	case "commit", "compare":
+		return view
+	}
+	return ""
 }
 
 // editorSwitcher is the project list behind the tree header's switcher, one

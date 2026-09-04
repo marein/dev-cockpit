@@ -104,6 +104,10 @@ func DocsTopics() []DocsTopic {
 					Desc:     `Swipe a row left to reveal its actions, always in the same order: rename and ungroup first, then stop, then delete.`,
 				},
 				{
+					Title: "Git from the projects page",
+					Desc:  `A project that is a repository carries a git button <i class="ti ti-brand-git align-text-bottom" aria-hidden="true"></i> next to its row actions. <em>New worktree</em> opens the create form with this project already picked as the source, so only the branch and a name are left; a project that is itself a worktree does not offer it, only a main repository is a source. <em>Fetch</em> brings the remote's state in and reports in a toast, how far the checked out branch stands from its upstream included, and a remote that wants a passphrase asks in the same dialog every git action uses. <em>Commit changes</em> and <em>Compare revisions</em> open the editor with that view already open. Switching the branch, push and pull stay in the editor's git sheet.`,
+				},
+				{
 					Title: "Open the terminal switcher",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Ctrl"}}},
 					Desc:  `Tap Ctrl twice without another key in between. Type to filter; use the arrows to move; Enter opens the selection and Escape closes it. The palette includes active terminals, the assistant, resumable coders, project editors, and new-terminal actions.`,

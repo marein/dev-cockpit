@@ -3042,6 +3042,14 @@ terminal-input { display: none; }
   75% { transform: translateY(0) rotate(-9deg); }
 }
 
+.dc-git-working {
+  display: inline-block;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .dc-git-working { animation: coder-files-upload-icon-pulse 1s ease-in-out infinite; }
+}
+
 /* The assistant's voice menu: wide enough that the volume slider is worth
    dragging, and the reading beside it keeps a fixed width so the row does not
    twitch while the value counts up. */

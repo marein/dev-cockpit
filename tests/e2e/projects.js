@@ -8,7 +8,7 @@ const { assert, sleep, submitBtn, confirmSwal, BASE } = L;
 // as [data-chip] entries inside [data-sessions-body], folded past 8 behind a
 // [data-chips-toggle] chip.
 
-L.runFeature("PROJECTS", async ({ engine, page, run }) => {
+L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
   const tag = `proj-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   const source = `zzwt-${tag}`;
@@ -915,6 +915,179 @@ L.runFeature("PROJECTS", async ({ engine, page, run }) => {
       const base = await git(path, ["rev-parse", "topic/beta-logout"]);
       const head = await git(path, ["rev-parse", "HEAD"]);
       assert(base.trim() === head.trim(), "the new branch does not start where it was told to");
+    });
+
+    // The git menu on a row. The button comes out of the same cheap facts the
+    // branch chip does, so a plain directory has none and a worktree row has no
+    // worktree entry; every destination is rendered onto the button, the fetch
+    // is the one thing that runs here and answers as the row's flash.
+    const gitMenu = async (name, label) => {
+      await page.click(`#project-${name} [data-git-project-menu]`);
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+      if (label) await page.click(`.dc-context-menu button:has-text("${label}")`);
+    };
+    const menuLabels = () => page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+    const closeMenu = async () => {
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+      // The window that makes a second click on a toggle close its menu
+      // instead of reopening it.
+      await sleep(400);
+    };
+
+    await run("git menu: on a repository row, not on a plain directory, no worktree entry on a worktree", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`#project-${source} [data-git-project-menu]`, { state: "visible", timeout: 8000 });
+      assert((await page.locator(`#project-${project} [data-git-project-menu]`).count()) === 0, "a plain directory carries a git menu");
+      await gitMenu(source);
+      const labels = await menuLabels();
+      assert(
+        JSON.stringify(labels) === JSON.stringify(["New worktree", "Fetch", "Commit changes", "Compare revisions"]),
+        `the main repository's menu reads ${JSON.stringify(labels)}`,
+      );
+      await closeMenu();
+      await gitMenu(`${source}-wt1`);
+      const worktree = await menuLabels();
+      assert(
+        JSON.stringify(worktree) === JSON.stringify(["Fetch", "Commit changes", "Compare revisions"]),
+        `the worktree's menu reads ${JSON.stringify(worktree)}`,
+      );
+      await closeMenu();
+      // The row's own facts stand untouched beside the button: the branch chip
+      // and the worktree's link to its main.
+      assert(await page.isVisible(`#project-${source} .ti-git-branch`), "the branch chip is gone");
+      assert(await page.isVisible(`#project-${source}-wt1 [data-project-worktree] a[href="/projects#project-${source}"]`), "the worktree's link to its main is gone");
+    });
+
+    await run("git menu: the worktree entry opens the create form with this project as the source", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`#project-${source} [data-git-project-menu]`, { state: "visible", timeout: 8000 });
+      await gitMenu(source, "New worktree");
+      await page.waitForURL(/\/projects\/new\?create=/, { timeout: 10000 });
+      await L.dismissUpdate(page);
+      await page.waitForSelector("#create", { state: "attached", timeout: 8000 });
+      const picked = await page.evaluate(() => document.querySelector("#create").value);
+      assert(picked === `worktree:${source}`, `the source is not preselected: ${picked}`);
+      await page.waitForSelector('[data-branch-picker="branch"]', { state: "attached", timeout: 8000 });
+      assert(await page.isVisible('input[name="project_name"]'), "the name field is missing, the form did not open on the worktree half");
+    });
+
+    await run("git menu: fetch toasts the answer with the branch's distance to its upstream, the list stands", async () => {
+      await git(sourcePath, ["branch", "--set-upstream-to=origin/master", "master"]);
+      const gap = async (range) => Number((await git(sourcePath, ["rev-list", "--count", range])).trim());
+      const ahead = await gap("origin/master..master");
+      const behind = await gap("master..origin/master");
+      const commits = (n) => (n === 1 ? "1 commit" : `${n} commits`);
+      let distance;
+      if (!ahead && !behind) distance = '"master" is up to date with "origin/master".';
+      else if (!behind) distance = `"master" is ${commits(ahead)} ahead of "origin/master".`;
+      else if (!ahead) distance = `"master" is ${commits(behind)} behind "origin/master".`;
+      else distance = `"master" has diverged from "origin/master": ${commits(ahead)} ahead, ${commits(behind)} behind.`;
+
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`#project-${source} [data-git-project-menu]`, { state: "visible", timeout: 8000 });
+      const before = page.url();
+      // The row is held across the fetch: a toast reports, the list is never
+      // re-rendered, so the node must still be the one on the page afterwards.
+      const row = await page.$(`#project-${source}`);
+      await page.route("**/fetch", async (route) => { await sleep(900); await route.continue().catch(() => {}); });
+      try {
+        await gitMenu(source, "Fetch");
+        // The button says so while the fetch runs: busy, its icon pulsing, and
+        // a second press refused.
+        await page.waitForSelector(`#project-${source} [data-git-project-menu][aria-busy="true"][disabled] .dc-git-working`, { timeout: 4000 });
+        await page.waitForSelector('.dc-toast:has-text("Fetched")', { state: "visible", timeout: 30000 });
+      } finally {
+        await page.unroute("**/fetch");
+      }
+      const text = (await page.textContent('.dc-toast:has-text("Fetched")')).replace(/\s+/g, " ").trim();
+      assert(text === `Fetched "${source}". ${distance}`, `the toast reads "${text}", want "Fetched \"${source}\". ${distance}"`);
+      assert(page.url() === before, `the fetch navigated away: ${page.url()}`);
+      assert(await row.evaluate((el) => el.isConnected), "the row was re-rendered for a toast");
+      assert((await page.locator(`#project-${source} .alert`).count()) === 0, "a flash stands on the row beside the toast");
+      // The button is quiet again.
+      await page.waitForSelector(`#project-${source} [data-git-project-menu]:not([aria-busy]):not([disabled])`, { timeout: 4000 });
+      assert((await page.locator(`#project-${source} .dc-git-working`).count()) === 0, "the icon keeps pulsing after the answer");
+    });
+
+    await run("git menu: a repository without a remote says so, a failing remote answers in git's words", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`#project-${solo} [data-git-project-menu]`, { state: "visible", timeout: 8000 });
+      await gitMenu(solo, "Fetch");
+      await page.waitForSelector('.dc-toast:has-text("Nothing to fetch")', { state: "visible", timeout: 20000 });
+      const none = (await page.textContent('.dc-toast:has-text("Nothing to fetch")')).replace(/\s+/g, " ").trim();
+      assert(none === `Nothing to fetch, "${solo}" has no remote.`, `a repository without a remote reads "${none}"`);
+
+      await git(sourcePath, ["remote", "set-url", "origin", "/nonexistent/repository.git"]);
+      try {
+        await sleep(400);
+        await gitMenu(source, "Fetch");
+        await page.waitForSelector('.dc-toast:has-text("nonexistent")', { state: "visible", timeout: 30000 });
+        await page.waitForSelector(`#project-${source} [data-git-project-menu]:not([disabled])`, { timeout: 4000 });
+        assert((await page.locator(`#project-${source} .dc-git-working`).count()) === 0, "the icon keeps pulsing after a refusal");
+        assert((await page.locator(`#project-${source} .alert`).count()) === 0, "a refused fetch put a flash on the row");
+      } finally {
+        await git(sourcePath, ["remote", "set-url", "origin", remotePath]);
+      }
+    });
+
+    await run("git menu: the two editor entries open the editor on the commit view and on the revision compare", async () => {
+      const shown = (sel) => page.evaluate((s) => {
+        const el = document.querySelector(s);
+        return !!el && el.offsetParent !== null && el.getBoundingClientRect().height > 0;
+      }, sel);
+      for (const [label, view, panel] of [
+        ["Commit changes", "commit", "[data-editor-commit]"],
+        ["Compare revisions", "compare", "[data-editor-revdiff]"],
+      ]) {
+        await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`#project-${source} [data-git-project-menu]`, { state: "visible", timeout: 8000 });
+        await gitMenu(source, label);
+        await page.waitForURL(new RegExp(`/projects/${source}/editor\\?.*view=${view}`), { timeout: 10000 });
+        await L.dismissUpdate(page);
+        await page.waitForSelector(`dc-editor[data-editor-view="${view}"][data-git-repo="1"]`, { state: "attached", timeout: 20000 });
+        await page.waitForFunction((s) => {
+          const el = document.querySelector(s);
+          return !!el && el.offsetParent !== null;
+        }, panel, { timeout: 10000 });
+        assert(!(await shown("[data-editor-tree]")), `${label}: the file tree still stands beside the ${view} view`);
+        const other = view === "commit" ? "[data-editor-revdiff]" : "[data-editor-commit]";
+        assert(!(await shown(other)), `${label}: the other view is open as well`);
+        // The way back is the row the link came from.
+        const back = await page.getAttribute(`a[href="/projects#project-${source}"]`, "href");
+        assert(back, `${label}: the editor lost its way back to the row`);
+      }
+    });
+
+    await run("git menu: at 390px the open menu stands inside the viewport with every entry", async () => {
+      const mp = await mobilePage();
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(mp);
+      const button = mp.locator(`#project-${source} [data-git-project-menu]`);
+      await button.waitFor({ state: "visible", timeout: 8000 });
+      await button.scrollIntoViewIfNeeded();
+      await button.click();
+      await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+      const fit = await mp.evaluate(() => {
+        const menu = document.querySelector(".dc-context-menu").getBoundingClientRect();
+        const rows = [...document.querySelectorAll(".dc-context-menu .dropdown-item")].map((row) => {
+          const r = row.getBoundingClientRect();
+          return { label: row.textContent.trim(), inside: r.left >= 0 && r.right <= window.innerWidth && r.top >= 0 && r.bottom <= window.innerHeight && r.height > 0 };
+        });
+        return {
+          width: window.innerWidth,
+          menu: { left: menu.left, right: menu.right, top: menu.top, bottom: menu.bottom },
+          inside: menu.left >= 0 && menu.right <= window.innerWidth && menu.top >= 0 && menu.bottom <= window.innerHeight,
+          rows,
+          overflow: document.documentElement.scrollWidth - window.innerWidth,
+        };
+      });
+      assert(fit.width === 390, `the mobile page is ${fit.width} wide`);
+      assert(fit.inside, `the menu leaves the viewport: ${JSON.stringify(fit.menu)}`);
+      assert(fit.rows.length === 4 && fit.rows.every((r) => r.inside), `an entry is cut off: ${JSON.stringify(fit.rows)}`);
+      assert(fit.overflow <= 0, `the row sprang the page by ${fit.overflow}px`);
+      await mp.keyboard.press("Escape");
+      await mp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
     });
 
     await run("delete project shows a toast and removes the card without a redirect", async () => {

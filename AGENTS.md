@@ -705,6 +705,36 @@ test. Update this file when a convention changes.
   remote named beside the label while the starting point shows the ref it
   begins at, the hidden field keeps the ref either way, and the query is
   tracked apart from the text because the two stopped being the same thing.
+- **The projects page's git menu leads somewhere, and acts once.** Every row
+  that is a repository carries a git button (`[data-git-project-menu]`, built
+  like the compose button beside it: the menu is `@dc/contextmenu`, and every
+  destination is rendered onto the button by the server as `data-git-worktree`,
+  `data-git-commit` and `data-git-compare`, so the client knows no route). The
+  worktree entry opens the create form with this project as the source
+  (`/projects/new?create=worktree:<name>`) and stands only on a main
+  repository, because the form offers nothing else as a source; the two editor
+  entries open the editor on a view (`?view=commit`, `?view=compare`, rendered
+  as `data-editor-view` and read once after the first status answer and the
+  tab restore, never out of the URL, for the reason the terminal id is not),
+  and an unknown value opens the plain editor. The one action is the fetch:
+  the same `POST /projects/:name/fetch` the create form's resync uses, so the
+  passphrase question reaches the app-wide dialog, and its answer is a toast
+  (`@dc/toast`, like the editor's own fetch), never a flash and never a
+  re-render: the list stands where it was, and while the fetch runs the
+  button is disabled and its icon pulses (`.dc-git-working`, the upload
+  button's pulse over opacity and scale behind the same reduced motion
+  guard the docker wave has, so the row never moves). The answer carries `message`
+  beside `fetched`, worded on the server (`fetchedMessage`): what was fetched
+  and where the checked out branch now stands against its upstream, one
+  `for-each-ref` after an action a person started; a refusal is git's words
+  through the ordinary 409. Deliberately not in the menu: switching the branch, push and pull
+  (they move a working copy coders are working in and stay in the editor's git
+  sheet, which shows the working copy around them) and removing a worktree
+  (that is deleting the project, which the row already has). None of it costs
+  the list a git process: the button and its entries come out of the
+  `gitfacts` facts the row already renders from, and the distance to the
+  upstream is deliberately not on the row, it would be a process per row per
+  render, or a cache with no honest invalidation.
 - **One write runs at a time, and that is two locks for two questions.** The
   page's own (`gitBusy`) is what a person sees: spinner on the tapped row
   and in the statusbar, every other row and the commit panel disabled with

@@ -33,6 +33,11 @@ type EditorData struct {
 	// URL, so the editor's init still sees the previous address. The terminal
 	// panel activates that session's tab.
 	Terminal string
+	// View is the panel the page opens on, "commit" or "compare", rendered
+	// for the same reason the terminal id is: the projects page's git menu
+	// links into a view, and the client reads it off the page, never the URL.
+	// Empty is the plain editor.
+	View string
 }
 
 // EditorProjectsData feeds the switcher fragment, the very rows the editor

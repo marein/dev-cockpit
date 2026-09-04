@@ -233,15 +233,22 @@ func (s *Server) handleProjectBranches(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"branches": branches, "fetchedAt": fetched})
 }
 
-// handleProjectFetch brings a project's remotes down for a surface outside the
-// editor: the create form's resync, which needs the remote branches to exist
-// here before its pickers can offer them, because a branch nobody fetched is a
-// branch this repository does not know.
+// handleProjectFetch brings a project's remotes down for the surfaces outside
+// the editor: the create form's resync, which needs the remote branches to
+// exist here before its pickers can offer them, because a branch nobody
+// fetched is a branch this repository does not know, and the projects page's
+// git menu, where a fetch is the one action that runs in place.
 //
 // It is the editor's own explicit fetch (handleEditorGitFetch) on a path of
 // its own, so the passphrase question travels through the one askpass bridge
 // and lands in the app-wide dialog, and a second write on that working copy
 // reads the same refusal it always does.
+//
+// The answer carries the sentence a person reads beside the flag a client
+// acts on: the resync repaints its list off `fetched`, the menu toasts
+// `message`, which says what was fetched and where the checked out branch now
+// stands. Worded here and not in the browser, because the distance comes out
+// of git and one wording serves every surface.
 func (s *Server) handleProjectFetch(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -251,7 +258,46 @@ func (s *Server) handleProjectFetch(c *gin.Context) {
 	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"fetched": fetched})
+	c.JSON(http.StatusOK, gin.H{"fetched": fetched, "message": fetchedMessage(c.Request.Context(), p, fetched)})
+}
+
+// fetchedMessage is the sentence a fetch answers with: whether anything was
+// fetched, and how far the checked out branch stands from its upstream now,
+// because right after a fetch is the moment that distance answers a question.
+// The distance is one for-each-ref after an action a person started; the
+// projects list itself never pays it, a process per row per render is what
+// gitfacts exists to avoid. A detached HEAD, an unborn branch and a branch that
+// follows nothing have no distance and get the first sentence alone.
+func fetchedMessage(ctx context.Context, p project.Project, fetched bool) string {
+	if !fetched {
+		return fmt.Sprintf("Nothing to fetch, %q has no remote.", p.Name)
+	}
+	message := fmt.Sprintf("Fetched %q.", p.Name)
+	ref, err := worktreeRef(ctx, p, p.GitBranch)
+	if err != nil || ref.Kind != git.KindBranch || ref.Upstream == "" {
+		return message
+	}
+	return message + " " + upstreamDistance(ref)
+}
+
+// upstreamDistance words where a branch stands against the branch it follows.
+func upstreamDistance(ref git.Ref) string {
+	switch {
+	case ref.Ahead == 0 && ref.Behind == 0:
+		return fmt.Sprintf("%q is up to date with %q.", ref.Name, ref.Upstream)
+	case ref.Behind == 0:
+		return fmt.Sprintf("%q is %s ahead of %q.", ref.Name, commitCount(ref.Ahead), ref.Upstream)
+	case ref.Ahead == 0:
+		return fmt.Sprintf("%q is %s behind %q.", ref.Name, commitCount(ref.Behind), ref.Upstream)
+	}
+	return fmt.Sprintf("%q has diverged from %q: %s ahead, %s behind.", ref.Name, ref.Upstream, commitCount(ref.Ahead), commitCount(ref.Behind))
+}
+
+func commitCount(n int) string {
+	if n == 1 {
+		return "1 commit"
+	}
+	return fmt.Sprintf("%d commits", n)
 }
 
 // worktreeCreate is what a created worktree project answers: the project it

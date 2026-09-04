@@ -7,7 +7,7 @@ import { onServerEvent } from "@dc/events";
 import { matchesTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
 import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
-import { ensureOk, postForm } from "@dc/http";
+import { ensureOk, postForm, postJSON } from "@dc/http";
 import { notifyError, notifyInfo, notifySuccess } from "@dc/toast";
 import { releaseCoder, steerCoder } from "@dc/steer";
 
@@ -69,6 +69,13 @@ class ProjectList extends HTMLElement {
         event.preventDefault();
         if (menuJustClosed()) return;
         this.openComposeMenu(composeBtn);
+        return;
+      }
+      const gitBtn = event.target.closest("[data-git-project-menu]");
+      if (gitBtn && this.contains(gitBtn)) {
+        event.preventDefault();
+        if (menuJustClosed()) return;
+        this.openGitMenu(gitBtn);
         return;
       }
       const main = event.target.closest("[data-chip-main-menu]");
@@ -300,6 +307,46 @@ class ProjectList extends HTMLElement {
       openMenu({ x, y, items: list, signal: this.ac.signal });
     };
     open(null);
+  }
+
+  openGitMenu(button) {
+    const items = [];
+    if (button.dataset.gitWorktree) {
+      items.push({
+        label: "New worktree",
+        icon: "ti-git-fork",
+        action: () => docker.navigate(button.dataset.gitWorktree),
+      });
+    }
+    items.push({ label: "Fetch", icon: "ti-refresh", action: () => void this.fetchProject(button) });
+    items.push({ divider: true });
+    items.push({ label: "Commit changes", icon: "ti-git-commit", action: () => docker.navigate(button.dataset.gitCommit) });
+    items.push({ label: "Compare revisions", icon: "ti-git-compare", action: () => docker.navigate(button.dataset.gitCompare) });
+    const rect = button.getBoundingClientRect();
+    openMenu({ x: Math.round(rect.left), y: Math.round(rect.bottom), items, signal: this.ac.signal });
+  }
+
+  async fetchProject(button) {
+    if (button.disabled) return;
+    const project = button.dataset.gitProject || "";
+    const icon = button.querySelector(".ti");
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    icon?.classList.add("dc-git-working");
+    try {
+      const response = await postJSON(button.dataset.gitFetch, {});
+      await ensureOk(response, `Could not fetch "${project}".`);
+      const data = await response.json();
+      const message = data.message || (data.fetched ? `Fetched "${project}".` : `"${project}" has no remote to fetch from.`);
+      if (data.fetched) notifySuccess(message);
+      else notifyInfo(message);
+    } catch (error) {
+      notifyError(error.message);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      icon?.classList.remove("dc-git-working");
+    }
   }
 
   async openContainerShell(info, kind, filter) {
