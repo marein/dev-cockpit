@@ -1302,6 +1302,55 @@ test. Update this file when a convention changes.
   sideways. Whatever a row cuts it carries whole as its `title`: a tab the
   file's path, a quick open row its path, a find in files row its path and
   line, because that is the only place a cut name can be read out in full.
+- **The project switcher is a palette, and the palette owns no data.** The
+  project name above the tree (`[data-editor-project-switch]`), the menu's
+  first entry `Switch project` and Ctrl/Cmd+Shift+P open
+  `[data-editor-palette]`, an
+  overlay over the editor body built like the file palette: one field, one
+  list, and a window level capture keydown for the arrows, Enter, Escape and
+  Tab while it stands, so Tab cannot walk out behind it and Escape closes it
+  before anything under it hears; a click on the backdrop closes it, opening
+  it closes the drawer, the sheet and the quick open, the quick open closes it
+  in turn, and the swipe and the double Shift stay off while it is up. The
+  rows are the server's fragment (`editor_projects.gohtml`, held out of sight
+  in `[data-editor-project-list]` and pulled again on a `projects` event),
+  sorted there by `@dc/project-sort` like every other project list, a
+  worktree behind its main; the palette clones them into groups
+  (`renderPalette`) and never builds that markup a second time. Every fact on
+  a row comes from the file reads the project list already did
+  (`render.EditorProject`: repository, branch, worktree and its main, worded
+  by `switcherRepo` and `switcherSearch` in `handlers_editor.go`), no git
+  process runs for the palette. Without a query two groups stand: `Recent`,
+  the last used projects with the current one on top carrying its check
+  (`PALETTE_RECENT`), and `All projects` in the shared order with a worktree
+  drawn as its main's member
+  (`projectSort.mainOf`, the same grouping the projects page folds); a query
+  collapses both into one ranked list: every token has to hit the row's
+  search line (`data-project-search`: name, repository, branch, and the
+  main's path for a worktree whose main is no project here) through
+  `@dc/filter`'s `matchesTokens`, and the first token ranks the hits
+  (`rankProject`: a name or repository it starts, then one it sits inside,
+  then the branch or the path alone); a query nothing matches says so in the
+  list right under the field, where the quick open puts its note. A fresh
+  palette marks its best row and focuses the field on a fine pointer alone
+  (`markPaletteBest`, `openPalette`), and the best row is the first one that
+  is a switch (`bestIndex`: under no query the row under the current project,
+  under a query the first hit), which is what makes Ctrl+Shift+P, Enter the
+  way back to the previous project and what keeps a phone's keyboard down; `closePalette` blurs the
+  field before it hides the overlay, because a focus left inside a hidden
+  element is one nobody can see, and an empty editor cannot take it. **The
+  palette looks like the file palette, on every width**: the same overlay
+  and panel measures (`36rem` by `26rem`, capped by the editor), the same
+  plain field, rows at the file rows' font and padding with the floor the
+  chooser rows keep (`2.25rem`), a worktree's directory as a second line
+  under the name the way a match's text stands under its file, and no phone
+  block of its own; the field on top and the list under it, groups top
+  down, the best row on top, a fresh list at its top, and Enter, the
+  keyboard's Go, takes the first row with nothing marked (`commitPalette`).
+  Two phone shapes were tried and taken out on 2026-09-05, a bottom sheet
+  with the field as its foot and the rows turned around, then a taller
+  panel with bigger rows and a bigger field: the palettes of the editor
+  are one thing, and looking alike counts more than the thumb's way.
 - **Code navigation asks a language server, and the server processes belong
   to the cockpit.** `internal/editorintelligence` keeps a fixed profile
   registry, only the languages the navigation is verified against (gopls,

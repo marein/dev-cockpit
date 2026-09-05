@@ -1,5 +1,13 @@
 {{define "editor_projects.gohtml"}}
 {{range .Projects}}
-<a class="dropdown-item{{if .Current}} active{{end}}" href="{{.URL}}" data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">{{.Name}}</a>
+<a class="editor-palette-row{{if .Current}} editor-palette-current{{end}}" href="{{.URL}}" data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}"{{if .WorktreeOf}} data-project-worktree-of="{{.WorktreeOf}}"{{end}}{{if .Worktree}} data-project-worktree{{end}} data-project-search="{{.Search}}"{{if .Current}} aria-current="page"{{end}} title="{{.Name}}{{if .Worktree}}, worktree of {{if .WorktreeOf}}{{.WorktreeOf}}{{else}}{{.WorktreeMain}}{{end}}{{end}}{{if .Branch}} on {{.Branch}}{{end}}">
+  <span class="editor-palette-line">
+    <i class="ti {{if .Worktree}}ti-git-fork{{else if .Repo}}ti-folder-code{{else}}ti-folder{{end}}" aria-hidden="true"></i>
+    <span class="editor-palette-repo">{{if .Repo}}{{.Repo}}{{else}}{{.Name}}{{end}}</span>
+    {{if .Branch}}<span class="editor-palette-branch"><i class="ti ti-git-branch" aria-hidden="true"></i> {{.Branch}}</span>{{end}}
+    {{if .Current}}<i class="ti ti-check editor-palette-check" aria-hidden="true"></i>{{end}}
+  </span>
+  {{if .Worktree}}<span class="editor-palette-sub">{{.Name}}{{if not .WorktreeOf}}<span class="editor-palette-outside"><i class="ti ti-external-link" aria-hidden="true"></i>{{.WorktreeMain}}</span>{{end}}</span>{{end}}
+</a>
 {{end}}
 {{end}}

@@ -26,21 +26,13 @@
   <div class="editor-body">
     <div class="editor-tree-col">
       <div class="editor-pane-header d-flex align-items-center gap-2 px-2 py-2 border-bottom">
-        <div class="dropdown min-w-0 flex-fill">
-          <button type="button" class="editor-project-switch d-flex align-items-center gap-2 min-w-0 w-100" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Switch project" title="Switch project (Ctrl+Shift+P)">
-            <i class="ti ti-folder"></i>
-            <span class="text-truncate small fw-medium">{{.Project.Name}}</span>
-            <i class="ti ti-chevron-down editor-project-caret"></i>
-          </button>
-          <div class="dropdown-menu editor-project-menu">
-            <div class="editor-project-search">
-              <input type="search" class="form-control form-control-sm" data-editor-project-filter placeholder="Search projects" aria-label="Search projects" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
-            </div>
-            <div data-editor-project-list>
-              {{template "editor_projects.gohtml" .}}
-            </div>
-            <div class="dropdown-item-text text-secondary small" data-editor-project-empty hidden>No matches</div>
-          </div>
+        <button type="button" class="editor-project-switch d-flex align-items-center gap-2 min-w-0 flex-fill" data-editor-project-switch aria-haspopup="dialog" aria-expanded="false" aria-label="Switch project" title="Switch project (Ctrl+Shift+P)">
+          <i class="ti {{if .Project.GitWorktree}}ti-git-fork{{else}}ti-folder{{end}}"></i>
+          <span class="text-truncate small fw-medium">{{.Project.Name}}</span>
+          <i class="ti ti-chevron-down editor-project-caret"></i>
+        </button>
+        <div data-editor-project-list hidden>
+          {{template "editor_projects.gohtml" .}}
         </div>
         <button type="button" class="btn btn-sm btn-ghost-secondary p-1" data-editor-commit-toggle aria-pressed="false" aria-label="Commit changes" title="Commit changes" hidden>
           <i class="ti ti-git-commit"></i>
@@ -168,6 +160,9 @@
               <i class="ti ti-dots-vertical"></i>
             </button>
             <div class="dropdown-menu dropdown-menu-end" data-editor-menu-list>
+              <button type="button" class="dropdown-item" data-editor-project-item>
+                <i class="ti ti-folders me-2"></i>Switch project
+              </button>
               <button type="button" class="dropdown-item" data-editor-files-item>
                 <i class="ti ti-files me-2"></i>Open files<span class="badge bg-secondary-lt ms-2" data-editor-files-count></span>
               </button>
@@ -437,6 +432,17 @@
         </div>
         <div class="editor-sheet-body" data-editor-sheet-body></div>
         <div class="text-secondary small px-3 py-2" data-editor-sheet-empty hidden></div>
+      </div>
+    </div>
+
+    <div class="editor-palette" data-editor-palette hidden>
+      <div class="editor-palette-panel" role="dialog" aria-label="Switch project">
+        <div class="editor-palette-head">
+          <input type="text" class="form-control" placeholder="Switch project…" data-editor-project-filter autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Switch project" enterkeyhint="go">
+        </div>
+        <div class="editor-palette-list" data-editor-palette-list role="listbox">
+          <div class="editor-palette-empty text-secondary small" data-editor-project-empty hidden>No matches.</div>
+        </div>
       </div>
     </div>
 

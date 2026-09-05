@@ -331,7 +331,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Switch projects",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "P"}}},
-					Desc:  `The project name above the file tree opens the projects, ordered like the projects page: type to narrow, arrows and Enter to open one. A project created or deleted anywhere comes and goes here without a reload.`,
+					Desc:  `The project name above the file tree, and <em>Switch project</em> in the editor's menu, open a palette over the editor: the last used projects first, then all of them ordered like the projects page with a worktree behind its main, every row naming its repository and branch. Type to narrow by name, repository or branch, arrows and Enter open one, and Enter on a fresh palette goes back to the last used project. A project created or deleted anywhere comes and goes here without a reload.`,
 				},
 				{
 					Title: "The file tree",

@@ -7440,6 +7440,7 @@ async function init(root) {
     if (!quickOpenEl.hidden) saveSearchDraft();
     closeDrawer();
     closeSheet();
+    closePalette();
     quickOpenMode = mode;
     quickOpenView = "results";
     quickOpenEl.hidden = false;
@@ -8992,7 +8993,7 @@ async function init(root) {
       // One source of truth: the class says the browser handed the pans over,
       // so everything the finger does from here is this handler's job.
       if (!surfaceEl.classList.contains("editor-swipe-zone")) return;
-      if (!sheetEl.hidden || !quickOpenEl.hidden) return;
+      if (!sheetEl.hidden || !quickOpenEl.hidden || paletteOpen()) return;
       gesture = {
         pointerId: e.pointerId,
         startX: e.clientX,
@@ -9262,103 +9263,193 @@ async function init(root) {
     if (sheetKind !== "settings" && sheetKind !== "docker" && sheetKind !== "git" && sheetKind !== "comments" && e.target.closest(".dropdown-item")) closeSheet();
   }, { signal });
 
-  const projectSwitchEl = root.querySelector(".editor-project-switch");
-  const projectDropEl = projectSwitchEl?.closest(".dropdown");
+  // The project switcher is a palette like the file one: a field over a list,
+  // the arrows walk it, Enter takes the marked row, a click or a tap takes any.
+  // The rows are the server's fragment ([data-editor-project-list], kept out of
+  // sight and re-pulled on a projects event), cloned into groups here, so the
+  // browser never builds that markup a second time. Without a query the last
+  // used projects stand as a shortlist over the full list, the current one on
+  // top with its check, which keeps the shared sort with its worktrees folded
+  // behind their main; a query collapses both into one ranked list over name,
+  // repository and branch together.
+  const projectSwitchEl = root.querySelector("[data-editor-project-switch]");
+  const projectItemEl = root.querySelector("[data-editor-project-item]");
   const projectListEl = root.querySelector("[data-editor-project-list]");
+  const paletteEl = root.querySelector("[data-editor-palette]");
+  const paletteListEl = root.querySelector("[data-editor-palette-list]");
   const projectFilterEl = root.querySelector("[data-editor-project-filter]");
   const projectEmptyEl = root.querySelector("[data-editor-project-empty]");
-  let projectMenuOpen = false;
-  let projectMenuIndex = -1;
-  let projectMenuFromKey = false;
+  const PALETTE_RECENT = 5;
+  let paletteIndex = -1;
   let projectsInFlight = false;
   let projectsDirty = false;
   if (projectListEl) projectSort.sort(projectListEl);
 
-  const projectRows = () => (projectListEl
-    ? Array.from(projectListEl.querySelectorAll(".dropdown-item")).filter((row) => !row.hidden)
-    : []);
+  const paletteOpen = () => Boolean(paletteEl) && !paletteEl.hidden;
+  const sourceRows = () => (projectListEl ? Array.from(projectListEl.querySelectorAll("[data-project-name]")) : []);
+  const paletteRows = () => (paletteListEl ? Array.from(paletteListEl.querySelectorAll("[data-project-name]")) : []);
 
-  function paintProjectMenu() {
-    if (!projectListEl) return;
-    for (const row of projectListEl.querySelectorAll(".dropdown-item.selected")) {
-      row.classList.remove("selected");
-      row.removeAttribute("aria-current");
-    }
-    const rows = projectRows();
-    if (!projectMenuOpen || projectMenuIndex < 0 || !rows.length) return;
-    projectMenuIndex = Math.min(projectMenuIndex, rows.length - 1);
-    const selected = rows[projectMenuIndex];
-    selected.classList.add("selected");
-    selected.setAttribute("aria-current", "true");
-    const menu = projectListEl.closest(".editor-project-menu");
-    if (!menu) return;
-    const top = selected.offsetTop;
-    const bottom = top + selected.offsetHeight;
-    if (top < menu.scrollTop) menu.scrollTop = top;
-    else if (bottom > menu.scrollTop + menu.clientHeight) menu.scrollTop = bottom - menu.clientHeight;
+  // rankProject says where a query lands on a row: every token has to hit
+  // somewhere in the row's search line (the token search the whole app
+  // shares), and the first token decides the order among the hits, a name or
+  // repository it starts ahead of one it sits inside, and that ahead of a hit
+  // in the branch or the path alone.
+  function rankProject(row, query) {
+    if (!matchesTokens(row.dataset.projectSearch || row.dataset.projectName || "", query)) return -1;
+    const first = query.toLowerCase().split(/\s+/).filter(Boolean)[0] || "";
+    const name = (row.dataset.projectName || "").toLowerCase();
+    const repo = (row.querySelector(".editor-palette-repo")?.textContent || "").toLowerCase();
+    if (name.startsWith(first) || repo.startsWith(first)) return 0;
+    if (name.includes(first) || repo.includes(first)) return 1;
+    return 2;
   }
 
-  function applyProjectFilter(fromInput) {
-    if (!projectListEl) return;
+  function paletteGroup(label, rows, members) {
+    const group = document.createElement("div");
+    group.className = "editor-palette-group";
+    if (label) {
+      const head = document.createElement("div");
+      head.className = "editor-palette-group-head";
+      head.textContent = label;
+      group.appendChild(head);
+    }
+    rows.forEach((row) => {
+      const clone = row.cloneNode(true);
+      if (members && members.has(row)) clone.classList.add("editor-palette-member");
+      group.appendChild(clone);
+    });
+    return group;
+  }
+
+  function renderPalette() {
+    if (!paletteListEl) return;
     const query = (projectFilterEl?.value || "").trim();
-    const marked = projectRows()[projectMenuIndex];
-    for (const row of projectListEl.querySelectorAll(".dropdown-item")) {
-      row.hidden = Boolean(query) && !matchesTokens(row.dataset.projectName || "", query);
+    const all = sourceRows();
+    const groups = [];
+    if (query) {
+      const hits = all.map((row) => ({ row, rank: rankProject(row, query) })).filter((hit) => hit.rank >= 0);
+      hits.sort((a, b) => a.rank - b.rank);
+      if (hits.length) groups.push(paletteGroup("", hits.map((hit) => hit.row)));
+    } else {
+      const recent = all
+        .filter((row) => Number(row.dataset.projectUsed) > 0)
+        .sort((a, b) => Number(b.dataset.projectUsed) - Number(a.dataset.projectUsed))
+        .slice(0, PALETTE_RECENT);
+      // A worktree that stands behind its main in the full list is drawn as its
+      // member; in the shortlist and under a query every row stands on its own.
+      const byName = new Map(all.map((row) => [row.dataset.projectName, row]));
+      const members = new Set(all.filter((row) => projectSort.mainOf(row, byName)));
+      if (recent.length) groups.push(paletteGroup("Recent", recent));
+      groups.push(paletteGroup(recent.length ? "All projects" : "", all, members));
     }
-    const rows = projectRows();
-    if (projectEmptyEl) projectEmptyEl.hidden = rows.length > 0;
-    if (fromInput) projectMenuIndex = rows.length ? 0 : -1;
-    else projectMenuIndex = rows.indexOf(marked);
-    paintProjectMenu();
+    paletteListEl.replaceChildren(...groups);
+    const rows = paletteRows();
+    // The note stands in the list under the field, where the quick open puts
+    // its own, not at the foot of the panel.
+    if (projectEmptyEl) {
+      projectEmptyEl.hidden = rows.length > 0;
+      if (!rows.length) paletteListEl.appendChild(projectEmptyEl);
+    }
   }
 
-  function moveProjectMenuSelection(delta) {
-    const rows = projectRows();
+  // The best row is the first one that is a switch: without a query the
+  // current project heads the shortlist with its check, so the row under it,
+  // the last used other project, is the one Enter should take; under a query
+  // the first hit is what was asked for.
+  function bestIndex(rows) {
+    if (!rows.length) return -1;
+    if ((projectFilterEl?.value || "").trim()) return 0;
+    const other = rows.findIndex((row) => !row.classList.contains("editor-palette-current"));
+    return other >= 0 ? other : 0;
+  }
+
+  function paintPalette() {
+    const rows = paletteRows();
+    if (paletteIndex >= rows.length) paletteIndex = rows.length - 1;
+    rows.forEach((row, i) => {
+      const on = i === paletteIndex;
+      row.classList.toggle("active", on);
+      if (on) row.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  // A fresh list starts at its top and marks its best row only where a
+  // keyboard is there to take it: on a touch screen a marked row is noise, and
+  // the tap decides anyway.
+  function markPaletteBest() {
+    const rows = paletteRows();
+    if (paletteListEl) paletteListEl.scrollTop = 0;
+    paletteIndex = pointerMedia.matches ? bestIndex(rows) : -1;
+    paintPalette();
+  }
+
+  function movePalette(delta) {
+    const rows = paletteRows();
     if (!rows.length) return;
-    if (projectMenuIndex < 0) projectMenuIndex = delta > 0 ? 0 : rows.length - 1;
-    else projectMenuIndex = (projectMenuIndex + delta + rows.length) % rows.length;
-    paintProjectMenu();
+    if (paletteIndex < 0) paletteIndex = delta > 0 ? 0 : rows.length - 1;
+    else paletteIndex = (paletteIndex + delta + rows.length) % rows.length;
+    paintPalette();
   }
 
-  function commitProjectMenuSelection() {
-    const selected = projectRows()[projectMenuIndex];
-    if (selected) selected.click();
+  // Enter takes the marked row, and with nothing marked the best one: that is
+  // what the Go key of a phone keyboard means after typing a query.
+  function commitPalette() {
+    const rows = paletteRows();
+    const row = rows[paletteIndex] || rows[bestIndex(rows)];
+    if (row) row.click();
   }
 
-  function openProjectMenu() {
-    if (!projectSwitchEl || !window.bootstrap?.Dropdown) return;
-    projectMenuFromKey = true;
-    window.bootstrap.Dropdown.getOrCreateInstance(projectSwitchEl).show();
-  }
-
-  function closeProjectMenu() {
-    if (projectSwitchEl) window.bootstrap?.Dropdown.getInstance(projectSwitchEl)?.hide();
-  }
-
-  projectDropEl?.addEventListener("shown.bs.dropdown", () => {
-    projectMenuOpen = true;
-    const rows = projectRows();
-    projectMenuIndex = projectMenuFromKey ? Math.max(rows.findIndex((row) => row.classList.contains("active")), 0) : -1;
-    projectMenuFromKey = false;
-    paintProjectMenu();
+  function openPalette() {
+    if (!paletteEl) return;
+    closeDrawer();
+    closeSheet();
+    if (!quickOpenEl.hidden) closeQuickOpen();
+    if (projectFilterEl) projectFilterEl.value = "";
+    paletteEl.hidden = false;
+    projectSwitchEl?.setAttribute("aria-expanded", "true");
+    renderPalette();
+    markPaletteBest();
     if (pointerMedia.matches) projectFilterEl?.focus();
     else projectSwitchEl?.blur();
-  }, { signal });
-  projectDropEl?.addEventListener("hidden.bs.dropdown", () => {
-    projectMenuOpen = false;
-    projectMenuIndex = -1;
-    projectMenuFromKey = false;
+  }
+
+  // The field lets go of the focus before the palette hides, so it never sits
+  // in a hidden element; the editor takes it where it can, an empty editor
+  // cannot and the page keeps it.
+  function closePalette() {
+    if (!paletteOpen()) return;
+    const hadFocus = paletteEl.contains(document.activeElement);
+    if (hadFocus) document.activeElement.blur();
+    paletteEl.hidden = true;
+    projectSwitchEl?.setAttribute("aria-expanded", "false");
+    paletteIndex = -1;
     if (projectFilterEl) projectFilterEl.value = "";
-    applyProjectFilter(false);
+    if (hadFocus) editor.focus();
+  }
+
+  projectSwitchEl?.addEventListener("click", () => {
+    if (paletteOpen()) closePalette();
+    else openPalette();
   }, { signal });
-  projectFilterEl?.addEventListener("input", () => applyProjectFilter(true), { signal });
+  projectItemEl?.addEventListener("click", () => openPalette(), { signal });
+  projectFilterEl?.addEventListener("input", () => {
+    renderPalette();
+    markPaletteBest();
+  }, { signal });
+  paletteEl?.addEventListener("click", (e) => {
+    if (e.target === paletteEl) closePalette();
+  }, { signal });
+  // The keys work wherever the focus sits, in the field or nowhere on a touch
+  // screen, and ahead of everything else on the page, so Tab cannot walk out
+  // behind the palette and Escape closes it before anything under it hears.
   window.addEventListener("keydown", (e) => {
-    if (!projectMenuOpen) return;
+    if (!paletteOpen()) return;
     const actions = {
-      ArrowDown: () => moveProjectMenuSelection(1),
-      ArrowUp: () => moveProjectMenuSelection(-1),
-      Enter: () => commitProjectMenuSelection(),
-      Escape: () => closeProjectMenu(),
+      ArrowDown: () => movePalette(1),
+      ArrowUp: () => movePalette(-1),
+      Enter: () => commitPalette(),
+      Escape: () => closePalette(),
+      Tab: () => projectFilterEl?.focus(),
     };
     const action = actions[e.key];
     if (!action) return;
@@ -9377,14 +9468,13 @@ async function init(root) {
     const ret = new URLSearchParams(window.location.search).get("return") || "";
     const html = await getText(`${base}/projects?return=${encodeURIComponent(ret)}`, { signal }).catch(() => "");
     if (html) {
-      const marked = projectRows()[projectMenuIndex]?.dataset.projectName || "";
+      const marked = paletteRows()[paletteIndex]?.dataset.projectName || "";
       projectListEl.innerHTML = html;
       projectSort.sort(projectListEl);
-      applyProjectFilter(false);
-      const kept = marked ? projectRows().findIndex((row) => row.dataset.projectName === marked) : -1;
-      if (kept !== -1) {
-        projectMenuIndex = kept;
-        paintProjectMenu();
+      if (paletteOpen()) {
+        renderPalette();
+        paletteIndex = marked ? paletteRows().findIndex((row) => row.dataset.projectName === marked) : -1;
+        paintPalette();
       }
     }
     projectsInFlight = false;
@@ -10186,8 +10276,8 @@ async function init(root) {
     } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && !e.repeat
       && e.key.toLowerCase() === "p" && quickOpenEl.hidden) {
       e.preventDefault();
-      if (projectMenuOpen) closeProjectMenu();
-      else openProjectMenu();
+      if (paletteOpen()) closePalette();
+      else openPalette();
     } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && !e.repeat
       && e.key.toLowerCase() === "g" && quickOpenEl.hidden) {
       if (gitSurface()) {
@@ -10268,7 +10358,7 @@ async function init(root) {
   }, { capture: true, signal });
   document.addEventListener("keyup", (e) => {
     if (e.target instanceof Element && e.target.closest("[data-editor-term-panel]")) return;
-    if (shiftTap.keyup(e.key) && quickOpenEl.hidden) {
+    if (shiftTap.keyup(e.key) && quickOpenEl.hidden && !paletteOpen()) {
       e.preventDefault();
       openQuickOpen("files");
     }

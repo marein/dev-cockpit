@@ -41,21 +41,41 @@ type EditorData struct {
 }
 
 // EditorProjectsData feeds the switcher fragment, the very rows the editor
-// page renders inside its dropdown. The client pulls it when the project set
-// changes instead of building the markup a second time in the browser.
+// page renders for its project palette. The client pulls it when the project
+// set changes instead of building the markup a second time in the browser.
 type EditorProjectsData struct {
 	Projects []EditorProject
 }
 
-// EditorProject is one project switcher entry in the editor's tree header. The
-// entries render with the data-project-* attributes @dc/project-sort reads, so
-// the client orders the menu like every other project listing.
+// EditorProject is one row of the editor's project palette. The rows render
+// with the data-project-* attributes @dc/project-sort reads, so the client
+// orders them like every other project listing, and they carry the git facts a
+// worktree is told apart by. Every fact here comes from the file reads the
+// project list already did (internal/gitfacts), no git process runs for the
+// palette.
 type EditorProject struct {
 	Name         string
 	URL          string
 	Current      bool
 	Active       bool
 	LastUsedUnix int64
+	// Repo is the repository the row belongs to as a reader names it: the main
+	// project's name for a worktree that has one in the cockpit, the last path
+	// element of the main repository otherwise, the project's own name for a
+	// repository, empty for a directory that is no repository at all.
+	Repo string
+	// Branch is the checked out branch, or a short hash on a detached HEAD.
+	Branch string
+	// Worktree marks a linked worktree, WorktreeOf names its main project when
+	// that project lies in the cockpit, and WorktreeMain is the main
+	// repository's path on disk for the worktree whose main does not.
+	Worktree     bool
+	WorktreeOf   string
+	WorktreeMain string
+	// Search is what the palette's query is matched against: the project's
+	// name, its repository and its branch in one line, so "dev htmx" lands on
+	// the one worktree of dev-cockpit that stands on the htmx branch.
+	Search string
 }
 
 // EditorTerminalsData feeds the editor's terminal panel fragment: the live

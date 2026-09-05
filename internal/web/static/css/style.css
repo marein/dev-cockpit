@@ -1407,7 +1407,7 @@ textarea[data-assistant-input] { resize: none; }
    price: an in-surface dropdown could never outrank a float that stayed above
    the surface, and the float covering what asks for interaction is the worse
    of the two. */
-body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .terminal-switcher, [data-editor-quickopen]:not([hidden])) .dc-host-float {
+body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .terminal-switcher, [data-editor-quickopen]:not([hidden]), [data-editor-palette]:not([hidden])) .dc-host-float {
   z-index: 5;
 }
 .dc-host-float [data-host-float-grip] {
@@ -1724,21 +1724,126 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   font-size: 0.7rem;
   color: var(--tblr-secondary);
 }
-.editor-project-menu {
-  max-height: 60vh;
-  overflow-y: auto;
+.editor-palette[hidden] {
+  display: none;
+}
+.editor-palette {
+  position: absolute;
+  inset: 0;
+  z-index: 17;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 0.75rem;
+  background: rgba(17, 24, 39, 0.55);
+}
+.editor-palette-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(36rem, 100%);
+  height: min(26rem, 100%);
+  background: var(--tblr-bg-surface);
+  border: 1px solid var(--tblr-border-color);
+  border-radius: 6px;
+  box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.editor-palette-head {
+  flex: 0 0 auto;
+}
+.editor-palette-head .form-control {
+  border: 0;
+  border-bottom: 1px solid var(--tblr-border-color);
+  border-radius: 0;
+  box-shadow: none;
+}
+.editor-palette-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   overscroll-behavior: contain;
-  padding-top: 0;
+  -webkit-overflow-scrolling: touch;
 }
-.editor-project-search {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 0.5rem;
-  background: var(--tblr-dropdown-bg, var(--tblr-bg-surface));
+.editor-palette-group + .editor-palette-group {
+  border-top: 1px solid var(--tblr-border-color);
 }
-.editor-project-menu .dropdown-item.selected {
+.editor-palette-group-head {
+  padding: 0.4rem 0.75rem 0.15rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tblr-secondary);
+}
+.editor-palette-row {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 2.25rem;
+  padding: 0.3rem 0.75rem;
+  min-width: 0;
+  font-size: 0.85rem;
+  color: var(--tblr-body-color);
+  text-decoration: none;
+  cursor: pointer;
+  outline: 0;
+}
+.editor-palette-row:hover,
+.editor-palette-row.active {
   background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18));
+  color: var(--tblr-body-color);
+  text-decoration: none;
+}
+.editor-palette-member {
+  margin-left: 1.25rem;
+  border-left: 2px solid var(--tblr-border-color);
+}
+.editor-palette-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.editor-palette-line .ti {
+  color: var(--tblr-secondary);
+  flex: 0 0 auto;
+}
+.editor-palette-repo {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-palette-branch {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--tblr-secondary);
+}
+.editor-palette-line .editor-palette-check {
+  color: var(--tblr-primary);
+}
+.editor-palette-sub {
+  padding-left: 1.55rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--tblr-secondary);
+}
+.editor-palette-outside {
+  margin-left: 0.4rem;
+}
+.editor-palette-outside .ti {
+  margin-right: 0.15rem;
+}
+.editor-palette-empty {
+  flex: 0 0 auto;
+  padding: 0.75rem;
 }
 .editor-tabs {
   display: flex;
