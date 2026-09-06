@@ -44,10 +44,13 @@
     </div>
     {{end}}
     <div class="quicknav-search" data-pb-head hidden>
-      <div class="input-icon">
-        <span class="input-icon-addon"><i class="ti ti-search" aria-hidden="true"></i></span>
-        <input type="text" class="form-control form-control-sm" data-pb-filter placeholder="Search projects…" aria-label="Search projects" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="go" data-1p-ignore data-lpignore="true">
-      </div>
+      <i class="ti ti-search" aria-hidden="true"></i>
+      <input type="text" class="quicknav-search-input" data-pb-filter placeholder="Search projects…" aria-label="Search projects" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="go" data-1p-ignore data-lpignore="true">
+      <span class="quicknav-search-side">
+        <button type="button" class="quicknav-search-clear" data-pb-clear aria-label="Clear the search" title="Clear the search">
+          <i class="ti ti-x"></i>
+        </button>
+      </span>
     </div>
   </div>
 

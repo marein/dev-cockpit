@@ -122,9 +122,11 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
           focused: document.activeElement === field,
           marked: Boolean(document.querySelector(".quicknav-pb-active")),
           source: document.querySelector("[data-pb-source]").hidden,
+          clear: getComputedStyle(document.querySelector("[data-pb-clear]")).visibility === "hidden",
         };
       });
       assert(head.above, "the search field does not stand over the rows");
+      assert(head.clear, "the x shows over an empty field");
       assert(head.focused, "the field did not take the focus where a keyboard is around");
       assert(head.marked, "no row is marked for Enter");
       assert(head.source, "the server's rows are not kept out of sight");
@@ -140,6 +142,20 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       await page.fill("[data-pb-filter]", `${project}-nothing-matches-this`);
       await sleep(300);
       assert(await page.$eval("[data-pb-empty]", (el) => !el.hidden), "no matches note stayed hidden");
+      assert(await page.$eval("[data-pb-clear]", (el) => getComputedStyle(el).visibility !== "hidden"), "the x stayed hidden over a query");
+      await page.click("[data-pb-clear]");
+      await sleep(300);
+      const cleared = await page.evaluate(() => ({
+        value: document.querySelector("[data-pb-filter]").value,
+        focused: document.activeElement === document.querySelector("[data-pb-filter]"),
+        empty: document.querySelector("[data-pb-empty]").hidden,
+        rows: document.querySelectorAll("[data-pb-rows] [data-pb-drill]").length,
+      }));
+      assert(cleared.value === "" && cleared.focused, "the x did not clear the field and hand the focus back");
+      assert(cleared.empty && cleared.rows > 0, "the rows did not come back after the clear");
+      await page.fill("[data-pb-filter]", `${project}-nothing-matches-this`);
+      await sleep(300);
+      assert(await page.$eval("[data-pb-empty]", (el) => !el.hidden), "the no matches note did not come back for a second query");
       await page.fill("[data-pb-filter]", project);
       await sleep(300);
       await page.keyboard.press("ArrowDown");

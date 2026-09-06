@@ -99,11 +99,7 @@ class QuickNav extends HTMLElement {
     // the event, not off a captured node.
     this.addEventListener("input", (event) => {
       if (!event.target.closest("[data-pb-filter]")) return;
-      this.view.query = event.target.value;
-      const browser = this.tabsRoot()?.querySelector("[data-project-browser]");
-      if (!browser) return;
-      this.renderProjects(browser);
-      this.markBestProject(browser);
+      this.setProjectQuery(event.target.value);
     }, { signal });
     // The palette keys work wherever the focus sits, and ahead of the dropdown's
     // own arrow handling, which would otherwise walk the menu's focus instead of
@@ -726,6 +722,22 @@ class QuickNav extends HTMLElement {
     head.querySelector("[data-pb-filter]")?.focus();
   }
 
+  setProjectQuery(query) {
+    this.view.query = query;
+    const browser = this.tabsRoot()?.querySelector("[data-project-browser]");
+    if (!browser) return;
+    this.renderProjects(browser);
+    this.markBestProject(browser);
+  }
+
+  clearProjectFilter() {
+    const field = this.projectHead()?.querySelector("[data-pb-filter]");
+    if (!field) return;
+    field.value = "";
+    this.setProjectQuery("");
+    field.focus();
+  }
+
   // Entering the project list: by opening the menu on it, by switching to it or
   // by stepping back out of a project. The field takes the focus where a
   // keyboard is around and the best row is marked for Enter; a background
@@ -810,15 +822,15 @@ class QuickNav extends HTMLElement {
       if (recent.length) groups.push(this.projectGroup("Recent", recent));
       groups.push(this.projectGroup(recent.length ? "All projects" : "", all, members));
     }
-    listEl.replaceChildren(...groups);
     // The note stands in the list right under the field, where the editor's
     // palettes put theirs.
     const empty = browser.querySelector("[data-pb-empty]");
+    listEl.replaceChildren(...groups);
     if (empty) {
       // A cockpit without a single project says so in its own words, the note
       // here is about a query that found nothing.
       empty.hidden = this.projectRows(browser).length > 0 || all.length === 0;
-      if (!empty.hidden) listEl.appendChild(empty);
+      listEl.appendChild(empty);
     }
   }
 
@@ -1161,6 +1173,12 @@ class QuickNav extends HTMLElement {
 
   handleClick(event) {
     if (!this.view) this.initView();
+    if (event.target.closest("[data-pb-clear]")) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.clearProjectFilter();
+      return;
+    }
     const del = event.target.closest("[data-qn-delete]");
     if (del) {
       event.preventDefault();

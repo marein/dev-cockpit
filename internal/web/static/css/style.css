@@ -1252,7 +1252,14 @@ textarea[data-assistant-input] { resize: none; }
    for a drilled project. The rows wear the measures of the editor's project
    palette (.editor-palette-*), so every search surface in the cockpit reads the
    same. */
-.quicknav-search { padding: 0 0.75rem 0.5rem; }
+.quicknav-top .quicknav-search {
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+  border-bottom: 0;
+}
+.quicknav-top .quicknav-search-input { padding-right: 1.75rem; }
+.quicknav-top .quicknav-search-side { right: 0.75rem; }
+.quicknav-search-input:placeholder-shown + .quicknav-search-side { visibility: hidden; }
 .quicknav-pb-group + .quicknav-pb-group { border-top: 1px solid var(--tblr-border-color); }
 .quicknav-pb-group-head {
   padding: 0.4rem 0.75rem 0.15rem;
@@ -2049,7 +2056,8 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
    first keystroke, and changes width with every one after it, never resizes
    the field somebody is typing in. */
 .editor-commit-filter,
-.editor-sheet-filter {
+.editor-sheet-filter,
+.quicknav-search {
   position: relative;
   display: flex;
   align-items: center;
@@ -2058,16 +2066,19 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   border-bottom: 1px solid var(--tblr-border-color);
 }
 .editor-commit-filter > .ti,
-.editor-sheet-filter > .ti {
+.editor-sheet-filter > .ti,
+.quicknav-search > .ti {
   flex: 0 0 auto;
   color: var(--tblr-secondary);
 }
 .editor-commit-filter:focus-within,
-.editor-sheet-filter:focus-within {
+.editor-sheet-filter:focus-within,
+.quicknav-search:focus-within {
   background: var(--tblr-bg-surface-secondary);
 }
 .editor-commit-filter-input,
-.editor-sheet-filter-input {
+.editor-sheet-filter-input,
+.quicknav-search-input {
   flex: 1 1 auto;
   min-width: 0;
   border: 0;
@@ -2077,11 +2088,13 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   padding: 0.15rem 5.5rem 0.15rem 0;
 }
 .editor-commit-filter-input:focus,
-.editor-sheet-filter-input:focus {
+.editor-sheet-filter-input:focus,
+.quicknav-search-input:focus {
   outline: none;
 }
 .editor-commit-filter-side,
-.editor-sheet-filter-side {
+.editor-sheet-filter-side,
+.quicknav-search-side {
   position: absolute;
   right: 0.4rem;
   display: flex;
@@ -2095,7 +2108,8 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   white-space: nowrap;
 }
 .editor-commit-filter-clear,
-.editor-sheet-filter-clear {
+.editor-sheet-filter-clear,
+.quicknav-search-clear {
   display: inline-flex;
   align-items: center;
   border: 0;
@@ -2105,7 +2119,8 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   line-height: 1;
 }
 .editor-commit-filter-clear:hover,
-.editor-sheet-filter-clear:hover {
+.editor-sheet-filter-clear:hover,
+.quicknav-search-clear:hover {
   color: var(--tblr-body-color);
 }
 .editor-commit-row:focus {
