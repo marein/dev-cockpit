@@ -1246,6 +1246,27 @@ textarea[data-assistant-input] { resize: none; }
    give it its own look (normal case, larger, body color) instead of reusing the
    small uppercase section-header style. */
 .quicknav-detail-title { color: var(--tblr-body-color); text-transform: none; }
+.quicknav-detail-actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 0.25rem;
+  margin: 0 0.75rem 0.5rem;
+  padding: 0.1875rem;
+  border-radius: var(--tblr-border-radius);
+  background: rgba(var(--tblr-emphasis-color-rgb), 0.04);
+}
+.quicknav-detail-actions > * {
+  display: flex;
+  min-width: 0;
+}
+.quicknav-detail-actions .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-radius: calc(var(--tblr-border-radius) - 1px);
+}
 .quicknav-menu .dropdown-divider { margin: 0; }
 /* The Projects tab is a palette: the search field rides in the sticky header so
    it stays put while the rows scroll, and it steps aside for the Active tab and

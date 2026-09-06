@@ -672,6 +672,8 @@ class QuickNav extends HTMLElement {
       // background refresh, which rebuilds the field and the rows underneath.
       query: "",
       index: -1,
+      // Where the list stood when a project was drilled open, for the way back.
+      listScroll: 0,
     };
   }
 
@@ -1280,14 +1282,21 @@ class QuickNav extends HTMLElement {
       this.enterActiveList();
       return;
     }
+    // Drilling in starts the detail at its top, title, action bar and the
+    // first terminals in view, however far down the list stood; that list
+    // position is kept in the view and comes back with the back row. Only
+    // these two taps move the menu, a background refresh keeps the position
+    // the reader is at.
     const drill = event.target.closest("[data-pb-drill]");
     if (drill) {
       event.preventDefault();
       event.stopPropagation();
       this.view.project = drill.getAttribute("data-pb-drill");
+      this.view.listScroll = this.menu.scrollTop;
       const browser = drill.closest("[data-project-browser]");
       if (browser) this.showProject(browser, this.view.project);
       this.syncProjectHead();
+      this.menu.scrollTop = 0;
       return;
     }
     const back = event.target.closest("[data-pb-back]");
@@ -1298,6 +1307,7 @@ class QuickNav extends HTMLElement {
       const browser = back.closest("[data-project-browser]");
       if (browser) this.showList(browser);
       this.enterProjectList();
+      this.menu.scrollTop = this.view.listScroll || 0;
     }
   }
 }

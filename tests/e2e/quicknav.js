@@ -45,11 +45,14 @@ const { assert, sleep, BASE } = L;
 // first. The Projects tab detail mirrors the projects page chip
 // row: no per-kind headlines, one merged list of the live coders and shells in
 // tab strip order, its containers under them, inactive coders after them. The
-// project's actions stand on one line under the title, right aligned and icons
-// only ([data-pb-actions], the shape the context bar above already uses):
-// editor, new coder and new shell always, the git menu ahead of them where the
-// project is a repository and the compose menu where it runs containers, both
-// the projects page's own menus out of @dc/project-actions. A container row
+// project's actions stand on one line under the title, icons only, as a bar
+// across the menu's width ([data-pb-actions], tinted and set in like the
+// segment switch above it) whose cells share the width evenly, so the head
+// reads the same with three, four or five of them: editor, new coder and new
+// shell always, the git menu ahead of them where the project is a repository
+// and the compose menu where it runs containers, both the projects page's own
+// menus out of @dc/project-actions. Drilling in starts the detail at the top,
+// and the way back returns the list to where it stood. A container row
 // answers a plain click with its own menu, running or not, the way the
 // editor's container cells do, and reveals its logs on a swipe. Detail rows
 // swipe too, reorder stays active-list only: active coders
@@ -64,6 +67,7 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
   const tag = `qn-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   const shellUrls = [];
+  const scrollProjects = [];
   let dragIds = [];
   let dragUrls = [];
   let retCoderPath = null;
@@ -596,11 +600,25 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
           git: bar.querySelectorAll("[data-git-project-menu]").length,
           docker: bar.querySelectorAll("[data-docker-project-menu]").length,
           belowTitle: bar.getBoundingClientRect().top >= document.querySelector(`${sel} [data-pb-back]`).getBoundingClientRect().bottom - 0.5,
-          rightAligned: (() => {
+          shape: (() => {
             const title = document.querySelector(`${sel} [data-pb-back]`).getBoundingClientRect();
-            const last = items[items.length - 1].getBoundingClientRect();
-            const first = items[0].getBoundingClientRect();
-            return last.right <= title.right + 1 && last.right >= title.right - 20 && first.left > title.left + 40;
+            const seg = document.querySelector(".quicknav-seg").getBoundingClientRect();
+            const b = bar.getBoundingClientRect();
+            const widths = items.map((e) => e.getBoundingClientRect().width);
+            const centered = items.every((e) => {
+              const cell = e.getBoundingClientRect();
+              const glyphs = [...e.querySelectorAll("i.ti")].map((i) => i.getBoundingClientRect());
+              const left = Math.min(...glyphs.map((g) => g.left));
+              const right = Math.max(...glyphs.map((g) => g.right));
+              return Math.abs((left + right) / 2 - (cell.left + cell.right) / 2) <= 2;
+            });
+            return {
+              left: Math.round(b.left - title.left),
+              right: Math.round(title.right - b.right),
+              seg: Math.round(seg.left - title.left),
+              spread: Math.round(Math.max(...widths) - Math.min(...widths)),
+              centered,
+            };
           })(),
         };
       }, detail);
@@ -614,9 +632,12 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       assert(acts.belowTitle, "the action row does not sit under the title");
       // Icons only must not mean a target a finger misses.
       assert(acts.heights.every((h) => h >= 28), `an action is too small to tap: ${acts.heights.join()}`);
-      // The row is right aligned: it ends where the rows below end, and starts
-      // well past their left edge.
-      assert(acts.rightAligned, "the action row is not flushed to the right edge");
+      // The bar takes the menu's width on the segment switch's margins (the
+      // switch itself ends early, the assistant link shares its line), and its
+      // cells share it evenly with every icon in the middle of its cell.
+      assert(acts.shape.left === acts.shape.seg && acts.shape.right === acts.shape.seg, `the action bar does not keep the segment switch's margins: ${JSON.stringify(acts.shape)}`);
+      assert(acts.shape.spread <= 1, `the action cells differ in width: ${JSON.stringify(acts.shape)}`);
+      assert(acts.shape.centered, "an action icon is off the middle of its cell");
       assert(acts.icons.join() === "ti-code,ti-robot+ti-plus,ti-terminal-2+ti-plus", `unexpected icons: ${acts.icons.join()}`);
       assert(acts.hrefs[0].includes("/editor") && acts.hrefs[1].includes("/coders/new") && acts.hrefs[2] === "/shells/new", `unexpected targets: ${acts.hrefs.join()}`);
       acts.titles.forEach((t) => assert(t && t.includes(project), `an action names no project: ${t}`));
@@ -668,9 +689,19 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
           commit: gitBtn?.dataset.gitCommit,
           compare: gitBtn?.dataset.gitCompare,
           worktree: Boolean(gitBtn?.dataset.gitWorktree),
+          spread: (() => {
+            const widths = items.map((e) => e.getBoundingClientRect().width);
+            return Math.round(Math.max(...widths) - Math.min(...widths));
+          })(),
+          margins: (() => {
+            const title = bar.closest("[data-pb-detail]").querySelector("[data-pb-back]").getBoundingClientRect();
+            const b = bar.getBoundingClientRect();
+            return [Math.round(b.left - title.left), Math.round(title.right - b.right)];
+          })(),
         };
       }, project);
       assert(row.count === 4, `the repository's row has ${row.count} actions, expected four`);
+      assert(row.spread <= 1 && row.margins[0] === row.margins[1], `four actions do not share the bar evenly: ${JSON.stringify(row)}`);
       assert(row.firstIsGit && row.beforeEditor, "the git action does not stand left of the editor");
       assert(row.afterDocker, "the git action does not stand right of the compose action");
       assert(row.fetch === `/projects/${project}/fetch`, `git fetch target is ${row.fetch}`);
@@ -686,7 +717,51 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       );
       await page.keyboard.press("Escape");
     });
+
+    await run("drilling a project starts its detail at the top, back returns the list to where it stood", async () => {
+      // Enough projects for the list to scroll, in a window low enough that
+      // the menu is short.
+      for (let i = 0; i < 8; i++) {
+        const name = `${project}-s${i}`;
+        await L.createProject(page, name);
+        scrollProjects.push(name);
+      }
+      await page.setViewportSize({ width: 750, height: 520 });
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.click(".quicknav-toggle");
+      await page.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 });
+      await page.locator('[data-quicknav-tab="projects"]:visible').first().click(); await sleep(500);
+      const menu = () => page.evaluate(() => {
+        const m = document.querySelector(".quicknav-menu");
+        return { top: m.scrollTop, max: m.scrollHeight - m.clientHeight };
+      });
+      await page.evaluate(() => { const m = document.querySelector(".quicknav-menu"); m.scrollTop = m.scrollHeight; });
+      await sleep(100);
+      const before = await menu();
+      assert(before.max > 40 && before.top > 40, `the list does not scroll far enough for the check: ${JSON.stringify(before)}`);
+      // The last row stands in view at the bottom, so the click moves nothing
+      // by itself.
+      const last = page.locator("[data-pb-rows] [data-pb-drill]").last();
+      const name = await last.getAttribute("data-pb-drill");
+      await last.click();
+      await page.locator(`[data-pb-detail="${name}"]`).first().waitFor({ state: "visible", timeout: 6000 });
+      await sleep(200);
+      const drilled = await page.evaluate((n) => {
+        const m = document.querySelector(".quicknav-menu").getBoundingClientRect();
+        const title = document.querySelector(`[data-pb-detail="${n}"] [data-pb-back]`).getBoundingClientRect();
+        const bar = document.querySelector(`[data-pb-detail="${n}"] [data-pb-actions]`).getBoundingClientRect();
+        return { top: document.querySelector(".quicknav-menu").scrollTop, titleIn: title.top >= m.top - 0.5 && title.bottom <= m.bottom, barIn: bar.top >= m.top && bar.bottom <= m.bottom };
+      }, name);
+      assert(drilled.top === 0, `the drilled detail does not start at the top: ${JSON.stringify(drilled)}`);
+      assert(drilled.titleIn && drilled.barIn, `title or action bar out of view after drilling: ${JSON.stringify(drilled)}`);
+      await page.locator("[data-pb-back]:visible").first().click(); await sleep(200);
+      const after = await menu();
+      assert(Math.abs(after.top - before.top) <= 1, `the list did not return to where it stood: before ${before.top}, after ${after.top}`);
+      await page.keyboard.press("Escape");
+      await page.setViewportSize({ width: 750, height: 900 });
+    });
   } finally {
+    for (const n of scrollProjects) await L.deleteProject(page, n).catch(() => {});
     if (retCoderPath) {
       await L.stopSession(page, `${BASE}${retCoderPath}`).catch(() => {});
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" }).catch(() => {});
