@@ -7,25 +7,37 @@
   <h2 class="page-title">Start shell</h2>
 </div>
 <div class="card">
-  <form method="post" action="/shells/new">
-    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-    {{if .SplitGroup}}<input type="hidden" name="group" value="{{.SplitGroup}}">
-    <input type="hidden" name="column" value="{{.SplitColumn}}">{{end}}
-    <div class="card-body">
-      <dc-project-select class="d-block mb-3">
-        <label class="form-label required" for="project">Project</label>
-        <select class="form-select" id="project" name="project" required>
-          {{range .Projects}}<option value="{{.Path}}" {{if eq .Path $.DefaultPath}}selected{{end}} data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">{{.Name}}</option>{{end}}
-        </select>
-      </dc-project-select>
-    </div>
-    <div class="card-footer">
-      <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
-        <a class="btn btn-ghost-secondary" href="{{.Return}}">Cancel</a>
-        <button type="submit" class="btn btn-primary">Start shell</button>
-      </div>
-    </div>
-  </form>
+  {{template "shells_new_form.gohtml" .}}
 </div>
 {{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* The shell's half of the shared create form, see coders_new.gohtml. */}}
+{{define "shells_new_form.gohtml"}}
+<form method="post" action="/shells/new{{if .Modal}}?modal=1{{end}}"{{if .Modal}} data-form-title="Start shell" data-form-wait="Starting the shell…"{{end}}>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  {{if .SplitGroup}}<input type="hidden" name="group" value="{{.SplitGroup}}">
+  <input type="hidden" name="column" value="{{.SplitColumn}}">{{end}}
+  <div class="{{if .Modal}}modal-body{{else}}card-body{{end}}">
+    <dc-project-select class="d-block mb-3">
+      <label class="form-label required" for="project">Project</label>
+      <select class="form-select" id="project" name="project" required>
+        {{range .Projects}}<option value="{{.Path}}" {{if eq .Path $.DefaultPath}}selected{{end}} data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">{{.Name}}</option>{{end}}
+      </select>
+    </dc-project-select>
+  </div>
+  {{if .Modal}}
+  <div class="modal-footer">
+    <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button>
+    <button type="submit" class="btn btn-primary">Start shell</button>
+  </div>
+  {{else}}
+  <div class="card-footer">
+    <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+      <a class="btn btn-ghost-secondary" href="{{.Return}}">Cancel</a>
+      <button type="submit" class="btn btn-primary">Start shell</button>
+    </div>
+  </div>
+  {{end}}
+</form>
 {{end}}

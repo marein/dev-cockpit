@@ -31,6 +31,11 @@ type CoderNewData struct {
 	// like Return does; Return alone cannot carry this, every quick nav link
 	// on an editor page sends the same editor return for its Cancel.
 	Panel bool
+	// Modal marks the render for the create dialog: the form comes back alone,
+	// wears the dialog's body and footer, and carries the marker in its action
+	// so the POST is answered the way an open dialog needs it (see
+	// internal/web/formmodal.go).
+	Modal bool
 	// SplitGroup and SplitColumn carry a split view the new coder joins right
 	// after it starts: the group id, and a member of the column it stacks into
 	// (empty for a column of its own at the right edge). They ride the query

@@ -8,7 +8,8 @@ const { assert, sleep, submitBtn, confirmSwal, modalShown, BASE } = L;
 // shared terminal interaction is in terminal.js. The prompt modal is session only and
 // diverges by pointer: desktop opens it from .attach-desktop, mobile from
 // .attach-mobile; both submit as one whole prompt to /input (Ctrl/Cmd+Enter). Routes:
-// GET/POST /coders/new, GET /sessions/:id, POST /sessions/:id/{stop,input,resize},
+// GET/POST /coders/new (the create dialog asks for the same GET with modal=1 and
+// posts to the same path, dc-form-modal), GET /sessions/:id, POST /sessions/:id/{stop,input,resize},
 // GET .../stream, .../files (+POST upload, /download, /delete), POST /coders/:id/{resume,delete}.
 // Creates a real provider session and stops it; safe because it is our own throwaway.
 
@@ -59,6 +60,180 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       } finally {
         await page.evaluate(() => localStorage.removeItem("dc-project-sort"));
       }
+    });
+
+    // The dialog element upgrades lazily like every custom element, and a click
+    // that beats it lands on the form page, which is the fallback and not what
+    // these checks are about.
+    const dialogReady = async (target) => {
+      assert((await L.waitUpgraded(target, ["dc-form-modal"], 8000)).length === 0, "dc-form-modal not upgraded");
+    };
+
+    // The create form opens in a dialog, from every way that used to lead to
+    // the form page: the dialog fetches the same /coders/new with modal=1 and
+    // posts to the same path. The page stays a page, the two checks above open
+    // it directly and read its fields.
+    await run("dialog: the projects chip and the quick nav both open the create form", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await dialogReady(page);
+      await page.click(`#project-${project} a[href^="/coders/new"]`);
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(600);
+      const desktop = await page.evaluate(() => ({
+        path: window.location.pathname,
+        title: document.querySelector("[data-form-modal] .modal-title").textContent.trim(),
+        action: document.querySelector("[data-form-modal] form").getAttribute("action"),
+        focused: document.activeElement?.getAttribute("name") || "",
+        project: document.querySelector('[data-form-modal] select[name="project"]').value,
+      }));
+      assert(desktop.path === "/projects", `the page moved to ${desktop.path}`);
+      assert(desktop.title === "Start coder", `dialog head reads ${desktop.title}`);
+      assert(desktop.action.startsWith("/coders/new"), `the form posts to ${desktop.action}`);
+      assert(desktop.focused === "name", `focus sits on ${desktop.focused || "nothing"}`);
+      assert(desktop.project.endsWith(`/${project}`), `the chip's project is not preselected: ${desktop.project}`);
+      // Escape closes and the focus goes back to the chip that opened it. The
+      // show class goes at the start of the fade, the focus travels when the
+      // dialog is really hidden, so the read waits out the transition.
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector("[data-form-modal] form"), null, { timeout: 8000 });
+      await sleep(400);
+      const closed = await page.evaluate(() => ({
+        focus: document.activeElement?.getAttribute("href") || "",
+        forms: document.querySelectorAll("[data-form-modal] form").length,
+        backdrops: document.querySelectorAll(".modal-backdrop").length,
+      }));
+      assert(closed.focus.startsWith("/coders/new"), `focus did not return to the chip: ${closed.focus}`);
+      assert(closed.forms === 0 && closed.backdrops === 0, `the dialog left something behind: ${JSON.stringify(closed)}`);
+
+      // The quick nav is the phone's way in, and there no field may take the
+      // focus, a keyboard would cover the dialog the moment it opens.
+      const mp = await mobilePage();
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await dialogReady(mp);
+      await mp.click(".quicknav-toggle");
+      await mp.click('.quicknav-menu a[href^="/coders/new"]');
+      await mp.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(600);
+      const mobile = await mp.evaluate(() => {
+        const submit = document.querySelector('[data-form-modal] button[type="submit"]').getBoundingClientRect();
+        return {
+          path: window.location.pathname,
+          menu: Boolean(document.querySelector(".quicknav-menu.show")),
+          focused: document.activeElement?.getAttribute("name") || "",
+          overflow: document.documentElement.scrollWidth > window.innerWidth,
+          submitReachable: submit.width > 0 && submit.bottom <= window.innerHeight,
+        };
+      });
+      assert(mobile.path === "/projects", `the phone left the page for ${mobile.path}`);
+      assert(!mobile.menu, "the quick nav stayed open behind the dialog");
+      assert(mobile.focused === "", `a touch keyboard would pop up on ${mobile.focused}`);
+      assert(!mobile.overflow && mobile.submitReachable, `not usable at 390: ${JSON.stringify(mobile)}`);
+      // With the keyboard open a phone leaves about half the screen, and the
+      // dialog scrolls, so the submit is still reachable.
+      await mp.setViewportSize({ width: 390, height: 420 });
+      await sleep(500);
+      await mp.locator('[data-form-modal] button[type="submit"]').scrollIntoViewIfNeeded();
+      await sleep(300);
+      const cramped = await mp.evaluate(() => {
+        const box = document.querySelector('[data-form-modal] button[type="submit"]').getBoundingClientRect();
+        return { visible: box.top >= 0 && box.bottom <= window.innerHeight, scrolls: getComputedStyle(document.querySelector("[data-form-modal]")).overflowY };
+      });
+      await mp.setViewportSize({ width: 390, height: 844 });
+      assert(cramped.visible, `the submit is out of reach with the keyboard open: ${JSON.stringify(cramped)}`);
+      assert(cramped.scrolls === "auto" || cramped.scrolls === "scroll", `the dialog does not scroll: ${cramped.scrolls}`);
+      await mp.keyboard.press("Escape").catch(() => {});
+      return "chip and quick nav, focus on the desktop and none on the phone";
+    });
+
+    // A refused create is the whole reason the dialog talks to the server
+    // itself: the message belongs in the dialog and the typed values have to
+    // survive it. The select only offers projects that exist, so the value the
+    // server refuses is planted.
+    await run("dialog: a refused create shows the message and keeps the values", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await dialogReady(page);
+      await page.click(`#project-${project} a[href^="/coders/new"]`);
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(400);
+      const typed = `tcref-${tag.slice(-4)}`;
+      await page.fill('[data-form-modal] input[name="name"]', typed);
+      await page.evaluate(() => {
+        const select = document.querySelector('[data-form-modal] select[name="project"]');
+        const option = document.createElement("option");
+        option.value = "/zz-no-such-project";
+        select.appendChild(option);
+        select.value = option.value;
+      });
+      await page.click('[data-form-modal] button[type="submit"]');
+      await page.waitForSelector("[data-form-modal] [data-form-modal-error]", { timeout: 8000 });
+      const state = await page.evaluate(() => ({
+        path: window.location.pathname,
+        open: document.querySelector("[data-form-modal]").classList.contains("show"),
+        error: document.querySelector("[data-form-modal-error]").textContent.trim(),
+        name: document.querySelector('[data-form-modal] input[name="name"]').value,
+        submitting: document.querySelector('[data-form-modal] button[type="submit"]').disabled,
+      }));
+      assert(state.path === "/projects" && state.open, `thrown out of the dialog: ${JSON.stringify(state)}`);
+      assert(state.error.length > 0, "no message in the dialog");
+      assert(state.name === typed, `the typed name is gone: ${state.name}`);
+      assert(!state.submitting, "the submit button stayed disabled after the refusal");
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector("[data-form-modal].show"), null, { timeout: 6000 });
+      return state.error;
+    });
+
+    // While the create runs the form gives way to a spinner and one line; the
+    // create is held back so that state can be read.
+    await run("dialog: a create shows the wait in place of the form, then lands on the new coder's page", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await dialogReady(page);
+      await page.click(`#project-${project} a[href^="/coders/new"]`);
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(400);
+      await page.fill('[data-form-modal] input[name="name"]', `tcdlg-${tag.slice(-4)}`);
+      await page.route("**/coders/new?*", async (route) => {
+        if (route.request().method() !== "POST") return route.continue().catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await route.continue().catch(() => {});
+      });
+      let created;
+      try {
+        await page.click('[data-form-modal] button[type="submit"]');
+        await page.waitForSelector("[data-form-modal] [data-form-modal-wait] .spinner-border", { state: "visible", timeout: 5000 });
+        const waiting = await page.evaluate(() => ({
+          formHidden: document.querySelector("[data-form-modal] form").hidden,
+          line: document.querySelector("[data-form-modal] [data-form-modal-wait]").textContent.trim(),
+          centered: getComputedStyle(document.querySelector("[data-form-modal] [data-form-modal-wait]")).textAlign,
+          buttons: document.querySelectorAll("[data-form-modal] .btn-loading").length,
+        }));
+        assert(waiting.formHidden, "the form still shows under the wait");
+        assert(/Starting the coder/.test(waiting.line), `the wait line reads ${JSON.stringify(waiting.line)}`);
+        assert(waiting.centered === "center" && waiting.buttons === 0, `the wait is not the spinner and a line: ${JSON.stringify(waiting)}`);
+        await page.waitForURL(/\/coders\/(?!new)[^/]+$/, { timeout: 20000 });
+        created = page.url();
+      } finally {
+        await page.unroute("**/coders/new?*").catch(() => {});
+      }
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });
+      // The dialog takes its fade to close, so the landing is what is waited
+      // for and the empty dialog is read after it.
+      await page.waitForFunction(() => !document.querySelector("[data-form-modal] form"), null, { timeout: 6000 });
+      const left = await page.evaluate(() => ({
+        open: document.querySelectorAll("[data-form-modal].show").length,
+        backdrops: document.querySelectorAll(".modal-backdrop").length,
+        locked: document.body.classList.contains("modal-open"),
+      }));
+      assert(left.open === 0 && left.backdrops === 0 && !left.locked, `the dialog stayed behind: ${JSON.stringify(left)}`);
+      // Cleanup through the routes: stopping and deleting from the UI has its
+      // own checks below, and the stored session must go with it, the runner's
+      // instance shares the coder's real store.
+      await page.evaluate(async (id) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/coders/${id}/stop`, { method: "POST", headers: { "X-CSRF-Token": token } });
+        await fetch(`/coders/${id}/delete`, { method: "POST", headers: { "X-CSRF-Token": token } });
+      }, new URL(created).pathname.split("/").pop());
+      await sleep(800);
+      return created;
     });
 
     await run("create -> attach elements + canvas", async () => {

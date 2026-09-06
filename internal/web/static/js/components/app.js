@@ -120,7 +120,12 @@ window.addEventListener("pe:include", (e) => {
 
 window.addEventListener("pe:form", (e) => {
   const buttons = [...e.detail.form.querySelectorAll("button")];
-  buttons.forEach((b) => { b.disabled = true; b.classList.add("btn-loading"); });
+  // The loading look belongs to something styled as a button: it paints the
+  // label transparent and puts a spinner in the element's own box. On anything
+  // else (a chip, an icon in a row) that leaves an empty shape with a spinner
+  // wherever the nearest positioned ancestor is, so those only go dead and the
+  // surface they sit on shows the wait.
+  buttons.forEach((b) => { b.disabled = true; if (b.classList.contains("btn")) b.classList.add("btn-loading"); });
   let stale = false;
   closeOpenModals();
   e.detail.succeed.push(dropModalOverlay);

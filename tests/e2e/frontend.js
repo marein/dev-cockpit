@@ -69,7 +69,9 @@ L.runFeature("FRONTEND", async ({ page, run, bag }) => {
 
     await run("custom elements upgraded on /projects", async () => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-      assert((await L.waitUpgraded(page, ["dc-quicknav", "dc-update-check", "dc-project-list"], 8000)).length === 0, "not upgraded");
+      // dc-form-modal sits in the layout of every signed in page, next to the
+      // swapped region, so it upgrades here like the quick nav does.
+      assert((await L.waitUpgraded(page, ["dc-quicknav", "dc-update-check", "dc-project-list", "dc-form-modal"], 8000)).length === 0, "not upgraded");
     });
 
     await run("marked text is opaque and carries 4.5:1, light and dark", async () => {

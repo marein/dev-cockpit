@@ -198,16 +198,16 @@
           <i class="ti ti-chevron-left flex-shrink-0"></i><span class="text-truncate">{{.Name}}</span>
         </button>
         <div class="d-flex align-items-center justify-content-end gap-1 px-3 pb-2" data-pb-actions>
-          {{if .GitRepo}}
-          <button type="button" class="btn btn-sm btn-ghost-secondary px-2 py-2" data-git-project-menu data-git-project="{{.Name}}"{{if not .Worktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{.EditorURL}}&amp;view=commit" data-git-compare="{{.EditorURL}}&amp;view=compare" title="Git in {{.Name}}" aria-label="Git actions for {{.Name}}">
-            <i class="ti ti-brand-git"></i>
-          </button>
-          {{end}}
           {{if .Docker.Stacks}}
           <button type="button" class="btn btn-sm btn-ghost-secondary px-2 py-2" data-docker-project-menu data-docker-project="{{.Name}}" title="Compose in {{.Name}}" aria-label="Compose actions for {{.Name}}">
             <span class="dc-term-icon{{if .Docker.AnyRunning}} running{{end}}{{if .Docker.Working}} dc-docker-working{{end}}" aria-hidden="true"><i class="ti ti-brand-docker"></i></span>
             {{range .Docker.Stacks}}<span hidden data-docker-stack data-stack-label="{{.Label}}" data-stack-running="{{.Running}}" data-stack-total="{{.Total}}"{{if .Busy}} data-stack-busy="1"{{end}}{{if .RunID}} data-stack-run="{{.RunID}}" data-stack-run-action="{{.RunAction}}"{{if .RunGoing}} data-stack-run-going="1"{{end}}{{end}}></span>{{end}}
             {{range $.QuickNav.DockerActions}}<span hidden data-docker-action data-action-id="{{.ID}}" data-action-icon="{{.Icon}}" data-action-label="{{.Label}}" data-action-command="{{.Command}}"{{if .Confirm}} data-action-confirm="1"{{end}}></span>{{end}}
+          </button>
+          {{end}}
+          {{if .GitRepo}}
+          <button type="button" class="btn btn-sm btn-ghost-secondary px-2 py-2" data-git-project-menu data-git-project="{{.Name}}"{{if not .Worktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{.EditorURL}}&amp;view=commit" data-git-compare="{{.EditorURL}}&amp;view=compare" title="Git in {{.Name}}" aria-label="Git actions for {{.Name}}">
+            <i class="ti ti-brand-git"></i>
           </button>
           {{end}}
           <a href="{{.EditorURL}}" class="btn btn-sm btn-ghost-secondary px-2 py-2" title="Editor for {{.Name}}" aria-label="Open editor for {{.Name}}">

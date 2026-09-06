@@ -10,6 +10,7 @@ import * as projectSort from "@dc/project-sort";
 import { splitCreateItems } from "@dc/split";
 import { notifyError, notifySuccess } from "@dc/toast";
 import { releaseCoder, steerCoder } from "@dc/steer";
+import { openFormModal } from "dc-form-modal";
 
 const DRAG_THRESHOLD = 6;
 const EDGE_ZONE = 32;
@@ -1256,6 +1257,9 @@ class TerminalTabs extends HTMLElement {
   navigate(url) {
     this.closeSwitcher();
     if (!url || url === window.location.pathname) return;
+    // The + menu's and the switcher's create entries open the dialog instead of
+    // the form page, by mouse and by keyboard alike: both commit through here.
+    if (openFormModal(url)) return;
     if (window.app?.navigate) window.app.navigate(url);
     else window.location.href = url;
   }

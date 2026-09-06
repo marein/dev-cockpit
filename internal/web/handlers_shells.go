@@ -25,14 +25,22 @@ func (s *Server) handleShellNew(c *gin.Context) {
 	// target through as hidden fields, like the coder create does.
 	target := splitTargetFromRequest(c)
 	page := s.page(c, "New Shell", "projects")
-	c.HTML(http.StatusOK, "shells_new.gohtml", render.ShellNewData{
+	data := render.ShellNewData{
 		Page:        page,
 		Projects:    render.ProjectOptions(page.QuickNav.AllProjects),
 		DefaultPath: defaultPath,
 		Return:      s.formReturn(c),
+		Modal:       inFormModal(c),
 		SplitGroup:  target.Group,
 		SplitColumn: target.Column,
-	})
+	}
+	// The dialog asked for this page and gets the form alone, the same one the
+	// page renders around its card.
+	if data.Modal {
+		c.HTML(http.StatusOK, "shells_new_form.gohtml", data)
+		return
+	}
+	c.HTML(http.StatusOK, "shells_new.gohtml", data)
 }
 
 func (s *Server) handleShellCreate(c *gin.Context) {
@@ -42,12 +50,12 @@ func (s *Server) handleShellCreate(c *gin.Context) {
 	target := splitTargetFromRequest(c)
 	p, err := s.projects.Find(strings.TrimSpace(c.PostForm("project")))
 	if err != nil {
-		s.redirectWithFlash(c, "/shells/new", "", err.Error())
+		s.formRefused(c, "/shells/new", err.Error())
 		return
 	}
 	id, err := s.shells.Start(p.Path, "shell")
 	if err != nil {
-		s.redirectWithFlash(c, "/shells/new", "", err.Error())
+		s.formRefused(c, "/shells/new", err.Error())
 		return
 	}
 	s.styleSessionPane(id)
@@ -56,10 +64,10 @@ func (s *Server) handleShellCreate(c *gin.Context) {
 	s.publishTerminals(s.projects.ProjectNameFor(p.Path))
 	if joinErr != nil {
 		// The shell runs either way; only the split view did not happen.
-		s.redirectWithFlash(c, "/shells/"+id, "", "The shell was started but could not join the split view.")
+		s.createLanded(c, "/shells/"+id, "", "The shell was started but could not join the split view.")
 		return
 	}
-	c.Redirect(http.StatusSeeOther, "/shells/"+id)
+	s.createLanded(c, "/shells/"+id, "", "")
 }
 
 func (s *Server) handleShellAttach(c *gin.Context) {

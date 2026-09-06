@@ -4,10 +4,12 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // Shells: plain throwaway terminals, the safe target. Custom elements terminal-attach,
 // terminal-input, terminal-setting-select, dc-inline-rename, dc-project-select. The shared
 // terminal interaction (typing, controls, copy, scroll) is in terminal.js; this
-// covers what is shell specific. Routes: GET /shells/new, POST /shells/new,
+// covers what is shell specific. The create form also stands in the app wide
+// create dialog (dc-form-modal): it asks for the same GET with modal=1 and posts
+// to the same path. Routes: GET /shells/new, POST /shells/new,
 // GET /shells/:id, POST /shells/:id/{delete,rename,input,resize}, GET .../stream.
 
-L.runFeature("SHELLS", async ({ page, run }) => {
+L.runFeature("SHELLS", async ({ page, run, mobilePage }) => {
   const tag = `shell-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   let shellUrl = null;
@@ -62,6 +64,141 @@ L.runFeature("SHELLS", async ({ page, run }) => {
       await page.keyboard.press("Enter"); await sleep(800);
       await page.reload({ waitUntil: "domcontentloaded" });
       assert((await page.textContent("[data-rename-label]")).trim() === name, "rename not persisted");
+    });
+
+    // The dialog element upgrades lazily like every custom element, and a click
+    // that beats it lands on the form page, which is the fallback and not what
+    // these checks are about.
+    const dialogReady = async (target) => {
+      assert((await L.waitUpgraded(target, ["dc-form-modal"], 8000)).length === 0, "dc-form-modal not upgraded");
+    };
+
+    // The create form opens in a dialog, from every way that used to lead to
+    // the form page: the dialog fetches the same /shells/new with modal=1 and
+    // posts to the same path. The page stays a page, the check above opens it
+    // directly and creates through it.
+    await run("dialog: the tab strip + menu and the quick nav both open the create form", async () => {
+      await page.goto(shellUrl, { waitUntil: "domcontentloaded" });
+      await dialogReady(page);
+      await page.click("terminal-tabs .terminal-tabs-new-btn");
+      await page.click('terminal-tabs .dropdown-menu.show a[href^="/shells/new"]');
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(600);
+      const desktop = await page.evaluate(() => ({
+        path: window.location.pathname,
+        title: document.querySelector("[data-form-modal] .modal-title").textContent.trim(),
+        action: document.querySelector("[data-form-modal] form").getAttribute("action"),
+        focused: document.activeElement?.getAttribute("name") || "",
+        menu: Boolean(document.querySelector("terminal-tabs .dropdown-menu.show")),
+      }));
+      assert(desktop.path.startsWith("/shells/"), `the page moved to ${desktop.path}`);
+      assert(desktop.title === "Start shell", `dialog head reads ${desktop.title}`);
+      assert(desktop.action.startsWith("/shells/new"), `the form posts to ${desktop.action}`);
+      assert(!desktop.menu, "the + menu stayed open behind the dialog");
+      assert(desktop.focused === "project", `focus sits on ${desktop.focused || "nothing"}`);
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector("[data-form-modal].show"), null, { timeout: 6000 });
+      await sleep(400);
+      const closed = await page.evaluate(() => ({
+        forms: document.querySelectorAll("[data-form-modal] form").length,
+        backdrops: document.querySelectorAll(".modal-backdrop").length,
+      }));
+      assert(closed.forms === 0 && closed.backdrops === 0, `the dialog left something behind: ${JSON.stringify(closed)}`);
+
+      // The quick nav is the phone's way in, and there no field may take the
+      // focus, a keyboard would cover the dialog the moment it opens.
+      const mp = await mobilePage();
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await dialogReady(mp);
+      await mp.click(".quicknav-toggle");
+      await mp.click('.quicknav-menu a[href^="/shells/new"]');
+      await mp.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(600);
+      const mobile = await mp.evaluate(() => {
+        const submit = document.querySelector('[data-form-modal] button[type="submit"]').getBoundingClientRect();
+        return {
+          path: window.location.pathname,
+          menu: Boolean(document.querySelector(".quicknav-menu.show")),
+          focused: document.activeElement?.getAttribute("name") || "",
+          overflow: document.documentElement.scrollWidth > window.innerWidth,
+          submitReachable: submit.width > 0 && submit.bottom <= window.innerHeight,
+        };
+      });
+      assert(mobile.path === "/projects", `the phone left the page for ${mobile.path}`);
+      assert(!mobile.menu, "the quick nav stayed open behind the dialog");
+      assert(mobile.focused === "", `a touch keyboard would pop up on ${mobile.focused}`);
+      assert(!mobile.overflow && mobile.submitReachable, `not usable at 390: ${JSON.stringify(mobile)}`);
+      await mp.keyboard.press("Escape").catch(() => {});
+      return "+ menu and quick nav, focus on the desktop and none on the phone";
+    });
+
+    // A refused create is the whole reason the dialog talks to the server
+    // itself: the message belongs in the dialog and the chosen values have to
+    // survive it. The select only offers projects that exist, so the value the
+    // server refuses is planted.
+    await run("dialog: a refused create shows the message and keeps the values", async () => {
+      await page.goto(shellUrl, { waitUntil: "domcontentloaded" });
+      await dialogReady(page);
+      await page.click("terminal-tabs .terminal-tabs-new-btn");
+      await page.click('terminal-tabs .dropdown-menu.show a[href^="/shells/new"]');
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(400);
+      await page.evaluate(() => {
+        const select = document.querySelector('[data-form-modal] select[name="project"]');
+        const option = document.createElement("option");
+        option.value = "/zz-no-such-project";
+        select.appendChild(option);
+        select.value = option.value;
+      });
+      await page.click('[data-form-modal] button[type="submit"]');
+      await page.waitForSelector("[data-form-modal] [data-form-modal-error]", { timeout: 8000 });
+      const state = await page.evaluate(() => ({
+        path: window.location.pathname,
+        open: document.querySelector("[data-form-modal]").classList.contains("show"),
+        error: document.querySelector("[data-form-modal-error]").textContent.trim(),
+        project: document.querySelector('[data-form-modal] select[name="project"]').value,
+        submitting: document.querySelector('[data-form-modal] button[type="submit"]').disabled,
+      }));
+      assert(state.path.startsWith("/shells/") && state.open, `thrown out of the dialog: ${JSON.stringify(state)}`);
+      assert(state.error.length > 0, "no message in the dialog");
+      assert(state.project === "/zz-no-such-project", `the chosen project is gone: ${state.project}`);
+      assert(!state.submitting, "the submit button stayed disabled after the refusal");
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector("[data-form-modal].show"), null, { timeout: 6000 });
+      return state.error;
+    });
+
+    await run("dialog: a create lands on the new shell's page", async () => {
+      await page.goto(shellUrl, { waitUntil: "domcontentloaded" });
+      await dialogReady(page);
+      await page.click("terminal-tabs .terminal-tabs-new-btn");
+      await page.click('terminal-tabs .dropdown-menu.show a[href^="/shells/new"]');
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(400);
+      await page.selectOption('[data-form-modal] select[name="project"]', { label: project });
+      // The page under the dialog is a shell page already, so the landing is
+      // the move to a different one.
+      const from = new URL(page.url()).pathname;
+      await page.click('[data-form-modal] button[type="submit"]');
+      await page.waitForURL((u) => /\/shells\/(?!new)[^/]+$/.test(u.pathname) && u.pathname !== from, { timeout: 15000 });
+      const created = page.url();
+      // The dialog takes its fade to close, so the landing is what is waited
+      // for and the empty dialog is read after it.
+      await page.waitForFunction(() => !document.querySelector("[data-form-modal] form"), null, { timeout: 6000 });
+      const left = await page.evaluate(() => ({
+        open: document.querySelectorAll("[data-form-modal].show").length,
+        backdrops: document.querySelectorAll(".modal-backdrop").length,
+        locked: document.body.classList.contains("modal-open"),
+      }));
+      assert(left.open === 0 && left.backdrops === 0 && !left.locked, `the dialog stayed behind: ${JSON.stringify(left)}`);
+      // Cleanup through the route: deleting from the strip has its own check
+      // right below, and its handle goes stale under WebKit now and then, which
+      // would fail this check for something it is not about.
+      await page.evaluate(async (id) => {
+        await fetch(`/shells/${id}/delete`, { method: "POST", headers: { "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content } });
+      }, new URL(created).pathname.split("/").pop());
+      await sleep(600);
+      return created;
     });
 
     // The attach header carries the delete on touch only, so the desktop way

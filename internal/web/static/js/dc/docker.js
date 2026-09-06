@@ -1,8 +1,12 @@
 import { confirm, promptText } from "@dc/dialog";
 import { ensureOk, postForm } from "@dc/http";
 import { notifyError, notifySuccess } from "@dc/toast";
+import { openFormModal } from "dc-form-modal";
 
 export function navigate(url) {
+  // A create form opens in its dialog wherever it is asked for, the git menu's
+  // New worktree included; everything else is a navigation.
+  if (openFormModal(url)) return;
   if (window.app?.navigate) window.app.navigate(url);
   else window.location.href = url;
 }

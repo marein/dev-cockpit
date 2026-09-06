@@ -57,6 +57,7 @@
       "dc-project-list": "{{asset "/js/components/project-list.js"}}",
       "dc-project-select": "{{asset "/js/components/project-select.js"}}",
       "dc-project-new": "{{asset "/js/components/project-new.js"}}",
+      "dc-form-modal": "{{asset "/js/components/form-modal.js"}}",
       "dc-docker-run": "{{asset "/js/components/docker-run.js"}}",
       "dc-docker-actions": "{{asset "/js/components/docker-actions.js"}}",
       "dc-docker-link-rules": "{{asset "/js/components/docker-link-rules.js"}}",
@@ -335,6 +336,23 @@
   </div>
   <div class="toast-container position-fixed top-0 end-0 p-3" data-dc-toasts></div>
   {{if .User}}
+  <!-- The create dialog, next to the swapped page region so it outlives a
+       boosted navigation and no fixed page context (an editor or a terminal in
+       fullscreen) can put it under its own backdrop. The form inside comes from
+       the server, from the very page the link points at; the dialog holds the
+       head and the close. -->
+  <dc-form-modal>
+    <div class="modal modal-blur fade" data-form-modal tabindex="-1" aria-labelledby="dc-form-modal-title" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content" data-form-modal-content>
+          <div class="modal-header">
+            <h3 class="modal-title" id="dc-form-modal-title" data-form-modal-title></h3>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dc-form-modal>
   {{template "host_status_float.gohtml" .}}
   <!-- The assistant overlay sits next to the swapped page region, not in it, so
        an open surface, a streaming answer and the words in the composer survive

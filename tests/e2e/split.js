@@ -244,7 +244,9 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await mp.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
     });
 
-    await run("mobile: cancelling a create form returns to the focused pane, not the first member", async () => {
+    // The create form stands in a dialog now, so cancelling never leaves the
+    // page: the split stays open behind it and keeps the pane it had focused.
+    await run("mobile: cancelling a create leaves the focused pane standing", async () => {
       const mp = await mobilePage();
       await mp.goto(shellUrls[1], { waitUntil: "domcontentloaded" });
       await mp.waitForURL(new RegExp(`/splits/${gid}\\?focus=${ids[1]}`), { timeout: 8000 });
@@ -253,8 +255,9 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await mp.waitForSelector('[data-quicknav-pane="active"]', { state: "visible", timeout: 8000 });
       await sleep(800);
       await mp.click('[data-quicknav-pane="active"] a[href^="/shells/new"]');
-      await mp.waitForURL(/\/shells\/new/, { timeout: 10000 });
-      await mp.locator("a", { hasText: "Cancel" }).first().click();
+      await mp.waitForSelector("[data-form-modal].show form", { timeout: 10000 });
+      await mp.locator('[data-form-modal] button:has-text("Cancel")').first().click();
+      await mp.waitForFunction(() => !document.querySelector("[data-form-modal].show"), null, { timeout: 6000 });
       await mp.waitForURL(new RegExp(`/splits/${gid}\\?focus=${ids[1]}`), { timeout: 10000 });
       await mp.waitForSelector(`terminal-attach[terminal-id="${ids[1]}"] .xterm-screen canvas`, { timeout: 15000 });
       const active = await mp.getAttribute("terminal-attach[active]", "terminal-id");
@@ -670,19 +673,21 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
       await sleep(1200);
       const item = await contextItem(`.attach-split-pane[data-pane-id="${ids[0]}"] [data-pane-head]`, "New shell here");
       await item.click();
-      await page.waitForURL(/\/shells\/new/, { timeout: 10000 });
-      const query = new URL(page.url()).searchParams;
-      assert(query.get("group") === gid && query.get("column") === ids[0], `the form carries the target: ${page.url()}`);
-      const fields = await page.$$eval("form input[type=hidden]", (els) => Object.fromEntries(els.map((e) => [e.name, e.value])));
+      // The form stands in the create dialog over the split (see shells.js),
+      // and the target rides the query into its hidden fields as it always did.
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 10000 });
+      await sleep(600);
+      const fields = await page.$$eval("[data-form-modal] form input[type=hidden]", (els) => Object.fromEntries(els.map((e) => [e.name, e.value])));
       assert(fields.group === gid && fields.column === ids[0], `hidden fields: ${JSON.stringify(fields)}`);
-      const selected = await page.$eval('select[name="project"]', (el) => el.value.split("/").pop());
+      const selected = await page.$eval('[data-form-modal] select[name="project"]', (el) => el.value.split("/").pop());
       assert(selected === project, `the project select stands on the pane's project: ${selected}`);
       // The field stays editable, which project the new pane works in is the
       // person's decision.
-      const editable = await page.$eval('select[name="project"]', (el) => !el.disabled && el.offsetParent !== null);
+      const editable = await page.$eval('[data-form-modal] select[name="project"]', (el) => !el.disabled && el.offsetParent !== null);
       assert(editable, "the project select is not editable");
-      await page.locator('form:has(select[name="project"]) button[type="submit"]').first().click();
-      await page.waitForURL(new RegExp(`/splits/${gid}\\?focus=`), { timeout: 20000 });
+      const fromPane = page.url();
+      await page.locator('[data-form-modal] form button[type="submit"]').first().click();
+      await page.waitForURL((u) => new RegExp(`/splits/${gid}\\?focus=`).test(u.href) && u.href !== fromPane, { timeout: 20000 });
       const fresh = new URL(page.url()).searchParams.get("focus");
       stackedId = fresh;
       shellUrls.push(`${L.BASE}/shells/${fresh}`);
@@ -731,26 +736,28 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
     await run("'New coder here' from the group tab opens the form prefilled and carries the target through it", async () => {
       const item = await contextItem(groupTabSel, "New coder here");
       await item.click();
-      await page.waitForURL(/\/coders\/new/, { timeout: 10000 });
-      const query = new URL(page.url()).searchParams;
-      assert(query.get("group") === gid, `the form carries the split: ${page.url()}`);
-      assert(!query.get("column"), `a split wide create names no column: ${page.url()}`);
-      assert(query.get("project") === project, `the project is prefilled: ${query.get("project")}`);
-      const fields = await page.$$eval("form input[type=hidden]", (els) => Object.fromEntries(els.map((e) => [e.name, e.value])));
+      // The form stands in the create dialog over the split (see coders.js),
+      // and the target rides the query into its hidden fields as it always did.
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 10000 });
+      await sleep(600);
+      const action = new URL(await page.getAttribute("[data-form-modal] form", "action"), page.url()).searchParams;
+      assert(action.get("modal") === "1", `the dialog's form posts without its marker: ${action.toString()}`);
+      const fields = await page.$$eval("[data-form-modal] form input[type=hidden]", (els) => Object.fromEntries(els.map((e) => [e.name, e.value])));
       assert(fields.group === gid, `hidden group field: ${JSON.stringify(fields)}`);
       assert(fields.column === "", `hidden column field: ${JSON.stringify(fields)}`);
-      const selected = await page.$eval('select[name="project"]', (el) => el.value.split("/").pop());
+      const selected = await page.$eval('[data-form-modal] select[name="project"]', (el) => el.value.split("/").pop());
       assert(selected === project, `the project select stands on the source project: ${selected}`);
       // The field stays editable: which project the new pane works in is the
       // person's decision, so nothing here is disabled or hidden.
-      const editable = await page.$eval('select[name="project"]', (el) => !el.disabled && el.offsetParent !== null);
+      const editable = await page.$eval('[data-form-modal] select[name="project"]', (el) => !el.disabled && el.offsetParent !== null);
       assert(editable, "the project select is not editable");
       // Send the form: the hidden fields carry the target through the POST, so
       // the coder starts and joins the split in one request.
-      const form = page.locator('form:has(select[name="agent"])').first();
+      const form = page.locator('[data-form-modal] form:has(select[name="agent"])').first();
       await form.locator('input[name="name"]').fill(`sc-${tag.slice(-5)}`);
+      const fromGroup = page.url();
       await form.locator('button[type="submit"]').first().click();
-      await page.waitForURL(new RegExp(`/splits/${gid}\\?focus=`), { timeout: 25000 });
+      await page.waitForURL((u) => new RegExp(`/splits/${gid}\\?focus=`).test(u.href) && u.href !== fromGroup, { timeout: 25000 });
       await page.waitForFunction(
         () => document.querySelectorAll("terminal-attach[terminal-id]").length === 4,
         undefined,
@@ -805,11 +812,13 @@ L.runFeature("SPLIT VIEW", async ({ page, run, mobilePage, engine }) => {
     await run("a split wide create opens a column of its own at the right edge", async () => {
       const item = await contextItem(groupTabSel, "New shell here");
       await item.click();
-      await page.waitForURL(/\/shells\/new/, { timeout: 10000 });
-      const query = new URL(page.url()).searchParams;
-      assert(query.get("group") === gid && !query.get("column"), `a split wide create names no column: ${page.url()}`);
-      await page.locator('form:has(select[name="project"]) button[type="submit"]').first().click();
-      await page.waitForURL(new RegExp(`/splits/${gid}\\?focus=`), { timeout: 20000 });
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 10000 });
+      await sleep(600);
+      const fields = await page.$$eval("[data-form-modal] form input[type=hidden]", (els) => Object.fromEntries(els.map((e) => [e.name, e.value])));
+      assert(fields.group === gid && !fields.column, `a split wide create names no column: ${JSON.stringify(fields)}`);
+      const fromWide = page.url();
+      await page.locator('[data-form-modal] form button[type="submit"]').first().click();
+      await page.waitForURL((u) => new RegExp(`/splits/${gid}\\?focus=`).test(u.href) && u.href !== fromWide, { timeout: 20000 });
       const fresh = new URL(page.url()).searchParams.get("focus");
       shellUrls.push(`${L.BASE}/shells/${fresh}`);
       await page.waitForFunction(

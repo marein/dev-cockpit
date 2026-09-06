@@ -8,7 +8,12 @@
 // terminal, also on an open split page. A menu whose entries mean something
 // else depending on the page is the thing to avoid here.
 
+import { openFormModal } from "dc-form-modal";
+
 const navigate = (url) => {
+  // The create forms stand in the dialog, here like everywhere else; without
+  // one on the page the form page is the answer, the way it always was.
+  if (openFormModal(url)) return;
   if (window.app?.navigate) Promise.resolve(window.app.navigate(url)).catch(() => {});
   else window.location.href = url;
 };

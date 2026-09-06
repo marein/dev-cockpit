@@ -225,6 +225,15 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await open();
     const detail = page.locator(`[data-pb-detail="${NAME}"]`);
     assert(await detail.locator("[data-pb-actions] [data-docker-project-menu]").count() === 1, "no compose action in the detail's row");
+    // Same order as the projects page's row: compose first, git after it.
+    const actionOrder = await detail.locator("[data-pb-actions]").evaluate((bar) => {
+      const items = [...bar.querySelectorAll("a, button")];
+      const compose = bar.querySelector("[data-docker-project-menu]");
+      const git = bar.querySelector("[data-git-project-menu]");
+      return { compose: items.indexOf(compose), git: git ? items.indexOf(git) : -1 };
+    });
+    assert(actionOrder.git === -1 || actionOrder.compose < actionOrder.git,
+      `the compose action does not stand left of the git action: ${JSON.stringify(actionOrder)}`);
     assert(await detail.locator('[data-pb-actions] [data-docker-project-menu] .dc-term-icon.running').count() === 1, "the compose action is not green while the stack runs");
     const containers = detail.locator('[data-chip-kind="docker"]');
     assert(await containers.count() === 1, `expected one container row, got ${await containers.count()}`);

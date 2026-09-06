@@ -88,7 +88,7 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 	// prefilled and carries the group target through as hidden fields.
 	target := splitTargetFromRequest(c)
 	page := s.page(c, "New Coder", "projects")
-	c.HTML(http.StatusOK, "coders_new.gohtml", render.CoderNewData{
+	data := render.CoderNewData{
 		Page:              page,
 		Projects:          render.ProjectOptions(page.QuickNav.AllProjects),
 		DefaultPath:       defaultPath,
@@ -97,9 +97,17 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 		AutomaticApproval: true,
 		Return:            s.formReturn(c),
 		Panel:             c.Query("panel") == "1",
+		Modal:             inFormModal(c),
 		SplitGroup:        target.Group,
 		SplitColumn:       target.Column,
-	})
+	}
+	// The dialog asked for this page and gets the form alone, the same one the
+	// page renders around its card.
+	if data.Modal {
+		c.HTML(http.StatusOK, "coders_new_form.gohtml", data)
+		return
+	}
+	c.HTML(http.StatusOK, "coders_new.gohtml", data)
 }
 
 func (s *Server) handleCoderAttach(c *gin.Context) {
@@ -161,7 +169,7 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 	}
 	co, err := s.coderFromRequest(c)
 	if err != nil {
-		s.redirectWithFlash(c, "/coders/new", "", err.Error())
+		s.formRefused(c, "/coders/new", err.Error())
 		return
 	}
 	// The criterion is checked before anything exists, with the watcher's own
@@ -171,11 +179,7 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 	if strings.TrimSpace(form.DoneWhen) != "" {
 		doneWhen, err = assistant.ValidateDoneWhen(form.DoneWhen)
 		if err != nil {
-			if wantsJSON(c.Request) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			s.redirectWithFlash(c, "/coders/new", "", err.Error())
+			s.formRefused(c, "/coders/new", err.Error())
 			return
 		}
 	}
@@ -189,11 +193,7 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		},
 	)
 	if err != nil {
-		if wantsJSON(c.Request) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		s.redirectWithFlash(c, "/coders/new", "", err.Error())
+		s.formRefused(c, "/coders/new", err.Error())
 		return
 	}
 	s.styleSessionPane(res.Identifier)
@@ -228,8 +228,10 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		}
 	}
 	// A local caller (the assistant, through dev-cockpit assistant coder-new) needs the
-	// identifier it just created, not the page a browser would follow to.
-	if wantsJSON(c.Request) {
+	// identifier it just created, not the page a browser would follow to. The
+	// dialog accepts JSON too but is a browser: it wants the destination this
+	// create leads to, so it hears the landing below.
+	if wantsJSON(c.Request) && !inFormModal(c) {
 		c.JSON(http.StatusOK, answer)
 		return
 	}
@@ -241,15 +243,15 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 	// lands on the coder's own page like a created shell does, and its editor
 	// return serves the form's Cancel alone.
 	if ret := s.formReturn(c); c.Query("panel") == "1" && editorReturnPath.MatchString(ret) {
-		c.Redirect(http.StatusSeeOther, ret+"?terminal="+url.QueryEscape(res.Identifier))
+		s.createLanded(c, ret+"?terminal="+url.QueryEscape(res.Identifier), "", "")
 		return
 	}
 	if joinErr != nil {
 		// The coder runs either way; only the split view did not happen.
-		s.redirectWithFlash(c, "/coders/"+res.Identifier, "", "The coder was started but could not join the split view.")
+		s.createLanded(c, "/coders/"+res.Identifier, "", "The coder was started but could not join the split view.")
 		return
 	}
-	c.Redirect(http.StatusSeeOther, "/coders/"+res.Identifier)
+	s.createLanded(c, "/coders/"+res.Identifier, "", "")
 }
 
 // editorReturnPath matches a create form's return target that is a project

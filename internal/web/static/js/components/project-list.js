@@ -104,6 +104,16 @@ class ProjectList extends HTMLElement {
     // server-rendered list, preserving its local filter and sort preferences.
     onServerEvent("projects", () => this.refreshProjectList(), { signal: this.ac.signal });
     onServerEvent("docker", () => this.refreshProjects(null), { signal: this.ac.signal });
+    // A form sent from the card (starting a shell above all) waits like
+    // everything else here: the card shows its line until the answer lands.
+    // The chips are no `.btn`, so the button spinner pe.js puts on a submit
+    // does not apply to them, and an empty pill with a spinner somewhere near
+    // it is not a wait anybody can read.
+    window.addEventListener("pe:form", (event) => {
+      const card = this.querySelector(".projects-card");
+      if (!card || !card.contains(event.detail.form)) return;
+      event.detail.finally.push(this.cardBar("Working"));
+    }, { signal: this.ac.signal });
   }
 
   disconnectedCallback() {
@@ -408,6 +418,17 @@ class ProjectList extends HTMLElement {
     this.refreshProjects(detail && detail.project ? [detail.project] : null);
   }
 
+  // cardBar shows the wait on the card: the same zero height line the quick nav
+  // and the background refresh show, so every wait started here looks alike. It
+  // hands back the remover, and a second caller while one stands adds nothing.
+  cardBar(label) {
+    const card = this.querySelector(".projects-card");
+    if (!card || card.querySelector(":scope > .dc-loading-bar")) return () => {};
+    const bar = el("div", { class: "dc-loading-bar", role: "status", "aria-label": label });
+    card.prepend(bar);
+    return () => bar.remove();
+  }
+
   // refreshProjects pulls a fresh /projects render and swaps the chip lists of
   // the named projects in place (all of them when names is null). The fetch is
   // this client's own, so the swapped-in forms already carry the right CSRF
@@ -422,9 +443,7 @@ class ProjectList extends HTMLElement {
     }
     this.dirty = false;
     this.inFlight = true;
-    const card = this.querySelector(".projects-card");
-    const bar = card && el("div", { class: "dc-loading-bar", role: "status", "aria-label": "Refreshing" });
-    if (bar) card.prepend(bar);
+    const hideBar = this.cardBar("Refreshing");
     // A worktree's main wears its worktrees' state on the badge, so the main's
     // row refreshes along with the worktree the event names.
     const wanted = names && new Set(names.flatMap((n) => {
@@ -437,7 +456,7 @@ class ProjectList extends HTMLElement {
       .then((html) => this.applySections(new DOMParser().parseFromString(html, "text/html"), wanted))
       .catch(() => {})
       .finally(() => {
-        if (bar) bar.remove();
+        hideBar();
         this.inFlight = false;
         if (this.dirty) {
           const whole = this.refreshWhole;
@@ -557,6 +576,7 @@ class ProjectList extends HTMLElement {
   // Re-renders just the project row from the redirected /projects response.
   ajaxRefresh(form) {
     const section = form.closest('[id^="project-"]');
+    const hideBar = this.cardBar("Working");
     fetch(form.action, { method: "POST", body: new URLSearchParams(new FormData(form)) })
       .then((response) => {
         if (!response.ok) throw new Error("submit failed");
@@ -573,7 +593,8 @@ class ProjectList extends HTMLElement {
         this.applyGroups();
         document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: fresh } }));
       })
-      .catch(() => window.pe.submit(form));
+      .catch(() => window.pe.submit(form))
+      .finally(hideBar);
   }
 
   setupSort() {

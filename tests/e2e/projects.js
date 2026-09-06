@@ -2,8 +2,10 @@ const L = require("./lib");
 const { assert, sleep, submitBtn, confirmSwal, BASE } = L;
 
 // Projects: the dense board with filter, sort, chip fold, and the create +
-// delete flows. Custom element dc-project-list. Routes: GET /projects,
-// GET /projects/new, POST /projects, POST /projects/delete. Rows are
+// delete flows. Custom elements dc-project-list, dc-project-new, dc-form-modal.
+// The create form stands on its own page and in the app wide create dialog,
+// which asks for the same GET with modal=1 and posts to the same path. Routes:
+// GET /projects, GET /projects/new, POST /projects, POST /projects/delete. Rows are
 // .list-group-item[data-project-name] with id project-<name>; sessions render
 // as [data-chip] entries inside [data-sessions-body], folded past 8 behind a
 // [data-chips-toggle] chip.
@@ -14,6 +16,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
   const source = `zzwt-${tag}`;
   const remote = `zzrm-${tag}`;
   const solo = `zzsolo-${tag}`;
+  const asker = `zzask-${tag}`;
   const shellUrls = [];
   const worktrees = [];
   let sourcePath = "";
@@ -1132,6 +1135,221 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert((await shown(badgeDot)) === false && (await news(rowDot)) === false, "the read news still lights a dot");
     });
 
+    // Waiting on this page has one look: the card's own line, the same the
+    // background refresh and the quick nav show. The chips are no `.btn`, so
+    // they never wear the button spinner, which on a pill leaves an empty shape
+    // with a spinner wherever the nearest positioned ancestor happens to be.
+    await run("starting a shell from a chip shows the card's line, and the chip goes dead", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
+      // The create is held back, or the wait is over before it can be read.
+      await page.route("**/shells/new", async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        await route.continue().catch(() => {});
+      });
+      let url = null;
+      try {
+        await page.click(`#project-${project} form[action="/shells/new"] button`);
+        await sleep(700);
+        const during = await page.evaluate((name) => {
+          const card = document.querySelector(".projects-card");
+          const button = document.querySelector(`#project-${name} form[action="/shells/new"] button`);
+          return {
+            bars: document.querySelectorAll(".projects-card > .dc-loading-bar").length,
+            onTop: card.firstElementChild?.classList.contains("dc-loading-bar"),
+            spinner: button?.classList.contains("btn-loading"),
+            dead: button?.disabled,
+          };
+        }, project);
+        assert(during.bars === 1 && during.onTop, `the card shows no line: ${JSON.stringify(during)}`);
+        assert(during.spinner === false, `the chip wears the button spinner: ${JSON.stringify(during)}`);
+        assert(during.dead === true, "the chip stays clickable while it works");
+        await page.waitForURL(/\/shells\/(?!new)[^/]+$/, { timeout: 20000 });
+        url = page.url();
+        shellUrls.push(url);
+      } finally {
+        await page.unroute("**/shells/new").catch(() => {});
+      }
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await sleep(1000);
+      const after = await page.evaluate(() => document.querySelectorAll(".dc-loading-bar").length);
+      assert(after === 0, `${after} lines left standing`);
+      return url;
+    });
+
+    // The create form also stands in the app wide create dialog: the same GET
+    // with modal=1 answers the form alone, and it posts to the same /projects.
+    // The page stays a page, which every check above opens directly. The dialog
+    // element upgrades lazily, and a click that beats it lands on the page,
+    // which is the fallback and not what these checks are about.
+    const dialogReady = async () => {
+      assert((await L.waitUpgraded(page, ["dc-form-modal"], 8000)).length === 0, "dc-form-modal not upgraded");
+    };
+
+    await run("dialog: the create button opens the form over the projects page", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
+      await dialogReady();
+      await page.click('a[href="/projects/new"]');
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(700);
+      const open = await page.evaluate(() => ({
+        path: window.location.pathname,
+        title: document.querySelector("[data-form-modal] .modal-title").textContent.trim(),
+        action: document.querySelector("[data-form-modal] form").getAttribute("action"),
+        focused: document.activeElement?.getAttribute("name") || "",
+        wrapper: Boolean(document.querySelector("[data-form-modal] dc-project-new")),
+      }));
+      assert(open.path === "/projects", `the page moved to ${open.path}`);
+      assert(open.title === "Create project", `dialog head reads ${open.title}`);
+      assert(open.action.startsWith("/projects"), `the form posts to ${open.action}`);
+      assert(open.focused === "create", `focus sits on ${open.focused || "nothing"}`);
+      assert(open.wrapper, "the form came without its own element");
+      return JSON.stringify(open);
+    });
+
+    // This form can more than the other two: the choice in its first select
+    // reshapes it, and the shape comes from the server. In the dialog that is
+    // the same GET swapped in place, so the worktree half with its branch
+    // pickers stands inside the standing dialog.
+    await run("dialog: the choice reshapes the form in place, worktree half included", async () => {
+      await page.selectOption('[data-form-modal] select[name="create"]', `worktree:${source}`);
+      await page.waitForSelector('[data-form-modal] [data-branch-picker="branch"]', { timeout: 10000 });
+      await sleep(600);
+      const shaped = await page.evaluate(() => ({
+        path: window.location.pathname,
+        open: document.querySelector("[data-form-modal]").classList.contains("show"),
+        source: document.querySelector('[data-form-modal] select[name="create"]').value,
+        mode: Boolean(document.querySelector('[data-form-modal] select[name="branch_mode"]')),
+        name: document.querySelector('[data-form-modal] input[name="project_name"]').value,
+        dialogs: document.querySelectorAll("[data-form-modal] form").length,
+      }));
+      assert(shaped.open && shaped.path === "/projects", `the reshape left the dialog: ${JSON.stringify(shaped)}`);
+      assert(shaped.source === `worktree:${source}`, `the choice did not stick: ${shaped.source}`);
+      assert(shaped.mode, "the branch mode select is missing, the worktree half did not arrive");
+      assert(shaped.dialogs === 1, `the dialog holds ${shaped.dialogs} forms`);
+      assert(shaped.name.startsWith(source), `the name suggestion is gone: ${shaped.name}`);
+      return JSON.stringify(shaped);
+    });
+
+    await run("dialog: a refused create shows the message and keeps the values", async () => {
+      await page.selectOption('[data-form-modal] select[name="create"]', "");
+      await page.waitForFunction(() => !document.querySelector('[data-form-modal] select[name="branch_mode"]'), null, { timeout: 8000 });
+      await sleep(400);
+      // A name the server has to refuse: an existing directory with something in
+      // it. An empty one is adopted on purpose, so the scratch project would be
+      // created a second time instead of refused.
+      await page.fill('[data-form-modal] input[name="project_name"]', source);
+      await page.click('[data-form-modal] button[type="submit"]');
+      await page.waitForSelector("[data-form-modal] [data-form-modal-error]", { timeout: 10000 });
+      const state = await page.evaluate(() => ({
+        path: window.location.pathname,
+        open: document.querySelector("[data-form-modal]").classList.contains("show"),
+        error: document.querySelector("[data-form-modal-error]").textContent.trim(),
+        name: document.querySelector('[data-form-modal] input[name="project_name"]').value,
+      }));
+      assert(state.path === "/projects" && state.open, `thrown out of the dialog: ${JSON.stringify(state)}`);
+      assert(state.error.length > 0, "no message in the dialog");
+      assert(state.name === source, `the typed name is gone: ${state.name}`);
+      return state.error;
+    });
+
+    await run("dialog: a create lands on the projects page with its row marked", async () => {
+      const name = `zzdlg-${tag.slice(-6)}`;
+      await page.fill('[data-form-modal] input[name="project_name"]', name);
+      await page.click('[data-form-modal] button[type="submit"]');
+      await page.waitForFunction((n) => Boolean(document.getElementById(`project-${n}`)), name, { timeout: 20000 });
+      await page.waitForFunction(() => !document.querySelector("[data-form-modal] form"), null, { timeout: 8000 });
+      const landed = await page.evaluate((n) => ({
+        url: window.location.href,
+        flash: (document.querySelector(`#project-${n} .alert`)?.textContent || "").trim(),
+        backdrops: document.querySelectorAll(".modal-backdrop").length,
+        locked: document.body.classList.contains("modal-open"),
+      }), name);
+      await L.deleteProject(page, name).catch(() => {});
+      assert(landed.url.endsWith(`#project-${name}`), `the landing does not name the new row: ${landed.url}`);
+      assert(landed.flash.includes(name), `the row carries no notice: ${JSON.stringify(landed)}`);
+      assert(landed.backdrops === 0 && !landed.locked, `the dialog stayed behind: ${JSON.stringify(landed)}`);
+      return JSON.stringify(landed);
+    });
+
+    // A dialog can open over the dialog: the git passphrase question above all,
+    // which the resync inside the create form can raise at any moment. Bootstrap
+    // holds the focus inside an open modal, so a popup that hangs elsewhere in
+    // the document cannot be typed into; @dc/dialog opens every popup inside the
+    // modal that stands, which is what this holds on to. Nothing real is
+    // contacted: core.sshCommand of this one repository points at a line that
+    // only asks what a passphrased key asks, the same stand-in editor-git.js
+    // uses, and the answer goes nowhere.
+    // Both widths: a trapped focus is worse on a phone, where there is no way
+    // to tab out of it.
+    const askFromDialog = async (target) => {
+      await target.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(target);
+      assert((await L.waitUpgraded(target, ["dc-form-modal"], 8000)).length === 0, "dc-form-modal not upgraded");
+      await target.click('a[href="/projects/new"]');
+      await target.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(600);
+      await target.selectOption('[data-form-modal] select[name="create"]', `worktree:${asker}`);
+      // A branch nobody has checked out, so the form opens on the existing half
+      // with its picker and the resync row in it.
+      await target.waitForSelector('[data-form-modal] [data-branch-picker="branch"]', { state: "visible", timeout: 10000 });
+      await sleep(400);
+      await target.click("[data-form-modal] #branch");
+      await target.waitForSelector('[data-form-modal] [data-branch-menu].show [data-branch-resync]', { timeout: 8000 });
+      await target.click("[data-form-modal] [data-branch-resync]");
+      await target.waitForSelector(".swal2-popup input.swal2-input", { state: "visible", timeout: 30000 });
+      await sleep(400);
+      let typed = "";
+      try {
+        const where = await target.evaluate(() => ({
+          inModal: Boolean(document.querySelector("[data-form-modal]")?.contains(document.querySelector(".swal2-container"))),
+          question: document.querySelector(".swal2-html-container")?.textContent || "",
+          masked: document.querySelector(".swal2-input")?.getAttribute("type") === "password",
+          active: document.activeElement?.className || "",
+        }));
+        assert(where.inModal, "the question hangs outside the dialog, where the focus trap cannot let it be typed into");
+        assert(/Enter passphrase for key/.test(where.question), `the question does not carry ssh's line: ${where.question}`);
+        assert(where.masked, "the passphrase field is not masked");
+        assert(where.active.includes("swal2-input"), `the question did not take the focus: ${where.active}`);
+        await target.click(".swal2-input");
+        await target.keyboard.type("opensesame");
+        typed = await target.inputValue(".swal2-input");
+        assert(typed === "opensesame", `the field took ${JSON.stringify(typed)}`);
+      } finally {
+        // A question left standing would hold the repository for every check
+        // after this one.
+        await target.click(".swal2-cancel").catch(() => {});
+        await target.waitForSelector(".swal2-container", { state: "detached", timeout: 8000 }).catch(() => {});
+      }
+      await sleep(500);
+      const back = await target.evaluate(() => ({
+        open: document.querySelector("[data-form-modal]")?.classList.contains("show"),
+        inModal: Boolean(document.querySelector("[data-form-modal]")?.contains(document.activeElement)),
+      }));
+      assert(back.open, "the create dialog went down with the question");
+      assert(back.inModal, "the focus did not come back into the dialog");
+      await target.keyboard.press("Escape").catch(() => {});
+      await target.waitForFunction(() => !document.querySelector("[data-form-modal] form"), null, { timeout: 8000 }).catch(() => {});
+      return typed;
+    };
+
+    await run("dialog: the git question opens inside it, takes the typing, and hands the focus back", async () => {
+      await L.createProject(page, asker);
+      const askPath = await L.projectPath(page, asker);
+      await seedRepo(askPath, ["zz-free"]);
+      await git(askPath, ["config", "core.sshCommand",
+        `sh -c 'case "$1" in -G) exit 0;; esac; "$SSH_ASKPASS" "Enter passphrase for key /zz/fake_ed25519:" >/dev/null 2>&1; exit 255' --`]);
+      await git(askPath, ["remote", "add", "origin", "ssh://zz-fake.invalid/repo.git"]);
+      const typed = await askFromDialog(page);
+      return `typed ${typed}, the dialog kept standing`;
+    });
+
+    await run("dialog: the git question is typeable at 390 too", async () => {
+      const typed = await askFromDialog(await mobilePage());
+      return `typed ${typed} on the phone`;
+    });
+
     // The git menu on a row. The button comes out of the same cheap facts the
     // branch chip does, so a plain directory has none and a worktree row has no
     // worktree entry; every destination is rendered onto the button, the fetch
@@ -1179,13 +1397,18 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(`#project-${source} [data-git-project-menu]`, { state: "visible", timeout: 8000 });
       await gitMenu(source, "New worktree");
-      await page.waitForURL(/\/projects\/new\?create=/, { timeout: 10000 });
-      await L.dismissUpdate(page);
-      await page.waitForSelector("#create", { state: "attached", timeout: 8000 });
-      const picked = await page.evaluate(() => document.querySelector("#create").value);
+      // The entry opens the create dialog over the list, with the row's project
+      // as the source, so the whole worktree half stands prefilled in it.
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 10000 });
+      await page.waitForSelector('[data-form-modal] #create', { state: "attached", timeout: 8000 });
+      const picked = await page.evaluate(() => document.querySelector("[data-form-modal] #create").value);
       assert(picked === `worktree:${source}`, `the source is not preselected: ${picked}`);
-      await page.waitForSelector('[data-branch-picker="branch"]', { state: "attached", timeout: 8000 });
-      assert(await page.isVisible('input[name="project_name"]'), "the name field is missing, the form did not open on the worktree half");
+      assert(page.url().endsWith("/projects"), `the page moved to ${page.url()}`);
+      await page.waitForSelector('[data-form-modal] [data-branch-picker="branch"]', { state: "attached", timeout: 8000 });
+      assert(await page.isVisible('[data-form-modal] input[name="project_name"]'), "the name field is missing, the form did not open on the worktree half");
+      await sleep(600);
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector("[data-form-modal] form"), null, { timeout: 8000 });
     });
 
     await run("git menu: fetch toasts the answer with the branch's distance to its upstream, the list stands", async () => {
@@ -1325,5 +1548,6 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
     await L.deleteProject(page, source).catch(() => {});
     await L.deleteProject(page, remote).catch(() => {});
     await L.deleteProject(page, solo).catch(() => {});
+    await L.deleteProject(page, asker).catch(() => {});
   }
 });

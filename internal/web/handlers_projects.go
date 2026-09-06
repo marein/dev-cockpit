@@ -303,7 +303,16 @@ func mergedActiveRefs(p *project.Project) []project.TerminalRef {
 // choice, which is what the select itself navigates to and what a link from
 // elsewhere can point at; without it the form is the plain create.
 func (s *Server) handleProjectNew(c *gin.Context) {
-	c.HTML(http.StatusOK, "projects_new.gohtml", s.projectNewData(c, c.Query("create")))
+	data := s.projectNewData(c, c.Query("create"))
+	data.Modal = inFormModal(c)
+	// The dialog asked for this page and gets the form alone, the same one the
+	// page renders around its card. The choice select reloads it in place, so
+	// the marker travels with every shape this form takes.
+	if data.Modal {
+		c.HTML(http.StatusOK, "projects_new_form.gohtml", data)
+		return
+	}
+	c.HTML(http.StatusOK, "projects_new.gohtml", data)
 }
 
 func (s *Server) handleProjectCreate(c *gin.Context) {
@@ -333,19 +342,15 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 	}
 	path, err := s.createProject(c.Request.Context(), form.Name.String())
 	if err != nil {
-		if wantsJSON(c.Request) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		s.redirectWithFlash(c, newProjectPath(form), "", err.Error())
+		s.formRefused(c, newProjectPath(form), err.Error())
 		return
 	}
 	name := filepath.Base(path)
-	if wantsJSON(c.Request) {
+	if wantsJSON(c.Request) && !inFormModal(c) {
 		c.JSON(http.StatusOK, gin.H{"name": name, "path": path})
 		return
 	}
-	s.redirectWithProjectFlash(c, name, "Project \""+name+"\" created.", "")
+	s.createLandedProject(c, name, "Project \""+name+"\" created.")
 }
 
 // createWorktree answers the create form's worktree half: the project is made
@@ -354,15 +359,11 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 func (s *Server) createWorktree(c *gin.Context, form projectCreateForm) {
 	made, err := s.createWorktreeProject(c, form)
 	if err != nil {
-		if wantsJSON(c.Request) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		s.redirectWithFlash(c, newProjectPath(form), "", err.Error())
+		s.formRefused(c, newProjectPath(form), err.Error())
 		return
 	}
 	name := filepath.Base(made.Plan.Dir)
-	if wantsJSON(c.Request) {
+	if wantsJSON(c.Request) && !inFormModal(c) {
 		c.JSON(http.StatusOK, gin.H{
 			"name":               name,
 			"path":               made.Plan.Dir,
@@ -373,7 +374,7 @@ func (s *Server) createWorktree(c *gin.Context, form projectCreateForm) {
 		})
 		return
 	}
-	s.redirectWithProjectFlash(c, name, worktreeCreatedMessage(name, made), "")
+	s.createLandedProject(c, name, worktreeCreatedMessage(name, made))
 }
 
 // createClone answers the create form's second choice: a project filled from
@@ -383,19 +384,15 @@ func (s *Server) createWorktree(c *gin.Context, form projectCreateForm) {
 func (s *Server) createClone(c *gin.Context, form projectCreateForm) {
 	path, err := s.createCloneProject(c, form.Name.String(), form.CloneURL)
 	if err != nil {
-		if wantsJSON(c.Request) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		s.redirectWithFlash(c, newProjectPath(form), "", err.Error())
+		s.formRefused(c, newProjectPath(form), err.Error())
 		return
 	}
 	name := filepath.Base(path)
-	if wantsJSON(c.Request) {
+	if wantsJSON(c.Request) && !inFormModal(c) {
 		c.JSON(http.StatusOK, gin.H{"name": name, "path": path, "cloned": strings.TrimSpace(form.CloneURL)})
 		return
 	}
-	s.redirectWithProjectFlash(c, name, "Project \""+name+"\" cloned from "+strings.TrimSpace(form.CloneURL)+".", "")
+	s.createLandedProject(c, name, "Project \""+name+"\" cloned from "+strings.TrimSpace(form.CloneURL)+".")
 }
 
 func (s *Server) handleProjectDelete(c *gin.Context) {

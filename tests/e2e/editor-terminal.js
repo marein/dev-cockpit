@@ -570,16 +570,18 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
     await run("desktop: a coder created from the + menu returns to the editor with its tab active", async () => {
       await page.click(`${panel} [data-editor-term-plus]`);
       await page.waitForSelector(`${panel} .dropdown-menu.show`, { timeout: 5000 });
-      await Promise.all([
-        page.waitForURL(/\/coders\/new/, { timeout: 10000 }),
-        page.click(`${panel} .dropdown-menu.show a.dropdown-item[href*="/coders/new"]`),
-      ]);
-      const f = page.locator('form:has(input[name="name"])').first();
+      // The entry opens the create dialog (see coders.js) over the editor; the
+      // panel marker rides the form's action through the POST, so the create
+      // still comes back to this editor with the new tab named.
+      await page.click(`${panel} .dropdown-menu.show a.dropdown-item[href*="/coders/new"]`);
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 10000 });
+      const f = page.locator('[data-form-modal] form:has(input[name="name"])').first();
       await f.locator('input[name="name"]').fill(`edt-${tag.slice(-6)}`);
-      await Promise.all([
-        page.waitForURL(/\/projects\/[^/]+\/editor\?terminal=/, { timeout: 30000 }),
-        f.locator('button[type="submit"]').first().click(),
-      ]);
+      // The editor page stays under the dialog and already carries a ?terminal=
+      // from an earlier check, so the landing is the move to a different one.
+      const from = page.url();
+      await f.locator('button[type="submit"]').first().click();
+      await page.waitForURL((u) => /\/projects\/[^/]+\/editor\?terminal=/.test(u.href) && u.href !== from, { timeout: 30000 });
       coderId = new URL(page.url()).searchParams.get("terminal");
       assert(coderId, "the redirect carries no terminal parameter");
       await page.waitForSelector(`${panel} [data-term-pane="${coderId}"].active terminal-attach[embedded] .xterm-screen canvas`, { timeout: 20000 });

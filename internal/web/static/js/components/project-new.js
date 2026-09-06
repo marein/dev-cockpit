@@ -1,6 +1,7 @@
 import { getJSON, postJSON, ensureOk } from "@dc/http";
 import { notifyError, notifyInfo } from "@dc/toast";
 import { relativeTime } from "dc-time";
+import { openFormModal } from "dc-form-modal";
 
 const slug = (raw) => String(raw).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 const repositoryName = (raw) => {
@@ -372,6 +373,10 @@ class ProjectNew extends HTMLElement {
       source.addEventListener("change", () => {
         const picked = source.value;
         const url = picked ? `/projects/new?create=${encodeURIComponent(picked)}` : "/projects/new";
+        // The choice reshapes the form, and the shape comes from the server.
+        // In the create dialog that means the same GET swapped in place, so the
+        // dialog stays open around it; on the page it is a navigation.
+        if (openFormModal(url)) return;
         if (window.app?.navigate) Promise.resolve(window.app.navigate(url)).catch(() => {});
         else window.location.href = url;
       }, { signal });

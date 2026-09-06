@@ -32,6 +32,7 @@ test. Update this file when a convention changes.
 - **Forms:** POST action path must equal the GET path that renders it (pairs in
   `internal/web/router.go`, e.g. `/coders/new`). Backlinks, login redirect, and
   post then redirect depend on it. New form, add both routes on one path.
+  The create dialog changes nothing about it, see below.
 - **Coders:** one instance serves every coder whose CLI is installed
   (`--provider` is deprecated and ignored, kept parseable for existing start
   commands). A coder's pages are the settings of that coder, so they live
@@ -707,11 +708,12 @@ test. Update this file when a convention changes.
   tracked apart from the text because the two stopped being the same thing.
 - **The projects page's git menu leads somewhere, and acts once.** Every row
   that is a repository carries a git button (`[data-git-project-menu]`, built
-  like the compose button beside it: the menu is `@dc/contextmenu`, and every
+  like the compose button left of it (compose before git, on the row and in the
+  quick nav's project detail alike): the menu is `@dc/contextmenu`, and every
   destination is rendered onto the button by the server as `data-git-worktree`,
   `data-git-commit` and `data-git-compare`, so the client knows no route). The
   worktree entry opens the create form with this project as the source
-  (`/projects/new?create=worktree:<name>`) and stands only on a main
+  (`/projects/new?create=worktree:<name>`, in the create dialog) and stands only on a main
   repository, because the form offers nothing else as a source; the two editor
   entries open the editor on a view (`?view=commit`, `?view=compare`, rendered
   as `data-editor-view` and read once after the first status answer and the
@@ -2254,6 +2256,36 @@ free floating page scripts.
   `[data-tabs-editors]` list in the plus menu) and a New section (New coder /
   New shell rows reusing the plus menu links, so the current project is
   preselected on the create form), all filterable.
+- **The create forms open in a dialog, and stay pages.** `/coders/new`,
+  `/shells/new` and `/projects/new` open in `dc-form-modal` (layout, next to the
+  swapped region, Bootstrap modal like the editor's comment dialog). It fetches
+  the same GET with `modal=1`, the server answers the form alone
+  (`*_new_form.gohtml`, one template for page and dialog, body/footer classes and
+  Cancel differ), and the marker rides the action back out through the POST, so
+  the POST path is still the GET path (`/projects/new` posts to `/projects`,
+  unchanged). Two seams: a capture click listener for every link to those paths
+  (capture, a cancelled `pe:click` would mean a full load) and `openFormModal`
+  for the JS ways (`@dc/split`, `@dc/docker`, the switcher's `navigate`,
+  the project form's choice select, which swaps the reshaped form into the
+  standing dialog). Both fall back to the page. The marker changes the answer,
+  not the destination (`formmodal.go`): a refusal comes back as the message
+  (`formRefused`) so the dialog keeps the typed values, a create answers the
+  location the redirect would have taken (`createLanded`, flash in the session).
+  The chips that create without a form stay one click. The first field takes the
+  focus on opening, fine pointer only, no scroll. While a create runs the form
+  hides behind a spinner and one line (`data-form-wait`), a refusal brings it
+  back untouched.
+- **A popup opens inside the modal that stands.** Bootstrap traps the focus in
+  an open modal, so a popup elsewhere in the document cannot be typed into (the
+  git passphrase question from a resync inside the create dialog). `@dc/dialog`'s
+  `fire` targets the topmost `.modal.show` unless the caller names a target
+  (`heightAuto` off with it); every popup goes through that door,
+  `@dc/gitprompt` included.
+- **A wait shows on its surface.** `.dc-loading-bar` is a zero height sticky
+  line prepended to what is loading (quick nav menu, projects card via
+  `cardBar`, tab strip fragment). pe.js's button spinner is for `.btn` only: it
+  needs the element's own box, and on a chip it leaves an empty pill with a
+  spinner somewhere else. Other buttons only go dead.
 - **Lifecycle:** set up in connectedCallback behind a re-init guard, tear down
   everything in disconnectedCallback, nothing may outlive the element. Create one
   AbortController per element and pass its signal to every addEventListener, then

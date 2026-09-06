@@ -139,6 +139,8 @@ type ProjectNewData struct {
 	Branches     []BranchChoice
 	// Fill carries a refused create's own values back into the form.
 	Fill ProjectNewFill
+	// Modal marks the render for the create dialog, like CoderNewData.Modal.
+	Modal bool
 }
 
 // AnyTaken reports whether one of the offered branches stands in a working

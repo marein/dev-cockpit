@@ -522,8 +522,11 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       await mp.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 });
       const newCoder = mp.locator('.quicknav-context a[href^="/coders/new"]').first();
       await newCoder.waitFor({ state: "visible", timeout: 6000 });
-      await Promise.all([mp.waitForURL(/\/coders\/new/, { timeout: 10000 }), newCoder.click()]);
-      const f = mp.locator('form:has(select[name="agent"])').first();
+      // The entry opens the create dialog (see coders.js), the editor page
+      // stays under it, and the create lands on the coder's own page.
+      await newCoder.click();
+      await mp.waitForSelector("[data-form-modal].show form", { timeout: 10000 });
+      const f = mp.locator('[data-form-modal] form:has(select[name="agent"])').first();
       await f.locator('input[name="name"]').fill(name);
       await Promise.all([mp.waitForURL(/\/coders\/(?!new)[^/]+$/, { timeout: 30000 }), f.locator('button[type="submit"]').first().click()]);
       retCoderPath = new URL(mp.url()).pathname;
@@ -605,6 +608,9 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       assert(!items.includes("New coder") && !items.includes("New shell") && !items.includes("Editor"), `the old rows are still in the list: ${items.join("|")}`);
     });
 
+    // The order of the row is the projects page's: docker, git, editor, new
+    // coder, new shell. This project carries no stack, so the docker half of
+    // that rule is where the stack is, in docker.js.
     await run("a repository grows the git action, left of the editor, opening the projects page's own menu", async () => {
       // The /git route is the runner's way to make a real repository out of the
       // scratch directory, the same one the projects runner seeds with.
@@ -639,6 +645,8 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
         return {
           count: items.length,
           firstIsGit: items[0] === gitBtn,
+          afterDocker: !bar.querySelector("[data-docker-project-menu]")
+            || items.indexOf(bar.querySelector("[data-docker-project-menu]")) < items.indexOf(gitBtn),
           beforeEditor: items.indexOf(gitBtn) < items.findIndex((e) => (e.getAttribute("href") || "").includes("/editor")),
           fetch: gitBtn?.dataset.gitFetch,
           commit: gitBtn?.dataset.gitCommit,
@@ -648,6 +656,7 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       }, project);
       assert(row.count === 4, `the repository's row has ${row.count} actions, expected four`);
       assert(row.firstIsGit && row.beforeEditor, "the git action does not stand left of the editor");
+      assert(row.afterDocker, "the git action does not stand right of the compose action");
       assert(row.fetch === `/projects/${project}/fetch`, `git fetch target is ${row.fetch}`);
       assert(row.commit?.includes("view=commit") && row.compare?.includes("view=compare"), "the git action misses the editor views");
       assert(row.worktree, "a main repository offers no worktree entry");

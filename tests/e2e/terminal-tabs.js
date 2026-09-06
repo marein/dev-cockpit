@@ -478,17 +478,20 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(hrefs[2] === "/assistant", `assistant link ${hrefs[2]}`);
       assert(hrefs[3].startsWith(`/projects/${project}/editor?return=`), `editor link ${hrefs[3]}`);
       assert(hrefs[1].includes(`return=%2Fshells%2F${ids[2]}`), `shell link return target ${hrefs[1]}`);
+      // The entry opens the app wide create dialog (see shells.js), which
+      // fetches the same /shells/new and carries the menu's project into it.
       await page.click('terminal-tabs .dropdown-menu.show a[href^="/shells/new"]');
-      await page.waitForURL(/\/shells\/new/, { timeout: 8000 });
-      const selectedPath = await page.locator('select[name="project"]').inputValue();
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      const selectedPath = await page.locator('[data-form-modal] select[name="project"]').inputValue();
       assert(selectedPath.endsWith(`/${project}`), `preselected project path ${selectedPath}`);
     });
 
     await run("a shell created through the + menu joins the strip on the right", async () => {
-      await Promise.all([
-        page.waitForURL(/\/shells\/(?!new)[^/]+$/, { timeout: 15000 }),
-        page.locator('form:has(select[name="project"]) button[type="submit"]').first().click(),
-      ]);
+      // The page under the dialog is a shell page already, so the landing is
+      // the move to a different one.
+      const from = new URL(page.url()).pathname;
+      await page.locator('[data-form-modal] form button[type="submit"]').first().click();
+      await page.waitForURL((u) => /\/shells\/(?!new)[^/]+$/.test(u.pathname) && u.pathname !== from, { timeout: 15000 });
       shellUrls.push(page.url());
       const newId = ownId(page.url());
       await page.waitForSelector(tabSel(newId), { state: "attached", timeout: 8000 });
@@ -952,9 +955,14 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.keyboard.press("Control");
       await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
       await page.click('.terminal-switcher-item[data-switcher-section="new"][data-switcher-url^="/shells/new"]');
-      await page.waitForURL(/\/shells\/new/, { timeout: 8000 });
-      const selectedPath = await page.locator('select[name="project"]').inputValue();
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      const selectedPath = await page.locator('[data-form-modal] select[name="project"]').inputValue();
       assert(selectedPath.endsWith(`/${foreignProject}`), `preselected project path '${selectedPath}'`);
+      // Bootstrap ignores a hide during the show transition, so the dialog gets
+      // its fade before Escape.
+      await sleep(600);
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector("[data-form-modal].show"), null, { timeout: 6000 });
     });
 
     await run("the switcher reaches the assistant", async () => {

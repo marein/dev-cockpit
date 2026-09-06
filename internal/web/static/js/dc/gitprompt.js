@@ -1,3 +1,4 @@
+import { fire } from "@dc/dialog";
 import { onServerEvent } from "@dc/events";
 import { getJSON, postJSON, postForm } from "@dc/http";
 import { escapeHtml, windowSeen } from "@dc/dom";
@@ -31,7 +32,10 @@ async function show(question) {
   const context = question.command
     ? ""
     : `<div class="text-secondary" style="margin-bottom: .75rem">${escapeHtml(question.project)} &middot; ${escapeHtml(question.action)}</div>`;
-  const result = await window.Swal.fire({
+  // Through @dc/dialog, not around it: the question can stand over an open
+  // modal (a create dialog, the editor's) and only a popup inside that modal
+  // can be typed into.
+  const result = await fire({
     title: "Git is asking",
     html: context
       + `<div style="white-space: pre-wrap; overflow-wrap: anywhere; text-align: start">${escapeHtml(line)}</div>`

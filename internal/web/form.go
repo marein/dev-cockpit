@@ -36,7 +36,7 @@ func (b CheckboxBool) Bool() bool { return bool(b) }
 
 func (s *Server) decodeForm(c *gin.Context, dst any, redirectBack string) bool {
 	if err := c.ShouldBind(dst); err != nil {
-		s.redirectWithFlash(c, redirectBack, "", "Please check the form and try again.")
+		s.formRefused(c, redirectBack, "Please check the form and try again.")
 		return false
 	}
 	return true

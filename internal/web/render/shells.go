@@ -11,6 +11,8 @@ type ShellNewData struct {
 	Projects    []ProjectOption
 	DefaultPath string
 	Return      string // where Cancel goes back to (the page you came from)
+	// Modal marks the render for the create dialog, like CoderNewData.Modal.
+	Modal bool
 	// SplitGroup and SplitColumn carry a split view the new shell joins right
 	// after it starts: the group id, and a member of the column it stacks into
 	// (empty for a column of its own at the right edge). They ride the query
