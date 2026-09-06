@@ -1,13 +1,13 @@
 import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
-import * as docker from "@dc/docker";
+import * as projectActions from "@dc/project-actions";
 import { confirm, promptText } from "@dc/dialog";
 import { el, syncAnimations } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import { matchesTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
 import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
-import { ensureOk, postForm, postJSON } from "@dc/http";
+import { ensureOk, postForm } from "@dc/http";
 import { notifyError, notifyInfo, notifySuccess } from "@dc/toast";
 import { releaseCoder, steerCoder } from "@dc/steer";
 
@@ -15,18 +15,6 @@ const FILTER_KEY = "dc-project-filter";
 const GROUPS_KEY = "dc-project-worktrees-open";
 const CHIP_LIMIT = 8;
 const FLASH_MS = 1600;
-// chipLinks reads the addresses a container chip carries, one hidden span per
-// address: a proxy route names a host and maybe a path, a published port names
-// only the port, and an empty scheme means the one this page was reached over.
-function chipLinks(chip) {
-  return Array.from(chip.querySelectorAll("[data-docker-link]")).map((span) => ({
-    scheme: span.dataset.linkScheme || "",
-    host: span.dataset.linkHost || "",
-    port: Number(span.dataset.linkPort || 0),
-    path: span.dataset.linkPath || "",
-  }));
-}
-
 function filterHaystack(card) {
   const main = card.dataset.projectWorktreeOf || "";
   return main ? `${card.dataset.projectName} ${main}` : card.dataset.projectName;
@@ -314,17 +302,7 @@ class ProjectList extends HTMLElement {
   }
 
   openDockerMenu(chip, x, y) {
-    const info = {
-      id: chip.dataset.chipId,
-      name: chip.dataset.chipName || "",
-      portsLabel: chip.dataset.dockerPorts || "",
-      links: chipLinks(chip),
-      running: chip.dataset.dockerRunning === "1",
-    };
-    const items = docker.containerMenuItems(info, {
-      onShell: (target, kind, filter) => this.openContainerShell(target, kind, filter),
-    });
-    openMenu({ x, y, items, signal: this.ac.signal });
+    projectActions.openDockerMenu(chip, x, y, { signal: this.ac.signal });
   }
 
   // The project's menu says which container to reach, so one is reachable
@@ -332,107 +310,19 @@ class ProjectList extends HTMLElement {
   // compose actions. A container with several addresses drills in: the same
   // menu, at the same place, with that container's addresses and a way back.
   openComposeMenu(button) {
-    const section = button.closest("[id^='project-']");
-    const project = button.dataset.dockerProject || "";
-    const stacks = Array.from(button.querySelectorAll("[data-docker-stack]")).map((span) => ({
-      label: span.dataset.stackLabel || "",
-      running: Number(span.dataset.stackRunning || 0),
-      total: Number(span.dataset.stackTotal || 0),
-      busy: Boolean(span.dataset.stackBusy),
-      run: span.dataset.stackRun
-        ? {
-          id: span.dataset.stackRun,
-          action: span.dataset.stackRunAction || "",
-          running: Boolean(span.dataset.stackRunGoing),
-          url: `/projects/${encodeURIComponent(project)}/docker/runs/${span.dataset.stackRun}`,
-        }
-        : null,
-    }));
-    const actions = Array.from(button.querySelectorAll("[data-docker-action]")).map((span) => ({
-      id: span.dataset.actionId || "",
-      icon: span.dataset.actionIcon || "",
-      label: span.dataset.actionLabel || "",
-      command: span.dataset.actionCommand || "",
-      confirm: Boolean(span.dataset.actionConfirm),
-    }));
-    // The containers in the order the row renders them, which is the order
-    // every docker surface stands in: unwell first, then running, then the
-    // rest.
-    const containers = Array.from(section?.querySelectorAll('[data-chip-kind="docker"]') || []).map((chip) => ({
-      name: chip.dataset.chipName || "",
-      links: chipLinks(chip),
-    }));
-    const rect = button.getBoundingClientRect();
-    const x = Math.round(rect.left);
-    const y = Math.round(rect.bottom);
-    // onDrill(null) is the way back, which is this menu built again.
-    const open = (items) => {
-      const list = items || docker.projectMenuItems({
-        project,
-        stacks,
-        containers,
-        actions,
-        onLogs: (stack, filter) => this.openComposeLogs(project, stack, filter),
-        onDrill: open,
-      });
-      if (!list.length) return;
-      openMenu({ x, y, items: list, signal: this.ac.signal });
-    };
-    open(null);
+    projectActions.openComposeMenu(button, { section: button.closest("[id^='project-']"), signal: this.ac.signal });
   }
 
   openGitMenu(button) {
-    const items = [];
-    if (button.dataset.gitWorktree) {
-      items.push({
-        label: "New worktree",
-        icon: "ti-git-fork",
-        action: () => docker.navigate(button.dataset.gitWorktree),
-      });
-    }
-    items.push({ label: "Fetch", icon: "ti-refresh", action: () => void this.fetchProject(button) });
-    items.push({ divider: true });
-    items.push({ label: "Commit changes", icon: "ti-git-commit", action: () => docker.navigate(button.dataset.gitCommit) });
-    items.push({ label: "Compare revisions", icon: "ti-git-compare", action: () => docker.navigate(button.dataset.gitCompare) });
-    const rect = button.getBoundingClientRect();
-    openMenu({ x: Math.round(rect.left), y: Math.round(rect.bottom), items, signal: this.ac.signal });
-  }
-
-  async fetchProject(button) {
-    if (button.disabled) return;
-    const project = button.dataset.gitProject || "";
-    const icon = button.querySelector(".ti");
-    button.disabled = true;
-    button.setAttribute("aria-busy", "true");
-    icon?.classList.add("dc-git-working");
-    try {
-      const response = await postJSON(button.dataset.gitFetch, {});
-      await ensureOk(response, `Could not fetch "${project}".`);
-      const data = await response.json();
-      const message = data.message || (data.fetched ? `Fetched "${project}".` : `"${project}" has no remote to fetch from.`);
-      if (data.fetched) notifySuccess(message);
-      else notifyInfo(message);
-    } catch (error) {
-      notifyError(error.message);
-    } finally {
-      button.disabled = false;
-      button.removeAttribute("aria-busy");
-      icon?.classList.remove("dc-git-working");
-    }
+    projectActions.openGitMenu(button, { signal: this.ac.signal });
   }
 
   async openContainerShell(info, kind, filter) {
-    const data = await docker.openShell(info.id, kind, info.name, filter);
-    if (data && data.url) docker.navigate(data.url);
+    await projectActions.openContainerShell(info, kind, filter);
   }
 
   async openLogTerminal(id, name) {
-    await this.openContainerShell({ id, name }, "logs-shell");
-  }
-
-  async openComposeLogs(project, stack, filter) {
-    const data = await docker.composeLogs(project, stack.label, stack.label || project, filter);
-    if (data && data.url) docker.navigate(data.url);
+    await projectActions.openLogTerminal(id, name);
   }
 
   // The server stops the coder before it drops the conversation, so the chip

@@ -43,6 +43,12 @@
       {{end}}
     </div>
     {{end}}
+    <div class="quicknav-search" data-pb-head hidden>
+      <div class="input-icon">
+        <span class="input-icon-addon"><i class="ti ti-search" aria-hidden="true"></i></span>
+        <input type="text" class="form-control form-control-sm" data-pb-filter placeholder="Search projects…" aria-label="Search projects" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="go" data-1p-ignore data-lpignore="true">
+      </div>
+    </div>
   </div>
 
   <div data-quicknav-pane="active">
@@ -165,25 +171,59 @@
   <div data-quicknav-pane="projects" hidden>
     <div data-project-browser>
       <div data-pb-list>
-        <h6 class="dropdown-header">Projects</h6>
-        {{range .QuickNav.AllProjects}}
-        <button type="button" class="dropdown-item d-flex align-items-center gap-2 {{if eq .Name $.QuickNav.CurrentProject}}active{{end}}" data-pb-drill="{{.Name}}" data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}"{{if eq .Name $.QuickNav.CurrentProject}} aria-current="true"{{end}}>
-          <i class="ti ti-folder flex-shrink-0"></i>
-          <span class="text-truncate">{{.Name}}</span>
-          {{if .HasNews}}<span class="status-dot status-dot-animated status-blue ms-auto flex-shrink-0"></span><i class="ti ti-chevron-right flex-shrink-0"></i>{{else}}<i class="ti ti-chevron-right ms-auto flex-shrink-0"></i>{{end}}
-        </button>
-        {{end}}
+        <div class="quicknav-pb-list" data-pb-rows role="listbox" aria-label="Projects"></div>
+        <div class="quicknav-pb-empty text-secondary small" data-pb-empty hidden>No matches.</div>
+        <div data-pb-source hidden>
+          {{range .QuickNav.AllProjects}}
+          <button type="button" class="quicknav-pb-row{{if eq .Name $.QuickNav.CurrentProject}} quicknav-pb-current{{end}}" data-pb-drill="{{.Name}}" data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}"{{if .WorktreeOf}} data-project-worktree-of="{{.WorktreeOf}}"{{end}}{{if .Worktree}} data-project-worktree{{end}} data-project-search="{{.Search}}"{{if eq .Name $.QuickNav.CurrentProject}} aria-current="true"{{end}} title="{{.Name}}{{if .Worktree}}, worktree of {{if .WorktreeOf}}{{.WorktreeOf}}{{else}}{{.WorktreeMain}}{{end}}{{end}}{{if .Branch}} on {{.Branch}}{{end}}">
+            <span class="quicknav-pb-line">
+              <i class="ti {{if .Worktree}}ti-git-fork{{else if .Repo}}ti-folder-code{{else}}ti-folder{{end}}" aria-hidden="true"></i>
+              <span class="quicknav-pb-repo">{{if .Repo}}{{.Repo}}{{else}}{{.Name}}{{end}}</span>
+              {{if .Branch}}<span class="quicknav-pb-branch"><i class="ti ti-git-branch" aria-hidden="true"></i> {{.Branch}}</span>{{end}}
+              <span class="quicknav-pb-fill" aria-hidden="true"></span>
+              {{if eq .Name $.QuickNav.CurrentProject}}<i class="ti ti-check quicknav-pb-check" aria-hidden="true"></i>{{end}}
+              <span class="status-dot status-dot-animated status-blue quicknav-pb-dot{{if not .HasNews}} d-none{{end}}" data-notify-project-dot data-notify-projects="qn-project-{{.Name}}" aria-label="Something new in this project"></span>
+              <i class="ti ti-chevron-right quicknav-pb-go" aria-hidden="true"></i>
+            </span>
+            {{if .Worktree}}<span class="quicknav-pb-sub">{{.Name}}{{if not .WorktreeOf}}<span class="quicknav-pb-outside"><i class="ti ti-external-link" aria-hidden="true"></i>{{.WorktreeMain}}</span>{{end}}</span>{{end}}
+          </button>
+          {{end}}
+        </div>
         {{if not .QuickNav.AllProjects}}<span class="dropdown-item-text text-secondary small">No projects</span>{{end}}
       </div>
 
       {{range .QuickNav.AllProjects}}
-      <div data-pb-detail="{{.Name}}" hidden>
+      <div id="qn-project-{{.Name}}" data-pb-detail="{{.Name}}" hidden>
         <button type="button" class="quicknav-detail-title dropdown-item d-flex align-items-center gap-2" data-pb-back>
           <i class="ti ti-chevron-left flex-shrink-0"></i><span class="text-truncate">{{.Name}}</span>
         </button>
-        <a class="dropdown-item d-flex align-items-center gap-2" href="{{.EditorURL}}">
-          <i class="ti ti-code flex-shrink-0"></i><span class="text-truncate">Editor</span>
-        </a>
+        <div class="d-flex align-items-center justify-content-end gap-1 px-3 pb-2" data-pb-actions>
+          {{if .GitRepo}}
+          <button type="button" class="btn btn-sm btn-ghost-secondary px-2 py-2" data-git-project-menu data-git-project="{{.Name}}"{{if not .Worktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{.EditorURL}}&amp;view=commit" data-git-compare="{{.EditorURL}}&amp;view=compare" title="Git in {{.Name}}" aria-label="Git actions for {{.Name}}">
+            <i class="ti ti-brand-git"></i>
+          </button>
+          {{end}}
+          {{if .Docker.Stacks}}
+          <button type="button" class="btn btn-sm btn-ghost-secondary px-2 py-2" data-docker-project-menu data-docker-project="{{.Name}}" title="Compose in {{.Name}}" aria-label="Compose actions for {{.Name}}">
+            <span class="dc-term-icon{{if .Docker.AnyRunning}} running{{end}}{{if .Docker.Working}} dc-docker-working{{end}}" aria-hidden="true"><i class="ti ti-brand-docker"></i></span>
+            {{range .Docker.Stacks}}<span hidden data-docker-stack data-stack-label="{{.Label}}" data-stack-running="{{.Running}}" data-stack-total="{{.Total}}"{{if .Busy}} data-stack-busy="1"{{end}}{{if .RunID}} data-stack-run="{{.RunID}}" data-stack-run-action="{{.RunAction}}"{{if .RunGoing}} data-stack-run-going="1"{{end}}{{end}}></span>{{end}}
+            {{range $.QuickNav.DockerActions}}<span hidden data-docker-action data-action-id="{{.ID}}" data-action-icon="{{.Icon}}" data-action-label="{{.Label}}" data-action-command="{{.Command}}"{{if .Confirm}} data-action-confirm="1"{{end}}></span>{{end}}
+          </button>
+          {{end}}
+          <a href="{{.EditorURL}}" class="btn btn-sm btn-ghost-secondary px-2 py-2" title="Editor for {{.Name}}" aria-label="Open editor for {{.Name}}">
+            <i class="ti ti-code"></i>
+          </a>
+          <a href="{{.NewCoderURL}}" class="btn btn-sm btn-ghost-secondary px-2 py-2" title="New coder in {{.Name}}" aria-label="New coder in {{.Name}}">
+            <i class="ti ti-robot"></i><i class="ti ti-plus ms-1"></i>
+          </a>
+          <form method="post" action="/shells/new" class="d-flex">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="project" value="{{.Path}}">
+            <button type="submit" class="btn btn-sm btn-ghost-secondary px-2 py-2" title="New shell in {{.Name}}" aria-label="New shell in {{.Name}}">
+              <i class="ti ti-terminal-2"></i><i class="ti ti-plus ms-1"></i>
+            </button>
+          </form>
+        </div>
         <div class="dropdown-divider"></div>
         <div data-qn-fold="{{.Name}}-terminals">
         {{range .Terminals}}
@@ -232,16 +272,23 @@
         </div>
         {{end}}
         </div>
-        <a class="dropdown-item d-flex align-items-center gap-2" href="{{.NewCoderURL}}">
-          <i class="ti ti-plus flex-shrink-0"></i><span>New coder</span>
-        </a>
-        <form method="post" action="/shells/new">
-          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-          <input type="hidden" name="project" value="{{.Path}}">
-          <button type="submit" class="dropdown-item d-flex align-items-center gap-2">
-            <i class="ti ti-plus flex-shrink-0"></i><span>New shell</span>
+        {{if .Docker.Containers}}
+        <div class="dropdown-divider"></div>
+        {{range .Docker.Containers}}
+        <div class="quicknav-swipe-row" data-chip data-chip-kind="docker" data-chip-id="{{.ID}}" data-chip-name="{{.DisplayName}}"
+             data-docker-running="{{if .Running}}1{{end}}" data-docker-ports="{{.PortsLabel}}">
+          <button type="button" class="dropdown-item quicknav-active-item d-flex align-items-center gap-2" data-chip-main-menu
+                  title="{{.Name}}" aria-label="Actions for {{.Name}}">
+            <span class="dc-term-icon{{if .Running}} running{{end}}{{if .Unwell}} text-danger{{end}} flex-shrink-0" aria-hidden="true"><i class="ti ti-brand-docker"></i></span>
+            <span class="text-truncate">{{.DisplayName}}</span>
           </button>
-        </form>
+          <button type="button" class="quicknav-swipe-delete quicknav-swipe-logs" data-docker-logs aria-label="Logs of {{.DisplayName}}" title="Logs">
+            <i class="ti ti-file-text" aria-hidden="true"></i>
+          </button>
+          {{range .Links}}<span hidden data-docker-link data-link-scheme="{{.Scheme}}" data-link-host="{{.Host}}" data-link-port="{{if .Port}}{{.Port}}{{end}}" data-link-path="{{.Path}}"></span>{{end}}
+        </div>
+        {{end}}
+        {{end}}
       </div>
       {{end}}
     </div>

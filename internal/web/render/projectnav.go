@@ -21,6 +21,28 @@ type ProjectNav struct {
 	Active       bool
 	LastUsedUnix int64
 	HasNews      bool
+	// The git facts the search line and the worktree marks are drawn from,
+	// the same set the editor's project palette carries and built from the
+	// same file reads (internal/gitfacts), no git process runs for them.
+	// Repo names the repository a row belongs to, Branch the checked out
+	// branch, Worktree marks a linked worktree, WorktreeOf names its main
+	// project when that project lies in the cockpit and WorktreeMain the main
+	// repository's path on disk when it does not.
+	Repo         string
+	Branch       string
+	Worktree     bool
+	WorktreeOf   string
+	WorktreeMain string
+	// Search is the one line the quick nav's query is matched against: name,
+	// repository and branch together, so "dev htmx" lands on the one worktree
+	// of dev-cockpit that stands on the htmx branch.
+	Search string
+	// GitRepo says whether the detail offers the git menu, and Docker carries
+	// the compose stacks and the containers it lists below its terminals, both
+	// the shapes the projects page already renders from. Docker is empty
+	// whenever no daemon answers, and the detail then shows nothing of it.
+	GitRepo bool
+	Docker  ProjectDocker
 }
 
 // ProjectNavItem is one navigable resource. URL points at the attach page for

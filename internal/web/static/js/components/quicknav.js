@@ -1,9 +1,12 @@
 import { confirm, promptText } from "@dc/dialog";
 import { el } from "@dc/dom";
+import { matchesTokens } from "@dc/filter";
 import { onServerEvent } from "@dc/events";
 import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
+import * as projectActions from "@dc/project-actions";
 import { applyFold } from "@dc/fold";
+import { menuJustClosed } from "@dc/contextmenu";
 import { ensureOk, getText, landingURL, postForm, postJSON } from "@dc/http";
 import { notifyError, notifySuccess } from "@dc/toast";
 import { releaseCoder, steerCoder } from "@dc/steer";
@@ -17,13 +20,27 @@ const FLING_VX = 0.25;
 const SNAP_MS = 250;
 const GROUP_ZONE_RATIO = 0.3;
 const GROUP_DWELL_MS = 220;
+// How many last used projects the Projects tab offers above the full list, the
+// same shortlist length the editor's project palette uses.
+const PB_RECENT = 5;
+// A keyboard is around: the search field takes the focus by itself and the
+// best row is marked for Enter. On a touch screen neither happens, opening the
+// tab must not throw the on-screen keyboard up at the reader.
+const POINTER = window.matchMedia("(hover: hover) and (pointer: fine)");
 
 // Floating quick nav: jump between live sessions/shells and browse projects. The
 // menu content is fetched fresh each time the dropdown opens (background refresh)
-// while the in-memory view (open tab, drilled project, expanded groups) is
-// re-applied so the items update under the user's current view instead of
-// resetting it. The project order is shared with the projects page through
-// @dc/project-sort.
+// while the in-memory view (open tab, drilled project, expanded groups, the
+// project query and the marked row) is re-applied so the items update under the
+// user's current view instead of resetting it. The project order is shared with
+// the projects page through @dc/project-sort.
+//
+// The Projects tab is a palette, built like the editor's project switcher: a
+// search field in the sticky header, the rows under it, the arrows walking them
+// and Enter drilling into the marked one. The server's rows sit out of sight in
+// [data-pb-source] and are cloned into groups, so a project can stand in the
+// shortlist and in the full list at once without the browser building that
+// markup a second time.
 class QuickNav extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -44,25 +61,54 @@ class QuickNav extends HTMLElement {
     this.confirming = false;
     this.suppressClick = false;
     this.opened = false;
+    this.centerActive = false;
 
     this.ac = new AbortController();
     const signal = this.ac.signal;
     this.addEventListener("show.bs.dropdown", () => {
       this.opened = true;
+      this.centerActive = true;
       this.applyState();
+      this.enterProjectList();
       this.refresh();
     }, { signal });
+    this.addEventListener("shown.bs.dropdown", () => this.enterActiveList(), { signal });
     // The confirm dialog opens outside the dropdown, which auto-close would read
     // as an outside click; keep the menu open under it.
     this.addEventListener("hide.bs.dropdown", (event) => { if (this.confirming) event.preventDefault(); }, { signal });
     this.addEventListener("hidden.bs.dropdown", () => {
       this.opened = false;
+      this.centerActive = false;
       this.closeSwipe();
+      // A closed palette forgets its query, like the editor's does: the next
+      // open starts on the shortlist, not on somebody's stale search.
+      if (this.view) {
+        this.view.query = "";
+        this.view.index = -1;
+      }
     }, { signal });
     // A coder or shell started, stopped, was renamed or reordered elsewhere: pull
     // the fresh list while the menu is open. Closed, it already refetches on open.
     onServerEvent("terminals", () => { if (this.opened) this.refresh(); }, { signal });
+    // Containers come and go, and a compose command runs for minutes: the
+    // detail's container rows and the spinner on its compose action follow the
+    // same event the projects page reads.
+    onServerEvent("docker", () => { if (this.opened) this.refresh(); }, { signal });
     this.addEventListener("click", (event) => this.handleClick(event), { signal });
+    // The field is rebuilt by every background refresh, so the query is read off
+    // the event, not off a captured node.
+    this.addEventListener("input", (event) => {
+      if (!event.target.closest("[data-pb-filter]")) return;
+      this.view.query = event.target.value;
+      const browser = this.tabsRoot()?.querySelector("[data-project-browser]");
+      if (!browser) return;
+      this.renderProjects(browser);
+      this.markBestProject(browser);
+    }, { signal });
+    // The palette keys work wherever the focus sits, and ahead of the dropdown's
+    // own arrow handling, which would otherwise walk the menu's focus instead of
+    // the marked row. Escape stays with Bootstrap, it closes the menu.
+    window.addEventListener("keydown", (event) => this.handleKey(event), { signal, capture: true });
     // Capture so a click synthesised right after a gesture, a tap on the grip
     // handle, or a tap while a delete is revealed never reaches pe.js and
     // navigates the row. The revealed-state tap just closes the reveal, except on
@@ -74,7 +120,7 @@ class QuickNav extends HTMLElement {
         event.stopPropagation();
         return;
       }
-      if (this.openSwipe && !event.target.closest("[data-qn-delete], [data-qn-purge], [data-qn-ungroup], [data-qn-remove], [data-qn-rename], [data-qn-steer], [data-qn-release]")) {
+      if (this.openSwipe && !event.target.closest("[data-qn-delete], [data-qn-purge], [data-qn-ungroup], [data-qn-remove], [data-qn-rename], [data-qn-steer], [data-qn-release], [data-docker-logs]")) {
         this.closeSwipe();
         event.preventDefault();
         event.stopPropagation();
@@ -107,6 +153,67 @@ class QuickNav extends HTMLElement {
 
   reposition() {
     if (window.bootstrap) window.bootstrap.Dropdown.getOrCreateInstance(this.toggle).update();
+  }
+
+  morph(html) {
+    const next = document.createElement("div");
+    next.innerHTML = html;
+    this.morphChildren(this.list, next);
+  }
+
+  keyOf(node) {
+    if (node.nodeType !== Node.ELEMENT_NODE) return null;
+    for (const name of ["id", "data-pb-detail", "data-chip-id", "data-tab-id", "data-qn-group", "data-qn-fold", "data-quicknav-pane"]) {
+      const value = node.getAttribute(name);
+      if (value) return name + "=" + value;
+    }
+    return node.hasAttribute("data-pb-actions") ? "pb-actions" : null;
+  }
+
+  morphChildren(cur, inc) {
+    const keyed = new Map();
+    for (const node of cur.childNodes) {
+      const key = this.keyOf(node);
+      if (key !== null && !keyed.has(key)) keyed.set(key, node);
+    }
+    let pointer = cur.firstChild;
+    for (const want of [...inc.childNodes]) {
+      const key = this.keyOf(want);
+      let match = key === null ? null : keyed.get(key) || null;
+      if (match) keyed.delete(key);
+      else if (key === null && pointer && this.keyOf(pointer) === null && pointer.nodeName === want.nodeName) match = pointer;
+      if (!match) {
+        cur.insertBefore(want, pointer);
+        continue;
+      }
+      if (match === pointer) pointer = pointer.nextSibling;
+      else cur.insertBefore(match, pointer);
+      this.morphNode(match, want);
+    }
+    while (pointer) {
+      const next = pointer.nextSibling;
+      cur.removeChild(pointer);
+      pointer = next;
+    }
+  }
+
+  morphNode(cur, inc) {
+    if (cur.isEqualNode(inc)) return;
+    if (cur.nodeName !== inc.nodeName) {
+      cur.replaceWith(inc);
+      return;
+    }
+    if (cur.nodeType !== Node.ELEMENT_NODE) {
+      cur.nodeValue = inc.nodeValue;
+      return;
+    }
+    for (const attr of [...cur.attributes]) {
+      if (attr.name !== "hidden" && !inc.hasAttribute(attr.name)) cur.removeAttribute(attr.name);
+    }
+    for (const attr of inc.attributes) {
+      if (attr.name !== "hidden" && cur.getAttribute(attr.name) !== attr.value) cur.setAttribute(attr.name, attr.value);
+    }
+    this.morphChildren(cur, inc);
   }
 
   activeList() {
@@ -522,8 +629,25 @@ class QuickNav extends HTMLElement {
           this.dirty = true;
           return;
         }
+        // The search field is part of the fragment, so a refresh throws away the
+        // very node somebody is typing in. Its focus and caret are put back on
+        // the new one; applyState carries the text itself.
+        const field = this.list.querySelector("[data-pb-filter]");
+        const typing = field && document.activeElement === field;
+        const caret = typing ? field.selectionStart : 0;
+        const scrolled = this.menu.scrollTop;
         this.openSwipe = null;
-        this.list.innerHTML = html;
+        this.morph(html);
+        this.applyState();
+        this.menu.scrollTop = scrolled;
+        this.enterActiveList();
+        if (typing) {
+          const next = this.list.querySelector("[data-pb-filter]");
+          if (next) {
+            next.focus();
+            next.setSelectionRange(caret, caret);
+          }
+        }
         this.reposition();
       })
       .catch(() => {})
@@ -548,6 +672,10 @@ class QuickNav extends HTMLElement {
       tab: savedTab === "projects" ? "projects" : "active",
       project: current || null,
       expanded: new Set(),
+      // The palette's query and the row Enter would take. Both survive a
+      // background refresh, which rebuilds the field and the rows underneath.
+      query: "",
+      index: -1,
     };
   }
 
@@ -575,8 +703,177 @@ class QuickNav extends HTMLElement {
   }
 
   applySort(browser) {
-    const pbList = browser.querySelector("[data-pb-list]");
-    if (pbList) projectSort.sort(pbList);
+    const source = browser.querySelector("[data-pb-source]");
+    if (source) projectSort.sort(source);
+  }
+
+  projectHead() {
+    return this.list.querySelector("[data-pb-head]");
+  }
+
+  // The search field belongs to the project list, not to the menu: it rides in
+  // the sticky header so it stays put while the rows scroll, and it goes away
+  // for the Active tab and while a project is drilled open.
+  syncProjectHead() {
+    const head = this.projectHead();
+    if (head) head.hidden = !(this.view.tab === "projects" && !this.view.project);
+  }
+
+  focusProjectFilter() {
+    if (!POINTER.matches) return;
+    const head = this.projectHead();
+    if (!head || head.hidden) return;
+    head.querySelector("[data-pb-filter]")?.focus();
+  }
+
+  // Entering the project list: by opening the menu on it, by switching to it or
+  // by stepping back out of a project. The field takes the focus where a
+  // keyboard is around and the best row is marked for Enter; a background
+  // refresh does none of that, it leaves the reader's mark where it stands.
+  enterActiveList() {
+    if (!this.centerActive || !this.view || this.view.tab !== "active" || !this.menu.clientHeight) return;
+    const row = this.tabsRoot()?.querySelector('[data-quicknav-pane="active"] [aria-current="true"]');
+    if (!row) return;
+    this.centerActive = false;
+    const mr = this.menu.getBoundingClientRect();
+    const r = row.getBoundingClientRect();
+    this.menu.scrollTop += (r.top + r.height / 2) - (mr.top + mr.height / 2);
+  }
+
+  enterProjectList() {
+    this.syncProjectHead();
+    if (this.view.tab !== "projects" || this.view.project) return;
+    const browser = this.tabsRoot()?.querySelector("[data-project-browser]");
+    if (browser) this.markBestProject(browser);
+    this.focusProjectFilter();
+  }
+
+  sourceProjects(browser) {
+    const source = browser.querySelector("[data-pb-source]");
+    return source ? Array.from(source.querySelectorAll("[data-project-name]")) : [];
+  }
+
+  projectRows(browser) {
+    const list = browser.querySelector("[data-pb-rows]");
+    return list ? Array.from(list.querySelectorAll("[data-pb-drill]")) : [];
+  }
+
+  // rankProject says where a query lands on a row, the same order the editor's
+  // project palette ranks by: every token has to hit the row's search line (the
+  // token search the whole app shares), and the first token decides among the
+  // hits, a name or repository it starts ahead of one it sits inside, and that
+  // ahead of a hit in the branch or the path alone.
+  rankProject(row, query) {
+    if (!matchesTokens(row.dataset.projectSearch || row.dataset.projectName || "", query)) return -1;
+    const first = query.toLowerCase().split(/\s+/).filter(Boolean)[0] || "";
+    const name = (row.dataset.projectName || "").toLowerCase();
+    const repo = (row.querySelector(".quicknav-pb-repo")?.textContent || "").toLowerCase();
+    if (name.startsWith(first) || repo.startsWith(first)) return 0;
+    if (name.includes(first) || repo.includes(first)) return 1;
+    return 2;
+  }
+
+  projectGroup(label, rows, members) {
+    const group = el("div", { class: "quicknav-pb-group" });
+    if (label) group.appendChild(el("div", { class: "quicknav-pb-group-head" }, label));
+    rows.forEach((row) => {
+      const clone = row.cloneNode(true);
+      if (members && members.has(row)) clone.classList.add("quicknav-pb-member");
+      group.appendChild(clone);
+    });
+    return group;
+  }
+
+  // Without a query the last used projects stand as a shortlist over the full
+  // list, which keeps the shared sort with its worktrees folded behind their
+  // main; a query collapses both into one ranked list over name, repository and
+  // branch together. Exactly what the editor's project palette does.
+  renderProjects(browser) {
+    const listEl = browser.querySelector("[data-pb-rows]");
+    if (!listEl) return;
+    const query = (this.view.query || "").trim();
+    const all = this.sourceProjects(browser);
+    const groups = [];
+    if (query) {
+      const hits = all.map((row) => ({ row, rank: this.rankProject(row, query) })).filter((hit) => hit.rank >= 0);
+      hits.sort((a, b) => a.rank - b.rank);
+      if (hits.length) groups.push(this.projectGroup("", hits.map((hit) => hit.row)));
+    } else {
+      const recent = all
+        .filter((row) => Number(row.dataset.projectUsed) > 0)
+        .sort((a, b) => Number(b.dataset.projectUsed) - Number(a.dataset.projectUsed))
+        .slice(0, PB_RECENT);
+      // A worktree that stands behind its main in the full list is drawn as its
+      // member; in the shortlist and under a query every row stands on its own.
+      const byName = new Map(all.map((row) => [row.dataset.projectName, row]));
+      const members = new Set(all.filter((row) => projectSort.mainOf(row, byName)));
+      if (recent.length) groups.push(this.projectGroup("Recent", recent));
+      groups.push(this.projectGroup(recent.length ? "All projects" : "", all, members));
+    }
+    listEl.replaceChildren(...groups);
+    // The note stands in the list right under the field, where the editor's
+    // palettes put theirs.
+    const empty = browser.querySelector("[data-pb-empty]");
+    if (empty) {
+      // A cockpit without a single project says so in its own words, the note
+      // here is about a query that found nothing.
+      empty.hidden = this.projectRows(browser).length > 0 || all.length === 0;
+      if (!empty.hidden) listEl.appendChild(empty);
+    }
+  }
+
+  paintProjects(browser) {
+    const rows = this.projectRows(browser);
+    if (this.view.index >= rows.length) this.view.index = rows.length - 1;
+    rows.forEach((row, i) => {
+      const on = i === this.view.index;
+      row.classList.toggle("quicknav-pb-active", on);
+      if (on) row.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  // A fresh list starts at its top and marks its best row, the first one, only
+  // where a keyboard is there to take it: on a touch screen a marked row is
+  // noise, and the tap decides anyway.
+  markBestProject(browser) {
+    const list = browser.querySelector("[data-pb-rows]");
+    if (list) list.scrollTop = 0;
+    this.view.index = POINTER.matches && this.projectRows(browser).length ? 0 : -1;
+    this.paintProjects(browser);
+  }
+
+  moveProject(browser, delta) {
+    const rows = this.projectRows(browser);
+    if (!rows.length) return;
+    if (this.view.index < 0) this.view.index = delta > 0 ? 0 : rows.length - 1;
+    else this.view.index = (this.view.index + delta + rows.length) % rows.length;
+    this.paintProjects(browser);
+  }
+
+  // Enter takes the marked row, and with nothing marked the best one: that is
+  // what the Go key of a phone keyboard means after typing a query.
+  commitProject(browser) {
+    const rows = this.projectRows(browser);
+    const row = rows[this.view.index] || rows[0];
+    if (row) row.click();
+  }
+
+  // The palette's keys, live only while the menu stands open on the project
+  // list. Escape is left alone, the dropdown closes on it.
+  handleKey(event) {
+    if (!this.opened || !this.view || this.view.tab !== "projects" || this.view.project) return;
+    const browser = this.tabsRoot()?.querySelector("[data-project-browser]");
+    if (!browser) return;
+    const actions = {
+      ArrowDown: () => this.moveProject(browser, 1),
+      ArrowUp: () => this.moveProject(browser, -1),
+      Enter: () => this.commitProject(browser),
+    };
+    const action = actions[event.key];
+    if (!action) return;
+    event.preventDefault();
+    event.stopPropagation();
+    action();
   }
 
   applyTab(root, tab) {
@@ -619,12 +916,16 @@ class QuickNav extends HTMLElement {
     const browser = root.querySelector("[data-project-browser]");
     if (browser) {
       this.applySort(browser);
+      const field = this.projectHead()?.querySelector("[data-pb-filter]");
+      if (field) field.value = this.view.query || "";
+      this.renderProjects(browser);
       if (this.view.project) {
         if (!this.showProject(browser, this.view.project)) this.view.project = null;
-      } else {
-        this.showList(browser);
       }
+      if (!this.view.project) this.showList(browser);
+      this.paintProjects(browser);
     }
+    this.syncProjectHead();
     root.querySelectorAll("[data-qn-fold]").forEach((group) => this.foldGroup(group));
   }
 
@@ -909,6 +1210,45 @@ class QuickNav extends HTMLElement {
       void this.releaseTarget(release.closest(".quicknav-swipe-row"));
       return;
     }
+    const git = event.target.closest("[data-git-project-menu]");
+    if (git) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!menuJustClosed()) projectActions.openGitMenu(git, { signal: this.ac.signal });
+      return;
+    }
+    const compose = event.target.closest("[data-docker-project-menu]");
+    if (compose) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!menuJustClosed()) {
+        projectActions.openComposeMenu(compose, { section: compose.closest("[data-pb-detail]"), signal: this.ac.signal });
+      }
+      return;
+    }
+    const logs = event.target.closest("[data-docker-logs]");
+    if (logs) {
+      event.preventDefault();
+      event.stopPropagation();
+      const row = logs.closest("[data-chip]");
+      if (row) void projectActions.openLogTerminal(row.dataset.chipId, row.dataset.chipName || "");
+      return;
+    }
+    const container = event.target.closest("[data-chip-main-menu]");
+    if (container) {
+      event.preventDefault();
+      event.stopPropagation();
+      const row = container.closest("[data-chip]");
+      if (!row || menuJustClosed()) return;
+      // A container row answers with its menu, running or not, like the
+      // editor's container cells do. A row reached with the keyboard clicks at
+      // no point at all, so the row itself is the anchor then.
+      const rect = container.getBoundingClientRect();
+      const x = event.clientX || rect.left;
+      const y = event.clientY || rect.bottom + 4;
+      projectActions.openDockerMenu(row, Math.round(x), Math.round(y), { signal: this.ac.signal });
+      return;
+    }
     const tab = event.target.closest("[data-quicknav-tab]");
     if (tab) {
       event.preventDefault();
@@ -917,6 +1257,9 @@ class QuickNav extends HTMLElement {
       store.set(TAB_KEY, this.view.tab);
       const root = tab.closest("[data-quicknav-tabs]");
       if (root) this.applyTab(root, this.view.tab);
+      this.centerActive = true;
+      this.enterProjectList();
+      this.enterActiveList();
       return;
     }
     const drill = event.target.closest("[data-pb-drill]");
@@ -926,6 +1269,7 @@ class QuickNav extends HTMLElement {
       this.view.project = drill.getAttribute("data-pb-drill");
       const browser = drill.closest("[data-project-browser]");
       if (browser) this.showProject(browser, this.view.project);
+      this.syncProjectHead();
       return;
     }
     const back = event.target.closest("[data-pb-back]");
@@ -935,6 +1279,7 @@ class QuickNav extends HTMLElement {
       this.view.project = null;
       const browser = back.closest("[data-project-browser]");
       if (browser) this.showList(browser);
+      this.enterProjectList();
     }
   }
 }

@@ -207,6 +207,83 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     assert(await row(page).locator('[data-chip-kind="docker-stack"]').count() === 0, "the old stack chip is still rendered");
   });
 
+  await run("the quick nav's project detail lists the containers and carries the compose menu", async () => {
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    // The quick nav hides from 768px up with a fine pointer, so it is driven in
+    // a window below md like its own runner does.
+    await page.setViewportSize({ width: 750, height: 900 });
+    const open = async () => {
+      await page.click(".quicknav-toggle");
+      await page.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 8000 });
+      await page.locator('[data-quicknav-tab="projects"]:visible').first().click();
+      await page.waitForSelector("[data-pb-rows] [data-pb-drill]", { state: "visible", timeout: 8000 });
+      await page.locator(`[data-pb-rows] [data-pb-drill="${NAME}"]`).first().click();
+      await page.locator(`[data-pb-detail="${NAME}"]`).first().waitFor({ state: "visible", timeout: 8000 });
+      await sleep(300);
+    };
+    await open();
+    const detail = page.locator(`[data-pb-detail="${NAME}"]`);
+    assert(await detail.locator("[data-pb-actions] [data-docker-project-menu]").count() === 1, "no compose action in the detail's row");
+    assert(await detail.locator('[data-pb-actions] [data-docker-project-menu] .dc-term-icon.running').count() === 1, "the compose action is not green while the stack runs");
+    const containers = detail.locator('[data-chip-kind="docker"]');
+    assert(await containers.count() === 1, `expected one container row, got ${await containers.count()}`);
+    assert((await containers.getAttribute("data-chip-name")) === "web", "the container row is not named by the compose service");
+    assert(await containers.locator("[data-docker-logs]").count() === 1, "the container row has no logs action");
+    // Below the terminals, which is where the projects page puts them too.
+    const order = await page.evaluate((name) => {
+      const d = document.querySelector(`[data-pb-detail="${name}"]`);
+      const fold = d.querySelector("[data-qn-fold]").getBoundingClientRect();
+      const container = d.querySelector('[data-chip-kind="docker"]').getBoundingClientRect();
+      return container.top >= fold.bottom - 0.5;
+    }, NAME);
+    assert(order, "the containers do not stand below the terminals");
+    // The menu is the projects page's own, built from the same shared module.
+    await detail.locator("[data-pb-actions] [data-docker-project-menu]").click();
+    await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
+    const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+    assert(labels.length > 0 && labels.some((l) => /web/.test(l)), `the compose menu names no container: ${JSON.stringify(labels)}`);
+    await closeMenu(page);
+
+    // A plain click on a running container answers with its menu, it does not
+    // shortcut into a shell: the same thing the editor's container cells do.
+    const before = page.url();
+    await containers.locator("[data-chip-main-menu]").click();
+    await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
+    const own = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+    assert(own.some((l) => /^Shell$/i.test(l)), `the container's menu offers no Shell: ${JSON.stringify(own)}`);
+    assert(own.some((l) => /^Logs$/i.test(l)), `the container's menu offers no Logs: ${JSON.stringify(own)}`);
+    assert(page.url() === before, `the click navigated to ${page.url()} instead of opening the menu`);
+    await closeMenu(page);
+
+    // The open menu follows the daemon: a container moved by a client of its
+    // own reaches it over the same SSE "docker" event the projects page reads,
+    // with no reload and without closing the drilled project.
+    const green = () => page.evaluate((name) => ({
+      row: document.querySelectorAll(`[data-pb-detail="${name}"] [data-chip-kind="docker"] .dc-term-icon.running`).length,
+      action: document.querySelectorAll(`[data-pb-detail="${name}"] [data-docker-project-menu] .dc-term-icon.running`).length,
+      open: Boolean(document.querySelector(".quicknav-menu.show")),
+      drilled: !document.querySelector(`[data-pb-detail="${name}"]`).hidden,
+    }), NAME);
+    assert(JSON.stringify(await green()) === JSON.stringify({ row: 1, action: 1, open: true, drilled: true }), "the running stack does not read green in the open menu");
+    // The row carries the container's id, which is what the detail is built
+    // from, so the mover and the surface under test agree on the target.
+    const id = await page.evaluate((name) => document.querySelector(`[data-pb-detail="${name}"] [data-chip-kind="docker"]`).dataset.chipId, NAME);
+    const api = await apiClient();
+    try {
+      assert((await api.post(`/docker/${id}/stop`)).ok(), "stopping the container failed");
+      await page.waitForFunction((name) => document.querySelectorAll(`[data-pb-detail="${name}"] [data-chip-kind="docker"] .dc-term-icon.running`).length === 0, NAME, { timeout: 30000 });
+      const idle = await green();
+      assert(idle.open && idle.drilled, "the menu closed or lost its project while the container moved");
+      assert(idle.action === 0, "the compose action stayed green with nothing running");
+      assert((await api.post(`/docker/${id}/start`)).ok(), "starting the container failed");
+      await page.waitForFunction((name) => document.querySelectorAll(`[data-pb-detail="${name}"] [data-chip-kind="docker"] .dc-term-icon.running`).length === 1, NAME, { timeout: 30000 });
+    } finally {
+      await api.dispose().catch(() => {});
+    }
+    await page.setViewportSize({ width: 1360, height: 900 });
+  });
+
   await run("the container chips stand in a row of their own, folding on their own", async () => {
     const rows = row(page).locator("[data-sessions-body] .project-chips");
     assert(await rows.count() === 2, "expected a terminal row and a container row");

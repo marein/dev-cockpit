@@ -161,6 +161,11 @@ type QuickNav struct {
 	// AllProjects feeds the two-level project browser: every project (alpha
 	// sorted, like the projects page) with its editor, sessions and shells.
 	AllProjects []ProjectNav
+	// DockerActions is the configured compose commands, the same list for
+	// every project because it describes the install and not one stack. The
+	// project detail's docker menu carries them exactly like the projects
+	// page's compose button does.
+	DockerActions []DockerButton
 }
 
 // HasInactiveCoders reports whether any project carries a resumable session.

@@ -7,10 +7,34 @@ const { assert, sleep, BASE } = L;
 // project detail, [data-pb-back] returns; a project scoped page sets
 // data-quicknav-current-project; a group over 5 entries folds with
 // [data-qn-fold-toggle]; the project order is shared with the projects page.
+// The Projects tab is a palette built like the editor's project switcher: a
+// search field ([data-pb-filter]) in the sticky header over the rows
+// ([data-pb-rows]), the server's rows kept out of sight in [data-pb-source] and
+// cloned into groups (Recent over All projects without a query, one ranked list
+// with one), the query matching name, repository and branch together over
+// data-project-search, the arrows walking the rows (.quicknav-pb-active) and
+// Enter drilling into the marked one. The field takes the focus and a row is
+// marked only where a keyboard is around (hover/fine pointer), so opening the
+// tab on a phone throws no keyboard up; the head steps aside for the Active tab
+// and while a project is drilled open.
 // The Active pane is one flat list of every live coder and shell, no per-kind
 // grouping, sorted and drag reorderable through the same cross-device @dc_tab_pos
 // state the attach page tab strip uses (POST /terminal-tabs/order); the New coder
-// and New shell buttons sit at the end of that list. On touch a swipe left on a
+// and New shell buttons sit at the end of that list. Entering that list (opening
+// the menu on it, or switching to it) scrolls the terminal the user stands on
+// into the middle of the menu, once the menu is on screen and has a height to
+// centre against (bootstrap's show fires before that, shown after it). It is a
+// one shot that survives the background refresh behind the open, which restores
+// the menu's scroll offset instead of dropping the reader back to the top, and
+// off a terminal page nothing is current and the list stays where it was. That
+// refresh reconciles the fresh markup against the standing menu instead of
+// replacing it, so a node that did not change is never detached and keeps its
+// running animation (the compose spinner would otherwise restart on every
+// container that moves). What is hidden in the menu stays the client's: the
+// server renders every pane and project detail hidden and applyState decides,
+// so the refresh must not carry that attribute over, or the open detail goes
+// display:none for as long as it takes to re-apply the view and every
+// animation under it is thrown away. On touch a swipe left on a
 // row reveals a delete action (row wrapper .quicknav-swipe-row, button
 // [data-qn-delete]) that behaves exactly like the desktop tab strip's close
 // control: confirm dialog, POST /coders/:id/stop or /shells/:id/delete, and
@@ -20,8 +44,15 @@ const { assert, sleep, BASE } = L;
 // /coders/:id/delete) that deletes the coder outright, the server stops it
 // first. The Projects tab detail mirrors the projects page chip
 // row: no per-kind headlines, one merged list of the live coders and shells in
-// tab strip order, inactive coders after them, New coder and New shell at the
-// end. Detail rows swipe too, reorder stays active-list only: active coders
+// tab strip order, its containers under them, inactive coders after them. The
+// project's actions stand on one line under the title, right aligned and icons
+// only ([data-pb-actions], the shape the context bar above already uses):
+// editor, new coder and new shell always, the git menu ahead of them where the
+// project is a repository and the compose menu where it runs containers, both
+// the projects page's own menus out of @dc/project-actions. A container row
+// answers a plain click with its own menu, running or not, the way the
+// editor's container cells do, and reveals its logs on a swipe. Detail rows
+// swipe too, reorder stays active-list only: active coders
 // reveal stop plus delete, inactive coders reveal delete (POST
 // /coders/:id/delete, projects page confirm wording), shells reveal rename plus
 // delete. A coder created through the quick nav lands on the coder's own page
@@ -75,6 +106,74 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       await drill.click();
       await page.locator(`[data-pb-detail="${project}"]`).first().waitFor({ state: "visible", timeout: 6000 });
       await page.locator("[data-pb-back]:visible").first().click(); await sleep(200);
+    });
+
+    await run("projects tab is a palette: field on top, query over name/repo/branch, arrows and Enter drill", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.click(".quicknav-toggle");
+      await page.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 });
+      await page.locator('[data-quicknav-tab="projects"]:visible').first().click(); await sleep(400);
+      await page.waitForSelector("[data-pb-rows] [data-pb-drill]", { state: "visible", timeout: 6000 });
+      const head = await page.evaluate(() => {
+        const field = document.querySelector("[data-pb-filter]");
+        const list = document.querySelector("[data-pb-rows]");
+        return {
+          above: field.getBoundingClientRect().bottom <= list.getBoundingClientRect().top + 2,
+          focused: document.activeElement === field,
+          marked: Boolean(document.querySelector(".quicknav-pb-active")),
+          source: document.querySelector("[data-pb-source]").hidden,
+        };
+      });
+      assert(head.above, "the search field does not stand over the rows");
+      assert(head.focused, "the field did not take the focus where a keyboard is around");
+      assert(head.marked, "no row is marked for Enter");
+      assert(head.source, "the server's rows are not kept out of sight");
+      // The scratch project's branch is what a fresh git init leaves, so the
+      // query goes over the name; the search line carries all three fields.
+      const line = await page.$eval(`[data-pb-rows] [data-pb-drill="${project}"]`, (el) => el.getAttribute("data-project-search"));
+      assert(line && line.includes(project), `search line ${line} does not carry the name`);
+      await page.fill("[data-pb-filter]", project);
+      await sleep(300);
+      const hits = await page.$$eval("[data-pb-rows] [data-pb-drill]", (els) => els.map((el) => el.getAttribute("data-pb-drill")));
+      assert(hits.length && hits.every((name) => name.includes(project)), `query left foreign rows: ${hits.join()}`);
+      // A query nobody can match says so in the list, under the field.
+      await page.fill("[data-pb-filter]", `${project}-nothing-matches-this`);
+      await sleep(300);
+      assert(await page.$eval("[data-pb-empty]", (el) => !el.hidden), "no matches note stayed hidden");
+      await page.fill("[data-pb-filter]", project);
+      await sleep(300);
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("ArrowUp");
+      await page.keyboard.press("Enter");
+      await page.locator(`[data-pb-detail="${project}"]`).first().waitFor({ state: "visible", timeout: 6000 });
+      assert(await page.$eval("[data-pb-head]", (el) => el.hidden), "the field stayed up over a drilled project");
+      await page.locator("[data-pb-back]:visible").first().click(); await sleep(300);
+      assert(await page.$eval("[data-pb-head]", (el) => !el.hidden), "the field did not come back with the list");
+      await page.locator('[data-quicknav-tab="active"]:visible').first().click(); await sleep(200);
+      assert(await page.$eval("[data-pb-head]", (el) => el.hidden), "the field stayed up on the Active tab");
+    });
+
+    await run("mobile: the projects palette waits for a tap, no keyboard on open", async () => {
+      const mp = await mobilePage();
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await mp.click(".quicknav-toggle");
+      await mp.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 6000 });
+      await mp.locator('[data-quicknav-tab="projects"]:visible').first().click(); await sleep(400);
+      await mp.waitForSelector("[data-pb-rows] [data-pb-drill]", { state: "visible", timeout: 6000 });
+      const idle = await mp.evaluate(() => ({
+        focused: document.activeElement === document.querySelector("[data-pb-filter]"),
+        marked: Boolean(document.querySelector(".quicknav-pb-active")),
+      }));
+      assert(!idle.focused, "the field grabbed the focus on a touch screen");
+      assert(!idle.marked, "a row was marked on a touch screen");
+      await mp.click("[data-pb-filter]");
+      await mp.fill("[data-pb-filter]", project);
+      await sleep(300);
+      assert(await mp.evaluate(() => document.activeElement === document.querySelector("[data-pb-filter]")), "the tap did not sharpen the field");
+      const hits = await mp.$$eval("[data-pb-rows] [data-pb-drill]", (els) => els.map((el) => el.getAttribute("data-pb-drill")));
+      assert(hits.length && hits.every((name) => name.includes(project)), `query left foreign rows: ${hits.join()}`);
+      await mp.locator(`[data-pb-rows] [data-pb-drill="${project}"]`).first().click();
+      await mp.locator(`[data-pb-detail="${project}"]`).first().waitFor({ state: "visible", timeout: 6000 });
     });
 
     await run("active pane is one @dc_tab_pos-sorted list, drag reorders it like the tab strip, new buttons last", async () => {
@@ -147,6 +246,72 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       await sleep(200);
       await page.click(sel);
       await page.waitForURL(new RegExp(dragIds[1]), { timeout: 8000 });
+    });
+
+    await run("active tab: opening the nav puts the terminal you stand on in the middle of the menu", async () => {
+      // A short window makes the menu short (height: min(60vh, 28rem)), so the
+      // list is longer than the box and the centring has something to do.
+      await page.setViewportSize({ width: 750, height: 380 });
+      // Enough rows to overflow the short menu. They go again at the end of the
+      // check: past five entries the project detail folds, and the swipe checks
+      // below reach for rows that would then be hidden.
+      const extra = [];
+      while (shellUrls.length < 7) {
+        const url = await L.createShell(page, project);
+        shellUrls.push(url);
+        extra.push(url);
+        await sleep(900);
+      }
+      const openNav = async () => {
+        await page.click(".quicknav-toggle");
+        await page.waitForSelector("[data-quicknav-active-list]", { state: "visible", timeout: 8000 });
+        await sleep(700);
+      };
+      const seen = () => page.evaluate(() => {
+        const menu = document.querySelector(".quicknav-menu.show");
+        const rows = [...menu.querySelectorAll('[data-quicknav-pane="active"] .quicknav-active-item[data-tab-kind="shell"]')];
+        const row = menu.querySelector('[data-quicknav-pane="active"] [aria-current="true"]');
+        const mr = menu.getBoundingClientRect();
+        const r = row && row.getBoundingClientRect();
+        return {
+          ids: rows.map((e) => e.dataset.tabId),
+          current: row ? row.dataset.tabId : null,
+          scrolls: menu.scrollHeight > menu.clientHeight + 1,
+          scrollTop: Math.round(menu.scrollTop),
+          inside: r ? r.top >= mr.top - 0.5 && r.bottom <= mr.bottom + 0.5 : false,
+          off: r ? Math.round(Math.abs((r.top + r.height / 2) - (mr.top + mr.height / 2))) : -1,
+        };
+      });
+
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await openNav();
+      const list = await seen();
+      assert(list.scrolls, "the active list does not overflow the short menu, the check would prove nothing");
+      // A row from the middle of the list: the top rows are reachable without
+      // scrolling, so they would pass on an untouched menu too.
+      const mid = list.ids[Math.floor(list.ids.length / 2)];
+      assert(mid, `no shell rows in the active pane: ${JSON.stringify(list.ids)}`);
+
+      await page.goto(`${BASE}/shells/${mid}`, { waitUntil: "domcontentloaded" });
+      await sleep(900);
+      await openNav();
+      const on = await seen();
+      assert(on.current === mid, `the current row is ${on.current}, expected ${mid}`);
+      assert(on.scrollTop > 0, "the menu never scrolled, the current row was left wherever it fell");
+      assert(on.inside, "the current row is not inside the menu");
+      assert(on.off <= 30, `the current row sits ${on.off}px off the menu's middle`);
+
+      // Off a terminal page nothing is current, and the list stays at its top.
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await openNav();
+      const off = await seen();
+      assert(off.current === null, `a row claims to be current off a terminal page: ${off.current}`);
+      assert(off.scrollTop === 0, `the menu scrolled to ${off.scrollTop} with nothing to centre`);
+      await page.setViewportSize({ width: 750, height: 900 });
+      for (const u of extra) {
+        await L.deleteShell(page, u);
+        shellUrls.splice(shellUrls.indexOf(u), 1);
+      }
     });
 
     await run("mobile: the grip handle reorders the active list (whole-row touch still scrolls)", async () => {
@@ -387,15 +552,114 @@ L.runFeature("QUICKNAV", async ({ page, run, mobilePage }) => {
       assert(await page.locator(`[data-pb-detail="${project}"] [data-qn-fold] > *`).count() >= before, "fold did not expand");
     });
 
-    await run("projects tab detail is one merged list in projects-page chip order, new buttons last", async () => {
+    await run("projects tab detail is one merged list in projects-page chip order, its actions one icon row", async () => {
       const detail = `[data-pb-detail="${project}"]`;
       assert((await page.$$(`${detail} h6.dropdown-header`)).length === 0, "per-kind headlines still present");
       assert((await page.$$(`${detail} [data-qn-fold]`)).length === 1, "expected one merged terminal group");
       const navIds = await page.$$eval(`${detail} [data-qn-fold] [data-tab-id]`, (els) => els.map((el) => el.getAttribute("data-tab-id")));
       const chipIds = await page.$$eval(`#project-${project} [data-chip] [data-notify-target]`, (els) => els.map((el) => el.getAttribute("data-notify-target")));
       assert(navIds.length > 0 && navIds.join() === chipIds.join(), `detail order ${navIds.join()} != chip order ${chipIds.join()}`);
-      const tail = await page.$$eval(`${detail} .dropdown-item`, (els) => els.slice(-2).map((el) => el.textContent.trim()));
-      assert(tail[0] === "New coder" && tail[1] === "New shell", `expected New coder/New shell last, got ${tail.join(", ")}`);
+      // The three project actions: one row, icons only, and nothing of them left
+      // in the list below.
+      const acts = await page.evaluate((sel) => {
+        const bar = document.querySelector(`${sel} [data-pb-actions]`);
+        if (!bar) return null;
+        const items = [...bar.querySelectorAll("a, button")];
+        const tops = items.map((e) => Math.round(e.getBoundingClientRect().top));
+        return {
+          count: items.length,
+          oneLine: tops.every((t) => t === tops[0]),
+          labels: items.map((e) => e.textContent.trim()),
+          titles: items.map((e) => e.getAttribute("title")),
+          hrefs: items.map((e) => e.getAttribute("href") || e.closest("form")?.getAttribute("action") || ""),
+          icons: items.map((e) => [...e.querySelectorAll("i.ti")].map((i) => [...i.classList].find((c) => c.startsWith("ti-"))).join("+")),
+          heights: items.map((e) => Math.round(e.getBoundingClientRect().height)),
+          git: bar.querySelectorAll("[data-git-project-menu]").length,
+          docker: bar.querySelectorAll("[data-docker-project-menu]").length,
+          belowTitle: bar.getBoundingClientRect().top >= document.querySelector(`${sel} [data-pb-back]`).getBoundingClientRect().bottom - 0.5,
+          rightAligned: (() => {
+            const title = document.querySelector(`${sel} [data-pb-back]`).getBoundingClientRect();
+            const last = items[items.length - 1].getBoundingClientRect();
+            const first = items[0].getBoundingClientRect();
+            return last.right <= title.right + 1 && last.right >= title.right - 20 && first.left > title.left + 40;
+          })(),
+        };
+      }, detail);
+      assert(acts, "the detail has no action row");
+      // A plain directory has no repository and no containers, so it carries
+      // the three that always stand.
+      assert(acts.count === 3, `expected three actions on a plain directory, got ${acts.count}`);
+      assert(acts.docker === 0, "a project without containers carries a compose button");
+      assert(acts.oneLine, `the actions are not on one line: ${acts.titles.join(", ")}`);
+      assert(acts.labels.every((t) => t === ""), `the actions carry text, not icons only: ${acts.labels.join("|")}`);
+      assert(acts.belowTitle, "the action row does not sit under the title");
+      // Icons only must not mean a target a finger misses.
+      assert(acts.heights.every((h) => h >= 28), `an action is too small to tap: ${acts.heights.join()}`);
+      // The row is right aligned: it ends where the rows below end, and starts
+      // well past their left edge.
+      assert(acts.rightAligned, "the action row is not flushed to the right edge");
+      assert(acts.icons.join() === "ti-code,ti-robot+ti-plus,ti-terminal-2+ti-plus", `unexpected icons: ${acts.icons.join()}`);
+      assert(acts.hrefs[0].includes("/editor") && acts.hrefs[1].includes("/coders/new") && acts.hrefs[2] === "/shells/new", `unexpected targets: ${acts.hrefs.join()}`);
+      acts.titles.forEach((t) => assert(t && t.includes(project), `an action names no project: ${t}`));
+      const items = await page.$$eval(`${detail} .dropdown-item`, (els) => els.map((el) => el.textContent.trim()));
+      assert(!items.includes("New coder") && !items.includes("New shell") && !items.includes("Editor"), `the old rows are still in the list: ${items.join("|")}`);
+    });
+
+    await run("a repository grows the git action, left of the editor, opening the projects page's own menu", async () => {
+      // The /git route is the runner's way to make a real repository out of the
+      // scratch directory, the same one the projects runner seeds with.
+      const path = await L.projectPath(page, project);
+      const git = async (args) => {
+        const res = await page.evaluate(async ({ cwd, args }) => {
+          const token = document.querySelector('meta[name="csrf-token"]')?.content || "";
+          const r = await fetch("/git", { method: "POST", headers: { "X-CSRF-Token": token, "Content-Type": "application/json" }, body: JSON.stringify({ cwd, args }) });
+          if (!r.ok) return { failed: `${r.status}` };
+          return { code: (await r.json()).exitCode };
+        }, { cwd: path, args });
+        if (res.failed || res.code !== 0) throw new Error(`git ${args.join(" ")} failed: ${res.failed || res.code}`);
+      };
+      await git(["init", "-q", "-b", "master"]);
+      await git(["config", "user.email", "e2e@example.com"]);
+      await git(["config", "user.name", "e2e"]);
+      await git(["config", "commit.gpgsign", "false"]);
+      await git(["commit", "-q", "--allow-empty", "-m", "init"]);
+
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.click(".quicknav-toggle");
+      await page.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 8000 });
+      await page.locator('[data-quicknav-tab="projects"]:visible').first().click();
+      await page.waitForSelector("[data-pb-rows] [data-pb-drill]", { state: "visible", timeout: 8000 });
+      await page.locator(`[data-pb-rows] [data-pb-drill="${project}"]`).first().click();
+      await page.locator(`[data-pb-detail="${project}"]`).first().waitFor({ state: "visible", timeout: 8000 });
+      await sleep(300);
+      const row = await page.evaluate((name) => {
+        const bar = document.querySelector(`[data-pb-detail="${name}"] [data-pb-actions]`);
+        const items = [...bar.querySelectorAll("a, button")];
+        const gitBtn = bar.querySelector("[data-git-project-menu]");
+        return {
+          count: items.length,
+          firstIsGit: items[0] === gitBtn,
+          beforeEditor: items.indexOf(gitBtn) < items.findIndex((e) => (e.getAttribute("href") || "").includes("/editor")),
+          fetch: gitBtn?.dataset.gitFetch,
+          commit: gitBtn?.dataset.gitCommit,
+          compare: gitBtn?.dataset.gitCompare,
+          worktree: Boolean(gitBtn?.dataset.gitWorktree),
+        };
+      }, project);
+      assert(row.count === 4, `the repository's row has ${row.count} actions, expected four`);
+      assert(row.firstIsGit && row.beforeEditor, "the git action does not stand left of the editor");
+      assert(row.fetch === `/projects/${project}/fetch`, `git fetch target is ${row.fetch}`);
+      assert(row.commit?.includes("view=commit") && row.compare?.includes("view=compare"), "the git action misses the editor views");
+      assert(row.worktree, "a main repository offers no worktree entry");
+
+      await page.locator(`[data-pb-detail="${project}"] [data-git-project-menu]`).click();
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
+      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      assert(
+        JSON.stringify(labels) === JSON.stringify(["New worktree", "Fetch", "Commit changes", "Compare revisions"]),
+        `the quick nav's git menu reads ${JSON.stringify(labels)}`,
+      );
+      await page.keyboard.press("Escape");
     });
   } finally {
     if (retCoderPath) {

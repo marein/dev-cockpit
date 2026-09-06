@@ -1,9 +1,19 @@
-import { confirm } from "@dc/dialog";
+import { confirm, isVisible as dialogVisible } from "@dc/dialog";
 import { notifyError } from "@dc/toast";
 import "@dc/theme";
 
 // The glue around pe.js: a lazy custom element loader, the loading bar and the
 // pe:* hooks. Every page is server rendered HTML, custom elements enhance it.
+
+// A dialog is not an outside click. Every dropdown that stays open on one
+// (data-bs-auto-close="outside") would otherwise lose its menu the moment a
+// confirm is answered: the dialog renders outside the menu, so the click that
+// dismisses it reads as a click elsewhere on the page. Bootstrap's events
+// bubble, so one listener holds every dropdown open while a dialog stands,
+// instead of each surface tracking its own dialogs.
+document.addEventListener("hide.bs.dropdown", (event) => {
+  if (dialogVisible()) event.preventDefault();
+});
 
 const bootBuild = buildId(document);
 

@@ -11,11 +11,18 @@ import (
 // the URLs to reach them. It adds nothing the projects list doesn't already
 // compute, it just reshapes a subset and derives the links. currentPath is the
 // page the quick nav was opened from, so the create links return there on Cancel,
-// matching the Active tab.
+// matching the Active tab. The row's repository name and its search line come
+// from switcherRepo and switcherSearch, the very functions the editor's project
+// palette uses, so both surfaces name a repository the same and answer the same
+// query.
 func (s *Server) projectBrowser(currentPath string) []render.ProjectNav {
 	projects := s.projectsWithRunners()
 	out := make([]render.ProjectNav, 0, len(projects))
 	ret := url.QueryEscape(currentPath)
+	// The same map the projects page builds, off the same cached daemon
+	// snapshot: nothing calls docker here. A host without a reachable daemon
+	// gets a nil map, and every project's Docker stays empty.
+	containers := s.dockerByProject(projects)
 	for _, p := range projects {
 		nav := render.ProjectNav{
 			Name:         p.Name,
@@ -26,6 +33,14 @@ func (s *Server) projectBrowser(currentPath string) []render.ProjectNav {
 			LastUsedUnix: p.LastUsedUnix,
 			Active:       p.Active(),
 			HasNews:      p.HasNews,
+			Repo:         switcherRepo(p),
+			Branch:       p.GitBranch,
+			Worktree:     p.GitWorktree,
+			WorktreeOf:   p.GitWorktreeOf,
+			WorktreeMain: p.GitWorktreeMain,
+			Search:       switcherSearch(p),
+			GitRepo:      p.GitRepo,
+			Docker:       containers[p.Name],
 		}
 		for _, r := range p.ActiveRefs {
 			url := "/shells/" + r.ID
