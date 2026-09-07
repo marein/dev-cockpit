@@ -4,8 +4,8 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // Editor terminal panel: the project's live coders and shells inside the editor
 // page, desktop only (fine pointer, wide viewport). The panel sits below the
 // editor surface in the pane column, opens through the kebab menu's Terminal
-// entry or Ctrl+J, remembers its open state and height per device
-// (dc-editor-term-open / dc-editor-term-height), and hides completely on mobile
+// entry or Ctrl+J, remembers its open state and height per project
+// (dc-editor-term-open:<project> / dc-editor-term-height:<project>), and hides completely on mobile
 // widths and coarse pointers. Content comes from the fragment
 // GET /projects/:name/editor/terminals (tabs plus empty pane divs); the client
 // mounts a terminal-attach/terminal-input island pair into a pane on first
@@ -165,8 +165,12 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       await sleep(300);
       const after = await page.evaluate(() => document.querySelector("[data-editor-term-panel]").getBoundingClientRect().height);
       assert(after > before + 80, `panel did not grow (${before} -> ${after})`);
-      const stored = await page.evaluate(() => parseInt(localStorage.getItem("dc-editor-term-height") || "0", 10));
-      assert(Math.abs(stored - after) < 8, `height not persisted (${stored} vs ${after})`);
+      const stored = await page.evaluate((p) => ({
+        project: parseInt(localStorage.getItem(`dc-editor-term-height:${p}`) || "0", 10),
+        device: parseInt(localStorage.getItem("dc-editor-term-height") || "0", 10),
+      }), project);
+      assert(Math.abs(stored.project - after) < 8, `height not persisted for the project (${stored.project} vs ${after})`);
+      assert(stored.device === stored.project, `the device default did not follow (${stored.device} vs ${stored.project})`);
     });
 
     await run("desktop: a shell started elsewhere appears live over the terminals event", async () => {

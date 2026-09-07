@@ -1172,6 +1172,24 @@ test. Update this file when a convention changes.
   guarding by comparing the two values would let a side whose longest line is
   shorter clamp what it is given and pull its neighbour back to its own end,
   which is a comparison that cannot be scrolled past the shorter file's width.
+- **Editor layout is per project** (`editor.js`, `readLayout`/`writeLayout`):
+  tree width, fold and scroll, the tree column's view (`dc-editor-view:<project>`,
+  restored without the reveal `?view=` does), the terminal panel's height, and
+  the commit and compare lists' filter and scroll while the view stands
+  (`dc-editor-commit-list:<project>`, `-revdiff-list:`, kept by `changeList`
+  behind `stateKey`, restored on the page's first open, dropped on close),
+  every tab's cursor and scroll (`view` on its `dc-editor-tabs` entry, line and
+  column, both axes; a diff's or comparison's scroll rides the same entry and is
+  put back after the merge view is built, `scrollTo` in the facade, because the
+  outer `.cm-mergeView` is the vertical scroller and the sides only scroll
+  sideways). The unchanged blocks a person opened in a collapsed diff ride
+  along as `expanded`, the start lines in the working copy: `@codemirror/merge`
+  exports the `uncollapseUnchanged` effect but not its field, so `expandedField`
+  records the effects and `expandBlocks` replays them after the build, onto
+  the revision side through the chunk mapping. Width, fold and height also write the bare key, the start for a
+  project this device never opened, copied onto the project on its first open.
+  Saves debounce 300ms and flush in the teardown; the tree scroll is read only
+  while the tree has a box and put back when the box appears (`wireTreeScroll`).
 - **One editor on every width: the strip stays, the options fold into one
   menu.** A strip and seven icons do not share 390px, and two different
   headers are two things to learn, so the icons went into the kebab instead of
@@ -1186,8 +1204,8 @@ test. Update this file when a convention changes.
   toggle shows on both
   widths with the effect the width
   allows: below `md` it opens the drawer, above it folds the tree column and
-  its splitter away (`.editor-tree-folded`, per device in `dc-editor-tree-
-  folded`, the rule scoped to the widths that have a column so the class is
+  its splitter away (`.editor-tree-folded`, per project in `dc-editor-tree-
+  folded:<project>`, the rule scoped to the widths that have a column so the class is
   inert on a phone). The sheet `[data-editor-sheet]` serves the menus
   that need more than a dropdown on a phone: the editor settings live in the
   hidden store `[data-editor-panels]` and the sheet **borrows the very
@@ -2215,10 +2233,10 @@ free floating page scripts.
   islands carry `embedded`: rows fit the pane the way fullscreen fits the
   viewport (`MinTerminalRows` is 5, else the server clamps a low panel back
   up to 30), the size observer watches height too, a hidden pane does not
-  connect, and the terminal fullscreen keys stay off the page. Open state and
-  active tab are
-  per project (`dc-editor-term-open:<project>`, `-active:`), the height per
-  device. Inside the panel the terminal keys mirror the attach pages and
+  connect, and the terminal fullscreen keys stay off the page. Open state,
+  active tab and height are
+  per project (`dc-editor-term-open:<project>`, `-active:`, `-height:`).
+  Inside the panel the terminal keys mirror the attach pages and
   Ctrl/Cmd+Shift+Enter passes through to the editor fullscreen; the panel
   owns them as long as the last click landed inside it, a focus-owner flag,
   because a click on the bare strip focuses nothing. The editor's own

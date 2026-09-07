@@ -1068,11 +1068,26 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       return "marked, unmarked, and updated without a reload";
     });
 
+    // A load brings back the view the page was left in, the commit or the
+    // compare panel included, and every check here starts from the tree.
     const openEditor = async (target) => {
       await target.goto(editorURL, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(target);
       await L.waitUpgraded(target, ["dc-editor"]);
-      await target.waitForSelector(".editor-item[data-path]", { timeout: 15000 });
+      await target.waitForSelector(".editor-item[data-path]", { state: "attached", timeout: 15000 });
+      await sleep(400);
+      const deadline = Date.now() + 15000;
+      for (;;) {
+        const treeShown = await target.evaluate(() => {
+          const open = document.querySelector("[data-editor-commit]:not([hidden]) [data-editor-commit-close], [data-editor-revdiff]:not([hidden]) [data-editor-revdiff-close]");
+          if (open) open.click();
+          const row = document.querySelector(".editor-item[data-path]");
+          return !!row && row.getBoundingClientRect().height > 0;
+        });
+        if (treeShown) break;
+        assert(Date.now() < deadline, "the editor never showed its tree");
+        await sleep(200);
+      }
     };
 
     // The checks from here on write through the editor page itself rather than
@@ -1442,7 +1457,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     // committing those would pull the ground from under them.
     const openCommitView = async (target) => {
       await target.waitForSelector("[data-editor-commit-toggle]:not([hidden])", { timeout: 15000 });
-      await target.click("[data-editor-commit-toggle]");
+      if (!(await target.locator("[data-editor-commit]:not([hidden])").count())) await target.click("[data-editor-commit-toggle]");
       await target.waitForSelector("[data-editor-commit]:not([hidden])", { timeout: 10000 });
     };
     // clearPicks empties the pick through the all checkbox. The box can stand

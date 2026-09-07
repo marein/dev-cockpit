@@ -29,13 +29,17 @@ const SEARCH_DRAFT_DEBOUNCE_MS = 200;
 const PREVIEW_DEBOUNCE_MS = 500;
 const DIFF_REV = "HEAD";
 const TREE_WIDTH_KEY = "dc-editor-tree-width";
+const TREE_SCROLL_KEY = "dc-editor-tree-scroll";
+const VIEW_KEY = "dc-editor-view";
 const FULLSCREEN_KEY = "dc-editor-fullscreen";
 const TERM_OPEN_KEY = "dc-editor-term-open";
 const TERM_HEIGHT_KEY = "dc-editor-term-height";
 const TERM_ACTIVE_KEY = "dc-editor-term-active";
-// Whether the tree column is folded away on a wide screen. Per device, like the
-// column's width: it is about the screen in front of you, not about the project.
+// Whether the tree column is folded away on a wide screen. Per project, like
+// the column's width and the terminal panel's height; the bare key is what this
+// device set last and what a project opened here for the first time starts with.
 const TREE_FOLD_KEY = "dc-editor-tree-folded";
+const LAYOUT_SAVE_MS = 300;
 // Whether the commit view groups its list by folder. Per device for the same
 // reason, and for every project alike.
 const COMMIT_GROUP_KEY = "dc-editor-commit-grouped";
@@ -67,6 +71,23 @@ async function init(root) {
   const base = `/projects/${encodeURIComponent(name)}/editor`;
   const tabsKey = `dc-editor-tabs:${name}`;
   const treeKey = `dc-editor-tree:${name}`;
+  const treeScrollKey = `${TREE_SCROLL_KEY}:${name}`;
+  const viewKey = `${VIEW_KEY}:${name}`;
+  const readLayout = (key) => {
+    const own = store.get(`${key}:${name}`, null);
+    if (own != null) return own;
+    const inherited = store.get(key, "");
+    store.set(`${key}:${name}`, inherited);
+    return inherited;
+  };
+  const writeLayout = (key, value) => {
+    store.set(`${key}:${name}`, value);
+    store.set(key, value);
+  };
+  let tabsRestored = false;
+  let viewSaveTimer = 0;
+  let treeScrollTimer = 0;
+  let treeScrollTop = 0;
   const lsp = editorLSP.createClient(base, root.dataset.editorLsp);
 
   const bodyEl = root.querySelector(".editor-body");
@@ -219,7 +240,7 @@ async function init(root) {
   // onCursor runs from inside createEditor's first update, before the const
   // below is bound, so anything of ours that reads the editor waits for this.
   let editorReady = false;
-  const editor = await createEditor(surfaceEl, { onChange, onCursor, onFocusChange: syncSwipeZone, lspUsable, onLSPClick: goToDefinition, onFindUsages: findUsages, onGoToDefinition: goToDefinitionAtCursor, onDocChanged }, editorSettings, signal, mergeEl);
+  const editor = await createEditor(surfaceEl, { onChange, onCursor, onFocusChange: syncSwipeZone, lspUsable, onLSPClick: goToDefinition, onFindUsages: findUsages, onGoToDefinition: goToDefinitionAtCursor, onDocChanged, onViewMoved: scheduleViewSave }, editorSettings, signal, mergeEl);
   editorReady = true;
   setupSettingsUI(root, editor, editorSettings, (key) => {
     if (key === "diff_view" || key === "diff_collapse") void reapplyComparison(key);
@@ -1543,10 +1564,54 @@ async function init(root) {
   // nothing has to be migrated. A comparison is its two paths: the content
   // comes from the disk on restore, unsaved changes fall away like they do for
   // every other tab.
-  function persistTabs() {
+  function savedLines(lines) {
+    if (!Array.isArray(lines)) return [];
+    return [...new Set(lines.filter((n) => Number.isInteger(n) && n > 0))].slice(0, 500);
+  }
+
+  function savedView(v) {
+    const place = (p) => !!p && typeof p.line === "number" && typeof p.column === "number";
+    if (!v || !place(v.anchor) || !place(v.head)) return null;
+    const out = {
+      anchor: { line: v.anchor.line, column: v.anchor.column },
+      head: { line: v.head.line, column: v.head.column },
+      scrollTop: Math.max(0, Math.round(Number(v.scrollTop) || 0)),
+      scrollLeft: Math.max(0, Math.round(Number(v.scrollLeft) || 0)),
+    };
+    const expanded = savedLines(v.expanded);
+    if (expanded.length) out.expanded = expanded;
+    return out;
+  }
+
+  function savedScroll(s) {
+    if (!s || typeof s !== "object") return null;
+    return {
+      top: Math.max(0, Math.round(Number(s.top) || 0)),
+      left: Math.max(0, Math.round(Number(s.left) || 0)),
+    };
+  }
+
+  function tabView(t) {
+    if (t.kind || t.compare || !t.handle) return null;
+    return savedView(editor.captureView(t, t.path === activePath));
+  }
+
+  function tabScroll(t) {
+    if (!t.compare) return null;
+    return savedScroll(t.path === activePath ? editor.scrollOf() || t.compare.scroll : t.compare.scroll);
+  }
+
+  function tabExpanded(t) {
+    if (!t.compare) return [];
+    return savedLines(t.path === activePath ? editor.expandedOf() : t.compare.expanded);
+  }
+
+  function writeTabs() {
     const open = tabs.map((t) => {
+      const scroll = tabScroll(t);
+      const expanded = tabExpanded(t);
       if (t.compare && t.compare.readOnly) {
-        return {
+        const entry = {
           type: "revdiff",
           left: t.compare.left,
           right: t.compare.right,
@@ -1555,20 +1620,43 @@ async function init(root) {
           leftLabel: t.compare.leftLabel,
           rightLabel: t.compare.rightLabel,
         };
+        if (scroll) entry.scroll = scroll;
+        if (expanded.length) entry.expanded = expanded;
+        return entry;
       }
-      if (t.compare) return { type: "compare", left: t.compare.left, right: t.compare.right };
-      if (t.external) return { type: "external", path: t.path };
-      if (!t.diffRev && !t.blameOn && !t.previewOn) return t.path;
+      if (t.compare) {
+        const entry = { type: "compare", left: t.compare.left, right: t.compare.right };
+        if (scroll) entry.scroll = scroll;
+        if (expanded.length) entry.expanded = expanded;
+        return entry;
+      }
+      const view = tabView(t);
+      if (t.external) return view ? { type: "external", path: t.path, view } : { type: "external", path: t.path };
+      if (!t.diffRev && !t.blameOn && !t.previewOn && !view) return t.path;
       const entry = { type: "file", path: t.path };
       if (t.diffRev) entry.diff = t.diffRev;
       if (t.blameOn) entry.blame = true;
       if (t.previewOn) entry.preview = true;
+      if (view) entry.view = view;
       return entry;
     });
     store.setJSON(tabsKey, { open, active: activePath });
+  }
+
+  function persistTabs() {
+    writeTabs();
     // The open tabs are half of what the server watches, so the scope goes with
     // them.
     scheduleFileWatch();
+  }
+
+  function scheduleViewSave() {
+    if (!tabsRestored) return;
+    clearTimeout(viewSaveTimer);
+    viewSaveTimer = setTimeout(() => {
+      viewSaveTimer = 0;
+      writeTabs();
+    }, LAYOUT_SAVE_MS);
   }
 
   function persistExpanded() {
@@ -1592,7 +1680,7 @@ async function init(root) {
         && typeof e.leftRev === "string" && typeof e.rightRev === "string") {
         entries.push(e);
       } else if (e && typeof e === "object" && e.type === "external" && typeof e.path === "string" && e.path) {
-        entries.push(e);
+        entries.push({ type: "external", path: e.path, view: savedView(e.view) });
       } else if (e && typeof e === "object" && typeof e.path === "string" && e.path) {
         entries.push({
           type: "file",
@@ -1600,6 +1688,7 @@ async function init(root) {
           diff: typeof e.diff === "string" ? e.diff : "",
           blame: e.blame === true,
           preview: e.preview === true,
+          view: savedView(e.view),
         });
       }
     }
@@ -1636,6 +1725,10 @@ async function init(root) {
       // The two share the surface, so a stored state that somehow carries both
       // keeps the diff and drops the preview.
       if (entries[i].type === "file" && entries[i].preview && !tab.kind && !tab.diffRev) tab.previewOn = true;
+      if (entries[i].view && tab.handle && !tab.kind) editor.restoreView(tab, entries[i].view);
+      const scroll = savedScroll(entries[i].scroll);
+      if (scroll && tab.compare) tab.compare.scroll = scroll;
+      if (tab.compare) tab.compare.expanded = savedLines(entries[i].expanded);
       tabs.push(tab);
     }
     if (tabs.length === 0) {
@@ -2568,11 +2661,15 @@ async function init(root) {
   // the first `shown` changes have rows, their folder rows ride along; the
   // rest waits behind a button whose numbers count changes, and the picks,
   // the summary and the commit always speak for the whole list.
-  function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf, canOpen, open, active, onPick, onFilter, empty }) {
+  function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf, canOpen, open, active, onPick, onFilter, empty, stateKey }) {
     let changes = [];
     let sorted = [];
     let query = "";
     let index = emptyIndex();
+    let pendingScroll = null;
+    let lastScroll = 0;
+    let restored = false;
+    let stateTimer = 0;
     // How many of the shown changes may carry rows right now; it grows with
     // the button and the walk and survives a re-render, so a refresh never
     // folds a list somebody grew back to its first batch.
@@ -3006,7 +3103,12 @@ async function init(root) {
       if (moreEl) rows.push(moreEl);
       const listHadFocus = listEl.contains(document.activeElement);
       listEl.replaceChildren(...rows);
-      listEl.scrollTop = scrollTop;
+      if (pendingScroll != null && listEl.clientHeight > 0) {
+        listEl.scrollTop = pendingScroll;
+        pendingScroll = null;
+      } else {
+        listEl.scrollTop = scrollTop;
+      }
       mark();
       if (listHadFocus && !focusRow()) filterEl.focus();
     }
@@ -3178,7 +3280,61 @@ async function init(root) {
       shown = COMMIT_ROWS_STEP;
       render();
       onFilter();
+      scheduleState();
     }
+
+    function persistState() {
+      if (!stateKey) return;
+      store.setJSON(stateKey, { filter: query, scroll: lastScroll });
+    }
+
+    function scheduleState() {
+      if (!stateKey) return;
+      clearTimeout(stateTimer);
+      stateTimer = setTimeout(() => {
+        stateTimer = 0;
+        persistState();
+      }, LAYOUT_SAVE_MS);
+    }
+
+    function restoreState() {
+      if (!stateKey) return;
+      if (!restored) {
+        restored = true;
+        const saved = store.getJSON(stateKey, null);
+        const filter = saved && typeof saved.filter === "string" ? saved.filter.trim() : "";
+        if (filter) {
+          filterEl.value = filter;
+          query = filter;
+          buildIndex();
+        }
+        lastScroll = Math.max(0, Math.round(Number(saved && saved.scroll) || 0));
+        if (lastScroll > 0) pendingScroll = lastScroll;
+      }
+      persistState();
+    }
+
+    function forgetState() {
+      if (!stateKey) return;
+      if (filterEl.value !== "" || query !== "") clear();
+      clearTimeout(stateTimer);
+      stateTimer = 0;
+      lastScroll = 0;
+      pendingScroll = null;
+      store.remove(stateKey);
+    }
+
+    listEl.addEventListener("scroll", () => {
+      if (listEl.clientHeight === 0) return;
+      lastScroll = Math.round(listEl.scrollTop);
+      scheduleState();
+    }, { signal, passive: true });
+    signal.addEventListener("abort", () => {
+      if (!stateTimer) return;
+      clearTimeout(stateTimer);
+      stateTimer = 0;
+      persistState();
+    });
 
     function clear() {
       filterEl.value = "";
@@ -3254,6 +3410,8 @@ async function init(root) {
       reset() {
         shown = COMMIT_ROWS_STEP;
       },
+      restoreState,
+      forgetState,
       focusRow,
       focusFilter() {
         filterEl.focus();
@@ -3293,6 +3451,7 @@ async function init(root) {
       queueCommitDraft();
     },
     onFilter: () => syncCommitControls(),
+    stateKey: `dc-editor-commit-list:${name}`,
     empty: (query) => {
       const el = document.createElement("div");
       el.className = "text-secondary small p-3";
@@ -3395,20 +3554,23 @@ async function init(root) {
   // openCommit is "bring the commit view up", whatever stands: a view that is
   // already on but sits in a closed drawer or a folded column still has to
   // become visible, which is what the entry in the git sheet promises.
-  function openCommit() {
+  function openCommit({ reveal = true } = {}) {
     if (!gitRepo) return;
     if (!commitOn) {
       closeRevdiff();
       commitOn = true;
+      store.set(viewKey, "commit");
       treeEl.hidden = true;
       commitEl.hidden = false;
       commitToggleBtn.classList.add("active");
       commitToggleBtn.setAttribute("aria-pressed", "true");
       commitList.reset();
+      commitList.restoreState();
       renderCommitList();
       void loadCommitInfo();
       void pullCommitDraft();
     }
+    if (!reveal) return;
     if (mobileMedia.matches) openDrawer();
     else if (treeFolded) toggleDrawer();
     // The panel opens where the work starts, the filter, like every other
@@ -3420,6 +3582,8 @@ async function init(root) {
   function closeCommit() {
     if (!commitOn) return;
     commitOn = false;
+    store.set(viewKey, "");
+    commitList.forgetState();
     commitEl.hidden = true;
     treeEl.hidden = false;
     commitToggleBtn.classList.remove("active");
@@ -3762,6 +3926,7 @@ async function init(root) {
     active: () => revdiffOn,
     onPick: () => syncRevdiffControls(),
     onFilter: () => syncRevdiffControls(),
+    stateKey: `dc-editor-revdiff-list:${name}`,
     empty: (query) => {
       const el = document.createElement("div");
       el.className = "text-secondary small p-3";
@@ -3902,19 +4067,22 @@ async function init(root) {
     syncRevdiffControls();
   }
 
-  function openRevdiff() {
+  function openRevdiff({ reveal = true } = {}) {
     if (!gitRepo) return;
     if (!revdiffOn) {
       closeCommit();
       revdiffOn = true;
+      store.set(viewKey, "compare");
       treeEl.hidden = true;
       revdiffEl.hidden = false;
       paintRevdiffHead();
       revdiffList.reset();
+      revdiffList.restoreState();
       revdiffList.render();
       syncRevdiffControls();
       void loadRevdiff();
     }
+    if (!reveal) return;
     if (mobileMedia.matches) openDrawer();
     else if (treeFolded) toggleDrawer();
     if (pointerMedia.matches) revdiffFilterEl.focus();
@@ -3923,6 +4091,8 @@ async function init(root) {
   function closeRevdiff() {
     if (!revdiffOn) return;
     revdiffOn = false;
+    store.set(viewKey, "");
+    revdiffList.forgetState();
     revdiffEl.hidden = true;
     treeEl.hidden = false;
   }
@@ -5156,6 +5326,7 @@ async function init(root) {
     const tab = activeTab();
     if (!tab) return;
     if (tab.compare && tab.compare.readOnly) {
+      editor.captureCompare(tab);
       await showRevdiff(tab);
       return;
     }
@@ -5172,6 +5343,8 @@ async function init(root) {
       name: tab.name,
       collapse: editorSettings.diff_collapse,
       valid: () => activeTab() === tab,
+      scroll: editor.scrollOf(),
+      expanded: editor.expandedOf(),
     });
   }
 
@@ -5254,7 +5427,7 @@ async function init(root) {
   // applyDiff compares the active tab against rev; an empty rev takes the
   // comparison off again. ask is false only where the person already answered
   // the size question.
-  async function applyDiff(rev, { ask = true } = {}) {
+  async function applyDiff(rev, { ask = true, scroll = null, expanded = null } = {}) {
     const tab = activeTab();
     if (!tab || tab.kind || tab.compare || tab.external || !editor.canDiff) return;
     const seq = ++diffSeq;
@@ -5317,6 +5490,8 @@ async function init(root) {
         name: tab.name,
         collapse: editorSettings.diff_collapse,
         valid: current,
+        scroll,
+        expanded,
       });
     } catch (err) {
       // A diff that cannot be built must never leave an empty surface: the file
@@ -5350,7 +5525,10 @@ async function init(root) {
       diffSeq += 1; // a build still in flight belongs to the tab we just left
       return;
     }
-    await applyDiff(tab.diffRev);
+    await applyDiff(tab.diffRev, {
+      scroll: { top: tab.handle.scrollTop || 0, left: tab.handle.scrollLeft || 0 },
+      expanded: tab.handle.expanded || [],
+    });
   }
 
   // resumeTabDiff builds the diff a tab was restored with once the status has
@@ -6048,6 +6226,8 @@ async function init(root) {
         readOnly: !!tab.compare.readOnly,
         collapse: editorSettings.diff_collapse,
         valid: () => activeTab() === tab,
+        scroll: tab.compare.scroll || null,
+        expanded: tab.compare.expanded || [],
       });
     } catch (err) {
       console.error("compare failed", err);
@@ -6075,6 +6255,8 @@ async function init(root) {
         name: tab.name,
         collapse: editorSettings.diff_collapse,
         valid: () => activeTab() === tab,
+        scroll: tab.compare.scroll || null,
+        expanded: tab.compare.expanded || [],
       });
     } catch (err) {
       console.error("compare failed", err);
@@ -7177,10 +7359,10 @@ async function init(root) {
 
   // The same button on both widths, with the effect the width allows: where the
   // tree is a drawer it opens and closes it, where the tree is a column it folds
-  // that column away and back. The fold is per device and comes back with the
+  // that column away and back. The fold is per project and comes back with the
   // page; the width the splitter set is untouched, so an unfolded column stands
   // where it stood.
-  let treeFolded = store.get(TREE_FOLD_KEY, "") === "1";
+  let treeFolded = readLayout(TREE_FOLD_KEY) === "1";
   function paintTreeFold() {
     root.classList.toggle("editor-tree-folded", treeFolded);
     const drawer = mobileMedia.matches;
@@ -7196,7 +7378,7 @@ async function init(root) {
       return;
     }
     treeFolded = !treeFolded;
-    store.set(TREE_FOLD_KEY, treeFolded ? "1" : "");
+    writeLayout(TREE_FOLD_KEY, treeFolded ? "1" : "");
     paintTreeFold();
   }
 
@@ -7208,7 +7390,7 @@ async function init(root) {
   }
 
   function wireSplitter() {
-    applyTreeWidth(parseInt(store.get(TREE_WIDTH_KEY, "0"), 10) || 0);
+    applyTreeWidth(parseInt(readLayout(TREE_WIDTH_KEY), 10) || 0);
     let dragging = false;
     splitterEl.addEventListener("mousedown", (e) => e.preventDefault(), { signal });
     splitterEl.addEventListener("pointerdown", (e) => {
@@ -7226,14 +7408,43 @@ async function init(root) {
       dragging = false;
       splitterEl.classList.remove("active");
       splitterEl.releasePointerCapture(e.pointerId);
-      store.set(TREE_WIDTH_KEY, String(Math.round(treeColEl.getBoundingClientRect().width)));
+      writeLayout(TREE_WIDTH_KEY, String(Math.round(treeColEl.getBoundingClientRect().width)));
       editor.measure();
     }, { signal });
     splitterEl.addEventListener("dblclick", () => {
       applyTreeWidth(0);
-      store.set(TREE_WIDTH_KEY, "0");
+      writeLayout(TREE_WIDTH_KEY, "0");
       editor.measure();
     }, { signal });
+  }
+
+  function restoreTreeScroll() {
+    const top = parseInt(store.get(treeScrollKey, "0"), 10) || 0;
+    if (top > 0) treeEl.scrollTop = top;
+  }
+
+  function saveTreeScroll() {
+    store.set(treeScrollKey, String(treeScrollTop));
+  }
+
+  function wireTreeScroll() {
+    treeEl.addEventListener("scroll", () => {
+      if (treeEl.clientHeight === 0) return;
+      treeScrollTop = Math.round(treeEl.scrollTop);
+      clearTimeout(treeScrollTimer);
+      treeScrollTimer = setTimeout(() => {
+        treeScrollTimer = 0;
+        saveTreeScroll();
+      }, LAYOUT_SAVE_MS);
+    }, { signal, passive: true });
+    let shown = false;
+    const observer = new ResizeObserver((entries) => {
+      const visible = entries[entries.length - 1].contentRect.height > 0;
+      if (visible && !shown) restoreTreeScroll();
+      shown = visible;
+    });
+    observer.observe(treeEl);
+    signal.addEventListener("abort", () => observer.disconnect());
   }
 
   // ---- quick open --------------------------------------------------------------
@@ -9197,6 +9408,7 @@ async function init(root) {
   wireTreeDrop();
   wirePaste();
   wireSplitter();
+  wireTreeScroll();
   wireQuickOpen();
   wireTabDrag();
   wireSheetDrag();
@@ -9726,7 +9938,7 @@ async function init(root) {
   }
 
   function wireTermSplitter() {
-    applyTermHeight(parseInt(store.get(TERM_HEIGHT_KEY, "0"), 10) || 0);
+    applyTermHeight(parseInt(readLayout(TERM_HEIGHT_KEY), 10) || 0);
     let dragging = false;
     termSplitterEl.addEventListener("mousedown", (e) => e.preventDefault(), { signal });
     termSplitterEl.addEventListener("pointerdown", (e) => {
@@ -9745,7 +9957,7 @@ async function init(root) {
       dragging = false;
       termSplitterEl.classList.remove("active");
       termSplitterEl.releasePointerCapture(e.pointerId);
-      store.set(TERM_HEIGHT_KEY, String(Math.round(termPanelEl.getBoundingClientRect().height)));
+      writeLayout(TERM_HEIGHT_KEY, String(Math.round(termPanelEl.getBoundingClientRect().height)));
       editor.measure();
     }, { signal });
   }
@@ -10393,13 +10605,26 @@ async function init(root) {
   // is half of why this exists.
   startFileWatch();
   await Promise.all([loadTree(), restoreTabs(), loadGitStatus()]);
+  tabsRestored = true;
+  restoreTreeScroll();
   if (tabs.length === 0 && mobileMedia.matches) openDrawer();
   if (pageTerminal && termOpen && termApplies()) void activateTermPane(pageTerminal, { focus: true });
-  const pageView = root.dataset.editorView || "";
-  if (pageView === "commit") openCommit();
-  else if (pageView === "compare") openRevdiff();
+  const reveal = !!root.dataset.editorView;
+  const pageView = root.dataset.editorView || store.get(viewKey, "");
+  if (pageView === "commit") openCommit({ reveal });
+  else if (pageView === "compare") openRevdiff({ reveal });
 
   return () => {
+    if (viewSaveTimer) {
+      clearTimeout(viewSaveTimer);
+      viewSaveTimer = 0;
+      writeTabs();
+    }
+    if (treeScrollTimer) {
+      clearTimeout(treeScrollTimer);
+      treeScrollTimer = 0;
+      saveTreeScroll();
+    }
     ac.abort();
     termStripResize.disconnect();
     clearTimeout(statusTimer);
@@ -10617,6 +10842,16 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   const schemeTheme = () => (isDark() ? theme.oneDark : []);
   let langSeq = 0;
   let mergeMod = null;
+  const expandedField = StateField.define({
+    create: () => [],
+    update(value, tr) {
+      let next = tr.docChanged ? value.map((pos) => tr.changes.mapPos(pos)) : value;
+      for (const e of tr.effects) {
+        if (mergeMod && e.is(mergeMod.uncollapseUnchanged) && !next.includes(e.value)) next = [...next, e.value];
+      }
+      return next;
+    },
+  });
   let mergeView = null;
   // Whether the compartment holds an inline diff right now. It is written by
   // the two functions that put one up and take one down and by nothing else,
@@ -10918,6 +11153,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   const sharedExtensions = (langExt) => [
     basicSetup,
     focusReporter,
+    expandedField,
     colorSwatchExtension,
     themeConf.of(schemeTheme()),
     langConf.of(langExt),
@@ -11262,6 +11498,8 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       if (u.docChanged) hooks.onDocChanged?.(u);
       if (u.docChanged) hooks.onChange();
       if (u.docChanged || u.selectionSet) reportCursor(u.state);
+      if (u.docChanged || u.selectionSet) hooks.onViewMoved?.();
+      if (mergeMod && u.transactions.some((tr) => tr.effects.some((e) => e.is(mergeMod.uncollapseUnchanged)))) hooks.onViewMoved?.();
       if (u.docChanged) lastSurfaceTouch = 0;
       if (u.docChanged || u.selectionSet) syncLSPPill(u.view);
     }),
@@ -11282,6 +11520,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     parent: host,
     state: EditorState.create({ doc: "", extensions: baseExtensions([]) }),
   });
+  editorView.scrollDOM.addEventListener("scroll", () => hooks.onViewMoved?.(), { signal, passive: true });
 
   // The editor of the working copy: the plain one, or the writable side of the
   // side by side view while that is up. Everything that reads or writes the
@@ -11414,9 +11653,11 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     const sides = [view.a.scrollDOM, view.b.scrollDOM];
     const echo = new Set();
     mergeScroll = new AbortController();
+    view.dom.addEventListener("scroll", () => hooks.onViewMoved?.(), { signal: mergeScroll.signal, passive: true });
     for (const [index, from] of sides.entries()) {
       const to = sides[index === 0 ? 1 : 0];
       from.addEventListener("scroll", () => {
+        hooks.onViewMoved?.();
         if (echo.delete(from)) return;
         const was = to.scrollLeft;
         if (was === from.scrollLeft) return;
@@ -11424,6 +11665,63 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
         if (to.scrollLeft !== was) echo.add(to);
       }, { signal: mergeScroll.signal, passive: true });
     }
+  }
+
+  function expandedLines(v) {
+    const doc = v.state.doc;
+    const positions = v.state.field(expandedField, false) || [];
+    return [...new Set(positions.map((pos) => doc.lineAt(Math.min(pos, doc.length)).number))].sort((x, y) => x - y);
+  }
+
+  function liveExpanded() {
+    if (mergeView) return expandedLines(mergeView.b);
+    return unifiedOn ? expandedLines(editorView) : [];
+  }
+
+  function expandBlocks(lines) {
+    if (!Array.isArray(lines) || !lines.length || !mergeMod) return;
+    const b = mergeView ? mergeView.b : editorView;
+    const doc = b.state.doc;
+    const positions = lines.filter((n) => n >= 1 && n <= doc.lines).map((n) => doc.line(n).from);
+    if (!positions.length) return;
+    b.dispatch({ effects: positions.map((pos) => mergeMod.uncollapseUnchanged.of(pos)) });
+    if (!mergeView) return;
+    const chunks = (mergeMod.getChunks(b.state) || { chunks: [] }).chunks;
+    const mapped = positions.map((pos) => {
+      let ours = 0;
+      let other = 0;
+      for (const chunk of chunks) {
+        if (chunk.fromB >= pos) break;
+        ours = chunk.toB;
+        other = chunk.toA;
+      }
+      return other + (pos - ours);
+    });
+    mergeView.a.dispatch({ effects: mapped.map((pos) => mergeMod.uncollapseUnchanged.of(pos)) });
+  }
+
+  function liveScroll() {
+    if (mergeView) return { top: Math.round(mergeView.dom.scrollTop), left: Math.round(mergeView.b.scrollDOM.scrollLeft) };
+    return { top: Math.round(editorView.scrollDOM.scrollTop), left: Math.round(editorView.scrollDOM.scrollLeft) };
+  }
+
+  function scrollTo(scroll) {
+    if (!scroll) return;
+    const merged = mergeView;
+    const apply = () => {
+      if (mergeView !== merged) return;
+      if (merged) {
+        merged.dom.scrollTop = scroll.top || 0;
+        merged.b.scrollDOM.scrollLeft = scroll.left || 0;
+        merged.b.requestMeasure();
+        return;
+      }
+      editorView.scrollDOM.scrollTop = scroll.top || 0;
+      editorView.scrollDOM.scrollLeft = scroll.left || 0;
+      editorView.requestMeasure();
+    };
+    apply();
+    requestAnimationFrame(apply);
   }
 
   function dropMergeView() {
@@ -11478,6 +11776,8 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     syncSurface();
     view.b.requestMeasure();
     reportCursor(view.b.state);
+    expandBlocks(spec.expanded);
+    scrollTo(spec.scroll);
   }
 
   // setDiff switches the open buffer between the plain editor, the side by side
@@ -11519,6 +11819,8 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       syncSurface();
       view.b.requestMeasure();
       reportCursor(view.b.state);
+      expandBlocks(spec.expanded);
+      scrollTo(spec.scroll);
       return;
     }
     const merge = spec.mode === "inline" ? await loadMerge() : null;
@@ -11535,6 +11837,10 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     if (merge) buildUnified(merge, spec);
     else dropUnified();
     editorView.requestMeasure();
+    if (merge) {
+      expandBlocks(spec.expanded);
+      scrollTo(spec.scroll);
+    }
   }
 
   // buildUnified puts the inline diff up against spec.original, and it takes
@@ -11652,6 +11958,10 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     // histories and never a character. MergeView cannot be handed an existing
     // EditorState, which is the same limit setDiff runs into.
     captureCompare(tab) {
+      if ((mergeView && compareOn) || (!mergeView && unifiedOn)) {
+        tab.compare.scroll = liveScroll();
+        tab.compare.expanded = liveExpanded();
+      }
       // compareOn, not just a merge view: a diff is a merge view too, and
       // reading its two sides into a comparison's documents would put the
       // revision of another file where this tab's right hand file belongs.
@@ -11694,14 +12004,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       // setState resets the scroller, so a tab switch would drop you at the top
       // of the file you come back to. The offset is captured per tab and set
       // again after the measure pass that follows the state swap.
-      const top = tab.handle.scrollTop || 0;
-      editorView.scrollDOM.scrollTop = top;
-      // Force a layout pass in case the editor mounted at zero size.
-      editorView.requestMeasure();
-      requestAnimationFrame(() => {
-        editorView.scrollDOM.scrollTop = top;
-        editorView.requestMeasure();
-      });
+      scrollTo({ top: tab.handle.scrollTop || 0, left: tab.handle.scrollLeft || 0 });
     },
     // captureView and restoreView carry the cursor and the scroll position
     // across a document the tab did not ask for: the disk moved under a clean
@@ -11720,10 +12023,13 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
         const line = state.doc.lineAt(pos);
         return { line: line.number, column: pos - line.from };
       };
+      const scroll = view ? liveScroll() : { top: tab.handle.scrollTop || 0, left: tab.handle.scrollLeft || 0 };
       return {
         anchor: place(selection.anchor),
         head: place(selection.head),
-        scrollTop: view ? view.scrollDOM.scrollTop : (tab.handle.scrollTop || 0),
+        scrollTop: scroll.top,
+        scrollLeft: scroll.left,
+        expanded: view ? liveExpanded() : (tab.handle.expanded || []),
       };
     },
     restoreView(tab, view) {
@@ -11736,19 +12042,25 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
         selection: { anchor: at(view.anchor), head: at(view.head) },
       }).state;
       tab.handle.scrollTop = view.scrollTop;
+      tab.handle.scrollLeft = view.scrollLeft || 0;
+      tab.handle.expanded = Array.isArray(view.expanded) ? view.expanded : [];
     },
     captureDoc(tab) {
+      const scroll = liveScroll();
+      if (mergeView || unifiedOn) tab.handle.expanded = liveExpanded();
       // The side by side editor's state carries the merge machinery, it cannot
       // be handed back to the plain editor. Its text can, so the tab keeps that
       // and rebuilds a plain state from it.
       if (mergeView) {
         tab.handle.state = EditorState.create({ doc: mergeView.b.state.doc, extensions: baseExtensions([]) });
-        tab.handle.scrollTop = 0;
-        return;
+      } else {
+        tab.handle.state = editorView.state;
       }
-      tab.handle.state = editorView.state;
-      tab.handle.scrollTop = editorView.scrollDOM.scrollTop;
+      tab.handle.scrollTop = scroll.top;
+      tab.handle.scrollLeft = scroll.left;
     },
+    scrollOf: () => liveScroll(),
+    expandedOf: () => liveExpanded(),
     valueOf(tab, isActive) {
       return isActive ? workView().state.doc.toString() : tab.handle.state.doc.toString();
     },
@@ -11912,6 +12224,7 @@ function createTextarea(host, hooks, settings) {
       ta.readOnly = !!tab.handle.readOnly;
       applyTabWidth();
       ta.scrollTop = tab.handle.scrollTop || 0;
+      ta.scrollLeft = tab.handle.scrollLeft || 0;
       if (tab.handle.selectionStart != null) {
         ta.selectionStart = tab.handle.selectionStart;
         ta.selectionEnd = tab.handle.selectionEnd ?? tab.handle.selectionStart;
@@ -11921,8 +12234,8 @@ function createTextarea(host, hooks, settings) {
     // The fallback keeps plain offsets: it exists for the minutes the CDN is
     // down, and a textarea has no line index to map through anyway.
     captureView(tab, isActive) {
-      if (!isActive) return { anchor: 0, head: 0, scrollTop: tab.handle.scrollTop || 0 };
-      return { anchor: ta.selectionStart, head: ta.selectionEnd, scrollTop: ta.scrollTop };
+      if (!isActive) return { anchor: 0, head: 0, scrollTop: tab.handle.scrollTop || 0, scrollLeft: tab.handle.scrollLeft || 0 };
+      return { anchor: ta.selectionStart, head: ta.selectionEnd, scrollTop: ta.scrollTop, scrollLeft: ta.scrollLeft };
     },
     restoreView(tab, view) {
       const length = (tab.handle.value || "").length;
@@ -11930,11 +12243,15 @@ function createTextarea(host, hooks, settings) {
       tab.handle.selectionStart = at(view.anchor);
       tab.handle.selectionEnd = at(view.head);
       tab.handle.scrollTop = view.scrollTop;
+      tab.handle.scrollLeft = view.scrollLeft || 0;
     },
     captureDoc(tab) {
       tab.handle.value = ta.value;
       tab.handle.scrollTop = ta.scrollTop;
+      tab.handle.scrollLeft = ta.scrollLeft;
     },
+    scrollOf: () => null,
+    expandedOf: () => [],
     valueOf(tab, isActive) {
       return isActive ? ta.value : tab.handle.value;
     },

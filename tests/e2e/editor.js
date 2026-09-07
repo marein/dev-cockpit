@@ -4228,7 +4228,10 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       return `${before.col.w}px column, folded to 0, back at ${back.col.w}px, splitter to ${wider.col.w}px`;
       } finally {
         // Whatever failed, the checks after this one get the page they expect.
-        await page.evaluate(() => localStorage.removeItem("dc-editor-tree-width"));
+        await page.evaluate((p) => {
+          localStorage.removeItem("dc-editor-tree-width");
+          localStorage.removeItem(`dc-editor-tree-width:${p}`);
+        }, project);
         await page.setViewportSize({ width: 1360, height: 900 });
         await sleep(400);
       }
