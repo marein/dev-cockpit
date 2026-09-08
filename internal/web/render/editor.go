@@ -23,6 +23,9 @@ type EditorData struct {
 	// settings.
 	DiffMaxLines int
 	DiffMaxKiB   int
+	// Autosave rides along like the limits above, so a page that is already
+	// open keeps what it was rendered with.
+	Autosave bool
 	// LSPExts is the code navigation surface as comma joined `ext:Label`
 	// pairs of the enabled language server profiles, so the client never
 	// mirrors the registry and a disabled profile leaves no surface.

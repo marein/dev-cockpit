@@ -403,6 +403,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
   try {
     await L.createProject(page, project);
     await L.createProject(page, plain);
+    // Autosave is on by default and the checks read the dirty state.
+    await L.setEditorFiles(page, { autosave: false });
 
     await run("settings: the git tab, one form, and only what describes the install", async () => {
       // The bare path leads to the leftmost tab, like a coder's base path leads

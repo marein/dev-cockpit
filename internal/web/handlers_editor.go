@@ -72,6 +72,7 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		Projects:     s.editorSwitcher(p.Name, ret),
 		DiffMaxLines: set.DiffMaxLines,
 		DiffMaxKiB:   set.DiffMaxKiB,
+		Autosave:     set.Autosave,
 		LSPExts:      s.lspSpec(),
 		Terminal:     strings.TrimSpace(c.Query("terminal")),
 		View:         editorView(c.Query("view")),

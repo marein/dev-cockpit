@@ -444,6 +444,10 @@ func DocsTopics() []DocsTopic {
 					Desc:  `A file you opened is saved onto exactly that file. If a coder or git wrote it in the meantime, nothing is written and a dialog says so: <em>Reload</em> takes the version on disk into the editor and your unsaved changes are gone, <em>Cancel</em> keeps them and writes nothing. If the file was deleted instead, the dialog offers <em>Create again</em>, which writes what is in the editor as a new file, or <em>Cancel</em>. There is no way to force the save, and a file you created in the editor saves normally.`,
 				},
 				{
+					Title: "Autosave",
+					Desc:  `A changed file is written one second after the last keystroke. Settings &rarr; Editor &rarr; Files switches it off.`,
+				},
+				{
 					Title: "Save",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "S"}}},
 					Desc:  `Save the current file.`,

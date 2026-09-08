@@ -338,8 +338,9 @@ func (s *Server) handleSettingsEditorGit(c *gin.Context) {
 }
 
 // handleSettingsEditorFiles renders the Files tab: how often an open editor
-// looks at what it has on the screen. It is a tab of its own because it is
-// neither git nor search: it is the editor following the disk.
+// looks at what it has on the screen, and whether it writes by itself. A tab
+// of its own because it is neither git nor search: it is the editor and the
+// disk, in both directions.
 func (s *Server) handleSettingsEditorFiles(c *gin.Context) {
 	set := s.editorSettings()
 	c.HTML(http.StatusOK, "settings_editor_files.gohtml", render.SettingsEditorData{
@@ -347,13 +348,22 @@ func (s *Server) handleSettingsEditorFiles(c *gin.Context) {
 		SettingsNav:     s.settingsNav("editor"),
 		Section:         "files",
 		FilePollSeconds: set.FilePollSeconds,
+		Autosave:        set.Autosave,
 	})
 }
 
-// handleSettingsEditorFilesSave stores that interval. Zero is a real answer and
-// means the editor stops following the disk on its own.
+// handleSettingsEditorFilesSave stores that interval and the autosave switch.
+// Zero is a real answer and means the editor stops following the disk on its
+// own.
 func (s *Server) handleSettingsEditorFilesSave(c *gin.Context) {
 	s.storeInt(editorFilePollSecondsKey, c.PostForm("file_poll_seconds"), 0, 60)
+	// Written explicitly, like the general page's switches: a later change of
+	// the default must not move a choice somebody made.
+	autosave := "off"
+	if c.PostForm("autosave") == "on" {
+		autosave = "on"
+	}
+	s.settings.Set(editorAutosaveKey, autosave)
 	s.redirectWithFlash(c, editorFilesSettingsPath, "Settings saved.", "")
 }
 

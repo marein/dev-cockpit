@@ -110,6 +110,8 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
 
   await run("setup: project with lib.go and use.go", async () => {
     await L.createProject(page, project);
+    // Autosave is on by default; these buffers are typed in and never saved.
+    await L.setEditorFiles(page, { autosave: false });
     for (const [path, content] of [
       ["lib.go", "package lib\n\nfunc IntelTarget() {}\n"],
       ["use.go", "package lib\n\nfunc use() {\n\tIntelTarget()\n\tIntelTarget()\n}\n"],

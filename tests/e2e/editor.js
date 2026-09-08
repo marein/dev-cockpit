@@ -326,6 +326,9 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
 
   try {
     await L.createProject(page, project);
+    // Autosave is on by default and every check below reads the dirty state,
+    // so it is off for this instance; the autosave check turns it on itself.
+    await L.setEditorFiles(page, { autosave: false });
 
     await run("mounts dc-editor + tree loads + CodeMirror ready", async () => {
       await page.goto(editorURL, { waitUntil: "domcontentloaded" });
@@ -2191,6 +2194,63 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await menuItem(page, "Delete").click();
       await confirmSwal(page);
       await page.waitForFunction((f) => !document.querySelector(`.editor-file[data-path="${f}"]`), conflictFile, { timeout: 8000 });
+    });
+
+    // The disk watch is off while this runs, so what happens to a tab is
+    // autosave's doing and never the watch's. Both settings go back.
+    await run("autosave writes on the pause, refuses a file that moved, and off means off", async () => {
+      const autoFile = `autosave_${tag}.txt`;
+      const reopen = async (autosave, poll) => {
+        const before = await L.setEditorFiles(page, { autosave, poll });
+        await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+        await L.dismissUpdate(page);
+        await page.waitForSelector(".cm-editor", { state: "attached", timeout: 20000 });
+        const carried = await page.evaluate(() => document.querySelector("dc-editor").dataset.editorAutosave);
+        assert((carried === "1") === autosave, `the page carries data-editor-autosave=${JSON.stringify(carried)}`);
+        return before;
+      };
+      const waitDisk = (path, want) => page.waitForFunction(async ([base, p, w]) => {
+        const res = await fetch(`${base}/file?path=${encodeURIComponent(p)}`, { headers: { Accept: "application/json" } });
+        return (await res.json()).content === w;
+      }, [`/projects/${encodeURIComponent(project)}/editor`, path, want], { timeout: 8000, polling: 300 });
+
+      const pollBefore = await reopen(true, 0);
+      await newFile(autoFile);
+      await page.click(".cm-content");
+      await page.keyboard.type("typed");
+      // Nothing is clicked from here: the pause is the trigger, the file is the
+      // proof.
+      await waitDisk(autoFile, "typed");
+      await waitDirty(autoFile, false);
+
+      // A file that moved under the buffer: nothing written, nothing asked,
+      // the tab marked.
+      assert((await outOfBand(autoFile, "theirs")) === 200, "the out of band write did not land");
+      await page.click(".cm-content");
+      await page.keyboard.press("Control+End");
+      await page.keyboard.type(" more");
+      await page.waitForSelector(`${tabSel(autoFile)}[data-disk-state="stale"]`, { timeout: 8000 });
+      assert(!(await page.$(".swal2-confirm")), "autosave opened a dialog");
+      const kept = await diskText(autoFile);
+      assert(kept === "theirs", `autosave wrote ${JSON.stringify(kept)} over the file that moved`);
+      await waitDirty(autoFile, true);
+
+      // Off is off: the same typing leaves the buffer unsaved and the disk
+      // untouched. The reload takes the tab back to what is on disk.
+      await reopen(false, pollBefore);
+      await page.click(tabSel(autoFile));
+      await page.click(".cm-content");
+      await page.keyboard.type("x");
+      await waitDirty(autoFile, true);
+      await sleep(2500);
+      assert(await page.$(`${tabSel(autoFile)}.dirty`), "the buffer was saved with autosave off");
+      assert((await diskText(autoFile)) === "theirs", "something was written with autosave off");
+
+      await openRowMenu(page, `.editor-file[data-path="${autoFile}"]`);
+      await menuItem(page, "Delete").click();
+      await confirmSwal(page);
+      await page.waitForFunction((f) => !document.querySelector(`.editor-file[data-path="${f}"]`), autoFile, { timeout: 8000 });
+      return "the pause writes, a moved file is marked and kept, the switch gates it";
     });
 
     // ---- the editor follows the disk ------------------------------------

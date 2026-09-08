@@ -309,7 +309,23 @@ test. Update this file when a convention changes.
   editor is saved before anything read it back. Every side of a comparison
   carries its own version, and every path that puts the disk into a tab goes
   through one place (`applyDiskContent`), so a reload can never leave the old
-  token behind.
+  token behind. What a save writes is the buffer as it was **read**
+  (`editor.snapshot`), handed back to `markSaved` afterwards, and dirtiness is
+  asked again: typing on while the write is in flight would otherwise mark the
+  newer text as saved and lose it.
+- **Autosave is one trigger and decides nothing.** The setting is the
+  install's (`editor-autosave`, Settings, Editor, Files, on unless switched
+  off) and rides into the page like the diff limits, so an open editor takes
+  it on its next load. The trigger is the pause after the last change
+  (`AUTOSAVE_DEBOUNCE_MS`), nothing else: a save on a lost focus or on a page
+  going away is a path a phone reaches unreliably and a test cannot hold
+  still. It runs the same `saveTab` a person does, with `ask: false`: a
+  refused write asks nothing, writes nothing and marks the tab the way the
+  disk watch marks one (`stale`, `missing`). That mark is also the brake, a
+  marked tab is skipped, because its version stays stale until somebody saves
+  or reloads it by hand. It leaves alone what the save button leaves alone, a
+  comparison and a file from outside the project, and writes one file at a
+  time.
 - **The editor follows the disk, and the scope of that is what is on the
   screen.** The `git` event is not enough and cannot be made enough:
   `Fingerprint.Worktree` is a hash over `git status`, which moves when a file

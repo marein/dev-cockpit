@@ -158,6 +158,8 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, page, run, mobilePage }) => {
 
   await run("setup: scratch project with a seeded file", async () => {
     await L.createProject(page, scratch);
+    // Autosave is on by default and the checks read the dirty state.
+    await L.setEditorFiles(page, { autosave: false });
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     const save = await page.evaluate(([p, f, c]) => {
       const token = document.querySelector('meta[name="csrf-token"]').content;

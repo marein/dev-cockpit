@@ -17,6 +17,7 @@ const (
 	editorGitPollSecondsKey  = "editor-git-poll-seconds"
 	editorFilePollSecondsKey = "editor-file-poll-seconds"
 	editorExclusionsKey      = "editor-search-exclusions"
+	editorAutosaveKey        = "editor-autosave"
 	editorDiffMaxLinesKey    = "editor-diff-max-lines"
 	editorDiffMaxKiBKey      = "editor-diff-max-kib"
 )
@@ -116,6 +117,11 @@ type editorSettings struct {
 	// be frequent. Hanging both on one number would force one of them into the
 	// wrong frequency. Zero turns the watch off.
 	FilePollSeconds int
+	// Autosave is whether the editor writes a changed buffer by itself. It
+	// describes the install, not the screen: what it moves is the working copy
+	// a coder and git write in too. On until it is switched off, so the key is
+	// read against "off" and not against "on".
+	Autosave bool
 	// The rest is read by the diff.
 	DiffMaxLines int
 	DiffMaxKiB   int
@@ -131,6 +137,7 @@ func (s *Server) editorSettings() editorSettings {
 	return editorSettings{
 		GitPollSeconds:  s.settingInt(editorGitPollSecondsKey, 2, 0, 60),
 		FilePollSeconds: s.settingInt(editorFilePollSecondsKey, 1, 0, 60),
+		Autosave:        s.settings.Get(editorAutosaveKey) != "off",
 		DiffMaxLines:    s.settingInt(editorDiffMaxLinesKey, 50000, 0, 500000),
 		DiffMaxKiB:      s.settingInt(editorDiffMaxKiBKey, 4096, 0, 16384),
 		Exclusions:      s.exclusions(),

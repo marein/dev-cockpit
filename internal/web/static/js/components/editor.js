@@ -27,6 +27,10 @@ const MAX_SAVED_TREE_DIRS = 200;
 // file per pause and neither serialises its writes.
 const SEARCH_DRAFT_DEBOUNCE_MS = 200;
 const PREVIEW_DEBOUNCE_MS = 500;
+// How long autosave waits after the last change, and the whole trigger: a save
+// on a lost focus or on a page going away would be a second path, unreachable
+// on a phone and untestable everywhere.
+const AUTOSAVE_DEBOUNCE_MS = 1000;
 const DIFF_REV = "HEAD";
 const TREE_WIDTH_KEY = "dc-editor-tree-width";
 const TREE_SCROLL_KEY = "dc-editor-tree-scroll";
@@ -231,6 +235,11 @@ async function init(root) {
     maxLines: Number(root.dataset.editorDiffMaxLines) || 0,
     maxKiB: Number(root.dataset.editorDiffMaxKib) || 0,
   };
+  // Read once with the page like the diff limits above, so an open editor
+  // keeps the answer it was rendered with.
+  const autosaveOn = root.dataset.editorAutosave === "1";
+  let autosaveTimer = 0;
+  let autosaveRunning = false;
   const ac = new AbortController();
   const signal = ac.signal;
   const mobileMedia = window.matchMedia("(max-width: 767.98px), (max-height: 500px)");
@@ -1555,6 +1564,7 @@ async function init(root) {
       return;
     }
     markDirty(tab, !editor.isClean(tab, true));
+    queueAutosave();
     schedulePreview(PREVIEW_DEBOUNCE_MS);
   }
 
@@ -6439,7 +6449,10 @@ async function init(root) {
   // server refused is not a failure: "saved" was written, "reloaded" is the
   // buffer replaced by the disk, "kept" is nothing written and the buffer
   // untouched. Only a real failure throws.
-  async function saveTab(tab) {
+  // ask tells the two callers apart: a person is asked about a file that moved
+  // under them, autosave never asks. It marks the tab instead and leaves the
+  // buffer alone.
+  async function saveTab(tab, { ask = true } = {}) {
     if (tab.compare && tab.compare.readOnly) return "kept";
     if (tab.compare) return await saveCompareTab(tab);
     // A file outside the project has no write route and its buffer cannot
@@ -6447,17 +6460,28 @@ async function init(root) {
     // must never find a way in: the write path would take the absolute
     // path for a relative one and create it inside the project.
     if (tab.external) return "kept";
-    const content = editor.valueOf(tab, tab.path === activePath);
+    // The buffer as it was written, not as it stands when the answer comes
+    // back: typing on while the write is in flight would otherwise mark that
+    // newer text as saved and lose it.
+    const written = editor.snapshot(tab, tab.path === activePath);
     let version;
     try {
-      version = await writeFile(tab.path, content, tab.version);
+      version = await writeFile(tab.path, written.toString(), tab.version);
     } catch (err) {
       if (err.conflict === "deleted") {
+        if (!ask) {
+          markTabDisk(tab, "missing");
+          return "kept";
+        }
         if (!(await askRecreateFile(tab.path))) return "kept";
         // No version, which is the create path: whoever answered that dialog
         // asked for exactly that, a new file with the buffer in it.
-        version = await writeFile(tab.path, content, "");
+        version = await writeFile(tab.path, written.toString(), "");
       } else if (err.conflict === "changed") {
+        if (!ask) {
+          markTabDisk(tab, "stale");
+          return "kept";
+        }
         if (!(await askReloadOverBuffer(tab.path))) return "kept";
         return (await reloadTabFromDisk(tab)) ? "reloaded" : "kept";
       } else {
@@ -6468,8 +6492,10 @@ async function init(root) {
     // The buffer and the file agree again, whichever of the two ways out of the
     // dialog got here, so whatever the disk did before is over.
     markTabDisk(tab, "");
-    editor.markSaved(tab, tab.path === activePath);
-    markDirty(tab, false);
+    editor.markSaved(tab, written);
+    // Asked again rather than answered with false: what was typed while the
+    // write was on its way is unsaved, and the active tab may have changed.
+    markDirty(tab, !editor.isClean(tab, tab.path === activePath));
     tab.commentChanges = null;
     if (commentsFor(tab.path).length) void syncCommentMoves(tab.path);
     return "saved";
@@ -6511,6 +6537,45 @@ async function init(root) {
       }
     } catch (err) {
       status(err.message, "error");
+    }
+  }
+
+  // Every change pushes the timer back, so a run happens when somebody stops
+  // typing and not while they are.
+  function queueAutosave() {
+    if (!autosaveOn) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => void runAutosave(), AUTOSAVE_DEBOUNCE_MS);
+  }
+
+  // runAutosave writes every buffer that can be written without asking. It
+  // skips what the save button skips, a comparison and a file from outside the
+  // project, plus a tab the disk moved under: that one is marked and belongs to
+  // the person in front of it. A refusal says nothing, the mark is the
+  // sentence; a write that never arrived leaves the dirty dot standing and one
+  // line in the statusbar instead of a toast per pause.
+  async function runAutosave() {
+    if (!autosaveOn || signal.aborted) return;
+    // One write at a time: the version a second one needs is the one the first
+    // is about to replace. The timer comes back for it.
+    if (autosaveRunning) {
+      queueAutosave();
+      return;
+    }
+    autosaveRunning = true;
+    try {
+      for (const tab of [...tabs]) {
+        if (signal.aborted || !tabs.includes(tab)) return;
+        if (!tab.dirty || tab.kind || tab.compare || tab.external || tab.diskState) continue;
+        try {
+          await saveTab(tab, { ask: false });
+        } catch (err) {
+          status(`Autosave failed: ${err.message}`);
+          return;
+        }
+      }
+    } finally {
+      autosaveRunning = false;
     }
   }
 
@@ -10628,6 +10693,7 @@ async function init(root) {
     ac.abort();
     termStripResize.disconnect();
     clearTimeout(statusTimer);
+    clearTimeout(autosaveTimer);
     clearTimeout(previewTimer);
     clearTimeout(searchTimer);
     clearTimeout(gitWatchTimer);
@@ -12064,12 +12130,18 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     valueOf(tab, isActive) {
       return isActive ? workView().state.doc.toString() : tab.handle.state.doc.toString();
     },
+    // The buffer as one value, handed back to markSaved after the write, so a
+    // save never has to trust that nothing moved meanwhile. toString is its
+    // text.
+    snapshot(tab, isActive) {
+      return isActive ? workView().state.doc : tab.handle.state.doc;
+    },
     isClean(tab, isActive) {
       const doc = isActive ? workView().state.doc : tab.handle.state.doc;
       return doc.eq(tab.handle.saved);
     },
-    markSaved(tab, isActive) {
-      tab.handle.saved = isActive ? workView().state.doc : tab.handle.state.doc;
+    markSaved(tab, written) {
+      tab.handle.saved = written;
     },
     search() {
       search.openSearchPanel(workView());
@@ -12255,11 +12327,14 @@ function createTextarea(host, hooks, settings) {
     valueOf(tab, isActive) {
       return isActive ? ta.value : tab.handle.value;
     },
+    snapshot(tab, isActive) {
+      return isActive ? ta.value : tab.handle.value;
+    },
     isClean(tab, isActive) {
       return (isActive ? ta.value : tab.handle.value) === tab.handle.saved;
     },
-    markSaved(tab, isActive) {
-      tab.handle.saved = isActive ? ta.value : tab.handle.value;
+    markSaved(tab, written) {
+      tab.handle.saved = written;
     },
     search() {
       return false;

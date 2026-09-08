@@ -97,6 +97,26 @@ async function dismissUpdate(page) {
   await page.waitForSelector(".swal2-container", { state: "detached", timeout: 5000 }).catch(() => {});
 }
 
+// Settings, Editor, Files: the autosave switch and the disk poll interval sit
+// in one form, so both are posted. Answers the interval it found, to put back.
+// Autosave is on by default, and a runner that types into the editor and reads
+// the dirty state has to switch it off.
+async function setEditorFiles(page, { autosave, poll }) {
+  const form = "#settings-editor-files";
+  await page.goto(`${BASE}/settings/editor/files`, { waitUntil: "domcontentloaded" });
+  await dismissUpdate(page);
+  const before = await page.inputValue(`${form} [name="file_poll_seconds"]`);
+  await page.locator(`${form} [name="autosave"]`).setChecked(!!autosave);
+  await page.fill(`${form} [name="file_poll_seconds"]`, poll === undefined ? before : String(poll));
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/settings/editor/files") && r.request().method() === "POST", { timeout: 15000 }),
+    page.click(`${form} button[type="submit"]`),
+  ]);
+  await page.waitForLoadState("domcontentloaded");
+  assert((await page.isChecked(`${form} [name="autosave"]`)) === !!autosave, `autosave came back as ${!autosave}`);
+  return before;
+}
+
 async function createProject(page, name) {
   await page.goto(`${BASE}/projects/new`, { waitUntil: "domcontentloaded" });
   await dismissUpdate(page);
@@ -284,7 +304,7 @@ async function runFeature(title, body) {
 
 module.exports = {
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
-  login, createProject, projectPath, deleteProject, dismissUpdate, createShell, deleteShell, createSession, stopSession, closeFromStrip,
+  login, createProject, projectPath, deleteProject, dismissUpdate, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
   makeRunner, report, assert,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };
