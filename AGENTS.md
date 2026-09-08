@@ -62,7 +62,24 @@ test. Update this file when a convention changes.
   in the browser title and the new-coder coder select render only when more
   than one coder is active, so single-coder hosts look unchanged. The coder
   icon badge on the attach and split pages always renders (like the shell
-  badge), it doubles as the status light.
+  badge), it doubles as the status light. A coder's name is optional: without
+  one the CLI is started with no name flag, and what the session is called is
+  read back from the CLI's own record, and all three write one that reads like
+  a title. claude puts an `ai-title` entry into its transcript a moment after
+  the first prompt, a short summary of it from the small model, the same title
+  its own session picker shows; copilot and opencode write theirs into their
+  own record. None of them is touched here. Only claude's gap is bridged: until
+  the `ai-title` lands, the transcript reader falls back to the first prompt
+  itself (`promptTitle`, slash commands and injected reminders left out), cut
+  by `coder.ShortTitle` to one line of `coder.TitleRunes`. A name a person gave
+  always stands above a generated one, and with no title at all
+  `coder.DisplayName`'s fallback stands in. A runtime therefore never passes an
+  empty name on, and the promote step matches an unnamed session on its
+  working directory, over `coder.SessionCandidates` where a coder offers it:
+  a record the lists hide is exactly what a promote is after, copilot's fresh
+  session carries neither a name nor events until somebody types, and without
+  that view the session keeps running under the key the cockpit minted while
+  copilot holds its own id and its own title.
 - **Claude session settings:** every claude session starts with one injected
   `--settings` blob (`internal/coder/claude/runtime.go`): theme auto, the
   notification hooks, and `disableAgentView`. The cockpit forwards keys via

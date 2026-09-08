@@ -33,6 +33,35 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       assert(agentOption, "created agent not in the agent select");
     });
 
+    // The name is optional. The form asks for none, and a coder started
+    // without one runs under the label the cockpit falls back to until there
+    // is a prompt to name it after.
+    await run("a coder starts without a name", async () => {
+      await page.goto(`${BASE}/coders/new?project=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
+      const field = await page.evaluate(() => ({
+        required: document.querySelector('input[name="name"]').required,
+        label: document.querySelector('label[for="name"]').className,
+      }));
+      assert(!field.required, "the name field is still required");
+      assert(!/required/.test(field.label), `the label still marks the name required: ${field.label}`);
+      const form = page.locator('form:has(select[name="agent"])').first();
+      await Promise.all([
+        page.waitForURL(/\/coders\/(?!new)[^/]+$/, { timeout: 20000 }),
+        form.locator('button[type="submit"]').first().click(),
+      ]);
+      const created = page.url();
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });
+      const label = (await page.textContent("[data-name-label]")).trim();
+      assert(label.length > 0, "an unnamed coder has no label at all");
+      await page.evaluate(async (id) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/coders/${id}/stop`, { method: "POST", headers: { "X-CSRF-Token": token } });
+        await fetch(`/coders/${id}/delete`, { method: "POST", headers: { "X-CSRF-Token": token } });
+      }, new URL(created).pathname.split("/").pop());
+      await sleep(800);
+      return label;
+    });
+
     // The project select stands in the order the projects page is in, out of the
     // shared "dc-project-sort" key, and the preselection follows that order,
     // unless the form was opened from a project. Same select as in shells.js.

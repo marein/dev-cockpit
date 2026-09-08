@@ -182,12 +182,12 @@ type StartResult struct {
 	AgentID    string
 }
 
-// Start creates a new coder session.
+// Start creates a new coder session. The name is optional: without one the CLI
+// gets no name flag, and what the session is called is read back from it, its
+// first prompt as a rule. Until there is a prompt DisplayName's fallback
+// stands in.
 func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions) (StartResult, error) {
 	name := strings.TrimSpace(rawName)
-	if name == "" {
-		return StartResult{}, errors.New("Coder name is required.")
-	}
 	workdir, err := s.projects.ValidatePath(rawProject)
 	if err != nil {
 		return StartResult{}, err
@@ -198,7 +198,7 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 	}
 	var before []Session
 	if !s.coder.SessionRuntime().UsesProvidedSessionID() {
-		before = s.coder.SessionRepository().List()
+		before = s.sessionCandidates()
 	}
 	sessionKey, err := terminal.NewKey()
 	if err != nil {
@@ -561,6 +561,17 @@ func (s *Manager) tagCoderPane(name, displayName, workdir string) error {
 	return s.tmux.SetOption(name, coderDirOption, workdir)
 }
 
+// sessionCandidates is the store view a promote works on, see
+// SessionCandidates. Both sides of the comparison read the same view, so a
+// record the lists hide cannot look new just because the promote started
+// seeing it.
+func (s *Manager) sessionCandidates() []Session {
+	if candidates, ok := s.coder.SessionRepository().(SessionCandidates); ok {
+		return candidates.CandidateSessions()
+	}
+	return s.coder.SessionRepository().List()
+}
+
 func (s *Manager) promoteSessionKey(tempKey string, before []Session, workdir, displayName string) string {
 	// A CLI that cannot carry the cockpit's name into its session record
 	// (coder.SessionNaming answering false) never produces a name match, so
@@ -571,24 +582,28 @@ func (s *Manager) promoteSessionKey(tempKey string, before []Session, workdir, d
 	if naming, ok := s.coder.SessionRuntime().(SessionNaming); ok {
 		named = naming.NamesSessions()
 	}
+	// A session started without a name is the same case: there is no name to
+	// match, the CLI writes its own, and waiting for one that was never asked
+	// for would burn the whole window.
+	if displayName == "" {
+		named = false
+	}
 	beforeIDs := map[string]bool{}
 	for _, r := range before {
 		beforeIDs[r.SessionID] = true
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		for _, r := range s.coder.SessionRepository().List() {
-			if beforeIDs[r.SessionID] || r.CWD != workdir {
-				continue
-			}
-			if named && strings.TrimSpace(r.Name) != displayName {
-				continue
-			}
-			if _, err := terminal.ValidateIdentifier(r.SessionID); err != nil {
+		target, found, ambiguous := promoteTarget(s.sessionCandidates(), beforeIDs, workdir, displayName, named)
+		if ambiguous {
+			return tempKey
+		}
+		if found {
+			if _, err := terminal.ValidateIdentifier(target.SessionID); err != nil {
 				return tempKey
 			}
-			if err := s.tmux.Rename(tempKey, r.SessionID); err == nil {
-				return r.SessionID
+			if err := s.tmux.Rename(tempKey, target.SessionID); err == nil {
+				return target.SessionID
 			}
 			return tempKey
 		}
@@ -597,6 +612,37 @@ func (s *Manager) promoteSessionKey(tempKey string, before []Session, workdir, d
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+// promoteTarget picks the record a promote may rename the pane onto. It
+// answers with that record, with nothing (wait, it has not appeared yet), or
+// with ambiguous, which is a promote that must not happen.
+//
+// Ambiguous is the unnamed case alone: there the working directory is the
+// whole criterion, so it has to point at one record, and two sessions that
+// came up in this project inside the same window are a guess this does not
+// make. The pane then keeps the key the cockpit minted, which is where it
+// stood before. A named start still takes the first record carrying its name,
+// as it always did.
+func promoteTarget(candidates []Session, seen map[string]bool, workdir, displayName string, named bool) (Session, bool, bool) {
+	var target Session
+	found := false
+	for _, r := range candidates {
+		if seen[r.SessionID] || r.CWD != workdir {
+			continue
+		}
+		if named {
+			if strings.TrimSpace(r.Name) != displayName {
+				continue
+			}
+			return r, true, false
+		}
+		if found {
+			return Session{}, false, true
+		}
+		target, found = r, true
+	}
+	return target, found, false
 }
 
 // listPanesBestEffort returns the current panes, treating a listing failure

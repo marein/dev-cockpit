@@ -24,9 +24,14 @@ func (runtime) Env() map[string]string { return nil }
 // of options separator would therefore become the task, so this command line
 // deliberately carries none.
 func (runtime) StartCommand(start coder.SessionStart) string {
-	command := fmt.Sprintf("cd %s && exec copilot%s --name %s",
-		clirun.ShellQuote(start.Workdir), flags(start.AgentID, start.AutomaticApproval),
-		clirun.ShellQuote(start.Name))
+	command := fmt.Sprintf("cd %s && exec copilot%s",
+		clirun.ShellQuote(start.Workdir), flags(start.AgentID, start.AutomaticApproval))
+	// A session without a name gets no flag at all, copilot then names it
+	// after the first prompt itself; an empty --name would be a value copilot
+	// has to refuse.
+	if name := strings.TrimSpace(start.Name); name != "" {
+		command += " --name " + clirun.ShellQuote(name)
+	}
 	if task := strings.TrimSpace(start.Task); task != "" {
 		command += " --interactive " + clirun.ShellQuote(task)
 	}

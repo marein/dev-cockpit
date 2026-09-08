@@ -23,8 +23,14 @@ type transcriptEntry struct {
 	SessionName string `json:"sessionName"`
 	AgentName   string `json:"agentName"`
 	CustomTitle string `json:"customTitle"`
+	AITitle     string `json:"aiTitle"`
 	CWD         string `json:"cwd"`
 	Timestamp   string `json:"timestamp"`
+	// Message, IsMeta and IsSidechain are what the first prompt is read out
+	// of, the title of a session nobody named.
+	Message     json.RawMessage `json:"message"`
+	IsMeta      bool            `json:"isMeta"`
+	IsSidechain bool            `json:"isSidechain"`
 }
 
 type sessionRepository struct {
@@ -281,6 +287,7 @@ func (r *sessionRepository) loadTranscript(path string) (storedSession, bool) {
 	sessionID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	name := ""
 	namePriority := 0
+	prompt := ""
 	cwd := ""
 	var updatedAt time.Time
 
@@ -301,28 +308,50 @@ func (r *sessionRepository) loadTranscript(path string) (storedSession, bool) {
 		if t, ok := coder.ParseTimestamp(entry.Timestamp); ok {
 			updatedAt = t
 		}
+		if prompt == "" && entry.Type == "user" && !entry.IsMeta && !entry.IsSidechain {
+			prompt = promptTitle(entry.Message)
+		}
 		switch entry.Type {
 		case "custom-title":
 			if v := strings.TrimSpace(entry.CustomTitle); v != "" {
 				name = v
-				namePriority = 3
+				namePriority = 4
 			}
 		case "agent-name":
-			if namePriority < 2 {
+			if namePriority < 3 {
 				if v := strings.TrimSpace(entry.SessionName); v != "" {
 					name = v
-					namePriority = 2
-				} else if namePriority < 1 {
+					namePriority = 3
+				} else if namePriority < 2 {
 					if v := strings.TrimSpace(entry.AgentName); v != "" {
 						name = v
-						namePriority = 1
+						namePriority = 2
 					}
+				}
+			}
+		case "ai-title":
+			// claude's own title for a session nobody named: a short summary
+			// of the first prompt, written by a background request to the
+			// small model a moment after that prompt. It is the title its own
+			// session picker shows, so the cockpit shows it too, and anything
+			// a person chose stands above it.
+			if namePriority < 1 {
+				if v := strings.TrimSpace(entry.AITitle); v != "" {
+					name = v
+					namePriority = 1
 				}
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return storedSession{}, false
+	}
+	// Neither a person nor claude has titled this session, so its first prompt
+	// stands in: claude writes its ai-title a moment after that prompt, and
+	// until it lands, a session somebody is already talking to must not read
+	// as a hexadecimal label.
+	if name == "" {
+		name = prompt
 	}
 	if cwd == "" {
 		return storedSession{}, false
@@ -350,4 +379,75 @@ func (r *sessionRepository) loadTranscript(path string) (storedSession, bool) {
 		sessionDir:  sessionDir,
 		filesDir:    filesDir,
 	}, true
+}
+
+// promptTitle turns a user message into the title of a session nobody named,
+// which is what copilot and opencode do for their own sessions. Only the text
+// a person wrote counts: tool results and the reminders the harness injects
+// carry no intent, and a slash command is read as the command it is, because
+// its wrapper says more about the transcript format than about the session.
+// The title is one line and bounded, it stands in tab strips, menus and lists.
+func promptTitle(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var message struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &message); err != nil || message.Role != "user" {
+		return ""
+	}
+	text := ""
+	if err := json.Unmarshal(message.Content, &text); err != nil {
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(message.Content, &blocks); err != nil {
+			return ""
+		}
+		var parts []string
+		for _, b := range blocks {
+			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+				parts = append(parts, b.Text)
+			}
+		}
+		text = strings.Join(parts, " ")
+	}
+	if command := betweenTags(text, "command-name"); command != "" {
+		return coder.ShortTitle(command)
+	}
+	return coder.ShortTitle(dropTagged(text, "system-reminder"))
+}
+
+// betweenTags returns what one XML-ish wrapper in text holds.
+func betweenTags(text, tag string) string {
+	openTag, closeTag := "<"+tag+">", "</"+tag+">"
+	start := strings.Index(text, openTag)
+	if start < 0 {
+		return ""
+	}
+	rest := text[start+len(openTag):]
+	end := strings.Index(rest, closeTag)
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(rest[:end])
+}
+
+// dropTagged removes every wrapper of one kind, contents included.
+func dropTagged(text, tag string) string {
+	openTag, closeTag := "<"+tag+">", "</"+tag+">"
+	for {
+		start := strings.Index(text, openTag)
+		if start < 0 {
+			return text
+		}
+		end := strings.Index(text[start:], closeTag)
+		if end < 0 {
+			return text[:start]
+		}
+		text = text[:start] + text[start+end+len(closeTag):]
+	}
 }

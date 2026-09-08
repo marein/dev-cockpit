@@ -26,6 +26,19 @@ func TestSessionSettings(t *testing.T) {
 	}
 }
 
+// A session without a name gets no --name at all: claude then titles it
+// itself, while an empty value would be one it has to refuse.
+func TestStartCommandLeavesTheNameOutWhenThereIsNone(t *testing.T) {
+	command := runtime{}.StartCommand(coder.SessionStart{SessionID: "sid", Workdir: "/work", Name: "  "})
+	if strings.Contains(command, "--name") {
+		t.Errorf("a session without a name must not carry the flag: %s", command)
+	}
+	named := runtime{}.StartCommand(coder.SessionStart{SessionID: "sid", Workdir: "/work", Name: "a name"})
+	if !strings.Contains(named, "--name 'a name'") {
+		t.Errorf("a named session must carry its name: %s", named)
+	}
+}
+
 func TestStartCommandCarriesSettings(t *testing.T) {
 	r := runtime{}
 	command := r.StartCommand(coder.SessionStart{SessionID: "sid", Name: "name", Workdir: "/work"})

@@ -15,8 +15,10 @@
 {{/* The one form both surfaces show: the page renders it inside its card, the
      create dialog asks for the same GET with modal=1 and gets it alone. Only
      the shell around the fields differs, and the marker rides the action back
-     out through the POST. The name field carries autofocus on the page alone,
-     the dialog focuses on a fine pointer only, so a phone keyboard stays down. */}}
+     out through the POST. The name is optional, a coder started without one
+     is named by it, which is what the field says while it is empty. It carries
+     autofocus on the page alone, the dialog focuses on a fine pointer only,
+     so a phone keyboard stays down. */}}
 {{define "coders_new_form.gohtml"}}
 <form method="post" action="/coders/new?return={{urlquery .Return}}{{if .Panel}}&amp;panel=1{{end}}{{if .Modal}}&amp;modal=1{{end}}"{{if .Modal}} data-form-title="Start coder" data-form-wait="Starting the coder…"{{end}}>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -24,8 +26,8 @@
   <input type="hidden" name="column" value="{{.SplitColumn}}">{{end}}
   <div class="{{if .Modal}}modal-body{{else}}card-body{{end}}">
     <div class="mb-3">
-      <label class="form-label required" for="name">Name</label>
-      <input class="form-control" id="name" name="name" required maxlength="120"{{if not .Modal}} autofocus{{end}} inputmode="text" autocomplete="off">
+      <label class="form-label" for="name">Name</label>
+      <input class="form-control" id="name" name="name" maxlength="120"{{if not .Modal}} autofocus{{end}} inputmode="text" autocomplete="off" placeholder="Leave empty and the coder names it">
     </div>
     <dc-project-select class="d-block mb-3">
       <label class="form-label required" for="project">Project</label>

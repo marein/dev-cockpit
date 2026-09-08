@@ -18,7 +18,9 @@ import (
 )
 
 type coderCreateForm struct {
-	Name              AlphaNumDashString `form:"name" binding:"required"`
+	// Name is optional: a coder without one starts under the CLI's own title,
+	// see coder.Manager.Start.
+	Name              AlphaNumDashString `form:"name"`
 	Project           string             `form:"project" binding:"required"`
 	Coder             string             `form:"coder"`
 	Agent             string             `form:"agent"`
@@ -208,7 +210,9 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 	if doneWhen != "" {
 		job, err := s.watcher.Steer(assistant.Job{
 			Terminal: res.Identifier,
-			Name:     res.Name,
+			// A coder started without a name is read under the same label
+			// every other surface shows it under.
+			Name:     coder.DisplayName(res.Name, res.Identifier),
 			Project:  s.projects.ProjectNameFor(res.Workdir),
 			CoderID:  co.ID(),
 			Task:     form.Task,

@@ -3,7 +3,10 @@ package coder
 // SessionStart is what a new coder session needs to come up. Task is optional:
 // when it is set the CLI is started with that first prompt in its argv, which
 // is the only delivery that cannot be lost. Typing into a pane that has not
-// read stdin yet loses the text without a trace.
+// read stdin yet loses the text without a trace. Name is optional too: an
+// empty one means the CLI is started without a name flag, and what the session
+// is called is read back from the CLI's own record, so a runtime must never
+// pass an empty name on.
 type SessionStart struct {
 	SessionID         string
 	Name              string

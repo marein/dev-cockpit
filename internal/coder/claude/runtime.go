@@ -17,15 +17,22 @@ func (runtime) UsesProvidedSessionID() bool { return true }
 
 func (runtime) Env() map[string]string { return map[string]string{"CLAUDE_CODE_NO_FLICKER": "1"} }
 
-// StartCommand builds the interactive session. A task is passed as claude's
+// StartCommand builds the interactive session. The name is optional, see the
+// flag below. A task is passed as claude's
 // positional prompt (`claude [options] [prompt]`), so the session comes up
 // already working on it. It goes behind endOfOptions, because the shell quoting
 // protects the shell and not claude's own flag parser: a task that starts with a
 // dash would otherwise be parsed as an option and never reach the session.
 func (r runtime) StartCommand(start coder.SessionStart) string {
-	command := fmt.Sprintf("cd %s && exec claude%s --session-id %s --name %s",
+	command := fmt.Sprintf("cd %s && exec claude%s --session-id %s",
 		clirun.ShellQuote(start.Workdir), r.flags(start.AgentID, start.AutomaticApproval),
-		clirun.ShellQuote(start.SessionID), clirun.ShellQuote(start.Name))
+		clirun.ShellQuote(start.SessionID))
+	// A session without a name gets no flag at all; an empty --name would be a
+	// value claude has to refuse. What such a session is called is read out of
+	// its transcript afterwards, see promptTitle in session.go.
+	if name := strings.TrimSpace(start.Name); name != "" {
+		command += " --name " + clirun.ShellQuote(name)
+	}
 	if task := strings.TrimSpace(start.Task); task != "" {
 		command += " " + endOfOptions + " " + clirun.ShellQuote(task)
 	}

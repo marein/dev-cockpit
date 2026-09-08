@@ -189,14 +189,19 @@ func postCoderAction(opts inspectOptions, target, action string) (map[string]any
 func newCoderCommand(opts *inspectOptions) *cobra.Command {
 	var coderID, agent, prompt, doneWhen string
 	cmd := &cobra.Command{
-		Use:   "coder-new <project> <name>",
+		Use:   "coder-new <project> [name]",
 		Short: "Start a coder in a project",
 		Long: "Start a coder session the same way the new coder form does. The project is " +
 			"a name from `status` or an absolute path, the name is what the " +
-			"session is called. Prints the identifier, which is what `coder-send-prompt` takes.",
-		Args: cobra.ExactArgs(2),
+			"session is called and may be left out, it is then named after its first prompt. " +
+			"Prints the identifier, which is what `coder-send-prompt` takes.",
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runNewCoder(cmd.OutOrStdout(), *opts, args[0], args[1], coderID, agent, prompt, doneWhen)
+			name := ""
+			if len(args) > 1 {
+				name = args[1]
+			}
+			return runNewCoder(cmd.OutOrStdout(), *opts, args[0], name, coderID, agent, prompt, doneWhen)
 		},
 	}
 	cmd.Flags().StringVar(&coderID, "coder", "", "which coder answers (default: the cockpit's first installed one)")

@@ -23,7 +23,21 @@ type storedSession struct {
 }
 
 func (r *sessionRepository) List() []coder.Session {
-	stored := r.listStored()
+	return sessions(r.listStored())
+}
+
+// CandidateSessions is the same store without the guard List applies, see
+// coder.SessionCandidates. A session copilot has just started is exactly what
+// that guard hides: it has no name until copilot writes one and no events
+// until the first turn, and both can be minutes away when nobody has typed
+// yet. Without this view the promote never finds it, and the session runs on
+// under the key the cockpit minted while copilot keeps its own id and its own
+// title.
+func (r *sessionRepository) CandidateSessions() []coder.Session {
+	return sessions(r.listAllStored())
+}
+
+func sessions(stored []storedSession) []coder.Session {
 	out := make([]coder.Session, 0, len(stored))
 	for _, s := range stored {
 		out = append(out, s.Session)
@@ -88,6 +102,14 @@ func (r *sessionRepository) DeleteFile(sessionID, rawName string) (filesystem.Fi
 }
 
 func (r *sessionRepository) listStored() []storedSession {
+	return r.list(true)
+}
+
+func (r *sessionRepository) listAllStored() []storedSession {
+	return r.list(false)
+}
+
+func (r *sessionRepository) list(hideEmpty bool) []storedSession {
 	info, err := os.Stat(r.stateRoot)
 	if err != nil || !info.IsDir() {
 		return nil
@@ -106,7 +128,7 @@ func (r *sessionRepository) listStored() []storedSession {
 		// record it never returns to. Unnamed records without any conversation
 		// events carry nothing to resume, so they stay out of the list (they
 		// cannot be deleted here either: the resuming process holds a lock).
-		if strings.TrimSpace(md.Name) == "" {
+		if hideEmpty && strings.TrimSpace(md.Name) == "" {
 			if _, err := os.Stat(filepath.Join(filepath.Dir(wsFile), "events.jsonl")); err != nil {
 				continue
 			}

@@ -51,6 +51,43 @@ func TestListReadsTranscripts(t *testing.T) {
 	}
 }
 
+// A transcript nobody named is listed under its first prompt, and a name that
+// was given still wins over it.
+func TestListTitlesAnUnnamedTranscriptByItsFirstPrompt(t *testing.T) {
+	root, cwd := t.TempDir(), t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+	prompt := `{"type":"user","cwd":"` + cwd + `","message":{"role":"user","content":"Fix the login redirect"}}`
+	second := `{"type":"user","cwd":"` + cwd + `","message":{"role":"user","content":"and the tests"}}`
+	writeTranscript(t, root, "p1", "aaa", prompt, second)
+	writeTranscript(t, root, "p2", "bbb", prompt, titleLine("named"))
+	writeTranscript(t, root, "p3", "ccc", cwdLine(cwd))
+
+	names := sessionNames(t, r)
+	sort.Strings(names)
+	if strings.Join(names, ",") != "Fix the login redirect,coder-ccc,named" {
+		t.Fatalf("names = %v, want the first prompt, the given name and the fallback", names)
+	}
+}
+
+// claude titles an unnamed session itself, a short summary of the first
+// prompt written a moment after it. That title is what its own session picker
+// shows, so it stands above the prompt the cockpit falls back to, and below
+// anything a person chose.
+func TestListPrefersClaudesOwnTitleOverThePrompt(t *testing.T) {
+	root, cwd := t.TempDir(), t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+	prompt := `{"type":"user","cwd":"` + cwd + `","message":{"role":"user","content":"Add a retry with backoff to the upload client"}}`
+	aiTitle := `{"type":"ai-title","aiTitle":"Upload client retry with backoff"}`
+	writeTranscript(t, root, "p1", "aaa", prompt, aiTitle)
+	writeTranscript(t, root, "p2", "bbb", prompt, aiTitle, titleLine("named"))
+
+	names := sessionNames(t, r)
+	sort.Strings(names)
+	if strings.Join(names, ",") != "Upload client retry with backoff,named" {
+		t.Fatalf("names = %v, want claude's own title and the given name", names)
+	}
+}
+
 func TestListCachesUnchangedTranscripts(t *testing.T) {
 	root, cwd := t.TempDir(), t.TempDir()
 	r := &sessionRepository{stateRoot: root}

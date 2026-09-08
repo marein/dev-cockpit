@@ -27,6 +27,17 @@ type SessionRepository interface {
 	DeleteFile(sessionID, rawName string) (filesystem.File, error)
 }
 
+// SessionCandidates is the optional wider view of a coder's own store, the one
+// a promote reads. List is what every surface shows, and it may leave out a
+// record that carries nothing for a person: copilot hides one without a name
+// and without conversation events, the empty record a resume leaves behind. A
+// promote looks for exactly that shape, the record the CLI has only just
+// created and has neither named nor written to, so it asks a repository that
+// offers this view for it, and List where none is offered.
+type SessionCandidates interface {
+	CandidateSessions() []Session
+}
+
 // LessSession orders sessions newest-first, with name and ID as tie-breakers.
 func LessSession(a, b Session) bool {
 	if !a.UpdatedAt.Equal(b.UpdatedAt) {
