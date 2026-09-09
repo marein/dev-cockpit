@@ -102,7 +102,10 @@ const { assert, sleep, BASE } = L;
 //   - the diff switch compares against HEAD and lives in the file's
 //     context menu (tab and tree row), reading "Show git diff" / "Hide git
 //     diff"; the file history and the revision picker fill the same field
-//     with another revision. The editor menu carries git only as the Git
+//     with another revision. A history row opens the commit's own menu and the
+//     sheet keeps standing under it: the menu hangs on the body, so a sheet
+//     that closed on the row would take the list out from under it (mouse and
+//     Enter alike, and Escape then belongs to the menu first). The editor menu carries git only as the Git
 //     entry that opens the sheet; without a repository the entry stays, the
 //     sheet then offers the clone and nothing else. `dc-editor` carries `data-git-repo` once
 //     the status answered, which is what diffReady waits on. The tab stores
@@ -3242,6 +3245,60 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         `git branch -qd ${probe} && git remote remove origin && rm -rf ${surfaceRemote} ${surfacePeer}\r`,
       ) === 200, "the shell refused the cleanup");
       return "created, switched, back on master";
+    });
+
+    // The sheet is the list the commit menu belongs to, so it has to stand while
+    // that menu is open: the menu hangs on the body, and a sheet that closed
+    // under it would take the list with it and leave the menu pointing at
+    // nothing. Mouse and keyboard reach the row the same way, and the two ways
+    // out of the sheet have to keep working behind that.
+    await run("a history row opens its menu and leaves the sheet standing, Escape and an outside click still close it", async () => {
+      const openHistory = async () => {
+        await page.click(".editor-tab.active", { button: "right" });
+        await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+        await menuItem("File history").first().click();
+        await page.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 8000 });
+        await page.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] [data-git-commit]").length > 0, null, { timeout: 15000 });
+      };
+      const standing = () => page.evaluate(() => ({
+        sheet: !document.querySelector("[data-editor-sheet]").hidden,
+        rows: document.querySelectorAll("[data-editor-sheet-body] [data-git-commit]").length,
+        menu: !!document.querySelector(".dc-context-menu"),
+      }));
+
+      await openTracked();
+      await openHistory();
+      await page.locator("[data-editor-sheet-body] [data-git-commit]").first().click();
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+      let state = await standing();
+      assert(state.menu && state.sheet && state.rows > 0, `the click took the sheet down: ${JSON.stringify(state)}`);
+
+      // Escape belongs to the menu while one stands, so the sheet is still
+      // there behind it and the second Escape is what closes it.
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+      state = await standing();
+      assert(state.sheet && state.rows > 0, `closing the menu closed the sheet: ${JSON.stringify(state)}`);
+
+      // The keyboard reaches the same row: the arrows walk the list and Enter
+      // is the row's own click.
+      await page.keyboard.press("ArrowDown");
+      await page.waitForFunction(() => document.activeElement?.closest("[data-git-commit]") !== null, null, { timeout: 4000 });
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+      state = await standing();
+      assert(state.menu && state.sheet && state.rows > 0, `Enter took the sheet down: ${JSON.stringify(state)}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+
+      // And the sheet still closes the two ways it always did.
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      await openHistory();
+      const box = await page.locator("[data-editor-sheet]").boundingBox();
+      await page.mouse.click(box.x + 8, box.y + 8);
+      await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+      return "row opens the menu, sheet stands, Escape and outside click close it";
     });
 
     await run("file history opens the diff against the picked commit, a typed revision works too", async () => {

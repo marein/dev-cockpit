@@ -1355,6 +1355,17 @@ test. Update this file when a convention changes.
   sideways. Whatever a row cuts it carries whole as its `title`: a tab the
   file's path, a quick open row its path, a find in files row its path and
   line, because that is the only place a cut name can be read out in full.
+- **Replace means replace, for a folder as for a file.** A paste or a drop onto
+  a taken name answers `ErrExists` as a 409, the browser asks once
+  (`confirmReplace`, one question for both ways in), and the repeat carries
+  `overwrite=1`. What comes back then is a replacement and not a merge: the old
+  folder goes with everything below it, which is why the dialog says so for a
+  folder and not for a file. `CopyEntry` builds the new one beside the old one
+  and swaps it in (`replaceWithCopy`, `swapIn`), `MoveEntry` swaps the moved
+  entry in the same way, so a replacement that fails leaves the old one standing
+  rather than nothing at all, and neither ever touches the source. The one case
+  refused is a source that sits inside what it would overwrite (`canReplace`):
+  clearing the target would take the source with it.
 - **The project switcher is a palette, and the palette owns no data.** The
   project name above the tree (`[data-editor-project-switch]`), the menu's
   first entry `Switch project` and Ctrl/Cmd+Shift+P open

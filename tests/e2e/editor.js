@@ -13,7 +13,9 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // and audio files open in a player instead of a download button, fed by the raw
 // endpoint, which serves those types inline so range requests (seeking) work.
 // A move, a copy or an upload onto a name that is already taken answers 409 and
-// the browser asks once before it replaces the file. The tree menu also copies
+// the browser asks once before it replaces what stands there. A folder is
+// replaced whole, everything below it included, which is what its dialog says
+// and a file's does not. The tree menu also copies
 // and pastes (clipboard in this browser only, a paste into the source folder
 // makes a "name copy"), packs a folder into a tar.gz (GET /editor/archive,
 // excluded from the gzip middleware, it would compress the archive twice) and
@@ -2910,6 +2912,82 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       assert(/Replace/i.test(await page.textContent(".swal2-popup")), "no replace confirm on a taken name");
       await page.click(".swal2-cancel");
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 });
+    });
+
+    await run("replace on a taken name writes over a file and over a whole folder", async () => {
+      const read = (rel) => page.evaluate(async ([proj, path]) => {
+        const res = await fetch(`/projects/${proj}/editor/file?path=${encodeURIComponent(path)}`);
+        return res.ok ? (await res.json()).content : null;
+      }, [project, rel]);
+      await page.evaluate(async ([project]) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const post = (what, body) => fetch(`/projects/${project}/editor/${what}`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+        });
+        await post("mkdir", "path=rpsrc");
+        await post("mkdir", "path=rpdst");
+        // The two names that clash, once as a file and once as a folder.
+        await post("file", "path=rpsrc/clash.txt&content=the%20new%20one");
+        await post("file", "path=rpdst/clash.txt&content=the%20old%20one");
+        await post("mkdir", "path=rpsrc/lib");
+        await post("mkdir", "path=rpsrc/lib/deep");
+        await post("file", "path=rpsrc/lib/new.txt&content=new%20content");
+        await post("file", "path=rpsrc/lib/deep/inner.txt&content=inner%20content");
+        await post("mkdir", "path=rpdst/lib");
+        await post("file", "path=rpdst/lib/old.txt&content=old%20content");
+      }, [project]);
+      await page.click("[data-editor-refresh]");
+      await page.waitForSelector('.editor-dir[data-path="rpsrc"]', { timeout: 8000 });
+      await page.click('.editor-dir[data-path="rpsrc"]');
+      await page.waitForSelector('.editor-file[data-path="rpsrc/clash.txt"]', { timeout: 8000 });
+
+      // A file over a file, the half that always worked and the reference for
+      // the folder below it.
+      await openRowMenu(page, '.editor-file[data-path="rpsrc/clash.txt"]');
+      await menuItem(page, "Copy file").click();
+      await openRowMenu(page, '.editor-dir[data-path="rpdst"]');
+      await page.click('.dc-context-menu .dropdown-item:has-text("Paste")');
+      await page.waitForFunction(() => /already holds a file/.test(document.querySelector(".swal2-html-container")?.textContent || ""), null, { timeout: 6000 });
+      await confirmSwal(page);
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 6000 });
+      await sleep(600);
+      assert((await read("rpdst/clash.txt")).trim() === "the new one",
+        `the file replacement did not land: ${JSON.stringify(await read("rpdst/clash.txt"))}`);
+
+      // And the same for a folder: the dialog names it a folder, says what it
+      // costs, and the press replaces the tree below it whole.
+      await openRowMenu(page, '.editor-dir[data-path="rpsrc/lib"]');
+      await menuItem(page, "Copy folder").click();
+      await openRowMenu(page, '.editor-dir[data-path="rpdst"]');
+      await page.click('.dc-context-menu .dropdown-item:has-text("Paste")');
+      await page.waitForFunction(() => /already holds a folder/.test(document.querySelector(".swal2-html-container")?.textContent || ""), null, { timeout: 6000 });
+      const text = await page.textContent(".swal2-html-container");
+      assert(/Everything in it is replaced/.test(text), `the folder dialog does not say what it costs: ${text}`);
+      await confirmSwal(page);
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 6000 });
+      await page.waitForFunction((p) => !!document.querySelector(`.editor-dir[data-path="${p}"]`), "rpdst/lib", { timeout: 8000 });
+      await sleep(600);
+      assert((await read("rpdst/lib/new.txt") || "").trim() === "new content", "the folder replacement did not bring its files");
+      assert((await read("rpdst/lib/deep/inner.txt") || "").trim() === "inner content", "the folder replacement stopped at the top level");
+      assert((await read("rpdst/lib/old.txt")) === null, "the replaced folder kept a file of its own");
+      assert((await read("rpsrc/lib/new.txt") || "").trim() === "new content", "the source folder was touched by a copy");
+      // The staging the swap builds beside the target is gone again.
+      const leftovers = await page.$$eval('[data-editor-tree] .editor-item[data-path^="rpdst/"]', (els) => els.map((el) => el.dataset.path).filter((p) => /\.replacing-/.test(p)));
+      assert(leftovers.length === 0, `the replacement left staging behind: ${leftovers.join(", ")}`);
+
+      // Dropping a folder onto a folder that holds the name asks the same
+      // question and answers it the same way, and a move leaves nothing behind.
+      await page.waitForSelector('.editor-dir[data-path="rpsrc/lib"]', { timeout: 8000 });
+      await dragRow(page, '.editor-dir[data-path="rpsrc/lib"]', '.editor-dir[data-path="rpdst"]');
+      await page.waitForFunction(() => /already holds a folder/.test(document.querySelector(".swal2-html-container")?.textContent || ""), null, { timeout: 6000 });
+      await confirmSwal(page);
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 6000 });
+      await sleep(800);
+      assert((await read("rpdst/lib/new.txt") || "").trim() === "new content", "the moved folder did not land");
+      assert((await read("rpsrc/lib/new.txt")) === null, "the source folder is still there, that is a copy and not a move");
+      return "file and folder both replace, drag and paste alike";
     });
 
     await run("a folder downloads as a tar.gz that unpacks with its content", async () => {

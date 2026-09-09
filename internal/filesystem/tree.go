@@ -293,8 +293,10 @@ func RenameEntry(root, rel, newName string) (Entry, error) {
 
 // MoveEntry moves the file or directory at root/rel into the directory
 // root/dirRel, keeping its base name. An empty dirRel is the project root.
-// Without overwrite a taken name is reported as ErrExists, with it the file
-// there is replaced.
+// Without overwrite a taken name is reported as ErrExists, with it whatever
+// stands there is replaced, a folder with everything below it included: the
+// question the browser asked was "replace it", and a folder that answers it
+// with an error is a dead end nobody can get past.
 func MoveEntry(root, rel, dirRel string, overwrite bool) (Entry, error) {
 	target, err := ResolveUnder(root, rel)
 	if err != nil {
@@ -323,17 +325,22 @@ func MoveEntry(root, rel, dirRel string, overwrite bool) (Entry, error) {
 	if info.IsDir() && IsUnder(dir, target) {
 		return Entry{}, errors.New("Cannot move a folder into itself.")
 	}
-	if existing, err := os.Lstat(dest); err == nil {
+	replacing := false
+	if _, err := os.Lstat(dest); err == nil {
 		if !overwrite {
 			return Entry{}, ErrExists
 		}
-		// Renaming onto a directory fails, and dropping a whole tree to make room
-		// is not something a drag should do silently.
-		if existing.IsDir() || info.IsDir() {
-			return Entry{}, errors.New("A folder with that name is already there.")
+		if err := canReplace(target, dest); err != nil {
+			return Entry{}, err
 		}
+		replacing = true
 	}
-	if err := os.Rename(target, dest); err != nil {
+	if replacing {
+		err = swapIn(target, dest)
+	} else {
+		err = os.Rename(target, dest)
+	}
+	if err != nil {
 		return Entry{}, err
 	}
 	moved, err := os.Stat(dest)
@@ -599,7 +606,9 @@ func writeStream(out string, src io.Reader, mode os.FileMode) error {
 // CopyEntry copies the file or directory at root/rel into the directory
 // root/dirRel. Copying into its own folder duplicates the entry under a free
 // "name copy" name; anywhere else a taken name is ErrExists unless overwrite
-// replaces the file there.
+// replaces what stands there, a folder with everything below it included. The
+// replacement is built beside the old one and swapped in whole, so the answer
+// to "replace it" is the same for a folder as for a file.
 func CopyEntry(root, rel, dirRel string, overwrite bool) (Entry, error) {
 	source, err := ResolveUnder(root, rel)
 	if err != nil {
@@ -627,24 +636,26 @@ func CopyEntry(root, rel, dirRel string, overwrite bool) (Entry, error) {
 		return Entry{}, errors.New("Cannot copy a folder into itself.")
 	}
 	dest := filepath.Join(dir, filepath.Base(source))
+	replacing := false
 	if dest == source {
 		if dest, err = freeCopyName(source); err != nil {
 			return Entry{}, err
 		}
-	} else if existing, err := os.Lstat(dest); err == nil {
+	} else if _, err := os.Lstat(dest); err == nil {
 		if !overwrite {
 			return Entry{}, ErrExists
 		}
-		if existing.IsDir() || info.IsDir() {
-			return Entry{}, errors.New("A folder with that name is already there.")
-		}
-		if err := os.Remove(dest); err != nil {
+		if err := canReplace(source, dest); err != nil {
 			return Entry{}, err
 		}
+		replacing = true
 	}
-	if info.IsDir() {
+	switch {
+	case replacing:
+		err = replaceWithCopy(source, dest, info)
+	case info.IsDir():
 		err = copyTree(source, dest)
-	} else {
+	default:
 		err = copyFile(source, dest, info.Mode().Perm())
 	}
 	if err != nil {
@@ -655,6 +666,87 @@ func CopyEntry(root, rel, dirRel string, overwrite bool) (Entry, error) {
 		return Entry{}, err
 	}
 	return entryFromInfo(copied, relTo(root, dest)), nil
+}
+
+// canReplace answers whether what stands at dest may be replaced by source. A
+// replacement takes the old one out of the way whole, so the one thing it must
+// never do is take the source with it: that is a folder holding the very thing
+// that is about to overwrite it.
+func canReplace(source, dest string) error {
+	if IsUnder(source, dest) {
+		return errors.New("Cannot replace a folder with something inside it.")
+	}
+	return nil
+}
+
+// replaceWithCopy puts a copy of source where dest stands, whatever stands
+// there and however much of it. The copy is built beside dest first and only
+// swapped in once it is whole, so a copy that fails halfway leaves the old one
+// exactly as it was, and the source is never touched at all.
+func replaceWithCopy(source, dest string, info os.FileInfo) error {
+	staged, err := stagingName(dest)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(staged) }()
+	if info.IsDir() {
+		err = copyTree(source, staged)
+	} else {
+		err = copyFile(source, staged, info.Mode().Perm())
+	}
+	if err != nil {
+		return err
+	}
+	return swapIn(staged, dest)
+}
+
+// swapIn puts what stands at source where dest stands. A plain file onto a
+// plain file is one rename and stays that way. With a directory on either side
+// rename refuses, so what stands is moved aside first and dropped only once the
+// new one is in place: a swap that fails then puts the old one back instead of
+// leaving nothing there at all.
+func swapIn(source, dest string) error {
+	sourceInfo, err := os.Lstat(source)
+	if err != nil {
+		return err
+	}
+	destInfo, err := os.Lstat(dest)
+	if err != nil {
+		return err
+	}
+	if !sourceInfo.IsDir() && !destInfo.IsDir() {
+		return os.Rename(source, dest)
+	}
+	aside, err := stagingName(dest)
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(dest, aside); err != nil {
+		return err
+	}
+	if err := os.Rename(source, dest); err != nil {
+		_ = os.Rename(aside, dest)
+		return err
+	}
+	// The swap is done, so a failure to drop the old one is not a failed
+	// replacement; it leaves a directory behind and nothing else.
+	_ = os.RemoveAll(aside)
+	return nil
+}
+
+// stagingName picks a free name beside dest for the half built replacement and
+// for what it replaces. The leading dot keeps it out of the way for the moment
+// it exists, and the counter keeps two replacements at once apart.
+func stagingName(dest string) (string, error) {
+	dir := filepath.Dir(dest)
+	base := filepath.Base(dest)
+	for i := 1; i < 100; i++ {
+		candidate := filepath.Join(dir, fmt.Sprintf(".%s.replacing-%d", base, i))
+		if _, err := os.Lstat(candidate); err != nil {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("Could not make room for the replacement.")
 }
 
 // freeCopyName picks "name copy", then "name copy 2" and so on, keeping the

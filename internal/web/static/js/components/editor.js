@@ -756,6 +756,8 @@ async function init(root) {
   const SHEET_ROW = ".dropdown-item, .editor-sheet-open";
   const sheetRows = () => rowsOf(sheetBodyEl, SHEET_ROW);
   const FILTERED_SHEETS = new Set(["files", "docker", "git", "comments", "history"]);
+  // Which sheets a row does not close, see the click handler far below.
+  const STANDING_SHEETS = new Set(["settings", "docker", "git", "comments", "history"]);
   let sheetQuery = "";
   let sheetMarked = null;
   const sheetRowText = (row) => (row.textContent || "").replace(/\s+/g, " ").trim();
@@ -6716,22 +6718,32 @@ async function init(root) {
     }
   }
 
+  // The one question both ways of putting something onto a taken name ask. A
+  // folder says what saying yes costs, because everything below it goes with
+  // it, the same way a file's content does.
+  function confirmReplace(name, dir, isDir) {
+    const where = dir || "The project root";
+    return confirmDialog({
+      title: `Replace "${name}"?`,
+      text: isDir
+        ? `${where} already holds a folder called ${name}. Everything in it is replaced.`
+        : `${where} already holds a file called ${name}.`,
+      confirmText: "Replace",
+    });
+  }
+
   // pasteInto copies whatever the tree clipboard holds into dir. The clipboard
   // belongs to this browser, nothing about it is shared or persisted.
   async function pasteInto(dir) {
     if (!clipboard) return;
-    const source = clipboard.path;
+    // What the clipboard held when the paste started: a copy takes a while and
+    // the question behind it has to be about the entry that is being pasted.
+    const { path: source, isDir } = clipboard;
     status("Copying…");
     try {
       let res = await postForm(`${base}/copy`, { path: source, dir });
       if (res.status === 409) {
-        const name = baseName(source);
-        const ok = await confirmDialog({
-          title: `Replace "${name}"?`,
-          text: `${dir || "The project root"} already holds a file called ${name}.`,
-          confirmText: "Replace",
-        });
-        if (!ok) {
+        if (!(await confirmReplace(baseName(source), dir, isDir))) {
           status("");
           return;
         }
@@ -6748,7 +6760,7 @@ async function init(root) {
   }
 
   // Drop of a tree row onto a folder row (or the empty tree area for the root).
-  async function moveEntry(path, dir) {
+  async function moveEntry(path, dir, isDir) {
     if (!path || parentDir(path) === dir) return;
     status("Moving…");
     try {
@@ -6756,13 +6768,7 @@ async function init(root) {
       // 409 means the target folder already holds that name. Offer to replace
       // it rather than ending the drag with an error.
       if (res.status === 409) {
-        const name = baseName(path);
-        const ok = await confirmDialog({
-          title: `Replace "${name}"?`,
-          text: `${dir || "The project root"} already holds a file called ${name}.`,
-          confirmText: "Replace",
-        });
-        if (!ok) {
+        if (!(await confirmReplace(baseName(path), dir, isDir))) {
           status("");
           return;
         }
@@ -7296,9 +7302,9 @@ async function init(root) {
         return;
       }
       e.preventDefault();
-      const path = dragging.path;
+      const { path, isDir } = dragging;
       endDrag();
-      void moveEntry(path, dir);
+      void moveEntry(path, dir, isDir);
     }, { signal });
   }
 
@@ -9528,16 +9534,19 @@ async function init(root) {
     sheetFilterEl.focus();
   }, { signal });
   // A row of an adopted menu did what it says; the sheet has served its purpose
-  // and gets out of the way so the answer is visible. The settings keep their
-  // sheet, they are selects and a switch, not one-shot actions; the docker
-  // sheet keeps it too, its rows open a menu or start a run the sheet then
-  // shows as busy.
+  // and gets out of the way so the answer is visible. STANDING_SHEETS are the
+  // ones whose rows do not say that: the settings are selects and a switch, not
+  // one-shot actions, and a row of the docker, git, comments or history sheet
+  // opens a menu or starts a run the sheet itself then shows. Closing under an
+  // open menu is what takes the list away from the menu that was just asked for,
+  // and the menu hangs on the body, so the click never even reads as one
+  // outside the sheet.
   sheetBodyEl.addEventListener("click", (e) => {
     // A row whose handler opened another sheet is detached by the time this
     // bubbles; closing then would close what just replaced it, which is how
     // the branch picker used to vanish the moment it opened.
     if (!sheetBodyEl.contains(e.target)) return;
-    if (sheetKind !== "settings" && sheetKind !== "docker" && sheetKind !== "git" && sheetKind !== "comments" && e.target.closest(".dropdown-item")) closeSheet();
+    if (!STANDING_SHEETS.has(sheetKind) && e.target.closest(".dropdown-item")) closeSheet();
   }, { signal });
 
   // The project switcher is a palette like the file one: a field over a list,
