@@ -431,7 +431,7 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       const firstTab = await page.evaluate(() => document.querySelector("[data-editor-term-panel] [data-term-tab]")?.getAttribute("data-term-tab"));
       await page.click(`${panel} [data-term-tab="${firstTab}"]`, { button: "right" });
       await page.waitForSelector(".dc-context-menu", { timeout: 5000 });
-      const labels = await page.evaluate(() => [...document.querySelectorAll(".dc-context-menu button")].map((b) => b.textContent.trim()).filter(Boolean));
+      const labels = await page.evaluate(() => [...document.querySelectorAll(".dc-context-menu .dropdown-item")].map((b) => b.textContent.trim()).filter(Boolean));
       await page.keyboard.press("Escape");
       for (const want of ["Open terminal page", "Rename", "Open project", "Delete"]) {
         assert(labels.includes(want), `menu misses "${want}": ${labels.join(", ")}`);
@@ -464,7 +464,7 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       await page.click(`${panel} [data-term-tab="${secondId}"]`, { button: "right" });
       await page.waitForSelector(".dc-context-menu", { timeout: 5000 });
       await page.evaluate(() => {
-        const item = [...document.querySelectorAll(".dc-context-menu button")].find((b) => /rename/i.test(b.textContent));
+        const item = [...document.querySelectorAll(".dc-context-menu .dropdown-item")].find((b) => /rename/i.test(b.textContent));
         item.click();
       });
       await page.waitForSelector(".swal2-input", { state: "visible", timeout: 5000 });
@@ -489,7 +489,7 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       await Promise.all([
         page.waitForURL(new RegExp(`/shells/${secondId}`), { timeout: 10000 }),
         page.evaluate(() => {
-          const item = [...document.querySelectorAll(".dc-context-menu button")].find((b) => /open terminal page/i.test(b.textContent));
+          const item = [...document.querySelectorAll(".dc-context-menu .dropdown-item")].find((b) => /open terminal page/i.test(b.textContent));
           item.click();
         }),
       ]);
@@ -666,7 +666,7 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       assert(coderId, "no coder from the previous check");
       await page.click(`${panel} [data-term-tab="${coderId}"]`, { button: "right" });
       await page.waitForSelector(".dc-context-menu", { timeout: 5000 });
-      const labels = await page.evaluate(() => [...document.querySelectorAll(".dc-context-menu button")].map((b) => b.textContent.trim()).filter(Boolean));
+      const labels = await page.evaluate(() => [...document.querySelectorAll(".dc-context-menu .dropdown-item")].map((b) => b.textContent.trim()).filter(Boolean));
       await page.keyboard.press("Escape");
       for (const want of ["Open terminal page", "Steer", "Open project", "Stop", "Delete"]) {
         assert(labels.includes(want), `menu misses "${want}": ${labels.join(", ")}`);
@@ -678,7 +678,7 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       await page.click(`${panel} [data-term-tab="${coderId}"]`, { button: "right" });
       await page.waitForSelector(".dc-context-menu", { timeout: 5000 });
       await page.evaluate(() => {
-        [...document.querySelectorAll(".dc-context-menu button")].find((b) => b.textContent.trim() === "Stop").click();
+        [...document.querySelectorAll(".dc-context-menu .dropdown-item")].find((b) => b.textContent.trim() === "Stop").click();
       });
       await confirmSwal(page);
       let stopped = false;
@@ -709,7 +709,7 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       await page.click(`${panel} [data-term-tab="${coderId}"]`, { button: "right" });
       await page.waitForSelector(".dc-context-menu", { timeout: 5000 });
       await page.evaluate(() => {
-        const items = [...document.querySelectorAll(".dc-context-menu button")];
+        const items = [...document.querySelectorAll(".dc-context-menu .dropdown-item")];
         items.reverse().find((b) => b.textContent.trim() === "Delete").click();
       });
       await confirmSwal(page);

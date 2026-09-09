@@ -148,7 +148,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       const chip = page.locator(`#project-${project} [data-chip][data-chip-kind="shell"]:not(.d-none)`).first();
       await chip.click({ button: "right" });
       await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
-      await page.click('.dc-context-menu button:has-text("Rename")');
+      await page.click('.dc-context-menu .dropdown-item:has-text("Rename")');
       await page.waitForSelector(".swal2-input", { state: "visible", timeout: 5000 });
       const newName = `ren-${tag.slice(-4)}`;
       await page.fill(".swal2-input", newName);
@@ -1357,7 +1357,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
     const gitMenu = async (name, label) => {
       await page.click(`#project-${name} [data-git-project-menu]`);
       await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
-      if (label) await page.click(`.dc-context-menu button:has-text("${label}")`);
+      if (label) await page.click(`.dc-context-menu .dropdown-item:has-text("${label}")`);
     };
     const menuLabels = () => page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
     const closeMenu = async () => {

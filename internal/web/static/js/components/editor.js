@@ -1105,9 +1105,17 @@ async function init(root) {
   // sheetActionRow is one action line of a sheet, the shape the docker and
   // git sheets share: an icon, a label that may keep its tail, a quiet second
   // line, and one click.
-  function sheetActionRow({ icon, iconClass, label, title, sub, subNodes, disabled, busy, onClick }) {
-    const row = document.createElement("button");
-    row.type = "button";
+  function sheetActionRow({ icon, iconClass, label, title, sub, subNodes, disabled, busy, onClick, href, target }) {
+    const row = document.createElement(href ? "a" : "button");
+    if (href) {
+      row.href = href;
+      if (target) {
+        row.target = target;
+        if (target === "_blank") row.rel = "noopener";
+      }
+    } else {
+      row.type = "button";
+    }
     row.className = "dropdown-item d-flex align-items-center gap-2";
     if (disabled) row.disabled = true;
     if (title) row.title = title;
@@ -1170,6 +1178,8 @@ async function init(root) {
         title: item.title,
         disabled: item.disabled,
         onClick: item.action,
+        href: item.href,
+        target: item.target,
       });
       if (item.disabled) row.dataset.editorSheetHead = "";
       dockerListEl.appendChild(row);

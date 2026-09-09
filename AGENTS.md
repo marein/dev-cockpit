@@ -2131,7 +2131,9 @@ free floating page scripts.
   address outside the app), so it opens in a new tab, copies and middle clicks
   like any link: a plain click runs its `action` where one is given, else
   pe.js takes it, a modifier click stays with the browser. Only what acts
-  (a POST, a dialog) is a button with an `action`. The arrow key
+  (a POST, a dialog) is a button with an `action`. The editor's docker sheet
+  renders the same `@dc/docker` items itself (`sheetActionRow`), so it takes
+  `href` and `target` too; a new renderer of menu items has to. The arrow key
   movement over its rows is exported (`rowsOf`, `focusRow`, `stepRowFocus`)
   and takes a row selector, so a second list of rows walks the same way
   instead of growing its own: the editor's sheets are that second one.

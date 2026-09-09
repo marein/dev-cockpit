@@ -99,7 +99,7 @@ const composeBtn = (page) => row(page).locator("[data-docker-project-menu]");
 // A label is matched whole and literally: an entry may carry brackets ("web
 // (2 addresses)") and a dot is a dot in a host name.
 const menuItem = (page, label) =>
-  page.locator(".dc-context-menu button", { hasText: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) });
+  page.locator(".dc-context-menu .dropdown-item", { hasText: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) });
 
 // A container chip answers a plain click with a shell, so its menu is where
 // every other row's menu is: on the right click, and on a long press.
@@ -355,11 +355,14 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
   await run("the container menu carries ports, shells, logs, and lifecycle", async () => {
     await openMenuOn(page, chip(page));
     assert(await menuItem(page, "Open :18088").count() === 1, "port link missing");
+    // An address is a link: an anchor to the address itself, opening a new tab.
+    const portLink = await menuItem(page, "Open :18088").evaluate((e) => ({ tag: e.tagName, href: e.getAttribute("href"), target: e.getAttribute("target") }));
+    assert(portLink.tag === "A" && /:18088$/.test(portLink.href) && portLink.target === "_blank", `the port row is not a link: ${JSON.stringify(portLink)}`);
     // The address the container's own label declares, before the port: where a
     // route exists it is the address a person wants. It carries no port, the
     // proxy answers on the default one.
     assert(await menuItem(page, `Open ${LINK_HOST}`).count() === 1, "the routed host from the container's label is missing");
-    const labels = (await page.locator(".dc-context-menu button").allTextContents()).map((t) => t.trim());
+    const labels = (await page.locator(".dc-context-menu .dropdown-item").allTextContents()).map((t) => t.trim());
     assert(labels.indexOf(`Open ${LINK_HOST}`) < labels.indexOf("Open :18088"), "the routed host does not stand before the port");
     assert(await menuItem(page, "Shell").count() === 1, "Shell entry missing");
     assert(await menuItem(page, "Logs").count() === 1, "Logs entry missing");
@@ -409,7 +412,7 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
       }));
     });
     await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
-    const items = mp.locator(".dc-context-menu button");
+    const items = mp.locator(".dc-context-menu .dropdown-item");
     assert(await items.filter({ hasText: /^Shell$/ }).count() === 1, "the long press menu lost its Shell entry");
     assert(await items.filter({ hasText: /^Stop$/ }).count() === 1, "the long press menu lost its lifecycle entries");
     await mp.keyboard.press("Escape");
@@ -457,7 +460,7 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     for (const label of ["Compose up", "Compose down", "Compose build", "Compose down with volumes"]) {
       assert(await menuItem(page, label).count() === 1, `configured command "${label}" missing`);
     }
-    const order = (await page.locator(".dc-context-menu button").allTextContents()).map((t) => t.trim());
+    const order = (await page.locator(".dc-context-menu .dropdown-item").allTextContents()).map((t) => t.trim());
     const at = (label) => order.indexOf(label);
     assert(at("Compose up") >= 0 && at("Compose up") < at("Compose down"), "the commands do not stand in the configured order");
     assert(at("Compose down") < at("Compose build"), "the commands do not stand in the configured order");
@@ -475,7 +478,7 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
     // The same menu again, now that container's addresses, the route before
     // the port, and a way back as the first entry.
-    const drilled = (await page.locator(".dc-context-menu button").allTextContents()).map((t) => t.trim());
+    const drilled = (await page.locator(".dc-context-menu .dropdown-item").allTextContents()).map((t) => t.trim());
     assert(drilled[0] === "Back", `the drilled menu starts with "${drilled[0]}"`);
     assert(drilled.indexOf(`Open ${LINK_HOST}`) > 0, "the drilled menu misses the routed host");
     assert(drilled.indexOf(`Open ${LINK_HOST}`) < drilled.indexOf("Open :18088"), "the drilled menu puts the port first");
@@ -524,7 +527,7 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
     // Whoever long presses this container asked about this container: every
     // address, no drill in.
-    const labels = (await mp.locator(".dc-context-menu button").allTextContents()).map((t) => t.trim());
+    const labels = (await mp.locator(".dc-context-menu .dropdown-item").allTextContents()).map((t) => t.trim());
     assert(labels.includes(`Open ${LINK_HOST}`) && labels.includes("Open :18088"), `the chip menu lost an address: ${labels.join(", ")}`);
     assert(!labels.some((t) => /addresses\)$/.test(t)), "the chip menu drills in instead of listing");
     // The menu stays inside the 390 wide viewport, and a label longer than the
@@ -721,6 +724,8 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     assert(await drillRow.count() === 1, "the sheet does not name the container and its addresses");
     await drillRow.click();
     assert(await page.locator("[data-editor-docker-list] .dropdown-item", { hasText: /^Open :18088$/ }).count() === 1, "the drilled sheet misses the port");
+    const sheetLink = await page.locator("[data-editor-docker-list] .dropdown-item", { hasText: /^Open :18088$/ }).evaluate((e) => ({ tag: e.tagName, href: e.getAttribute("href"), target: e.getAttribute("target") }));
+    assert(sheetLink.tag === "A" && /:18088$/.test(sheetLink.href) && sheetLink.target === "_blank", `the sheet's port row is not a link: ${JSON.stringify(sheetLink)}`);
     assert(await page.locator("[data-editor-docker-list] .dropdown-item", { hasText: new RegExp(`^Open ${LINK_HOST}$`) }).count() === 1, "the drilled sheet misses the routed host");
     await page.locator("[data-editor-docker-list] .dropdown-item", { hasText: /^Back$/ }).click();
     assert(await page.locator("[data-editor-docker-list] .dropdown-item", { hasText: /^web \(2 addresses\)$/ }).count() === 1, "Back did not lead to the project's own list");
