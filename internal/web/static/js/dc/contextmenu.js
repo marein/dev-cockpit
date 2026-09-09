@@ -98,10 +98,13 @@ export function openMenu({ x, y, items, signal }) {
       }
       continue;
     }
-    const button = el(
-      "button",
+    const row = el(
+      item.href ? "a" : "button",
       {
-        type: "button",
+        type: item.href ? null : "button",
+        href: item.href || null,
+        target: item.target || null,
+        rel: item.target === "_blank" ? "noopener" : null,
         class: "dropdown-item" + (item.danger ? " text-danger" : "") + (item.warn ? " text-orange" : "") + (item.purple ? " text-purple" : ""),
         role: "menuitem",
         title: item.title || null,
@@ -110,14 +113,20 @@ export function openMenu({ x, y, items, signal }) {
       ...labelNodes(item.label),
       item.hint ? el("span", { class: "dc-menu-hint ms-auto ps-3 small text-secondary text-nowrap" }, item.hint) : null,
     );
-    if (item.disabled) button.disabled = true;
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+    if (item.disabled) row.disabled = true;
+    row.addEventListener("click", (event) => {
+      if (item.href && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) {
+        closeMenu();
+        return;
+      }
+      if (!item.href || item.action) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       closeMenu();
       item.action?.();
     });
-    node.appendChild(button);
+    node.appendChild(row);
   }
   if (node.lastElementChild?.classList.contains("dropdown-divider")) node.lastElementChild.remove();
   if (!node.childElementCount) return null;
@@ -320,6 +329,11 @@ function onKeydown(event, node) {
   }
   if (event.key === "Tab") {
     closeMenu();
+    return;
+  }
+  if (event.key === " " && document.activeElement instanceof HTMLAnchorElement && node.contains(document.activeElement)) {
+    event.preventDefault();
+    document.activeElement.click();
     return;
   }
   const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;

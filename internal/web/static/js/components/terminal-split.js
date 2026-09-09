@@ -392,17 +392,11 @@ class TerminalSplit extends HTMLElement {
     }));
     if (dataset.paneProject) {
       items.push({ divider: true });
-      items.push({
-        label: "Open project",
-        icon: "ti-folder",
-        action: () => this.navigate("/projects#project-" + dataset.paneProject),
-      });
+      items.push({ label: "Open project", icon: "ti-folder", href: "/projects#project-" + dataset.paneProject });
       items.push({
         label: "Open editor",
         icon: "ti-code",
-        action: () => this.navigate(
-          "/projects/" + encodeURIComponent(dataset.paneProject) + "/editor?return=" + encodeURIComponent(window.location.pathname),
-        ),
+        href: "/projects/" + encodeURIComponent(dataset.paneProject) + "/editor?return=" + encodeURIComponent(window.location.pathname),
       });
     }
     items.push({ divider: true });

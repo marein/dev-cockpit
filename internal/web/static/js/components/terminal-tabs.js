@@ -264,17 +264,11 @@ class TerminalTabs extends HTMLElement {
     }
     if (dataset.tabProject) {
       items.push({ divider: true });
-      items.push({
-        label: "Open project",
-        icon: "ti-folder",
-        action: () => this.navigate("/projects#project-" + dataset.tabProject),
-      });
+      items.push({ label: "Open project", icon: "ti-folder", href: "/projects#project-" + dataset.tabProject });
       items.push({
         label: "Open editor",
         icon: "ti-code",
-        action: () => this.navigate(
-          "/projects/" + encodeURIComponent(dataset.tabProject) + "/editor?return=" + encodeURIComponent(window.location.pathname),
-        ),
+        href: "/projects/" + encodeURIComponent(dataset.tabProject) + "/editor?return=" + encodeURIComponent(window.location.pathname),
       });
     }
     items.push({ divider: true });

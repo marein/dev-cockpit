@@ -2126,7 +2126,12 @@ free floating page scripts.
   `@dc/contextmenu` renders a body-mounted `.dc-context-menu`
   dropdown at a point, one open menu at a time (Escape/arrow keys, outside
   pointerdown, outside wheel/touchmove, `dc:navigated` and the caller's abort
-  signal close it; programmatic scrolls must never close it). The arrow key
+  signal close it; programmatic scrolls must never close it). A row that leads
+  to a page carries `href` and renders as an anchor (`target: "_blank"` for an
+  address outside the app), so it opens in a new tab, copies and middle clicks
+  like any link: a plain click runs its `action` where one is given, else
+  pe.js takes it, a modifier click stays with the browser. Only what acts
+  (a POST, a dialog) is a button with an `action`. The arrow key
   movement over its rows is exported (`rowsOf`, `focusRow`, `stepRowFocus`)
   and takes a row selector, so a second list of rows walks the same way
   instead of growing its own: the editor's sheets are that second one.

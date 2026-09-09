@@ -1,4 +1,5 @@
 import { postForm } from "@dc/http";
+import { closeMenu } from "@dc/contextmenu";
 import { errorText } from "@dc/toast";
 
 // One dialog for the create forms, so starting a coder or a shell never leaves
@@ -53,6 +54,7 @@ function withMarker(url) {
 // A dialog over an open menu reads as two surfaces at once, and the menu would
 // sit under the backdrop anyway.
 function closeMenus() {
+  closeMenu();
   if (!window.bootstrap) return;
   for (const menu of document.querySelectorAll(".dropdown-menu.show")) {
     const toggle = menu.parentElement?.querySelector('[data-bs-toggle="dropdown"]');

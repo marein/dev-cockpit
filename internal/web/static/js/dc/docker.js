@@ -174,7 +174,8 @@ function linkItem(link) {
     label: addressLabel(address),
     title: `Open ${address}`,
     icon: "ti-external-link",
-    action: () => window.open(linkUrl(link), "_blank", "noopener"),
+    href: linkUrl(link),
+    target: "_blank",
   };
 }
 
@@ -279,7 +280,7 @@ function stackMenuItems(stack, project, actions, onLogs) {
       label: stack.run.running ? `${stack.run.action} is running…` : `Output of ${stack.run.action}`,
       icon: stack.run.running ? "ti-loader-2" : "ti-file-description",
       iconClass: stack.run.running ? "dc-spin" : "",
-      action: () => navigate(stack.run.url),
+      href: stack.run.url,
     });
   }
   if (stack.busy) return items;

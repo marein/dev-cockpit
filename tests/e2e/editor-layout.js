@@ -309,6 +309,24 @@ L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
       return `${again.pos} scrolled ${again.cmScroll}, tree at ${again.treeScroll}, panel ${again.termHeight}`;
     });
 
+    // The view in the address is applied once the git status has answered, not
+    // on the init round alone: on a full page load the event stream's connect
+    // snapshot fires a second status round that supersedes the first one, and
+    // the view used to depend on which of the two landed.
+    await run("a full page load with ?view= opens the commit and the compare view", async () => {
+      await page.goto(`${editorURL(a)}?view=commit`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("[data-editor-commit]:not([hidden])", { state: "attached", timeout: 15000 });
+      assert(await page.getAttribute("[data-editor-commit-toggle]", "aria-pressed") === "true", "the commit toggle is not pressed");
+      await page.goto(`${editorURL(a)}?view=compare`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("[data-editor-revdiff]:not([hidden])", { state: "attached", timeout: 15000 });
+      assert(await page.evaluate(() => document.querySelector("[data-editor-commit]").hidden), "the commit view stands beside the compare view");
+      await page.click("[data-editor-revdiff-close]");
+      await sleep(300);
+      const after = await layout();
+      assert(!after.commitOn && !after.treeHidden, "closing the compare view did not bring the tree back");
+      assert(await page.evaluate((p) => localStorage.getItem(`dc-editor-view:${p}`), a) === "", "the closed view is still stored");
+    });
+
     await run("a third project starts with the device's last fold, the second keeps its own", async () => {
       await switchByKey(c);
       const fresh = await layout();

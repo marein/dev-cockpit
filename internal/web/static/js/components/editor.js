@@ -327,6 +327,8 @@ async function init(root) {
   // Whether the status has answered at all: the git surface renders on the
   // answer, repository or not, never on the guess.
   let gitLoaded = false;
+  let gitAnswered = null;
+  const gitFirstAnswer = new Promise((resolve) => { gitAnswered = resolve; });
   // One git write at a time: a second push while the first is on the network
   // would only race it. The action key is what lets the row that was tapped
   // carry the spinner while every other one waits disabled.
@@ -2385,6 +2387,7 @@ async function init(root) {
       // test that waits for the status has something honest to wait for.
       root.dataset.gitRepo = gitRepo ? "1" : "0";
       gitLoaded = true;
+      gitAnswered();
       gitBranch = gitRepo ? changes.branch || null : null;
       paintGitStatus();
       applyGitState(changes);
@@ -3589,6 +3592,13 @@ async function init(root) {
     // filter in this app. Touch keeps its keyboard down, which is the whole
     // reason the pointer is asked and not the width.
     if (pointerMedia.matches) commitFilterEl.focus();
+  }
+
+  async function openPageView(view, reveal) {
+    await gitFirstAnswer;
+    if (signal.aborted) return;
+    if (view === "commit") openCommit({ reveal });
+    else if (view === "compare") openRevdiff({ reveal });
   }
 
   function closeCommit() {
@@ -10078,11 +10088,6 @@ async function init(root) {
     if (wasActive && !termActiveId) editor.focus();
   }
 
-  function termNavigate(url) {
-    if (anyDirty() && !window.confirm("Discard unsaved changes?")) return;
-    window.app?.navigate?.(url);
-  }
-
   async function renameTermShell(id, current) {
     const newName = await promptText({
       title: `Rename shell "${current}"`,
@@ -10102,7 +10107,7 @@ async function init(root) {
     const url = tab.getAttribute("data-term-url") || "";
     const coder = kind === "coder";
     const items = [
-      { label: "Open terminal page", icon: "ti-external-link", action: () => termNavigate(url) },
+      { label: "Open terminal page", icon: "ti-external-link", href: url },
     ];
     if (!coder) {
       items.push({ label: "Rename", icon: "ti-pencil", action: () => void renameTermShell(id, sessionName) });
@@ -10134,7 +10139,7 @@ async function init(root) {
         });
     }
     items.push({ divider: true });
-    items.push({ label: "Open project", icon: "ti-folder", action: () => termNavigate("/projects#project-" + name) });
+    items.push({ label: "Open project", icon: "ti-folder", href: "/projects#project-" + name });
     items.push({ divider: true });
     items.push({
       label: coder ? "Stop" : "Delete",
@@ -10685,8 +10690,7 @@ async function init(root) {
   if (pageTerminal && termOpen && termApplies()) void activateTermPane(pageTerminal, { focus: true });
   const reveal = !!root.dataset.editorView;
   const pageView = root.dataset.editorView || store.get(viewKey, "");
-  if (pageView === "commit") openCommit({ reveal });
-  else if (pageView === "compare") openRevdiff({ reveal });
+  if (pageView) void openPageView(pageView, reveal);
 
   return () => {
     if (viewSaveTimer) {

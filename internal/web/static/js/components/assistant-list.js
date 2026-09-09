@@ -107,6 +107,7 @@ class AssistantList extends HTMLElement {
         {
           label: "Open",
           icon: "ti-message",
+          href: url,
           action: () => {
             // Inside the overlay a conversation opens in the overlay, it is
             // its own world; the history page navigates.

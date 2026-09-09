@@ -264,7 +264,7 @@ class ProjectList extends HTMLElement {
     const mainForm = chip.querySelector("[data-chip-main-form]");
     const xForm = chip.querySelector("[data-chip-x]");
     const items = [];
-    if (main) items.push({ label: "Attach", icon: "ti-plug-connected", action: () => main.click() });
+    if (main) items.push({ label: "Attach", icon: "ti-plug-connected", href: main.getAttribute("href") });
     if (mainForm) items.push({ label: "Resume", icon: "ti-player-play", action: () => mainForm.requestSubmit() });
     if (chip.dataset.chipKind === "shell" && chip.dataset.chipId) {
       items.push({ label: "Rename", icon: "ti-pencil", action: () => void this.renameShell(chip) });

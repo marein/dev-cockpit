@@ -107,16 +107,12 @@ export function openComposeMenu(button, { section, signal } = {}) {
 export function openGitMenu(button, { signal } = {}) {
   const items = [];
   if (button.dataset.gitWorktree) {
-    items.push({
-      label: "New worktree",
-      icon: "ti-git-fork",
-      action: () => docker.navigate(button.dataset.gitWorktree),
-    });
+    items.push({ label: "New worktree", icon: "ti-git-fork", href: button.dataset.gitWorktree });
   }
   items.push({ label: "Fetch", icon: "ti-refresh", action: () => void fetchProject(button) });
   items.push({ divider: true });
-  items.push({ label: "Commit changes", icon: "ti-git-commit", action: () => docker.navigate(button.dataset.gitCommit) });
-  items.push({ label: "Compare revisions", icon: "ti-git-compare", action: () => docker.navigate(button.dataset.gitCompare) });
+  items.push({ label: "Commit changes", icon: "ti-git-commit", href: button.dataset.gitCommit });
+  items.push({ label: "Compare revisions", icon: "ti-git-compare", href: button.dataset.gitCompare });
   const rect = button.getBoundingClientRect();
   openMenu({ x: Math.round(rect.left), y: Math.round(rect.bottom), items, signal });
 }
