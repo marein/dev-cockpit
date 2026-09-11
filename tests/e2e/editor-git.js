@@ -5175,6 +5175,135 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       assert(await page.locator(".editor-tab").count() === 0, "a tab survived the close");
       return "shown with a file, gone without one";
     });
+
+    // Reveal in tree is about the tree, so it takes the drawer there first: the
+    // commit view and the comparison stand in the tree's place, and a reveal
+    // under one of them marked a row nobody could see. On a phone the drawer is
+    // the whole surface, which is where it showed. Both starting points are
+    // checked, on both widths.
+    await run("reveal in tree leaves the commit view and the comparison for the file view, on both widths", async () => {
+      const revealed = async (target, path) => target.evaluate((want) => {
+        const tree = document.querySelector("[data-editor-tree]");
+        const commit = document.querySelector("[data-editor-commit]");
+        const revdiff = document.querySelector("[data-editor-revdiff]");
+        const row = tree?.querySelector(".editor-file.selected");
+        return {
+          treeShown: Boolean(tree && !tree.hidden && tree.getClientRects().length),
+          commitShown: Boolean(commit && !commit.hidden && commit.getClientRects().length),
+          revdiffShown: Boolean(revdiff && !revdiff.hidden && revdiff.getClientRects().length),
+          selected: row ? row.dataset.path : null,
+          onWanted: row ? row.dataset.path === want : false,
+        };
+      }, path);
+      // The tab menu opens by right click on a fine pointer and by a tap on the
+      // already active tab on a phone, which is the only way there.
+      const revealFromTabMenu = async (target, path, touch) => {
+        if (touch) await target.tap(`.editor-tab[data-path="${path}"]`);
+        else await target.click(`.editor-tab[data-path="${path}"]`, { button: "right" });
+        await target.waitForSelector(".dc-context-menu", { state: "visible", timeout: 8000 });
+        await target.locator(".dc-context-menu .dropdown-item", { hasText: /Reveal in tree/ }).first().click();
+        await sleep(1200);
+      };
+
+      await openEditor(page);
+      await page.click('.editor-item[data-path="root.txt"]');
+      await page.waitForSelector('.editor-tab[data-path="root.txt"].active', { state: "attached", timeout: 10000 });
+      await openCommitView(page);
+      const deskBefore = await revealed(page, "root.txt");
+      assert(deskBefore.commitShown && !deskBefore.treeShown, `the commit view is not the starting point: ${JSON.stringify(deskBefore)}`);
+      await revealFromTabMenu(page, "root.txt", false);
+      const deskAfter = await revealed(page, "root.txt");
+      assert(deskAfter.treeShown && !deskAfter.commitShown && !deskAfter.revdiffShown,
+        `the desktop reveal left the commit view standing: ${JSON.stringify(deskAfter)}`);
+      assert(deskAfter.onWanted, `the desktop reveal marked ${deskAfter.selected}`);
+
+      const mp = await mobilePage();
+      await openEditor(mp);
+      await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 10000 }).catch(() => {});
+      if (!(await mp.$(".editor.editor-drawer-open"))) {
+        await mp.locator("[data-editor-drawer-toggle]").first().click();
+        await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 10000 });
+      }
+      await mp.click('.editor-item[data-path="root.txt"]');
+      await mp.waitForSelector('.editor-tab[data-path="root.txt"].active', { state: "attached", timeout: 15000 });
+      // Opening a file closes the drawer, so the commit view is brought up
+      // through it and the drawer then makes way for the tab strip again. The
+      // backdrop's only uncovered strip is at the right edge.
+      await mp.locator("[data-editor-drawer-toggle]").first().click();
+      await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 10000 });
+      await openCommitView(mp);
+      const phoneBefore = await revealed(mp, "root.txt");
+      assert(phoneBefore.commitShown && !phoneBefore.treeShown, `the phone's commit view is not the starting point: ${JSON.stringify(phoneBefore)}`);
+      const width = await mp.evaluate(() => window.innerWidth);
+      await mp.touchscreen.tap(width - 22, 400);
+      await mp.waitForFunction(() => !document.querySelector(".editor").classList.contains("editor-drawer-open"), null, { timeout: 10000 });
+      await sleep(600);
+      await revealFromTabMenu(mp, "root.txt", true);
+      const phoneAfter = await mp.evaluate(() => document.querySelector(".editor").classList.contains("editor-drawer-open"));
+      const phoneTree = await revealed(mp, "root.txt");
+      assert(phoneAfter, "the phone reveal did not open the drawer");
+      assert(phoneTree.treeShown && !phoneTree.commitShown && !phoneTree.revdiffShown,
+        `the phone reveal left the commit view standing: ${JSON.stringify(phoneTree)}`);
+      assert(phoneTree.onWanted, `the phone reveal marked ${phoneTree.selected}`);
+
+      // The comparison is the tree column's other face, so it gives way the
+      // same. It is reached through the git sheet, which on a phone closes
+      // itself on the pick and leaves the drawer carrying the comparison.
+      // An earlier check leaves a revision pair stored per project; the
+      // comparison opens on its own default without it, so the panel shows a
+      // real comparison instead of a stale revision's message.
+      const forgetPair = (target) => target.evaluate((proj) => localStorage.removeItem(`dc-editor-revdiff:${proj}`), project);
+      await forgetPair(page);
+      await openEditor(page);
+      await page.click('.editor-item[data-path="root.txt"]');
+      await page.waitForSelector('.editor-tab[data-path="root.txt"].active', { state: "attached", timeout: 10000 });
+      await openRevdiff(page);
+      await revdiffSettled(page);
+      const deskCompare = await revealed(page, "root.txt");
+      assert(deskCompare.revdiffShown && !deskCompare.treeShown,
+        `the comparison is not the starting point: ${JSON.stringify(deskCompare)}`);
+      await revealFromTabMenu(page, "root.txt", false);
+      const deskFromCompare = await revealed(page, "root.txt");
+      assert(deskFromCompare.treeShown && !deskFromCompare.revdiffShown && !deskFromCompare.commitShown,
+        `the desktop reveal left the comparison standing: ${JSON.stringify(deskFromCompare)}`);
+      assert(deskFromCompare.onWanted, `the desktop reveal out of the comparison marked ${deskFromCompare.selected}`);
+
+      await forgetPair(mp);
+      await openEditor(mp);
+      await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 10000 }).catch(() => {});
+      if (!(await mp.$(".editor.editor-drawer-open"))) {
+        await mp.locator("[data-editor-drawer-toggle]").first().click();
+        await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 10000 });
+      }
+      await mp.click('.editor-item[data-path="root.txt"]');
+      await mp.waitForSelector('.editor-tab[data-path="root.txt"].active', { state: "attached", timeout: 15000 });
+      await openRevdiff(mp);
+      await revdiffSettled(mp);
+      if (!(await mp.$(".editor.editor-drawer-open"))) {
+        await mp.locator("[data-editor-drawer-toggle]").first().click();
+        await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 10000 });
+      }
+      await sleep(800);
+      const phoneCompare = await revealed(mp, "root.txt");
+      assert(phoneCompare.revdiffShown && !phoneCompare.treeShown,
+        `the phone's comparison is not the starting point: ${JSON.stringify(phoneCompare)}`);
+      if (process.env.REVEAL_SHOTS) await mp.screenshot({ path: `${process.env.REVEAL_SHOTS}/phone-1-compare-view.png` });
+      const phoneWidth = await mp.evaluate(() => window.innerWidth);
+      await mp.touchscreen.tap(phoneWidth - 22, 400);
+      await mp.waitForFunction(() => !document.querySelector(".editor").classList.contains("editor-drawer-open"), null, { timeout: 10000 });
+      await sleep(600);
+      await revealFromTabMenu(mp, "root.txt", true);
+      const phoneDrawer = await mp.evaluate(() => document.querySelector(".editor").classList.contains("editor-drawer-open"));
+      const phoneFromCompare = await revealed(mp, "root.txt");
+      if (process.env.REVEAL_SHOTS) await mp.screenshot({ path: `${process.env.REVEAL_SHOTS}/phone-2-after-reveal-from-compare.png` });
+      assert(phoneDrawer, "the phone reveal out of the comparison did not open the drawer");
+      assert(phoneFromCompare.treeShown && !phoneFromCompare.revdiffShown && !phoneFromCompare.commitShown,
+        `the phone reveal left the comparison standing: ${JSON.stringify(phoneFromCompare)}`);
+      assert(phoneFromCompare.onWanted, `the phone reveal out of the comparison marked ${phoneFromCompare.selected}`);
+
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      return "the commit view and the comparison both give way to the tree, desktop and phone";
+    });
   } finally {
     // The poll interval is instance-wide, put it back for the next runner.
     await page.goto(`${BASE}/settings/editor/git`, { waitUntil: "domcontentloaded" }).catch(() => {});

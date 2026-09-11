@@ -240,25 +240,24 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(`#project-${project} .status-dot-animated.status-blue`, { state: "attached", timeout: 6000 });
       await page.waitForFunction(() => {
-        const badge = document.querySelector(".quicknav-toggle [data-notify-count]");
-        return badge && !badge.classList.contains("d-none") && parseInt(badge.textContent, 10) >= 1;
+        const dot = document.querySelector(".dc-rail [data-notify-any], .dc-tabbar [data-notify-any]");
+        return dot && !dot.classList.contains("d-none");
       }, null, { timeout: 6000 });
-      // The quick nav shows where the editor's terminal panel does not (below
-      // md on a fine pointer), so opening it needs a window below md.
+      // The tab bar and its sheet stand below lg only.
       await page.setViewportSize({ width: 750, height: 900 });
-      await page.click(".quicknav-toggle");
-      // News shows as the ringing coder/shell icon now (dc-term-icon.news), not a
-      // separate status dot; the project-level dot above stays a status dot.
-      await page.waitForSelector(`[data-quicknav-pane="active"] [data-notify-target="${coderId}"].news`, { state: "attached", timeout: 6000 });
+      await page.click('.dc-tabbar button[data-ctx-area="terminals"]');
+      // News is the same Tabler status dot everywhere; on a coder or shell it
+      // hangs on the icon, which the news class on the icon shows.
+      await page.waitForSelector(`dc-ctx-sheet [data-notify-target="${coderId}"].news`, { state: "attached", timeout: 6000 });
       await page.keyboard.press("Escape");
       await page.setViewportSize({ width: 1360, height: 900 });
     });
 
-    await run("quick nav badge and title counter survive a boosted navigation", async () => {
+    await run("the news dot and the title counter survive a boosted navigation", async () => {
       // The app-wide event stream does not reconnect on a pe.js swap, so the
-      // fresh body's badge only shows because dc-notifications re-applies the
+      // fresh body's dot only shows because dc-notifications re-applies the
       // channel state on remount. The window marker proves the navigation was
-      // a boost, not a full reload (which would restore the badge anyway).
+      // a boost, not a full reload (which would restore the dot anyway).
       await page.evaluate(() => { window.__peProbe = true; });
       await Promise.all([
         page.waitForURL(/\/settings/, { timeout: 15000 }),
@@ -267,8 +266,8 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       await sleep(600);
       assert(await page.evaluate(() => window.__peProbe === true), "navigation was a full reload, probe lost");
       await page.waitForFunction(() => {
-        const badge = document.querySelector(".quicknav-toggle [data-notify-count]");
-        return badge && !badge.classList.contains("d-none") && parseInt(badge.textContent, 10) >= 1;
+        const dot = document.querySelector(".dc-rail [data-notify-any], .dc-tabbar [data-notify-any]");
+        return dot && !dot.classList.contains("d-none");
       }, null, { timeout: 4000 });
       assert(/^\(\d+/.test(await page.title()), `title counter lost: ${await page.title()}`);
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });

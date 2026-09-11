@@ -1,0 +1,13 @@
+{{/* The news mark. One dot for the whole app: Tabler's animated status-dot in
+     blue, sitting at the top right corner of whatever carries it.
+
+     Inside a session icon it takes no options, the icon's own news class shows
+     it (.dc-news-dot in style.css). A dot that stands for a whole scope rather
+     than for one target brings its wiring along: Scope with Projects for the
+     targets of a project, Any for "something is new somewhere". Those start on
+     the server's Hidden and are toggled by decorateNews from there on. */}}
+{{define "news_dot.gohtml"}}
+{{- $o := . -}}
+{{- if not $o}}{{$o = dict}}{{end -}}
+<span class="status-dot status-dot-animated status-blue dc-news-dot{{with $o.Class}} {{.}}{{end}}{{if $o.Hidden}} d-none{{end}}"{{if $o.Scope}} data-notify-project-dot{{end}}{{with $o.Projects}} data-notify-projects="{{.}}"{{end}}{{if $o.Any}} data-notify-any{{end}}{{with $o.Label}} aria-label="{{.}}"{{else}} aria-hidden="true"{{end}}></span>
+{{- end}}

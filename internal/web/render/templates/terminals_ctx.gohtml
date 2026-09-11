@@ -1,0 +1,21 @@
+{{/* The list column of the terminal pages is the terminal tab strip itself,
+     laid out as rows: every live coder and shell in strip order, a split view
+     as one row. Dragging reorders, dropping one row on another makes a split
+     view, a right click opens the row's actions, the keyboard gestures of the
+     strip work as before. The plus menu sits in the head. */}}
+{{define "terminals_ctx.gohtml"}}
+<terminal-tabs class="dc-ctx d-print-none" data-tabs-url="/terminal-tabs" data-tabs-vertical data-ctx-own-scroll>
+  <div class="dc-ctx-head">
+    <button type="button" class="btn btn-icon btn-ghost-secondary dc-work-toggle" data-dc-focus="work" aria-label="Back to the terminal"><i class="ti ti-arrow-left" aria-hidden="true"></i></button>
+    <h1 class="dc-ctx-title">Terminals</h1>
+    <div class="dc-ctx-tools">
+      {{template "terminal_tabs_new.gohtml" .}}
+    </div>
+  </div>
+  {{template "ctx_filter.gohtml" "Filter terminals…"}}
+  <div class="dc-ctx-body">
+    {{template "terminal_tabs_strip.gohtml" .}}
+  </div>
+  <div class="dc-ctx-resize" data-ctx-resize aria-hidden="true"></div>
+</terminal-tabs>
+{{end}}

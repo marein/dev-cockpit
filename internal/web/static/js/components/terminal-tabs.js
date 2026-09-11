@@ -8,6 +8,7 @@ import { applyFold } from "@dc/fold";
 import { ensureOk, getText, landingURL, postForm, postJSON } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
 import { splitCreateItems } from "@dc/split";
+import { get } from "@dc/store";
 import { notifyError, notifySuccess } from "@dc/toast";
 import { releaseCoder, steerCoder } from "@dc/steer";
 import { openFormModal } from "dc-form-modal";
@@ -25,6 +26,7 @@ class TerminalTabs extends HTMLElement {
     this.strip = this.querySelector("[data-tabs-strip]");
     if (!this.strip) return;
     this.switcherOnly = this.hasAttribute("hidden");
+    this.vertical = this.hasAttribute("data-tabs-vertical");
     this.ac = new AbortController();
     this.drag = null;
     this.switcher = null;
@@ -40,7 +42,7 @@ class TerminalTabs extends HTMLElement {
     this.tap = new DoubleTap();
     const signal = this.ac.signal;
 
-    this.revealActive();
+    this.revealActive(this.vertical);
     this.expandedResume = new Set();
     const resumeProjects = this.querySelector("[data-tabs-resume-projects]");
     if (resumeProjects) projectSort.sort(resumeProjects);
@@ -135,6 +137,13 @@ class TerminalTabs extends HTMLElement {
     return (tab.dataset.tabMembers || tab.dataset.tabId || "").split(" ").filter(Boolean);
   }
 
+  persistMemberOrder(group) {
+    const ids = Array.from(this.strip.querySelectorAll(`.terminal-tab-member[data-tab-group="${group}"]`)).map((row) => row.dataset.tabId);
+    postJSON("/terminal-tabs/group", { ids })
+      .then((response) => ensureOk(response, "Could not save the pane order."))
+      .catch((error) => notifyError(error.message));
+  }
+
   persistOrder() {
     const ids = this.tabs().flatMap((tab) => this.memberIds(tab));
     postJSON("/terminal-tabs/order", { ids })
@@ -160,8 +169,12 @@ class TerminalTabs extends HTMLElement {
     });
   }
 
-  revealTab(tab) {
+  revealTab(tab, center = false) {
     if (!tab) return;
+    if (this.vertical) {
+      tab.scrollIntoView({ block: center ? "center" : "nearest" });
+      return;
+    }
     const strip = this.strip;
     if (tab.offsetLeft < strip.scrollLeft
       || tab.offsetLeft + tab.offsetWidth > strip.scrollLeft + strip.clientWidth) {
@@ -169,8 +182,15 @@ class TerminalTabs extends HTMLElement {
     }
   }
 
-  revealActive() {
-    this.revealTab(this.strip.querySelector(".terminal-tab.active"));
+  revealActive(center = false) {
+    const member = this.strip.querySelector(".terminal-tab-member.active");
+    const tab = member && member.getClientRects().length ? member : this.strip.querySelector(".terminal-tab.active");
+    this.revealTab(tab, center);
+  }
+
+  unitRows(tab) {
+    if (tab.dataset.tabKind !== "split") return [tab];
+    return [tab, ...this.strip.querySelectorAll(`.terminal-tab-member[data-tab-group="${CSS.escape(tab.dataset.tabId)}"]`)];
   }
 
   markPending(tab) {
@@ -184,7 +204,7 @@ class TerminalTabs extends HTMLElement {
   }
 
   onWheel(event) {
-    if (!event.deltaY || event.deltaX) return;
+    if (this.vertical || !event.deltaY || event.deltaX) return;
     if (this.strip.scrollWidth <= this.strip.clientWidth) return;
     event.preventDefault();
     this.strip.scrollLeft += event.deltaY;
@@ -199,16 +219,47 @@ class TerminalTabs extends HTMLElement {
       if (tab) void this.closeTarget(tab.dataset);
       return;
     }
-    if (!this.suppressClick) return;
+    const menu = event.target.closest("[data-tab-menu]");
+    if (menu) {
+      event.preventDefault();
+      event.stopPropagation();
+      const tab = menu.closest(".terminal-tab, .terminal-tab-member");
+      const rect = menu.getBoundingClientRect();
+      if (tab) this.openRowMenu(tab, rect.right, rect.bottom);
+      return;
+    }
+    const grip = event.target.closest("[data-tab-grip]");
+    if (grip) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (!this.suppressClick) {
+      const split = event.target.closest(".terminal-tab-split");
+      if (split) this.aimSplit(split);
+      return;
+    }
     this.suppressClick = false;
     event.preventDefault();
     event.stopPropagation();
+  }
+
+  aimSplit(tab) {
+    const focus = get("dc-split-active-" + tab.dataset.tabId, "");
+    if (!focus || !this.memberIds(tab).includes(focus)) return;
+    const href = tab.getAttribute("href") || "";
+    tab.setAttribute("href", href.split("?")[0] + "?focus=" + encodeURIComponent(focus));
+    window.setTimeout(() => tab.setAttribute("href", href), 0);
   }
 
   onContextMenu(event) {
     const tab = event.target.closest(".terminal-tab");
     if (!tab) return;
     event.preventDefault();
+    this.openRowMenu(tab, event.clientX, event.clientY);
+  }
+
+  openRowMenu(tab, x, y) {
     this.cancelDrag();
     const dataset = { ...tab.dataset };
     const split = dataset.tabKind === "split";
@@ -268,10 +319,13 @@ class TerminalTabs extends HTMLElement {
       items.push({
         label: "Open editor",
         icon: "ti-code",
-        href: "/projects/" + encodeURIComponent(dataset.tabProject) + "/editor?return=" + encodeURIComponent(window.location.pathname),
+        href: "/projects/" + encodeURIComponent(dataset.tabProject) + "/editor",
       });
     }
     items.push({ divider: true });
+    if (dataset.tabGroup) {
+      items.push({ label: "Remove from split view", icon: "ti-layout-off", action: () => void this.removeFromSplit(dataset) });
+    }
     if (split) {
       items.push({ label: "Ungroup split view", icon: "ti-layout-off", action: () => void this.ungroupSplit(dataset) });
       items.push({
@@ -297,7 +351,7 @@ class TerminalTabs extends HTMLElement {
         });
       }
     }
-    openMenu({ x: event.clientX, y: event.clientY, items, signal: this.ac.signal });
+    openMenu({ x, y, items, signal: this.ac.signal });
   }
 
   async groupTabs(base, added) {
@@ -337,6 +391,17 @@ class TerminalTabs extends HTMLElement {
     } finally {
       this.confirming = false;
       this.tryRefresh();
+    }
+  }
+
+  async removeFromSplit({ tabId, tabName }) {
+    try {
+      const response = await postJSON("/terminal-tabs/ungroup", { ids: [tabId] });
+      await ensureOk(response, "Could not change the split view.");
+      notifySuccess(`"${tabName}" left the split view.`);
+      this.tryRefresh();
+    } catch (error) {
+      notifyError(error.message);
     }
   }
 
@@ -428,13 +493,19 @@ class TerminalTabs extends HTMLElement {
     }
   }
 
-  contentX(clientX) {
-    return clientX - this.strip.getBoundingClientRect().left + this.strip.scrollLeft;
+  axisClient(event) {
+    return this.vertical ? event.clientY : event.clientX;
+  }
+
+  contentPos(client) {
+    const rect = this.strip.getBoundingClientRect();
+    return this.vertical ? client - rect.top + this.strip.scrollTop : client - rect.left + this.strip.scrollLeft;
   }
 
   onPointerDown(event) {
-    if (event.button !== 0 || this.switcher || event.target.closest("[data-tab-close]")) return;
-    const tab = event.target.closest(".terminal-tab");
+    if (event.button !== 0 || this.switcher || event.target.closest("[data-tab-close], [data-tab-menu]")) return;
+    if (event.pointerType === "touch" && !event.target.closest("[data-tab-grip]")) return;
+    const tab = event.target.closest(".terminal-tab, .terminal-tab-member");
     if (!tab) return;
     this.suppressClick = false;
     this.drag = {
@@ -442,7 +513,7 @@ class TerminalTabs extends HTMLElement {
       pointerId: event.pointerId,
       startClientX: event.clientX,
       startClientY: event.clientY,
-      lastClientX: event.clientX,
+      lastClient: this.axisClient(event),
       active: false,
       raf: 0,
     };
@@ -465,7 +536,7 @@ class TerminalTabs extends HTMLElement {
       this.beginDrag(event);
     }
     event.preventDefault();
-    drag.lastClientX = event.clientX;
+    drag.lastClient = this.axisClient(event);
     this.updateDrag();
   }
 
@@ -476,18 +547,16 @@ class TerminalTabs extends HTMLElement {
     if (drag.active) {
       window.cancelAnimationFrame(drag.raf);
       this.suppressClick = true;
-      this.strip.classList.remove("terminal-tabs-strip-dragging");
-      drag.tab.classList.remove("terminal-tab-dragging");
-      for (const tab of drag.tabs) {
-        tab.style.transform = "";
-        tab.classList.remove("terminal-tab-group-target");
-      }
+      window.setTimeout(() => { this.suppressClick = false; }, 0);
+      this.settleDrag(drag);
       if (drag.groupTarget >= 0 && drag.tabs[drag.groupTarget]) {
         void this.groupTabs(drag.tabs[drag.groupTarget], drag.tab);
       } else if (drag.toIndex !== drag.fromIndex) {
         const others = drag.tabs.filter((tab) => tab !== drag.tab);
-        this.strip.insertBefore(drag.tab, others[drag.toIndex] || null);
-        this.persistOrder();
+        const anchor = others[drag.toIndex] || (drag.member ? others[others.length - 1].nextSibling : null);
+        for (const row of drag.units[drag.fromIndex]) this.strip.insertBefore(row, anchor);
+        if (drag.member) this.persistMemberOrder(drag.member);
+        else this.persistOrder();
       }
     }
     // Flush any event that arrived while the drag held the strip.
@@ -499,37 +568,45 @@ class TerminalTabs extends HTMLElement {
     this.drag = null;
     if (!drag || !drag.active) return;
     window.cancelAnimationFrame(drag.raf);
+    this.settleDrag(drag);
+  }
+
+  settleDrag(drag) {
     this.strip.classList.remove("terminal-tabs-strip-dragging");
-    drag.tab.classList.remove("terminal-tab-dragging");
-    for (const tab of drag.tabs) {
-      tab.style.transform = "";
-      tab.classList.remove("terminal-tab-group-target");
+    for (const row of drag.units.flat()) {
+      row.style.transform = "";
+      row.classList.remove("terminal-tab-dragging", "terminal-tab-group-target");
     }
   }
 
   beginDrag(event) {
     const drag = this.drag;
     drag.active = true;
-    drag.tabs = this.tabs();
+    drag.member = drag.tab.classList.contains("terminal-tab-member") ? drag.tab.dataset.tabGroup : "";
+    drag.tabs = drag.member
+      ? Array.from(this.strip.querySelectorAll(`.terminal-tab-member[data-tab-group="${drag.member}"]`))
+      : this.tabs();
+    drag.units = drag.tabs.map((tab) => (drag.member ? [tab] : this.unitRows(tab)));
     drag.fromIndex = drag.tabs.indexOf(drag.tab);
     drag.toIndex = drag.fromIndex;
-    drag.width = drag.tab.getBoundingClientRect().width;
-    const stripLeft = this.strip.getBoundingClientRect().left;
-    drag.centers = drag.tabs.map((tab) => {
-      const rect = tab.getBoundingClientRect();
-      return rect.left + rect.width / 2 - stripLeft + this.strip.scrollLeft;
-    });
-    drag.widths = drag.tabs.map((tab) => tab.getBoundingClientRect().width);
-    drag.startContentX = this.contentX(event.clientX);
+    const size = (rect) => (this.vertical ? rect.height : rect.width);
+    const start = (rect) => (this.vertical ? rect.top : rect.left);
+    const stripStart = start(this.strip.getBoundingClientRect());
+    const scrolled = this.vertical ? this.strip.scrollTop : this.strip.scrollLeft;
+    drag.widths = drag.units.map((rows) => rows.reduce((sum, row) => sum + size(row.getBoundingClientRect()), 0));
+    drag.width = drag.widths[drag.fromIndex];
+    drag.centers = drag.units.map((rows, i) => start(rows[0].getBoundingClientRect()) + drag.widths[i] / 2 - stripStart + scrolled);
+    drag.startContentX = this.contentPos(this.axisClient(event));
     drag.groupTarget = -1;
     drag.groupPending = -1;
     drag.groupSince = 0;
     this.strip.classList.add("terminal-tabs-strip-dragging");
-    drag.tab.classList.add("terminal-tab-dragging");
+    for (const row of drag.units[drag.fromIndex]) row.classList.add("terminal-tab-dragging");
     drag.raf = window.requestAnimationFrame(() => this.tickEdgeScroll());
   }
 
   groupCandidate(drag, draggedCenter) {
+    if (drag.member) return -1;
     for (let i = 0; i < drag.tabs.length; i += 1) {
       if (i === drag.fromIndex) continue;
       let shift = 0;
@@ -546,7 +623,7 @@ class TerminalTabs extends HTMLElement {
   updateDrag() {
     const drag = this.drag;
     if (!drag || !drag.active) return;
-    const dx = this.contentX(drag.lastClientX) - drag.startContentX;
+    const dx = this.contentPos(drag.lastClient) - drag.startContentX;
     const draggedCenter = drag.centers[drag.fromIndex] + dx;
     let toIndex = 0;
     for (let i = 0; i < drag.centers.length; i += 1) {
@@ -567,28 +644,34 @@ class TerminalTabs extends HTMLElement {
     drag.tabs.forEach((tab, i) => {
       tab.classList.toggle("terminal-tab-group-target", i === drag.groupTarget);
     });
-    drag.tab.style.transform = "translateX(" + dx + "px)";
-    drag.tabs.forEach((tab, i) => {
-      if (tab === drag.tab) return;
+    const move = this.vertical ? "translateY" : "translateX";
+    drag.units.forEach((rows, i) => {
       let shift = 0;
-      if (i > drag.fromIndex && i <= drag.toIndex) shift = -drag.width;
+      if (i === drag.fromIndex) shift = dx;
+      else if (i > drag.fromIndex && i <= drag.toIndex) shift = -drag.width;
       else if (i < drag.fromIndex && i >= drag.toIndex) shift = drag.width;
-      tab.style.transform = shift ? "translateX(" + shift + "px)" : "";
+      const transform = shift ? move + "(" + shift + "px)" : "";
+      for (const row of rows) row.style.transform = transform;
     });
   }
 
   tickEdgeScroll() {
     const drag = this.drag;
     if (!drag || !drag.active) return;
-    const rect = this.strip.getBoundingClientRect();
+    const scroller = this.vertical ? this.strip.closest(".dc-ctx-body") || this.strip : this.strip;
+    const rect = scroller.getBoundingClientRect();
+    const lower = this.vertical ? rect.top : rect.left;
+    const upper = this.vertical ? rect.bottom : rect.right;
     let delta = 0;
-    if (drag.lastClientX < rect.left + EDGE_ZONE) delta = -EDGE_STEP;
-    else if (drag.lastClientX > rect.right - EDGE_ZONE) delta = EDGE_STEP;
+    if (drag.lastClient < lower + EDGE_ZONE) delta = -EDGE_STEP;
+    else if (drag.lastClient > upper - EDGE_ZONE) delta = EDGE_STEP;
     if (delta) {
-      const max = this.strip.scrollWidth - this.strip.clientWidth;
-      const next = Math.max(0, Math.min(this.strip.scrollLeft + delta, max));
-      if (next !== this.strip.scrollLeft) {
-        this.strip.scrollLeft = next;
+      const max = this.vertical ? scroller.scrollHeight - scroller.clientHeight : scroller.scrollWidth - scroller.clientWidth;
+      const current = this.vertical ? scroller.scrollTop : scroller.scrollLeft;
+      const next = Math.max(0, Math.min(current + delta, max));
+      if (next !== current) {
+        if (this.vertical) scroller.scrollTop = next;
+        else scroller.scrollLeft = next;
         this.updateDrag();
       }
     }
@@ -747,7 +830,7 @@ class TerminalTabs extends HTMLElement {
     const next = (base + direction + tabs.length) % tabs.length;
     this.pendingIndex = next;
     const url = tabs[next].getAttribute("href");
-    if (!url || url === window.location.pathname) {
+    if (!url || new URL(url, window.location.href).pathname === window.location.pathname) {
       window.pe?.abortController?.abort();
       this.markPending(null);
       return;
@@ -824,14 +907,9 @@ class TerminalTabs extends HTMLElement {
     return row;
   }
 
-  // The assistant is no page, it is the overlay: the row opens it where the
-  // user stands, like every other entry point does, instead of navigating to
-  // the redirect that would swap the page under it.
+  // The assistant is a page: the row navigates to the live conversation.
   openAssistant() {
-    this.closeSwitcher();
-    const panel = document.querySelector("dc-assistant-panel");
-    if (panel?.openPanel) panel.openPanel();
-    else this.navigate("/assistant");
+    this.navigate(this.querySelector("[data-tabs-assistant]")?.getAttribute("href") || "/assistant");
   }
 
   actionRow(link) {
@@ -1200,7 +1278,7 @@ class TerminalTabs extends HTMLElement {
   async closeTarget({ tabId, tabKind, tabName }, purge = false) {
     if (this.confirming) return;
     const id = tabId;
-    const tab = this.strip.querySelector(`.terminal-tab[data-tab-id="${CSS.escape(id)}"]`);
+    const tab = this.strip.querySelector(`.terminal-tab[data-tab-id="${CSS.escape(id)}"], .terminal-tab-member[data-tab-id="${CSS.escape(id)}"]`);
     if (!tab) return;
     const kind = tabKind || tab.dataset.tabKind;
     const name = tabName || tab.dataset.tabName;
@@ -1226,6 +1304,13 @@ class TerminalTabs extends HTMLElement {
       await ensureOk(response, "Could not close the session.");
       notifySuccess(drop ? `Coder "${name}" deleted.`
         : kind === "coder" ? `Coder "${name}" stopped.` : `Shell "${name}" deleted.`);
+      if (tab.dataset.tabGroup) {
+        this.removeTab(id);
+        if (window.location.pathname === "/splits/" + tab.dataset.tabGroup && window.app?.navigate) {
+          Promise.resolve(window.app.navigate(window.location.pathname + window.location.search)).catch(() => {});
+        }
+        return;
+      }
       if (current) {
         const tabs = this.tabs();
         const index = tabs.indexOf(tab);
@@ -1245,7 +1330,7 @@ class TerminalTabs extends HTMLElement {
   }
 
   removeTab(id) {
-    this.strip.querySelector(`.terminal-tab[data-tab-id="${CSS.escape(id)}"]`)?.remove();
+    this.strip.querySelector(`.terminal-tab[data-tab-id="${CSS.escape(id)}"], .terminal-tab-member[data-tab-id="${CSS.escape(id)}"]`)?.remove();
   }
 
   navigate(url) {

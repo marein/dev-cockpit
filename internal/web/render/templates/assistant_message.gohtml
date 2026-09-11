@@ -1,6 +1,6 @@
 {{define "assistant_message.gohtml"}}
 {{with .Message}}
-<div id="message-{{.ID}}" class="dc-msg{{if .User}} dc-msg-user{{end}}" data-assistant-message data-no-pe data-role="{{if .User}}user{{else}}assistant{{end}}" data-message-id="{{.ID}}" data-run-id="{{.RunID}}" data-state="{{.State}}">
+<div id="message-{{.ID}}" class="dc-msg{{if .User}} dc-msg-user{{else if .Wake}} dc-msg-info{{else}} dc-msg-assistant{{end}}" data-assistant-message data-no-pe data-role="{{if .User}}user{{else}}assistant{{end}}" data-message-id="{{.ID}}" data-run-id="{{.RunID}}" data-state="{{.State}}">
   {{with .Wake}}
   <div class="d-flex align-items-center gap-2 mb-1" data-assistant-wake="{{.Verdict}}">
     <span class="badge {{if .Done}}bg-green-lt{{else if .Blocked}}bg-orange-lt{{else}}bg-secondary-lt{{end}}">
@@ -25,7 +25,7 @@
   <div class="d-flex flex-column gap-2 mt-2" data-assistant-files>
     {{range .Attachments}}
     {{if eq .Media "image"}}
-    <a href="{{.URL}}" target="_blank" rel="noopener" data-assistant-file="{{.Name}}"><img src="{{.URL}}" alt="{{.Name}}" class="dc-assistant-media"></a>
+    <a href="{{.URL}}" target="_blank" rel="noopener" data-assistant-file="{{.Name}}"><img src="{{.URL}}" alt="{{.Name}}" class="dc-assistant-media"{{if .Width}} width="{{.Width}}" height="{{.Height}}" style="--dc-media-ratio:{{.Width}}/{{.Height}}"{{end}}></a>
     {{else if eq .Media "video"}}
     <video src="{{.URL}}" class="dc-assistant-media" controls playsinline preload="metadata" data-assistant-file="{{.Name}}"></video>
     {{else if eq .Media "audio"}}

@@ -18,3 +18,14 @@ func TestCoderLabelUsesTheBrandCasing(t *testing.T) {
 		}
 	}
 }
+
+func TestNoticeHTMLSetsQuotedNamesInMonospace(t *testing.T) {
+	got := string(NoticeHTML(`Shell "a <b>" deleted.`))
+	want := `Shell <span class="dc-mono">a &lt;b&gt;</span> deleted.`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if got := string(NoticeHTML(`an "unpaired quote`)); got != "an &#34;unpaired quote" {
+		t.Fatalf("unpaired quote: got %q", got)
+	}
+}

@@ -35,7 +35,6 @@ const DIFF_REV = "HEAD";
 const TREE_WIDTH_KEY = "dc-editor-tree-width";
 const TREE_SCROLL_KEY = "dc-editor-tree-scroll";
 const VIEW_KEY = "dc-editor-view";
-const FULLSCREEN_KEY = "dc-editor-fullscreen";
 const TERM_OPEN_KEY = "dc-editor-term-open";
 const TERM_HEIGHT_KEY = "dc-editor-term-height";
 const TERM_ACTIVE_KEY = "dc-editor-term-active";
@@ -2312,13 +2311,13 @@ async function init(root) {
     }
     syncFilesItem();
     if (sheetKind === "files") renderFilesSheet();
-    setCommitChanges(((changes && changes.worktree) || []).slice());
+    const moved = setCommitChanges(((changes && changes.worktree) || []).slice());
     // A picked path that left the list was committed or reverted elsewhere; it
     // leaves the pick too, and the next save writes the pruned draft. Nothing
     // is saved for the pruning alone: a commit on another device clears the
     // stored draft, and a save from here would put the old message back.
     pruneCommitPicked();
-    syncCommitUI();
+    syncCommitUI(moved);
   }
 
   // numbersText is what the tooltip says about size: how many lines came and
@@ -2688,6 +2687,7 @@ async function init(root) {
   // the summary and the commit always speak for the whole list.
   function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf, canOpen, open, active, onPick, onFilter, empty, stateKey }) {
     let changes = [];
+    let changesSig = null;
     let sorted = [];
     let query = "";
     let index = emptyIndex();
@@ -2746,9 +2746,13 @@ async function init(root) {
     // belongs to the list, not to a keystroke, so it is done here and the
     // filter only rebuilds the tree over it.
     function setChanges(list) {
+      const sig = list.map((entry) => JSON.stringify(entry)).join("\n");
+      if (sig === changesSig) return false;
+      changesSig = sig;
       changes = list;
       sorted = [...list].sort((a, b) => a.path.localeCompare(b.path));
       buildIndex();
+      return true;
     }
 
     // buildIndex counts what the rows need. byPath and the two totals are
@@ -3499,7 +3503,7 @@ async function init(root) {
 
   function setCommitChanges(list) {
     commitChanges = list;
-    commitList.setChanges(list);
+    return commitList.setChanges(list);
   }
 
   // pruneCommitPicked drops picks the changes list no longer holds. Only a
@@ -3515,7 +3519,7 @@ async function init(root) {
     syncCommitControls();
   }
 
-  function syncCommitUI() {
+  function syncCommitUI(changed = true) {
     commitToggleBtn.hidden = !gitRepo;
     gitItem.hidden = !gitSurface();
     gitItemCount.textContent = commitChanges.length ? String(commitChanges.length) : "";
@@ -3525,7 +3529,10 @@ async function init(root) {
       : "Commit changes";
     if (!gitRepo && commitOn) closeCommit();
     if (!gitRepo && revdiffOn) closeRevdiff();
-    if (commitOn) renderCommitList();
+    if (commitOn) {
+      if (changed) renderCommitList();
+      else syncCommitControls();
+    }
     if (sheetKind === "git") renderGitSheet();
   }
 
@@ -4092,10 +4099,10 @@ async function init(root) {
       removed += entry.removed || 0;
     }
     revdiffTotals = { added, removed };
-    revdiffList.setChanges((data.files || []).slice());
+    const changed = revdiffList.setChanges((data.files || []).slice());
     paintRevdiffHead();
     if (!same) revdiffList.reset();
-    revdiffList.render();
+    if (!same || changed) revdiffList.render();
     syncRevdiffControls();
   }
 
@@ -6889,7 +6896,10 @@ async function init(root) {
   }
 
   async function revealInTree(path) {
+    closeCommit();
+    closeRevdiff();
     if (mobileMedia.matches) openDrawer();
+    else if (treeFolded) toggleDrawer();
     expandTo(parentDir(path));
     await loadTree();
     for (let i = 0; i < 40 && !signal.aborted; i++) {
@@ -9771,8 +9781,7 @@ async function init(root) {
       return;
     }
     projectsInFlight = true;
-    const ret = new URLSearchParams(window.location.search).get("return") || "";
-    const html = await getText(`${base}/projects?return=${encodeURIComponent(ret)}`, { signal }).catch(() => "");
+    const html = await getText(`${base}/projects`, { signal }).catch(() => "");
     if (html) {
       const marked = paletteRows()[paletteIndex]?.dataset.projectName || "";
       projectListEl.innerHTML = html;
@@ -9790,34 +9799,6 @@ async function init(root) {
     }
   }
   onServerEvent("projects", () => void refreshProjects(), { signal });
-
-  const fullscreenBtn = root.querySelector("[data-editor-fullscreen]");
-  let fullscreenOn = store.get(FULLSCREEN_KEY, "") === "1";
-  // A phone has no window around the page to grow out of: the browser's own
-  // chrome is all there is, and the editor already fills what is left. So the
-  // whole switch stays away below the width the drawer belongs to, and the
-  // stored state comes back with the wider screen.
-  const fullscreenApplies = () => !mobileMedia.matches;
-  const paintFullscreen = () => {
-    const applies = fullscreenApplies();
-    document.documentElement.classList.toggle("dc-editor-fullscreen", fullscreenOn && applies);
-    fullscreenBtn.hidden = !applies;
-    fullscreenBtn.setAttribute("aria-pressed", fullscreenOn ? "true" : "false");
-    fullscreenBtn.title = (fullscreenOn ? "Exit fullscreen" : "Fullscreen") + " (Ctrl+Shift+Enter)";
-    fullscreenBtn.innerHTML = `<i class="ti ${fullscreenOn ? "ti-minimize" : "ti-maximize"} me-2"></i>${fullscreenOn ? "Exit fullscreen" : "Fullscreen"}`;
-  };
-  const setFullscreen = (on) => {
-    if (fullscreenOn === on || !fullscreenApplies()) return;
-    fullscreenOn = on;
-    store.set(FULLSCREEN_KEY, on ? "1" : "");
-    paintFullscreen();
-  };
-  paintFullscreen();
-  mobileMedia.addEventListener("change", paintFullscreen, { signal });
-  fullscreenBtn.addEventListener("click", () => setFullscreen(!fullscreenOn), { signal });
-  tabsEl.addEventListener("dblclick", (e) => {
-    if (!e.target.closest(".editor-tab")) setFullscreen(!fullscreenOn);
-  }, { signal });
 
   const termPanelEl = root.querySelector("[data-editor-term-panel]");
   const termSplitterEl = root.querySelector("[data-editor-term-splitter]");
@@ -10491,12 +10472,6 @@ async function init(root) {
       stepTermTab(e.shiftKey ? -1 : 1);
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && !e.repeat && e.key === "Enter") {
-      e.preventDefault();
-      e.stopPropagation();
-      setFullscreen(!fullscreenOn);
-      return;
-    }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "x") {
       const tab = termTabFor(termActiveId);
       if (!tab) return;
@@ -10546,9 +10521,6 @@ async function init(root) {
     if (e.key === "Tab" && e.ctrlKey && !e.altKey && !e.metaKey) {
       e.preventDefault();
       stepTab(e.shiftKey ? -1 : 1);
-    } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key === "Enter" && quickOpenEl.hidden) {
-      e.preventDefault();
-      setFullscreen(!fullscreenOn);
     } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
       save();
@@ -10729,7 +10701,6 @@ async function init(root) {
         if (!tab.kind && !tab.compare) lsp.closeDocument(tab.path);
       }
     }
-    document.documentElement.classList.remove("dc-editor-fullscreen");
     termModalsHostEl.remove();
     window.bootstrap?.Modal?.getInstance(commentModalEl)?.dispose();
     commentModalHostEl.remove();

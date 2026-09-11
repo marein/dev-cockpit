@@ -31,6 +31,7 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plu
 		"coderLabel":         CoderLabel,
 		"deleteWorktreeNote": DeleteWorktreeNote,
 		"originIcon":         OriginIcon,
+		"notice":             NoticeHTML,
 		"worktreeChoice":     WorktreeChoice,
 		"projectName": func(path string) string {
 			p := strings.TrimSpace(path)
@@ -138,12 +139,15 @@ type QuickNav struct {
 	// Strip is Active folded like the tab strip: split view groups become one
 	// entry with their members, so the quick nav renders groups as blocks.
 	Strip []StripTab
-	// UnreadCount is the number of targets with unread news, rendered into
-	// the toggle badge server-side so the badge survives a boosted body swap
-	// (the app-wide event stream sends its snapshot on connect, not per
+	// TerminalNews says whether a coder or a shell holds unread news, the one
+	// question the Terminals button of the rail and the tabbar asks. A
+	// compose action, a backup job, a standing git question and the assistant
+	// are no terminals and stay out of it, only the bell counts them in.
+	// Rendered server-side so the dot survives a boosted body swap (the
+	// app-wide event stream sends its snapshot on connect, not per
 	// navigation); the client keeps it live from there.
-	UnreadCount int
-	CurrentID   string
+	TerminalNews bool
+	CurrentID    string
 	// Focus is the split member whose pane is active on the current page, so
 	// the group block can mark that member row and the project context can
 	// follow it even when the group's members span several projects.
@@ -265,4 +269,40 @@ func (t StripTab) MemberKinds() string {
 		kinds[i] = t.Members[i].Kind
 	}
 	return strings.Join(kinds, " ")
+}
+
+// TerminalsURL is where the rail's Terminals entry leads: the terminal the
+// page already shows, else the first one in strip order. Empty while nothing
+// runs, and the entry then stands disabled.
+func (q QuickNav) TerminalsURL() string {
+	for _, t := range q.Strip {
+		if t.IsActive(q.CurrentID) {
+			return t.URL
+		}
+	}
+	if len(q.Strip) > 0 {
+		return q.Strip[0].URL
+	}
+	return ""
+}
+
+// NoticeHTML renders a flash or notice text. A name the message sets in
+// double quotes is what the reader looks for, so it stands in monospace and
+// the quotes go; everything else is escaped as is. An unpaired quote stays.
+func NoticeHTML(message string) template.HTML {
+	parts := strings.Split(message, "\"")
+	if len(parts)%2 == 0 {
+		return template.HTML(template.HTMLEscapeString(message))
+	}
+	var b strings.Builder
+	for i, part := range parts {
+		if i%2 == 1 {
+			b.WriteString(`<span class="dc-mono">`)
+			b.WriteString(template.HTMLEscapeString(part))
+			b.WriteString(`</span>`)
+			continue
+		}
+		b.WriteString(template.HTMLEscapeString(part))
+	}
+	return template.HTML(b.String())
 }

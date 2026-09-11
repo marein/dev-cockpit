@@ -1,32 +1,13 @@
 {{define "settings_backup.gohtml"}}
 {{template "app_start.gohtml" .}}
-<div class="page-header d-print-none mb-3">
-  <div class="d-flex align-items-center gap-2">
-    <div class="flex-fill min-w-0">
-      <h2 class="page-title text-truncate mb-0">Settings</h2>
-    </div>
-  </div>
-</div>
-
-<div class="card">
-  <div class="row g-0">
-    <div class="col-12 col-md-3 border-end">
-      <div class="card-body">
-        {{template "settings_nav" .SettingsNav}}
-      </div>
-    </div>
-    <div class="col-12 col-md-9">
-      <div class="card-header">
-        <ul class="nav nav-tabs card-header-tabs">
-          <li class="nav-item">
-            <a class="nav-link{{if eq .Tab "export"}} active{{end}}" href="/settings/backup"><i class="ti ti-database-export me-1 d-none d-sm-inline-block"></i>Export</a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link{{if eq .Tab "import"}} active{{end}}" href="/settings/backup?tab=import"><i class="ti ti-database-import me-1 d-none d-sm-inline-block"></i>Import{{if .Review}}<span class="badge bg-primary text-white rounded-pill ms-2">{{len .Review}}</span>{{end}}</a>
-          </li>
-        </ul>
-      </div>
-      <div class="card-body">
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<nav class="nav nav-bordered dc-work-tabs" aria-label="Sections">
+  <a class="nav-link{{if eq .Tab "export"}} active{{end}}" href="/settings/backup"><i class="ti ti-database-export me-1 dc-hide-xs"></i>Export</a>
+  <a class="nav-link{{if eq .Tab "import"}} active{{end}}" href="/settings/backup?tab=import"><i class="ti ti-database-import me-1 dc-hide-xs"></i>Import{{if .Review}}<span class="badge bg-primary-lt ms-2">{{len .Review}}</span>{{end}}</a>
+</nav>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
         {{if eq .Tab "export"}}
         <div id="settings-backup-export">
           {{if and (eq $.FlashProject "settings-backup-export") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
@@ -43,7 +24,7 @@
         {{else}}
         <div id="settings-backup-import">
           {{if and (eq $.FlashProject "settings-backup-import") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
-          {{if .ImportError}}<div class="alert alert-danger">{{.ImportError}}</div>{{end}}
+          {{if .ImportError}}{{template "notice.gohtml" (dict "Level" "error" "Message" .ImportError "Dismiss" false)}}{{end}}
           {{if .Import}}
           <div class="text-secondary small mb-3">Backup{{if .Import.Host}} from <strong>{{.Import.Host}}</strong>{{end}}{{if .Import.Created}}, created {{.Import.Created}}{{end}}{{if .Import.Version}}, version {{.Import.Version}}{{end}}. Pick what to import, existing files are overwritten.</div>
           <dc-backup-busy busy-text="Importing, this can take a while.">
@@ -126,9 +107,6 @@
         </div>
         {{end}}
         {{end}}
-      </div>
-    </div>
-  </div>
 </div>
 {{template "app_end.gohtml" .}}
 {{end}}

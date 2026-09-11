@@ -1,6 +1,7 @@
 import { confirm, isVisible as dialogVisible } from "@dc/dialog";
 import { notifyError } from "@dc/toast";
 import "@dc/theme";
+import { watchCtx, initCtxLayout } from "@dc/ctx";
 
 // The glue around pe.js: a lazy custom element loader, the loading bar and the
 // pe:* hooks. Every page is server rendered HTML, custom elements enhance it.
@@ -57,30 +58,56 @@ function syncJingle(dom) {
 
 window.app.peInit();
 
+// The phone has no list column on the page: [data-ctx-area] (the tab bar's
+// Projects, Terminals and Settings, the list button in every work head) opens
+// the area's column as a sheet instead. A row in the sheet navigates and the
+// sheet closes with it.
+document.addEventListener("click", (event) => {
+  const trigger = event.target instanceof Element && event.target.closest("[data-ctx-area]");
+  if (!trigger) return;
+  event.preventDefault();
+  const sheet = document.querySelector("dc-ctx-sheet");
+  if (!sheet || typeof sheet.open !== "function") return;
+  const area = trigger.getAttribute("data-ctx-area");
+  if (!sheet.hidden && sheet.area === area) sheet.close();
+  else void sheet.open(area);
+});
+
 // data-no-pe opts a link or form out of boosting into a native load.
 window.addEventListener("pe:click", (e) => e.detail.a.closest("[data-no-pe]") && e.preventDefault());
 window.addEventListener("pe:submit", (e) => e.detail.form.closest("[data-no-pe]") && e.preventDefault());
 
+// The work surface is the column that scrolls, never the page, so a move
+// from one terminal to the next carries the column's scroll position over
+// into the fresh body instead of landing at the top of the strip.
 const isAttachPath = (path) => /^\/(coders|shells|splits)\/(?!new$)[^/]+$/.test(path);
-let heightHoldTimer;
-const releaseHeightHold = () => {
-  clearTimeout(heightHoldTimer);
-  document.body.style.minHeight = "";
-};
+// The fresh terminal has no rows until it renders, so the column is held at
+// the old height for a moment, or the position would clamp to the top.
 const keepScroll = (detail) => {
-  const x = window.scrollX;
-  const y = window.scrollY;
-  document.body.style.minHeight = document.documentElement.scrollHeight + "px";
-  clearTimeout(heightHoldTimer);
-  heightHoldTimer = setTimeout(releaseHeightHold, 2000);
-  detail.succeed.push(() => window.scrollTo({ left: x, top: y, behavior: "instant" }));
+  const scroller = document.querySelector(".dc-work-body");
+  const top = scroller ? scroller.scrollTop : 0;
+  const height = scroller ? scroller.scrollHeight : 0;
+  detail.succeed.push(() => {
+    const next = document.querySelector(".dc-work-body");
+    if (!next) return;
+    const page = next.querySelector(".attach-page");
+    if (page) {
+      page.style.minHeight = `${height}px`;
+      setTimeout(() => { page.style.minHeight = ""; }, 2000);
+    }
+    next.scrollTop = top;
+  });
 };
+
+if (document.querySelector(".dc-app")) {
+  void watchCtx();
+  initCtxLayout();
+}
+window.addEventListener("dc:navigated", initCtxLayout);
 
 window.addEventListener("pe:navigate", (e) => {
   if (isAttachPath(window.location.pathname) && isAttachPath(new URL(e.detail.url, window.location.origin).pathname)) {
     keepScroll(e.detail);
-  } else {
-    releaseHeightHold();
   }
 });
 
@@ -88,8 +115,6 @@ window.addEventListener("pe:form", (e) => {
   if (isAttachPath(window.location.pathname)
     && /^\/coders\/[^/]+\/resume$/.test(new URL(e.detail.form.action, window.location.origin).pathname)) {
     keepScroll(e.detail);
-  } else {
-    releaseHeightHold();
   }
 });
 

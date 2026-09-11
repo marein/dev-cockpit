@@ -22,6 +22,24 @@ function toastContainer() {
   return el;
 }
 
+function noticeText(el, text) {
+  const parts = String(text).split('"');
+  if (parts.length % 2 === 0) {
+    el.textContent = text;
+    return;
+  }
+  parts.forEach((part, i) => {
+    if (i % 2 === 0) {
+      el.append(part);
+      return;
+    }
+    const mono = document.createElement("span");
+    mono.className = "dc-mono";
+    mono.textContent = part;
+    el.append(mono);
+  });
+}
+
 export function showToast({ icon, title, detail, timer, onClick, onHidden } = {}) {
   const kind = kinds[icon] || kinds.error;
   const duration = timer || 6000;
@@ -49,7 +67,7 @@ export function showToast({ icon, title, detail, timer, onClick, onHidden } = {}
   if (title) {
     const heading = document.createElement("div");
     heading.className = "fw-bold text-break";
-    heading.textContent = title;
+    noticeText(heading, title);
     body.append(heading);
   }
   if (detail instanceof Node) {
@@ -57,7 +75,7 @@ export function showToast({ icon, title, detail, timer, onClick, onHidden } = {}
   } else if (detail) {
     const block = document.createElement("div");
     block.className = "dc-toast-detail small text-start";
-    block.textContent = detail;
+    noticeText(block, detail);
     body.append(block);
   }
 

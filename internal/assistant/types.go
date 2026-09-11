@@ -81,8 +81,14 @@ type Summary struct {
 	LastMessageAt time.Time `json:"lastMessageAt"`
 	// Preview is the opening of the last assistant answer, bounded for the list.
 	Preview string `json:"preview"`
-	// Unfinished marks a conversation whose last turn did not complete, so the list can
-	// show it without loading the transcript.
+	// Running marks a conversation whose last answer is still being written. It is
+	// the working state, not a fault, and it is the one the list shows while a turn
+	// is under way.
+	Running bool `json:"running"`
+	// Unfinished marks a conversation whose last turn stopped before it was done,
+	// cancelled, failed or interrupted. A turn that is still running is never one of
+	// them, that is Running, so the two never stand at the same time and neither has
+	// to be guessed from the other.
 	Unfinished bool `json:"unfinished"`
 	// MessageCount is the number of stored messages, used for the list subtitle.
 	MessageCount int `json:"messageCount"`
@@ -201,6 +207,7 @@ func (c Conversation) Idle() bool {
 func (c *Conversation) summarize() {
 	c.MessageCount = len(c.Messages)
 	c.Preview = ""
+	c.Running = false
 	c.Unfinished = false
 	for i := len(c.Messages) - 1; i >= 0; i-- {
 		m := c.Messages[i]
@@ -208,7 +215,8 @@ func (c *Conversation) summarize() {
 			continue
 		}
 		c.Preview = preview(m.Content)
-		c.Unfinished = m.State != StateComplete
+		c.Running = !m.State.Settled()
+		c.Unfinished = m.State.Settled() && m.State != StateComplete
 		break
 	}
 	if last, ok := c.Last(); ok {

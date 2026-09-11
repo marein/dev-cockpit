@@ -1,23 +1,42 @@
+{{/* The server status, two doors to one menu: the icon button in a phone's
+     work head, and the word in the status line on a wide screen. Both carry
+     the same element, the gauge rows and the float button, and hide while the
+     host reports nothing. */}}
 {{define "host_status.gohtml"}}
 <dc-host-status class="dropdown"{{if not .Host.Any}} hidden{{end}}>
   <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" data-host-toggle aria-label="Server status" title="Server status">
-    <i class="ti ti-server fs-2 js-host-icon {{hostLevelClass .Host.Level}}"></i>
+    <i class="ti ti-server js-host-icon {{hostLevelClass .Host.Level}}"></i>
   </button>
-  <div class="dropdown-menu dropdown-menu-end shadow p-3">
-    {{/* The button already carries the server icon, the panel only needs the word. */}}
-    <div class="d-flex align-items-center mb-3">
-      <span class="fw-bold">Server</span>
-      <button type="button" class="btn btn-sm btn-ghost-secondary ms-auto" data-host-float-open title="Keep the values floating over the page">
-        <i class="ti ti-app-window me-1"></i>Float
-      </button>
-    </div>
-    <div class="d-grid gap-3">
-      {{template "host_status_row.gohtml" (dict "key" "cpu" "title" "CPU" "has" .Host.HasCPU "percent" .Host.CPUPercent "label" .Host.CPULabel)}}
-      {{template "host_status_row.gohtml" (dict "key" "mem" "title" "RAM" "has" .Host.HasMem "percent" .Host.MemPercent "label" .Host.MemLabel)}}
-      {{template "host_status_row.gohtml" (dict "key" "disk" "title" "Disk" "has" .Host.HasDisk "percent" .Host.DiskPercent "label" .Host.DiskLabel)}}
-    </div>
-  </div>
+  {{template "host_status_menu.gohtml" .}}
 </dc-host-status>
+{{end}}
+
+{{define "host_status_bar.gohtml"}}
+{{/* The status line scrolls sideways when it has to, which clips a menu
+     placed inside it, so this one is positioned fixed. */}}
+<dc-host-status class="dropdown dropup"{{if not .Host.Any}} hidden{{end}}>
+  <button type="button" class="dc-status-item" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' data-host-toggle aria-label="Server status" title="Server status">
+    <i class="ti ti-server js-host-icon {{hostLevelClass .Host.Level}}"></i><span>Server</span>
+  </button>
+  {{template "host_status_menu.gohtml" .}}
+</dc-host-status>
+{{end}}
+
+{{define "host_status_menu.gohtml"}}
+<div class="dropdown-menu dropdown-menu-end shadow p-3">
+  {{/* The button already carries the server icon, the panel only needs the word. */}}
+  <div class="d-flex align-items-center mb-3">
+    <span class="fw-bold">Server</span>
+    <button type="button" class="btn btn-sm btn-ghost-secondary ms-auto" data-host-float-open title="Keep the values floating over the page">
+      <i class="ti ti-app-window me-1"></i>Float
+    </button>
+  </div>
+  <div class="d-grid gap-3">
+    {{template "host_status_row.gohtml" (dict "key" "cpu" "title" "CPU" "has" .Host.HasCPU "percent" .Host.CPUPercent "label" .Host.CPULabel)}}
+    {{template "host_status_row.gohtml" (dict "key" "mem" "title" "RAM" "has" .Host.HasMem "percent" .Host.MemPercent "label" .Host.MemLabel)}}
+    {{template "host_status_row.gohtml" (dict "key" "disk" "title" "Disk" "has" .Host.HasDisk "percent" .Host.DiskPercent "label" .Host.DiskLabel)}}
+  </div>
+</div>
 {{end}}
 
 {{define "host_status_row.gohtml"}}

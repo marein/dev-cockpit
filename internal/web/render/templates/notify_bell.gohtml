@@ -1,5 +1,8 @@
-{{define "notify_bell.gohtml"}}<div class="dropdown">
-  <button type="button" class="btn btn-icon dc-notify-bell" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-label="Notifications">
+{{/* The bell with its menu. The context is the dropdown's extra class, so the
+     rail opens its menu to the side (dropend) and a head opens it downwards.
+     The rail clips what leaves its column, so its menu is positioned fixed. */}}
+{{define "notify_bell.gohtml"}}<div class="dropdown{{if .}} {{.}}{{end}}">
+  <button type="button" class="btn btn-icon dc-notify-bell" data-bs-toggle="dropdown" data-bs-auto-close="outside"{{if eq . "dropend"}} data-bs-popper-config='{"strategy":"fixed"}'{{end}} aria-label="Notifications" title="Notifications">
     <i class="ti ti-bell fs-2"></i>
     <span class="dc-notify-badge d-none" aria-hidden="true">0</span>
   </button>

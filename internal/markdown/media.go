@@ -3,6 +3,7 @@ package markdown
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -19,6 +20,13 @@ type Media struct {
 	URL string
 	// Kind is image, video, audio or file.
 	Kind string
+	// Width and Height are the pixel size of a still image, zero when the
+	// resolver could not read it. They are rendered as the image's attributes,
+	// which is what reserves its space before it has arrived: without them
+	// every picture in a long answer pushes the text under it down the moment
+	// it decodes.
+	Width  int
+	Height int
 }
 
 // MediaResolver maps a destination as written in the Markdown onto a Media.
@@ -48,6 +56,11 @@ func RenderGFMWithMedia(src string, resolve MediaResolver) (string, error) {
 	return buf.String(), nil
 }
 
+// mediaClass is what the stylesheet sizes a picture or a clip by, the same
+// class on every one of them, whether this package renders it or goldmark
+// does.
+const mediaClass = "dc-assistant-media"
+
 // kindMedia is the node the transformer puts in place of a claimed link or
 // image that is not a still image. A dedicated node keeps the default
 // renderers untouched for everything else.
@@ -66,8 +79,8 @@ func (n *mediaNode) Dump(source []byte, level int) {
 }
 
 // mediaTransformer rewrites the claimed destinations. A still image only needs
-// its destination replaced, goldmark's own image renderer then does the right
-// thing; the other kinds are replaced by a media node.
+// its destination and its size set, goldmark's own image renderer then does
+// the right thing; the other kinds are replaced by a media node.
 type mediaTransformer struct{ resolve MediaResolver }
 
 func (t *mediaTransformer) Transform(doc *ast.Document, reader text.Reader, _ parser.Context) {
@@ -100,6 +113,8 @@ func (t *mediaTransformer) Transform(doc *ast.Document, reader text.Reader, _ pa
 		if media.Kind == "image" {
 			if image, isImage := n.(*ast.Image); isImage {
 				image.Destination = []byte(media.URL)
+				image.SetAttributeString("class", mediaClass)
+				setSize(image, media)
 				return ast.WalkContinue, nil
 			}
 		}
@@ -115,6 +130,39 @@ func (t *mediaTransformer) Transform(doc *ast.Document, reader text.Reader, _ pa
 			r.parent.ReplaceChild(r.parent, r.node, r.with)
 		}
 	}
+}
+
+// setSize puts the pixel size on an image node. goldmark's own image renderer
+// writes the attributes out of the node's attributes, so the picture carries
+// its box without this package rendering it. A resolver that does not know the
+// size sets nothing, and the image renders as it did before.
+func setSize(image *ast.Image, media Media) {
+	if media.Width <= 0 || media.Height <= 0 {
+		return
+	}
+	image.SetAttributeString("width", strconv.Itoa(media.Width))
+	image.SetAttributeString("height", strconv.Itoa(media.Height))
+	image.SetAttributeString("style", mediaRatioStyle(media))
+}
+
+// sizeAttributes is the same box for the image this package renders itself, a
+// link that points at a picture.
+func sizeAttributes(media Media) string {
+	if media.Width <= 0 || media.Height <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(` width="%d" height="%d" style="%s"`, media.Width, media.Height, mediaRatioStyle(media))
+}
+
+// mediaRatioStyle hands the stylesheet the ratio the attributes describe. The
+// two are not the same thing to a browser: the width attribute is a width the
+// layout may no longer choose, so a cap on the height clamps the height alone
+// and draws the picture out of shape. With the ratio the stylesheet writes
+// that cap as the width it allows, and the height follows from it. A picture
+// whose size nobody could read carries neither, and both stay auto, which is
+// the one case a browser keeps the ratio by itself.
+func mediaRatioStyle(media Media) string {
+	return fmt.Sprintf("--dc-media-ratio:%d/%d", media.Width, media.Height)
 }
 
 // mediaRenderer renders the media node. preload is metadata on purpose: a
@@ -134,9 +182,9 @@ func (r *mediaRenderer) render(w util.BufWriter, _ []byte, node ast.Node, enteri
 	label := util.EscapeHTML([]byte(n.label))
 	switch n.media.Kind {
 	case "image":
-		fmt.Fprintf(w, `<a href="%s" target="_blank" rel="noopener"><img src="%s" alt="%s" class="dc-assistant-media"></a>`, url, url, label)
+		fmt.Fprintf(w, `<a href="%s" target="_blank" rel="noopener"><img src="%s" alt="%s" class="%s"%s></a>`, url, url, label, mediaClass, sizeAttributes(n.media))
 	case "video":
-		fmt.Fprintf(w, `<video src="%s" class="dc-assistant-media" controls playsinline preload="metadata"></video>`, url)
+		fmt.Fprintf(w, `<video src="%s" class="%s" controls playsinline preload="metadata"></video>`, url, mediaClass)
 	case "audio":
 		fmt.Fprintf(w, `<audio src="%s" class="dc-assistant-audio" controls preload="metadata"></audio>`, url)
 	default:

@@ -4,42 +4,32 @@
 
 {{define "docs.gohtml"}}
 {{template "app_start.gohtml" .}}
-<div class="page-header d-print-none mb-3">
-  <div class="d-flex align-items-center gap-2">
-    <div class="flex-fill min-w-0">
-      <h2 class="page-title text-truncate mb-0">Documentation</h2>
-    </div>
-  </div>
-</div>
-
-<p class="text-secondary mb-3">{{.Lead}}</p>
-<div class="accordion" id="docs-accordion">
-  {{range $i, $topic := .Topics}}
-  <div class="accordion-item" id="{{$topic.Key}}">
-    <h3 class="accordion-header">
-      <button class="accordion-button{{if ne $i 0}} collapsed{{end}}" type="button" data-bs-toggle="collapse" data-bs-target="#docs-panel-{{$topic.Key}}" aria-expanded="{{if eq $i 0}}true{{else}}false{{end}}" aria-controls="docs-panel-{{$topic.Key}}">
-        <i class="ti {{$topic.Icon}} text-secondary me-2"></i>
-        <span class="fw-medium">{{$topic.Title}}</span>
-        <span class="text-secondary small ms-2 d-none d-sm-inline">{{$topic.Lead}}</span>
-        <span class="badge bg-secondary-lt ms-auto me-2">{{$topic.Count}}</span>
-      </button>
-    </h3>
-    <div id="docs-panel-{{$topic.Key}}" class="accordion-collapse collapse{{if eq $i 0}} show{{end}}" data-bs-parent="#docs-accordion">
-      <div class="accordion-body pt-0">
-        {{if $topic.Intro}}<p class="text-secondary">{{$topic.Intro}}</p>{{end}}
-        {{if $topic.LinkURL}}<a class="btn btn-sm btn-outline-primary mb-2" href="{{$topic.LinkURL}}">{{$topic.LinkText}}</a>{{end}}
+{{template "docs_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Documentation</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
+  <p class="text-secondary mb-4">{{.Lead}}</p>
+  {{range $topic := .Topics}}
+  <section class="dc-docs-topic" id="{{$topic.Key}}">
+    <h2 class="h3 d-flex align-items-center gap-2 mb-1"><i class="ti {{$topic.Icon}} text-primary" aria-hidden="true"></i><span>{{$topic.Title}}</span><span class="badge bg-secondary-lt ms-auto">{{$topic.Count}}</span></h2>
+    <div class="text-secondary small mb-3">{{$topic.Lead}}</div>
+    {{if $topic.Intro}}<p class="text-secondary">{{$topic.Intro}}</p>{{end}}
+    {{if $topic.LinkURL}}<a class="btn btn-sm btn-outline-primary mb-3" href="{{$topic.LinkURL}}">{{$topic.LinkText}}</a>{{end}}
+    <div class="card">
+      <div class="list-group list-group-flush">
         {{range $topic.Items}}
-        <div class="row g-1 py-2 border-bottom">
-          <div class="col-md-4">
-            <div class="fw-medium">{{.Title}}</div>
-            {{if or .HasKeys .Tag}}<div class="d-flex flex-wrap align-items-center gap-1 mt-1">{{template "docs_marks" .}}</div>{{end}}
+        <div class="list-group-item">
+          <div class="dc-docs-item-head">
+            <span class="fw-medium">{{.Title}}</span>
+            {{if or .HasKeys .Tag}}<span class="d-flex align-items-center gap-2 flex-wrap">{{template "docs_marks" .}}</span>{{end}}
           </div>
-          <div class="col-md-8 text-secondary">{{.Desc}}</div>
+          <div class="text-secondary small mt-1">{{.Desc}}</div>
         </div>
         {{end}}
       </div>
     </div>
-  </div>
+  </section>
   {{end}}
 </div>
 {{template "app_end.gohtml" .}}

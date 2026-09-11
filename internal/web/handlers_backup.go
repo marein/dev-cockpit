@@ -104,8 +104,9 @@ func backupGroups(svc *backup.Service) []render.BackupGroup {
 
 func (s *Server) handleSettingsBackupNew(c *gin.Context) {
 	c.HTML(http.StatusOK, "settings_backup_new.gohtml", render.SettingsBackupNewData{
-		Page:   s.page(c, "Settings", "settings"),
-		Groups: backupGroups(s.backups),
+		Page:        s.page(c, "Settings", "settings"),
+		SettingsNav: s.settingsNav("backup"),
+		Groups:      backupGroups(s.backups),
 	})
 }
 
@@ -254,13 +255,14 @@ func (s *Server) handleSettingsBackupMerge(c *gin.Context) {
 		return
 	}
 	data := render.BackupMergeData{
-		Page:     s.page(c, "Settings", "settings"),
-		ID:       view.Entry.ID,
-		FilePath: view.Entry.Path,
-		Text:     view.Text,
-		Content:  view.Current,
-		Previous: view.Previous,
-		Restart:  s.backups.CockpitPath(view.Entry.Path),
+		Page:        s.page(c, "Settings", "settings"),
+		SettingsNav: s.settingsNav("backup"),
+		ID:          view.Entry.ID,
+		FilePath:    view.Entry.Path,
+		Text:        view.Text,
+		Content:     view.Current,
+		Previous:    view.Previous,
+		Restart:     s.backups.CockpitPath(view.Entry.Path),
 	}
 	c.HTML(http.StatusOK, "settings_backup_merge.gohtml", data)
 }

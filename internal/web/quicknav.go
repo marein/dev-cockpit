@@ -1,7 +1,6 @@
 package web
 
 import (
-	"net/http"
 	"net/url"
 	"strings"
 
@@ -17,33 +16,6 @@ func (s *Server) quicknav(c *gin.Context) render.QuickNav {
 	return s.buildQuickNav(c.Param("id"), c.Param("name"), c.Request.URL.Path, c.Query("focus"))
 }
 
-// handleQuickNav renders just the menu items so the quick nav button can pull a
-// fresh list every time it opens, instead of showing whatever was live when the
-// page was first rendered. The page context (which entry is current, the return
-// target for the create links) is reconstructed from the path the client is on.
-func (s *Server) handleQuickNav(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
-		path = "/"
-	}
-	id, name, cleanPath, focus := quicknavContextFromPath(path)
-	assistantID := s.currentAssistantID()
-	steered, prefill := s.watcher.Marks()
-	c.HTML(http.StatusOK, "quicknav_items.gohtml", render.Page{
-		QuickNav:   s.buildQuickNav(id, name, cleanPath, focus),
-		CSRFToken:  s.csrfToken(c),
-		MultiCoder: s.multiCoder(),
-		// The menu carries the assistant row too, so a refreshed fragment has to
-		// bring its news mark along or it would drop off on every open. The
-		// steered marks and the dialog prefills ride along for the same reason.
-		AssistantID:   assistantID,
-		AssistantNews: assistantID != "" && s.notifier.UnreadTargets()[assistantID],
-		Steered:       steered,
-		SteerPrefill:  prefill,
-		Working:       s.activity.Working(),
-	})
-}
-
 // buildQuickNav assembles the quick nav targets for the given page context. The
 // active list shares terminalTabs, so the quick nav and the attach page tab
 // strip list the same coders and shells in the same @dc_tab_pos order.
@@ -51,7 +23,7 @@ func (s *Server) buildQuickNav(currentID, nameParam, currentPath, focus string) 
 	qn := render.QuickNav{CurrentID: currentID, Focus: focus}
 	qn.Active = s.terminalTabs()
 	qn.Strip = foldStripTabs(qn.Active)
-	qn.UnreadCount = len(s.notifier.UnreadTargets())
+	qn.TerminalNews = s.anyTerminalNews()
 	qn.CurrentProject = currentProject(nameParam, qn, focus)
 	qn.CurrentPath = currentPath
 	// The create forms return here on Cancel; on a split page that must lead

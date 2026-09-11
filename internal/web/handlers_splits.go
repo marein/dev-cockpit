@@ -88,6 +88,39 @@ func (s *Server) groupMembers(gid string) []render.TerminalTab {
 	return members
 }
 
+// terminalFocused is what a terminal becoming the one being looked at does:
+// the project it works in moves to the top of the recent list, and its news
+// counts as seen. The attach pages do it while they render, the split page
+// for the pane it renders focused, and an open split posts it whenever the
+// focus moves to another pane, which on that page happens without a
+// navigation of its own. An empty project name touches nothing.
+func (s *Server) terminalFocused(id, projectName string) {
+	s.projects.Touch(projectName)
+	s.notifier.MarkTargetRead(id)
+}
+
+// handleSplitFocus takes the pane an open split view just made the active one.
+// Activating a pane changes no address there, so the page says it instead and
+// lands in the same place a navigation to a terminal lands. A pane that is
+// already the active one sends nothing, so this never doubles a touch.
+func (s *Server) handleSplitFocus(c *gin.Context) {
+	gid, err := terminal.ValidateIdentifier(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No split view with this id was found."})
+		return
+	}
+	id := strings.TrimSpace(c.PostForm("terminal"))
+	for _, m := range s.groupMembers(gid) {
+		if m.ID != id {
+			continue
+		}
+		s.terminalFocused(m.ID, m.Project)
+		c.JSON(http.StatusOK, gin.H{"project": m.Project})
+		return
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "That terminal is not a member of this split view."})
+}
+
 // handleSplitAttach renders the split view page: one terminal island per
 // member, side by side. A group that shrank to one member redirects to that
 // member's own page, a gone group redirects to the projects list.
@@ -118,14 +151,20 @@ func (s *Server) handleSplitAttach(c *gin.Context) {
 		focus = members[0].ID
 	}
 	projectName := commonProject(members)
-	if projectName != "" {
-		s.projects.Touch(projectName)
+	// The focused pane is the one being looked at, so it is its project that
+	// moves up, not the group's shared one, which a mixed split has none of.
+	// Only that pane counts as seen; the other members keep their news until
+	// their pane is activated, which posts to handleSplitFocus.
+	focusProject := projectName
+	for _, m := range members {
+		if m.ID == focus {
+			focusProject = m.Project
+			break
+		}
 	}
-	// Only the focused pane counts as seen; the other members keep their news
-	// until their pane is activated (the client posts the read then).
-	s.notifier.MarkTargetRead(focus)
+	s.terminalFocused(focus, focusProject)
 	groupName := groupLabel(members)
-	page := s.page(c, pageTitle(groupName, projectName), "projects")
+	page := s.page(c, pageTitle(groupName, projectName), "terminals")
 	page.HasTabStrip = true
 	cols, rows, cells := splitLayout(members)
 	rendered := make([]render.SplitMember, 0, len(members))

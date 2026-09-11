@@ -2,15 +2,19 @@ import { onServerEvent } from "@dc/events";
 import { getText, postForm, ensureOk } from "@dc/http";
 import { confirm } from "@dc/dialog";
 import { openMenu, wireRowMenus } from "@dc/contextmenu";
+import { applyFold } from "@dc/fold";
 import { notifyError } from "@dc/toast";
 
-// A self-refreshing assistant list: the steered jobs in their modal, the
-// history rows, and the memory. The list swaps itself on the assistant event,
-// so a check that finished or a conversation that ended elsewhere changes what
-// is on screen without anybody pulling on a timer, and an action acts in place.
-// With the history attribute the rows carry a context menu (right click, long
-// press, and the kebab button) for what a row does not need a page for; with
-// the memory attribute a row edits in place.
+const EARLIER_LIMIT = 5;
+
+// A self-refreshing assistant list: the steered jobs, the conversations in
+// the list column, and the memory. The list swaps its [data-assistant-body]
+// on the assistant event, so a check that finished or a conversation that
+// ended elsewhere changes what is on screen without anybody pulling on a
+// timer, and an action acts in place. With the history attribute the rows
+// carry a context menu (right click, long press, and the kebab button) for
+// what a row does not need a page for; with the memory attribute a row
+// edits in place.
 class AssistantList extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -27,6 +31,8 @@ class AssistantList extends HTMLElement {
     this.addEventListener("submit", (event) => void this.onAction(event), { signal: this.ac.signal });
 
     if (this.hasAttribute("history")) {
+      this.earlierOpen = false;
+      this.foldEarlier();
       wireRowMenus(this, "[data-assistant-conversation]", (row, x, y) => this.openRowMenu(row, x, y), { signal: this.ac.signal });
       this.addEventListener("click", (event) => {
         const button = event.target.closest("[data-conversation-menu]");
@@ -41,10 +47,35 @@ class AssistantList extends HTMLElement {
     if (this.hasAttribute("memory")) this.wireMemory(this.ac.signal);
 
     // Opening is the moment where being current matters most; closing drops the
-    // work nobody is looking at.
+    // work nobody is looking at. A list inside a sheet renders empty and pulls
+    // itself every time the sheet opens.
     this.modal = this.querySelector(".modal");
     this.modal?.addEventListener("show.bs.modal", () => void this.refresh(), { signal: this.ac.signal });
     this.modal?.addEventListener("hidden.bs.modal", () => { this.dirty = false; }, { signal: this.ac.signal });
+    this.sheet = this.closest(".offcanvas");
+    this.sheet?.addEventListener("show.bs.offcanvas", () => void this.refresh(), { signal: this.ac.signal });
+  }
+
+  // The earlier conversations show their newest five, the rest stands behind
+  // one row that unfolds it; the choice survives the list's refreshes. The
+  // fold hides with a class of its own, so nothing that hides rows with
+  // d-none and the fold undo each other.
+  foldEarlier() {
+    const list = this.querySelector("[data-assistant-earlier]");
+    if (!list) return;
+    applyFold(list, {
+      limit: EARLIER_LIMIT,
+      expanded: this.earlierOpen,
+      hiddenClass: "dc-folded",
+      toggleAttr: "data-assistant-earlier-toggle",
+      toggleClass: "list-group-item list-group-item-action justify-content-center text-secondary small",
+      signal: this.ac.signal,
+      onToggle: (event, next) => {
+        event.preventDefault();
+        this.earlierOpen = next;
+        this.foldEarlier();
+      },
+    });
   }
 
   // A memory row edits where it stands: the pencil hides the reading half and
@@ -109,11 +140,7 @@ class AssistantList extends HTMLElement {
           icon: "ti-message",
           href: url,
           action: () => {
-            // Inside the overlay a conversation opens in the overlay, it is
-            // its own world; the history page navigates.
-            const panel = this.closest("dc-assistant-panel");
-            if (panel?.openConversation) panel.openConversation(url);
-            else if (window.pe) window.pe.navigate(url);
+            if (window.app?.navigate) window.app.navigate(url);
             else window.location.assign(url);
           },
         },
@@ -133,6 +160,14 @@ class AssistantList extends HTMLElement {
       await ensureOk(response, "The conversation could not be deleted.");
     } catch (err) {
       notifyError(err?.message || "The conversation could not be deleted.");
+      return;
+    }
+    // The page of the deleted conversation is gone with it, the bare address
+    // opens the live one; every other page just sees the row go.
+    if (window.location.pathname === url) {
+      if (window.app?.navigate) window.app.navigate("/assistant");
+      else window.location.assign("/assistant");
+      return;
     }
     await this.refresh();
   }
@@ -194,6 +229,7 @@ class AssistantList extends HTMLElement {
       const fresh = holder.querySelector("[data-assistant-body]");
       const current = this.querySelector("[data-assistant-body]");
       if (fresh && current) current.replaceWith(fresh);
+      if (this.hasAttribute("history")) this.foldEarlier();
     } catch {
       void 0;
     } finally {

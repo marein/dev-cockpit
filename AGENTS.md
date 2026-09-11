@@ -140,8 +140,8 @@ test. Update this file when a convention changes.
   own, which is also why only a chat turn (`RunChat`) may write what a turn
   reports about the context window onto the conversation: a check's consumption
   is not the conversation's, and the ring on the new conversation button would
-  otherwise show a stranger's number. In the panel a person reads coders, not
-  jobs (the head, the button and the empty state say steered coders); code,
+  otherwise show a stranger's number. On the page a person reads coders, not
+  jobs (the aside, the button and the empty state say steered coders); code,
   routes, state values, the `dev-cockpit assistant` commands and the
   notification titles keep job.
 - **A turn's answer is blocks, and the seam between two of them is read, never
@@ -157,6 +157,23 @@ test. Update this file when a convention changes.
   blocks, never in front of a turn's first and never behind its last, so the
   stored answer keeps its own ends, and a provider version that stops naming its
   boundaries falls back to the plain appended answer.
+- **A picture in the transcript brings its own ratio, and the three places that
+  write one write it the same way.** `filesystem.ImageSize` answers with the
+  size the browser draws the file at, which for a photo out of a phone is not
+  the size in the frame header: the Exif orientation may put it on its side,
+  and a browser turns it before it draws it. That size goes into the markup
+  twice, as the `width` and `height` attributes and as `--dc-media-ratio`, and
+  never one without the other, in all three writers (`internal/markdown`'s
+  transformer and its own renderer, `assistant_message.gohtml`, and
+  `renderAttachment` in `assistant.js`). The attributes hold the box open
+  before the file arrives, the property is what lets the stylesheet write the
+  height cap as the width that cap allows: the attribute width is a width the
+  layout may no longer choose, so a plain `max-height` would clamp the height
+  alone and draw the picture out of shape. A picture nobody could measure
+  carries neither, and both sides stay auto, which is the one case a browser
+  keeps the ratio by itself. Everything the thread shows wears
+  `dc-assistant-media`, goldmark's own image included, because that class is
+  the only thing that keeps a picture inside the conversation.
 - **The editor reads git, and writes it through a deliberately short list of
   actions.** `internal/git` is the only place that runs the binary, and every
   call goes through its one helper:
@@ -593,6 +610,14 @@ test. Update this file when a convention changes.
   repository yet gets the same segment saying so and a sheet whose one
   action is `git/clone`, straight into the project directory, which git
   itself refuses unless it holds nothing.
+- **What wants the tree brings the tree back.** The commit view and the
+  revision comparison stand where the tree stands, so anything that shows
+  something *in* the tree closes them first: `revealInTree` (the tab menu's
+  Reveal in tree, Ctrl+Alt+R) calls `closeCommit` and `closeRevdiff` before it
+  expands and selects, then opens the drawer on a phone and unfolds a folded
+  tree column on the desktop, the same pair the commit view uses to reveal
+  itself. Without it the row was marked under a panel nobody could see
+  through, which on a phone is the whole surface.
 - **Two revisions against each other are one more face of the tree column,
   and the list under it is the commit view's list.** `Compare revisions` in
   the git sheet opens `[data-editor-revdiff]` where the commit view opens,
@@ -741,8 +766,8 @@ test. Update this file when a convention changes.
   tracked apart from the text because the two stopped being the same thing.
 - **The projects page's git menu leads somewhere, and acts once.** Every row
   that is a repository carries a git button (`[data-git-project-menu]`, built
-  like the compose button left of it (compose before git, on the row and in the
-  quick nav's project detail alike): the menu is `@dc/contextmenu`, and every
+  like the compose button left of it (compose before git): the menu is
+  `@dc/contextmenu`, and every
   destination is rendered onto the button by the server as `data-git-worktree`,
   `data-git-commit` and `data-git-compare`, so the client knows no route). The
   worktree entry opens the create form with this project as the source
@@ -1086,8 +1111,7 @@ test. Update this file when a convention changes.
   an empty save marks the field `is-invalid`
   instead of writing, Ctrl/Cmd+Enter saves it the way the commit message
   commits, and its host div moves to `document.body` like the terminal
-  panel's modals, so the fullscreen editor's fixed context cannot put it
-  under its own backdrop. The delete confirms (the gutter menu's `Delete
+  panel's modals. The delete confirms (the gutter menu's `Delete
   comment`, a cell's `Delete`, both through `deleteCommentDialog`, and
   `Delete all`) stay SweetAlert like every other confirm.
   Ctrl+Alt+C comments the cursor line,
@@ -1230,6 +1254,11 @@ test. Update this file when a convention changes.
   toggle, the strip, `[data-editor-save]` (`hidden` unless the active file is
   dirty) and the menu itself; every other control is an entry of `[data-
   editor-menu-list]`, and the entries are the same at 390 and at 1440. The
+  two editor heads are the shell's heads: the tree head is a
+  `dc-ctx-head` (project switcher as the title, commit and refresh in
+  `dc-ctx-tools`), the strip row a `dc-work-head` (42px, 28px icon buttons,
+  the phone's `shell_head_tools` at the end), so the editor has no head row
+  of its own above them. The
   menu carries one git entry, `Git`, which opens the git sheet; the per-file
   switches stay entries of the file's context menu
   (`diffMenuItem`/`blameMenuItem`, the revision diff and the file history,
@@ -1729,9 +1758,8 @@ test. Update this file when a convention changes.
   press takes the slide's own cancel path, so its release only spends the
   click. The hint says which way out this recording has, the slide arrow under
   a held press and Esc under a hands free one. The keyboard way is
-  Alt Alt through the `@dc/doubletap` machine, wired in the panel element
-  because the first double tap must work with the overlay closed (it opens
-  the chat first) while the surface owns what start and stop mean
+  Alt Alt through the `@dc/doubletap` machine, wired by the surface on the
+  document's capture phase so it works from anywhere on the assistant page
   (`toggleTalk`): the first double tap starts recording, the second stops
   and sends. Only a bare Alt counts, so Alt+<key> combos never half-arm it
   and nothing leaks into a terminal or an editable field, where a bare Alt
@@ -1931,7 +1959,7 @@ test. Update this file when a convention changes.
   asked, which may be long gone. A container shell is a normal cockpit shell
   started with a
   first command (`Shells.StartCommand`, `docker exec … ; exec bash -il`, same
-  for the log follower), so it lives in the tab strip, the quick nav and the
+  for the log follower), so it lives in the tab strip and the
   editor's terminal panel like any shell, falls back to a plain shell in the
   compose directory when the container ends, and restore brings it back
   commandless. The client menus are shared through `@dc/docker` (projects
@@ -2066,28 +2094,161 @@ test. Update this file when a convention changes.
   and the rebuilt list. The fresh animation then stands where the one it
   replaced stood and they all run in step. That is a synchronisation and not
   a morph, nothing is diffed and nothing is kept alive.
-- **Page headers:** one pattern everywhere: `page-header d-print-none mb-3`,
-  inside it pretitle/breadcrumb plus `page-title`. Pages with a right side action
-  wrap both in `d-flex align-items-center gap-2` with the title block as
-  `flex-fill min-w-0` and the action as `flex-shrink-0`. No `row`/`col` in
-  headers. Tabler's `.page-header` is a wrapping flex column, so style.css clamps
-  every direct child (`min-width: 0; max-width: 100%`), otherwise long
-  unbreakable names widen the layout. Page specific controls (for example the
-  terminal font size and rows selects) belong to the content below, not into the
-  header. On the terminal pages the header's destructive actions (stop a coder,
-  delete a shell) render `dc-coarse-only`: on a desktop the tab strip owns them
-  (close control and tab context menu), on touch the header is the direct way.
-  The split page has no close-all in its header at all, that is the group tab's
-  close control and the quick nav swipe.
-- **The open burger menu is its own box:** below md Tabler zeroes the horizontal
-  padding of the container inside `.navbar-collapse`, so nothing in that menu may
-  carry negative margins. The one `row` in there is `g-0` for that reason: with
-  gutters its negative margins have nothing left to cancel them and push the page
-  half a gutter past the viewport, which reads as the whole page rocking sideways
-  while the menu stands open. The columns sit flush with the container edge
-  without gutters, which is where the grid put their content anyway, so the wide
-  header does not move. `overflow.js` measures it: every page it covers gets the
-  menu opened and closed at 320, 375 and 390.
+- **The shell:** every app page stands in one grid, `.dc-app` in
+  `layout.gohtml`: the rail of areas on the left (`shell_rail.gohtml`, the
+  Projects, Terminals, Editor and Assistant entries, Settings and Docs at the
+  foot with the theme button, the update button, the bell and the logout, all
+  32px with 20px glyphs), an
+  optional list column (`.dc-ctx`), the work surface (`.dc-work`) and one
+  status line (`shell_status.gohtml`: running coders and shells, steered
+  coders, the server status as a dropup, the version with the update check).
+  Below lg the rail and the status line go, a tab bar with the same five areas
+  stands at the bottom (`shell_tabbar.gohtml`), the list column and the work
+  surface share the screen one at a time (`data-focus` on `.dc-app`, switched
+  by `[data-dc-focus]` from `app.js`), and the controls from the rail's foot
+  stand at the end of every work head (`shell_head_tools.gohtml`, placed by
+  `work_body.gohtml`). `app_start.gohtml` opens the grid and paints the rail,
+  the page renders its list column through `ctx_start`/`ctx_body`/`ctx_end`
+  (a dict with `Title` and `Count`) and its work surface through `work_start`
+  (opens the head with the phone's list button, the page fills the head with
+  a `dc-work-title` or a `dc-work-tabs` nav and its actions) and `work_body`
+  (padded, `dc-narrow` for forms) or `work_body_fill` (the terminal and the
+  editor size themselves), and `app_end.gohtml` closes with the status line,
+  the tab bar and the overlays. The projects page is the one exception, its
+  `dc-project-list` element is the work surface itself and closes with
+  `app_close.gohtml`. The grid reads the list column's presence from the DOM
+  (`:has`), so a page without one needs no class. The settings pages share
+  `settings_ctx.gohtml` (the sidebar rows of `settings_nav`), the terminal
+  pages `terminals_ctx.gohtml` (the strip's entries as rows, the group's
+  members nested), the docs and the projects page build their own. The rail's
+  Terminals entry leads to the current or first terminal
+  (`QuickNav.TerminalsURL`), disabled while nothing runs. The Editor entry
+  links the fixed `/editor` and the server picks the project
+  (`handleEditorEntry`): the one used last, else the first one, else the
+  projects page with the flash that one has to be created. That answer is a
+  See Other with `Cache-Control: no-store`, never a permanent redirect, or
+  the browser would keep reopening the project of the first click. No page
+  therefore carries an editor link that ages, and nothing follows a moving
+  context client side. `ActiveTab` marks the area (`projects`, `terminals`,
+  `editor`, `settings`, `docs`). Below lg the list columns give way to the
+  sheet (below), a wide screen has the rail and the list columns for everything it
+  lists. On the terminal pages the list column is the tab strip itself
+  (`terminals_ctx.gohtml`: `terminal-tabs` with `data-tabs-vertical`, rows
+  instead of tabs, the plus menu in its head, the terminal settings behind
+  the gear in the work head); no stop or delete stands in the work head, the
+  row's close control and menu on a wide screen and the sheet's row menu on
+  a phone are the way, for a split's members too. The work body is the column that scrolls, never the page:
+  `body.dc-body` has no overflow, `overflow.js` measures every page against
+  that.
+- **The list column stays live:** `@dc/ctx` listens for the `projects` and
+  `terminals` events (only inside the signed-in shell, the events module is
+  imported lazily so the login page opens no stream), refetches the current
+  page and swaps only `.dc-ctx-body` and the title, scroll position kept.
+  **That pull belongs to the page it was asked for.** A boosted navigation can
+  leave that page while it is in flight, and its answer describes the page
+  that was left: `refreshCtx` remembers the address it asked for and drops an
+  answer the location has moved on from, and `swapCtx` refuses a document
+  whose `.dc-app` names another area, so no caller can paint a foreign column.
+  Without it an action that starts a terminal and then navigates (the docker
+  menus' Logs and Shell, which do both in one go) landed on the terminal with
+  the project index still standing in its column. A full load is not exposed
+  to this, it throws the pending answer away with the document; only the
+  boosted path is.
+  A list that wants this carries `data-ctx-list="projects"` or `"terminals"`;
+  the project index also follows `terminals` for its running counts. The
+  index sorts like every other project list, through `@dc/project-sort` with
+  its `INDEX` field set (`data-index-*`, never `data-project-name`, which the
+  runners and the notifications reserve for the cards): `dc-project-list`
+  applies the chosen mode to the index along with the board and again on
+  every `dc:rendered` swap of the column.
+- **The list column remembers its width and its place per area:** the
+  `[data-ctx-resize]` handle at the column's right edge (desktop only) drags
+  `--dc-ctx-w` on `.dc-app`, 200px up to half the window, a double click puts
+  the default back; `initCtxLayout` (`@dc/ctx`, run on load and on every
+  `dc:navigated`) stores the width and the `.dc-ctx-body` scroll position
+  under `dc-ctx-width:<area>` and `dc-ctx-scroll:<area>` (`data-area` of
+  `.dc-app`, so projects, terminals, settings and docs each keep their own)
+  and restores both, the way the editor keeps its layout per project. A
+  column that places itself opts out of the scroll restore with
+  `data-ctx-own-scroll`: the terminals column centers its active row on
+  connect (`revealActive(true)`, the sheet and the column alike), and a
+  restored position would undo that.
+- **Below lg the list column is a sheet.** The page's own `.dc-ctx` is
+  hidden there; `[data-ctx-area="<area>"]` (the tab bar's Projects, Terminals
+  and Settings buttons, nothing else) opens
+  `dc-ctx-sheet` (`ctx_sheet.gohtml` next to the swapped region,
+  `components/ctx-sheet.js`), which pulls `GET /ctx/<area>?path=<current>`
+  (`ctx.go`: the very partial the page renders, `projects_ctx`,
+  `terminals_ctx`, `settings_ctx`, `docs_ctx`, with the page's QuickNav so
+  the current terminal is marked and the create links carry its project) and
+  shows the column from the bottom, a fixed 52vh so a filter never resizes
+  it, standing on the tab bar (`bottom: var(--dc-tabbar-h)`, the bar stays
+  usable, another area's button swaps the content, the same button again
+  closes), the column head as the sheet head with its back button turned
+  into the close, 3rem of room under the last row. A row navigates and
+  the sheet closes on the click; Escape, the backdrop, `dc:navigated` and
+  `show.bs.modal` close it too. A fresh open shows a spinner placeholder
+  after 150ms and, when the fragment fails, a message with a Try again
+  button (`placeholder()` in `ctx-sheet.js`, marked
+  `data-ctx-sheet-placeholder` so a live refresh treats it as no column;
+  every load carries a token, a stale answer never paints) (the create dialog stops a link's click in
+  the document's capture phase, before the sheet sees it). The sheet's own
+  click listener stays in the bubble phase and skips a `defaultPrevented`
+  click: the row menus and grips in the strip prevent theirs, and a capture
+  listener closed the sheet before the menu opened. Phone only extras carry
+  `d-lg-none`: the filter row
+  (`ctx_filter.gohtml`, `[data-ctx-filter]`, a row between head and body so
+  the list scrolls under it; the projects one is the board's own filter,
+  same `dc-project-filter` key, same name plus main haystack and token
+  match, so sheet and board always agree, the terminals one matches the
+  row text and is not stored), the
+  projects sort menu (`[data-ctx-sort-option]`, the shared `dc-project-sort`
+  key), and on every strip
+  row the three dots (`[data-tab-menu]`, opens the row's context menu at the
+  button) and the grip (`[data-tab-grip]`): on touch a drag starts only from
+  the grip, the strip itself is `touch-action: pan-y`, so a finger on the
+  row scrolls. The terminals sheet opens with the current row centered
+  (`revealActive(true)`, the focused member's row when the page is a split;
+  refreshes keep `nearest`, so a live update never moves the list). A drag
+  moves units: a split row travels with its member rows (`unitRows`, one
+  transform for all of them, the others shift by the unit's height), the
+  edge zone is measured on the scroller (`.dc-ctx-body` in the column and
+  the sheet), and the click suppression after a drag lasts one task, a
+  touch drag has no click to swallow and the next tap must land. The carried
+  rows are the topmost thing on the page (`.terminal-tab-dragging`, opaque,
+  a z-index above every layer) and the row under the pointer wears the 2px
+  frame of the drop target (`.terminal-tab-group-target`), the active row
+  included: both rules name the row class as well, because Tabler's
+  `.list-group-item-action:not(.active):hover` and the column's
+  `.dc-rows .list-group-item.active` outrank a plain class and once put the
+  carried row under its neighbours and the active row's bar over the frame.
+  A tap on a split row carries the pane this device was on last in its
+  address (`aimSplit`, from `dc-split-active-<gid>`): a plain open lands on
+  the first pane, and on a phone the hidden panes never boot, so the
+  remembered pane could not restore itself there. A split row is followed by one `.terminal-tab-member` row per
+  member (phone only, `data-tab-group` names the split, no `terminal-tab`
+  class so the strip order never sees them), whose menu adds *Remove from
+  split view* (`POST /terminal-tabs/ungroup` with that one id) and whose
+  grip reorders the members among themselves (`drag.member`, no group
+  target, `POST /terminal-tabs/group` with the member ids in the new order,
+  which is what sets `@dc_tab_gpos` and so the pane order everywhere). The projects sheet refetches on `projects` and `terminals`
+  events, the terminals sheet is a `terminal-tabs` instance and refetches on
+  its own. The quick nav (FAB, palette, `/quicknav`) is gone.
+- **Third-party assets come from jsDelivr:** Tabler 1.5.1, the icon webfont,
+  Bootstrap's JS, SweetAlert, CodeMirror, xterm and the jingle player are
+  loaded from the CDN, nothing is vendored. The shell's CSS is written
+  against Tabler 1.5.1 (its `a:hover:has(.icon)` rule, the alert variables).
+- **The palette:** style.css sets the cockpit's colors on Tabler's variable
+  names at the root for both schemes (`--tblr-primary`, the surfaces, the
+  border color), so every Tabler component and every `--tblr-*` reference in
+  custom CSS follows. The session icon (`dc-term-icon`) is a tinted tile:
+  grey idle, green running, purple steered or assistant, a pulsing ring while
+  working (green, and purple on a steered coder and on the assistant,
+  `.steered.working` and `.assistant.working`, dot, glow and ring together), and the
+  news dot below at its top right corner. Steered is the open job of `Watcher.Marks()`, the same source
+  the assistant's steered list reads, rendered as the `steered` class
+  wherever a coder icon shows, the hidden member spans of a split row
+  included.
 
 ## Frontend
 
@@ -2194,7 +2355,7 @@ free floating page scripts.
   never on `document`; a transport accepts an event when the origin island
   (`event.target.closest("terminal-attach")`) matches its id. The island
   touched last carries the `active` attribute (exactly one per page); events
-  without an origin island (footer controls, prompt dialog, paste, direction
+  without an origin island (footer controls, paste, direction
   pads) go to the active island's transport only. The split view page
   (`/splits/:id`) renders one island pair per group member; group membership
   lives in tmux user options (`@dc_tab_group`, `@dc_tab_gpos`,
@@ -2205,7 +2366,17 @@ free floating page scripts.
   pages and rendered once per member on the split page
   (`[data-terminal-footer=<id>]`, only the active pane's footer shows).
   Grouped sessions live on the split page: their solo attach URLs
-  303-redirect to `/splits/<gid>?focus=<id>`. The `terminal-split` element
+  303-redirect to `/splits/<gid>?focus=<id>`. **A terminal that takes the
+  focus moves its project up the recent list**, and one place does it,
+  `terminalFocused` (touch the project, mark the target read): the attach
+  pages call it while they render, the split page for the pane it renders
+  focused (that pane's project, not the group's shared one, which a mixed
+  split has none of), and an open split posts
+  `POST /splits/:id/focus` with the member id whenever the focus moves to
+  another pane, because activating a pane there changes no address. The
+  client sends it from `terminal-split`, starting from the rendered focus,
+  so a plain open says nothing and a pane that is already active never fires,
+  by mouse and by keyboard alike (both end in the island's `activate`). The `terminal-split` element
   owns the pane headers (context menu, drag reorder via CSS `order` +
   re-POSTing `/terminal-tabs/group`). The group tab's close control closes
   every member (confirmed); ungrouping is the non-destructive context menu /
@@ -2215,7 +2386,7 @@ free floating page scripts.
   `@dc_tab_gcol`; a member without one renders as a column of its own, which
   is what every group looked like before columns existed, so there is nothing
   to migrate. `@dc_tab_gpos` stays the group's one global order: it drives the
-  strip label, the quick nav, the mobile swipe and the stacking inside a
+  strip label, the sheet, the mobile swipe and the stacking inside a
   column, and a column stands where its first member stands in that order,
   never by the raw option value. The panes stay flat siblings of one CSS grid
   (`splitLayout` in Go, mirrored by `terminal-split`; every column divides the
@@ -2226,7 +2397,7 @@ free floating page scripts.
   the start so the preview cannot move the ground it measures against: it
   posts `/terminal-tabs/group` with the flat order plus a `cols` array, which
   is optional on purpose, every other caller of that route (the strip drag,
-  the quick nav drag) says nothing about columns and what it says nothing
+  on a phone from the row's grip) says nothing about columns and what it says nothing
   about keeps the columns it has. The mobile page is untouched, one pane per
   page and a flat swipe order. The desktop pane stepping (Ctrl+Shift+arrows)
   walks the visual order, columns left to right and each column top to
@@ -2242,17 +2413,39 @@ free floating page scripts.
   attributes (`/splits/<split-group>?focus=<id>`), never from
   window.location: the remembered pane activation fires on the boosted DOM
   swap before pushState runs, and a fragment pulled with the old location
-  paints the page you just left as the active tab. **The rows setting is the height of the
-  vertical axis from here on**, not of every pane: the container carries a
-  height of `rows × cell + one pane head` and the panes fit their rows into
-  the box they are given (the fullscreen mechanism plus the `fitAddon` path,
-  the editor panel's), so a column shows about `rows` lines in total and
-  grouping or stacking never changes the page height. One terminal line in
-  pixels is only known to a rendered terminal, so the islands report it
-  (`dc:terminal-metrics` plus a `data-cell-height` attribute, because every
-  custom element upgrades lazily and either of the two may come first) and it
-  is remembered per font size, so the next split page is sized before its
-  first paint. **A terminal can be created straight into a split**, from the
+  paints the page you just left as the active tab. **Every terminal fits its
+  box**: the split fills the work body, the panes divide it, and each island
+  takes its rows from the box it is given (the `fitAddon` path); the extra
+  rows setting (`dc-terminal-extra-rows`, default 0) adds rows below the fit
+  and the pane scrolls for them on its own, so grouping or stacking never
+  changes the page height. The host is `overflow: clip`, as on master: a
+  canvas past the box, a subpixel or a server size beyond it, is cut
+  silently and never draws a scrollbar (with `overflow: auto` every pixel
+  of overhang drew bars in both directions on a 2x2 split). Only while the
+  extra rows setting stands above zero the island marks the host
+  `attach-terminal-extra`, which opens the vertical axis (`overflow-y:
+  auto`) for the rows it asked for past the fit; the horizontal axis stays
+  clipped always. The size in tmux is one per session while every open view
+  has a box of its own, and a `terminal-size` from the server past the box
+  (another device attached or resized, a stacked pane is the smallest box
+  there is) would leave the canvas cut: `keepRows` answers it with the rows
+  the box holds and, on a fine pointer, its own columns (a resize capped to
+  the box, deduped against the last request so the server's row floor cannot
+  loop), so the smallest open box decides and the taller view keeps a gap.
+  A phone keeps the server's columns, a mirror always followed the desktop's
+  width. Because the host scrolls for extra rows, nothing inside it may
+  reach below the screen: the phone's cursor input, placed two rows under the
+  cursor as the keyboard anchor, is clamped to the last row. Shift with the
+  wheel scrolls the host in the browser, the terminal emulator convention
+  for a wheel the program must not see: the handler scrolls the host itself
+  (taking `deltaX` where the OS already swapped the axis for Shift) and stops
+  the event before xterm, which would turn a wheel without scrollback into
+  cursor keys; Ctrl with the wheel stays with the browser (zoom, pinch). The
+  host is also what `followCursor` scrolls: a cursor outside the host's box
+  is brought back with two rows of margin on the first snapshot of a page
+  (later resets, a history scroll among them, leave the view alone), on
+  focus and while typing; a visible cursor never moves the view.
+  **A terminal can be created straight into a split**, from the
   pane head's menu into that pane's column and from the group tab's menu into
   a column of its own at the right edge (`@dc/split`); both entries open the
   session's create form prefilled. It rides the existing
@@ -2268,7 +2461,7 @@ free floating page scripts.
   column was never written down, which moves nobody either).
   **One order, and a partial post is a permutation.** The strip position lives
   in tmux as `@dc_tab_pos` and is the single order every surface renders, each
-  one a view on it (the strip and the quick nav show everything, the editor's
+  one a view on it (the strip shows everything, the editor's
   terminal panel one project). A surface that shows part of it also posts part
   of it, so `POST /terminal-tabs/order` never takes the posted ids as the whole
   strip: `applyTabOrder` folds them into the current order as a permutation of
@@ -2281,14 +2474,12 @@ free floating page scripts.
   fragment `/projects/:name/editor/terminals` renders the project's sessions
   as tabs plus empty pane divs, and `editor.js` mounts an island pair into a
   pane on its first activation, so a never shown pane holds no stream. Those
-  islands carry `embedded`: rows fit the pane the way fullscreen fits the
-  viewport (`MinTerminalRows` is 5, else the server clamps a low panel back
-  up to 30), the size observer watches height too, a hidden pane does not
-  connect, and the terminal fullscreen keys stay off the page. Open state,
+  islands carry `embedded`: rows fit the pane like everywhere else
+  (`MinTerminalRows`, 5, is the server's floor), the size observer watches
+  height too, a hidden pane does not connect. Open state,
   active tab and height are
   per project (`dc-editor-term-open:<project>`, `-active:`, `-height:`).
-  Inside the panel the terminal keys mirror the attach pages and
-  Ctrl/Cmd+Shift+Enter passes through to the editor fullscreen; the panel
+  Inside the panel the terminal keys mirror the attach pages; the panel
   owns them as long as the last click landed inside it, a focus-owner flag,
   because a click on the bare strip focuses nothing. The editor's own
   shortcuts skip events from inside the panel. A coder created through the +
@@ -2296,7 +2487,7 @@ free floating page scripts.
   the `panel=1` marker** through the POST, that pair redirects to
   `.../editor?terminal=<id>`, and the panel activates that tab **after** the
   tab restore, whose own `editor.focus()` lands later. The marker is what
-  earns the comeback, the return alone cannot: the quick nav's create links
+  earns the comeback, the return alone cannot: the strip's create links
   on an editor page carry the same editor return for their Cancel, and
   without the marker a create lands on the coder's own page like a created
   shell does, which is the correct place wherever the panel does not exist.
@@ -2305,10 +2496,8 @@ free floating page scripts.
   address, so the editor's init still reads the previous one. A coder pane gets the attach page's files
   modal, a `[data-terminal-footer]` button block the island's activation
   unhides, and `coder-file-upload` is re-inserted after the mount so its drop
-  zone finds the terminal. The modals host and `dc-host-float` both meet the
-  fullscreen editor's fixed context at 1030, with opposite answers: the
-  modals move to `document.body`, else a modal falls under its own backdrop,
-  while the float keeps ducking to 5 and is gone there for as long as a popup
+  zone finds the terminal. The modals host moves to `document.body` like the terminal
+  panel's, and `dc-host-float` keeps ducking to 5 for as long as a popup
   stands. Lifting that duck has been built and dropped twice, a float above
   the surface can never be covered by a dropdown inside it. The tab context
   menu mirrors the strip menu minus Open editor, plus Open terminal page.
@@ -2320,11 +2509,90 @@ free floating page scripts.
   hidden instance leaves direct Ctrl+Tab to the page (the editor binds it for
   its own tabs) and pulls the `/terminal-tabs` fragment lazily when the
   switcher opens instead of on every `terminals` event. The switcher is a
-  quick-access palette: active terminals, inactive coders, an Editors section
-  (one row per project, `ProjectNav.EditorURL`, fed by the hidden
-  `[data-tabs-editors]` list in the plus menu) and a New section (New coder /
-  New shell rows reusing the plus menu links, so the current project is
-  preselected on the create form), all filterable.
+  quick-access palette: active terminals, an Assistant row, inactive coders,
+  an Editors section (one row per project, `ProjectNav.EditorURL`) and a New
+  section (New coder / New shell rows reusing the plus menu links, so the
+  current project is preselected on the create form), all filterable. The
+  assistant link and the `[data-tabs-editors]` list are hidden data inside
+  the plus menu, never menu entries: the menu itself offers only what creates
+  a terminal.
+- **The assistant is a page.** `/assistant` opens the live conversation
+  (`Service.Open`, starting one when there is none) and sends the browser to
+  `/assistant/:id`, which `assistant_page.gohtml` renders: the list column
+  (`assistant_ctx.gohtml`, a `dc-assistant-list` with the `history` attribute
+  as the `.dc-ctx` itself, so it refreshes its `[data-assistant-body]` from
+  `/ctx/assistant?path=` on the assistant event and its rows carry the
+  conversation menu; the conversation that still takes messages under its own
+  head, the rest under Earlier, the new conversation control in the head with
+  its own form id prefix, and the phone's sheet adopts the same column through
+  `/ctx/assistant`), then `dc-assistant` as the work column itself
+  (`class="dc-work"`, so the head's voice menu and the composer are its
+  children), and an aside (`offcanvas-xl offcanvas-end`,
+  never with the plain `offcanvas` class, which would keep it fixed) that
+  stands inline from xl up with the steered coders as a self refreshing list,
+  and below xl is the sheet the head's steering wheel (`d-xl-none`) opens.
+  That wheel carries the open jobs as a count in its corner, not as a number
+  beside it: `.dc-steer-badge` is absolute in the button, `var(--dc-steer)` on
+  white. Its size is set against the head button, not copied from the rail's
+  count: the head's `btn-icon` is 28px where the rail's is 40px, so a 16px mark
+  would sit on the wheel instead of beside it. 14px in the corner leaves the
+  same third of the glyph covered that the pre-redesign badge left (18.4px at
+  2.6px in a 40px button, 33 percent of a 14px glyph), which is why the wheel
+  stays readable. The sheet and the inline aside start their
+  list at the same distance from every edge: the first job row drops its top
+  padding at every width (the rule sits outside the xl block), so the gap above
+  it is the offcanvas body's padding, like left and right.
+  The memory is a sheet of the layout (`assistant_memory_sheet.gohtml`,
+  `#assistant-memory`, a plain `offcanvas` next to the ctx sheet on every
+  page), opened by the brain in the conversation list's head, from the
+  assistant page's column and from the phone's sheet on any page alike (the
+  ctx sheet closes on `show.bs.offcanvas`); it renders empty and its
+  `dc-assistant-list` pulls `/assistant/memory` on every `show.bs.offcanvas`
+  and counts the entries into the header badge, so no page pays for the list.
+  The add form ids carry `AssistantMemoryData.Prefix` (`/assistant/memory?prefix=`).
+  The steered coder rows' actions are `btn-sm`. An earlier conversation renders read-only on its own
+  address with the way to the live one; a conversation's deletion sends the
+  browser to `/assistant`; a notification names `/assistant/<id>#message-<id>`
+  and the surface lands on the message itself (`landOnHash`, pulling
+  `?all=1` once when the window held it back) since pe.js scrolls nothing. The
+  surface pulls its own address on the assistant event (`syncFromServer`) and
+  swaps itself only when the transcript moved or the composer went read-only,
+  and never over unsaved words or a running answer. The tab bar's sparkle is a
+  `[data-ctx-area="assistant"]` button, the rail's a link with the active
+  state, both keep `[data-assistant-link]` for the news mark. A message wears
+  a stripe on its left: blue for the user, the assistant's purple for its
+  answers, grey (`dc-msg-info`) for a check's report. The column's Earlier
+  list shows its newest five and folds the rest behind one row
+  (`applyFold` in `dc-assistant-list`, hidden class `dc-folded`, the choice
+  survives the list's refreshes); the column takes no filter row
+  (`ctx_filter.gohtml` stays out, as it does in `docs_ctx.gohtml`), so the
+  phone's sheet shows the whole list; a steered coder's task and criterion
+  fold under its row (Bootstrap collapse per terminal id, closed by default,
+  the e2e reads them through `textContent`); a running check wears a purple
+  badge with a spinner. A conversation row tells working from broken: while
+  its turn runs the round icon carries the working ring
+  (`.dc-term-icon.assistant.working`, the coders' run on a circular path, in
+  the assistant's own purple), and the orange Unfinished badge stands only for
+  a turn that stopped before it was done. The two come apart at the source (`Summary.Running`,
+  `Summary.Unfinished` in `internal/assistant`), no surface reads one out of
+  the other, and the coarse assistant event swaps the list at both ends of a
+  turn. A user message shares the answer's typography
+  (`1rem`, the markdown line height). The work head carries the
+  conversation title alone, the sparkle icon only below lg and in every state
+  (`d-lg-none` never comes off: a running turn adds the working ring to the
+  phone's head icon and nothing else, `setRunning` toggling `working` off the
+  stream frames the stop button already follows, so the desktop head stays
+  bare and reads a running turn off the list column beside it), and the aside
+  starts with the first coder, its heading is the sheet's below xl.
+- **A picture in the transcript carries its pixel size.** Every image the
+  assistant renders, an attachment and one an answer points at alike, gets
+  `width` and `height` from the file itself (`filesystem.ImageSize`, the
+  header alone, png, jpeg and gif; anything else says nothing and takes the
+  `aspect-ratio: auto 4 / 3` placeholder). Without them a transcript full of
+  screenshots rebuilds itself under the reader while they arrive, and the
+  browser's scroll anchoring cannot save it: it may pick the empty picture
+  itself as the anchor. The upload and draft answers carry the size too, so
+  the bubble the composer paints stands where the server's does.
 - **The create forms open in a dialog, and stay pages.** `/coders/new`,
   `/shells/new` and `/projects/new` open in `dc-form-modal` (layout, next to the
   swapped region, Bootstrap modal like the editor's comment dialog). It fetches
@@ -2351,10 +2619,10 @@ free floating page scripts.
   (`heightAuto` off with it); every popup goes through that door,
   `@dc/gitprompt` included.
 - **A wait shows on its surface.** `.dc-loading-bar` is a zero height sticky
-  line prepended to what is loading (quick nav menu, projects card via
-  `cardBar`, tab strip fragment). pe.js's button spinner is for `.btn` only: it
-  needs the element's own box, and on a chip it leaves an empty pill with a
-  spinner somewhere else. Other buttons only go dead.
+  line prepended to what is loading (the tab strip fragment). The
+  project list shows no line, its refreshes swap rows in place. pe.js's button
+  spinner is for `.btn` only: it needs the element's own box, and on a chip it
+  leaves an empty pill with a spinner somewhere else. Other buttons only go dead.
 - **Lifecycle:** set up in connectedCallback behind a re-init guard, tear down
   everything in disconnectedCallback, nothing may outlive the element. Create one
   AbortController per element and pass its signal to every addEventListener, then
@@ -2363,9 +2631,12 @@ free floating page scripts.
   heavy islands (`terminal-attach`, `terminal-input`, `dc-editor`) run their setup
   in a function that returns a teardown the element stores and calls on disconnect.
 - **Theming:** the color theme follows the OS by default, and the theme
-  switcher in the header (`dc-theme-switch` from `theme_switch.gohtml`, in the
-  burger navigation on mobile) forces light or dark per device (`dc-theme` in
-  localStorage, absent means auto). `@dc/theme` is the one source of the
+  button at the foot of the rail (`dc-theme-cycle` from `theme_cycle.gohtml`,
+  on a phone a row of the menu at the end of the work head, on the login page
+  next to the version) shows the mode in force and moves to the next one per
+  click along a fixed ring, light, dark, follow the OS, the same order whatever
+  the OS says, so no mode drops out of the round. The choice is per device
+  (`dc-theme` in localStorage, absent means auto), without a toast. `@dc/theme` is the one source of the
   effective scheme: it sets `data-bs-theme`, keeps the `theme-color` metas in
   step, follows the OS while the preference is auto, follows a change made in
   another tab over the storage event, and publishes every move as a `dc:theme`
@@ -2380,12 +2651,13 @@ free floating page scripts.
   variables (`rgba(var(--tblr-emphasis-color-rgb), …)` for hover/overlay tints),
   never hardcode palette colors. **Marked text is one rule for the whole app**,
   set once in `style.css` on `::selection` and `::-moz-selection` from
-  `--dc-selection-bg` / `--dc-selection-fg` (the Tabler primary and white, the
-  same in both schemes because Tabler defines them at the root for both). The
+  `--dc-selection-bg` / `--dc-selection-fg` (the light scheme's primary and
+  white, pinned as literals because the dark scheme's lighter primary would
+  drop the pair under 4.5:1). The
   fill is opaque and the mark names its own foreground on purpose: a translucent
   one would hand the contrast to whatever sits underneath, and what sits
   underneath is a green or red diff row, a code block, a field. That pair is
-  #ffffff on #066fd1, 5.00:1, so no surface has to be measured on its own.
+  #ffffff on #146ecd, 5.06:1, so no surface has to be measured on its own.
   Two surfaces bring a mark of their own and are named where the rule is:
   CodeMirror hides the native mark inside a `.cm-line` and paints
   `.cm-selectionBackground` instead (and oneDark's own selection leaves a comment
@@ -2396,7 +2668,11 @@ free floating page scripts.
   is an invisible layer over the canvas that actually carries the glyphs. The terminal screen has its own palette, picked
   in the settings menu (`dc-terminal-theme` in localStorage, every scheme
   follows the effective theme between a light and dark variant), defined in
-  `terminal-attach.js`. The tab strip follows the page theme, only the active
+  `terminal-attach.js`. The host element carries that palette's background as
+  well, inline from `applyTheme` and as the pre-script paint in `style.css`:
+  the canvas covers whole cells, so a partial row below the last line and a
+  partial column right of the last one leave the host showing through, and a
+  second colour there draws an edge across the pane. The tab strip follows the page theme, only the active
   tab keeps the dark frame via a `[data-bs-theme="dark"]` override. SweetAlert
   serves dialogs only, and is themed in `style.css` by setting its
   `--swal2-background`/`--swal2-color` custom properties on `body` to Tabler
@@ -2529,10 +2805,11 @@ reports a moved one through the exported `Server.PublishTerminals`, wired in
 a session seen for the first time is only taken in, or every start would
 announce a rename. Surfaces react by pulling their own
 fragment (per client, so path, CSRF and element state like unfold or filter
-stay correct), coalesce bursts behind one in-flight fetch, and show a
-`.dc-loading-bar` (zero-height sticky first child: no layout shift, the line
-stays pinned to the visible top). The tab strip skips the pull while hidden
-(coarse pointer, mobile navigates via the quick nav) or during a close/drag and
+stay correct) and coalesce bursts behind one in-flight fetch; the tab strip
+shows a `.dc-loading-bar` while it pulls (zero-height sticky first child: no
+layout shift, the line stays pinned to the visible top), the project list shows
+nothing. The tab strip skips the pull while hidden
+(coarse pointer, the phone navigates through the sheet) or during a close/drag and
 flushes after; its refresh keeps the + menu and switcher current.
 `dc-project-list` swaps only the named project's
 `[data-sessions-body]` chip lists and re-folds them; the unfold flags live on
@@ -2561,13 +2838,29 @@ waits out a short grace period (750ms), held per target in the client, so a
 read racing across tabs surfaces nothing at all; the read drops the held
 target before it ever shows, and a hidden tab then lets it through so sound
 reaches the user from background tabs. The
-projects list and the quick nav mark coders and shells with unread news (blue
-animated status dot on the row and on the project; blue is the notification
-color everywhere, red stays reserved for errors); the marks render
+projects list and the terminal lists mark coders and shells with unread news;
+blue is the notification color everywhere, red stays reserved for errors. The
+mark is one dot for the whole app, `news_dot.gohtml`: Tabler's animated
+`status-dot` in blue, nothing of ours repaints it, and one rule in style.css
+(`.dc-news-dot`) puts it on the top right corner of the icon it belongs to. A
+carrier that is no session icon wraps its glyph in a `.dc-news-anchor` to
+offer that same corner. Nothing but the bell counts: the tab bar's Terminals
+button used to carry a number and wears the dot now, and the rail's Terminals
+button, which carried nothing, wears it too. That button also means what it
+says: a terminal is a coder or a shell, so a compose action, a backup job, a
+standing git question and the assistant (which has its own button and its own
+mark) leave it dark. The narrowing lives in `internal/web`
+(`notifyterminals.go`), never in `internal/notify`, which carries targets and
+classifies none of them: the test is positive and asked of the cached coder
+snapshots and the shell list, so an unknown kind does not count until a coder
+or a shell answers to it, and a session deleted while its news stood drops out
+with it. The stream carries both lists, `targets` whole for the bell and
+`terminals` narrowed for the dot. The marks render
 server-side and stay fresh because the projects page renders per navigation
-and the quick nav refetches on every open. On top of that, dc-notifications
-updates opted-in DOM live over its SSE channel: `[data-notify-count]` badges
-(the quick nav toggle), `[data-notify-target]` dots and
+and the sheet refetches on every open. On top of that, dc-notifications
+updates opted-in DOM live over its SSE channel: `[data-notify-target]` icons
+(the `news` class shows their dot), `[data-notify-any]` (the Terminals
+buttons, shown while a coder or a shell is unread) and
 `[data-notify-project-dot]` (the projects page; a dot naming row ids in
 `data-notify-projects`, the badge of a folded worktree group, collects those
 rows' news instead of its own container's, and the open group hides it by

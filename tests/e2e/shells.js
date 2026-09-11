@@ -77,7 +77,7 @@ L.runFeature("SHELLS", async ({ page, run, mobilePage }) => {
     // the form page: the dialog fetches the same /shells/new with modal=1 and
     // posts to the same path. The page stays a page, the check above opens it
     // directly and creates through it.
-    await run("dialog: the tab strip + menu and the quick nav both open the create form", async () => {
+    await run("dialog: the tab strip + menu and the sheet both open the create form", async () => {
       await page.goto(shellUrl, { waitUntil: "domcontentloaded" });
       await dialogReady(page);
       await page.click("terminal-tabs .terminal-tabs-new-btn");
@@ -105,31 +105,33 @@ L.runFeature("SHELLS", async ({ page, run, mobilePage }) => {
       }));
       assert(closed.forms === 0 && closed.backdrops === 0, `the dialog left something behind: ${JSON.stringify(closed)}`);
 
-      // The quick nav is the phone's way in, and there no field may take the
+      // The sheet is the phone's way in, and there no field may take the
       // focus, a keyboard would cover the dialog the moment it opens.
       const mp = await mobilePage();
       await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await dialogReady(mp);
-      await mp.click(".quicknav-toggle");
-      await mp.click('.quicknav-menu a[href^="/shells/new"]');
+      await mp.tap('.dc-tabbar button[data-ctx-area="terminals"]');
+      await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-tabs-new-menu]", { timeout: 8000 });
+      await mp.click("dc-ctx-sheet [data-tabs-new-menu]");
+      await mp.click('dc-ctx-sheet a[href^="/shells/new"]');
       await mp.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
       await sleep(600);
       const mobile = await mp.evaluate(() => {
         const submit = document.querySelector('[data-form-modal] button[type="submit"]').getBoundingClientRect();
         return {
           path: window.location.pathname,
-          menu: Boolean(document.querySelector(".quicknav-menu.show")),
+          menu: !document.querySelector("dc-ctx-sheet").hidden,
           focused: document.activeElement?.getAttribute("name") || "",
           overflow: document.documentElement.scrollWidth > window.innerWidth,
           submitReachable: submit.width > 0 && submit.bottom <= window.innerHeight,
         };
       });
       assert(mobile.path === "/projects", `the phone left the page for ${mobile.path}`);
-      assert(!mobile.menu, "the quick nav stayed open behind the dialog");
+      assert(!mobile.menu, "the sheet stayed open behind the dialog");
       assert(mobile.focused === "", `a touch keyboard would pop up on ${mobile.focused}`);
       assert(!mobile.overflow && mobile.submitReachable, `not usable at 390: ${JSON.stringify(mobile)}`);
       await mp.keyboard.press("Escape").catch(() => {});
-      return "+ menu and quick nav, focus on the desktop and none on the phone";
+      return "+ menu and sheet, focus on the desktop and none on the phone";
     });
 
     // A refused create is the whole reason the dialog talks to the server

@@ -10,8 +10,7 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // GET /projects/:name/editor/terminals (tabs plus empty pane divs); the client
 // mounts a terminal-attach/terminal-input island pair into a pane on first
 // activation, so hidden panes hold no stream. Islands carry the `embedded`
-// attribute: rows fit the panel height like fullscreen fits the viewport, the
-// terminal fullscreen shortcuts stay off the page, and a hidden pane does not
+// attribute: rows fit the panel height, and a hidden pane does not
 // connect. The panel refreshes over the app wide `terminals` event and marks a
 // pane's news read when it is activated. The + button POSTs /shells/new with
 // the project path and activates the new shell's tab. Tab context menu: open
@@ -37,7 +36,7 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // A coder created through the + menu comes back to the editor: the create
 // form's action carries the return target plus the panel=1 marker, the server
 // redirects to .../editor?terminal=<id> and the panel activates that tab
-// (without the marker, e.g. from the quick nav, a create lands on the coder's
+// (without the marker, e.g. from the sheet, a create lands on the coder's
 // own page). Coder panes get
 // the attach page's files modal (fragment-rendered per coder, kept alive
 // across refreshes like the panes) behind a [data-terminal-footer] button the
@@ -615,51 +614,6 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       assert(action === `/coders/${coderId}/files`, `upload form action is ${action}`);
       await page.click(`#coder-files-modal-${coderId} .btn-close`);
       await page.waitForFunction((id) => !document.getElementById(`coder-files-modal-${id}`)?.classList.contains("show"), coderId, { timeout: 8000 });
-    });
-
-    await run("desktop: Ctrl+Shift+Enter in the terminal reaches the editor fullscreen, the files modal stays usable there", async () => {
-      assert(coderId, "no coder from the previous check");
-      await page.click(`${panel} [data-term-pane="${coderId}"] .xterm-screen`);
-      await page.keyboard.press("Control+Shift+Enter");
-      await sleep(400);
-      let fullscreen = await page.evaluate(() => document.documentElement.classList.contains("dc-editor-fullscreen"));
-      assert(fullscreen, "the fullscreen toggle did not reach the editor");
-      await page.click(`${panel} [data-term-foot="${coderId}"] .coder-files-button`);
-      await page.waitForFunction((id) => document.getElementById(`coder-files-modal-${id}`)?.classList.contains("show"), coderId, { timeout: 8000 });
-      await page.click(`#coder-files-modal-${coderId} .btn-close`, { timeout: 5000 });
-      await page.waitForFunction((id) => !document.getElementById(`coder-files-modal-${id}`)?.classList.contains("show"), coderId, { timeout: 8000 });
-      await page.click(`${panel} [data-term-pane="${coderId}"] .xterm-screen`);
-      await page.keyboard.press("Control+Shift+Enter");
-      await sleep(400);
-      fullscreen = await page.evaluate(() => document.documentElement.classList.contains("dc-editor-fullscreen"));
-      assert(!fullscreen, "the second toggle did not leave fullscreen");
-    });
-
-    // The float never outranks something that asks for interaction, and the
-    // fullscreen editor is no exception to that: it ducks to the same 5 there,
-    // which sinks it behind the fullscreen surface for as long as the popup
-    // stands. Deliberate, a float that stayed above the surface could never be
-    // covered by a dropdown inside it. An exception here would be the bug.
-    await run("desktop: the host float ducks under everything, in fullscreen too", async () => {
-      const zs = await page.evaluate(() => {
-        const float = document.createElement("div");
-        float.className = "dc-host-float";
-        document.body.appendChild(float);
-        const resting = getComputedStyle(float).zIndex;
-        const menu = document.createElement("div");
-        menu.className = "dropdown-menu show";
-        document.body.appendChild(menu);
-        const ducked = getComputedStyle(float).zIndex;
-        document.documentElement.classList.add("dc-editor-fullscreen");
-        const fullscreen = getComputedStyle(float).zIndex;
-        document.documentElement.classList.remove("dc-editor-fullscreen");
-        float.remove();
-        menu.remove();
-        return { resting, ducked, fullscreen };
-      });
-      assert(zs.resting === "1045", `resting z-index is ${zs.resting}`);
-      assert(zs.ducked === "5", `ducked z-index is ${zs.ducked}`);
-      assert(zs.fullscreen === "5", `the fullscreen duck was lifted to ${zs.fullscreen}`);
     });
 
     await run("desktop: the coder tab menu mirrors the strip entries", async () => {

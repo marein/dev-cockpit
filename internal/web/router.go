@@ -49,7 +49,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth := browser.Group("/", s.requireAuth)
 	auth.GET("/", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, "/projects") })
 	auth.POST("/logout", s.handleLogout)
-	auth.GET("/quicknav", s.handleQuickNav)
+	auth.GET("/ctx/:area", s.handleCtx)
 	auth.GET("/docs", s.handleDocs)
 	auth.GET("/terminal-tabs", s.handleTerminalTabsFragment)
 	auth.POST("/terminal-tabs/order", s.handleTerminalTabsOrder)
@@ -57,6 +57,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/terminal-tabs/ungroup", s.handleTerminalTabsUngroup)
 	auth.POST("/terminal-tabs/group/name", s.handleTerminalTabsGroupName)
 	auth.GET("/splits/:id", s.handleSplitAttach)
+	auth.POST("/splits/:id/focus", s.handleSplitFocus)
 	auth.POST("/terminal-theme", s.handleTerminalTheme)
 
 	auth.GET("/coders/new", s.handleCoderNew)
@@ -123,16 +124,12 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/coders/:id/resume", s.handleCoderResume)
 	auth.POST("/coders/:id/delete", s.handleCoderDelete)
 
-	// The assistant has no pages of its own: every entry opens the overlay on
-	// whatever page is open, and its interior comes from /assistant/panel. The
-	// GET routes below serve the overlay's fragments; the bare paths redirect,
-	// so an old notification link or bookmark still opens the overlay, told
-	// what to show through the query (the browser keeps a #message fragment
-	// across the redirect). The static segments win over :id, and conversation
-	// ids are UUID shaped, so they cannot collide.
-	auth.GET("/assistant", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, "/projects?assistant=open") })
-	auth.GET("/assistant/panel", s.handleAssistantPanel)
-	auth.GET("/assistant/history", s.handleAssistantHistory)
+	// The assistant is a page: the bare address opens the live conversation
+	// and sends the browser to it, a conversation's address shows that one
+	// (read-only when it is history) beside the list column of all of them.
+	// Its lists serve themselves as fragments for the self refreshing lists
+	// on the page and for the phone's sheet.
+	auth.GET("/assistant", s.handleAssistantPage)
 	auth.GET("/assistant/memory", s.handleAssistantMemory)
 	auth.POST("/assistant/memory", s.handleAssistantMemorySave)
 	// The steered jobs belong to the assistant, not to one conversation: a job
@@ -146,9 +143,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// from fragments, not from these.
 	auth.GET("/assistant/conversations", s.handleAssistantConversations)
 	auth.GET("/assistant/conversations/:id", s.handleAssistantConversationRead)
-	auth.GET("/assistant/:id", func(c *gin.Context) {
-		c.Redirect(http.StatusSeeOther, "/projects?assistant="+c.Param("id"))
-	})
+	auth.GET("/assistant/:id", s.handleAssistantPage)
 	auth.POST("/assistant/:id", s.handleAssistantAction)
 	auth.GET("/assistant/:id/stream", s.handleAssistantStream)
 	auth.GET("/assistant/:id/messages/:messageId", s.handleAssistantMessage)
@@ -254,6 +249,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 
 	auth.GET("/update/check", s.handleUpdateCheck)
 	auth.POST("/update/apply", s.handleUpdateApply)
+
+	// The shell's Editor entry, one fixed address the server resolves to a
+	// project, so no page has to carry a link that ages.
+	auth.GET("/editor", s.handleEditorEntry)
 
 	auth.GET("/projects", s.handleProjectsList)
 	auth.GET("/projects/new", s.handleProjectNew)

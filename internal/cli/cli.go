@@ -871,11 +871,11 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 				continue
 			}
 			// There is one assistant, so its news never carries a conversation
-			// title: the entry says what happened. The assistant has no pages,
-			// the link opens the overlay via the query, and the fragment names
-			// the answer the overlay scrolls to.
+			// title: the entry says what happened. The link is the
+			// conversation's page, and the fragment names the answer the page
+			// scrolls to.
 			info.Name = assistant.Name
-			info.URL = "/projects?assistant=" + entry.ID
+			info.URL = "/assistant/" + entry.ID
 			info.Title = fmt.Sprintf("%s answered.", assistant.Name)
 			if m, ok := conversations.LastAnswer(entry.ID); ok {
 				info.URL += "#message-" + m.ID

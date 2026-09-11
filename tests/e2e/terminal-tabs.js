@@ -43,9 +43,8 @@ const { assert, sleep, BASE } = L;
 // switcher is closed, flushing the deferred refresh when it opens. The
 // switcher is a full quick-access palette: below the active terminals and the
 // inactive coders sit an Editors section (one row per project, sorted like the
-// resume groups through @dc/project-sort, URLs from ProjectNav.EditorURL with
-// the ?return target, fed by a hidden [data-tabs-editors] link list in the +
-// menu) and a New section (New coder / New shell rows reusing the + menu
+// resume groups through @dc/project-sort, URLs from ProjectNav.EditorURL, fed
+// by a hidden [data-tabs-editors] link list in the + menu) and a New section (New coder / New shell rows reusing the + menu
 // links, so the current project arrives preselected on the create form). All
 // of it filters through the search input; with no sessions at all the
 // switcher still opens on the editor and New rows.
@@ -77,7 +76,7 @@ const { assert, sleep, BASE } = L;
 // Bootstrap's own dropdown keys jump around. It
 // opens New coder / New shell with the current project preselected, followed by
 // a resume section listing every inactive coder grouped by project (same source
-// as the quick nav project browser, plain form POST to
+// as the sheet project browser, plain form POST to
 // /coders/:id/resume, folded to 3 per project with a "Show N more" toggle via
 // @dc/fold). The project groups are wrapped in [data-project-name/-active/-used]
 // elements and reordered client side through @dc/project-sort, so the sort mode
@@ -92,7 +91,7 @@ const { assert, sleep, BASE } = L;
 // resumes and navigates to the attach page. Opening the + menu or the switcher
 // refreshes the strip and menu content in the background from the
 // GET /terminal-tabs fragment (same pattern and 2px progress indicator as the
-// quick nav's /quicknav); an open switcher rebuilds its rows in place,
+// sheet's /ctx/terminals); an open switcher rebuilds its rows in place,
 // preserving filter text, selection and expanded groups.
 // Tabs hide their idle (green) status
 // dot via CSS and show only the blue news dot; the notify wiring stays on the
@@ -110,8 +109,12 @@ const { assert, sleep, BASE } = L;
 // desktop attach footer (always Ctrl+Ctrl to open the switcher; standalone/PWA
 // also shows Ctrl+Tab to step between tabs, via a display-mode media query,
 // since browsers reserve Ctrl+Tab): always visible, no strip space. The + menu
-// also links to the current project's editor (quick nav parity). On coarse
-// pointer clients the strip stays hidden, the quick nav covers mobile. The strip
+// also links to the current project's editor (sheet parity). On coarse
+// pointer clients the strip stays hidden, the sheet covers mobile. The sheet's
+// filter row is the phone's only way to shorten the list, so it is remembered
+// under dc-terminal-filter the way the projects page remembers its own: a
+// stored filter already hides the rows it hides when the sheet opens, and
+// clearing it is stored too. The strip
 // lists every live session on the host, so all interactions here MUST stay on
 // tabs of sessions this runner created (scoped via data-tab-id). Known side
 // effect: the drag posts the full strip order, so on a shared host tmux the
@@ -136,22 +139,22 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
     }
     const ids = shellUrls.map(ownId);
 
-    await run("strip renders every own shell, active tab is the current one, newest sits rightmost", async () => {
+    await run("strip renders every own shell, active tab is the current one, newest sits last", async () => {
       await page.goto(shellUrls[2], { waitUntil: "domcontentloaded" });
       assert((await L.waitUpgraded(page, ["terminal-tabs"], 8000)).length === 0, "terminal-tabs not upgraded");
       for (const id of ids) await page.waitForSelector(tabSel(id), { state: "attached", timeout: 8000 });
       const order = await tabOrder();
       const ownOrder = order.filter((id) => ids.includes(id));
       assert(JSON.stringify(ownOrder) === JSON.stringify(ids), `own tab order ${ownOrder} != creation order ${ids}`);
-      assert(order[order.length - 1] === ids[2], "newest own shell is not the rightmost tab");
+      assert(order[order.length - 1] === ids[2], "newest own shell is not the last tab");
       const active = await page.$eval(tabSel(ids[2]), (e) => e.classList.contains("active") && e.getAttribute("aria-selected") === "true");
       assert(active, "current shell tab not marked active");
       const project2 = await page.$eval(tabSel(ids[0]), (e) => e.dataset.tabProject);
       assert(project2 === project, `tab project label '${project2}'`);
       const idleClean = await page.$eval(`${tabSel(ids[0])} .dc-term-icon`, (e) => !e.classList.contains("news"));
       assert(idleClean, "idle tab icon still carries the news mark");
-      const sticky = await page.$eval("terminal-tabs", (e) => getComputedStyle(e).position === "sticky");
-      assert(sticky, "tab strip is not sticky");
+      const column = await page.$eval("terminal-tabs", (e) => e.classList.contains("dc-ctx") && e.hasAttribute("data-tabs-vertical"));
+      assert(column, "tab strip is not the list column");
     });
 
     // The shortcut description lives in a modal behind a help button in the
@@ -162,7 +165,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await help.click();
       await L.modalShown(page, "terminal-shortcuts-modal");
       const text = await page.$eval("#terminal-shortcuts-modal", (e) => e.textContent);
-      assert(/Ctrl/.test(text) && /Fullscreen/i.test(text) && /switcher/i.test(text), `modal text incomplete: ${text.replace(/\s+/g, " ").slice(0, 120)}`);
+      assert(/Ctrl/.test(text) && /switcher/i.test(text), `modal text incomplete: ${text.replace(/\s+/g, " ").slice(0, 120)}`);
       const kbdCount = await page.locator("#terminal-shortcuts-modal kbd").count();
       assert(kbdCount >= 6, `expected kbd elements in the modal, got ${kbdCount}`);
       await page.click('#terminal-shortcuts-modal [data-bs-dismiss="modal"]');
@@ -176,8 +179,113 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
     });
 
+    await run("the column centers the active tab and stops flush at the ends", async () => {
+      const extra = [];
+      for (let i = 0; i < 5; i += 1) {
+        extra.push(await L.createShell(page, project));
+        await sleep(1100);
+      }
+      const sctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1360, height: 330 } });
+      try {
+        const sp = await sctx.newPage();
+        await L.login(sp);
+        const own = [...ids, ...extra.map(ownId)];
+        await sp.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+        await sp.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
+        const order = (await sp.$$eval("terminal-tabs .terminal-tab", (els) => els.map((e) => e.dataset.tabId))).filter((id) => own.includes(id));
+        const place = (id) => sp.evaluate((sel) => {
+          const row = document.querySelector(sel);
+          const body = row.closest(".dc-ctx-body");
+          const r = row.getBoundingClientRect();
+          const b = body.getBoundingClientRect();
+          return { off: Math.round((r.top + r.height / 2) - (b.top + b.height / 2)), scroll: Math.round(body.scrollTop), max: body.scrollHeight - body.clientHeight };
+        }, tabSel(id));
+        const land = async (id) => {
+          await sp.click(tabSel(id));
+          await sp.waitForSelector(`${tabSel(id)}.active`, { state: "attached", timeout: 8000 });
+          await sleep(700);
+          return place(id);
+        };
+        const middle = order[Math.floor(order.length / 2)];
+        const mid = await land(middle);
+        assert(mid.max > 40, `the column does not scroll: ${JSON.stringify(mid)}`);
+        assert(Math.abs(mid.off) <= 8, `the active tab is not centered after a navigation: ${JSON.stringify(mid)}`);
+        const last = await land(order[order.length - 1]);
+        assert(last.scroll >= last.max - 1, `the last tab does not leave the list at its end: ${JSON.stringify(last)}`);
+        const first = await land(order[0]);
+        assert(first.scroll === 0, `the first tab does not leave the list at its start: ${JSON.stringify(first)}`);
+        await sp.goto(`${L.BASE}/shells/${middle}`, { waitUntil: "domcontentloaded" });
+        await sp.waitForSelector(`${tabSel(middle)}.active`, { state: "attached", timeout: 8000 });
+        await sleep(700);
+        const loaded = await place(middle);
+        assert(Math.abs(loaded.off) <= 8, `the active tab is not centered on a plain load: ${JSON.stringify(loaded)}`);
+        return `centered at ${mid.off}px, ends at ${first.scroll}/${last.scroll} of ${last.max}`;
+      } finally {
+        await sctx.close();
+        for (const u of extra) {
+          await page.evaluate(async (path) => {
+            const token = document.querySelector('meta[name="csrf-token"]').content;
+            await fetch(`${path}/delete`, { method: "POST", headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" }, body: `csrf_token=${encodeURIComponent(token)}` });
+          }, new URL(u).pathname).catch(() => {});
+        }
+        await sleep(800);
+        await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
+      }
+    });
+
+    await run("a dragged tab lies above everything and the tab under it wears the blue frame", async () => {
+      await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
+      await sleep(600);
+      const src = await page.locator(tabSel(ids[1])).boundingBox();
+      const dst = await page.locator(tabSel(ids[0])).boundingBox();
+      assert(src && dst, "tab bounding boxes unavailable");
+      const x = src.x + src.width / 2;
+      const from = src.y + src.height / 2;
+      const to = dst.y + dst.height / 2 + 4;
+      await page.mouse.move(x, from);
+      await page.mouse.down();
+      for (let i = 1; i <= 8; i += 1) {
+        await page.mouse.move(x, from + (to - from) * (i / 8), { steps: 2 });
+        await sleep(20);
+      }
+      await sleep(450);
+      const state = await page.evaluate(([a, b]) => {
+        const carried = document.querySelector(a);
+        const target = document.querySelector(b);
+        const r = carried.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        const z = parseInt(getComputedStyle(carried).zIndex, 10) || 0;
+        const top = Math.max(...[...document.querySelectorAll("*")].map((e) => parseInt(getComputedStyle(e).zIndex, 10) || 0));
+        return {
+          covered: !carried.contains(hit),
+          z,
+          top,
+          bg: getComputedStyle(carried).backgroundColor,
+          target: target.classList.contains("terminal-tab-group-target"),
+          frame: getComputedStyle(target).boxShadow,
+        };
+      }, [tabSel(ids[1]), tabSel(ids[0])]);
+      for (let i = 8; i >= 0; i -= 1) {
+        await page.mouse.move(x, from + (to - from) * (i / 8), { steps: 2 });
+        await sleep(20);
+      }
+      await sleep(250);
+      await page.mouse.up();
+      await sleep(500);
+      assert(!state.covered, "the dragged tab is covered by another element");
+      assert(state.z >= state.top, `the dragged tab's z-index ${state.z} is below the page's highest ${state.top}`);
+      assert(!/rgba\(\d+, \d+, \d+, 0\)|transparent/.test(state.bg), `the dragged tab is transparent: ${state.bg}`);
+      assert(state.target, "the active tab under the pointer is not the group target");
+      assert(/inset/.test(state.frame) && /0px 0px 0px 2px/.test(state.frame), `the target wears no 2px frame: ${state.frame}`);
+      const order = (await tabOrder()).filter((id) => ids.includes(id));
+      assert(JSON.stringify(order) === JSON.stringify(ids), `the probe drag changed the order: ${order}`);
+      return `z ${state.z} over ${state.top}, frame ${state.frame}`;
+    });
+
     await run("dragging a tab reorders the strip and the order survives a reload", async () => {
-      await page.$eval(".terminal-tabs-strip", (s) => { s.scrollLeft = s.scrollWidth; });
+      await page.$eval(".dc-ctx-body", (s) => { s.scrollTop = s.scrollHeight; });
       await sleep(150);
       const src = page.locator(tabSel(ids[2]));
       const dst = page.locator(tabSel(ids[0]));
@@ -185,11 +293,11 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       const d = await dst.boundingBox();
       assert(s && d, "tab bounding boxes unavailable");
       const from = { x: s.x + s.width / 2, y: s.y + s.height / 2 };
-      const to = { x: d.x + d.width * 0.1, y: d.y + d.height / 2 };
+      const to = { x: d.x + d.width / 2, y: d.y + d.height * 0.1 };
       await page.mouse.move(from.x, from.y);
       await page.mouse.down();
       for (let i = 1; i <= 12; i++) {
-        await page.mouse.move(from.x + (to.x - from.x) * (i / 12), from.y, { steps: 2 });
+        await page.mouse.move(from.x, from.y + (to.y - from.y) * (i / 12), { steps: 2 });
         await sleep(30);
       }
       await page.mouse.up();
@@ -410,17 +518,17 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.waitForURL(new RegExp(ids[2]), { timeout: 8000 });
     });
 
-    await run("the strip settings menu adjusts rows and stays open while selecting", async () => {
-      await page.click(".terminal-tabs-settings > button");
-      await page.waitForSelector(".terminal-tabs-settings .dropdown-menu.show", { state: "visible", timeout: 4000 });
-      const selects = await page.locator(".terminal-tabs-settings terminal-setting-select select").count();
-      assert(selects === 3, `settings menu carries ${selects} selects, expected font size, rows and theme`);
-      const rowsSel = '.terminal-tabs-settings terminal-setting-select[setting="rows"] select';
+    await run("the settings menu adjusts the extra rows and stays open while selecting", async () => {
+      await page.click(".attach-settings > button");
+      await page.waitForSelector(".attach-settings .dropdown-menu.show", { state: "visible", timeout: 4000 });
+      const selects = await page.locator(".attach-settings terminal-setting-select select").count();
+      assert(selects === 3, `settings menu carries ${selects} selects, expected font size, extra rows and theme`);
+      const rowsSel = '.attach-settings terminal-setting-select[setting="extra-rows"] select';
       const before = await page.$eval(rowsSel, (el) => el.value);
-      await page.selectOption(rowsSel, "40");
+      await page.selectOption(rowsSel, "10");
       await sleep(300);
-      assert(await page.evaluate(() => localStorage.getItem("dc-terminal-rows")) === "40", "rows not persisted from the strip settings menu");
-      assert((await page.locator(".terminal-tabs-settings .dropdown-menu.show").count()) === 1, "settings menu closed on select");
+      assert(await page.evaluate(() => localStorage.getItem("dc-terminal-extra-rows")) === "10", "extra rows not persisted from the settings menu");
+      assert((await page.locator(".attach-settings .dropdown-menu.show").count()) === 1, "settings menu closed on select");
       await page.selectOption(rowsSel, before);
       await sleep(200);
       await page.keyboard.press("Escape");
@@ -467,17 +575,17 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       return "keyboard opens on the first row, the mouse on none";
     });
 
-    await run("the + menu leads with new coder and new shell, then the assistant and the editor, project preselected", async () => {
+    await run("the + menu offers new coder and new shell only, project preselected", async () => {
       await page.click(".terminal-tabs-new-btn");
       await page.waitForSelector("terminal-tabs .dropdown-menu.show", { state: "visible", timeout: 4000 });
       const hrefs = await page.$$eval("terminal-tabs .dropdown-menu.show > a", (as) => as.map((a) => a.getAttribute("href")));
-      assert(hrefs.length === 4, `expected 4 links, got ${hrefs.length}`);
+      assert(hrefs.length === 2, `expected 2 links, got ${hrefs.length}`);
       // What the menu is mostly used for stands first.
       assert(hrefs[0].startsWith("/coders/new?") && hrefs[0].includes(`project=${project}`), `coder link ${hrefs[0]}`);
       assert(hrefs[1].startsWith("/shells/new?") && hrefs[1].includes(`project=${project}`), `shell link ${hrefs[1]}`);
-      assert(hrefs[2] === "/assistant", `assistant link ${hrefs[2]}`);
-      assert(hrefs[3].startsWith(`/projects/${project}/editor?return=`), `editor link ${hrefs[3]}`);
       assert(hrefs[1].includes(`return=%2Fshells%2F${ids[2]}`), `shell link return target ${hrefs[1]}`);
+      assert(!(await page.$("terminal-tabs .dropdown-menu.show > a[href='/assistant']")), "the assistant is a menu entry");
+      assert(await page.$("terminal-tabs [data-tabs-assistant]"), "the switcher lost its assistant data");
       // The entry opens the app wide create dialog (see shells.js), which
       // fetches the same /shells/new and carries the menu's project into it.
       await page.click('terminal-tabs .dropdown-menu.show a[href^="/shells/new"]');
@@ -486,7 +594,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(selectedPath.endsWith(`/${project}`), `preselected project path ${selectedPath}`);
     });
 
-    await run("a shell created through the + menu joins the strip on the right", async () => {
+    await run("a shell created through the + menu joins the strip at the end", async () => {
       // The page under the dialog is a shell page already, so the landing is
       // the move to a different one.
       const from = new URL(page.url()).pathname;
@@ -497,7 +605,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.waitForSelector(tabSel(newId), { state: "attached", timeout: 8000 });
       await sleep(400);
       const order = await tabOrder();
-      assert(order[order.length - 1] === newId, "new shell is not the rightmost tab");
+      assert(order[order.length - 1] === newId, "new shell is not the last tab");
       const ownOrder = order.filter((id) => [...ids, newId].includes(id));
       assert(JSON.stringify(ownOrder) === JSON.stringify([ids[2], ids[0], ids[1], newId]), `own order with new shell: ${ownOrder}`);
     });
@@ -606,7 +714,6 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
     await run("context menu navigates to the project card and the project editor", async () => {
       await page.goto(shellUrls[2], { waitUntil: "domcontentloaded" });
       await page.waitForSelector(tabSel(ids[2]), { state: "attached", timeout: 8000 });
-      const attachPath = new URL(page.url()).pathname;
       await openTabMenu(tabSel(ids[2]));
       await menuItem("Open project").click();
       await page.waitForFunction((p) => window.location.pathname === "/projects" && window.location.hash === `#project-${p}`, project, { timeout: 8000 });
@@ -616,7 +723,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await openTabMenu(tabSel(ids[2]));
       await menuItem("Open editor").click();
       await page.waitForURL(new RegExp(`/projects/${project}/editor`), { timeout: 10000 });
-      assert(decodeURIComponent(page.url()).includes(`return=${attachPath}`), `editor url misses the return target: ${page.url()}`);
+      assert(!page.url().includes("return="), `editor url still carries a return target: ${page.url()}`);
       await page.waitForSelector("[data-editor-tree]", { state: "attached", timeout: 8000 });
       await page.waitForFunction(() => {
         const t = document.querySelector("[data-editor-tree]");
@@ -686,7 +793,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await sleep(200);
     });
 
-    await run("closing the current tab switches to its right neighbor like Terminal.app", async () => {
+    await run("closing the current tab switches to its next neighbor like Terminal.app", async () => {
       assert(page.url().includes(ids[2]), `unexpected page ${page.url()}`);
       const order = (await tabOrder()).filter((id) => ids.includes(id));
       assert(order[0] === ids[2] && order[1] === ids[0], `own order before close: ${order}`);
@@ -716,6 +823,9 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.keyboard.up("Control");
       await L.confirmSwal(page);
       await page.waitForSelector(tabSel(extraId), { state: "detached", timeout: 10000 });
+      // The tab goes before the boosted move to the neighbor lands.
+      await page.waitForFunction((id) => !window.location.pathname.includes(id), extraId, { timeout: 10000 })
+        .catch(() => {});
       assert(!page.url().includes(extraId), `still on the closed terminal ${page.url()}`);
       await sleep(600);
       assert((await page.locator(".dc-toast .ti-alert-circle").count()) === 0, "error toast after the shortcut close");
@@ -845,25 +955,57 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(left === 0, "the deleted coder is still offered for resume");
     });
 
-    await run("switching tabs keeps the scroll position instead of jumping to the top", async () => {
-      await page.evaluate(() => localStorage.setItem("dc-terminal-rows", "100"));
+    // Extra rows make the pane taller than its box: the pane scrolls for
+    // them on its own, the page around it never grows.
+    await run("extra rows make the pane scroll for itself while the page stays put", async () => {
+      await page.evaluate(() => localStorage.setItem("dc-terminal-extra-rows", "100"));
       await page.evaluate(async (id) => {
         const token = document.querySelector('meta[name="csrf-token"]').content;
         await fetch(`/shells/${id}/input`, { method: "POST", headers: { "X-CSRF-Token": token, "Content-Type": "application/json" }, body: JSON.stringify({ items: [{ prompt: "seq 1 300" }] }) });
       }, ids[0]);
       await sleep(800);
+      await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
+      await sleep(1200);
+      const box = await page.evaluate(() => {
+        const host = document.querySelector("#terminal");
+        const body = document.querySelector(".dc-work-body");
+        return { spare: host.scrollHeight - host.clientHeight, pageSpare: body.scrollHeight - body.clientHeight, rows: host.querySelectorAll(".xterm-rows > div").length };
+      });
+      assert(box.spare > 200, `the pane does not scroll for its extra rows: ${JSON.stringify(box)}`);
+      assert(box.pageSpare <= 1, `the page grew with the extra rows: ${JSON.stringify(box)}`);
+      const before = await page.evaluate(() => document.querySelector("#terminal").scrollTop);
+      const inputs = [];
+      const onReq = (r) => { if (/\/input$/.test(r.url()) && r.method() === "POST") inputs.push(r.postData() || ""); };
+      page.on("request", onReq);
+      await page.evaluate((dy) => {
+        const screen = document.querySelector("#terminal .xterm-screen");
+        const rect = screen.getBoundingClientRect();
+        screen.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaMode: 0, deltaY: dy, shiftKey: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }));
+      }, before > 0 ? -120 : 120);
+      await sleep(600);
+      page.off("request", onReq);
+      const after = await page.evaluate(() => document.querySelector("#terminal").scrollTop);
+      assert(after !== before, `shift + wheel did not scroll the pane in the browser (${before} -> ${after})`);
+      assert(inputs.length === 0, `shift + wheel reached the program: ${inputs.join(" | ")}`);
+      const cursorShown = () => page.evaluate(() => {
+        const host = document.querySelector("#terminal").getBoundingClientRect();
+        const cursor = document.querySelector("#terminal .xterm-helper-textarea").getBoundingClientRect();
+        return { shown: cursor.top >= host.top && cursor.bottom <= host.bottom, scrollTop: Math.round(document.querySelector("#terminal").scrollTop) };
+      });
+      assert(!(await cursorShown()).shown, "the wheel did not move the cursor out of the visible band");
+      await page.evaluate(() => document.activeElement?.blur());
+      const hostBox = await page.locator("#terminal").boundingBox();
+      await page.mouse.click(hostBox.x + hostBox.width / 2, hostBox.y + hostBox.height / 2);
+      await sleep(400);
+      const focused = await cursorShown();
+      assert(focused.shown, `focus did not bring the cursor into view: ${JSON.stringify(focused)}`);
       await page.goto(shellUrls[1], { waitUntil: "domcontentloaded" });
-      await page.waitForSelector(tabSel(ids[0]), { state: "attached", timeout: 8000 });
-      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-      await sleep(300);
-      const before = await page.evaluate(() => window.scrollY);
-      assert(before > 200, `page did not scroll (scrollY ${before}), rows setting ineffective?`);
-      await page.click(tabSel(ids[0]));
-      await page.waitForURL(new RegExp(ids[0]), { timeout: 8000 });
-      await sleep(500);
-      const after = await page.evaluate(() => window.scrollY);
-      assert(after > 200, `view jumped to the top on tab switch (scrollY ${after})`);
-      await page.evaluate(() => localStorage.removeItem("dc-terminal-rows"));
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
+      await sleep(1500);
+      const loaded = await cursorShown();
+      assert(loaded.shown, `the load did not bring the cursor into view: ${JSON.stringify(loaded)}`);
+      await page.evaluate(() => localStorage.removeItem("dc-terminal-extra-rows"));
     });
 
     await run("pages without the strip mount a hidden switcher-only instance, double Ctrl works app wide", async () => {
@@ -975,16 +1117,10 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await sleep(200);
       const rows = await page.$$eval(".terminal-switcher-item:not([hidden])", (els) => els.map((e) => e.dataset.switcherSection));
       assert(rows.length === 1 && rows[0] === "assistant", `filter 'assist' shows ${JSON.stringify(rows)}`);
-      // The assistant is no page: the row opens the overlay where the user
-      // stands. The mark proves it, the address alone would not: the old route
-      // redirected back onto this very path.
-      await page.evaluate(() => { document.querySelector(".page").dataset.runnerMark = "1"; });
+      // The assistant is a page: the row navigates to the live conversation.
       await page.click('.terminal-switcher-item[data-switcher-section="assistant"]');
-      await page.waitForSelector(".dc-assistant-panel-card:not([hidden]) dc-assistant[ready]", { timeout: 8000 });
-      assert(await page.evaluate(() => document.querySelector(".page")?.dataset.runnerMark === "1"),
-        "the switcher navigated the page instead of opening the overlay on it");
-      await page.click("[data-assistant-panel-close]");
-      await page.waitForSelector(".dc-assistant-panel-card[hidden]", { state: "attached", timeout: 8000 });
+      await page.waitForURL(/\/assistant\/[^/]+$/, { timeout: 8000 });
+      await page.waitForSelector("dc-assistant[ready]", { timeout: 8000 });
     });
 
     await run("the strip stays hidden on coarse pointer (mobile) clients", async () => {
@@ -999,18 +1135,57 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       const settingsVisible = await mp.$eval(".attach-settings", (e) => getComputedStyle(e).display !== "none");
       assert(settingsVisible, "settings row hidden on mobile");
       assert(await mp.$(".attach-settings .ti-settings"), "mobile settings gear button missing");
-      assert(await mp.$(".attach-settings .ti-terminal-2"), "mobile shell icon badge missing on the shell page");
+      assert(await mp.$(".dc-work-head .dc-term-icon .ti-terminal-2"), "mobile shell icon badge missing on the shell page");
       await mp.click(".attach-settings [data-bs-toggle=dropdown]");
       await mp.waitForSelector(".attach-settings .dropdown-menu.show", { state: "visible", timeout: 4000 });
       const mobileSelects = await mp.locator(".attach-settings terminal-setting-select select").count();
       assert(mobileSelects === 3, `mobile settings menu carries ${mobileSelects} selects`);
-      const rowsSel = '.attach-settings terminal-setting-select[setting="rows"] select';
+      const rowsSel = '.attach-settings terminal-setting-select[setting="extra-rows"] select';
       const before = await mp.$eval(rowsSel, (el) => el.value);
-      await mp.selectOption(rowsSel, "40");
+      await mp.selectOption(rowsSel, "10");
       await sleep(200);
-      assert(await mp.evaluate(() => localStorage.getItem("dc-terminal-rows")) === "40", "rows not persisted from the mobile settings menu");
+      assert(await mp.evaluate(() => localStorage.getItem("dc-terminal-extra-rows")) === "10", "extra rows not persisted from the mobile settings menu");
       await mp.selectOption(rowsSel, before);
       await sleep(200);
+    });
+
+    await run("the sheet remembers the terminals filter across a reload", async () => {
+      const mp = await mobilePage();
+      const foreignId = ownId(foreignShellUrl);
+      const sheetRow = (id) => `.terminal-tab[data-tab-id="${id}"]`;
+      const openSheet = async () => {
+        await mp.tap('.dc-tabbar button[data-ctx-area="terminals"]');
+        await mp.waitForSelector(`dc-ctx-sheet:not([hidden]) ${sheetRow(foreignId)}`, { state: "attached", timeout: 8000 });
+        await sleep(300);
+      };
+      const hidden = (id) => mp.$eval(`dc-ctx-sheet ${sheetRow(id)}`, (e) => e.classList.contains("d-none"));
+      const field = () => mp.$eval("dc-ctx-sheet [data-ctx-filter]", (e) => e.value);
+      const stored = () => mp.evaluate(() => localStorage.getItem("dc-terminal-filter"));
+
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await openSheet();
+      await mp.fill("dc-ctx-sheet [data-ctx-filter]", project);
+      await sleep(200);
+      assert(await hidden(foreignId), "the filter leaves the foreign shell row in the list");
+      assert(!(await hidden(ids[0])), "the filter hides an own shell row");
+      assert(await stored() === project, `filter stored as ${JSON.stringify(await stored())}`);
+
+      await mp.reload({ waitUntil: "domcontentloaded" });
+      await openSheet();
+      assert(await field() === project, `filter field carries '${await field()}' after the reload`);
+      assert(await hidden(foreignId), "the remembered filter does not hide the foreign row on open");
+      assert(!(await hidden(ids[0])), "the remembered filter hides an own shell row");
+
+      await mp.click("dc-ctx-sheet [data-ctx-filter-clear]");
+      await sleep(200);
+      assert(await stored() === "", `cleared filter stored as ${JSON.stringify(await stored())}`);
+      assert(!(await hidden(foreignId)), "the cleared filter keeps the foreign row hidden");
+      await mp.reload({ waitUntil: "domcontentloaded" });
+      await openSheet();
+      assert(await field() === "", `the cleared filter comes back as '${await field()}'`);
+      assert(!(await hidden(foreignId)), "the old filter is back after it was cleared");
+      await mp.tap('.dc-tabbar button[data-ctx-area="terminals"]');
+      await mp.waitForSelector("dc-ctx-sheet[hidden]", { state: "attached", timeout: 4000 });
     });
   } finally {
     if (coderUrl) await L.stopSession(page, coderUrl).catch(() => {});

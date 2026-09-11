@@ -1,39 +1,25 @@
 {{define "shell_attach.gohtml"}}
 {{template "app_start.gohtml" .}}
-<div class="page-header d-print-none mb-3">
-  <div class="d-flex align-items-center gap-2">
-    <div class="flex-fill min-w-0">
-      {{template "project_breadcrumb.gohtml" .ProjectName}}
-      <dc-inline-rename class="min-w-0" rename-url="{{.RenameURL}}" name-url="/shells/{{.Shell.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">
-        <h2 class="page-title text-truncate mb-0" data-rename-label role="button" tabindex="0" title="Click to rename">{{.Shell.Name}}</h2>
-        <input type="text" class="form-control d-none" data-rename-input maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Shell name" value="{{.Shell.Name}}">
-      </dc-inline-rename>
-    </div>
-    <div class="flex-shrink-0 dc-coarse-only">
-      <form method="post" action="/shells/{{.Shell.Identifier}}/delete" data-confirm="Delete shell &quot;{{.Shell.Name}}&quot;?" data-confirm-button="Delete">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button type="submit" class="btn btn-outline-danger btn-icon" aria-label="Delete shell {{.Shell.Name}}" title="Delete">
-          <i class="ti ti-trash"></i>
-        </button>
-      </form>
-    </div>
+{{template "terminals_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<span class="dc-term-icon running d-lg-none" data-notify-target="{{.Shell.Identifier}}" title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i>{{template "news_dot.gohtml"}}</span>
+<dc-inline-rename class="d-flex min-w-0" rename-url="{{.RenameURL}}" name-url="/shells/{{.Shell.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">
+  <h1 class="dc-work-title dc-mono" data-rename-label role="button" tabindex="0" title="Click to rename">{{.Shell.Name}}</h1>
+  <input type="text" class="form-control form-control-sm d-none" data-rename-input maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Shell name" value="{{.Shell.Name}}">
+</dc-inline-rename>
+{{if .ProjectName}}<a class="text-secondary small dc-trunc dc-hide-xs text-decoration-none flex-shrink-0" href="/projects#project-{{.ProjectName}}" title="Back to {{.ProjectName}}">{{.ProjectName}}</a>{{end}}
+<span class="flex-fill"></span>
+<div class="attach-settings dropdown">
+  <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
+    <i class="ti ti-settings"></i>
+  </button>
+  <div class="dropdown-menu dropdown-menu-end terminal-settings-menu">
+    {{template "terminal_settings.gohtml"}}
   </div>
 </div>
-
+{{template "work_body_fill.gohtml" .}}
 <div class="attach-page min-w-0">
-  <div class="attach-settings">
-    <span class="dc-term-icon running me-auto" data-notify-target="{{.Shell.Identifier}}" title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i></span>
-    <div class="dropdown">
-      <button type="button" class="btn btn-sm btn-icon btn-outline-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
-        <i class="ti ti-settings"></i>
-      </button>
-      <div class="dropdown-menu dropdown-menu-end terminal-settings-menu">
-        {{template "terminal_settings.gohtml"}}
-      </div>
-    </div>
-  </div>
   <div class="attach-frame min-w-0 w-100">
-    {{template "terminal_tabs.gohtml" .}}
     <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.Shell.Identifier}}"
                     stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
       <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>

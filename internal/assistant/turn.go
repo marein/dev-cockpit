@@ -571,7 +571,7 @@ func (s *Service) markLostTurns(followed map[string]bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, entry := range s.store.List() {
-		if !entry.Unfinished {
+		if !entry.Running && !entry.Unfinished {
 			continue
 		}
 		c, ok := s.store.Load(entry.ID)

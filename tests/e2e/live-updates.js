@@ -7,7 +7,7 @@ const { assert, sleep, BASE } = L;
 // The server publishes a "terminals" event whenever the live coder/shell set or
 // its order changes (create, stop, resume, delete, shell rename, reorder), and
 // pushes a snapshot (notifications + terminals) on every connect. terminal-tabs
-// and dc-quicknav subscribe and pull their own fresh fragment, so a change in one
+// and the sheet subscribe and pull their own fresh fragment, so a change in one
 // client shows up in every other client without a navigation.
 //
 // This runner drives two independent desktop clients against the same instance:
@@ -113,17 +113,21 @@ L.runFeature("LIVE-UPDATES", async ({ engine, browser, page, run, bag }) => {
       shells.splice(1, 1);
     });
 
-    await run("an open quick nav refreshes when a session starts in another client", async () => {
-      await page.click(".quicknav-toggle");
-      await page.waitForSelector("[data-quicknav-active-list]", { state: "visible", timeout: 6000 });
+    await run("an open terminals sheet refreshes when a session starts in another client", async () => {
+      // The tab bar and its sheet stand below lg only, a wide screen has the
+      // rail and the list columns instead.
+      await page.setViewportSize({ width: 750, height: 900 });
+      await page.click('.dc-tabbar button[data-ctx-area="terminals"]');
+      await page.waitForSelector("dc-ctx-sheet:not([hidden]) .terminal-tabs-strip", { state: "visible", timeout: 6000 });
       const shellC = await L.createShell(pageB, project);
       shells.push(shellC);
       const idC = shellId(shellC);
       await page.waitForSelector(
-        `[data-quicknav-active-list] .quicknav-active-item[data-tab-id="${idC}"]`,
+        `dc-ctx-sheet .terminal-tab[data-tab-id="${idC}"]`,
         { timeout: 8000 },
       );
       await page.keyboard.press("Escape");
+      await page.setViewportSize({ width: 1360, height: 900 });
     });
 
     await run("the projects page adds/removes sessions live and keeps unfold in other projects", async () => {
@@ -175,6 +179,66 @@ L.runFeature("LIVE-UPDATES", async ({ engine, browser, page, run, bag }) => {
       const remove = await postAs(pageB, "/projects/delete", { project: remote });
       assert(remove.ok, `project delete POST failed: ${remove.status}`);
       await page.waitForSelector(`#project-${remote}`, { state: "detached", timeout: 8000 });
+    });
+
+    await run("a column refresh started before a navigation never paints the page it was left on", async () => {
+      // The hazard in order: an event on the projects page starts the column's
+      // own pull of /projects, the page navigates to a terminal while it is in
+      // flight, and the answer lands afterwards. It describes the page that was
+      // left, so painting it puts the project index next to the terminal. A
+      // slow /projects is what the live host has and what makes the order
+      // reproducible here.
+      await page.unroute("**/projects").catch(() => {});
+      let slow = false;
+      await page.route("**/projects", async (route) => {
+        if (route.request().method() !== "GET" || !slow) return route.continue();
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        return route.continue();
+      });
+      try {
+        await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+        assert((await L.waitUpgraded(page, ["dc-project-list"], 8000)).length === 0, "project list not upgraded");
+        await sleep(1200);
+        const column = () => page.evaluate(() => {
+          const ctx = document.querySelector(".dc-ctx");
+          return {
+            title: ctx?.querySelector(".dc-ctx-title")?.textContent.trim() || "",
+            list: ctx?.querySelector("[data-ctx-list]")?.getAttribute("data-ctx-list") || "",
+            projectRows: ctx?.querySelectorAll("[data-project-index] a").length || 0,
+            tabs: ctx?.querySelectorAll(".terminal-tab").length || 0,
+          };
+        });
+        const start = await column();
+        assert(start.title === "Projects" && start.list === "projects", `the projects column did not render: ${JSON.stringify(start)}`);
+        slow = true;
+        // Client B starts a shell: that publishes the terminals event which
+        // makes A's column pull /projects, now answered slowly.
+        const shellB = await L.createShell(pageB, project);
+        shells.push(shellB);
+        const idB2 = shellId(shellB);
+        await sleep(400);
+        // The boosted navigation every JS opened terminal takes (the docker
+        // actions' `@dc/docker` navigate is this call): the page swaps while
+        // the column's pull is still running, where a full load would have
+        // thrown the pending answer away with the document.
+        const target = shellId(shells[0]);
+        await page.evaluate((id) => window.app.navigate(`/shells/${id}`), target);
+        await page.waitForURL(new RegExp(`/shells/${target}`), { timeout: 15000 });
+        await page.waitForSelector(`.terminal-tab[data-tab-id="${idB2}"]`, { timeout: 15000 });
+        const samples = [];
+        for (let i = 0; i < 30; i += 1) {
+          await sleep(250);
+          samples.push(await column());
+        }
+        const stale = samples.filter((s) => s.title !== "Terminals" || s.projectRows > 0);
+        assert(!stale.length, `the terminal page showed the project index in its column: ${JSON.stringify(stale[0])}`);
+        const last = samples[samples.length - 1];
+        assert(last.tabs > 0, `the terminals column lost its rows: ${JSON.stringify(last)}`);
+        return `${samples.length} samples stayed on "${last.title}" with ${last.tabs} rows`;
+      } finally {
+        slow = false;
+        await page.unroute("**/projects").catch(() => {});
+      }
     });
   } finally {
     if (pageB) await pageB.close().catch(() => {});

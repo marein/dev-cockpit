@@ -1,23 +1,10 @@
 {{define "settings_notifications.gohtml"}}
 {{template "app_start.gohtml" .}}
-<div class="page-header d-print-none mb-3">
-  <div class="d-flex align-items-center gap-2">
-    <div class="flex-fill min-w-0">
-      <h2 class="page-title text-truncate mb-0">Settings</h2>
-    </div>
-  </div>
-</div>
-
-<div class="card">
-  <div class="row g-0">
-    <div class="col-12 col-md-3 border-end">
-      <div class="card-body">
-        {{template "settings_nav" .SettingsNav}}
-      </div>
-    </div>
-    <div class="col-12 col-md-9">
-      <div class="card-body">
-        <h3 class="card-title">Notifications</h3>
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Notifications</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
         <div class="mb-4">
           <label class="form-label">Sound volume</label>
           <div class="text-secondary small mb-2">Played when a notification arrives, but the browser needs one interaction on the page first. Zero turns the sound off. Stored per device.</div>
@@ -61,12 +48,7 @@
             <label class="form-label">Web push</label>
             <div class="text-secondary small mb-2">System notifications on this device, also when the app is closed. Works only when the app is served over HTTPS. On iPhone and iPad this needs the app installed on the home screen. Each device registers itself here.</div>
             {{if .StaleDevices}}
-            <div class="alert alert-warning" role="alert">
-              <div class="d-flex">
-                <i class="ti ti-alert-triangle me-2 fs-3"></i>
-                <div>The web push keys changed, devices marked "Old keys" cannot receive pushes anymore. Enable each of them again from the device itself, then remove the old entries.</div>
-              </div>
-            </div>
+            {{template "notice.gohtml" (dict "Level" "warning" "Message" "The web push keys changed, devices marked \"Old keys\" cannot receive pushes anymore. Enable each of them again from the device itself, then remove the old entries." "Dismiss" false)}}
             {{end}}
             <div class="text-secondary small mb-2 d-none" data-push-status></div>
             <div class="btn-list">
@@ -125,19 +107,10 @@
             </form>
           </div>
         </dc-push-settings>
-      </div>
-    </div>
-  </div>
 </div>
 {{template "app_end.gohtml" .}}
 {{end}}
 
 {{define "settings_section_flash"}}
-<div class="alert alert-{{if eq .Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible mb-3" role="alert">
-  <div class="d-flex">
-    <i class="ti {{if eq .Flash.Level "success"}}ti-circle-check{{else}}ti-alert-circle{{end}} me-2 fs-3"></i>
-    <div class="text-break min-w-0">{{.Flash.Message}}</div>
-  </div>
-  <a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>
-</div>
+{{template "notice.gohtml" (dict "Level" .Flash.Level "Message" .Flash.Message "Dismiss" true)}}
 {{end}}

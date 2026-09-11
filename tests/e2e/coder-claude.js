@@ -67,16 +67,12 @@ const { assert, sleep } = L;
       await sleep(800);
     }, { soft: true });
 
-    await run("claude: prompt reaches /input, agent pane reacts", async () => {
+    await run("claude: a prompt item posted to /input reaches the agent, the pane reacts", async () => {
       const marker = `CLA${tag.slice(-4)}`;
-      await page.click(".attach-desktop [data-terminal-prompt-modal-open]");
-      await L.modalShown(page, "terminal-prompt-modal");
-      await sleep(600);
-      await page.fill("#terminal-prompt-modal-text", `${marker} please reply`);
-      const reqP = page.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
-      await page.keyboard.press("Control+Enter");
-      const req = await reqP;
-      assert((req.postData() || "").includes(marker), "prompt not carried to /input");
+      await page.evaluate(async (text) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`${location.pathname}/input`, { method: "POST", headers: { "X-CSRF-Token": token, "Content-Type": "application/json" }, body: JSON.stringify({ items: [{ prompt: text }] }) });
+      }, `${marker} please reply`);
       const before = await page.evaluate(() => (document.querySelector(".attach-selection") || {}).textContent || "");
       let changed = false, snippet = "";
       for (let i = 0; i < 40; i++) {

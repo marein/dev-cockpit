@@ -1,21 +1,17 @@
 {{define "error.gohtml"}}{{template "html_head.gohtml" .}}
-<body>
+<body class="dc-body">
   <div data-page-content>
-  <div class="page page-center">
-    <div class="container container-tight py-4">
-      <div class="empty">
-        <div class="empty-header">{{.Status}}</div>
-        <p class="empty-title">{{.Heading}}</p>
-        <p class="empty-subtitle text-secondary">{{.Message}}</p>
-        <div class="empty-action">
-          <a href="/" class="btn btn-primary">
-            <i class="ti ti-arrow-left me-2"></i>
-            Back to home
-          </a>
-        </div>
-      </div>
+  <main class="dc-login">
+    <div class="dc-login-box text-center">
+      <div class="dc-login-brand"><span class="dc-rail-mark m-0"><i class="ti ti-dashboard" aria-hidden="true"></i></span><span>Dev Cockpit</span></div>
+      <div class="dc-error-code mb-3">{{.Status}}</div>
+      <h1 class="h2 mb-2">{{.Heading}}</h1>
+      <p class="text-secondary mb-4">{{.Message}}</p>
+      <a href="/" class="btn btn-primary">
+        <i class="ti ti-arrow-left me-2" aria-hidden="true"></i>Back to home
+      </a>
     </div>
-  </div>
+  </main>
   </div>
 </body>
 </html>{{end}}

@@ -71,7 +71,10 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // The run's news: opening a run's page marks the project's docker target read
 // (server side on the GET, like the backup page), and a failed run is never
 // swallowed by the notify dedupe window as a follow-up of a fresh success,
-// it replaces it as the target's one unread entry. The output block is
+// it replaces it as the target's one unread entry. A compose run is also
+// where the two news marks part: the bell counts it, the Terminals mark of
+// the rail and the tabbar ([data-notify-any]) stays dark, because a compose
+// action runs in a terminal and is none. The output block is
 // Tabler's own pre, a dark surface with light text in both themes, measured
 // as a real luminance gap under both color schemes: a half override once
 // kept the light text on a light ground and was unreadable in light mode.
@@ -193,6 +196,29 @@ const READ_MOTION = (el) => ({
   running: el.getAnimations().filter((a) => a.playState === "running").length,
 });
 
+// landedOnTerminal reads what the page shows after an action opened a terminal:
+// the terminal itself in the work surface and the terminals list in the column.
+// The column is its own surface and refreshes on its own, so an action that
+// leaves the projects page has to be read there too, not only in the address.
+async function landedOnTerminal(page, what) {
+  await page.waitForSelector("terminal-attach", { timeout: 8000 });
+  await sleep(1200);
+  const seen = await page.evaluate(() => {
+    const ctx = document.querySelector(".dc-ctx");
+    return {
+      title: ctx?.querySelector(".dc-ctx-title")?.textContent.trim() || "",
+      tabs: ctx?.querySelectorAll(".terminal-tab").length || 0,
+      projectRows: ctx?.querySelectorAll("[data-project-index] a").length || 0,
+      board: document.querySelectorAll("dc-project-list [id^='project-']").length,
+      area: document.querySelector(".dc-app")?.getAttribute("data-area") || "",
+    };
+  });
+  assert(seen.area === "terminals", `${what}: the shell is not on the terminals area: ${JSON.stringify(seen)}`);
+  assert(!seen.board, `${what}: the projects board is still in the work surface: ${JSON.stringify(seen)}`);
+  assert(seen.title === "Terminals" && !seen.projectRows, `${what}: the column still shows the project index: ${JSON.stringify(seen)}`);
+  assert(seen.tabs > 0, `${what}: the terminals column has no rows: ${JSON.stringify(seen)}`);
+}
+
 L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) => {
   await run("the fixture project shows its container chip and compose button", async () => {
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
@@ -205,92 +231,6 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     assert(await composeBtn(page).count() === 1, "compose button missing next to the row actions");
     assert(await composeBtn(page).locator(".dc-term-icon.running").count() === 1, "compose button not green while running");
     assert(await row(page).locator('[data-chip-kind="docker-stack"]').count() === 0, "the old stack chip is still rendered");
-  });
-
-  await run("the quick nav's project detail lists the containers and carries the compose menu", async () => {
-    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-    await dismissUpdate(page);
-    // The quick nav hides from 768px up with a fine pointer, so it is driven in
-    // a window below md like its own runner does.
-    await page.setViewportSize({ width: 750, height: 900 });
-    const open = async () => {
-      await page.click(".quicknav-toggle");
-      await page.waitForSelector("[data-quicknav-tabs]", { state: "visible", timeout: 8000 });
-      await page.locator('[data-quicknav-tab="projects"]:visible').first().click();
-      await page.waitForSelector("[data-pb-rows] [data-pb-drill]", { state: "visible", timeout: 8000 });
-      await page.locator(`[data-pb-rows] [data-pb-drill="${NAME}"]`).first().click();
-      await page.locator(`[data-pb-detail="${NAME}"]`).first().waitFor({ state: "visible", timeout: 8000 });
-      await sleep(300);
-    };
-    await open();
-    const detail = page.locator(`[data-pb-detail="${NAME}"]`);
-    assert(await detail.locator("[data-pb-actions] [data-docker-project-menu]").count() === 1, "no compose action in the detail's row");
-    // Same order as the projects page's row: compose first, git after it.
-    const actionOrder = await detail.locator("[data-pb-actions]").evaluate((bar) => {
-      const items = [...bar.querySelectorAll("a, button")];
-      const compose = bar.querySelector("[data-docker-project-menu]");
-      const git = bar.querySelector("[data-git-project-menu]");
-      return { compose: items.indexOf(compose), git: git ? items.indexOf(git) : -1 };
-    });
-    assert(actionOrder.git === -1 || actionOrder.compose < actionOrder.git,
-      `the compose action does not stand left of the git action: ${JSON.stringify(actionOrder)}`);
-    assert(await detail.locator('[data-pb-actions] [data-docker-project-menu] .dc-term-icon.running').count() === 1, "the compose action is not green while the stack runs");
-    const containers = detail.locator('[data-chip-kind="docker"]');
-    assert(await containers.count() === 1, `expected one container row, got ${await containers.count()}`);
-    assert((await containers.getAttribute("data-chip-name")) === "web", "the container row is not named by the compose service");
-    assert(await containers.locator("[data-docker-logs]").count() === 1, "the container row has no logs action");
-    // Below the terminals, which is where the projects page puts them too.
-    const order = await page.evaluate((name) => {
-      const d = document.querySelector(`[data-pb-detail="${name}"]`);
-      const fold = d.querySelector("[data-qn-fold]").getBoundingClientRect();
-      const container = d.querySelector('[data-chip-kind="docker"]').getBoundingClientRect();
-      return container.top >= fold.bottom - 0.5;
-    }, NAME);
-    assert(order, "the containers do not stand below the terminals");
-    // The menu is the projects page's own, built from the same shared module.
-    await detail.locator("[data-pb-actions] [data-docker-project-menu]").click();
-    await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
-    const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
-    assert(labels.length > 0 && labels.some((l) => /web/.test(l)), `the compose menu names no container: ${JSON.stringify(labels)}`);
-    await closeMenu(page);
-
-    // A plain click on a running container answers with its menu, it does not
-    // shortcut into a shell: the same thing the editor's container cells do.
-    const before = page.url();
-    await containers.locator("[data-chip-main-menu]").click();
-    await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
-    const own = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
-    assert(own.some((l) => /^Shell$/i.test(l)), `the container's menu offers no Shell: ${JSON.stringify(own)}`);
-    assert(own.some((l) => /^Logs$/i.test(l)), `the container's menu offers no Logs: ${JSON.stringify(own)}`);
-    assert(page.url() === before, `the click navigated to ${page.url()} instead of opening the menu`);
-    await closeMenu(page);
-
-    // The open menu follows the daemon: a container moved by a client of its
-    // own reaches it over the same SSE "docker" event the projects page reads,
-    // with no reload and without closing the drilled project.
-    const green = () => page.evaluate((name) => ({
-      row: document.querySelectorAll(`[data-pb-detail="${name}"] [data-chip-kind="docker"] .dc-term-icon.running`).length,
-      action: document.querySelectorAll(`[data-pb-detail="${name}"] [data-docker-project-menu] .dc-term-icon.running`).length,
-      open: Boolean(document.querySelector(".quicknav-menu.show")),
-      drilled: !document.querySelector(`[data-pb-detail="${name}"]`).hidden,
-    }), NAME);
-    assert(JSON.stringify(await green()) === JSON.stringify({ row: 1, action: 1, open: true, drilled: true }), "the running stack does not read green in the open menu");
-    // The row carries the container's id, which is what the detail is built
-    // from, so the mover and the surface under test agree on the target.
-    const id = await page.evaluate((name) => document.querySelector(`[data-pb-detail="${name}"] [data-chip-kind="docker"]`).dataset.chipId, NAME);
-    const api = await apiClient();
-    try {
-      assert((await api.post(`/docker/${id}/stop`)).ok(), "stopping the container failed");
-      await page.waitForFunction((name) => document.querySelectorAll(`[data-pb-detail="${name}"] [data-chip-kind="docker"] .dc-term-icon.running`).length === 0, NAME, { timeout: 30000 });
-      const idle = await green();
-      assert(idle.open && idle.drilled, "the menu closed or lost its project while the container moved");
-      assert(idle.action === 0, "the compose action stayed green with nothing running");
-      assert((await api.post(`/docker/${id}/start`)).ok(), "starting the container failed");
-      await page.waitForFunction((name) => document.querySelectorAll(`[data-pb-detail="${name}"] [data-chip-kind="docker"] .dc-term-icon.running`).length === 1, NAME, { timeout: 30000 });
-    } finally {
-      await api.dispose().catch(() => {});
-    }
-    await page.setViewportSize({ width: 1360, height: 900 });
   });
 
   await run("the container chips stand in a row of their own, folding on their own", async () => {
@@ -437,7 +377,7 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
       page.waitForURL(/\/shells\/[^/]+$/, { timeout: 15000 }),
       chip(page).locator("[data-docker-logs]").click(),
     ]);
-    await page.waitForSelector("terminal-attach", { timeout: 8000 });
+    await landedOnTerminal(page, "the chip's logs icon");
     assert(await page.locator(".swal2-popup").count() === 0, "a dialog opened after all");
     // A container's logs terminal carries that container's name.
     const named = (await page.locator("[data-rename-label]").textContent()).trim();
@@ -561,7 +501,7 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
       page.waitForURL(/\/shells\/[^/]+$/, { timeout: 15000 }),
       menuItem(page, "Logs").click(),
     ]);
-    await page.waitForSelector("terminal-attach", { timeout: 8000 });
+    await landedOnTerminal(page, "the project menu's logs entry");
     // The stack's is not named after the project, it is every service of a
     // compose directory.
     const stackNamed = (await page.locator("[data-rename-label]").textContent()).trim();
@@ -577,7 +517,7 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
       page.waitForURL(/\/shells\/[^/]+$/, { timeout: 15000 }),
       menuItem(page, "Shell").click(),
     ]);
-    await page.waitForSelector("terminal-attach", { timeout: 8000 });
+    await landedOnTerminal(page, "the container menu's Shell entry");
     const shellUrl = page.url();
     await L.deleteShell(page, shellUrl);
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
@@ -935,6 +875,51 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await page.waitForFunction(() => document.querySelector("[data-editor-docker-status-text]")?.textContent === "1/1", null, { timeout: 40000 });
   });
 
+  // The same entries, the other surface: on the projects page a logs action
+  // leaves for the terminal, in the editor it stays. The editor owns terminals
+  // of its own, so the shell it starts becomes a tab of its panel and the file
+  // being edited never goes away.
+  await run("the editor's docker sheet opens the logs as a terminal tab and stays in the editor", async () => {
+    await page.goto(`${BASE}/projects/${NAME}/editor`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    await page.waitForSelector(".cm-editor, .editor-textarea", { state: "attached", timeout: 15000 });
+    await page.waitForSelector("[data-editor-docker-status]:not([hidden])", { timeout: 15000 });
+    const before = page.url();
+    const tabs = () => page.locator("[data-editor-term-panel] [data-term-tab]").count();
+    const had = await tabs();
+    await page.click("[data-editor-docker-status]");
+    await page.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 8000 });
+    await page.waitForSelector("[data-editor-docker-list] .dropdown-item", { state: "visible", timeout: 8000 });
+    const cell = page.locator("[data-editor-docker-list] [data-docker-container]", { hasText: /web/ });
+    await cell.click();
+    await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+    await menuItem(page, "Logs").click();
+    await page.waitForFunction((n) => document.querySelectorAll("[data-editor-term-panel] [data-term-tab]").length > n, had, { timeout: 20000 });
+    await sleep(1200);
+    const seen = await page.evaluate(() => ({
+      url: location.pathname,
+      editor: Boolean(document.querySelector("dc-editor")),
+      sheet: document.querySelector("[data-editor-sheet]")?.hidden ?? true,
+      tabs: [...document.querySelectorAll("[data-editor-term-panel] [data-term-tab]")].map((t) => t.textContent.replace(/\s+/g, " ").trim()),
+      active: document.querySelector("[data-editor-term-panel] [data-term-tab].active")?.getAttribute("data-term-tab") || "",
+      attached: document.querySelectorAll("[data-editor-term-panel] terminal-attach").length,
+    }));
+    assert(seen.url === new URL(before).pathname, `the editor navigated away: ${seen.url}`);
+    assert(seen.editor, "the editor surface is gone");
+    assert(seen.sheet, "the docker sheet stayed open over the editor");
+    assert(seen.tabs.length > had, `the logs did not become a panel tab: ${JSON.stringify(seen.tabs)}`);
+    assert(seen.tabs.some((t) => /web logs/.test(t)), `no tab carries the container's logs: ${JSON.stringify(seen.tabs)}`);
+    assert(seen.active && seen.attached > 0, `the new tab is not the active terminal: ${JSON.stringify(seen)}`);
+    // The panel opened for this check, so it is put back the way it stood.
+    await page.evaluate((project) => {
+      localStorage.removeItem(`dc-editor-term-open:${project}`);
+      localStorage.removeItem(`dc-editor-term-active:${project}`);
+    }, NAME);
+    await L.deleteShell(page, `${BASE}/shells/${seen.active}`).catch(() => {});
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+  });
+
   await run("docker has its own settings section with the host and the commands", async () => {
     await page.goto(`${BASE}/settings/general`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
@@ -1004,7 +989,7 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     // The element upgrades lazily after the load, and a drag dispatched before
     // its listeners exist moves nothing.
     await page.waitForFunction(() => !!document.querySelector("dc-docker-actions")?.rows, null, { timeout: 4000 });
-    // A finger on the grip handle, the way the quick nav and the editor sheet
+    // A finger on the grip handle, the way the sheet and the editor sheet
     // reorder on touch: the first move spends the threshold, the rest carries
     // the whole distance past the next row's center.
     await page.evaluate(async () => {
@@ -1058,15 +1043,21 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await menuItem(page, "E2E follow").click();
     await page.waitForSelector(".dc-toast", { timeout: 8000 }).catch(() => {});
     await sleep(1500);
-    // The icon says a command is going, and it says it by moving: the class
-    // alone would pass with keyframes nobody wrote, and a transform on an
-    // inline box renders nothing at all.
+    // The icon says a command is going, and it says it by moving: the row's
+    // docker icon is a status light (.dc-term-icon), so the motion is the
+    // running ring on its ::before, the same one a working coder carries. The
+    // class alone would pass with keyframes nobody wrote, and a transform on
+    // an inline box renders nothing at all.
     const waving = composeBtn(page).locator(".dc-docker-working");
     await waving.waitFor({ state: "attached", timeout: 8000 });
-    const wave = await waving.evaluate(READ_MOTION);
-    assert(wave.name === "dc-docker-wave", `the docker icon carries no wave: ${wave.name}`);
-    assert(wave.running === 1, `the wave is not running: ${JSON.stringify(wave)}`);
-    assert(wave.display !== "inline", "the waving icon is inline, so nothing of it moves");
+    const wave = await waving.evaluate((el) => ({
+      name: getComputedStyle(el, "::before").animationName,
+      display: getComputedStyle(el).display,
+      running: el.getAnimations({ subtree: true }).filter((a) => a.playState === "running").length,
+    }));
+    assert(wave.name === "dc-run", `the docker icon carries no ring: ${wave.name}`);
+    assert(wave.running === 1, `the ring is not running: ${JSON.stringify(wave)}`);
+    assert(wave.display !== "inline", "the icon is inline, so nothing of it moves");
     await composeBtn(page).click();
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
     const running = menuItem(page, "E2E follow is running…");
@@ -1153,6 +1144,55 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
       await page.keyboard.press("Escape");
       await postAs(page, "/notifications/read", { all: "1" });
     } finally {
+      await L.deleteProject(page, scratch);
+      await page.waitForSelector(`#project-${scratch}`, { state: "detached", timeout: 180000 }).catch(() => {});
+    }
+  });
+
+  await run("a compose run leaves the Terminals mark cold while the bell counts it", async () => {
+    const scratch = `dcmark-${Date.now().toString(36)}`;
+    await L.createProject(page, scratch);
+    // The mark only renders while something runs, so the check needs a
+    // terminal of its own: a compose run that lights nothing because the
+    // button is not there would prove nothing at all.
+    const shellUrl = await L.createShell(page, scratch);
+    try {
+      const target = `docker:${scratch}`;
+      const wrote = await postAs(page, `/projects/${scratch}/editor/file`, { path: "compose.yaml", content: SCRATCH_COMPOSE });
+      assert(wrote.ok, `writing the scratch compose file answered ${wrote.status}`);
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await dismissUpdate(page);
+      await postAs(page, "/notifications/read", { all: "1" });
+      // The mark is in the page and dark, which is what makes the assertion
+      // below about the compose run and not about a missing element.
+      await page.waitForFunction(() => {
+        const dot = document.querySelector(".dc-rail [data-notify-any], .dc-tabbar [data-notify-any]");
+        return dot && dot.classList.contains("d-none");
+      }, null, { timeout: 8000 });
+
+      const up = await postAs(page, `/projects/${scratch}/docker/compose`, { stack: "", action: "up" });
+      assert(up.ok, `compose up on the scratch project answered ${up.status}`);
+      await waitNotify(page, (list) => list.some((n) => !n.read && n.targetId === target), 90000, "the compose entry");
+      // Nothing else is unread, so what the mark could react to is this run.
+      const strays = (await notifications(page)).filter((n) => !n.read && n.targetId !== target);
+      assert(strays.length === 0, `other unread news would blur the check: ${JSON.stringify(strays.map((n) => n.targetId))}`);
+
+      // The bell sees it: the counted badge stands.
+      await page.waitForFunction(() => !!document.querySelector(".dc-notify-badge:not(.d-none)"), null, { timeout: 8000 });
+      // The Terminals mark does not: a compose action runs in a terminal, it
+      // is not one. Waited out past the client's grace window, a mark that
+      // lights late would otherwise pass here.
+      await sleep(2000);
+      const state = await page.evaluate(() => {
+        const dot = document.querySelector(".dc-rail [data-notify-any], .dc-tabbar [data-notify-any]");
+        const bell = document.querySelector(".dc-notify-badge:not(.d-none)");
+        return { dot: dot ? dot.className : null, bell: bell ? bell.textContent : null };
+      });
+      assert(state.dot && state.dot.includes("d-none"), `the compose run lit the Terminals mark: ${JSON.stringify(state)}`);
+      assert(state.bell, `the bell did not count the compose run: ${JSON.stringify(state)}`);
+      await postAs(page, "/notifications/read", { all: "1" });
+    } finally {
+      await L.deleteShell(page, shellUrl).catch(() => {});
       await L.deleteProject(page, scratch);
       await page.waitForSelector(`#project-${scratch}`, { state: "detached", timeout: 180000 }).catch(() => {});
     }

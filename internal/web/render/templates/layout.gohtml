@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f9fafb">
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111827">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f1317">
   <script>(()=>{let s="";try{s=window.localStorage.getItem("dc-theme")||""}catch(e){}const f=s==="light"||s==="dark"?s:"";(f?f==="dark":window.matchMedia("(prefers-color-scheme:dark)").matches)&&document.documentElement.setAttribute("data-bs-theme","dark");if(!f)return;const m=document.querySelector('meta[name="theme-color"][media*="'+f+'"]');m&&document.querySelectorAll('meta[name="theme-color"]').forEach((t)=>t.setAttribute("content",m.getAttribute("content")))})();</script>
   <meta name="csrf-token" content="{{.CSRFToken}}">
   <meta name="dc-jingle" content="{{.Jingle}}">
@@ -14,7 +14,7 @@
   <link rel="icon" href="{{asset "/favicon.svg"}}" type="image/svg+xml">
   <link rel="apple-touch-icon" href="{{asset "/app-icon-180.png"}}">
   <link rel="manifest" href="{{asset "/manifest.json"}}">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.4.0/dist/css/tabler.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.5.1/dist/css/tabler.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.44.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
   <link rel="stylesheet" href="{{asset "/css/style.css"}}">
@@ -46,8 +46,8 @@
       "@dc/split": "{{asset "/js/dc/split.js"}}",
       "@dc/doubletap": "{{asset "/js/dc/doubletap.js"}}",
       "@dc/filter": "{{asset "/js/dc/filter.js"}}",
+      "@dc/ctx": "{{asset "/js/dc/ctx.js"}}",
       "@dc/volume-slider": "{{asset "/js/dc/volume-slider.js"}}",
-      "dc-quicknav": "{{asset "/js/components/quicknav.js"}}",
       "dc-notifications": "{{asset "/js/components/notifications.js"}}",
       "dc-update-check": "{{asset "/js/components/update-check.js"}}",
       "dc-host-status": "{{asset "/js/components/host-status.js"}}",
@@ -63,12 +63,12 @@
       "dc-docker-link-rules": "{{asset "/js/components/docker-link-rules.js"}}",
       "dc-assistant": "{{asset "/js/components/assistant.js"}}",
       "dc-assistant-list": "{{asset "/js/components/assistant-list.js"}}",
-      "dc-assistant-panel": "{{asset "/js/components/assistant-panel.js"}}",
       "dc-coder-select": "{{asset "/js/components/coder-select.js"}}",
       "dc-inline-rename": "{{asset "/js/components/inline-rename.js"}}",
       "dc-live-name": "{{asset "/js/components/live-name.js"}}",
       "dc-time": "{{asset "/js/components/dc-time.js"}}",
-      "dc-theme-switch": "{{asset "/js/components/theme-switch.js"}}",
+      "dc-theme-cycle": "{{asset "/js/components/theme-cycle.js"}}",
+      "dc-ctx-sheet": "{{asset "/js/components/ctx-sheet.js"}}",
       "dc-editor": "{{asset "/js/components/editor.js"}}",
       "dc-jingle-picker": "{{asset "/js/components/jingle-picker.js"}}",
       "dc-notify-volume": "{{asset "/js/components/notify-volume.js"}}",
@@ -136,209 +136,97 @@
     }
   }
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.25/dist/sweetalert2.all.min.js"></script>
   <script type="module" src="{{asset "/js/pe.js"}}"></script>
   <script type="module" src="{{asset "/js/components/app.js"}}"></script>
 </head>
 {{end}}
 
+{{/* One alert for a flash that belongs to no project row. The pages put it at
+     the top of their work body through work_body.gohtml, so it sits inside the
+     column that scrolls and never widens the shell. */}}
+{{define "flash.gohtml"}}
+{{if and .Flash.Message (eq .FlashProject "")}}
+{{template "notice.gohtml" (dict "Level" .Flash.Level "Message" .Flash.Message "Dismiss" true)}}
+{{end}}
+{{end}}
+
+{{/* One notice, the same everywhere: Tabler's alert with the icon in front,
+     names in monospace (see the notice function), the close cross when the
+     notice is a flash. Level is success, error, warning or info. */}}
+{{define "notice.gohtml"}}
+{{$level := .Level}}{{if eq $level "error"}}{{$level = "danger"}}{{end}}
+<div class="alert alert-{{$level}}{{if .Dismiss}} alert-dismissible{{end}} dc-notice {{if .Class}}{{.Class}}{{else}}mb-3{{end}}" role="alert">
+  <div class="d-flex gap-2">
+    <i class="ti {{if eq $level "success"}}ti-circle-check{{else if eq $level "danger"}}ti-alert-circle{{else if eq $level "warning"}}ti-alert-triangle{{else}}ti-info-circle{{end}} icon alert-icon" aria-hidden="true"></i>
+    <div class="text-break min-w-0">{{notice .Message}}</div>
+  </div>
+  {{if .Dismiss}}<a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>{{end}}
+</div>
+{{end}}
+
 {{define "login_start.gohtml"}}{{template "html_head.gohtml" .}}{{$appName := "Dev Cockpit"}}
-<body>
+<body class="dc-body">
   <div data-page-content>
-  <div class="page page-center">
-    <div class="container container-tight py-4">
-      <div class="text-center mb-4">
-        <a href="/login" class="navbar-brand navbar-brand-autodark justify-content-center text-reset text-decoration-none" aria-label="{{$appName}}">
-          <i class="ti ti-dashboard fs-1 me-2" aria-hidden="true"></i>
-          <span>{{$appName}}</span>
-        </a>
-      </div>
+  <main class="dc-login">
+    <div class="dc-login-box">
+      <a href="/login" class="dc-login-brand text-reset text-decoration-none" aria-label="{{$appName}}">
+        <span class="dc-rail-mark m-0"><i class="ti ti-dashboard icon" aria-hidden="true"></i></span>
+        <span>{{$appName}}</span>
+      </a>
       {{if .Flash.Message}}
-      <div class="alert alert-{{if eq .Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible" role="alert">
-        <div class="d-flex">
-          <i class="ti {{if eq .Flash.Level "success"}}ti-circle-check{{else}}ti-alert-circle{{end}} me-2 fs-3"></i>
-          <div class="text-break min-w-0">{{.Flash.Message}}</div>
-        </div>
-        <a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>
-      </div>
+      {{template "notice.gohtml" (dict "Level" .Flash.Level "Message" .Flash.Message "Dismiss" true)}}
       {{end}}
 {{end}}
 
 {{define "login_end.gohtml"}}
+      <div class="d-flex justify-content-center align-items-center gap-3 mt-3 text-secondary small">
+        <span>Version {{appVersion}}</span>
+        <span aria-hidden="true">·</span>
+        {{template "theme_cycle.gohtml" (dict "Class" "btn btn-sm btn-icon btn-ghost-secondary")}}
+      </div>
     </div>
-  </div>
+  </main>
   </div>
 </body>
 </html>{{end}}
 
-{{define "app_start.gohtml"}}{{template "html_head.gohtml" .}}{{$appName := "Dev Cockpit"}}
-<body>
+{{/* The shell: a rail of areas on the left, an optional list column, the work
+     surface, one status line, and on phones a tab bar instead of the rail.
+     app_start opens the shell and paints the rail, the page then renders its
+     own list column (ctx_*.gohtml) and its work surface (work_*.gohtml), and
+     app_end closes with the status line, the tab bar and the overlays that
+     live next to the swapped region. The list column is optional, the grid
+     reads its presence from the DOM. */}}
+{{define "app_start.gohtml"}}{{template "html_head.gohtml" .}}
+<body class="dc-body">
   <div data-page-content>
-  <div class="page">
-    <header class="navbar navbar-expand-md d-print-none d-md-none">
-      <div class="container-xl">
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar-menu" aria-controls="navbar-menu" aria-expanded="false" aria-label="Toggle navigation">
-          <span class="navbar-toggler-icon"></span>
-        </button>
-        <div class="navbar-brand navbar-brand-autodark d-none-navbar-horizontal mx-auto mx-md-0 pe-0 pe-md-3">
-          <a href="/projects" class="d-flex align-items-center gap-2 text-reset text-decoration-none" aria-label="{{$appName}}">
-            <i class="ti ti-dashboard fs-2" aria-hidden="true"></i>
-            <span>{{$appName}}</span>
-          </a>
-        </div>
-        <div class="d-md-none d-flex align-items-center gap-1">
-          {{if .User}}
-          {{template "host_status.gohtml" .}}
-          <a href="/assistant" class="btn btn-icon btn-ghost-purple" aria-label="Assistant" title="Assistant" data-assistant-link>
-            <span class="dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}}><i class="ti ti-sparkles"></i></span>
-          </a>
-          {{end}}
-          {{if .User}}<dc-notifications>{{template "notify_bell.gohtml" .}}</dc-notifications>{{else}}
-          <span class="navbar-toggler invisible" aria-hidden="true" tabindex="-1">
-            <span class="navbar-toggler-icon"></span>
-          </span>
-          {{end}}
-        </div>
-      </div>
-    </header>
-    <header class="navbar-expand-md">
-      <div class="collapse navbar-collapse" id="navbar-menu">
-        <div class="navbar">
-          <div class="container-xl">
-            <div class="navbar-brand navbar-brand-autodark d-none d-md-flex pe-3">
-              <a href="/projects" class="d-flex align-items-center gap-2 text-reset text-decoration-none" aria-label="{{$appName}}">
-                <i class="ti ti-dashboard fs-2" aria-hidden="true"></i>
-                <span>{{$appName}}</span>
-              </a>
-            </div>
-            {{/* g-0 because below md Tabler zeroes the horizontal padding of
-                 the container inside the open menu, and a row's negative gutter
-                 margins would then have nothing to cancel them and push the page
-                 half a gutter wider than the viewport. Without gutters the
-                 columns sit flush with the container edge, which is where the
-                 grid put their content anyway, so the wide header stays put. */}}
-            <div class="row g-0 flex-column flex-md-row flex-fill align-items-center">
-              <div class="col">
-                <ul class="navbar-nav">
-                  <li class="nav-item">
-                    <a class="nav-link {{if eq .ActiveTab "projects"}}active{{end}}" href="/projects">
-                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-folders"></i></span>
-                      <span class="nav-link-title">Projects</span>
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {{if eq .ActiveTab "settings"}}active{{end}}" href="/settings/general">
-                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-settings"></i></span>
-                      <span class="nav-link-title">Settings{{if .BackupReviewCount}} <span class="status-dot status-dot-animated status-blue ms-1" title="Backup files to resolve" aria-label="Backup files to resolve"></span>{{end}}</span>
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {{if eq .ActiveTab "docs"}}active{{end}}" href="/docs">
-                      <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-book-2"></i></span>
-                      <span class="nav-link-title">Docs</span>
-                    </a>
-                  </li>
-                  {{if .User}}
-                  <li class="nav-item d-md-none">
-                    <hr class="my-2">
-                  </li>
-                  <li class="nav-item d-md-none">
-                    <div class="d-flex align-items-center justify-content-between nav-link dc-theme-row">
-                      <span class="d-inline-flex align-items-center">
-                        <span class="nav-link-icon"><i class="ti ti-brightness-half"></i></span>
-                        <span class="nav-link-title">Theme</span>
-                      </span>
-                      {{template "theme_switch.gohtml"}}
-                    </div>
-                  </li>
-                  {{/* No divider of its own: the entry is hidden until an update
-                       exists, and two rules with nothing between them look like
-                       a mistake. It is a button, not a row: an update is the one
-                       thing in this menu that asks to be done, not navigated to. */}}
-                  <li class="nav-item d-md-none js-update-flag d-none">
-                    <div class="px-3 py-2">
-                      <button type="button" class="btn btn-primary btn-sm" data-update-open>
-                        <i class="ti ti-arrow-up-circle me-1"></i>Update to <span class="js-update-version ms-1"></span>
-                      </button>
-                    </div>
-                  </li>
-                  <li class="nav-item d-md-none">
-                    <form method="post" action="/logout" data-no-pe>
-                      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-                      <button type="submit" class="nav-link w-100 text-start">
-                        <span class="nav-link-icon"><i class="ti ti-logout"></i></span>
-                        <span class="nav-link-title">Logout</span>
-                      </button>
-                    </form>
-                  </li>
-                  {{end}}
-                </ul>
-              </div>
-              {{if .User}}
-              <div class="col-auto d-none d-md-block">
-                <div class="d-flex align-items-center gap-1">
-                  {{template "theme_switch.gohtml"}}
-                  <button type="button" class="js-update-flag d-none btn btn-sm btn-outline-primary" data-update-open title="Update available">
-                    <i class="ti ti-arrow-up-circle me-1"></i><span class="nav-link-title js-update-version">Update</span>
-                  </button>
-                  {{template "host_status.gohtml" .}}
-                  <a href="/assistant" class="btn btn-icon btn-ghost-purple" aria-label="Assistant" title="Assistant" data-assistant-link>
-                    <span class="dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}}><i class="ti ti-sparkles"></i></span>
-                  </a>
-                  <dc-notifications>{{template "notify_bell.gohtml" .}}</dc-notifications>
-                  <form method="post" action="/logout" data-no-pe>
-                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-                    <button type="submit" class="btn btn-icon btn-ghost-secondary" aria-label="Logout" title="Logout">
-                      <i class="ti ti-logout fs-2"></i>
-                    </button>
-                  </form>
-                </div>
-              </div>
-              {{end}}
-            </div>
-          </div>
-        </div>
-      </div>
-    </header>
-    <div class="page-wrapper">
-      <div class="page-body">
-        <div class="container-xl">
-          {{if and .Flash.Message (eq .FlashProject "")}}
-          <div class="alert alert-{{if eq .Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible" role="alert">
-            <div class="d-flex">
-              <i class="ti {{if eq .Flash.Level "success"}}ti-circle-check{{else}}ti-alert-circle{{end}} me-2 fs-3"></i>
-              <div class="text-break min-w-0">{{.Flash.Message}}</div>
-            </div>
-            <a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>
-          </div>
-          {{end}}
+  <div class="dc-app" data-area="{{.ActiveTab}}">
+  {{if .User}}{{template "shell_rail.gohtml" .}}{{end}}
 {{end}}
 
 {{define "app_end.gohtml"}}
-        </div>
-      </div>
-      <footer class="footer footer-transparent d-print-none">
-        <div class="container-xl">
-          <div class="row text-center align-items-center flex-row-reverse">
-            <div class="col-lg-auto ms-lg-auto text-secondary">
-              Version {{appVersion}} <dc-update-check id="dc-update" data-version="{{appVersion}}"></dc-update-check>
-            </div>
-            <div class="col-12 col-lg-auto mt-3 mt-lg-0">
-              <a href="/" class="text-secondary text-decoration-none">Dev Cockpit</a>
-            </div>
-          </div>
-        </div>
-      </footer>
     </div>
+  </main>
+{{template "app_close.gohtml" .}}
+{{end}}
+
+{{/* Everything after the work surface: the status line, the tab bar, the
+     overlays next to the swapped region. A page whose work surface is a custom
+     element closes that element itself and calls this directly. */}}
+{{define "app_close.gohtml"}}
+  {{if .User}}
+  {{template "shell_status.gohtml" .}}
+  {{template "shell_tabbar.gohtml" .}}
+  {{end}}
   </div>
-  {{template "quicknav.gohtml" .}}
+  {{if .User}}{{template "ctx_sheet.gohtml" .}}{{template "assistant_memory_sheet.gohtml" .}}{{end}}
   {{if and .User (not .HasTabStrip)}}{{template "terminal_tabs_switcher.gohtml" .}}{{end}}
   </div>
   <div class="toast-container position-fixed top-0 end-0 p-3" data-dc-toasts></div>
   {{if .User}}
   <!-- The create dialog, next to the swapped page region so it outlives a
-       boosted navigation and no fixed page context (an editor or a terminal in
-       fullscreen) can put it under its own backdrop. The form inside comes from
+       boosted navigation and no fixed page context can put it under its own backdrop. The form inside comes from
        the server, from the very page the link points at; the dialog holds the
        head and the close. -->
   <dc-form-modal>
@@ -354,21 +242,153 @@
     </div>
   </dc-form-modal>
   {{template "host_status_float.gohtml" .}}
-  <!-- The assistant overlay sits next to the swapped page region, not in it, so
-       an open surface, a streaming answer and the words in the composer survive
-       every boosted navigation untouched. From lg up it docks as a side panel
-       and its corner button replaces the quick nav; below that it covers the
-       screen. The interior is fetched on open. Nothing here is re-rendered per
-       page, so the element keeps the corner's news target in sync itself. -->
-  <dc-assistant-panel class="dc-assistant-panel" panel-url="/assistant/panel">
-    <button type="button" class="btn btn-icon dc-assistant-corner" aria-label="Assistant" title="Assistant" data-assistant-corner>
-      <span class="dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}}><i class="ti ti-sparkles"></i></span>
-    </button>
-    <div class="dc-assistant-panel-card" hidden>
-      <div class="dc-assistant-resize" data-assistant-resize aria-hidden="true"></div>
-      <div class="dc-assistant-panel-body" data-panel-body></div>
-    </div>
-  </dc-assistant-panel>
   {{end}}
 </body>
 </html>{{end}}
+
+{{/* The rail: one entry per area, the assistant's light among them, and at the
+     foot the settings, the docs and the small controls that used to sit in the
+     header (theme, update, bell, logout). */}}
+{{define "shell_rail.gohtml"}}
+<nav class="dc-rail d-print-none" aria-label="Areas">
+  <a class="dc-rail-mark" href="/projects" title="Dev Cockpit" aria-label="Dev Cockpit"><i class="ti ti-dashboard icon" aria-hidden="true"></i></a>
+  <a class="dc-rail-btn{{if eq .ActiveTab "projects"}} active{{end}}" href="/projects"><i class="ti ti-folders icon" aria-hidden="true"></i><span>Projects</span></a>
+  {{with .QuickNav.TerminalsURL}}
+  <a class="dc-rail-btn{{if eq $.ActiveTab "terminals"}} active{{end}}" href="{{.}}"><span class="dc-news-anchor"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" true "Hidden" (not $.QuickNav.TerminalNews) "Label" "Something new in a terminal")}}</span><span>Terminals</span></a>
+  {{else}}
+  <span class="dc-rail-btn" aria-disabled="true" title="Nothing is running. Start a coder or a shell in a project."><i class="ti ti-terminal-2 icon" aria-hidden="true"></i><span>Terminals</span></span>
+  {{end}}
+  <a class="dc-rail-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="/editor"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>
+  <a class="dc-rail-btn{{if eq .ActiveTab "assistant"}} active{{end}}" href="/assistant" data-assistant-link title="Assistant"><span class="dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}}><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml"}}</span><span>Assistant</span></a>
+  <span class="dc-rail-gap"></span>
+  <div class="dc-rail-foot">
+    <a class="dc-rail-btn{{if eq .ActiveTab "settings"}} active{{end}}" href="/settings/general"><i class="ti ti-settings icon" aria-hidden="true"></i><span>Settings</span>{{if .BackupReviewCount}}<span class="dc-rail-count" title="Backup files to resolve" aria-label="Backup files to resolve">{{.BackupReviewCount}}</span>{{end}}</a>
+    <a class="dc-rail-btn{{if eq .ActiveTab "docs"}} active{{end}}" href="/docs"><i class="ti ti-book icon" aria-hidden="true"></i><span>Docs</span></a>
+    <span class="dc-rail-sep"></span>
+    {{template "theme_cycle.gohtml" (dict "Class" "dc-rail-mini")}}
+    {{/* Hidden until an update exists. It is a button, not a row: an update is
+         the one thing here that asks to be done, not navigated to. */}}
+    <button type="button" class="dc-rail-mini dc-rail-update js-update-flag d-none" data-update-open title="Update available" aria-label="Update available">
+      <i class="ti ti-arrow-up-circle" aria-hidden="true"></i><span class="js-update-version visually-hidden"></span>
+    </button>
+    <dc-notifications class="dc-rail-notify">{{template "notify_bell.gohtml" "dropend"}}</dc-notifications>
+    <form method="post" action="/logout" data-no-pe>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <button type="submit" class="dc-rail-mini" aria-label="Logout" title="Logout"><i class="ti ti-logout icon" aria-hidden="true"></i></button>
+    </form>
+  </div>
+</nav>
+{{end}}
+
+{{/* The phone has no rail, so the controls from its foot stand at the end of
+     every work head instead: the server status, the bell, and one menu with
+     the theme, the update and the logout. work_body.gohtml places it. */}}
+{{define "shell_head_tools.gohtml"}}
+{{if .User}}
+<div class="dc-head-tools d-lg-none">
+  {{template "host_status.gohtml" .}}
+  <dc-notifications>{{template "notify_bell.gohtml" ""}}</dc-notifications>
+  <div class="dropdown">
+    <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="More" title="More">
+      <i class="ti ti-dots-vertical" aria-hidden="true"></i>
+    </button>
+    <div class="dropdown-menu dropdown-menu-end">
+      {{template "theme_cycle.gohtml" (dict "Class" "dropdown-item" "Label" true)}}
+      <div class="js-update-flag d-none">
+        <div class="dropdown-divider"></div>
+        <button type="button" class="dropdown-item" data-update-open>
+          <i class="ti ti-arrow-up-circle me-2" aria-hidden="true"></i>Update to <span class="js-update-version ms-1"></span>
+        </button>
+      </div>
+      <div class="dropdown-divider"></div>
+      <form method="post" action="/logout" data-no-pe>
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button type="submit" class="dropdown-item">
+          <i class="ti ti-logout me-2" aria-hidden="true"></i>Logout
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{/* The status line under the shell: the server, the version. */}}
+{{define "shell_status.gohtml"}}
+<footer class="dc-status d-print-none">
+  {{template "host_status_bar.gohtml" .}}
+  <span class="dc-status-gap"></span>
+  <span class="dc-status-item" title="Version">Version {{appVersion}} <dc-update-check id="dc-update" data-version="{{appVersion}}"></dc-update-check></span>
+</footer>
+{{end}}
+
+{{/* The phone's areas, one tab each, the same five as the rail. */}}
+{{define "shell_tabbar.gohtml"}}
+<nav class="dc-tabbar d-print-none" aria-label="Areas">
+  <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "projects"}} active{{end}}" data-ctx-area="projects"><i class="ti ti-folders icon" aria-hidden="true"></i><span>Projects</span></button>
+  <button type="button" class="dc-tabbar-btn{{if eq $.ActiveTab "terminals"}} active{{end}}" data-ctx-area="terminals"><span class="dc-news-anchor"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" true "Hidden" (not $.QuickNav.TerminalNews) "Label" "Something new in a terminal")}}</span><span>Terminals</span></button>
+  <a class="dc-tabbar-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="/editor"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>
+  <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "assistant"}} active{{end}}" data-ctx-area="assistant" data-assistant-link><span class="dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}}><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml"}}</span><span>Assistant</span></button>
+  <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "settings"}} active{{end}}" data-ctx-area="settings"><i class="ti ti-settings icon" aria-hidden="true"></i><span>Settings</span>{{if .BackupReviewCount}}<span class="dc-tabbar-count" title="Backup files to resolve" aria-label="Backup files to resolve">{{.BackupReviewCount}}</span>{{end}}</button>
+</nav>
+{{end}}
+
+{{/* The list column. ctx_start takes a dict with Title and an optional Count,
+     leaves the head open for the page's tools, ctx_body closes the head and
+     opens the scrolling list, ctx_end closes the column. */}}
+{{define "ctx_start.gohtml"}}
+<aside class="dc-ctx d-print-none">
+  <div class="dc-ctx-head">
+    <button type="button" class="btn btn-icon btn-ghost-secondary dc-work-toggle" data-dc-focus="work" aria-label="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></button>
+    <h1 class="dc-ctx-title">{{.Title}}</h1>
+{{end}}
+
+{{/* The phone's filter over a list column, a row under the head that hides
+     rows as one types; the desktop column shows the whole list. The argument
+     is the placeholder. */}}
+{{define "ctx_filter.gohtml"}}
+  <div class="dc-ctx-filter d-lg-none">
+    <div class="dc-filter">
+      <i class="ti ti-search" aria-hidden="true"></i>
+      <input type="text" class="dc-filter-input" data-ctx-filter placeholder="{{.}}" aria-label="{{.}}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+      <span class="dc-filter-side">
+        <button type="button" class="dc-filter-clear d-none" data-ctx-filter-clear aria-label="Clear the filter" title="Clear the filter"><i class="ti ti-x" aria-hidden="true"></i></button>
+      </span>
+    </div>
+  </div>
+{{end}}
+
+{{define "ctx_body.gohtml"}}
+  </div>
+  <div class="dc-ctx-body">
+{{end}}
+
+{{define "ctx_end.gohtml"}}
+  </div>
+  <div class="dc-ctx-resize" data-ctx-resize aria-hidden="true"></div>
+</aside>
+{{end}}
+
+{{/* The work surface. work_start opens it with the head and the button that
+     brings the list column up on a phone, the page fills the head, and one of
+     the work_body templates closes the head and opens the body: padded for
+     forms and boards, filling for the surfaces that size themselves (the
+     terminal, the editor). */}}
+{{define "work_start.gohtml"}}
+<main class="dc-work">
+  <div class="dc-work-head">
+{{end}}
+
+{{define "work_body.gohtml"}}
+    {{template "shell_head_tools.gohtml" .}}
+  </div>
+  <div class="dc-work-body dc-work-pad">
+    {{template "flash.gohtml" .}}
+{{end}}
+
+{{define "work_body_fill.gohtml"}}
+    {{template "shell_head_tools.gohtml" .}}
+  </div>
+  <div class="dc-work-body dc-work-fill">
+    {{template "flash.gohtml" .}}
+{{end}}

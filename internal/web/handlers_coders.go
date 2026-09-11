@@ -131,9 +131,8 @@ func (s *Server) handleCoderAttach(c *gin.Context) {
 		return
 	}
 	projectName := s.projects.ProjectNameFor(running.CWD)
-	s.projects.Touch(projectName)
-	s.notifier.MarkTargetRead(running.Identifier)
-	page := s.page(c, pageTitle(running.Name, projectName), "projects")
+	s.terminalFocused(running.Identifier, projectName)
+	page := s.page(c, pageTitle(running.Name, projectName), "terminals")
 	page.HasTabStrip = true
 	c.HTML(http.StatusOK, "coder_attach.gohtml", render.CoderAttachData{
 		Page:            page,

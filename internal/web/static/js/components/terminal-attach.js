@@ -6,463 +6,409 @@ import { fire as fireDialog, isVisible as dialogVisible } from "@dc/dialog";
 
 const TERMINAL_THEMES = {
   dark: {
-    frame: "#0b0f19",
-    theme: {
-      background: "#111827",
-      foreground: "#f9fafb",
-      selectionBackground: "#3b82f6",
-      selectionForeground: "#f9fafb",
-    },
+    background: "#111827",
+    foreground: "#f9fafb",
+    selectionBackground: "#3b82f6",
+    selectionForeground: "#f9fafb",
   },
   light: {
-    frame: "#ffffff",
-    theme: {
-      background: "#ffffff",
-      foreground: "#1f2937",
-      cursor: "#1f2937",
-      cursorAccent: "#ffffff",
-      selectionBackground: "#3b82f6",
-      black: "#000000",
-      red: "#990000",
-      green: "#00a600",
-      yellow: "#999900",
-      blue: "#0000b2",
-      magenta: "#b200b2",
-      cyan: "#00a6b2",
-      white: "#555555",
-      brightBlack: "#666666",
-      brightRed: "#e50000",
-      brightGreen: "#00d900",
-      brightYellow: "#e5e500",
-      brightBlue: "#0000ff",
-      brightMagenta: "#e500e5",
-      brightCyan: "#00e5e5",
-      brightWhite: "#a5a5a5",
-    },
+    background: "#ffffff",
+    foreground: "#1f2937",
+    cursor: "#1f2937",
+    cursorAccent: "#ffffff",
+    selectionBackground: "#3b82f6",
+    black: "#000000",
+    red: "#990000",
+    green: "#00a600",
+    yellow: "#999900",
+    blue: "#0000b2",
+    magenta: "#b200b2",
+    cyan: "#00a6b2",
+    white: "#555555",
+    brightBlack: "#666666",
+    brightRed: "#e50000",
+    brightGreen: "#00d900",
+    brightYellow: "#e5e500",
+    brightBlue: "#0000ff",
+    brightMagenta: "#e500e5",
+    brightCyan: "#00e5e5",
+    brightWhite: "#a5a5a5",
   },
   "solarized-dark": {
-    frame: "#002b36",
-    theme: {
-      background: "#002b36",
-      foreground: "#839496",
-      cursor: "#839496",
-      cursorAccent: "#002b36",
-      selectionBackground: "#073642",
-      selectionForeground: "#93a1a1",
-      black: "#073642",
-      red: "#dc322f",
-      green: "#859900",
-      yellow: "#b58900",
-      blue: "#268bd2",
-      magenta: "#d33682",
-      cyan: "#2aa198",
-      white: "#eee8d5",
-      brightBlack: "#586e75",
-      brightRed: "#cb4b16",
-      brightGreen: "#859900",
-      brightYellow: "#b58900",
-      brightBlue: "#268bd2",
-      brightMagenta: "#6c71c4",
-      brightCyan: "#2aa198",
-      brightWhite: "#fdf6e3",
-    },
+    background: "#002b36",
+    foreground: "#839496",
+    cursor: "#839496",
+    cursorAccent: "#002b36",
+    selectionBackground: "#073642",
+    selectionForeground: "#93a1a1",
+    black: "#073642",
+    red: "#dc322f",
+    green: "#859900",
+    yellow: "#b58900",
+    blue: "#268bd2",
+    magenta: "#d33682",
+    cyan: "#2aa198",
+    white: "#eee8d5",
+    brightBlack: "#586e75",
+    brightRed: "#cb4b16",
+    brightGreen: "#859900",
+    brightYellow: "#b58900",
+    brightBlue: "#268bd2",
+    brightMagenta: "#6c71c4",
+    brightCyan: "#2aa198",
+    brightWhite: "#fdf6e3",
   },
   "solarized-light": {
-    frame: "#fdf6e3",
-    theme: {
-      background: "#fdf6e3",
-      foreground: "#657b83",
-      cursor: "#657b83",
-      cursorAccent: "#fdf6e3",
-      selectionBackground: "#93a1a1",
-      black: "#073642",
-      red: "#dc322f",
-      green: "#859900",
-      yellow: "#b58900",
-      blue: "#268bd2",
-      magenta: "#d33682",
-      cyan: "#2aa198",
-      white: "#586e75",
-      brightBlack: "#93a1a1",
-      brightRed: "#cb4b16",
-      brightGreen: "#859900",
-      brightYellow: "#b58900",
-      brightBlue: "#268bd2",
-      brightMagenta: "#6c71c4",
-      brightCyan: "#2aa198",
-      brightWhite: "#657b83",
-    },
+    background: "#fdf6e3",
+    foreground: "#657b83",
+    cursor: "#657b83",
+    cursorAccent: "#fdf6e3",
+    selectionBackground: "#93a1a1",
+    black: "#073642",
+    red: "#dc322f",
+    green: "#859900",
+    yellow: "#b58900",
+    blue: "#268bd2",
+    magenta: "#d33682",
+    cyan: "#2aa198",
+    white: "#586e75",
+    brightBlack: "#93a1a1",
+    brightRed: "#cb4b16",
+    brightGreen: "#859900",
+    brightYellow: "#b58900",
+    brightBlue: "#268bd2",
+    brightMagenta: "#6c71c4",
+    brightCyan: "#2aa198",
+    brightWhite: "#657b83",
   },
   "gruvbox-dark": {
-    frame: "#282828",
-    theme: {
-      background: "#282828",
-      foreground: "#ebdbb2",
-      cursor: "#ebdbb2",
-      cursorAccent: "#282828",
-      selectionBackground: "#504945",
-      selectionForeground: "#ebdbb2",
-      black: "#282828",
-      red: "#cc241d",
-      green: "#98971a",
-      yellow: "#d79921",
-      blue: "#458588",
-      magenta: "#b16286",
-      cyan: "#689d6a",
-      white: "#a89984",
-      brightBlack: "#928374",
-      brightRed: "#fb4934",
-      brightGreen: "#b8bb26",
-      brightYellow: "#fabd2f",
-      brightBlue: "#83a598",
-      brightMagenta: "#d3869b",
-      brightCyan: "#8ec07c",
-      brightWhite: "#ebdbb2",
-    },
+    background: "#282828",
+    foreground: "#ebdbb2",
+    cursor: "#ebdbb2",
+    cursorAccent: "#282828",
+    selectionBackground: "#504945",
+    selectionForeground: "#ebdbb2",
+    black: "#282828",
+    red: "#cc241d",
+    green: "#98971a",
+    yellow: "#d79921",
+    blue: "#458588",
+    magenta: "#b16286",
+    cyan: "#689d6a",
+    white: "#a89984",
+    brightBlack: "#928374",
+    brightRed: "#fb4934",
+    brightGreen: "#b8bb26",
+    brightYellow: "#fabd2f",
+    brightBlue: "#83a598",
+    brightMagenta: "#d3869b",
+    brightCyan: "#8ec07c",
+    brightWhite: "#ebdbb2",
   },
   "gruvbox-light": {
-    frame: "#fbf1c7",
-    theme: {
-      background: "#fbf1c7",
-      foreground: "#3c3836",
-      cursor: "#3c3836",
-      cursorAccent: "#fbf1c7",
-      selectionBackground: "#d5c4a1",
-      black: "#fbf1c7",
-      red: "#cc241d",
-      green: "#98971a",
-      yellow: "#d79921",
-      blue: "#458588",
-      magenta: "#b16286",
-      cyan: "#689d6a",
-      white: "#7c6f64",
-      brightBlack: "#928374",
-      brightRed: "#9d0006",
-      brightGreen: "#79740e",
-      brightYellow: "#b57614",
-      brightBlue: "#076678",
-      brightMagenta: "#8f3f71",
-      brightCyan: "#427b58",
-      brightWhite: "#3c3836",
-    },
+    background: "#fbf1c7",
+    foreground: "#3c3836",
+    cursor: "#3c3836",
+    cursorAccent: "#fbf1c7",
+    selectionBackground: "#d5c4a1",
+    black: "#fbf1c7",
+    red: "#cc241d",
+    green: "#98971a",
+    yellow: "#d79921",
+    blue: "#458588",
+    magenta: "#b16286",
+    cyan: "#689d6a",
+    white: "#7c6f64",
+    brightBlack: "#928374",
+    brightRed: "#9d0006",
+    brightGreen: "#79740e",
+    brightYellow: "#b57614",
+    brightBlue: "#076678",
+    brightMagenta: "#8f3f71",
+    brightCyan: "#427b58",
+    brightWhite: "#3c3836",
   },
   "catppuccin-mocha": {
-    frame: "#1e1e2e",
-    theme: {
-      background: "#1e1e2e",
-      foreground: "#cdd6f4",
-      cursor: "#f5e0dc",
-      cursorAccent: "#1e1e2e",
-      selectionBackground: "#585b70",
-      selectionForeground: "#cdd6f4",
-      black: "#45475a",
-      red: "#f38ba8",
-      green: "#a6e3a1",
-      yellow: "#f9e2af",
-      blue: "#89b4fa",
-      magenta: "#f5c2e7",
-      cyan: "#94e2d5",
-      white: "#bac2de",
-      brightBlack: "#585b70",
-      brightRed: "#f38ba8",
-      brightGreen: "#a6e3a1",
-      brightYellow: "#f9e2af",
-      brightBlue: "#89b4fa",
-      brightMagenta: "#f5c2e7",
-      brightCyan: "#94e2d5",
-      brightWhite: "#a6adc8",
-    },
+    background: "#1e1e2e",
+    foreground: "#cdd6f4",
+    cursor: "#f5e0dc",
+    cursorAccent: "#1e1e2e",
+    selectionBackground: "#585b70",
+    selectionForeground: "#cdd6f4",
+    black: "#45475a",
+    red: "#f38ba8",
+    green: "#a6e3a1",
+    yellow: "#f9e2af",
+    blue: "#89b4fa",
+    magenta: "#f5c2e7",
+    cyan: "#94e2d5",
+    white: "#bac2de",
+    brightBlack: "#585b70",
+    brightRed: "#f38ba8",
+    brightGreen: "#a6e3a1",
+    brightYellow: "#f9e2af",
+    brightBlue: "#89b4fa",
+    brightMagenta: "#f5c2e7",
+    brightCyan: "#94e2d5",
+    brightWhite: "#a6adc8",
   },
   "catppuccin-latte": {
-    frame: "#eff1f5",
-    theme: {
-      background: "#eff1f5",
-      foreground: "#4c4f69",
-      cursor: "#dc8a78",
-      cursorAccent: "#eff1f5",
-      selectionBackground: "#acb0be",
-      black: "#5c5f77",
-      red: "#d20f39",
-      green: "#40a02b",
-      yellow: "#df8e1d",
-      blue: "#1e66f5",
-      magenta: "#ea76cb",
-      cyan: "#179299",
-      white: "#6c6f85",
-      brightBlack: "#6c6f85",
-      brightRed: "#d20f39",
-      brightGreen: "#40a02b",
-      brightYellow: "#df8e1d",
-      brightBlue: "#1e66f5",
-      brightMagenta: "#ea76cb",
-      brightCyan: "#179299",
-      brightWhite: "#4c4f69",
-    },
+    background: "#eff1f5",
+    foreground: "#4c4f69",
+    cursor: "#dc8a78",
+    cursorAccent: "#eff1f5",
+    selectionBackground: "#acb0be",
+    black: "#5c5f77",
+    red: "#d20f39",
+    green: "#40a02b",
+    yellow: "#df8e1d",
+    blue: "#1e66f5",
+    magenta: "#ea76cb",
+    cyan: "#179299",
+    white: "#6c6f85",
+    brightBlack: "#6c6f85",
+    brightRed: "#d20f39",
+    brightGreen: "#40a02b",
+    brightYellow: "#df8e1d",
+    brightBlue: "#1e66f5",
+    brightMagenta: "#ea76cb",
+    brightCyan: "#179299",
+    brightWhite: "#4c4f69",
   },
   "one-dark": {
-    frame: "#282c34",
-    theme: {
-      background: "#282c34",
-      foreground: "#abb2bf",
-      cursor: "#528bff",
-      cursorAccent: "#282c34",
-      selectionBackground: "#3e4451",
-      selectionForeground: "#abb2bf",
-      black: "#282c34",
-      red: "#e06c75",
-      green: "#98c379",
-      yellow: "#e5c07b",
-      blue: "#61afef",
-      magenta: "#c678dd",
-      cyan: "#56b6c2",
-      white: "#abb2bf",
-      brightBlack: "#5c6370",
-      brightRed: "#e06c75",
-      brightGreen: "#98c379",
-      brightYellow: "#e5c07b",
-      brightBlue: "#61afef",
-      brightMagenta: "#c678dd",
-      brightCyan: "#56b6c2",
-      brightWhite: "#ffffff",
-    },
+    background: "#282c34",
+    foreground: "#abb2bf",
+    cursor: "#528bff",
+    cursorAccent: "#282c34",
+    selectionBackground: "#3e4451",
+    selectionForeground: "#abb2bf",
+    black: "#282c34",
+    red: "#e06c75",
+    green: "#98c379",
+    yellow: "#e5c07b",
+    blue: "#61afef",
+    magenta: "#c678dd",
+    cyan: "#56b6c2",
+    white: "#abb2bf",
+    brightBlack: "#5c6370",
+    brightRed: "#e06c75",
+    brightGreen: "#98c379",
+    brightYellow: "#e5c07b",
+    brightBlue: "#61afef",
+    brightMagenta: "#c678dd",
+    brightCyan: "#56b6c2",
+    brightWhite: "#ffffff",
   },
   "one-light": {
-    frame: "#fafafa",
-    theme: {
-      background: "#fafafa",
-      foreground: "#383a42",
-      cursor: "#526fff",
-      cursorAccent: "#fafafa",
-      selectionBackground: "#e5e5e6",
-      black: "#383a42",
-      red: "#e45649",
-      green: "#50a14f",
-      yellow: "#c18401",
-      blue: "#4078f2",
-      magenta: "#a626a4",
-      cyan: "#0184bc",
-      white: "#696c77",
-      brightBlack: "#a0a1a7",
-      brightRed: "#e45649",
-      brightGreen: "#50a14f",
-      brightYellow: "#c18401",
-      brightBlue: "#4078f2",
-      brightMagenta: "#a626a4",
-      brightCyan: "#0184bc",
-      brightWhite: "#383a42",
-    },
+    background: "#fafafa",
+    foreground: "#383a42",
+    cursor: "#526fff",
+    cursorAccent: "#fafafa",
+    selectionBackground: "#e5e5e6",
+    black: "#383a42",
+    red: "#e45649",
+    green: "#50a14f",
+    yellow: "#c18401",
+    blue: "#4078f2",
+    magenta: "#a626a4",
+    cyan: "#0184bc",
+    white: "#696c77",
+    brightBlack: "#a0a1a7",
+    brightRed: "#e45649",
+    brightGreen: "#50a14f",
+    brightYellow: "#c18401",
+    brightBlue: "#4078f2",
+    brightMagenta: "#a626a4",
+    brightCyan: "#0184bc",
+    brightWhite: "#383a42",
   },
   "tokyonight-dark": {
-    frame: "#1a1b26",
-    theme: {
-      background: "#1a1b26",
-      foreground: "#c0caf5",
-      cursor: "#c0caf5",
-      cursorAccent: "#1a1b26",
-      selectionBackground: "#33467c",
-      selectionForeground: "#c0caf5",
-      black: "#15161e",
-      red: "#f7768e",
-      green: "#9ece6a",
-      yellow: "#e0af68",
-      blue: "#7aa2f7",
-      magenta: "#bb9af7",
-      cyan: "#7dcfff",
-      white: "#a9b1d6",
-      brightBlack: "#414868",
-      brightRed: "#f7768e",
-      brightGreen: "#9ece6a",
-      brightYellow: "#e0af68",
-      brightBlue: "#7aa2f7",
-      brightMagenta: "#bb9af7",
-      brightCyan: "#7dcfff",
-      brightWhite: "#c0caf5",
-    },
+    background: "#1a1b26",
+    foreground: "#c0caf5",
+    cursor: "#c0caf5",
+    cursorAccent: "#1a1b26",
+    selectionBackground: "#33467c",
+    selectionForeground: "#c0caf5",
+    black: "#15161e",
+    red: "#f7768e",
+    green: "#9ece6a",
+    yellow: "#e0af68",
+    blue: "#7aa2f7",
+    magenta: "#bb9af7",
+    cyan: "#7dcfff",
+    white: "#a9b1d6",
+    brightBlack: "#414868",
+    brightRed: "#f7768e",
+    brightGreen: "#9ece6a",
+    brightYellow: "#e0af68",
+    brightBlue: "#7aa2f7",
+    brightMagenta: "#bb9af7",
+    brightCyan: "#7dcfff",
+    brightWhite: "#c0caf5",
   },
   "tokyonight-day": {
-    frame: "#e1e2e7",
-    theme: {
-      background: "#e1e2e7",
-      foreground: "#3760bf",
-      cursor: "#3760bf",
-      cursorAccent: "#e1e2e7",
-      selectionBackground: "#b7c1e3",
-      black: "#b4b5b9",
-      red: "#f52a65",
-      green: "#587539",
-      yellow: "#8c6c3e",
-      blue: "#2e7de9",
-      magenta: "#9854f1",
-      cyan: "#007197",
-      white: "#6172b0",
-      brightBlack: "#a1a6c5",
-      brightRed: "#f52a65",
-      brightGreen: "#587539",
-      brightYellow: "#8c6c3e",
-      brightBlue: "#2e7de9",
-      brightMagenta: "#9854f1",
-      brightCyan: "#007197",
-      brightWhite: "#3760bf",
-    },
+    background: "#e1e2e7",
+    foreground: "#3760bf",
+    cursor: "#3760bf",
+    cursorAccent: "#e1e2e7",
+    selectionBackground: "#b7c1e3",
+    black: "#b4b5b9",
+    red: "#f52a65",
+    green: "#587539",
+    yellow: "#8c6c3e",
+    blue: "#2e7de9",
+    magenta: "#9854f1",
+    cyan: "#007197",
+    white: "#6172b0",
+    brightBlack: "#a1a6c5",
+    brightRed: "#f52a65",
+    brightGreen: "#587539",
+    brightYellow: "#8c6c3e",
+    brightBlue: "#2e7de9",
+    brightMagenta: "#9854f1",
+    brightCyan: "#007197",
+    brightWhite: "#3760bf",
   },
   "everforest-dark": {
-    frame: "#2d353b",
-    theme: {
-      background: "#2d353b",
-      foreground: "#d3c6aa",
-      cursor: "#d3c6aa",
-      cursorAccent: "#2d353b",
-      selectionBackground: "#4f5b58",
-      selectionForeground: "#d3c6aa",
-      black: "#475258",
-      red: "#e67e80",
-      green: "#a7c080",
-      yellow: "#dbbc7f",
-      blue: "#7fbbb3",
-      magenta: "#d699b6",
-      cyan: "#83c092",
-      white: "#d3c6aa",
-      brightBlack: "#5c6a72",
-      brightRed: "#e67e80",
-      brightGreen: "#a7c080",
-      brightYellow: "#dbbc7f",
-      brightBlue: "#7fbbb3",
-      brightMagenta: "#d699b6",
-      brightCyan: "#83c092",
-      brightWhite: "#d3c6aa",
-    },
+    background: "#2d353b",
+    foreground: "#d3c6aa",
+    cursor: "#d3c6aa",
+    cursorAccent: "#2d353b",
+    selectionBackground: "#4f5b58",
+    selectionForeground: "#d3c6aa",
+    black: "#475258",
+    red: "#e67e80",
+    green: "#a7c080",
+    yellow: "#dbbc7f",
+    blue: "#7fbbb3",
+    magenta: "#d699b6",
+    cyan: "#83c092",
+    white: "#d3c6aa",
+    brightBlack: "#5c6a72",
+    brightRed: "#e67e80",
+    brightGreen: "#a7c080",
+    brightYellow: "#dbbc7f",
+    brightBlue: "#7fbbb3",
+    brightMagenta: "#d699b6",
+    brightCyan: "#83c092",
+    brightWhite: "#d3c6aa",
   },
   "everforest-light": {
-    frame: "#fdf6e3",
-    theme: {
-      background: "#fdf6e3",
-      foreground: "#5c6a72",
-      cursor: "#5c6a72",
-      cursorAccent: "#fdf6e3",
-      selectionBackground: "#e0dcc7",
-      black: "#5c6a72",
-      red: "#f85552",
-      green: "#8da101",
-      yellow: "#dfa000",
-      blue: "#3a94c5",
-      magenta: "#df69ba",
-      cyan: "#35a77c",
-      white: "#708089",
-      brightBlack: "#939f91",
-      brightRed: "#f85552",
-      brightGreen: "#8da101",
-      brightYellow: "#dfa000",
-      brightBlue: "#3a94c5",
-      brightMagenta: "#df69ba",
-      brightCyan: "#35a77c",
-      brightWhite: "#5c6a72",
-    },
+    background: "#fdf6e3",
+    foreground: "#5c6a72",
+    cursor: "#5c6a72",
+    cursorAccent: "#fdf6e3",
+    selectionBackground: "#e0dcc7",
+    black: "#5c6a72",
+    red: "#f85552",
+    green: "#8da101",
+    yellow: "#dfa000",
+    blue: "#3a94c5",
+    magenta: "#df69ba",
+    cyan: "#35a77c",
+    white: "#708089",
+    brightBlack: "#939f91",
+    brightRed: "#f85552",
+    brightGreen: "#8da101",
+    brightYellow: "#dfa000",
+    brightBlue: "#3a94c5",
+    brightMagenta: "#df69ba",
+    brightCyan: "#35a77c",
+    brightWhite: "#5c6a72",
   },
   "rosepine-dark": {
-    frame: "#191724",
-    theme: {
-      background: "#191724",
-      foreground: "#e0def4",
-      cursor: "#e0def4",
-      cursorAccent: "#191724",
-      selectionBackground: "#403d52",
-      selectionForeground: "#e0def4",
-      black: "#26233a",
-      red: "#eb6f92",
-      green: "#31748f",
-      yellow: "#f6c177",
-      blue: "#9ccfd8",
-      magenta: "#c4a7e7",
-      cyan: "#ebbcba",
-      white: "#e0def4",
-      brightBlack: "#6e6a86",
-      brightRed: "#eb6f92",
-      brightGreen: "#31748f",
-      brightYellow: "#f6c177",
-      brightBlue: "#9ccfd8",
-      brightMagenta: "#c4a7e7",
-      brightCyan: "#ebbcba",
-      brightWhite: "#e0def4",
-    },
+    background: "#191724",
+    foreground: "#e0def4",
+    cursor: "#e0def4",
+    cursorAccent: "#191724",
+    selectionBackground: "#403d52",
+    selectionForeground: "#e0def4",
+    black: "#26233a",
+    red: "#eb6f92",
+    green: "#31748f",
+    yellow: "#f6c177",
+    blue: "#9ccfd8",
+    magenta: "#c4a7e7",
+    cyan: "#ebbcba",
+    white: "#e0def4",
+    brightBlack: "#6e6a86",
+    brightRed: "#eb6f92",
+    brightGreen: "#31748f",
+    brightYellow: "#f6c177",
+    brightBlue: "#9ccfd8",
+    brightMagenta: "#c4a7e7",
+    brightCyan: "#ebbcba",
+    brightWhite: "#e0def4",
   },
   "rosepine-dawn": {
-    frame: "#faf4ed",
-    theme: {
-      background: "#faf4ed",
-      foreground: "#575279",
-      cursor: "#575279",
-      cursorAccent: "#faf4ed",
-      selectionBackground: "#dfdad9",
-      black: "#f2e9e1",
-      red: "#b4637a",
-      green: "#286983",
-      yellow: "#ea9d34",
-      blue: "#56949f",
-      magenta: "#907aa9",
-      cyan: "#d7827e",
-      white: "#575279",
-      brightBlack: "#9893a5",
-      brightRed: "#b4637a",
-      brightGreen: "#286983",
-      brightYellow: "#ea9d34",
-      brightBlue: "#56949f",
-      brightMagenta: "#907aa9",
-      brightCyan: "#d7827e",
-      brightWhite: "#575279",
-    },
+    background: "#faf4ed",
+    foreground: "#575279",
+    cursor: "#575279",
+    cursorAccent: "#faf4ed",
+    selectionBackground: "#dfdad9",
+    black: "#f2e9e1",
+    red: "#b4637a",
+    green: "#286983",
+    yellow: "#ea9d34",
+    blue: "#56949f",
+    magenta: "#907aa9",
+    cyan: "#d7827e",
+    white: "#575279",
+    brightBlack: "#9893a5",
+    brightRed: "#b4637a",
+    brightGreen: "#286983",
+    brightYellow: "#ea9d34",
+    brightBlue: "#56949f",
+    brightMagenta: "#907aa9",
+    brightCyan: "#d7827e",
+    brightWhite: "#575279",
   },
   "ayu-dark": {
-    frame: "#0d1017",
-    theme: {
-      background: "#0d1017",
-      foreground: "#bfbdb6",
-      cursor: "#e6b450",
-      cursorAccent: "#0d1017",
-      selectionBackground: "#1b3a5b",
-      selectionForeground: "#bfbdb6",
-      black: "#131721",
-      red: "#ea6c73",
-      green: "#7fd962",
-      yellow: "#f9af4f",
-      blue: "#53bdfa",
-      magenta: "#cda1fa",
-      cyan: "#90e1c6",
-      white: "#c7c7c7",
-      brightBlack: "#686868",
-      brightRed: "#f07178",
-      brightGreen: "#aad94c",
-      brightYellow: "#ffb454",
-      brightBlue: "#59c2ff",
-      brightMagenta: "#d2a6ff",
-      brightCyan: "#95e6cb",
-      brightWhite: "#ffffff",
-    },
+    background: "#0d1017",
+    foreground: "#bfbdb6",
+    cursor: "#e6b450",
+    cursorAccent: "#0d1017",
+    selectionBackground: "#1b3a5b",
+    selectionForeground: "#bfbdb6",
+    black: "#131721",
+    red: "#ea6c73",
+    green: "#7fd962",
+    yellow: "#f9af4f",
+    blue: "#53bdfa",
+    magenta: "#cda1fa",
+    cyan: "#90e1c6",
+    white: "#c7c7c7",
+    brightBlack: "#686868",
+    brightRed: "#f07178",
+    brightGreen: "#aad94c",
+    brightYellow: "#ffb454",
+    brightBlue: "#59c2ff",
+    brightMagenta: "#d2a6ff",
+    brightCyan: "#95e6cb",
+    brightWhite: "#ffffff",
   },
   "ayu-light": {
-    frame: "#fcfcfc",
-    theme: {
-      background: "#fcfcfc",
-      foreground: "#5c6166",
-      cursor: "#ffaa33",
-      cursorAccent: "#fcfcfc",
-      selectionBackground: "#d1e4f4",
-      black: "#010101",
-      red: "#f07171",
-      green: "#86b300",
-      yellow: "#f2ae49",
-      blue: "#399ee6",
-      magenta: "#a37acc",
-      cyan: "#4cbf99",
-      white: "#5c6166",
-      brightBlack: "#8a9199",
-      brightRed: "#f07171",
-      brightGreen: "#86b300",
-      brightYellow: "#f2ae49",
-      brightBlue: "#399ee6",
-      brightMagenta: "#a37acc",
-      brightCyan: "#4cbf99",
-      brightWhite: "#5c6166",
-    },
+    background: "#fcfcfc",
+    foreground: "#5c6166",
+    cursor: "#ffaa33",
+    cursorAccent: "#fcfcfc",
+    selectionBackground: "#d1e4f4",
+    black: "#010101",
+    red: "#f07171",
+    green: "#86b300",
+    yellow: "#f2ae49",
+    blue: "#399ee6",
+    magenta: "#a37acc",
+    cyan: "#4cbf99",
+    white: "#5c6166",
+    brightBlack: "#8a9199",
+    brightRed: "#f07171",
+    brightGreen: "#86b300",
+    brightYellow: "#f2ae49",
+    brightBlue: "#399ee6",
+    brightMagenta: "#a37acc",
+    brightCyan: "#4cbf99",
+    brightWhite: "#5c6166",
   },
 };
 
@@ -571,15 +517,19 @@ function initTerminalAttach(host) {
       });
     }
   }, { capture: true });
-  listen(host, "focusin", claimActive);
+  listen(host, "focusin", () => {
+    claimActive();
+    if (interactiveInput) window.requestAnimationFrame(() => followCursor());
+  });
   const streamRefreshButtons = document.querySelectorAll("[data-terminal-refresh]");
 
   const fontSizeSetting = document.querySelector('terminal-setting-select[setting="font-size"]');
-  const rowsSetting = document.querySelector('terminal-setting-select[setting="rows"]');
+  const extraRowsSetting = document.querySelector('terminal-setting-select[setting="extra-rows"]');
   const themeSetting = document.querySelector('terminal-setting-select[setting="theme"]');
 
   const DEFAULT_FONT_SIZE = 14;
-  const DEFAULT_ROWS = 30;
+  const DEFAULT_EXTRA_ROWS = 0;
+  const FALLBACK_ROWS = 24;
   const DEFAULT_THEME = "auto";
   let themeOverride = themeSetting
     ? (get(themeSetting.getAttribute("storage-key") || "", "") || themeSetting.getAttribute("default-value") || DEFAULT_THEME)
@@ -593,7 +543,7 @@ function initTerminalAttach(host) {
   // POST, stream connect), so the session picks up this client's scheme on
   // every path, not only the dedicated POST.
   const themeColors = () => {
-    const t = resolveTheme().theme;
+    const t = resolveTheme();
     return { bg: t.background, fg: t.foreground };
   };
 
@@ -609,17 +559,21 @@ function initTerminalAttach(host) {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
     fontSize: DEFAULT_FONT_SIZE,
     scrollback: 0,
-    theme: resolveTheme().theme,
+    theme: resolveTheme(),
   });
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(terminalElement);
 
+  // The host carries the terminal's own background, not a colour of its own:
+  // the canvas covers whole cells only, so a partial row at the bottom and a
+  // partial column at the right leave the host showing through, and any second
+  // colour would draw an edge there.
   const applyTheme = () => {
     const entry = resolveTheme();
-    term.options.theme = entry.theme;
-    terminalElement.style.background = entry.frame;
-    terminalElement.style.setProperty("--dc-terminal-contrast", entry.theme.foreground);
+    term.options.theme = entry;
+    terminalElement.style.background = entry.background;
+    terminalElement.style.setProperty("--dc-terminal-contrast", entry.foreground);
   };
   // A live theme change (menu, OS flip) has no resize or stream connect to ride,
   // so it pushes the colors itself. On mount and reconnect the stream connect
@@ -692,51 +646,20 @@ function initTerminalAttach(host) {
     }
     return null;
   };
-  const visibleBand = () => {
-    let top = 0;
-    let bottom = window.innerHeight;
-    const tabs = document.querySelector("terminal-tabs");
-    if (tabs && tabs.offsetHeight > 0) {
-      const position = window.getComputedStyle(tabs).position;
-      if (position === "sticky" || position === "fixed") {
-        top = tabs.offsetHeight;
-      }
-    }
-    const head = host.closest(".attach-split-pane")?.querySelector("[data-pane-head]");
-    if (head && head.offsetHeight > 0) {
-      const position = window.getComputedStyle(head).position;
-      if (position === "sticky" || position === "fixed") {
-        top += head.offsetHeight;
-      }
-    }
-    for (const footer of document.querySelectorAll(".attach-footer")) {
-      if (footer.offsetHeight > 0) {
-        const position = window.getComputedStyle(footer).position;
-        if (position === "sticky" || position === "fixed") {
-          bottom = window.innerHeight - footer.offsetHeight;
-        }
-        break;
-      }
-    }
-    return { top, bottom };
-  };
   const isTerminalFocused = () => Boolean(terminalElement.querySelector(".xterm.focus"));
   const followCursor = () => {
     const cursor = cursorMetrics();
     if (!cursor) {
       return;
     }
-    const band = visibleBand();
+    const band = terminalElement.getBoundingClientRect();
+    if (cursor.top >= band.top && cursor.bottom <= band.bottom) {
+      return;
+    }
     const margin = cursor.cell * 2;
-    let delta = 0;
-    if (cursor.bottom + margin > band.bottom) {
-      delta = cursor.bottom + margin - band.bottom;
-    } else if (cursor.top - margin < band.top) {
-      delta = cursor.top - margin - band.top;
-    }
-    if (delta !== 0) {
-      window.scrollBy(0, delta);
-    }
+    terminalElement.scrollTop += cursor.bottom > band.bottom
+      ? cursor.bottom + margin - band.bottom
+      : cursor.top - margin - band.top;
   };
   let followScheduled = false;
   term.onCursorMove(() => {
@@ -891,7 +814,17 @@ function initTerminalAttach(host) {
     if (interactiveInput) {
       listen(terminalElement, "wheel", (event) => {
         if (event.ctrlKey) {
-          return; // leave pinch-zoom to the browser
+          return;
+        }
+        if (event.shiftKey) {
+          event.preventDefault();
+          event.stopPropagation();
+          const screen = terminalElement.querySelector(".xterm-screen");
+          const unit = event.deltaMode === 1
+            ? (screen && term.rows >= 1 ? screen.clientHeight / term.rows : 17)
+            : event.deltaMode === 2 ? terminalElement.clientHeight : 1;
+          terminalElement.scrollTop += (event.deltaY || event.deltaX) * unit;
+          return;
         }
         event.preventDefault();
         event.stopPropagation();
@@ -1022,7 +955,7 @@ function initTerminalAttach(host) {
       cursorInput.style.width = cellWidth + "px";
       cursorInput.style.height = cellHeight + "px";
       cursorInput.style.left = term.buffer.active.cursorX * cellWidth + "px";
-      cursorInput.style.top = (term.buffer.active.cursorY + 2) * cellHeight + "px";
+      cursorInput.style.top = Math.min(term.buffer.active.cursorY + 2, term.rows - 1) * cellHeight + "px";
       cursorInput.style.scrollMarginBottom = (footer ? footer.offsetHeight : 0) + "px";
     };
     placeCursorInput();
@@ -1253,65 +1186,15 @@ function initTerminalAttach(host) {
       || fallback);
   };
   let fontSizeOverride = settingValue(fontSizeSetting, DEFAULT_FONT_SIZE);
-  let rowsOverride = settingValue(rowsSetting, DEFAULT_ROWS);
+  // Every terminal fits the box it is given, a solo page, a split pane, the
+  // editor's panel and a phone alike. The extra rows setting adds rows below
+  // the fit; the host then scrolls for them on its own.
+  let extraRows = settingValue(extraRowsSetting, DEFAULT_EXTRA_ROWS);
+  terminalElement.classList.toggle("attach-terminal-extra", extraRows > 0);
   let lastClientCols = 0;
-  let lastClientRows = rowsOverride;
+  let lastFitRows = 0;
+  let asked = { cols: 0, rows: 0 };
   let measureElementObserver = null;
-
-  // A pane of a desktop split view takes its rows from the box it is given,
-  // like fullscreen and the editor's panel do: the rows setting is the
-  // column's height budget from here on, and stacked panes share it. On a
-  // coarse pointer the split shows one pane like a solo page, so the setting
-  // keeps applying there.
-  const splitPane = !embedded && interactiveInput && Boolean(host.closest("terminal-split"));
-  // The split container needs one terminal line in pixels to turn the rows
-  // setting into its height. Only a rendered terminal knows it, so every
-  // island reports it after a layout; the value is the font's, not this
-  // pane's, so whoever hears it first can size the whole page.
-  const reportCellHeight = () => {
-    const screen = terminalElement.querySelector(".xterm-screen");
-    if (!screen || term.rows < 1) return;
-    const cell = screen.getBoundingClientRect().height / term.rows;
-    if (!(cell > 0)) return;
-    // On the element as well as in the event: the islands upgrade before or
-    // after the split around them (every custom element is imported lazily),
-    // and whoever comes second has to be able to read what the first measured.
-    host.dataset.cellHeight = String(cell);
-    host.dispatchEvent(new CustomEvent("dc:terminal-metrics", {
-      bubbles: true,
-      detail: { id: terminalId, cell, fontSize: fontSizeOverride },
-    }));
-  };
-
-  let fullscreen = !embedded && interactiveInput && get("dc-terminal-fullscreen", "") === "1";
-  const fullscreenButtons = document.querySelectorAll("[data-terminal-fullscreen]");
-  const paintFullscreen = () => {
-    if (embedded) return;
-    document.documentElement.classList.toggle("dc-terminal-fullscreen", fullscreen);
-    const label = fullscreen ? "Exit fullscreen" : "Fullscreen";
-    for (const button of fullscreenButtons) {
-      button.setAttribute("aria-pressed", fullscreen ? "true" : "false");
-      button.setAttribute("aria-label", label);
-      button.title = label + " (Ctrl+Shift+F)";
-      const icon = button.querySelector("i");
-      if (icon) icon.className = (fullscreen ? "ti ti-minimize" : "ti ti-maximize") + " me-2";
-      const text = button.querySelector("[data-terminal-fullscreen-label]");
-      if (text) text.textContent = label;
-    }
-  };
-  const setFullscreen = (on) => {
-    if (!interactiveInput || embedded || fullscreen === on) {
-      return;
-    }
-    fullscreen = on;
-    set("dc-terminal-fullscreen", on ? "1" : "");
-    paintFullscreen();
-    scheduleResize();
-    if (host.hasAttribute("active")) {
-      term.focus();
-    }
-  };
-  paintFullscreen();
 
   // xterm appends offscreen measurement <div>s to document.body; reparent them
   // into the terminal so they inherit its font and measure cells correctly.
@@ -1351,15 +1234,12 @@ function initTerminalAttach(host) {
   const resolveClientSize = async () => {
     term.options.fontSize = fontSizeOverride;
     await waitForLayout();
-    reportCellHeight();
     const dims = fitAddon.proposeDimensions();
     const cols = Math.max(2, (dims && dims.cols) ? dims.cols : lastClientCols || term.cols || 2);
-    const rows = (fullscreen || embedded || splitPane)
-      ? Math.max(2, (dims && dims.rows) ? dims.rows : lastClientRows || DEFAULT_ROWS)
-      : Math.max(2, rowsOverride || lastClientRows || DEFAULT_ROWS);
+    const fit = (dims && dims.rows) ? dims.rows : lastFitRows || FALLBACK_ROWS;
     lastClientCols = cols;
-    lastClientRows = rows;
-    return { cols, rows };
+    lastFitRows = fit;
+    return { cols, rows: Math.max(2, fit + extraRows) };
   };
 
   // ---- Stream ----------------------------------------------------------------
@@ -1414,6 +1294,12 @@ function initTerminalAttach(host) {
     return bytes;
   };
 
+  let cursorRevealed = false;
+  const revealCursorOnce = () => {
+    if (cursorRevealed || !interactiveInput) return;
+    cursorRevealed = true;
+    window.requestAnimationFrame(() => followCursor());
+  };
   const writeChunk = (encodedChunk, reset) => {
     const shouldFollow = followOutput;
     if (reset) {
@@ -1427,6 +1313,7 @@ function initTerminalAttach(host) {
       if (reset) {
         onInitialSnapshot?.();
         followAfterSettingSnapshot();
+        revealCursorOnce();
       }
       return;
     }
@@ -1437,6 +1324,7 @@ function initTerminalAttach(host) {
       if (reset) {
         onInitialSnapshot?.();
         followAfterSettingSnapshot();
+        revealCursorOnce();
       }
     });
   };
@@ -1502,6 +1390,7 @@ function initTerminalAttach(host) {
       const size = JSON.parse(event.data);
       if (size.cols && size.rows && (term.cols !== size.cols || term.rows !== size.rows)) {
         term.resize(size.cols, size.rows);
+        keepRows(size);
       }
       // The program's modes from tmux (covers attaching to an already running
       // session, where we never saw the enable sequences); xterm's own parser
@@ -1556,11 +1445,15 @@ function initTerminalAttach(host) {
     };
   };
 
-  const performResize = async () => {
+  const performResize = async (cap = null) => {
     if (embedded && host.clientWidth === 0) {
       return;
     }
-    const { cols, rows } = await resolveClientSize();
+    const fit = await resolveClientSize();
+    const cols = cap?.cols || fit.cols;
+    const rows = cap ? Math.min(fit.rows, cap.rows) : fit.rows;
+    if (cap && cols === asked.cols && rows === asked.rows) return;
+    asked = { cols, rows };
     const hadSource = Boolean(source);
     if (term.cols !== cols || term.rows !== rows) {
       term.resize(cols, rows);
@@ -1590,15 +1483,19 @@ function initTerminalAttach(host) {
     }
   };
 
-  const scheduleResize = () => {
+  let pendingCap = null;
+  const scheduleResize = (cap = null) => {
+    pendingCap = cap;
     if (resizeTimer !== null) {
       window.clearTimeout(resizeTimer);
     }
     resizeTimer = window.setTimeout(() => {
       resizeTimer = null;
+      const next = pendingCap;
+      pendingCap = null;
       // Best-effort: a failed resize means the session is gone, which the stream
       // itself reports — no need for a second toast on every window resize.
-      void performResize().catch(() => {}).finally(() => {
+      void performResize(next).catch(() => {}).finally(() => {
         if (isTerminalFocused()) {
           followCursor();
         }
@@ -1608,10 +1505,19 @@ function initTerminalAttach(host) {
 
   const refreshStream = async () => {
     const { cols, rows } = await resolveClientSize();
+    asked = { cols, rows };
     if (term.cols !== cols || term.rows !== rows) {
       term.resize(cols, rows);
     }
     connectStream(cols, rows, true);
+  };
+
+  const keepRows = (size) => {
+    if (!lastFitRows) return;
+    const rows = Math.max(2, lastFitRows + extraRows);
+    const wide = interactiveInput && size.cols > lastClientCols;
+    if (size.rows <= rows && !wide) return;
+    scheduleResize({ cols: interactiveInput ? 0 : size.cols, rows: Math.min(size.rows, rows) });
   };
 
   // ---- Wiring ----------------------------------------------------------------
@@ -1630,51 +1536,20 @@ function initTerminalAttach(host) {
     });
   }
 
-  for (const button of fullscreenButtons) {
-    listen(button, "click", (event) => {
-      event.preventDefault();
-      const toggle = button.closest(".dropdown")?.querySelector('[data-bs-toggle="dropdown"]');
-      if (toggle) window.bootstrap?.Dropdown.getInstance(toggle)?.hide();
-      setFullscreen(!fullscreen);
-    });
-  }
-  if (interactiveInput && !embedded) {
-    listen(document, "keydown", (event) => {
-      if ((event.key === "F" || event.key === "f" || event.key === "Enter") && (event.ctrlKey || event.metaKey)
-        && event.shiftKey && !event.altKey && !event.repeat) {
-        event.preventDefault();
-        event.stopPropagation();
-        setFullscreen(!fullscreen);
-      }
-    }, { capture: true });
-    listen(document, "dblclick", (event) => {
-      if (event.target.closest("[data-tabs-strip]") && !event.target.closest(".terminal-tab")) {
-        setFullscreen(!fullscreen);
-      }
-    });
-  }
-
-  listen(window, "resize", scheduleResize);
+  listen(window, "resize", () => scheduleResize());
   let observedWidth = 0;
   let observedHeight = 0;
   const widthObserver = new ResizeObserver(() => {
+    // The rows come from the box, so the height is as much a resize as the
+    // width is. The mount's own first measurement is not one, an embedded
+    // island starts on it.
     const width = host.clientWidth;
-    if (embedded || splitPane) {
-      // Both take their rows from their box, so the height is as much a
-      // resize as the width is. The mount's own first measurement is not one:
-      // an embedded island starts on it, a split pane already resized itself.
-      const height = host.clientHeight;
-      if (width === observedWidth && height === observedHeight) return;
-      const initial = observedWidth === 0 && observedHeight === 0;
-      observedWidth = width;
-      observedHeight = height;
-      if (width > 0 && !(initial && splitPane)) scheduleResize();
-      return;
-    }
-    if (width === observedWidth) return;
-    const initial = observedWidth === 0;
+    const height = host.clientHeight;
+    if (width === observedWidth && height === observedHeight) return;
+    const initial = observedWidth === 0 && observedHeight === 0;
     observedWidth = width;
-    if (!initial) scheduleResize();
+    observedHeight = height;
+    if (width > 0 && (!initial || embedded)) scheduleResize();
   });
   widthObserver.observe(host);
   listen(document, "dc:theme", () => {
@@ -1692,8 +1567,9 @@ function initTerminalAttach(host) {
     }
     if (event.detail?.setting === "font-size") {
       fontSizeOverride = Number(event.detail.value) || DEFAULT_FONT_SIZE;
-    } else if (event.detail?.setting === "rows") {
-      rowsOverride = Number(event.detail.value) || DEFAULT_ROWS;
+    } else if (event.detail?.setting === "extra-rows") {
+      extraRows = Number(event.detail.value) || DEFAULT_EXTRA_ROWS;
+      terminalElement.classList.toggle("attach-terminal-extra", extraRows > 0);
     } else {
       return;
     }
@@ -1731,7 +1607,6 @@ function initTerminalAttach(host) {
     widthObserver.disconnect();
     if (resizeTimer !== null) window.clearTimeout(resizeTimer);
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
-    document.documentElement.classList.remove("dc-terminal-fullscreen");
     term.dispose();
   };
 }

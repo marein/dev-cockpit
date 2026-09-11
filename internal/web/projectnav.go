@@ -27,7 +27,7 @@ func (s *Server) projectBrowser(currentPath string) []render.ProjectNav {
 		nav := render.ProjectNav{
 			Name:         p.Name,
 			Path:         p.Path,
-			EditorURL:    "/projects/" + url.PathEscape(p.Name) + "/editor?return=" + ret,
+			EditorURL:    "/projects/" + url.PathEscape(p.Name) + "/editor",
 			NewCoderURL:  "/coders/new?project=" + url.QueryEscape(p.Name) + "&return=" + ret,
 			NewShellURL:  "/shells/new?project=" + url.QueryEscape(p.Name) + "&return=" + ret,
 			LastUsedUnix: p.LastUsedUnix,

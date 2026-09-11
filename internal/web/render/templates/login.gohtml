@@ -1,8 +1,8 @@
 {{define "login.gohtml"}}
 {{template "login_start.gohtml" .}}
-<div class="card card-md">
+<div class="card">
   <div class="card-body">
-    <h2 class="h2 text-center mb-4">Login to your account</h2>
+    <h2 class="h3 text-center mb-4">Login to your account</h2>
     <form method="post" action="/login" data-no-pe>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <input type="hidden" name="next" value="{{.Next}}">
@@ -14,11 +14,11 @@
         <label class="form-label required" for="password">Password</label>
         <input class="form-control" id="password" name="password" type="password" required autocomplete="current-password" placeholder="Your password">
       </div>
-      <div class="form-footer">
+      <div class="mt-4">
         <button type="submit" class="btn btn-primary w-100">Sign in</button>
       </div>
     </form>
-    </div>
   </div>
+</div>
 {{template "login_end.gohtml" .}}
 {{end}}

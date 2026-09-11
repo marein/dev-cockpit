@@ -104,7 +104,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
     // This self-contained runner creates its project before exercising the list.
     await run("base custom elements upgraded on /projects", async () => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-      const missing = await L.waitUpgraded(page, ["dc-quicknav", "dc-update-check", "dc-project-list"], 8000);
+      const missing = await L.waitUpgraded(page, ["dc-ctx-sheet", "dc-update-check", "dc-project-list"], 8000);
       assert(missing.length === 0, `not upgraded: ${missing}`);
     });
 
@@ -257,6 +257,10 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       // timer-opened menu, so this checks the coordinate handling only.
       await sleep(700);
       const chip = page.locator(`#project-${project} [data-chip]:not(.d-none)`).first();
+      // A finger rests on a chip it can see: the work column scrolls the row
+      // into view first, the way the page did before the column scrolled.
+      await chip.scrollIntoViewIfNeeded();
+      await sleep(200);
       const box = await chip.boundingBox();
       await chip.evaluate((el) => {
         el.dispatchEvent(new MouseEvent("contextmenu", {
@@ -805,7 +809,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await page.click("#branch");
       await page.fill("#branch", "zzz");
       await sleep(500);
-      await page.click("h2.page-title");
+      await page.click(".dc-work-head h1, .dc-work-head .dc-work-title, .dc-ctx-title");
       await sleep(300);
       assert(await page.inputValue("#branch") === "only/on-remote", "the field kept a query instead of the choice");
     });
@@ -1016,6 +1020,11 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
         await page.click(`[data-project-sort-option="${mode}"]`); await sleep(300);
         const g = await groupOf(source);
         assert(contiguous(g), `${mode}: the worktrees left their main: ${JSON.stringify(g.kids)} after ${g.main}`);
+        const order = await page.evaluate(() => ({
+          board: [...document.querySelectorAll(".projects-card [data-project-name]")].map((el) => el.dataset.projectName),
+          index: [...document.querySelectorAll("[data-project-index] [data-index-project]")].map((el) => el.dataset.indexProject),
+        }));
+        assert(JSON.stringify(order.index) === JSON.stringify(order.board), `${mode}: the index sorts unlike the board: ${order.index.join(",")} vs ${order.board.join(",")}`);
       }
     });
 
@@ -1108,7 +1117,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       const row = html.indexOf(`id="project-${source}"`);
       const start = html.indexOf("data-worktrees-toggle", row);
       const badge = row >= 0 && start >= 0 ? html.slice(start, html.indexOf("</button>", start)) : "";
-      assert(/status-blue" data-notify-project-dot/.test(badge), `a load does not render the badge's dot: ${JSON.stringify(badge)}`);
+      assert(/status-blue dc-news-dot" data-notify-project-dot/.test(badge), `a load does not render the badge's dot: ${JSON.stringify(badge)}`);
       await page.click(`#project-${source} [data-worktrees-toggle]`);
       await page.waitForSelector(`#project-${wt}`, { state: "visible", timeout: 4000 });
       assert((await shown(badgeDot)) === false && (await news(badgeDot)) === true, "the open group's badge still wears the dot");
@@ -1135,11 +1144,11 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert((await shown(badgeDot)) === false && (await news(rowDot)) === false, "the read news still lights a dot");
     });
 
-    // Waiting on this page has one look: the card's own line, the same the
-    // background refresh and the quick nav show. The chips are no `.btn`, so
-    // they never wear the button spinner, which on a pill leaves an empty shape
-    // with a spinner wherever the nearest positioned ancestor happens to be.
-    await run("starting a shell from a chip shows the card's line, and the chip goes dead", async () => {
+    // Waiting on this page shows no line and no spinner: the chips are no
+    // `.btn`, so they never wear the button spinner, which on a pill leaves an
+    // empty shape with a spinner wherever the nearest positioned ancestor
+    // happens to be. The chip only goes dead until the answer lands.
+    await run("starting a shell from a chip shows no line, and the chip goes dead", async () => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(page);
       // The create is held back, or the wait is over before it can be read.
@@ -1155,13 +1164,12 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
           const card = document.querySelector(".projects-card");
           const button = document.querySelector(`#project-${name} form[action="/shells/new"] button`);
           return {
-            bars: document.querySelectorAll(".projects-card > .dc-loading-bar").length,
-            onTop: card.firstElementChild?.classList.contains("dc-loading-bar"),
+            bars: card.querySelectorAll(".dc-loading-bar").length,
             spinner: button?.classList.contains("btn-loading"),
             dead: button?.disabled,
           };
         }, project);
-        assert(during.bars === 1 && during.onTop, `the card shows no line: ${JSON.stringify(during)}`);
+        assert(during.bars === 0, `the card shows a line: ${JSON.stringify(during)}`);
         assert(during.spinner === false, `the chip wears the button spinner: ${JSON.stringify(during)}`);
         assert(during.dead === true, "the chip stays clickable while it works");
         await page.waitForURL(/\/shells\/(?!new)[^/]+$/, { timeout: 20000 });
@@ -1287,7 +1295,13 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await target.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(target);
       assert((await L.waitUpgraded(target, ["dc-form-modal"], 8000)).length === 0, "dc-form-modal not upgraded");
-      await target.click('a[href="/projects/new"]');
+      // The create button lives in the list column, which a phone shows as a
+      // sheet on demand.
+      if (await target.locator(".dc-tabbar").isVisible()) {
+        await target.click('.dc-tabbar button[data-ctx-area="projects"]');
+        await target.waitForSelector("dc-ctx-sheet:not([hidden]) a[href='/projects/new']", { timeout: 8000 });
+      }
+      await target.click('a[href="/projects/new"]:visible');
       await target.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
       await sleep(600);
       await target.selectOption('[data-form-modal] select[name="create"]', `worktree:${asker}`);
@@ -1418,10 +1432,10 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       const behind = await gap("master..origin/master");
       const commits = (n) => (n === 1 ? "1 commit" : `${n} commits`);
       let distance;
-      if (!ahead && !behind) distance = '"master" is up to date with "origin/master".';
-      else if (!behind) distance = `"master" is ${commits(ahead)} ahead of "origin/master".`;
-      else if (!ahead) distance = `"master" is ${commits(behind)} behind "origin/master".`;
-      else distance = `"master" has diverged from "origin/master": ${commits(ahead)} ahead, ${commits(behind)} behind.`;
+      if (!ahead && !behind) distance = 'master is up to date with origin/master.';
+      else if (!behind) distance = `master is ${commits(ahead)} ahead of origin/master.`;
+      else if (!ahead) distance = `master is ${commits(behind)} behind origin/master.`;
+      else distance = `master has diverged from origin/master: ${commits(ahead)} ahead, ${commits(behind)} behind.`;
 
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(`#project-${source} [data-git-project-menu]`, { state: "visible", timeout: 8000 });
@@ -1440,7 +1454,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
         await page.unroute("**/fetch");
       }
       const text = (await page.textContent('.dc-toast:has-text("Fetched")')).replace(/\s+/g, " ").trim();
-      assert(text === `Fetched "${source}". ${distance}`, `the toast reads "${text}", want "Fetched \"${source}\". ${distance}"`);
+      assert(text === `Fetched ${source}. ${distance}`, `the toast reads "${text}", want "Fetched ${source}. ${distance}"`);
       assert(page.url() === before, `the fetch navigated away: ${page.url()}`);
       assert(await row.evaluate((el) => el.isConnected), "the row was re-rendered for a toast");
       assert((await page.locator(`#project-${source} .alert`).count()) === 0, "a flash stands on the row beside the toast");
@@ -1455,7 +1469,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await gitMenu(solo, "Fetch");
       await page.waitForSelector('.dc-toast:has-text("Nothing to fetch")', { state: "visible", timeout: 20000 });
       const none = (await page.textContent('.dc-toast:has-text("Nothing to fetch")')).replace(/\s+/g, " ").trim();
-      assert(none === `Nothing to fetch, "${solo}" has no remote.`, `a repository without a remote reads "${none}"`);
+      assert(none === `Nothing to fetch, ${solo} has no remote.`, `a repository without a remote reads "${none}"`);
 
       await git(sourcePath, ["remote", "set-url", "origin", "/nonexistent/repository.git"]);
       try {
@@ -1492,9 +1506,6 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
         assert(!(await shown("[data-editor-tree]")), `${label}: the file tree still stands beside the ${view} view`);
         const other = view === "commit" ? "[data-editor-revdiff]" : "[data-editor-commit]";
         assert(!(await shown(other)), `${label}: the other view is open as well`);
-        // The way back is the row the link came from.
-        const back = await page.getAttribute(`a[href="/projects#project-${source}"]`, "href");
-        assert(back, `${label}: the editor lost its way back to the row`);
       }
     });
 
@@ -1527,6 +1538,44 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert(fit.overflow <= 0, `the row sprang the page by ${fit.overflow}px`);
       await mp.keyboard.press("Escape");
       await mp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+    });
+
+    await run("the list column remembers its width and its scroll position per area", async () => {
+      const filler = [];
+      for (let i = 0; i < 8; i += 1) { const name = `zzfill-${tag.slice(-4)}-${i}`; await L.createProject(page, name); filler.push(name); }
+      try {
+        await page.setViewportSize({ width: 1440, height: 360 });
+        await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector("[data-ctx-resize]", { state: "attached", timeout: 8000 });
+        const width = () => page.evaluate(() => Math.round(document.querySelector(".dc-app > .dc-ctx").getBoundingClientRect().width));
+        const before = await width();
+        const handle = await page.locator("[data-ctx-resize]").boundingBox();
+        await page.mouse.move(handle.x + handle.width / 2, handle.y + 150);
+        await page.mouse.down();
+        await page.mouse.move(handle.x + handle.width / 2 + 120, handle.y + 150, { steps: 6 });
+        await page.mouse.up();
+        const wider = await width();
+        assert(wider >= before + 100, `the drag did not widen the column: ${before} -> ${wider}`);
+        assert(await page.evaluate(() => localStorage.getItem("dc-ctx-width:projects")) === String(wider), "the width is not stored per area");
+        const scrolled = await page.evaluate(() => { const b = document.querySelector(".dc-app > .dc-ctx .dc-ctx-body"); b.scrollTop = 80; return b.scrollTop; });
+        assert(scrolled === 80, `the list column does not scroll in a short window (${scrolled})`);
+        await sleep(400);
+        await page.goto(`${BASE}/settings/general`, { waitUntil: "domcontentloaded" });
+        await sleep(300);
+        assert((await width()) === before, "the settings column took the projects width");
+        await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector("[data-ctx-resize]", { state: "attached", timeout: 8000 });
+        await sleep(300);
+        assert((await width()) === wider, `the width did not come back: ${await width()}`);
+        const restored = await page.evaluate(() => document.querySelector(".dc-app > .dc-ctx .dc-ctx-body").scrollTop);
+        assert(Math.abs(restored - scrolled) <= 2, `the scroll position did not come back: ${restored} vs ${scrolled}`);
+        await page.dblclick("[data-ctx-resize]");
+        assert((await width()) === before, "a double click did not put the default width back");
+      } finally {
+        await page.evaluate(() => { localStorage.removeItem("dc-ctx-width:projects"); localStorage.removeItem("dc-ctx-scroll:projects"); });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        for (const name of filler) await L.deleteProject(page, name).catch(() => {});
+      }
     });
 
     await run("delete project shows a toast and removes the card without a redirect", async () => {

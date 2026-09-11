@@ -1,7 +1,6 @@
 import { createRepeater } from "@dc/repeater";
 import { notifyError } from "@dc/toast";
 import { postJSON, ensureOk } from "@dc/http";
-import { jumpTextEdge } from "@dc/dom";
 
 function initTerminalInput(host) {
   const inputUrl = host.getAttribute("input-url");
@@ -49,12 +48,8 @@ function initTerminalInput(host) {
       handler(event);
     }
   };
-  const promptModalElement = document.getElementById("terminal-prompt-modal");
-  const promptModalOpenButtons = document.querySelectorAll("[data-terminal-prompt-modal-open]");
-  const promptModalForm = document.getElementById("terminal-prompt-modal-form");
-  const promptModalTextarea = document.getElementById("terminal-prompt-modal-text");
   const controlButtons = document.querySelectorAll("[data-terminal-control]");
-  const ctrlToggle = document.querySelector("[data-shell-ctrl]");
+  const ctrlToggle = document.querySelector(`[data-terminal-footer="${terminalId}"] [data-shell-ctrl]`) || document.querySelector("[data-shell-ctrl]");
 
   let ctrlArmed = false;
   const setCtrlArmed = (armed) => {
@@ -75,7 +70,7 @@ function initTerminalInput(host) {
       // the tap handler so the on-screen keyboard opens (iOS requires the focus
       // inside the user gesture).
       if (ctrlArmed) {
-        document.getElementById("terminal-cursor-input")?.focus();
+        (document.querySelector(`terminal-attach[terminal-id="${terminalId}"] #terminal-cursor-input`) || document.getElementById("terminal-cursor-input"))?.focus();
       }
     });
   }
@@ -249,48 +244,6 @@ function initTerminalInput(host) {
     }));
   };
   bindInputs();
-
-  if (promptModalElement && promptModalTextarea) {
-    listen(promptModalElement, "shown.bs.modal", () => {
-      promptModalTextarea.focus();
-      promptModalTextarea.select();
-    });
-    listen(promptModalElement, "hidden.bs.modal", () => {
-      promptModalTextarea.value = "";
-    });
-  }
-
-  for (const button of promptModalOpenButtons) {
-    listen(button, "click", () => {
-      window.setTimeout(() => {
-        promptModalTextarea?.focus();
-      }, 0);
-    });
-  }
-
-  listen(promptModalForm, "submit", (event) => {
-    event.preventDefault();
-    if (!isActive()) {
-      return;
-    }
-    const prompt = promptModalTextarea?.value ?? "";
-    if (prompt === "") {
-      promptModalTextarea?.focus();
-      return;
-    }
-    void sendTerminalInput({ prompt });
-    if (promptModalElement) {
-      window.bootstrap?.Modal.getOrCreateInstance(promptModalElement).hide();
-    }
-  });
-
-  listen(promptModalTextarea, "keydown", (event) => {
-    if (jumpTextEdge(event, promptModalTextarea)) return;
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      promptModalForm?.requestSubmit();
-    }
-  });
 
   for (const button of controlButtons) {
     const control = button.dataset.terminalControl;

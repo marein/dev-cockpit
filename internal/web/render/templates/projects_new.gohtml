@@ -1,13 +1,13 @@
 {{define "projects_new.gohtml"}}
 {{template "app_start.gohtml" .}}
-<div class="page-header d-print-none mb-3">
-  <div class="page-pretitle">
-    <a href="/projects" class="link-secondary text-decoration-none"><i class="ti ti-arrow-left me-1"></i>Projects</a>
+{{template "work_start.gohtml" .}}
+<a class="btn btn-icon btn-ghost-secondary" href="/projects" aria-label="Back" title="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+<h1 class="dc-work-title">Create project</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow dc-form-width">
+  <div class="card">
+    {{template "projects_new_form.gohtml" .}}
   </div>
-  <h2 class="page-title">Create project</h2>
-</div>
-<div class="card">
-  {{template "projects_new_form.gohtml" .}}
 </div>
 {{template "app_end.gohtml" .}}
 {{end}}
@@ -88,12 +88,7 @@
       </div>
     </div>
     {{else}}
-    <div class="alert alert-warning" role="alert">
-      <div class="d-flex">
-        <i class="ti ti-alert-circle me-2 fs-3"></i>
-        <div class="text-break min-w-0">"{{.Source}}" has no branch yet, so there is nothing a worktree could stand on. Make a commit in it first.</div>
-      </div>
-    </div>
+    {{template "notice.gohtml" (dict "Level" "warning" "Message" (printf "\"%s\" has no branch yet, so there is nothing a worktree could stand on. Make a commit in it first." .Source) "Dismiss" false)}}
     {{end}}
     {{end}}
     <div class="mb-0">

@@ -21,6 +21,7 @@ type SkillsListData struct {
 // SkillsFormData is the model for create/edit skill forms.
 type SkillsFormData struct {
 	Page
+	SettingsNav  SettingsNav
 	Base         string // canonical coder URL prefix, "/settings/coders/<id>"
 	IsEdit       bool
 	OriginalID   string

@@ -6,7 +6,7 @@ import (
 )
 
 // DocsData feeds the documentation page: one intro line plus the topics,
-// each rendered as a collapsible panel of title/description rows.
+// each rendered as a section of title/description rows, listed in the column beside them.
 type DocsData struct {
 	Page
 	Lead   string
@@ -76,7 +76,7 @@ func (i DocsItem) HasKeys() bool { return len(i.Keys) > 0 }
 func (t DocsTopic) Count() int { return len(t.Items) }
 
 // DocsLead is the note above the topics.
-const DocsLead = "The whole app is light or dark: by default it follows the OS, the theme switcher in the header (on a phone in the navigation menu) forces one. Shortcuts use Ctrl; where supported, Cmd (on Mac) works too. Some shortcuts are reserved by the browser and only work in the installed web app. Where the desktop right-clicks for a menu, touch long-presses, and scrolling cancels the press."
+const DocsLead = "The whole app is light or dark: by default it follows the OS, the theme button at the foot of the rail (on a phone in the menu at the end of the page head) shows the mode in force, and every click moves to the next one: light, dark, follow the OS. Shortcuts use Ctrl; where supported, Cmd (on Mac) works too. Some shortcuts are reserved by the browser and only work in the installed web app. Where the desktop right-clicks for a menu, touch long-presses, and scrolling cancels the press."
 
 // DocsTopics returns the documentation content.
 func DocsTopics() []DocsTopic {
@@ -88,24 +88,18 @@ func DocsTopics() []DocsTopic {
 			Lead:  "Move between terminals, projects, and the editor.",
 			Items: []DocsItem{
 				{
-					Title:    "Quick navigation",
+					Title:    "The list sheet",
 					Tag:      "Phone and tablet",
 					TagClass: "bg-blue-lt",
-					Desc:     `On phones and tablets, where it is the primary way to move around: the floating grid button <i class="ti ti-layout-grid align-text-bottom" aria-hidden="true"></i> browses active terminals and projects, and a project's list also starts a new coder or shell in that project. On a desktop its corner belongs to the assistant instead, and the terminal switcher (double Ctrl) is the route that leverages the keyboard.`,
-				},
-				{
-					Title: "Quick-nav reorder and split",
-					Desc:  `Drag rows to reorder terminals, on touch with the grip handle <i class="ti ti-grip-vertical align-text-bottom" aria-hidden="true"></i>. Hold a row over another row to group them into a split.`,
-				},
-				{
-					Title:    "Quick-nav swipe actions",
-					Tag:      "Touch",
-					TagClass: "bg-blue-lt",
-					Desc:     `Swipe a row left to reveal its actions, always in the same order: rename and ungroup first, then stop, then delete.`,
+					Desc:     `On a phone the tab bar's Projects, Terminals and Settings do not jump to a page: they slide a sheet up with the area's list, the same rows the desktop shows beside the page. A row opens its page and the sheet goes; the terminals sheet opens with the terminal you are in centered. Projects and terminals have a filter field, projects the sort menu <i class="ti ti-arrows-sort align-text-bottom" aria-hidden="true"></i> the board uses; the filter is the board's own, typed here it holds there too. A split view lists its members as rows of their own under it, each with its actions. A terminal row carries its actions behind <i class="ti ti-dots align-text-bottom" aria-hidden="true"></i>, rename, stop, delete, steer, the split view's own, and the grip <i class="ti ti-grip-vertical align-text-bottom" aria-hidden="true"></i> drags it into a new order, the same order every terminal list shows; a split view travels with its members, and a finger held at the top or bottom scrolls the list.`,
 				},
 				{
 					Title: "Git from the projects page",
 					Desc:  `A project that is a repository carries a git button <i class="ti ti-brand-git align-text-bottom" aria-hidden="true"></i> next to its row actions. <em>New worktree</em> opens the create form with this project already picked as the source, so only the branch and a name are left; a project that is itself a worktree does not offer it, only a main repository is a source. <em>Fetch</em> brings the remote's state in and reports in a toast, how far the checked out branch stands from its upstream included, and a remote that wants a passphrase asks in the same dialog every git action uses. <em>Commit changes</em> and <em>Compare revisions</em> open the editor with that view already open. Switching the branch, push and pull stay in the editor's git sheet.`,
+				},
+				{
+					Title: "The list column keeps its width and place",
+					Desc:  `On a desktop the list next to the rail can be dragged wider or narrower at its right edge, a double click on that edge puts the default back. The width and how far the list is scrolled are kept per area on this device, so the projects and the terminals come back the way they were left.`,
 				},
 				{
 					Title: "Open the terminal switcher",
@@ -122,7 +116,7 @@ func DocsTopics() []DocsTopic {
 			Items: []DocsItem{
 				{
 					Title: "One place, always open",
-					Desc:  `The sparkle button <i class="ti ti-sparkles align-text-bottom" aria-hidden="true"></i> opens the assistant in the header, the quick nav, the + menu of the tab strip and the terminal switcher. On a desktop it docks as a side panel, drag its left edge to resize, stored per device, and its round corner button takes the quick nav's place.`,
+					Desc:  `The sparkle button <i class="ti ti-sparkles align-text-bottom" aria-hidden="true"></i> opens the assistant from the rail and the terminal switcher, on a phone the tab bar's sparkle opens the conversations as a sheet. It is a page: the conversations stand in the list column beside it, the steered coders in an aside on a wide window and behind the steering wheel in the head below, the memory behind the brain in the list's head. A message carries a stripe on its left, blue for you, purple for the assistant, grey for a report a check wrote.`,
 				},
 				{
 					Title:    "It sees the cockpit",
@@ -134,7 +128,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "It remembers you",
 					Tag:      "Memory",
 					TagClass: "bg-blue-lt",
-					Desc:     `Say remember that and the assistant writes it down. The brain icon <i class="ti ti-brain align-text-bottom" aria-hidden="true"></i> opens what it knows, to read and to correct. It goes into every answer, so it survives a new conversation.`,
+					Desc:     `Say remember that and the assistant writes it down. The brain icon <i class="ti ti-brain align-text-bottom" aria-hidden="true"></i> in the head of the conversation list opens what it knows, to read and to correct. It goes into every answer, so it survives a new conversation.`,
 				},
 				{
 					Title:    "Pictures, recordings and clips",
@@ -156,7 +150,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Starting over",
-					Desc:  `The new-conversation button <i class="ti ti-message-plus align-text-bottom" aria-hidden="true"></i> starts fresh, and with more than one coder installed it asks which one answers. One conversation is live at a time, the earlier ones stay read-only under the clock icon <i class="ti ti-history align-text-bottom" aria-hidden="true"></i>.`,
+					Desc:  `The new-conversation button <i class="ti ti-message-plus align-text-bottom" aria-hidden="true"></i> starts fresh, and with more than one coder installed it asks which one answers. One conversation is live at a time, the earlier ones stay read-only in the list column.`,
 				},
 				{
 					Title:    "How full the conversation is",
@@ -186,13 +180,13 @@ func DocsTopics() []DocsTopic {
 					Title:    "The steered coders",
 					Tag:      "Coders",
 					TagClass: "bg-blue-lt",
-					Desc:     `The steering-wheel button <i class="ti ti-steering-wheel align-text-bottom" aria-hidden="true"></i> in the assistant's head opens the steered coders, its badge counts the ones still steered. A steered coder names its criterion, the last report, the checks it used and until when it runs, and takes the same criterion again once it is over.`,
+					Desc:     `The steered coders stand beside the conversation on a wide window; below that the steering-wheel button <i class="ti ti-steering-wheel align-text-bottom" aria-hidden="true"></i> in the head opens them, its badge counts the ones still steered. A steered coder names its criterion, the last report, the checks it used and until when it runs, and takes the same criterion again once it is over.`,
 				},
 				{
 					Title:    "Steer and release where the coder is",
 					Tag:      "Ownership",
 					TagClass: "bg-blue-lt",
-					Desc:     `A steered coder's icon turns purple wherever it shows, and the color follows steer and release without a reload. Steer and release where the coder is listed: swipe its row in the quick nav, or open the context menu of its tab, its pane header or its chip. The dialog's criterion may stay empty, the checks then judge against the task the coder is on.`,
+					Desc:     `A steered coder's icon turns purple wherever it shows, and the color follows steer and release without a reload. Steer and release where the coder is listed: the context menu of its tab (on a phone behind the three dots of its row in the sheet), its pane header or its chip. The dialog's criterion may stay empty, the checks then judge against the task the coder is on.`,
 				},
 			},
 		},
@@ -211,12 +205,6 @@ func DocsTopics() []DocsTopic {
 					Desc:  `Copy a selection with Ctrl/Cmd+C; on a phone, toggle copy mode <i class="ti ti-copy align-text-bottom" aria-hidden="true"></i> to select text with your finger. Pasting <i class="ti ti-clipboard align-text-bottom" aria-hidden="true"></i> sends the clipboard as input.`,
 				},
 				{
-					Title:    "Coder prompt",
-					Tag:      "Coder",
-					TagClass: "bg-secondary-lt",
-					Desc:     `The pencil button <i class="ti ti-pencil align-text-bottom" aria-hidden="true"></i> in the footer opens a box for composing a longer prompt and sends it to the coder.`,
-				},
-				{
 					Title:    "Send files to a coder",
 					Tag:      "Coder",
 					TagClass: "bg-secondary-lt",
@@ -227,8 +215,8 @@ func DocsTopics() []DocsTopic {
 					Desc:  `The refresh button <i class="ti ti-refresh align-text-bottom" aria-hidden="true"></i> in the footer reloads the terminal stream if the view looks out of sync.`,
 				},
 				{
-					Title: "Font size, rows, and theme",
-					Desc:  `The gear button <i class="ti ti-settings align-text-bottom" aria-hidden="true"></i> on a terminal page sets the font size, the visible rows, and the color theme, stored per device. Every palette follows the OS between a light and a dark variant. In a split view the rows are the height of the page, not of every pane: a column shows about that many lines in total, and stacked panes share them.`,
+					Title: "Font size, extra rows, and theme",
+					Desc:  `The gear button <i class="ti ti-settings align-text-bottom" aria-hidden="true"></i> on a terminal page sets the font size, the extra rows, and the color theme, stored per device. A terminal always fills the box it stands in, a solo page, a split pane or the editor panel; extra rows add lines below that fit and the pane scrolls for them on its own. On a desktop the wheel alone scrolls the program, Shift and the wheel scroll the pane in the browser, like in a terminal emulator. Every palette follows the OS between a light and a dark variant.`,
 				},
 				{
 					Title:    "Arrange tabs and panes",
@@ -298,11 +286,6 @@ func DocsTopics() []DocsTopic {
 					Title: "Close the current terminal",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "X"}}},
 					Desc:  `Stops a coder or deletes a shell, the same way the cross on its tab does, and it asks before it happens. On a split view it belongs to the tab, so it closes the whole split after one question.`,
-				},
-				{
-					Title: "Fullscreen terminal",
-					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "F"}}, {Caps: []string{"Ctrl", "Shift", "Enter"}}},
-					Desc:  `<em>Fullscreen</em> in the terminal settings <i class="ti ti-settings align-text-bottom" aria-hidden="true"></i> of the tab strip. Double-clicking unused space in that strip does the same thing.`,
 				},
 				{
 					Title: "Choose the active split pane",
@@ -395,7 +378,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "One menu for everything else",
-					Desc:  `Next to the tabs the toolbar keeps only the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> and, while the open file is unsaved, Save. Everything else is in that menu and reads the same on a phone and on a wide screen: the list of open files, go to file, find in the file and in the project, go to line, the editor settings, save all, the git sheet, and the keyboard shortcuts. Fullscreen is the one entry a phone does not get, there is no window there to grow out of.`,
+					Desc:  `Next to the tabs the toolbar keeps only the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> and, while the open file is unsaved, Save. Everything else is in that menu and reads the same on a phone and on a wide screen: the list of open files, go to file, find in the file and in the project, go to line, the editor settings, save all, the git sheet, and the keyboard shortcuts.`,
 				},
 				{
 					Title: "The sheets take the keyboard",
@@ -492,11 +475,6 @@ func DocsTopics() []DocsTopic {
 					Desc:  `<em>Editor settings</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> sets tab width, indentation, font size, line wrapping and how a diff looks, side by side against inline, or automatic, which picks by the window width and follows it while a diff is open, and whether unchanged parts are folded. All of it stays on this device. A file covered by a project's .editorconfig takes its indentation from there, the control then only shows it.`,
 				},
 				{
-					Title: "Fullscreen editor",
-					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "Enter"}}},
-					Desc:  `<em>Fullscreen</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the shortcut, or a double-click on empty space in the tab strip. On a phone the entry is not there: the editor already has the screen.`,
-				},
-				{
 					Title: "Terminal panel",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "J"}}},
 					Desc:  `<em>Terminal</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the terminal icon <i class="ti ti-terminal-2 align-text-bottom" aria-hidden="true"></i> in the statusbar, or the shortcut opens the project's coders and shells below the code. Tabs switch between them, <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> starts a new one or resumes a stopped coder, and the keys, the refresh and the file upload work like on the terminal pages. Open or closed, the active tab and the height are remembered per project. Desktop only.`,
@@ -551,7 +529,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Shell into a container",
 					Tag:      "Terminal",
 					TagClass: "bg-blue-lt",
-					Desc:     `<em>Shell</em> opens a normal cockpit terminal that steps into the container, <em>Log terminal</em> one that follows its output. Both live in the tab strip and the quick nav like any shell, and when the container stops, the pane falls back to a plain shell in the project.`,
+					Desc:     `<em>Shell</em> opens a normal cockpit terminal that steps into the container, <em>Log terminal</em> one that follows its output. Both live in the tab strip like any shell, and when the container stops, the pane falls back to a plain shell in the project.`,
 				},
 				{
 					Title: "Docker host",
@@ -628,15 +606,15 @@ func DocsTopics() []DocsTopic {
 			Items: []DocsItem{
 				{
 					Title:    "Light and dark mode",
-					Tag:      "Header",
+					Tag:      "Rail",
 					TagClass: "bg-secondary-lt",
-					Desc:     `The theme switcher in the header, on a phone in the navigation menu, picks between auto <i class="ti ti-contrast align-text-bottom" aria-hidden="true"></i>, light <i class="ti ti-sun align-text-bottom" aria-hidden="true"></i>, and dark <i class="ti ti-moon align-text-bottom" aria-hidden="true"></i>. Auto follows the OS scheme, light and dark force one. The choice is stored per device. Page, editor, and terminal follow it together; coders may take up to two seconds to apply a theme change.`,
+					Desc:     `The theme switcher at the foot of the rail, on a phone in the menu at the end of the page head, picks between auto <i class="ti ti-contrast align-text-bottom" aria-hidden="true"></i>, light <i class="ti ti-sun align-text-bottom" aria-hidden="true"></i>, and dark <i class="ti ti-moon align-text-bottom" aria-hidden="true"></i>. Auto follows the OS scheme, light and dark force one. The choice is stored per device. Page, editor, and terminal follow it together; coders may take up to two seconds to apply a theme change.`,
 				},
 				{
 					Title:    "How the machine is doing",
-					Tag:      "Header",
+					Tag:      "Status line",
 					TagClass: "bg-secondary-lt",
-					Desc:     `The server button <i class="ti ti-server align-text-bottom" aria-hidden="true"></i> in the header, on a phone as well, opens CPU, RAM and disk, each as a percentage with the plain numbers below it. The icon turns yellow when one of them passes 80 percent and red from 95, so a quiet header means a quiet machine. The disk is the one the projects live on. On Linux the CPU value is the share of the cores actually at work since the reading before. On a Mac it is the load average against the core count, so there it can pass 100 percent when more work is queued than the machine can run at once; the line under the value says which of the two it is. The values refresh while a page is open, every 5 seconds. The Float button <i class="ti ti-app-window align-text-bottom" aria-hidden="true"></i> in the panel puts the three values into a small card that floats over the page: drag it to where you want it, it stays put across pages and reloads, keeps itself inside a shrinking window, shows through the fullscreen terminal and editor, steps aside the moment a menu or dialog opens, and closes with its cross. On a wide screen it draws a ring per value; on a phone it shrinks to three slim bars so it costs barely a line.`,
+					Desc:     `The server button <i class="ti ti-server align-text-bottom" aria-hidden="true"></i> in the status line, on a phone in the page head, opens CPU, RAM and disk, each as a percentage with the plain numbers below it. The icon turns yellow when one of them passes 80 percent and red from 95, so a quiet icon means a quiet machine. The disk is the one the projects live on. On Linux the CPU value is the share of the cores actually at work since the reading before. On a Mac it is the load average against the core count, so there it can pass 100 percent when more work is queued than the machine can run at once; the line under the value says which of the two it is. The values refresh while a page is open, every 5 seconds. The Float button <i class="ti ti-app-window align-text-bottom" aria-hidden="true"></i> in the panel puts the three values into a small card that floats over the page: drag it to where you want it, it stays put across pages and reloads, keeps itself inside a shrinking window, steps aside the moment a menu or dialog opens, and closes with its cross. On a wide screen it draws a ring per value; on a phone it shrinks to three slim bars so it costs barely a line.`,
 				},
 				{
 					Title:    "Restore terminals at startup",

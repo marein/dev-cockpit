@@ -258,7 +258,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
     await target.waitForSelector("[data-editor-quickopen]", { state: "hidden", timeout: 4000 });
     await sleep(300);
   };
-  // A finger on the grip handle, the gesture quicknav uses for the same job.
+  // A finger on the grip handle, the gesture the terminals sheet uses for the same job.
   const dragSheetRow = async (mp, path, toIndex) => {
     await mp.evaluate(async ([sel, want]) => {
       const rows = [...document.querySelectorAll(".editor-sheet-row")];
@@ -336,27 +336,6 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.goto(editorURL, { waitUntil: "domcontentloaded" });
       assert((await L.waitUpgraded(page, ["dc-editor"], 8000)).length === 0, "dc-editor not upgraded");
       await page.waitForSelector("[data-editor-tree]", { timeout: 8000 });
-      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
-      await page.waitForFunction(() => { const t = document.querySelector("[data-editor-tree]"); return t && !/Loading/.test(t.textContent); }, null, { timeout: 8000 });
-    });
-
-    await run("the header back button follows the ?return target like the create forms' Cancel", async () => {
-      const backSel = '.page-header a[title="Back"]';
-      let href = await page.getAttribute(backSel, "href");
-      assert(href === "/projects", `default back href '${href}'`);
-      const ret = `/projects#project-${project}`;
-      await page.goto(`${editorURL}?return=${encodeURIComponent(ret)}`, { waitUntil: "domcontentloaded" });
-      href = await page.getAttribute(backSel, "href");
-      assert(href === ret, `back href '${href}' != '${ret}'`);
-      await page.click(backSel);
-      await page.waitForFunction((r) => window.location.pathname + window.location.hash === r, ret, { timeout: 8000 });
-      await page.waitForFunction((p) => {
-        const card = document.getElementById(`project-${p}`);
-        if (!card) return false;
-        const rect = card.getBoundingClientRect();
-        return rect.top >= 0 && rect.top < window.innerHeight;
-      }, project, { timeout: 4000 });
-      await page.goto(editorURL, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
       await page.waitForFunction(() => { const t = document.querySelector("[data-editor-tree]"); return t && !/Loading/.test(t.textContent); }, null, { timeout: 8000 });
     });
@@ -3462,75 +3441,6 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       return `${travel}px across, still on ${before.split("/").pop()}`;
     });
 
-    await run("fullscreen: button toggles and persists, Ctrl+Shift+Enter and strip double-click toggle too", async () => {
-      const waitFullscreen = (want) => page.waitForFunction(
-        (w) => document.documentElement.classList.contains("dc-editor-fullscreen") === w, want, { timeout: 6000 });
-      await clickItem("[data-editor-fullscreen]");
-      await waitFullscreen(true);
-      assert(await page.$eval("[data-editor-fullscreen]", (e) => e.getAttribute("aria-pressed") === "true"), "button not pressed after enabling");
-      assert(await page.$eval("[data-editor-fullscreen] i", (e) => e.className.includes("ti-minimize")), "entry icon did not switch to minimize");
-      assert(await page.isVisible(".editor-back"), "back button not visible in fullscreen");
-      await page.reload({ waitUntil: "domcontentloaded" });
-      await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
-      await waitFullscreen(true);
-      await page.keyboard.press("Control+Shift+Enter");
-      await waitFullscreen(false);
-      const box = await page.locator("[data-editor-tabs]").boundingBox();
-      await page.mouse.dblclick(box.x + box.width - 8, box.y + box.height / 2);
-      await waitFullscreen(true);
-      await clickItem("[data-editor-fullscreen]");
-      await waitFullscreen(false);
-      assert(!(await page.isVisible(".editor-back")), "back button visible outside fullscreen");
-    });
-
-    // A docked assistant keeps its column in fullscreen. The panel sits above
-    // the editor, so an editor that took the whole viewport would run under it
-    // and lose its right edge. The editor ends at the panel's left edge
-    // instead, and it follows the resize handle because both sides read
-    // --dc-assistant-w. Closing the panel gives the viewport back.
-    await run("fullscreen: the docked assistant keeps its column and the editor follows its resize", async () => {
-      const edges = () => page.evaluate(() => {
-        const box = document.querySelector(".editor").getBoundingClientRect();
-        const card = document.querySelector(".dc-assistant-panel-card").getBoundingClientRect();
-        return {
-          right: Math.round(box.right),
-          panelLeft: Math.round(card.left),
-          width: window.innerWidth,
-          docked: document.body.classList.contains("dc-assistant-docked"),
-        };
-      });
-      await page.click("[data-assistant-corner]");
-      await page.waitForSelector(".dc-assistant-panel-card:not([hidden]) dc-assistant[ready]", { timeout: 20000 });
-      await clickItem("[data-editor-fullscreen]");
-      await page.waitForFunction(() => document.documentElement.classList.contains("dc-editor-fullscreen"), null, { timeout: 6000 });
-      await sleep(300);
-      const side = await edges();
-      assert(side.docked, "the panel did not dock");
-      assert(Math.abs(side.right - side.panelLeft) <= 1 && side.right < side.width - 100,
-        `the editor does not stop at the panel: ${JSON.stringify(side)}`);
-
-      const handle = await page.locator("[data-assistant-resize]").boundingBox();
-      await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(handle.x - 120, handle.y + handle.height / 2, { steps: 10 });
-      await page.mouse.up();
-      await sleep(400);
-      const wider = await edges();
-      assert(wider.right < side.right - 30 && Math.abs(wider.right - wider.panelLeft) <= 1,
-        `the editor did not follow the panel's resize: ${JSON.stringify(wider)}`);
-
-      await page.click("[data-assistant-panel-close]");
-      await page.waitForSelector(".dc-assistant-panel-card[hidden]", { state: "attached", timeout: 8000 });
-      await sleep(300);
-      const full = await page.evaluate(() => {
-        const box = document.querySelector(".editor").getBoundingClientRect();
-        return { right: Math.round(box.right), width: window.innerWidth };
-      });
-      assert(Math.abs(full.right - full.width) <= 1, `the closed panel left a gap: ${JSON.stringify(full)}`);
-      await clickItem("[data-editor-fullscreen]");
-      await page.waitForFunction(() => !document.documentElement.classList.contains("dc-editor-fullscreen"), null, { timeout: 6000 });
-    });
-
     await run("project palette: the switcher opens a palette whose rows carry repository and branch, sorted the shared way", async () => {
       await L.createProject(page, projectB);
       // One visit makes the other project a recent one, so the shortlist has
@@ -3987,9 +3897,9 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       return `strip ${strip.strip.w}px, three controls in the header`;
     });
 
-    // Fullscreen is the one entry the two widths do not share: a phone has no
-    // window around the page to grow out of, so the switch stays away there.
-    await run("mobile: the menu carries the same entries as the wide screen, minus fullscreen", async () => {
+    // The terminal panel is the one entry the two widths do not share: a
+    // phone has no panel.
+    await run("mobile: the menu carries the same entries as the wide screen, minus the terminal panel", async () => {
       const mp = await mobilePage();
       // The same file open on both, so a file bound entry cannot make the two
       // lists differ for a reason that has nothing to do with the width. The
@@ -4001,15 +3911,11 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await openViaPalette(page, noteFile);
       const phone = await menuEntries(mp);
       const desktop = await menuEntries(page);
-      assert(!phone.includes("data-editor-fullscreen"), `the phone menu offers fullscreen: ${phone.join(", ")}`);
-      assert(desktop.includes("data-editor-fullscreen"), `the wide menu lost fullscreen: ${desktop.join(", ")}`);
-      // Fullscreen and the terminal panel are the two deliberate desktop-only
-      // entries: a phone has no window to grow out of and no panel either.
       assert(!phone.includes("data-editor-term-item"), `the phone menu offers the terminal panel: ${phone.join(", ")}`);
       assert(desktop.includes("data-editor-term-item"), `the wide menu lost the terminal panel: ${desktop.join(", ")}`);
-      const want = desktop.filter((entry) => entry !== "data-editor-fullscreen" && entry !== "data-editor-term-item");
+      const want = desktop.filter((entry) => entry !== "data-editor-term-item");
       assert(JSON.stringify(phone) === JSON.stringify(want),
-        `the menus differ beyond fullscreen and terminal:\n  390:  ${phone.join(", ")}\n  1360: ${desktop.join(", ")}`);
+        `the menus differ beyond the terminal panel:\n  390:  ${phone.join(", ")}\n  1360: ${desktop.join(", ")}`);
       for (const entry of ["data-editor-files-item", "data-editor-quick-open-item", "data-editor-find-item",
         "data-editor-search-project-item", "data-editor-settings-item"]) {
         assert(phone.includes(entry), `the menu misses ${entry}: ${phone.join(", ")}`);
@@ -4198,15 +4104,13 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
 
     // The check above drives the gesture with synthetic pointer events, which
     // skip the browser's own scroll arbitration, and that arbitration is
-    // exactly what broke this outside fullscreen. Chromium can be given a real
+    // exactly what broke this. Chromium can be given a real
     // finger through CDP, so there the gesture is the real one.
-    await run("mobile: a real finger swipes the file outside fullscreen (chromium)", async () => {
+    await run("mobile: a real finger swipes the file (chromium)", async () => {
       if (engine !== "chromium") return "skipped, CDP is chromium only";
       const mp = await mobilePage();
       const cdp = await mp.context().newCDPSession(mp);
       await setWrap(mp, true);
-      assert(!(await mp.evaluate(() => document.documentElement.classList.contains("dc-editor-fullscreen"))),
-        "this has to run outside fullscreen, that is the case it is about");
       const drag = async (dx) => {
         const box = await mp.$eval("[data-editor-surface]", (el) => {
           const r = el.getBoundingClientRect();
@@ -4274,7 +4178,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       assert(after.page === start.page, `the page scrolled under the gesture: ${start.page} -> ${after.page}`);
       assert(after.scroll > atRelease, `the release did not keep the text moving: ${atRelease} -> ${after.scroll}`);
       assert(after.file === first, `a vertical drag switched the file to ${after.file}`);
-      return `${order.join(" / ")}, real finger, no fullscreen, fling ${Math.round(after.scroll - atRelease)}px`;
+      return `${order.join(" / ")}, real finger, fling ${Math.round(after.scroll - atRelease)}px`;
     });
 
     // One header on both widths, measured the same way on both: what a person

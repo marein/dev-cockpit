@@ -61,51 +61,88 @@ func (s *Server) assistantEntryState() (string, bool) {
 	return id, s.notifier.UnreadTargets()[id]
 }
 
-// handleAssistantPanel serves the interior of the assistant overlay as a
-// fragment: the chat by default, or one of the overlay's own views. The
-// overlay is the assistant's only surface and its own world, so its jobs,
-// memory and history render inside it instead of opening a modal or
-// navigating the page behind it. Opening the chat opens the live conversation
-// and starts one when there is none; naming a conversation shows that one,
-// read-only when it is history.
+// handleAssistantPage renders the assistant: the conversation the address
+// names, read-only when it is history, beside the list column of every
+// conversation. The bare /assistant opens the live conversation, starts one
+// when there is none, and sends the browser to its address, so every page
+// the assistant shows carries the conversation's id and the list column can
+// mark it.
 //
-// The fetch marks nothing read. An open panel syncs on every assistant event,
-// in background windows too, so a read here would clear the news before the
-// push dispatcher re-checks unread and nothing would ever toast or push.
-// Reading is the client's decision, it posts a read only for a surface that
-// is visible in a focused window.
-func (s *Server) handleAssistantPanel(c *gin.Context) {
-	var current assistant.Conversation
-	var err error
-	if id := strings.TrimSpace(c.Query("conversation")); id != "" {
-		current, err = s.conversations.Get(id)
-	} else {
-		current, err = s.conversations.Open("")
-	}
-	if err != nil {
-		c.String(http.StatusServiceUnavailable, err.Error())
+// The render marks nothing read. The page pulls itself again on every
+// assistant event, in background windows too, so a read here would clear the
+// news before the push dispatcher re-checks unread and nothing would ever
+// toast or push. Reading is the client's decision, it posts a read only for
+// a surface that is visible in a focused window.
+func (s *Server) handleAssistantPage(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		current, err := s.conversations.Open("")
+		if err != nil {
+			s.renderError(c, http.StatusServiceUnavailable, "Assistant unavailable", err.Error())
+			return
+		}
+		c.Redirect(http.StatusSeeOther, "/assistant/"+current.ID)
 		return
 	}
-	data := s.assistantData(current, c.Query("all") != "", true)
-	data.Page = render.Page{CSRFToken: s.csrfToken(c)}
-	switch c.Query("view") {
-	case "jobs":
-		data.View = "jobs"
-	case "memory":
-		data.View = "memory"
-		data.MemoryData = s.assistantMemoryData(c)
-	case "history":
-		data.View = "history"
-		history := s.assistantHistoryData(c)
-		data.HistoryData = &history
-	default:
-		data.View = "chat"
+	current, err := s.conversations.Get(id)
+	if err != nil {
+		s.renderError(c, http.StatusNotFound, "Conversation not found", "There is no such conversation.")
+		return
 	}
-	c.HTML(http.StatusOK, "assistant_panel_content.gohtml", data)
+	data := s.assistantData(current, c.Query("all") != "")
+	data.ConversationTitle = strings.TrimSpace(current.Title)
+	title := "Assistant"
+	if data.ConversationTitle != "" {
+		title = data.ConversationTitle + " - Assistant"
+	}
+	data.Page = s.page(c, title, "assistant")
+	data.Ctx = s.assistantCtxData(c, data.Path, "assistant-ctx-new")
+	c.HTML(http.StatusOK, "assistant_page.gohtml", data)
 }
 
-// assistantData builds the surface model both hosts render.
-func (s *Server) assistantData(current assistant.Conversation, all, panel bool) render.AssistantData {
+// assistantCtxData builds the list column for the page at path: the page's
+// column and the phone's sheet render the same model, prefix tells their
+// posting forms apart.
+func (s *Server) assistantCtxData(c *gin.Context, path, prefix string) *render.AssistantCtxData {
+	history := s.assistantHistoryData(c)
+	currentID := s.currentAssistantID()
+	clean := path
+	if i := strings.IndexByte(clean, '?'); i >= 0 {
+		clean = clean[:i]
+	}
+	activeID := strings.TrimPrefix(clean, "/assistant/")
+	if activeID == clean {
+		activeID = currentID
+	}
+	data := &render.AssistantCtxData{
+		Page:      render.Page{CSRFToken: s.csrfToken(c)},
+		Path:      clean,
+		ActiveID:  activeID,
+		Available: history.Available,
+		Coders:    s.assistantCoderOptions(),
+		IDPrefix:  prefix,
+		PostURL:   "/assistant/new",
+	}
+	for _, card := range history.Conversations {
+		if card.ID == currentID {
+			current := card
+			data.Current = &current
+			data.Answering = current.Running
+			continue
+		}
+		data.Earlier = append(data.Earlier, card)
+	}
+	if currentID != "" {
+		data.PostURL = "/assistant/" + currentID
+		if current, err := s.conversations.Get(currentID); err == nil {
+			data.NewCoderID = s.assistantNewCoderID(current)
+		}
+	}
+	return data
+}
+
+// assistantData builds the conversation model the page renders.
+func (s *Server) assistantData(current assistant.Conversation, all bool) render.AssistantData {
 	blocked := s.assistantBlockedReason(current)
 	base := "/assistant/" + current.ID
 	messages, earlier, allURL := assistantWindow(s.assistantMessageViews(current, blocked != ""), base, all)
@@ -127,7 +164,7 @@ func (s *Server) assistantData(current assistant.Conversation, all, panel bool) 
 	}
 	return render.AssistantData{
 		ID:             current.ID,
-		Panel:          panel,
+		Path:           base,
 		CoderID:        current.CoderID,
 		CoderLabel:     render.CoderLabel(current.CoderID),
 		Coders:         s.assistantCoderOptions(),
@@ -150,7 +187,6 @@ func (s *Server) assistantData(current assistant.Conversation, all, panel bool) 
 		TTS:            !s.voiceTTSOff(),
 		MaxPromptBytes: assistant.MaxPromptBytes,
 		MaxUploadBytes: s.maxUploadBytes(),
-		MemoryCount:    len(s.assistant.Memory()),
 		HistoryCount:   len(s.conversations.List()),
 		Draft:          current.Draft.Text,
 		DraftFiles:     s.assistantDraftFiles(current),
@@ -183,7 +219,11 @@ func (s *Server) assistantDraftViews(current assistant.Conversation) []gin.H {
 		if url == "" {
 			continue
 		}
-		files = append(files, gin.H{"name": a.Name, "media": a.Media, "size": a.Size, "url": url})
+		file := gin.H{"name": a.Name, "media": a.Media, "size": a.Size, "url": url}
+		if width, height := assistantImageSize(a.Media, a.Path); width > 0 {
+			file["width"], file["height"] = width, height
+		}
+		files = append(files, file)
 	}
 	return files
 }
@@ -410,11 +450,14 @@ func (s *Server) assistantMessageView(conversationID string, m assistant.Message
 		Time:       machineTime(m.CreatedAt),
 	}
 	for _, a := range m.Attachments {
+		width, height := assistantImageSize(a.Media, a.Path)
 		view.Attachments = append(view.Attachments, render.AssistantAttachmentView{
 			Name:     a.Name,
 			URL:      s.assistantMediaURL(conversationID, a.Path),
 			Media:    a.Media,
 			SizeText: filesystem.HumanSize(a.Size),
+			Width:    width,
+			Height:   height,
 		})
 	}
 	if view.User {
@@ -430,6 +473,16 @@ func (s *Server) assistantMessageView(conversationID string, m assistant.Message
 		view.AudioURL = "/assistant/" + conversationID + "/messages/" + m.ID + "/audio"
 	}
 	return view
+}
+
+// assistantImageSize is the pixel size of a picture on disk, and nothing at
+// all for every other kind of file: only an image reserves a box in the
+// transcript, and a size nobody could read is left unsaid.
+func assistantImageSize(media, file string) (int, int) {
+	if media != "image" {
+		return 0, 0
+	}
+	return filesystem.ImageSize(file)
 }
 
 // assistantMediaURL turns an absolute workspace path into the URL that serves
@@ -453,12 +506,17 @@ func (s *Server) assistantMarkdown(conversationID, src string) template.HTML {
 		if rel == "" || strings.Contains(rel, "://") || strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, "#") {
 			return markdown.Media{}, false
 		}
-		if _, err := s.assistant.ResolveWorkspaceFile(rel); err != nil {
+		absolute, err := s.assistant.ResolveWorkspaceFile(rel)
+		if err != nil {
 			return markdown.Media{}, false
 		}
+		kind := assistant.MediaKind(rel)
+		width, height := assistantImageSize(kind, absolute)
 		return markdown.Media{
-			URL:  "/assistant/" + conversationID + "/media/" + path.Clean(filepath.ToSlash(rel)),
-			Kind: assistant.MediaKind(rel),
+			URL:    "/assistant/" + conversationID + "/media/" + path.Clean(filepath.ToSlash(rel)),
+			Kind:   kind,
+			Width:  width,
+			Height: height,
 		}, true
 	})
 	if err != nil {
@@ -647,7 +705,7 @@ func (s *Server) assistantRunResponse(c *gin.Context, id string, run assistant.R
 		c.JSON(http.StatusOK, gin.H{"runId": run.RunID, "messageId": run.MessageID, "userMessageId": run.UserMessageID, "replacedId": run.ReplacedID, "title": run.Title, "queued": run.Queued})
 		return
 	}
-	c.Redirect(http.StatusSeeOther, "/projects?assistant="+id)
+	c.Redirect(http.StatusSeeOther, "/assistant/"+id)
 }
 
 // assistantDiscard takes back one message that is still waiting in the queue.
@@ -666,7 +724,7 @@ func (s *Server) assistantDiscard(c *gin.Context, id string) {
 		c.JSON(http.StatusOK, gin.H{"discarded": true})
 		return
 	}
-	c.Redirect(http.StatusSeeOther, "/projects?assistant="+id)
+	c.Redirect(http.StatusSeeOther, "/assistant/"+id)
 }
 
 func (s *Server) assistantCancel(c *gin.Context, id string) {
@@ -678,7 +736,7 @@ func (s *Server) assistantCancel(c *gin.Context, id string) {
 		c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
 		return
 	}
-	c.Redirect(http.StatusSeeOther, "/projects?assistant="+id)
+	c.Redirect(http.StatusSeeOther, "/assistant/"+id)
 }
 
 // assistantNew starts a fresh conversation. The memory carries what matters
@@ -697,7 +755,7 @@ func (s *Server) assistantNew(c *gin.Context, coderID string) {
 		c.JSON(http.StatusOK, gin.H{"id": created.ID})
 		return
 	}
-	c.Redirect(http.StatusSeeOther, "/projects?assistant="+created.ID)
+	c.Redirect(http.StatusSeeOther, "/assistant/"+created.ID)
 }
 
 // assistantSteer starts steering a terminal. Both callers come through here:
@@ -824,7 +882,7 @@ func (s *Server) assistantDelete(c *gin.Context, id string) {
 		c.JSON(http.StatusOK, gin.H{"deleted": true})
 		return
 	}
-	s.redirectWithFlash(c, "/projects", "Conversation deleted.", "")
+	s.redirectWithFlash(c, "/assistant", "Conversation deleted.", "")
 }
 
 func (s *Server) assistantActionError(c *gin.Context, id string, err error) {
@@ -836,7 +894,7 @@ func (s *Server) assistantActionError(c *gin.Context, id string, err error) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	s.redirectWithFlash(c, "/projects?assistant="+id, "", err.Error())
+	s.redirectWithFlash(c, "/assistant/"+id, "", err.Error())
 }
 
 // handleAssistantUpload takes the files of the next message. They are stored
@@ -880,12 +938,16 @@ func (s *Server) handleAssistantUpload(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 			return
 		}
-		saved = append(saved, gin.H{
+		file := gin.H{
 			"name":  attachment.Name,
 			"media": attachment.Media,
 			"size":  attachment.Size,
 			"url":   s.assistantMediaURL(id, attachment.Path),
-		})
+		}
+		if width, height := assistantImageSize(attachment.Media, attachment.Path); width > 0 {
+			file["width"], file["height"] = width, height
+		}
+		saved = append(saved, file)
 	}
 	c.JSON(http.StatusOK, gin.H{"files": saved})
 }
@@ -981,10 +1043,6 @@ func (s *Server) handleAssistantStream(c *gin.Context) {
 // handleAssistantHistory serves the history list body: the overlay's history
 // view fetches it, and the live refresh swaps it, so a conversation that
 // finishes elsewhere shows up without a reload.
-func (s *Server) handleAssistantHistory(c *gin.Context) {
-	c.HTML(http.StatusOK, "assistant_history_content.gohtml", s.assistantHistoryData(c))
-}
-
 func (s *Server) assistantHistoryData(c *gin.Context) render.AssistantHistoryData {
 	summaries := s.conversations.List()
 	currentID := s.currentAssistantID()
@@ -997,6 +1055,7 @@ func (s *Server) assistantHistoryData(c *gin.Context) render.AssistantHistoryDat
 			CoderLabel: render.CoderLabel(entry.CoderID),
 			URL:        "/assistant/" + entry.ID,
 			Messages:   entry.MessageCount,
+			Running:    entry.Running,
 			Unfinished: entry.Unfinished,
 			Current:    entry.ID == currentID,
 			Updated:    machineTime(entry.LastMessageAt),
@@ -1077,11 +1136,15 @@ func (s *Server) handleAssistantConversationRead(c *gin.Context) {
 // a black box the user cannot correct in place. The overlay's memory view
 // fetches it and a deletion refreshes it in place.
 func (s *Server) handleAssistantMemory(c *gin.Context) {
-	c.HTML(http.StatusOK, "assistant_memory_content.gohtml", *s.assistantMemoryData(c))
+	prefix := strings.TrimSpace(c.Query("prefix"))
+	if prefix == "" {
+		prefix = "memory"
+	}
+	c.HTML(http.StatusOK, "assistant_memory_content.gohtml", *s.assistantMemoryData(c, prefix))
 }
 
-func (s *Server) assistantMemoryData(c *gin.Context) *render.AssistantMemoryData {
-	data := &render.AssistantMemoryData{Page: render.Page{CSRFToken: s.csrfToken(c)}}
+func (s *Server) assistantMemoryData(c *gin.Context, prefix string) *render.AssistantMemoryData {
+	data := &render.AssistantMemoryData{Page: render.Page{CSRFToken: s.csrfToken(c)}, Prefix: prefix}
 	for _, entry := range s.assistant.Memory() {
 		data.Entries = append(data.Entries, render.AssistantMemoryEntry{
 			Slug:    entry.Slug,
@@ -1094,23 +1157,31 @@ func (s *Server) assistantMemoryData(c *gin.Context) *render.AssistantMemoryData
 }
 
 func (s *Server) handleAssistantMemorySave(c *gin.Context) {
-	switch strings.TrimSpace(c.PostForm("form")) {
-	case "delete":
-		if err := s.assistant.DeleteMemory(strings.TrimSpace(c.PostForm("slug"))); err != nil {
-			s.redirectWithFlash(c, "/projects?assistant=memory", "", err.Error())
+	done := func(message string, err error) {
+		if wantsJSON(c.Request) {
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"saved": true})
 			return
 		}
-		s.redirectWithFlash(c, "/projects?assistant=memory", "Memory deleted.", "")
+		if err != nil {
+			s.redirectWithFlash(c, "/assistant", "", err.Error())
+			return
+		}
+		s.redirectWithFlash(c, "/assistant", message, "")
+	}
+	switch strings.TrimSpace(c.PostForm("form")) {
+	case "delete":
+		done("Memory deleted.", s.assistant.DeleteMemory(strings.TrimSpace(c.PostForm("slug"))))
 	case "save":
-		if _, err := s.assistant.SaveMemory(
+		_, err := s.assistant.SaveMemory(
 			strings.TrimSpace(c.PostForm("slug")),
 			c.PostForm("title"),
 			c.PostForm("body"),
-		); err != nil {
-			s.redirectWithFlash(c, "/projects?assistant=memory", "", err.Error())
-			return
-		}
-		s.redirectWithFlash(c, "/projects?assistant=memory", "Memory saved.", "")
+		)
+		done("Memory saved.", err)
 	default:
 		s.renderError(c, http.StatusBadRequest, "Unknown action", "That action isn't available on this page.")
 	}

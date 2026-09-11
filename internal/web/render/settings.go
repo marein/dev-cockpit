@@ -255,7 +255,8 @@ type SettingsBackupData struct {
 // SettingsBackupNewData feeds the create backup form page.
 type SettingsBackupNewData struct {
 	Page
-	Groups []BackupGroup
+	SettingsNav SettingsNav
+	Groups      []BackupGroup
 }
 
 // BackupListData feeds the standalone backup list fragment, pulled live by
@@ -270,12 +271,13 @@ type BackupListData struct {
 // marks cockpit files, saving a merge or restoring restarts the server.
 type BackupMergeData struct {
 	Page
-	ID       string
-	FilePath string
-	Text     bool
-	Content  string
-	Previous string
-	Restart  bool
+	SettingsNav SettingsNav
+	ID          string
+	FilePath    string
+	Text        bool
+	Content     string
+	Previous    string
+	Restart     bool
 }
 
 // SettingsNotificationsData feeds the notifications settings page.

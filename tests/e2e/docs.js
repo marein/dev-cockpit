@@ -1,16 +1,16 @@
 const L = require("./lib");
 const { assert, BASE } = L;
 
-// Documentation: the app-wide Docs navigation entry and the /docs page. The
-// content (navigation, terminal and editor controls, gestures inline with
-// their topic, notifications, push delivery, settings tips) comes from Go
-// (internal/web/render/docs.go); the page renders it as one Bootstrap
-// accordion, a panel per topic with title/description rows, first topic open.
-// Built from Tabler components only, no page specific CSS.
+// Documentation: the rail's Docs entry and the /docs page. The content
+// (navigation, terminal and editor controls, gestures inline with their topic,
+// notifications, push delivery, settings tips) comes from Go
+// (internal/web/render/docs.go); the page renders the topics as rows of the
+// list column and as one section each on the work surface, a list group of
+// title/description rows per section. Built from Tabler components only.
 
 const TOPICS = ["navigation", "terminals", "editor", "docker", "notifications", "push", "settings"];
 
-const docsText = (page) => page.locator("#docs-accordion").evaluate((el) => el.textContent);
+const docsText = (page) => page.locator(".dc-work-body").evaluate((el) => el.textContent);
 
 // A throwaway instance built from a dev tree offers an update on first visit;
 // the modal would swallow the panel click. Deny it, never confirm.
@@ -27,21 +27,16 @@ async function dismissUpdate(page) {
 }
 
 L.runFeature("DOCS", async ({ page, run }) => {
-  await run("the docs page lists every topic as a collapsible panel", async () => {
+  await run("the docs page lists every topic in the list column and as a section", async () => {
     await page.goto(`${BASE}/docs`, { waitUntil: "domcontentloaded" });
-    assert(await page.locator('.navbar-nav a[href="/docs"].active').count() === 1, "Docs nav item is not active");
-    assert(await page.locator("h2", { hasText: "Documentation" }).count() === 1, "documentation heading missing");
+    assert(await page.locator('.dc-rail a[href="/docs"].active').count() === 1, "Docs rail entry is not active");
+    assert(await page.locator("h1", { hasText: "Documentation" }).count() === 1, "documentation heading missing");
     for (const topic of TOPICS) {
-      assert(await page.locator(`.accordion-item#${topic}`).count() === 1, `missing topic ${topic}`);
+      assert(await page.locator(`section#${topic}`).count() === 1, `missing topic ${topic}`);
+      assert(await page.locator(`.dc-ctx a[href="#${topic}"]`).count() === 1, `topic ${topic} missing from the list column`);
     }
-    assert(await page.locator("#docs-panel-navigation.show").count() === 1, "first topic is not open");
-    assert(await page.locator("#docs-panel-editor.show").count() === 0, "a later topic starts open");
     await dismissUpdate(page);
-    await page.click('button[data-bs-target="#docs-panel-editor"]');
-    await page.waitForSelector("#docs-panel-editor.show", { timeout: 4000 });
-    assert(await page.locator("#docs-panel-editor").getByText("Quick open").count() >= 1, "opened topic has no rows");
-    // Collapsed panels hold no rendered text, so the copy checks read
-    // textContent, which covers the folded topics too.
+    assert(await page.locator("section#editor").getByText("Quick open").count() >= 1, "the editor topic has no rows");
     const text = await docsText(page);
     assert(!/\bsession\b/i.test(text), "user-facing terminology includes session");
   });
@@ -62,7 +57,7 @@ L.runFeature("DOCS", async ({ page, run }) => {
   await run("named controls carry their own icon", async () => {
     await page.goto(`${BASE}/docs`, { waitUntil: "domcontentloaded" });
     for (const [topic, icon] of [["terminals", "ti-upload"], ["terminals", "ti-refresh"], ["editor", "ti-eye"], ["navigation", "ti-layout-grid"]]) {
-      assert(await page.locator(`#${topic} .col-md-8 i.${icon}`).count() >= 1, `${icon} missing in ${topic}`);
+      assert(await page.locator(`#${topic} .list-group-item i.${icon}`).count() >= 1, `${icon} missing in ${topic}`);
     }
   });
 });

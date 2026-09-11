@@ -5,9 +5,7 @@ const { assert, sleep, submitBtn, confirmSwal, modalShown, BASE } = L;
 // Custom elements terminal-attach, terminal-input, terminal-scroll-zone,
 // terminal-direction-pad, coder-file-upload, terminal-setting-select,
 // dc-project-select. The
-// shared terminal interaction is in terminal.js. The prompt modal is session only and
-// diverges by pointer: desktop opens it from .attach-desktop, mobile from
-// .attach-mobile; both submit as one whole prompt to /input (Ctrl/Cmd+Enter). Routes:
+// shared terminal interaction is in terminal.js. Routes:
 // GET/POST /coders/new (the create dialog asks for the same GET with modal=1 and
 // posts to the same path, dc-form-modal), GET /sessions/:id, POST /sessions/:id/{stop,input,resize},
 // GET .../stream, .../files (+POST upload, /download, /delete), POST /coders/:id/{resume,delete}.
@@ -102,7 +100,7 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
     // the form page: the dialog fetches the same /coders/new with modal=1 and
     // posts to the same path. The page stays a page, the two checks above open
     // it directly and read its fields.
-    await run("dialog: the projects chip and the quick nav both open the create form", async () => {
+    await run("dialog: the projects chip and the sheet both open the create form", async () => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await dialogReady(page);
       await page.click(`#project-${project} a[href^="/coders/new"]`);
@@ -134,27 +132,29 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       assert(closed.focus.startsWith("/coders/new"), `focus did not return to the chip: ${closed.focus}`);
       assert(closed.forms === 0 && closed.backdrops === 0, `the dialog left something behind: ${JSON.stringify(closed)}`);
 
-      // The quick nav is the phone's way in, and there no field may take the
+      // The sheet is the phone's way in, and there no field may take the
       // focus, a keyboard would cover the dialog the moment it opens.
       const mp = await mobilePage();
       await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await dialogReady(mp);
-      await mp.click(".quicknav-toggle");
-      await mp.click('.quicknav-menu a[href^="/coders/new"]');
+      await mp.tap('.dc-tabbar button[data-ctx-area="terminals"]');
+      await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-tabs-new-menu]", { timeout: 8000 });
+      await mp.click("dc-ctx-sheet [data-tabs-new-menu]");
+      await mp.click('dc-ctx-sheet a[href^="/coders/new"]');
       await mp.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
       await sleep(600);
       const mobile = await mp.evaluate(() => {
         const submit = document.querySelector('[data-form-modal] button[type="submit"]').getBoundingClientRect();
         return {
           path: window.location.pathname,
-          menu: Boolean(document.querySelector(".quicknav-menu.show")),
+          menu: !document.querySelector("dc-ctx-sheet").hidden,
           focused: document.activeElement?.getAttribute("name") || "",
           overflow: document.documentElement.scrollWidth > window.innerWidth,
           submitReachable: submit.width > 0 && submit.bottom <= window.innerHeight,
         };
       });
       assert(mobile.path === "/projects", `the phone left the page for ${mobile.path}`);
-      assert(!mobile.menu, "the quick nav stayed open behind the dialog");
+      assert(!mobile.menu, "the sheet stayed open behind the dialog");
       assert(mobile.focused === "", `a touch keyboard would pop up on ${mobile.focused}`);
       assert(!mobile.overflow && mobile.submitReachable, `not usable at 390: ${JSON.stringify(mobile)}`);
       // With the keyboard open a phone leaves about half the screen, and the
@@ -171,7 +171,7 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       assert(cramped.visible, `the submit is out of reach with the keyboard open: ${JSON.stringify(cramped)}`);
       assert(cramped.scrolls === "auto" || cramped.scrolls === "scroll", `the dialog does not scroll: ${cramped.scrolls}`);
       await mp.keyboard.press("Escape").catch(() => {});
-      return "chip and quick nav, focus on the desktop and none on the phone";
+      return "chip and sheet, focus on the desktop and none on the phone";
     });
 
     // A refused create is the whole reason the dialog talks to the server
@@ -270,48 +270,6 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       assert((await L.waitUpgraded(page, ["terminal-attach", "terminal-input", "coder-file-upload", "terminal-setting-select"], 12000)).length === 0, "not upgraded");
       await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });
       await sleep(2000);
-    });
-
-    await run("desktop: prompt modal sends to /input, closes, agent reacts", async () => {
-      const marker = `PMK${tag.slice(-4)}`;
-      await page.click(".attach-desktop [data-terminal-prompt-modal-open]");
-      await modalShown(page, "terminal-prompt-modal"); await sleep(600);
-      await page.fill("#terminal-prompt-modal-text", `${marker} please reply`);
-      const reqP = page.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
-      await page.keyboard.press("Control+Enter");
-      assert(((await reqP).postData() || "").includes(marker), "prompt not carried to /input");
-      await page.waitForFunction(() => { const m = document.getElementById("terminal-prompt-modal"); return m && !m.classList.contains("show"); }, null, { timeout: 6000 });
-      const before = await page.evaluate(() => (document.querySelector(".attach-selection") || {}).textContent || "");
-      let changed = false; for (let i = 0; i < 30; i++) { await sleep(600); if ((await page.evaluate(() => (document.querySelector(".attach-selection") || {}).textContent || "")) !== before) { changed = true; break; } }
-      assert(changed, "agent pane did not react (slow/not authed)");
-    }, { soft: true });
-
-    // macOS sends Home and End for Fn+Left and Fn+Right, and a textarea answers
-    // them by scrolling its box while the caret stays where it was.
-    await run("desktop: Home and End jump through the whole prompt", async () => {
-      const box = "#terminal-prompt-modal-text";
-      await page.click(".attach-desktop [data-terminal-prompt-modal-open]");
-      await modalShown(page, "terminal-prompt-modal"); await sleep(300);
-      await page.fill(box, "first line\nsecond line\nthird line");
-      const text = await page.inputValue(box);
-      await page.locator(box).evaluate((el) => el.setSelectionRange(15, 15));
-      await page.keyboard.press("End");
-      let caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
-      assert(caret[0] === text.length && caret[1] === text.length, `End did not reach the end: ${caret}`);
-      await page.keyboard.press("Home");
-      caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
-      assert(caret[0] === 0 && caret[1] === 0, `Home did not reach the start: ${caret}`);
-      await page.locator(box).evaluate((el) => el.setSelectionRange(15, 15));
-      await page.keyboard.press("Shift+End");
-      caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
-      assert(caret[0] === 15 && caret[1] === text.length, `Shift+End did not extend to the end: ${caret}`);
-      await page.keyboard.press("Shift+Home");
-      caret = await page.locator(box).evaluate((el) => [el.selectionStart, el.selectionEnd]);
-      assert(caret[0] === 0 && caret[1] === 15, `Shift+Home did not extend to the start: ${caret}`);
-      await page.fill(box, "");
-      await page.keyboard.press("Escape");
-      await page.waitForFunction(() => { const m = document.getElementById("terminal-prompt-modal"); return m && !m.classList.contains("show"); }, null, { timeout: 6000 });
-      return "both keys jump, Shift extends";
     });
 
     await run("files: multi upload -> Done -> list, reference (Copied), download, delete", async () => {
@@ -417,16 +375,6 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
         page.off("request", watch);
       }
       await page.keyboard.press("Escape").catch(() => {});
-    });
-
-    await run("mobile: prompt modal opens from the mobile toolbar", async () => {
-      const mp = await mobilePage();
-      await mp.goto(sessionUrl, { waitUntil: "domcontentloaded" });
-      await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 }); await sleep(800);
-      await mp.locator(".attach-mobile [data-terminal-prompt-modal-open]").first().click();
-      await modalShown(mp, "terminal-prompt-modal");
-      assert(await mp.$("#terminal-prompt-modal-text"), "prompt textarea missing on mobile");
-      await mp.keyboard.press("Escape").catch(() => {});
     });
 
     await run("legacy /sessions URLs redirect to /coders", async () => {

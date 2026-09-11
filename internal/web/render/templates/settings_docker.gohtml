@@ -1,23 +1,10 @@
 {{define "settings_docker.gohtml"}}
 {{template "app_start.gohtml" .}}
-<div class="page-header d-print-none mb-3">
-  <div class="d-flex align-items-center gap-2">
-    <div class="flex-fill min-w-0">
-      <h2 class="page-title text-truncate mb-0">Settings</h2>
-    </div>
-  </div>
-</div>
-
-<div class="card">
-  <div class="row g-0">
-    <div class="col-12 col-md-3 border-end">
-      <div class="card-body">
-        {{template "settings_nav" .SettingsNav}}
-      </div>
-    </div>
-    <div class="col-12 col-md-9">
-      <div class="card-body">
-        <h3 class="card-title">Docker</h3>
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Docker</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
         <form method="post" action="/settings/docker" id="settings-docker">
           {{if and (eq $.FlashProject "settings-docker") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -198,9 +185,6 @@
           </div>
           <button type="submit" class="btn btn-primary">Save</button>
         </form>
-      </div>
-    </div>
-  </div>
 </div>
 {{template "app_end.gohtml" .}}
 {{end}}

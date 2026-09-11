@@ -9,5 +9,5 @@
   Dict: ID (terminal), Coder (coder id), Steered (bool), Working (bool).
 */}}
 {{define "steered_icon.gohtml"}}
-<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .Steered}} steered{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
+<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .Steered}} steered{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}{{template "news_dot.gohtml"}}</span>
 {{end}}

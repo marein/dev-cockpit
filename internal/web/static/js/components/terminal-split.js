@@ -2,20 +2,12 @@ import { openMenu } from "@dc/contextmenu";
 import { confirm, promptText } from "@dc/dialog";
 import { ensureOk, postForm, postJSON } from "@dc/http";
 import { splitCreateItems } from "@dc/split";
-import { get, set } from "@dc/store";
 import { releaseCoder, steerCoder } from "@dc/steer";
 import { notifyError, notifySuccess } from "@dc/toast";
 
 const DRAG_THRESHOLD = 6;
 // The row tracks every column divides, capped like the server's splitLayout.
 const MAX_GRID_ROWS = 512;
-// What a stacked pane keeps whatever the budget says. A column of many panes
-// grows past the rows setting instead of squeezing them into nothing.
-const MIN_PANE_ROWS = 4;
-// The 1px flex gap between the panes, the border color showing through.
-const PANE_GAP = 1;
-const DEFAULT_ROWS = 30;
-const DEFAULT_FONT_SIZE = 14;
 
 const gcd = (a, b) => (b ? gcd(b, a % b) : a);
 const lcm = (a, b) => (a < 1 || b < 1 ? 1 : (a / gcd(a, b)) * b);
@@ -55,12 +47,9 @@ class TerminalSplit extends HTMLElement {
     this.suppressClick = false;
     this.confirming = false;
     this.pendingSync = false;
-    this.cellHeight = 0;
+    this.focused = this.querySelector("terminal-attach[active]")?.getAttribute("terminal-id") || "";
     const signal = this.ac.signal;
-    this.addEventListener("dc:terminal-metrics", (event) => this.onMetrics(event), { signal });
-    document.addEventListener("terminal-setting-change", (event) => {
-      if (event.detail?.setting === "rows" || event.detail?.setting === "font-size") this.applyBudget();
-    }, { signal });
+    document.addEventListener("dc:terminal-activated", (event) => this.onFocusMoved(event.detail?.id), { signal });
     this.addEventListener("contextmenu", (event) => this.onContextMenu(event), { signal });
     this.addEventListener("click", (event) => {
       const close = event.target.closest("[data-pane-close]");
@@ -87,22 +76,12 @@ class TerminalSplit extends HTMLElement {
       this.observer = new MutationObserver(() => this.syncWithStrip());
       this.observer.observe(strip, { childList: true, subtree: true });
     }
-    // Fullscreen gives the panes the whole viewport, so the budget steps
-    // aside; the flag lives on the root element as a class.
-    this.fullscreenObserver = new MutationObserver(() => this.applyBudget());
-    this.fullscreenObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-    this.cellHeight = Number(this.querySelector("terminal-attach[data-cell-height]")?.dataset.cellHeight)
-      || Number(get(this.cellKey(), ""))
-      || 0;
-    this.applyBudget();
   }
 
   disconnectedCallback() {
     this.cancelDrag();
     this.observer?.disconnect();
     this.observer = null;
-    this.fullscreenObserver?.disconnect();
-    this.fullscreenObserver = null;
     if (this.refreshTimer) {
       clearTimeout(this.refreshTimer);
       this.refreshTimer = null;
@@ -113,6 +92,15 @@ class TerminalSplit extends HTMLElement {
 
   groupId() {
     return this.querySelector("terminal-attach[split-group]")?.getAttribute("split-group") || "";
+  }
+
+  onFocusMoved(id) {
+    if (!id || id === this.focused) return;
+    if (!this.querySelector(`.attach-split-pane[data-pane-id="${CSS.escape(id)}"]`)) return;
+    const gid = this.groupId();
+    if (!gid) return;
+    this.focused = id;
+    postForm(`/splits/${encodeURIComponent(gid)}/focus`, { terminal: id }).catch(() => {});
   }
 
   memberDrift() {
@@ -266,65 +254,6 @@ class TerminalSplit extends HTMLElement {
         flat += 1;
       });
     });
-    this.applyBudget();
-  }
-
-  // ---- The rows budget ------------------------------------------------------
-  // The rows setting is the height of the vertical axis, not of every pane: a
-  // column shows about that many terminal lines in total, stacked panes share
-  // them minus their pane heads, and grouping or stacking never changes the
-  // page height. The container therefore carries the height and the panes fit
-  // their rows into the box they are given (the fullscreen mechanism, reused).
-  applyBudget() {
-    if (!this.isConnected) return;
-    const off = window.matchMedia("(pointer: coarse)").matches
-      || document.documentElement.classList.contains("dc-terminal-fullscreen")
-      || !(this.cellHeight > 0);
-    if (off) {
-      if (this.style.height) {
-        this.style.height = "";
-        this.style.flex = "";
-      }
-      return;
-    }
-    const head = this.querySelector("[data-pane-head]")?.offsetHeight || 0;
-    let depth = 1;
-    for (const column of this.columns()) depth = Math.max(depth, column.length);
-    // The height is a border box, so the container's own border rides along or
-    // a single pane column comes out one line short of the setting.
-    const border = Math.max(0, this.offsetHeight - this.clientHeight);
-    const budget = this.settingValue("rows", DEFAULT_ROWS) * this.cellHeight + head;
-    const floor = depth * (head + MIN_PANE_ROWS * this.cellHeight) + (depth - 1) * PANE_GAP;
-    const height = `${Math.round(Math.max(budget, floor) + border)}px`;
-    if (this.style.height === height) return;
-    this.style.height = height;
-    this.style.flex = "0 0 auto";
-  }
-
-  // One terminal line in pixels: only a rendered terminal knows it, so the
-  // islands report it and it is remembered per font size. Without the memory
-  // the first paint of every split page would be the flat fallback height and
-  // reflow once the first pane has measured itself.
-  onMetrics(event) {
-    const cell = Number(event.detail?.cell) || 0;
-    if (!(cell > 0) || Math.abs(cell - this.cellHeight) < 0.01) return;
-    this.cellHeight = cell;
-    set(this.cellKey(Number(event.detail?.fontSize) || 0), String(cell));
-    this.applyBudget();
-  }
-
-  cellKey(fontSize) {
-    return `dc-terminal-cell-${fontSize || this.settingValue("font-size", DEFAULT_FONT_SIZE)}`;
-  }
-
-  // Read straight from storage like terminal-attach does: the select is lazy
-  // loaded and may not have upgraded yet.
-  settingValue(setting, fallback) {
-    const el = document.querySelector(`terminal-setting-select[setting="${setting}"]`);
-    if (!el) return fallback;
-    return parseInt(get(el.getAttribute("storage-key") || "", ""), 10)
-      || parseInt(el.getAttribute("default-value") || "", 10)
-      || fallback;
   }
 
   refreshPage() {
@@ -396,7 +325,7 @@ class TerminalSplit extends HTMLElement {
       items.push({
         label: "Open editor",
         icon: "ti-code",
-        href: "/projects/" + encodeURIComponent(dataset.paneProject) + "/editor?return=" + encodeURIComponent(window.location.pathname),
+        href: "/projects/" + encodeURIComponent(dataset.paneProject) + "/editor",
       });
     }
     items.push({ divider: true });

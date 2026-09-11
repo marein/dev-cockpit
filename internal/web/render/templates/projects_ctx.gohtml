@@ -1,0 +1,47 @@
+{{/* The projects column: the index of every project, one row each with the
+     worktrees nested under their main. The page renders it beside the board,
+     the phone's sheet renders it on its own through /ctx/projects. Two marks
+     stand beside the name, and both are the session icon itself
+     (.dc-term-icon), so a row at work looks exactly like a coder at work: the
+     count of running coders and shells, with the number where a coder's own
+     glyph sits, and the project's docker, coloured the way the card colours
+     its own docker icons, green for containers up, red for a container in a
+     bad way, grey while only a compose action moves, and gone while nothing
+     of the project's docker runs at all.
+     Neither is rebuilt here, the running ring and the dot that runs the
+     border come from the one rule every other icon uses.
+
+     The count carries the row's news as well, as the corner dot every session
+     icon wears, so a row says in one place that its terminals have something
+     new. It names the resumable coders among its targets for that, they hold
+     news without running. A project with no live terminal has no count to
+     carry it and keeps the dot of its own at the end of the row. */}}
+{{define "projects_ctx.gohtml"}}
+{{template "ctx_start.gohtml" (dict "Title" "Projects")}}
+<div class="dc-ctx-tools">
+  <div class="dropdown d-lg-none">
+    <button type="button" class="btn btn-icon btn-ghost-secondary" data-ctx-sort-toggle data-bs-toggle="dropdown" data-bs-auto-close="true" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" aria-label="Sort projects" title="Sort projects"><i class="ti ti-arrows-sort" aria-hidden="true"></i></button>
+    <div class="dropdown-menu dropdown-menu-end">
+      <button type="button" class="dropdown-item" data-ctx-sort-option="alpha"><i class="ti ti-sort-ascending-letters me-2" aria-hidden="true"></i>Name</button>
+      <button type="button" class="dropdown-item" data-ctx-sort-option="active"><i class="ti ti-activity me-2" aria-hidden="true"></i>Active first</button>
+      <button type="button" class="dropdown-item" data-ctx-sort-option="recent"><i class="ti ti-history me-2" aria-hidden="true"></i>Recently used</button>
+    </div>
+  </div>
+  <a href="/projects/new" class="btn btn-icon btn-ghost-secondary" aria-label="Create project" title="Create project"><i class="ti ti-plus" aria-hidden="true"></i></a>
+</div>
+  </div>
+{{template "ctx_filter.gohtml" "Filter projects…"}}
+  <div class="dc-ctx-body">
+<nav class="list-group list-group-flush dc-rows" aria-label="Project index" data-project-index data-ctx-list="projects">
+  {{range .Rows}}
+  <a class="list-group-item list-group-item-action{{if .Grouped}} is-nested{{end}}" href="/projects#project-{{.Name}}" data-dc-focus="work" data-index-project="{{.Name}}" data-index-active="{{if .Active}}true{{else}}false{{end}}" data-index-used="{{.LastUsedUnix}}"{{if .Grouped}} data-index-worktree-of="{{.GitWorktreeOf}}"{{end}}>
+    {{if .Grouped}}<i class="ti ti-git-fork" aria-hidden="true"></i>{{end}}<span class="dc-mono dc-trunc flex-fill">{{.Name}}</span>
+    {{if .ActiveRefs}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}" data-notify-targets="{{.TerminalIDs}}" title="{{.CountTitle}}">{{len .ActiveRefs}}{{template "news_dot.gohtml"}}</span>{{end}}
+    {{if .DockerShown}}<span class="dc-term-icon{{with .DockerTone}} {{.}}{{end}}{{if .DockerWorking}} dc-docker-working{{end}}" title="{{.DockerTitle}}"><i class="ti ti-brand-docker" aria-hidden="true"></i></span>{{end}}
+    {{if not .ActiveRefs}}{{template "news_dot.gohtml" (dict "Hidden" (not .HasNews) "Scope" true "Projects" (print "project-" .Name) "Label" "Something new in this project")}}{{end}}
+  </a>
+  {{end}}
+  {{if not .Rows}}<div class="p-3 text-secondary small">No projects yet.</div>{{end}}
+</nav>
+{{template "ctx_end.gohtml"}}
+{{end}}

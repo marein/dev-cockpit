@@ -22,9 +22,9 @@ const { assert, sleep, BASE } = L;
 // leaves the element standing (asserted through element identity). Open state
 // and position live in localStorage (dc-host-float); the card clamps itself
 // back into the viewport on restore, drag and resize. z-order: 1045 over what
-// stands (assistant panel 1040, fullscreen views 1030, sticky footers 10), and
+// stands (assistant panel 1040, sticky footers 10), and
 // a body:has duck rule drops it to 5 while anything that asks for interaction
-// is open (dropdowns incl. the quick nav, modals, dialogs, context menus, the
+// is open (dropdowns incl. the sheet, modals, dialogs, context menus, the
 // switcher, the editor's quick open), because the strip's dropdowns live inside
 // a z-10 sticky context no fixed number could respect.
 //
@@ -43,8 +43,8 @@ const { assert, sleep, BASE } = L;
 // - the surfaces hide through the hidden attribute, and style.css makes that
 //   win over d-flex, so checks read computed display, never the attribute.
 
-const DESKTOP = ".navbar-collapse";
-const MOBILE = "header.navbar";
+const DESKTOP = ".dc-status";
+const MOBILE = ".dc-head-tools";
 const number = (text) => Number(String(text).replace("%", "").trim());
 
 L.runFeature("HOST-STATUS", async ({ browser, page, run, mobilePage }) => {
@@ -149,10 +149,12 @@ L.runFeature("HOST-STATUS", async ({ browser, page, run, mobilePage }) => {
     await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await mp.waitForSelector(`${MOBILE} dc-host-status`, { timeout: 8000 });
     // The bell's dropdown carries a "Mark all read" button of its own, so the
-    // count has to stay on the cluster's own children: status, assistant, bell.
-    const cluster = await mp.$$eval(`${MOBILE} .d-md-none.d-flex > *`, (els) => els.map((el) => el.localName));
-    assert(cluster.join(",") === "dc-host-status,a,dc-notifications", `the compact header carries ${cluster.join(", ")}`);
-    assert((await mp.locator(`${MOBILE} .js-update-flag`).count()) === 0, "the update flag is still in the compact header");
+    // count has to stay on the cluster's own children: status, bell, menu.
+    const cluster = await mp.$$eval(`${MOBILE} > *`, (els) => els.map((el) => el.localName));
+    assert(cluster.join(",") === "dc-host-status,dc-notifications,div", `the head tools carry ${cluster.join(", ")}`);
+    // The update stands in the menu at the end and only while one exists.
+    const flagShown = await mp.$$eval(`${MOBILE} .js-update-flag`, (els) => els.some((el) => getComputedStyle(el).display !== "none"));
+    assert(!flagShown, "the update row shows without an update");
     await mp.click(`${MOBILE} [data-host-toggle]`);
     await mp.waitForSelector(`${MOBILE} dc-host-status .dropdown-menu.show`, { timeout: 4000 });
     const rows = await mp.$$eval(`${MOBILE} [data-host-row]`, (els) => els
@@ -208,7 +210,7 @@ L.runFeature("HOST-STATUS", async ({ browser, page, run, mobilePage }) => {
     // Driven through the component itself, not by editing classes: whether this
     // host really has an update pending is none of this runner's business.
     const entry = await mp.evaluate(() => {
-      const el = document.querySelector("li.js-update-flag");
+      const el = document.querySelector(".dc-head-tools .js-update-flag");
       const check = document.querySelector("dc-update-check");
       if (!el || !check) return null;
       check.renderFlags({ available: false, latest: "9.9.9" });
@@ -223,12 +225,12 @@ L.runFeature("HOST-STATUS", async ({ browser, page, run, mobilePage }) => {
         button: button ? button.className : "",
       };
     });
-    assert(entry, "no update entry in the burger menu");
+    assert(entry, "no update entry in the head menu");
     assert(entry.away === "none", "the update entry shows without an update");
     assert(entry.shown !== "none", "the update entry stayed hidden with an update available");
     assert(/^Update to 9\.9\.9$/.test(entry.text), `entry reads "${entry.text}"`);
     assert(entry.title === "Update to 9.9.9", `entry tooltip "${entry.title}"`);
-    assert(/btn-primary/.test(entry.button) && /btn-sm/.test(entry.button), `the update is not a small primary button: ${entry.button}`);
+    assert(/dropdown-item/.test(entry.button), `the update is not a row of the menu: ${entry.button}`);
   });
 
   await run("mobile: the float squashes to mini bars with the value underneath", async () => {
@@ -299,7 +301,7 @@ L.runFeature("HOST-STATUS", async ({ browser, page, run, mobilePage }) => {
 
   await run("the float lives outside the swapped region: a boosted navigation keeps the element", async () => {
     await page.evaluate(() => { document.querySelector("dc-host-float").dataset.probe = "kept"; });
-    await page.click('.navbar-collapse a[href="/docs"]');
+    await page.click('.dc-rail a[href="/docs"]');
     await page.waitForURL(/\/docs/, { timeout: 8000 });
     await sleep(400);
     const kept = await page.evaluate(() => ({
@@ -345,20 +347,9 @@ L.runFeature("HOST-STATUS", async ({ browser, page, run, mobilePage }) => {
     await sleep(200);
   });
 
-  await run("z-order: over panel, fullscreen and footers; ducks under anything that pops up", async () => {
+  await run("z-order: over panel and footers; ducks under anything that pops up", async () => {
     const z = await page.$eval("dc-host-float", (el) => Number(getComputedStyle(el).zIndex));
-    assert(z === 1045, `float z-index ${z}, want 1045 (over the 1040 panel and the 1030 fullscreen views)`);
-    const steady = await page.evaluate(() => {
-      const results = {};
-      for (const mode of ["dc-terminal-fullscreen", "dc-editor-fullscreen"]) {
-        document.documentElement.classList.add(mode);
-        results[mode] = Number(getComputedStyle(document.querySelector("dc-host-float")).zIndex);
-        document.documentElement.classList.remove(mode);
-      }
-      return results;
-    });
-    assert(steady["dc-terminal-fullscreen"] === 1045 && steady["dc-editor-fullscreen"] === 1045,
-      `fullscreen z ${JSON.stringify(steady)}, want 1045 over the 1030 views`);
+    assert(z === 1045, `float z-index ${z}, want 1045 (over the 1040 panel)`);
     // Any open popup has to win: an open dropdown ducks the card under everything.
     await page.click(".dc-notify-bell:visible");
     await page.waitForSelector(".dc-notify-menu.show", { timeout: 4000 });
@@ -380,24 +371,23 @@ L.runFeature("HOST-STATUS", async ({ browser, page, run, mobilePage }) => {
     assert(hidden, "the float came back after being closed");
   });
 
-  await run("the desktop header keeps the wordmark and the menu-only rows stay off it", async () => {
+  await run("the rail keeps the mark and the phone's menu rows stay off it", async () => {
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-    // Two brands live in the layout, one per header breakpoint; this is the wide one.
-    await page.waitForSelector(".navbar-collapse .navbar-brand", { timeout: 8000 });
-    const brand = await page.$eval(".navbar-collapse .navbar-brand", (el) => el.textContent.trim());
-    assert(/Dev Cockpit/.test(brand), `the wordmark is gone on a desktop: "${brand}"`);
-    const hiddenOnWide = await page.$$eval("li.js-update-flag",
+    await page.waitForSelector(".dc-rail .dc-rail-mark", { timeout: 8000 });
+    const mark = await page.$eval(".dc-rail .dc-rail-mark", (el) => el.getAttribute("aria-label"));
+    assert(mark === "Dev Cockpit", `the mark lost its name on a desktop: "${mark}"`);
+    const hiddenOnWide = await page.$$eval(".js-update-flag",
       (els) => els.every((el) => getComputedStyle(el).display === "none"));
-    assert(hiddenOnWide, "the menu-only update row rendered into the desktop nav");
-    // Two logouts live in the layout too: the icon in the wide header's control
-    // cluster, and the spelled-out row in the burger menu, which keeps its words.
-    const logout = await page.$eval('.navbar-collapse .col-auto form[action="/logout"] button', (el) => ({
+    assert(hiddenOnWide, "an update button rendered without an update");
+    // Two logouts live in the layout too: the icon at the rail's foot, and the
+    // spelled-out row in the phone's head menu, which keeps its words.
+    const logout = await page.$eval('.dc-rail form[action="/logout"] button', (el) => ({
       text: el.textContent.trim(),
       label: el.getAttribute("aria-label"),
     }));
     assert(logout.text === "", `logout still spells itself out: "${logout.text}"`);
     assert(logout.label === "Logout", `logout lost its label: ${logout.label}`);
-    const menuLogout = await page.$eval('.navbar-nav form[action="/logout"] button', (el) => el.textContent.trim());
+    const menuLogout = await page.$eval(`${MOBILE} form[action="/logout"] button`, (el) => el.textContent.trim());
     assert(menuLogout === "Logout", `the menu row lost its words: "${menuLogout}"`);
   });
 });

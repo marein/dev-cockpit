@@ -2,6 +2,7 @@ import { postForm, ensureOk, getText, getJSON, csrfHeaders } from "@dc/http";
 import { notifyError, showToast } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
 import { jumpTextEdge } from "@dc/dom";
+import { DoubleTap } from "@dc/doubletap";
 
 const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
@@ -18,6 +19,7 @@ const STALE_MS = 45000;
 const VOICE_MODE_KEY = "dc-assistant-voice-mode";
 const VOICE_VOLUME_KEY = "dc-assistant-voice-volume";
 const VOICE_VOLUME_DEFAULT = 100;
+const PLACE_KEY = "dc-assistant-place";
 
 // How long the send button has to be held before the press means talking
 // instead of sending; a shorter press stays the plain send it always was.
@@ -58,6 +60,11 @@ function renderAttachment(file) {
     image.src = file.url;
     image.alt = file.name;
     image.className = "dc-assistant-media";
+    if (file.width && file.height) {
+      image.setAttribute("width", file.width);
+      image.setAttribute("height", file.height);
+      image.style.setProperty("--dc-media-ratio", `${file.width}/${file.height}`);
+    }
     link.append(image);
     return link;
   }
@@ -79,9 +86,22 @@ function renderAttachment(file) {
   return link;
 }
 
-// The one conversation surface. It renders only inside the assistant overlay
-// and scrolls its own [data-assistant-scroll] region; the page behind the
-// overlay never scrolls for it.
+function lastMessage(root) {
+  const messages = root.querySelectorAll("[data-assistant-message][data-message-id]");
+  const last = messages[messages.length - 1];
+  return last ? `${last.getAttribute("data-message-id")}:${last.getAttribute("data-state")}` : "";
+}
+
+function composerHoldsUnsavedWords(surface, fresh) {
+  const input = surface.querySelector("[data-assistant-input]");
+  const freshInput = fresh.querySelector("[data-assistant-input]");
+  if (!input || !freshInput) return false;
+  return input.value !== freshInput.value;
+}
+
+// The one conversation surface: the work column of the assistant page. It
+// scrolls its own [data-assistant-scroll] region under the head, the page
+// never scrolls for it.
 class Assistant extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -101,6 +121,7 @@ class Assistant extends HTMLElement {
     this.input = this.querySelector("[data-assistant-input]");
     this.sendButton = this.querySelector("[data-assistant-send]");
     this.cancelButton = this.querySelector("[data-assistant-cancel]");
+    this.headIcon = this.querySelector("[data-assistant-head-icon]");
     this.counter = this.querySelector("[data-assistant-count]");
     this.empty = this.querySelector("[data-assistant-empty]");
     this.attachButton = this.querySelector("[data-assistant-attach]");
@@ -211,12 +232,133 @@ class Assistant extends HTMLElement {
       this.sizer.observe(this.log);
     }
 
+    // Another device may have moved the conversation on, or a message arrived
+    // while the event stream was down (the connect snapshot repeats the
+    // signal, so a reconnect catches up like the tab strip does): the page
+    // pulls itself again and swaps the column only when the transcript moved
+    // or the composer went read-only, and the composer holds nothing unsaved,
+    // so a running answer and words being typed stay untouched.
+    onServerEvent("assistant", () => void this.syncFromServer(), { signal });
+    // Alt Alt toggles push to talk from anywhere on the page, the machine is
+    // the terminal switcher's on a key no gesture uses yet. The listeners ride
+    // the document's capture phase, so the gesture works with the focus in an
+    // editable field too; a bare Alt types nothing there, so nothing leaks in.
+    this.talkTap = new DoubleTap();
+    document.addEventListener("keydown", (event) => this.onTalkTapKeydown(event), { signal, capture: true });
+    document.addEventListener("keyup", (event) => this.onTalkTapKeyup(event), { signal, capture: true });
+
     this.setRunning(this.running);
     this.openStream();
     this.stickToEnd();
     this.onInput();
     this.autoGrow();
+    // The earlier messages load as the whole transcript, a page of its own;
+    // the message the reader was looking at keeps its place in the viewport
+    // across it, carried in the fragment and the session store.
+    this.addEventListener("click", (event) => {
+      const all = event.target.closest("[data-assistant-all]");
+      if (!all) return;
+      const place = this.readingPlace();
+      if (!place) return;
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        window.sessionStorage.setItem(PLACE_KEY, JSON.stringify(place));
+      } catch (error) {
+        void error;
+      }
+      const target = all.getAttribute("href").split("#")[0] + "#message-" + encodeURIComponent(place.id);
+      if (window.app?.navigate) window.app.navigate(target);
+      else window.location.href = target;
+    }, { signal });
+
     this.setAttribute("ready", "");
+    document.dispatchEvent(new CustomEvent("dc:assistant-shown"));
+    // A tick later: under a boosted navigation the element connects before
+    // pe.js pushes the new address and scrolls its hash target, and the
+    // landing has to read that address and come after that scroll.
+    window.setTimeout(() => { if (this.isConnected) this.landOnHash(); }, 0);
+  }
+
+  readingPlace() {
+    if (!this.scroller) return null;
+    const top = this.scroller.getBoundingClientRect().top;
+    for (const message of this.scroller.querySelectorAll("[data-assistant-message][data-message-id]")) {
+      const rect = message.getBoundingClientRect();
+      if (rect.bottom > top) return { id: message.getAttribute("data-message-id"), offset: rect.top - top };
+    }
+    return null;
+  }
+
+  // A notification link names the answer it announces in the fragment. The
+  // page lands on it when it is rendered, and pulls the whole transcript
+  // once when the window held it back. A place stored by the show earlier
+  // link puts the message back where the reader had it instead.
+  landOnHash() {
+    const hash = window.location.hash;
+    if (!hash.startsWith("#message-")) return;
+    const id = decodeURIComponent(hash.slice("#message-".length));
+    let place = null;
+    try {
+      place = JSON.parse(window.sessionStorage.getItem(PLACE_KEY) || "null");
+      window.sessionStorage.removeItem(PLACE_KEY);
+    } catch (error) {
+      void error;
+    }
+    if (place && place.id === id && this.querySelector(`[data-message-id="${CSS.escape(id)}"]`)) {
+      this.anchorTo(id, place.offset);
+      return;
+    }
+    if (this.focusMessage(id)) return;
+    const all = this.querySelector("[data-assistant-all]");
+    if (!all || new URLSearchParams(window.location.search).has("all")) return;
+    const target = all.getAttribute("href").split("#")[0] + hash;
+    if (window.app?.navigate) window.app.navigate(target);
+    else window.location.href = target;
+  }
+
+  async syncFromServer() {
+    if (this.running || this.syncing || !this.isConnected) return;
+    this.syncing = true;
+    try {
+      const html = await getText(window.location.pathname + window.location.search);
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const fresh = doc.querySelector("dc-assistant");
+      if (!fresh || fresh.getAttribute("conversation-id") !== this.getAttribute("conversation-id")) return;
+      const moved = lastMessage(fresh) !== lastMessage(this) || fresh.hasAttribute("blocked") !== this.hasAttribute("blocked");
+      if (!moved || composerHoldsUnsavedWords(this, fresh) || this.running) return;
+      const app = this.closest(".dc-app");
+      this.replaceWith(document.adoptNode(fresh));
+      if (app) await window.app?.loadElements?.(app);
+    } catch (error) {
+      void error;
+    } finally {
+      this.syncing = false;
+    }
+  }
+
+  // Only a bare Alt counts as a tap, everything else resets the machine, so
+  // an Alt+<key> combo never half-arms it; event.repeat covers a held key's
+  // auto repeat.
+  onTalkTapKeydown(event) {
+    if (event.key !== "Alt" || event.repeat || event.ctrlKey || event.metaKey || event.shiftKey) {
+      this.talkTap.reset();
+      return;
+    }
+    this.talkTap.keydown(event.key);
+  }
+
+  onTalkTapKeyup(event) {
+    const fired = this.talkTap.keyup(event.key);
+    // Firefox on Windows hands a bare Alt keyup to its menu bar, which would
+    // swallow the second tap and park the focus outside the page. The
+    // default is taken off every clean tap's keyup, the arming first one and
+    // the firing second one alike, and never off the keyup that ends an
+    // Alt+<key> combo, which the machine already refused as a tap.
+    if (event.key === "Alt" && (fired || this.talkTap.armed === "Alt")) event.preventDefault();
+    if (!fired) return;
+    event.stopPropagation();
+    this.toggleTalk();
   }
 
   viewportHeight() {
@@ -454,6 +596,7 @@ class Assistant extends HTMLElement {
     this.running = running;
     this.toggleAttribute("running", running);
     this.cancelButton?.classList.toggle("d-none", !running);
+    this.headIcon?.classList.toggle("working", running);
     this.onInput();
   }
 
@@ -562,7 +705,7 @@ class Assistant extends HTMLElement {
     let node = this.bubble(messageId);
     if (!node) {
       node = document.createElement("div");
-      node.className = "dc-msg";
+      node.className = "dc-msg dc-msg-assistant";
       node.id = "message-" + messageId;
       node.setAttribute("data-assistant-message", "");
       node.setAttribute("data-no-pe", "");

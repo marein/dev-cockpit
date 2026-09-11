@@ -45,6 +45,7 @@ func (s *Server) handleSkillNew(co *coder.Manager) gin.HandlerFunc {
 		base := s.coderBase(co)
 		c.HTML(http.StatusOK, "skills_form.gohtml", render.SkillsFormData{
 			Page:        s.page(c, "Create skill", "settings"),
+			SettingsNav: s.coderSettingsNav("coder", co, "skills"),
 			Base:        base,
 			FormAction:  base + "/skills",
 			SubmitLabel: "Create skill",
@@ -68,6 +69,7 @@ func (s *Server) handleSkillEdit(co *coder.Manager) gin.HandlerFunc {
 		}
 		c.HTML(http.StatusOK, "skills_form.gohtml", render.SkillsFormData{
 			Page:         s.page(c, "Edit skill", "settings"),
+			SettingsNav:  s.coderSettingsNav("coder", co, "skills"),
 			Base:         base,
 			IsEdit:       true,
 			OriginalID:   skill.ID,

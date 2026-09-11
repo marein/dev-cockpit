@@ -122,10 +122,10 @@ L.runFeature("BACKUP", async ({ page, run }) => {
     await page.goto(`${BASE}/settings/backup`, { waitUntil: "domcontentloaded" });
     assert(await page.isVisible("#settings-backup-export"), "export pane not default");
     assert(!(await page.isVisible('input[name="archive"]')), "import pane leaking into export tab");
-    await page.click('.nav-tabs a:has-text("Import")');
+    await page.click('.dc-work-tabs a:has-text("Import")');
     await page.waitForSelector('input[name="archive"]', { timeout: 8000 });
     assert(!(await page.isVisible("#settings-backup-export")), "export pane leaking into import tab");
-    await page.click('.nav-tabs a:has-text("Export")');
+    await page.click('.dc-work-tabs a:has-text("Export")');
     await page.waitForSelector("#settings-backup-export", { timeout: 8000 });
   });
 
@@ -204,7 +204,7 @@ L.runFeature("BACKUP", async ({ page, run }) => {
     await page.waitForSelector("#settings-backup-review", { timeout: 8000 });
     const rows = page.locator("#settings-backup-review .list-group-item");
     assert((await rows.count()) === 1, `expected 1 review row, got ${await rows.count()}`);
-    assert((await page.locator('.navbar a[href="/settings/general"] .status-dot').count()) > 0, "main nav news dot missing");
+    assert((await page.locator('.dc-rail a[href="/settings/general"] .dc-rail-count').count()) > 0, "rail review count missing");
     assert((await page.locator('a[href="/settings/backup"] .badge').last().textContent()).trim() === "1", "backup sub-nav badge missing the review count");
     assert((await rows.first().textContent()).includes("settings.json"), "settings.json row missing");
     await rows.first().locator('a:has-text("Merge")').click();
