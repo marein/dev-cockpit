@@ -14,6 +14,12 @@ type AssistantAttachmentView struct {
 	URL      string
 	Media    string
 	SizeText string
+	// Width and Height are the pixel size of a picture, zero when it could not
+	// be read. They render as the image's attributes, so its space stands
+	// before the browser has the file: without them a transcript full of
+	// screenshots rearranges itself under the reader while they arrive.
+	Width  int
+	Height int
 }
 
 // AssistantJobView is one steered job on the conversation page: what the
@@ -44,19 +50,16 @@ type AssistantJobView struct {
 type AssistantData struct {
 	Page
 	ID string
-	// Panel says the surface renders inside the overlay: it gets its own
-	// compact head row and scrolls internally instead of with the page.
-	Panel bool
-	// View is which of the overlay's own sections renders: "chat", "jobs",
-	// "memory" or "history". The overlay is its own world, nothing in it
-	// opens a modal or navigates the page behind it.
-	View string
-	// MemoryData and HistoryData feed the overlay's memory and history views,
-	// set only when that view renders.
-	MemoryData  *AssistantMemoryData
-	HistoryData *AssistantHistoryData
-	CoderID     string
-	CoderLabel  string
+	// ConversationTitle names the conversation in the work head, the same
+	// title the list column shows; empty while nobody has spoken in it.
+	ConversationTitle string
+	// Path is the page's own address: the list column marks its row, and the
+	// page pulls it again to catch up after an assistant event.
+	Path string
+	// Ctx is the list column beside the conversation.
+	Ctx        *AssistantCtxData
+	CoderID    string
+	CoderLabel string
 	// Coders is only used when more than one is installed: the new
 	// conversation control then asks which one answers.
 	Coders   []AssistantCoderOption
@@ -104,10 +107,7 @@ type AssistantData struct {
 	TTS            bool
 	MaxPromptBytes int
 	MaxUploadBytes int64
-	// MemoryCount is what the assistant knows about the user, shown as a
-	// badge so the memory never grows unnoticed.
-	MemoryCount  int
-	HistoryCount int
+	HistoryCount   int
 	// Draft is the unsent message this conversation holds, rendered straight
 	// into the message box, and DraftFiles are the files that were uploaded
 	// for it, as the JSON the composer rebuilds its chips from. Both come from
@@ -137,6 +137,10 @@ type AssistantCard struct {
 	CoderLabel string
 	URL        string
 	Messages   int
+	// Running says a turn is being written right now, and Unfinished that the
+	// last one stopped before it was done. They come apart at the source, so a
+	// row shows the run as work and never as a fault.
+	Running    bool
 	Unfinished bool
 	Current    bool
 	// Updated is a machine stamp (RFC3339), the dc-time element renders it in
@@ -155,6 +159,32 @@ type AssistantHistoryData struct {
 	CurrentURL string
 }
 
+// AssistantCtxData is the list column of the assistant page, and what
+// /ctx/assistant answers for the phone's sheet: the conversation that still
+// takes messages under its own head, the rest under Earlier, and the new
+// conversation control in the head.
+type AssistantCtxData struct {
+	Page
+	// Path is the page the column stands beside: its row is active, and the
+	// column refreshes itself from /ctx/assistant with the same path.
+	Path string
+	// Current is the conversation that still takes messages, nil while none
+	// exists; Answering says a turn runs in it right now, read off that card so
+	// the head and the row say the same thing.
+	Current   *AssistantCard
+	Answering bool
+	Earlier   []AssistantCard
+	ActiveID  string
+	Available bool
+	// Coders and NewCoderID drive the new conversation control, PostURL is
+	// where its forms post, and IDPrefix keeps those forms' ids apart from
+	// the composer's and between the page's column and the sheet's.
+	Coders     []AssistantCoderOption
+	NewCoderID string
+	PostURL    string
+	IDPrefix   string
+}
+
 // AssistantMemoryEntry is one thing the assistant knows about the user.
 type AssistantMemoryEntry struct {
 	Slug  string
@@ -170,6 +200,9 @@ type AssistantMemoryEntry struct {
 type AssistantMemoryData struct {
 	Page
 	Entries []AssistantMemoryEntry
+	// Prefix names the add form's ids, so a second rendering of the list in
+	// one document could keep its own.
+	Prefix string
 }
 
 // AssistantMessageView is one rendered message. User text stays plain, assistant

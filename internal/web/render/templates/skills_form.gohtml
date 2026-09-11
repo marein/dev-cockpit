@@ -1,9 +1,11 @@
 {{define "skills_form.gohtml"}}
 {{template "app_start.gohtml" .}}
-<div class="page-header d-print-none mb-3">
-  <div class="page-pretitle">Coder</div>
-  <h2 class="page-title">{{.Heading}}</h2>
-</div>
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<a class="btn btn-icon btn-ghost-secondary" href="{{.Base}}/skills" aria-label="Back" title="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+<h1 class="dc-work-title">{{.Heading}}</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
 <div class="card">
   <form method="post" action="{{.FormAction}}">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -29,6 +31,7 @@
       </div>
     </div>
   </form>
+</div>
 </div>
 {{template "app_end.gohtml" .}}
 {{end}}

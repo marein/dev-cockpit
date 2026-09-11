@@ -1,13 +1,10 @@
-{{define "project_breadcrumb.gohtml"}}
-<div class="page-pretitle">
-  {{if .}}
-  <a href="/projects#project-{{.}}" class="link-secondary text-decoration-none d-inline-block mw-100 text-truncate align-bottom">
-    <i class="ti ti-arrow-left me-1"></i>{{.}}
-  </a>
-  {{else}}
-  <a href="/projects" class="link-secondary text-decoration-none d-inline-block mw-100 text-truncate align-bottom">
-    <i class="ti ti-arrow-left me-1"></i>Projects
-  </a>
-  {{end}}
-</div>
+{{/* The way back from a page that belongs to a project: the arrow at the
+     start of the work head, to the project's row on the board, or to the board
+     itself without a project. */}}
+{{define "project_back.gohtml"}}
+{{if .}}
+<a href="/projects#project-{{.}}" class="btn btn-icon btn-ghost-secondary" aria-label="Back to {{.}}" title="Back to {{.}}"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+{{else}}
+<a href="/projects" class="btn btn-icon btn-ghost-secondary" aria-label="Back to the projects" title="Back to the projects"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+{{end}}
 {{end}}

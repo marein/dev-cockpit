@@ -1,0 +1,70 @@
+{{/* The assistant page: the conversation the address names in the work
+     column, the list column of every conversation beside it. The work column
+     is the dc-assistant element itself, so the head's voice menu and the
+     composer are its own children, and the steered coders and the memory
+     stand in an aside that is inline from xl up and a sheet below.
+
+     The head's sparkle belongs to the phone alone and stays there: `d-lg-none`
+     is on it in every state, the desktop head is the title and nothing else,
+     and a running turn shows on the desktop in the list column beside it. On
+     the phone that icon is the same status light the column's rows carry, so
+     `setRunning` puts the working ring on it and takes it off again, on the
+     stream frames that show and hide the stop button, without a reload. A
+     state that made the icon appear would be a new element on the desktop
+     head, which is why running only ever adds `working`. */}}
+{{define "assistant_page.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "assistant_ctx.gohtml" .Ctx}}
+<dc-assistant class="dc-work" data-assistant-coder="{{.CoderID}}" conversation-id="{{.ID}}" coder-label="{{.CoderLabel}}" stream-url="{{.StreamURL}}" post-url="{{.PostURL}}" message-url="{{.MessageURL}}" upload-url="{{.UploadURL}}" stt-url="{{.SttURL}}"{{if .TTS}} tts{{end}} max-bytes="{{.MaxPromptBytes}}" max-file-bytes="{{.MaxUploadBytes}}" draft-url="{{.DraftURL}}" draft-files="{{.DraftFiles}}"{{if .Running}} running{{end}}{{if .Blocked}} blocked{{end}}>
+  <div class="dc-work-head" data-assistant-head>
+    <span class="dc-term-icon assistant d-lg-none{{if .Running}} working{{end}}" data-assistant-head-icon aria-hidden="true"><i class="ti ti-sparkles"></i></span>
+    <h1 class="dc-work-title flex-fill min-w-0 text-truncate" data-assistant-title>{{if .ConversationTitle}}{{.ConversationTitle}}{{else}}New conversation{{end}}</h1>
+    {{if .TTS}}
+    {{/* The speaker opens the voice menu instead of switching on its own: the
+         icon alone says whether answers read themselves aloud, so the button
+         never wears a colour for it. Both choices are per device and live in
+         localStorage, the way the terminal keeps its own settings. */}}
+    <div class="dropdown">
+      <button type="button" class="btn btn-icon btn-ghost-secondary" data-assistant-voice data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Voice" title="Voice"><i class="ti ti-volume-off"></i></button>
+      <div class="dropdown-menu dropdown-menu-end p-3 dc-voice-menu">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="assistant-voice-autoplay" data-assistant-autoplay>
+          <label class="form-check-label" for="assistant-voice-autoplay">Autoplay</label>
+        </div>
+        <div class="form-label mb-1">Volume</div>
+        <dc-assistant-volume></dc-assistant-volume>
+      </div>
+    </div>
+    {{end}}
+    {{template "assistant_jobs_button.gohtml" .}}
+    {{template "shell_head_tools.gohtml" .}}
+  </div>
+  <div class="dc-work-body dc-work-fill">
+    {{template "flash.gohtml" .}}
+    <div class="dc-assistant-body">
+      <div class="dc-assistant-main">
+        <div class="dc-assistant-scroll" data-assistant-scroll>
+          {{template "assistant_thread.gohtml" .}}
+        </div>
+        {{template "assistant_composer.gohtml" .}}
+      </div>
+      {{/* The aside holds the steered coders: beside the conversation from xl
+           up, below xl the sheet the head's steering wheel opens. The memory
+           sheet is the layout's, opened from the list column's head. */}}
+      <aside class="offcanvas-xl offcanvas-end dc-assistant-aside" tabindex="-1" id="assistant-aside" aria-label="Steered coders" data-assistant-aside>
+        <div class="offcanvas-header border-bottom py-2">
+          <h2 class="offcanvas-title h4 m-0">Steered coders</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#assistant-aside" aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body dc-assistant-aside-body">
+          <dc-assistant-list list-url="{{.JobsURL}}" data-assistant-jobs-list>
+            {{template "assistant_jobs_list.gohtml" .}}
+          </dc-assistant-list>
+          <div class="text-secondary small">Steered coders are checked on their own schedule, the wake ups land in the conversation.</div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</dc-assistant>
+{{template "app_close.gohtml" .}}
+{{end}}

@@ -1,0 +1,12 @@
+{{define "docs_ctx.gohtml"}}
+{{template "ctx_start.gohtml" (dict "Title" "Docs")}}
+{{template "ctx_body.gohtml"}}
+<nav class="list-group list-group-flush dc-rows" aria-label="Topics">
+  {{range .Topics}}
+  <a class="list-group-item list-group-item-action" href="#{{.Key}}" data-dc-focus="work" data-docs-topic-link="{{.Key}}">
+    <i class="ti {{.Icon}}" aria-hidden="true"></i><span class="flex-fill dc-trunc">{{.Title}}</span><span class="badge bg-secondary-lt">{{.Count}}</span>
+  </a>
+  {{end}}
+</nav>
+{{template "ctx_end.gohtml"}}
+{{end}}

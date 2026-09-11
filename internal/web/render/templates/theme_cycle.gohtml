@@ -1,0 +1,13 @@
+{{/* One button for the color theme: it shows the mode in force and a click
+     moves to the next one, light, dark, follow the OS. .Class styles the
+     button for its place, .Label adds the mode's name for a menu row. */}}
+{{define "theme_cycle.gohtml"}}
+<dc-theme-cycle>
+  <button type="button" class="{{.Class}}" data-theme-cycle aria-label="Theme" title="Theme">
+    <i class="ti ti-sun" data-theme-mark="light" aria-hidden="true" hidden></i>
+    <i class="ti ti-contrast" data-theme-mark="auto" aria-hidden="true" hidden></i>
+    <i class="ti ti-moon" data-theme-mark="dark" aria-hidden="true" hidden></i>
+    {{if .Label}}<span class="ms-2">Theme: <span data-theme-label></span></span>{{end}}
+  </button>
+</dc-theme-cycle>
+{{end}}

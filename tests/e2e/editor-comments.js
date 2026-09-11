@@ -21,7 +21,7 @@ const { assert, sleep, BASE } = L;
 // answers null without one, so this runner's scratch project shows a bare
 // line's menu with two entries). The
 // note's dialog is a Bootstrap modal (data-editor-comment-modal, its host
-// moved to document.body for the fullscreen editor): textarea with a dimmed
+// moved to document.body like the terminal panel's modals): textarea with a dimmed
 // form-hint under it, Cancel, Save
 // or Add, an empty save marks the field is-invalid, Ctrl/Cmd+Enter saves
 // like the commit message; the dialog only creates and edits, every delete

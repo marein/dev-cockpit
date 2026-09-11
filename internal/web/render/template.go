@@ -138,12 +138,15 @@ type QuickNav struct {
 	// Strip is Active folded like the tab strip: split view groups become one
 	// entry with their members, so the quick nav renders groups as blocks.
 	Strip []StripTab
-	// UnreadCount is the number of targets with unread news, rendered into
-	// the toggle badge server-side so the badge survives a boosted body swap
-	// (the app-wide event stream sends its snapshot on connect, not per
+	// TerminalNews says whether a coder or a shell holds unread news, the one
+	// question the Terminals button of the rail and the tabbar asks. A
+	// compose action, a backup job, a standing git question and the assistant
+	// are no terminals and stay out of it, only the bell counts them in.
+	// Rendered server-side so the dot survives a boosted body swap (the
+	// app-wide event stream sends its snapshot on connect, not per
 	// navigation); the client keeps it live from there.
-	UnreadCount int
-	CurrentID   string
+	TerminalNews bool
+	CurrentID    string
 	// Focus is the split member whose pane is active on the current page, so
 	// the group block can mark that member row and the project context can
 	// follow it even when the group's members span several projects.

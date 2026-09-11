@@ -11,6 +11,7 @@ type SplitMember struct {
 	StreamURL     string
 	ResizeURL     string
 	InputURL      string
+	CopyURL       string
 	ScrollHistory bool // shells scroll the tmux history
 	// Col is the rendered column, 1 based and left to right, and Row/RowSpan
 	// place the pane inside that column's stack. The three are the pane's

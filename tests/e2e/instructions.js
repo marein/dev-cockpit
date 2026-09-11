@@ -16,8 +16,8 @@ L.runFeature("INSTRUCTIONS", async ({ page, run }) => {
       await page.goto(`${BASE}/instructions`, { waitUntil: "domcontentloaded" });
       const canonical = new URL(page.url()).pathname;
       assert(/^\/settings\/coders\/\w+\/instructions$/.test(canonical), `not canonical under settings: ${canonical}`);
-      assert(!(await page.$('.navbar-nav a[href$="/instructions"]')), "Coder still in the main navigation");
-      assert(await page.$('.navbar-nav a[href="/settings/general"].active'), "Settings is not the active main nav tab");
+      assert(!(await page.$('.dc-rail a[href$="/instructions"]')), "Coder still in the rail");
+      assert(await page.$('.dc-rail a[href="/settings/general"].active'), "Settings is not the active rail entry");
       assert(await page.$('[data-settings-nav] a[href="/settings/notifications"]'), "no settings sidebar on the coder page");
       assert(await page.$("[data-settings-coder].active"), "coder entry in the settings sidebar not marked");
       assert(await page.$('[data-coder-sections] a.active[href$="/instructions"]'), "instructions section tab not marked");

@@ -28,9 +28,9 @@
 
 {{define "coder_files_content.gohtml"}}
 {{if .Error}}
-<div class="alert alert-danger mb-3 text-break" role="alert">{{.Error}}</div>
+{{template "notice.gohtml" (dict "Level" "error" "Message" .Error "Dismiss" false)}}
 {{else if .Message}}
-<div class="alert alert-success mb-3 text-break" role="alert">{{.Message}}</div>
+{{template "notice.gohtml" (dict "Level" "success" "Message" .Message "Dismiss" false)}}
 {{end}}
 {{if .Files}}
 <div class="card">

@@ -1,15 +1,11 @@
 {{define "settings_backup_new.gohtml"}}
 {{template "app_start.gohtml" .}}
-<div class="page-header d-print-none mb-3">
-  <div class="d-flex align-items-center gap-2">
-    <div class="flex-fill min-w-0">
-      <div class="page-pretitle">Backup</div>
-      <h2 class="page-title text-truncate mb-0">Create backup</h2>
-    </div>
-    <a href="/settings/backup" class="btn flex-shrink-0">Back</a>
-  </div>
-</div>
-
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<a class="btn btn-icon btn-ghost-secondary" href="/settings/backup" aria-label="Back" title="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+<h1 class="dc-work-title">Create backup</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
 <div class="card">
   <div class="card-body">
     <form method="post" action="/settings/backup/new" id="backup-create">
@@ -42,6 +38,7 @@
       </div>
     </form>
   </div>
+</div>
 </div>
 {{template "app_end.gohtml" .}}
 {{end}}

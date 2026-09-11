@@ -174,7 +174,7 @@ async function createShell(page, project) {
 
 async function deleteShell(page, shellUrl) {
   const delPath = new URL(shellUrl).pathname + "/delete";
-  await closeTerminal(page, shellUrl, `form[action="${delPath}"] button[type="submit"], form[action="${delPath}"] button`);
+  await closeTerminal(page, shellUrl, `form[action="${delPath}"] button[type="submit"], form[action="${delPath}"] button`, delPath);
 }
 
 async function createSession(page, project, name, coder) {
@@ -190,18 +190,23 @@ async function createSession(page, project, name, coder) {
 // closeFromStrip closes a terminal through the tab strip's close control, the
 // desktop way: the attach page header carries stop and delete on touch only.
 // It asks the same confirm as the header button did.
+// The strip repaints itself right after a page lands (its own fragment pull,
+// then every terminals event), so the close control is clicked through a
+// locator that re-resolves it, a handle taken before a repaint is detached.
 async function closeFromStrip(page, id) {
-  const btn = await page.$(`terminal-tabs .terminal-tab[data-tab-id="${id}"] [data-tab-close]`);
-  if (!btn) return false;
-  await btn.click();
+  const sel = `terminal-tabs .terminal-tab[data-tab-id="${id}"] [data-tab-close]`;
+  if (!(await page.$(sel))) return false;
+  await page.locator(sel).first().click();
   await confirmSwal(page).catch(() => {});
   await sleep(600);
   return true;
 }
 
-// closeTerminal takes whichever way the viewport offers: the header button on
-// touch, the tab strip on the desktop.
-async function closeTerminal(page, url, headerSelector) {
+// closeTerminal takes whichever way the page offers: a header button where
+// one stands, else the tab strip's close control. A terminal inside a split
+// has no row of its own in the strip, so that one goes straight to the route
+// the controls post to.
+async function closeTerminal(page, url, headerSelector, action) {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   const btn = await page.$(headerSelector);
   if (btn && await btn.isVisible()) {
@@ -210,11 +215,16 @@ async function closeTerminal(page, url, headerSelector) {
     await sleep(500);
     return;
   }
-  await closeFromStrip(page, new URL(url).pathname.split("/").pop());
+  if (await closeFromStrip(page, new URL(url).pathname.split("/").pop())) return;
+  await page.evaluate(async (path) => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || "";
+    await fetch(path, { method: "POST", headers: { "X-CSRF-Token": token, Accept: "application/json" } });
+  }, action || new URL(url).pathname + "/delete");
+  await sleep(600);
 }
 
 async function stopSession(page, sessionUrl) {
-  await closeTerminal(page, sessionUrl, 'form[action$="/stop"] button[type="submit"], form[action$="/stop"] button');
+  await closeTerminal(page, sessionUrl, 'form[action$="/stop"] button[type="submit"], form[action$="/stop"] button', new URL(sessionUrl).pathname + "/stop");
 }
 
 function makeRunner() {

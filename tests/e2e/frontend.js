@@ -55,7 +55,53 @@ async function selectionContrast(page, sel) {
   }, sel);
 }
 
-L.runFeature("FRONTEND", async ({ page, run, bag }) => {
+// The theme button is the one control that belongs to no feature: it stands in
+// the rail's foot, in the phone's head menu and on the login page, and it walks
+// one fixed ring, light, dark, follow the OS, whatever the OS itself says.
+const RING = ["light", "dark", "auto"];
+const RING_LABELS = { light: "Light", dark: "Dark", auto: "Follow the OS" };
+const RAIL_CYCLE = ".dc-rail-foot dc-theme-cycle";
+// The bell next to it is a dropdown too, so the menu is named by what only it
+// carries, not by its place among the head tools.
+const HEAD_MENU = ".dc-head-tools .dropdown:has([data-theme-cycle])";
+
+// What one theme button shows and what the page made of it. The mark is read off
+// the computed display, style.css is what turns the hidden attribute into one.
+async function themeState(page, root) {
+  return page.evaluate((sel) => {
+    const host = document.querySelector(sel);
+    if (!host) return { missing: true, shown: [] };
+    const button = host.querySelector("[data-theme-cycle]");
+    const label = host.querySelector("[data-theme-label]");
+    let stored = null;
+    try { stored = localStorage.getItem("dc-theme"); } catch (e) { /* blocked storage */ }
+    return {
+      shown: [...host.querySelectorAll("[data-theme-mark]")]
+        .filter((m) => getComputedStyle(m).display !== "none")
+        .map((m) => m.getAttribute("data-theme-mark")),
+      stored,
+      label: label ? label.textContent.trim() : null,
+      title: button ? button.getAttribute("title") : "",
+      aria: button ? button.getAttribute("aria-label") : "",
+      dark: document.documentElement.getAttribute("data-bs-theme") === "dark",
+    };
+  }, root);
+}
+
+// One step of the ring, with the whole walk in the message: a mode that drops
+// out of the round is only readable from the sequence that led there.
+function assertMode(state, mode, walked, where) {
+  const shown = state.shown.join("+") || "nothing";
+  assert(state.shown.length === 1 && state.shown[0] === mode, `${where}: the button shows ${shown}, expected ${mode} (walked ${walked.join(" > ")})`);
+  assert(state.stored === (mode === "auto" ? null : mode), `${where} ${mode}: dc-theme holds ${state.stored}`);
+  assert(state.title.startsWith(`Theme: ${RING_LABELS[mode]}.`), `${where} ${mode}: the title reads ${state.title}`);
+  assert(state.title === state.aria, `${where} ${mode}: title and aria-label differ (${state.title} / ${state.aria})`);
+}
+
+// A user toggle rides the 350ms dc-theme-flip, so a read waits it out.
+const FLIP = 450;
+
+L.runFeature("FRONTEND", async ({ page, run, mobilePage, bag }) => {
   const tag = `fe-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   let shellUrl = null;
@@ -70,8 +116,8 @@ L.runFeature("FRONTEND", async ({ page, run, bag }) => {
     await run("custom elements upgraded on /projects", async () => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       // dc-form-modal sits in the layout of every signed in page, next to the
-      // swapped region, so it upgrades here like the quick nav does.
-      assert((await L.waitUpgraded(page, ["dc-quicknav", "dc-update-check", "dc-project-list", "dc-form-modal"], 8000)).length === 0, "not upgraded");
+      // swapped region, so it upgrades here like the sheet does.
+      assert((await L.waitUpgraded(page, ["dc-ctx-sheet", "dc-update-check", "dc-project-list", "dc-form-modal"], 8000)).length === 0, "not upgraded");
     });
 
     await run("marked text is opaque and carries 4.5:1, light and dark", async () => {
@@ -81,7 +127,7 @@ L.runFeature("FRONTEND", async ({ page, run, bag }) => {
       for (const scheme of ["light", "dark"]) {
         await page.emulateMedia({ colorScheme: scheme });
         await sleep(300);
-        for (const [what, sel] of [["page text", ".page-title"], ["form field", "[data-project-filter]"]]) {
+        for (const [what, sel] of [["page text", ".dc-project-name"], ["form field", "[data-project-filter]"]]) {
           const m = await selectionContrast(page, sel);
           assert(!m.missing, `${what}: nothing matched ${sel}`);
           if (m.unsupported || m.sameAsOwn) {
@@ -96,6 +142,82 @@ L.runFeature("FRONTEND", async ({ page, run, bag }) => {
       }
       await page.emulateMedia({ colorScheme: null });
       await sleep(200);
+    });
+
+    await run("the theme button walks all three modes, on an OS in light and in dark", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`${RAIL_CYCLE} [data-theme-cycle]`, { timeout: 8000 });
+      for (const scheme of ["light", "dark"]) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.evaluate(() => { try { localStorage.removeItem("dc-theme"); } catch (e) { /* blocked storage */ } });
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`${RAIL_CYCLE} [data-theme-cycle]`, { timeout: 8000 });
+        await sleep(300);
+        // Two rounds from auto: a mode the ring never reaches falls out on the
+        // first one, a ring that turns with the OS instead of on its own on the
+        // second (it ran auto, dark, auto, dark under an OS in light mode).
+        const walked = [];
+        for (const mode of [...RING, ...RING]) {
+          await page.click(`${RAIL_CYCLE} [data-theme-cycle]`);
+          await sleep(FLIP);
+          const state = await themeState(page, RAIL_CYCLE);
+          walked.push(state.shown.join("+") || "nothing");
+          assertMode(state, mode, walked, `OS ${scheme}`);
+          const wantDark = mode === "dark" || (mode === "auto" && scheme === "dark");
+          assert(state.dark === wantDark, `OS ${scheme} ${mode}: data-bs-theme dark is ${state.dark}, expected ${wantDark}`);
+        }
+      }
+      await page.evaluate(() => { try { localStorage.removeItem("dc-theme"); } catch (e) { /* blocked storage */ } });
+      await page.emulateMedia({ colorScheme: null });
+      await sleep(200);
+    });
+
+    await run("a forced mode survives a reload, auto goes on following the OS", async () => {
+      await page.emulateMedia({ colorScheme: "dark" });
+      await page.evaluate(() => { try { localStorage.setItem("dc-theme", "light"); } catch (e) { /* blocked storage */ } });
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`${RAIL_CYCLE} [data-theme-cycle]`, { timeout: 8000 });
+      await sleep(300);
+      let state = await themeState(page, RAIL_CYCLE);
+      assertMode(state, "light", ["light"], "reload under an OS in dark");
+      assert(!state.dark, "the reload took the OS scheme over the stored light");
+      // Two clicks from light stand on auto, which takes its scheme from the OS
+      // alone, in both directions and without another click.
+      for (let i = 0; i < 2; i++) { await page.click(`${RAIL_CYCLE} [data-theme-cycle]`); await sleep(FLIP); }
+      state = await themeState(page, RAIL_CYCLE);
+      assertMode(state, "auto", ["dark", "auto"], "two clicks on from light");
+      assert(state.dark, "auto did not take the OS dark scheme");
+      await page.emulateMedia({ colorScheme: "light" });
+      await sleep(300);
+      state = await themeState(page, RAIL_CYCLE);
+      assert(!state.dark, "auto did not follow the OS back to light");
+      assertMode(state, "auto", ["auto"], "after the OS flip");
+      await page.emulateMedia({ colorScheme: null });
+      await sleep(200);
+    });
+
+    await run("the phone's menu row walks the same ring and names the mode", async () => {
+      const mp = await mobilePage();
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await dismissUpdate(mp);
+      await mp.emulateMedia({ colorScheme: "light" });
+      await mp.evaluate(() => { try { localStorage.removeItem("dc-theme"); } catch (e) { /* blocked storage */ } });
+      await mp.reload({ waitUntil: "domcontentloaded" });
+      await mp.click(`${HEAD_MENU} > [data-bs-toggle="dropdown"]`);
+      await mp.waitForSelector(`${HEAD_MENU} .dropdown-menu.show`, { timeout: 8000 });
+      // The menu carries data-bs-auto-close="outside", so the row stays under
+      // the finger for the whole round.
+      const walked = [];
+      for (const mode of RING) {
+        await mp.click(`${HEAD_MENU} [data-theme-cycle]`);
+        await sleep(FLIP);
+        const state = await themeState(mp, `${HEAD_MENU} dc-theme-cycle`);
+        walked.push(state.shown.join("+") || "nothing");
+        assertMode(state, mode, walked, "phone menu");
+        assert(state.label === RING_LABELS[mode], `phone menu ${mode}: the row reads ${state.label}`);
+      }
+      await mp.evaluate(() => { try { localStorage.removeItem("dc-theme"); } catch (e) { /* blocked storage */ } });
+      await mp.emulateMedia({ colorScheme: null });
     });
 
     await run("custom elements upgraded on the editor", async () => {

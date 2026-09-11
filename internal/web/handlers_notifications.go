@@ -79,7 +79,7 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	// Snapshot: current unread state plus a bare terminals signal (no project) so
 	// the tab strip and quick nav pull their fragment and the projects page
 	// reconciles all its sections, catching a page up after connect or reconnect.
-	if err := writeEnvelope(w, eventbus.Event{Type: "notifications", Data: s.notifier.UnreadEvent()}); err != nil {
+	if err := writeEnvelope(w, eventbus.Event{Type: "notifications", Data: s.notifyPayload(s.notifier.UnreadEvent())}); err != nil {
 		return
 	}
 	if err := writeEnvelope(w, eventbus.Event{Type: "terminals"}); err != nil {
@@ -190,7 +190,7 @@ func (s *Server) handleEventStream(c *gin.Context) {
 				return
 			}
 		case ev := <-notifyEvents:
-			if err := writeEnvelope(w, eventbus.Event{Type: "notifications", Data: ev}); err != nil {
+			if err := writeEnvelope(w, eventbus.Event{Type: "notifications", Data: s.notifyPayload(ev)}); err != nil {
 				return
 			}
 		case ev := <-busEvents:

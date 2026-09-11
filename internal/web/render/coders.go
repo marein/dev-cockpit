@@ -58,6 +58,7 @@ type CoderAttachData struct {
 	StreamURL       string
 	ResizeURL       string
 	InputURL        string
+	CopyURL         string
 }
 
 // CoderFilesData is the model for the coder files HTML fragment.

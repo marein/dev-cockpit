@@ -17,6 +17,11 @@ import "@dc/gitprompt";
 const channel = {
   unread: null,
   targets: [],
+  // terminals is targets narrowed to the coders and the shells, the server's
+  // own answer (see notifyterminals.go): a compose action, a backup job, a
+  // standing git question and the assistant are no terminals. The bell counts
+  // targets, the Terminals news dot reads this.
+  terminals: [],
   held: new Map(),
   listeners: new Set(),
   readUrl: "/notifications/read",
@@ -34,6 +39,7 @@ const channel = {
   receive(payload) {
     if (!payload) return;
     this.targets = payload.targets || [];
+    this.terminals = payload.terminals || [];
     // A toast already on screen and the own visible page act on the real
     // server state right away, independent of the grace window below.
     dismissReadToast(this.targets);
@@ -85,8 +91,7 @@ const channel = {
     const pulse = this.unread !== null && count > this.unread;
     this.unread = count;
     updateTitle(count);
-    updateCountBadges(count);
-    decorateNews(shown);
+    decorateNews(shown, this.terminals.filter((id) => !this.held.has(id)));
     this.listeners.forEach((listener) => listener({ unread: count, pulse }));
   },
 };
@@ -127,23 +132,17 @@ function updateTitle(unread) {
   document.title = unread > 0 ? `(${unread > 99 ? "99+" : unread}) ${base}` : base;
 }
 
-// Targets hold at most one unread entry, so the unread count doubles as the
-// number of targets with news. Any element opting in via [data-notify-count]
-// (e.g. the quick nav toggle) mirrors it.
-function updateCountBadges(unread) {
-  document.querySelectorAll("[data-notify-count]").forEach((badge) => {
-    badge.textContent = unread > 99 ? "99+" : String(unread);
-    badge.classList.toggle("d-none", unread === 0);
-  });
-}
-
 // Server-rendered target lists opt into live news marks: a [data-notify-target]
-// coder or shell icon turns blue and dances while it has news, and
+// coder or shell icon wears the news dot while it has news, and
 // [data-notify-project-dot] shows while any target inside the same project
 // container has news. A dot that names other containers in
 // data-notify-projects (their element ids, space separated: the worktree
-// rows folded under a main's badge) collects theirs instead of its own.
-function decorateNews(targetIds) {
+// rows folded under a main's badge) collects theirs instead of its own. The
+// bell is the only place that counts; everywhere else the dot is the whole
+// statement, so [data-notify-any] (the Terminals button of the rail and the
+// tabbar) only asks whether a terminal is new at all, which is why it reads
+// the narrowed list and not every target.
+function decorateNews(targetIds, terminalIds) {
   const ids = new Set(targetIds || []);
   document.querySelectorAll("[data-notify-target]").forEach((icon) => {
     icon.classList.toggle("news", ids.has(icon.getAttribute("data-notify-target")));
@@ -158,6 +157,10 @@ function decorateNews(targetIds) {
     const any = scopes.some((scope) => [...scope.querySelectorAll("[data-notify-target]")]
       .some((el) => ids.has(el.getAttribute("data-notify-target"))));
     dot.classList.toggle("d-none", !any);
+  });
+  const terminals = terminalIds || [];
+  document.querySelectorAll("[data-notify-any]").forEach((dot) => {
+    dot.classList.toggle("d-none", terminals.length === 0);
   });
 }
 
@@ -183,13 +186,10 @@ function targetURL(notification) {
   return notification.url || "/coders/" + encodeURIComponent(notification.targetId);
 }
 
-// openUrl acts on a notification URL without leaving the page when possible.
-// An assistant link opens the overlay in place, the panel reads conversation
-// and message anchor from the same URL the notification carries. Everything
-// else navigates boosted, the hard navigation stays the fallback.
+// openUrl follows a notification URL boosted, the hard navigation stays the
+// fallback. An assistant entry names the conversation's page and the answer
+// in the fragment, which the page lands on itself.
 function openUrl(url) {
-  const panel = document.querySelector("dc-assistant-panel");
-  if (panel?.openFromUrl?.(url)) return;
   if (window.app?.navigate) window.app.navigate(url);
   else window.location.href = url;
 }
@@ -385,8 +385,7 @@ class Notifications extends HTMLElement {
       const item = event.target.closest("a[data-notify-id]");
       if (!item) return;
       event.preventDefault();
-      // The menu closes itself, an assistant entry opens the overlay in place
-      // and no page swap takes the open dropdown down anymore.
+      // The menu closes itself before the page swaps.
       if (window.bootstrap) window.bootstrap.Dropdown.getOrCreateInstance(this.bell).hide();
       openTarget({ id: item.dataset.notifyId, targetId: item.dataset.notifyTarget, url: item.getAttribute("href") });
     }, { signal });

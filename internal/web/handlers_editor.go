@@ -47,6 +47,47 @@ type editorPreviewForm struct {
 	Content string `form:"content"`
 }
 
+// handleEditorEntry answers the shell's Editor entry, the one address the rail
+// and the tab bar link. Which project it opens is decided here and never in a
+// rendered link: the project this editor was last opened on, else the one
+// before that, else the project used last anywhere in the cockpit, else the
+// first one, and with no project at all the projects page says one has to be
+// created, through the same flash every other handler sends it. The memory is
+// server state (`editorRecent`), so the phone opens what the desktop was on.
+// Every step checks the project still exists, a deleted one falls through to
+// the next. The answer must not be cached or the browser would keep reopening
+// the project of the first click, so it is a See Other with no-store, never a
+// permanent redirect.
+func (s *Server) handleEditorEntry(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	list := s.projects.List()
+	exists := func(name string) bool {
+		for i := range list {
+			if list[i].Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	for _, name := range s.editorRecent.Names() {
+		if exists(name) {
+			c.Redirect(http.StatusSeeOther, "/projects/"+url.PathEscape(name)+"/editor")
+			return
+		}
+	}
+	pick := -1
+	for i := range list {
+		if pick < 0 || list[i].LastUsedUnix > list[pick].LastUsedUnix {
+			pick = i
+		}
+	}
+	if pick < 0 {
+		s.redirectWithFlash(c, "/projects", "", "No project yet. Create one, then it opens in the editor.")
+		return
+	}
+	c.Redirect(http.StatusSeeOther, "/projects/"+url.PathEscape(list[pick].Name)+"/editor")
+}
+
 // handleProjectEditor renders the editor page for one project.
 func (s *Server) handleProjectEditor(c *gin.Context) {
 	p, err := s.projects.FindByName(c.Param("name"))
@@ -55,21 +96,23 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		return
 	}
 	s.projects.Touch(p.Name)
+	// Exactly the project name, nothing of what stands open in it: the entry
+	// has to answer "where was I", and a file or a scroll position is the
+	// page's own state, not the area's.
+	s.editorRecent.Touch(p.Name)
 	// The language servers of the project's languages start with the page,
 	// so their indexing runs while the reader still orients, not under the
 	// first lookup; the statusbar indicator shows it meanwhile. The editor
 	// page itself is editor action.
 	s.intel.Touch(p.Name)
 	go s.warmLSPServers(p)
-	ret := s.formReturn(c)
 	set := s.editorSettings()
 	c.HTML(http.StatusOK, "project_editor.gohtml", render.EditorData{
-		Page:         s.page(c, "Editor - "+p.Name, "projects"),
+		Page:         s.page(c, "Editor - "+p.Name, "editor"),
 		Project:      p,
 		MaxEditKiB:   filesystem.MaxEditableBytes / 1024,
 		MaxEditSize:  filesystem.HumanSize(filesystem.MaxEditableBytes),
-		Return:       ret,
-		Projects:     s.editorSwitcher(p.Name, ret),
+		Projects:     s.editorSwitcher(p.Name),
 		DiffMaxLines: set.DiffMaxLines,
 		DiffMaxKiB:   set.DiffMaxKiB,
 		Autosave:     set.Autosave,
@@ -94,15 +137,14 @@ func editorView(raw string) string {
 
 // editorSwitcher is the project list behind the tree header's switcher, one
 // entry per project linking to its editor. current marks the project the page
-// belongs to, and the back target rides along so a switch keeps the way out
-// the reader arrived with.
-func (s *Server) editorSwitcher(current, ret string) []render.EditorProject {
+// belongs to.
+func (s *Server) editorSwitcher(current string) []render.EditorProject {
 	list := s.projectsWithRunners()
 	entries := make([]render.EditorProject, 0, len(list))
 	for _, q := range list {
 		entries = append(entries, render.EditorProject{
 			Name:         q.Name,
-			URL:          "/projects/" + url.PathEscape(q.Name) + "/editor?return=" + url.QueryEscape(ret),
+			URL:          "/projects/" + url.PathEscape(q.Name) + "/editor",
 			Current:      q.Name == current,
 			Active:       q.Active(),
 			LastUsedUnix: q.LastUsedUnix,
@@ -155,13 +197,12 @@ func switcherSearch(q project.Project) string {
 // open editor pulls when a project is created, renamed or deleted somewhere
 // else. It answers the same markup the page carries, so the browser never
 // holds a second copy of those rows; the project this editor belongs to comes
-// from the route and the back target from ?return, exactly as the page built
-// them. A project that has just been deleted under this page is no error here:
-// the switcher simply loses its row, and where that leaves the editor is the
-// page's own business.
+// from the route, exactly as the page built them. A project that has just been
+// deleted under this page is no error here: the switcher simply loses its row,
+// and where that leaves the editor is the page's own business.
 func (s *Server) handleEditorProjects(c *gin.Context) {
 	c.HTML(http.StatusOK, "editor_projects.gohtml", render.EditorProjectsData{
-		Projects: s.editorSwitcher(c.Param("name"), s.formReturn(c)),
+		Projects: s.editorSwitcher(c.Param("name")),
 	})
 }
 

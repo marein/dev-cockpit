@@ -186,10 +186,15 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 				{Name: "push-channels.json", Path: st("push-channels.json")},
 				{Name: "push-subscriptions.json", Path: st("push-subscriptions.json")}}},
 		{ID: "terminals", Group: "Cockpit", Label: "Terminal restore",
-			Description: "The restore snapshot. With the restore setting on, coders and shells come back on the next start, in their project directories. The per shell command histories travel along.",
+			Description: "The restore snapshot. With the restore setting on, coders and shells come back on the next start, in their project directories. The per shell command histories and the terminals last looked at travel along.",
 			Sources: []Source{
 				{Name: "terminal-restore.json", Path: st("terminal-restore.json")},
-				{Name: "shell-history", Path: st("shell-history")}},
+				{Name: "shell-history", Path: st("shell-history")},
+				// The terminals last looked at are session ids, and an id
+				// without the snapshot that brings that session back names
+				// nothing on the new host. So it travels here and not with
+				// the projects.
+				{Name: "recent-terminals.json", Path: st("recent-terminals.json")}},
 			Requires: []string{"projects", "claude-sessions", "copilot-sessions"}},
 		{ID: "assistant", Group: "Cockpit", Label: "Assistant",
 			Description: "Its memory, its conversations, the jobs it steers and the files a message carried. The generated instruction files stay out, the next start writes them from the memory again.",
@@ -239,10 +244,11 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 				{Name: "command-history-state.json", Path: hm(".copilot/command-history-state.json")}}},
 
 		{ID: "projects", Group: "Host", Label: "Projects",
-			Description: "The complete projects directory, every working copy as it sits on disk. Imports into the current projects dir. Can be large. The recent projects order and the editor's line comments travel along.",
+			Description: "The complete projects directory, every working copy as it sits on disk. Imports into the current projects dir. Can be large. The recent projects order, the projects the editor was last opened on and the editor's line comments travel along.",
 			Sources: []Source{
 				{Name: "projects", Path: projectsDir},
 				{Name: "recent-projects.json", Path: st("recent-projects.json")},
+				{Name: "recent-editor-projects.json", Path: st("recent-editor-projects.json")},
 				{Name: "line-comments", Path: st("line-comments")}}},
 		{ID: "ssh", Group: "Host", Label: "SSH keys",
 			Description: "The complete ~/.ssh, keys, config, known_hosts, authorized_keys. File modes are preserved.",
