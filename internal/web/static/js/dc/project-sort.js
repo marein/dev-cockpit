@@ -10,17 +10,19 @@ import { get } from "@dc/store";
 
 export const KEY = "dc-project-sort";
 export const MODES = ["alpha", "active", "recent"];
+const CARD = { selector: "[data-project-name]", name: "projectName", active: "projectActive", used: "projectUsed", worktreeOf: "projectWorktreeOf" };
+export const INDEX = { selector: "[data-index-project]", name: "indexProject", active: "indexActive", used: "indexUsed", worktreeOf: "indexWorktreeOf" };
 
 export function mode() {
   const stored = get(KEY, "");
   return MODES.indexOf(stored) >= 0 ? stored : "alpha";
 }
 
-function keyOf(node) {
+function keyOf(node, f = CARD) {
   return {
-    name: node.dataset.projectName.toLowerCase(),
-    active: node.dataset.projectActive === "true",
-    used: Number(node.dataset.projectUsed) || 0,
+    name: node.dataset[f.name].toLowerCase(),
+    active: node.dataset[f.active] === "true",
+    used: Number(node.dataset[f.used]) || 0,
   };
 }
 
@@ -36,18 +38,18 @@ export function comparator(m) {
   };
 }
 
-export function mainOf(node, byName) {
-  const of = node.dataset.projectWorktreeOf;
-  if (!of || of === node.dataset.projectName) return null;
+export function mainOf(node, byName, f = CARD) {
+  const of = node.dataset[f.worktreeOf];
+  if (!of || of === node.dataset[f.name]) return null;
   const main = byName.get(of);
-  if (!main || main.dataset.projectWorktreeOf) return null;
+  if (!main || main.dataset[f.worktreeOf]) return null;
   return main;
 }
 
-function groupKey(main, members) {
-  const key = keyOf(main);
+function groupKey(main, members, f = CARD) {
+  const key = keyOf(main, f);
   members.forEach((node) => {
-    const k = keyOf(node);
+    const k = keyOf(node, f);
     key.active = key.active || k.active;
     key.used = Math.max(key.used, k.used);
   });
@@ -56,14 +58,14 @@ function groupKey(main, members) {
 
 // Sort the [data-project-name] children of `container` in place by `m`
 // (defaults to the stored mode), then re-append them in order.
-export function sort(container, m) {
+export function sort(container, m, f = CARD) {
   const current = m || mode();
-  const items = Array.from(container.querySelectorAll("[data-project-name]"));
-  const byName = new Map(items.map((node) => [node.dataset.projectName, node]));
+  const items = Array.from(container.querySelectorAll(f.selector));
+  const byName = new Map(items.map((node) => [node.dataset[f.name], node]));
   const members = new Map();
   const tops = [];
   items.forEach((node) => {
-    const main = mainOf(node, byName);
+    const main = mainOf(node, byName, f);
     if (!main) {
       tops.push(node);
       return;
@@ -71,9 +73,9 @@ export function sort(container, m) {
     if (!members.has(main)) members.set(main, []);
     members.get(main).push(node);
   });
-  const keys = new Map(tops.map((node) => [node, groupKey(node, members.get(node) || [])]));
+  const keys = new Map(tops.map((node) => [node, groupKey(node, members.get(node) || [], f)]));
   tops.sort((a, b) => compareKeys(current, keys.get(a), keys.get(b)));
-  const own = comparator(current);
+  const own = (a, b) => compareKeys(current, keyOf(a, f), keyOf(b, f));
   tops.forEach((node) => {
     container.appendChild(node);
     (members.get(node) || []).sort(own).forEach((member) => container.appendChild(member));

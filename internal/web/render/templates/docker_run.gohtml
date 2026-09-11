@@ -1,14 +1,10 @@
 {{define "docker_run.gohtml"}}
 {{template "app_start.gohtml" .}}
-<div class="page-header d-print-none mb-3">
-  <div class="d-flex align-items-center gap-2">
-    <div class="flex-fill min-w-0">
-      {{template "project_breadcrumb.gohtml" .Project}}
-      <h2 class="page-title text-truncate mb-0">{{.Run.Action}}</h2>
-    </div>
-  </div>
-</div>
-
+{{template "work_start.gohtml" .}}
+{{template "project_back.gohtml" .Project}}
+<h1 class="dc-work-title">{{.Run.Action}}</h1>
+{{if .Project}}<span class="text-secondary small dc-trunc dc-hide-xs">{{.Project}}</span>{{end}}
+{{template "work_body.gohtml" .}}
 <dc-docker-run class="d-block" output-url="{{.OutputURL}}" stop-url="{{.StopURL}}">
   <div class="card">
     <div class="card-body">
@@ -22,7 +18,7 @@
           </button>
         </div>
       </div>
-      <pre class="mb-0 overflow-auto" style="max-height: 60vh" data-run-output>{{.Output}}</pre>
+      <pre class="mb-0 overflow-auto dc-run-output" data-run-output>{{.Output}}</pre>
     </div>
   </div>
 </dc-docker-run>

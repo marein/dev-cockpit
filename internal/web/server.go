@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/pluginhost"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/push"
+	"github.com/marein/dev-cockpit/internal/recent"
 	"github.com/marein/dev-cockpit/internal/restore"
 	"github.com/marein/dev-cockpit/internal/settings"
 	"github.com/marein/dev-cockpit/internal/shell"
@@ -39,6 +41,12 @@ import (
 
 //go:embed static
 var staticAssets embed.FS
+
+// recentEntries is how many names the two area stores below keep. More than
+// one, so a deleted project or a stopped terminal still has a predecessor the
+// entry can open instead; few enough that the file stays a hint of where
+// somebody was and never a history of everything they touched.
+const recentEntries = 5
 
 // Server wires HTTP handling against the domain services.
 type Server struct {
@@ -93,6 +101,14 @@ type Server struct {
 	// file line, so a pass over the code survives a reload and a device
 	// switch.
 	lineComments *lineComments
+	// editorRecent is where the editor was last opened, the projects by name,
+	// and terminalRecent the terminals last looked at, by id. They are what
+	// the two area entries of the rail resolve to, so a phone picked up in
+	// the evening opens what the desktop was on: server state, no cookie, no
+	// browser storage. Both keep a few names, not one, so the entry still
+	// lands somewhere sensible when the last one is gone.
+	editorRecent   *recent.Store
+	terminalRecent *recent.Store
 	// askpassBroker and askpassScript are the bridge a user-triggered git
 	// action may ask the browser through; nil keeps every prompt failing
 	// fast, which is also what the tests run with.
@@ -167,37 +183,39 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		updater = nil
 	}
 	s := &Server{
-		cfg:           cfg,
-		coders:        coders,
-		shells:        shells,
-		conversations: conversations,
-		assistant:     workspace,
-		watcher:       watcher,
-		projects:      projects,
-		createProject: NewProjectCreator(projects, bus),
-		quickOpen:     filesystem.NewQuickOpenCache(),
-		notifier:      notifier,
-		activity:      tracker,
-		bus:           bus,
-		settings:      settingsStore,
-		pusher:        pusher,
-		restorer:      restorer,
-		version:       version,
-		updater:       updater,
-		backups:       backups,
-		assets:        assets,
-		gitWatchers:   newGitWatchers(),
-		fileWatchers:  newFileWatchers(),
-		gitWrites:     newGitWrites(),
-		commitDrafts:  newCommitDrafts(cfg.StateDir),
-		searchDrafts:  newSearchDrafts(cfg.StateDir),
-		lineComments:  newLineComments(cfg.StateDir),
-		host:          hostinfo.NewCache(cfg.ProjectsRoot, hostSampleTTL),
-		docker:        dockerService,
-		intel:         intel,
-		voice:         voiceService,
-		plugins:       plugins,
-		deletes:       newProjectDeletes(cfg.StateDir),
+		cfg:            cfg,
+		coders:         coders,
+		shells:         shells,
+		conversations:  conversations,
+		assistant:      workspace,
+		watcher:        watcher,
+		projects:       projects,
+		createProject:  NewProjectCreator(projects, bus),
+		quickOpen:      filesystem.NewQuickOpenCache(),
+		notifier:       notifier,
+		activity:       tracker,
+		bus:            bus,
+		settings:       settingsStore,
+		pusher:         pusher,
+		restorer:       restorer,
+		version:        version,
+		updater:        updater,
+		backups:        backups,
+		assets:         assets,
+		gitWatchers:    newGitWatchers(),
+		fileWatchers:   newFileWatchers(),
+		gitWrites:      newGitWrites(),
+		commitDrafts:   newCommitDrafts(cfg.StateDir),
+		searchDrafts:   newSearchDrafts(cfg.StateDir),
+		lineComments:   newLineComments(cfg.StateDir),
+		editorRecent:   recent.NewCapped(filepath.Join(cfg.StateDir, "recent-editor-projects.json"), recentEntries),
+		terminalRecent: recent.NewCapped(filepath.Join(cfg.StateDir, "recent-terminals.json"), recentEntries),
+		host:           hostinfo.NewCache(cfg.ProjectsRoot, hostSampleTTL),
+		docker:         dockerService,
+		intel:          intel,
+		voice:          voiceService,
+		plugins:        plugins,
+		deletes:        newProjectDeletes(cfg.StateDir),
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
 			cfg.LoginRateBlock, cfg.LoginRateMaxAttempts,

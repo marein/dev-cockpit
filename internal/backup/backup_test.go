@@ -646,3 +646,73 @@ func TestOldAssistantArchivesStillImport(t *testing.T) {
 		}
 	}
 }
+
+// Where somebody was last travels with what it names: the editor's projects
+// with the projects, the terminals with the restore snapshot, because a
+// session id without that snapshot names nothing on the new host.
+func TestTheEntryMemoriesTravelWithWhatTheyName(t *testing.T) {
+	src, dirs := testService(t)
+	seedSource(t, dirs)
+	if err := os.WriteFile(filepath.Join(dirs.state, "recent-editor-projects.json"), []byte(`{"demo":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirs.state, "recent-terminals.json"), []byte(`{"abc":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirs.state, "terminal-restore.json"), []byte(`[]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := src.Export(&buf, []string{"projects", "terminals"}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	names := archiveNames(t, buf.Bytes())
+	for _, want := range []string{"data/projects/recent-editor-projects.json", "data/terminals/recent-terminals.json"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("%s did not travel: %v", want, names)
+		}
+	}
+
+	dst, dstDirs := testService(t)
+	id, err := dst.SavePending(encrypted(t, buf.Bytes()), "test-pw")
+	if err != nil {
+		t.Fatalf("save pending: %v", err)
+	}
+	if _, err := dst.Apply(id, []string{"projects", "terminals"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	for name, want := range map[string]string{"recent-editor-projects.json": `{"demo":1}`, "recent-terminals.json": `{"abc":1}`} {
+		data, err := os.ReadFile(filepath.Join(dstDirs.state, name))
+		if err != nil || string(data) != want {
+			t.Fatalf("%s not restored: %q, %v", name, data, err)
+		}
+	}
+}
+
+// An archive written before these files existed imports unchanged, the chain
+// then falls back to the project and the terminal it can still find.
+func TestAnOldArchiveWithoutTheEntryMemoriesImports(t *testing.T) {
+	src, dirs := testService(t)
+	seedSource(t, dirs)
+	if err := os.WriteFile(filepath.Join(dirs.state, "terminal-restore.json"), []byte(`[]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := src.Export(&buf, []string{"projects", "terminals"}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	dst, dstDirs := testService(t)
+	id, err := dst.SavePending(encrypted(t, buf.Bytes()), "test-pw")
+	if err != nil {
+		t.Fatalf("save pending: %v", err)
+	}
+	if _, err := dst.Apply(id, []string{"projects", "terminals"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dstDirs.state, "recent-editor-projects.json")); !os.IsNotExist(err) {
+		t.Fatalf("the import invented a file: %v", err)
+	}
+}

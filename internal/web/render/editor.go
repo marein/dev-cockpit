@@ -11,9 +11,6 @@ type EditorData struct {
 	// sentence in the empty editor reads like the rows next to it rather than
 	// as a five digit KiB number.
 	MaxEditSize string
-	// Return is the safe in-app URL the header back button leads to, passed by
-	// the linking page as ?return like the create forms' Cancel.
-	Return string
 	// Projects feeds the project switcher in the file tree header, one entry
 	// per selectable project linking to its editor page.
 	Projects []EditorProject

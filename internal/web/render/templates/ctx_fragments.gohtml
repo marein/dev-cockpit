@@ -1,0 +1,35 @@
+{{/* The list column of one area on its own, what /ctx/<area> answers for the
+     phone's sheet. Each one is the partial the page renders. */}}
+{{define "ctx_projects.gohtml"}}{{template "projects_ctx.gohtml" .}}{{end}}
+{{define "ctx_terminals.gohtml"}}{{template "terminals_ctx.gohtml" .}}{{end}}
+{{define "ctx_settings.gohtml"}}{{template "settings_ctx.gohtml" .}}{{end}}
+{{define "ctx_docs.gohtml"}}{{template "docs_ctx.gohtml" .}}{{end}}
+{{define "ctx_assistant.gohtml"}}{{template "assistant_ctx.gohtml" .}}{{end}}
+
+{{/* The phone's sheet: the tab bar and the head's list button open it, it
+     pulls the area's column from /ctx/<area> and shows it from the bottom.
+     Next to the swapped region so it outlives a boosted navigation. */}}
+{{define "ctx_sheet.gohtml"}}
+<dc-ctx-sheet class="dc-sheet d-print-none" data-ctx-sheet hidden>
+  <div class="dc-sheet-panel" role="dialog" aria-modal="true" aria-label="List" data-ctx-sheet-panel></div>
+</dc-ctx-sheet>
+{{end}}
+
+{{/* The assistant's memory as a sheet from the right, on every page: the
+     brain in the conversation list's head opens it, from the page's column
+     and from the phone's sheet alike. It renders empty and pulls the list
+     when it opens, so no page pays for it. */}}
+{{define "assistant_memory_sheet.gohtml"}}
+<div class="offcanvas offcanvas-end dc-assistant-memory d-print-none" tabindex="-1" id="assistant-memory" aria-label="Memory" data-assistant-memory-sheet>
+  <div class="offcanvas-header border-bottom py-2">
+    <h2 class="offcanvas-title h4 m-0">Memory</h2>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#assistant-memory" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body d-flex flex-column gap-3">
+    <dc-assistant-list list-url="/assistant/memory" quiet memory data-assistant-memory-list>
+      <div data-assistant-body><div class="text-secondary small text-center py-3" data-assistant-memory-loading>Loading…</div></div>
+    </dc-assistant-list>
+    <div class="text-secondary small">The assistant reads the memory before every answer.</div>
+  </div>
+</div>
+{{end}}

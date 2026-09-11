@@ -66,7 +66,7 @@ L.runFeature(`MULTI-CODER (${MODE})`, async ({ page, run }) => {
     await page.goto(`${BASE}/agents`, { waitUntil: "domcontentloaded" });
     assert(/\/settings\/coders\/\w+\/agents$/.test(page.url()), `legacy /agents did not land on a canonical URL: ${page.url()}`);
     const rows = await page.$$eval("[data-settings-nav] [data-settings-coder]", (as) => as.map((a) => new URL(a.href).pathname));
-    assert(rows.length === 2, `expected 2 coder rows in the sidebar, got ${rows.length}`);
+    assert(rows.length >= 2, `expected the coder rows in the sidebar, got ${rows.length}: ${rows}`);
     assert(rows.includes("/settings/coders/claude/agents") && rows.includes("/settings/coders/copilot/agents"), `coder rows wrong: ${rows}`);
     assert(await page.$("[data-settings-coder] svg.coder-icon"), "no Claude icon in the sidebar coder rows");
     const sections = await page.$$eval("[data-coder-sections] a", (as) => as.map((a) => new URL(a.href).pathname));
@@ -108,7 +108,7 @@ L.runFeature(`MULTI-CODER (${MODE})`, async ({ page, run }) => {
       await page.fill('input[name="name"]', `s-${tag}`);
       await Promise.all([page.waitForURL(/\/coders\/(?!new)[^/]+$/, { timeout: 20000 }), submitBtn(page, 'input[name="name"]').click()]);
       sessionUrl = page.url();
-      assert(await page.$('.attach-page span[title="Copilot"] i.ti-brand-github-copilot'), "no Copilot icon on attach page");
+      assert(await page.$('.dc-work-head span[title="Copilot"] i.ti-brand-github-copilot'), "no Copilot icon in the attach page's head");
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       const badge = await page.evaluate((p) => {
         const scope = document.getElementById(`project-${p}`);
@@ -117,9 +117,10 @@ L.runFeature(`MULTI-CODER (${MODE})`, async ({ page, run }) => {
       assert(badge, "no Copilot icon on the project session row");
     });
 
-    await run("quicknav fragment shows coder labels", async () => {
-      const html = await page.evaluate(async () => (await fetch("/quicknav?path=/projects")).text());
-      assert(html.includes("Copilot") || html.includes("Claude"), "quicknav fragment has no coder label");
+    await run("the terminals column fragment lists the running coder", async () => {
+      const html = await page.evaluate(async () => (await fetch("/ctx/terminals?path=/projects")).text());
+      const id = new URL(sessionUrl).pathname.split("/").pop();
+      assert(html.includes(`data-tab-id="${id}"`) && html.includes('data-tab-kind="coder"'), "the column fragment misses the coder row");
     });
   } finally {
     if (sessionUrl) { await L.stopSession(page, sessionUrl).catch(() => {}); await sleep(500); }

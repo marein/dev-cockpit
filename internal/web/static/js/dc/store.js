@@ -3,7 +3,6 @@
 // first read and deleted.
 const legacyKeys = {
   "dc-terminal-font-size": "session-terminal-font-size",
-  "dc-terminal-rows": "session-terminal-rows",
   "dc-update": "dcUpdate",
   "dc-editor-settings": "dev-cockpit.editor-settings",
 };

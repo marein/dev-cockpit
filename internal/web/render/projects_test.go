@@ -463,8 +463,8 @@ func TestProjectRowCarriesTheGitMenuOnARepository(t *testing.T) {
 	for _, want := range []string{
 		`data-git-project-menu`,
 		`data-git-worktree="/projects/new?create=worktree%3Aapp"`,
-		`data-git-commit="/projects/app/editor?return=%2Fprojects%23project-app&amp;view=commit"`,
-		`data-git-compare="/projects/app/editor?return=%2Fprojects%23project-app&amp;view=compare"`,
+		`data-git-commit="/projects/app/editor?view=commit"`,
+		`data-git-compare="/projects/app/editor?view=compare"`,
 		`data-git-fetch="/projects/app/fetch"`,
 	} {
 		if !strings.Contains(out, want) {
@@ -520,7 +520,7 @@ func TestProjectRowBadgeCollectsTheWorktreesNews(t *testing.T) {
 		t.Fatal("a group without news reports news")
 	}
 	quiet := badgeOf(t, renderProjects(t, data))
-	if !strings.Contains(quiet, `status-blue d-none" data-notify-project-dot data-notify-projects="project-app-feature project-app-fix"`) {
+	if !strings.Contains(quiet, `status-blue dc-news-dot d-none" data-notify-project-dot data-notify-projects="project-app-feature project-app-fix"`) {
 		t.Fatalf("the quiet badge's dot is not hidden or names no rows: %q", quiet)
 	}
 	for i := range data.Projects {
@@ -534,11 +534,11 @@ func TestProjectRowBadgeCollectsTheWorktreesNews(t *testing.T) {
 	}
 	out := renderProjects(t, data)
 	loud := badgeOf(t, out)
-	if !strings.Contains(loud, `status-blue" data-notify-project-dot data-notify-projects="project-app-feature project-app-fix"`) {
+	if !strings.Contains(loud, `status-blue dc-news-dot" data-notify-project-dot data-notify-projects="project-app-feature project-app-fix"`) {
 		t.Fatalf("the badge does not show the worktree's news: %q", loud)
 	}
 	main := out[strings.Index(out, `id="project-app"`):strings.Index(out, "data-worktrees-toggle")]
-	if !strings.Contains(main, `status-blue ms-1 d-none" data-notify-project-dot`) {
+	if !strings.Contains(main, `status-blue dc-news-dot ms-1 d-none" data-notify-project-dot`) {
 		t.Fatalf("the main's own dot shows for a worktree's news: %q", main)
 	}
 }

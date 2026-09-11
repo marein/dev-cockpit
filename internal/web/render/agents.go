@@ -13,6 +13,7 @@ type AgentsListData struct {
 // AgentsFormData is the model for create/edit forms.
 type AgentsFormData struct {
 	Page
+	SettingsNav  SettingsNav
 	Base         string // canonical coder URL prefix, "/settings/coders/<id>"
 	IsEdit       bool
 	OriginalID   string

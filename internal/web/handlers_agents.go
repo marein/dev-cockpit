@@ -30,6 +30,7 @@ func (s *Server) handleAgentNew(co *coder.Manager) gin.HandlerFunc {
 		base := s.coderBase(co)
 		c.HTML(http.StatusOK, "agents_form.gohtml", render.AgentsFormData{
 			Page:        s.page(c, "Create agent", "settings"),
+			SettingsNav: s.coderSettingsNav("coder", co, "agents"),
 			Base:        base,
 			FormAction:  base + "/agents",
 			SubmitLabel: "Create agent",
@@ -49,6 +50,7 @@ func (s *Server) handleAgentEdit(co *coder.Manager) gin.HandlerFunc {
 		}
 		c.HTML(http.StatusOK, "agents_form.gohtml", render.AgentsFormData{
 			Page:         s.page(c, "Edit agent", "settings"),
+			SettingsNav:  s.coderSettingsNav("coder", co, "agents"),
 			Base:         base,
 			IsEdit:       true,
 			OriginalID:   a.ID,

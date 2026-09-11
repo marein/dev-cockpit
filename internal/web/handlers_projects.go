@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -79,6 +80,20 @@ type projectDeleteForm struct {
 }
 
 func (s *Server) handleProjectsList(c *gin.Context) {
+	// TODO(v2.0.0): the assistant used to open as an overlay over this page,
+	// so every address stored before the restructure names /projects and says
+	// in `assistant` what to show: a conversation id, `open` for the live one,
+	// `memory` for the memory view. The assistant is a page now, and the
+	// fragment the browser carries across the redirect still names the answer
+	// it scrolls to.
+	if id := c.Query("assistant"); id != "" {
+		target := "/assistant"
+		if id != "open" && id != "memory" {
+			target += "/" + url.PathEscape(id)
+		}
+		c.Redirect(http.StatusPermanentRedirect, target)
+		return
+	}
 	for i := range s.coders {
 		s.coders[i].Invalidate()
 	}

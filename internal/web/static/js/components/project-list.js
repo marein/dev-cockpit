@@ -2,7 +2,7 @@ import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import * as projectActions from "@dc/project-actions";
 import { confirm, promptText } from "@dc/dialog";
-import { el, syncAnimations } from "@dc/dom";
+import { syncAnimations } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import { matchesTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
@@ -103,17 +103,11 @@ class ProjectList extends HTMLElement {
     // path. The server only signals the change; this client pulls its own
     // server-rendered list, preserving its local filter and sort preferences.
     onServerEvent("projects", () => this.refreshProjectList(), { signal: this.ac.signal });
-    onServerEvent("docker", () => this.refreshProjects(null), { signal: this.ac.signal });
-    // A form sent from the card (starting a shell above all) waits like
-    // everything else here: the card shows its line until the answer lands.
-    // The chips are no `.btn`, so the button spinner pe.js puts on a submit
-    // does not apply to them, and an empty pill with a spinner somewhere near
-    // it is not a wait anybody can read.
-    window.addEventListener("pe:form", (event) => {
-      const card = this.querySelector(".projects-card");
-      if (!card || !card.contains(event.detail.form)) return;
-      event.detail.finally.push(this.cardBar("Working"));
+    document.addEventListener("dc:rendered", (event) => {
+      const index = event.detail?.root?.querySelector?.("[data-project-index]");
+      if (index) projectSort.sort(index, projectSort.mode(), projectSort.INDEX);
     }, { signal: this.ac.signal });
+    onServerEvent("docker", () => this.refreshProjects(null), { signal: this.ac.signal });
   }
 
   disconnectedCallback() {
@@ -418,17 +412,6 @@ class ProjectList extends HTMLElement {
     this.refreshProjects(detail && detail.project ? [detail.project] : null);
   }
 
-  // cardBar shows the wait on the card: the same zero height line the quick nav
-  // and the background refresh show, so every wait started here looks alike. It
-  // hands back the remover, and a second caller while one stands adds nothing.
-  cardBar(label) {
-    const card = this.querySelector(".projects-card");
-    if (!card || card.querySelector(":scope > .dc-loading-bar")) return () => {};
-    const bar = el("div", { class: "dc-loading-bar", role: "status", "aria-label": label });
-    card.prepend(bar);
-    return () => bar.remove();
-  }
-
   // refreshProjects pulls a fresh /projects render and swaps the chip lists of
   // the named projects in place (all of them when names is null). The fetch is
   // this client's own, so the swapped-in forms already carry the right CSRF
@@ -443,7 +426,6 @@ class ProjectList extends HTMLElement {
     }
     this.dirty = false;
     this.inFlight = true;
-    const hideBar = this.cardBar("Refreshing");
     // A worktree's main wears its worktrees' state on the badge, so the main's
     // row refreshes along with the worktree the event names.
     const wanted = names && new Set(names.flatMap((n) => {
@@ -456,7 +438,6 @@ class ProjectList extends HTMLElement {
       .then((html) => this.applySections(new DOMParser().parseFromString(html, "text/html"), wanted))
       .catch(() => {})
       .finally(() => {
-        hideBar();
         this.inFlight = false;
         if (this.dirty) {
           const whole = this.refreshWhole;
@@ -540,7 +521,11 @@ class ProjectList extends HTMLElement {
           this.applySections(doc, null);
           return;
         }
+        const scroller = this.querySelector(".dc-work-body");
+        const top = scroller ? scroller.scrollTop : 0;
         this.replaceChildren(...fresh.childNodes);
+        const next = this.querySelector(".dc-work-body");
+        if (next) next.scrollTop = top;
         window.app.loadElements(this);
         syncAnimations(this);
         this.querySelectorAll("[data-sessions-body]").forEach((body) => this.foldChips(body));
@@ -576,7 +561,6 @@ class ProjectList extends HTMLElement {
   // Re-renders just the project row from the redirected /projects response.
   ajaxRefresh(form) {
     const section = form.closest('[id^="project-"]');
-    const hideBar = this.cardBar("Working");
     fetch(form.action, { method: "POST", body: new URLSearchParams(new FormData(form)) })
       .then((response) => {
         if (!response.ok) throw new Error("submit failed");
@@ -593,8 +577,7 @@ class ProjectList extends HTMLElement {
         this.applyGroups();
         document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: fresh } }));
       })
-      .catch(() => window.pe.submit(form))
-      .finally(hideBar);
+      .catch(() => window.pe.submit(form));
   }
 
   setupSort() {
@@ -607,6 +590,8 @@ class ProjectList extends HTMLElement {
 
     const apply = (mode) => {
       projectSort.sort(list, mode);
+      const index = document.querySelector("[data-project-index]");
+      if (index) projectSort.sort(index, mode, projectSort.INDEX);
       options.forEach((opt) => opt.classList.toggle("active", opt.dataset.projectSortOption === mode));
       const active = options.find((opt) => opt.dataset.projectSortOption === mode);
       if (current && active) current.textContent = active.textContent.trim();
@@ -628,9 +613,7 @@ class ProjectList extends HTMLElement {
       return;
     }
     const empty = this.querySelector("[data-project-filter-empty]");
-    const meta = this.querySelector("[data-project-filter-meta]");
-    const count = this.querySelector("[data-project-filter-count]");
-    const xBtn = this.querySelector(".input-icon [data-project-filter-clear]");
+    const xBtn = this.querySelector(".dc-filter [data-project-filter-clear]");
 
     const apply = (query) => {
       const needle = query.trim();
@@ -644,11 +627,8 @@ class ProjectList extends HTMLElement {
       const active = needle !== "";
       this.filterActive = active;
       this.applyGroups();
-      input.classList.toggle("border-primary", active);
       if (empty) empty.classList.toggle("d-none", visible !== 0);
       if (xBtn) xBtn.classList.toggle("d-none", !active);
-      if (meta) meta.classList.toggle("d-none", !active);
-      if (count) count.textContent = active ? `${visible} of ${cards.length}` : "";
     };
 
     const set = (value) => {

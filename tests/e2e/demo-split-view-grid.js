@@ -61,8 +61,8 @@ async function main() {
     await sleep(BEAT);
   };
 
-  // A guide line at the bottom edge of the split, so the rows budget is
-  // something you can see instead of something you have to believe.
+  // A guide line at the bottom edge of the split, so the fit is something
+  // you can see instead of something you have to believe.
   const guide = async (on) => {
     await page.evaluate((show) => {
       const old = document.getElementById("dc-demo-guide");
@@ -129,7 +129,6 @@ async function main() {
     // Bigger type than the default, so the terminals read on a small screen.
     await page.evaluate(() => {
       window.localStorage.setItem("dc-terminal-font-size", "16");
-      window.localStorage.setItem("dc-terminal-rows", "24");
     });
     await L.createProject(page, project);
     for (let i = 0; i < 2; i += 1) shells.push(await L.createShell(page, project));
@@ -191,8 +190,8 @@ async function main() {
     await panesSettled();
     await sleep(READ);
 
-    // 5 — the rows budget: the page height does not move when panes stack.
-    await caption("The rows setting is the height of the page, not of a pane");
+    // 5 — the fit: the page height does not move when panes stack.
+    await caption("The split fills the page, the panes divide it");
     await guide(true);
     await sleep(READ);
     await caption("Stacking shares that height, the page keeps it");

@@ -64,6 +64,55 @@ func (s *Server) terminalTabs() []render.TerminalTab {
 	return tabs
 }
 
+// handleTerminalsEntry answers the shell's Terminals entry, the one fixed
+// address the rail links. Which terminal it opens is decided here and never in
+// a rendered link: the terminal last looked at, else the one looked at before
+// that, else the first one in strip order, so a phone picked up later opens
+// the pane the desktop was on. Every step checks the session is still running,
+// a stopped one falls through to the next. The entry itself stands disabled
+// while nothing runs at all; whoever still gets here, because the last
+// terminal ended a moment ago, lands on the projects list with that same
+// sentence. Like the editor entry the answer is a See Other with no-store,
+// never a permanent redirect, or the browser would keep reopening the terminal
+// of the first click.
+func (s *Server) handleTerminalsEntry(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	tabs := s.terminalTabs()
+	for _, id := range s.terminalRecent.Names() {
+		for _, t := range tabs {
+			if t.ID != id {
+				continue
+			}
+			// A grouped session lives on the split page, with its pane
+			// focused, exactly like its own link leads there.
+			if url, ok := s.splitPageURL(t.Group, t.ID); ok {
+				c.Redirect(http.StatusSeeOther, url)
+				return
+			}
+			c.Redirect(http.StatusSeeOther, t.URL)
+			return
+		}
+	}
+	strip := foldStripTabs(tabs)
+	if len(strip) == 0 {
+		// Two empty states, and they ask for different things. Without a
+		// project there is nowhere to start a terminal, so that one hands
+		// over to the projects list with the sentence that says why. With
+		// projects, the area opens on itself: the column, the plus menu and
+		// the two create actions are all here, so the first terminal is
+		// started where it will run.
+		if len(s.projects.List()) == 0 {
+			s.redirectWithInfo(c, "/projects", "No project yet. Create one, then you can start a coder or a shell in it.")
+			return
+		}
+		page := s.page(c, "Terminals", "terminals")
+		page.HasTabStrip = true
+		c.HTML(http.StatusOK, "terminals_empty.gohtml", page)
+		return
+	}
+	c.Redirect(http.StatusSeeOther, strip[0].URL)
+}
+
 // foldStripTabs folds the flat session list into the strip entries: sessions
 // sharing a @dc_tab_group become one group tab at the position of their best
 // placed member, everything else stays a single tab. A group with fewer than

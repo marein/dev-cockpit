@@ -1,27 +1,27 @@
 {{define "assistant_memory_content.gohtml"}}
 <div data-assistant-body>
   <div class="d-flex justify-content-end mb-3">
-    <button type="button" class="btn btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#memory-new" aria-expanded="false" aria-controls="memory-new" data-memory-add>
+    <button type="button" class="btn btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#{{.Prefix}}-new" aria-expanded="false" aria-controls="{{.Prefix}}-new" data-memory-add>
       <i class="ti ti-plus me-1"></i>Add a memory
     </button>
   </div>
-  <div class="collapse{{if not .Entries}} show{{end}} mb-3" id="memory-new">
+  <div class="collapse{{if not .Entries}} show{{end}} mb-3" id="{{.Prefix}}-new">
     <div class="card">
-      <form method="post" action="/assistant/memory" class="card-body">
+      <form method="post" action="/assistant/memory" class="card-body" data-ajax-refresh>
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="hidden" name="form" value="save">
         <div class="mb-3">
-          <label class="form-label" for="memory-title">Title</label>
-          <input type="text" class="form-control" id="memory-title" name="title" maxlength="120" required autocomplete="off" placeholder="How I like commit messages">
+          <label class="form-label" for="{{.Prefix}}-title">Title</label>
+          <input type="text" class="form-control" id="{{.Prefix}}-title" name="title" maxlength="120" required autocomplete="off" placeholder="How I like commit messages">
         </div>
         <div class="mb-3">
-          <label class="form-label" for="memory-body">What to remember</label>
-          <textarea class="form-control font-monospace" id="memory-body" name="body" rows="4" required placeholder="One fact, in one or two sentences."></textarea>
+          <label class="form-label" for="{{.Prefix}}-body">What to remember</label>
+          <textarea class="form-control font-monospace" id="{{.Prefix}}-body" name="body" rows="4" required placeholder="One fact, in one or two sentences."></textarea>
           <small class="form-hint">The assistant reads this before every answer, so keep it short and true.</small>
         </div>
         <div class="d-flex gap-2">
           <button type="submit" class="btn btn-primary">Add</button>
-          {{if .Entries}}<button type="button" class="btn" data-bs-toggle="collapse" data-bs-target="#memory-new">Cancel</button>{{end}}
+          {{if .Entries}}<button type="button" class="btn" data-bs-toggle="collapse" data-bs-target="#{{.Prefix}}-new">Cancel</button>{{end}}
         </div>
       </form>
     </div>
@@ -62,7 +62,7 @@
             </div>
           </div>
         </div>
-        <form method="post" action="/assistant/memory" data-memory-edit="{{.Slug}}" hidden>
+        <form method="post" action="/assistant/memory" data-memory-edit="{{.Slug}}" data-ajax-refresh hidden>
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="form" value="save">
           <input type="hidden" name="slug" value="{{.Slug}}">

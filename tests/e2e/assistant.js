@@ -1,16 +1,16 @@
 const L = require("./lib");
 const { assert, BASE, sleep } = L;
 
-// Assistant: the cockpit's own conversation. It has no pages: the overlay
-// (dc-assistant-panel, fetched from GET /assistant/panel) is its only surface,
-// docked as a resizable side panel from lg up (its corner button replaces the
-// floating quick nav there) and covering the screen below that. Jobs, memory
-// and history are views inside the overlay, an earlier conversation opens
-// read-only inside it, and a notification link (/projects?assistant=<id>
-// #message-<id>) opens it on the announced answer. The old /assistant paths
-// redirect into that query. The conversation APIs stay: POST /assistant/:id
-// dispatching on the hidden form field, the SSE at /assistant/:id/stream, the
-// message fragment, uploads, drafts and the byte ranged media route.
+// Assistant: the cockpit's own conversation, a page of its own. /assistant
+// lands on the live conversation's page /assistant/:id, the list column
+// beside it holds every conversation (the phone opens it as a sheet from the
+// tab bar), the steered coders and the memory stand in an aside that is
+// inline from xl up and a sheet the head's buttons open below. An earlier
+// conversation opens read-only on its page, and a notification link
+// (/assistant/<id>#message-<id>) lands on the announced answer. The
+// conversation APIs stay: POST /assistant/:id dispatching on the hidden form
+// field, the SSE at /assistant/:id/stream, the message fragment, uploads,
+// drafts and the byte ranged media route.
 //
 // The instance MUST run with tests/e2e/fakes ahead of the real CLIs on PATH,
 // with a scratch HOME and its own TMUX_TMPDIR: the fakes persist provider
@@ -27,13 +27,13 @@ const { assert, BASE, sleep } = L;
 // an instance somebody is using.
 //
 // Gotchas:
-// - opening the panel opens the current conversation and creates one when
+// - opening the page opens the current conversation and creates one when
 //   there is none, so a check never posts a bare "open",
 // - an untouched conversation is reused, so pressing New twice must not leave
 //   two empty conversations behind,
 // - the composer is JS owned, every interaction waits for dc-assistant[ready],
-// - the docked panel's open state is stored per device: a goto reopens it, and
-//   a check that needs it closed closes it explicitly,
+// - a surface on screen reads its own news, so a check that wants the marks
+//   leaves the page first,
 // - an upload finishes before the message is sent: the chip carries the name
 //   the send posts back, so a check waits for the chip, not for the network,
 // - the memory is what a coder reads at startup, so the generated CLAUDE.md
@@ -69,88 +69,93 @@ async function dismissUpdate(page) {
   await page.waitForSelector(".swal2-container", { state: "detached", timeout: 5000 });
 }
 
-const READY = ".dc-assistant-panel-card:not([hidden]) dc-assistant[ready]";
+const READY = "dc-assistant[ready]";
 
-// openAssistant opens the overlay on /projects (the neutral page) and returns
-// the live conversation's id. A stored open panel reopens on its own, so the
-// corner is only clicked when the card is still hidden.
+// openAssistant opens the assistant page: the bare address lands on the live
+// conversation, and returns its id.
 async function openAssistant(page) {
-  await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/assistant`, { waitUntil: "domcontentloaded" });
   await dismissUpdate(page);
-  if (!(await page.locator(".dc-assistant-panel-card:not([hidden])").count())) {
-    await page.click("[data-assistant-corner]");
-  }
   await page.waitForSelector(READY, { timeout: 15000 });
   return page.locator("dc-assistant").getAttribute("conversation-id");
 }
 
-// openConversation opens one conversation in the overlay through the same
-// query a notification link carries.
+// openConversation opens one conversation's page, the address a notification
+// link carries.
 async function openConversation(page, id) {
-  await page.goto(`${BASE}/projects?assistant=${id}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/assistant/${id}`, { waitUntil: "domcontentloaded" });
   await dismissUpdate(page);
   await page.waitForSelector(READY, { timeout: 15000 });
 }
 
+// closePanel leaves the assistant: the page is the surface, so leaving it is
+// going somewhere else, and a surface that is off screen reads no news.
 async function closePanel(page) {
-  if (!(await page.locator(".dc-assistant-panel-card:not([hidden])").count())) return;
-  await page.click("[data-assistant-panel-close]");
-  await page.waitForSelector(".dc-assistant-panel-card[hidden]", { state: "attached", timeout: 8000 });
+  if (!new URL(page.url()).pathname.startsWith("/assistant")) return;
+  await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+  await dismissUpdate(page);
 }
 
-// openView switches the overlay to one of its own views. The buttons for the
-// other views live in the chat head, so the way there goes back to the chat
-// first.
+// openView brings one of the page's lists on screen: the conversations stand
+// in the list column, the jobs and the memory in the aside, which is inline
+// on a wide window and a sheet the head's buttons open below xl.
 async function openView(page, view, readySelector) {
-  if (await page.locator('dc-assistant-panel [data-assistant-view-open="chat"]').count()) {
-    await page.click('dc-assistant-panel [data-assistant-view-open="chat"]');
-    await page.waitForSelector(READY, { timeout: 15000 });
+  if (!new URL(page.url()).pathname.startsWith("/assistant")) await openAssistant(page);
+  if (view === "jobs" && !(await page.locator("#assistant-aside").isVisible())) {
+    await page.click("[data-assistant-jobs-button]");
+    await page.waitForSelector("#assistant-aside.show", { timeout: 8000 });
   }
-  await page.click(`dc-assistant-panel [data-assistant-view-open="${view}"]`);
+  if (view === "memory" && !(await page.locator("#assistant-memory.show").count())) {
+    await page.click(".dc-app > .dc-ctx [data-assistant-memory-button]");
+    await page.waitForSelector("#assistant-memory.show", { timeout: 8000 });
+  }
   await page.waitForSelector(readySelector, { timeout: 15000 });
 }
 
 // NEW_MENU is the new conversation control on a host with several coders. Its
 // label is not a selector: it carries the context percentage, so it changes with
 // every turn. The attribute holding the label's stable part is what identifies
-// the button.
-const NEW_MENU = '[data-bs-toggle="dropdown"][data-assistant-new-label]';
+// the button; the list column carries a second one, so the composer's is named
+// through its surface.
+const NEW_MENU = 'dc-assistant [data-bs-toggle="dropdown"][data-assistant-new-label]';
+
+// A new conversation posts through pe.js and lands on the new page, so a
+// change is seen through the swapped body: a mark set before the click is gone
+// after it, then the surface is ready again.
+async function afterSwap(page, act) {
+  await page.evaluate(() => { document.querySelector(".dc-app").dataset.runnerSwap = "1"; });
+  await act();
+  await page.waitForFunction(() => !document.querySelector(".dc-app")?.dataset.runnerSwap, null, { timeout: 15000 });
+  await page.waitForSelector(READY, { timeout: 15000 });
+}
 
 // The fakes differ per coder, and the checks below read claude's answers, so a
 // host with both installed picks claude explicitly. With one coder the picker
 // is not rendered at all and the conversation already runs on it.
 async function useClaude(page) {
-  const picker = page.locator('[data-assistant-new="claude"]');
+  const picker = page.locator('dc-assistant [data-assistant-new="claude"]');
   const onClaude = (await page.locator("dc-assistant").getAttribute("data-assistant-coder")) === "claude";
   if (!(await picker.count()) || onClaude) {
     return page.locator("dc-assistant").getAttribute("conversation-id");
   }
   await page.click(NEW_MENU);
-  await picker.click();
+  await afterSwap(page, () => picker.click());
   await page.waitForSelector('dc-assistant[data-assistant-coder="claude"][ready]', { timeout: 15000 });
   return page.locator("dc-assistant").getAttribute("conversation-id");
 }
 
 // Always the coder the current conversation runs on, so the reuse check keeps
 // comparing like with like: an untouched conversation is only reused for the
-// coder that was asked for. The new-conversation post answers JSON, and the
-// wait keys on the surface reaching that id.
+// coder that was asked for. The post lands on the conversation's page, the
+// address names the one that answers.
 async function newConversation(page) {
   const current = await page.locator("dc-assistant").getAttribute("data-assistant-coder").catch(() => null);
   const dropdown = page.locator(NEW_MENU);
   if (await dropdown.count()) await dropdown.click();
-  const [response] = await Promise.all([
-    page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes("/assistant/")),
-    page.locator(current ? `[data-assistant-new="${current}"]` : "[data-assistant-new]").first().click(),
-  ]);
-  const target = (await response.json().catch(() => ({}))).id;
-  assert(target, `the new conversation did not answer an id: ${response.status()}`);
-  await page.waitForFunction(
-    (id) => document.querySelector("dc-assistant")?.getAttribute("conversation-id") === id
-      && document.querySelector("dc-assistant")?.hasAttribute("ready"),
-    target,
-    { timeout: 15000 },
-  );
+  await afterSwap(page, () => page.locator(current ? `dc-assistant [data-assistant-new="${current}"]` : "dc-assistant [data-assistant-new]").first().click());
+  const target = new URL(page.url()).pathname.split("/").pop();
+  assert(target && target.length > 8, `the new conversation did not land on a page: ${page.url()}`);
+  assert((await page.locator("dc-assistant").getAttribute("conversation-id")) === target, "the surface shows another conversation than the address");
   return target;
 }
 
@@ -198,15 +203,15 @@ async function waitSettled(page, timeout = 20000) {
 // percentage on a circle whose circumference is exactly 100, so the attribute is
 // the number, and the level attribute is what colors it (absent below 85).
 function ringFill(page) {
-  return page.locator("[data-assistant-ring-fill]").first().getAttribute("stroke-dasharray");
+  return page.locator("dc-assistant [data-assistant-ring-fill]").first().getAttribute("stroke-dasharray");
 }
 
 function ringLevel(page) {
-  return page.locator("[data-assistant-ring]").first().getAttribute("data-assistant-ring-level");
+  return page.locator("dc-assistant [data-assistant-ring]").first().getAttribute("data-assistant-ring-level");
 }
 
 function newLabel(page) {
-  return page.locator("[data-assistant-new-label]").first().getAttribute("title");
+  return page.locator("dc-assistant [data-assistant-new-label]").first().getAttribute("title");
 }
 
 async function send(page, text) {
@@ -247,7 +252,7 @@ async function attach(page, files) {
 }
 
 // startCoder and postForm are what the jobs checks need: a coder to steer and
-// the conversation's own dispatch route, the same one the overlay's forms and
+// the conversation's own dispatch route, the same one the page's forms and
 // the assistant's commands post to.
 async function startCoder(page, project, name, task) {
   return page.evaluate(async ([values]) => {
@@ -276,7 +281,7 @@ async function postForm(page, conversation, fields) {
 }
 
 // The jobs of the assistant sit on one path, not on a conversation: steering and
-// calling a job off post there, from the overlay's list and from the command line.
+// calling a job off post there, from the page's list and from the command line.
 async function postJobs(page, fields) {
   return page.evaluate(async (values) => {
     const body = new URLSearchParams(values);
@@ -295,7 +300,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   let chatID = "";
   let freshID = "";
 
-  await run("the overlay opens a conversation and creates one when there is none", async () => {
+  await run("the page opens a conversation and creates one when there is none", async () => {
     const opened = await openAssistant(page);
     assert(opened && opened.length > 8, "no conversation id on the surface");
     assert(await page.locator("[data-assistant-input]").isVisible(), "no composer");
@@ -308,19 +313,15 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(await page.locator("[data-assistant-empty]").isVisible(), "the run's conversation is not empty");
   });
 
-  await run("the assistant pages are gone, their addresses open the overlay", async () => {
-    // /assistant and a conversation address redirect into the query the
-    // overlay consumes; memory, history and jobs are the overlay's own
-    // fragments, covered below.
-    for (const path of ["/assistant", `/assistant/${chatID}`]) {
-      const landed = await page.evaluate(async (p) => {
-        const res = await fetch(p, { redirect: "follow", headers: { Accept: "text/html" } });
-        return { url: res.url, ok: res.ok };
-      }, path);
-      assert(landed.ok && new URL(landed.url).pathname === "/projects",
-        `${path} did not redirect into the overlay query: ${landed.url}`);
-    }
-    return "redirects, no pages";
+  await run("the assistant is a page, the bare address lands on the live conversation", async () => {
+    const landed = await page.evaluate(async (id) => {
+      const res = await fetch("/assistant", { redirect: "follow", headers: { Accept: "text/html" } });
+      const body = await res.text();
+      return { url: res.url, ok: res.ok, column: body.includes("data-assistant-rows"), surface: body.includes(`conversation-id="${id}"`) };
+    }, chatID);
+    assert(landed.ok && new URL(landed.url).pathname === `/assistant/${chatID}`, `/assistant did not land on the live conversation: ${landed.url}`);
+    assert(landed.column && landed.surface, "the page misses the list column or the conversation");
+    return "a page with the list column";
   });
 
   await run("a turn runs end to end over the conversation's own stream", async () => {
@@ -330,7 +331,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(text.includes("FLUGHAFEN"), `answer missing: ${text}`);
   });
 
-  await run("the transcript survives a reload of the page under the overlay", async () => {
+  await run("the transcript survives a reload of the page", async () => {
     await page.reload({ waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
     await page.waitForSelector(READY, { timeout: 15000 });
@@ -599,7 +600,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(decoded === 1, "the browser could not decode the served image");
   });
 
-  await run("a picture wider than the overlay clamps instead of widening it", async () => {
+  await run("a picture wider than the conversation clamps instead of widening it", async () => {
     await attach(page, [{ name: "wide.svg", mimeType: "image/svg+xml", buffer: WIDE_SVG }]);
     await page.fill("[data-assistant-input]", "MAGIC how wide");
     await page.click("[data-assistant-send]");
@@ -611,10 +612,10 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     const wide = await page.evaluate(() => {
       const img = [...document.querySelectorAll('[data-role="user"] img.dc-assistant-media')].pop();
       const scroller = document.querySelector("[data-assistant-scroll]");
-      if (Math.round(img.getBoundingClientRect().width) > scroller.clientWidth) return "the picture is wider than the overlay";
+      if (Math.round(img.getBoundingClientRect().width) > scroller.clientWidth) return "the picture is wider than the conversation";
       return scroller.scrollWidth > scroller.clientWidth + 1 ? "the transcript scrolls sideways" : "";
     });
-    assert(wide === "", `a wide picture breaks the overlay: ${wide}`);
+    assert(wide === "", `a wide picture breaks the conversation: ${wide}`);
   });
 
   // The composer's file input and the files of a sent message carry the same
@@ -647,7 +648,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(await bubble.locator("img").count() === 0, "raw model HTML survived");
 
     // The answer carries a command line that is wider than a phone. It has to
-    // scroll inside its own bubble, never take the overlay sideways with it.
+    // scroll inside its own bubble, never take the conversation sideways with it.
     const mp = await mobilePage();
     await openConversation(mp, chatID);
     await sleep(400);
@@ -659,13 +660,13 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       const scroller = document.querySelector("[data-assistant-scroll]");
       return scroller.scrollWidth > scroller.clientWidth + 1 ? "the transcript scrolls sideways" : "";
     });
-    assert(wide === "", `a code block wider than the screen breaks the overlay: ${wide}`);
+    assert(wide === "", `a code block wider than the screen breaks the conversation: ${wide}`);
     await closePanel(mp);
   });
 
-  await run("a memory is saved and listed in the overlay's own view", async () => {
+  await run("a memory is saved and listed in the memory sheet", async () => {
     await openAssistant(page);
-    await openView(page, "memory", "dc-assistant-panel #memory-new");
+    await openView(page, "memory", "#memory-new");
     await dropRunnerMemories(page);
     if (!(await page.locator("#memory-new.show").count())) {
       await page.click("[data-memory-add]");
@@ -678,7 +679,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     const shown = await page.locator(`[data-memory-entry="${memorySlug}"]`).innerText();
     assert(shown.includes(memoryTitle), `memory not listed: ${shown}`);
     assert(shown.includes(memoryBody), "memory body not listed");
-    return "saved without leaving the overlay";
+    return "saved without leaving the page";
   });
 
   await run("editing a memory in place keeps its file and deleting removes it", async () => {
@@ -715,19 +716,19 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     const again = await newConversation(page);
     assert(again === freshID, "an untouched conversation was not reused");
 
-    await openView(page, "history", "dc-assistant-panel [data-assistant-conversation]");
-    const rows = await page.locator("[data-assistant-conversation]").count();
-    assert(rows >= 2, `history holds ${rows} conversations, expected at least 2`);
-    assert(await page.locator(`[data-assistant-conversation] .bg-purple-lt`).count() === 1,
-      "the history does not mark the current conversation");
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-conversation]");
+    const rows = await page.locator("[data-assistant-rows] [data-assistant-conversation]").count();
+    assert(rows >= 2, `the column holds ${rows} conversations, expected at least 2`);
+    assert(await page.locator("[data-assistant-rows] [data-assistant-conversation].active").count() === 1,
+      "the column does not mark the open conversation");
   });
 
   // Runs right after the check above, which left a newer conversation behind:
   // the run's own conversation is history now, and history stays history, so
   // this is where the run adopts the live one for everything that follows.
-  await run("an earlier conversation opens read-only inside the overlay", async () => {
+  await run("an earlier conversation opens read-only on its page", async () => {
     await openConversation(page, chatID);
-    assert((await page.locator("dc-assistant-panel [data-assistant-input]").count()) === 0,
+    assert((await page.locator("dc-assistant [data-assistant-input]").count()) === 0,
       "an earlier conversation still has a composer");
     assert((await page.locator("[data-assistant-retry]").count()) === 0, "an earlier conversation still offers a retry");
     const link = page.locator("[data-assistant-current]");
@@ -744,7 +745,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     }, chatID);
     assert(status === 400, `a message to an earlier conversation answered ${status}`);
 
-    // The way back stays inside the overlay: no navigation, the live chat.
+    // The way back is the live conversation's page.
     await link.click();
     await page.waitForFunction(
       (gone) => document.querySelector("dc-assistant")?.getAttribute("conversation-id") !== gone
@@ -752,10 +753,10 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       chatID,
       { timeout: 15000 },
     );
-    assert(new URL(page.url()).pathname === "/projects", "the way back navigated the page");
+    assert(new URL(page.url()).pathname === `/assistant/${freshID}`, `the way back landed on ${page.url()}`);
     assert((await page.locator("dc-assistant").getAttribute("conversation-id")) === freshID,
       "the way back did not open the current conversation");
-    assert((await page.locator("dc-assistant-panel [data-assistant-input]").count()) === 1,
+    assert((await page.locator("dc-assistant [data-assistant-input]").count()) === 1,
       "the current conversation has no composer");
     chatID = freshID;
   });
@@ -772,6 +773,64 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     const bubble = page.locator('[data-role="assistant"]').last();
     assert((await bubble.getAttribute("data-state")) === "cancelled", "not cancelled");
     assert((await bubble.innerText()).includes("still working"), "partial answer lost");
+  });
+
+  // Working is not a fault. While the turn runs the row carries the ring
+  // around the assistant's round icon and no badge; the Unfinished badge
+  // belongs to a turn that stopped before it was done, and both swap on the
+  // assistant event, without a reload.
+  await run("the list runs the ring while a turn runs and badges only a stopped one", async () => {
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-conversation]");
+    const id = await page.locator("dc-assistant").getAttribute("conversation-id");
+    const row = `[data-assistant-rows] [data-assistant-conversation="${id}"]`;
+    const badged = (sel) => {
+      const el = document.querySelector(sel);
+      return !!el && [...el.querySelectorAll(".badge")].some((b) => b.textContent.trim() === "Unfinished");
+    };
+
+    await send(page, "SLOW and let the row say so");
+    await page.waitForSelector(`${row} .dc-term-icon.assistant.working`, { timeout: 15000 });
+    assert(!(await page.evaluate(badged, row)), "a running turn is shown as unfinished");
+
+    await page.click("[data-assistant-cancel]");
+    await waitSettled(page);
+    await page.waitForFunction(
+      (sel) => {
+        const el = document.querySelector(sel);
+        if (!el || el.querySelector(".dc-term-icon.assistant.working")) return false;
+        return [...el.querySelectorAll(".badge")].some((b) => b.textContent.trim() === "Unfinished");
+      },
+      row,
+      { timeout: 15000 },
+    );
+  });
+
+  // The head's sparkle is the phone's, in every state: the desktop head stays
+  // the title alone, a running turn never makes an icon appear there, and on
+  // the phone the same icon wears the ring while the turn runs and loses it
+  // when the turn ends, without a reload.
+  await run("the conversation head runs the ring on the phone and stays bare on the desktop", async () => {
+    await openAssistant(page);
+    const mp = await mobilePage();
+    await openConversation(mp, chatID);
+    const head = "dc-assistant [data-assistant-head-icon]";
+    const ringing = (sel) => !!document.querySelector(sel)?.classList.contains("working");
+    assert(!(await page.locator(head).isVisible()), "the desktop head carries the icon while nothing runs");
+    assert(await mp.locator(head).isVisible(), "the phone head has no icon");
+
+    await send(page, "SLOW and hold the head");
+    await mp.waitForFunction(ringing, head, { timeout: 15000 });
+    assert(await mp.locator(head).isVisible(), "the phone head icon went away while the turn runs");
+    await page.waitForFunction(ringing, head, { timeout: 15000 });
+    assert(!(await page.locator(head).isVisible()), "the desktop head shows an icon while the turn runs");
+
+    await page.click("[data-assistant-cancel]");
+    await waitSettled(page);
+    await mp.waitForFunction((sel) => !document.querySelector(sel)?.classList.contains("working"), head, { timeout: 15000 });
+    assert(await mp.locator(head).isVisible(), "the phone head icon went away after the turn");
+    assert(!(await page.locator(head).isVisible()), "the desktop head kept an icon after the turn");
+    await closePanel(mp);
+    return "ring on the phone while it runs, desktop head bare throughout";
   });
 
   await run("a message sent while an answer runs queues and flushes after it", async () => {
@@ -840,79 +899,64 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   });
 
   // On a desktop the assistant docks next to the page instead of leaving it:
-  // the corner button (which replaces the floating quick nav there) opens it,
-  // the page shifts aside, the surface loads the live conversation, a
-  // navigation keeps the panel (it lives outside the swapped region), and
-  // Escape closes it.
-  await run("on a desktop the assistant docks as a panel and survives navigation", async () => {
+  // the rail's assistant entry opens it (the floating sheet has no place
+  // on a wide screen), the shell shifts aside, the surface loads the live
+  // conversation, a navigation keeps the panel (it lives outside the swapped
+  // region), and Escape closes it.
+  await run("on a desktop the assistant is a page with the list column and the aside", async () => {
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
-    assert(!(await page.locator(".navbar-nav a[href='/assistant']").count()),
-      "the assistant still sits in the main navigation");
-    assert(await page.locator(".quicknav-toggle").isHidden(), "the quick nav still shows on a desktop");
-    await page.click("[data-assistant-corner]");
+    assert(await page.locator(".dc-rail [data-assistant-link]").count() === 1,
+      "the assistant is missing from the rail");
+    assert(await page.locator("dc-ctx-sheet").isHidden(), "the sheet stands open on a desktop");
+    await page.click(".dc-rail [data-assistant-link]");
     await page.waitForSelector(READY, { timeout: 15000 });
-    assert(new URL(page.url()).pathname === "/projects", `the corner button left the page: ${page.url()}`);
-    const docked = await page.evaluate(() => ({
-      body: document.body.classList.contains("dc-assistant-docked"),
-      margin: getComputedStyle(document.querySelector(".page")).marginRight,
-      composer: Boolean(document.querySelector("dc-assistant-panel [data-assistant-input]")),
-    }));
-    assert(docked.body && docked.margin !== "0px", `the page did not make room: ${JSON.stringify(docked)}`);
-    assert(docked.composer, "the panel has no composer");
-
-    const bands = await page.evaluate(() => {
-      const bar = document.querySelector("#navbar-menu .navbar").getBoundingClientRect();
-      const head = document.querySelector("[data-assistant-head]").getBoundingClientRect();
-      return { barBottom: Math.round(bar.bottom), headBottom: Math.round(head.bottom), barHeight: Math.round(bar.height) };
+    assert(new URL(page.url()).pathname === `/assistant/${chatID}`, `the rail entry landed on ${page.url()}`);
+    const shape = await page.evaluate(() => {
+      const column = document.querySelector(".dc-app > .dc-ctx[data-assistant-rows]");
+      const aside = document.getElementById("assistant-aside");
+      const work = document.querySelector("dc-assistant.dc-work");
+      return {
+        railActive: Boolean(document.querySelector('.dc-rail .dc-rail-btn.active[href="/assistant"]')),
+        column: Boolean(column) && column.offsetParent !== null,
+        activeRow: Boolean(column?.querySelector("[data-assistant-conversation].active")),
+        aside: aside.offsetParent !== null && getComputedStyle(aside).position === "static",
+        composer: Boolean(work?.querySelector("[data-assistant-input]")),
+        overflow: document.documentElement.scrollWidth > window.innerWidth,
+      };
     });
-    assert(Math.abs(bands.barBottom - bands.headBottom) <= 1 && Math.abs(bands.barHeight - 56) <= 1,
-      `the panel head does not line up with the page header: ${JSON.stringify(bands)}`);
-
-    // The panel sits next to the swapped region, so a boosted navigation does
-    // not touch it: the same element stays, nothing is torn down and refetched.
-    await page.evaluate(() => { document.querySelector("dc-assistant-panel").dataset.runnerMark = "1"; });
-    await page.click('.navbar-nav a[href="/docs"]');
-    await page.waitForFunction(() => window.location.pathname === "/docs", null, { timeout: 15000 });
-    assert(await page.locator(".dc-assistant-panel-card:not([hidden]) dc-assistant").count() === 1,
-      "the panel did not survive a boosted navigation");
-    assert(await page.evaluate(() => document.querySelector("dc-assistant-panel")?.dataset.runnerMark === "1"),
-      "the panel was rebuilt by the navigation instead of surviving it");
-    assert(await page.locator("[data-assistant-corner]").isHidden(), "the corner button shows next to the open panel");
-
-    await page.focus("dc-assistant-panel [data-assistant-input]");
-    await page.keyboard.press("Escape");
-    await page.waitForSelector(".dc-assistant-panel-card[hidden]", { state: "attached", timeout: 8000 });
-    assert(!(await page.evaluate(() => document.body.classList.contains("dc-assistant-docked"))),
-      "closing the panel left the page shifted aside");
-    return "docked, kept across pages, closed with Escape";
+    assert(shape.railActive, "the rail does not mark the assistant");
+    assert(shape.column && shape.activeRow, `the list column is missing or unmarked: ${JSON.stringify(shape)}`);
+    assert(shape.aside, "the aside does not stand beside the conversation on a wide window");
+    assert(shape.composer && !shape.overflow, `the page is not whole: ${JSON.stringify(shape)}`);
+    return "rail, column, conversation, aside";
   });
 
-  // Below lg the same surface covers the whole screen instead of docking, and
-  // every entry opens it in place: the header sparkle and the quick nav row.
-  await run("on a phone the assistant opens as a fullscreen overlay", async () => {
+  // Below lg the tab bar's sparkle opens the conversations as a sheet, the
+  // way the other areas open theirs, and a row opens the conversation's page.
+  await run("on a phone the tab bar opens the conversations sheet and a row opens the page", async () => {
     const mp = await mobilePage();
     await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(mp);
-    await mp.click("header.d-md-none [data-assistant-link]");
-    await mp.waitForSelector(READY, { timeout: 15000 });
+    await mp.tap('.dc-tabbar button[data-ctx-area="assistant"]');
+    await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-assistant-rows] [data-assistant-conversation]", { timeout: 8000 });
     assert(mp.url().endsWith("/projects"), "the sparkle button left the page");
-    const covers = await mp.evaluate(() => {
-      const card = document.querySelector(".dc-assistant-panel-card");
-      const r = card.getBoundingClientRect();
-      return r.width >= window.innerWidth - 1 && r.height >= window.innerHeight - 1;
-    });
-    assert(covers, "the overlay does not cover the screen");
-    const overflow = await mp.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-    assert(overflow <= 0, `horizontal overflow of ${overflow}px on a phone`);
-    await closePanel(mp);
-
-    await mp.click(".quicknav-toggle");
-    await mp.waitForSelector("[data-quicknav-assistant]", { state: "visible", timeout: 8000 });
-    await mp.click("[data-quicknav-assistant]");
+    assert(await mp.locator("dc-ctx-sheet [data-assistant-new]").count() >= 1, "the sheet offers no new conversation");
+    await mp.tap(`dc-ctx-sheet [data-assistant-conversation="${chatID}"] a[href]`);
+    await mp.waitForURL(new RegExp(`/assistant/${chatID}$`), { timeout: 10000 });
     await mp.waitForSelector(READY, { timeout: 15000 });
+    const fit = await mp.evaluate(() => ({
+      sheetHidden: document.querySelector("dc-ctx-sheet").hidden,
+      tabActive: Boolean(document.querySelector('.dc-tabbar button[data-ctx-area="assistant"].active')),
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      composerBottom: Math.round(document.querySelector("[data-assistant-form]").getBoundingClientRect().bottom),
+      tabbarTop: Math.round(document.querySelector(".dc-tabbar").getBoundingClientRect().top),
+    }));
+    assert(fit.sheetHidden && fit.tabActive, `the sheet or the tab bar is off: ${JSON.stringify(fit)}`);
+    assert(fit.overflow <= 0, `horizontal overflow of ${fit.overflow}px on a phone`);
+    assert(fit.composerBottom <= fit.tabbarTop + 1, `the composer sits under the tab bar: ${JSON.stringify(fit)}`);
     await closePanel(mp);
-    return "sparkle and quick nav both open it in place";
+    return "sheet from the tab bar, page from the row";
   });
 
   await run("a finished answer marks the entry points until it is read", async () => {
@@ -928,7 +972,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/assistant/${chatID}`), { timeout: 20000 }),
       page.click("[data-assistant-send]"),
     ]);
-    // Close before the answer lands: an open surface reads its own news, so
+    // Leave before the answer lands: an open surface reads its own news, so
     // the marks only have something to show once it is out of sight.
     await closePanel(page);
     await page.waitForFunction(
@@ -939,18 +983,18 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       chatID,
       { timeout: 20000 },
     );
-    assert(await page.locator(`header a[data-assistant-link] [data-notify-target="${chatID}"]`).count() === 2,
-      "the header sparkles carry no news mark");
-    assert(await page.locator(`[data-assistant-corner] [data-notify-target="${chatID}"]`).count() === 1,
-      "the corner button carries no news mark");
+    assert(await page.locator(`[data-assistant-link] [data-notify-target="${chatID}"]`).count() === 2,
+      "the rail and tab bar sparkles carry no news mark");
+    assert(await page.locator(`.dc-rail [data-assistant-link] [data-notify-target="${chatID}"]`).count() === 1,
+      "the rail entry carries no news mark");
     const fragment = await page.evaluate(async () => {
-      const res = await fetch("/quicknav?path=/projects", { headers: { Accept: "text/html" } });
+      const res = await fetch("/ctx/terminals?path=/projects", { headers: { Accept: "text/html" } });
       return res.text();
     });
-    assert(fragment.includes(`data-notify-target="${chatID}"`), "the refreshed quick nav drops the mark");
+    assert(fragment.includes(`data-notify-target="${chatID}"`), "the refreshed terminals column drops the mark");
   });
 
-  await run("the notification opens the overlay on the answer it announces", async () => {
+  await run("the notification opens the page on the answer it announces", async () => {
     const entry = await page.evaluate(async (id) => {
       const res = await fetch("/notifications", { headers: { Accept: "application/json" } });
       const data = await res.json();
@@ -963,7 +1007,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert((entry.detail || "").length > 0, "the entry carries no words of the answer");
     assert(!entry.detail.includes("\n") && [...entry.detail].length <= 141,
       `the detail is not one short line: ${entry.detail}`);
-    assert(entry.url.includes(`?assistant=${chatID}`), `the entry does not carry the overlay query: ${entry.url}`);
+    assert(entry.url.startsWith(`/assistant/${chatID}`), `the entry does not name the conversation's page: ${entry.url}`);
     const answered = entry.url.split("#message-")[1];
     assert(answered, `the entry does not link at a message: ${entry.url}`);
 
@@ -974,7 +1018,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(first !== answered, "the transcript is too short for this check");
     await closePanel(page);
 
-    await page.goto(`${BASE}/projects?assistant=${chatID}#message-${first}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/assistant/${chatID}#message-${first}`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
     await page.waitForSelector(READY, { timeout: 15000 });
     await sleep(500);
@@ -986,14 +1030,12 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       return { top, limit: scroller.clientHeight * 0.4 };
     }, first);
     assert(!placed.missing && placed.top > -4 && placed.top < placed.limit,
-      `the overlay did not land on the message (${JSON.stringify(placed)})`);
-    assert(new URL(page.url()).search === "", "the consumed query is still in the address");
+      `the page did not land on the message (${JSON.stringify(placed)})`);
   });
 
-  await run("a bell entry click opens the overlay in place", async () => {
-    // The notification center hands an assistant link to the panel instead of
-    // navigating: the page stays, the dropdown closes, the overlay opens on
-    // the announced conversation and message.
+  await run("a bell entry click opens the conversation's page on the answer", async () => {
+    // The notification center follows the entry boosted: the dropdown closes,
+    // the page is the announced conversation, landed on the message.
     await closePanel(page);
     const entry = await page.evaluate(async (id) => {
       const res = await fetch("/notifications", { headers: { Accept: "application/json" } });
@@ -1003,21 +1045,18 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(entry, "no notification for the conversation");
     const answered = entry.url.split("#message-")[1];
     assert(answered, `the entry does not link at a message: ${entry.url}`);
-    const before = page.url();
-    await page.evaluate(() => { window.__inPlaceProbe = true; });
     await page.locator(".dc-notify-bell:visible").first().click();
     await page.waitForSelector(".dc-notify-menu.show", { timeout: 6000 });
     await page.locator(`.dc-notify-menu.show a[data-notify-target="${chatID}"]`).first().click();
+    await page.waitForURL(new RegExp(`/assistant/${chatID}`), { timeout: 15000 });
     await page.waitForSelector(READY, { timeout: 15000 });
-    assert(await page.evaluate(() => window.__inPlaceProbe === true), "the click navigated, probe lost");
-    assert(page.url() === before, `the address changed: ${page.url()}`);
     assert((await page.locator("dc-assistant").getAttribute("conversation-id")) === chatID,
-      "the overlay is not on the announced conversation");
+      "the page is not on the announced conversation");
     await page.waitForSelector(`[data-message-id="${answered}"]`, { state: "attached", timeout: 8000 });
     await page.waitForSelector(".dc-notify-menu.show", { state: "detached", timeout: 4000 });
   });
 
-  await run("opening the overlay lands at the end of the transcript", async () => {
+  await run("opening the page lands at the end of the transcript", async () => {
     await closePanel(page);
     await openAssistant(page);
     // Pictures in the transcript decode after the element is done, so the
@@ -1061,7 +1100,8 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     await page.waitForFunction((count) => document.querySelectorAll("[data-assistant-message]").length > count, shown, { timeout: 15000 });
     await page.waitForSelector(READY, { timeout: 15000 });
     assert((await page.locator("[data-assistant-all]").count()) === 0, "the whole transcript still offers to show earlier messages");
-    assert(new URL(page.url()).pathname === "/projects", "showing the rest navigated the page");
+    assert(new URL(page.url()).pathname === `/assistant/${chatID}` && new URL(page.url()).search === "?all=1",
+      `showing the rest landed on ${page.url()}`);
     await sleep(500);
     const after = await page.evaluate((id) => {
       const scroller = document.querySelector("[data-assistant-scroll]");
@@ -1078,8 +1118,8 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(after.above > 0, "no earlier messages extend above the anchor");
   });
 
-  await run("the history and memory lists serve their own fragments", async () => {
-    for (const path of ["/assistant/history", "/assistant/memory", "/assistant/jobs"]) {
+  await run("the conversations, memory and jobs lists serve their own fragments", async () => {
+    for (const path of [`/ctx/assistant?path=/assistant/${chatID}`, "/assistant/memory", "/assistant/jobs"]) {
       const fragment = await page.evaluate(async (p) => {
         const res = await fetch(p, { headers: { Accept: "text/html" } });
         return { status: res.status, body: await res.text() };
@@ -1094,11 +1134,11 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     await L.createProject(page, jobsProject).catch(() => {});
     const jobsDir = await L.projectPath(page, jobsProject);
     await openAssistant(page);
-    const badge = page.locator("dc-assistant-panel [data-assistant-jobs-button] .dc-steer-badge");
-    assert(await badge.count() === 1, "no badge on the jobs button in the panel head");
+    const badge = page.locator("[data-assistant-jobs-button] .dc-steer-badge");
+    assert(await badge.count() === 1, "no badge on the jobs button in the page head");
     assert((await badge.first().getAttribute("class")).includes("d-none"),
       "the badge claims a steered job before there is one");
-    assert((await page.locator("dc-assistant-panel [data-assistant-jobs-button]").getAttribute("title")) === "Steered coders",
+    assert((await page.locator("[data-assistant-jobs-button]").getAttribute("title")) === "Steered coders",
       "the jobs button does not say Steered coders");
 
     const created = await startCoder(page, jobsDir, "jobs-task", "Write the README.");
@@ -1115,25 +1155,38 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     // Live, over the assistant event: no reload, no polling.
     await page.waitForFunction(
       () => {
-        const mark = document.querySelector("dc-assistant-panel [data-assistant-jobs-button] .dc-steer-badge");
+        const mark = document.querySelector("[data-assistant-jobs-button] .dc-steer-badge");
         return mark && !mark.classList.contains("d-none") && Number(mark.textContent) > 0;
       },
       null,
       { timeout: 15000 },
     );
 
-    await page.click("dc-assistant-panel [data-assistant-jobs-button]");
+    // A count in the icon's corner, in the steered purple, not a number
+    // standing next to the wheel.
+    const mark = await page.evaluate(() => {
+      const el = document.querySelector("[data-assistant-jobs-button] .dc-steer-badge");
+      const own = getComputedStyle(el);
+      const steer = getComputedStyle(document.documentElement).getPropertyValue("--dc-steer-rgb").trim();
+      return { position: own.position, background: own.backgroundColor, steer: `rgb(${steer})` };
+    });
+    assert(mark.position === "absolute", `the steer badge is ${mark.position}, not a corner mark`);
+    assert(mark.background === mark.steer, `the steer badge is ${mark.background}, not ${mark.steer}`);
+
+    await openView(page, "jobs", `[data-assistant-job="${jobCoder}"]`);
     await page.waitForFunction(
       (id) => (document.querySelector(`[data-assistant-job="${id}"]`)?.innerText || "").includes("steering"),
       jobCoder,
       { timeout: 15000 },
     );
-    assert((await page.locator(".modal.show").count()) === 0, "the jobs view opened a modal");
-    assert((await page.locator(".modal-backdrop").count()) === 0, "the jobs view left a backdrop");
-    // The panel speaks of coders, the word job stays in the code and the CLI.
-    const head = await page.locator("dc-assistant-panel [data-assistant-head]").innerText();
-    assert(head.includes("Steered coders"), `the jobs view is not headed Steered coders: ${head}`);
-    const text = await page.locator(`[data-assistant-job="${jobCoder}"]`).innerText();
+    assert((await page.locator(".modal.show").count()) === 0, "the jobs list opened a modal");
+    assert((await page.locator(".modal-backdrop").count()) === 0, "the jobs list left a backdrop");
+    // The page speaks of coders, the word job stays in the code and the CLI.
+    const head = await page.locator("#assistant-aside .offcanvas-title").textContent();
+    assert(head.includes("Steered coders"), `the jobs sheet is not headed Steered coders: ${head}`);
+    // The task and the criterion sit folded under the row, so the words are
+    // read from the content, not from what is on screen.
+    const text = await page.locator(`[data-assistant-job="${jobCoder}"]`).textContent();
     for (const want of ["jobs-task", "steering", "WAKE_NOTHING", "Write the README", "0 of"]) {
       assert(text.includes(want), `the job row misses ${want}:\n${text}`);
     }
@@ -1141,7 +1194,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     // so it also carries what earlier runs on this instance left behind.
     assert(await page.locator(`[data-assistant-job="${jobCoder}"]`).count() === 1,
       "the job is listed twice");
-    return "one list, a view of the overlay";
+    return "one list, beside the conversation";
   });
 
   await run("stopping a job asks first and the view acts in place", async () => {
@@ -1160,7 +1213,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       jobCoder,
       { timeout: 15000 },
     );
-    assert(await page.locator(".dc-assistant-panel-card:not([hidden])").count() === 1, "the overlay closed under the action");
+    assert(await page.locator("#assistant-aside").isVisible(), "the aside went away under the action");
     return "confirmed, stopped in place";
   });
 
@@ -1172,48 +1225,65 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       jobCoder,
       { timeout: 15000 },
     );
-    const text = await row.innerText();
+    const text = await row.textContent();
     assert(text.includes("WAKE_NOTHING"), `the criterion did not survive: ${text}`);
     assert(text.includes("0 of"), `the budget was not given back: ${text}`);
     assert(await row.locator("[data-assistant-job-open]").count() === 1, "no way from the job to its coder");
     return "steering again, same criterion";
   });
 
-  await run("on a phone the jobs view is thumb sized", async () => {
+  await run("on a phone the jobs sheet is thumb sized", async () => {
     const mp = await mobilePage();
-    await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await mp.goto(`${BASE}/assistant`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(mp);
-    await mp.click("header.d-md-none [data-assistant-link]");
     await mp.waitForSelector(READY, { timeout: 15000 });
-    await mp.click("dc-assistant-panel [data-assistant-jobs-button]");
-    await mp.waitForSelector(`[data-assistant-job="${jobCoder}"]`, { timeout: 15000 });
+    await mp.click("[data-assistant-jobs-button]");
+    await mp.waitForSelector(`#assistant-aside.show [data-assistant-job="${jobCoder}"]`, { timeout: 15000 });
     await sleep(400);
     const fit = await mp.evaluate((id) => {
       const stop = document.querySelector(`[data-assistant-job="${id}"] [data-assistant-job-stop]`);
       if (!stop) return "the action is missing";
       const b = stop.getBoundingClientRect();
-      if (b.height < 36) return `the action is ${b.height} high`;
+      if (b.height < 26) return `the action is ${b.height} high`;
       if (b.right > window.innerWidth + 1 || b.left < -1) return `the action sticks out: ${JSON.stringify(b)}`;
       return "";
     }, jobCoder);
     assert(fit === "", `the view is not usable with a thumb: ${fit}`);
-    return "full width, reachable";
+
+    // The first row stands as far from the head as from the sides: one gap,
+    // the sheet body's own padding.
+    const gaps = await mp.evaluate(() => {
+      const body = document.querySelector("#assistant-aside .offcanvas-body");
+      const content = document.querySelector("#assistant-aside [data-assistant-job] .d-flex");
+      const b = body.getBoundingClientRect();
+      const c = content.getBoundingClientRect();
+      return {
+        top: Math.round(c.top - b.top),
+        left: Math.round(c.left - b.left),
+        right: Math.round(b.right - c.right),
+      };
+    });
+    assert(gaps.top === gaps.left && gaps.top === gaps.right,
+      `the sheet's gaps differ: ${JSON.stringify(gaps)}`);
+    return `full width, reachable, gaps ${gaps.top}/${gaps.left}/${gaps.right}`;
   });
 
-  // A job's coder is the one link that really leaves the overlay. On a phone
-  // the overlay is a visit, so it closes with the navigation, and the way
-  // back is one tap on the sparkle.
+  // A job's coder is a link that leaves the page. On a phone
+  // the sheet is a visit, so it goes with the navigation, and the way back
+  // is the tab bar's sparkle and the current conversation's row.
   await run("the way from a job to its coder leaves and comes back clean", async () => {
     const mp = await mobilePage();
     await mp.click(`[data-assistant-job="${jobCoder}"] [data-assistant-job-open]`);
     await mp.waitForURL((url) => url.pathname.includes(jobCoder), { timeout: 15000 });
     await sleep(400);
-    assert(await mp.evaluate(() => document.querySelector(".dc-assistant-panel-card")?.hasAttribute("hidden")),
-      "the overlay stayed over the coder page");
-    await mp.click("header.d-md-none [data-assistant-link]");
+    assert(await mp.locator("#assistant-aside.show, .offcanvas-backdrop").count() === 0,
+      "the aside sheet stayed over the coder page");
+    await mp.tap('.dc-tabbar button[data-ctx-area="assistant"]');
+    await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-assistant-rows] [data-assistant-conversation]", { timeout: 8000 });
+    await mp.tap("dc-ctx-sheet [data-assistant-rows] [data-assistant-conversation] a[href]");
     await mp.waitForSelector(READY, { timeout: 15000 });
     await closePanel(mp);
-    return "coder page usable, one tap back";
+    return "coder page usable, two taps back";
   });
 
   // A turn is not a child of the server any more. The fake kills the cockpit
@@ -1247,14 +1317,19 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     // conversation, so deleting the conversation leaves it alone: the next
     // conversation lists the same job and its reports land there.
     const conversation = await openAssistant(page);
-    await openView(page, "history", "dc-assistant-panel [data-assistant-conversation]");
-    await page.click(`[data-assistant-conversation="${conversation}"] [data-conversation-menu]`);
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-conversation]");
+    await page.click(`[data-assistant-rows] [data-assistant-conversation="${conversation}"] [data-conversation-menu]`);
     await page.waitForSelector(".dc-context-menu", { timeout: 8000 });
     await page.click('.dc-context-menu .dropdown-item:has-text("Delete")');
     await L.confirmSwal(page);
-    await page.waitForSelector(`[data-assistant-conversation="${conversation}"]`, { state: "detached", timeout: 10000 });
+    await page.waitForFunction(
+      (gone) => Boolean(document.querySelector("dc-assistant[ready]"))
+        && document.querySelector("dc-assistant[ready]").getAttribute("conversation-id") !== gone,
+      conversation,
+      { timeout: 15000 },
+    );
 
-    await openView(page, "jobs", `dc-assistant-panel [data-assistant-job="${jobCoder}"]`);
+    await openView(page, "jobs", `[data-assistant-job="${jobCoder}"]`);
     const state = await page.locator(`[data-assistant-job="${jobCoder}"] [data-assistant-job-state]`).innerText();
     assert(state.trim() === "steering",
       `the job did not survive the deleted conversation: ${state}`);
@@ -1280,13 +1355,13 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     await dismissUpdate(page);
     // The mark sits on every surface that lists the coder, so the selector is
     // scoped to the one that is on screen here: the tab strip. Unscoped it
-    // resolves to four nodes and the first is the attach page's own badge, which
-    // lives in the settings row that style.css hides on a fine pointer
-    // (`@media not (pointer: coarse)`), so a wait for it to become visible can
-    // never pass on a desktop viewport. The others are checked as rendered.
+    // resolves to several nodes and the first is the attach page's own badge in
+    // the work head, which is a phone only element (d-lg-none), so a wait for
+    // it to become visible can never pass on a desktop viewport. The others
+    // are checked as rendered.
     const mark = `.terminal-tabs-strip .dc-term-icon.steered[data-notify-target="${marked}"]`;
     await page.waitForSelector(mark, { timeout: 10000 });
-    assert(await page.locator(`.attach-settings .dc-term-icon.steered[data-notify-target="${marked}"]`).count() === 1,
+    assert(await page.locator(`.dc-work-head dc-steered-mark .dc-term-icon.steered[data-notify-target="${marked}"]`).count() === 1,
       "the attach page's own badge does not carry the mark");
 
     // The phone's project list carries the mark and the menu data too.
@@ -1317,48 +1392,51 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
 
   await run("deleting a conversation through its menu keeps the assistant reachable", async () => {
     const conversation = await openAssistant(page);
-    await openView(page, "history", "dc-assistant-panel [data-assistant-conversation]");
-    await page.click(`[data-assistant-conversation="${conversation}"] [data-conversation-menu]`);
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-conversation]");
+    await page.click(`[data-assistant-rows] [data-assistant-conversation="${conversation}"] [data-conversation-menu]`);
     await page.waitForSelector(".dc-context-menu", { timeout: 8000 });
     const items = await page.locator(".dc-context-menu .dropdown-item").allInnerTexts();
     assert(items.some((t) => t.includes("Open")) && items.some((t) => t.includes("Delete")),
       `the row menu misses an action: ${items.join(", ")}`);
     await page.click('.dc-context-menu .dropdown-item:has-text("Delete")');
     await L.confirmSwal(page);
-    await page.waitForSelector(`[data-assistant-conversation="${conversation}"]`, { state: "detached", timeout: 10000 });
-    assert(new URL(page.url()).pathname === "/projects", "the deletion navigated away");
-
-    // The chat comes back with a fresh conversation, the overlay never dies.
-    await page.click('dc-assistant-panel [data-assistant-view-open="chat"]');
-    await page.waitForSelector(READY, { timeout: 15000 });
-    assert((await page.locator("dc-assistant").getAttribute("conversation-id")) !== conversation,
-      "the deleted conversation is still the live one");
-    assert(await page.locator("dc-assistant-panel [data-assistant-input]").isVisible(), "no composer after the deletion");
+    // The deleted conversation's page is gone with it: the assistant comes
+    // back with a fresh conversation on its own page.
+    await page.waitForFunction(
+      (gone) => Boolean(document.querySelector("dc-assistant[ready]"))
+        && document.querySelector("dc-assistant[ready]").getAttribute("conversation-id") !== gone,
+      conversation,
+      { timeout: 15000 },
+    );
+    assert(new URL(page.url()).pathname.startsWith("/assistant/"), `the deletion landed on ${page.url()}`);
+    assert(await page.locator(`[data-assistant-rows] [data-assistant-conversation="${conversation}"]`).count() === 0,
+      "the deleted conversation is still in the column");
+    assert(await page.locator("dc-assistant [data-assistant-input]").isVisible(), "no composer after the deletion");
     await closePanel(page);
   });
 
-  // A history row opens its conversation read-only inside the overlay through
-  // the row itself; the menu's Open does the same.
-  await run("a history row opens its transcript in place", async () => {
+  // A column row opens its conversation's page, read-only when it is history;
+  // the menu's Open does the same.
+  await run("a column row opens its transcript on its page", async () => {
     await openAssistant(page);
-    await openView(page, "history", "dc-assistant-panel [data-assistant-conversation]");
-    const row = page.locator("dc-assistant-panel [data-assistant-conversation]:not(:has(.bg-purple-lt))").first();
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-conversation]");
+    const row = page.locator("[data-assistant-rows] [data-assistant-conversation]:not(.active)").first();
     const victim = await row.getAttribute("data-assistant-conversation").catch(() => null);
-    assert(victim, "no archived row to open");
+    assert(victim, "no earlier row to open");
     await row.locator("a").click();
-    await page.waitForSelector("dc-assistant-panel [data-assistant-current]", { timeout: 15000 });
-    assert(new URL(page.url()).pathname === "/projects", "opening a history row navigated the page");
+    await page.waitForURL(new RegExp(`/assistant/${victim}$`), { timeout: 15000 });
+    await page.waitForSelector("dc-assistant [data-assistant-current]", { timeout: 15000 });
     assert((await page.locator("dc-assistant").getAttribute("conversation-id")) === victim,
-      "the overlay shows a different conversation than the row named");
+      "the page shows a different conversation than the row named");
     await closePanel(page);
-    return "read only, in place";
+    return "read only, on its page";
   });
 
   await run("a prompt keeps its line breaks in the optimistic bubble", async () => {
     await openAssistant(page);
     if (!(await page.locator("[data-assistant-input]").count())) {
-      await page.click('dc-assistant-panel [data-assistant-view-open="chat"]');
-      await page.waitForSelector(READY, { timeout: 15000 });
+      await page.click("[data-assistant-current]");
+      await page.waitForSelector("dc-assistant[ready] [data-assistant-input]", { timeout: 15000 });
     }
     await send(page, "MAGIC first line\nsecond line");
     const optimistic = await page.locator('[data-role="user"] [data-assistant-text]').last()
@@ -1373,8 +1451,8 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   await run("a sent message shows its time at once and one after a reload", async () => {
     await openAssistant(page);
     if (!(await page.locator("[data-assistant-input]").count())) {
-      await page.click('dc-assistant-panel [data-assistant-view-open="chat"]');
-      await page.waitForSelector(READY, { timeout: 15000 });
+      await page.click("[data-assistant-current]");
+      await page.waitForSelector("dc-assistant[ready] [data-assistant-input]", { timeout: 15000 });
     }
     const marker = "MAGIC stamped right away";
     await page.fill("[data-assistant-input]", marker);
@@ -1435,11 +1513,11 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     return time.shown;
   });
 
-  await run("the composer resists resizing while the other overlay boxes allow it", async () => {
+  await run("the composer resists resizing while the aside's boxes allow it", async () => {
     const composer = await page.locator("[data-assistant-input]")
       .evaluate((n) => getComputedStyle(n).resize);
     assert(composer === "none", `the composer grew a resize handle: ${composer}`);
-    await openView(page, "memory", "dc-assistant-panel #memory-new");
+    await openView(page, "memory", "#memory-new");
     if (!(await page.locator("#memory-new.show").count())) {
       await page.click("[data-memory-add]");
       await page.waitForSelector("#memory-new.show", { timeout: 8000 });
@@ -1454,7 +1532,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   // takes both keys and jumps through the whole text.
   await run("Home and End jump to the start and the end of the composer", async () => {
     await openAssistant(page);
-    const box = "dc-assistant-panel [data-assistant-input]";
+    const box = "dc-assistant [data-assistant-input]";
     await page.fill(box, "first line\nsecond line\nthird line");
     const text = await page.inputValue(box);
     await page.locator(box).evaluate((el) => el.setSelectionRange(15, 15));
@@ -1479,29 +1557,4 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
 
   // The error state replaces the whole panel body, so it must carry its own
   // close control, on a phone there is no Escape key to fall back to.
-  await run("a failed panel load keeps a close control and retry recovers", async () => {
-    await closePanel(page);
-    await page.route("**/assistant/panel*", (route) => route.abort());
-    await page.click("[data-assistant-corner]");
-    await page.waitForSelector(".dc-assistant-panel-card [data-assistant-panel-retry]", { timeout: 8000 });
-    assert(await page.locator(".dc-assistant-panel-card [data-assistant-panel-close]").isVisible(),
-      "the error state has no close control");
-    await page.unroute("**/assistant/panel*");
-    await page.click(".dc-assistant-panel-card [data-assistant-panel-retry]");
-    await page.waitForSelector(READY, { timeout: 15000 });
-    await closePanel(page);
-    return "close there, retry recovers";
-  });
-
-  await run("a slow panel load shows a spinner before the content arrives", async () => {
-    await page.route("**/assistant/panel*", async (route) => {
-      await sleep(700);
-      await route.continue();
-    });
-    await page.click("[data-assistant-corner]");
-    await page.waitForSelector('.dc-assistant-panel-card [aria-label="Loading the assistant"]', { timeout: 4000 });
-    await page.unroute("**/assistant/panel*");
-    await page.waitForSelector(READY, { timeout: 15000 });
-    await closePanel(page);
-  });
 });

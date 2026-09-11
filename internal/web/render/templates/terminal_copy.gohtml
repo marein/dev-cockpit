@@ -1,0 +1,27 @@
+{{define "terminal_copy_modal.gohtml"}}
+{{/* The copy sheet: what the terminal has said, as text a person can select,
+     scroll and copy the way they do anywhere else. A canvas holds no
+     selectable text, so this is the one surface where copying works with the
+     browser's own means and, on a phone, with the system's own handles.
+     It renders empty and pulls its content when it opens, so no page pays for
+     it. What it shows is a snapshot from the moment it opened: a target that
+     keeps moving is the last thing anybody wants to copy from. */}}
+<div class="modal modal-blur fade" id="terminal-copy-modal" tabindex="-1" aria-labelledby="terminal-copy-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="modal-header dc-copy-head">
+        <h3 class="modal-title" id="terminal-copy-modal-title">History</h3>
+        <select class="form-select form-select-sm dc-copy-amount" data-copy-amount aria-label="How much to show"></select>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body dc-copy-body">
+        <div class="dc-copy-waiting" data-copy-waiting hidden>
+          <div class="spinner-border text-secondary" role="status"></div>
+        </div>
+        <pre class="dc-copy-text" data-copy-text tabindex="0"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+<terminal-copy hidden></terminal-copy>
+{{end}}

@@ -1,0 +1,22 @@
+{{/* The terminals area with nothing in it. The column, its plus menu and the
+     two actions are all here, so the first terminal is started where it will
+     run instead of on a page that only points somewhere else. Reached only
+     with at least one project, without one the entry sends you to the
+     projects list, where the missing piece is. */}}
+{{define "terminals_empty.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "terminals_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Terminals</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-empty">
+  <i class="ti ti-terminal-2" aria-hidden="true"></i>
+  <div class="dc-empty-title">Nothing is running yet</div>
+  <div class="mb-3">Start a coder or a shell in one of your projects, it opens right here.</div>
+  <div class="btn-list justify-content-center">
+    <a href="/coders/new" class="btn btn-primary"><i class="ti ti-robot me-1" aria-hidden="true"></i> New coder</a>
+    <a href="/shells/new" class="btn btn-outline-primary"><i class="ti ti-terminal-2 me-1" aria-hidden="true"></i> New shell</a>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

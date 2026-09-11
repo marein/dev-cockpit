@@ -288,6 +288,19 @@ func (d ProjectDocker) AnyRunning() bool {
 	return false
 }
 
+// AnyUnwell reports whether one of the project's containers is in a state
+// worth the error color, which is what the container chips already wear one by
+// one. One icon standing for the whole project answers the same question over
+// all of them, and red outranks green the way it does on a chip.
+func (d ProjectDocker) AnyUnwell() bool {
+	for _, c := range d.Containers {
+		if c.Unwell() {
+			return true
+		}
+	}
+	return false
+}
+
 // Working reports whether a compose command of this project is in flight,
 // which is what the row's docker icon rides the wave for. Both halves count:
 // a run this process started holds the stack busy, and a run adopted after a
@@ -336,6 +349,77 @@ type ProjectRow struct {
 	WorktreeNews   bool
 	WorktreeActive bool
 	Grouped        bool
+	// The two marks the projects column carries beside the name, both read off
+	// what the page already holds, so the column asks nothing of its own.
+	//
+	// The count: TerminalIDs is the row's terminals as one space separated
+	// list, the live ones and the resumable ones, and Working whether one of
+	// them is at work right now, out of Page.Working. The ids go onto the
+	// count as its notify targets, which is what keeps both of its marks live,
+	// the work from the activity event and the news from the notification one.
+	//
+	// The docker mark: DockerRunning, DockerUnwell and DockerWorking are the
+	// project's containers and compose runs out of ProjectDocker, the same
+	// answers the card's compose button and container chips color on.
+	TerminalIDs   string
+	Working       bool
+	DockerRunning bool
+	DockerUnwell  bool
+	DockerWorking bool
+}
+
+// CountTitle words the session count. The number is running coders and shells,
+// as it always was, and the two marks on it say that one of them is at work
+// and that one of the project's terminals has news.
+func (r ProjectRow) CountTitle() string {
+	notes := []string{"Running coders and shells"}
+	if r.Working {
+		notes = append(notes, "something is at work")
+	}
+	if r.HasNews {
+		notes = append(notes, "something is new")
+	}
+	return strings.Join(notes, ", ")
+}
+
+// DockerTone is the state color the docker mark wears, out of the vocabulary
+// the card already uses on its own docker icons: the error color for a
+// container in a bad way, the running green for containers up, and empty for
+// the grey of a project whose containers are all down, which is the same grey
+// the card's compose button stands in then.
+func (r ProjectRow) DockerTone() string {
+	switch {
+	case r.DockerUnwell:
+		return "text-danger"
+	case r.DockerRunning:
+		return "running"
+	}
+	return ""
+}
+
+// DockerShown reports whether the row carries the docker mark at all. The card
+// keeps a grey compose button on every project that has a stack, because that
+// button is also the way to those actions; this row has no actions on it and
+// is one line among many, so it only carries what has something to say: a
+// container running, a container in a bad way, and a compose action in
+// flight. That last one shows even in grey, because what it says is not the
+// color but the motion. Nothing running, no mark.
+func (r ProjectRow) DockerShown() bool {
+	return r.DockerRunning || r.DockerUnwell || r.DockerWorking
+}
+
+// DockerTitle words that mark, most pressing first, the same order the color
+// picks.
+func (r ProjectRow) DockerTitle() string {
+	switch {
+	case r.DockerUnwell:
+		return "A container of this project is in a bad way"
+	case r.DockerWorking && r.DockerRunning:
+		return "Containers running, a compose action is at work"
+	case r.DockerWorking:
+		return "A compose action is at work"
+	}
+	return "Containers running"
 }
 
 // WorktreeIDs is the space separated list of row ids the fold button
@@ -396,12 +480,34 @@ func (d ProjectsListData) Rows() []ProjectRow {
 			main.WorktreeNews = main.WorktreeNews || child.HasNews
 			main.WorktreeActive = main.WorktreeActive || child.Active()
 		}
-		rows = append(rows, main)
+		rows = append(rows, d.withRunState(main))
 		for _, name := range children[p.Name] {
-			rows = append(rows, ProjectRow{Project: d.Projects[index[name]], Grouped: true})
+			rows = append(rows, d.withRunState(ProjectRow{Project: d.Projects[index[name]], Grouped: true}))
 		}
 	}
 	return rows
+}
+
+// withRunState fills the row's running state from the page's own two answers:
+// the Working map keyed by terminal id, and the project's docker presence.
+func (d ProjectsListData) withRunState(r ProjectRow) ProjectRow {
+	ids := make([]string, 0, len(r.ActiveRefs)+len(r.InactiveCoderRefs))
+	for _, ref := range r.ActiveRefs {
+		ids = append(ids, ref.ID)
+		r.Working = r.Working || d.Page.Working[ref.ID]
+	}
+	// A resumable coder holds news of its own, and the count is the row's one
+	// place for a terminal's news, so it names those too. None of them can be
+	// at work, so the work mark stays with the live ones above.
+	for _, ref := range r.InactiveCoderRefs {
+		ids = append(ids, ref.ID)
+	}
+	r.TerminalIDs = strings.Join(ids, " ")
+	dock := d.Docker[r.Name]
+	r.DockerRunning = dock.AnyRunning()
+	r.DockerUnwell = dock.AnyUnwell()
+	r.DockerWorking = dock.Working()
+	return r
 }
 
 // ProjectsListData is the model for the projects list page.

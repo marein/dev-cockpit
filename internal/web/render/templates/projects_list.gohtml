@@ -1,29 +1,19 @@
 {{define "projects_list.gohtml"}}
 {{template "app_start.gohtml" .}}
-<div class="page-header d-print-none mb-3">
-  <div class="d-flex align-items-center">
-    <h2 class="page-title mb-0">Projects</h2>
-    <div class="ms-auto{{if pluginSlot "projects-actions"}} d-flex align-items-center gap-2{{end}}">
-      {{pluginSlot "projects-actions"}}<a href="/projects/new" class="btn btn-primary btn-icon" aria-label="Create project" title="Create project">
-        <i class="ti ti-plus"></i>
-      </a>
-    </div>
-  </div>
-</div>
-<dc-project-list>
+{{template "projects_ctx.gohtml" .}}
+<dc-project-list class="dc-work" role="main">
+  <div class="dc-work-head">
 {{if .Projects}}
-<div class="mb-3">
-  <div class="d-flex gap-2 align-items-start">
-    <div class="input-icon flex-fill">
-      <span class="input-icon-addon"><i class="ti ti-search"></i></span>
-      <input type="text" class="form-control" data-project-filter placeholder="Filter projects…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" aria-label="Filter projects">
-      <span class="input-icon-addon">
-        <button type="button" class="btn-close d-none" data-project-filter-clear aria-label="Clear filter" style="pointer-events:auto;"></button>
+    <div class="dc-filter">
+      <i class="ti ti-search" aria-hidden="true"></i>
+      <input type="text" class="dc-filter-input" data-project-filter placeholder="Filter projects…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" aria-label="Filter projects">
+      <span class="dc-filter-side">
+        <button type="button" class="dc-filter-clear d-none" data-project-filter-clear aria-label="Clear filter" title="Clear filter"><i class="ti ti-x" aria-hidden="true"></i></button>
       </span>
     </div>
     <div class="dropdown flex-shrink-0">
-      <button type="button" class="btn dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="true" aria-expanded="false" aria-label="Sort projects" title="Sort projects" data-project-sort-toggle>
-        <i class="ti ti-arrows-sort me-1"></i><span data-project-sort-current>Name</span>
+      <button type="button" class="btn btn-sm btn-ghost-secondary" data-bs-toggle="dropdown" data-bs-auto-close="true" aria-expanded="false" aria-label="Sort projects" title="Sort projects" data-project-sort-toggle>
+        <i class="ti ti-arrows-sort" aria-hidden="true"></i><span class="dc-hide-xs ms-1" data-project-sort-current>Name</span>
       </button>
       <div class="dropdown-menu dropdown-menu-end">
         <button type="button" class="dropdown-item" data-project-sort-option="alpha">
@@ -39,50 +29,42 @@
         <div class="dropdown-item-text text-secondary small">Applies to project listings across the app.</div>
       </div>
     </div>
+{{else}}
+    <h1 class="dc-work-title flex-fill">Projects</h1>
+{{end}}
+    {{pluginSlot "projects-actions"}}
+    {{template "shell_head_tools.gohtml" .}}
   </div>
-  <div class="small mt-1 d-none" data-project-filter-meta>
-    <span class="text-primary" data-project-filter-count></span>
-    <a href="#" class="link-secondary text-decoration-none ms-2" data-project-filter-clear data-no-pe>Clear filter</a>
-  </div>
-</div>
-<div class="card projects-card">
-  <div class="list-group list-group-flush list-group-hoverable">
+  <div class="dc-work-body dc-work-pad">
+    {{template "flash.gohtml" .}}
+{{if .Projects}}
+<div class="dc-board projects-card">
+  <div class="list-group">
   {{range .Rows}}
-  <div class="list-group-item project-row{{if .Grouped}} project-row-worktree{{end}}" id="project-{{.Name}}" data-project-name="{{.Name}}"{{if .GitWorktreeOf}} data-project-worktree-of="{{.GitWorktreeOf}}"{{end}}{{if .Grouped}} data-project-grouped hidden{{end}}{{if .Worktrees}} data-project-worktrees="{{len .Worktrees}}"{{end}} data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
+  <div class="card list-group-item project-row{{if .Grouped}} project-row-worktree{{end}}" id="project-{{.Name}}" data-project-name="{{.Name}}"{{if .GitWorktreeOf}} data-project-worktree-of="{{.GitWorktreeOf}}"{{end}}{{if .Grouped}} data-project-grouped hidden{{end}}{{if .Worktrees}} data-project-worktrees="{{len .Worktrees}}"{{end}} data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
     {{$delete := index $.Deleting .Name}}
     {{if $delete.Failed}}
-    <div class="alert alert-danger mb-2" role="alert">
-      <div class="d-flex">
-        <i class="ti ti-alert-circle me-2 fs-3"></i>
-        <div class="text-break min-w-0">{{$delete.Failed}}</div>
-      </div>
-    </div>
+    {{template "notice.gohtml" (dict "Level" "error" "Message" $delete.Failed "Dismiss" false)}}
     {{end}}
     {{if and (eq $.FlashProject .Name) $.Flash.Message}}
-    <div class="alert alert-{{if eq $.Flash.Level "success"}}success{{else}}danger{{end}} alert-dismissible mb-2" role="alert">
-      <div class="d-flex">
-        <i class="ti {{if eq $.Flash.Level "success"}}ti-circle-check{{else}}ti-alert-circle{{end}} me-2 fs-3"></i>
-        <div class="text-break min-w-0">{{$.Flash.Message}}</div>
-      </div>
-      <a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>
-    </div>
+    {{template "notice.gohtml" (dict "Level" $.Flash.Level "Message" $.Flash.Message "Dismiss" true)}}
     {{end}}
     <div class="d-flex align-items-start gap-2">
       <div class="flex-fill min-w-0 d-flex align-items-baseline flex-wrap column-gap-3 row-gap-1" data-project-meta>
-        <span class="fw-medium text-break">{{if .Grouped}}<i class="ti ti-corner-down-right text-secondary" aria-hidden="true"></i> {{end}}{{.Name}} <span class="status-dot status-dot-animated status-blue ms-1{{if not .HasNews}} d-none{{end}}" data-notify-project-dot aria-label="Something new in this project"></span></span>
+        <span class="dc-project-name text-break">{{if .Grouped}}<i class="ti ti-git-fork icon icon-sm text-secondary" aria-hidden="true"></i>{{end}}{{.Name}} {{template "news_dot.gohtml" (dict "Class" "ms-1" "Hidden" (not .HasNews) "Scope" true "Label" "Something new in this project")}}</span>
         {{if .Worktrees}}
-        <button type="button" class="project-chip project-chip-more project-worktrees-toggle" data-worktrees-toggle="{{.WorktreeCount}}"{{if .WorktreeActive}} data-worktrees-active{{end}} aria-expanded="false" aria-controls="{{.WorktreeIDs}}" aria-label="Show its {{.WorktreeCount}}" title="Show its {{.WorktreeCount}}"><i class="ti ti-git-fork" aria-hidden="true"></i>{{len .Worktrees}}<i class="ti ti-chevron-right" aria-hidden="true"></i><span class="status-dot status-dot-animated status-blue{{if not .WorktreeNews}} d-none{{end}}" data-notify-project-dot data-notify-projects="{{.WorktreeIDs}}" aria-label="Something new in a worktree"></span></button>
+        <button type="button" class="project-chip project-chip-more project-worktrees-toggle" data-worktrees-toggle="{{.WorktreeCount}}"{{if .WorktreeActive}} data-worktrees-active{{end}} aria-expanded="false" aria-controls="{{.WorktreeIDs}}" aria-label="Show its {{.WorktreeCount}}" title="Show its {{.WorktreeCount}}"><i class="ti ti-git-fork" aria-hidden="true"></i>{{len .Worktrees}}<i class="ti ti-chevron-right" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Hidden" (not .WorktreeNews) "Scope" true "Projects" .WorktreeIDs "Label" "Something new in a worktree")}}</button>
         {{end}}
         {{if and .GitRepo .GitBranch}}
-        <span class="small text-break"><i class="ti ti-git-branch" aria-hidden="true"></i> {{.GitBranch}}</span>
+        <span class="text-secondary small text-break"><i class="ti ti-git-branch icon icon-xs" aria-hidden="true"></i> {{.GitBranch}}</span>
         {{end}}
         {{if .GitWorktree}}
-        <span class="text-secondary small text-break" data-project-worktree title="Worktree of {{if .GitWorktreeOf}}{{.GitWorktreeOf}}{{else}}{{.GitWorktreeMain}}{{end}}"><i class="ti ti-git-fork" aria-hidden="true"></i> {{if .GitWorktreeOf}}<a href="/projects#project-{{.GitWorktreeOf}}" class="link-secondary">{{.GitWorktreeOf}}</a>{{else}}{{.GitWorktreeMain}}{{end}}</span>
+        <span class="text-secondary small text-break" data-project-worktree title="Worktree of {{if .GitWorktreeOf}}{{.GitWorktreeOf}}{{else}}{{.GitWorktreeMain}}{{end}}"><i class="ti ti-git-fork icon icon-xs" aria-hidden="true"></i> {{if .GitWorktreeOf}}<a href="/projects#project-{{.GitWorktreeOf}}" class="link-secondary">{{.GitWorktreeOf}}</a>{{else}}{{.GitWorktreeMain}}{{end}}</span>
         {{else if .GitOrigin}}
         {{if .GitOriginURL}}
-        <a href="{{.GitOriginURL}}" target="_blank" rel="noopener" class="link-secondary small text-decoration-none text-break"><i class="ti {{originIcon .GitOrigin}}" aria-hidden="true"></i> {{.GitOrigin}}</a>
+        <a href="{{.GitOriginURL}}" target="_blank" rel="noopener" class="link-secondary small text-decoration-none text-break"><i class="ti {{originIcon .GitOrigin}} icon icon-xs" aria-hidden="true"></i> {{.GitOrigin}}</a>
         {{else}}
-        <span class="text-secondary small text-break"><i class="ti {{originIcon .GitOrigin}}" aria-hidden="true"></i> {{.GitOrigin}}</span>
+        <span class="text-secondary small text-break"><i class="ti {{originIcon .GitOrigin}} icon icon-xs" aria-hidden="true"></i> {{.GitOrigin}}</span>
         {{end}}
         {{else if ne .Label .Name}}
         <span class="text-secondary small text-break">{{.Label}}</span>
@@ -103,20 +85,20 @@
         </button>
         {{end}}{{end}}
         {{if .GitRepo}}
-        {{$editorURL := print "/projects/" .Name "/editor?return=" (urlquery (print "/projects#project-" .Name))}}
-        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-git-project-menu data-git-project="{{$projectName}}"{{if not .GitWorktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{$editorURL}}&amp;view=commit" data-git-compare="{{$editorURL}}&amp;view=compare" aria-label="Git actions for project {{$projectName}}" title="Git">
-          <i class="ti ti-brand-git"></i>
+        {{$editorURL := print "/projects/" .Name "/editor"}}
+        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-git-project-menu data-git-project="{{$projectName}}"{{if not .GitWorktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{$editorURL}}?view=commit" data-git-compare="{{$editorURL}}?view=compare" aria-label="Git actions for project {{$projectName}}" title="Git">
+          <i class="ti ti-brand-git icon"></i>
         </button>
         {{end}}
-        <a href="/projects/{{.Name}}/editor?return={{urlquery (print "/projects#project-" .Name)}}" class="btn btn-sm btn-icon btn-ghost-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
-          <i class="ti ti-code"></i>
+        <a href="/projects/{{.Name}}/editor" class="btn btn-sm btn-icon btn-ghost-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
+          <i class="ti ti-code icon"></i>
         </a>
         {{$wtNote := deleteWorktreeNote .Project}}{{$dockerNote := ""}}{{with index $.Docker .Name}}{{if .Containers}}{{$dockerNote = "Its directory goes, and its containers are brought down with compose first, volumes included."}}{{end}}{{end}}
         <form method="post" action="/projects/delete" data-project-delete data-ajax-refresh data-confirm="Delete project &quot;{{.Name}}&quot;?"{{if or $dockerNote $wtNote}} data-confirm-text="{{$dockerNote}}{{if and $dockerNote $wtNote}} {{end}}{{$wtNote}}"{{end}} data-confirm-button="Delete">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="project" value="{{.Name}}">
-          <button type="submit" class="btn btn-sm btn-icon btn-ghost-danger" aria-label="Delete project {{.Name}}" title="Delete">
-            <i class="ti ti-trash"></i>
+          <button type="submit" class="btn btn-sm btn-icon btn-ghost-secondary tone-danger" aria-label="Delete project {{.Name}}" title="Delete">
+            <i class="ti ti-trash icon"></i>
           </button>
         </form>
         {{end}}
@@ -130,7 +112,7 @@
         <div class="project-chip" data-chip data-chip-kind="coder" data-chip-id="{{.ID}}" data-chip-name="{{.Name}}"
              {{- if index $.Steered .ID}} data-chip-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-chip-steer-prefill="{{.}}"{{end}}>
           <a href="/coders/{{.ID}}" class="project-chip-main" title="Attach to coder {{.Name}}" data-chip-main>
-            <span class="dc-term-icon running{{if index $.Working .ID}} working{{end}}{{if .HasNews}} news{{end}}{{if index $.Steered .ID}} steered{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
+            <span class="dc-term-icon running{{if index $.Working .ID}} working{{end}}{{if .HasNews}} news{{end}}{{if index $.Steered .ID}} steered{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}{{template "news_dot.gohtml"}}</span>
             <span class="project-chip-name">{{.Name}}</span>
           </a>
           <form method="post" action="/coders/{{.ID}}/stop" data-confirm="Stop coder &quot;{{.Name}}&quot;?" data-confirm-button="Stop" data-ajax-refresh data-chip-x>
@@ -141,7 +123,7 @@
         {{else}}
         <div class="project-chip" data-chip data-chip-kind="shell" data-chip-id="{{.ID}}" data-chip-name="{{.Name}}">
           <a href="/shells/{{.ID}}" class="project-chip-main" title="Attach to shell {{.Name}}" data-chip-main>
-            <span class="dc-term-icon running{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i></span>
+            <span class="dc-term-icon running{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i>{{template "news_dot.gohtml"}}</span>
             <span class="project-chip-name">{{.Name}}</span>
           </a>
           <form method="post" action="/shells/{{.ID}}/delete" data-confirm="Delete shell &quot;{{.Name}}&quot;?" data-confirm-button="Delete" data-ajax-refresh data-chip-x>
@@ -156,7 +138,7 @@
           <form method="post" action="/coders/{{.ID}}/resume" data-chip-main-form>
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="project-chip-main" title="Resume coder {{.Name}}">
-              <span class="dc-term-icon{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}</span>
+              <span class="dc-term-icon{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}{{template "news_dot.gohtml"}}</span>
               <span class="project-chip-name">{{.Name}}</span>
             </button>
           </form>
@@ -203,20 +185,22 @@
   {{end}}
   </div>
 </div>
-<div class="empty d-none" data-project-filter-empty>
-  <div class="empty-icon"><i class="ti ti-search fs-1"></i></div>
-  <p class="empty-title">No projects match.</p>
+<div class="dc-empty d-none" data-project-filter-empty>
+  <i class="ti ti-search" aria-hidden="true"></i>
+  <div class="dc-empty-title">No projects match.</div>
 </div>
 {{else}}
-<div class="empty">
-  <div class="empty-icon"><i class="ti ti-folder fs-1"></i></div>
-  <p class="empty-title">No projects yet</p>
-  <div class="empty-action{{if pluginSlot "projects-empty-actions"}} btn-list justify-content-center{{end}}">
+<div class="dc-empty">
+  <i class="ti ti-folder" aria-hidden="true"></i>
+  <div class="dc-empty-title">No projects yet</div>
+  <div class="mb-3">Create one, or point the cockpit at a directory that holds some.</div>
+  <div class="btn-list justify-content-center">
     <a href="/projects/new" class="btn btn-primary"><i class="ti ti-plus me-1"></i> Create project</a>{{with pluginSlot "projects-empty-actions"}}
     {{.}}{{end}}
   </div>
 </div>
 {{end}}
+  </div>
 </dc-project-list>
-{{template "app_end.gohtml" .}}
+{{template "app_close.gohtml" .}}
 {{end}}

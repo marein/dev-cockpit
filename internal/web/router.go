@@ -49,7 +49,11 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth := browser.Group("/", s.requireAuth)
 	auth.GET("/", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, "/projects") })
 	auth.POST("/logout", s.handleLogout)
-	auth.GET("/quicknav", s.handleQuickNav)
+	auth.GET("/ctx/:area", s.handleCtx)
+	// TODO(v2.0.0): the quick nav served its menu from here before the
+	// areas got list columns of their own, and the projects column is what
+	// it opened on.
+	auth.GET("/quicknav", retiredPath("/ctx/projects"))
 	auth.GET("/docs", s.handleDocs)
 	auth.GET("/terminal-tabs", s.handleTerminalTabsFragment)
 	auth.POST("/terminal-tabs/order", s.handleTerminalTabsOrder)
@@ -57,6 +61,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/terminal-tabs/ungroup", s.handleTerminalTabsUngroup)
 	auth.POST("/terminal-tabs/group/name", s.handleTerminalTabsGroupName)
 	auth.GET("/splits/:id", s.handleSplitAttach)
+	auth.POST("/splits/:id/focus", s.handleSplitFocus)
 	auth.POST("/terminal-theme", s.handleTerminalTheme)
 
 	auth.GET("/coders/new", s.handleCoderNew)
@@ -118,21 +123,22 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/coders/:id/files/download", s.handleCoderFileDownload)
 	auth.POST("/coders/:id/files/delete", s.handleCoderFileDelete)
 	auth.POST("/coders/:id/input", s.handleCoderInput)
+	auth.GET("/coders/:id/copy", s.handleTerminalCopy)
 	auth.POST("/coders/:id/resize", s.handleCoderResize)
 	auth.GET("/coders/:id/stream", s.handleCoderStream)
 	auth.POST("/coders/:id/resume", s.handleCoderResume)
 	auth.POST("/coders/:id/delete", s.handleCoderDelete)
 
-	// The assistant has no pages of its own: every entry opens the overlay on
-	// whatever page is open, and its interior comes from /assistant/panel. The
-	// GET routes below serve the overlay's fragments; the bare paths redirect,
-	// so an old notification link or bookmark still opens the overlay, told
-	// what to show through the query (the browser keeps a #message fragment
-	// across the redirect). The static segments win over :id, and conversation
-	// ids are UUID shaped, so they cannot collide.
-	auth.GET("/assistant", func(c *gin.Context) { c.Redirect(http.StatusSeeOther, "/projects?assistant=open") })
-	auth.GET("/assistant/panel", s.handleAssistantPanel)
-	auth.GET("/assistant/history", s.handleAssistantHistory)
+	// The assistant is a page: the bare address opens the live conversation
+	// and sends the browser to it, a conversation's address shows that one
+	// (read-only when it is history) beside the list column of all of them.
+	// Its lists serve themselves as fragments for the self refreshing lists
+	// on the page and for the phone's sheet.
+	auth.GET("/assistant", s.handleAssistantPage)
+	// TODO(v2.0.0): the overlay pulled its interior and its history list
+	// from these two, and both are the page now.
+	auth.GET("/assistant/panel", retiredPath("/assistant"))
+	auth.GET("/assistant/history", retiredPath("/assistant"))
 	auth.GET("/assistant/memory", s.handleAssistantMemory)
 	auth.POST("/assistant/memory", s.handleAssistantMemorySave)
 	// The steered jobs belong to the assistant, not to one conversation: a job
@@ -146,9 +152,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// from fragments, not from these.
 	auth.GET("/assistant/conversations", s.handleAssistantConversations)
 	auth.GET("/assistant/conversations/:id", s.handleAssistantConversationRead)
-	auth.GET("/assistant/:id", func(c *gin.Context) {
-		c.Redirect(http.StatusSeeOther, "/projects?assistant="+c.Param("id"))
-	})
+	auth.GET("/assistant/:id", s.handleAssistantPage)
 	auth.POST("/assistant/:id", s.handleAssistantAction)
 	auth.GET("/assistant/:id/stream", s.handleAssistantStream)
 	auth.GET("/assistant/:id/messages/:messageId", s.handleAssistantMessage)
@@ -167,6 +171,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/shells/:id/delete", s.handleShellDelete)
 	auth.POST("/shells/:id/rename", s.handleShellRename)
 	auth.POST("/shells/:id/input", s.handleShellInput)
+	auth.GET("/shells/:id/copy", s.handleTerminalCopy)
 	auth.POST("/shells/:id/resize", s.handleShellResize)
 	auth.GET("/shells/:id/stream", s.handleShellStream)
 
@@ -254,6 +259,12 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 
 	auth.GET("/update/check", s.handleUpdateCheck)
 	auth.POST("/update/apply", s.handleUpdateApply)
+
+	// The shell's Editor and Terminals entries, two fixed addresses the
+	// server resolves to a project and to a session, so no page has to carry
+	// a link that ages.
+	auth.GET("/editor", s.handleEditorEntry)
+	auth.GET("/terminals", s.handleTerminalsEntry)
 
 	auth.GET("/projects", s.handleProjectsList)
 	auth.GET("/projects/new", s.handleProjectNew)
@@ -388,6 +399,22 @@ func (s *Server) servePlugin(p *pluginhost.Serve) gin.HandlerFunc {
 			return
 		}
 		routes.ServeHTTP(c.Writer, c.Request)
+	}
+}
+
+// retiredPath forwards one address the restructure retired to what replaced
+// it, query kept. 308 keeps the method, so a stale form replays against the
+// new path, and a page still holding the old address reads a redirect instead
+// of a 404. What answers is shaped for the new surface, so this is the move
+// written down, not a promise that old JS can read the body.
+// TODO(v2.0.0): drop together with the retired paths.
+func retiredPath(target string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		to := target
+		if q := c.Request.URL.RawQuery; q != "" {
+			to += "?" + q
+		}
+		c.Redirect(http.StatusPermanentRedirect, to)
 	}
 }
 

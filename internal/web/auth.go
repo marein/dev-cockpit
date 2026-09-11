@@ -193,6 +193,18 @@ func (s *Server) finishRedirect(c *gin.Context, sess ginsessions.Session, locati
 	c.Redirect(http.StatusSeeOther, location)
 }
 
+// redirectWithInfo carries a notice that is not an outcome: the area entries
+// send one when there is nothing to open yet. It renders as the info notice,
+// so a cockpit that is merely still empty does not read like a failure.
+func (s *Server) redirectWithInfo(c *gin.Context, location, message string) {
+	sess := ginsessions.Default(c)
+	if message != "" {
+		sess.Set(flashMessageKey, message)
+		sess.Set(flashLevelKey, "info")
+	}
+	s.finishRedirect(c, sess, location)
+}
+
 func (s *Server) redirectWithFlash(c *gin.Context, location, message, errMsg string) {
 	sess := ginsessions.Default(c)
 	setFlash(sess, message, errMsg)

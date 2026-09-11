@@ -689,6 +689,38 @@ func TestStoppingATurnFlushesTheQueueRightAway(t *testing.T) {
 	}
 }
 
+// Running and unfinished are two different things and the index keeps them
+// apart: a turn under way is work, a turn that stopped before it was done is
+// the one thing left to report. Nothing downstream has to read one out of the
+// other.
+func TestTheIndexTellsARunningTurnFromAnUnfinishedOne(t *testing.T) {
+	block := make(chan struct{})
+	runner := &fakeRunner{
+		events: []Event{{Kind: EventDelta, Text: "partial"}},
+		hold:   func(TurnRequest) chan struct{} { return block },
+	}
+	svc, _, _ := newTestService(t, runner)
+	created, _ := svc.create("claude", "/projects/demo")
+
+	frames := collectFrames(svc, created.ID)
+	defer frames.stop()
+	if _, err := svc.Send(created.ID, "first", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitFor(t, "the first delta", func() bool { return frames.has(FrameDelta) })
+	if entries := svc.List(); len(entries) != 1 || !entries[0].Running || entries[0].Unfinished {
+		t.Fatalf("want the turn under way marked running and not unfinished, got %+v", entries)
+	}
+
+	if err := svc.Cancel(created.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	waitIdle(t, svc, created.ID)
+	if entries := svc.List(); len(entries) != 1 || entries[0].Running || !entries[0].Unfinished {
+		t.Fatalf("want the stopped turn marked unfinished and not running, got %+v", entries)
+	}
+}
+
 func TestAQueuedMessageSurvivesARestart(t *testing.T) {
 	dir := t.TempDir()
 	first := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}}

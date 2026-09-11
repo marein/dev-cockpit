@@ -1,24 +1,10 @@
+{{/* The strip fragment. */}}
 {{define "terminal_tabs.gohtml"}}
 <terminal-tabs class="d-print-none" data-tabs-url="/terminal-tabs">
   {{template "terminal_tabs_core.gohtml" .}}
-  <div class="dropdown terminal-tabs-new terminal-tabs-settings">
-    <button type="button" class="terminal-tabs-new-btn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
-      <i class="ti ti-settings"></i>
-    </button>
-    <div class="dropdown-menu dropdown-menu-end terminal-settings-menu">
-      {{template "terminal_settings.gohtml"}}
-      <div class="dropdown-divider"></div>
-      <button type="button" class="dropdown-item" data-terminal-fullscreen aria-pressed="false" aria-label="Fullscreen" title="Fullscreen (Ctrl+Shift+F)">
-        <i class="ti ti-maximize me-2"></i><span data-terminal-fullscreen-label>Fullscreen</span>
-      </button>
-    </div>
-  </div>
 </terminal-tabs>
 {{end}}
 
-{{/* The app layout mounts this on every page without an inline tab strip: the
-     same element hidden, strip and plus menu only, so the double Ctrl/Meta
-     switcher works app wide. */}}
 {{define "terminal_tabs_switcher.gohtml"}}
 <terminal-tabs hidden data-tabs-url="/terminal-tabs">
   {{template "terminal_tabs_core.gohtml" .}}
@@ -26,16 +12,24 @@
 {{end}}
 
 {{define "terminal_tabs_core.gohtml"}}
-  <div class="terminal-tabs-strip" data-tabs-strip role="tablist" aria-label="Active coders and shells">
+  {{template "terminal_tabs_strip.gohtml" .}}
+  {{template "terminal_tabs_new.gohtml" .}}
+{{end}}
+
+{{/* The list of live terminals, one row each, a split view as one row. It is
+     the list column of the terminal pages and the body of the strip fragment
+     the component pulls on every terminals event. */}}
+{{define "terminal_tabs_strip.gohtml"}}
+  <div class="terminal-tabs-strip list-group list-group-flush dc-rows" data-tabs-strip role="tablist" aria-label="Active coders and shells">
     {{range .QuickNav.Strip}}
     {{if .Members}}
-    <a class="terminal-tab terminal-tab-split{{if .IsActive $.QuickNav.CurrentID}} active{{end}}"
+    <a class="terminal-tab terminal-tab-split list-group-item list-group-item-action{{if .IsActive $.QuickNav.CurrentID}} active{{end}}"
        href="{{.URL}}" role="tab" draggable="false"
        aria-selected="{{if .IsActive $.QuickNav.CurrentID}}true{{else}}false{{end}}"
        data-tab-id="{{.ID}}" data-tab-kind="split" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}" data-tab-members="{{.MemberIDs}}" data-tab-member-kinds="{{.MemberKinds}}" data-tab-member-cols="{{.MemberCols}}"
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
-      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}" data-tab-icon data-notify-targets="{{.MemberIDs}}" aria-hidden="true"><i class="ti ti-layout"></i></span>
-      {{$t := .}}<span class="d-none" aria-hidden="true">{{range $t.Members}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}" data-member-name="{{.Name}}" data-member-url="/splits/{{$t.ID}}?focus={{.ID}}">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>{{end}}</span>
+      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}" data-tab-icon data-notify-targets="{{.MemberIDs}}" aria-hidden="true"><i class="ti ti-layout"></i>{{template "news_dot.gohtml"}}</span>
+      {{$t := .}}<span class="d-none" aria-hidden="true">{{range $t.Members}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}" data-notify-target="{{.ID}}" data-member-name="{{.Name}}" data-member-url="/splits/{{$t.ID}}?focus={{.ID}}">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>{{end}}</span>
       <span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
         <span class="terminal-tab-project">{{if .Project}}{{.Project}} · {{end}}{{len .Members}} terminals</span>
@@ -43,15 +37,32 @@
       <span class="terminal-tab-close" data-tab-close role="button" tabindex="-1" aria-label="Close all terminals in {{.Name}}" title="Close all terminals">
         <i class="ti ti-x" aria-hidden="true"></i>
       </span>
+      <span class="terminal-tab-menu d-lg-none" data-tab-menu role="button" tabindex="-1" aria-label="Options for {{.Name}}" title="Options"><i class="ti ti-dots" aria-hidden="true"></i></span>
+      <span class="terminal-tab-grip d-lg-none" data-tab-grip aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
     </a>
+    {{range $t.Members}}
+    <a class="terminal-tab-member list-group-item list-group-item-action is-nested d-lg-none{{if and (eq $t.ID $.QuickNav.CurrentID) (eq .ID $.QuickNav.Focus)}} active{{end}}"
+       href="/splits/{{$t.ID}}?focus={{.ID}}" role="tab" draggable="false"
+       data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}" data-tab-group="{{$t.ID}}"
+       {{- if .Coder}}{{if index $.Steered .ID}} data-tab-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-tab-steer-prefill="{{.}}"{{end}}{{end}}
+       title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
+      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}" data-tab-icon data-notify-target="{{.ID}}" aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
+      <span class="terminal-tab-text">
+        <span class="terminal-tab-name">{{.Name}}</span>
+        {{if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}
+      </span>
+      <span class="terminal-tab-menu" data-tab-menu role="button" tabindex="-1" aria-label="Options for {{.Name}}" title="Options"><i class="ti ti-dots" aria-hidden="true"></i></span>
+      <span class="terminal-tab-grip" data-tab-grip aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
+    </a>
+    {{end}}
     {{else}}
-    <a class="terminal-tab{{if eq .ID $.QuickNav.CurrentID}} active{{end}}"
+    <a class="terminal-tab list-group-item list-group-item-action{{if eq .ID $.QuickNav.CurrentID}} active{{end}}"
        href="{{.URL}}" role="tab" draggable="false"
        aria-selected="{{if eq .ID $.QuickNav.CurrentID}}true{{else}}false{{end}}"
        data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"
        {{- if .Coder}}{{if index $.Steered .ID}} data-tab-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-tab-steer-prefill="{{.}}"{{end}}{{end}}
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
-      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}" data-tab-icon data-notify-target="{{.ID}}" aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}</span>
+      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}" data-tab-icon data-notify-target="{{.ID}}" aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" .Coder}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
       <span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
         {{if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}
@@ -59,12 +70,20 @@
       <span class="terminal-tab-close" data-tab-close role="button" tabindex="-1" aria-label="{{if .Coder}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if .Coder}}Stop coder{{else}}Delete shell{{end}}">
         <i class="ti ti-x" aria-hidden="true"></i>
       </span>
+      <span class="terminal-tab-menu d-lg-none" data-tab-menu role="button" tabindex="-1" aria-label="Options for {{.Name}}" title="Options"><i class="ti ti-dots" aria-hidden="true"></i></span>
+      <span class="terminal-tab-grip d-lg-none" data-tab-grip aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
     </a>
     {{end}}
     {{end}}
+    {{if not .QuickNav.Strip}}<div class="p-3 text-secondary small">Nothing is running.</div>{{end}}
   </div>
+{{end}}
+
+{{/* The plus menu: new coder or shell, the assistant, the editor, the
+     inactive coders to resume. Cmd+T opens it. */}}
+{{define "terminal_tabs_new.gohtml"}}
   <div class="dropdown terminal-tabs-new">
-    <button type="button" class="terminal-tabs-new-btn" data-tabs-new-menu data-bs-toggle="dropdown" aria-expanded="false" aria-label="New coder or shell" title="New coder or shell (Cmd+T)">
+    <button type="button" class="btn btn-icon btn-ghost-secondary terminal-tabs-new-btn" data-tabs-new-menu data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" aria-label="New coder or shell" title="New coder or shell (Cmd+T)">
       <i class="ti ti-plus"></i>
     </button>
     <div class="dropdown-menu dropdown-menu-end terminal-tabs-new-menu">
@@ -74,14 +93,6 @@
       <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-new="shell" href="/shells/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
         <i class="ti ti-terminal-2 flex-shrink-0"></i><span>New shell</span>
       </a>
-      <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-assistant href="/assistant" title="Assistant">
-        <span class="terminal-tab-icon dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}} aria-hidden="true"><i class="ti ti-sparkles"></i></span><span>Assistant</span>
-      </a>
-      {{if .QuickNav.CurrentProject}}
-      <a class="dropdown-item d-flex align-items-center gap-2" href="/projects/{{.QuickNav.CurrentProject}}/editor?return={{urlquery .QuickNav.CurrentPath}}" title="Editor for {{.QuickNav.CurrentProject}}">
-        <i class="ti ti-code flex-shrink-0"></i><span>Editor</span>
-      </a>
-      {{end}}
       {{if .QuickNav.HasInactiveCoders}}
       <div class="dropdown-divider"></div>
       <h6 class="dropdown-header">Inactive coders</h6>
@@ -96,7 +107,7 @@
         <button type="submit" class="dropdown-item d-flex align-items-center gap-2"
                 data-resume-id="{{.ID}}" data-resume-name="{{.Name}}" data-resume-project="{{$p.Name}}"
                 title="Resume coder {{.Name}}">
-          <span class="terminal-tab-icon dc-term-icon{{if .HasNews}} news{{end}}" data-resume-icon data-notify-target="{{.ID}}" aria-hidden="true">{{template "coder_icon.gohtml" .Coder}}</span>
+          <span class="terminal-tab-icon dc-term-icon{{if .HasNews}} news{{end}}" data-resume-icon data-notify-target="{{.ID}}" aria-hidden="true">{{template "coder_icon.gohtml" .Coder}}{{template "news_dot.gohtml"}}</span>
           <span class="text-truncate">{{.Name}}</span>
         </button>
       </form>
@@ -106,8 +117,14 @@
       {{end}}{{end}}
       </div>
       {{end}}
-      {{/* Data for the switcher's editor rows: one editor link per project,
-           sorted client side like the resume groups. Never shown in the menu. */}}
+      {{/* Data for the switcher's assistant and editor rows, one editor link
+           per project sorted client side like the resume groups. Never shown in
+           the menu, which offers only what creates a terminal. */}}
+      <div class="d-none">
+        <a data-tabs-assistant href="/assistant" title="Assistant">
+          <span class="terminal-tab-icon dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}} aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml"}}</span><span>Assistant</span>
+        </a>
+      </div>
       <div class="d-none" data-tabs-editors>
         {{range $p := .QuickNav.AllProjects}}
         <a data-editor-project="{{$p.Name}}" data-project-name="{{$p.Name}}" data-project-active="{{if $p.Active}}true{{else}}false{{end}}" data-project-used="{{$p.LastUsedUnix}}" href="{{$p.EditorURL}}" tabindex="-1"></a>

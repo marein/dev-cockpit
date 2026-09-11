@@ -63,7 +63,6 @@
       this.abortController?.abort();
       this.abortController = null;
       this.mediaQuery = null;
-      this.terminal?.classList.remove("attach-terminal-copy-mode");
       this.terminal = null;
       this.zone = null;
       this.pointerID = null;
@@ -111,7 +110,7 @@
               justify-content: center;
             }
             .zone {
-              width: 50%;
+              width: 100%;
               height: 100%;
               background: transparent;
               pointer-events: auto;
@@ -119,11 +118,6 @@
               overscroll-behavior: contain;
               user-select: none;
               -webkit-user-select: none;
-            }
-            @media (orientation: landscape) {
-              .zone {
-                width: 60%;
-              }
             }
           }
         </style>
@@ -146,9 +140,6 @@
       this.terminal?.addEventListener("touchmove", (event) => this.handleTerminalTouchMove(event), captureOptions);
       this.terminal?.addEventListener("touchend", (event) => this.handleTerminalTouchEnd(event), captureOptions);
       this.terminal?.addEventListener("touchcancel", () => this.handleTerminalTouchCancel(), captureOptions);
-      for (const button of this.copyButtons()) {
-        button.addEventListener("click", () => this.toggle(), options);
-      }
       // Every input POST reports its round trip (terminal-input.js), the EWMA
       // feeds the fling velocity cap.
       document.addEventListener("terminal-input-latency", (event) => {
@@ -214,6 +205,9 @@
         startY: touch.clientY,
         startTime: Date.now(),
         moved: false,
+        // Where the touch went down is where the browser decided whether this
+        // one gets a click at all, so the answer is kept from here.
+        onZone: this.hitsZone(touch.clientX, touch.clientY),
       };
     }
 
@@ -243,6 +237,7 @@
       const moved = this.pendingTap.moved
         || Math.hypot(touch.clientX - this.pendingTap.startX, touch.clientY - this.pendingTap.startY) > TAP_MOVE_MAX_PX;
       const quick = Date.now() - this.pendingTap.startTime < TAP_MAX_MS;
+      const onZone = this.pendingTap.onZone;
       this.pendingTap = null;
       if (this.suppressTap) {
         this.suppressTap = false;
@@ -251,11 +246,41 @@
       if (moved) {
         return;
       }
+      if (onZone) {
+        this.replayTap(touch);
+      }
       if (this.isActive()) {
         this.focusTerminalInput();
       } else if (quick) {
         this.clearSelection();
       }
+    }
+
+    hitsZone(clientX, clientY) {
+      if (!this.isActive()) {
+        return false;
+      }
+      const rect = this.zone?.getBoundingClientRect();
+      return Boolean(rect)
+        && clientX >= rect.left && clientX <= rect.right
+        && clientY >= rect.top && clientY <= rect.bottom;
+    }
+
+    // A touch the zone takes never becomes a click: it cancels the browser's
+    // default action at touchstart so the gesture is its own, and the click is
+    // part of what that cancels. A gesture that turns out to be a tap is not a
+    // gesture at all, so the click is handed back on the terminal, where it
+    // bubbles like the tap beside the zone always did. Whatever a tap outside
+    // closes app wide, an open menu among it, therefore closes over the whole
+    // terminal too, and the zone never has to know what any of those are.
+    replayTap(touch) {
+      this.terminal?.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+      }));
     }
 
     clearSelection() {
@@ -289,30 +314,11 @@
       }
     }
 
-    toggle() {
-      if (!this.mediaQuery?.matches) {
-        return;
-      }
-      this.setActive(!this.hasAttribute("active"));
-    }
-
-    copyButtons() {
-      const island = this.terminal?.getAttribute?.("terminal-id") || "";
-      return Array.from(document.querySelectorAll("[data-terminal-copy]")).filter((button) => {
-        const footer = button.closest("[data-terminal-footer]");
-        return !footer || footer.getAttribute("data-terminal-footer") === island;
-      });
-    }
-
+    // The zone is the terminal's gesture surface and nothing else. Selecting
+    // text happens in the copy sheet, on real text, so there is no mode here to
+    // switch off any more.
     syncState() {
-      const active = this.isActive();
-      const copyMode = Boolean(this.mediaQuery?.matches) && !active;
-      this.setAttribute("aria-hidden", active ? "false" : "true");
-      this.terminal?.classList.toggle("attach-terminal-copy-mode", copyMode);
-      for (const button of this.copyButtons()) {
-        button.classList.toggle("active", copyMode);
-        button.setAttribute("aria-pressed", copyMode ? "true" : "false");
-      }
+      this.setAttribute("aria-hidden", this.isActive() ? "false" : "true");
     }
 
     isGestureEvent(event) {

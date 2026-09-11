@@ -84,9 +84,8 @@ func (s *Server) handleShellAttach(c *gin.Context) {
 		return
 	}
 	projectName := s.projects.ProjectNameFor(sh.CWD)
-	s.projects.Touch(projectName)
-	s.notifier.MarkTargetRead(sh.Identifier)
-	page := s.page(c, pageTitle(sh.Name, projectName), "projects")
+	s.terminalFocused(sh.Identifier, projectName)
+	page := s.page(c, pageTitle(sh.Name, projectName), "terminals")
 	page.HasTabStrip = true
 	c.HTML(http.StatusOK, "shell_attach.gohtml", render.ShellAttachData{
 		Page:        page,
@@ -95,6 +94,7 @@ func (s *Server) handleShellAttach(c *gin.Context) {
 		StreamURL:   "/shells/" + sh.Identifier + "/stream",
 		ResizeURL:   "/shells/" + sh.Identifier + "/resize",
 		InputURL:    "/shells/" + sh.Identifier + "/input",
+		CopyURL:     "/shells/" + sh.Identifier + "/copy",
 		RenameURL:   "/shells/" + sh.Identifier + "/rename",
 	})
 }
