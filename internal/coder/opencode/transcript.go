@@ -10,12 +10,13 @@ import (
 )
 
 // SessionTranscript hands over what was said in a session, whole, for somebody
-// to read and copy. It asks the same rows the activity reading asks for and
-// takes the same parts out of them, the text of a message and the names of the
-// tools that ran, but it flattens nothing: a message arrives with its own line
-// breaks, its own code blocks and its own table, because that is the point of
-// copying it. A synthetic part stays out here too, it is injected bookkeeping
-// and not anybody's words.
+// to read and copy. It asks the same rows the activity reading asks for but
+// takes only the text of a message out of them, and it flattens nothing: a
+// message arrives with its own line breaks, its own code blocks and its own
+// table, because that is the point of copying it. A synthetic part stays out
+// here too, it is injected bookkeeping and not anybody's words, and so is a
+// tool part: that a tool ran belongs to the activity reading, which answers the
+// other question.
 //
 // The query asks for the newest messages, so the bound travels into the
 // database rather than being applied after everything came back: a tool part
@@ -63,7 +64,6 @@ func renderFullTranscript(rows []activityRow, messages, cap int) coder.Recording
 	type message struct {
 		id     string
 		blocks []string
-		tools  []string
 	}
 	var recorded []message
 	current := -1
@@ -79,26 +79,16 @@ func renderFullTranscript(rows []activityRow, messages, cap int) coder.Recording
 		if row.Role == "assistant" {
 			speaker = "coder"
 		}
-		switch row.PartType {
-		case "text":
-			if row.Synthetic == 1 {
-				continue
-			}
-			if text := strings.TrimSpace(row.Text); text != "" {
-				recorded[current].blocks = append(recorded[current].blocks, speaker+":\n"+text)
-			}
-		case "tool":
-			if name := strings.TrimSpace(row.Tool); name != "" {
-				recorded[current].tools = append(recorded[current].tools, name)
-			}
+		if row.PartType != "text" || row.Synthetic == 1 {
+			continue
+		}
+		if text := strings.TrimSpace(row.Text); text != "" {
+			recorded[current].blocks = append(recorded[current].blocks, speaker+":\n"+text)
 		}
 	}
 	var blocksOut []string
 	for _, m := range recorded {
 		blocksOut = append(blocksOut, m.blocks...)
-		if len(m.tools) > 0 {
-			blocksOut = append(blocksOut, "coder ran "+strings.Join(m.tools, ", "))
-		}
 	}
 	return keepNewest(blocksOut, len(recorded) > messages && messages > 0, cap)
 }

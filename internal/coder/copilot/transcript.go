@@ -12,10 +12,12 @@ import (
 )
 
 // SessionTranscript hands over what was said in a session, whole, for somebody
-// to read and copy. It reads the same event log the activity reading reads and
-// takes the same lines out of it, the messages and the names of the tools that
-// ran, but it flattens nothing: a message arrives with its own line breaks, its
-// own code blocks and its own table, because that is the point of copying it.
+// to read and copy. It reads the same event log the activity reading reads, but
+// takes only the messages out of it, and it flattens nothing: a message arrives
+// with its own line breaks, its own code blocks and its own table, because that
+// is the point of copying it. That a tool ran is the coder's bookkeeping and
+// stays out; the activity reading names the tools, it answers the other
+// question.
 //
 // Unlike the activity reading this one starts at the beginning of the log. The
 // activity reading only ever wants the end and seeks there; here the reader
@@ -40,14 +42,6 @@ func (r *sessionRepository) transcript(sessionID string, messages, cap int) (cod
 
 func readTranscript(source io.Reader, messages, cap int) (coder.Recording, error) {
 	var blocksOut []string
-	var tools []string
-	flushTools := func() {
-		if len(tools) == 0 {
-			return
-		}
-		blocksOut = append(blocksOut, "coder ran "+strings.Join(tools, ", "))
-		tools = nil
-	}
 	scanner := bufio.NewScanner(source)
 	scanner.Buffer(make([]byte, 64*1024), maxTranscriptLine)
 	for scanner.Scan() {
@@ -57,25 +51,18 @@ func readTranscript(source io.Reader, messages, cap int) (coder.Recording, error
 		}
 		switch event.Type {
 		case "user.message":
-			flushTools()
 			if text := strings.TrimSpace(event.Data.Content); text != "" {
 				blocksOut = append(blocksOut, "user:\n"+text)
 			}
 		case "assistant.message":
-			flushTools()
 			if text := strings.TrimSpace(event.Data.Content); text != "" {
 				blocksOut = append(blocksOut, "coder:\n"+text)
-			}
-		case "tool.execution_start":
-			if name := strings.TrimSpace(event.Data.ToolName); name != "" {
-				tools = append(tools, name)
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return coder.Recording{}, err
 	}
-	flushTools()
 	return keepNewest(blocksOut, messages, cap), nil
 }
 

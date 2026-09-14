@@ -181,7 +181,12 @@ test. Update this file when a convention changes.
   carries neither, and both sides stay auto, which is the one case a browser
   keeps the ratio by itself. Everything the thread shows wears
   `dc-assistant-media`, goldmark's own image included, because that class is
-  the only thing that keeps a picture inside the conversation.
+  the only thing that keeps a picture inside the conversation. The thread has
+  no width of its own, it reads across the whole work column, so the two caps
+  on that class are what keeps a picture an attachment inside a message rather
+  than the message: `--dc-media-width` and `--dc-media-cap`, width and height,
+  and both travel through the same `min()` as the ratio, never as a bare
+  `max-height`.
 - **The editor reads git, and writes it through a deliberately short list of
   actions.** `internal/git` is the only place that runs the binary, and every
   call goes through its one helper:
@@ -2285,7 +2290,20 @@ test. Update this file when a convention changes.
   grey idle, green running, purple steered or assistant, a pulsing ring while
   working (green, and purple on a steered coder and on the assistant,
   `.steered.working` and `.assistant.working`, dot, glow and ring together), and the
-  news dot below at its top right corner. Steered is the open job of `Watcher.Marks()`, the same source
+  news dot below at its top right corner. **Both marks draw outside the tile**,
+  the working dot rides a path a pixel past its edge and the news dot pulses to
+  three times its size, so a container that carries a session icon must not clip
+  it. That is what took `overflow: hidden` off `.project-chip`: it was there to
+  keep the two parts' hover backgrounds inside the rounded pill, which the parts
+  now do themselves (`.project-chip-main` rounds the start corners,
+  `.project-chip-x` the end ones, and a chip without an X rounds all four on the
+  main part), and the pulse is whole again, and it is why the phone's tab bar
+  carries a `z-index` above everything the work surface furnishes itself with
+  (its sticky footer at 10, the editor's panes and splitters up to 18) and far
+  below what opens over the whole app (the sheets at 1045): the mark of the tab
+  it carries bleeds upward out of the bar. What a scrollport cuts stays cut, a
+  list has to clip what scrolls under its head, and so does the editor's
+  terminal strip, which scrolls sideways. Steered is the open job of `Watcher.Marks()`, the same source
   the assistant's steered list reads, rendered as the `steered` class
   wherever a coder icon shows, the hidden member spans of a split row
   included.
@@ -2487,7 +2505,11 @@ free floating page scripts.
   transcript, copilot from its event log, opencode from its rows. It asks for
   what was said and may not flatten or cut inside a message, which is exactly
   what `Activity` may do; that is why it is a second method on the same record
-  and not a bigger budget on the first. Everything else answers with
+  and not a bigger budget on the first. It also takes less out of the record
+  than `Activity` does: a tool call leaves nothing behind here, no `coder ran`
+  line, because this is text somebody copies and that a tool ran is the coder's
+  bookkeeping. The activity reading keeps naming the tools, it answers what the
+  session last did. Everything else answers with
   `capture-pane`, which never attaches, so the pane keeps the size the client
   that owns it gave it.
   How much is shown is the reader's choice and the unit follows the source,

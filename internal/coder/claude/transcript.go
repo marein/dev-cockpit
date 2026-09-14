@@ -57,9 +57,10 @@ func readTranscript(source io.Reader, messages, cap int) (coder.Recording, error
 }
 
 // renderFullTranscript writes one block per message, oldest first, the way the
-// conversation happened. A tool call is named rather than spelled out: its
-// arguments are the coder's business and would bury the sentences somebody came
-// for, but knowing that it ran is part of reading the conversation.
+// conversation happened. A tool call leaves nothing behind: this reading is
+// what somebody copies an answer out of, and that a tool ran is the coder's
+// bookkeeping, not a sentence anybody came here to take with them. The activity
+// reading names the tools, it answers the other question.
 func renderFullTranscript(entries []transcriptLine, messages, cap int) coder.Recording {
 	var blocksOut []string
 	for _, entry := range entries {
@@ -67,21 +68,13 @@ func renderFullTranscript(entries []transcriptLine, messages, cap int) coder.Rec
 		if entry.Type == "assistant" {
 			speaker = "coder"
 		}
-		var tools []string
 		for _, block := range blocks(entry) {
-			switch block.Type {
-			case "text":
-				if text := strings.TrimSpace(block.Text); text != "" {
-					blocksOut = append(blocksOut, speaker+":\n"+text)
-				}
-			case "tool_use":
-				if name := strings.TrimSpace(block.Name); name != "" {
-					tools = append(tools, name)
-				}
+			if block.Type != "text" {
+				continue
 			}
-		}
-		if len(tools) > 0 {
-			blocksOut = append(blocksOut, "coder ran "+strings.Join(tools, ", "))
+			if text := strings.TrimSpace(block.Text); text != "" {
+				blocksOut = append(blocksOut, speaker+":\n"+text)
+			}
 		}
 	}
 	return keepNewest(blocksOut, messages, cap)
