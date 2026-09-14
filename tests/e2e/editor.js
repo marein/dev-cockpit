@@ -379,6 +379,26 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       assert(/^\d+:\d+$/.test(pos || ""), `unexpected position readout: ${pos}`);
     });
 
+    await run("the editor fits its column, nothing scrolls the work body", async () => {
+      const fit = await page.evaluate(() => {
+        const body = document.querySelector(".dc-work-body");
+        const box = body.getBoundingClientRect();
+        const below = [];
+        (function walk(el) {
+          for (const child of el.children) {
+            const style = getComputedStyle(child);
+            const rect = child.getBoundingClientRect();
+            if (rect.height && rect.bottom > box.bottom + 0.5) below.push(`${child.className || child.tagName} by ${(rect.bottom - box.bottom).toFixed(2)}px`);
+            if (style.overflowY === "visible") walk(child);
+          }
+        })(body);
+        return { spare: body.scrollHeight - body.clientHeight, height: body.clientHeight, below };
+      });
+      assert(fit.spare <= 0, `the work body scrolls by ${fit.spare}px, below it: ${JSON.stringify(fit.below)}`);
+      assert(fit.below.length === 0, `something reaches under the work body: ${JSON.stringify(fit.below)}`);
+      return `${fit.height}px column, nothing over`;
+    });
+
     await run("real language highlighting for a code file", async () => {
       await newFile("main.go");
       await page.click(".cm-content"); await page.keyboard.type('package main\n\nfunc main() {}\n');

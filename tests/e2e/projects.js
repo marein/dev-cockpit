@@ -1490,10 +1490,10 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       const behind = await gap("master..origin/master");
       const commits = (n) => (n === 1 ? "1 commit" : `${n} commits`);
       let distance;
-      if (!ahead && !behind) distance = 'master is up to date with origin/master.';
-      else if (!behind) distance = `master is ${commits(ahead)} ahead of origin/master.`;
-      else if (!ahead) distance = `master is ${commits(behind)} behind origin/master.`;
-      else distance = `master has diverged from origin/master: ${commits(ahead)} ahead, ${commits(behind)} behind.`;
+      if (!ahead && !behind) distance = '"master" is up to date with "origin/master".';
+      else if (!behind) distance = `"master" is ${commits(ahead)} ahead of "origin/master".`;
+      else if (!ahead) distance = `"master" is ${commits(behind)} behind "origin/master".`;
+      else distance = `"master" has diverged from "origin/master": ${commits(ahead)} ahead, ${commits(behind)} behind.`;
 
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(`#project-${source} [data-git-project-menu]`, { state: "visible", timeout: 8000 });
@@ -1512,7 +1512,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
         await page.unroute("**/fetch");
       }
       const text = (await page.textContent('.dc-toast:has-text("Fetched")')).replace(/\s+/g, " ").trim();
-      assert(text === `Fetched ${source}. ${distance}`, `the toast reads "${text}", want "Fetched ${source}. ${distance}"`);
+      assert(text === `Fetched "${source}". ${distance}`, `the toast reads "${text}", want "Fetched "${source}". ${distance}"`);
       assert(page.url() === before, `the fetch navigated away: ${page.url()}`);
       assert(await row.evaluate((el) => el.isConnected), "the row was re-rendered for a toast");
       assert((await page.locator(`#project-${source} .alert`).count()) === 0, "a flash stands on the row beside the toast");
@@ -1527,7 +1527,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await gitMenu(solo, "Fetch");
       await page.waitForSelector('.dc-toast:has-text("Nothing to fetch")', { state: "visible", timeout: 20000 });
       const none = (await page.textContent('.dc-toast:has-text("Nothing to fetch")')).replace(/\s+/g, " ").trim();
-      assert(none === `Nothing to fetch, ${solo} has no remote.`, `a repository without a remote reads "${none}"`);
+      assert(none === `Nothing to fetch, "${solo}" has no remote.`, `a repository without a remote reads "${none}"`);
 
       await git(sourcePath, ["remote", "set-url", "origin", "/nonexistent/repository.git"]);
       try {

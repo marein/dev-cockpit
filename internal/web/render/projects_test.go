@@ -2,10 +2,13 @@ package render
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/marein/dev-cockpit/internal/pluginhost"
 	"github.com/marein/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/plugin"
 )
 
 // renderProjects executes the real projects list with one row.
@@ -637,5 +640,38 @@ func TestProjectRowRendersTheFoldedGroup(t *testing.T) {
 			t.Fatalf("%s is out of order", id)
 		}
 		last = at
+	}
+}
+
+// slotPlugin adds one widget to the create project slot.
+type slotPlugin struct{}
+
+func (slotPlugin) ConfigureServe(s plugin.Serve) error {
+	s.AddSlotHTML(plugin.SlotProjectsActions, "<demo-widget></demo-widget>")
+	return nil
+}
+
+// The slot is where a plugin hangs its own way to start a project, so it
+// belongs next to the plus that starts one, in the projects column. That
+// column is also the sheet a phone opens, so one place serves both.
+func TestProjectsActionsSlotStandsLeftOfTheCreateButton(t *testing.T) {
+	serves, err := pluginhost.ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "demo", Plugin: slotPlugin{}}}, t.TempDir(), t.TempDir(), nil, nil)
+	if err != nil {
+		t.Fatalf("configure serve: %v", err)
+	}
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", serves)
+	var b strings.Builder
+	if err := tmpl.ExecuteTemplate(&b, "projects_list.gohtml", projectsData(nil)); err != nil {
+		t.Fatalf("render projects list: %v", err)
+	}
+	out := b.String()
+	if !regexp.MustCompile(`<demo-widget></demo-widget>\s*<a href="/projects/new"`).MatchString(out) {
+		t.Fatal("the slot does not stand in front of the create project button")
+	}
+	if at, head := strings.Index(out, "<demo-widget>"), strings.Index(out, `class="dc-work-head"`); at < 0 || at > head {
+		t.Fatalf("the slot does not render in the projects column: slot at %d, work head at %d", at, head)
+	}
+	if n := strings.Count(out, "<demo-widget>"); n != 1 {
+		t.Fatalf("the slot renders %d times, the column is the one place it belongs", n)
 	}
 }

@@ -45,8 +45,9 @@ type Named[T any] struct {
 // plugin markup renders; which slots exist is the cockpit's decision and the
 // list only ever grows.
 const (
-	// SlotProjectsActions sits in the projects page header, next to the
-	// create project button.
+	// SlotProjectsActions sits in the projects column's tools, left of the
+	// create project button, on every screen: the column is what the phone
+	// opens as its sheet.
 	SlotProjectsActions = "projects-actions"
 	// SlotProjectsEmptyActions sits in the empty state of the projects page,
 	// next to the create project action a fresh install shows.
