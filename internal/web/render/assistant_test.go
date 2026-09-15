@@ -16,29 +16,27 @@ func renderAssistantCtx(t *testing.T, data AssistantCtxData) string {
 	return out.String()
 }
 
-func assistantCtxData(current, earlier AssistantCard) AssistantCtxData {
+func assistantCtxData(cards ...AssistantCard) AssistantCtxData {
 	return AssistantCtxData{
-		Page:      Page{Title: "Assistant"},
-		Path:      "/assistant/" + current.ID,
-		Current:   &current,
-		Answering: current.Running,
-		Earlier:   []AssistantCard{earlier},
-		ActiveID:  current.ID,
-		Available: true,
-		Coders:    []AssistantCoderOption{{ID: "claude", Label: "Claude"}},
-		PostURL:   "/assistant/" + current.ID,
-		IDPrefix:  "test",
+		Page:       Page{Title: "Assistant"},
+		Path:       "/assistants/" + cards[0].ID,
+		Assistants: cards,
+		ActiveID:   cards[0].ID,
+		Available:  true,
+		Coders:     []AssistantCoderOption{{ID: "claude", Label: "Claude"}},
+		PostURL:    "/assistants/new",
+		IDPrefix:   "test",
 	}
 }
 
 // Working is not a fault: while the turn runs the row shows the ring around
 // the assistant's own round icon and says nothing about an unfinished turn.
-func TestAnsweringConversationRunsTheRingWithoutTheBadge(t *testing.T) {
+func TestAnsweringAssistantRunsTheRingWithoutTheBadge(t *testing.T) {
 	out := renderAssistantCtx(t, assistantCtxData(
-		AssistantCard{ID: "c1", Title: "Live one", URL: "/assistant/c1", Running: true},
-		AssistantCard{ID: "c2", Title: "Old one", URL: "/assistant/c2"},
+		AssistantCard{ID: "c1", Title: "Live one", URL: "/assistants/c1", Running: true},
+		AssistantCard{ID: "c2", Title: "Other one", URL: "/assistants/c2"},
 	))
-	if !strings.Contains(out, `class="dc-term-icon assistant working"`) {
+	if !strings.Contains(out, "dc-term-icon assistant working") {
 		t.Fatal("the answering row does not run the ring")
 	}
 	if strings.Contains(out, "Unfinished") {
@@ -48,16 +46,42 @@ func TestAnsweringConversationRunsTheRingWithoutTheBadge(t *testing.T) {
 
 // A turn that stopped before it was done is the only thing the badge stands
 // for, and such a row never runs the ring next to it.
-func TestUnfinishedConversationWearsTheBadgeWithoutTheRing(t *testing.T) {
+func TestUnfinishedAssistantWearsTheBadgeWithoutTheRing(t *testing.T) {
 	out := renderAssistantCtx(t, assistantCtxData(
-		AssistantCard{ID: "c1", Title: "Live one", URL: "/assistant/c1"},
-		AssistantCard{ID: "c2", Title: "Old one", URL: "/assistant/c2", Unfinished: true},
+		AssistantCard{ID: "c1", Title: "Live one", URL: "/assistants/c1"},
+		AssistantCard{ID: "c2", Title: "Other one", URL: "/assistants/c2", Unfinished: true},
 	))
 	if !strings.Contains(out, "Unfinished") {
 		t.Fatal("the stopped row does not wear the badge")
 	}
 	if strings.Contains(out, "assistant working") {
 		t.Fatal("a row that is not running still runs the ring")
+	}
+}
+
+// Every assistant is a row of its own, all of them live: what the column says
+// about one of them is what it holds and what it is doing, never that it is
+// the current one or an earlier one.
+func TestTheColumnListsEveryAssistantWithWhatItHolds(t *testing.T) {
+	out := renderAssistantCtx(t, assistantCtxData(
+		AssistantCard{ID: "c1", Title: "Release work", URL: "/assistants/c1", OpenJobs: 2},
+		AssistantCard{ID: "c2", Title: "Side quest", URL: "/assistants/c2", News: true},
+	))
+	for _, want := range []string{"Release work", "Side quest", `data-assistant-instance="c1"`, `data-assistant-instance="c2"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("want %q in the column", want)
+		}
+	}
+	if !strings.Contains(out, "ti-steering-wheel") {
+		t.Fatal("want the open jobs on the row that holds them")
+	}
+	if !strings.Contains(out, "dc-term-icon assistant news") {
+		t.Fatal("want the news mark on the row that has it")
+	}
+	for _, gone := range []string{"Earlier", "Current"} {
+		if strings.Contains(out, gone) {
+			t.Fatalf("the column still splits the assistants into %q", gone)
+		}
 	}
 }
 

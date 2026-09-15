@@ -46,6 +46,7 @@
       "@dc/split": "{{asset "/js/dc/split.js"}}",
       "@dc/doubletap": "{{asset "/js/dc/doubletap.js"}}",
       "@dc/filter": "{{asset "/js/dc/filter.js"}}",
+      "@dc/rowdrag": "{{asset "/js/dc/rowdrag.js"}}",
       "@dc/ctx": "{{asset "/js/dc/ctx.js"}}",
       "@dc/volume-slider": "{{asset "/js/dc/volume-slider.js"}}",
       "dc-notifications": "{{asset "/js/components/notifications.js"}}",
@@ -259,7 +260,7 @@
        a notice saying what is missing, which is more use than a dead row. */}}
   <a class="dc-rail-btn{{if eq $.ActiveTab "terminals"}} active{{end}}" href="/terminals"><span class="dc-news-anchor"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" true "Hidden" (not $.QuickNav.TerminalNews) "Label" "Something new in a terminal")}}</span><span>Terminals</span></a>
   <a class="dc-rail-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="/editor"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>
-  <a class="dc-rail-btn{{if eq .ActiveTab "assistant"}} active{{end}}" href="/assistant" data-assistant-link title="Assistant"><span class="dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}}><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml"}}</span><span>Assistant</span></a>
+  <a class="dc-rail-btn{{if eq .ActiveTab "assistants"}} active{{end}}" href="/assistants" title="Assistants"><span class="dc-term-icon assistant"><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" "assistant" "Hidden" (not .AssistantNews) "Label" "Something new in an assistant")}}</span><span>Assistants</span></a>
   <span class="dc-rail-gap"></span>
   <div class="dc-rail-foot">
     <a class="dc-rail-btn{{if eq .ActiveTab "settings"}} active{{end}}" href="/settings/general"><i class="ti ti-settings icon" aria-hidden="true"></i><span>Settings</span>{{if .BackupReviewCount}}<span class="dc-rail-count" title="Backup files to resolve" aria-label="Backup files to resolve">{{.BackupReviewCount}}</span>{{end}}</a>
@@ -328,7 +329,7 @@
   <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "projects"}} active{{end}}" data-ctx-area="projects"><i class="ti ti-folders icon" aria-hidden="true"></i><span>Projects</span></button>
   <button type="button" class="dc-tabbar-btn{{if eq $.ActiveTab "terminals"}} active{{end}}" data-ctx-area="terminals"><span class="dc-news-anchor"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" true "Hidden" (not $.QuickNav.TerminalNews) "Label" "Something new in a terminal")}}</span><span>Terminals</span></button>
   <a class="dc-tabbar-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="/editor"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>
-  <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "assistant"}} active{{end}}" data-ctx-area="assistant" data-assistant-link><span class="dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}}><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml"}}</span><span>Assistant</span></button>
+  <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "assistants"}} active{{end}}" data-ctx-area="assistants"><span class="dc-term-icon assistant"><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" "assistant" "Hidden" (not .AssistantNews) "Label" "Something new in an assistant")}}</span><span>Assistants</span></button>
   <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "settings"}} active{{end}}" data-ctx-area="settings"><i class="ti ti-settings icon" aria-hidden="true"></i><span>Settings</span>{{if .BackupReviewCount}}<span class="dc-tabbar-count" title="Backup files to resolve" aria-label="Backup files to resolve">{{.BackupReviewCount}}</span>{{end}}</button>
 </nav>
 {{end}}

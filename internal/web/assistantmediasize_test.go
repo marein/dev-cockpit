@@ -39,11 +39,18 @@ func TestAPictureInTheTranscriptCarriesItsSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("assistant: %v", err)
 	}
-	s := &Server{conversations: conversations, assistant: workspace}
-	shot := filepath.Join(workspace.Workspace(), "assistant-files", "board.png")
+	s := &Server{assistants: conversations, workspace: workspace}
+	const id = "11111111-1111-4111-8111-111111111111"
+	uploads, err := conversations.UploadDir(id)
+	if err != nil {
+		t.Fatalf("upload dir: %v", err)
+	}
+	shot := filepath.Join(uploads, "board.png")
 	writeShot(t, shot, 1280, 800)
+	// And a picture an answer points at sits in the files folder.
+	writeShot(t, filepath.Join(workspace.Dir(id), "assistant-files", "board.png"), 1280, 800)
 
-	view := s.assistantMessageView("c1", assistant.Message{
+	view := s.assistantMessageView(id, assistant.Message{
 		ID:          "m1",
 		Role:        assistant.RoleUser,
 		Content:     "look at this",
@@ -56,7 +63,7 @@ func TestAPictureInTheTranscriptCarriesItsSize(t *testing.T) {
 		t.Fatalf("the attachment reads as %dx%d, want 1280x800", view.Attachments[0].Width, view.Attachments[0].Height)
 	}
 
-	html := string(s.assistantMarkdown("c1", "![the board](assistant-files/board.png)"))
+	html := string(s.assistantMarkdown(id, "![the board](assistant-files/board.png)"))
 	for _, want := range []string{`width="1280"`, `height="800"`} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("want %s in the answer, got %q", want, html)
@@ -72,14 +79,19 @@ func TestAFileThatIsNoPictureCarriesNoSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("assistant: %v", err)
 	}
-	s := &Server{conversations: conversations, assistant: workspace}
-	notes := filepath.Join(workspace.Workspace(), "assistant-files", "notes.txt")
-	writeShot(t, filepath.Join(workspace.Workspace(), "assistant-files", "keep.png"), 10, 10)
+	s := &Server{assistants: conversations, workspace: workspace}
+	const id = "11111111-1111-4111-8111-111111111111"
+	uploads, err := conversations.UploadDir(id)
+	if err != nil {
+		t.Fatalf("upload dir: %v", err)
+	}
+	notes := filepath.Join(uploads, "notes.txt")
+	writeShot(t, filepath.Join(uploads, "keep.png"), 10, 10)
 	if err := os.WriteFile(notes, []byte("no picture"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	view := s.assistantMessageView("c1", assistant.Message{
+	view := s.assistantMessageView(id, assistant.Message{
 		ID:          "m1",
 		Role:        assistant.RoleUser,
 		Attachments: []assistant.Attachment{{Name: "notes.txt", Path: notes, Media: "file", Size: 10}},

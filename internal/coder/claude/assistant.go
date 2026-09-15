@@ -67,10 +67,17 @@ func (r *runner) DeleteSession(sessionID string) error {
 	return r.sessions.DeleteSession(sessionID)
 }
 
+// TrustWorkdir implements assistant.WorkdirTruster: an assistant's workspace
+// is a directory claude has never seen, and the answer to its trust dialog is
+// written ahead of the turn the way it is written ahead of a terminal.
+func (r *runner) TrustWorkdir(dir string) error {
+	return runtime{}.TrustWorkdir(dir)
+}
+
 // Command builds one non-interactive claude turn. The first turn creates the
-// session under the conversation's own id and names it, so a transferred conversation shows up
-// as a coder terminal carrying the conversation title; every later turn resumes that
-// exact id.
+// session under the assistant's own id and names it after the assistant, so
+// claude's own session list shows it under that name; every later turn resumes
+// that exact id.
 //
 // A conversation has the same tools as a coder terminal, including the ones that
 // change files and run commands, and the same automatic approval the cockpit

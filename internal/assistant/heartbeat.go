@@ -61,7 +61,7 @@ func (w *Watcher) RunHeartbeat(interval time.Duration) {
 // that ran out is exactly the one that has none left to give.
 func (w *Watcher) Heartbeat() {
 	w.SweepExpired()
-	for _, entry := range w.store.List() {
+	for _, entry := range w.jobs.All() {
 		if !entry.State.Open() {
 			continue
 		}
@@ -162,7 +162,7 @@ func (w *Watcher) noteMovement(job Job, activity Activity) Job {
 	if digest == job.ActivityDigest && !job.ActivityAt.IsZero() {
 		return job
 	}
-	fresh, ok := w.store.Update(job.Terminal, func(entry *Job) bool {
+	fresh, ok := w.jobs.Of(job.Owner).Update(job.Terminal, func(entry *Job) bool {
 		entry.ActivityDigest = digest
 		entry.ActivityAt = w.now().UTC()
 		return true

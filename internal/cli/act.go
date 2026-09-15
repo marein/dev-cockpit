@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/spf13/cobra"
 )
@@ -83,7 +84,7 @@ func runKeys(out io.Writer, opts inspectOptions, target string, keys []string) e
 
 // postInput sends one batch of input the way the prompt box does.
 func postInput(out io.Writer, opts inspectOptions, target string, items []map[string]string, done string) error {
-	client, err := localapi.Dial(opts.stateDir)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
@@ -179,7 +180,7 @@ func runDeleteCoder(out io.Writer, opts inspectOptions, target string, confirmed
 // postCoderAction posts one of the coder routes that take no body, which is
 // what resuming, stopping and deleting a session are.
 func postCoderAction(opts inspectOptions, target, action string) (map[string]any, error) {
-	client, err := localapi.Dial(opts.stateDir)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +213,7 @@ func newCoderCommand(opts *inspectOptions) *cobra.Command {
 }
 
 func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, agent, prompt, doneWhen string) error {
-	client, err := localapi.Dial(opts.stateDir)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
@@ -272,10 +273,12 @@ func newSteerCommand(opts *inspectOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "coder-steer <terminal>",
 		Short: "Steer a coder until a job is done",
-		Long: "Steer a running coder: when it reports something, the assistant checks where " +
-			"the job stands and tells the user once it is done or stuck. The criterion is " +
-			"required and has to be checkable, because that is what decides done. Ten checks " +
-			"and eight hours per job, then it stops on its own.",
+		Long: "Steer a running coder: when it reports something, you are woken to check where " +
+			"the job stands, and the user hears once it is done or stuck. The job is yours, " +
+			"its reports land in your own thread. A coder another assistant already steers is " +
+			"refused, and the refusal names them. The criterion is required and has to be " +
+			"checkable, because that is what decides done. Ten checks and eight hours per job, " +
+			"then it stops on its own.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSteer(cmd.OutOrStdout(), *opts, args[0], task, doneWhen)
@@ -287,7 +290,7 @@ func newSteerCommand(opts *inspectOptions) *cobra.Command {
 }
 
 func runSteer(out io.Writer, opts inspectOptions, terminal, task, doneWhen string) error {
-	client, err := localapi.Dial(opts.stateDir)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
@@ -311,8 +314,9 @@ func newReleaseCommand(opts *inspectOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:   "coder-release <terminal>",
 		Short: "Release a steered coder",
-		Long:  "Call a steered job off. The coder keeps running, it just stops waking the assistant.",
-		Args:  cobra.ExactArgs(1),
+		Long: "Call a steered job off. The coder keeps running, it just stops waking you. " +
+			"Only your own jobs: a coder another assistant steers is theirs, and the refusal names them.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRelease(cmd.OutOrStdout(), *opts, args[0])
 		},
@@ -320,7 +324,7 @@ func newReleaseCommand(opts *inspectOptions) *cobra.Command {
 }
 
 func runRelease(out io.Writer, opts inspectOptions, terminal string) error {
-	client, err := localapi.Dial(opts.stateDir)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
@@ -337,7 +341,58 @@ func runRelease(out io.Writer, opts inspectOptions, terminal string) error {
 // assistantJobsPath is where the steered jobs live, the same path the page
 // posts to. A job belongs to the assistant, not to one conversation, so this
 // command carries no conversation of its own.
-const assistantJobsPath = "/assistant/jobs"
+const assistantJobsPath = "/assistants/jobs"
+
+// newDeleteAssistantCommand removes another assistant for good. Deleting is in
+// this group because assistants see each other and the user may ask one of them
+// to clean up; deleting yourself is refused by the cockpit, there would be
+// nobody left to say what happened.
+func newDeleteAssistantCommand(opts *inspectOptions) *cobra.Command {
+	var confirmed bool
+	cmd := &cobra.Command{
+		Use:   "assistant-delete <id> --yes",
+		Short: "Delete another assistant for good",
+		Long: "Delete an assistant: its thread, its uploads and its jobs are gone, and the " +
+			"coders it was steering are handed back to the user, named in the answer. There " +
+			"is no way back. You cannot delete yourself. The id is from `assistant-list`. " +
+			"Because it cannot be undone, the call has to say so: `--yes`.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDeleteAssistant(cmd.OutOrStdout(), *opts, args[0], confirmed)
+		},
+	}
+	cmd.Flags().BoolVar(&confirmed, "yes", false, "confirm that this assistant is removed for good")
+	return cmd
+}
+
+func runDeleteAssistant(out io.Writer, opts inspectOptions, id string, confirmed bool) error {
+	id = strings.TrimSpace(id)
+	// Whether the call is allowed at all comes before whether it was
+	// confirmed. An assistant asking to delete itself is refused however it
+	// confirms, so answering with the --yes hint first would send it back to
+	// repeat a call that can never work, and it would read the real reason
+	// only on the second try. The server refuses it too, at its own door; this
+	// is the same sentence, said earlier.
+	if own := strings.TrimSpace(opts.assistantID); own != "" && own == id {
+		return errors.New(assistant.SelfDeleteRefusal)
+	}
+	if !confirmed {
+		return errors.New("Deleting an assistant cannot be undone, its whole thread goes with it. Repeat the call with --yes.")
+	}
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
+	if err != nil {
+		return err
+	}
+	answer, err := client.PostForm("/assistants/"+id, url.Values{"form": {"delete"}}, actionTimeout)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "assistant %s deleted\n", id)
+	if released, _ := answer["released"].(string); released != "" {
+		fmt.Fprintln(out, released)
+	}
+	return nil
+}
 
 func newProjectCommand(opts *inspectOptions) *cobra.Command {
 	return &cobra.Command{
@@ -353,7 +408,7 @@ func newProjectCommand(opts *inspectOptions) *cobra.Command {
 }
 
 func runNewProject(out io.Writer, opts inspectOptions, name string) error {
-	client, err := localapi.Dial(opts.stateDir)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
@@ -392,7 +447,7 @@ func runDeleteProject(out io.Writer, opts inspectOptions, name string, confirmed
 	if !confirmed {
 		return errors.New("Deleting a project cannot be undone. Repeat the call with --yes if the user asked for exactly this project.")
 	}
-	client, err := localapi.Dial(opts.stateDir)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}

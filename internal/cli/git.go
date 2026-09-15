@@ -116,7 +116,7 @@ func runGitProxy(stdout, stderr io.Writer, stateDir string, args []string) (int,
 	if err != nil {
 		return 0, err
 	}
-	client, err := localapi.Dial(stateDir)
+	client, err := localapi.Dial(stateDir, "")
 	if err != nil {
 		return 0, err
 	}

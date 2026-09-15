@@ -1,0 +1,18 @@
+{{define "settings_assistant_jobs.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "assistant_settings_start.gohtml" .}}
+<form method="post" action="/settings/assistant/jobs" id="settings-assistant-jobs">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <div class="text-secondary small mb-3">A steered coder is checked by the assistant that steers it, and every check is a paid turn nobody asked for interactively. This is how many of those may run at the same moment, over every assistant together: a check that has to wait is not dropped, it takes the next free slot. Each job still runs at most one check at a time whatever this says.</div>
+  <div class="mb-3 row">
+    <div class="col-12 col-lg-4">
+      <label class="form-label" for="assistant-max-checks">Checks at once</label>
+      <input class="form-control" type="number" id="assistant-max-checks" name="max_checks" min="{{.Min}}" max="{{.Max}}" step="1" value="{{.MaxChecks}}">
+      <div class="form-text">Between {{.Min}} and {{.Max}}, {{.Default}} by default. It applies to the next check, no restart needed.</div>
+    </div>
+  </div>
+  <button type="submit" class="btn btn-primary">Save</button>
+</form>
+{{template "assistant_settings_end.gohtml"}}
+{{template "app_end.gohtml" .}}
+{{end}}

@@ -21,7 +21,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,9 +39,13 @@ const (
 // component below data/<section>/ in the archive, Path is the absolute host
 // location, a file or a directory. The mapping is resolved against the
 // current registry on import, so an archive stays portable across homes.
-// Skip names relative slash paths below Path the export leaves out, a
-// directory in it takes its subtree with it. The import knows nothing about
-// it: an older archive that still carries such a file keeps importing it.
+// Skip names relative slash paths below Path the export leaves out, matched
+// with path.Match, so a `*` stands for one path element and a file that is
+// generated into every directory of one depth is named by its place, never
+// by its base name alone: a user's file of the same name one level deeper
+// travels. A directory in it takes its subtree with it. The import knows
+// nothing about it: an older archive that still carries such a file keeps
+// importing it.
 type Source struct {
 	Name string
 	Path string
@@ -196,15 +199,30 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 				// the projects.
 				{Name: "recent-terminals.json", Path: st("recent-terminals.json")}},
 			Requires: []string{"projects", "claude-sessions", "copilot-sessions"}},
-		{ID: "assistant", Group: "Cockpit", Label: "Assistant",
-			Description: "Its memory, its conversations, the jobs it steers and the files a message carried. The generated instruction files stay out, the next start writes them from the memory again.",
+		{ID: "assistant", Group: "Cockpit", Label: "Assistants",
+			Description: "The shared memory and every assistant's thread with the jobs it steers, its workspace and the files a message carried. The generated instruction files stay out, the next turn writes them from the memory again.",
 			Sources: []Source{
 				{Name: "assistant.json", Path: st("assistant/assistant.json")},
+				{Name: "memory", Path: st("assistant/memory")},
+				// One directory per assistant, holding its transcript, its
+				// jobs and its workspace, so what belongs together travels
+				// together. CLAUDE.md, AGENTS.md and the cockpit wrapper at
+				// the top of a workspace are written before every turn (see
+				// internal/assistant/memory.go) and carry this host's absolute
+				// paths and version, so they are noise; the same names deeper
+				// in the workspace are the assistant's own files and travel.
+				{Name: "instances", Path: st("assistant/instances"), Skip: []string{"*/workspace/CLAUDE.md", "*/workspace/AGENTS.md", "*/workspace/cockpit"}},
+				// The assistant last looked at is what the area's address
+				// opens, and the ids it names travel in the index above.
+				{Name: "recent-assistants.json", Path: st("recent-assistants.json")},
+				// The three names the last release wrote its archives with.
+				// They are absent on export from this layout and land an old
+				// archive in the layout the startup move reads, so a backup
+				// taken before the assistants moved into instances still
+				// imports. TODO(v2.0.0): drop them once such an archive can no
+				// longer exist.
 				{Name: "conversations", Path: st("assistant/conversations")},
 				{Name: "jobs.json", Path: st("assistant/jobs.json")},
-				// CLAUDE.md and AGENTS.md are written from workspace/memory
-				// before every turn (see internal/assistant/memory.go) and carry
-				// this host's absolute paths and version, so they are noise.
 				{Name: "workspace", Path: st("assistant/workspace"), Skip: []string{"CLAUDE.md", "AGENTS.md"}}},
 			Requires: []string{"projects", "claude-sessions", "copilot-sessions"}},
 
@@ -376,9 +394,9 @@ func (s *Service) Export(w io.Writer, ids []string) error {
 	return gz.Close()
 }
 
-// collectPath streams one source into the archive under key. skip holds
-// relative slash paths below root the export leaves out, an empty skip costs
-// nothing.
+// collectPath streams one source into the archive under key. skip holds the
+// patterns of relative slash paths below root the export leaves out, see
+// Source; an empty list costs nothing.
 func collectPath(tw *tar.Writer, key, root string, skip []string, entry *ManifestSection) error {
 	info, err := os.Lstat(root)
 	if err != nil {
@@ -398,7 +416,7 @@ func collectPath(tw *tar.Writer, key, root string, skip []string, entry *Manifes
 		name := key
 		if rel, err := filepath.Rel(root, p); err == nil && rel != "." {
 			rel = filepath.ToSlash(rel)
-			if slices.Contains(skip, rel) {
+			if skipped(skip, rel) {
 				if d.IsDir() {
 					return fs.SkipDir
 				}
@@ -412,6 +430,18 @@ func collectPath(tw *tar.Writer, key, root string, skip []string, entry *Manifes
 		}
 		return addEntry(tw, name, p, fi, entry)
 	})
+}
+
+// skipped reports whether a relative path is one the source leaves out. A
+// pattern that cannot be parsed matches nothing, the export never loses a
+// file to a typo in this table.
+func skipped(skip []string, rel string) bool {
+	for _, pattern := range skip {
+		if ok, err := path.Match(pattern, rel); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 func addEntry(tw *tar.Writer, name, p string, fi fs.FileInfo, entry *ManifestSection) error {

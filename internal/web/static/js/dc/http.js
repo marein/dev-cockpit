@@ -73,8 +73,8 @@ export function getJSON(url, { signal, headers } = {}) {
     .then((response) => response.json());
 }
 
-export function getText(url, { signal } = {}) {
-  return fetch(url, { headers: { Accept: "text/html" }, cache: "no-store", signal })
+export function getText(url, { signal, headers } = {}) {
+  return fetch(url, { headers: { Accept: "text/html", ...headers }, cache: "no-store", signal })
     .then((response) => ensureOk(response, "Request failed."))
     .then((response) => response.text());
 }

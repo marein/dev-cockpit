@@ -2,21 +2,6 @@ package assistant
 
 import "time"
 
-// Status is the lifecycle state of a conversation.
-type Status string
-
-const (
-	// StatusActive marks a conversation that still owns its provider session.
-	StatusActive Status = "active"
-	// StatusTransferred marks a conversation whose provider session was handed to a
-	// coder terminal. The transcript stays readable, the composer does not.
-	StatusTransferred Status = "transferred"
-	// StatusArchived marks a conversation that a newer one replaced. The
-	// transcript stays readable, its provider session is gone: nothing can
-	// continue it, and the cockpit holds the whole conversation on disk.
-	StatusArchived Status = "archived"
-)
-
 // Role distinguishes the two message authors.
 type Role string
 
@@ -35,8 +20,8 @@ const (
 	StateFailed      State = "failed"
 	StateInterrupted State = "interrupted"
 	// StateQueued marks a user message waiting for the running turn to end. It
-	// sits in the transcript, deletable until the server flushes every waiting
-	// message as one new turn.
+	// sits in the transcript, deletable until the assistant flushes every
+	// waiting message as one new turn.
 	StateQueued State = "queued"
 )
 
@@ -59,14 +44,15 @@ const (
 	MaxPromptBytes = 32 << 10
 	// MaxResponseBytes is the largest accepted assistant answer.
 	MaxResponseBytes = 1 << 20
-	// MaxTitleRunes bounds a conversation title.
-	MaxTitleRunes = 120
 	// MaxQueuedMessages bounds what may wait while a turn runs. The flush joins
 	// every waiting message into one prompt, and that prompt has to stay within
 	// what a process argument accepts.
 	MaxQueuedMessages = 20
-	// DefaultTitle names a conversation that has not seen a prompt yet.
-	DefaultTitle = "New conversation"
+	// MaxTitleRunes bounds an assistant's name.
+	MaxTitleRunes = 120
+	// DefaultTitle names an assistant that has not seen a prompt yet. The first
+	// prompt renames it, and the user may rename it at any time.
+	DefaultTitle = "New assistant"
 )
 
 // Summary is one index entry. It deliberately carries no messages: the list
@@ -75,17 +61,15 @@ type Summary struct {
 	ID            string    `json:"id"`
 	Title         string    `json:"title"`
 	CoderID       string    `json:"coderId"`
-	ProjectPath   string    `json:"projectPath"`
-	Status        Status    `json:"status"`
 	CreatedAt     time.Time `json:"createdAt"`
 	LastMessageAt time.Time `json:"lastMessageAt"`
 	// Preview is the opening of the last assistant answer, bounded for the list.
 	Preview string `json:"preview"`
-	// Running marks a conversation whose last answer is still being written. It is
+	// Running marks an assistant whose last answer is still being written. It is
 	// the working state, not a fault, and it is the one the list shows while a turn
 	// is under way.
 	Running bool `json:"running"`
-	// Unfinished marks a conversation whose last turn stopped before it was done,
+	// Unfinished marks an assistant whose last turn stopped before it was done,
 	// cancelled, failed or interrupted. A turn that is still running is never one of
 	// them, that is Running, so the two never stand at the same time and neither has
 	// to be guessed from the other.
@@ -94,31 +78,26 @@ type Summary struct {
 	MessageCount int `json:"messageCount"`
 }
 
-// Conversation is one complete conversation with its transcript.
-type Conversation struct {
+// Instance is one complete instance with its transcript.
+type Instance struct {
 	Summary
-	// NativeSessionID is the provider session this conversation drives. It equals the
-	// conversation id, which is UUID shaped so it also works as a tmux session name
-	// once the conversation is transferred.
-	NativeSessionID string `json:"nativeSessionId"`
-	// TransferredSessionID is the coder terminal that took over, set once.
-	TransferredSessionID string    `json:"transferredSessionId,omitempty"`
-	UpdatedAt            time.Time `json:"updatedAt"`
-	Messages             []Message `json:"messages"`
-	// Draft is what was typed into the composer and not sent yet. It belongs to
-	// the conversation, not to the browser that typed it, so the same words are
-	// there after a page change and on the next device.
-	Draft Draft `json:"draft,omitempty"`
+	// NativeSessionID is the provider session this instance drives. It equals
+	// the instance id.
+	NativeSessionID string    `json:"nativeSessionId"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+	Messages        []Message `json:"messages"`
 	// Context is how full the coder's context window stood at the end of the
-	// last turn that reported it. It lives on the conversation, not on a
-	// message: it describes the whole conversation as it stands, and a reader
+	// last turn that reported it. It lives on the instance, not on a
+	// message: it describes the whole instance as it stands, and a reader
 	// coming back has to see the number without a turn running.
 	Context *ContextUsage `json:"context,omitempty"`
 }
 
 // Draft is an unsent prompt with the files that were already uploaded for it.
-// The files travel with the text, otherwise coming back shows a message whose
-// attachments are gone.
+// It belongs to the assistant, not to the browser that typed it, so the same
+// words are there after a page change and on the next device. The files travel
+// with the text, otherwise coming back shows a message whose attachments are
+// gone. It lives in a file of its own, see DraftStore.
 type Draft struct {
 	Text        string       `json:"text,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
@@ -129,7 +108,7 @@ type Draft struct {
 func (d Draft) Empty() bool { return d.Text == "" && len(d.Attachments) == 0 }
 
 // Same reports whether a draft would store exactly what is already stored,
-// which is how a repeated flush avoids rewriting the transcript.
+// which is how a repeated flush writes nothing and wakes nobody.
 func (d Draft) Same(text string, attachments []Attachment) bool {
 	if d.Text != text || len(d.Attachments) != len(attachments) {
 		return false
@@ -143,7 +122,7 @@ func (d Draft) Same(text string, attachments []Attachment) bool {
 }
 
 // Attachment is one file a prompt carries. The cockpit stores it inside the
-// conversation's own files directory and hands the coder the absolute path, so a coder
+// instance's own files directory and hands the coder the absolute path, so a coder
 // that can look at images gets a real file instead of a copy of the bytes.
 type Attachment struct {
 	Name string `json:"name"`
@@ -190,21 +169,21 @@ type WakeNote struct {
 }
 
 // Last returns the final message of the transcript.
-func (c Conversation) Last() (Message, bool) {
+func (c Instance) Last() (Message, bool) {
 	if len(c.Messages) == 0 {
 		return Message{}, false
 	}
 	return c.Messages[len(c.Messages)-1], true
 }
 
-// Idle reports whether the conversation currently has no unfinished assistant turn.
-func (c Conversation) Idle() bool {
+// Idle reports whether the instance currently has no unfinished assistant turn.
+func (c Instance) Idle() bool {
 	last, ok := c.Last()
 	return !ok || last.State.Settled()
 }
 
 // summarize refreshes the index fields derived from the transcript.
-func (c *Conversation) summarize() {
+func (c *Instance) summarize() {
 	c.MessageCount = len(c.Messages)
 	c.Preview = ""
 	c.Running = false

@@ -77,8 +77,8 @@ func (s *Manager) SetHidden(hidden func(sessionID string) bool) {
 }
 
 // visibleSessions is the stored session list with the hidden ones removed.
-// Every list the UI builds goes through it; ResumeReserved is the single,
-// explicit way past it.
+// Every list the UI builds goes through it, and nothing gets past it: a hidden
+// session is an assistant's or a check's, and neither is a coder.
 func (s *Manager) visibleSessions() []Session {
 	all := s.coder.SessionRepository().List()
 	if s.hidden == nil {
@@ -241,46 +241,10 @@ func (s *Manager) Resume(rawID string) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
-	return s.resume(stored, false)
+	return s.resume(stored)
 }
 
-// ResumeReserved brings a session back that the visibility filter hides, the
-// one deliberate way past it. A chat drives a real provider session and keeps
-// it hidden from every coder surface; when the chat is handed over, this
-// starts the terminal on that exact conversation instead of a fresh one.
-//
-// It goes through the same body as Resume, so pane tagging, environment and
-// snapshot invalidation cannot drift apart. It cleans up after itself: a
-// failure between the tmux start and the tagging kills the half-built session,
-// otherwise the caller would be left with a pane it does not know about.
-func (s *Manager) ResumeReserved(rawSessionID, rawWorkdir, title string) (Session, error) {
-	id, err := terminal.ValidateIdentifier(rawSessionID)
-	if err != nil {
-		return Session{}, err
-	}
-	var stored Session
-	found := false
-	// Deliberately unfiltered: this is the caller that owns the reservation.
-	for _, r := range s.coder.SessionRepository().List() {
-		if r.SessionID == id {
-			stored = r
-			found = true
-			break
-		}
-	}
-	if !found {
-		return Session{}, fmt.Errorf(`No stored conversation "%s" was found.`, id)
-	}
-	if workdir := strings.TrimSpace(rawWorkdir); workdir != "" && NormalizeCWD(workdir) != NormalizeCWD(stored.CWD) {
-		return Session{}, errors.New("That conversation belongs to a different project.")
-	}
-	if strings.TrimSpace(stored.Name) == "" {
-		stored.Name = strings.TrimSpace(title)
-	}
-	return s.resume(stored, true)
-}
-
-func (s *Manager) resume(stored Session, cleanupOnFailure bool) (Session, error) {
+func (s *Manager) resume(stored Session) (Session, error) {
 	if _, err := terminal.ValidateIdentifier(stored.SessionID); err != nil {
 		return Session{}, fmt.Errorf(`Coder "%s" cannot be resumed: its identifier is not usable as a tmux session name.`, stored.SessionID)
 	}
@@ -294,20 +258,11 @@ func (s *Manager) resume(stored Session, cleanupOnFailure bool) (Session, error)
 	if err := s.tmux.NewSession(stored.SessionID, stored.CWD, cmd, s.coder.SessionRuntime().Env()); err != nil {
 		return Session{}, err
 	}
-	fail := func(err error) (Session, error) {
-		if cleanupOnFailure {
-			if killErr := s.tmux.Kill(stored.SessionID); killErr != nil {
-				log.Printf("coder: cleanup of a half-started session %s failed: %v", stored.SessionID, killErr)
-			}
-			s.Invalidate()
-		}
+	if err := s.configureTerminal(stored.SessionID); err != nil {
 		return Session{}, err
 	}
-	if err := s.configureTerminal(stored.SessionID); err != nil {
-		return fail(err)
-	}
 	if err := s.tagCoderPane(stored.SessionID, stored.Name, stored.CWD); err != nil {
-		return fail(err)
+		return Session{}, err
 	}
 	s.Invalidate()
 	return stored, nil

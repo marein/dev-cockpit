@@ -8,10 +8,19 @@ const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
 const ATTACH_ICONS = { image: "ti-photo", video: "ti-video", audio: "ti-microphone", file: "ti-paperclip" };
 
-// The conversation stream sends a ping frame every 15s, the same life sign
+// An assistant's stream sends a ping frame every 15s, the same life sign
 // /events carries, because the SSE keepalive is a comment and fires no event
 // here. Past this the stream counts as dead, with room for one missed ping.
 const STALE_MS = 45000;
+
+const RENDER_MARK = "\u2060";
+
+// How long the typing has to rest before the draft is saved. Short, because the
+// draft is its own small file on the server and saving it costs a few hundred
+// bytes: the point of the wait is only that a word being typed is not a
+// request, not that the write is expensive. The editor's search draft waits the
+// same 200ms for the same reason.
+const DRAFT_DEBOUNCE_MS = 200;
 
 // Voice mode is a per device choice, like the terminal theme: whether a
 // finished answer is read aloud on this screen. The volume sits beside it,
@@ -92,6 +101,23 @@ function lastMessage(root) {
   return last ? `${last.getAttribute("data-message-id")}:${last.getAttribute("data-state")}` : "";
 }
 
+function takeRenderMark(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node = null;
+  let at = -1;
+  for (let cursor = walker.nextNode(); cursor; cursor = walker.nextNode()) {
+    const found = cursor.data.lastIndexOf(RENDER_MARK);
+    if (found >= 0) {
+      node = cursor;
+      at = found;
+    }
+  }
+  if (!node) return null;
+  const rest = node.splitText(at);
+  rest.data = rest.data.slice(RENDER_MARK.length);
+  return rest;
+}
+
 function composerHoldsUnsavedWords(surface, fresh) {
   const input = surface.querySelector("[data-assistant-input]");
   const freshInput = fresh.querySelector("[data-assistant-input]");
@@ -99,7 +125,7 @@ function composerHoldsUnsavedWords(surface, fresh) {
   return input.value !== freshInput.value;
 }
 
-// The one conversation surface: the work column of the assistant page. It
+// One assistant's surface: the work column of its page. It
 // scrolls its own [data-assistant-scroll] region under the head, the page
 // never scrolls for it.
 class Assistant extends HTMLElement {
@@ -127,7 +153,7 @@ class Assistant extends HTMLElement {
     this.attachButton = this.querySelector("[data-assistant-attach]");
     // The input, not a file of a message: a sent attachment carries the same
     // attribute and sits above the composer, so an unscoped lookup finds its
-    // link and the paperclip stops working for the rest of the conversation.
+    // link and the paperclip stops working for the rest of the thread.
     this.fileInput = this.querySelector("input[data-assistant-file]");
     this.attachTray = this.querySelector("[data-assistant-attachments]");
     this.attached = [];
@@ -232,7 +258,7 @@ class Assistant extends HTMLElement {
       this.sizer.observe(this.log);
     }
 
-    // Another device may have moved the conversation on, or a message arrived
+    // Another device may have moved the thread on, or a message arrived
     // while the event stream was down (the connect snapshot repeats the
     // signal, so a reconnect catches up like the tab strip does): the page
     // pulls itself again and swaps the column only when the transcript moved
@@ -246,12 +272,18 @@ class Assistant extends HTMLElement {
     this.talkTap = new DoubleTap();
     document.addEventListener("keydown", (event) => this.onTalkTapKeydown(event), { signal, capture: true });
     document.addEventListener("keyup", (event) => this.onTalkTapKeyup(event), { signal, capture: true });
+    // Ctrl+Tab steps to the next assistant and wraps at both ends, the tab
+    // strip's gesture on this area's own list. Capture phase like the strip's,
+    // so it works with the cursor in the composer too.
+    this.pendingIndex = null;
+    document.addEventListener("keydown", (event) => this.onStepKeydown(event), { signal, capture: true });
 
     this.setRunning(this.running);
     this.openStream();
     this.stickToEnd();
     this.onInput();
     this.autoGrow();
+    this.takeFocus();
     // The earlier messages load as the whole transcript, a page of its own;
     // the message the reader was looking at keeps its place in the viewport
     // across it, carried in the fragment and the session store.
@@ -321,10 +353,10 @@ class Assistant extends HTMLElement {
     if (this.running || this.syncing || !this.isConnected) return;
     this.syncing = true;
     try {
-      const html = await getText(window.location.pathname + window.location.search);
+      const html = await getText(window.location.pathname + window.location.search, { headers: { "X-DC-Pull": "1" } });
       const doc = new DOMParser().parseFromString(html, "text/html");
       const fresh = doc.querySelector("dc-assistant");
-      if (!fresh || fresh.getAttribute("conversation-id") !== this.getAttribute("conversation-id")) return;
+      if (!fresh || fresh.getAttribute("assistant-id") !== this.getAttribute("assistant-id")) return;
       const moved = lastMessage(fresh) !== lastMessage(this) || fresh.hasAttribute("blocked") !== this.hasAttribute("blocked");
       if (!moved || composerHoldsUnsavedWords(this, fresh) || this.running) return;
       const app = this.closest(".dc-app");
@@ -340,6 +372,42 @@ class Assistant extends HTMLElement {
   // Only a bare Alt counts as a tap, everything else resets the machine, so
   // an Alt+<key> combo never half-arms it; event.repeat covers a held key's
   // auto repeat.
+  // The rows of the column beside the thread, in the order they were dragged
+  // into, and only that one: the phone's sheet holds the same rows and a step
+  // has to count them once.
+  assistantRows() {
+    const column = document.querySelector(".dc-app > .dc-ctx[data-assistant-rows]");
+    return column ? Array.from(column.querySelectorAll("[data-assistant-instance]")) : [];
+  }
+
+  onStepKeydown(event) {
+    if (event.key !== "Tab" || !event.ctrlKey || event.altKey || event.metaKey) return;
+    const rows = this.assistantRows();
+    if (rows.length < 2) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.stepAssistant(rows, event.shiftKey ? -1 : 1);
+  }
+
+  // The step counts from where the last press was heading and not from what is
+  // on screen yet (pendingIndex, the tab strip's switchTo): mashing the key
+  // walks the list instead of bouncing between two rows while a page loads.
+  stepAssistant(rows, direction) {
+    const id = this.getAttribute("assistant-id");
+    const open = rows.findIndex((row) => row.dataset.assistantInstance === id);
+    const base = this.pendingIndex ?? (open === -1 ? 0 : open);
+    const next = (base + direction + rows.length) % rows.length;
+    this.pendingIndex = next;
+    const row = rows[next];
+    const url = row.dataset.assistantUrl || "/assistants/" + row.dataset.assistantInstance;
+    if (new URL(url, window.location.href).pathname === window.location.pathname) {
+      window.pe?.abortController?.abort();
+      return;
+    }
+    if (window.app?.navigate) Promise.resolve(window.app.navigate(url)).catch(() => {});
+    else window.location.href = url;
+  }
+
   onTalkTapKeydown(event) {
     if (event.key !== "Alt" || event.repeat || event.ctrlKey || event.metaKey || event.shiftKey) {
       this.talkTap.reset();
@@ -457,12 +525,15 @@ class Assistant extends HTMLElement {
     if (wasPinned) this.stickToEnd();
   }
 
-  // The unsent message belongs to the conversation, so the browser only holds
+  // The unsent message belongs to the assistant, so the browser only holds
   // it until the next save: the page renders it back into the box, the chips
   // come from the files the draft carried.
   restoreDraft() {
     this.draftSaved = { text: this.input?.value || "", files: this.attachmentNames([]) };
     this.draftAt = "";
+    // Counts the saves of this device, so a slow answer a newer save has
+    // already overtaken stays quiet. See saveDraft.
+    this.draftSeq = 0;
     let files = [];
     try {
       files = JSON.parse(this.getAttribute("draft-files") || "[]");
@@ -475,13 +546,13 @@ class Assistant extends HTMLElement {
     this.draftSaved.files = this.attachmentNames(this.attached);
   }
 
-  // Another device saved a draft for this conversation. The event says which
-  // conversation moved and nothing more, so the fresh state comes from the
+  // Another device saved a draft for this assistant. The event says which
+  // assistant moved and nothing more, so the fresh state comes from the
   // server, the way the tab strip pulls its fragment. A bare signal (the
   // snapshot after a reconnect) means everyone catches up.
   onDraftEvent(detail) {
-    const conversation = detail && typeof detail === "object" ? detail.conversation : "";
-    if (conversation && conversation !== this.getAttribute("conversation-id")) return;
+    const assistant = detail && typeof detail === "object" ? detail.assistant : "";
+    if (assistant && assistant !== this.getAttribute("assistant-id")) return;
     void this.pullDraft();
   }
 
@@ -534,14 +605,16 @@ class Assistant extends HTMLElement {
     return files.filter((file) => file.progress >= 1).map((file) => file.name).join("\n");
   }
 
-  // A draft is saved when the typing stops, not while it runs: a conversation
-  // is one file, and a keystroke is not worth rewriting it. This is the only
-  // path that saves, so there is nothing to reason about when a page goes away
-  // or a phone locks: after the pause the words are already at the server.
+  // A draft is saved when the typing stops, not while it runs. It is a file of
+  // its own on the server, small and next to the thread, so the wait is short:
+  // long enough that a word being typed is not a request, short enough that
+  // picking up the other device a moment later finds the words. This is the
+  // only path that saves, so there is nothing to reason about when a page goes
+  // away or a phone locks: after the pause the words are already at the server.
   queueDraft() {
     if (!this.input || this.hasAttribute("blocked")) return;
     window.clearTimeout(this.draftTimer);
-    this.draftTimer = window.setTimeout(() => void this.saveDraft(), 1000);
+    this.draftTimer = window.setTimeout(() => void this.saveDraft(), DRAFT_DEBOUNCE_MS);
   }
 
   async saveDraft() {
@@ -556,6 +629,12 @@ class Assistant extends HTMLElement {
     body.set("form", "draft");
     body.set("message", text);
     ready.forEach((file) => body.append("attachment", file.name));
+    // Saves pause after 200ms of rest, so two of them can be in the air at
+    // once and they can land in either order. Only the answer to the newest
+    // one may speak: an older one setting draftAt would move this device's
+    // watermark backwards, and the next pull would read its own older words
+    // as fresh and put them back into the box under the cursor.
+    const seq = ++this.draftSeq;
     this.draftSaving = true;
     try {
       const response = await fetch(this.postUrl, {
@@ -567,12 +646,13 @@ class Assistant extends HTMLElement {
       // What this device wrote last. The draft that comes back from the server
       // is only applied when it is newer than this, so an echo of the own save
       // never lands back in the box.
-      if (payload.updatedAt) this.draftAt = payload.updatedAt;
+      if (payload.updatedAt && seq === this.draftSeq) this.draftAt = payload.updatedAt;
     } catch {
-      this.draftSaved = null;
+      if (seq === this.draftSeq) this.draftSaved = null;
     } finally {
-      this.draftSaving = false;
+      if (seq === this.draftSeq) this.draftSaving = false;
     }
+    if (seq !== this.draftSeq) return;
     // Look once after every save: two devices that wrote at the same moment
     // both end on what the server kept, instead of each holding what the other
     // one replaced.
@@ -667,9 +747,9 @@ class Assistant extends HTMLElement {
         break;
       case "message":
         // A message appeared outside a followed generation: a check wrote its
-        // report, or a message queued while a turn ran. Pull that one message
-        // and append or replace it: a chat answer may be streaming right now,
-        // and this must not touch its state.
+        // report, a message queued while a turn ran, or another device sent a
+        // prompt. Pull that one message and append or replace it: a chat answer
+        // may be streaming right now, and this must not touch its state.
         void this.replaceMessage(frame.messageId, "complete");
         break;
       case "gone":
@@ -734,7 +814,9 @@ class Assistant extends HTMLElement {
     if (!tail) {
       tail = document.createElement("span");
       tail.setAttribute("data-assistant-tail", "");
-      body.append(tail);
+      const spot = takeRenderMark(body);
+      if (spot) spot.parentNode.insertBefore(tail, spot);
+      else body.append(tail);
     }
     return tail;
   }
@@ -1131,7 +1213,7 @@ class Assistant extends HTMLElement {
   // the first call starts recording, the second stops and sends, the same
   // path the button's release takes. A call while the microphone permission
   // prompt still stands takes the grab back instead of recording into a
-  // conversation nobody watches.
+  // assistant nobody watches.
   toggleTalk() {
     if (!this.talkReady) return;
     if (this.talkActive()) {
@@ -1606,6 +1688,34 @@ class Assistant extends HTMLElement {
     if (this.ownTops.some((entry) => Math.abs(top - entry.top) <= 1)) return;
     const remaining = this.scrollLength() - top - this.viewportHeight();
     this.pinned = remaining < 120;
+  }
+
+  // Opening an assistant puts the cursor in the box, so a thought can be typed
+  // without clicking first. Only where a keyboard is already there: COARSE is
+  // the same pointer test the send uses to decide whether to keep the focus
+  // after a message, and on a phone taking it would raise the on-screen
+  // keyboard over half the screen on every tap.
+  //
+  // It runs on connect, which is where both ways in arrive: a fresh page load
+  // and a boosted navigation, whether the row was clicked or reached with the
+  // keyboard and Enter. Two things it must not do. It must not move the
+  // transcript, so the focus is taken without a scroll; the box sits below the
+  // scrolling region and the browser would otherwise pull the page to it. And
+  // it must not take the focus away from somebody: the element is replaced
+  // again whenever the page catches up with the server (syncFromServer), and a
+  // reader who is typing in the memory sheet or the search field keeps their
+  // cursor.
+  //
+  // What decides that is whether the focused element is still **in** the
+  // document. A row that was clicked or opened with Enter holds the focus
+  // until the swap takes it out, and it is gone by the time this runs, which
+  // is exactly the case this is for; a field somebody is typing in is still
+  // there.
+  takeFocus() {
+    if (COARSE || !this.input) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected && !this.contains(active)) return;
+    this.input.focus({ preventScroll: true });
   }
 
   // stickToEnd holds the transcript at its end while the reader is following

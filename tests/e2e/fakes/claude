@@ -268,6 +268,16 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     sleep 12
     answer="and after it"
     ;;
+  *STREAM_PARAGRAPH*)
+    # One sentence in many small deltas, so a check can read the bubble while
+    # the text is still growing: the rendered prefix and the raw tail meet
+    # inside the sentence, which is where a break must never appear.
+    for part in "Der Workspace sagt " "nur, wo du " "gestartet bist, " "nicht wo " "du gerade "; do
+      emit "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"$part\"}}}"
+      sleep 0.25
+    done
+    answer="bist."
+    ;;
   *RESTART_CHAT*)
     # Half the answer, then the server that started this turn is killed and
     # started again. The turn keeps writing, which is the whole point.
@@ -277,6 +287,22 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     answer="and after it"
     ;;
   *MAGIC*) answer="FLUGHAFEN" ;;
+  *FILELINK*)
+    # A file written into the workspace the turn runs in and handed over the
+    # way the instructions say: a link relative to that workspace. The check
+    # reads the file back through that link, so the fake writes what it links.
+    mkdir -p "$PWD/assistant-files"
+    printf 'proof from %s\n' "$PWD" > "$PWD/assistant-files/proof.txt"
+    answer="Here it is: [the proof](assistant-files/proof.txt)"
+    ;;
+  *OWNER*)
+    # A cockpit command run the way the instructions say, through the wrapper
+    # in the workspace by its path and nothing else on the line. The list marks
+    # the caller's own row, which it can only do when the wrapper carried the
+    # id, so the answer is that output as it came.
+    listed=$("$PWD/cockpit" assistant-list 2>&1) || listed="wrapper failed: $listed"
+    answer=$(printf '```\n%s\n```' "$listed")
+    ;;
 esac
 
 # A check on a watched job. The criterion travels in the prompt, so the test

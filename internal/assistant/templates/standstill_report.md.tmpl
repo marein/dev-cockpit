@@ -1,0 +1,7 @@
+**{{name .Job}}** is idle and the job is not done, and the check did not send it anything.
+
+Done when: {{doneWhenLine .Job.DoneWhen}}
+
+{{with oneLine .Said}}The check said: {{.}}
+
+{{end}}It needs a decision or a next step from you.

@@ -53,11 +53,11 @@ type Server struct {
 	cfg    config.Config
 	coders []*coder.Manager
 	shells *shell.Shells
-	// conversations drives the cockpit's own conversations, assistant owns
-	// their workspace and memory.
-	conversations *assistant.Service
-	assistant     *assistant.Workspace
-	// watcher owns the steered jobs: what the assistant keeps an eye on and
+	// assistants drives the cockpit's own assistants, workspace owns the
+	// directory and the memory they share.
+	assistants *assistant.Service
+	workspace  *assistant.Workspace
+	// watcher owns the steered jobs: what an assistant keeps an eye on and
 	// what wakes it.
 	watcher  *assistant.Watcher
 	projects *project.Repository
@@ -109,6 +109,11 @@ type Server struct {
 	// lands somewhere sensible when the last one is gone.
 	editorRecent   *recent.Store
 	terminalRecent *recent.Store
+	// assistantRecent is which assistants were opened last, by id. The area
+	// entry does not resolve through it, it opens the list; what reads it is
+	// the plus button, which offers the coder the assistant opened last runs
+	// on instead of whichever the list happens to return first.
+	assistantRecent *recent.Store
 	// askpassBroker and askpassScript are the bridge a user-triggered git
 	// action may ask the browser through; nil keeps every prompt failing
 	// fast, which is also what the tests run with.
@@ -183,39 +188,40 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		updater = nil
 	}
 	s := &Server{
-		cfg:            cfg,
-		coders:         coders,
-		shells:         shells,
-		conversations:  conversations,
-		assistant:      workspace,
-		watcher:        watcher,
-		projects:       projects,
-		createProject:  NewProjectCreator(projects, bus),
-		quickOpen:      filesystem.NewQuickOpenCache(),
-		notifier:       notifier,
-		activity:       tracker,
-		bus:            bus,
-		settings:       settingsStore,
-		pusher:         pusher,
-		restorer:       restorer,
-		version:        version,
-		updater:        updater,
-		backups:        backups,
-		assets:         assets,
-		gitWatchers:    newGitWatchers(),
-		fileWatchers:   newFileWatchers(),
-		gitWrites:      newGitWrites(),
-		commitDrafts:   newCommitDrafts(cfg.StateDir),
-		searchDrafts:   newSearchDrafts(cfg.StateDir),
-		lineComments:   newLineComments(cfg.StateDir),
-		editorRecent:   recent.NewCapped(filepath.Join(cfg.StateDir, "recent-editor-projects.json"), recentEntries),
-		terminalRecent: recent.NewCapped(filepath.Join(cfg.StateDir, "recent-terminals.json"), recentEntries),
-		host:           hostinfo.NewCache(cfg.ProjectsRoot, hostSampleTTL),
-		docker:         dockerService,
-		intel:          intel,
-		voice:          voiceService,
-		plugins:        plugins,
-		deletes:        newProjectDeletes(cfg.StateDir),
+		cfg:             cfg,
+		coders:          coders,
+		shells:          shells,
+		assistants:      conversations,
+		workspace:       workspace,
+		watcher:         watcher,
+		projects:        projects,
+		createProject:   NewProjectCreator(projects, bus),
+		quickOpen:       filesystem.NewQuickOpenCache(),
+		notifier:        notifier,
+		activity:        tracker,
+		bus:             bus,
+		settings:        settingsStore,
+		pusher:          pusher,
+		restorer:        restorer,
+		version:         version,
+		updater:         updater,
+		backups:         backups,
+		assets:          assets,
+		gitWatchers:     newGitWatchers(),
+		fileWatchers:    newFileWatchers(),
+		gitWrites:       newGitWrites(),
+		commitDrafts:    newCommitDrafts(cfg.StateDir),
+		searchDrafts:    newSearchDrafts(cfg.StateDir),
+		lineComments:    newLineComments(cfg.StateDir),
+		editorRecent:    recent.NewCapped(filepath.Join(cfg.StateDir, "recent-editor-projects.json"), recentEntries),
+		terminalRecent:  recent.NewCapped(filepath.Join(cfg.StateDir, "recent-terminals.json"), recentEntries),
+		assistantRecent: recent.NewCapped(filepath.Join(cfg.StateDir, "recent-assistants.json"), recentEntries),
+		host:            hostinfo.NewCache(cfg.ProjectsRoot, hostSampleTTL),
+		docker:          dockerService,
+		intel:           intel,
+		voice:           voiceService,
+		plugins:         plugins,
+		deletes:         newProjectDeletes(cfg.StateDir),
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
 			cfg.LoginRateBlock, cfg.LoginRateMaxAttempts,
@@ -322,7 +328,7 @@ func shouldGzip(c *gin.Context) bool {
 		strings.HasSuffix(req.URL.Path, "/editor/archive") ||
 		strings.HasSuffix(req.URL.Path, "/editor/raw") ||
 		// The assistant serves images, audio and video from here, byte ranged.
-		strings.Contains(req.URL.Path, "/assistant/") && strings.Contains(req.URL.Path, "/media/") {
+		strings.Contains(req.URL.Path, "/assistants/") && strings.Contains(req.URL.Path, "/media/") {
 		return false
 	}
 

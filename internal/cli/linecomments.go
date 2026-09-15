@@ -62,7 +62,7 @@ func newLineCommentListCommand(opts *inspectOptions) *cobra.Command {
 }
 
 func runLineCommentList(out io.Writer, opts inspectOptions, project string, paths []string, contains string, outdated bool) error {
-	client, err := localapi.Dial(opts.stateDir)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
@@ -211,7 +211,7 @@ func runLineCommentAdd(out io.Writer, opts inspectOptions, project, path, lineAr
 	if strings.TrimSpace(note) == "" {
 		return errors.New("nothing to add, the comment text is empty")
 	}
-	client, err := localapi.Dial(opts.stateDir)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
@@ -263,7 +263,7 @@ func runLineCommentRemove(out io.Writer, opts inspectOptions, project string, id
 	if len(paths) == 0 && len(ids) == 0 && !outdated {
 		return errors.New("give at least one id from `line-comment-list`, --path <file> for whole files, or --outdated for the orphans")
 	}
-	client, err := localapi.Dial(opts.stateDir)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}

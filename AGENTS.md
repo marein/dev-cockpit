@@ -91,7 +91,7 @@ test. Update this file when a convention changes.
   when preparing a 2.0.0 release.
 - **Retired addresses redirect.** What a released build handed out keeps
   answering after a surface moves: `/quicknav` to `/ctx/projects`,
-  `/assistant/panel` and `/assistant/history` to `/assistant` (`retiredPath`
+  `/assistant/panel` and `/assistant/history` to `/assistants` (`retiredPath`
   in `router.go`), and `/projects?assistant=<id|open|memory>`, the shape the
   notification entries carry from when the assistant was an overlay, to the
   assistant's own page (`handleProjectsList`). All 308, all TODO(v2.0.0). The
@@ -106,13 +106,15 @@ test. Update this file when a convention changes.
   marks what arrives on it, which is what the session check and the CSRF check
   read. Never add a second writer of the state files, and never let the assistant
   drive tmux directly.
-- **`dev-cockpit assistant …` is internal surface.** Everything the assistant
-  runs sits under that one command group, which shares the `--state-dir` and
-  `--projects-dir` flags. Unlike the rest of the CLI it is exempt from the never
+- **`dev-cockpit assistant …` is internal surface.** Everything an assistant
+  runs sits under that one command group, which shares the `--state-dir`,
+  `--projects-dir` and `--as` flags, the last one naming the assistant that is
+  calling, see the identity rule below. Unlike the rest of the CLI it is exempt from the never
   remove rule above: its names, flags and output are tuned for the model and may
   change with any release, and its help text says so. The generated instructions
-  build every call through `Workspace.CockpitCommand`, so a rename lands in one
-  place. Names are object first and verb last (`coder-send-prompt`, `job-list`,
+  and the check prompt spell every call through the workspace's `cockpit`
+  wrapper (`Workspace.Wrapper`, see the wrapper rule below), so a rename lands
+  in one place. Names are object first and verb last (`coder-send-prompt`, `job-list`,
   `project-delete`), so the flat help list groups itself by object; `status` is
   the one exception, it is about the whole cockpit.
   What is not exempt is the group itself, `serve` and `hash-password`:
@@ -138,20 +140,221 @@ test. Update this file when a convention changes.
   run (timeout and result, one output file for both streams). A run without a
   result did not finish by its own decision, and that is not the same as a
   zero.
-- **One live conversation, and jobs belong to the assistant.** `Service.Current`
-  is the live conversation and `Service.Open` starts one when there is none;
-  nothing that acts carries a conversation id. A watched job outlives the
-  conversation it was asked for and reports into whichever one is live when its
-  check comes back, so a report is never written into a transcript the user has
-  already left. The jobs live on one path, `/assistant/jobs`, which serves the
-  list and takes both actions on it. A check runs in a provider session of its
-  own, which is also why only a chat turn (`RunChat`) may write what a turn
-  reports about the context window onto the conversation: a check's consumption
-  is not the conversation's, and the ring on the new conversation button would
-  otherwise show a stranger's number. On the page a person reads coders, not
-  jobs (the aside, the button and the empty state say steered coders); code,
-  routes, state values, the `dev-cockpit assistant` commands and the
-  notification titles keep job.
+- **Several assistants live side by side, and a job belongs to one of them.**
+  An assistant is one instance: a name, a thread, the coders it steers, and it
+  lives until somebody deletes it. Nothing is archived, nothing is "the live
+  one", and nothing creates one by itself: `Service.Create` is the only way in
+  and the surfaces call it when a person asks. Which one the area's own
+  address opens is decided by `handleAssistantsEntry` alone, see the page
+  rule below: the one looked at last, else the first row.
+  On disk each one owns a directory, `assistant/instances/<id>/` with its
+  `transcript.json`, its `jobs.json`, its `draft.json` and its `workspace/`,
+  so what belongs to one conversation is deleted and backed up as one thing;
+  `assistant.json` stays the index. The workspace is where that assistant's
+  turns run, with `assistant-files/` for what it writes, `user-upload/` for
+  what a message carried, and its own generated `CLAUDE.md`, `AGENTS.md` and
+  `cockpit` wrapper (`generatedFiles`, noise in a backup, dropped by the move);
+  an assistant comes to it the way every directory here comes to be, on first
+  use through `Workspace.Workdir`, no migration makes one. Before every turn
+  the coder's CLI is told to trust it (`assistant.WorkdirTruster`, claude and
+  copilot answer it), because a non interactive turn cannot answer a trust
+  dialog. What is shared is the memory, `assistant/memory/`, because what the
+  user told one assistant holds for all of them; everything of one
+  conversation is separated by its directory, and that separation is **order,
+  not protection**: an assistant may read another's transcript and another's
+  workspace, it writes only its own. There is no way to send another assistant
+  anything, work is handed to coders, and no assistant may delete itself.
+  **A job carries its owner**, and the owner is the directory it was read from
+  (`Job.Owner`, `json:"-"`, filled by `Jobs.Of`). A check wakes that assistant
+  and its report is written into that thread, never into whoever is on screen.
+  One terminal carries at most one job: a second assistant steering a coder
+  somebody already steers is refused **by name**, releasing somebody else's job
+  is refused the same way, and only the user may take a coder off an assistant.
+  Sending a prompt to any terminal stays allowed and makes nothing yours, which
+  is why `NoteAssistantInput` counts only the steering assistant's own send.
+  Deleting an assistant takes its jobs with it: the open ones are read before
+  the delete, the entries go with the directory, and only after the delete
+  went through does `Watcher.Dropped` kill their running checks and announce
+  their projects, so a delete that fails keeps the assistant with its jobs
+  steering; the answer names the coders that came back. The jobs live on one
+  path, `/assistants/jobs`, which serves
+  the list (`?assistant=<id>` narrows it to one) and takes both actions on it.
+  Two routes make a job, `/assistants/jobs` and the `done_when` of
+  `/coders/new`, and both read the owner through `steerOwner`: a job built
+  without one is refused by the watcher. The create already started the coder,
+  so it reports that refusal as `steerError` in its answer instead of ending
+  the request.
+  A check runs in a provider session of its own, which is also why only a chat
+  turn (`RunChat`) may write what a turn reports about the context window onto
+  the assistant: a check's consumption is not the thread's. On the page a
+  person reads coders, not jobs (the aside, the button and the empty state say
+  steered coders); code, routes, state values, the `dev-cockpit assistant`
+  commands and the notification titles keep job.
+- **One chat turn per assistant, and the queue is that assistant's.** A second
+  prompt into an assistant that is answering waits: it goes into the transcript
+  as `StateQueued`, the page shows it as Waiting and offers to take it back
+  (`Service.Discard`), and the end of the turn sends everything waiting as
+  exactly one new turn (`Service.flushReady`, called from the settle and once
+  per assistant after `Recover`, so a queue survives a restart). The queue
+  belongs to the one assistant, so a thread that is thinking holds up nothing
+  but itself and every other assistant answers at the same time; the decision
+  falls under the service lock, the same one the turn's end takes, so a send
+  racing that end either queues or starts. `MaxQueuedMessages` bounds what may
+  wait. Across assistants there is no
+  cap at all, one that answers "busy" because another is thinking is one nobody
+  can rely on. What **is** capped globally is the checks, the turns nobody asked
+  for interactively: `assistant-max-checks`, a setting on
+  `/settings/assistant/jobs`, default `assistant.DefaultConcurrentChecks`, read
+  again before every check so a change applies without a restart, and a check
+  that has to wait still happens.
+- **The unsent message is a file of its own.** `instances/<id>/draft.json`
+  through `assistant.DraftStore`, reached by the `Drafts` registry the way the
+  jobs are: a draft is saved every time the typing pauses (200ms in
+  `assistant.js`), and writing it into the transcript meant rewriting a thread
+  that grows without bound, plus its index entry, for a keystroke. A draft save
+  touches that one file and announces the `draft` event, nothing else. A draft
+  written before the move is carried over on the first read, once, marked
+  TODO(v2.0.0). Two saves can be in the air at once, so the answer of an
+  overtaken one is dropped rather than moving this device's watermark backwards.
+- **The list of assistants is sorted by hand.** `POST /assistants/order` takes
+  the ids top first and `Store.Reorder` writes the index in that order: the
+  index array **is** the order, so nothing carries a position and nothing can
+  disagree with anything. A posted order is read as a permutation of the seats
+  those assistants already hold, the way `applyTabOrder` reads the tab strip's,
+  so an assistant the post never saw keeps its exact seat. A new one goes to the
+  top, and an answer arriving in one moves nobody. The gesture is not a second
+  one beside the strip's: both lists run `@dc/rowdrag`, whose defaults *are*
+  the strip's behaviour, so a mouse drags a row from anywhere and a finger from
+  the grip at the end of the row, behind the three dots, where the strip's
+  grip stands. **Ctrl+Tab steps through the assistants** and wraps at both
+  ends, the strip's own gesture (`stepAssistant`, the `pendingIndex` of
+  `switchTo`, so mashing the key walks the list instead of bouncing between two
+  rows while a page loads). It hangs on `dc-assistant` in the document's
+  capture phase, so it is caught with the cursor in the composer, and it reads
+  the rows of the page's own column (`.dc-app > .dc-ctx[data-assistant-rows]`),
+  never the phone's sheet, which holds the same rows a second time. A row says
+  the name, the coder, how many messages and when, and its badges keep the
+  right edge whatever the name is: a title long enough to truncate must not
+  carry them out of line with the rows above. The preview of the last message
+  is not on the row, `Summary.Preview` and the `preview` field stay for what
+  `dev-cockpit assistant assistant-list` prints. The column passes three things of its own: its grip
+  (`[data-assistant-grip]`), its classes (`.dc-rows-dragging`,
+  `.dc-row-dragging`) and `capture: "drag"`. That last one is not a taste:
+  the row is a container with the link inside it, and a capture taken on the
+  press retargets the click that follows to the row, so every click that opens
+  an assistant would be swallowed. Taking it when the drag begins releases the
+  grip's **implicit touch capture** and fires `lostpointercapture` before the
+  row has moved a pixel, so only the capture the drag itself holds may end a
+  drag (`event.target === drag.row`), or no finger ever sorts anything.
+- **Nobody sweeps the assistant's disk but the startup sweep.**
+  `Store.SweepOrphans` removes an instance directory the index does not list,
+  workspace included, invisible from every surface and collected by nothing
+  else. It reads the index itself instead of through the store, and it sweeps
+  only when that read produced entries: a corrupt state file is quarantined as
+  `<path>.broken` and reads as absent afterwards, so a sweep trusting an empty
+  read would delete every assistant on disk the one time the index cannot be
+  parsed. The check session sweep at startup asks `Workspace.IsWorkdir` whether
+  a session ran in some assistant's workspace, whoever that assistant was.
+- **An assistant knows who it is from its own instruction file.** The
+  generated `CLAUDE.md`/`AGENTS.md` in an instance's workspace are that
+  assistant's, rebuilt from the memory right before every turn of its
+  (`Workspace.Prepare`, through `preparingRunner`) and by the memory page for
+  every assistant that has a workspace: they carry its id, its name, its
+  workspace path, the memory, and every cockpit command through its wrapper.
+  Nothing is said in a prompt, so the transcript keeps showing what the user
+  typed, and a check reads the same file because it runs in the same
+  workspace.
+- **A cockpit command is `./cockpit`, the wrapper.** Every workspace carries a
+  generated executable, `<workspace>/cockpit` (`Workspace.Wrapper`, written by
+  `Workspace.write` with the instruction files, so it is rewritten before every
+  turn): `exec <binary> assistant --state-dir … --projects-dir … --as <id> "$@"`.
+  The instructions and the check prompt (`Watcher.cockpit`, through the
+  `cockpitNamer` the workspace implements) spell every example as `./cockpit …`
+  (`shortCockpit`), the script in the directory the turn starts in, and name
+  the absolute path exactly once, with the sentence that it is the spelling for
+  a turn standing in another directory, which happens all the time and often in
+  the same line as `cd <project> && …`. They name nothing else, so a check
+  reads one spelling of a command and a turn cannot drop or misspell a flag. A
+  caller without a workspace to ask (the plain `wakePrompt`) falls back to
+  `dev-cockpit assistant` and names no path.
+- **A check runs in its assistant's workspace and reads the assistant's own
+  instructions.** No directory and no shorter file of its own: every ability a
+  conversation has, the files it can hand over, what it knows about the user,
+  is one a check may need for its report, which goes to the user like an
+  answer does, and every ability struck from a check would have to be written
+  back in one by one, the next gap noticed only when a job dies of it
+  (decided 2026-09-16 after both had been built and taken out again).
+- **The texts the cockpit writes for an assistant are templates.**
+  `internal/assistant/templates/*.tmpl`, text/template files embedded by
+  `templates.go` and filled through `render`: the instruction files, the
+  wrapper, the check prompt (`wake_prompt.md.tmpl`,
+  it also sends a check to the project's own instruction files when a
+  criterion touches conventions or gates, naming no file list because the
+  names differ per project and coder, and it draws the line on long runs: a
+  suite, an e2e pass, a build are the coder's work, the check judges the
+  report and verifies cheaply, a criterion that needs a long run goes to the
+  coder as WORKING with what was sent, and a verdict comes in time whatever is
+  still open; the assistant's own instructions say the same from the writing
+  side, long runs into the coder's task with the proof in the criterion) and
+  the three reports a check ends in. They read like text and are edited as
+  text; the Go side hands over typed data (`instructionsData`, `wrapperData`,
+  `wakeData`, `reportData`) and nothing else. A paragraph stays on one line in
+  a template, so a pinned sentence in a test matches the file. The
+  instructions ride along in every turn and every check, so they carry the
+  rules and not the reference: what a command's flags do is in that command's
+  `--help`, the instructions point there, and `TestTheHelpCarriesWhatTheInstructionsDelegate`
+  in the cli package pins that the help really says it, so the pointer never
+  leads nowhere.
+- **Who is calling on the local socket is a different question from whether
+  they may.** Reaching the socket is the whole credential and `localCall`
+  answers that and nothing else. Which assistant is acting is the `--as <id>`
+  flag on the assistant command group, handed to `localapi.Dial` and sent on
+  `localapi.AssistantHeader` by every local API request, so a command run by a
+  turn says who it is and one typed by a person says nothing. It is a flag and
+  not the environment because the workspace's wrapper carries it into every
+  call, so it is never remembered by a model, it stands on exactly the call it
+  belongs to instead of on every shell below a turn, and it reads in every log
+  line; it is `--as` because `job-list --assistant` already means whose jobs. `Server.callingAssistant` checks the id against the assistants
+  that exist, so a stale id reaches nothing, and everything that has to be
+  charged to somebody refuses on an empty answer rather than picking one, with
+  a sentence that names the flag (`assistantCallerRefusal`).
+- **The one conversation layout migrates once.** A state directory holding the
+  shape of the last release (`assistant/conversations/`, `jobs.json` and one
+  shared `workspace/` with the memory in it) is moved at startup by
+  `internal/assistant/migrate.go`, and that is the only shape it reads: the
+  conversation that was live becomes the first assistant with the jobs and
+  with the whole shared workspace as its own (the files every conversation
+  wrote, its own uploads flattened into `user-upload/`, the generated files
+  dropped), the memory moves up to `assistant/memory/`, and every other
+  conversation is deleted with the directory that held them and its uploads:
+  each had lost its provider session when it was archived, so nobody could
+  ever answer in one again, and a hundred threads nobody can answer in would
+  make the one list that matters unreadable. A link an old answer carries
+  (`assistant-files/x`) lands on the moved file because a link is read in the
+  workspace of the assistant whose answer it is; an attachment is found by its
+  name in that assistant's upload folder (`attachmentPath`), never by the
+  absolute path the transcript stored. The backup keeps the three source names
+  of the release (`conversations`, `jobs.json`, `workspace`, TODO(v2.0.0)) so
+  an old archive still lands in the layout this move reads.
+- **The area is `/assistants`, and the old subtree keeps landing.** Every
+  address under `/assistant` answers 308 to its plural twin
+  (`movedAssistantPath`, TODO(v2.0.0)), because a stored push message and a
+  notification entry point at `/assistant/<id>`; `/ctx/assistant` does the same
+  for the phone's sheet. Nothing in the old subtree answers in place, not even
+  `/assistant/jobs` and `/assistant/conversations`, the paths the released CLI
+  called over the socket (removed 2026-09-17): no released CLI can reach this
+  server. A turn runs the binary on disk, through the workspace's wrapper or
+  by the absolute path the released instructions spelled, and a self update
+  replaces that file in place, so after the restart every command a turn runs
+  is the new binary calling the new paths; the old image lives on only in the
+  server process that is being replaced, and it calls nothing. What that
+  window costs is a check instructed by the old binary: its commands run the
+  new one without `--as`, are refused where an owner is needed, and the
+  standstill rule ends the job as BLOCKED once, at the update. The area is
+  plural everywhere it is named, like Projects and Terminals,
+  because several things live behind it; the page title of one open assistant
+  ("Name - Assistant") and the `dev-cockpit assistant` command group stay
+  singular, they name one.
 - **A turn's answer is blocks, and the seam between two of them is read, never
   guessed.** An answer that works with tools arrives in several text blocks, and
   every runner hands them over as one stream of deltas the turn appends as it
@@ -165,6 +368,16 @@ test. Update this file when a convention changes.
   blocks, never in front of a turn's first and never behind its last, so the
   stored answer keeps its own ends, and a provider version that stops naming its
   boundaries falls back to the plain appended answer.
+- **The streamed tail stands where the renderer put the mark.** A streaming
+  answer is the prefix the server rendered plus the raw text that arrived
+  since, and only a Markdown parser knows whether that text continues the open
+  paragraph, list item or code block. So `publishRender` renders the prefix
+  with `assistant.RenderMark` behind it (a word joiner), and `assistant.js`
+  puts the tail span where that character came out, cutting it away. A mark the
+  render swallowed (a table row, dropped raw HTML) leaves the tail behind the
+  prefix, where it stood before. The page parses no model output for this, and
+  hanging the tail behind the markup is what made a sentence still being typed
+  read as two paragraphs.
 - **A picture in the transcript brings its own ratio, and the three places that
   write one write it the same way.** `filesystem.ImageSize` answers with the
   size the browser draws the file at, which for a photo out of a phone is not
@@ -1745,7 +1958,7 @@ test. Update this file when a convention changes.
   piper pair downloads. A model loads before the port binds, so a changed option cannot
   reach a warm engine: `ensureRunning` compares the running container's option
   against the current one and starts over when they differ.
-  Speech to text is `POST /assistant/:id/stt`: the clip is whatever
+  Speech to text is `POST /assistants/:id/stt`: the clip is whatever
   MediaRecorder produced, webm/opus mostly and mp4/aac on Safari, the engine
   decodes either, and whisper detects the language per utterance, so German,
   English and mixed input work without a language setting. Push to talk lives
@@ -1779,7 +1992,7 @@ test. Update this file when a convention changes.
   types nothing; the default is taken off every clean tap's keyup, because
   Firefox on Windows otherwise hands a bare Alt keyup to its menu bar and
   parks the focus outside the page. Text to speech is
-  `GET /assistant/:id/messages/:messageId/audio`, synthesized per request and
+  `GET /assistants/:id/messages/:messageId/audio`, synthesized per request and
   never stored: a spoken answer is a couple of seconds of engine time and
   megabytes of uncompressed audio, so saying it again is cheaper than keeping
   it, and nothing of a conversation then lies outside its transcript, with no
@@ -2109,7 +2322,7 @@ test. Update this file when a convention changes.
   a morph, nothing is diffed and nothing is kept alive.
 - **The shell:** every app page stands in one grid, `.dc-app` in
   `layout.gohtml`: the rail of areas on the left (`shell_rail.gohtml`, the
-  Projects, Terminals, Editor and Assistant entries, Settings and Docs at the
+  Projects, Terminals, Editor and Assistants entries, Settings and Docs at the
   foot with the theme button, the update button, the bell and the logout, all
   32px with 20px glyphs), an
   optional list column (`.dc-ctx`), the work surface (`.dc-work`) and one
@@ -2208,9 +2421,9 @@ test. Update this file when a convention changes.
   project. The `.dc-ctx-body` scroll position goes under
   `dc-ctx-scroll:<area>` through `keepCtxScroll`, but only for a column that
   asks with `data-ctx-keep-scroll` (`KeepScroll` in `ctx_start.gohtml`, the
-  projects column and nothing else): the terminals strip centers its active
-  row on connect (`revealActive(true)`) and the assistant's list opens on the
-  current conversation, a put back position would undo both. The phone's
+  projects column and nothing else): the terminals strip and the assistants
+  list center their active row on connect (`revealActive(true)`), a put back
+  position would undo it. The phone's
   sheet reads the same attribute off the column it just built, so the
   projects sheet comes back where it was left and the others open at their
   top (`ctx-sheet.js`, after `decorate()` so the sort and the filter have
@@ -2252,14 +2465,19 @@ test. Update this file when a convention changes.
   row the three dots (`[data-tab-menu]`, opens the row's context menu at the
   button) and the grip (`[data-tab-grip]`): on touch a drag starts only from
   the grip, the strip itself is `touch-action: pan-y`, so a finger on the
-  row scrolls. The terminals sheet opens with the current row centered
-  (`revealActive(true)`, the focused member's row when the page is a split;
-  refreshes keep `nearest`, so a live update never moves the list). A drag
+  row scrolls. The terminals sheet and the assistants sheet open with the current row
+  centered (`revealActive(true)` on both elements, the focused member's row
+  when the page is a split; refreshes keep `nearest`, so a live update never
+  moves the list). A drag
   moves units: a split row travels with its member rows (`unitRows`, one
   transform for all of them, the others shift by the unit's height), the
   edge zone is measured on the scroller (`.dc-ctx-body` in the column and
   the sheet), and the click suppression after a drag lasts one task, a
-  touch drag has no click to swallow and the next tap must land. The carried
+  touch drag has no click to swallow and the next tap must land. The gesture
+  itself is `@dc/rowdrag`, whose defaults are this strip's behaviour to the
+  pixel, and the assistants' column is the other caller: it passes what differs
+  there and changes nothing here. The strip captures the pointer on the press
+  and measures from where the threshold was crossed. The carried
   rows are the topmost thing on the page (`.terminal-tab-dragging`, opaque,
   a z-index above every layer) and the row under the pointer wears the 2px
   frame of the drop target (`.terminal-tab-group-target`), the active row
@@ -2274,7 +2492,7 @@ test. Update this file when a convention changes.
   member (phone only, `data-tab-group` names the split, no `terminal-tab`
   class so the strip order never sees them), whose menu adds *Remove from
   split view* (`POST /terminal-tabs/ungroup` with that one id) and whose
-  grip reorders the members among themselves (`drag.member`, no group
+  grip reorders the members among themselves (`memberGroup`, no group
   target, `POST /terminal-tabs/group` with the member ids in the new order,
   which is what sets `@dc_tab_gpos` and so the pane order everywhere). The projects sheet refetches on `projects` and `terminals`
   events, the terminals sheet is a `terminal-tabs` instance and refetches on
@@ -2602,29 +2820,48 @@ free floating page scripts.
   hidden instance leaves direct Ctrl+Tab to the page (the editor binds it for
   its own tabs) and pulls the `/terminal-tabs` fragment lazily when the
   switcher opens instead of on every `terminals` event. The switcher is a
-  quick-access palette: active terminals, an Assistant row, inactive coders,
+  quick-access palette: active terminals, an Assistants row, inactive coders,
   an Editors section (one row per project, `ProjectNav.EditorURL`) and a New
   section (New coder / New shell rows reusing the plus menu links, so the
   current project is preselected on the create form), all filterable. The
   assistant link and the `[data-tabs-editors]` list are hidden data inside
   the plus menu, never menu entries: the menu itself offers only what creates
   a terminal.
-- **The assistant is a page.** `/assistant` opens the live conversation
-  (`Service.Open`, starting one when there is none) and sends the browser to
-  `/assistant/:id`, which `assistant_page.gohtml` renders: the list column
+- **The assistants are a page.** `/assistants` is the area's entry and decides
+  in `handleAssistantsEntry`, never in a rendered link, which one opens: the
+  assistant last looked at (`assistantRecent`), else the first row of the hand
+  sorted list, and the empty state only when there is no assistant at all. Like
+  the terminals entry it answers with a **See Other and `Cache-Control:
+  no-store`**, never a permanent redirect, or the browser would keep reopening
+  the assistant of the first click. The list is not the other half of that
+  choice, it stands in the column beside the thread and marks the open row,
+  here and in the phone's sheet, which render the same column.
+  `/assistants/:id` opens one, and
+  `assistant_page.gohtml` renders both: the list column
   (`assistant_ctx.gohtml`, a `dc-assistant-list` with the `history` attribute
   as the `.dc-ctx` itself, so it refreshes its `[data-assistant-body]` from
-  `/ctx/assistant?path=` on the assistant event and its rows carry the
-  conversation menu; the conversation that still takes messages under its own
-  head, the rest under Earlier, the new conversation control in the head with
-  its own form id prefix, and the phone's sheet adopts the same column through
-  `/ctx/assistant`), then `dc-assistant` as the work column itself
+  `/ctx/assistants?path=` on the assistant event and keeps the marked row in
+  view over the swap (`revealActive()`, `nearest`) after centering it on
+  connect (`revealActive(true)`, the strip's way, called once more by the
+  sheet after its filter ran), its rows carry the assistant
+  menu and are dragged into order, the new assistant control sits in the head
+  with its own form id prefix, and the phone's sheet adopts the same column
+  through `/ctx/assistants`, with the phone's `ctx_filter.gohtml` row over the
+  rows like every other list column), then `dc-assistant` as the work column itself
   (`class="dc-work"`, so the head's voice menu and the composer are its
   children), and an aside (`offcanvas-xl offcanvas-end`,
   never with the plain `offcanvas` class, which would keep it fixed) that
-  stands inline from xl up with the steered coders as a self refreshing list,
+  stands inline from xl up with the steered coders as a self refreshing list
+  (each row offers both ways to look at that coder, its screen and the editor
+  on the project it works in, the second one only where there is a project, and
+  the two names on the row are those ways too: the coder's name opens the
+  coder, the project's name the project),
   and below xl is the sheet the head's steering wheel (`d-xl-none`) opens.
-  That wheel carries the open jobs as a count in its corner, not as a number
+  The aside's own head (`dc-ctx-head` with the title and the close, the
+  sheet's way out) wears `d-xl-none` too: inline it stands under the page's
+  head, nothing is there to close, and the list starts at once. The width
+  decides, never the offcanvas state, it is one element in both sizes; Tabler
+  hid the old `offcanvas-header` the same way. That wheel carries the open jobs as a count in its corner, not as a number
   beside it: `.dc-steer-badge` is absolute in the button, `var(--dc-steer)` on
   white. Its size is set against the head button, not copied from the rail's
   count: the head's `btn-icon` is 28px where the rail's is 40px, so a 16px mark
@@ -2637,15 +2874,14 @@ free floating page scripts.
   it is the offcanvas body's padding, like left and right.
   The memory is a sheet of the layout (`assistant_memory_sheet.gohtml`,
   `#assistant-memory`, a plain `offcanvas` next to the ctx sheet on every
-  page), opened by the brain in the conversation list's head, from the
-  assistant page's column and from the phone's sheet on any page alike (the
-  ctx sheet closes on `show.bs.offcanvas`); it renders empty and its
-  `dc-assistant-list` pulls `/assistant/memory` on every `show.bs.offcanvas`
-  and counts the entries into the header badge, so no page pays for the list.
-  The add form ids carry `AssistantMemoryData.Prefix` (`/assistant/memory?prefix=`).
-  The steered coder rows' actions are `btn-sm`. An earlier conversation renders read-only on its own
-  address with the way to the live one; a conversation's deletion sends the
-  browser to `/assistant`; a notification names `/assistant/<id>#message-<id>`
+  page), opened by the brain in the list's head, from the assistant page's
+  column and from the phone's sheet on any page alike (the ctx sheet closes on
+  `show.bs.offcanvas`); it renders empty and its `dc-assistant-list` pulls
+  `/assistants/memory` on every `show.bs.offcanvas` and counts the entries into
+  the header badge, so no page pays for the list. The add form ids carry
+  `AssistantMemoryData.Prefix` (`/assistants/memory?prefix=`).
+  The steered coder rows' actions are `btn-sm`. Deleting an assistant sends
+  the browser to `/assistants`; a notification names `/assistants/<id>#message-<id>`
   and the surface lands on the message itself (`landOnHash`, pulling
   `?all=1` once when the window held it back) since pe.js scrolls nothing. The
   surface pulls its own address on the assistant event (`syncFromServer`) and
@@ -2878,7 +3114,7 @@ move: the editor's docker segment is exactly that. Then a `ping` frame every
 15s; the client forces a reconnect when the
 stream stays silent past 45s (interval timer plus visibilitychange), because a
 dead socket does not reliably fire an error. The conversation's own stream
-(`/assistant/:id/stream`) carries the same ping on the same beat and is judged
+(`/assistants/:id/stream`) carries the same ping on the same beat and is judged
 by the same 45s, and it needs it more than any other surface: an answer is
 silent while the model thinks, so without a life sign the page would have to
 read that silence as a dead socket and rebuild the stream over and over, each
@@ -2937,7 +3173,15 @@ mark is one dot for the whole app, `news_dot.gohtml`: Tabler's animated
 `status-dot` in blue, nothing of ours repaints it, and one rule in style.css
 (`.dc-news-dot`) puts it on the top right corner of the icon it belongs to. A
 carrier that is no session icon wraps its glyph in a `.dc-news-anchor` to
-offer that same corner. Nothing but the bell counts: the tab bar's Terminals
+offer that same corner. What shows a dot is decided by the dot's own wiring,
+not by its carrier: a dot that names one target is shown by that session
+icon's `news` class, and a dot that brings its wiring along (`data-notify-any`
+for a whole area, `data-notify-project-dot` for a scope) governs itself
+through `d-none` wherever it hangs, session icon included
+(`.dc-term-icon > .dc-news-dot:not([data-notify-any])` is what the icon
+hides). That is why the assistants' entries keep the session icon look
+(`.dc-term-icon.assistant`, the sparkles in its round badge) and still wear a
+mark that stands for every assistant. Nothing but the bell counts: the tab bar's Terminals
 button used to carry a number and wears the dot now, and the rail's Terminals
 button, which carried nothing, wears it too. That button also means what it
 says: a terminal is a coder or a shell, so a compose action, a backup job, a

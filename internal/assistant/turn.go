@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,8 +24,8 @@ type activeRun struct {
 	rec  RunRecord
 	proc detach.Process
 	// launched says proc is real. A chat turn is registered before its
-	// process exists, so a send in the launch window queues and a stop is
-	// kept; both read this under the service lock, which is also where
+	// process exists, so a send in the launch window queues behind it and a
+	// stop is kept; both read this under the service lock, which is also where
 	// launchAndFollow sets it.
 	launched bool
 	done     chan struct{}
@@ -41,46 +40,6 @@ type activeRun struct {
 	// outcome and err are what a check concluded, valid once done is closed.
 	outcome wakeOutcome
 	err     error
-}
-
-// slots bound how many turns run at once. It is a counter and not a channel
-// because a restart has to be able to take slots for turns that were already
-// running: the limit governs what may start, it can never refuse a turn that is
-// already on the machine.
-type slots struct {
-	mu    sync.Mutex
-	limit int
-	held  int
-}
-
-func newSlots(limit int) *slots { return &slots{limit: limit} }
-
-// take reserves a slot, or reports that the limit is reached.
-func (s *slots) take() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.held >= s.limit {
-		return false
-	}
-	s.held++
-	return true
-}
-
-// adopt takes a slot for a turn that is already running, past the limit if it
-// has to. More turns than the limit can only happen after a restart, and it
-// settles by itself as they end.
-func (s *slots) adopt() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.held++
-}
-
-func (s *slots) release() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.held > 0 {
-		s.held--
-	}
 }
 
 // launch starts one turn and writes it into the register. From this moment the
@@ -117,8 +76,8 @@ func (s *Service) launch(rec *RunRecord, runner Runner, req TurnRequest) (detach
 // launchAndFollow is the second half of a chat turn's start, off the service
 // lock: the run in the register of running turns already says the turn
 // exists, this makes it true. With the run registered first, a send in the
-// launch window queues instead of starting a second turn, and a stop in that
-// window is kept: the process is killed the moment it begins. The register
+// launch window is refused instead of starting a second turn, and a stop in
+// that window is kept: the process is killed the moment it begins. The register
 // entry is only written when the process starts, so a stop from the window
 // writes its mark here, where the entry finally exists.
 func (s *Service) launchAndFollow(a *activeRun, runner Runner, req TurnRequest) {
@@ -154,7 +113,7 @@ func (s *Service) follow(a *activeRun, runner Runner) {
 		// The context reading only travels with a chat turn. Every other kind
 		// runs in a provider session of its own that nothing continues, a
 		// check's above, so what it consumed says nothing about the
-		// conversation it reports into and would overwrite the chat's own
+		// instance it reports into and would overwrite the chat's own
 		// number with a stranger's.
 		if a.rec.Kind != RunChat {
 			usage = nil
@@ -163,7 +122,7 @@ func (s *Service) follow(a *activeRun, runner Runner) {
 	}
 }
 
-// read turns the raw output of a turn into the conversation's stream and
+// read turns the raw output of a turn into the instance's stream and
 // returns the answer, the context reading the turn reported, and whatever went
 // wrong.
 func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, error) {
@@ -201,7 +160,9 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 
 	// publishRender sends the answer so far as HTML. Markdown only survives
 	// being cut mid document when something re-renders the whole prefix, so
-	// this is where the formatting comes from while the text streams.
+	// this is where the formatting comes from while the text streams. The
+	// prefix is rendered with RenderMark behind it, which is how the page
+	// learns where the text after this render goes.
 	publishRender := func() {
 		if s.render == nil || !live {
 			return
@@ -213,13 +174,13 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 		if !renderAt.IsZero() && time.Since(renderAt) < renderInterval(len(text)) {
 			return
 		}
-		html, err := s.render(text)
+		html, err := s.render(text + RenderMark)
 		if err != nil {
 			return
 		}
 		renderAt = time.Now()
 		renderLen = len(text)
-		s.hub.publish(a.rec.Conversation, StreamEvent{Kind: FrameHTML, RunID: a.rec.ID, MessageID: a.rec.MessageID, HTML: html})
+		s.hub.publish(a.rec.Instance, StreamEvent{Kind: FrameHTML, RunID: a.rec.ID, MessageID: a.rec.MessageID, HTML: html})
 	}
 
 	for events != nil {
@@ -233,19 +194,19 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 			case EventDelta:
 				if buf.Len()+len(ev.Text) > MaxResponseBytes {
 					if turnErr == nil {
-						turnErr = errors.New("The answer grew past the size this conversation can hold. The part received so far is kept.")
+						turnErr = errors.New("The answer grew past the size this instance can hold. The part received so far is kept.")
 						a.proc.Kill()
 					}
 					continue
 				}
 				buf.WriteString(ev.Text)
 				if live {
-					s.hub.publish(a.rec.Conversation, StreamEvent{Kind: FrameDelta, RunID: a.rec.ID, MessageID: a.rec.MessageID, Text: ev.Text})
+					s.hub.publish(a.rec.Instance, StreamEvent{Kind: FrameDelta, RunID: a.rec.ID, MessageID: a.rec.MessageID, Text: ev.Text})
 					publishRender()
 				}
 			case EventTool:
 				if live {
-					s.hub.publish(a.rec.Conversation, StreamEvent{Kind: FrameTool, RunID: a.rec.ID, MessageID: a.rec.MessageID, Text: ev.Text})
+					s.hub.publish(a.rec.Instance, StreamEvent{Kind: FrameTool, RunID: a.rec.ID, MessageID: a.rec.MessageID, Text: ev.Text})
 				}
 			case EventUsage:
 				// Nothing goes out while the answer streams: the number moves
@@ -329,7 +290,7 @@ func (s *Service) settleChat(a *activeRun, text string, usage *ContextUsage, tur
 	state, message := a.turnState(turnErr)
 
 	s.mu.Lock()
-	c, ok := s.store.Load(a.rec.Conversation)
+	c, ok := s.store.Load(a.rec.Instance)
 	if ok {
 		for i := range c.Messages {
 			if c.Messages[i].ID != a.rec.MessageID || c.Messages[i].RunID != a.rec.ID {
@@ -338,13 +299,13 @@ func (s *Service) settleChat(a *activeRun, text string, usage *ContextUsage, tur
 			c.Messages[i].Content = text
 			c.Messages[i].State = state
 			c.Messages[i].Error = message
-			// The reading belongs to the conversation this turn ran in, so it is
+			// The reading belongs to the instance this turn ran in, so it is
 			// written where the answer is written and only when the turn really
 			// reported one: a failed turn leaves the last known number standing
 			// rather than clearing the ring. Only a chat turn gets this far, and
 			// that is what makes the number the chat's own: everything else runs
 			// in a provider session of its own, so its context is not this
-			// conversation's, see the kind filter in follow.
+			// instance's, see the kind filter in follow.
 			if usage != nil {
 				reading := *usage
 				c.Context = &reading
@@ -353,22 +314,17 @@ func (s *Service) settleChat(a *activeRun, text string, usage *ContextUsage, tur
 			s.store.Save(c)
 			break
 		}
-		// A new conversation was started while this one was still answering:
-		// the archive left its provider session alone for exactly this moment.
-		if c.Status == StatusArchived {
-			s.dropSessionLocked(c)
-		}
 	}
 	s.mu.Unlock()
 
 	// The end frame goes out before the turn stops counting as running, so
-	// nothing can see an idle conversation while its stream still says an
+	// nothing can see an idle instance while its stream still says an
 	// answer is on the way.
 	context := 0
 	if usage != nil {
 		context = usage.Percent()
 	}
-	s.hub.publish(a.rec.Conversation, StreamEvent{
+	s.hub.publish(a.rec.Instance, StreamEvent{
 		Kind:      FrameEnd,
 		RunID:     a.rec.ID,
 		MessageID: a.rec.MessageID,
@@ -389,19 +345,18 @@ func (s *Service) settleChat(a *activeRun, text string, usage *ContextUsage, tur
 	delete(s.running, a.rec.ID)
 	s.mu.Unlock()
 
-	s.chatSlots.release()
 	s.changed()
 	// A finished answer is news, and so is one that died on the way: the whole
 	// point of asking from a phone is not to sit and watch. Only a turn the
 	// user stopped stays silent, they were there when it happened.
 	if s.onDone != nil && (state == StateComplete || state == StateFailed || state == StateInterrupted) {
-		s.onDone(a.rec.Conversation)
+		s.onDone(a.rec.Instance)
 	}
-	// The end of a turn is what lets the queue go: whatever waited while this
-	// one ran goes out as one new turn now. After the news above, so the entry
-	// still points at the answer that just settled, not at the placeholder the
-	// flush is about to write.
-	s.flushReady()
+	// The end of a turn is what lets this assistant's queue go: whatever waited
+	// while it ran goes out as one new turn now. After the news above, so the
+	// entry still points at the answer that just settled, not at the
+	// placeholder the flush is about to write.
+	s.flushReady(a.rec.Instance)
 }
 
 // settleCheck ends a check. It writes nothing anywhere: what the answer means
@@ -413,7 +368,7 @@ func (s *Service) settleCheck(a *activeRun, text string, turnErr error) {
 	// The session of a check is its own and nothing continues it, so it goes
 	// when the check does. A session that refuses to go keeps its reservation
 	// and cannot turn up as a resumable coder.
-	s.dropSessionLocked(Conversation{
+	s.dropSessionLocked(Instance{
 		Summary:         Summary{CoderID: a.rec.CoderID},
 		NativeSessionID: a.rec.SessionID,
 	})
@@ -476,11 +431,6 @@ type AdoptedCheck struct {
 func (s *Service) Recover() []AdoptedCheck {
 	var adopted []AdoptedCheck
 	followed := map[string]bool{}
-
-	// The queue flush waits until the whole register is walked: an orphaned
-	// turn settles right here in the loop, and a flush started at that moment
-	// could run next to a turn of the same conversation that is still a few
-	// entries further down.
 	s.mu.Lock()
 	s.recovering = true
 	s.mu.Unlock()
@@ -521,12 +471,11 @@ func (s *Service) Recover() []AdoptedCheck {
 			seen.MessageID = rec.MessageID
 			adopted = append(adopted, AdoptedCheck{Terminal: rec.Terminal, Context: seen, run: a})
 		default:
-			s.chatSlots.adopt()
 			followed[rec.MessageID] = true
 			// The page gets the whole answer again: the file is read from its
 			// first byte, so a browser that reconnects sees what was there
 			// before the restart and everything after it, without a reload.
-			s.hub.publish(rec.Conversation, StreamEvent{Kind: FrameStart, RunID: rec.ID, MessageID: rec.MessageID, State: string(StateStreaming)})
+			s.hub.publish(rec.Instance, StreamEvent{Kind: FrameStart, RunID: rec.ID, MessageID: rec.MessageID, State: string(StateStreaming)})
 		}
 		if alive {
 			log.Printf("assistant: turn %s is still running as process %d, reading on", rec.ID, rec.PID)
@@ -541,9 +490,9 @@ func (s *Service) Recover() []AdoptedCheck {
 	s.recovering = false
 	s.mu.Unlock()
 	// A message that queued before the restart is still waiting in its
-	// transcript. When no recovered turn runs for the live conversation it goes
-	// out now; when one does, its own end flushes.
-	s.flushReady()
+	// transcript. Where no recovered turn runs for that assistant it goes out
+	// now; where one does, its own end flushes.
+	s.flushAllReady()
 	return adopted
 }
 
@@ -557,9 +506,6 @@ func (s *Service) orphan(rec RunRecord, cause error) {
 		s.runs.Delete(rec.ID)
 		return
 	}
-	// The slot is taken first and given back by settling, so the books balance
-	// for a turn that is only ever closed.
-	s.chatSlots.adopt()
 	s.settleChat(a, "", nil, cause)
 }
 

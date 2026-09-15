@@ -4,6 +4,10 @@ import "strings"
 
 // TurnRequest is one prompt handed to a provider CLI.
 type TurnRequest struct {
+	// Instance is the assistant this turn belongs to, the one whose workspace
+	// it runs in and whose instructions are rebuilt before it starts. A check
+	// carries the assistant whose job it is.
+	Instance string
 	// SessionID is the provider session this turn belongs to. The first turn
 	// creates it, every later turn resumes it.
 	SessionID string
@@ -11,20 +15,20 @@ type TurnRequest struct {
 	// runner whether the session already exists, so a failed first turn that
 	// still wrote provider state cannot make the retry collide.
 	Resume bool
-	// Title names the provider session on creation, so a transferred conversation
-	// shows up as a coder terminal with the conversation's title.
+	// Title names the provider session on creation, so the coder's own session
+	// list shows it under the assistant's name.
 	Title string
-	// Workdir is the validated project directory the process runs in.
+	// Workdir is the instance's workspace, the directory the process runs in.
 	Workdir string
 	Prompt  string
 }
 
 // MaxSessionNameBytes bounds the name a provider session is created with. A
-// conversation title is written for the page and may be long; copilot refuses a
+// instance title is written for the page and may be long; copilot refuses a
 // name over 100 characters, so a turn hands over a name both CLIs take.
 const MaxSessionNameBytes = 80
 
-// SessionName cuts a conversation title down to a provider session name, on a
+// SessionName cuts an assistant title down to a provider session name, on a
 // rune boundary so a multi byte title never breaks in the middle of a
 // character.
 func SessionName(title string) string {
@@ -113,18 +117,18 @@ type Coders interface {
 	Available() []CoderInfo
 }
 
-// Projects validates the project directory a conversation is bound to.
-type Projects interface {
-	ValidatePath(raw string) (string, error)
-	ProjectNameFor(path string) string
+// Workdirs resolves the directory an instance's turns run in. The assistant
+// workspace implements it.
+type Workdirs interface {
+	// Workdir is the workspace of one instance, created when it is missing.
+	Workdir(instanceID string) (string, error)
 }
 
-// Terminals promotes a conversation's provider session into a coder terminal. The web
-// layer implements it over the coder managers.
-type Terminals interface {
-	// ResumeReserved starts a terminal on an existing provider session and
-	// returns its identifier.
-	ResumeReserved(coderID, sessionID, projectPath, title string) (string, error)
-	// Stop kills a terminal again, used to roll a failed transfer back.
-	Stop(coderID, terminalID string) error
+// WorkdirTruster is the optional capability of a runner whose CLI stops a
+// directory it has never seen on a trust dialog and keeps the answer in its
+// own configuration. A turn runs in a workspace the CLI may never have seen,
+// and a non interactive turn cannot answer a dialog, so the answer is written
+// ahead of the start, the way the coder manager writes it for a terminal.
+type WorkdirTruster interface {
+	TrustWorkdir(dir string) error
 }

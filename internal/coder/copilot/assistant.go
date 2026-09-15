@@ -67,6 +67,13 @@ func (r *runner) DeleteSession(sessionID string) error {
 	return r.sessions.DeleteSession(sessionID)
 }
 
+// TrustWorkdir implements assistant.WorkdirTruster: an assistant's workspace
+// is a directory copilot has never seen, and the answer to its trust prompt
+// is written ahead of the turn the way it is written ahead of a terminal.
+func (r *runner) TrustWorkdir(dir string) error {
+	return runtime{}.TrustWorkdir(dir)
+}
+
 // Command builds one non-interactive copilot turn. A conversation has the same tools as a
 // coder terminal, including the ones that change files and run commands. A
 // non-interactive run cannot ask for a decision, so the approval flags carry

@@ -1,13 +1,20 @@
 const L = require("./lib");
 const { assert, BASE, sleep } = L;
 
-// Coders waking the assistant: a steered job (POST /assistant/jobs with
-// form=steer), the job list fragment (GET /assistant/jobs, swapped by
+// Coders waking their assistant: a steered job (POST /assistants/jobs with
+// form=steer, carrying the assistant it belongs to), the job list fragment
+// (GET /assistants/jobs, narrowed to one assistant with ?assistant=, swapped by
 // dc-assistant-list on the assistant event), the check itself (a wake turn in
 // its own provider session), and what a check leaves behind: one message marked
-// as a check plus cockpit news naming the job when there is something to say,
-// and nothing at all when there is not. The coder's own signal stays quiet while
-// its job is open: its entry is written already read, the report is the news.
+// as a check in the thread of the assistant that steered it, plus cockpit news
+// naming the job when there is something to say, and nothing at all when there
+// is not. The coder's own signal stays quiet while its job is open: its entry is
+// written already read, the report is the news.
+//
+// A job has exactly one owner, and that is what makes the reports land where
+// they belong: a check wakes its owner, a second assistant steering a coder
+// somebody already steers is refused by name, and releasing somebody else's job
+// is refused too.
 //
 // The instance MUST be the assistant one: tests/e2e/fakes ahead of the real CLIs
 // on PATH and a scratch HOME. The signal is injected the way notifications.js
@@ -42,9 +49,9 @@ const { assert, BASE, sleep } = L;
 //   coder-send-prompt`, so it needs the cockpit CLI on the instance's PATH,
 //   which a runner instance has no reason to have; that rule is covered by the
 //   Go test in internal/assistant instead,
-// - a check runs with its own provider session, so the conversation's own turn
+// - a check runs with its own provider session, so the assistant's own turn
 //   stays free: a chat message during a check has to go through, and what the
-//   check consumed stays out of the conversation's context ring, which is why
+//   check consumed stays out of that assistant's context ring, which is why
 //   both fakes report a different number on a check than on a chat turn,
 // - a check counts when it came back, so the counter says how many checks
 //   answered; while one runs the job carries data-assistant-job-checking, which
@@ -72,23 +79,36 @@ async function dismissUpdate(page) {
   await page.waitForSelector(".swal2-container", { state: "detached", timeout: 5000 });
 }
 
-// The assistant has no pages: /assistant redirects to /projects with the
-// query that opens the overlay, so the conversation id comes from the surface
-// element, not from the address.
-async function openAssistant(page) {
-  await page.goto(`${BASE}/assistant`, { waitUntil: "domcontentloaded" });
+// ownAssistant is the assistant this run steers with, and it is one of its own:
+// a job belongs to exactly one assistant and its reports land in that thread,
+// so a run that read somebody else's thread would be reading somebody else's
+// news. It is deleted again in the cleanup check.
+async function ownAssistant(page) {
+  const created = await page.evaluate(async () => {
+    const body = new URLSearchParams({ form: "new", coder: "claude" });
+    body.set("csrf_token", document.querySelector('meta[name="csrf-token"]').content);
+    const res = await fetch("/assistants/new", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: body.toString(),
+    });
+    return (await res.json().catch(() => ({}))).id || "";
+  });
+  assert(created, "the run could not start an assistant of its own");
+  await page.goto(`${BASE}/assistants/${created}`, { waitUntil: "domcontentloaded" });
   await dismissUpdate(page);
   await page.waitForSelector("dc-assistant[ready]", { timeout: 15000 });
-  return page.locator("dc-assistant").getAttribute("conversation-id");
+  return created;
 }
 
-// post sends one of the job forms the way the page's own list does. Jobs belong
-// to the assistant, not to a conversation, so they all go to the one jobs path.
+// post sends one of the job forms the way the page's own list does. One path
+// for every assistant's jobs, because a terminal carries at most one job; which
+// assistant a job is for travels in the form.
 async function post(page, fields) {
   return page.evaluate(async (values) => {
     const body = new URLSearchParams(values);
     body.set("csrf_token", document.querySelector('meta[name="csrf-token"]').content);
-    const res = await fetch("/assistant/jobs", {
+    const res = await fetch("/assistants/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: body.toString(),
@@ -115,7 +135,7 @@ async function startCoder(page, project, name, task) {
 // overlay currently shows.
 async function jobState(page, terminal) {
   return page.evaluate(async (id) => {
-    const res = await fetch("/assistant/jobs", { headers: { Accept: "text/html" } });
+    const res = await fetch("/assistants/jobs", { headers: { Accept: "text/html" } });
     const holder = document.createElement("div");
     holder.innerHTML = await res.text();
     const row = holder.querySelector(`[data-assistant-job="${id}"]`);
@@ -181,11 +201,12 @@ L.runFeature("wake", async ({ page, run }) => {
   let preambleCoder = "";
   let askCoder = "";
   let ringCoder = "";
+  let secondAssistant = "";
 
   await run("a coder starts with its task in the argv", async () => {
     await L.createProject(page, project).catch(() => {});
     projectDir = await L.projectPath(page, project);
-    conversation = await openAssistant(page);
+    conversation = await ownAssistant(page);
     const created = await startCoder(page, projectDir, "wake-task", "Write the README.");
     assert(created.status === 200, `create answered ${created.status}: ${JSON.stringify(created.body)}`);
     coderID = created.body.id;
@@ -195,7 +216,7 @@ L.runFeature("wake", async ({ page, run }) => {
   await run("steering shows the job, and the page may leave the criterion empty", async () => {
     // From the page the criterion is optional: the check then judges against
     // the session's own task, and the job list says so instead of a blank.
-    const open = await post(page, { form: "steer", terminal: coderID, done_when: "" });
+    const open = await post(page, { form: "steer", assistant: conversation, terminal: coderID, done_when: "" });
     assert(open.status === 200, `a page steer without a criterion was refused: ${open.status}`);
     await page.reload({ waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
@@ -206,6 +227,7 @@ L.runFeature("wake", async ({ page, run }) => {
 
     const steered = await post(page, {
       form: "steer",
+      assistant: conversation,
       terminal: coderID,
       task: "Write the README",
       done_when: "WAKE_DONE: README.md exists",
@@ -223,6 +245,7 @@ L.runFeature("wake", async ({ page, run }) => {
   await run("an unknown terminal cannot be steered", async () => {
     const refused = await post(page, {
       form: "steer",
+      assistant: conversation,
       terminal: "11111111-1111-4111-8111-111111111111",
       done_when: "anything",
     });
@@ -256,7 +279,9 @@ L.runFeature("wake", async ({ page, run }) => {
       return data.notifications || [];
     });
     const news = stored.filter((n) => n.targetId === conversation);
-    assert(news.length >= 1 && news[0].title === "Job done.", `unexpected news ${JSON.stringify(news)}`);
+    // One bell for every assistant, so the title names the one that reported.
+    assert(news.length >= 1 && /: job done\.$/.test(news[0].title || ""),
+      `unexpected news ${JSON.stringify(news)}`);
     // The name and the project come from the report's own note, the job the
     // check was about, so the lower line names it without any lookup.
     assert(new RegExp(`^".+" - ${project}$`).test(news[0].detail || ""),
@@ -276,6 +301,7 @@ L.runFeature("wake", async ({ page, run }) => {
     nothingCoder = created.body.id;
     const steered = await post(page, {
       form: "steer",
+      assistant: conversation,
       terminal: nothingCoder,
       task: "Nothing to report",
       done_when: "WAKE_NOTHING: never true",
@@ -296,7 +322,7 @@ L.runFeature("wake", async ({ page, run }) => {
       await sleep(500);
       const state = await jobState(page, nothingCoder);
       checked = !!state && state.state === "steering" && await page.evaluate(async (id) => {
-        const res = await fetch("/assistant/jobs", { headers: { Accept: "text/html" } });
+        const res = await fetch("/assistants/jobs", { headers: { Accept: "text/html" } });
         const html = await res.text();
         return html.includes(`data-assistant-job="${id}"`) && /1 of \d+ checks/.test(html);
       }, nothingCoder);
@@ -316,6 +342,7 @@ L.runFeature("wake", async ({ page, run }) => {
     // one thing a standing job may not end as.
     const steered = await post(page, {
       form: "steer",
+      assistant: conversation,
       terminal: standCoder,
       task: "Something nobody moves",
       done_when: "WAKE_WORKING: never true",
@@ -352,6 +379,7 @@ L.runFeature("wake", async ({ page, run }) => {
     busyCoder = created.body.id;
     const steered = await post(page, {
       form: "steer",
+      assistant: conversation,
       terminal: busyCoder,
       task: "Something that is still running",
       done_when: "WAKE_WORKING: never true",
@@ -386,6 +414,7 @@ L.runFeature("wake", async ({ page, run }) => {
     // loud. Everything before the verdict has to be gone.
     const steered = await post(page, {
       form: "steer",
+      assistant: conversation,
       terminal: preambleCoder,
       task: "Something with a talkative check",
       done_when: "WAKE_PREAMBLE: never true",
@@ -446,6 +475,7 @@ L.runFeature("wake", async ({ page, run }) => {
     // answer write nothing, so the run leaves no message behind.
     const steered = await post(page, {
       form: "steer",
+      assistant: conversation,
       terminal: slowCoder,
       task: "Something long",
       done_when: "SLOW WAKE_NOTHING: never true",
@@ -461,7 +491,7 @@ L.runFeature("wake", async ({ page, run }) => {
     while (Date.now() < deadline && !checking) {
       await sleep(400);
       checking = await page.evaluate(async (id) => {
-        const res = await fetch("/assistant/jobs", { headers: { Accept: "text/html" } });
+        const res = await fetch("/assistants/jobs", { headers: { Accept: "text/html" } });
         const html = await res.text();
         return new RegExp(`data-assistant-job="${id}"[\\s\\S]*?data-assistant-job-checking`).test(html);
       }, slowCoder);
@@ -520,6 +550,7 @@ L.runFeature("wake", async ({ page, run }) => {
     const goneCoder = created.body.id;
     const steered = await post(page, {
       form: "steer",
+      assistant: conversation,
       terminal: goneCoder,
       task: "A job on a coder that gets deleted",
       done_when: "WAKE_NOTHING: never true",
@@ -553,6 +584,7 @@ L.runFeature("wake", async ({ page, run }) => {
     const restartCoder = created.body.id;
     const steered = await post(page, {
       form: "steer",
+      assistant: conversation,
       terminal: restartCoder,
       task: "Survive a restart",
       done_when: "WAKE_RESTART: the check is killed halfway through",
@@ -568,7 +600,7 @@ L.runFeature("wake", async ({ page, run }) => {
     // above may still hold that slot. A queued check would spend this wait
     // sitting in the queue instead of surviving a restart.
     const free = async () => page.evaluate(async () => {
-      const res = await fetch("/assistant/jobs", { headers: { Accept: "text/html" } });
+      const res = await fetch("/assistants/jobs", { headers: { Accept: "text/html" } });
       return !(await res.text()).includes("data-assistant-job-checking");
     });
     const idleBy = Date.now() + 180000;
@@ -608,7 +640,8 @@ L.runFeature("wake", async ({ page, run }) => {
     assert(created.status === 200, `create answered ${created.status}`);
     stopCoder = created.body.id;
     const steered = await post(page, {
-      form: "steer", terminal: stopCoder, task: "Something", done_when: "WAKE_NOTHING: never true",
+      form: "steer",
+      assistant: conversation, terminal: stopCoder, task: "Something", done_when: "WAKE_NOTHING: never true",
     });
     assert(steered.status === 200, `steer answered ${steered.status}`);
 
@@ -617,7 +650,7 @@ L.runFeature("wake", async ({ page, run }) => {
       await fetch(`/coders/${session}/stop`, { method: "POST", headers: { "X-CSRF-Token": token } });
     }, stopCoder);
 
-    await page.goto(`${BASE}/assistant/${conversation}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/assistants/${conversation}`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
     await page.waitForSelector("dc-assistant[ready]", { timeout: 15000 });
     // A stopped coder cannot report again, so a job left steering would wait
@@ -634,30 +667,30 @@ L.runFeature("wake", async ({ page, run }) => {
     assert(created.status === 200, `create answered ${created.status}`);
     const doomed = created.body.id;
     const steered = await post(page, {
-      form: "steer", terminal: doomed, task: "Something", done_when: "WAKE_NOTHING: never true",
+      form: "steer",
+      assistant: conversation, terminal: doomed, task: "Something", done_when: "WAKE_NOTHING: never true",
     });
     assert(steered.status === 200, `steer answered ${steered.status}`);
 
     await L.deleteProject(page, scratch);
 
-    await page.goto(`${BASE}/assistant/${conversation}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/assistants/${conversation}`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
     await page.waitForSelector("dc-assistant[ready]", { timeout: 15000 });
     await waitJobState(page, doomed, "stopped");
     return "project gone, job closed";
   });
 
-  await run("a job survives a new conversation and reports into it", async () => {
-    // A job belongs to the assistant, not to the conversation it was started
-    // from. Starting a new one must not lose it, and everything it finds from
-    // here on belongs where the user is now.
+  // A job stays with the assistant that steered it when another one is
+  // started: nothing moves it, and the second assistant does not inherit it.
+  await run("a job stays with its own assistant when another one is started", async () => {
     const before = await jobState(page, busyCoder);
     assert(before && before.state === "steering", `want a steering job first, got ${JSON.stringify(before)}`);
 
     const other = await page.evaluate(async (current) => {
       const body = new URLSearchParams({ form: "new", coder: "claude" });
       body.set("csrf_token", document.querySelector('meta[name="csrf-token"]').content);
-      const res = await fetch(`/assistant/${current}`, {
+      const res = await fetch(`/assistants/${current}`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
         body: body.toString(),
@@ -665,19 +698,31 @@ L.runFeature("wake", async ({ page, run }) => {
       const payload = await res.json().catch(() => ({}));
       return payload.id || "";
     }, conversation);
-    assert(other && other !== conversation, `no second conversation: ${other}`);
+    assert(other && other !== conversation, `no second assistant: ${other}`);
+    secondAssistant = other;
 
-    // From here on the new conversation is the live one, which is where the
-    // rest of this run looks for reports.
-    conversation = other;
-    await page.goto(`${BASE}/assistant/${conversation}`, { waitUntil: "domcontentloaded" });
-    await dismissUpdate(page);
-    await page.waitForSelector("dc-assistant[ready]", { timeout: 15000 });
+    // The second assistant's own list holds nothing: the job is not its.
+    const theirs = await page.evaluate(async (id) => {
+      const res = await fetch(`/assistants/jobs?assistant=${id}`, { headers: { Accept: "text/html" } });
+      return res.text();
+    }, other);
+    assert(!theirs.includes(busyCoder), "a second assistant inherited a job it never steered");
+
+    // Steering the same coder for the second assistant is refused, by name.
+    const stolen = await post(page, { form: "steer", terminal: busyCoder, assistant: other, done_when: "WAKE_NOTHING" });
+    assert(stolen.status === 400, `stealing a steered coder answered ${stolen.status}`);
+    assert(/already steering/i.test(stolen.body.error || ""), `the refusal does not say who holds it: ${stolen.body.error}`);
+
+    const mine = await page.evaluate(async (id) => {
+      const res = await fetch(`/assistants/jobs?assistant=${id}`, { headers: { Accept: "text/html" } });
+      return res.text();
+    }, conversation);
+    assert(mine.includes(busyCoder), "the job left the assistant that steered it");
 
     const after = await jobState(page, busyCoder);
     assert(after && after.state === "steering",
-      `the job did not survive the new conversation: ${JSON.stringify(after)}`);
-    return "job kept, new conversation is the live one";
+      `the job did not survive the second assistant: ${JSON.stringify(after)}`);
+    return "one owner, and it is named in the refusal";
   });
 
   await run("a check answers a dialog with keys and the job keeps running", async () => {
@@ -690,13 +735,14 @@ L.runFeature("wake", async ({ page, run }) => {
     askCoder = created.body.id;
     const steered = await post(page, {
       form: "steer",
+      assistant: conversation,
       terminal: askCoder,
       task: "Run the tests",
       done_when: "WAKE_ANSWER: the tests pass",
     });
     assert(steered.status === 200, `steer answered ${steered.status}`);
 
-    await page.goto(`${BASE}/assistant/${conversation}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/assistants/${conversation}`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
     await page.waitForSelector("dc-assistant[ready]", { timeout: 15000 });
     const before = await page.locator("[data-assistant-message]").count();
@@ -728,7 +774,7 @@ L.runFeature("wake", async ({ page, run }) => {
   // conversation, the ring would jump to the check's value and show a number
   // that has nothing to do with the chat.
   await run("a check never moves the conversation's context ring", async () => {
-    await page.goto(`${BASE}/assistant/${conversation}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/assistants/${conversation}`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
     await page.waitForSelector("dc-assistant[ready]", { timeout: 15000 });
 
@@ -752,6 +798,7 @@ L.runFeature("wake", async ({ page, run }) => {
     ringCoder = created.body.id;
     const steered = await post(page, {
       form: "steer",
+      assistant: conversation,
       terminal: ringCoder,
       task: "Write the file",
       done_when: "WAKE_DONE: the file is there",
@@ -778,6 +825,20 @@ L.runFeature("wake", async ({ page, run }) => {
       }, id);
     }
     await L.deleteProject(page, project).catch(() => {});
-    return "coders and project removed";
+    // The assistants this run made go with it, the one it steered from and the
+    // one the ownership check started. Deleting is done from another page than
+    // their own, which is where the answer is readable.
+    for (const id of [conversation, secondAssistant].filter(Boolean)) {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.evaluate(async (target) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        await fetch(`/assistants/${target}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json", "X-CSRF-Token": token },
+          body: "form=delete",
+        });
+      }, id);
+    }
+    return "coders, project and assistants removed";
   });
 });

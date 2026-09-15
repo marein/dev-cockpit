@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/web/render"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -126,12 +128,68 @@ func (s *Server) authenticated(c *gin.Context) bool {
 }
 
 // localCall reports whether the request arrived on the local socket. That is
-// how the assistant acts on the cockpit: through the same handlers a browser
+// how an assistant acts on the cockpit: through the same handlers a browser
 // uses, so the serve process stays the only writer of its state. Reaching the
 // socket is the whole credential, see LocalHandler.
+//
+// It answers whether the caller may act, and nothing else. Who is acting is a
+// different question with a different answer, see callingAssistant: several
+// assistants share this socket, and so does a person at a shell.
 func (s *Server) localCall(c *gin.Context) bool {
 	local, _ := c.Request.Context().Value(localCallKey).(bool)
 	return local
+}
+
+// callingAssistant is which assistant sent this request, empty when none did.
+// Every command an assistant runs carries its id on the group's --as flag, the
+// way its instructions spell every call, and the local API client puts it on
+// the wire, so a command run by a turn says who it is and a command typed by a
+// person says nothing.
+//
+// The id is checked against the assistants that exist, so a stale id from a
+// deleted assistant does not act as one, and an invented value reaches
+// nothing. Everything that has to be charged to somebody refuses on an empty
+// answer rather than picking one: with several assistants, guessing means
+// steering a coder in somebody else's name.
+func (s *Server) callingAssistant(c *gin.Context) string {
+	if !s.localCall(c) {
+		return ""
+	}
+	id := strings.TrimSpace(c.GetHeader(localapi.AssistantHeader))
+	if id == "" {
+		return ""
+	}
+	if _, err := s.assistants.Get(id); err != nil {
+		return ""
+	}
+	return id
+}
+
+// assistantCaller is callingAssistant with the sentence a refusal carries. The
+// sentence names the flag, because the one caller that can hit this and do
+// something about it is a turn that dropped it from the command its
+// instructions spell out.
+func (s *Server) assistantCaller(c *gin.Context) (string, error) {
+	if id := s.callingAssistant(c); id != "" {
+		return id, nil
+	}
+	return "", errors.New(assistantCallerRefusal)
+}
+
+// assistantCallerRefusal is what a call that needs an owner reads when none
+// was named or the one named does not exist.
+const assistantCallerRefusal = "This needs to come from an assistant. Run it with --as <your id>, the way your instructions spell every command, and check that the id is a live assistant."
+
+// assistantName is what one assistant is called, for a sentence or a row that
+// names it. An id that resolves to nothing still needs a word.
+func (s *Server) assistantName(id string) string {
+	if id == "" {
+		return ""
+	}
+	if instance, err := s.assistants.Get(id); err == nil && strings.TrimSpace(instance.Title) != "" {
+		return instance.Title
+	}
+	return "Another assistant"
 }
 
 func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
@@ -147,7 +205,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 	}
 	user, _ := sess.Get(sessionUserKey).(string)
 	token := s.csrfToken(c)
-	assistantID, assistantNews := s.assistantEntryState()
+	assistantNews := s.assistantNews()
 	steered, prefill := s.watcher.Marks()
 	return render.Page{
 		Title:             title,
@@ -159,7 +217,6 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		MultiCoder:        s.multiCoder(),
 		QuickNav:          s.quicknav(c),
 		Jingle:            s.selectedJingle(),
-		AssistantID:       assistantID,
 		AssistantNews:     assistantNews,
 		BackupReviewCount: s.backups.PendingReviewCount(),
 		Steered:           steered,

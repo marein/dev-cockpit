@@ -2,7 +2,7 @@ package render
 
 import "html/template"
 
-// AssistantCoderOption is one selectable coder on the new conversation control.
+// AssistantCoderOption is one selectable coder on the new assistant control.
 type AssistantCoderOption struct {
 	ID    string
 	Label string
@@ -22,10 +22,18 @@ type AssistantAttachmentView struct {
 	Height int
 }
 
-// AssistantJobView is one steered job on the conversation page: what the
-// assistant keeps an eye on, what it costs, and where it stands.
+// AssistantJobView is one steered job on the assistant page: what an assistant
+// keeps an eye on, what it costs, and where it stands.
 type AssistantJobView struct {
 	Terminal string
+	// Owner is what the assistant steering this job is called. A list narrowed
+	// to one assistant does not render it, a list of everybody's does: with
+	// several of them the question "who holds this coder" is the whole point of
+	// the list. OwnerID is the same assistant as an id, which steering the same
+	// coder again posts back, so a job that comes up a second time comes up for
+	// the one that had it.
+	Owner    string
+	OwnerID  string
 	Name     string
 	Project  string
 	Task     string
@@ -39,44 +47,45 @@ type AssistantJobView struct {
 	Wakes    int
 	MaxWakes int
 	// Expires is a machine stamp (RFC3339); the dc-time element renders it in
-	// the browser locale like the conversation timestamps.
+	// the browser locale like the message timestamps.
 	Expires string
-	// URL opens the coder the job steers.
-	URL string
+	// URL opens the coder the job steers, EditorURL the editor on the project
+	// it works in: the two ways to look at what a steered coder is doing, the
+	// screen it types on and the files it writes. Empty where the job names no
+	// project, which is what a coder outside one is.
+	URL       string
+	EditorURL string
 }
 
-// AssistantData is the model for the assistant conversation surface, rendered
-// as the full page and as the interior of the docked panel.
+// AssistantData is the model for one assistant's surface. An empty ID is the
+// area with no assistant in it at all: the work column is then the empty state
+// whose one control makes the first one.
 type AssistantData struct {
 	Page
 	ID string
-	// ConversationTitle names the conversation in the work head, the same
-	// title the list column shows; empty while nobody has spoken in it.
-	ConversationTitle string
+	// Name is what this assistant is called, in the work head and the same
+	// name the list column shows; empty while nobody has spoken in it.
+	Name string
 	// Path is the page's own address: the list column marks its row, and the
 	// page pulls it again to catch up after an assistant event.
 	Path string
-	// Ctx is the list column beside the conversation.
+	// Ctx is the list column beside it.
 	Ctx        *AssistantCtxData
 	CoderID    string
 	CoderLabel string
-	// Coders is only used when more than one is installed: the new
-	// conversation control then asks which one answers.
+	// Coders is only used when more than one is installed: the new assistant
+	// control then asks which one answers.
 	Coders   []AssistantCoderOption
 	Messages []AssistantMessageView
 	Running  bool
 	// Blocked carries the reason the composer is off. Empty means the
 	// assistant accepts messages.
 	Blocked string
-	// NewCoderID is the coder a new conversation started from a blocked one
-	// runs on. It is empty when this conversation's coder is gone, then the
-	// new one picks whichever coder is installed.
+	// NewCoderID is the coder a new assistant started from this one runs on. It
+	// is empty when this assistant's coder is gone, then the new one picks
+	// whichever coder is installed.
 	NewCoderID string
-	// CurrentURL points at the conversation that still takes messages, set
-	// only while looking at a different one. An earlier conversation then
-	// sends the reader on instead of offering to start another one.
-	CurrentURL string
-	// Jobs are the coders the assistant steers. Empty when nothing is
+	// Jobs are the coders this assistant steers. Empty when nothing is
 	// steered, which is the normal state.
 	Jobs []AssistantJobView
 	// JobsOpen is how many of them still wake the assistant. It is what the
@@ -86,10 +95,12 @@ type AssistantData struct {
 	// JobsOlder is how many closed jobs the list holds back, so nothing is
 	// dropped silently. The open jobs always all render.
 	JobsOlder int
-	// JobsURL is the jobs path: it serves the list on its own, so the page can
-	// pull it when a check changed something, and it takes the two actions on a
-	// job. One path, so the forms post where the fragment came from.
-	JobsURL string
+	// JobsURL is the one path the two actions on a job post to, whoever steers
+	// it. JobsListURL is the same path narrowed to this assistant, which is
+	// what the page pulls when a check changed something and what the badge
+	// counts: the aside shows the coders this assistant holds, not everybody's.
+	JobsURL     string
+	JobsListURL string
 	// EarlierCount is how many messages are held back above the rendered
 	// window, and AllURL renders the whole transcript, anchored at the oldest
 	// message that was already on the page.
@@ -107,18 +118,17 @@ type AssistantData struct {
 	TTS            bool
 	MaxPromptBytes int
 	MaxUploadBytes int64
-	HistoryCount   int
-	// Draft is the unsent message this conversation holds, rendered straight
-	// into the message box, and DraftFiles are the files that were uploaded
-	// for it, as the JSON the composer rebuilds its chips from. Both come from
-	// the conversation, so the draft is there on the next device too.
+	// Draft is the unsent message this assistant holds, rendered straight into
+	// the message box, and DraftFiles are the files that were uploaded for it,
+	// as the JSON the composer rebuilds its chips from. Both come from the
+	// stored assistant, so the draft is there on the next device too.
 	Draft      string
 	DraftFiles string
 	// DraftURL serves the stored draft on its own, which is how a second device
 	// catches up after a save somewhere else and after a reconnect.
 	DraftURL string
 	// ContextPercent is how full the coder's context window stood at the end of
-	// the last turn, drawn as the ring around the new conversation button. Zero
+	// the last turn, drawn as the ring around the new assistant button. Zero
 	// means there is nothing to show, either because no turn reported a reading
 	// yet or because that model's window is unknown, and the ring then stays
 	// empty: a wrong percentage is worse than none. It is rendered here as well
@@ -127,13 +137,14 @@ type AssistantData struct {
 	ContextPercent int
 }
 
-// AssistantCard is one row on the assistant history. The title names the
-// conversation, the same way `dev-cockpit assistant conversation-list` prints it,
-// and the preview of the last answer sits under it.
+// AssistantCard is one row of the assistant list: what it is called, what it
+// holds and what it is doing. The same name `dev-cockpit assistant
+// assistant-list` prints. The preview of the last message is not on the row,
+// the rows are read as a list of who is who; it stays in the summary and in
+// what the CLI prints.
 type AssistantCard struct {
 	ID         string
 	Title      string
-	Preview    string
 	CoderLabel string
 	URL        string
 	Messages   int
@@ -142,43 +153,35 @@ type AssistantCard struct {
 	// row shows the run as work and never as a fault.
 	Running    bool
 	Unfinished bool
-	Current    bool
+	// OpenJobs is how many coders this assistant steers right now. It is on the
+	// row because with several assistants that is the one thing a glance has to
+	// answer: who is holding what.
+	OpenJobs int
+	// News says this assistant has an unread answer. The rail carries one dot
+	// for the whole area, so this is where the reader sees which one it is in.
+	News bool
 	// Updated is a machine stamp (RFC3339), the dc-time element renders it in
 	// the browser locale.
 	Updated string
 }
 
-// AssistantHistoryData is the model for the earlier conversations.
-type AssistantHistoryData struct {
-	Page
-	Conversations []AssistantCard
-	Available     bool
-	// CurrentURL is the conversation that still takes messages. While there is
-	// one, the page sends the reader there instead of offering to start
-	// another one next to it.
-	CurrentURL string
-}
-
 // AssistantCtxData is the list column of the assistant page, and what
-// /ctx/assistant answers for the phone's sheet: the conversation that still
-// takes messages under its own head, the rest under Earlier, and the new
-// conversation control in the head.
+// /ctx/assistants answers for the phone's sheet: every assistant that lives, in
+// the order the rows were dragged into, and the control that makes another one
+// in the head.
 type AssistantCtxData struct {
 	Page
 	// Path is the page the column stands beside: its row is active, and the
-	// column refreshes itself from /ctx/assistant with the same path.
+	// column refreshes itself from /ctx/assistants with the same path.
 	Path string
-	// Current is the conversation that still takes messages, nil while none
-	// exists; Answering says a turn runs in it right now, read off that card so
-	// the head and the row say the same thing.
-	Current   *AssistantCard
-	Answering bool
-	Earlier   []AssistantCard
-	ActiveID  string
-	Available bool
-	// Coders and NewCoderID drive the new conversation control, PostURL is
-	// where its forms post, and IDPrefix keeps those forms' ids apart from
-	// the composer's and between the page's column and the sheet's.
+	// Assistants are all of them. There is no current one and no earlier ones:
+	// every row is a live assistant that takes messages.
+	Assistants []AssistantCard
+	ActiveID   string
+	Available  bool
+	// Coders and NewCoderID drive the new assistant control, PostURL is where
+	// its forms post, and IDPrefix keeps those forms' ids apart from the
+	// composer's and between the page's column and the sheet's.
 	Coders     []AssistantCoderOption
 	NewCoderID string
 	PostURL    string
@@ -205,8 +208,9 @@ type AssistantMemoryData struct {
 	Prefix string
 }
 
-// AssistantMessageView is one rendered message. User text stays plain, assistant
-// answers are rendered from Markdown server-side with raw HTML disabled.
+// AssistantMessageView is one rendered message. User text stays plain,
+// assistant answers are rendered from Markdown server-side with raw HTML
+// disabled.
 type AssistantMessageView struct {
 	ID    string
 	RunID string
@@ -225,7 +229,7 @@ type AssistantMessageView struct {
 	CanRetry    bool
 	// Queued marks a message still waiting for the running turn to end, and
 	// CanDiscard says the page may still take it back. A waiting entry in a
-	// read-only conversation renders as never sent instead.
+	// blocked assistant renders without the button.
 	Queued     bool
 	CanDiscard bool
 	Time       string

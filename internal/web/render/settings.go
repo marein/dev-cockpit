@@ -140,6 +140,22 @@ type SettingsVoiceData struct {
 	DockerOK bool
 }
 
+// SettingsAssistantJobsData feeds the assistant settings page's jobs tab. One
+// number: how many checks may run at once across every assistant. Section marks
+// the open tab the way the voice tab does.
+type SettingsAssistantJobsData struct {
+	Page
+	SettingsNav SettingsNav
+	Section     string
+	// MaxChecks is the stored limit, Min and Max what the field accepts, and
+	// Default what it falls back to, named in the help text so the number is
+	// never a mystery.
+	MaxChecks int
+	Min       int
+	Max       int
+	Default   int
+}
+
 // VoiceEngine is one engine on the voice page.
 type VoiceEngine struct {
 	// Key is the form field and settings suffix ("stt", "tts").

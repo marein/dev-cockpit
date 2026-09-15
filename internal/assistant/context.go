@@ -2,7 +2,7 @@ package assistant
 
 import "strings"
 
-// How full the coder's context window stands is the one number a conversation
+// How full the coder's context window stands is the one number an assistant
 // cannot work out for itself. The assistant runs headless, so nobody sees the
 // statusline a coder terminal shows, and the numbers only exist inside the
 // provider's own output. Both CLIs report what a turn consumed, neither one
@@ -44,7 +44,7 @@ func (u ContextUsage) Percent() int {
 	}
 	if pct < 1 {
 		// A turn that consumed anything at all is not an empty window. Rounding
-		// the first percent down to nothing would show a fresh conversation and
+		// the first percent down to nothing would show a fresh instance and
 		// a started one alike.
 		return 1
 	}

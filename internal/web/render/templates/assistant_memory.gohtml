@@ -7,7 +7,7 @@
   </div>
   <div class="collapse{{if not .Entries}} show{{end}} mb-3" id="{{.Prefix}}-new">
     <div class="card">
-      <form method="post" action="/assistant/memory" class="card-body" data-ajax-refresh>
+      <form method="post" action="/assistants/memory" class="card-body" data-ajax-refresh>
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="hidden" name="form" value="save">
         <div class="mb-3">
@@ -53,7 +53,7 @@
             </div>
             <div class="flex-shrink-0 d-flex gap-2">
               <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-memory-edit-open aria-label="Edit {{.Title}}" title="Edit"><i class="ti ti-pencil"></i></button>
-              <form method="post" action="/assistant/memory" data-ajax-refresh data-confirm="Delete this memory?" data-confirm-button="Delete">
+              <form method="post" action="/assistants/memory" data-ajax-refresh data-confirm="Delete this memory?" data-confirm-button="Delete">
                 <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                 <input type="hidden" name="form" value="delete">
                 <input type="hidden" name="slug" value="{{.Slug}}">
@@ -62,7 +62,7 @@
             </div>
           </div>
         </div>
-        <form method="post" action="/assistant/memory" data-memory-edit="{{.Slug}}" data-ajax-refresh hidden>
+        <form method="post" action="/assistants/memory" data-memory-edit="{{.Slug}}" data-ajax-refresh hidden>
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="form" value="save">
           <input type="hidden" name="slug" value="{{.Slug}}">

@@ -171,7 +171,7 @@ func (s *Server) handleSettingsVoiceSave(c *gin.Context) {
 // pass through here unnamed. The off check is the backstop for a page from
 // before a settings change, the page attribute already takes the button away.
 func (s *Server) handleAssistantSTT(c *gin.Context) {
-	if _, err := s.conversations.Get(c.Param("id")); err != nil {
+	if _, err := s.assistants.Get(c.Param("id")); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
@@ -207,15 +207,15 @@ func (s *Server) handleAssistantSTT(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"text": strings.TrimSpace(transcript.Text), "language": transcript.Language})
 }
 
-// handleAssistantMessageAudio serves one answer spoken. The wav is rendered
-// on the first ask and cached next to the conversation, so the speaker button
-// and voice mode replay for free; a regenerated answer is a new message id
-// and therefore a new cache entry. Only the cockpit process writes here, a
-// container never touches the conversation directories: the text goes over
-// the engine's API and the bytes come back the same way.
+// handleAssistantMessageAudio serves one answer spoken. The wav is synthesized
+// for every ask and kept nowhere, see speakAnswer: the speaker button and voice
+// mode pay a round of engine time each time, and asking twice at once still
+// costs one. Nothing of an assistant is written outside its own directories for
+// it, and no container touches them either: the text goes over the engine's API
+// and the bytes come back the same way.
 func (s *Server) handleAssistantMessageAudio(c *gin.Context) {
 	id := c.Param("id")
-	current, err := s.conversations.Get(id)
+	current, err := s.assistants.Get(id)
 	if err != nil {
 		c.String(http.StatusNotFound, err.Error())
 		return

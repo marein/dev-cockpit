@@ -34,7 +34,7 @@ func TestPostFormReachesTheCockpit(t *testing.T) {
 		_, _ = w.Write([]byte(`{"name":"a coder"}`))
 	})
 
-	client, err := Dial(dir)
+	client, err := Dial(dir, "")
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestPostReportsTheRefusalSentence(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"No running coder with that id."}`))
 	})
 
-	client, _ := Dial(dir)
+	client, _ := Dial(dir, "")
 	_, err := client.PostJSON("/coders/x/input", map[string]any{"items": []any{}}, time.Second)
 	if err == nil || err.Error() != "No running coder with that id." {
 		t.Fatalf("want the handler's sentence, got %v", err)
@@ -91,7 +91,7 @@ func TestListenReplacesADeadSocket(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":"second"}`))
 	})
 
-	client, err := Dial(dir)
+	client, err := Dial(dir, "")
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestDialWithoutARunningCockpit(t *testing.T) {
 	// A spent budget answers with the same message one attempt used to; zero
 	// budget means one attempt, so this test does not sleep the real one out.
 	t.Setenv(dialBudgetEnv, "0s")
-	_, err := Dial(t.TempDir())
+	_, err := Dial(t.TempDir(), "")
 	if err == nil {
 		t.Fatal("want a readable error when no cockpit is listening")
 	}
@@ -154,7 +154,7 @@ func TestDialWaitsForASocketThatIsStillMissing(t *testing.T) {
 	dir := t.TempDir()
 	lateCockpit(t, dir, 300*time.Millisecond)
 
-	client, err := Dial(dir)
+	client, err := Dial(dir, "")
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestDialWaitsOutARefusingSocket(t *testing.T) {
 	_ = listener.Close()
 	lateCockpit(t, dir, 300*time.Millisecond)
 
-	client, err := Dial(dir)
+	client, err := Dial(dir, "")
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestALongStateDirStillGetsASocket(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":"yes"}`))
 	})
-	client, err := Dial(long)
+	client, err := Dial(long, "")
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

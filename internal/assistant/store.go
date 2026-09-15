@@ -14,56 +14,71 @@ import (
 	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
-// idPattern guards every id that becomes a path component. Conversation ids are UUID
+// idPattern guards every id that becomes a path component. Instance ids are UUID
 // shaped, so this is a whitelist, not an escape.
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9-]{8,64}$`)
 
-// ValidID reports whether an id is usable as a conversation identifier.
+// ValidID reports whether an id is usable as an instance identifier.
 func ValidID(id string) bool { return idPattern.MatchString(id) }
 
-// Store persists the conversation index and one file per transcript:
+// transcriptFileName is the thread of one assistant inside its directory. The
+// draft store names it too, to carry an old draft out of it once.
+const transcriptFileName = "transcript.json"
+
+// Store persists the index of instances and one directory per instance:
 //
-//	<index-path>                                     index, no messages
-//	<dir>/<conversation-id>.json                     one transcript
-//	<upload-root>/<conversation-id>/<name>           what a prompt carried
-//	<dir>/../audio/<conversation-id>/<message>-<voice>.wav  the spoken answers
+//	<index-path>                                          index, no messages
+//	<dir>/<instance-id>/transcript.json                   one transcript
+//	<dir>/<instance-id>/jobs.json                         the jobs it steers
+//	<dir>/<instance-id>/workspace                         where its turns run
+//	<dir>/<instance-id>/workspace/user-upload/<name>      what a prompt carried
+//	<dir>/<instance-id>/workspace/assistant-files/<name>  what the instance wrote
+//
+// An instance owning a directory instead of a file is what lets everything that
+// belongs to one conversation sit together: the transcript, the jobs it steers
+// and the workspace it works in are deleted, backed up and reasoned about as
+// one thing.
 //
 // Index and transcripts go through internal/statefile, so reads pick up outside
 // changes, writes are atomic and a corrupt file is quarantined instead of
-// overwritten. The audio cache sits next to the transcripts and is
-// deliberately not in the backup: it is rendered from the answer whenever it
-// is missing, no word of the cockpit is lost with it.
+// overwritten.
 type Store struct {
-	indexPath  string
-	dir        string
-	uploadRoot string
-	audioRoot  string
-	mu         sync.Mutex
+	indexPath string
+	dir       string
+	mu        sync.Mutex
 }
 
 // NewStore returns the assistant's store for a state directory, the layout
 // Paths describes.
-func NewStore(stateDir string) *Store { return NewStoreAt(Paths(stateDir)) }
-
-// NewStoreAt returns a store over explicit paths, so the layout stays in one
-// place: the caller decides where index, transcripts and uploads live.
-func NewStoreAt(indexPath, dir, uploadRoot string) *Store {
-	return &Store{indexPath: indexPath, dir: dir, uploadRoot: uploadRoot, audioRoot: filepath.Join(filepath.Dir(dir), "audio")}
+func NewStore(stateDir string) *Store {
+	index, instances, _ := Paths(stateDir)
+	return NewStoreAt(index, instances)
 }
 
-// UploadRoot is the directory holding one upload subdirectory per conversation.
-func (s *Store) UploadRoot() string { return s.uploadRoot }
+// NewStoreAt returns a store over explicit paths, so the layout stays in one
+// place: the caller decides where the index and the instances live.
+func NewStoreAt(indexPath, dir string) *Store {
+	return &Store{indexPath: indexPath, dir: dir}
+}
 
-// UploadDir is where the uploads of one conversation live. It is created on
+// WorkspaceDir is the workspace of one instance, the directory its turns run
+// in and the one its uploads and files sit under.
+func (s *Store) WorkspaceDir(id string) string {
+	return filepath.Join(s.InstanceDir(id), workspaceDirName)
+}
+
+// UploadDir is where the uploads of one instance live. It is created on
 // demand by the upload path, never here.
 func (s *Store) UploadDir(id string) (string, error) {
 	if !ValidID(id) {
-		return "", errors.New("Invalid conversation.")
+		return "", errors.New("Invalid assistant.")
 	}
-	return filepath.Join(s.uploadRoot, id), nil
+	return filepath.Join(s.WorkspaceDir(id), uploadDirName), nil
 }
 
-// List returns the index, newest activity first.
+// List returns the index in the order the user put it in. The file is the
+// order: the index array is written in the order the list shows, so nothing
+// has to carry a position and nothing can disagree with anything.
 func (s *Store) List() []Summary {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -73,40 +88,79 @@ func (s *Store) List() []Summary {
 func (s *Store) list() []Summary {
 	var out []Summary
 	statefile.Load(s.indexPath, &out)
-	sort.SliceStable(out, func(i, j int) bool { return out[i].LastMessageAt.After(out[j].LastMessageAt) })
 	return out
+}
+
+// Reorder writes the index in the order the ids name. A posted order is read
+// as a permutation of the places those assistants already hold, the way the
+// tab strip reads one: the slots stay, only who sits in which changes, so an
+// assistant the post never saw keeps its exact seat instead of being pushed
+// aside. Ids the index does not carry are dropped, duplicates count once, and
+// a post that resolves to nothing writes nothing.
+func (s *Store) Reorder(ids []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	index := s.list()
+	at := make(map[string]int, len(index))
+	for i, entry := range index {
+		at[entry.ID] = i
+	}
+	moved := make([]Summary, 0, len(ids))
+	slots := make([]int, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		i, ok := at[id]
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		moved = append(moved, index[i])
+		slots = append(slots, i)
+	}
+	if len(moved) == 0 {
+		return
+	}
+	sort.Ints(slots)
+	for i, slot := range slots {
+		index[slot] = moved[i]
+	}
+	statefile.Save(s.indexPath, 0o600, index)
 }
 
 // Load reads one transcript. A missing or unreadable transcript reports false
 // without touching the index: the entry stays visible and recoverable instead
 // of disappearing behind a silent self-heal.
-func (s *Store) Load(id string) (Conversation, bool) {
+func (s *Store) Load(id string) (Instance, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.load(id)
 }
 
-func (s *Store) load(id string) (Conversation, bool) {
+func (s *Store) load(id string) (Instance, bool) {
 	if !ValidID(id) {
-		return Conversation{}, false
+		return Instance{}, false
 	}
-	var c Conversation
+	var c Instance
 	statefile.Load(s.transcriptPath(id), &c)
 	if c.ID == "" {
-		return Conversation{}, false
+		return Instance{}, false
 	}
 	return c, true
 }
 
 // Save writes the transcript and refreshes its index entry.
-func (s *Store) Save(c Conversation) {
+func (s *Store) Save(c Instance) {
 	if !ValidID(c.ID) {
-		log.Printf("assistant: refusing to save invalid conversation id %q", c.ID)
+		log.Printf("assistant: refusing to save invalid instance id %q", c.ID)
 		return
 	}
 	c.summarize()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := os.MkdirAll(s.InstanceDir(c.ID), 0o700); err != nil {
+		log.Printf("assistant: create instance directory for %s: %v", c.ID, err)
+		return
+	}
 	statefile.Save(s.transcriptPath(c.ID), 0o600, c)
 	index := s.list()
 	replaced := false
@@ -118,29 +172,34 @@ func (s *Store) Save(c Conversation) {
 		}
 	}
 	if !replaced {
-		index = append(index, c.Summary)
+		// A new assistant goes to the top. Every other one keeps the place the
+		// user dragged it to, and the one just made is the one they are looking
+		// at, so it is the only entry that may take a place nobody gave it.
+		index = append([]Summary{c.Summary}, index...)
 	}
-	sort.SliceStable(index, func(i, j int) bool { return index[i].LastMessageAt.After(index[j].LastMessageAt) })
 	statefile.Save(s.indexPath, 0o600, index)
 }
 
-// Delete removes the transcript and its index entry.
+// Delete removes everything the instance owns and its index entry: the
+// transcript, the jobs it steered, and its workspace with the files a prompt
+// carried and the files the instance itself wrote. Deleting an assistant is
+// deleting the whole of it, and the workspace is its as much as the transcript
+// is: what is left of an assistant nobody can open is disk nobody can reach,
+// and the answers that linked those files are gone with it.
+//
+// The index entry goes first and the directory second, because only that
+// order heals itself: a directory the removal left half behind is an orphan
+// the startup sweep takes, while an entry left behind after its transcript
+// went would stand in the list forever, unopenable and, with the transcript
+// gone, undeletable. So a removal that fails is logged and is still a delete,
+// the assistant is gone from every surface and the disk follows at the next
+// start.
 func (s *Store) Delete(id string) error {
 	if !ValidID(id) {
-		return errors.New("Invalid conversation.")
+		return errors.New("Invalid assistant.")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.Remove(s.transcriptPath(id)); err != nil && !os.IsNotExist(err) {
-		log.Printf("assistant: remove transcript %s: %v", id, err)
-		return errors.New("The conversation could not be deleted.")
-	}
-	// The uploads and the spoken answers go with the transcript. A failure here
-	// is logged and does not keep the conversation alive: the index entry is
-	// what the user sees.
-	if err := os.RemoveAll(filepath.Join(s.uploadRoot, id)); err != nil {
-		log.Printf("assistant: remove uploads of %s: %v", id, err)
-	}
 	index := s.list()
 	out := index[:0]
 	for _, entry := range index {
@@ -149,11 +208,18 @@ func (s *Store) Delete(id string) error {
 		}
 	}
 	statefile.Save(s.indexPath, 0o600, out)
+	if err := os.RemoveAll(s.InstanceDir(id)); err != nil {
+		log.Printf("assistant: remove instance directory %s, the startup sweep takes what is left: %v", id, err)
+	}
 	return nil
 }
 
+// InstanceDir is everything one instance owns on disk. Exported because the
+// jobs of an instance live in it and are stored by a store of their own.
+func (s *Store) InstanceDir(id string) string { return filepath.Join(s.dir, id) }
+
 func (s *Store) transcriptPath(id string) string {
-	return filepath.Join(s.dir, id+".json")
+	return filepath.Join(s.InstanceDir(id), transcriptFileName)
 }
 
 // preview shortens an assistant answer for the list page.

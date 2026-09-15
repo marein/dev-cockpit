@@ -18,7 +18,7 @@ import (
 // running turn, on disk, next to the file it describes.
 //
 // Everything a later process needs to finish a turn it never started lives in
-// the entry: which conversation and message it belongs to, which coder has to
+// the entry: which instance and message it belongs to, which coder has to
 // parse its output, where the output is, which process is writing it, and what
 // the turn is allowed to do while it runs.
 
@@ -38,13 +38,19 @@ const (
 type RunRecord struct {
 	ID   string  `json:"id"`
 	Kind RunKind `json:"kind"`
-	// Conversation and MessageID name what the turn writes into. A chat turn
-	// has its placeholder message already and names the conversation it belongs
-	// to; a check carries no conversation, only the id its report will get, so
-	// writing that report twice is impossible and it lands wherever the user is
-	// when it comes back.
-	Conversation string `json:"conversation,omitempty"`
-	MessageID    string `json:"messageId"`
+	// Instance and MessageID name what the turn writes into. A chat turn has
+	// its placeholder message already and names the assistant it belongs to; a
+	// check carries no transcript of its own, only the id its report will get,
+	// so writing that report twice is impossible.
+	//
+	// The key on disk is still the word the previous version used. A register
+	// entry is the one state file that is read across versions on purpose: a
+	// self update replaces the binary while turns are running, and the next
+	// process has to find the assistant of a turn the previous one started, or
+	// the answer that is still being written lands nowhere.
+	// TODO(v2.0.0): rename the key once no such binary can still be in memory.
+	Instance  string `json:"conversation,omitempty"`
+	MessageID string `json:"messageId"`
 	// CoderID picks the runner that can read this output, SessionID the
 	// provider session the turn drives. Both are needed to attach: the parser
 	// belongs to the coder, and a check keeps its session reserved until it is

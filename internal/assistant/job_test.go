@@ -78,12 +78,26 @@ func answering(verdict string) func(TurnRequest) []Event {
 	}
 }
 
+// fixtureJobs is how a test talks about "the job on term-1" without naming an
+// owner: the jobs live per assistant now, and a test that names one on every
+// line would be a test about the storage instead of about the checks.
+type fixtureJobs struct{ registry *Jobs }
+
+func (f fixtureJobs) Get(terminal string) (Job, bool) { return f.registry.Find(terminal) }
+func (f fixtureJobs) List() []Job                     { return f.registry.All() }
+func (f fixtureJobs) Save(job Job)                    { f.registry.Of(job.Owner).Save(job) }
+
 type jobFixture struct {
-	svc      *Service
+	svc *Service
+	// owner is the assistant every job of this fixture belongs to. A job needs
+	// one now, so the fixture has one; a test about several of them makes its
+	// own with svc.Create.
+	owner Instance
+
 	sessions *fakeSessions
 	watcher  *Watcher
 	store    *Store
-	jobs     *JobStore
+	jobs     fixtureJobs
 	runner   *fakeRunner
 	news     chan string
 }
@@ -98,11 +112,16 @@ func newJobFixture(t *testing.T, verdict string) *jobFixture {
 		svc: svc, store: store, runner: runner,
 		news: news,
 	}
-	fixture.jobs = &JobStore{path: t.TempDir() + "/jobs.json"}
+	fixture.jobs = fixtureJobs{NewJobs(store)}
 	// A working coder by default: most checks are about what the answer does,
 	// not about a standing job.
 	fixture.sessions = &fakeSessions{activity: Activity{Text: "the coder said something"}}
-	fixture.watcher = NewWatcher(svc, fixture.jobs, fixture.sessions)
+	fixture.watcher = NewWatcher(svc, fixture.jobs.registry, fixture.sessions, nil)
+	owner, err := svc.create("claude")
+	if err != nil {
+		t.Fatalf("create the assistant: %v", err)
+	}
+	fixture.owner = owner
 	// A check is not over when the job says so: the verdict lands on the job
 	// first and the report is written after it, so the wait of a test can end
 	// while the check still writes. This runs before the directories of this
@@ -126,15 +145,13 @@ func newJobFixture(t *testing.T, verdict string) *jobFixture {
 	return fixture
 }
 
-// steered creates a conversation with a job on a terminal, the normal starting
+// steered creates an assistant with a job on a terminal, the normal starting
 // point of every check.
-func (f *jobFixture) steered(t *testing.T) (Conversation, Job) {
+func (f *jobFixture) steered(t *testing.T) (Instance, Job) {
 	t.Helper()
-	c, err := f.svc.create("claude", "/projects/demo")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	c := f.owner
 	job, err := f.watcher.Steer(Job{
+		Owner:    c.ID,
 		Terminal: "term-1",
 		Name:     "readme-task",
 		Project:  "demo",
@@ -146,6 +163,28 @@ func (f *jobFixture) steered(t *testing.T) (Conversation, Job) {
 		t.Fatalf("steer: %v", err)
 	}
 	return c, job
+}
+
+// waitReport waits until a check's report stands in one assistant's transcript.
+// The job is closed first and the message written after it, so a test that read
+// the transcript the moment the state moved would read it too early.
+func (f *jobFixture) waitReport(t *testing.T, owner string) Instance {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		fresh, err := f.svc.Get(owner)
+		if err == nil {
+			for _, m := range fresh.Messages {
+				if m.Wake != nil {
+					return fresh
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	fresh, _ := f.svc.Get(owner)
+	t.Fatalf("no report in %s after 5s, got %+v", owner, fresh.Messages)
+	return Instance{}
 }
 
 // waitJobState waits until the job reached a state, which is what a verdict
@@ -196,10 +235,10 @@ func (f *jobFixture) waitWakes(t *testing.T, terminal string, want int) Job {
 
 func TestSteerNeedsATerminalAndGetsItsBudget(t *testing.T) {
 	f := newJobFixture(t, "NOTHING")
-	if _, err := f.watcher.Steer(Job{DoneWhen: "the tests pass"}); err == nil {
+	if _, err := f.watcher.Steer(Job{Owner: f.owner.ID, DoneWhen: "the tests pass"}); err == nil {
 		t.Fatal("want a job without a terminal refused")
 	}
-	job, err := f.watcher.Steer(Job{Terminal: "term-1", DoneWhen: "the tests pass"})
+	job, err := f.watcher.Steer(Job{Owner: f.owner.ID, Terminal: "term-1", DoneWhen: "the tests pass"})
 	if err != nil {
 		t.Fatalf("steer: %v", err)
 	}
@@ -212,7 +251,7 @@ func TestSteerNeedsATerminalAndGetsItsBudget(t *testing.T) {
 	// The empty criterion stays empty in the store, whitespace and all: the
 	// requirement lives at the jobs handler's door, for the assistant's own
 	// command, and never here.
-	bare, err := f.watcher.Steer(Job{Terminal: "term-2", DoneWhen: "  "})
+	bare, err := f.watcher.Steer(Job{Owner: f.owner.ID, Terminal: "term-2", DoneWhen: "  "})
 	if err != nil {
 		t.Fatalf("a page steer without a criterion has to be allowed: %v", err)
 	}
@@ -228,7 +267,7 @@ func TestSteerNeedsATerminalAndGetsItsBudget(t *testing.T) {
 func TestSteerRefusesADoneWhenItWouldHaveToCut(t *testing.T) {
 	f := newJobFixture(t, "NOTHING")
 	long := strings.Repeat("y", maxDoneWhenRunes+1)
-	_, err := f.watcher.Steer(Job{Terminal: "term-1", DoneWhen: long})
+	_, err := f.watcher.Steer(Job{Owner: f.owner.ID, Terminal: "term-1", DoneWhen: long})
 	if err == nil {
 		t.Fatal("want a criterion over the bound refused")
 	}
@@ -240,7 +279,7 @@ func TestSteerRefusesADoneWhenItWouldHaveToCut(t *testing.T) {
 	}
 
 	exact := strings.Repeat("y", maxDoneWhenRunes)
-	job, err := f.watcher.Steer(Job{Terminal: "term-1", DoneWhen: exact})
+	job, err := f.watcher.Steer(Job{Owner: f.owner.ID, Terminal: "term-1", DoneWhen: exact})
 	if err != nil {
 		t.Fatalf("a criterion at the bound has to pass: %v", err)
 	}
@@ -252,7 +291,7 @@ func TestSteerRefusesADoneWhenItWouldHaveToCut(t *testing.T) {
 	// store word for word, only the edges and the line endings are normalized;
 	// folding is a display concern of the places that need one line.
 	listed := "  the tests pass\r\nthe report is written\nnothing was committed\n"
-	job, err = f.watcher.Steer(Job{Terminal: "term-2", DoneWhen: listed})
+	job, err = f.watcher.Steer(Job{Owner: f.owner.ID, Terminal: "term-2", DoneWhen: listed})
 	if err != nil {
 		t.Fatalf("steer: %v", err)
 	}
@@ -280,7 +319,7 @@ func TestATaskOverItsBoundIsCutWithANotice(t *testing.T) {
 	}
 
 	f := newJobFixture(t, "NOTHING")
-	job, err := f.watcher.Steer(Job{Terminal: "term-1", Task: long})
+	job, err := f.watcher.Steer(Job{Owner: f.owner.ID, Terminal: "term-1", Task: long})
 	if err != nil {
 		t.Fatalf("a long task must not refuse the job: %v", err)
 	}
@@ -323,7 +362,7 @@ func TestTheWakePromptCarriesADoneWhensLines(t *testing.T) {
 // successor, spend one of its checks and write the old note on it.
 func TestALateCheckAnswerDoesNotTouchTheNextJob(t *testing.T) {
 	f := newJobFixture(t, "NOTHING")
-	first, err := f.watcher.Steer(Job{Terminal: "term-1", DoneWhen: "the first report is written"})
+	first, err := f.watcher.Steer(Job{Owner: f.owner.ID, Terminal: "term-1", DoneWhen: "the first report is written"})
 	if err != nil {
 		t.Fatalf("steer: %v", err)
 	}
@@ -331,7 +370,7 @@ func TestALateCheckAnswerDoesNotTouchTheNextJob(t *testing.T) {
 	// The successor has to carry its own creation time, or the identities
 	// cannot tell the two jobs apart.
 	time.Sleep(2 * time.Millisecond)
-	second, err := f.watcher.Steer(Job{Terminal: "term-1", DoneWhen: "the second report is written"})
+	second, err := f.watcher.Steer(Job{Owner: f.owner.ID, Terminal: "term-1", DoneWhen: "the second report is written"})
 	if err != nil {
 		t.Fatalf("steer again: %v", err)
 	}
@@ -380,7 +419,7 @@ func TestALateCheckAnswerDoesNotTouchTheNextJob(t *testing.T) {
 // standing forever.
 func TestACheckWithoutAJobIdentityStillCounts(t *testing.T) {
 	f := newJobFixture(t, "NOTHING")
-	job, err := f.watcher.Steer(Job{Terminal: "term-1", DoneWhen: "the tests pass"})
+	job, err := f.watcher.Steer(Job{Owner: f.owner.ID, Terminal: "term-1", DoneWhen: "the tests pass"})
 	if err != nil {
 		t.Fatalf("steer: %v", err)
 	}
@@ -429,10 +468,7 @@ func TestWakeWithNewsWritesOneMarkedMessageAndNotifies(t *testing.T) {
 
 	f.watcher.Handle("term-1")
 	f.waitJobState(t, "term-1", JobDone)
-	fresh, err := f.svc.Get(c.ID)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
+	fresh := f.waitReport(t, c.ID)
 	if len(fresh.Messages) != 1 {
 		t.Fatalf("want exactly one message, got %d", len(fresh.Messages))
 	}
@@ -477,7 +513,7 @@ func TestWakeGatesRefuseBeforeSpendingATurn(t *testing.T) {
 	t.Run("stopped job", func(t *testing.T) {
 		f := newJobFixture(t, "DONE: x")
 		f.steered(t)
-		if err := f.watcher.Release("term-1"); err != nil {
+		if err := f.watcher.Release("term-1", ""); err != nil {
 			t.Fatalf("stop: %v", err)
 		}
 		f.watcher.Handle("term-1")
@@ -512,34 +548,180 @@ func TestWakeGatesRefuseBeforeSpendingATurn(t *testing.T) {
 	})
 }
 
-// A job outlives the conversation it was started from: it belongs to the
-// assistant, and its report lands in whichever conversation is live when it
-// comes back. Nothing is lost when the user starts a new one or deletes the old.
-func TestAJobOutlivesItsConversation(t *testing.T) {
+// A job belongs to the assistant that steered it, and its report lands in that
+// assistant's own thread. This is the trap the whole feature turns on: written
+// into whoever happens to be on screen, a report would arrive in a thread that
+// never asked for it.
+func TestAReportLandsInTheAssistantThatSteered(t *testing.T) {
 	f := newJobFixture(t, "DONE: the file is there")
-	started, _ := f.steered(t)
-	if err := f.svc.Delete(started.ID); err != nil {
-		t.Fatalf("delete: %v", err)
+	owner, _ := f.steered(t)
+	other, err := f.svc.Create("claude")
+	if err != nil {
+		t.Fatalf("create: %v", err)
 	}
 
 	f.watcher.Handle("term-1")
 	f.waitJobState(t, "term-1", JobDone)
+	f.waitReport(t, owner.ID)
 
-	current, ok := f.svc.Current()
-	if !ok {
-		t.Fatal("want a conversation for the report to land in")
-	}
-	if current.ID == started.ID {
-		t.Fatal("the deleted conversation came back")
-	}
-	reports := 0
-	for _, m := range current.Messages {
-		if m.Wake != nil {
-			reports++
+	reports := func(id string) int {
+		fresh, err := f.svc.Get(id)
+		if err != nil {
+			t.Fatalf("get: %v", err)
 		}
+		count := 0
+		for _, m := range fresh.Messages {
+			if m.Wake != nil {
+				count++
+			}
+		}
+		return count
 	}
-	if reports != 1 {
-		t.Fatalf("want the report in the live conversation, got %d of %d messages", reports, len(current.Messages))
+	if got := reports(owner.ID); got != 1 {
+		t.Fatalf("want the report in the assistant that steered, got %d", got)
+	}
+	if got := reports(other.ID); got != 0 {
+		t.Fatalf("want nothing written into the other assistant, got %d", got)
+	}
+}
+
+// An assistant's jobs are its own, so they go when it goes: nothing is left
+// steering a coder on behalf of somebody who is not there, and no check can
+// ever be bought for it again.
+func TestDeletingAnAssistantTakesItsJobsWithIt(t *testing.T) {
+	f := newJobFixture(t, "DONE: the file is there")
+	started, _ := f.steered(t)
+	if _, ok := f.jobs.Get("term-1"); !ok {
+		t.Fatal("want the job before the delete")
+	}
+
+	if err := f.svc.Delete(started.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	if job, ok := f.jobs.Get("term-1"); ok {
+		t.Fatalf("want the job gone with its assistant, got %+v", job)
+	}
+	if len(f.jobs.List()) != 0 {
+		t.Fatalf("want no jobs left, got %+v", f.jobs.List())
+	}
+}
+
+// A report whose assistant disappeared while the check ran has nowhere to go.
+// It is dropped rather than written into whichever assistant is around, which
+// is exactly what the single live conversation used to do.
+func TestAReportIsDroppedWhenItsAssistantIsGone(t *testing.T) {
+	f := newJobFixture(t, "DONE: x")
+	other, err := f.svc.Create("claude")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	gone := Job{Owner: "44444444-4444-4444-8444-444444444444", Terminal: "term-1", Name: "readme-task"}
+	if id := f.svc.recordWake(gone, "", VerdictDone, "the job is finished"); id != "" {
+		t.Fatalf("want no message written, got %q", id)
+	}
+	fresh, _ := f.svc.Get(other.ID)
+	if len(fresh.Messages) != 0 {
+		t.Fatalf("want nothing written into another assistant, got %+v", fresh.Messages)
+	}
+}
+
+// One terminal, one job. A second assistant steering a coder somebody already
+// steers is refused, and the refusal names the one holding it: a silent
+// takeover would leave two assistants paying for checks on the same coder.
+func TestASecondAssistantCannotStealASteeredCoder(t *testing.T) {
+	f := newJobFixture(t, "WORKING: going")
+	owner, _ := f.steered(t)
+	if err := f.svc.Rename(owner.ID, "Release work"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	other, _ := f.svc.Create("claude")
+
+	_, err := f.watcher.Steer(Job{Owner: other.ID, Terminal: "term-1", Name: "readme-task", DoneWhen: "x"})
+	if err == nil {
+		t.Fatal("want the second assistant refused")
+	}
+	if !strings.Contains(err.Error(), "Release work") {
+		t.Fatalf("want the owner named in the refusal, got %q", err)
+	}
+	job, ok := f.jobs.Get("term-1")
+	if !ok || job.Owner != owner.ID {
+		t.Fatalf("want the job untouched, got %+v", job)
+	}
+}
+
+// Releasing somebody else's job is the same takeover by the back door, so an
+// assistant is refused there too. The user, who owns the machine, is not.
+func TestOnlyTheOwnerOrTheUserReleasesAJob(t *testing.T) {
+	f := newJobFixture(t, "WORKING: going")
+	owner, _ := f.steered(t)
+	other, _ := f.svc.Create("claude")
+
+	if err := f.watcher.Release("term-1", other.ID); err == nil {
+		t.Fatal("want another assistant refused")
+	}
+	if job, _ := f.jobs.Get("term-1"); job.State != JobSteering {
+		t.Fatalf("want the job still steering, got %q", job.State)
+	}
+	if err := f.watcher.Release("term-1", owner.ID); err != nil {
+		t.Fatalf("want the owner allowed, got %v", err)
+	}
+	if job, _ := f.jobs.Get("term-1"); job.State != JobStopped {
+		t.Fatalf("want the job stopped, got %q", job.State)
+	}
+}
+
+// Deleting an assistant hands its coders back: the jobs go with the directory
+// and are named, because a coder that quietly stops being watched is the one
+// ending nobody hears about. Nothing of them changes before the delete went
+// through, so a delete that fails keeps the assistant with its jobs steering.
+func TestDeletingAnAssistantNamesTheCodersItHandsBack(t *testing.T) {
+	f := newJobFixture(t, "WORKING: going")
+	owner, _ := f.steered(t)
+
+	held := f.watcher.OpenJobs(owner.ID)
+	if len(held) != 1 || held[0].Terminal != "term-1" {
+		t.Fatalf("want the one open job read, got %+v", held)
+	}
+	if !strings.Contains(ReleasedNames(held), "readme-task") {
+		t.Fatalf("want the coder named, got %q", ReleasedNames(held))
+	}
+	if job, ok := f.jobs.Get("term-1"); !ok || !job.State.Open() {
+		t.Fatalf("want the job still steering before the delete, got %+v (%v)", job, ok)
+	}
+
+	if err := f.svc.Delete(owner.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	f.watcher.Dropped(owner.ID, held)
+	if job, ok := f.jobs.Get("term-1"); ok {
+		t.Fatalf("want the job gone with its owner, got %+v", job)
+	}
+	if _, ok := f.jobs.registry.stores[owner.ID]; ok {
+		t.Fatal("want the store of the deleted assistant forgotten")
+	}
+}
+
+// An owner is a directory name, so one that is no id has no jobs and makes no
+// path: the pages and the delete read through ListOf, and a job cannot be
+// made for such an owner either.
+func TestAnOwnerThatIsNoIdHasNoJobsAndMakesNoPath(t *testing.T) {
+	f := newJobFixture(t, "WORKING: going")
+	f.steered(t)
+
+	stray := "../../etc"
+	if jobs := f.watcher.ListOf(stray); jobs != nil {
+		t.Fatalf("want no jobs for %q, got %+v", stray, jobs)
+	}
+	if _, err := f.watcher.Steer(Job{Owner: stray, Terminal: "term-2"}); err == nil {
+		t.Fatal("want a job for an owner that is no id refused")
+	}
+	if _, err := os.Stat(filepath.Join(f.store.dir, stray)); !os.IsNotExist(err) {
+		t.Fatalf("want no path made outside the instances, got %v", err)
+	}
+	if _, ok := f.jobs.registry.stores[stray]; ok {
+		t.Fatal("want no store remembered for an owner that is no id")
 	}
 }
 
@@ -611,6 +793,7 @@ func TestChatTurnAndCheckRunAtTheSameTime(t *testing.T) {
 	// The check runs while the chat turn is still open, and finishes.
 	f.watcher.Handle("term-1")
 	f.waitJobState(t, "term-1", JobDone)
+	f.waitReport(t, c.ID)
 
 	// The chat answer lands afterwards, with its own text, and the check's
 	// message is still there: the two never wrote over each other.
@@ -833,7 +1016,7 @@ func TestAJobThatRanOutOfTimeReportsOnce(t *testing.T) {
 
 	f.watcher.Handle("term-1")
 	f.waitJobState(t, "term-1", JobExpired)
-	fresh, _ := f.svc.Get(c.ID)
+	fresh := f.waitReport(t, c.ID)
 	if len(fresh.Messages) != 1 || !strings.Contains(fresh.Messages[0].Content, "time it was given is over") {
 		t.Fatalf("want one report about the time running out, got %+v", fresh.Messages)
 	}
@@ -849,7 +1032,7 @@ func TestTheLastCheckReportsThatItWasTheLast(t *testing.T) {
 
 	f.watcher.Handle("term-1")
 	f.waitJobState(t, "term-1", JobExpired)
-	fresh, _ := f.svc.Get(c.ID)
+	fresh := f.waitReport(t, c.ID)
 	if len(fresh.Messages) != 1 {
 		t.Fatalf("want one report after the last check, got %d", len(fresh.Messages))
 	}
@@ -900,12 +1083,13 @@ func TestASteeringCheckMayReportWorkingOnAnIdleCoder(t *testing.T) {
 	f.sessions.set(Activity{Text: "the coder said something", Finished: true})
 	c, _ := f.steered(t)
 	// The runner answers like a check that used its one allowed write: sending
-	// to the steered terminal is what the input path records as assistant input.
+	// to the steered terminal is what the input path records as assistant input,
+	// and it counts because it comes from the assistant that steers it.
 	f.runner.answer = func(req TurnRequest) []Event {
 		if !strings.Contains(req.Prompt, "you are steering") {
 			return []Event{{Kind: EventDelta, Text: "chat answer"}}
 		}
-		f.watcher.NoteAssistantInput("term-1")
+		f.watcher.NoteAssistantInput("term-1", c.ID)
 		return []Event{{Kind: EventDelta, Text: "WORKING: sent it the next step"}}
 	}
 
@@ -931,7 +1115,7 @@ func TestAJobCalledOffWhileACheckRunsStaysOff(t *testing.T) {
 	f.runner.answer = func(req TurnRequest) []Event {
 		if strings.Contains(req.Prompt, "you are steering") {
 			// The user hits stop while the check is thinking.
-			if err := f.watcher.Release("term-1"); err != nil {
+			if err := f.watcher.Release("term-1", ""); err != nil {
 				t.Errorf("stop: %v", err)
 			}
 			return []Event{{Kind: EventDelta, Text: "DONE: the file is there"}}
@@ -972,7 +1156,7 @@ func TestReleaseKillsTheRunningCheck(t *testing.T) {
 		return len(f.svc.running) > 0
 	})
 
-	if err := f.watcher.Release("term-1"); err != nil {
+	if err := f.watcher.Release("term-1", ""); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 
@@ -1138,7 +1322,7 @@ func TestACoderThatIsGoneStillGetsOneCheck(t *testing.T) {
 func TestSendingToABlockedJobTakesItUpAgain(t *testing.T) {
 	f := newJobFixture(t, "BLOCKED: it needs a token")
 	f.sessions.set(Activity{Text: "the coder said something", Finished: true})
-	f.steered(t)
+	owner, _ := f.steered(t)
 
 	f.watcher.Handle("term-1")
 	blocked := f.waitJobState(t, "term-1", JobBlocked)
@@ -1146,7 +1330,7 @@ func TestSendingToABlockedJobTakesItUpAgain(t *testing.T) {
 		t.Fatalf("want the check counted, got %d", blocked.Wakes)
 	}
 
-	f.watcher.NoteAssistantInput("term-1")
+	f.watcher.NoteAssistantInput("term-1", owner.ID)
 
 	job, _ := f.jobs.Get("term-1")
 	if job.State != JobSteering {
@@ -1169,7 +1353,7 @@ func TestSendingToAClosedJobLeavesItClosed(t *testing.T) {
 		job.State = state
 		f.jobs.Save(job)
 
-		f.watcher.NoteAssistantInput("term-1")
+		f.watcher.NoteAssistantInput("term-1", c.ID)
 
 		fresh, _ := f.jobs.Get("term-1")
 		if fresh.State != state {
@@ -1266,7 +1450,7 @@ func orphanCheck(t *testing.T, svc *Service, conversationID, terminalID string, 
 	}
 	if _, err := svc.launch(&rec, runner, TurnRequest{
 		SessionID: sessionID,
-		Workdir:   c.ProjectPath,
+		Workdir:   mustWorkdir(t, svc, c.ID),
 		Prompt:    "A coder you are steering is not moving.",
 	}); err != nil {
 		t.Fatalf("launch the check: %v", err)
@@ -1285,13 +1469,13 @@ func TestACheckSurvivesARestart(t *testing.T) {
 		after:  []Event{{Kind: EventDelta, Text: "is finished"}},
 		block:  make(chan struct{}),
 	}
-	svc, _, _, runs := newTestServiceIn(t, dir, runner)
-	c, err := svc.create("claude", "/projects/demo")
+	svc, store, _, runs := newTestServiceIn(t, dir, runner)
+	c, err := svc.create("claude")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	jobs := &JobStore{path: filepath.Join(dir, "jobs.json")}
-	jobs.Save(Job{
+	jobs := NewJobs(store)
+	jobs.Of(c.ID).Save(Job{
 		Terminal:      "term-1",
 		CoderID:       "claude",
 		DoneWhen:      "the file is there",
@@ -1310,7 +1494,7 @@ func TestACheckSurvivesARestart(t *testing.T) {
 	restarted, _, _, _ := newTestServiceIn(t, dir, runner)
 	news := make(chan string, 4)
 	restarted.SetHooks(func() {}, func(conversationID string) { news <- conversationID })
-	watcher := NewWatcher(restarted, jobs, &fakeSessions{})
+	watcher := NewWatcher(restarted, jobs, &fakeSessions{}, nil)
 
 	adopted := restarted.Recover()
 	if len(adopted) != 1 || adopted[0].Terminal != "term-1" {
@@ -1332,7 +1516,7 @@ func TestACheckSurvivesARestart(t *testing.T) {
 		return false
 	})
 
-	job, _ := jobs.Get("term-1")
+	job, _ := jobs.Find("term-1")
 	if job.State != JobDone {
 		t.Fatalf("want the job closed on the verdict, got %q", job.State)
 	}
@@ -1384,13 +1568,13 @@ func TestAnOverdueFinishedCheckStillDeliversItsVerdict(t *testing.T) {
 	runner := &fakeRunner{
 		events: []Event{{Kind: EventDelta, Text: "DONE: the job is finished"}},
 	}
-	svc, _, _, runs := newTestServiceIn(t, dir, runner)
-	c, err := svc.create("claude", "/projects/demo")
+	svc, store, _, runs := newTestServiceIn(t, dir, runner)
+	c, err := svc.create("claude")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	jobs := &JobStore{path: filepath.Join(dir, "jobs.json")}
-	jobs.Save(Job{
+	jobs := NewJobs(store)
+	jobs.Of(c.ID).Save(Job{
 		Terminal:      "term-1",
 		CoderID:       "claude",
 		DoneWhen:      "the file is there",
@@ -1406,7 +1590,7 @@ func TestAnOverdueFinishedCheckStillDeliversItsVerdict(t *testing.T) {
 	runs.Update(rec.ID, func(r *RunRecord) { r.Deadline = time.Now().UTC().Add(-time.Minute) })
 
 	restarted, _, _, _ := newTestServiceIn(t, dir, runner)
-	watcher := NewWatcher(restarted, jobs, &fakeSessions{})
+	watcher := NewWatcher(restarted, jobs, &fakeSessions{}, nil)
 
 	adopted := restarted.Recover()
 	if len(adopted) != 1 {
@@ -1415,7 +1599,7 @@ func TestAnOverdueFinishedCheckStillDeliversItsVerdict(t *testing.T) {
 	watcher.Recover(adopted)
 
 	waitFor(t, "the verdict to close the job", func() bool {
-		job, ok := jobs.Get("term-1")
+		job, ok := jobs.Find("term-1")
 		return ok && job.State == JobDone
 	})
 	fresh, err := restarted.Get(c.ID)
@@ -1443,7 +1627,7 @@ func TestAReportIsWrittenOnce(t *testing.T) {
 	f := newJobFixture(t, "DONE: x")
 	c, _ := f.steered(t)
 
-	job := Job{Terminal: "term-1", Name: "readme-task", Project: "cockpit"}
+	job := Job{Owner: c.ID, Terminal: "term-1", Name: "readme-task", Project: "cockpit"}
 	first := f.svc.recordWake(job, "fixed-id", VerdictDone, "the job is finished")
 	second := f.svc.recordWake(job, "fixed-id", VerdictDone, "the job is finished")
 	if first != "fixed-id" || second != "fixed-id" {
@@ -1470,10 +1654,9 @@ func TestAReportCarriesTheJobsName(t *testing.T) {
 
 	f.watcher.Handle("term-1")
 	f.waitJobState(t, "term-1", JobDone)
-	fresh, err := f.svc.Get(c.ID)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
+	// The job is closed before its report is written, so the state alone is too
+	// early to read the transcript on.
+	fresh := f.waitReport(t, c.ID)
 	if len(fresh.Messages) != 1 || fresh.Messages[0].Wake == nil {
 		t.Fatalf("want one report marked as a check, got %+v", fresh.Messages)
 	}
@@ -1481,7 +1664,7 @@ func TestAReportCarriesTheJobsName(t *testing.T) {
 		t.Fatalf("want the job's name on the report, got %q", name)
 	}
 
-	if _, err := f.watcher.Steer(Job{
+	if _, err := f.watcher.Steer(Job{Owner: f.owner.ID,
 		Terminal: "term-1",
 		Name:     "another-task",
 		Project:  "demo",
@@ -1731,7 +1914,7 @@ func TestConcurrentWritersDoNotLoseEachOther(t *testing.T) {
 }
 
 // One entry per terminal ever steered grows forever, and the file is parsed
-// whole on every read, so the jobs that are over are bounded by count. The
+// whole whenever it changed, so the jobs that are over are bounded by count. The
 // oldest of them go, and the newest survive whatever the file's order is.
 func TestTheStoreDropsTheOldestClosedJobs(t *testing.T) {
 	store := &JobStore{path: t.TempDir() + "/jobs.json"}
@@ -1812,6 +1995,87 @@ func TestPruneTerminalsDropsWhatCannotBeResolvedAnyMore(t *testing.T) {
 	}
 }
 
+// The pages ask every assistant's store on every render, so a read of a file
+// that did not change must not parse it: the parse stays in memory, and a stat
+// of the file decides whether it still stands. A file that does not exist yet
+// is not parsed at all.
+func TestAnUnchangedFileIsReadFromMemory(t *testing.T) {
+	store := &JobStore{path: t.TempDir() + "/jobs.json"}
+	if _, ok := store.Get("term-1"); ok {
+		t.Fatal("a store without a file holds a job")
+	}
+	if store.parses != 0 {
+		t.Fatalf("a file that does not exist was parsed %d times", store.parses)
+	}
+	store.Save(Job{Terminal: "term-1", State: JobSteering})
+
+	first := store.List()
+	second := store.List()
+	if _, ok := store.Get("term-1"); !ok {
+		t.Fatal("the saved job is gone")
+	}
+	if store.parses != 1 {
+		t.Fatalf("want one parse for three reads of an unchanged file, got %d", store.parses)
+	}
+	if len(first) != 1 || len(second) != 1 || first[0].Terminal != "term-1" {
+		t.Fatalf("the reads disagree: %+v then %+v", first, second)
+	}
+	// What a caller gets is its own copy, so what it does with it stays with it.
+	second[0].Terminal = "changed"
+	if got := store.List(); got[0].Terminal != "term-1" {
+		t.Fatalf("a caller's change reached the store: %+v", got)
+	}
+}
+
+// The disk stays the truth. A jobs.json somebody else wrote, by hand or from
+// another process, counts on the very next read, the store's own write counts
+// even when it lands in the same clock tick with the same length as the file
+// before it, and a file that is gone, the way a quarantine leaves it, serves
+// nothing from memory.
+func TestAChangedFileIsReadAgain(t *testing.T) {
+	store := &JobStore{path: t.TempDir() + "/jobs.json"}
+	store.Save(Job{Terminal: "term-1", State: JobSteering, Name: "one", Wakes: 1})
+	if got := store.List(); got[0].Name != "one" {
+		t.Fatalf("want the saved job, got %+v", got)
+	}
+
+	// Somebody else replaces the file. The name is longer on purpose: within
+	// one clock tick the length is what tells the files apart, and a test must
+	// not depend on the clock.
+	statefile.Save(store.path, 0o600, []Job{{Terminal: "term-1", State: JobSteering, Name: "one, renamed", Wakes: 1}})
+	if got := store.List(); got[0].Name != "one, renamed" {
+		t.Fatalf("the replaced file was not read: %+v", got)
+	}
+	if store.parses != 2 {
+		t.Fatalf("want a second parse for the replaced file, got %d", store.parses)
+	}
+
+	// The store's own write: 1 to 2 keeps the length, and the time is put back
+	// so the stamp cannot tell the files apart. The write itself has to.
+	info, err := os.Stat(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Update("term-1", func(job *Job) bool { job.Wakes = 2; return true })
+	if err := os.Chtimes(store.path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if job, _ := store.Get("term-1"); job.Wakes != 2 {
+		t.Fatalf("the store's own write was not read back: %+v", job)
+	}
+
+	if err := os.Remove(store.path); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.List(); len(got) != 0 {
+		t.Fatalf("a file that is gone still served jobs: %+v", got)
+	}
+	store.Save(Job{Terminal: "term-2", State: JobSteering})
+	if _, ok := store.Get("term-2"); !ok {
+		t.Fatal("the store does not come back after its file was gone")
+	}
+}
+
 // Deleting a coder deletes its job. Release is for a terminal that stays: the
 // entry keeps standing so the user sees what became of it. A deleted session
 // has nothing to stand next to.
@@ -1837,7 +2101,7 @@ func TestSteeringATerminalAgainRenewsItsJob(t *testing.T) {
 	f := newJobFixture(t, "NOTHING")
 	f.steered(t)
 
-	renewed, err := f.watcher.Steer(Job{Terminal: "term-1", CoderID: "claude", DoneWhen: "something else"})
+	renewed, err := f.watcher.Steer(Job{Owner: f.owner.ID, Terminal: "term-1", CoderID: "claude", DoneWhen: "something else"})
 	if err != nil {
 		t.Fatalf("steer again: %v", err)
 	}
@@ -1851,10 +2115,13 @@ func TestSteeringATerminalAgainRenewsItsJob(t *testing.T) {
 }
 
 // A check is told to call the cockpit's own commands the way a turn has to call
-// them: the binary that is running and the directories of this instance. A bare
+// them: `./cockpit`, the wrapper in the workspace it starts in, the same
+// spelling the instructions use, with the absolute path of that script named
+// exactly once for the moments the check stands in a project. A bare
 // name depends on a PATH the turn does not control, and on a machine with
-// several instances it would read the endpoint of the wrong one.
-func TestTheWakePromptNamesThisInstance(t *testing.T) {
+// several instances it would read the endpoint of the wrong one; a command
+// without the wrapper's flags would act as nobody.
+func TestTheWakePromptNamesTheOwnersWrapper(t *testing.T) {
 	dir := t.TempDir()
 	svc, workspace, err := New(dir, fakeCoders{runner: &fakeRunner{dir: t.TempDir()}}, Cockpit{
 		Executable:  "/opt/dev-cockpit/dev-cockpit",
@@ -1864,19 +2131,69 @@ func TestTheWakePromptNamesThisInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	want := "/opt/dev-cockpit/dev-cockpit assistant --state-dir /var/lib/dc --projects-dir /srv/projects terminal-screen"
-	if got := workspace.CockpitCommand("terminal-screen"); got != want {
-		t.Fatalf("unexpected command %q", got)
+	const owner = "11111111-1111-4111-8111-111111111111"
+	wrapper := workspace.Wrapper(owner)
+	if !filepath.IsAbs(wrapper) || filepath.Dir(wrapper) != workspace.Dir(owner) || workspace.Cockpit(owner) != wrapper {
+		t.Fatalf("the wrapper is not the workspace's own by an absolute path: %q", wrapper)
 	}
 
-	watcher := NewWatcher(svc, &JobStore{path: dir + "/jobs.json"}, &fakeSessions{})
-	prompt := watcher.wakePrompt(Job{Terminal: "term-1", DoneWhen: "x"}, Activity{Text: "something"})
+	watcher := NewWatcher(svc, NewJobs(NewStore(dir)), &fakeSessions{}, nil)
+	prompt := watcher.wakePrompt(Job{Owner: owner, Terminal: "term-1", DoneWhen: "x"}, Activity{Text: "something"})
 	for _, want := range []string{
-		"/opt/dev-cockpit/dev-cockpit assistant --state-dir /var/lib/dc --projects-dir /srv/projects terminal-screen term-1",
-		"/opt/dev-cockpit/dev-cockpit assistant --state-dir /var/lib/dc --projects-dir /srv/projects coder-send-prompt term-1",
+		"`./cockpit terminal-screen term-1`",
+		"`./cockpit coder-send-prompt term-1 \"<text>\"`",
+		"`./cockpit coder-send-control-keys term-1 <key>...`",
+		"from another directory, and a `cd <project> && …` is one, it is `" + wrapper + "`",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("the prompt misses %q:\n%s", want, prompt)
+		}
+	}
+	if n := strings.Count(prompt, wrapper); n != 1 {
+		t.Fatalf("want the absolute path named once, found it %d times:\n%s", n, prompt)
+	}
+	if strings.Contains(prompt, "--as ") || strings.Contains(prompt, "dev-cockpit assistant") {
+		t.Fatalf("the prompt spells a command a second way:\n%s", prompt)
+	}
+}
+
+// A check that runs the long things itself ends its turn without a verdict,
+// and that reads as nothing said. So the prompt draws the line on both sides:
+// long runs are the coder's, the check judges the report and verifies
+// cheaply, a criterion that needs a long run goes to the coder as WORKING, and
+// a verdict comes in time whatever is still open.
+func TestTheWakePromptKeepsLongRunsWithTheCoder(t *testing.T) {
+	prompt := wakePrompt(Job{Terminal: "term-1", DoneWhen: "e2e PASS"}, Activity{Text: "x"})
+	for _, want := range []string{
+		"Long runs are the coder's work, not yours",
+		"seconds to a few minutes",
+		"have the coder run it, and report WORKING with what you sent",
+		"Only when you started something yourself that still runs is WORKING about that",
+		"answer in time with the verdict on the first line",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("the prompt misses %q:\n%s", want, prompt)
+		}
+	}
+}
+
+// A criterion about a project's conventions or gates is judged against what
+// the project itself says, so the check is told to look for the project's
+// instruction files and read them first, without being told which files those
+// are: the names differ per project and per coder.
+func TestTheWakePromptSendsTheCheckToTheProjectsInstructions(t *testing.T) {
+	prompt := wakePrompt(Job{Terminal: "term-1", Project: "demo", DoneWhen: "the gates pass"}, Activity{Text: "x"})
+	for _, want := range []string{
+		"look in the project for the instruction files that lie there and read them before you judge",
+		"which files those are differs per project and per coder",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("the prompt misses %q:\n%s", want, prompt)
+		}
+	}
+	for _, fixed := range []string{"CLAUDE.md", "AGENTS.md", "copilot-instructions"} {
+		if strings.Contains(prompt, fixed) {
+			t.Fatalf("the prompt names %s, a file list that cannot be right for every project", fixed)
 		}
 	}
 }
@@ -1890,24 +2207,33 @@ func TestAWorkspaceLinkOutOfTheWorkspaceIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
+	const id = "11111111-1111-4111-8111-111111111111"
+	own, err := workspace.Workdir(id)
+	if err != nil {
+		t.Fatalf("workdir: %v", err)
+	}
 	outside := filepath.Join(t.TempDir(), "secret.txt")
 	if err := os.WriteFile(outside, []byte("not yours"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if err := os.Symlink(outside, filepath.Join(workspace.Workspace(), "link.txt")); err != nil {
+	if err := os.Symlink(outside, filepath.Join(own, "link.txt")); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
 	// A real file next to it still resolves, so the check is about the target
 	// and not about refusing everything.
-	if err := os.WriteFile(filepath.Join(workspace.Workspace(), "own.txt"), []byte("mine"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(own, "own.txt"), []byte("mine"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	if _, err := workspace.ResolveWorkspaceFile("link.txt"); err == nil {
+	if _, err := workspace.ResolveWorkspaceFile(id, "link.txt"); err == nil {
 		t.Fatal("a link pointing out of the workspace was served")
 	}
-	if _, err := workspace.ResolveWorkspaceFile("own.txt"); err != nil {
+	if _, err := workspace.ResolveWorkspaceFile(id, "own.txt"); err != nil {
 		t.Fatalf("a file of its own must still resolve: %v", err)
+	}
+	// Another assistant's address reads its own workspace, where the file is not.
+	if _, err := workspace.ResolveWorkspaceFile("22222222-2222-4222-8222-222222222222", "own.txt"); err == nil {
+		t.Fatal("a file was served out of another assistant's workspace")
 	}
 }
 
@@ -1916,7 +2242,7 @@ func TestAWorkspaceLinkOutOfTheWorkspaceIsRefused(t *testing.T) {
 // assistant's report lines say so instead of showing an empty criterion.
 func TestAJobWithoutADoneWhenJudgesAgainstTheSessionsOwnTask(t *testing.T) {
 	f := newJobFixture(t, "NOTHING")
-	job, err := f.watcher.Steer(Job{Terminal: "term-9", CoderID: "claude"})
+	job, err := f.watcher.Steer(Job{Owner: f.owner.ID, Terminal: "term-9", CoderID: "claude"})
 	if err != nil {
 		t.Fatalf("a job without a criterion has to be allowed: %v", err)
 	}
@@ -1947,9 +2273,9 @@ func TestAJobWithoutADoneWhenJudgesAgainstTheSessionsOwnTask(t *testing.T) {
 func TestTheWakePromptOffersTheWaysToWrite(t *testing.T) {
 	job := Job{Terminal: "term-1", DoneWhen: "the tests pass"}
 	activity := Activity{Text: "the coder stopped", Finished: true}
-	prompt := wakePromptWith(job, activity, "dc output", "dc send", "dc keys")
+	prompt := wakePromptWith(job, activity, "/w/cockpit", "")
 	for _, want := range []string{
-		"yours to keep moving", "dc send term-1", "dc keys term-1", "dc output term-1",
+		"yours to keep moving", "/w/cockpit coder-send-prompt term-1", "/w/cockpit coder-send-control-keys term-1", "/w/cockpit terminal-screen term-1",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("the prompt has to say %q:\n%s", want, prompt)
@@ -1963,7 +2289,7 @@ func TestTheWakePromptOffersTheWaysToWrite(t *testing.T) {
 // the record, changing a copy and saving it back loses one of the two.
 func TestAWakeAndAnInputAtTheSameTimeKeepBothFields(t *testing.T) {
 	f := newJobFixture(t, "NOTHING")
-	f.steered(t)
+	owner, job := f.steered(t)
 
 	const rounds = 100
 	var wg sync.WaitGroup
@@ -1971,11 +2297,11 @@ func TestAWakeAndAnInputAtTheSameTimeKeepBothFields(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			f.watcher.mark("term-1", func(w *Job) { w.Wakes++ })
+			f.watcher.mark(job, func(w *Job) { w.Wakes++ })
 		}()
 		go func() {
 			defer wg.Done()
-			f.watcher.NoteAssistantInput("term-1")
+			f.watcher.NoteAssistantInput("term-1", owner.ID)
 		}()
 	}
 	wg.Wait()
