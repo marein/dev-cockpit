@@ -129,40 +129,59 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/coders/:id/resume", s.handleCoderResume)
 	auth.POST("/coders/:id/delete", s.handleCoderDelete)
 
-	// The assistant is a page: the bare address opens the live conversation
-	// and sends the browser to it, a conversation's address shows that one
-	// (read-only when it is history) beside the list column of all of them.
-	// Its lists serve themselves as fragments for the self refreshing lists
-	// on the page and for the phone's sheet.
-	auth.GET("/assistant", s.handleAssistantPage)
-	// TODO(v2.0.0): the overlay pulled its interior and its history list
-	// from these two, and both are the page now.
-	auth.GET("/assistant/panel", retiredPath("/assistant"))
-	auth.GET("/assistant/history", retiredPath("/assistant"))
-	auth.GET("/assistant/memory", s.handleAssistantMemory)
-	auth.POST("/assistant/memory", s.handleAssistantMemorySave)
-	// The steered jobs belong to the assistant, not to one conversation: a job
-	// outlives the conversation it was started from and reports into whichever
-	// one is live when it has something to say. So they sit on a path of their
-	// own, which is also the one `dev-cockpit assistant coder-steer` posts to.
-	auth.GET("/assistant/jobs", s.handleAssistantJobs)
-	auth.POST("/assistant/jobs", s.handleAssistantJobsAction)
-	// The two conversation reads answer the assistant's own `conversation-list`
-	// and `conversation-show` commands as JSON. The overlay renders its history
-	// from fragments, not from these.
-	auth.GET("/assistant/conversations", s.handleAssistantConversations)
-	auth.GET("/assistant/conversations/:id", s.handleAssistantConversationRead)
-	auth.GET("/assistant/:id", s.handleAssistantPage)
-	auth.POST("/assistant/:id", s.handleAssistantAction)
-	auth.GET("/assistant/:id/stream", s.handleAssistantStream)
-	auth.GET("/assistant/:id/messages/:messageId", s.handleAssistantMessage)
-	auth.GET("/assistant/:id/draft", s.handleAssistantDraft)
-	auth.POST("/assistant/:id/user-upload", s.handleAssistantUpload)
+	// The assistants are an area, like the terminals: the bare address leads
+	// to the one last looked at, an assistant's own address shows that one
+	// beside the list column of all of them. Its lists serve themselves as
+	// fragments for the self refreshing lists on the page and for the phone's
+	// sheet.
+	auth.GET("/assistants", s.handleAssistantsEntry)
+	auth.GET("/assistants/memory", s.handleAssistantMemory)
+	auth.POST("/assistants/memory", s.handleAssistantMemorySave)
+	// The steered jobs sit on a path of their own, one path for every
+	// assistant's: a terminal carries at most one job, so who may steer it is a
+	// question about all of them at once. Which assistant a job belongs to
+	// travels in the request and in the answer. It is also the path
+	// `dev-cockpit assistant coder-steer` posts to.
+	auth.GET("/assistants/jobs", s.handleAssistantJobs)
+	auth.POST("/assistants/jobs", s.handleAssistantJobsAction)
+	// The two reads answer the `assistant-list` and `assistant-show` commands
+	// as JSON: this is how assistants see each other. The page renders its own
+	// list from fragments, not from these.
+	auth.POST("/assistants/order", s.handleAssistantOrder)
+	auth.GET("/assistants/instances", s.handleAssistantInstances)
+	auth.GET("/assistants/instances/:id", s.handleAssistantInstanceRead)
+	auth.GET("/assistants/:id", s.handleAssistantPage)
+	auth.POST("/assistants/:id", s.handleAssistantAction)
+	auth.GET("/assistants/:id/stream", s.handleAssistantStream)
+	auth.GET("/assistants/:id/messages/:messageId", s.handleAssistantMessage)
+	auth.GET("/assistants/:id/draft", s.handleAssistantDraft)
+	auth.POST("/assistants/:id/user-upload", s.handleAssistantUpload)
 	// The two voice routes: a recorded clip in and its transcript out, and
 	// one answer spoken, synthesized per request.
-	auth.POST("/assistant/:id/stt", s.handleAssistantSTT)
-	auth.GET("/assistant/:id/messages/:messageId/audio", s.handleAssistantMessageAudio)
-	auth.GET("/assistant/:id/media/*path", s.handleAssistantMedia)
+	auth.POST("/assistants/:id/stt", s.handleAssistantSTT)
+	auth.GET("/assistants/:id/messages/:messageId/audio", s.handleAssistantMessageAudio)
+	auth.GET("/assistants/:id/media/*path", s.handleAssistantMedia)
+
+	// TODO(v2.0.0): the area was /assistant while there was one assistant, and
+	// every address under it answers with a 308 to its plural twin. A stored
+	// push message and a notification entry point at /assistant/<id>, so the
+	// old subtree has to keep landing somewhere; 308 keeps the method, so a
+	// form of a page loaded before the move replays against the new path.
+	//
+	// The overlay the first two served is the page now, so they lead to the
+	// area itself and not to a plural twin that never existed.
+	auth.GET("/assistant/panel", retiredPath("/assistants"))
+	auth.GET("/assistant/history", retiredPath("/assistants"))
+	// TODO(v2.0.0): what a released CLI calls over the socket answers in place
+	// instead of redirecting. The local API client never follows a redirect, it
+	// wants the JSON, so a 308 here would not move it, it would break it.
+	auth.GET("/assistant/jobs", s.handleAssistantJobs)
+	auth.POST("/assistant/jobs", s.handleAssistantJobsAction)
+	auth.GET("/assistant/conversations", s.handleAssistantInstances)
+	auth.GET("/assistant/conversations/:id", s.handleAssistantInstanceRead)
+	auth.Any("/assistant", movedAssistantPath)
+	auth.Any("/assistant/:id", movedAssistantPath)
+	auth.Any("/assistant/:id/*rest", movedAssistantPath)
 
 	auth.GET("/shells/new", s.handleShellNew)
 	auth.POST("/shells/new", s.handleShellCreate)
@@ -194,6 +213,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/settings/assistant", s.handleSettingsAssistant)
 	auth.GET("/settings/assistant/voice", s.handleSettingsVoice)
 	auth.POST("/settings/assistant/voice", s.handleSettingsVoiceSave)
+	auth.GET("/settings/assistant/jobs", s.handleSettingsAssistantJobs)
+	auth.POST("/settings/assistant/jobs", s.handleSettingsAssistantJobsSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
 	auth.POST("/settings/general", s.handleSettingsGeneralSave)
 	// Docker is a section of its own: the daemon and the compose commands.
@@ -400,6 +421,18 @@ func (s *Server) servePlugin(p *pluginhost.Serve) gin.HandlerFunc {
 		}
 		routes.ServeHTTP(c.Writer, c.Request)
 	}
+}
+
+// movedAssistantPath forwards an address under the old /assistant subtree to
+// its plural twin, query kept. It is a named function so the route table says
+// which routes lead here.
+// TODO(v2.0.0): drop together with the old subtree.
+func movedAssistantPath(c *gin.Context) {
+	target := "/assistants" + strings.TrimPrefix(c.Request.URL.Path, "/assistant")
+	if q := c.Request.URL.RawQuery; q != "" {
+		target += "?" + q
+	}
+	c.Redirect(http.StatusPermanentRedirect, target)
 }
 
 // retiredPath forwards one address the restructure retired to what replaced

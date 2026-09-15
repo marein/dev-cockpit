@@ -37,11 +37,15 @@ import (
 // and its event stream. They read the same files and the same tmux the server
 // reads, so a fresh process always sees the current picture.
 
-// inspectOptions is which cockpit a command talks to. One instance is shared by
-// the whole assistant command group, filled from its persistent flags.
+// inspectOptions is which cockpit a command talks to and who is calling. One
+// instance is shared by the whole assistant command group, filled from its
+// persistent flags.
 type inspectOptions struct {
 	stateDir    string
 	projectsDir string
+	// assistantID is the assistant running the command, from --as. Empty for
+	// a person at a shell, who is nobody in particular.
+	assistantID string
 }
 
 func newStatusCommand(opts *inspectOptions) *cobra.Command {
@@ -166,7 +170,7 @@ func newActivityCommand(opts *inspectOptions) *cobra.Command {
 }
 
 func runActivity(out io.Writer, opts inspectOptions, target string, entries int, full bool) error {
-	client, err := localapi.Dial(opts.stateDir)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
@@ -233,71 +237,74 @@ func formatActivity(target string, answer map[string]any) string {
 // service, and a second reader would have to repeat its rules. They still only
 // read, the routes change nothing.
 
-// conversationTimeout bounds the two conversation reads. Generous, because a
+// assistantReadTimeout bounds the two assistant reads. Generous, because a
 // contains search reads every transcript once.
-const conversationTimeout = 30 * time.Second
+const assistantReadTimeout = 30 * time.Second
 
-// maxConversationsShown bounds the conversation list the same way the status
-// list bounds the inactive coders: the recent ones carry the information, the
-// tail is only cost, and what is dropped is printed as a count, never silently.
-const maxConversationsShown = maxInactiveShown
+// maxAssistantsShown bounds the assistant list the same way the status list
+// bounds the inactive coders: the recent ones carry the information, the tail
+// is only cost, and what is dropped is printed as a count, never silently.
+const maxAssistantsShown = maxInactiveShown
 
-func newConversationsCommand(opts *inspectOptions) *cobra.Command {
+func newAssistantsCommand(opts *inspectOptions) *cobra.Command {
 	contains := ""
 	cmd := &cobra.Command{
-		Use:   "conversation-list",
-		Short: "Show the assistant's own recent conversations",
-		Long: "Show the conversations the assistant had with the user, newest first: the id, " +
-			"the title, the coder, when the last message was, and a preview. The list is capped " +
-			"at the recent ones and says how many older ones it dropped. `--contains` keeps only " +
-			"the conversations where a word appears in the title or in a message, compared case " +
-			"insensitively, and the cap applies after that. Reads only, changes nothing.",
+		Use:   "assistant-list",
+		Short: "Show every assistant that lives right now",
+		Long: "Show the assistants in the order the list is sorted into: the id, the name, " +
+			"the coder, when the last message was, and a preview. Yours is marked. Every one " +
+			"of them is live and takes messages, so this is also how you see who else is " +
+			"working and what they hold. The list is capped at the first ones of that order " +
+			"and says how many it dropped. `--contains` keeps only the assistants where a word " +
+			"appears in the name or in a message, compared case insensitively, and the cap " +
+			"applies after that. Reads only, changes nothing.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runConversations(cmd.OutOrStdout(), *opts, contains)
+			return runAssistants(cmd.OutOrStdout(), *opts, contains)
 		},
 	}
-	cmd.Flags().StringVar(&contains, "contains", "", "list only conversations carrying this word in the title or a message")
+	cmd.Flags().StringVar(&contains, "contains", "", "list only assistants carrying this word in the name or a message")
 	return cmd
 }
 
-func runConversations(out io.Writer, opts inspectOptions, contains string) error {
-	client, err := localapi.Dial(opts.stateDir)
+func runAssistants(out io.Writer, opts inspectOptions, contains string) error {
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
-	path := "/assistant/conversations"
+	path := assistantsPath
 	contains = strings.TrimSpace(contains)
 	if contains != "" {
 		path += "?contains=" + url.QueryEscape(contains)
 	}
-	answer, err := client.GetJSON(path, conversationTimeout)
+	answer, err := client.GetJSON(path, assistantReadTimeout)
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(out, formatConversations(contains, answer))
+	_, err = io.WriteString(out, formatAssistants(contains, opts.assistantID, answer))
 	return err
 }
 
-// formatConversations renders the conversation list, at most
-// maxConversationsShown entries, the dropped tail counted. The cap sits here
-// and not in the route, like the status cap: the route reports what there is,
-// the command decides what a page of it may cost.
-func formatConversations(contains string, answer map[string]any) string {
-	raw, _ := answer["conversations"].([]any)
+// formatAssistants renders the assistant list, at most maxAssistantsShown
+// entries, the dropped tail counted. The cap sits here and not in the route,
+// like the status cap: the route reports what there is, the command decides
+// what a page of it may cost. own marks the caller's own row, so a turn reading
+// this list knows which line is itself without comparing ids by eye.
+func formatAssistants(contains, own string, answer map[string]any) string {
+	raw, _ := answer["assistants"].([]any)
 	var b strings.Builder
 	if contains != "" {
-		fmt.Fprintf(&b, "Assistant conversations containing %q (%d)\n", contains, len(raw))
+		fmt.Fprintf(&b, "Assistants containing %q (%d)\n", contains, len(raw))
 	} else {
-		fmt.Fprintf(&b, "Assistant conversations (%d)\n", len(raw))
+		fmt.Fprintf(&b, "Assistants (%d)\n", len(raw))
 	}
 	if len(raw) == 0 {
 		b.WriteString("  none\n")
 		return b.String()
 	}
 	shown := raw
-	if len(shown) > maxConversationsShown {
-		shown = shown[:maxConversationsShown]
+	if len(shown) > maxAssistantsShown {
+		shown = shown[:maxAssistantsShown]
 	}
 	for _, entry := range shown {
 		m, ok := entry.(map[string]any)
@@ -307,7 +314,14 @@ func formatConversations(contains string, answer map[string]any) string {
 		title, _ := m["title"].(string)
 		coder, _ := m["coderId"].(string)
 		id, _ := m["id"].(string)
-		fmt.Fprintf(&b, "  %-9s %s", orDash(coder), quoted(title))
+		mark := " "
+		if own != "" && id == own {
+			mark = "*"
+		}
+		fmt.Fprintf(&b, " %s%-9s %s", mark, orDash(coder), quoted(title))
+		if jobs := jsonCount(m["openJobs"]); jobs > 0 {
+			fmt.Fprintf(&b, "  steering %d", jobs)
+		}
 		if when := jsonTime(m["lastMessageAt"]); when != "" {
 			fmt.Fprintf(&b, "  last message %s", when)
 		}
@@ -319,23 +333,27 @@ func formatConversations(contains string, answer map[string]any) string {
 	if rest := len(raw) - len(shown); rest > 0 {
 		fmt.Fprintf(&b, "  and %d older, narrow the list with --contains\n", rest)
 	}
+	if own != "" {
+		b.WriteString("  * is you. You read the others, you write only your own.\n")
+	}
 	return b.String()
 }
 
-func newConversationCommand(opts *inspectOptions) *cobra.Command {
+func newAssistantCommandShow(opts *inspectOptions) *cobra.Command {
 	entries := 0
 	full := false
 	cmd := &cobra.Command{
-		Use:   "conversation-show <id>",
-		Short: "Show the messages of one assistant conversation",
-		Long: "Show what was said in one of the assistant's own conversations, newest last, " +
-			"each message with its role. The id is from `conversation-list`. The reading is capped " +
+		Use:   "assistant-show <id>",
+		Short: "Show the messages of one assistant",
+		Long: "Show what was said in one assistant's thread, newest last, each message with " +
+			"its role. The id is from `assistant-list`, and it may be your own or another " +
+			"assistant's: reading across is allowed, writing is not. The reading is capped " +
 			"by default, and a cut message says how much of it is shown; `--full` lifts the cap " +
 			"and composes with `--entries`: `--entries 1 --full` is the whole last message. " +
 			"Reads only, changes nothing.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runConversation(cmd.OutOrStdout(), *opts, args[0], entries, full)
+			return runAssistantShow(cmd.OutOrStdout(), *opts, args[0], entries, full)
 		},
 	}
 	cmd.Flags().IntVar(&entries, "entries", 0, "how many messages to show (default the recent ones)")
@@ -343,12 +361,12 @@ func newConversationCommand(opts *inspectOptions) *cobra.Command {
 	return cmd
 }
 
-func runConversation(out io.Writer, opts inspectOptions, id string, entries int, full bool) error {
-	client, err := localapi.Dial(opts.stateDir)
+func runAssistantShow(out io.Writer, opts inspectOptions, id string, entries int, full bool) error {
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
-	path := "/assistant/conversations/" + strings.TrimSpace(id)
+	path := assistantsPath + "/" + strings.TrimSpace(id)
 	query := ""
 	if entries > 0 {
 		query = "entries=" + strconv.Itoa(entries)
@@ -362,17 +380,21 @@ func runConversation(out io.Writer, opts inspectOptions, id string, entries int,
 	if query != "" {
 		path += "?" + query
 	}
-	answer, err := client.GetJSON(path, conversationTimeout)
+	answer, err := client.GetJSON(path, assistantReadTimeout)
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(out, formatConversation(answer))
+	_, err = io.WriteString(out, formatAssistantThread(answer))
 	return err
 }
 
-// formatConversation renders one transcript: a line saying what is shown, then
-// the messages, newest last, each under a line naming who said it and when.
-func formatConversation(answer map[string]any) string {
+// assistantsPath is where the assistants are read, the same path the page's
+// own list is built from.
+const assistantsPath = "/assistants/instances"
+
+// formatAssistantThread renders one transcript: a line saying what is shown,
+// then the messages, newest last, each under a line naming who said it and when.
+func formatAssistantThread(answer map[string]any) string {
 	title, _ := answer["title"].(string)
 	coder, _ := answer["coderId"].(string)
 	raw, _ := answer["messages"].([]any)
@@ -380,16 +402,16 @@ func formatConversation(answer map[string]any) string {
 	total := jsonCount(answer["messageCount"])
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Conversation %s", quoted(title))
+	fmt.Fprintf(&b, "Assistant %s", quoted(title))
 	if coder != "" {
-		fmt.Fprintf(&b, " with coder %s", coder)
+		fmt.Fprintf(&b, " on coder %s", coder)
 	}
 	fmt.Fprintf(&b, ", %d messages.\n", total)
 	if dropped > 0 {
 		fmt.Fprintf(&b, "Showing the last %d; %d older are not shown, --entries brings them back.\n", len(raw), dropped)
 	}
 	if len(raw) == 0 {
-		b.WriteString("This conversation has no messages yet.\n")
+		b.WriteString("This assistant has no messages yet.\n")
 		return b.String()
 	}
 	for _, entry := range raw {
@@ -450,10 +472,13 @@ func newJobsCommand(opts *inspectOptions) *cobra.Command {
 	since := ""
 	cmd := &cobra.Command{
 		Use:   "job-list",
-		Short: "Show the coders the assistant is steering",
+		Short: "Show the coders an assistant is steering",
 		Long: "Show the steered jobs: what each one has to reach, what is left of its checks " +
-			"and of its time, and what the last check said. A steered terminal is the " +
-			"assistant's to write into; every other terminal belongs to the user. " +
+			"and of its time, and what the last check said. A coder you steer is yours to " +
+			"write into; every other terminal belongs to the user or to another assistant. " +
+			"It lists your own jobs; `--assistant all` lists every assistant's, each line " +
+			"naming who steers it, and `--assistant <id>` lists one other's. Run outside a " +
+			"turn it lists everybody's, there is nobody to be. " +
 			"Every open job is listed; the closed ones are capped at the recent ones, " +
 			"counted per state under their header, and a long criterion is cut and says so. " +
 			"`--contains`, `--state` and `--since` narrow the list before the cap, so they " +
@@ -473,12 +498,18 @@ func newJobsCommand(opts *inspectOptions) *cobra.Command {
 	cmd.Flags().StringVar(&since, "since", "", "list only jobs that changed since then, a span like 24h or a date like 2026-03-04")
 	cmd.Flags().BoolVar(&filter.All, "all", false, "list every closed job instead of the recent ones")
 	cmd.Flags().BoolVar(&filter.Full, "full", false, "show the criteria whole, without the cut")
+	cmd.Flags().StringVar(&filter.Assistant, "assistant", "", "whose jobs to list: an assistant id, or all (default: your own)")
 	return cmd
 }
 
 // jobLine is one job in the job-list output.
 type jobLine struct {
-	Terminal  string
+	Terminal string
+	// Owner and OwnerName are the assistant steering this job. They are printed
+	// only in a listing that spans more than one, where "whose is this" is the
+	// question the listing exists to answer.
+	Owner     string
+	OwnerName string
 	Name      string
 	Project   string
 	Coder     string
@@ -504,6 +535,10 @@ type jobLine struct {
 type jobsFilter struct {
 	Contains string
 	State    string
+	// Assistant is whose jobs are listed: one id, the word all, or empty for
+	// the caller's own. It is not part of keeps below, it decides which stores
+	// are read at all.
+	Assistant string
 	// Since is the moment a job must have changed after, already resolved from
 	// the flag, and SinceRaw is what the caller wrote, for the line that says
 	// what was filtered.
@@ -542,7 +577,7 @@ func (f jobsFilter) parse(since string, now time.Time) (jobsFilter, error) {
 // keeps answers whether one job survives the filter. The word is looked for in
 // what a person would search by: the coder's name, the task, the criterion and
 // what the last check said. Compared case insensitively, the way
-// `conversation-list --contains` compares.
+// `assistant-list --contains` compares.
 func (f jobsFilter) keeps(job jobLine) bool {
 	if f.State != "" && job.State != f.State {
 		return false
@@ -596,6 +631,9 @@ type jobsReport struct {
 	// Dropped is how many jobs the filter took out, so the output can say that
 	// the list is a part of what is stored and not all of it.
 	Dropped int
+	// Owners says the listing spans more than one assistant, so every line
+	// names who steers it.
+	Owners bool
 }
 
 func runJobs(out io.Writer, opts inspectOptions, filter jobsFilter) error {
@@ -603,14 +641,24 @@ func runJobs(out io.Writer, opts inspectOptions, filter jobsFilter) error {
 	if err != nil {
 		return fmt.Errorf("failed to read the cockpit configuration: %w", err)
 	}
-	jobs := assistant.NewJobStore(stateDir).List()
-	// The same order the conversation and the page use, from the same function:
-	// open jobs first, then the newest.
+	store := assistant.NewStore(stateDir)
+	registry := assistant.NewJobs(store)
+	owner, everybody := jobsOwner(filter.Assistant, opts.assistantID)
+	jobs := registry.All()
+	if !everybody {
+		jobs = registry.Of(owner).List()
+	}
+	names := assistantNames(store)
+	// The same order the assistant page and the thread use, from the same
+	// function: open jobs first, then the newest.
 	assistant.SortJobs(jobs)
 
-	report := jobsReport{Now: time.Now(), Filter: filter}
+	report := jobsReport{Now: time.Now(), Filter: filter, Owners: everybody}
 	for _, job := range jobs {
 		line := jobLineFrom(job)
+		if everybody {
+			line.OwnerName = names[line.Owner]
+		}
 		if !filter.keeps(line) {
 			report.Dropped++
 			continue
@@ -621,6 +669,35 @@ func runJobs(out io.Writer, opts inspectOptions, filter jobsFilter) error {
 	return err
 }
 
+// jobsOwner resolves whose jobs a call is about. The caller's own is the
+// default, own being what the group's --as flag named, so a turn asks about
+// itself with the flag it carries anyway; a shell has no assistant to be and
+// sees everybody's, which is the honest answer to a question nobody can
+// attribute.
+func jobsOwner(asked, own string) (owner string, everybody bool) {
+	asked = strings.TrimSpace(asked)
+	if strings.EqualFold(asked, "all") {
+		return "", true
+	}
+	if asked != "" {
+		return asked, false
+	}
+	if own = strings.TrimSpace(own); own != "" {
+		return own, false
+	}
+	return "", true
+}
+
+// assistantNames is what each assistant is called, by id, for a listing that
+// names who steers what.
+func assistantNames(store *assistant.Store) map[string]string {
+	out := map[string]string{}
+	for _, entry := range store.List() {
+		out[entry.ID] = entry.Title
+	}
+	return out
+}
+
 func jobLineFrom(job assistant.Job) jobLine {
 	changed := job.UpdatedAt
 	if changed.IsZero() {
@@ -628,6 +705,7 @@ func jobLineFrom(job assistant.Job) jobLine {
 	}
 	return jobLine{
 		Terminal:  job.Terminal,
+		Owner:     job.Owner,
 		Name:      job.Name,
 		Project:   job.Project,
 		Coder:     job.CoderID,
@@ -649,9 +727,10 @@ func newJobCommand(opts *inspectOptions) *cobra.Command {
 		Use:   "job-show <terminal>",
 		Short: "Show one job in full",
 		Long: "Show everything one job holds, nothing cut: the criterion, the task, " +
-			"the state, the spent checks, the time left, and the whole report the " +
-			"last check left. `job-list` keeps its list short on purpose; this is where a single " +
-			"job is looked up. Reads only, changes nothing.",
+			"the state, the spent checks, the time left, who steers it, and the whole report " +
+			"the last check left. It finds the job whoever owns it, so it is also how you " +
+			"see that a coder is taken. `job-list` keeps its list short on purpose; this is " +
+			"where a single job is looked up. Reads only, changes nothing.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runJob(cmd.OutOrStdout(), *opts, args[0])
@@ -665,9 +744,13 @@ func runJob(out io.Writer, opts inspectOptions, terminal string) error {
 		return fmt.Errorf("failed to read the cockpit configuration: %w", err)
 	}
 	terminal = strings.TrimSpace(terminal)
-	for _, job := range assistant.NewJobStore(stateDir).List() {
+	store := assistant.NewStore(stateDir)
+	names := assistantNames(store)
+	for _, job := range assistant.NewJobs(store).All() {
 		if job.Terminal == terminal {
-			_, err = io.WriteString(out, formatJob(time.Now(), jobLineFrom(job)))
+			line := jobLineFrom(job)
+			line.OwnerName = names[job.Owner]
+			_, err = io.WriteString(out, formatJob(time.Now(), line))
 			return err
 		}
 	}
@@ -687,6 +770,9 @@ func formatJob(now time.Time, job jobLine) string {
 	}
 	fmt.Fprintf(&b, "Job %s\n", quoted(name))
 	fmt.Fprintf(&b, "  terminal  %s\n", job.Terminal)
+	if job.OwnerName != "" {
+		fmt.Fprintf(&b, "  steered by %s\n", job.OwnerName)
+	}
 	if job.Coder != "" {
 		fmt.Fprintf(&b, "  coder     %s\n", job.Coder)
 	}
@@ -771,8 +857,13 @@ func formatJobs(r jobsReport) string {
 		fmt.Fprintf(&b, "  and %d older, --contains, --state and --since search past this, --all lists every one\n", rest)
 	}
 
-	b.WriteString("\nA steering job means the assistant holds that terminal and may write into it. " +
-		"Every other terminal belongs to the user.\n")
+	if r.Owners {
+		b.WriteString("\nA steering job means that assistant holds the terminal and may write into it. " +
+			"A coder somebody else steers is theirs: steering or releasing it is refused, only the user can take it off them.\n")
+	} else {
+		b.WriteString("\nA steering job means you hold that terminal and may write into it. " +
+			"Every other terminal belongs to the user or to another assistant, `--assistant all` shows theirs.\n")
+	}
 	return b.String()
 }
 
@@ -831,6 +922,12 @@ func writeJobLines(b *strings.Builder, now time.Time, job jobLine, full bool) {
 	fmt.Fprintf(b, "  %-9s %-16s %-16s checks %d/%d  %s  id %s\n",
 		job.State, quoted(name), orDash(job.Project),
 		job.Wakes, job.MaxWakes, jobDeadline(now, job), job.Terminal)
+	// Only a listing that spans several assistants says whose job this is. In
+	// your own list the answer is always you, and a line repeating that on
+	// every job is noise paid for in the answer that carries it.
+	if job.OwnerName != "" {
+		fmt.Fprintf(b, "    steered by: %s\n", job.OwnerName)
+	}
 	// A criterion may be stored as several lines, one check per line; the list
 	// folds them to one line and `job-show` shows them as they stand. A job without
 	// one is judged against the session's own task, and the line says so.
@@ -1059,7 +1156,7 @@ func reservedSessions(stateDir string) map[string]bool {
 // never come to different conclusions about what is steered.
 func steeredTerminals(stateDir string) map[string]bool {
 	out := map[string]bool{}
-	for _, job := range assistant.NewJobStore(stateDir).List() {
+	for _, job := range assistant.NewJobs(assistant.NewStore(stateDir)).All() {
 		if job.State.Open() {
 			out[job.Terminal] = true
 		}

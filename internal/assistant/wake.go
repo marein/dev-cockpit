@@ -24,6 +24,9 @@ const wakeTimeout = 2 * time.Hour
 
 // wakeSpec is one check the watcher asks for.
 type wakeSpec struct {
+	// Owner is the assistant whose job this is: the one the check acts as and
+	// the one its report is written into.
+	Owner    string
 	Terminal string
 	Prompt   string
 	// Context is what the watcher saw before the check started. It travels into
@@ -64,7 +67,7 @@ type wakeOutcome struct {
 // startWake spends one turn checking on a steered coder. It is deliberately not
 // a chat turn:
 //
-//   - it runs in a provider session of its own, so the conversation's session
+//   - it runs in a provider session of its own, so the instance's session
 //     stays free for the user and the check does not drag the whole chat history
 //     along, which is what a check would cost otherwise,
 //   - it holds a wake slot, never a chat slot,
@@ -75,16 +78,20 @@ type wakeOutcome struct {
 // restart in the middle costs nothing: the check keeps running and whoever comes
 // back reads its verdict out of the file.
 func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
-	c, err := s.Open("")
+	c, err := s.Get(spec.Owner)
 	if err != nil {
 		return nil, err
 	}
 	co, ok := s.coder(c.CoderID)
 	if !ok {
-		return nil, errors.New("The coder of this conversation is not available right now.")
+		return nil, errors.New("The coder of this assistant is not available right now.")
 	}
 	if strings.TrimSpace(spec.Prompt) == "" {
 		return nil, errors.New("A check needs a prompt.")
+	}
+	workdir, err := s.workdirs.Workdir(c.ID)
+	if err != nil {
+		return nil, err
 	}
 
 	// A session of its own, kept out of the coder lists while it exists and
@@ -106,17 +113,21 @@ func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
 
 		Terminal: spec.Terminal,
 		Context:  spec.Context,
+		Owner:    spec.Owner,
 		Deadline: s.now().UTC().Add(wakeTimeout),
 	}, done: make(chan struct{})}
+	// A check runs in the workspace of the assistant whose job it is, so its
+	// instructions say who it acts as and every command it runs says so.
 	p, err := s.launch(&a.rec, co.Runner, TurnRequest{
+		Instance:  c.ID,
 		SessionID: sessionID,
 		Title:     wakeSessionName(c.Title),
-		Workdir:   c.ProjectPath,
+		Workdir:   workdir,
 		Prompt:    spec.Prompt,
 	})
 	if err != nil {
 		s.mu.Lock()
-		s.dropSessionLocked(Conversation{Summary: Summary{CoderID: c.CoderID}, NativeSessionID: sessionID})
+		s.dropSessionLocked(Instance{Summary: Summary{CoderID: c.CoderID}, NativeSessionID: sessionID})
 		s.mu.Unlock()
 		return nil, err
 	}
@@ -160,29 +171,26 @@ func (s *Service) killChecks(terminal string) {
 	}
 }
 
-// recordWake writes the report of a check into the live conversation and
-// announces it: one message that is marked as a check, never a user message,
-// plus the cockpit's usual news so the phone rings. Returns the message id.
+// recordWake writes the report of a check into the transcript of the assistant
+// that steers the job, and announces it: one message that is marked as a check,
+// never a user message, plus the cockpit's usual news so the phone rings.
+// Returns the message id.
 //
-// The report goes where the user is, not where the job started. A job outlives
-// the conversation it was asked for, and writing into that one would put the
-// answer into a transcript the user has already left behind.
+// The report goes to the owner, and only to the owner. A job is a standing
+// arrangement one assistant made, so the answer belongs in that conversation
+// and nowhere else: written into whichever assistant somebody happened to be
+// looking at, a report would arrive in a thread that never asked for it, with
+// nothing in that thread to make sense of it.
 //
 // The id comes from the check's register entry, so concluding the same check
 // twice writes one message and not two. A report that belongs to no check (a job
 // that ran out) gets a fresh one.
 func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text string) string {
-	// Resolved before the lock: opening a conversation takes it.
-	target, err := s.Open("")
-	if err != nil {
-		log.Printf("assistant: no conversation for the report on %s: %v", job.Terminal, err)
-		return ""
-	}
-
 	s.mu.Lock()
-	c, ok := s.store.Load(target.ID)
+	c, ok := s.store.Load(job.Owner)
 	if !ok {
 		s.mu.Unlock()
+		log.Printf("assistant: the assistant of the job on %s is gone, dropping its report", job.Terminal)
 		return ""
 	}
 	if messageID == "" {

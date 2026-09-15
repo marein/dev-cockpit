@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/web"
 )
@@ -527,5 +528,53 @@ func TestDeletingACoderNeedsTheConfirmation(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatalf("want no request at all, got %d", calls)
+	}
+}
+
+// Deleting an assistant cannot be undone, so the command wants --yes. But
+// whether a call is allowed at all comes before whether it was confirmed: an
+// assistant asking to delete itself is refused however it confirms, and
+// sending it back to repeat the call with --yes would make it read the real
+// reason only on the second try. Nothing leaves the process in that case, so
+// the check also costs no round trip.
+func TestDeletingYourselfIsRefusedBeforeTheConfirmation(t *testing.T) {
+	const own = "11111111-1111-4111-8111-111111111111"
+	// No cockpit is dialled in any of these, so a stray request would hang on
+	// the socket instead of answering.
+	t.Setenv("DEV_COCKPIT_DIAL_BUDGET", "0s")
+	as := func(id string) inspectOptions { return inspectOptions{stateDir: t.TempDir(), assistantID: id} }
+
+	var out strings.Builder
+	err := runDeleteAssistant(&out, as(own), own, false)
+	if err == nil || err.Error() != assistant.SelfDeleteRefusal {
+		t.Fatalf("want the self delete refused on the first try, got %v", err)
+	}
+	// And it stays refused when the call does carry the confirmation.
+	if err := runDeleteAssistant(&out, as(own), own, true); err == nil || err.Error() != assistant.SelfDeleteRefusal {
+		t.Fatalf("want --yes refused too, got %v", err)
+	}
+	// Whitespace around the id is the same id.
+	if err := runDeleteAssistant(&out, as(own), "  "+own+" ", true); err == nil || err.Error() != assistant.SelfDeleteRefusal {
+		t.Fatalf("want a padded id read as the same assistant, got %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("a refused delete printed something: %q", out.String())
+	}
+
+	// Another assistant is a different question, and there the confirmation is
+	// what is missing first.
+	const other = "22222222-2222-4222-8222-222222222222"
+	err = runDeleteAssistant(&out, as(own), other, false)
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("want the confirmation asked for another assistant, got %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "cannot delete itself") {
+		t.Fatalf("another assistant was read as this one: %v", err)
+	}
+
+	// A person at a shell carries no --as, so nothing is theirs to be: the
+	// confirmation is the only thing in the way.
+	if err := runDeleteAssistant(&out, as(""), own, false); err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("want a shell asked for the confirmation, got %v", err)
 	}
 }

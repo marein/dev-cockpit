@@ -97,11 +97,10 @@ type Page struct {
 	// inline. Every other page gets a hidden switcher-only terminal-tabs
 	// instance from the layout, so the double Ctrl/Meta switcher works app wide.
 	HasTabStrip bool
-	// AssistantID is the conversation the assistant entry points open, and
-	// AssistantNews whether it has unread news. The three entry points carry
-	// the id as a notification target, so dc-notifications marks them live the
-	// way it marks a terminal row.
-	AssistantID   string
+	// AssistantNews says whether any assistant holds an answer nobody has read.
+	// One mark for the whole area, like the terminals': news in one of them is
+	// news whichever the entry opens, and which one it is in is what the list
+	// column's rows say.
 	AssistantNews bool
 	// BackupReviewCount is the number of open backup overwrite reviews,
 	// rendered as a badge on the Settings nav so the pending resolution is

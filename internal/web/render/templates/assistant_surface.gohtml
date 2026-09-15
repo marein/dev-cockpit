@@ -15,6 +15,7 @@
   <p class="mb-1">Give me a task. A coder builds it, I steer it and report done or stuck.</p>
   <p class="text-secondary mb-1">Stuck somewhere? Ask me, I look at what is running and get it going again.</p>
   <p class="text-secondary mb-1">I know your projects and this machine, and you can attach a picture, a recording or a clip.</p>
+  <p class="text-secondary mb-1">Start another assistant for work that has nothing to do with this one. We share what you tell us to remember, and each of us keeps its own coders.</p>
   <p class="text-secondary mb-0">All of this is customizable, just tell me when I should <em>remember something</em>.</p>
   <div class="d-inline-block border rounded text-secondary small mt-4 px-3 py-2" role="note">
     <i class="ti ti-info-circle me-1" aria-hidden="true"></i>The assistant runs on the default model, choosing a model comes in a later release.
@@ -28,20 +29,14 @@
 <div class="assistant-composer" data-assistant-footer role="status">
   <div class="d-flex align-items-center gap-2">
     <div class="text-secondary small flex-fill min-w-0">{{.Blocked}}</div>
-    {{if .CurrentURL}}
-    <a href="{{.CurrentURL}}" class="btn btn-primary flex-shrink-0" data-assistant-current>
-      <i class="ti ti-sparkles me-1"></i>Current conversation
-    </a>
-    {{else}}
-    <form method="post" action="{{.PostURL}}" class="flex-shrink-0">
+    <form method="post" action="/assistants/new" class="flex-shrink-0">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <input type="hidden" name="form" value="new">
       {{if .NewCoderID}}<input type="hidden" name="coder" value="{{.NewCoderID}}">{{end}}
       <button type="submit" class="btn btn-primary" data-assistant-new-context>
-        <i class="ti ti-plus me-1"></i>New conversation
+        <i class="ti ti-plus me-1"></i>New assistant
       </button>
     </form>
-    {{end}}
   </div>
 </div>
 {{else}}
@@ -84,7 +79,7 @@
 {{end}}
 {{end}}
 
-{{/* The new conversation control sits in the composer row, whose own element is
+{{/* The new assistant control sits in the composer row, whose own element is
      the message form. A form inside a form is dropped by the parser, and the
      button would then post the message form with a stray form=new field, so
      the posting forms render beside the composer and the buttons reach them by
@@ -116,7 +111,7 @@
      The label carries the number as words, because a ring alone is not readable
      without a pointer. */}}
 {{define "assistant_new_button.gohtml"}}
-{{$base := "New conversation, the memory comes along"}}
+{{$base := "New assistant, the memory comes along"}}
 {{$label := $base}}{{if .ContextPercent}}{{$label = printf "%s. Context %d percent" $base .ContextPercent}}{{end}}
 {{if gt (len .Coders) 1}}
 <div class="dropdown flex-shrink-0">

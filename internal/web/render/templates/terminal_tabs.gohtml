@@ -121,8 +121,8 @@
            per project sorted client side like the resume groups. Never shown in
            the menu, which offers only what creates a terminal. */}}
       <div class="d-none">
-        <a data-tabs-assistant href="/assistant" title="Assistant">
-          <span class="terminal-tab-icon dc-term-icon assistant{{if .AssistantNews}} news{{end}}"{{if .AssistantID}} data-notify-target="{{.AssistantID}}"{{end}} aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml"}}</span><span>Assistant</span>
+        <a data-tabs-assistant href="/assistants" title="Assistants">
+          <span class="terminal-tab-icon dc-term-icon assistant" aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml" (dict "Any" "assistant" "Hidden" (not .AssistantNews) "Label" "Something new in an assistant")}}</span><span>Assistants</span>
         </a>
       </div>
       <div class="d-none" data-tabs-editors>

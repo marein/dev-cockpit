@@ -34,6 +34,17 @@ import (
 	"github.com/marein/dev-cockpit/internal/filesystem"
 )
 
+// Reaching the socket says the caller is on this machine and may act. It does
+// not say which assistant is calling, and with several of them living at once
+// that is a different question with a different answer: every command an
+// assistant runs names it with the `--as <id>` flag its instructions spell
+// into every call, and the client sends that id on this header. A caller
+// without it is a person at a shell, and everything that needs an assistant to
+// charge the action to refuses instead of guessing one.
+//
+// AssistantHeader carries the id on every request over the socket.
+const AssistantHeader = "X-Dev-Cockpit-Assistant"
+
 // The socket lives in a directory of its own, and that directory carries the
 // permission. A socket file gets its mode from the umask at bind time, which
 // leaves a window where anybody could connect; a directory nobody else may
@@ -102,6 +113,9 @@ func Listen(stateDir string) (net.Listener, error) {
 // handlers.
 type Client struct {
 	http *http.Client
+	// assistant is who is calling, empty for a person at a shell. It is sent on
+	// every request, so a command is charged to the assistant that ran it.
+	assistant string
 }
 
 // dialBudget is how long Dial waits for the cockpit of a state directory to
@@ -128,10 +142,11 @@ func budget() time.Duration {
 	return dialBudget
 }
 
-// Dial returns a client for the cockpit of one state directory. It probes the
-// socket and waits out a restart window: a missing socket file and a refused
-// connection are retried until the budget is spent, everything else, and the
-// spent budget, answer with the message that no cockpit is running.
+// Dial returns a client for the cockpit of one state directory, calling as
+// assistantID, which is empty for a person at a shell. It probes the socket and
+// waits out a restart window: a missing socket file and a refused connection
+// are retried until the budget is spent, everything else, and the spent
+// budget, answer with the message that no cockpit is running.
 //
 // The waiting lives here and not in the transport's DialContext on purpose.
 // Only the connection probe may ever be repeated: a request is one attempt
@@ -139,14 +154,16 @@ func budget() time.Duration {
 // timeouts are partly shorter than this budget, so a retry inside the request
 // would be cut off before the budget mattered; Dial has no context, the budget
 // collides with nothing.
-func Dial(stateDir string) (*Client, error) {
+func Dial(stateDir, assistantID string) (*Client, error) {
 	path := SocketPath(stateDir)
 	deadline := time.Now().Add(budget())
 	for {
 		conn, err := net.DialTimeout("unix", path, time.Second)
 		if err == nil {
 			_ = conn.Close()
-			return newClient(path), nil
+			client := newClient(path)
+			client.assistant = strings.TrimSpace(assistantID)
+			return client, nil
 		}
 		retryable := errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED)
 		if !retryable || !time.Now().Before(deadline) {
@@ -204,6 +221,10 @@ func (c *Client) request(method, path, contentType string, body []byte, timeout 
 		req.Header.Set("Content-Type", contentType)
 	}
 	req.Header.Set("Accept", "application/json")
+	// Who is calling, when an assistant is.
+	if c.assistant != "" {
+		req.Header.Set(AssistantHeader, c.assistant)
+	}
 
 	res, err := c.http.Do(req)
 	if err != nil {

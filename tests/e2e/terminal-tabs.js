@@ -586,7 +586,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(hrefs[0].startsWith("/coders/new?") && hrefs[0].includes(`project=${project}`), `coder link ${hrefs[0]}`);
       assert(hrefs[1].startsWith("/shells/new?") && hrefs[1].includes(`project=${project}`), `shell link ${hrefs[1]}`);
       assert(hrefs[1].includes(`return=%2Fshells%2F${ids[2]}`), `shell link return target ${hrefs[1]}`);
-      assert(!(await page.$("terminal-tabs .dropdown-menu.show > a[href='/assistant']")), "the assistant is a menu entry");
+      assert(!(await page.$("terminal-tabs .dropdown-menu.show > a[href='/assistants']")), "the assistant is a menu entry");
       assert(await page.$("terminal-tabs [data-tabs-assistant]"), "the switcher lost its assistant data");
       // The entry opens the app wide create dialog (see shells.js), which
       // fetches the same /shells/new and carries the menu's project into it.
@@ -1106,10 +1106,12 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await sleep(200);
       const rows = await page.$$eval(".terminal-switcher-item:not([hidden])", (els) => els.map((e) => e.dataset.switcherSection));
       assert(rows.length === 1 && rows[0] === "assistant", `filter 'assist' shows ${JSON.stringify(rows)}`);
-      // The assistant is a page: the row navigates to the live conversation.
+      // The assistant is a page: the row goes into the area, which leads to the
+      // assistant looked at last, and to the empty state on an instance that
+      // has none, because nothing makes one by itself.
       await page.click('.terminal-switcher-item[data-switcher-section="assistant"]');
-      await page.waitForURL(/\/assistant\/[^/]+$/, { timeout: 8000 });
-      await page.waitForSelector("dc-assistant[ready]", { timeout: 8000 });
+      await page.waitForURL(/\/assistants(\/[^/]+)?$/, { timeout: 8000 });
+      await page.waitForSelector("dc-assistant[ready], [data-assistant-none]", { timeout: 8000 });
     });
 
     await run("the strip stays hidden on coarse pointer (mobile) clients", async () => {

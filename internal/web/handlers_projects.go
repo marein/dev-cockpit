@@ -87,7 +87,7 @@ func (s *Server) handleProjectsList(c *gin.Context) {
 	// fragment the browser carries across the redirect still names the answer
 	// it scrolls to.
 	if id := c.Query("assistant"); id != "" {
-		target := "/assistant"
+		target := "/assistants"
 		if id != "open" && id != "memory" {
 			target += "/" + url.PathEscape(id)
 		}

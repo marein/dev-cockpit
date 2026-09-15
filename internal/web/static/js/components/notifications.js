@@ -18,10 +18,12 @@ const channel = {
   unread: null,
   targets: [],
   // terminals is targets narrowed to the coders and the shells, the server's
-  // own answer (see notifyterminals.go): a compose action, a backup job, a
-  // standing git question and the assistant are no terminals. The bell counts
-  // targets, the Terminals news dot reads this.
+  // own answer (see notifyterminals.go): a compose action, a backup job and a
+  // standing git question are no terminals, and neither are the assistants,
+  // which get a narrowing of their own. The bell counts targets, each area's
+  // news dot reads its own list.
   terminals: [],
+  assistants: [],
   held: new Map(),
   listeners: new Set(),
   readUrl: "/notifications/read",
@@ -40,6 +42,7 @@ const channel = {
     if (!payload) return;
     this.targets = payload.targets || [];
     this.terminals = payload.terminals || [];
+    this.assistants = payload.assistants || [];
     // A toast already on screen and the own visible page act on the real
     // server state right away, independent of the grace window below.
     dismissReadToast(this.targets);
@@ -91,7 +94,10 @@ const channel = {
     const pulse = this.unread !== null && count > this.unread;
     this.unread = count;
     updateTitle(count);
-    decorateNews(shown, this.terminals.filter((id) => !this.held.has(id)));
+    decorateNews(shown, {
+      terminal: this.terminals.filter((id) => !this.held.has(id)),
+      assistant: this.assistants.filter((id) => !this.held.has(id)),
+    });
     this.listeners.forEach((listener) => listener({ unread: count, pulse }));
   },
 };
@@ -141,8 +147,10 @@ function updateTitle(unread) {
 // bell is the only place that counts; everywhere else the dot is the whole
 // statement, so [data-notify-any] (the Terminals button of the rail and the
 // tabbar) only asks whether a terminal is new at all, which is why it reads
-// the narrowed list and not every target.
-function decorateNews(targetIds, terminalIds) {
+// the narrowed list and not every target. Its value names the area, so the
+// assistants' entry points read theirs and stay dark for a terminal's news and
+// the other way round.
+function decorateNews(targetIds, areas) {
   const ids = new Set(targetIds || []);
   document.querySelectorAll("[data-notify-target]").forEach((icon) => {
     icon.classList.toggle("news", ids.has(icon.getAttribute("data-notify-target")));
@@ -158,9 +166,9 @@ function decorateNews(targetIds, terminalIds) {
       .some((el) => ids.has(el.getAttribute("data-notify-target"))));
     dot.classList.toggle("d-none", !any);
   });
-  const terminals = terminalIds || [];
   document.querySelectorAll("[data-notify-any]").forEach((dot) => {
-    dot.classList.toggle("d-none", terminals.length === 0);
+    const area = dot.getAttribute("data-notify-any") || "terminal";
+    dot.classList.toggle("d-none", ((areas || {})[area] || []).length === 0);
   });
 }
 
@@ -233,11 +241,12 @@ function shownTargets() {
     .filter((el) => el.offsetParent !== null)
     .map((el) => el.getAttribute("terminal-id"))
     .filter(Boolean);
-  // The assistant surface on screen counts like a pane: in the docked panel,
-  // the fullscreen overlay, and on its own page alike.
-  shown.push(...[...document.querySelectorAll("dc-assistant[conversation-id]")]
+  // An assistant on screen counts like a pane, and only the one that is on
+  // screen: the others keep their news, which is what makes the list column's
+  // own marks mean something.
+  shown.push(...[...document.querySelectorAll("dc-assistant[assistant-id]")]
     .filter((el) => el.offsetParent !== null)
-    .map((el) => el.getAttribute("conversation-id"))
+    .map((el) => el.getAttribute("assistant-id"))
     .filter(Boolean));
   if (shown.length) return shown;
   const match = window.location.pathname.match(/^\/(?:coders|shells)\/([^/]+)$/);

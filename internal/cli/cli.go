@@ -230,10 +230,10 @@ func newAskpassCommand() *cobra.Command {
 	}
 }
 
-// newAssistantCommand groups everything the cockpit's own assistant runs. They
+// newAssistantCommand groups everything the cockpit's own assistants run. They
 // share the two directory flags, because every one of them has to reach the same
-// instance: a machine can run several, and a command that read the default state
-// directory would answer about the wrong cockpit. The whole group is hidden from
+// cockpit: a machine can run several, and a command that read the default state
+// directory would answer about the wrong one. The whole group is hidden from
 // the top level help, it is not a user interface, typed explicitly it works.
 func newAssistantCommand() *cobra.Command {
 	opts := &inspectOptions{stateDir: config.DefaultStateDir, projectsDir: config.DefaultProjectsDir}
@@ -252,16 +252,29 @@ func newAssistantCommand() *cobra.Command {
 	}
 	cmd.PersistentFlags().StringVar(&opts.stateDir, "state-dir", opts.stateDir, "directory for dev-cockpit state files")
 	cmd.PersistentFlags().StringVar(&opts.projectsDir, "projects-dir", opts.projectsDir, "projects root directory")
+	cmd.PersistentFlags().StringVar(&opts.assistantID, "as", "", "the assistant running this command, its id")
+	// --as names which assistant is calling, and it sits on the group next to
+	// the two directories because it is the same kind of thing: which cockpit,
+	// and who inside it. Every assistant has instructions of its own now, and
+	// they spell the flag into every command they list, the way they spell the
+	// directories; a flag written into the instructions is not one a model has
+	// to remember, it is copied with the command. Several assistants share this
+	// group, so the id has to travel with the call and not with the process:
+	// what a turn inherits is inherited by every shell below it, while the flag
+	// stands on exactly the call it belongs to, readable in every log line. It
+	// is --as and not --assistant, because job-list already carries --assistant
+	// with another meaning, whose jobs to list. What needs it refuses without
+	// it, see assistantCaller in the web package.
 	// The names put the object first and the verb last, so the flat help list
 	// groups by object on its own: every coder- command stands together, then
-	// the conversations, the jobs, the projects.
+	// the assistants, the jobs, the projects.
 	cmd.AddCommand(
 		newStatusCommand(opts),
 		newCoderCommand(opts), newActivityCommand(opts),
 		newSendCommand(opts), newKeysCommand(opts),
 		newSteerCommand(opts), newReleaseCommand(opts),
 		newResumeCoderCommand(opts), newStopCoderCommand(opts), newDeleteCoderCommand(opts),
-		newConversationsCommand(opts), newConversationCommand(opts),
+		newAssistantsCommand(opts), newAssistantCommandShow(opts), newDeleteAssistantCommand(opts),
 		newJobsCommand(opts), newJobCommand(opts),
 		newNotificationsCommand(opts),
 		newProjectCommand(opts), newDeleteProjectCommand(opts),
@@ -489,9 +502,11 @@ func runServe(opts serveOptions) error {
 	}
 	pushService.Start(notifier)
 
-	// The store is built before the startup pass, which prunes the jobs of
-	// terminals that are gone the same way it prunes their notifications.
-	jobs := assistant.NewJobStore(cfg.StateDir)
+	// The registry is built before the startup pass, which prunes the jobs of
+	// terminals that are gone the same way it prunes their notifications. It
+	// reaches every assistant's jobs, because a terminal that is gone is gone
+	// for whoever was steering it.
+	jobs := assistant.NewJobs(assistant.NewStore(cfg.StateDir))
 
 	// The startup pass runs before the watchers and the server, so restored
 	// sessions are in place when the first page renders. Off by default, the
@@ -532,6 +547,9 @@ func runServe(opts serveOptions) error {
 		conversations,
 		jobs,
 		coderSessions{coders: coders},
+		// How many checks may run at once is a house rule, read again before
+		// every check so the setting applies without a restart.
+		func() int { return web.ConcurrentChecks(settingsStore) },
 	)
 	// The working marks. The tracker holds the shelves, everything below only
 	// feeds it: the record watchers report each coder's own account of its
@@ -608,11 +626,13 @@ func runServe(opts serveOptions) error {
 	notifier.SetTurnOpen(func(targetID string) {
 		tracker.SetTurn(targetID, true, false, time.Now())
 	})
-	// A coder somebody steers has the assistant looking at it, so its own news
-	// stays quiet and the assistant's report is what the user hears. The
+	// A coder somebody steers has an assistant looking at it, so its own news
+	// stays quiet and that assistant's report is what the user hears. Whose
+	// job it is does not matter here: what is silenced is the coder's own
+	// news, and it is silenced because somebody is watching it. The
 	// notification center knows nothing about jobs, it only asks this.
 	notifier.SetSilent(func(targetID string) bool {
-		job, ok := jobs.Get(targetID)
+		job, ok := jobs.Find(targetID)
 		return ok && job.State.Open()
 	})
 
@@ -668,7 +688,7 @@ func runServe(opts serveOptions) error {
 	// the jobs whose check did not survive.
 	adopted := conversations.Recover()
 	watcher.Recover(adopted)
-	sweepCheckSessions(coders, assistantService.Workspace())
+	sweepCheckSessions(coders, assistantService.IsWorkdir)
 	// The compose runs of the previous process are detached the same way and
 	// keep going too. This puts their busy marks and their directory claims
 	// back, and reports the ones that finished while nobody was there to hear
@@ -863,23 +883,25 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 			}
 			return info
 		}
-		// The assistant comes first: its conversations are hidden from the
-		// coder lists, and it is the only surface with a fixed home, so the
-		// lookup is cheap and cannot be shadowed by a coder of the same id.
+		// The assistants come first: their provider sessions are hidden from
+		// the coder lists, and they are the only surface with a fixed home, so
+		// the lookup is cheap and cannot be shadowed by a coder of the same id.
 		for _, entry := range conversations.List() {
 			if entry.ID != targetID {
 				continue
 			}
-			// There is one assistant, so its news never carries a conversation
-			// title: the entry says what happened. The link is the
-			// conversation's page, and the fragment names the answer the page
-			// scrolls to.
-			info.Name = assistant.Name
-			info.URL = "/assistant/" + entry.ID
-			info.Title = fmt.Sprintf("%s answered.", assistant.Name)
+			// One bell for all of them, and every entry names the assistant
+			// that rang it: with several of them "the assistant answered" would
+			// send the user looking through threads for which one. The name is
+			// what it is called, falling back to the surface's own word for an
+			// assistant nobody has named yet. The link is that assistant's
+			// page, and the fragment names the answer the page scrolls to.
+			info.Name = assistantCaller(entry)
+			info.URL = "/assistants/" + entry.ID
+			info.Title = fmt.Sprintf("%s answered.", info.Name)
 			if m, ok := conversations.LastAnswer(entry.ID); ok {
 				info.URL += "#message-" + m.ID
-				info.Title, info.Detail = assistantNews(m)
+				info.Title, info.Detail = assistantNews(info.Name, m)
 			}
 			return info
 		}
@@ -997,16 +1019,26 @@ func composeNews(run docker.RunView) (title, detail string) {
 	return title, newsTarget(name, run.Project)
 }
 
-// assistantNews is what a notification about the assistant says: a report about
+// assistantCaller is the name a notification is rung under: what this assistant
+// is called, and the surface's own word for one that has not been named yet.
+func assistantCaller(entry assistant.Summary) string {
+	if title := strings.TrimSpace(entry.Title); title != "" && title != assistant.DefaultTitle {
+		return title
+	}
+	return assistant.Name
+}
+
+// assistantNews is what a notification about one assistant says: a report about
 // a job says how the job ended and names it below, everything else says that an
 // answer arrived and shows the first words of it, because that title says that
-// something arrived and not what.
+// something arrived and not what. who is the assistant it comes from, so the
+// user knows which thread to open before they open one.
 //
 // The job's name and project come from the message's own note, never from a
 // lookup: this resolver runs before the job store exists, and a terminal that is
 // steered again would hand back the successor's job. A report from before the
 // note carried them names what it can.
-func assistantNews(m assistant.Message) (title, detail string) {
+func assistantNews(who string, m assistant.Message) (title, detail string) {
 	if m.Wake != nil {
 		// A job ends in one of three states and the title says which one, in
 		// the words of the JobState it was closed with.
@@ -1018,6 +1050,9 @@ func assistantNews(m assistant.Message) (title, detail string) {
 		case string(assistant.VerdictExpired):
 			title = "Job expired."
 		}
+		if title != "" && who != "" {
+			title = who + ": " + strings.ToLower(title[:1]) + title[1:]
+		}
 		if title != "" {
 			return title, newsTarget(m.Wake.Name, m.Wake.Project)
 		}
@@ -1025,9 +1060,9 @@ func assistantNews(m assistant.Message) (title, detail string) {
 	if m.State == assistant.StateFailed || m.State == assistant.StateInterrupted {
 		// Whatever was written before it broke off is still the best line
 		// about what the turn was doing.
-		return fmt.Sprintf("%s could not finish.", assistant.Name), answerExcerpt(m.Content)
+		return fmt.Sprintf("%s could not finish.", who), answerExcerpt(m.Content)
 	}
-	return fmt.Sprintf("%s answered.", assistant.Name), answerExcerpt(m.Content)
+	return fmt.Sprintf("%s answered.", who), answerExcerpt(m.Content)
 }
 
 // answerExcerptRunes is how much of an answer a notification carries: enough
@@ -1080,26 +1115,9 @@ func (c assistantCoders) Available() []assistant.CoderInfo {
 // isStrayCheckSession decides what the startup sweep deletes. The name alone is
 // user text, somebody may call a coder "cockpit check: whatever", and deleting
 // it would take that coder's transcript with it. A check always runs in the
-// assistant's own workspace, so both have to hold.
-func isStrayCheckSession(session coder.Session, workspace string) bool {
-	return assistant.IsCheckSession(session.Name) && sameDir(session.CWD, workspace)
-}
-
-// sameDir compares two directories the way the file system would, so a trailing
-// slash or a relative spelling does not decide whether something is deleted.
-func sameDir(a, b string) bool {
-	a = strings.TrimSpace(a)
-	b = strings.TrimSpace(b)
-	if a == "" || b == "" {
-		return false
-	}
-	if resolved, err := filepath.Abs(a); err == nil {
-		a = resolved
-	}
-	if resolved, err := filepath.Abs(b); err == nil {
-		b = resolved
-	}
-	return filepath.Clean(a) == filepath.Clean(b)
+// workspace of the assistant whose job it is, so both have to hold.
+func isStrayCheckSession(session coder.Session, ownWorkdir func(string) bool) bool {
+	return assistant.IsCheckSession(session.Name) && ownWorkdir(session.CWD)
 }
 
 // coderSessions lets a check ask the coder of a job what that session last did.
@@ -1191,14 +1209,16 @@ func runHashPassword(stdin *os.File, stdout, stderr io.Writer, cost int) error {
 // process left behind. A check reserves its session for as long as it runs, and
 // the reservation lives in that process, so a session it never got to drop
 // becomes a resumable ghost coder at the next start. Nothing running answers to
-// these names, a live check is always reserved and never listed.
-func sweepCheckSessions(coders []*coder.Manager, workspace string) {
+// these names, a live check is always reserved and never listed. ownWorkdir
+// says whether a directory is an assistant's workspace, the place every check
+// runs in.
+func sweepCheckSessions(coders []*coder.Manager, ownWorkdir func(string) bool) {
 	for _, m := range coders {
 		// A check that outlived the restart reserved its session again a moment
 		// ago, and a cached snapshot from before that would offer it up here.
 		m.Invalidate()
 		for _, session := range m.Snapshot().Resumable {
-			if !isStrayCheckSession(session, workspace) {
+			if !isStrayCheckSession(session, ownWorkdir) {
 				continue
 			}
 			if _, err := m.DeleteResumable(session.SessionID); err != nil {

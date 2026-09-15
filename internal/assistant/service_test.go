@@ -2,10 +2,12 @@ package assistant
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/marein/dev-cockpit/internal/detach"
+	"github.com/marein/dev-cockpit/internal/markdown"
 	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
@@ -255,25 +258,34 @@ func (c fakeCoders) Available() []CoderInfo {
 	return []CoderInfo{{ID: "claude", Label: "Claude", Runner: c.runner}}
 }
 
-// fakeProjects resolves every project onto a real directory, because a turn is
-// a real process now and a process needs somewhere to run.
-type fakeProjects struct {
+// mustWorkdir is the workspace of one instance, the directory a turn of its
+// runs in.
+func mustWorkdir(t *testing.T, svc *Service, id string) string {
+	t.Helper()
+	dir, err := svc.workdirs.Workdir(id)
+	if err != nil {
+		t.Fatalf("workdir of %s: %v", id, err)
+	}
+	return dir
+}
+
+// fakeWorkdirs gives every instance a real directory, because a turn is a
+// real process and a process needs somewhere to run.
+type fakeWorkdirs struct {
 	missing bool
 	root    string
 }
 
-func (p *fakeProjects) ValidatePath(raw string) (string, error) {
+func (p *fakeWorkdirs) Workdir(instanceID string) (string, error) {
 	if p.missing {
 		return "", errors.New("gone")
 	}
-	dir := filepath.Join(p.root, filepath.Base(raw))
+	dir := filepath.Join(p.root, instanceID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 	return dir, nil
 }
-
-func (p *fakeProjects) ProjectNameFor(path string) string { return filepath.Base(path) }
 
 type fakeTerminals struct {
 	id     string
@@ -297,7 +309,7 @@ func (t *fakeTerminals) Stop(coderID, terminalID string) error {
 	return nil
 }
 
-func newTestService(t *testing.T, runner *fakeRunner) (*Service, *Store, *fakeProjects) {
+func newTestService(t *testing.T, runner *fakeRunner) (*Service, *Store, *fakeWorkdirs) {
 	t.Helper()
 	svc, store, projects, _ := newTestServiceIn(t, t.TempDir(), runner)
 	return svc, store, projects
@@ -306,7 +318,7 @@ func newTestService(t *testing.T, runner *fakeRunner) (*Service, *Store, *fakePr
 // newTestServiceIn builds a service over a state directory a test names itself,
 // so a restart can be played: the second service reads the same store and the
 // same run register, and picks up whatever the first one left running.
-func newTestServiceIn(t *testing.T, dir string, runner *fakeRunner) (*Service, *Store, *fakeProjects, *RunStore) {
+func newTestServiceIn(t *testing.T, dir string, runner *fakeRunner) (*Service, *Store, *fakeWorkdirs, *RunStore) {
 	t.Helper()
 	if runner != nil && runner.dir == "" {
 		runner.dir = t.TempDir()
@@ -316,7 +328,7 @@ func newTestServiceIn(t *testing.T, dir string, runner *fakeRunner) (*Service, *
 	}
 	store := NewStore(dir)
 	runs := NewRunStore(dir)
-	projects := &fakeProjects{root: filepath.Join(dir, "projects")}
+	projects := &fakeWorkdirs{root: filepath.Join(dir, "projects")}
 	svc := newService(store, runs, fakeCoders{runner: runner}, projects)
 	t.Cleanup(func() { quiesce(t, svc, nil) })
 	return svc, store, projects, runs
@@ -451,7 +463,7 @@ func TestSendStreamsAndCompletes(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "Hel"}, {Kind: EventTool}, {Kind: EventDelta, Text: "lo"}}}
 	svc, _, _ := newTestService(t, runner)
 
-	created, err := svc.create("claude", "/projects/demo")
+	created, err := svc.create("claude")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -489,7 +501,7 @@ func TestSendStreamsAndCompletes(t *testing.T) {
 	}
 
 	turns := runner.turns()
-	if len(turns) != 1 || turns[0].Resume || turns[0].SessionID != created.ID || filepath.Base(turns[0].Workdir) != "demo" {
+	if len(turns) != 1 || turns[0].Resume || turns[0].SessionID != created.ID || turns[0].Instance != created.ID || filepath.Base(turns[0].Workdir) != created.ID {
 		t.Fatalf("unexpected first turn: %+v", turns)
 	}
 }
@@ -501,7 +513,7 @@ func TestSendStreamsAndCompletes(t *testing.T) {
 func TestASentMessageIsAnnouncedBeforeItsAnswer(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	frames := collectFrames(svc, created.ID)
 	run, err := svc.Send(created.ID, "vom Telefon", nil)
@@ -533,7 +545,7 @@ func TestASentMessageIsAnnouncedBeforeItsAnswer(t *testing.T) {
 func TestSecondTurnResumesTheProviderSession(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	if _, err := svc.Send(created.ID, "first", nil); err != nil {
 		t.Fatalf("send: %v", err)
@@ -558,10 +570,13 @@ func TestSecondTurnResumesTheProviderSession(t *testing.T) {
 	}
 }
 
+// One turn per assistant: a second prompt into one that is answering waits in
+// that assistant's queue, and the end of the turn sends everything waiting as
+// one new turn.
 func TestSendWhileRunningQueuesAndFlushesAsOneTurn(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}, block: make(chan struct{})}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	frames := collectFrames(svc, created.ID)
 	defer frames.stop()
@@ -576,8 +591,8 @@ func TestSendWhileRunningQueuesAndFlushesAsOneTurn(t *testing.T) {
 	if err != nil || !third.Queued {
 		t.Fatalf("want the third message queued, got %+v, %v", third, err)
 	}
-	conversation, _ := svc.Get(created.ID)
-	waiting := queuedMessages(conversation)
+	instance, _ := svc.Get(created.ID)
+	waiting := queuedMessages(instance)
 	if len(waiting) != 2 || waiting[0].Content != "second" || waiting[1].Content != "third" {
 		t.Fatalf("want both messages waiting in order, got %+v", waiting)
 	}
@@ -588,25 +603,58 @@ func TestSendWhileRunningQueuesAndFlushesAsOneTurn(t *testing.T) {
 	waitIdle(t, svc, created.ID)
 
 	turns := runner.turns()
-	first := strings.Index(turns[1].Prompt, "--- Message 1 ---\nsecond")
+	firstAt := strings.Index(turns[1].Prompt, "--- Message 1 ---\nsecond")
 	next := strings.Index(turns[1].Prompt, "--- Message 2 ---\nthird")
-	if first < 0 || next < 0 || next < first {
+	if firstAt < 0 || next < 0 || next < firstAt {
 		t.Fatalf("want one flush turn carrying both messages in order, got %q", turns[1].Prompt)
 	}
-	conversation, _ = svc.Get(created.ID)
-	if len(queuedMessages(conversation)) != 0 {
-		t.Fatalf("want no message left waiting, got %+v", conversation.Messages)
+	instance, _ = svc.Get(created.ID)
+	if len(queuedMessages(instance)) != 0 {
+		t.Fatalf("want no message left waiting, got %+v", instance.Messages)
 	}
-	last, _ := conversation.Last()
+	last, _ := instance.Last()
 	if last.Role != RoleAssistant || last.State != StateComplete || last.Content != "ok" {
 		t.Fatalf("want the flush turn answered, got %+v", last)
 	}
 }
 
+// The queue is one assistant's. A thread that is thinking holds up nothing but
+// itself: every other assistant answers at the same time, and a message waiting
+// in one of them waits for that one alone.
+func TestAWaitingAssistantDoesNotBlockAnother(t *testing.T) {
+	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}, block: make(chan struct{})}
+	svc, _, _ := newTestService(t, runner)
+	waiting, _ := svc.Create("claude")
+	other, _ := svc.Create("claude")
+
+	if _, err := svc.Send(waiting.ID, "first", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	queued, err := svc.Send(waiting.ID, "second", nil)
+	if err != nil || !queued.Queued {
+		t.Fatalf("want the second message queued, got %+v, %v", queued, err)
+	}
+	mine, err := svc.Send(other.ID, "mine", nil)
+	if err != nil || mine.Queued {
+		t.Fatalf("want the other assistant to answer right away, got %+v, %v", mine, err)
+	}
+	// Nothing of the first assistant's queue reached the second one.
+	instance, _ := svc.Get(other.ID)
+	if len(queuedMessages(instance)) != 0 {
+		t.Fatalf("want nothing waiting in the other assistant, got %+v", instance.Messages)
+	}
+
+	close(runner.block)
+	waitIdle(t, svc, waiting.ID)
+	waitIdle(t, svc, other.ID)
+}
+
+// A waiting message can be taken back until the flush sends it, and one that
+// already went out is answered instead of silently dropped.
 func TestAQueuedMessageCanBeDiscardedWhileItWaits(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}, block: make(chan struct{})}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	frames := collectFrames(svc, created.ID)
 	defer frames.stop()
@@ -621,9 +669,8 @@ func TestAQueuedMessageCanBeDiscardedWhileItWaits(t *testing.T) {
 		t.Fatalf("discard: %v", err)
 	}
 	waitFor(t, "the removal to reach the stream", func() bool { return frames.has(FrameGone) })
-	// A message that already went out is answered, not silently dropped.
-	conversation, _ := svc.Get(created.ID)
-	if err := svc.Discard(created.ID, conversation.Messages[0].ID); err == nil {
+	instance, _ := svc.Get(created.ID)
+	if err := svc.Discard(created.ID, instance.Messages[0].ID); err == nil {
 		t.Fatal("want a discard of a sent message to be refused")
 	}
 
@@ -632,25 +679,30 @@ func TestAQueuedMessageCanBeDiscardedWhileItWaits(t *testing.T) {
 	if turns := runner.turns(); len(turns) != 1 {
 		t.Fatalf("want no flush turn after the discard, got %d turns", len(turns))
 	}
-	conversation, _ = svc.Get(created.ID)
-	if len(conversation.Messages) != 2 {
-		t.Fatalf("want the discarded message gone from the transcript, got %+v", conversation.Messages)
+	instance, _ = svc.Get(created.ID)
+	if len(instance.Messages) != 2 {
+		t.Fatalf("want the discarded message gone from the transcript, got %+v", instance.Messages)
 	}
 }
 
+// Stopping the running turn is what lets the queue go right away, with the
+// stopped answer still standing above it.
 func TestStoppingATurnFlushesTheQueueRightAway(t *testing.T) {
 	block := make(chan struct{})
 	runner := &fakeRunner{
 		events: []Event{{Kind: EventDelta, Text: "partial"}},
+		// The prompt a turn is held on is matched at its end: the assistant is
+		// named after its first message, so "contains" would hold the second
+		// turn too.
 		hold: func(req TurnRequest) chan struct{} {
-			if strings.Contains(req.Prompt, "first") {
+			if strings.HasSuffix(req.Prompt, "first") {
 				return block
 			}
 			return nil
 		},
 	}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	frames := collectFrames(svc, created.ID)
 	defer frames.stop()
@@ -668,12 +720,13 @@ func TestStoppingATurnFlushesTheQueueRightAway(t *testing.T) {
 	waitIdle(t, svc, created.ID)
 
 	turns := runner.turns()
+	// On its own, not joined with anything.
 	if turns[1].Prompt != "second" {
 		t.Fatalf("want the queued message flushed on its own, got %q", turns[1].Prompt)
 	}
-	conversation, _ := svc.Get(created.ID)
+	instance, _ := svc.Get(created.ID)
 	var stopped, answered bool
-	for _, m := range conversation.Messages {
+	for _, m := range instance.Messages {
 		if m.Role != RoleAssistant {
 			continue
 		}
@@ -685,47 +738,17 @@ func TestStoppingATurnFlushesTheQueueRightAway(t *testing.T) {
 		}
 	}
 	if !stopped || !answered {
-		t.Fatalf("want a stopped answer and a flushed one, got %+v", conversation.Messages)
+		t.Fatalf("want a stopped answer and a flushed one, got %+v", instance.Messages)
 	}
 }
 
-// Running and unfinished are two different things and the index keeps them
-// apart: a turn under way is work, a turn that stopped before it was done is
-// the one thing left to report. Nothing downstream has to read one out of the
-// other.
-func TestTheIndexTellsARunningTurnFromAnUnfinishedOne(t *testing.T) {
-	block := make(chan struct{})
-	runner := &fakeRunner{
-		events: []Event{{Kind: EventDelta, Text: "partial"}},
-		hold:   func(TurnRequest) chan struct{} { return block },
-	}
-	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
-
-	frames := collectFrames(svc, created.ID)
-	defer frames.stop()
-	if _, err := svc.Send(created.ID, "first", nil); err != nil {
-		t.Fatalf("send: %v", err)
-	}
-	waitFor(t, "the first delta", func() bool { return frames.has(FrameDelta) })
-	if entries := svc.List(); len(entries) != 1 || !entries[0].Running || entries[0].Unfinished {
-		t.Fatalf("want the turn under way marked running and not unfinished, got %+v", entries)
-	}
-
-	if err := svc.Cancel(created.ID); err != nil {
-		t.Fatalf("cancel: %v", err)
-	}
-	waitIdle(t, svc, created.ID)
-	if entries := svc.List(); len(entries) != 1 || entries[0].Running || !entries[0].Unfinished {
-		t.Fatalf("want the stopped turn marked unfinished and not running, got %+v", entries)
-	}
-}
-
+// A message that queued before the restart is still waiting in its transcript,
+// and the recovery is what lets it go.
 func TestAQueuedMessageSurvivesARestart(t *testing.T) {
 	dir := t.TempDir()
 	first := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}}
 	svc1, store, _, _ := newTestServiceIn(t, dir, first)
-	created, err := svc1.create("claude", "/projects/demo")
+	created, err := svc1.create("claude")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -747,23 +770,26 @@ func TestAQueuedMessageSurvivesARestart(t *testing.T) {
 
 	waitIdle(t, svc2, created.ID)
 	turns := second.turns()
-	if len(turns) != 1 || turns[0].Prompt != "queued while the server was down" {
+	if len(turns) != 1 || !strings.HasSuffix(turns[0].Prompt, "queued while the server was down") {
 		t.Fatalf("want the waiting message flushed after the restart, got %+v", turns)
 	}
-	conversation, _ := svc2.Get(created.ID)
-	if len(queuedMessages(conversation)) != 0 {
-		t.Fatalf("want nothing left waiting, got %+v", conversation.Messages)
+	instance, _ := svc2.Get(created.ID)
+	if len(queuedMessages(instance)) != 0 {
+		t.Fatalf("want nothing left waiting, got %+v", instance.Messages)
 	}
-	last, _ := conversation.Last()
+	last, _ := instance.Last()
 	if last.State != StateComplete || last.Content != "after the restart" {
 		t.Fatalf("want the flushed turn answered, got %+v", last)
 	}
 }
 
+// Handing the provider session to a coder terminal ends the thread's own turns,
+// so a message still waiting in it would never go out. The transfer says so
+// instead of dropping it.
 func TestTransferIsRefusedWhileMessagesWait(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}}
 	svc, store, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	if _, err := svc.Send(created.ID, "first", nil); err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -787,52 +813,112 @@ func TestTransferIsRefusedWhileMessagesWait(t *testing.T) {
 	}
 }
 
-func TestGlobalGenerationLimit(t *testing.T) {
+// Running and unfinished are two different things and the index keeps them
+// apart: a turn under way is work, a turn that stopped before it was done is
+// the one thing left to report. Nothing downstream has to read one out of the
+// other.
+func TestTheIndexTellsARunningTurnFromAnUnfinishedOne(t *testing.T) {
+	block := make(chan struct{})
+	runner := &fakeRunner{
+		events: []Event{{Kind: EventDelta, Text: "partial"}},
+		hold:   func(TurnRequest) chan struct{} { return block },
+	}
+	svc, _, _ := newTestService(t, runner)
+	created, _ := svc.create("claude")
+
+	frames := collectFrames(svc, created.ID)
+	defer frames.stop()
+	if _, err := svc.Send(created.ID, "first", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitFor(t, "the first delta", func() bool { return frames.has(FrameDelta) })
+	if entries := svc.List(); len(entries) != 1 || !entries[0].Running || entries[0].Unfinished {
+		t.Fatalf("want the turn under way marked running and not unfinished, got %+v", entries)
+	}
+
+	if err := svc.Cancel(created.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	waitIdle(t, svc, created.ID)
+	if entries := svc.List(); len(entries) != 1 || entries[0].Running || !entries[0].Unfinished {
+		t.Fatalf("want the stopped turn marked unfinished and not running, got %+v", entries)
+	}
+}
+
+// A restart starts no turn of its own where nothing was waiting. A recovery
+// that sent something anyway would be charging the user for a prompt they never
+// see going out.
+func TestARestartStartsNoTurnOfItsOwn(t *testing.T) {
+	dir := t.TempDir()
+	first := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}}
+	svc1, _, _, _ := newTestServiceIn(t, dir, first)
+	created, err := svc1.create("claude")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := svc1.Send(created.ID, "hello", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitIdle(t, svc1, created.ID)
+
+	second := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "after the restart"}}}
+	svc2, _, _, _ := newTestServiceIn(t, dir, second)
+	svc2.Recover()
+
+	if turns := second.turns(); len(turns) != 0 {
+		t.Fatalf("the restart started a turn nobody asked for: %+v", turns)
+	}
+	instance, _ := svc2.Get(created.ID)
+	if len(instance.Messages) != 2 {
+		t.Fatalf("want the transcript as it was, got %+v", instance.Messages)
+	}
+	if !instance.Idle() {
+		t.Fatal("want the assistant idle after the restart")
+	}
+	// And it takes the next message the moment somebody sends one.
+	if _, err := svc2.Send(created.ID, "again", nil); err != nil {
+		t.Fatalf("send after the restart: %v", err)
+	}
+	waitIdle(t, svc2, created.ID)
+}
+
+// There is no global cap on chat turns any more: every assistant answers at
+// the same time as every other. What is still capped is one turn per assistant,
+// and that one is a refusal, see TestSendWhileRunningIsRefusedAsBusy.
+func TestEveryAssistantAnswersAtTheSameTime(t *testing.T) {
 	runner := &fakeRunner{block: make(chan struct{})}
 	svc, _, _ := newTestService(t, runner)
 
+	const assistants = 4
 	var ids []string
-	for i := 0; i < maxConcurrentRuns+1; i++ {
-		created, err := svc.create("claude", "/projects/demo")
+	for i := 0; i < assistants; i++ {
+		created, err := svc.Create("claude")
 		if err != nil {
 			t.Fatalf("create: %v", err)
 		}
 		ids = append(ids, created.ID)
 	}
-	// Creating a conversation archives the one before it, and an archived one
-	// takes no message. The slot limit belongs to the substrate, so the test
-	// puts them all back to active to drive more than one generation at once.
-	for _, id := range ids {
-		c, ok := svc.store.Load(id)
-		if !ok {
-			t.Fatalf("load %s", id)
-		}
-		c.Status = StatusActive
-		svc.store.Save(c)
-	}
-	for i := 0; i < maxConcurrentRuns; i++ {
-		if _, err := svc.Send(ids[i], "hello", nil); err != nil {
+	for i, id := range ids {
+		if _, err := svc.Send(id, "hello", nil); err != nil {
 			t.Fatalf("send %d: %v", i, err)
 		}
 	}
-	if _, err := svc.Send(ids[maxConcurrentRuns], "hello", nil); !errors.Is(err, ErrBusy) {
-		t.Fatalf("want a busy error past the limit, got %v", err)
+	for _, id := range ids {
+		if !svc.Running(id) {
+			t.Fatalf("want %s answering, nothing may wait for another assistant", id)
+		}
 	}
 
 	close(runner.block)
-	for i := 0; i < maxConcurrentRuns; i++ {
-		waitIdle(t, svc, ids[i])
+	for _, id := range ids {
+		waitIdle(t, svc, id)
 	}
-	if _, err := svc.Send(ids[maxConcurrentRuns], "hello", nil); err != nil {
-		t.Fatalf("want the slot released after the runs finished, got %v", err)
-	}
-	waitIdle(t, svc, ids[maxConcurrentRuns])
 }
 
 func TestCancelKeepsThePartialAnswer(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "partial"}}, block: make(chan struct{})}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	frames := collectFrames(svc, created.ID)
 	defer frames.stop()
@@ -858,7 +944,7 @@ func TestCancelKeepsThePartialAnswer(t *testing.T) {
 func TestFailedTurnCanBeRetried(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventError, Err: errors.New("The coder could not finish this answer.")}}}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
 		t.Fatalf("send: %v", err)
@@ -889,7 +975,7 @@ func TestFailedTurnCanBeRetried(t *testing.T) {
 		t.Fatalf("want the failed answer replaced, got %d messages", len(conversation.Messages))
 	}
 	turns := runner.turns()
-	if len(turns) != 2 || turns[1].Prompt != "hello" {
+	if len(turns) != 2 || !strings.HasSuffix(turns[1].Prompt, "hello") {
 		t.Fatalf("want the retry to resend the same prompt, got %+v", turns)
 	}
 }
@@ -901,7 +987,7 @@ func TestFailedTurnCanBeRetried(t *testing.T) {
 func TestAFailedTurnIsNamedFromStandardError(t *testing.T) {
 	runner := &fakeRunner{unfinished: true, stderr: "Error: No authentication information found.\n\nTo authenticate, run the '/login' command.\n"}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
 		t.Fatalf("send: %v", err)
@@ -920,7 +1006,7 @@ func TestAFailedTurnIsNamedFromStandardError(t *testing.T) {
 func TestAFailedTurnWithNothingToNameStaysGeneric(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "half"}}, unfinished: true}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
 		t.Fatalf("send: %v", err)
@@ -937,7 +1023,7 @@ func TestAFailedTurnWithNothingToNameStaysGeneric(t *testing.T) {
 func TestRetryIsRefusedForACompletedTurn(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "done"}}}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -950,7 +1036,7 @@ func TestRetryIsRefusedForACompletedTurn(t *testing.T) {
 
 func TestOversizePromptIsRefused(t *testing.T) {
 	svc, _, _ := newTestService(t, &fakeRunner{})
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	if _, err := svc.Send(created.ID, "   ", nil); err == nil {
 		t.Fatal("want an empty prompt to be refused")
@@ -968,7 +1054,7 @@ func TestOversizeAnswerFailsAndKeepsThePrefix(t *testing.T) {
 	chunk := strings.Repeat("y", 600<<10)
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: chunk}, {Kind: EventDelta, Text: chunk}}}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
 		t.Fatalf("send: %v", err)
@@ -993,12 +1079,12 @@ func orphanTurn(t *testing.T, svc *Service, conversationID string, runner *fakeR
 		t.Fatalf("get conversation: %v", err)
 	}
 	rec := RunRecord{
-		ID:           statefile.NewID(),
-		Kind:         RunChat,
-		Conversation: c.ID,
-		MessageID:    statefile.NewID(),
-		CoderID:      "claude",
-		SessionID:    c.NativeSessionID,
+		ID:        statefile.NewID(),
+		Kind:      RunChat,
+		Instance:  c.ID,
+		MessageID: statefile.NewID(),
+		CoderID:   "claude",
+		SessionID: c.NativeSessionID,
 	}
 	c.Messages = append(c.Messages, Message{
 		ID:        rec.MessageID,
@@ -1008,7 +1094,7 @@ func orphanTurn(t *testing.T, svc *Service, conversationID string, runner *fakeR
 		State:     StateStreaming,
 	})
 	svc.store.Save(c)
-	if _, err := svc.launch(&rec, runner, TurnRequest{SessionID: c.NativeSessionID, Workdir: c.ProjectPath, Prompt: "hello"}); err != nil {
+	if _, err := svc.launch(&rec, runner, TurnRequest{SessionID: c.NativeSessionID, Workdir: mustWorkdir(t, svc, c.ID), Prompt: "hello"}); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
 	return rec
@@ -1020,7 +1106,7 @@ func orphanTurn(t *testing.T, svc *Service, conversationID string, runner *fakeR
 func TestAStartedTurnIsInTheRegister(t *testing.T) {
 	runner := &fakeRunner{block: make(chan struct{})}
 	svc, _, _, runs := newTestServiceIn(t, t.TempDir(), runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	run, err := svc.Send(created.ID, "hello", nil)
 	if err != nil {
 		t.Fatalf("send: %v", err)
@@ -1037,7 +1123,7 @@ func TestAStartedTurnIsInTheRegister(t *testing.T) {
 	switch {
 	case rec.ID != run.RunID || rec.MessageID != run.MessageID:
 		t.Fatalf("want the entry to name the run and its message, got %+v", rec)
-	case rec.Kind != RunChat || rec.Conversation != created.ID || rec.CoderID != "claude":
+	case rec.Kind != RunChat || rec.Instance != created.ID || rec.CoderID != "claude":
 		t.Fatalf("want the entry to name conversation and coder, got %+v", rec)
 	case rec.PID <= 0 || rec.Output == "" || rec.Errors == "":
 		t.Fatalf("want the entry to name the process and its files, got %+v", rec)
@@ -1068,7 +1154,7 @@ func TestATurnSurvivesARestartAndIsWrittenToItsEnd(t *testing.T) {
 		block:  make(chan struct{}),
 	}
 	svc, _, _, runs := newTestServiceIn(t, dir, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	rec := orphanTurn(t, svc, created.ID, runner)
 
 	if !detach.Alive(rec.PID, rec.Lock) {
@@ -1130,7 +1216,7 @@ func TestATurnThatEndedDuringTheRestartIsComplete(t *testing.T) {
 	dir := t.TempDir()
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "all of it"}}}
 	svc, _, _, _ := newTestServiceIn(t, dir, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	rec := orphanTurn(t, svc, created.ID, runner)
 	waitFor(t, "the turn to end on its own", func() bool { return !detach.Alive(rec.PID, rec.Lock) })
 
@@ -1148,7 +1234,7 @@ func TestATurnWhoseProcessDiedBecomesInterrupted(t *testing.T) {
 	dir := t.TempDir()
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "half"}}, unfinished: true}
 	svc, _, _, _ := newTestServiceIn(t, dir, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	rec := orphanTurn(t, svc, created.ID, runner)
 	waitFor(t, "the turn to die", func() bool { return !detach.Alive(rec.PID, rec.Lock) })
 
@@ -1174,7 +1260,7 @@ func TestATurnWhoseProcessDiedBecomesInterrupted(t *testing.T) {
 func TestAStreamingMessageWithoutARunIsClosed(t *testing.T) {
 	dir := t.TempDir()
 	svc, store, _, _ := newTestServiceIn(t, dir, &fakeRunner{})
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	c, _ := svc.Get(created.ID)
 	c.Messages = append(c.Messages, Message{ID: "m1", Role: RoleAssistant, RunID: "gone", State: StateStreaming, CreatedAt: time.Now().UTC()})
 	store.Save(c)
@@ -1187,41 +1273,29 @@ func TestAStreamingMessageWithoutARunIsClosed(t *testing.T) {
 	}
 }
 
-// The limit on running turns is counted from the register after a restart, not
-// from a number that died with the previous process.
-func TestTheLimitIsCountedAgainAfterARestart(t *testing.T) {
+// A turn that outlived the restart is picked up as this assistant's running
+// turn again, so a message sent into it queues behind it instead of starting a
+// second one next to it.
+func TestARecoveredTurnStillHoldsItsAssistant(t *testing.T) {
 	dir := t.TempDir()
 	runner := &fakeRunner{block: make(chan struct{})}
 	svc, _, _, _ := newTestServiceIn(t, dir, runner)
-	var ids []string
-	for i := 0; i < maxConcurrentRuns; i++ {
-		created, _ := svc.create("claude", "/projects/demo")
-		ids = append(ids, created.ID)
-		orphanTurn(t, svc, created.ID, runner)
-	}
+	created, _ := svc.create("claude")
+	orphanTurn(t, svc, created.ID, runner)
 
 	restarted, _, _, _ := newTestServiceIn(t, dir, runner)
 	restarted.Recover()
-	waitFor(t, "the restarted server to pick both turns up", func() bool {
-		return restarted.Running(ids[len(ids)-1])
+	waitFor(t, "the restarted server to pick the turn up", func() bool {
+		return restarted.Running(created.ID)
 	})
 
-	fresh, err := restarted.create("claude", "/projects/demo")
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if _, err := restarted.Send(fresh.ID, "one more", nil); !errors.Is(err, ErrBusy) {
-		t.Fatalf("want the recovered turns to fill the limit, got %v", err)
+	queued, err := restarted.Send(created.ID, "one more", nil)
+	if err != nil || !queued.Queued {
+		t.Fatalf("want the send queued behind the recovered turn, got %+v, %v", queued, err)
 	}
 
 	close(runner.block)
-	for _, id := range ids {
-		waitIdle(t, restarted, id)
-	}
-	if _, err := restarted.Send(fresh.ID, "one more", nil); err != nil {
-		t.Fatalf("want the limit free again once the recovered turns ended: %v", err)
-	}
-	waitIdle(t, restarted, fresh.ID)
+	waitIdle(t, restarted, created.ID)
 }
 
 // A stop is written down before the process is killed, so a restart that lands
@@ -1230,7 +1304,7 @@ func TestAStoppedTurnStaysStoppedAcrossARestart(t *testing.T) {
 	dir := t.TempDir()
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "partial"}}, unfinished: true}
 	svc, _, _, runs := newTestServiceIn(t, dir, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	rec := orphanTurn(t, svc, created.ID, runner)
 	rec.Cancelled = true
 	runs.Save(rec)
@@ -1253,7 +1327,7 @@ func TestATurnWithLostOutputIsNotReadBack(t *testing.T) {
 	dir := t.TempDir()
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "gone"}}}
 	svc, _, _, runs := newTestServiceIn(t, dir, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	rec := orphanTurn(t, svc, created.ID, runner)
 	waitFor(t, "the turn to end", func() bool { return !detach.Alive(rec.PID, rec.Lock) })
 	rec.Processed = 1 << 20
@@ -1276,7 +1350,7 @@ func TestATurnWithLostOutputIsNotReadBack(t *testing.T) {
 func TestReservationHidesTheSessionUntilTransfer(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "hi"}}, exists: false}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	if !svc.Reserved("claude", created.ID) {
 		t.Fatal("want an active conversation to reserve its provider session")
@@ -1321,7 +1395,7 @@ func TestReservationHidesTheSessionUntilTransfer(t *testing.T) {
 func TestTransferIsRefusedWhileRunningOrUnfinished(t *testing.T) {
 	runner := &fakeRunner{block: make(chan struct{}), exists: true}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	terminals := &fakeTerminals{id: created.ID}
 
 	if _, err := svc.Transfer(created.ID, terminals); err == nil {
@@ -1349,7 +1423,7 @@ func TestTransferIsRefusedWhileRunningOrUnfinished(t *testing.T) {
 func TestFailedTransferKeepsTheChatActive(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "hi"}}, exists: true}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -1368,181 +1442,156 @@ func TestFailedTransferKeepsTheChatActive(t *testing.T) {
 	}
 }
 
-// A crash between archiving and creating, or a state directory from before the
-// rule existed, can hold more than one live conversation. Starting the service
-// settles that: the newest stays, the rest become history.
-func TestStartupKeepsOneLiveConversation(t *testing.T) {
+// Every assistant that exists stays live across a restart, and each keeps its
+// provider session reserved: none of them may turn up as a resumable coder.
+func TestStartupKeepsEveryAssistantLive(t *testing.T) {
 	runner := &fakeRunner{exists: true}
 	svc, store, _ := newTestService(t, runner)
-	first, _ := svc.create("claude", "/projects/demo")
-	second, _ := svc.create("claude", "/projects/demo")
-	// Put the earlier one back the way a crash would have left it.
-	c, _ := store.Load(first.ID)
-	c.Status = StatusActive
-	c.LastMessageAt = time.Now().Add(-time.Hour)
-	store.Save(c)
+	first, _ := svc.create("claude")
+	second, _ := svc.create("claude")
 
-	restarted := newService(store, svc.runs, svc.coders, svc.projects)
+	restarted := newService(store, svc.runs, svc.coders, svc.workdirs)
 
-	back, err := restarted.Get(first.ID)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if back.Status != StatusArchived {
-		t.Fatalf("want the older conversation archived on startup, got %q", back.Status)
-	}
-	stayed, err := restarted.Get(second.ID)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if stayed.Status != StatusActive {
-		t.Fatalf("want the newest conversation live, got %q", stayed.Status)
-	}
-	if !restarted.Reserved("claude", second.ID) {
-		t.Fatal("want the live conversation reserved")
-	}
-	if restarted.Reserved("claude", first.ID) {
-		t.Fatal("want the archived conversation released")
+	for _, id := range []string{first.ID, second.ID} {
+		back, err := restarted.Get(id)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if back.Status != StatusActive {
+			t.Fatalf("want %s live after the restart, got %q", id, back.Status)
+		}
+		if !restarted.Reserved("claude", id) {
+			t.Fatalf("want the session of %s reserved", id)
+		}
 	}
 }
 
-// A new conversation ends the one before it: the transcript stays, the provider
-// session behind it goes, because nothing can continue it any more.
-func TestANewConversationArchivesTheOneBeforeIt(t *testing.T) {
+// Starting another assistant changes nothing about the ones that are there:
+// they keep their session, their transcript and their composer. This is the
+// rule the whole feature turns on, the one that used to say the opposite.
+func TestANewAssistantLeavesTheOthersAlone(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "hi"}}, exists: true}
 	svc, _, _ := newTestService(t, runner)
-	first, _ := svc.create("claude", "/projects/demo")
+	first, _ := svc.create("claude")
 	if _, err := svc.Send(first.ID, "hello", nil); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	waitIdle(t, svc, first.ID)
 
-	second, err := svc.create("claude", "/projects/demo")
+	second, err := svc.Create("claude")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	if second.ID == first.ID {
+		t.Fatal("want a second assistant, got the first one back")
+	}
 
-	archived, err := svc.Get(first.ID)
+	kept, err := svc.Get(first.ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if archived.Status != StatusArchived {
-		t.Fatalf("want the earlier conversation archived, got %q", archived.Status)
-	}
-	if len(archived.Messages) != 2 {
-		t.Fatalf("want the transcript kept, got %d messages", len(archived.Messages))
-	}
-	// The drop runs off the archiving request, so the switch never waits a
-	// provider CLI boot out; the delete and the released reservation follow.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		runner.mu.Lock()
-		dropped := len(runner.deleted) == 1 && runner.deleted[0] == first.ID
-		runner.mu.Unlock()
-		if dropped && !svc.Reserved("claude", first.ID) {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("want the provider session of the earlier conversation dropped, got %v", runner.deleted)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !svc.Reserved("claude", second.ID) {
-		t.Fatal("want the new conversation reserved")
-	}
-	if _, err := svc.Send(first.ID, "again", nil); err == nil {
-		t.Fatal("want an archived conversation to refuse a message")
-	}
-}
-
-// Everything that acts asks for the live conversation, so opening one has to be
-// the same conversation every time: a check that reports and a page that renders
-// must not each leave a fresh empty one behind.
-func TestOpenReturnsTheLiveConversation(t *testing.T) {
-	svc, _, _ := newTestService(t, &fakeRunner{})
-
-	first, err := svc.Open("")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	again, err := svc.Open("")
-	if err != nil {
-		t.Fatalf("open again: %v", err)
-	}
-	if again.ID != first.ID {
-		t.Fatalf("want the same conversation, got %s and %s", first.ID, again.ID)
-	}
-	if len(svc.List()) != 1 {
-		t.Fatalf("want one conversation, got %d", len(svc.List()))
-	}
-	current, ok := svc.Current()
-	if !ok || current.ID != first.ID {
-		t.Fatalf("want Current to be the open one, got %+v (%v)", current, ok)
-	}
-}
-
-// Asking for a coder is the new conversation button. An untouched one is that
-// conversation already, a used one is left as the record it became.
-func TestOpenWithACoderReusesAnUntouchedConversation(t *testing.T) {
-	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "hi"}}}
-	svc, _, _ := newTestService(t, runner)
-
-	empty, _ := svc.Open("claude")
-	same, _ := svc.Open("claude")
-	if same.ID != empty.ID {
-		t.Fatal("want an untouched conversation reused instead of a trail of empty ones")
-	}
-
-	if _, err := svc.Send(same.ID, "hello", nil); err != nil {
-		t.Fatalf("send: %v", err)
-	}
-	waitIdle(t, svc, same.ID)
-	fresh, err := svc.Open("claude")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	if fresh.ID == same.ID {
-		t.Fatal("want a conversation that was used left alone and a new one started")
-	}
-}
-
-// The archive leaves a session alone while its turn is still running: killing it
-// under the process would pull the provider's state out from under it. The turn
-// ending is what drops it.
-func TestArchiveDropsTheSessionAfterARunningTurn(t *testing.T) {
-	runner := &fakeRunner{block: make(chan struct{}), exists: true}
-	svc, _, _ := newTestService(t, runner)
-	first, _ := svc.create("claude", "/projects/demo")
-	if _, err := svc.Send(first.ID, "hello", nil); err != nil {
-		t.Fatalf("send: %v", err)
-	}
-
-	if _, err := svc.create("claude", "/projects/demo"); err != nil {
-		t.Fatalf("create: %v", err)
+	if kept.Status != StatusActive {
+		t.Fatalf("want the first assistant still live, got %q", kept.Status)
 	}
 	if len(runner.deleted) != 0 {
-		t.Fatalf("want the session kept while the turn runs, got %v", runner.deleted)
+		t.Fatalf("want no provider session dropped, got %v", runner.deleted)
+	}
+	if !svc.Reserved("claude", first.ID) || !svc.Reserved("claude", second.ID) {
+		t.Fatal("want both sessions reserved")
+	}
+	if _, err := svc.Send(first.ID, "again", nil); err != nil {
+		t.Fatalf("want the first assistant to keep taking messages, got %v", err)
+	}
+}
+
+// Creating is always somebody asking, and it always makes one: nothing reuses
+// an untouched assistant any more, because nothing creates by itself either.
+// That is what keeps the list what the user made.
+func TestCreateStartsAnotherEveryTime(t *testing.T) {
+	svc, _, _ := newTestService(t, &fakeRunner{})
+
+	first, err := svc.Create("")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	second, err := svc.Create("")
+	if err != nil {
+		t.Fatalf("create again: %v", err)
+	}
+	if first.ID == second.ID {
+		t.Fatal("want two assistants")
+	}
+	if len(svc.List()) != 2 {
+		t.Fatalf("want two assistants in the index, got %d", len(svc.List()))
+	}
+	if list := svc.List(); list[0].ID != second.ID {
+		t.Fatalf("want the one just made at the top of the list, got %s", list[0].ID)
+	}
+}
+
+// The list order is the user's. A drag writes it, and it survives everything
+// that writes the index afterwards: an answer in another assistant does not
+// move anybody, and a new one lands on top without disturbing the rest.
+func TestTheListKeepsTheOrderItWasSortedInto(t *testing.T) {
+	svc, _, _ := newTestService(t, &fakeRunner{})
+
+	first, _ := svc.Create("")
+	second, _ := svc.Create("")
+	third, _ := svc.Create("")
+
+	svc.Reorder([]string{first.ID, third.ID, second.ID})
+	if got := ids(svc.List()); !slices.Equal(got, []string{first.ID, third.ID, second.ID}) {
+		t.Fatalf("want the posted order, got %v", got)
 	}
 
-	close(runner.block)
-	waitIdle(t, svc, first.ID)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		runner.mu.Lock()
-		done := len(runner.deleted) == 1
-		runner.mu.Unlock()
-		if done {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	// An answer in the one at the back leaves the order alone.
+	if _, err := svc.Send(second.ID, "hi", nil); err != nil {
+		t.Fatalf("send: %v", err)
 	}
-	t.Fatalf("want the session dropped after the turn, got %v", runner.deleted)
+	waitIdle(t, svc, second.ID)
+	if got := ids(svc.List()); !slices.Equal(got, []string{first.ID, third.ID, second.ID}) {
+		t.Fatalf("want the order kept after an answer, got %v", got)
+	}
+
+	fourth, _ := svc.Create("")
+	if got := ids(svc.List()); !slices.Equal(got, []string{fourth.ID, first.ID, third.ID, second.ID}) {
+		t.Fatalf("want the new one on top, got %v", got)
+	}
+}
+
+// An id the index does not carry is dropped, and an assistant the post never
+// saw keeps its exact seat instead of being pushed to the end.
+func TestReorderLeavesWhatItDoesNotNameWhereItIs(t *testing.T) {
+	svc, _, _ := newTestService(t, &fakeRunner{})
+
+	first, _ := svc.Create("")
+	second, _ := svc.Create("")
+	third, _ := svc.Create("")
+	// Created newest first, so the list reads third, second, first.
+
+	svc.Reorder([]string{"11111111-1111-4111-8111-111111111111", third.ID, first.ID})
+	if got := ids(svc.List()); !slices.Equal(got, []string{third.ID, second.ID, first.ID}) {
+		t.Fatalf("want the unknown id dropped and the seats kept, got %v", got)
+	}
+
+	svc.Reorder([]string{first.ID, third.ID})
+	if got := ids(svc.List()); !slices.Equal(got, []string{first.ID, second.ID, third.ID}) {
+		t.Fatalf("want the two named to swap seats around the one unnamed, got %v", got)
+	}
+}
+
+func ids(list []Summary) []string {
+	out := make([]string, 0, len(list))
+	for _, entry := range list {
+		out = append(out, entry.ID)
+	}
+	return out
 }
 
 func TestDeleteRemovesTheProviderSession(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "hi"}}, exists: true}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	if err := svc.Delete(created.ID); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -1564,7 +1613,7 @@ func TestDeleteRemovesTheProviderSession(t *testing.T) {
 func TestDeleteKeepsTheChatWhenTheProviderRefuses(t *testing.T) {
 	runner := &fakeRunner{exists: true, deleteFn: func(string) error { return errors.New("locked") }}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	if err := svc.Delete(created.ID); err == nil {
 		t.Fatal("want the delete error to surface")
@@ -1577,7 +1626,7 @@ func TestDeleteKeepsTheChatWhenTheProviderRefuses(t *testing.T) {
 func TestDeleteStopsARunningGeneration(t *testing.T) {
 	runner := &fakeRunner{block: make(chan struct{}), exists: true}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -1592,10 +1641,10 @@ func TestDeleteStopsARunningGeneration(t *testing.T) {
 
 func TestUnavailableCoderAndProject(t *testing.T) {
 	svc, _, projects := newTestService(t, &fakeRunner{})
-	if _, err := svc.create("nope", "/projects/demo"); err == nil {
+	if _, err := svc.create("nope"); err == nil {
 		t.Fatal("want an unknown coder to be refused")
 	}
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	projects.missing = true
 	if _, err := svc.Send(created.ID, "hello", nil); err == nil {
@@ -1608,7 +1657,7 @@ func TestUnavailableCoderAndProject(t *testing.T) {
 
 func TestRenameBoundsTheTitle(t *testing.T) {
 	svc, _, _ := newTestService(t, &fakeRunner{})
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	if err := svc.Rename(created.ID, "   "); err == nil {
 		t.Fatal("want an empty title to be refused")
@@ -1629,7 +1678,7 @@ func TestRenameBoundsTheTitle(t *testing.T) {
 func TestStreamSnapshotCarriesTheRunningAnswer(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "half"}}, block: make(chan struct{})}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -1659,7 +1708,7 @@ func TestTheAnswerIsRenderedWhileItStreams(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "# Title\n\nbody"}}, block: make(chan struct{})}
 	svc, _, _ := newTestService(t, runner)
 	svc.SetRenderer(func(src string) (string, error) { return "<rendered>" + src + "</rendered>", nil })
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	frames := collectFrames(svc, created.ID)
 	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
@@ -1673,8 +1722,8 @@ func TestTheAnswerIsRenderedWhileItStreams(t *testing.T) {
 			rendered = f.HTML
 		}
 	}
-	if rendered != "<rendered># Title\n\nbody</rendered>" {
-		t.Fatalf("want the answer so far rendered, got %q", rendered)
+	if rendered != "<rendered># Title\n\nbody"+RenderMark+"</rendered>" {
+		t.Fatalf("want the answer so far rendered with the mark behind it, got %q", rendered)
 	}
 
 	// A page connecting now gets the rendered prefix plus the raw tail, never
@@ -1689,14 +1738,100 @@ func TestTheAnswerIsRenderedWhileItStreams(t *testing.T) {
 	waitIdle(t, svc, created.ID)
 }
 
+// The page hangs the text that arrived since the last render on the mark, so
+// the mark has to come out of the real renderer where the next character
+// belongs: inside the block that is still open, or as a block of its own where
+// the prefix closed one. Without it the tail lands behind the rendered markup
+// and a sentence still being typed reads as two paragraphs.
+func TestTheRenderedPrefixMarksWhereTheNextTextGoes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		prefix string
+		want   string
+	}{
+		{"mid sentence", "wo du gestartet bist, nicht wo", "wo" + RenderMark + "</p>"},
+		{"after a closed emphasis", "das ist *wichtig*", "</em>" + RenderMark + "</p>"},
+		{"inside an open code fence", "```go\nfunc main() {", "func main() {" + RenderMark + "\n</code>"},
+		{"inside the open list item", "- one\n- two", "two" + RenderMark + "</li>"},
+		{"behind a finished block", "Der Satz steht.\n\n", "<p>" + RenderMark + "</p>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			html, err := markdown.RenderGFM(tc.prefix + RenderMark)
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			if !strings.Contains(html, tc.want) {
+				t.Fatalf("want %q in the rendered prefix, got %q", tc.want, html)
+			}
+		})
+	}
+}
+
+// Deleting an assistant deletes the whole of it. Its two folders in the shared
+// workspace are its as much as the transcript is, and what is left of an
+// assistant nobody can open is disk nobody can reach.
+func TestDeleteTakesTheAssistantsOwnFilesWithIt(t *testing.T) {
+	dir := t.TempDir()
+	svc, workspace, err := New(dir, fakeCoders{runner: &fakeRunner{}}, Cockpit{})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	mine, err := svc.Create("claude")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	theirs, err := svc.Create("claude")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	_, instances, memory := Paths(dir)
+	write := func(path string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{mine.ID, theirs.ID} {
+		uploads, _ := svc.UploadDir(id)
+		write(filepath.Join(uploads, "picked.png"))
+		write(filepath.Join(workspace.Dir(id), FilesDirName, "written.patch"))
+	}
+	// What is shared belongs to nobody in particular.
+	write(filepath.Join(memory, "likes-go.md"))
+
+	if err := svc.Delete(mine.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(instances, mine.ID)); !os.IsNotExist(err) {
+		t.Fatalf("the instance directory survived the delete: %v", err)
+	}
+	// And nothing of anybody else went with it.
+	theirUploads, _ := svc.UploadDir(theirs.ID)
+	for _, kept := range []string{
+		filepath.Join(instances, theirs.ID, "transcript.json"),
+		filepath.Join(theirUploads, "picked.png"),
+		filepath.Join(workspace.Dir(theirs.ID), FilesDirName, "written.patch"),
+		filepath.Join(memory, "likes-go.md"),
+	} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Fatalf("the delete took %s with it: %v", kept, err)
+		}
+	}
+}
+
 func TestStoreQuarantinesACorruptTranscript(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
-	svc := newService(store, NewRunStore(dir), fakeCoders{runner: &fakeRunner{}}, &fakeProjects{root: filepath.Join(dir, "projects")})
-	created, _ := svc.create("claude", "/projects/demo")
+	svc := newService(store, NewRunStore(dir), fakeCoders{runner: &fakeRunner{}}, &fakeWorkdirs{root: filepath.Join(dir, "projects")})
+	created, _ := svc.create("claude")
 
-	_, conversations, _ := Paths(dir)
-	path := filepath.Join(conversations, created.ID+".json")
+	_, instances, _ := Paths(dir)
+	path := filepath.Join(instances, created.ID, "transcript.json")
 	if err := writeFile(path, "{not json"); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -1744,7 +1879,7 @@ func TestNewsReachesTheUserForAFinishedAndAFailedTurn(t *testing.T) {
 				notified = append(notified, id)
 			})
 
-			created, err := svc.create("claude", "/projects/demo")
+			created, err := svc.create("claude")
 			if err != nil {
 				t.Fatalf("create: %v", err)
 			}
@@ -1774,7 +1909,7 @@ func TestACancelledTurnIsNotNews(t *testing.T) {
 		notified = append(notified, id)
 	})
 
-	created, err := svc.create("claude", "/projects/demo")
+	created, err := svc.create("claude")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -1813,7 +1948,7 @@ func fileExists(path string) (bool, error) {
 func TestRenameDuringARunSurvivesTheEndOfTheTurn(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "partial"}}, block: make(chan struct{})}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	frames := collectFrames(svc, created.ID)
 	defer frames.stop()
@@ -1838,8 +1973,8 @@ func TestRenameDuringARunSurvivesTheEndOfTheTurn(t *testing.T) {
 
 func TestReapUploadsDropsOnlyWhatNoMessagePointsAt(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}}
-	svc, store, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	svc, _, _ := newTestService(t, runner)
+	created, _ := svc.create("claude")
 
 	dir, err := svc.UploadDir(created.ID)
 	if err != nil {
@@ -1867,19 +2002,6 @@ func TestReapUploadsDropsOnlyWhatNoMessagePointsAt(t *testing.T) {
 	}
 	waitIdle(t, svc, created.ID)
 
-	// A directory of a conversation that no longer exists goes away with its files.
-	gone := filepath.Join(store.UploadRoot(), "99999999-9999-4999-8999-999999999999")
-	if err := os.MkdirAll(gone, 0o700); err != nil {
-		t.Fatalf("create stale dir: %v", err)
-	}
-	stale := filepath.Join(gone, "leftover.png")
-	if err := os.WriteFile(stale, []byte("x"), 0o600); err != nil {
-		t.Fatalf("write stale: %v", err)
-	}
-	if err := os.Chtimes(stale, old, old); err != nil {
-		t.Fatalf("age stale: %v", err)
-	}
-
 	svc.ReapUploads(time.Hour)
 
 	if _, err := os.Stat(sent); err != nil {
@@ -1891,8 +2013,103 @@ func TestReapUploadsDropsOnlyWhatNoMessagePointsAt(t *testing.T) {
 	if _, err := os.Stat(orphan); err == nil {
 		t.Fatal("an upload no message points at should be gone")
 	}
-	if _, err := os.Stat(gone); err == nil {
-		t.Fatal("the directory of a deleted conversation should be gone")
+}
+
+// The draft is a file of its own next to the transcript. Saving one writes that
+// file and neither the thread nor the index: a draft is saved every time the
+// typing pauses, and a thread that has been going for a week must not be
+// rewritten for a keystroke.
+func TestADraftWritesItsOwnFileAndNothingElse(t *testing.T) {
+	dir := t.TempDir()
+	svc, store, _, _ := newTestServiceIn(t, dir, &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}})
+	created, _ := svc.create("claude")
+	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitIdle(t, svc, created.ID)
+
+	transcript := filepath.Join(store.InstanceDir(created.ID), "transcript.json")
+	index := filepath.Join(dir, "assistant", "assistant.json")
+	before := map[string][]byte{}
+	for _, path := range []string{transcript, index} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		before[path] = data
+	}
+
+	if _, changed, err := svc.SaveDraft(created.ID, "half a thought", nil); err != nil || !changed {
+		t.Fatalf("save draft: %v (changed %v)", err, changed)
+	}
+	draft := filepath.Join(store.InstanceDir(created.ID), "draft.json")
+	if _, err := os.Stat(draft); err != nil {
+		t.Fatalf("want the draft in a file of its own: %v", err)
+	}
+	for path, data := range before {
+		fresh, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s again: %v", path, err)
+		}
+		if string(fresh) != string(data) {
+			t.Fatalf("a draft save rewrote %s", filepath.Base(path))
+		}
+	}
+	if got, _ := svc.Draft(created.ID); got.Text != "half a thought" {
+		t.Fatalf("want the draft read back, got %+v", got)
+	}
+	// The same draft again writes nothing and wakes nobody.
+	if _, changed, _ := svc.SaveDraft(created.ID, "half a thought", nil); changed {
+		t.Fatal("want an unchanged draft to announce nothing")
+	}
+	// And sending empties it, so the words do not come back into the box.
+	if _, err := svc.Send(created.ID, "half a thought", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitIdle(t, svc, created.ID)
+	if got, _ := svc.Draft(created.ID); got.Text != "" {
+		t.Fatalf("want the draft spent after the send, got %+v", got)
+	}
+}
+
+// A draft written before it had a file of its own is carried over on the first
+// read, once. Nobody has to think about which of the two places holds it.
+func TestADraftInAnOldTranscriptIsCarriedOver(t *testing.T) {
+	dir := t.TempDir()
+	svc, store, _, _ := newTestServiceIn(t, dir, &fakeRunner{})
+	created, _ := svc.create("claude")
+
+	// The shape a transcript had while the draft lived inside it.
+	path := filepath.Join(store.InstanceDir(created.ID), "transcript.json")
+	var raw map[string]any
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("parse transcript: %v", err)
+	}
+	raw["draft"] = map[string]any{"text": "typed before the move", "updatedAt": time.Now().UTC()}
+	out, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	got, err := svc.Draft(created.ID)
+	if err != nil || got.Text != "typed before the move" {
+		t.Fatalf("want the old draft carried over, got %+v, %v", got, err)
+	}
+	// It is in the new file now, so the transcript is never read for it again:
+	// clearing the file leaves the draft empty instead of reviving the old one.
+	draft := filepath.Join(store.InstanceDir(created.ID), "draft.json")
+	if err := os.WriteFile(draft, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("write draft: %v", err)
+	}
+	if got, _ := svc.Draft(created.ID); got.Text != "" {
+		t.Fatalf("want the transcript left alone after the move, got %+v", got)
 	}
 }
 
@@ -1903,7 +2120,7 @@ func TestReapUploadsDropsOnlyWhatNoMessagePointsAt(t *testing.T) {
 func TestReapUploadsKeepsWhatADraftPointsAt(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "ok"}}}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	dir, err := svc.UploadDir(created.ID)
 	if err != nil {
@@ -1958,18 +2175,18 @@ func TestSessionNameFitsWhatTheCLIsAccept(t *testing.T) {
 	}
 }
 
-// Search is the read behind the assistant's `conversation-list` command. The index
+// Search is the read behind the `assistant-list` command. The index
 // alone answers a title match; a word that only fell in a message needs the
 // transcript, so the search goes through the store the way the command does.
 func TestSearchMatchesTitleAndMessageContentCaseInsensitively(t *testing.T) {
 	svc, store, _ := newTestService(t, nil)
 	old := time.Date(2026, 3, 4, 9, 0, 0, 0, time.UTC)
-	store.Save(Conversation{
-		Summary:  Summary{ID: "11111111-1111-4111-8111-111111111111", Title: "Fix the tabs", CoderID: "claude", Status: StatusArchived},
+	store.Save(Instance{
+		Summary:  Summary{ID: "11111111-1111-4111-8111-111111111111", Title: "Fix the tabs", CoderID: "claude", Status: StatusActive},
 		Messages: []Message{{ID: "m1", Role: RoleUser, Content: "the strip flickers", CreatedAt: old, State: StateComplete}},
 	})
-	store.Save(Conversation{
-		Summary:  Summary{ID: "22222222-2222-4222-8222-222222222222", Title: "Weekend plans", CoderID: "claude", Status: StatusArchived},
+	store.Save(Instance{
+		Summary:  Summary{ID: "22222222-2222-4222-8222-222222222222", Title: "Weekend plans", CoderID: "claude", Status: StatusActive},
 		Messages: []Message{{ID: "m2", Role: RoleAssistant, Content: "The BACKUP ran fine.", CreatedAt: old.Add(time.Hour), State: StateComplete}},
 	})
 
@@ -1990,7 +2207,7 @@ func TestSearchMatchesTitleAndMessageContentCaseInsensitively(t *testing.T) {
 	}
 }
 
-// Transcript is the read behind the `conversation-show` command: the last entries,
+// Transcript is the read behind the `assistant-show` command: the last entries,
 // each message cut visibly, the dropped tail counted instead of hidden, and
 // the stored transcript untouched.
 func TestTranscriptWindowsAndCutsVisibly(t *testing.T) {
@@ -2004,7 +2221,7 @@ func TestTranscriptWindowsAndCutsVisibly(t *testing.T) {
 			CreatedAt: time.Date(2026, 3, 4, 9, i, 0, 0, time.UTC),
 		})
 	}
-	store.Save(Conversation{Summary: Summary{ID: id, Title: "long", CoderID: "claude", Status: StatusArchived}, Messages: messages})
+	store.Save(Instance{Summary: Summary{ID: id, Title: "long", CoderID: "claude", Status: StatusActive}, Messages: messages})
 
 	c, dropped, err := svc.Transcript(id, 0, 20)
 	if err != nil {
@@ -2041,31 +2258,31 @@ func TestTranscriptWindowsAndCutsVisibly(t *testing.T) {
 
 // The runner may work seconds building its command, the way opencode's first
 // turn does while it boots a server to create its provider session. The send
-// answers before that work begins, and the service stands open: a second send
-// queues behind the launching turn instead of starting a second one.
+// answers before that work begins, and the turn counts as running from that
+// moment: a second send in the launch window queues rather than starting a
+// second turn next to the one that is still coming up.
 func TestASendAnswersWhileTheCommandIsStillBuilt(t *testing.T) {
 	gate := make(chan struct{})
 	runner := &fakeRunner{commandGate: gate, events: []Event{{Kind: EventDelta, Text: "hi"}}}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	run, err := svc.Send(created.ID, "hello", nil)
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if run.Queued {
-		t.Fatal("the first send starts a turn, it does not queue")
+	if run.RunID == "" {
+		t.Fatal("the first send has to start a turn")
 	}
-	second, err := svc.Send(created.ID, "more", nil)
-	if err != nil {
-		t.Fatalf("a send during the launch: %v", err)
-	}
-	if !second.Queued {
-		t.Fatal("a send during the launch has to queue behind the turn")
+	queued, err := svc.Send(created.ID, "more", nil)
+	if err != nil || !queued.Queued {
+		t.Fatalf("a send during the launch has to queue, got %+v, %v", queued, err)
 	}
 	close(gate)
 	waitIdle(t, svc, created.ID)
-	waitIdle(t, svc, created.ID)
+	if turns := runner.turns(); len(turns) != 2 {
+		t.Fatalf("want the launch turn and the flush behind it, got %d", len(turns))
+	}
 }
 
 // A stop that lands while the turn is still launching has no process to kill
@@ -2075,7 +2292,7 @@ func TestAStopInTheLaunchWindowStopsTheTurn(t *testing.T) {
 	gate := make(chan struct{})
 	runner := &fakeRunner{commandGate: gate, block: make(chan struct{}), events: []Event{{Kind: EventDelta, Text: "hi"}}}
 	svc, _, _ := newTestService(t, runner)
-	created, _ := svc.create("claude", "/projects/demo")
+	created, _ := svc.create("claude")
 
 	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
 		t.Fatalf("send: %v", err)

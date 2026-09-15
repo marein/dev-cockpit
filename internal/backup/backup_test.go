@@ -482,10 +482,10 @@ func TestApplyBlocksEscapes(t *testing.T) {
 }
 
 // New durable state is worth nothing in a backup that leaves it out: an import
-// would bring the conversations back and the jobs they steer would be gone. The
-// jobs file is state like any other, so it belongs in the section that carries
-// the assistant.
-func TestTheAssistantSectionCarriesTheSteeredJobs(t *testing.T) {
+// would bring the assistants back and the jobs they steer would be gone. An
+// assistant's jobs live in its own directory, so the directory is what has to
+// travel.
+func TestTheAssistantSectionCarriesTheInstances(t *testing.T) {
 	sections := buildSections("/state", "/projects", "/home/user")
 	var assistant *Section
 	for i := range sections {
@@ -496,12 +496,15 @@ func TestTheAssistantSectionCarriesTheSteeredJobs(t *testing.T) {
 	if assistant == nil {
 		t.Fatal("there is no assistant section any more")
 	}
-	for _, source := range assistant.Sources {
-		if source.Path == "/state/assistant/jobs.json" {
-			return
-		}
+	if !slices.ContainsFunc(assistant.Sources, func(src Source) bool { return src.Path == "/state/assistant/instances" }) {
+		t.Fatalf("the instances are not in the backup: %+v", assistant.Sources)
 	}
-	t.Fatalf("the steered jobs are not in the backup: %+v", assistant.Sources)
+	// The archive is gone with the migration that used to write it, so nothing
+	// may still ask for it: a source that names nothing is dead weight in the
+	// manifest and a promise the import cannot keep.
+	if slices.ContainsFunc(assistant.Sources, func(src Source) bool { return strings.Contains(src.Path, "archive") }) {
+		t.Fatalf("the backup still carries an assistant archive: %+v", assistant.Sources)
+	}
 }
 
 // An imported conversation only continues when the provider session travels
@@ -526,14 +529,14 @@ func TestTheAssistantSectionDependsOnTheSessions(t *testing.T) {
 func seedAssistant(t *testing.T, dirs testDirs) {
 	t.Helper()
 	files := map[string]string{
-		"assistant.json":                     `{"conversations":[]}`,
-		"conversations/c1.json":              `{"id":"c1"}`,
-		"jobs.json":                          `[]`,
-		"workspace/CLAUDE.md":                "generated for /state/assistant/workspace",
-		"workspace/AGENTS.md":                "generated for /state/assistant/workspace",
-		"workspace/memory/likes-go.md":       "---\ntitle: Go\n---\nyes",
-		"workspace/assistant-files/note.txt": "scratch",
-		"workspace/user-upload/abc/pic.png":  "PNG",
+		"assistant.json":                                  `[{"id":"c1"}]`,
+		"instances/c1/transcript.json":                    `{"id":"c1"}`,
+		"instances/c1/jobs.json":                          `[]`,
+		"instances/c1/workspace/CLAUDE.md":                "generated for /state/assistant/instances/c1/workspace",
+		"instances/c1/workspace/AGENTS.md":                "generated for /state/assistant/instances/c1/workspace",
+		"instances/c1/workspace/assistant-files/note.txt": "scratch",
+		"instances/c1/workspace/user-upload/pic.png":      "PNG",
+		"memory/likes-go.md":                              "---\ntitle: Go\n---\nyes",
 	}
 	for rel, content := range files {
 		p := filepath.Join(dirs.state, "assistant", filepath.FromSlash(rel))
@@ -565,11 +568,11 @@ func TestAssistantExportLeavesTheGeneratedInstructionsOut(t *testing.T) {
 	}
 	for _, want := range []string{
 		"data/assistant/assistant.json",
-		"data/assistant/conversations/c1.json",
-		"data/assistant/jobs.json",
-		"data/assistant/workspace/memory/likes-go.md",
-		"data/assistant/workspace/assistant-files/note.txt",
-		"data/assistant/workspace/user-upload/abc/pic.png",
+		"data/assistant/instances/c1/transcript.json",
+		"data/assistant/instances/c1/jobs.json",
+		"data/assistant/instances/c1/workspace/assistant-files/note.txt",
+		"data/assistant/instances/c1/workspace/user-upload/pic.png",
+		"data/assistant/memory/likes-go.md",
 	} {
 		if !slices.Contains(names, want) {
 			t.Fatalf("%s did not travel: %v", want, names)
@@ -584,10 +587,10 @@ func TestAssistantExportLeavesTheGeneratedInstructionsOut(t *testing.T) {
 	if _, err := dst.Apply(id, []string{"assistant"}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if data, err := os.ReadFile(filepath.Join(dstDirs.state, "assistant", "workspace", "user-upload", "abc", "pic.png")); err != nil || string(data) != "PNG" {
+	if data, err := os.ReadFile(filepath.Join(dstDirs.state, "assistant", "instances", "c1", "workspace", "user-upload", "pic.png")); err != nil || string(data) != "PNG" {
 		t.Fatalf("attachment not restored: %q, %v", data, err)
 	}
-	if _, err := os.Stat(filepath.Join(dstDirs.state, "assistant", "workspace", "CLAUDE.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(dstDirs.state, "assistant", "instances", "c1", "workspace", "CLAUDE.md")); err == nil {
 		t.Fatal("the generated instructions reached the target host")
 	}
 }

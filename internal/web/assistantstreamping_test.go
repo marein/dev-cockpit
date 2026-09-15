@@ -27,7 +27,7 @@ func TestTheConversationStreamProvesItIsAliveWithAPingFrame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("assistant: %v", err)
 	}
-	current, err := conversations.Open("")
+	current, err := conversations.Create("")
 	if err != nil {
 		t.Fatalf("open conversation: %v", err)
 	}
@@ -36,12 +36,12 @@ func TestTheConversationStreamProvesItIsAliveWithAPingFrame(t *testing.T) {
 	assistantPingInterval = 20 * time.Millisecond
 	t.Cleanup(func() { assistantPingInterval = beat })
 
-	s := &Server{conversations: conversations, assistant: workspace, cfg: config.Config{StreamHeartbeatInterval: time.Second}}
+	s := &Server{assistants: conversations, workspace: workspace, cfg: config.Config{StreamHeartbeatInterval: time.Second}}
 	r := gin.New()
-	r.GET("/assistant/:id/stream", s.handleAssistantStream)
+	r.GET("/assistants/:id/stream", s.handleAssistantStream)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	request := httptest.NewRequest(http.MethodGet, "/assistant/"+current.ID+"/stream", nil).WithContext(ctx)
+	request := httptest.NewRequest(http.MethodGet, "/assistants/"+current.ID+"/stream", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {

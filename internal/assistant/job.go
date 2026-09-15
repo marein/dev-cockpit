@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -63,6 +64,11 @@ const (
 
 // Job is one steered job.
 type Job struct {
+	// Owner is the assistant this job belongs to: the one a check wakes and the
+	// one its report is written into. It is not stored, it is the directory the
+	// job was read from, so there is one source of truth for it and an entry
+	// cannot claim an owner it does not sit under.
+	Owner string `json:"-"`
 	// Terminal is the coder session, which is also the id its news arrives
 	// under, so a signal resolves to a job with one lookup.
 	Terminal string `json:"terminal"`
@@ -124,25 +130,29 @@ func (j Job) Spent() bool { return j.MaxWakes > 0 && j.Wakes >= j.MaxWakes }
 // generous because this tail is also the horizon `jobs --contains` searches.
 const maxClosedJobs = 150
 
-// JobStore persists the jobs. One file, read through on every call like every
-// other state file, so a job survives a restart and two processes cannot hold
-// different ideas about it.
+// jobsFileName is what the jobs of one instance are stored as, inside that
+// instance's own directory. The directory is the owner, so nothing has to be
+// written into the entries to say whose they are.
+const jobsFileName = "jobs.json"
+
+// JobStore persists the jobs of one assistant. One file, read through on every
+// call like every other state file, so a job survives a restart and two
+// processes cannot hold different ideas about it.
 type JobStore struct {
-	path string
-	mu   sync.Mutex
+	owner string
+	path  string
+	mu    sync.Mutex
 }
 
-// JobsPath is where the jobs live for a state directory.
-func JobsPath(stateDir string) string {
-	return filepath.Join(stateDir, "assistant", "jobs.json")
+// NewJobStore returns the store for one instance's directory.
+func NewJobStore(owner, dir string) *JobStore {
+	return &JobStore{owner: owner, path: filepath.Join(dir, jobsFileName)}
 }
 
-// NewJobStore returns the store for a state directory.
-func NewJobStore(stateDir string) *JobStore {
-	return &JobStore{path: JobsPath(stateDir)}
-}
+// Owner is the assistant whose jobs this store holds.
+func (s *JobStore) Owner() string { return s.owner }
 
-// List returns every job, newest first.
+// List returns every job of this assistant, newest first.
 func (s *JobStore) List() []Job {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -152,6 +162,9 @@ func (s *JobStore) List() []Job {
 func (s *JobStore) load() []Job {
 	var out []Job
 	statefile.Load(s.path, &out)
+	for i := range out {
+		out[i].Owner = s.owner
+	}
 	return out
 }
 
@@ -167,10 +180,16 @@ func (s *JobStore) Get(terminal string) (Job, bool) {
 	return Job{}, false
 }
 
-// Save writes one job, replacing the entry of the same terminal.
+// Save writes one job, replacing the entry of the same terminal. The directory
+// is created here: an assistant that never wrote a transcript can still steer.
 func (s *JobStore) Save(w Job) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		log.Printf("assistant: create the job directory of %s: %v", s.owner, err)
+		return
+	}
+	w.Owner = s.owner
 	list := s.load()
 	replaced := false
 	for i := range list {
@@ -215,6 +234,97 @@ func capClosed(list []Job) []Job {
 		}
 	}
 	return kept
+}
+
+// Jobs is every assistant's jobs at once: one store per instance, and the
+// questions that cross instances answered over all of them. Who owns a
+// terminal is such a question, and it has to be one: a terminal carries at most
+// one open job, whoever steered it.
+//
+// It reads the index for the instances that exist, so an instance that is
+// deleted takes its jobs out of every answer the moment its entry is gone, and
+// a store is remembered only to keep its lock, never its contents: every store
+// reads its file through on every call like all the other state files.
+type Jobs struct {
+	store *Store
+
+	mu     sync.Mutex
+	stores map[string]*JobStore
+}
+
+// NewJobs wires the registry over the index of instances.
+func NewJobs(store *Store) *Jobs {
+	return &Jobs{store: store, stores: map[string]*JobStore{}}
+}
+
+// Of is the job store of one assistant.
+func (j *Jobs) Of(owner string) *JobStore {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if s, ok := j.stores[owner]; ok {
+		return s
+	}
+	s := NewJobStore(owner, j.store.InstanceDir(owner))
+	j.stores[owner] = s
+	return s
+}
+
+// Owners are the assistants that exist right now, in the order the list is
+// sorted into.
+func (j *Jobs) Owners() []string {
+	entries := j.store.List()
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, entry.ID)
+	}
+	return out
+}
+
+// All returns every assistant's jobs, each carrying its owner.
+func (j *Jobs) All() []Job {
+	var out []Job
+	for _, owner := range j.Owners() {
+		out = append(out, j.Of(owner).List()...)
+	}
+	return out
+}
+
+// Find is the job of one terminal, whoever steers it. An open job wins over a
+// closed one: a terminal that was steered, released and steered again by
+// somebody else has an entry in both stores, and the one that decides ownership
+// is the open one. Among closed entries the newest answers, which is what the
+// steer dialog prefills from.
+func (j *Jobs) Find(terminal string) (Job, bool) {
+	terminal = strings.TrimSpace(terminal)
+	var best Job
+	found := false
+	for _, owner := range j.Owners() {
+		job, ok := j.Of(owner).Get(terminal)
+		if !ok {
+			continue
+		}
+		switch {
+		case !found, job.State.Open():
+			best, found = job, true
+		case best.State.Open():
+		case job.CreatedAt.After(best.CreatedAt):
+			best = job
+		}
+		if best.State.Open() {
+			return best, true
+		}
+	}
+	return best, found
+}
+
+// PruneTerminals drops the jobs of terminals that are not in keep, across every
+// assistant. Returns how many entries were removed.
+func (j *Jobs) PruneTerminals(keep map[string]bool) int {
+	removed := 0
+	for _, owner := range j.Owners() {
+		removed += j.Of(owner).PruneTerminals(keep)
+	}
+	return removed
 }
 
 // PruneTerminals drops the jobs of terminals that are not in keep. The startup
@@ -312,7 +422,7 @@ type Activity struct {
 	// Finished says its turn is over: it is waiting, not working.
 	Finished bool
 	// Screen says Text is the terminal picture rather than a recorded
-	// conversation. Then the reading carries the coder's input line, and the
+	// instance. Then the reading carries the coder's input line, and the
 	// prompt has to say so.
 	Screen bool
 }
@@ -323,22 +433,31 @@ type Activity struct {
 // not: the second one says so and closes the job.
 const maxSilentChecks = 2
 
-// maxConcurrentChecks is how many checks may run at once, across every job.
-// Five: jobs are independent, and one slow check must not make every other
-// job's check stand in line behind it, a real build and test pass holds its
-// slot for a long time. Each job still runs at most one check at a time
-// (running and pending above), so this cap only decides how many different
-// jobs may be checked at the same moment. It stays global and small because
-// every check is a paid turn nobody asked for interactively: a fleet of noisy
-// coders fans out to five turns, not to one per coder.
-const maxConcurrentChecks = 5
+// DefaultConcurrentChecks is how many checks may run at once, across every job
+// of every assistant. Five: jobs are independent, and one slow check must not
+// make every other job's check stand in line behind it, a real build and test
+// pass holds its slot for a long time. Each job still runs at most one check at
+// a time (running and pending above), so this cap only decides how many
+// different jobs may be checked at the same moment. It stays global and small
+// because every check is a paid turn nobody asked for interactively: a fleet of
+// noisy coders fans out to five turns, not to one per coder. It is global and
+// not per assistant for exactly that reason: what it protects is the machine
+// and the bill, and neither of those is divided by the number of assistants.
+//
+// It is the default of a setting, not a constant the user cannot reach: how
+// many paid turns may run at once is a house rule, and a host with one coder
+// and a host with twenty do not want the same number.
+const DefaultConcurrentChecks = 5
 
-// Watcher turns a coder's news into a check by the assistant. It owns the gates
-// that decide whether a wake may happen at all, so the cost of the feature is
-// visible in one place.
+// Watcher turns a coder's news into a check by the assistant that steers it. It
+// owns the gates that decide whether a wake may happen at all, so the cost of
+// the feature is visible in one place. There is one watcher for every
+// assistant: a job carries its owner, so which instance a check wakes and which
+// transcript its report lands in is read off the job and never off whoever
+// happens to be on screen.
 type Watcher struct {
 	service  *Service
-	store    *JobStore
+	jobs     *Jobs
 	sessions Sessions
 	now      func() time.Time
 
@@ -362,19 +481,86 @@ type Watcher struct {
 	stall       time.Duration
 	vanishAfter time.Duration
 
-	// slots is the one global cap on checks: maxConcurrentChecks at a time,
-	// whatever happens in the cockpit. It is a queue and not a limit that drops:
-	// a second job whose coder reports while a check runs waits its turn instead
-	// of going silent. A chat turn has its own slots and never waits for this.
-	slots chan struct{}
+	// slots is the one global cap on checks, whatever happens in the cockpit.
+	// It is a queue and not a limit that drops: a second job whose coder
+	// reports while a check runs waits its turn instead of going silent. A chat
+	// turn never waits for this, it has no cap of its own at all.
+	slots *checkSlots
+}
+
+// checkSlots is the cap on running checks, asked again on every acquire. The
+// limit is a setting, so it may be a different number by the time the next
+// check asks, and a fixed size channel could not answer that. Waiting is the
+// point: a check that has to wait is a check that still happens.
+type checkSlots struct {
+	limit func() int
+
+	mu    sync.Mutex
+	free  *sync.Cond
+	taken int
+}
+
+func newCheckSlots(limit func() int) *checkSlots {
+	s := &checkSlots{limit: limit}
+	s.free = sync.NewCond(&s.mu)
+	return s
+}
+
+func (s *checkSlots) take() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for s.taken >= s.bound() {
+		s.free.Wait()
+	}
+	s.taken++
+}
+
+// tryTake takes a slot without waiting, for a check that is already running:
+// after a restart the turn is on the machine whatever the cap says, and
+// standing in line for it would be standing in line for itself.
+func (s *checkSlots) tryTake() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.taken >= s.bound() {
+		return false
+	}
+	s.taken++
+	return true
+}
+
+func (s *checkSlots) release() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.taken > 0 {
+		s.taken--
+	}
+	// A lowered limit can leave more checks running than the cap allows, so
+	// everybody waiting is woken and asks again rather than one of them being
+	// let through on a slot that is not free yet.
+	s.free.Broadcast()
+}
+
+// bound is the limit right now, never below one: a zero would stop every check
+// forever, and a job that is never checked is the failure this whole feature
+// exists to prevent.
+func (s *checkSlots) bound() int {
+	if s.limit == nil {
+		return DefaultConcurrentChecks
+	}
+	if n := s.limit(); n > 0 {
+		return n
+	}
+	return DefaultConcurrentChecks
 }
 
 // NewWatcher wires the watcher. There is no global switch: steering is
-// explicit per job, so a job that exists is a job that wakes.
-func NewWatcher(service *Service, store *JobStore, sessions Sessions) *Watcher {
+// explicit per job, so a job that exists is a job that wakes. maxChecks is
+// asked again before every check, so the setting behind it applies without a
+// restart; nil means the default.
+func NewWatcher(service *Service, jobs *Jobs, sessions Sessions, maxChecks func() int) *Watcher {
 	return &Watcher{
 		service:     service,
-		store:       store,
+		jobs:        jobs,
 		sessions:    sessions,
 		now:         time.Now,
 		quiet:       heartbeatQuiet,
@@ -382,7 +568,7 @@ func NewWatcher(service *Service, store *JobStore, sessions Sessions) *Watcher {
 		vanishAfter: vanishGrace,
 		running:     map[string]bool{},
 		pending:     map[string]bool{},
-		slots:       make(chan struct{}, maxConcurrentChecks),
+		slots:       newCheckSlots(maxChecks),
 	}
 }
 
@@ -399,11 +585,13 @@ func (w *Watcher) announceChange(project string) {
 
 // Marks is what the pages render about the jobs: which terminals an open job
 // holds right now, and the stored criterion of the closed ones, which is what
-// the steer dialog offers as its prefill when a terminal is steered again.
+// the steer dialog offers as its prefill when a terminal is steered again. Every
+// assistant's jobs together, because the mark says the terminal is taken and
+// that is true whoever took it.
 func (w *Watcher) Marks() (steered map[string]bool, doneWhens map[string]string) {
 	steered = map[string]bool{}
 	doneWhens = map[string]string{}
-	for _, job := range w.store.List() {
+	for _, job := range w.jobs.All() {
 		if job.State.Open() {
 			steered[job.Terminal] = true
 			continue
@@ -473,6 +661,18 @@ func (w *Watcher) Steer(spec Job) (Job, error) {
 	if terminal == "" {
 		return Job{}, errors.New("A job needs the terminal it steers.")
 	}
+	owner := strings.TrimSpace(spec.Owner)
+	if owner == "" {
+		return Job{}, errors.New("A job needs the assistant it belongs to.")
+	}
+	// One terminal, one job. A second assistant steering a coder that is
+	// already steered is refused and told whose it is: taking it over silently
+	// would leave two assistants believing they are moving the same coder, and
+	// the first one's checks would keep paying for a coder somebody else is
+	// writing into.
+	if held, ok := w.jobs.Find(terminal); ok && held.State.Open() && held.Owner != owner {
+		return Job{}, fmt.Errorf("%s is already steering that coder. Ask the user, only they can take it off.", w.ownerName(held.Owner))
+	}
 	task, _ := TruncateTask(spec.Task)
 	doneWhen := ""
 	if strings.TrimSpace(spec.DoneWhen) != "" {
@@ -484,6 +684,7 @@ func (w *Watcher) Steer(spec Job) (Job, error) {
 	}
 	now := w.now().UTC()
 	job := Job{
+		Owner:     owner,
 		Terminal:  terminal,
 		Name:      strings.TrimSpace(spec.Name),
 		Project:   strings.TrimSpace(spec.Project),
@@ -496,18 +697,39 @@ func (w *Watcher) Steer(spec Job) (Job, error) {
 		ExpiresAt: now.Add(defaultJobTTL),
 		UpdatedAt: now,
 	}
-	w.store.Save(job)
+	w.jobs.Of(owner).Save(job)
 	w.service.changed()
 	w.announceChange(job.Project)
 	return job, nil
+}
+
+// ownerName is what an assistant is called, for a sentence somebody reads. An
+// instance that is gone by the time the sentence is written still needs a word,
+// and the generic one is better than an id nobody recognizes.
+func (w *Watcher) ownerName(owner string) string {
+	if instance, err := w.service.Get(owner); err == nil && strings.TrimSpace(instance.Title) != "" {
+		return instance.Title
+	}
+	return "Another assistant"
 }
 
 // Release calls a job off. It stays visible in that state, so the user can see
 // what happened to it instead of finding it gone. A check that is running on
 // the job right now is killed: release takes the actor away, and a dead check
 // writes nothing and costs nothing more.
-func (w *Watcher) Release(terminal string) error {
-	fresh, ok := w.store.Update(strings.TrimSpace(terminal), func(job *Job) bool {
+//
+// by is the assistant asking, empty for the user. The user may call any job
+// off, they own the machine; an assistant only its own, because releasing
+// somebody else's job is taking their coder away by the back door.
+func (w *Watcher) Release(terminal, by string) error {
+	job, ok := w.jobs.Find(strings.TrimSpace(terminal))
+	if !ok {
+		return errors.New("No job steers that terminal.")
+	}
+	if by != "" && job.Owner != by {
+		return fmt.Errorf("%s steers that coder, not you. Leave it alone or let the user decide.", w.ownerName(job.Owner))
+	}
+	fresh, ok := w.jobs.Of(job.Owner).Update(job.Terminal, func(job *Job) bool {
 		job.State = JobStopped
 		job.UpdatedAt = w.now().UTC()
 		return true
@@ -521,6 +743,47 @@ func (w *Watcher) Release(terminal string) error {
 	return nil
 }
 
+// ReleaseAll calls off every open job of one assistant and returns them, in the
+// order they are listed. It is what deleting an assistant does first: a job
+// whose owner is gone can never be checked again, so leaving the entries open
+// would leave their coders marked as steered by nobody, and nothing would ever
+// move them. Releasing hands the terminals back to the user, and the returned
+// jobs are how the user is told which ones those were.
+func (w *Watcher) ReleaseAll(owner string) []Job {
+	var released []Job
+	for _, job := range w.ListOf(owner) {
+		if !job.State.Open() {
+			continue
+		}
+		if err := w.Release(job.Terminal, owner); err != nil {
+			log.Printf("assistant: release %s while deleting %s: %v", job.Terminal, owner, err)
+			continue
+		}
+		released = append(released, job)
+	}
+	return released
+}
+
+// ReleasedNames is the sentence the user reads about the coders an assistant
+// gave back, empty when it held none.
+func ReleasedNames(released []Job) string {
+	if len(released) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(released))
+	for _, job := range released {
+		if name := strings.TrimSpace(job.Name); name != "" {
+			names = append(names, name)
+			continue
+		}
+		names = append(names, job.Terminal)
+	}
+	if len(names) == 1 {
+		return names[0] + " is yours again."
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1] + " are yours again."
+}
+
 // Forget removes the job of a terminal that is gone for good. Release is the
 // end of a job whose terminal stays: it leaves the entry standing, so the user
 // can see what happened to it. A deleted session has nothing left to show it
@@ -529,28 +792,34 @@ func (w *Watcher) Release(terminal string) error {
 // killed like on a release, for the same reason: nobody pays for its answer.
 func (w *Watcher) Forget(terminal string) {
 	terminal = strings.TrimSpace(terminal)
-	job, ok := w.store.Get(terminal)
+	job, ok := w.jobs.Find(terminal)
 	if !ok {
 		return
 	}
-	w.store.Delete(terminal)
+	w.jobs.Of(job.Owner).Delete(terminal)
 	w.service.killChecks(terminal)
 	w.service.changed()
 	w.announceChange(job.Project)
 }
 
-// Get returns one job by the terminal it steers.
-func (w *Watcher) Get(terminal string) (Job, bool) { return w.store.Get(terminal) }
+// Get returns one job by the terminal it steers, whoever steers it.
+func (w *Watcher) Get(terminal string) (Job, bool) { return w.jobs.Find(terminal) }
 
-// NoteAssistantInput records that an assistant turn wrote into this terminal.
-// The user's inputs are none of the job's business: steering is ownership, and
-// only steer and release change it. What is recorded here serves the checks
-// themselves. A terminal nobody steers is ignored, so this costs one lookup on
-// the input path.
-func (w *Watcher) NoteAssistantInput(terminal string) {
+// NoteAssistantInput records that the steering assistant wrote into this
+// terminal. The user's inputs are none of the job's business: steering is
+// ownership, and only steer and release change it. A prompt from another
+// assistant is none of it either, anybody may send one, and a job that counted
+// a stranger's send as its own would hand its next check a free pass through
+// the standstill rule. A terminal nobody steers is ignored, so this costs one
+// lookup on the input path.
+func (w *Watcher) NoteAssistantInput(terminal, by string) {
+	job, ok := w.jobs.Find(strings.TrimSpace(terminal))
+	if !ok || job.Owner != by {
+		return
+	}
 	reopened := false
 	now := w.now().UTC()
-	fresh, ok := w.store.Update(strings.TrimSpace(terminal), func(job *Job) bool {
+	fresh, ok := w.jobs.Of(job.Owner).Update(job.Terminal, func(job *Job) bool {
 		job.LastAssistantInputAt = now
 		if job.State == JobBlocked {
 			// A blocked job is the one state the cockpit created itself, while
@@ -578,9 +847,16 @@ func (w *Watcher) NoteAssistantInput(terminal string) {
 	}
 }
 
-// List returns every job, open ones first.
+// List returns every assistant's jobs, open ones first. ListOf narrows that to
+// one assistant, which is what its own page and its own commands show.
 func (w *Watcher) List() []Job {
-	out := w.store.List()
+	out := w.jobs.All()
+	SortJobs(out)
+	return out
+}
+
+func (w *Watcher) ListOf(owner string) []Job {
+	out := w.jobs.Of(owner).List()
 	SortJobs(out)
 	return out
 }
@@ -617,7 +893,7 @@ func (w *Watcher) Handle(terminal string) {
 // picture is what running and pending prevent, and the budget caps what a
 // noisy coder can spend either way.
 func (w *Watcher) gate(terminal string) (Job, bool) {
-	job, ok := w.store.Get(terminal)
+	job, ok := w.jobs.Find(terminal)
 	if !ok || !job.State.Open() {
 		return Job{}, false
 	}
@@ -638,9 +914,9 @@ func (w *Watcher) gate(terminal string) (Job, bool) {
 // out while the check was running stops it.
 func (w *Watcher) check(job Job) {
 	for {
-		w.slots <- struct{}{}
+		w.slots.take()
 		w.wake(job)
-		<-w.slots
+		w.slots.release()
 
 		w.mu.Lock()
 		again := w.pending[job.Terminal]
@@ -701,7 +977,7 @@ func (w *Watcher) wake(job Job) {
 	// line: the check waits for the one slot, and reading the coder takes its
 	// own time, so the baseline has to be the job as it stands now, not the
 	// copy the signal was gated on.
-	job = w.mark(job.Terminal, func(fresh *Job) { fresh.CheckingSince = w.now().UTC() })
+	job = w.mark(job, func(fresh *Job) { fresh.CheckingSince = w.now().UTC() })
 	if job.Terminal == "" {
 		return
 	}
@@ -718,6 +994,7 @@ func (w *Watcher) wake(job Job) {
 	}
 
 	run, err := w.service.startWake(wakeSpec{
+		Owner:    job.Owner,
 		Terminal: job.Terminal,
 		Prompt:   w.wakePrompt(job, activity),
 		Context:  seen,
@@ -739,19 +1016,14 @@ func (w *Watcher) adopt(check AdoptedCheck) {
 	// The turn is already on the machine, so the slot is taken if it is free and
 	// skipped if it is not. Waiting for it would be waiting for a check that is
 	// running, which is what this one is.
-	held := false
-	select {
-	case w.slots <- struct{}{}:
-		held = true
-	default:
-	}
+	held := w.slots.tryTake()
 	defer func() {
 		if held {
-			<-w.slots
+			w.slots.release()
 		}
 	}()
 
-	job, ok := w.store.Get(check.Terminal)
+	job, ok := w.jobs.Find(check.Terminal)
 	if !ok {
 		// The job is gone, so there is nobody to report to. The check is still
 		// waited on, otherwise its provider session would stay behind.
@@ -795,7 +1067,7 @@ func (w *Watcher) conclude(job Job, seen checkContext, outcome wakeOutcome, err 
 		log.Printf("assistant: wake for %s: %v", terminal, err)
 		silent := 0
 		open := false
-		if w.markJob(terminal, seen, func(fresh *Job) {
+		if w.markJob(job, seen, func(fresh *Job) {
 			fresh.CheckingSince = time.Time{}
 			fresh.LastWakeAt = w.now().UTC()
 			open = fresh.State.Open()
@@ -818,7 +1090,7 @@ func (w *Watcher) conclude(job Job, seen checkContext, outcome wakeOutcome, err 
 	// The counted record is the one everything after it is decided from: the
 	// input route writes to the same job while a check runs, and the copy this
 	// call started with is minutes old by now.
-	job = w.markJob(terminal, seen, func(fresh *Job) {
+	job = w.markJob(job, seen, func(fresh *Job) {
 		fresh.CheckingSince = time.Time{}
 		fresh.Wakes++
 		fresh.LastWakeAt = w.now().UTC()
@@ -843,8 +1115,8 @@ func (w *Watcher) conclude(job Job, seen checkContext, outcome wakeOutcome, err 
 // A check runs for minutes, and the input route writes to the same record while
 // it does, so the fields a check owns are written back one at a time instead of
 // saving a copy that went stale.
-func (w *Watcher) mark(terminal string, change func(*Job)) Job {
-	fresh, ok := w.store.Update(terminal, func(job *Job) bool {
+func (w *Watcher) mark(job Job, change func(*Job)) Job {
+	fresh, ok := w.jobs.Of(job.Owner).Update(job.Terminal, func(job *Job) bool {
 		change(job)
 		job.UpdatedAt = w.now().UTC()
 		return true
@@ -861,8 +1133,8 @@ func (w *Watcher) mark(terminal string, change func(*Job)) Job {
 // and steering the terminal again replaces the entry, so everything a check
 // charges to its job, the spent wake, the note, the silent counter, has to
 // check the identity inside the write, not before it.
-func (w *Watcher) markJob(terminal string, seen checkContext, change func(*Job)) Job {
-	fresh, ok := w.store.Update(terminal, func(job *Job) bool {
+func (w *Watcher) markJob(job Job, seen checkContext, change func(*Job)) Job {
+	fresh, ok := w.jobs.Of(job.Owner).Update(job.Terminal, func(job *Job) bool {
 		if !seen.forJob(*job) {
 			return false
 		}
@@ -892,11 +1164,11 @@ func (w *Watcher) Recover(adopted []AdoptedCheck) {
 		carried[check.Terminal] = true
 		go w.adopt(check)
 	}
-	for _, job := range w.store.List() {
+	for _, job := range w.jobs.All() {
 		if !job.Checking() || carried[job.Terminal] {
 			continue
 		}
-		w.mark(job.Terminal, func(fresh *Job) {
+		w.mark(job, func(fresh *Job) {
 			fresh.CheckingSince = time.Time{}
 			fresh.LastWakeAt = time.Time{}
 			fresh.Note = "The check was interrupted by a restart, looking again."
@@ -912,7 +1184,7 @@ func (w *Watcher) Recover(adopted []AdoptedCheck) {
 // report closes a job and tells the user, which is the same pair of steps for a
 // finished job, a blocked one and a standstill.
 func (w *Watcher) report(job Job, seen checkContext, outcome wakeOutcome) {
-	fresh, ok := w.store.Update(job.Terminal, func(entry *Job) bool {
+	fresh, ok := w.jobs.Of(job.Owner).Update(job.Terminal, func(entry *Job) bool {
 		if !entry.State.Open() {
 			// The user called the job off, or it ran out, while this check was
 			// running. Then it is off: a late answer must not reopen a job the
@@ -950,49 +1222,45 @@ func (w *Watcher) resolveStandstill(job Job, outcome wakeOutcome, idle bool, ste
 	if !idle || outcome.Verdict != VerdictWorking {
 		return outcome
 	}
-	if fresh, ok := w.store.Get(job.Terminal); ok && fresh.LastAssistantInputAt.After(steeredBefore) {
+	if fresh, ok := w.jobs.Of(job.Owner).Get(job.Terminal); ok && fresh.LastAssistantInputAt.After(steeredBefore) {
 		// It steered the coder, so something is moving again.
 		return outcome
 	}
 	return wakeOutcome{Verdict: VerdictBlocked, Text: standstillReport(job, outcome.Text)}
 }
 
+// reportData is what the report templates are filled with: the job, and the
+// one thing a report has to say about it.
+type reportData struct {
+	Job Job
+	// Reason is why the checks stopped, Said what the last check answered.
+	Reason string
+	Said   string
+}
+
+// report fills one of the report templates. The file ends in a newline the
+// way a text file does; a report is a message and carries none.
+func report(name string, data reportData) string {
+	return strings.TrimSuffix(render(name, data), "\n")
+}
+
 // silentReport is what the user reads when the checks themselves stop working.
 // The job is closed, because nobody is checking it any more and pretending
 // otherwise is the failure this whole feature exists to prevent.
 func silentReport(job Job, err error) string {
-	name := job.Name
-	if name == "" {
-		name = job.Terminal
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "I cannot check on **%s** any more: %s\n\n", name, oneLine(err.Error()))
-	fmt.Fprintf(&b, "Done when: %s\n\n", DoneWhenLine(job.DoneWhen))
-	b.WriteString("Nothing is steering this coder now. Tell me to look again, or take it from here yourself.")
-	return b.String()
+	return report("silent_report.md.tmpl", reportData{Job: job, Reason: err.Error()})
 }
 
 // standstillReport says what nobody else would: the coder is idle, the job is
 // not done, and the check did not move it.
 func standstillReport(job Job, said string) string {
-	name := job.Name
-	if name == "" {
-		name = job.Terminal
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "**%s** is idle and the job is not done, and the check did not send it anything.\n\n", name)
-	fmt.Fprintf(&b, "Done when: %s\n\n", DoneWhenLine(job.DoneWhen))
-	if line := oneLine(said); line != "" {
-		fmt.Fprintf(&b, "The check said: %s\n\n", line)
-	}
-	b.WriteString("It needs a decision or a next step from you.")
-	return b.String()
+	return report("standstill_report.md.tmpl", reportData{Job: job, Said: said})
 }
 
 // note records what a check without news found. No transcript entry, no push:
 // the job's own line on the page is where a "still working" belongs.
 func (w *Watcher) note(job Job, text string) {
-	fresh, ok := w.store.Update(job.Terminal, func(entry *Job) bool {
+	fresh, ok := w.jobs.Of(job.Owner).Update(job.Terminal, func(entry *Job) bool {
 		if !entry.State.Open() {
 			return false
 		}
@@ -1023,7 +1291,7 @@ func (w *Watcher) note(job Job, text string) {
 // first on every pass, which is what makes that report happen without a signal.
 func (w *Watcher) SweepExpired() {
 	now := w.now().UTC()
-	for _, job := range w.store.List() {
+	for _, job := range w.jobs.All() {
 		if !job.State.Open() {
 			continue
 		}
@@ -1042,7 +1310,7 @@ func (w *Watcher) SweepExpired() {
 // does, so there is no second channel and no second kind of message.
 func (w *Watcher) expire(job Job, reason string) {
 	report := ""
-	fresh, ok := w.store.Update(job.Terminal, func(entry *Job) bool {
+	fresh, ok := w.jobs.Of(job.Owner).Update(job.Terminal, func(entry *Job) bool {
 		if !entry.State.Open() {
 			// Already closed, by another signal or by the user. One report per job.
 			return false
@@ -1070,27 +1338,12 @@ func (w *Watcher) expire(job Job, reason string) {
 // expiryReport is what the user reads: what stopped, why, and that nobody is
 // looking at it any more.
 func expiryReport(job Job, reason string) string {
-	name := job.Name
-	if name == "" {
-		name = job.Terminal
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "I stopped steering **%s**", name)
-	if job.Project != "" {
-		fmt.Fprintf(&b, " in %s", job.Project)
-	}
-	fmt.Fprintf(&b, ": %s, so nothing checks this job any more.\n\n", reason)
-	fmt.Fprintf(&b, "Done when: %s\n\n", DoneWhenLine(job.DoneWhen))
-	if job.Note != "" {
-		fmt.Fprintf(&b, "The last check said: %s\n\n", job.Note)
-	}
-	b.WriteString("Tell me if you want another look at it.")
-	return b.String()
+	return report("expiry_report.md.tmpl", reportData{Job: job, Reason: reason})
 }
 
 // SortJobs puts the jobs that still wake the assistant first, then the
 // newest. Exported because every list of jobs is read in this order, the page,
-// the conversation and `dev-cockpit assistant job-list`, and one order means one function.
+// the instance and `dev-cockpit assistant job-list`, and one order means one function.
 func SortJobs(list []Job) {
 	sort.SliceStable(list, func(i, j int) bool {
 		if list[i].State.Open() != list[j].State.Open() {
@@ -1100,131 +1353,53 @@ func SortJobs(list []Job) {
 	})
 }
 
-// cockpitCommands is how a check is told to call the cockpit's own commands.
-// Implemented by the assistant workspace, which already builds the same strings
-// for the generated instructions.
-type cockpitCommands interface {
-	CockpitCommand(name string) string
+// cockpitNamer is how a check is told to call the cockpit's own commands.
+// Implemented by the assistant workspace, which names the same wrapper in the
+// generated instructions, so a check reads one spelling and not two.
+type cockpitNamer interface {
+	Cockpit(instanceID string) string
 }
 
-// command names one of the cockpit's commands for the prompt, with the path and
-// the directories of this instance when they are known.
-func (w *Watcher) command(name string) string {
+// cockpit is what a command in the check prompt starts with: the wrapper of
+// the assistant whose job it is when a workspace can name it, and the plain
+// command group otherwise.
+func (w *Watcher) cockpit(owner string) string {
 	if w.service != nil {
-		if namer, ok := w.service.projects.(cockpitCommands); ok {
-			return namer.CockpitCommand(name)
+		if namer, ok := w.service.workdirs.(cockpitNamer); ok {
+			return namer.Cockpit(owner)
 		}
 	}
-	return "dev-cockpit " + name
+	return plainCockpit
 }
+
+// plainCockpit is the command group without a wrapper, for a caller without
+// a workspace to ask.
+const plainCockpit = "dev-cockpit assistant"
 
 // wakePrompt is what the assistant reads when a coder reported. It carries the
 // job, what the terminal shows, what this turn may change, and the contract for
 // the answer. The contract is what keeps a check from becoming noise: a wake
 // without news must be able to say so in one word.
 func (w *Watcher) wakePrompt(job Job, activity Activity) string {
-	return wakePromptWith(job, activity,
-		w.command("terminal-screen"), w.command("coder-send-prompt"), w.command("coder-send-control-keys"))
+	return wakePromptWith(job, activity, w.cockpit(job.Owner))
 }
 
 // wakePrompt is the same prompt with the plain command names, for a caller
 // without an instance to ask.
 func wakePrompt(job Job, activity Activity) string {
-	return wakePromptWith(job, activity, "dev-cockpit assistant terminal-screen",
-		"dev-cockpit assistant coder-send-prompt", "dev-cockpit assistant coder-send-control-keys")
+	return wakePromptWith(job, activity, plainCockpit)
 }
 
-func wakePromptWith(job Job, activity Activity, outputCommand, sendCommand, keysCommand string) string {
-	var b strings.Builder
-	// The opening matches what bought the check. Most checks are bought by a
-	// report, the coder finished or asked something, and greeting their judge
-	// with a stall story frames every job as stuck. Only a session that stands
-	// still mid work gets the not moving opening.
-	if activity.Finished {
-		b.WriteString("A coder you are steering reported. The job stands to be judged against its criterion, ")
-		b.WriteString("and when it is not met, find out what is in the way and get the coder going again.\n\n")
-	} else {
-		b.WriteString("A coder you are steering is not moving. Find out what is in the way and get it going again.\n\n")
-	}
-	b.WriteString("## The job\n\n")
-	fmt.Fprintf(&b, "- terminal: %s\n", job.Terminal)
-	if job.Name != "" {
-		fmt.Fprintf(&b, "- coder: %s\n", job.Name)
-	}
-	if job.Project != "" {
-		fmt.Fprintf(&b, "- project: %s\n", job.Project)
-	}
-	if job.Task != "" {
-		fmt.Fprintf(&b, "- task: %s\n", job.Task)
-	}
-	// A criterion may be absent: a job from the page carries none, and then
-	// the session's own task is the criterion. It may also be a list, one
-	// check per line. The lines have to reach the check as lines: folded into
-	// one they read as one sentence, and a check that skims it treats the
-	// tail as elaboration instead of as its own condition.
-	if strings.TrimSpace(job.DoneWhen) == "" {
-		b.WriteString("- done when: nothing was written down for this job. It is done when the task this ")
-		b.WriteString("session was given is complete: read the task and the session's own record, judge ")
-		b.WriteString("against that, and name in your report what you checked.\n\n")
-	} else if lines := strings.Split(job.DoneWhen, "\n"); len(lines) > 1 {
-		b.WriteString("- done when, every line of it:\n")
-		for _, line := range lines {
-			fmt.Fprintf(&b, "    %s\n", strings.TrimSpace(line))
-		}
-		b.WriteString("\n")
-	} else {
-		fmt.Fprintf(&b, "- done when: %s\n\n", job.DoneWhen)
-	}
+// wakeData is what the check prompt template is filled with.
+type wakeData struct {
+	Job      Job
+	Activity Activity
+	// Cockpit is what every command the prompt spells starts with.
+	Cockpit string
+}
 
-	if activity.Screen {
-		b.WriteString("## What its terminal showed\n\n```\n")
-	} else {
-		b.WriteString("## What the session last recorded\n\n```\n")
-	}
-	b.WriteString(strings.TrimSpace(activity.Text))
-	b.WriteString("\n```\n\n")
-	if activity.Screen {
-		b.WriteString("The bottom of a screen is the coder's input line, and whatever stands there is the coder's own ")
-		b.WriteString("suggestion for a next prompt. Nobody typed it, it belongs to nobody, and it says nothing ")
-		b.WriteString("about whether anything is moving.\n\n")
-	}
-
-	b.WriteString("## Moving it\n\n")
-	b.WriteString("This terminal is steered, so it is yours to keep moving.\n\n")
-	fmt.Fprintf(&b, "Read what you need: the project files, the cockpit's read only commands, and `%s %s` ", outputCommand, job.Terminal)
-	b.WriteString("for the screen as it stands right now, which is where you see what stopped it. ")
-	fmt.Fprintf(&b, "Then move it: `%s %s \"<text>\"` sends a prompt, ", sendCommand, job.Terminal)
-	fmt.Fprintf(&b, "`%s %s <key>...` presses keys, in one call, in the order you would press them ", keysCommand, job.Terminal)
-	b.WriteString("(`arrow-down`, `arrow-up`, `enter`, `escape`).\n\n")
-	b.WriteString("Examples, not a list to work through: a tool call that ran into an API error is often worth ")
-	b.WriteString("another go; a coder that says it has no room left to think in takes `/compact`; an open dialog ")
-	b.WriteString("takes keys and never text, sent as text the answer lands in the chooser as text and the question ")
-	b.WriteString("stays open. What is really in the way is on the screen, and what to do about it is your judgement.\n\n")
-	b.WriteString("A question the task already answers is yours to answer. One that costs money, deletes something, ")
-	b.WriteString("is hard to undo or that the task does not imply belongs to the user: report BLOCKED and touch nothing. ")
-	b.WriteString("Starting a coder is allowed when the task explicitly calls for that next step, ")
-	b.WriteString("for example a case decision the user wrote into it, and refused otherwise. ")
-	b.WriteString("Creating or deleting projects is refused for this turn.\n\n")
-
-	b.WriteString("## Your answer\n\n")
-	b.WriteString("Answer while you still can. This turn has two hours and is killed when that runs out, ")
-	b.WriteString("which reaches the user as a job whose check came back with nothing. If checking properly ")
-	b.WriteString("would take longer than that, say what you know now and what is still open, as WORKING or ")
-	b.WriteString("BLOCKED, and let the next check carry on.\n\n")
-	b.WriteString("Your whole answer starts with the verdict. Do not think out loud first: everything before the verdict ")
-	b.WriteString("is thrown away, and the rest is what the user reads. Exactly one of these:\n\n")
-	b.WriteString("- `DONE: <what the user needs to know, one or two sentences>`\n")
-	b.WriteString("- `BLOCKED: <what is in the way and what you need from the user>`\n")
-	b.WriteString("- `WORKING: <one short line about what you sent it and what it is doing now>`\n")
-	b.WriteString("- `NOTHING`\n\n")
-	b.WriteString("Use DONE only when the done-when is met and you checked it, not when it looks likely. ")
-	b.WriteString("Use WORKING only when the coder is going again, which for a coder that had stopped means you sent it ")
-	b.WriteString("something: a WORKING without that is turned into BLOCKED anyway, because a job nobody moves is stuck. ")
-	b.WriteString("DONE and BLOCKED reach the user on their phone; WORKING and NOTHING stay quiet, ")
-	b.WriteString("so a report that is not one of those two costs a turn and says nothing. ")
-	b.WriteString("While this job is open the coder's own news rings nowhere, so your report is the one thing ")
-	b.WriteString("the user hears about it.\n")
-	return b.String()
+func wakePromptWith(job Job, activity Activity, cockpit string) string {
+	return render("wake_prompt.md.tmpl", wakeData{Job: job, Activity: activity, Cockpit: cockpit})
 }
 
 // Verdict is what a wake concluded.

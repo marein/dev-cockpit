@@ -54,14 +54,16 @@ func TestBackupNewsNamesTheArchive(t *testing.T) {
 	}
 }
 
-// A plain answer says in its title only that the assistant answered, so the
-// entry carries the first words of the answer itself.
+// A plain answer says in its title only that this assistant answered, so the
+// entry carries the first words of the answer itself. The name is the title's
+// subject: one bell rings for all of them, so an entry that did not say which
+// one would send the user looking through threads.
 func TestAnAnsweredNotificationCarriesAnExcerpt(t *testing.T) {
-	title, detail := assistantNews(assistant.Message{
+	title, detail := assistantNews("Release work", assistant.Message{
 		State:   assistant.StateComplete,
 		Content: "## Done\n\nThe **tests** pass and the [branch](https://example.test) is pushed.",
 	})
-	if title != "Assistant answered." {
+	if title != "Release work answered." {
 		t.Fatalf("want the answered wording, got %q", title)
 	}
 	if detail != "Done The tests pass and the branch is pushed." {
@@ -100,12 +102,12 @@ func TestAJobReportSaysHowItEndedAndNamesTheJob(t *testing.T) {
 		verdict assistant.Verdict
 		want    string
 	}{
-		{assistant.VerdictDone, "Job done."},
-		{assistant.VerdictBlocked, "Job blocked."},
-		{assistant.VerdictExpired, "Job expired."},
+		{assistant.VerdictDone, "Release work: job done."},
+		{assistant.VerdictBlocked, "Release work: job blocked."},
+		{assistant.VerdictExpired, "Release work: job expired."},
 	}
 	for _, c := range cases {
-		title, detail := assistantNews(assistant.Message{
+		title, detail := assistantNews("Release work", assistant.Message{
 			State:   assistant.StateComplete,
 			Content: "the report",
 			Wake: &assistant.WakeNote{
@@ -127,11 +129,11 @@ func TestAJobReportSaysHowItEndedAndNamesTheJob(t *testing.T) {
 // A report from before the note carried a name names what it can, instead of a
 // job nobody can name any more.
 func TestAJobReportWithoutANameCarriesNoLowerLine(t *testing.T) {
-	title, detail := assistantNews(assistant.Message{
+	title, detail := assistantNews("Release work", assistant.Message{
 		State: assistant.StateComplete,
 		Wake:  &assistant.WakeNote{Terminal: "term-1", Verdict: string(assistant.VerdictDone)},
 	})
-	if title != "Job done." {
+	if title != "Release work: job done." {
 		t.Fatalf("want the ending of the job, got %q", title)
 	}
 	if detail != "" {
@@ -142,11 +144,23 @@ func TestAJobReportWithoutANameCarriesNoLowerLine(t *testing.T) {
 // A turn that never finished says so, and what it managed to write is still
 // the best line about what it was doing.
 func TestAFailedAnswerSaysSo(t *testing.T) {
-	title, detail := assistantNews(assistant.Message{State: assistant.StateFailed, Content: "half an answer"})
-	if title != "Assistant could not finish." {
+	title, detail := assistantNews("Release work", assistant.Message{State: assistant.StateFailed, Content: "half an answer"})
+	if title != "Release work could not finish." {
 		t.Fatalf("want the failure wording, got %q", title)
 	}
 	if detail != "half an answer" {
 		t.Fatalf("want the words that were written, got %q", detail)
+	}
+}
+
+// An assistant nobody named yet still needs a word in the bell, and it is the
+// surface's own: "Assistant answered" is right for the one that has not been
+// given a name of its own.
+func TestAnUnnamedAssistantRingsUnderTheSurfaceName(t *testing.T) {
+	if got := assistantCaller(assistant.Summary{Title: assistant.DefaultTitle}); got != assistant.Name {
+		t.Fatalf("want the surface name for an unnamed assistant, got %q", got)
+	}
+	if got := assistantCaller(assistant.Summary{Title: "Release work"}); got != "Release work" {
+		t.Fatalf("want the assistant's own name, got %q", got)
 	}
 }

@@ -221,7 +221,13 @@ dc-theme-cycle { display: contents; }
   width: 1.75rem; height: 1.75rem; border-radius: var(--tblr-border-radius); color: var(--tblr-secondary);
 }
 .terminal-tab-menu:hover, .terminal-tab-menu:active { background: rgba(var(--tblr-secondary-rgb), 0.12); color: var(--tblr-body-color); }
-.terminal-tab-grip { touch-action: none; cursor: grab; }
+.terminal-tab-grip { touch-action: none; cursor: grab; height: auto; align-self: stretch; }
+/* The whole height of the row is the handle, the glyph only marks where it is:
+   a thumb aiming at one line of a row that is two or three lines tall is a
+   thumb that scrolls the list instead. The negative margin is the row's own
+   vertical padding (.dc-rows .list-group-item), so the handle reaches the edges
+   the row has. */
+.dc-rows .list-group-item > .terminal-tab-grip, .dc-rows .list-group-item > .dc-row-grip { margin-block: -8px; }
 @media (max-width: 991.98px) {
   .terminal-tab .terminal-tab-close { display: none; }
   .dc-sheet-panel .terminal-tabs-strip { touch-action: pan-y; }
@@ -342,10 +348,13 @@ button.dc-status-item, a.dc-status-item { cursor: pointer; }
    to. Tabler owns its size, its colour and its animation, so nothing here
    repaints it, and a carrier that is no session icon wraps its glyph in a
    .dc-news-anchor to offer the same corner. On a session icon the carrier's
-   news class shows it, and changed is the split page's device local news. */
+   news class shows it, and changed is the split page's device local news. A
+   dot that brings its own wiring (data-notify-any, the entry to a whole area)
+   governs itself through d-none wherever it hangs, session icon included: the
+   carrier has no one target whose news it could wear. */
 .dc-news-anchor { position: relative; display: inline-flex; }
 .dc-term-icon > .dc-news-dot, .dc-news-anchor > .dc-news-dot { position: absolute; top: -3px; right: -3px; }
-.dc-term-icon > .dc-news-dot { display: none; }
+.dc-term-icon > .dc-news-dot:not([data-notify-any]) { display: none; }
 .dc-term-icon.news > .dc-news-dot, .dc-term-icon.changed > .dc-news-dot { display: inline-block; }
 .coder-icon { width: 1em; height: 1em; vertical-align: -0.125em; }
 /* The project board: one card per project, its worktrees folded under it. */
@@ -849,6 +858,26 @@ terminal-tabs[data-tabs-vertical] .terminal-tabs-strip { display: flex; flex-dir
   box-shadow: inset 0 0 0 2px var(--tblr-primary);
   transition: box-shadow 0.1s ease, background 0.1s ease;
 }
+/* The assistants' column drags with the same gesture (@dc/rowdrag) and wears
+   its own names for it. The rules name the row class as well, because Tabler's
+   .list-group-item-action:not(.active):hover and the column's
+   .dc-rows .list-group-item.active outrank a plain class and once put the
+   carried row under its neighbours and the active row's bar over the frame. */
+.dc-row-grip {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 1.25rem; align-self: stretch; color: var(--tblr-secondary);
+  touch-action: none; cursor: grab;
+}
+.dc-rows-dragging, .dc-rows-dragging .list-group-item { cursor: grabbing; }
+.dc-rows-dragging .list-group-item { transition: transform 0.12s ease; }
+.dc-rows-dragging .list-group-item.dc-row-dragging {
+  position: relative; z-index: 1100; transition: none;
+  background: var(--tblr-bg-surface-secondary);
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.25);
+}
+.dc-rows-dragging .list-group-item.active.dc-row-dragging {
+  box-shadow: inset 3px 0 0 var(--tblr-primary), 0 0.25rem 0.75rem rgba(0, 0, 0, 0.25);
+}
 .terminal-tabs-new-menu { width: calc(var(--dc-ctx-w) - 16px); max-width: calc(100vw - 2rem); max-height: min(70vh, 26rem); overflow-y: auto; overscroll-behavior: contain; padding-top: 0; }
 .terminal-tabs-new-menu .dropdown-item > .text-truncate { min-width: 0; }
 .terminal-tabs-new-menu .dropdown-item.selected { background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18)); }
@@ -1101,9 +1130,18 @@ dc-assistant[dropping] .assistant-composer {
    conversation scrolls in its own region under the head, the composer stands
    under it, and the steered coders and the memory sit in an aside that is
    inline from xl up and a sheet below. */
+/* The none state is a flex item of .dc-work-fill: it keeps its own height,
+   a scrolling flex column would squash a block taller than the area instead of
+   scrolling it. */
+[data-assistant-none] { max-width: 60rem; margin-inline: auto; flex: none; }
 .dc-assistant-body { flex: 1; display: flex; min-height: 0; min-width: 0; }
 .dc-assistant-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.dc-assistant-main [data-assistant-empty] { max-width: 60rem; }
+/* Both empty states stand at the top of the work area, under the head, and
+   centred across it: that is the form .dc-empty gives every other empty area,
+   and the text belongs to the head it stands under. The margins are sideways
+   only, a vertical auto would float the block into the middle of a tall
+   window. */
+.dc-assistant-main [data-assistant-empty] { max-width: 60rem; margin-inline: auto; }
 .dc-assistant-scroll {
   display: block;
   flex: 1 1 auto;

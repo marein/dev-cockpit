@@ -1,5 +1,9 @@
-{{/* The assistant page: the conversation the address names in the work
-     column, the list column of every conversation beside it. The work column
+{{/* The assistant page: the assistant the address names in the work
+     column, the list column of all of them beside it, the open one marked in
+     it. The area's own address never renders this without an id, it resolves
+     to one (handleAssistantsEntry); with no assistant at all the work column
+     is the empty state and the only control on it is the one that makes the
+     first one. The work column
      is the dc-assistant element itself, so the head's voice menu and the
      composer are its own children, and the steered coders and the memory
      stand in an aside that is inline from xl up and a sheet below.
@@ -15,10 +19,31 @@
 {{define "assistant_page.gohtml"}}
 {{template "app_start.gohtml" .}}
 {{template "assistant_ctx.gohtml" .Ctx}}
-<dc-assistant class="dc-work" data-assistant-coder="{{.CoderID}}" conversation-id="{{.ID}}" coder-label="{{.CoderLabel}}" stream-url="{{.StreamURL}}" post-url="{{.PostURL}}" message-url="{{.MessageURL}}" upload-url="{{.UploadURL}}" stt-url="{{.SttURL}}"{{if .TTS}} tts{{end}} max-bytes="{{.MaxPromptBytes}}" max-file-bytes="{{.MaxUploadBytes}}" draft-url="{{.DraftURL}}" draft-files="{{.DraftFiles}}"{{if .Running}} running{{end}}{{if .Blocked}} blocked{{end}}>
+{{if not .ID}}
+<div class="dc-work">
+  <div class="dc-work-head">
+    <h1 class="dc-work-title flex-fill min-w-0 text-truncate">Assistants</h1>
+  </div>
+  <div class="dc-work-body dc-work-fill">
+    {{template "flash.gohtml" .}}
+    <div class="text-center py-5" data-assistant-none>
+      <div class="mb-3"><span class="dc-term-icon assistant fs-1" aria-hidden="true"><i class="ti ti-sparkles"></i></span></div>
+      <p class="mb-1">No assistant yet.</p>
+      <p class="text-secondary mb-4">An assistant coordinates work: you give it a task, a coder builds it, it steers that coder and reports done or stuck. You can run several side by side, each with its own thread and its own coders.</p>
+      {{if .Coders}}
+      {{template "assistant_new_forms.gohtml" (dict "Coders" .Coders "CoderID" .NewCoderID "PostURL" .PostURL "CSRFToken" .CSRFToken "Prefix" "assistant-first")}}
+      {{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .NewCoderID "ContextPercent" 0 "NoRing" true "NewClass" "btn btn-primary" "Prefix" "assistant-first")}}
+      {{else}}
+      <p class="text-secondary mb-0">No installed coder can run one right now.</p>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{else}}
+<dc-assistant class="dc-work" data-assistant-coder="{{.CoderID}}" assistant-id="{{.ID}}" coder-label="{{.CoderLabel}}" stream-url="{{.StreamURL}}" post-url="{{.PostURL}}" message-url="{{.MessageURL}}" upload-url="{{.UploadURL}}" stt-url="{{.SttURL}}"{{if .TTS}} tts{{end}} max-bytes="{{.MaxPromptBytes}}" max-file-bytes="{{.MaxUploadBytes}}" draft-url="{{.DraftURL}}" draft-files="{{.DraftFiles}}"{{if .Running}} running{{end}}{{if .Blocked}} blocked{{end}}>
   <div class="dc-work-head" data-assistant-head>
     <span class="dc-term-icon assistant d-lg-none{{if .Running}} working{{end}}" data-assistant-head-icon aria-hidden="true"><i class="ti ti-sparkles"></i></span>
-    <h1 class="dc-work-title flex-fill min-w-0 text-truncate" data-assistant-title>{{if .ConversationTitle}}{{.ConversationTitle}}{{else}}New conversation{{end}}</h1>
+    <h1 class="dc-work-title flex-fill min-w-0 text-truncate" data-assistant-title>{{if .Name}}{{.Name}}{{else}}New assistant{{end}}</h1>
     {{if .TTS}}
     {{/* The speaker opens the voice menu instead of switching on its own: the
          icon alone says whether answers read themselves aloud, so the button
@@ -52,19 +77,22 @@
            up, below xl the sheet the head's steering wheel opens. The memory
            sheet is the layout's, opened from the list column's head. */}}
       <aside class="offcanvas-xl offcanvas-end dc-assistant-aside" tabindex="-1" id="assistant-aside" aria-label="Steered coders" data-assistant-aside>
-        <div class="offcanvas-header border-bottom py-2">
-          <h2 class="offcanvas-title h4 m-0">Steered coders</h2>
+        {{/* The same head the list column and the thread wear, so all three end
+             on one line; see the memory sheet in ctx_fragments.gohtml. */}}
+        <div class="dc-ctx-head">
+          <h2 class="dc-ctx-title">Steered coders</h2>
           <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#assistant-aside" aria-label="Close"></button>
         </div>
         <div class="offcanvas-body dc-assistant-aside-body">
-          <dc-assistant-list list-url="{{.JobsURL}}" data-assistant-jobs-list>
+          <dc-assistant-list list-url="{{.JobsListURL}}" data-assistant-jobs-list>
             {{template "assistant_jobs_list.gohtml" .}}
           </dc-assistant-list>
-          <div class="text-secondary small">Steered coders are checked on their own schedule, the wake ups land in the conversation.</div>
+          <div class="text-secondary small">These are the coders this assistant steers. They are checked on their own schedule, and the reports land in this thread.</div>
         </div>
       </aside>
     </div>
   </div>
 </dc-assistant>
+{{end}}
 {{template "app_close.gohtml" .}}
 {{end}}

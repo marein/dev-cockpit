@@ -1,20 +1,17 @@
 import { onServerEvent } from "@dc/events";
-import { getText, postForm, ensureOk } from "@dc/http";
-import { confirm } from "@dc/dialog";
+import { getText, postForm, postJSON, ensureOk } from "@dc/http";
+import { confirm, fire } from "@dc/dialog";
 import { openMenu, wireRowMenus } from "@dc/contextmenu";
-import { applyFold } from "@dc/fold";
-import { notifyError } from "@dc/toast";
+import { RowDrag } from "@dc/rowdrag";
+import { notifyError, notifySuccess } from "@dc/toast";
 
-const EARLIER_LIMIT = 5;
-
-// A self-refreshing assistant list: the steered jobs, the conversations in
-// the list column, and the memory. The list swaps its [data-assistant-body]
-// on the assistant event, so a check that finished or a conversation that
-// ended elsewhere changes what is on screen without anybody pulling on a
-// timer, and an action acts in place. With the history attribute the rows
-// carry a context menu (right click, long press, and the kebab button) for
-// what a row does not need a page for; with the memory attribute a row
-// edits in place.
+// A self-refreshing assistant list: the steered jobs, the assistants in the
+// list column, and the memory. The list swaps its [data-assistant-body] on the
+// assistant event, so a check that finished or an assistant that answered
+// elsewhere changes what is on screen without anybody pulling on a timer, and
+// an action acts in place. With the history attribute the rows carry a context
+// menu (right click, long press, and the kebab button) for what a row does not
+// need a page for; with the memory attribute a row edits in place.
 class AssistantList extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -31,17 +28,16 @@ class AssistantList extends HTMLElement {
     this.addEventListener("submit", (event) => void this.onAction(event), { signal: this.ac.signal });
 
     if (this.hasAttribute("history")) {
-      this.earlierOpen = false;
-      this.foldEarlier();
-      wireRowMenus(this, "[data-assistant-conversation]", (row, x, y) => this.openRowMenu(row, x, y), { signal: this.ac.signal });
+      wireRowMenus(this, "[data-assistant-instance]", (row, x, y) => this.openRowMenu(row, x, y), { signal: this.ac.signal });
       this.addEventListener("click", (event) => {
-        const button = event.target.closest("[data-conversation-menu]");
+        const button = event.target.closest("[data-assistant-menu]");
         if (!button) return;
         event.preventDefault();
         event.stopPropagation();
         const rect = button.getBoundingClientRect();
-        this.openRowMenu(button.closest("[data-assistant-conversation]"), rect.left, rect.bottom + 4);
+        this.openRowMenu(button.closest("[data-assistant-instance]"), rect.left, rect.bottom + 4);
       }, { signal: this.ac.signal });
+      this.wireDrag(this.ac.signal);
     }
 
     if (this.hasAttribute("memory")) this.wireMemory(this.ac.signal);
@@ -54,28 +50,6 @@ class AssistantList extends HTMLElement {
     this.modal?.addEventListener("hidden.bs.modal", () => { this.dirty = false; }, { signal: this.ac.signal });
     this.sheet = this.closest(".offcanvas");
     this.sheet?.addEventListener("show.bs.offcanvas", () => void this.refresh(), { signal: this.ac.signal });
-  }
-
-  // The earlier conversations show their newest five, the rest stands behind
-  // one row that unfolds it; the choice survives the list's refreshes. The
-  // fold hides with a class of its own, so nothing that hides rows with
-  // d-none and the fold undo each other.
-  foldEarlier() {
-    const list = this.querySelector("[data-assistant-earlier]");
-    if (!list) return;
-    applyFold(list, {
-      limit: EARLIER_LIMIT,
-      expanded: this.earlierOpen,
-      hiddenClass: "dc-folded",
-      toggleAttr: "data-assistant-earlier-toggle",
-      toggleClass: "list-group-item list-group-item-action justify-content-center text-secondary small",
-      signal: this.ac.signal,
-      onToggle: (event, next) => {
-        event.preventDefault();
-        this.earlierOpen = next;
-        this.foldEarlier();
-      },
-    });
   }
 
   // A memory row edits where it stands: the pencil hides the reading half and
@@ -127,9 +101,15 @@ class AssistantList extends HTMLElement {
     entry.querySelector("[data-memory-view]").hidden = false;
   }
 
+  // An assistant's row menu: open it, give it a name of its own, or delete it.
+  // Renaming is here and not on the page because with several of them the name
+  // is what the list is read by, and this is the list.
   openRowMenu(row, x, y) {
     if (!row) return null;
-    const url = row.dataset.conversationUrl || "/assistant/" + row.dataset.assistantConversation;
+    // A long press on the grip is both a drag and a menu; the menu wins.
+    this.rowDrag?.cancel();
+    const url = row.dataset.assistantUrl || "/assistants/" + row.dataset.assistantInstance;
+    const name = row.dataset.assistantName || "";
     return openMenu({
       x,
       y,
@@ -144,35 +124,100 @@ class AssistantList extends HTMLElement {
             else window.location.assign(url);
           },
         },
-        { label: "Delete", icon: "ti-trash", danger: true, action: () => void this.deleteConversation(url) },
+        { label: "Rename", icon: "ti-pencil", action: () => void this.renameAssistant(url, name) },
+        { label: "Delete", icon: "ti-trash", danger: true, action: () => void this.deleteAssistant(url, name) },
       ],
     });
   }
 
-  async deleteConversation(url) {
-    const ok = await confirm({
-      title: "Delete this conversation? The memory is kept.",
-      confirmText: "Delete",
+  async renameAssistant(url, name) {
+    const result = await fire({
+      title: "Rename this assistant",
+      input: "text",
+      inputValue: name,
+      inputAttributes: { "aria-label": "Name" },
+      showCancelButton: true,
+      confirmButtonText: "Rename",
+      cancelButtonText: "Cancel",
+      reverseButtons: true,
     });
-    if (!ok) return;
+    if (!result.isConfirmed) return;
+    const title = (result.value || "").trim();
+    if (!title || title === name) return;
     try {
-      const response = await postForm(url, { form: "delete" });
-      await ensureOk(response, "The conversation could not be deleted.");
+      const response = await postForm(url, { form: "rename", title });
+      await ensureOk(response, "The assistant could not be renamed.");
     } catch (err) {
-      notifyError(err?.message || "The conversation could not be deleted.");
-      return;
-    }
-    // The page of the deleted conversation is gone with it, the bare address
-    // opens the live one; every other page just sees the row go.
-    if (window.location.pathname === url) {
-      if (window.app?.navigate) window.app.navigate("/assistant");
-      else window.location.assign("/assistant");
+      notifyError(err?.message || "The assistant could not be renamed.");
       return;
     }
     await this.refresh();
   }
 
+  async deleteAssistant(url, name) {
+    const ok = await confirm({
+      title: name ? `Delete "${name}"?` : "Delete this assistant?",
+      text: "Its thread goes with it. The coders it steers are released and yours again, the shared memory is kept.",
+      confirmText: "Delete",
+    });
+    if (!ok) return;
+    let released = "";
+    try {
+      const response = await postForm(url, { form: "delete" });
+      await ensureOk(response, "The assistant could not be deleted.");
+      // The answer names the coders that came back, and that is the one thing
+      // the user cannot see for themselves once the row is gone.
+      released = (await response.json().catch(() => ({})))?.released || "";
+    } catch (err) {
+      notifyError(err?.message || "The assistant could not be deleted.");
+      return;
+    }
+    if (released) notifySuccess(released);
+    // The page of the deleted assistant is gone with it, the bare address opens
+    // whichever one is left; every other page just sees the row go.
+    if (window.location.pathname === url) {
+      if (window.app?.navigate) window.app.navigate("/assistants");
+      else window.location.assign("/assistants");
+      return;
+    }
+    await this.refresh();
+  }
+
+  // The list is sorted by hand, so the rows are dragged into place and the
+  // order is posted to the server, which is where it lives: it comes back on
+  // the next reload, on this device and on every other one. The gesture is the
+  // tab strip's own, @dc/rowdrag, and this is one list with no groups in it, so
+  // a row only ever changes seats. The one deviation is the capture: this row
+  // is a container with the link inside it, so a capture on the press would
+  // retarget every click that opens an assistant.
+  wireDrag(signal) {
+    this.rowDrag = new RowDrag(this, {
+      rowSelector: "[data-assistant-instance]",
+      gripSelector: "[data-assistant-grip]",
+      ignoreSelector: "[data-assistant-menu]",
+      capture: "drag",
+      classes: { list: "dc-rows-dragging", row: "dc-row-dragging" },
+      rows: () => this.rows(),
+      scroller: () => this.querySelector(".dc-ctx-body") || this,
+      onDrop: () => this.persistOrder(),
+      onEnd: () => { if (this.dirty) void this.refresh(); },
+    });
+    this.rowDrag.wire(signal);
+  }
+
+  rows() {
+    return Array.from(this.querySelectorAll("[data-assistant-instance]"));
+  }
+
+  persistOrder() {
+    const ids = this.rows().map((row) => row.dataset.assistantInstance).filter(Boolean);
+    postJSON("/assistants/order", { ids })
+      .then((response) => ensureOk(response, "Could not save the order."))
+      .catch((error) => notifyError(error.message));
+  }
+
   disconnectedCallback() {
+    this.rowDrag?.cancel();
     this.ac?.abort();
     this.ac = null;
   }
@@ -216,6 +261,12 @@ class AssistantList extends HTMLElement {
   }
 
   async refresh() {
+    // A swap in the middle of a drag would take the row out from under the
+    // pointer, so the pull waits for the gesture and runs when it ends.
+    if (this.rowDrag?.busy) {
+      this.dirty = true;
+      return;
+    }
     if (this.pulling) {
       this.dirty = true;
       return;
@@ -229,7 +280,6 @@ class AssistantList extends HTMLElement {
       const fresh = holder.querySelector("[data-assistant-body]");
       const current = this.querySelector("[data-assistant-body]");
       if (fresh && current) current.replaceWith(fresh);
-      if (this.hasAttribute("history")) this.foldEarlier();
     } catch {
       void 0;
     } finally {

@@ -6,9 +6,14 @@
     <div class="list-group-item px-0" data-assistant-job="{{.Terminal}}">
       <div class="d-flex align-items-center gap-2">
         <span class="dc-term-icon" aria-hidden="true"><i class="ti ti-steering-wheel"></i></span>
+        {{/* The two names are the two things behind the row, so they are the
+             way there: the coder's name opens the coder, the project's name
+             opens the project. */}}
         <div class="min-w-0 flex-fill">
-          <div class="fw-medium text-truncate">{{.Name}}</div>
-          {{if .Project}}<div class="text-secondary small text-truncate">{{.Project}}</div>{{end}}
+          <div class="fw-medium text-truncate"><a class="text-reset text-decoration-none" href="{{.URL}}" data-assistant-job-coder-link>{{.Name}}</a></div>
+          {{/* Only a list of everybody's jobs names the assistant; on one
+               assistant's own page the answer is always the same. */}}
+          <div class="text-secondary small text-truncate">{{if .Owner}}{{.Owner}}{{if .Project}} · {{end}}{{end}}{{if .Project}}<a class="link-secondary text-decoration-none" href="/projects#project-{{.Project}}" data-assistant-job-project-link>{{.Project}}</a>{{end}}</div>
         </div>
         {{if .Checking}}<span class="badge bg-purple-lt flex-shrink-0" data-assistant-job-checking><span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>checking</span>{{end}}
         <span class="badge flex-shrink-0 {{if .Open}}bg-blue-lt{{else if eq .State "done"}}bg-green-lt{{else if eq .State "blocked"}}bg-orange-lt{{else}}bg-secondary-lt{{end}}" data-assistant-job-state>{{.State}}</span>
@@ -22,13 +27,22 @@
       </div>
       {{if .Note}}<div class="small text-break mt-1" data-assistant-job-note>{{.Note}}</div>{{end}}
       <div class="text-secondary small mt-1">{{.Wakes}} of {{.MaxWakes}} checks{{if and .Open .Expires}} · until <dc-time datetime="{{.Expires}}"></dc-time>{{end}}</div>
+      {{/* Two ways to look at a steered coder, the screen it types on and the
+           files it writes; the editor is offered where the coder works in a
+           project. The row wraps, so the actions stand side by side in the
+           inline aside and under each other in the phone's sheet. */}}
       <div class="d-flex flex-wrap gap-2 mt-3">
         <a href="{{.URL}}" class="btn btn-sm flex-fill" data-assistant-job-open>
           <i class="ti ti-terminal-2 me-1"></i>Open coder
         </a>
+        {{if .EditorURL}}
+        <a href="{{.EditorURL}}" class="btn btn-sm flex-fill" data-assistant-job-editor>
+          <i class="ti ti-code me-1"></i>Open editor
+        </a>
+        {{end}}
         {{if .Open}}
         <form method="post" action="{{$.JobsURL}}" class="flex-fill d-flex" data-ajax-refresh
-              data-confirm="Release &#34;{{.Name}}&#34;? The coder keeps working, the assistant stops checking on it. It is yours again."
+              data-confirm="Release &#34;{{.Name}}&#34;? The coder keeps working, nothing checks on it any more. It is yours again."
               data-confirm-button="Release">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="form" value="release">
@@ -42,6 +56,7 @@
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="form" value="steer">
           <input type="hidden" name="terminal" value="{{.Terminal}}">
+          <input type="hidden" name="assistant" value="{{.OwnerID}}">
           <input type="hidden" name="task" value="{{.Task}}">
           <input type="hidden" name="done_when" value="{{.DoneWhen}}">
           <button type="submit" class="btn btn-sm btn-outline-primary flex-fill" data-assistant-job-again>
@@ -59,19 +74,19 @@
   {{else}}
   <div class="text-center text-secondary py-4" data-assistant-jobs-empty>
     <div class="mb-2"><i class="ti ti-steering-wheel-off icon-lg"></i></div>
-    <p class="mb-0">Nothing is steered right now. Ask me to keep an eye on a coder and say when it is done, then it stands here.</p>
+    <p class="mb-0">This assistant steers nothing right now. Ask it to keep an eye on a coder and say when it is done, then it stands here.</p>
   </div>
   {{end}}
 </div>
 {{end}}
 
 {{/* The head's way to the steered coders: below xl the aside is a sheet this
-     button opens, from xl up the aside stands beside the conversation and the
-     button gives way. The badge counts the open jobs either way. */}}
+     button opens, from xl up the aside stands beside the thread and the button
+     gives way. The badge counts this assistant's open jobs either way. */}}
 {{define "assistant_jobs_button.gohtml"}}
 <button type="button" class="btn btn-icon btn-ghost-secondary flex-shrink-0 position-relative d-xl-none" data-bs-toggle="offcanvas" data-bs-target="#assistant-aside"
         aria-label="Steered coders" title="Steered coders" data-assistant-jobs-button>
   <i class="ti ti-steering-wheel" aria-hidden="true"></i>
-  <dc-steer-badge class="dc-steer-badge{{if not .JobsOpen}} d-none{{end}}" src="{{.JobsURL}}" aria-hidden="true">{{.JobsOpen}}</dc-steer-badge>
+  <dc-steer-badge class="dc-steer-badge{{if not .JobsOpen}} d-none{{end}}" src="{{.JobsListURL}}" aria-hidden="true">{{.JobsOpen}}</dc-steer-badge>
 </button>
 {{end}}

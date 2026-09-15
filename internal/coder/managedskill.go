@@ -84,7 +84,7 @@ func (i CockpitInstance) running(stateDir string) bool {
 }
 
 // gitProxyCommand spells the proxy the way a coder has to call it, the
-// assistant instructions' rule (Workspace.CockpitCommand): the absolute path
+// assistant workspace's wrapper rule (Workspace.Wrapper): the absolute path
 // of the running binary and the state directory of this instance, because a
 // bare `dev-cockpit` depends on a PATH a session does not control, and on a
 // machine with several instances it would reach whichever one owns the

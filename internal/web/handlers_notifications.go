@@ -107,9 +107,9 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "docker"}); err != nil {
 		return
 	}
-	// A bare draft signal, no conversation named: an open composer pulls its own
+	// A bare draft signal, no assistant named: an open composer pulls its own
 	// draft after a reconnect, the way the tab strip pulls its fragment.
-	if err := writeEnvelope(w, eventbus.Event{Type: "draft", Data: map[string]string{"conversation": ""}}); err != nil {
+	if err := writeEnvelope(w, eventbus.Event{Type: "draft", Data: map[string]string{"assistant": ""}}); err != nil {
 		return
 	}
 	// The same for the commit panel: a bare commitdraft signal, no project

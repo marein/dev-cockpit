@@ -1,16 +1,19 @@
 const L = require("./lib");
 const { assert, BASE, sleep } = L;
 
-// Assistant: the cockpit's own conversation, a page of its own. /assistant
-// lands on the live conversation's page /assistant/:id, the list column
-// beside it holds every conversation (the phone opens it as a sheet from the
-// tab bar), the steered coders and the memory stand in an aside that is
-// inline from xl up and a sheet the head's buttons open below. An earlier
-// conversation opens read-only on its page, and a notification link
-// (/assistant/<id>#message-<id>) lands on the announced answer. The
-// conversation APIs stay: POST /assistant/:id dispatching on the hidden form
-// field, the SSE at /assistant/:id/stream, the message fragment, uploads,
-// drafts and the byte ranged media route.
+// Assistants: the cockpit's own conversation partners, a page of their own.
+// Several of them live side by side, each with its own thread and its own
+// steered coders, and each lives until it is deleted. /assistants lands on the
+// one the user was last in, /assistants/:id opens one, and with none at all the
+// page renders the empty state whose button makes the first. The list column
+// beside it holds every assistant (the phone opens it as a sheet from the tab
+// bar), the steered coders and the memory stand in an aside that is inline
+// from xl up and a sheet the head's buttons open below. A notification link
+// (/assistants/<id>#message-<id>) lands on the announced answer. The APIs stay:
+// POST /assistants/:id dispatching on the hidden form field (message, retry,
+// cancel, draft, new, rename, delete), the SSE at
+// /assistants/:id/stream, the message fragment, uploads, drafts and the byte
+// ranged media route.
 //
 // The instance MUST run with tests/e2e/fakes ahead of the real CLIs on PATH,
 // with a scratch HOME and its own TMUX_TMPDIR: the fakes persist provider
@@ -19,7 +22,9 @@ const { assert, BASE, sleep } = L;
 // FAIL (a failing turn), MARKDOWN (markup and an injection attempt), TOOL (a
 // tool signal), CONTEXT_HIGH (a turn that reports a nearly full context
 // window; both fakes otherwise report 68 percent of it), PAUSE_CHAT (an answer
-// with twelve silent seconds in the middle of it).
+// with twelve silent seconds in the middle of it), STREAM_PARAGRAPH (one
+// sentence in many small deltas, so the streamed text can be read while it
+// grows).
 //
 // One check restarts the instance: the RESTART_CHAT prompt makes the fake kill
 // the cockpit mid answer and start it again, which is how the run proves that a
@@ -27,10 +32,10 @@ const { assert, BASE, sleep } = L;
 // an instance somebody is using.
 //
 // Gotchas:
-// - opening the page opens the current conversation and creates one when
-//   there is none, so a check never posts a bare "open",
-// - an untouched conversation is reused, so pressing New twice must not leave
-//   two empty conversations behind,
+// - nothing creates an assistant by itself: the page never leaves one behind,
+//   so a run that needs one presses New,
+// - pressing New twice makes two assistants, they are not reused and nothing
+//   is archived,
 // - the composer is JS owned, every interaction waits for dc-assistant[ready],
 // - a surface on screen reads its own news, so a check that wants the marks
 //   leaves the page first,
@@ -38,19 +43,21 @@ const { assert, BASE, sleep } = L;
 //   the send posts back, so a check waits for the chip, not for the network,
 // - the memory is what a coder reads at startup, so the generated CLAUDE.md
 //   and AGENTS.md in the workspace must carry a saved entry,
-// - one conversation is live at a time and starting a new one archives the
-//   previous for good (its provider session is dropped), so a check that opens
-//   a new conversation has to keep working in that one,
+// - every assistant stays live: starting a new one leaves the others alone,
+//   composer and provider session included, so a check may come back to one it
+//   left,
+// - a job belongs to the assistant that steered it, so the jobs aside of a
+//   page shows that assistant's coders and nobody else's,
 // - silence in the middle of an answer costs nothing: the stream says it is
 //   alive with a ping frame every 15s, only a missing ping rebuilds it, and the
 //   message is pulled after a break alone (a rebuilt stream, a page coming
 //   back), never on a quiet tick; a pull that lands mid answer must leave the
 //   bubble alone, the store holds an answer only once the turn settled,
-// - the composer never locks: a send during a running turn queues the message
-//   (bubble with data-state="queued", Waiting badge, Don't send button) and
-//   the end of the turn flushes the queue as one new turn, so a check that
-//   wants a waiting bubble keeps the first turn running (SLOW) and a check
-//   that wants it flushed stops that turn.
+// - the composer never locks, and a send during a running turn waits in that
+//   assistant's queue: it stands in the transcript as Waiting, it can be taken
+//   back until it goes, and the end of the turn sends what is left as one new
+//   turn, so a check that wants the queue keeps the first turn running (SLOW)
+//   and stops it again afterwards.
 
 const jobsProject = "zzjobs";
 
@@ -71,19 +78,39 @@ async function dismissUpdate(page) {
 
 const READY = "dc-assistant[ready]";
 
-// openAssistant opens the assistant page: the bare address lands on the live
-// conversation, and returns its id.
-async function openAssistant(page) {
-  await page.goto(`${BASE}/assistant`, { waitUntil: "domcontentloaded" });
+// openAssistant lands on one assistant. With an id it opens that one, which is
+// what every check that has a thread of its own wants. Without one it takes the
+// area's own address, which resolves to the assistant last looked at the way
+// /terminals resolves to a terminal, and with no assistant at all it makes the
+// first one, because nothing else does any more. Returns the id on screen.
+async function openAssistant(page, id) {
+  if (id) {
+    await openConversation(page, id);
+    return id;
+  }
+  await page.goto(`${BASE}/assistants`, { waitUntil: "domcontentloaded" });
   await dismissUpdate(page);
+  if (await page.locator("[data-assistant-none]").count()) await createFirst(page);
   await page.waitForSelector(READY, { timeout: 15000 });
-  return page.locator("dc-assistant").getAttribute("conversation-id");
+  return page.locator("dc-assistant").getAttribute("assistant-id");
 }
 
-// openConversation opens one conversation's page, the address a notification
-// link carries.
+// createFirst presses the empty state's button. With more than one coder
+// installed that button is a dropdown toggle and the coders are its items, so
+// the menu has to be opened before one of them can be clicked.
+async function createFirst(page) {
+  const toggle = page.locator('[data-assistant-none] [data-bs-toggle="dropdown"][data-assistant-new-label]');
+  if (await toggle.count()) {
+    await toggle.click();
+    await page.waitForSelector('[data-assistant-none] .dropdown-menu.show', { timeout: 8000 });
+  }
+  await afterSwap(page, () => page.locator("[data-assistant-none] [data-assistant-new]").first().click());
+}
+
+// openConversation opens one assistant's page, the address a notification link
+// carries.
 async function openConversation(page, id) {
-  await page.goto(`${BASE}/assistant/${id}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/assistants/${id}`, { waitUntil: "domcontentloaded" });
   await dismissUpdate(page);
   await page.waitForSelector(READY, { timeout: 15000 });
 }
@@ -91,16 +118,18 @@ async function openConversation(page, id) {
 // closePanel leaves the assistant: the page is the surface, so leaving it is
 // going somewhere else, and a surface that is off screen reads no news.
 async function closePanel(page) {
-  if (!new URL(page.url()).pathname.startsWith("/assistant")) return;
+  if (!new URL(page.url()).pathname.startsWith("/assistants")) return;
   await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
   await dismissUpdate(page);
 }
 
-// openView brings one of the page's lists on screen: the conversations stand
-// in the list column, the jobs and the memory in the aside, which is inline
-// on a wide window and a sheet the head's buttons open below xl.
+// openView brings one of the page's lists on screen: the assistants stand in
+// the list column, the jobs and the memory in the aside, which is inline on a
+// wide window and a sheet the head's buttons open below xl.
 async function openView(page, view, readySelector) {
-  if (!new URL(page.url()).pathname.startsWith("/assistant")) await openAssistant(page);
+  // The area's own address is the list and carries no surface, so only an
+  // assistant's own page counts as being there already.
+  if (!/^\/assistants\/[^/]+$/.test(new URL(page.url()).pathname)) await openAssistant(page);
   if (view === "jobs" && !(await page.locator("#assistant-aside").isVisible())) {
     await page.click("[data-assistant-jobs-button]");
     await page.waitForSelector("#assistant-aside.show", { timeout: 8000 });
@@ -112,15 +141,15 @@ async function openView(page, view, readySelector) {
   await page.waitForSelector(readySelector, { timeout: 15000 });
 }
 
-// NEW_MENU is the new conversation control on a host with several coders. Its
+// NEW_MENU is the new assistant control on a host with several coders. Its
 // label is not a selector: it carries the context percentage, so it changes with
 // every turn. The attribute holding the label's stable part is what identifies
 // the button; the list column carries a second one, so the composer's is named
 // through its surface.
 const NEW_MENU = 'dc-assistant [data-bs-toggle="dropdown"][data-assistant-new-label]';
 
-// A new conversation posts through pe.js and lands on the new page, so a
-// change is seen through the swapped body: a mark set before the click is gone
+// A new assistant posts through pe.js and lands on the new page, so a change
+// is seen through the swapped body: a mark set before the click is gone
 // after it, then the surface is ready again.
 async function afterSwap(page, act) {
   await page.evaluate(() => { document.querySelector(".dc-app").dataset.runnerSwap = "1"; });
@@ -136,26 +165,25 @@ async function useClaude(page) {
   const picker = page.locator('dc-assistant [data-assistant-new="claude"]');
   const onClaude = (await page.locator("dc-assistant").getAttribute("data-assistant-coder")) === "claude";
   if (!(await picker.count()) || onClaude) {
-    return page.locator("dc-assistant").getAttribute("conversation-id");
+    return page.locator("dc-assistant").getAttribute("assistant-id");
   }
   await page.click(NEW_MENU);
   await afterSwap(page, () => picker.click());
   await page.waitForSelector('dc-assistant[data-assistant-coder="claude"][ready]', { timeout: 15000 });
-  return page.locator("dc-assistant").getAttribute("conversation-id");
+  return page.locator("dc-assistant").getAttribute("assistant-id");
 }
 
-// Always the coder the current conversation runs on, so the reuse check keeps
-// comparing like with like: an untouched conversation is only reused for the
-// coder that was asked for. The post lands on the conversation's page, the
-// address names the one that answers.
+// Always the coder the assistant on screen runs on, so a run that reads
+// claude's answers keeps reading claude's. The post lands on the new
+// assistant's page, the address names the one that answers.
 async function newConversation(page) {
   const current = await page.locator("dc-assistant").getAttribute("data-assistant-coder").catch(() => null);
   const dropdown = page.locator(NEW_MENU);
   if (await dropdown.count()) await dropdown.click();
   await afterSwap(page, () => page.locator(current ? `dc-assistant [data-assistant-new="${current}"]` : "dc-assistant [data-assistant-new]").first().click());
   const target = new URL(page.url()).pathname.split("/").pop();
-  assert(target && target.length > 8, `the new conversation did not land on a page: ${page.url()}`);
-  assert((await page.locator("dc-assistant").getAttribute("conversation-id")) === target, "the surface shows another conversation than the address");
+  assert(target && target.length > 8, `the new assistant did not land on a page: ${page.url()}`);
+  assert((await page.locator("dc-assistant").getAttribute("assistant-id")) === target, "the surface shows another assistant than the address");
   return target;
 }
 
@@ -173,8 +201,8 @@ async function clickAndWait(page, selector) {
   await waitSettled(page);
 }
 
-// The memory is shared state on a singleton surface, so the run clears its own
-// entries first instead of assuming an empty memory. Saving under a title that
+// The memory is shared by every assistant, so the run clears its own entries
+// first instead of assuming an empty memory. Saving under a title that
 // exists deliberately writes a second file, which would make the checks below
 // read the leftover one.
 async function dropRunnerMemories(page) {
@@ -214,8 +242,22 @@ function newLabel(page) {
   return page.locator("dc-assistant [data-assistant-new-label]").first().getAttribute("title");
 }
 
-async function send(page, text) {
+// An assistant takes one turn at a time and a second prompt waits in its queue,
+// so a check that wants its own turn has to wait for the one before it to be
+// over instead of queueing behind it. The wait is on the surface's own running
+// mark, the same one the stop button hangs on, not on the last bubble: a bubble
+// settles a moment before the turn stops counting as running.
+async function idle(page) {
   await page.waitForSelector("dc-assistant[ready]", { timeout: 15000 });
+  await page.waitForFunction(
+    () => !document.querySelector("dc-assistant")?.hasAttribute("running"),
+    null,
+    { timeout: 60000 },
+  );
+}
+
+async function send(page, text) {
+  await idle(page);
   const before = await page.locator('[data-role="assistant"]').count();
   await page.fill("[data-assistant-input]", text);
   await page.click("[data-assistant-send]");
@@ -267,17 +309,17 @@ async function startCoder(page, project, name, task) {
   }, [{ name, project, coder: "claude", automatic_approval: "on", prompt: task }]);
 }
 
-async function postForm(page, conversation, fields) {
+async function postForm(page, instance, fields) {
   return page.evaluate(async ([id, values]) => {
     const body = new URLSearchParams(values);
     body.set("csrf_token", document.querySelector('meta[name="csrf-token"]').content);
-    const res = await fetch(`/assistant/${id}`, {
+    const res = await fetch(`/assistants/${id}`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: body.toString(),
     });
     return { status: res.status, body: await res.json().catch(() => ({})) };
-  }, [conversation, fields]);
+  }, [instance, fields]);
 }
 
 // The jobs of the assistant sit on one path, not on a conversation: steering and
@@ -286,7 +328,7 @@ async function postJobs(page, fields) {
   return page.evaluate(async (values) => {
     const body = new URLSearchParams(values);
     body.set("csrf_token", document.querySelector('meta[name="csrf-token"]').content);
-    const res = await fetch("/assistant/jobs", {
+    const res = await fetch("/assistants/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: body.toString(),
@@ -300,31 +342,64 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   let chatID = "";
   let freshID = "";
 
-  await run("the page opens a conversation and creates one when there is none", async () => {
+  // Nothing creates an assistant by itself any more, so the page's own empty
+  // state is the first thing there is, and its button is the only way to the
+  // first one.
+  await run("the page offers the first assistant and creates none by itself", async () => {
+    await page.goto(`${BASE}/assistants`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    const empty = await page.locator("[data-assistant-none]").count();
+    if (empty) {
+      assert((await page.locator("dc-assistant").count()) === 0, "an empty page rendered a surface anyway");
+      assert((await page.locator("[data-assistant-none] [data-assistant-new]").count()) >= 1,
+        "the empty state offers no way to the first assistant");
+    }
     const opened = await openAssistant(page);
-    assert(opened && opened.length > 8, "no conversation id on the surface");
+    assert(opened && opened.length > 8, "no assistant id on the surface");
     assert(await page.locator("[data-assistant-input]").isVisible(), "no composer");
-    // The surface is a singleton, so the run takes a conversation of its own
-    // instead of asserting on whatever the instance already held.
+    // The run takes an assistant of its own instead of reading whatever the
+    // instance already held.
     chatID = await useClaude(page);
     if (!(await page.locator("[data-assistant-empty]").count())) {
       chatID = await newConversation(page);
     }
-    assert(await page.locator("[data-assistant-empty]").isVisible(), "the run's conversation is not empty");
+    assert(await page.locator("[data-assistant-empty]").isVisible(), "the run's assistant is not empty");
   });
 
-  await run("the assistant is a page, the bare address lands on the live conversation", async () => {
-    const landed = await page.evaluate(async (id) => {
-      const res = await fetch("/assistant", { redirect: "follow", headers: { Accept: "text/html" } });
-      const body = await res.text();
-      return { url: res.url, ok: res.ok, column: body.includes("data-assistant-rows"), surface: body.includes(`conversation-id="${id}"`) };
-    }, chatID);
-    assert(landed.ok && new URL(landed.url).pathname === `/assistant/${chatID}`, `/assistant did not land on the live conversation: ${landed.url}`);
-    assert(landed.column && landed.surface, "the page misses the list column or the conversation");
-    return "a page with the list column";
+  // The area's own address leads to the assistant last looked at, the way
+  // /terminals leads to a terminal: the list stands in the column beside it
+  // and marks its row, so the area opens on what is in it and on the thread
+  // at once. The answer is a See Other nobody may cache, never a permanent
+  // one, or the browser would keep reopening the assistant of the first click.
+  await run("the bare address opens the assistant last looked at, the list beside it", async () => {
+    // The recent store keeps whole seconds and breaks a tie by id, so this
+    // open has to land in a second of its own to be the one looked at last.
+    await sleep(1100);
+    await openConversation(page, chatID);
+    const answer = await page.request.get(`${BASE}/assistants`, { maxRedirects: 0 });
+    assert(answer.status() === 303, `the area answered ${answer.status()} instead of a See Other`);
+    assert(answer.headers().location === `/assistants/${chatID}`,
+      `the area led to ${answer.headers().location} instead of the one last looked at`);
+    assert((answer.headers()["cache-control"] || "").includes("no-store"),
+      `the area's answer may be cached: ${answer.headers()["cache-control"]}`);
+
+    await page.goto(`${BASE}/assistants`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    await page.waitForSelector(READY, { timeout: 15000 });
+    const one = await page.evaluate((id) => ({
+      path: window.location.pathname,
+      column: Boolean(document.querySelector("[data-assistant-rows]")),
+      surface: document.querySelector("dc-assistant")?.getAttribute("assistant-id") === id,
+      active: document.querySelector(`[data-assistant-rows] [data-assistant-instance="${id}"]`)?.classList.contains("active"),
+      marked: document.querySelectorAll("[data-assistant-rows] [data-assistant-instance].active").length,
+    }), chatID);
+    assert(one.path === `/assistants/${chatID}`, `the bare address landed on ${one.path}`);
+    assert(one.column && one.surface && one.active && one.marked === 1,
+      `the assistant's own page is not whole: ${JSON.stringify(one)}`);
+    return "the one last looked at, its row marked in the list";
   });
 
-  await run("a turn runs end to end over the conversation's own stream", async () => {
+  await run("a turn runs end to end over the assistant's own stream", async () => {
     await send(page, "MAGIC what is the word");
     await waitSettled(page);
     const text = await page.locator('[data-role="assistant"]').last().innerText();
@@ -370,7 +445,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     // its menu: the ring sits inside the button so it cannot break either.
     const posts = await page.locator("[data-assistant-new]").first().evaluate((button) =>
       button.getAttribute("form") || button.getAttribute("data-bs-toggle"));
-    assert(posts, "the new conversation button lost its form or its dropdown");
+    assert(posts, "the new assistant button lost its form or its dropdown");
     return "68, live to 96, rendered on load";
   });
 
@@ -387,8 +462,8 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     const opened = [];
     const pulled = [];
     const watch = (request) => {
-      if (/\/assistant\/[^/]+\/stream/.test(request.url())) opened.push(request.url());
-      if (/\/assistant\/[^/]+\/messages\//.test(request.url())) pulled.push(request.url());
+      if (/\/assistants\/[^/]+\/stream/.test(request.url())) opened.push(request.url());
+      if (/\/assistants\/[^/]+\/messages\//.test(request.url())) pulled.push(request.url());
     };
     page.on("request", watch);
     try {
@@ -411,7 +486,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
           `the streamed text was wiped after ${i + 1}s of silence: ${during}`);
       }
       assert(opened.length === connects,
-        `the silence cost ${opened.length - connects} reconnects of the conversation stream`);
+        `the silence cost ${opened.length - connects} reconnects of the assistant's stream`);
       assert(pulled.length === pulls,
         `the silence cost ${pulled.length - pulls} pulls of the message`);
 
@@ -423,6 +498,51 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     } finally {
       page.off("request", watch);
     }
+  });
+
+  // While an answer streams, the bubble carries the prefix the server
+  // rendered plus the raw text that arrived after that render, and the seam
+  // between the two falls wherever the render landed, mid sentence. The raw
+  // text used to be hung behind the rendered markup, where it became a block
+  // of its own: a sentence still being typed read as two paragraphs until the
+  // finished message replaced it. What stands there mid answer is the
+  // beginning of what stands there at the end, break for break.
+  await run("the streamed text shows no break the finished answer does not have", async () => {
+    await send(page, "STREAM_PARAGRAPH one sentence in many pieces");
+
+    const shots = [];
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const shot = await page.evaluate(() => {
+        const nodes = document.querySelectorAll('[data-role="assistant"]');
+        const bubble = nodes[nodes.length - 1];
+        const body = bubble?.querySelector("[data-assistant-text]");
+        if (!body) return null;
+        const tail = body.querySelector("[data-assistant-tail]");
+        return {
+          state: bubble.getAttribute("data-state"),
+          text: body.innerText.trim(),
+          tail: tail ? tail.textContent : "",
+        };
+      });
+      if (shot) shots.push(shot);
+      if (shot && shot.state !== "streaming") break;
+      await sleep(60);
+    }
+
+    await waitSettled(page, 30000);
+    const final = (await page.locator('[data-role="assistant"] [data-assistant-text]').last().innerText()).trim();
+    assert(final === "Der Workspace sagt nur, wo du gestartet bist, nicht wo du gerade bist.",
+      `the finished answer is not the one sentence: ${JSON.stringify(final)}`);
+
+    const seams = shots.filter((s) => s.state === "streaming" && s.tail.length && s.text.length);
+    assert(seams.length >= 3,
+      `only ${seams.length} snapshots caught the rendered prefix meeting the raw tail`);
+    for (const shot of seams) {
+      assert(final.startsWith(shot.text),
+        `the streamed text is not the beginning of the finished answer: ${JSON.stringify(shot.text)}`);
+    }
+    return `${seams.length} snapshots at the seam`;
   });
 
   // The cross on a chip read a data attribute that no longer exists, so the
@@ -442,7 +562,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   // The draft belongs to the conversation, not to the browser that typed it:
   // the same words are there after a page change and on the next device, the
   // files that were uploaded for them come along, and sending takes both.
-  await run("an unsent message waits in the conversation, on every device", async () => {
+  await run("an unsent message waits in the assistant, on every device", async () => {
     const draft = "eine Frage, die ich noch nicht abgeschickt habe";
     await page.fill("[data-assistant-input]", draft);
     await attach(page, [{ name: "draft.png", mimeType: "image/png", buffer: PNG }]);
@@ -460,6 +580,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert((await mp.locator(`[data-assistant-attachment="draft.png"]`).count()) === 1,
       "the second device sees the draft without its file");
 
+    await idle(page);
     await page.fill("[data-assistant-input]", "MAGIC and this one goes");
     await page.click("[data-assistant-send]");
     await waitSettled(page);
@@ -487,6 +608,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     );
 
     // Sending on one device empties the other one's box the same way.
+    await idle(page);
     await page.fill("[data-assistant-input]", "MAGIC weiter");
     await sleep(1400);
     await page.click("[data-assistant-send]");
@@ -547,7 +669,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   // an abort, not a network error), so coming back rides the same visibility
   // path a woken phone takes, which reopens the stream and lands the snapshot.
   await run("a message that arrived while the stream was down appears on reconnect", async () => {
-    await openAssistant(page);
+    await openAssistant(page, chatID);
     const before = await page.locator("[data-assistant-message]").count();
     await ctx.setOffline(true);
     await page.evaluate(() => window.stop());
@@ -573,9 +695,18 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       { name: "shot.png", mimeType: "image/png", buffer: PNG },
       { name: "note.wav", mimeType: "audio/wav", buffer: WAV },
     ]);
+    await idle(page);
     await page.fill("[data-assistant-input]", "MAGIC look at this");
     await page.click("[data-assistant-send]");
     await waitSettled(page);
+    // The bubble the composer wrote is replaced by the server rendered one
+    // when the announcement arrives, so the wait is for the files to stand in
+    // it, not for the answer beside it to settle.
+    await page.waitForFunction(() => {
+      const bubbles = document.querySelectorAll('[data-role="user"]');
+      const last = bubbles[bubbles.length - 1];
+      return last && last.querySelectorAll("[data-assistant-file]").length === 2;
+    }, null, { timeout: 15000 });
 
     const bubble = page.locator('[data-role="user"]').last();
     assert(await bubble.locator("img.dc-assistant-media").count() === 1, "no image in the message");
@@ -583,7 +714,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(await bubble.evaluate((node) => node.hasAttribute("data-no-pe")), "message content is not opted out of pe boosting");
 
     const url = await bubble.locator("img.dc-assistant-media").getAttribute("src");
-    assert(url.includes(`/assistant/${chatID}/media/`), `unexpected media url: ${url}`);
+    assert(url.includes(`/assistants/${chatID}/media/`), `unexpected media url: ${url}`);
     const ranged = await page.evaluate(async (target) => {
       const res = await fetch(target, { headers: { Range: "bytes=0-9" } });
       return { status: res.status, length: (await res.arrayBuffer()).byteLength };
@@ -600,11 +731,50 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(decoded === 1, "the browser could not decode the served image");
   });
 
-  await run("a picture wider than the conversation clamps instead of widening it", async () => {
+  await run("a file the assistant writes into its workspace downloads from the link in its answer", async () => {
+    await send(page, "FILELINK");
+    await waitSettled(page);
+    const bubble = page.locator('[data-role="assistant"]').last();
+    const link = bubble.locator("a[href*='/media/assistant-files/proof.txt']");
+    await link.waitFor({ timeout: 15000 });
+    const href = await link.getAttribute("href");
+    assert(href.startsWith(`/assistants/${chatID}/media/assistant-files/proof.txt`), `the link points elsewhere: ${href}`);
+    const served = await page.evaluate(async (target) => {
+      const res = await fetch(target);
+      return { status: res.status, body: await res.text(), disposition: res.headers.get("content-disposition") || "" };
+    }, href);
+    assert(served.status === 200, `the linked file answered ${served.status}`);
+    assert(served.body.startsWith("proof from "), `the served file is not the one written: ${served.body}`);
+    const workspace = served.body.trim().slice("proof from ".length);
+    assert(workspace.endsWith(`/instances/${chatID}/workspace`), `the turn ran outside its own workspace: ${workspace}`);
+    if (href.includes("download=1")) {
+      assert(/attachment/.test(served.disposition), `a download link served inline: ${served.disposition}`);
+    }
+    return `served from ${workspace}`;
+  });
+
+  await run("a cockpit command run through the workspace wrapper is charged to the assistant", async () => {
+    await send(page, "OWNER");
+    await waitSettled(page);
+    const text = await page.locator('[data-role="assistant"]').last().innerText();
+    assert(!text.includes("wrapper failed"), `the wrapper did not run: ${text}`);
+    const own = text.split("\n").find((line) => line.trim().startsWith("*") && line.includes(`id ${chatID}`));
+    assert(own, `the list does not mark this assistant as the caller:\n${text}`);
+    assert(text.includes("* is you"), `the list does not know who is calling:\n${text}`);
+    return own.trim();
+  });
+
+  await run("a picture wider than the thread clamps instead of widening it", async () => {
     await attach(page, [{ name: "wide.svg", mimeType: "image/svg+xml", buffer: WIDE_SVG }]);
+    await idle(page);
     await page.fill("[data-assistant-input]", "MAGIC how wide");
     await page.click("[data-assistant-send]");
     await waitSettled(page);
+    await page.waitForFunction(() => {
+      const bubbles = document.querySelectorAll('[data-role="user"]');
+      const last = bubbles[bubbles.length - 1];
+      return last && last.querySelector('[data-assistant-file="wide.svg"]');
+    }, null, { timeout: 15000 });
     await page.waitForFunction(() => {
       const img = [...document.querySelectorAll('[data-role="user"] img.dc-assistant-media')].pop();
       return img && img.getBoundingClientRect().width >= 50;
@@ -612,10 +782,10 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     const wide = await page.evaluate(() => {
       const img = [...document.querySelectorAll('[data-role="user"] img.dc-assistant-media')].pop();
       const scroller = document.querySelector("[data-assistant-scroll]");
-      if (Math.round(img.getBoundingClientRect().width) > scroller.clientWidth) return "the picture is wider than the conversation";
+      if (Math.round(img.getBoundingClientRect().width) > scroller.clientWidth) return "the picture is wider than the thread";
       return scroller.scrollWidth > scroller.clientWidth + 1 ? "the transcript scrolls sideways" : "";
     });
-    assert(wide === "", `a wide picture breaks the conversation: ${wide}`);
+    assert(wide === "", `a wide picture breaks the thread: ${wide}`);
   });
 
   // The composer's file input and the files of a sent message carry the same
@@ -660,12 +830,12 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       const scroller = document.querySelector("[data-assistant-scroll]");
       return scroller.scrollWidth > scroller.clientWidth + 1 ? "the transcript scrolls sideways" : "";
     });
-    assert(wide === "", `a code block wider than the screen breaks the conversation: ${wide}`);
+    assert(wide === "", `a code block wider than the screen breaks the thread: ${wide}`);
     await closePanel(mp);
   });
 
   await run("a memory is saved and listed in the memory sheet", async () => {
-    await openAssistant(page);
+    await openAssistant(page, chatID);
     await openView(page, "memory", "#memory-new");
     await dropRunnerMemories(page);
     if (!(await page.locator("#memory-new.show").count())) {
@@ -707,58 +877,149 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     await page.waitForSelector(`[data-memory-entry="${memorySlug}"]`, { state: "detached", timeout: 10000 });
   });
 
-  await run("a new conversation starts empty and reuses an untouched one", async () => {
-    await openAssistant(page);
+  // The rule the whole feature turns on: a new assistant is another one, not a
+  // replacement. Nothing is reused, nothing is archived, and the one that was
+  // there keeps its thread and its composer.
+  await run("a new assistant starts empty and leaves the one before it alone", async () => {
+    await openAssistant(page, chatID);
     freshID = await newConversation(page);
-    assert(freshID !== chatID, "new conversation did not open");
-    assert(await page.locator("[data-assistant-empty]").isVisible(), "new conversation is not empty");
+    assert(freshID !== chatID, "new assistant did not open");
+    assert(await page.locator("[data-assistant-empty]").isVisible(), "the new assistant is not empty");
 
-    const again = await newConversation(page);
-    assert(again === freshID, "an untouched conversation was not reused");
+    const third = await newConversation(page);
+    assert(third !== freshID, "pressing New twice reused an assistant instead of making one");
 
-    await openView(page, "history", "[data-assistant-rows] [data-assistant-conversation]");
-    const rows = await page.locator("[data-assistant-rows] [data-assistant-conversation]").count();
-    assert(rows >= 2, `the column holds ${rows} conversations, expected at least 2`);
-    assert(await page.locator("[data-assistant-rows] [data-assistant-conversation].active").count() === 1,
-      "the column does not mark the open conversation");
-  });
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
+    const rows = await page.locator("[data-assistant-rows] [data-assistant-instance]").count();
+    assert(rows >= 3, `the column holds ${rows} assistants, expected at least 3`);
+    assert(await page.locator("[data-assistant-rows] [data-assistant-instance].active").count() === 1,
+      "the column does not mark the open assistant");
 
-  // Runs right after the check above, which left a newer conversation behind:
-  // the run's own conversation is history now, and history stays history, so
-  // this is where the run adopts the live one for everything that follows.
-  await run("an earlier conversation opens read-only on its page", async () => {
+    // The first one is still live: it takes a message, which is what the
+    // single live conversation used to refuse.
     await openConversation(page, chatID);
-    assert((await page.locator("dc-assistant [data-assistant-input]").count()) === 0,
-      "an earlier conversation still has a composer");
-    assert((await page.locator("[data-assistant-retry]").count()) === 0, "an earlier conversation still offers a retry");
-    const link = page.locator("[data-assistant-current]");
-    assert(await link.isVisible(), "no link to the current conversation");
-
+    assert((await page.locator("dc-assistant [data-assistant-input]").count()) === 1,
+      "an assistant lost its composer when another one was started");
     const status = await page.evaluate(async (id) => {
       const token = document.querySelector('meta[name="csrf-token"]')?.content || "";
-      const res = await fetch(`/assistant/${id}`, {
+      const res = await fetch(`/assistants/${id}`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json", "X-CSRF-Token": token },
-        body: "form=message&message=this+must+not+land",
+        body: "form=draft&message=still+mine",
       });
       return res.status;
     }, chatID);
-    assert(status === 400, `a message to an earlier conversation answered ${status}`);
+    assert(status === 200, `an assistant refused a draft after another one was started: ${status}`);
 
-    // The way back is the live conversation's page.
-    await link.click();
+    // Every one of them has a stream of its own, and the area's own address
+    // comes back to the one that was open last, which is this one.
+    await openConversation(page, third);
+    assert((await page.locator("dc-assistant").getAttribute("stream-url")) === `/assistants/${third}/stream`,
+      "an assistant does not carry its own stream");
+    await page.goto(`${BASE}/assistants`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    await page.waitForSelector(READY, { timeout: 15000 });
+    assert(new URL(page.url()).pathname === `/assistants/${third}`,
+      `the bare address landed on ${page.url()} instead of the one opened last`);
+    assert((await page.locator(`[data-assistant-rows] [data-assistant-instance="${third}"].active`).count()) === 1,
+      "the list does not mark the assistant the area opened");
+    chatID = third;
+  });
+
+  // The list is the user's to sort: a row is dragged into place, the order goes
+  // to the server, and it is still there after a reload. Nothing about when an
+  // assistant last said something moves anybody.
+  await run("the list keeps the order the rows were dragged into", async () => {
+    await openAssistant(page, chatID);
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
+    const ids = () => page.locator("[data-assistant-rows] [data-assistant-instance]")
+      .evaluateAll((rows) => rows.map((row) => row.dataset.assistantInstance));
+    const before = await ids();
+    assert(before.length >= 3, `the column holds ${before.length} assistants, expected at least 3`);
+
+    // The first row onto the third one's place, with a real pointer: the drag
+    // starts past the threshold and the drop is where the pointer lets go.
+    const rows = page.locator("[data-assistant-rows] [data-assistant-instance]");
+    const from = await rows.first().boundingBox();
+    const to = await rows.nth(2).boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2 + 20, { steps: 4 });
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2 + 4, { steps: 12 });
+    const [saved] = await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/assistants/order") && r.request().method() === "POST", { timeout: 15000 }),
+      page.mouse.up(),
+    ]);
+    assert(saved.status() === 204, `the order answered ${saved.status()}`);
+
+    const want = [before[1], before[2], before[0], ...before.slice(3)];
     await page.waitForFunction(
-      (gone) => document.querySelector("dc-assistant")?.getAttribute("conversation-id") !== gone
-        && document.querySelector("dc-assistant")?.hasAttribute("ready"),
-      chatID,
+      (order) => [...document.querySelectorAll("[data-assistant-rows] [data-assistant-instance]")]
+        .map((row) => row.dataset.assistantInstance).join(" ") === order.join(" "),
+      want,
       { timeout: 15000 },
     );
-    assert(new URL(page.url()).pathname === `/assistant/${freshID}`, `the way back landed on ${page.url()}`);
-    assert((await page.locator("dc-assistant").getAttribute("conversation-id")) === freshID,
-      "the way back did not open the current conversation");
-    assert((await page.locator("dc-assistant [data-assistant-input]").count()) === 1,
-      "the current conversation has no composer");
-    chatID = freshID;
+
+    // And it is the server's now, so a fresh page reads the same order.
+    await page.goto(`${BASE}/assistants`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    await page.waitForSelector("[data-assistant-rows] [data-assistant-instance]", { timeout: 15000 });
+    const after = await ids();
+    assert(after.join(" ") === want.join(" "),
+      `the order did not survive the reload: ${after.join(" ")} instead of ${want.join(" ")}`);
+    // This check ends on the list, and the checks after it expect a thread.
+    await openConversation(page, chatID);
+    return `dragged to ${want.slice(0, 3).map((id) => id.slice(0, 4)).join(" ")}`;
+  });
+
+  // Ctrl+Tab walks the assistants the way it walks the terminals: the order the
+  // list stands in, and it wraps at both ends. The cursor sits in the composer
+  // when an assistant opens, so this also proves the key is caught there.
+  await run("Ctrl+Tab steps to the next assistant and wraps at the end", async () => {
+    await openAssistant(page, chatID);
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
+    const ids = await page.locator(".dc-app > .dc-ctx[data-assistant-rows] [data-assistant-instance]")
+      .evaluateAll((rows) => rows.map((row) => row.dataset.assistantInstance));
+    assert(ids.length >= 2, `the column holds ${ids.length} assistants, expected at least 2`);
+    const at = ids.indexOf(chatID);
+    assert(at !== -1, "the open assistant has no row in the column");
+
+    await page.keyboard.press("Control+Tab");
+    await page.waitForURL(new RegExp(`/assistants/${ids[(at + 1) % ids.length]}$`), { timeout: 10000 });
+    await page.waitForSelector(READY, { timeout: 15000 });
+    await page.keyboard.press("Control+Shift+Tab");
+    await page.waitForURL(new RegExp(`/assistants/${chatID}$`), { timeout: 10000 });
+    await page.waitForSelector(READY, { timeout: 15000 });
+
+    // The wrap: forward from the last row is the first one.
+    await openConversation(page, ids[ids.length - 1]);
+    await page.keyboard.press("Control+Tab");
+    await page.waitForURL(new RegExp(`/assistants/${ids[0]}$`), { timeout: 10000 });
+    await page.waitForSelector(READY, { timeout: 15000 });
+
+    await openConversation(page, chatID);
+    return `stepped both ways over ${ids.length} rows and wrapped`;
+  });
+
+  // A name is how several of them are told apart, so the list column renames
+  // in place and the page's head follows.
+  await run("an assistant is renamed from its row", async () => {
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
+    const id = await page.locator("dc-assistant").getAttribute("assistant-id");
+    await page.click(`[data-assistant-rows] [data-assistant-instance="${id}"] [data-assistant-menu]`);
+    await page.waitForSelector(".dc-context-menu", { timeout: 8000 });
+    await page.click('.dc-context-menu .dropdown-item:has-text("Rename")');
+    await page.waitForSelector(".swal2-input", { timeout: 8000 });
+    await page.fill(".swal2-input", "zztc renamed");
+    await page.click(".swal2-confirm");
+    await page.waitForFunction(
+      (target) => document.querySelector(`[data-assistant-instance="${target}"]`)?.dataset.assistantName === "zztc renamed",
+      id,
+      { timeout: 10000 },
+    );
+    await openConversation(page, id);
+    assert((await page.locator("[data-assistant-title]").innerText()).includes("zztc renamed"),
+      "the page head does not carry the new name");
   });
 
   await run("stopping a running answer keeps the part that arrived", async () => {
@@ -780,9 +1041,9 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   // belongs to a turn that stopped before it was done, and both swap on the
   // assistant event, without a reload.
   await run("the list runs the ring while a turn runs and badges only a stopped one", async () => {
-    await openView(page, "history", "[data-assistant-rows] [data-assistant-conversation]");
-    const id = await page.locator("dc-assistant").getAttribute("conversation-id");
-    const row = `[data-assistant-rows] [data-assistant-conversation="${id}"]`;
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
+    const id = await page.locator("dc-assistant").getAttribute("assistant-id");
+    const row = `[data-assistant-rows] [data-assistant-instance="${id}"]`;
     const badged = (sel) => {
       const el = document.querySelector(sel);
       return !!el && [...el.querySelectorAll(".badge")].some((b) => b.textContent.trim() === "Unfinished");
@@ -809,8 +1070,8 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   // the title alone, a running turn never makes an icon appear there, and on
   // the phone the same icon wears the ring while the turn runs and loses it
   // when the turn ends, without a reload.
-  await run("the conversation head runs the ring on the phone and stays bare on the desktop", async () => {
-    await openAssistant(page);
+  await run("the assistant head runs the ring on the phone and stays bare on the desktop", async () => {
+    await openAssistant(page, chatID);
     const mp = await mobilePage();
     await openConversation(mp, chatID);
     const head = "dc-assistant [data-assistant-head-icon]";
@@ -833,51 +1094,91 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     return "ring on the phone while it runs, desktop head bare throughout";
   });
 
-  await run("a message sent while an answer runs queues and flushes after it", async () => {
+  // One turn per assistant, and the queue is that assistant's: a second prompt
+  // into one that is answering waits in the transcript, can be taken back while
+  // it waits, and goes out as one turn when the running one ends. The composer
+  // never locks for it.
+  await run("a second message while an answer runs waits and goes out afterwards", async () => {
     await send(page, "SLOW again please");
     await page.waitForSelector("[data-assistant-cancel]:not(.d-none)", { timeout: 10000 });
     const composer = await page.locator("[data-assistant-input]").evaluate((el) => ({ readOnly: el.readOnly, disabled: el.disabled }));
     assert(!composer.readOnly && !composer.disabled, "the composer locked during a turn");
     assert(await page.locator("[data-assistant-send]").isVisible(), "the send button is gone during a turn");
-    const before = await page.locator('[data-role="assistant"]').count();
-    await page.fill("[data-assistant-input]", "MAGIC after the queue");
-    await page.click("[data-assistant-send]");
-    await page.waitForSelector('[data-assistant-message][data-state="queued"] [data-assistant-queued]', { timeout: 10000 });
-    assert((await page.locator('[data-assistant-message][data-state="queued"]').count()) === 1,
-      "the queued message renders more than one bubble");
-    await page.click("[data-assistant-cancel]");
-    await page.waitForFunction(
-      (count) => document.querySelectorAll('[data-role="assistant"]').length > count,
-      before,
-      { timeout: 20000 },
-    );
-    await waitSettled(page);
-    assert((await page.locator('[data-assistant-message][data-state="queued"]').count()) === 0,
-      "the queued mark did not clear after the flush");
-    const text = await page.locator('[data-role="assistant"]').last().innerText();
-    assert(text.includes("FLUGHAFEN"), `the queued message was not answered: ${text}`);
-  });
 
-  await run("a queued message can be taken back before it goes out", async () => {
-    await send(page, "SLOW once more");
-    await page.waitForSelector("[data-assistant-cancel]:not(.d-none)", { timeout: 10000 });
-    await page.fill("[data-assistant-input]", "MAGIC do not send this");
+    // One that is taken back again, and one that stays.
+    await page.fill("[data-assistant-input]", "this one is taken back");
     await page.click("[data-assistant-send]");
-    await page.waitForSelector("[data-assistant-discard]", { timeout: 10000 });
-    const answers = await page.locator('[data-role="assistant"]').count();
+    await page.waitForSelector('[data-assistant-message][data-state="queued"]', { timeout: 15000 });
+    assert(await page.locator("[data-assistant-queued]").first().isVisible(),
+      "a waiting message wears no badge");
     await page.click("[data-assistant-discard]");
     await page.waitForFunction(
-      () => !document.querySelector('[data-assistant-message][data-state="queued"]'),
+      () => document.querySelectorAll('[data-assistant-message][data-state="queued"]').length === 0,
       null,
-      { timeout: 10000 },
+      { timeout: 15000 },
     );
+
+    await page.fill("[data-assistant-input]", "MAGIC this one waits");
+    await page.click("[data-assistant-send]");
+    await page.waitForSelector('[data-assistant-message][data-state="queued"]', { timeout: 15000 });
+    assert((await page.inputValue("[data-assistant-input]")) === "",
+      "the composer kept the words of a message that went into the queue");
+
+    // Stopping the running turn is what lets the queue go.
     await page.click("[data-assistant-cancel]");
     await waitSettled(page);
-    await sleep(1500);
-    assert((await page.locator('[data-role="assistant"]').count()) === answers,
-      "a turn ran for the message that was taken back");
+    // The flush is a turn of its own: the waiting entry stops saying so when it
+    // starts, and the answer arrives after that.
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-assistant-message][data-state="queued"]').length === 0,
+      null,
+      { timeout: 30000 },
+    );
+    // The answer comes after that, so this waits for the words and not for a
+    // settled last bubble: right after the flush started, the last thing in the
+    // transcript is the flushed question and it is settled already.
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('[data-role="assistant"]')].some((m) => m.innerText.includes("FLUGHAFEN")),
+      null,
+      { timeout: 60000 },
+    ).catch(() => {});
+    const texts = await page.locator('[data-role="assistant"]').allInnerTexts();
+    assert(texts.some((t) => t.includes("FLUGHAFEN")), "the waiting message was never answered");
+    const asked = await page.locator('[data-role="user"]').allInnerTexts();
+    assert(!asked.some((t) => t.includes("taken back")), "the message that was taken back went out anyway");
+    return "one waited, one was taken back, the composer stayed open";
+  });
+
+  // A waiting assistant blocks nobody: another one answers at the same time.
+  await run("a message waiting in one assistant does not hold up another", async () => {
+    await openConversation(page, chatID);
+    const other = await page.evaluate(async (mine) => {
+      const res = await fetch("/assistants/instances", { headers: { Accept: "application/json" } });
+      const data = await res.json();
+      return (data.assistants || []).map((a) => a.id).find((id) => id !== mine) || "";
+    }, chatID);
+    assert(other, "there is no second assistant to answer at the same time");
+    await send(page, "SLOW once more");
+    await page.waitForSelector("[data-assistant-cancel]:not(.d-none)", { timeout: 10000 });
+    await page.fill("[data-assistant-input]", "waiting behind it");
+    await page.click("[data-assistant-send]");
+    await page.waitForSelector('[data-assistant-message][data-state="queued"]', { timeout: 15000 });
+
+    await openConversation(page, other);
+    await send(page, "MAGIC answer me now");
+    await waitSettled(page);
     const text = await page.locator('[data-role="assistant"]').last().innerText();
-    assert(!text.includes("FLUGHAFEN"), "the message that was taken back was answered anyway");
+    assert(text.includes("FLUGHAFEN"), `the other assistant did not answer: ${text}`);
+
+    await openConversation(page, chatID);
+    await page.click("[data-assistant-cancel]");
+    await waitSettled(page);
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-assistant-message][data-state="queued"]').length === 0,
+      null,
+      { timeout: 30000 },
+    );
+    return "the other one answered while the first still held a message";
   });
 
   await run("a failed turn offers a retry that recovers", async () => {
@@ -890,12 +1191,12 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert((await retried.innerText()).includes("Recovered"), "retry did not recover");
   });
 
-  await run("the assistant conversation is never listed as a resumable coder", async () => {
+  await run("an assistant's provider session is never listed as a resumable coder", async () => {
     await closePanel(page);
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
     const body = await page.locator("body").innerText();
-    assert(!body.includes(chatID), "the assistant conversation showed up as a coder");
+    assert(!body.includes(chatID), "an assistant's session showed up as a coder");
   });
 
   // On a desktop the assistant docks next to the page instead of leaving it:
@@ -904,22 +1205,38 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   // conversation, a navigation keeps the panel (it lives outside the swapped
   // region), and Escape closes it.
   await run("on a desktop the assistant is a page with the list column and the aside", async () => {
+    // The entry answers with the one looked at last, so this run's own is
+    // opened first and is what the rail has to land on.
+    await openConversation(page, chatID);
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
-    assert(await page.locator(".dc-rail [data-assistant-link]").count() === 1,
-      "the assistant is missing from the rail");
+    const railEntry = '.dc-rail .dc-rail-btn[href="/assistants"]';
+    assert(await page.locator(railEntry).count() === 1, "the assistant is missing from the rail");
+    assert((await page.locator(railEntry).innerText()).trim() === "Assistants",
+      "the rail entry is not in the plural");
     assert(await page.locator("dc-ctx-sheet").isHidden(), "the sheet stands open on a desktop");
-    await page.click(".dc-rail [data-assistant-link]");
+    // The entry leads into the assistant that was open last, with the list
+    // standing beside it, the way the terminals entry leads into a terminal.
+    await page.click(railEntry);
     await page.waitForSelector(READY, { timeout: 15000 });
-    assert(new URL(page.url()).pathname === `/assistant/${chatID}`, `the rail entry landed on ${page.url()}`);
+    assert(new URL(page.url()).pathname === `/assistants/${chatID}`,
+      `the rail entry landed on ${page.url()} instead of the one open last`);
+    // And a row of that list opens its own, the column staying where it is.
+    const other = await page.locator("[data-assistant-rows] [data-assistant-instance]:not(.active)").first()
+      .getAttribute("data-assistant-instance");
+    assert(other, "the column offers no second assistant");
+    await afterSwap(page, () => page.locator(`[data-assistant-rows] [data-assistant-instance="${other}"] a[href]`).click());
+    await page.waitForSelector(READY, { timeout: 15000 });
+    assert(new URL(page.url()).pathname === `/assistants/${other}`, `the row landed on ${page.url()}`);
+    await openConversation(page, chatID);
     const shape = await page.evaluate(() => {
       const column = document.querySelector(".dc-app > .dc-ctx[data-assistant-rows]");
       const aside = document.getElementById("assistant-aside");
       const work = document.querySelector("dc-assistant.dc-work");
       return {
-        railActive: Boolean(document.querySelector('.dc-rail .dc-rail-btn.active[href="/assistant"]')),
+        railActive: Boolean(document.querySelector('.dc-rail .dc-rail-btn.active[href="/assistants"]')),
         column: Boolean(column) && column.offsetParent !== null,
-        activeRow: Boolean(column?.querySelector("[data-assistant-conversation].active")),
+        activeRow: Boolean(column?.querySelector("[data-assistant-instance].active")),
         aside: aside.offsetParent !== null && getComputedStyle(aside).position === "static",
         composer: Boolean(work?.querySelector("[data-assistant-input]")),
         overflow: document.documentElement.scrollWidth > window.innerWidth,
@@ -927,27 +1244,86 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     });
     assert(shape.railActive, "the rail does not mark the assistant");
     assert(shape.column && shape.activeRow, `the list column is missing or unmarked: ${JSON.stringify(shape)}`);
-    assert(shape.aside, "the aside does not stand beside the conversation on a wide window");
+    assert(shape.aside, "the aside does not stand beside the thread on a wide window");
     assert(shape.composer && !shape.overflow, `the page is not whole: ${JSON.stringify(shape)}`);
-    return "rail, column, conversation, aside";
+    return "rail, column, thread, aside";
   });
 
   // Below lg the tab bar's sparkle opens the conversations as a sheet, the
   // way the other areas open theirs, and a row opens the conversation's page.
-  await run("on a phone the tab bar opens the conversations sheet and a row opens the page", async () => {
+  // Opening an assistant puts the cursor in the box. On a desktop always, by
+  // the mouse and by the keyboard alike, and without pulling the transcript
+  // off its end; on a phone never, where it would raise the keyboard over half
+  // the screen on every tap.
+  await run("opening an assistant puts the cursor in the box on a desktop", async () => {
+    await openAssistant(page, chatID);
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
+    const rows = page.locator("[data-assistant-rows] [data-assistant-instance]:not(.active) a[href]");
+    assert(await rows.count(), "no other assistant to switch to");
+
+    // By the mouse. The wait is on the address and then on the surface of the
+    // assistant it names: the page being left already carries [ready], so a
+    // bare wait for it would measure the old one.
+    const first = await rows.first().getAttribute("href");
+    await rows.first().click();
+    await page.waitForURL(new RegExp(`${first}$`), { timeout: 15000 });
+    await page.waitForSelector(`dc-assistant[ready][assistant-id="${first.split("/").pop()}"]`, { timeout: 15000 });
+    await page.waitForFunction(
+      () => document.activeElement?.hasAttribute("data-assistant-input"),
+      null,
+      { timeout: 5000 },
+    ).catch(() => {});
+    assert(await page.evaluate(() => document.activeElement?.hasAttribute("data-assistant-input")),
+      "a mouse switch left the cursor outside the box");
+    // And the transcript kept its place at the end, the focus pulled nothing.
+    const atEnd = await page.evaluate(() => {
+      const box = document.querySelector("[data-assistant-scroll]");
+      return !box || box.scrollHeight - box.clientHeight - box.scrollTop < 40;
+    });
+    assert(atEnd, "taking the focus moved the transcript off its end");
+
+    // By the keyboard: the row's link is focused and opened with Enter, the
+    // way somebody walking the page reaches it.
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
+    const next = page.locator("[data-assistant-rows] [data-assistant-instance]:not(.active) a[href]").first();
+    const target = await next.getAttribute("href");
+    await next.focus();
+    await page.keyboard.press("Enter");
+    await page.waitForURL(new RegExp(`${target}$`), { timeout: 15000 });
+    await page.waitForSelector(`dc-assistant[ready][assistant-id="${target.split("/").pop()}"]`, { timeout: 15000 });
+    await page.waitForFunction(
+      () => document.activeElement?.hasAttribute("data-assistant-input"),
+      null,
+      { timeout: 5000 },
+    ).catch(() => {});
+    assert(await page.evaluate(() => document.activeElement?.hasAttribute("data-assistant-input")),
+      "a keyboard switch left the cursor outside the box");
+    return "cursor in the box, transcript untouched";
+  });
+
+  await run("on a phone the box is not focused and no keyboard rises", async () => {
+    const mp = await mobilePage();
+    await openConversation(mp, chatID);
+    assert(!(await mp.evaluate(() => document.activeElement?.hasAttribute("data-assistant-input"))),
+      "the phone focused the box and would raise the keyboard on every open");
+    await closePanel(mp);
+    return "no focus on a coarse pointer";
+  });
+
+  await run("on a phone the tab bar opens the assistants sheet and a row opens the page", async () => {
     const mp = await mobilePage();
     await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(mp);
-    await mp.tap('.dc-tabbar button[data-ctx-area="assistant"]');
-    await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-assistant-rows] [data-assistant-conversation]", { timeout: 8000 });
+    await mp.tap('.dc-tabbar button[data-ctx-area="assistants"]');
+    await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-assistant-rows] [data-assistant-instance]", { timeout: 8000 });
     assert(mp.url().endsWith("/projects"), "the sparkle button left the page");
-    assert(await mp.locator("dc-ctx-sheet [data-assistant-new]").count() >= 1, "the sheet offers no new conversation");
-    await mp.tap(`dc-ctx-sheet [data-assistant-conversation="${chatID}"] a[href]`);
-    await mp.waitForURL(new RegExp(`/assistant/${chatID}$`), { timeout: 10000 });
+    assert(await mp.locator("dc-ctx-sheet [data-assistant-new]").count() >= 1, "the sheet offers no new assistant");
+    await mp.tap(`dc-ctx-sheet [data-assistant-instance="${chatID}"] a[href]`);
+    await mp.waitForURL(new RegExp(`/assistants/${chatID}$`), { timeout: 10000 });
     await mp.waitForSelector(READY, { timeout: 15000 });
     const fit = await mp.evaluate(() => ({
       sheetHidden: document.querySelector("dc-ctx-sheet").hidden,
-      tabActive: Boolean(document.querySelector('.dc-tabbar button[data-ctx-area="assistant"].active')),
+      tabActive: Boolean(document.querySelector('.dc-tabbar button[data-ctx-area="assistants"].active')),
       overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       composerBottom: Math.round(document.querySelector("[data-assistant-form]").getBoundingClientRect().bottom),
       tabbarTop: Math.round(document.querySelector(".dc-tabbar").getBoundingClientRect().top),
@@ -955,8 +1331,113 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(fit.sheetHidden && fit.tabActive, `the sheet or the tab bar is off: ${JSON.stringify(fit)}`);
     assert(fit.overflow <= 0, `horizontal overflow of ${fit.overflow}px on a phone`);
     assert(fit.composerBottom <= fit.tabbarTop + 1, `the composer sits under the tab bar: ${JSON.stringify(fit)}`);
+    // The sheet is the same list the desktop column is, so opened over an
+    // assistant it marks that assistant's row, the way the terminals sheet
+    // marks the terminal on screen.
+    await mp.tap('.dc-tabbar button[data-ctx-area="assistants"]');
+    await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-assistant-rows] [data-assistant-instance]", { state: "attached", timeout: 8000 });
+    const marked = await mp.$$eval("dc-ctx-sheet [data-assistant-instance].active", (els) => els.map((el) => el.dataset.assistantInstance));
+    assert(marked.length === 1 && marked[0] === chatID, `the sheet marks ${JSON.stringify(marked)} instead of the open assistant`);
+    await mp.tap('.dc-tabbar button[data-ctx-area="assistants"]');
+    await mp.waitForSelector("dc-ctx-sheet[hidden]", { state: "attached", timeout: 4000 });
     await closePanel(mp);
-    return "sheet from the tab bar, page from the row";
+    return "sheet from the tab bar, page from the row, the row marked";
+  });
+
+  // The list column carries the phone's filter, the same ctx_filter.gohtml row
+  // over the same kind of list the terminals and the projects have: it hides
+  // rows as one types, and the query is the area's own and outlives the sheet.
+  await run("the assistants sheet filters its rows and remembers the query", async () => {
+    const mp = await mobilePage();
+    await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(mp);
+    // Attached, not visible: a remembered query hides rows, and the sheet that
+    // opens with one would never show the row this waits for.
+    const openSheet = async () => {
+      await mp.tap('.dc-tabbar button[data-ctx-area="assistants"]');
+      await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-assistant-rows] [data-assistant-instance]", { state: "attached", timeout: 8000 });
+      await sleep(300);
+    };
+    const closeSheet = async () => {
+      await mp.tap('.dc-tabbar button[data-ctx-area="assistants"]');
+      await mp.waitForSelector("dc-ctx-sheet[hidden]", { state: "attached", timeout: 4000 });
+    };
+    const hidden = (id) => mp.$eval(`dc-ctx-sheet [data-assistant-instance="${id}"]`, (el) => el.classList.contains("d-none"));
+    await openSheet();
+    // The query comes out of the list itself: a word that stands in one row
+    // and in no other, whatever this run has named its assistants by then.
+    const rows = await mp.$$eval("dc-ctx-sheet [data-assistant-instance]", (els) =>
+      els.map((el) => ({ id: el.dataset.assistantInstance, text: (el.textContent || "").toLowerCase() })));
+    assert(rows.length >= 2, `the column holds ${rows.length} assistants, expected at least 2`);
+    const counts = new Map();
+    for (const row of rows) {
+      for (const word of new Set(row.text.match(/[a-z]{4,}/g) || [])) counts.set(word, (counts.get(word) || 0) + 1);
+    }
+    const query = [...counts.entries()].find(([, seen]) => seen === 1)?.[0];
+    assert(query, `no word tells the rows apart: ${JSON.stringify(rows.map((row) => row.text))}`);
+    const mine = rows.find((row) => row.text.includes(query));
+    const other = rows.find((row) => row.id !== mine.id);
+
+    await mp.fill("dc-ctx-sheet [data-ctx-filter]", query);
+    await sleep(200);
+    assert(!(await hidden(mine.id)), `the filter hid the row '${query}' names`);
+    assert(await hidden(other.id), "the filter left an unmatched row standing");
+    assert(await mp.evaluate(() => localStorage.getItem("dc-ctx-filter:assistants")) === query,
+      "the area does not remember what was typed into its filter");
+
+    await closeSheet();
+    await openSheet();
+    assert(await hidden(other.id), "the remembered query does not hide the unmatched row on open");
+    await mp.click("dc-ctx-sheet [data-ctx-filter-clear]");
+    await sleep(200);
+    assert(!(await hidden(other.id)), "clearing the filter leaves the row hidden");
+    await closeSheet();
+    return `filtered by '${query}', remembered, cleared`;
+  });
+
+  // The same drag on a phone: a finger starts one only on a row's grip, the way
+  // the tab strip splits scrolling from sorting, and it is the same gesture
+  // (@dc/rowdrag) the mouse uses on the desktop column.
+  await run("a finger sorts the list by a row's grip", async () => {
+    const mp = await mobilePage();
+    await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(mp);
+    await mp.tap('.dc-tabbar button[data-ctx-area="assistants"]');
+    await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-assistant-rows] [data-assistant-instance]", { state: "attached", timeout: 8000 });
+    await sleep(400);
+    const ids = () => mp.$$eval("dc-ctx-sheet [data-assistant-instance]", (els) => els.map((el) => el.dataset.assistantInstance));
+    const before = await ids();
+    assert(before.length >= 2, `the sheet holds ${before.length} assistants, expected at least 2`);
+    const grip = await mp.locator(`dc-ctx-sheet [data-assistant-instance="${before[0]}"] [data-assistant-grip]`).boundingBox();
+    assert(grip, "the row carries no grip on a phone");
+    const second = await mp.locator(`dc-ctx-sheet [data-assistant-instance="${before[1]}"]`).boundingBox();
+    const cdp = await mp.context().newCDPSession(mp);
+    const start = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
+    const end = second.y + second.height / 2 + 4;
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: start.x, y: start.y, id: 1 }] });
+    for (let i = 1; i <= 8; i += 1) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: start.x, y: Math.round(start.y + (end - start.y) * (i / 8)), id: 1 }] });
+      await sleep(30);
+    }
+    // Read while the finger is still down: the row has to be the carried one.
+    const carried = await mp.locator(`dc-ctx-sheet [data-assistant-instance="${before[0]}"].dc-row-dragging`).count();
+    const [saved] = await Promise.all([
+      mp.waitForResponse((r) => r.url().includes("/assistants/order") && r.request().method() === "POST", { timeout: 15000 }),
+      cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }),
+    ]);
+    assert(carried === 1, "the finger on the grip carried no row");
+    assert(saved.status() === 204, `the order answered ${saved.status()}`);
+    const want = [before[1], before[0], ...before.slice(2)];
+    await mp.waitForFunction(
+      (order) => [...document.querySelectorAll("dc-ctx-sheet [data-assistant-instance]")]
+        .map((row) => row.dataset.assistantInstance).join(" ") === order.join(" "),
+      want,
+      { timeout: 15000 },
+    );
+    // Out through a navigation: a tap right after a touch stream that the CDP
+    // drove is not reliably the next gesture the browser sees.
+    await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    return `the top row dragged to ${want.slice(0, 2).map((id) => id.slice(0, 4)).join(" ")}`;
   });
 
   await run("a finished answer marks the entry points until it is read", async () => {
@@ -969,45 +1450,75 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     await openConversation(page, chatID);
     await page.fill("[data-assistant-input]", "Tell me the MAGIC word, answer LATER");
     await Promise.all([
-      page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/assistant/${chatID}`), { timeout: 20000 }),
+      page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/assistants/${chatID}`), { timeout: 20000 }),
       page.click("[data-assistant-send]"),
     ]);
     // Leave before the answer lands: an open surface reads its own news, so
     // the marks only have something to show once it is out of sight.
     await closePanel(page);
+    // The mark on the entry points is one for the whole area, not one
+    // assistant's: news in any of them lights the rail and the tab bar,
+    // whichever one an entry would open, and which one it is in is what the
+    // list column's rows say.
+    const areaDots = '[data-notify-any="assistant"]:not(.d-none)';
     await page.waitForFunction(
-      (id) => {
-        const marks = [...document.querySelectorAll(`[data-notify-target="${id}"]`)];
-        return marks.length >= 1 && marks.some((m) => m.classList.contains("news"));
-      },
-      chatID,
+      (sel) => document.querySelectorAll(sel).length >= 2,
+      areaDots,
       { timeout: 20000 },
     );
-    assert(await page.locator(`[data-assistant-link] [data-notify-target="${chatID}"]`).count() === 2,
-      "the rail and tab bar sparkles carry no news mark");
-    assert(await page.locator(`.dc-rail [data-assistant-link] [data-notify-target="${chatID}"]`).count() === 1,
+    assert(await page.locator(`.dc-rail ${areaDots}`).count() === 1,
       "the rail entry carries no news mark");
+    assert(await page.locator(`.dc-tabbar ${areaDots}`).count() === 1,
+      "the tab bar entry carries no news mark");
+    // And it is on the screen, not only in the markup: the entries wear the
+    // assistant's session icon, which hides the dot that names one target
+    // until the icon says news, and this dot answers for the whole area
+    // instead. Each entry is asked where it is the one that shows, the rail on
+    // the desktop and the tab bar on the phone.
+    const painted = async (surface, where) => surface.locator(`${where} ${areaDots}`).evaluate((dot) => {
+      const style = window.getComputedStyle(dot);
+      return style.display !== "none" && style.visibility !== "hidden" && dot.getBoundingClientRect().width > 0;
+    });
+    assert(await painted(page, ".dc-rail"), "the rail mark is in the markup but not on the screen");
+    await parked.waitForFunction(
+      (sel) => document.querySelectorAll(`.dc-tabbar ${sel}`).length === 1,
+      areaDots,
+      { timeout: 20000 },
+    );
+    assert(await painted(parked, ".dc-tabbar"), "the tab bar mark is in the markup but not on the screen");
+    // And the row of the assistant that rang says which one it was.
     const fragment = await page.evaluate(async () => {
-      const res = await fetch("/ctx/terminals?path=/projects", { headers: { Accept: "text/html" } });
+      const res = await fetch("/ctx/assistants?path=/assistants", { headers: { Accept: "text/html" } });
       return res.text();
     });
-    assert(fragment.includes(`data-notify-target="${chatID}"`), "the refreshed terminals column drops the mark");
+    assert(fragment.includes(`data-notify-target="${chatID}"`), "the assistant column drops the mark");
   });
 
   await run("the notification opens the page on the answer it announces", async () => {
+    // What this assistant is called right now, read from its own row: the
+    // first prompt named it, so the name is not a constant.
+    const answeredBy = await page.evaluate(async (id) => {
+      const res = await fetch("/assistants/instances", { headers: { Accept: "application/json" } });
+      const data = await res.json();
+      return (data.assistants || []).find((a) => a.id === id)?.title || "";
+    }, chatID);
+    assert(answeredBy, "the assistant is not in the index");
     const entry = await page.evaluate(async (id) => {
       const res = await fetch("/notifications", { headers: { Accept: "application/json" } });
       const data = await res.json();
       return (data.notifications || []).find((n) => n.targetId === id) || null;
     }, chatID);
-    assert(entry, "no notification for the conversation");
-    assert(entry.title === "Assistant answered.", `the title does not name the assistant: ${entry.title}`);
+    assert(entry, "no notification for the assistant");
+    // One bell rings for all of them, so every entry has to say which one
+    // answered: the title is that assistant's own name.
+    assert(entry.title === `${answeredBy} answered.`,
+      `the title does not name the assistant that answered (${answeredBy}): ${entry.title}`);
     // The title only says that an answer arrived, so the line below it carries
     // the first words of it, which is what the list, the toast and the phone show.
     assert((entry.detail || "").length > 0, "the entry carries no words of the answer");
     assert(!entry.detail.includes("\n") && [...entry.detail].length <= 141,
       `the detail is not one short line: ${entry.detail}`);
-    assert(entry.url.startsWith(`/assistant/${chatID}`), `the entry does not name the conversation's page: ${entry.url}`);
+    assert(entry.url.startsWith(`/assistants/${chatID}`), `the entry does not name the assistant's page: ${entry.url}`);
     const answered = entry.url.split("#message-")[1];
     assert(answered, `the entry does not link at a message: ${entry.url}`);
 
@@ -1018,7 +1529,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(first !== answered, "the transcript is too short for this check");
     await closePanel(page);
 
-    await page.goto(`${BASE}/assistant/${chatID}#message-${first}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/assistants/${chatID}#message-${first}`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
     await page.waitForSelector(READY, { timeout: 15000 });
     await sleep(500);
@@ -1033,7 +1544,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       `the page did not land on the message (${JSON.stringify(placed)})`);
   });
 
-  await run("a bell entry click opens the conversation's page on the answer", async () => {
+  await run("a bell entry click opens the assistant's page on the answer", async () => {
     // The notification center follows the entry boosted: the dropdown closes,
     // the page is the announced conversation, landed on the message.
     await closePanel(page);
@@ -1042,23 +1553,30 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
       const data = await res.json();
       return (data.notifications || []).find((n) => n.targetId === id) || null;
     }, chatID);
-    assert(entry, "no notification for the conversation");
+    assert(entry, "no notification for the assistant");
     const answered = entry.url.split("#message-")[1];
     assert(answered, `the entry does not link at a message: ${entry.url}`);
     await page.locator(".dc-notify-bell:visible").first().click();
     await page.waitForSelector(".dc-notify-menu.show", { timeout: 6000 });
     await page.locator(`.dc-notify-menu.show a[data-notify-target="${chatID}"]`).first().click();
-    await page.waitForURL(new RegExp(`/assistant/${chatID}`), { timeout: 15000 });
+    await page.waitForURL(new RegExp(`/assistants/${chatID}`), { timeout: 15000 });
     await page.waitForSelector(READY, { timeout: 15000 });
-    assert((await page.locator("dc-assistant").getAttribute("conversation-id")) === chatID,
-      "the page is not on the announced conversation");
+    assert((await page.locator("dc-assistant").getAttribute("assistant-id")) === chatID,
+      "the page is not on the announced assistant");
     await page.waitForSelector(`[data-message-id="${answered}"]`, { state: "attached", timeout: 8000 });
     await page.waitForSelector(".dc-notify-menu.show", { state: "detached", timeout: 4000 });
+    // Reading it takes the area's mark out again, live and without a reload:
+    // one dot for the whole area means nothing is left to light it.
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-notify-any="assistant"]:not(.d-none)').length === 0,
+      null,
+      { timeout: 15000 },
+    );
   });
 
   await run("opening the page lands at the end of the transcript", async () => {
     await closePanel(page);
-    await openAssistant(page);
+    await openAssistant(page, chatID);
     // Pictures in the transcript decode after the element is done, so the
     // measurement has to happen after the layout settled, not on ready.
     await sleep(500);
@@ -1070,14 +1588,14 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   });
 
   await run("a long transcript renders its end and opens the rest on request", async () => {
-    await openAssistant(page);
+    await openAssistant(page, chatID);
     // The window is 20 messages, so the transcript is pushed past it.
     for (let i = 0; (await page.locator("[data-assistant-message]").count()) <= 22 && i < 12; i += 1) {
       await send(page, `MAGIC turn ${i}`);
       await waitSettled(page);
     }
     await closePanel(page);
-    await openAssistant(page);
+    await openAssistant(page, chatID);
     const shown = await page.locator("[data-assistant-message]").count();
     assert(shown === 20, `the window rendered ${shown} messages instead of 20`);
     const all = page.locator("[data-assistant-all]");
@@ -1100,7 +1618,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     await page.waitForFunction((count) => document.querySelectorAll("[data-assistant-message]").length > count, shown, { timeout: 15000 });
     await page.waitForSelector(READY, { timeout: 15000 });
     assert((await page.locator("[data-assistant-all]").count()) === 0, "the whole transcript still offers to show earlier messages");
-    assert(new URL(page.url()).pathname === `/assistant/${chatID}` && new URL(page.url()).search === "?all=1",
+    assert(new URL(page.url()).pathname === `/assistants/${chatID}` && new URL(page.url()).search === "?all=1",
       `showing the rest landed on ${page.url()}`);
     await sleep(500);
     const after = await page.evaluate((id) => {
@@ -1118,8 +1636,8 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(after.above > 0, "no earlier messages extend above the anchor");
   });
 
-  await run("the conversations, memory and jobs lists serve their own fragments", async () => {
-    for (const path of [`/ctx/assistant?path=/assistant/${chatID}`, "/assistant/memory", "/assistant/jobs"]) {
+  await run("the assistants, memory and jobs lists serve their own fragments", async () => {
+    for (const path of [`/ctx/assistants?path=/assistants/${chatID}`, "/assistants/memory", "/assistants/jobs"]) {
       const fragment = await page.evaluate(async (p) => {
         const res = await fetch(p, { headers: { Accept: "text/html" } });
         return { status: res.status, body: await res.text() };
@@ -1133,7 +1651,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   await run("the jobs button says whether anything is steered, live", async () => {
     await L.createProject(page, jobsProject).catch(() => {});
     const jobsDir = await L.projectPath(page, jobsProject);
-    await openAssistant(page);
+    await openAssistant(page, chatID);
     const badge = page.locator("[data-assistant-jobs-button] .dc-steer-badge");
     assert(await badge.count() === 1, "no badge on the jobs button in the page head");
     assert((await badge.first().getAttribute("class")).includes("d-none"),
@@ -1144,8 +1662,12 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     const created = await startCoder(page, jobsDir, "jobs-task", "Write the README.");
     assert(created.status === 200, `create answered ${created.status}`);
     jobCoder = created.body.id;
+    // Which assistant a job reports to travels in the form: with several of
+    // them the server refuses to pick one, and the aside below is this
+    // assistant's, so the job has to be its.
     const steered = await postJobs(page, {
       form: "steer",
+      assistant: chatID,
       terminal: jobCoder,
       task: "Write the README",
       done_when: "WAKE_NOTHING: never true",
@@ -1182,7 +1704,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert((await page.locator(".modal.show").count()) === 0, "the jobs list opened a modal");
     assert((await page.locator(".modal-backdrop").count()) === 0, "the jobs list left a backdrop");
     // The page speaks of coders, the word job stays in the code and the CLI.
-    const head = await page.locator("#assistant-aside .offcanvas-title").textContent();
+    const head = await page.locator("#assistant-aside .dc-ctx-title").textContent();
     assert(head.includes("Steered coders"), `the jobs sheet is not headed Steered coders: ${head}`);
     // The task and the criterion sit folded under the row, so the words are
     // read from the content, not from what is on screen.
@@ -1194,7 +1716,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     // so it also carries what earlier runs on this instance left behind.
     assert(await page.locator(`[data-assistant-job="${jobCoder}"]`).count() === 1,
       "the job is listed twice");
-    return "one list, beside the conversation";
+    return "one list, beside the thread";
   });
 
   await run("stopping a job asks first and the view acts in place", async () => {
@@ -1229,20 +1751,37 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(text.includes("WAKE_NOTHING"), `the criterion did not survive: ${text}`);
     assert(text.includes("0 of"), `the budget was not given back: ${text}`);
     assert(await row.locator("[data-assistant-job-open]").count() === 1, "no way from the job to its coder");
+    // Two ways to look at a steered coder: its screen and the files it writes.
+    const editor = row.locator("[data-assistant-job-editor]");
+    assert(await editor.count() === 1, "no way from the job to the editor");
+    const href = await editor.getAttribute("href");
+    assert(/^\/projects\/[^/]+\/editor$/.test(href), `the editor link points at ${href}`);
+    // The two names on the row lead where they name.
+    const coderHref = await row.locator("[data-assistant-job-coder-link]").getAttribute("href");
+    assert(coderHref === `/coders/${jobCoder}`, `the name points at ${coderHref}`);
+    const projectHref = await row.locator("[data-assistant-job-project-link]").getAttribute("href");
+    assert(/^\/projects#project-.+/.test(projectHref), `the project points at ${projectHref}`);
     return "steering again, same criterion";
   });
 
   await run("on a phone the jobs sheet is thumb sized", async () => {
     const mp = await mobilePage();
-    await mp.goto(`${BASE}/assistant`, { waitUntil: "domcontentloaded" });
-    await dismissUpdate(mp);
-    await mp.waitForSelector(READY, { timeout: 15000 });
+    await openConversation(mp, chatID);
     await mp.click("[data-assistant-jobs-button]");
     await mp.waitForSelector(`#assistant-aside.show [data-assistant-job="${jobCoder}"]`, { timeout: 15000 });
     await sleep(400);
     const fit = await mp.evaluate((id) => {
       const stop = document.querySelector(`[data-assistant-job="${id}"] [data-assistant-job-stop]`);
       if (!stop) return "the action is missing";
+      // Every action of the row is thumb sized and inside the screen, the way
+      // to the editor next to the way to the coder included.
+      for (const sel of ["[data-assistant-job-open]", "[data-assistant-job-editor]", "[data-assistant-job-stop]"]) {
+        const el = document.querySelector(`[data-assistant-job="${id}"] ${sel}`);
+        if (!el) return `${sel} is missing`;
+        const r = el.getBoundingClientRect();
+        if (r.height < 26) return `${sel} is ${r.height} high`;
+        if (r.right > window.innerWidth + 1 || r.left < -1) return `${sel} sticks out: ${JSON.stringify(r)}`;
+      }
       const b = stop.getBoundingClientRect();
       if (b.height < 26) return `the action is ${b.height} high`;
       if (b.right > window.innerWidth + 1 || b.left < -1) return `the action sticks out: ${JSON.stringify(b)}`;
@@ -1278,9 +1817,9 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     await sleep(400);
     assert(await mp.locator("#assistant-aside.show, .offcanvas-backdrop").count() === 0,
       "the aside sheet stayed over the coder page");
-    await mp.tap('.dc-tabbar button[data-ctx-area="assistant"]');
-    await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-assistant-rows] [data-assistant-conversation]", { timeout: 8000 });
-    await mp.tap("dc-ctx-sheet [data-assistant-rows] [data-assistant-conversation] a[href]");
+    await mp.tap('.dc-tabbar button[data-ctx-area="assistants"]');
+    await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-assistant-rows] [data-assistant-instance]", { timeout: 8000 });
+    await mp.tap("dc-ctx-sheet [data-assistant-rows] [data-assistant-instance] a[href]");
     await mp.waitForSelector(READY, { timeout: 15000 });
     await closePanel(mp);
     return "coder page usable, two taps back";
@@ -1312,28 +1851,62 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     return text;
   });
 
-  await run("a job survives the conversation it was started from", async () => {
-    // The job of jobCoder is steering. Jobs belong to the assistant, not to one
-    // conversation, so deleting the conversation leaves it alone: the next
-    // conversation lists the same job and its reports land there.
-    const conversation = await openAssistant(page);
-    await openView(page, "history", "[data-assistant-rows] [data-assistant-conversation]");
-    await page.click(`[data-assistant-rows] [data-assistant-conversation="${conversation}"] [data-conversation-menu]`);
+  // A job belongs to the assistant that steered it, so the aside of another
+  // assistant's page does not show it: with several of them, "who holds what"
+  // is the question the surface has to answer.
+  await run("a job stands in the aside of the assistant that steers it and nowhere else", async () => {
+    const owner = await openAssistant(page, chatID);
+    await openView(page, "jobs", `[data-assistant-job="${jobCoder}"]`);
+    const state = await page.locator(`[data-assistant-job="${jobCoder}"] [data-assistant-job-state]`).innerText();
+    assert(state.trim() === "steering", `the job is not steering: ${state}`);
+
+    const other = await newConversation(page);
+    assert(other !== owner, "the second assistant did not open");
+    await openView(page, "jobs", "[data-assistant-jobs-empty], [data-assistant-job]");
+    assert((await page.locator(`[data-assistant-job="${jobCoder}"]`).count()) === 0,
+      "another assistant's page lists a job it does not steer");
+
+    await openConversation(page, owner);
+    await openView(page, "jobs", `[data-assistant-job="${jobCoder}"]`);
+    return "one owner, one aside";
+  });
+
+  // Deleting an assistant releases the coders it steers and says which ones:
+  // a coder that quietly stops being watched is the ending nobody hears. It is
+  // deleted from another assistant's page on purpose, so the toast is not
+  // carried away by the navigation off the deleted one's own page.
+  await run("deleting an assistant hands its coders back and names them", async () => {
+    const owner = await openAssistant(page, chatID);
+    // The job has to be open and it has to be this assistant's for the check to
+    // say anything, and by now it may be closed or held by another one. The
+    // browser is the user, so it may call any job off; then it is steered for
+    // the assistant about to be deleted.
+    await postJobs(page, { form: "release", terminal: jobCoder });
+    const steered = await postJobs(page, { form: "steer", assistant: owner, terminal: jobCoder, done_when: "still steering" });
+    assert(steered.status === 200, `steering for the owner answered ${steered.status}: ${JSON.stringify(steered.body)}`);
+    const from = await newConversation(page);
+    assert(from !== owner, "no second assistant to delete from");
+
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
+    await page.click(`[data-assistant-rows] [data-assistant-instance="${owner}"] [data-assistant-menu]`);
     await page.waitForSelector(".dc-context-menu", { timeout: 8000 });
     await page.click('.dc-context-menu .dropdown-item:has-text("Delete")');
     await L.confirmSwal(page);
-    await page.waitForFunction(
-      (gone) => Boolean(document.querySelector("dc-assistant[ready]"))
-        && document.querySelector("dc-assistant[ready]").getAttribute("conversation-id") !== gone,
-      conversation,
-      { timeout: 15000 },
-    );
+    const toast = await page.waitForSelector(".dc-toast", { timeout: 15000 });
+    const said = (await toast.innerText()).trim();
+    assert(/yours again/.test(said), `the deletion did not name the released coders: ${said}`);
+    await page.waitForSelector(`[data-assistant-rows] [data-assistant-instance="${owner}"]`, { state: "detached", timeout: 10000 });
 
-    await openView(page, "jobs", `[data-assistant-job="${jobCoder}"]`);
-    const state = await page.locator(`[data-assistant-job="${jobCoder}"] [data-assistant-job-state]`).innerText();
-    assert(state.trim() === "steering",
-      `the job did not survive the deleted conversation: ${state}`);
-    return "job kept by the assistant";
+    // The job went with its assistant: nothing steers that coder any more.
+    const jobs = await page.evaluate(async () => {
+      const res = await fetch("/assistants/jobs", { headers: { Accept: "text/html" } });
+      return res.text();
+    });
+    assert(!jobs.includes(jobCoder), "a released job is still listed after its assistant was deleted");
+    // The run's assistant was the one deleted, so the checks after this one
+    // carry on in the one it was deleted from.
+    chatID = from;
+    return said;
   });
 
   // The one steered indicator is the coder icon itself turning purple,
@@ -1342,12 +1915,12 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   // The steer itself comes from the page without a criterion, which the page
   // path allows.
   await run("a steered coder's icon turns purple and release takes it back", async () => {
-    await openAssistant(page);
+    await openAssistant(page, chatID);
     const dir = await L.projectPath(page, jobsProject);
     const created = await startCoder(page, dir, "mark-task", "Write the file.");
     assert(created.status === 200, `create answered ${created.status}`);
     const marked = created.body.id;
-    const steered = await postJobs(page, { form: "steer", terminal: marked, task: "Write the file", done_when: "" });
+    const steered = await postJobs(page, { form: "steer", assistant: chatID, terminal: marked, task: "Write the file", done_when: "" });
     assert(steered.status === 200, `steer answered ${steered.status}: ${JSON.stringify(steered.body)}`);
 
     await closePanel(page);
@@ -1390,54 +1963,56 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     await L.deleteProject(page, jobsProject).catch(() => {});
   });
 
-  await run("deleting a conversation through its menu keeps the assistant reachable", async () => {
-    const conversation = await openAssistant(page);
-    await openView(page, "history", "[data-assistant-rows] [data-assistant-conversation]");
-    await page.click(`[data-assistant-rows] [data-assistant-conversation="${conversation}"] [data-conversation-menu]`);
+  await run("deleting an assistant through its menu keeps the surface reachable", async () => {
+    const conversation = await openAssistant(page, chatID);
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
+    await page.click(`[data-assistant-rows] [data-assistant-instance="${conversation}"] [data-assistant-menu]`);
     await page.waitForSelector(".dc-context-menu", { timeout: 8000 });
     const items = await page.locator(".dc-context-menu .dropdown-item").allInnerTexts();
     assert(items.some((t) => t.includes("Open")) && items.some((t) => t.includes("Delete")),
       `the row menu misses an action: ${items.join(", ")}`);
     await page.click('.dc-context-menu .dropdown-item:has-text("Delete")');
     await L.confirmSwal(page);
-    // The deleted conversation's page is gone with it: the assistant comes
-    // back with a fresh conversation on its own page.
+    // The deleted assistant's page is gone with it: the bare address comes
+    // back to one of the others, or to the empty state when it was the last.
     await page.waitForFunction(
-      (gone) => Boolean(document.querySelector("dc-assistant[ready]"))
-        && document.querySelector("dc-assistant[ready]").getAttribute("conversation-id") !== gone,
+      (gone) => document.querySelector("dc-assistant[ready]")?.getAttribute("assistant-id") !== gone
+        || Boolean(document.querySelector("[data-assistant-none]")),
       conversation,
       { timeout: 15000 },
     );
-    assert(new URL(page.url()).pathname.startsWith("/assistant/"), `the deletion landed on ${page.url()}`);
-    assert(await page.locator(`[data-assistant-rows] [data-assistant-conversation="${conversation}"]`).count() === 0,
-      "the deleted conversation is still in the column");
-    assert(await page.locator("dc-assistant [data-assistant-input]").isVisible(), "no composer after the deletion");
+    assert(new URL(page.url()).pathname.startsWith("/assistants"), `the deletion landed on ${page.url()}`);
+    assert(await page.locator(`[data-assistant-rows] [data-assistant-instance="${conversation}"]`).count() === 0,
+      "the deleted assistant is still in the column");
+    // This one deleted the run's assistant too, so the rest carries on in
+    // whichever is left standing at the top of the list.
+    chatID = await page.locator("[data-assistant-rows] [data-assistant-instance]").first()
+      .getAttribute("data-assistant-instance");
+    assert(chatID, "the deletion left no assistant to carry on in");
     await closePanel(page);
   });
 
-  // A column row opens its conversation's page, read-only when it is history;
-  // the menu's Open does the same.
-  await run("a column row opens its transcript on its page", async () => {
-    await openAssistant(page);
-    await openView(page, "history", "[data-assistant-rows] [data-assistant-conversation]");
-    const row = page.locator("[data-assistant-rows] [data-assistant-conversation]:not(.active)").first();
-    const victim = await row.getAttribute("data-assistant-conversation").catch(() => null);
-    assert(victim, "no earlier row to open");
+  // A column row opens that assistant's page, the menu's Open does the same,
+  // and the one on screen is the one the row named.
+  await run("a column row opens its assistant on its page", async () => {
+    await openAssistant(page, chatID);
+    await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
+    const row = page.locator("[data-assistant-rows] [data-assistant-instance]:not(.active)").first();
+    const victim = await row.getAttribute("data-assistant-instance").catch(() => null);
+    assert(victim, "no other row to open");
     await row.locator("a").click();
-    await page.waitForURL(new RegExp(`/assistant/${victim}$`), { timeout: 15000 });
-    await page.waitForSelector("dc-assistant [data-assistant-current]", { timeout: 15000 });
-    assert((await page.locator("dc-assistant").getAttribute("conversation-id")) === victim,
-      "the page shows a different conversation than the row named");
+    await page.waitForURL(new RegExp(`/assistants/${victim}$`), { timeout: 15000 });
+    await page.waitForSelector(READY, { timeout: 15000 });
+    assert((await page.locator("dc-assistant").getAttribute("assistant-id")) === victim,
+      "the page shows a different assistant than the row named");
+    assert((await page.locator("dc-assistant [data-assistant-input]").count()) === 1,
+      "an assistant opened from the column has no composer");
     await closePanel(page);
-    return "read only, on its page";
+    return "every row is live";
   });
 
   await run("a prompt keeps its line breaks in the optimistic bubble", async () => {
-    await openAssistant(page);
-    if (!(await page.locator("[data-assistant-input]").count())) {
-      await page.click("[data-assistant-current]");
-      await page.waitForSelector("dc-assistant[ready] [data-assistant-input]", { timeout: 15000 });
-    }
+    await openAssistant(page, chatID);
     await send(page, "MAGIC first line\nsecond line");
     const optimistic = await page.locator('[data-role="user"] [data-assistant-text]').last()
       .evaluate((n) => n.innerHTML);
@@ -1449,11 +2024,8 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   // The stamp belongs to the bubble the moment it appears, and the server
   // rendered message that may replace it must not put a second one next to it.
   await run("a sent message shows its time at once and one after a reload", async () => {
-    await openAssistant(page);
-    if (!(await page.locator("[data-assistant-input]").count())) {
-      await page.click("[data-assistant-current]");
-      await page.waitForSelector("dc-assistant[ready] [data-assistant-input]", { timeout: 15000 });
-    }
+    await openAssistant(page, chatID);
+    await idle(page);
     const marker = "MAGIC stamped right away";
     await page.fill("[data-assistant-input]", marker);
     await page.click("[data-assistant-send]");
@@ -1475,7 +2047,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
     assert(!Number.isNaN(Date.parse(fresh.raw)), `the fresh stamp is not machine readable: ${fresh.raw}`);
     assert(fresh.shown === fresh.want, `the fresh stamp is not locale formatted: ${fresh.shown} != ${fresh.want}`);
     await waitSettled(page);
-    await openAssistant(page);
+    await openAssistant(page, chatID);
     const after = await page.evaluate((text) => {
       const nodes = [...document.querySelectorAll('[data-role="user"]')]
         .filter((node) => node.textContent.includes(text));
@@ -1531,7 +2103,7 @@ L.runFeature("assistant", async ({ ctx, page, run, mobilePage }) => {
   // them by scrolling its box while the caret stays where it was. The composer
   // takes both keys and jumps through the whole text.
   await run("Home and End jump to the start and the end of the composer", async () => {
-    await openAssistant(page);
+    await openAssistant(page, chatID);
     const box = "dc-assistant [data-assistant-input]";
     await page.fill(box, "first line\nsecond line\nthird line");
     const text = await page.inputValue(box);

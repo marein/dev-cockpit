@@ -157,13 +157,14 @@ func TestJobsOutputCarriesEveryFieldADecisionNeeds(t *testing.T) {
 		"last check: still writing the file",
 		"blocked", "checks 4/10", "closed", "id bbb",
 		// The rule itself, at the place it is read.
-		"the assistant holds that terminal",
+		"you hold that terminal",
+		"belongs to the user or to another assistant",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("job-list output is missing %q:\n%s", want, out)
 		}
 	}
-	// Open first, the order the conversation and the page use.
+	// Open first, the order the thread and the page use.
 	if strings.Index(out, "id aaa") > strings.Index(out, "id bbb") {
 		t.Fatalf("want the open job first:\n%s", out)
 	}
@@ -394,7 +395,7 @@ func TestAllListsEveryClosedJob(t *testing.T) {
 // job the capped list would never print, with the terminal id `job-show` takes.
 func TestRunJobsFiltersBeforeTheCap(t *testing.T) {
 	stateDir := t.TempDir()
-	store := assistant.NewJobStore(stateDir)
+	store := testJobStore(t, stateDir)
 	now := time.Now().UTC()
 	for i := 0; i < maxClosedJobsShown+5; i++ {
 		store.Save(assistant.Job{
@@ -471,7 +472,7 @@ func TestJobOutputCarriesTheWholeJob(t *testing.T) {
 func TestRunJobReadsTheStoreAndRefusesUnknownTerminals(t *testing.T) {
 	stateDir := t.TempDir()
 	now := time.Now().UTC()
-	assistant.NewJobStore(stateDir).Save(assistant.Job{
+	testJobStore(t, stateDir).Save(assistant.Job{
 		Terminal: "aaa", Name: "readme-task", CoderID: "claude",
 		DoneWhen: "README.md exists", State: assistant.JobSteering,
 		MaxWakes: 10, CreatedAt: now, ExpiresAt: now.Add(4 * time.Hour),
@@ -523,7 +524,7 @@ func TestJobsOutputSaysWhenNothingIsSteered(t *testing.T) {
 // through the real store for that reason.
 func TestRunJobsReadsTheStore(t *testing.T) {
 	stateDir := t.TempDir()
-	store := assistant.NewJobStore(stateDir)
+	store := testJobStore(t, stateDir)
 	now := time.Now().UTC()
 	store.Save(assistant.Job{
 		Terminal: "aaa", Name: "readme-task", Project: "cockpit", CoderID: "claude",
@@ -602,14 +603,15 @@ func TestNotificationsOutputFallsBackToTheGenericWording(t *testing.T) {
 func TestReservedSessionsCoversOnlyActiveConversations(t *testing.T) {
 	stateDir := t.TempDir()
 	seed := func(store *assistant.Store, id string, status assistant.Status) {
-		store.Save(assistant.Conversation{
+		store.Save(assistant.Instance{
 			Summary:         assistant.Summary{ID: id, Title: "seed", CoderID: "claude", Status: status},
 			NativeSessionID: id,
 		})
 	}
 	seed(assistant.NewStore(stateDir), "11111111-1111-4111-8111-111111111111", assistant.StatusActive)
 	seed(assistant.NewStore(stateDir), "22222222-2222-4222-8222-222222222222", assistant.StatusTransferred)
-	seed(assistant.NewStoreAt(assistant.Paths(stateDir)), "33333333-3333-4333-8333-333333333333", assistant.StatusActive)
+	index, instances, _ := assistant.Paths(stateDir)
+	seed(assistant.NewStoreAt(index, instances), "33333333-3333-4333-8333-333333333333", assistant.StatusActive)
 
 	hidden := reservedSessions(stateDir)
 	for _, id := range []string{"11111111-1111-4111-8111-111111111111", "33333333-3333-4333-8333-333333333333"} {
@@ -673,7 +675,7 @@ func TestRunStatusHidesConversations(t *testing.T) {
 	// disappear, and the other one proves the fixture reaches the list at all.
 	storeClaudeSession(t, conversation, opts.projectsDir)
 	storeClaudeSession(t, coderSession, opts.projectsDir)
-	assistant.NewStore(opts.stateDir).Save(assistant.Conversation{
+	assistant.NewStore(opts.stateDir).Save(assistant.Instance{
 		Summary:         assistant.Summary{ID: conversation, Title: "a conversation", CoderID: "claude", Status: assistant.StatusActive},
 		NativeSessionID: conversation,
 	})
@@ -711,93 +713,95 @@ func storeClaudeSession(t *testing.T, id, cwd string) {
 
 // The startup sweep deletes provider sessions a killed check left behind. What
 // it may not delete is a coder somebody named like one: the name is user text,
-// the working directory is not.
+// the working directory is not, it has to be an assistant's workspace.
 func TestTheSweepNeedsBothTheNameAndTheWorkspace(t *testing.T) {
-	workspace := "/var/lib/dc/assistant/workspace"
+	workspace := "/var/lib/dc/assistant/instances/11111111-1111-4111-8111-111111111111/workspace"
+	own := func(dir string) bool { return dir == workspace }
 	stray := coder.Session{SessionID: "a", Name: "cockpit check: New conversation", CWD: workspace}
-	if !isStrayCheckSession(stray, workspace) {
-		t.Fatal("a check session in the assistant workspace has to be swept")
+	if !isStrayCheckSession(stray, own) {
+		t.Fatal("a check session in an assistant workspace has to be swept")
 	}
 	for _, kept := range []coder.Session{
 		{SessionID: "b", Name: "cockpit check: New conversation", CWD: "/root/projects/demo"},
 		{SessionID: "c", Name: "readme-task", CWD: workspace},
 		{SessionID: "d", Name: "cockpit check: mine", CWD: ""},
 	} {
-		if isStrayCheckSession(kept, workspace) {
+		if isStrayCheckSession(kept, own) {
 			t.Fatalf("a coder that is not a stray check was swept: %+v", kept)
 		}
 	}
-	// A trailing slash is the same directory, not a different one.
-	if !isStrayCheckSession(coder.Session{Name: "cockpit check: x", CWD: workspace + "/"}, workspace) {
-		t.Fatal("the same directory spelled differently was kept")
-	}
 }
 
-// The conversation-list command goes through the running cockpit like coder-activity, so
-// the test is about the request it makes and the page it prints: capped like
-// the status list, with the dropped tail counted instead of hidden.
-func TestConversationsListsCapsAndNamesTheDroppedTail(t *testing.T) {
+// The assistant-list command goes through the running cockpit like coder-activity,
+// so the test is about the request it makes and the page it prints: capped like
+// the status list, with the dropped tail counted instead of hidden, and the
+// caller's own row marked so a turn knows which line is itself.
+func TestAssistantListCapsAndNamesTheDroppedTail(t *testing.T) {
 	var gotPath, gotQuery string
 	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
 		var entries []string
-		for i := 0; i < maxConversationsShown+2; i++ {
+		for i := 0; i < maxAssistantsShown+2; i++ {
 			entries = append(entries, fmt.Sprintf(
-				`{"id":"conv-%d","title":"Task %d","coderId":"claude","lastMessageAt":"2026-03-04T09:30:00Z","preview":"what the answer said"}`, i, i))
+				`{"id":"conv-%d","title":"Task %d","coderId":"claude","lastMessageAt":"2026-03-04T09:30:00Z","preview":"what the answer said","openJobs":%d}`, i, i, i))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"conversations":[` + strings.Join(entries, ",") + `]}`))
+		_, _ = w.Write([]byte(`{"assistants":[` + strings.Join(entries, ",") + `]}`))
 	})
 
 	var out strings.Builder
-	if err := runConversations(&out, inspectOptions{stateDir: dir}, ""); err != nil {
-		t.Fatalf("conversation-list: %v", err)
+	if err := runAssistants(&out, inspectOptions{stateDir: dir, assistantID: "conv-1"}, ""); err != nil {
+		t.Fatalf("assistant-list: %v", err)
 	}
-	if gotPath != "/assistant/conversations" || gotQuery != "" {
-		t.Fatalf("want the bare conversations route, got %q with query %q", gotPath, gotQuery)
+	if gotPath != assistantsPath || gotQuery != "" {
+		t.Fatalf("want the bare assistants route, got %q with query %q", gotPath, gotQuery)
 	}
 	for _, want := range []string{
-		fmt.Sprintf("Assistant conversations (%d)", maxConversationsShown+2),
+		fmt.Sprintf("Assistants (%d)", maxAssistantsShown+2),
 		"claude", `"Task 0"`, "id conv-0", "what the answer said", "last message ",
-		"and 2 older",
+		"steering 1", "* is you", "and 2 older",
 	} {
 		if !strings.Contains(out.String(), want) {
-			t.Fatalf("conversation-list output is missing %q:\n%s", want, out.String())
+			t.Fatalf("assistant-list output is missing %q:\n%s", want, out.String())
 		}
 	}
-	if got := strings.Count(out.String(), "id conv-"); got != maxConversationsShown {
-		t.Fatalf("want %d printed entries, got %d:\n%s", maxConversationsShown, got, out.String())
+	if got := strings.Count(out.String(), "id conv-"); got != maxAssistantsShown {
+		t.Fatalf("want %d printed entries, got %d:\n%s", maxAssistantsShown, got, out.String())
+	}
+	if !strings.Contains(out.String(), `*claude    "Task 1"`) {
+		t.Fatalf("want the caller's own row marked:\n%s", out.String())
 	}
 }
 
 // --contains travels as a query the server filters by, the command only caps
 // and prints. An empty answer still says what was searched.
-func TestConversationsPassesTheContainsWord(t *testing.T) {
+func TestAssistantListPassesTheContainsWord(t *testing.T) {
 	var gotQuery string
 	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"conversations":[]}`))
+		_, _ = w.Write([]byte(`{"assistants":[]}`))
 	})
 
 	var out strings.Builder
-	if err := runConversations(&out, inspectOptions{stateDir: dir}, "release notes"); err != nil {
-		t.Fatalf("conversation-list: %v", err)
+	if err := runAssistants(&out, inspectOptions{stateDir: dir}, "release notes"); err != nil {
+		t.Fatalf("assistant-list: %v", err)
 	}
 	if gotQuery != "contains=release+notes" {
 		t.Fatalf("want the escaped word in the query, got %q", gotQuery)
 	}
 	for _, want := range []string{`containing "release notes" (0)`, "none"} {
 		if !strings.Contains(out.String(), want) {
-			t.Fatalf("conversation-list output is missing %q:\n%s", want, out.String())
+			t.Fatalf("assistant-list output is missing %q:\n%s", want, out.String())
 		}
 	}
 }
 
-// The conversation-show command reads one transcript through the same query shape
+// The assistant-show command reads one transcript through the same query shape
 // coder-activity uses: entries and full travel to the server, and what the server
-// cut stands in the output as it came, note included.
-func TestConversationReadsOneTranscript(t *testing.T) {
+// cut stands in the output as it came, note included. The id may be another
+// assistant's, reading across is the point of it.
+func TestAssistantShowReadsOneTranscript(t *testing.T) {
 	var gotPath, gotQuery string
 	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
@@ -808,26 +812,77 @@ func TestConversationReadsOneTranscript(t *testing.T) {
 	})
 
 	var out strings.Builder
-	if err := runConversation(&out, inspectOptions{stateDir: dir}, "abc", 0, false); err != nil {
-		t.Fatalf("conversation-show: %v", err)
+	if err := runAssistantShow(&out, inspectOptions{stateDir: dir}, "abc", 0, false); err != nil {
+		t.Fatalf("assistant-show: %v", err)
 	}
-	if gotPath != "/assistant/conversations/abc" || gotQuery != "" {
-		t.Fatalf("want the bare conversation route, got %q with query %q", gotPath, gotQuery)
+	if gotPath != assistantsPath+"/abc" || gotQuery != "" {
+		t.Fatalf("want the bare assistant route, got %q with query %q", gotPath, gotQuery)
 	}
-	if err := runConversation(&out, inspectOptions{stateDir: dir}, "abc", 3, true); err != nil {
-		t.Fatalf("conversation-show with entries and full: %v", err)
+	if err := runAssistantShow(&out, inspectOptions{stateDir: dir}, "abc", 3, true); err != nil {
+		t.Fatalf("assistant-show with entries and full: %v", err)
 	}
 	if gotQuery != "entries=3&full=1" {
 		t.Fatalf("want entries and full in the query, got %q", gotQuery)
 	}
 	for _, want := range []string{
-		`Conversation "Fix the tabs" with coder claude, 8 messages.`,
+		`Assistant "Fix the tabs" on coder claude, 8 messages.`,
 		"Showing the last 2; 6 older are not shown",
 		"[user ", "[assistant ",
 		"write the README", "runes shown, use --full",
 	} {
 		if !strings.Contains(out.String(), want) {
-			t.Fatalf("conversation-show output is missing %q:\n%s", want, out.String())
+			t.Fatalf("assistant-show output is missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// testJobStore is one assistant's job store in a fresh state directory: the
+// jobs live inside the assistant that steers them now, so a test that is about
+// the listing still needs one to hang them on.
+func testJobStore(t *testing.T, stateDir string) *assistant.JobStore {
+	t.Helper()
+	const owner = "11111111-1111-4111-8111-111111111111"
+	store := assistant.NewStore(stateDir)
+	store.Save(assistant.Instance{Summary: assistant.Summary{
+		ID: owner, Title: "Release work", CoderID: "claude", Status: assistant.StatusActive,
+	}})
+	return assistant.NewJobs(store).Of(owner)
+}
+
+// A listing that spans several assistants names who steers each job, and a
+// listing of your own does not: in your own list the answer is always you.
+func TestJobsOutputNamesTheOwnerOnlyAcrossAssistants(t *testing.T) {
+	mine := jobLine{Terminal: "aaa", Name: "readme-task", State: "steering", Open: true, MaxWakes: 10, DoneWhen: "x"}
+	theirs := mine
+	theirs.OwnerName = "Side quest"
+
+	own := formatJobs(jobsReport{Now: time.Now(), Jobs: []jobLine{mine}})
+	if strings.Contains(own, "steered by") {
+		t.Fatalf("your own list must not repeat who steers every job:\n%s", own)
+	}
+	across := formatJobs(jobsReport{Now: time.Now(), Jobs: []jobLine{theirs}, Owners: true})
+	if !strings.Contains(across, "steered by: Side quest") {
+		t.Fatalf("want the owner named across assistants:\n%s", across)
+	}
+	if !strings.Contains(across, "only the user can take it off them") {
+		t.Fatalf("want the ownership rule spelled out across assistants:\n%s", across)
+	}
+}
+
+// Whose jobs a call is about: the --assistant flag wins, then the caller's
+// own from the group's --as, and a shell without one sees everybody's, which
+// is the honest answer to a question nobody can attribute.
+func TestJobsOwnerFallsBackToTheCallersOwnID(t *testing.T) {
+	if owner, everybody := jobsOwner("", "mine"); owner != "mine" || everybody {
+		t.Fatalf("want the caller's own, got %q %v", owner, everybody)
+	}
+	if owner, everybody := jobsOwner("ALL", "mine"); owner != "" || !everybody {
+		t.Fatalf("want every assistant's, got %q %v", owner, everybody)
+	}
+	if owner, everybody := jobsOwner("theirs", "mine"); owner != "theirs" || everybody {
+		t.Fatalf("want the named assistant's, got %q %v", owner, everybody)
+	}
+	if owner, everybody := jobsOwner("", ""); owner != "" || !everybody {
+		t.Fatalf("want everybody's without a turn, got %q %v", owner, everybody)
 	}
 }

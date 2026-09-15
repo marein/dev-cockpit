@@ -1,39 +1,34 @@
-{{/* The assistant's list column: the conversation that still takes messages
-     under its own head, the earlier ones under theirs, the new conversation
-     control in the head. The column is a dc-assistant-list, so it refreshes
-     itself on the assistant event from /ctx/assistant and its rows carry the
-     conversation menu; the phone's sheet adopts the same element. */}}
+{{/* The assistant's list column: every assistant that lives, in the order the
+     rows were dragged into, and the control that makes another one in the
+     head. There is no current one and no earlier ones, they all take messages;
+     what tells them apart is the name, what each one holds and what it is
+     doing. The row of the assistant on screen is the marked one, here and in
+     the phone's sheet, which is this same column. The column is
+     a dc-assistant-list, so it refreshes itself on the assistant event from
+     /ctx/assistants and its rows carry the assistant menu; the phone's sheet
+     adopts the same element. */}}
 {{define "assistant_ctx.gohtml"}}
-<dc-assistant-list class="dc-ctx d-print-none" list-url="/ctx/assistant?path={{urlquery .Path}}" history data-assistant-rows>
+<dc-assistant-list class="dc-ctx d-print-none" list-url="/ctx/assistants?path={{urlquery .Path}}" history data-assistant-rows>
   <div class="dc-ctx-head">
     <button type="button" class="btn btn-icon btn-ghost-secondary dc-work-toggle" data-dc-focus="work" aria-label="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></button>
-    <h1 class="dc-ctx-title">Assistant</h1>
+    <h1 class="dc-ctx-title">Assistants</h1>
     <div class="dc-ctx-tools">
-      <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="offcanvas" data-bs-target="#assistant-memory" aria-label="Memory" title="What the assistant knows about you" data-assistant-memory-button><i class="ti ti-brain" aria-hidden="true"></i></button>
+      <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="offcanvas" data-bs-target="#assistant-memory" aria-label="Memory" title="What the assistants know about you" data-assistant-memory-button><i class="ti ti-brain" aria-hidden="true"></i></button>
       {{if .Available}}{{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .NewCoderID "ContextPercent" 0 "NoRing" true "NewClass" "btn btn-icon btn-ghost-secondary" "Prefix" .IDPrefix)}}{{end}}
     </div>
   </div>
+  {{template "ctx_filter.gohtml" "Filter assistants…"}}
   <div class="dc-ctx-body">
     {{if .Available}}{{template "assistant_new_forms.gohtml" (dict "Coders" .Coders "CoderID" .NewCoderID "PostURL" .PostURL "CSRFToken" .CSRFToken "Prefix" .IDPrefix)}}{{end}}
     <div data-assistant-body>
       {{if not .Available}}
-      <div class="p-3 text-secondary small">No installed coder can run the assistant right now.</div>
+      <div class="p-3 text-secondary small">No installed coder can run an assistant right now.</div>
+      {{else if .Assistants}}
+      <nav class="list-group list-group-flush dc-rows" aria-label="Assistants">
+        {{range .Assistants}}{{template "assistant_ctx_row.gohtml" (dict "Card" . "Active" (eq .ID $.ActiveID))}}{{end}}
+      </nav>
       {{else}}
-      {{with .Current}}
-      <div class="dc-section-head"><i class="ti ti-activity" aria-hidden="true"></i>{{if $.Answering}}Answering{{else}}Current{{end}}</div>
-      <nav class="list-group list-group-flush dc-rows" aria-label="Current conversation">
-        {{template "assistant_ctx_row.gohtml" (dict "Card" . "Active" (eq .ID $.ActiveID))}}
-      </nav>
-      {{end}}
-      {{if .Earlier}}
-      <div class="dc-section-head"><i class="ti ti-history" aria-hidden="true"></i>Earlier<span class="badge bg-secondary-lt ms-auto">{{len .Earlier}}</span></div>
-      <nav class="list-group list-group-flush dc-rows" aria-label="Earlier conversations" data-assistant-earlier>
-        {{range .Earlier}}{{template "assistant_ctx_row.gohtml" (dict "Card" . "Active" (eq .ID $.ActiveID))}}{{end}}
-      </nav>
-      {{end}}
-      {{if and (not .Current) (not .Earlier)}}
-      <div class="p-3 text-secondary small">Nothing here yet. The button above starts a conversation.</div>
-      {{end}}
+      <div class="p-3 text-secondary small">No assistant yet. The button above starts one.</div>
       {{end}}
     </div>
   </div>
@@ -41,20 +36,28 @@
 </dc-assistant-list>
 {{end}}
 
-{{/* One conversation row. The two states a turn can leave behind are apart in
+{{/* One assistant's row. The two states a turn can leave behind are apart in
      the model, so nothing is guessed here: while the turn runs the icon carries
      the working ring, and only a turn that stopped before it was done wears the
-     Unfinished badge. */}}
+     Unfinished badge. The open job count sits on the row because with several
+     assistants that is the question a glance has to answer, who is holding
+     what, and the news mark says which one of them rang. */}}
 {{define "assistant_ctx_row.gohtml"}}
 {{with .Card}}
-<div class="list-group-item list-group-item-action{{if $.Active}} active{{end}}" data-assistant-conversation="{{.ID}}" data-conversation-url="{{.URL}}">
-  <span class="dc-term-icon assistant{{if .Running}} working{{end}}" aria-hidden="true"><i class="ti ti-sparkles"></i></span>
-  <a class="d-flex flex-column min-w-0 flex-fill text-reset text-decoration-none" href="{{.URL}}">
-    <span class="d-flex align-items-center gap-2 min-w-0"><span class="dc-trunc">{{if .Title}}{{.Title}}{{else}}New conversation{{end}}</span>{{if .Unfinished}}<span class="badge bg-orange-lt">Unfinished</span>{{end}}</span>
+<div class="list-group-item list-group-item-action{{if $.Active}} active{{end}}" data-assistant-instance="{{.ID}}" data-assistant-url="{{.URL}}" data-assistant-name="{{.Title}}">
+  <span class="dc-term-icon assistant{{if .Running}} working{{end}}{{if .News}} news{{end}}" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml"}}</span>
+  <a class="d-flex flex-column min-w-0 flex-fill text-reset text-decoration-none" href="{{.URL}}" draggable="false">
+    {{/* The badges keep the right edge of the row, whatever the name is: what
+         they say is read down the column, so a title long enough to truncate
+         must not carry them out of line with the rows above and below. */}}
+    <span class="d-flex align-items-center gap-2 min-w-0"><span class="dc-trunc">{{if .Title}}{{.Title}}{{else}}New assistant{{end}}</span>{{if or .OpenJobs .Unfinished}}<span class="d-flex align-items-center gap-2 ms-auto flex-shrink-0">{{if .OpenJobs}}<span class="badge bg-purple-lt" title="Steers {{.OpenJobs}} coder{{if ne .OpenJobs 1}}s{{end}}"><i class="ti ti-steering-wheel me-1" aria-hidden="true"></i>{{.OpenJobs}}</span>{{end}}{{if .Unfinished}}<span class="badge bg-orange-lt">Unfinished</span>{{end}}</span>{{end}}</span>
     <span class="text-secondary small dc-trunc">{{.CoderLabel}} · {{.Messages}} message{{if ne .Messages 1}}s{{end}}{{if .Updated}} · <dc-time datetime="{{.Updated}}"></dc-time>{{end}}</span>
-    {{if .Preview}}<span class="text-secondary small dc-trunc">{{.Preview}}</span>{{end}}
   </a>
-  <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary flex-shrink-0" aria-label="Conversation actions" title="Actions" data-conversation-menu><i class="ti ti-dots" aria-hidden="true"></i></button>
+  <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary flex-shrink-0" aria-label="Assistant actions" title="Actions" data-assistant-menu><i class="ti ti-dots" aria-hidden="true"></i></button>
+  {{/* The grip is the phone's way into the drag and stands where the strip's
+       stands, at the end of the row behind the three dots: a touch anywhere
+       else scrolls the list, a mouse drags the whole row. */}}
+  <span class="dc-row-grip d-lg-none" data-assistant-grip aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
 </div>
 {{end}}
 {{end}}

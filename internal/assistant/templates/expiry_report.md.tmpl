@@ -1,0 +1,7 @@
+I stopped steering **{{name .Job}}**{{with .Job.Project}} in {{.}}{{end}}: {{.Reason}}, so nothing checks this job any more.
+
+Done when: {{doneWhenLine .Job.DoneWhen}}
+
+{{with .Job.Note}}The last check said: {{.}}
+
+{{end}}Tell me if you want another look at it.

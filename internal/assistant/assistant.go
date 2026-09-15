@@ -1,34 +1,49 @@
-// Package assistant is the cockpit's own conversation: one conversation with an
-// installed coder that is bound to the cockpit instead of to a project.
+// Package assistant is the cockpit's own conversation partner. There may be
+// several of them at once: every instance is one assistant with a name, a
+// transcript, a workspace of its own and the coder jobs it steers, and it lives
+// until somebody deletes it. Nothing is archived and none of them is "the" live
+// one.
 //
-// A conversation is a real provider session driven in non-interactive mode. The
+// An instance is a real provider session driven in non-interactive mode. The
 // cockpit keeps the readable transcript, the conversation context lives in the
 // provider's own session and is resumed by id on every turn.
 //
-// One substrate, one binding. The substrate is the conversation, its store, the
+// One substrate, one binding. The substrate is the instance, its store, the
 // streaming and the process handling; the binding is what makes it the
 // assistant: its own store paths, a working directory of its own, the memory the
-// user can see and edit, and the jobs it steers. The working directory
-// deliberately sits next to the cockpit state, never on top of it: the state
+// user can see and edit, and the jobs it steers. The working directories
+// deliberately sit next to the cockpit state, never on top of it: the state
 // directory holds webhook URLs and push keys, and no coder gets those as its
 // default file scope.
+//
+// What is shared and what is not is a deliberate line. The memory is shared,
+// because what the user told one assistant is true for all of them. Everything
+// that belongs to one conversation sits in that instance's own directory, the
+// transcript, the jobs, the draft and the workspace it works in, and that
+// separation is order, not protection: an instance may read another's
+// transcript and another's workspace, it only ever writes into its own. The
+// generated instruction files are one instance's too, they carry its identity.
 //
 // This package must not import internal/coder. The coder package refers to
 // assistant.Runner for its optional conversation capability, so an import in the
 // other direction would close a cycle. Everything this package needs from the
 // coder side arrives through the small interfaces in runner.go, wired in main.
 //
-//	<state-dir>/assistant/assistant.json          the conversation index
-//	<state-dir>/assistant/conversations/<id>.json one transcript
-//	<state-dir>/assistant/workspace               the working directory
-//	<state-dir>/assistant/workspace/memory        one markdown file per fact
-//	<state-dir>/assistant/workspace/user-upload/<id> what a message carried
+//	<state-dir>/assistant/assistant.json                                 the index of instances
+//	<state-dir>/assistant/memory                                         one markdown file per fact, shared
+//	<state-dir>/assistant/instances/<id>/transcript.json                 one transcript
+//	<state-dir>/assistant/instances/<id>/jobs.json                       the jobs it steers
+//	<state-dir>/assistant/instances/<id>/workspace                       the working directory of its turns
+//	<state-dir>/assistant/instances/<id>/workspace/CLAUDE.md, AGENTS.md  its generated instructions
+//	<state-dir>/assistant/instances/<id>/workspace/assistant-files       what it wrote
+//	<state-dir>/assistant/instances/<id>/workspace/user-upload           what a message carried
 package assistant
 
 import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +56,7 @@ const Name = "Assistant"
 
 // Cockpit is how a turn looks at the cockpit itself: the absolute path of the
 // running binary plus the arguments that point its read only inspection
-// commands at this instance's data. Passing the resolved path means the
+// commands at this cockpit's data. Passing the resolved path means the
 // assistant never depends on where the binary sits or on PATH.
 type Cockpit struct {
 	Executable  string
@@ -58,49 +73,71 @@ type Cockpit struct {
 	RepoURL string
 }
 
-// Workspace owns the assistant's directories and its memory. The
-// conversations themselves live in the Service built by New.
+// Workspace owns the directories the instances work in and the shared memory.
+// The instances themselves live in the Service built by New.
 type Workspace struct {
-	root       string
-	workspace  string
-	memoryDir  string
-	uploadRoot string
-	cockpit    Cockpit
+	root      string
+	indexPath string
+	instances string
+	memoryDir string
+	cockpit   Cockpit
 }
 
 // Paths returns the assistant's store locations for a state directory. The
 // inspection commands build the same store to know which provider sessions
-// belong to a conversation, so the layout lives in one place.
-func Paths(stateDir string) (index, conversations, uploads string) {
-	root := filepath.Join(stateDir, "assistant")
+// belong to an instance, so the layout lives in one place.
+func Paths(stateDir string) (index, instances, memory string) {
+	root := Root(stateDir)
 	return filepath.Join(root, "assistant.json"),
-		filepath.Join(root, "conversations"),
-		filepath.Join(root, "workspace", "user-upload")
+		filepath.Join(root, "instances"),
+		filepath.Join(root, "memory")
 }
 
+// Root is the one directory everything about the assistant sits under.
+func Root(stateDir string) string { return filepath.Join(stateDir, "assistant") }
+
+// FilesDirName is the folder inside an instance's workspace it writes its own
+// files into. Named here because three places need the same word: the
+// directory that is created, the instructions that tell an instance where to
+// write, and the store that deletes it with the instance.
+const FilesDirName = "assistant-files"
+
+// uploadDirName is the folder inside an instance's workspace the files a
+// message carried are stored in.
+const uploadDirName = "user-upload"
+
+// workspaceDirName is the folder inside an instance's directory its turns run
+// in, the one directory of the instance a coder gets as its default scope.
+const workspaceDirName = "workspace"
+
 // New wires the assistant over the installed coders and returns both halves:
-// the conversation service that drives the conversations and the assistant service
-// that owns workspace and memory. cockpit describes how a turn can look at
-// the cockpit itself, it may be empty.
+// the service that drives the instances and the workspace that owns their
+// directories and the memory. cockpit describes how a turn can look at the
+// cockpit itself, it may be empty.
 func New(stateDir string, coders Coders, cockpit Cockpit) (*Service, *Workspace, error) {
-	index, conversations, uploads := Paths(stateDir)
-	root := filepath.Join(stateDir, "assistant")
+	index, instances, memory := Paths(stateDir)
 	s := &Workspace{
-		root:       root,
-		workspace:  filepath.Join(root, "workspace"),
-		memoryDir:  filepath.Join(root, "workspace", "memory"),
-		uploadRoot: uploads,
-		cockpit:    cockpit,
+		root:      Root(stateDir),
+		indexPath: index,
+		instances: instances,
+		memoryDir: memory,
+		cockpit:   cockpit,
+	}
+	// The move comes first: it is what puts the memory where ensure would
+	// otherwise create an empty one.
+	if err := migrate(s.root, index, instances, memory); err != nil {
+		return nil, nil, err
 	}
 	if err := s.ensure(); err != nil {
 		return nil, nil, err
 	}
-	store := NewStoreAt(index, conversations, uploads)
-	return newService(store, NewRunStore(stateDir), syncingCoders{coders: coders, sync: s.Sync}, s), s, nil
+	store := NewStoreAt(index, instances)
+	store.SweepOrphans()
+	return newService(store, NewRunStore(stateDir), preparingCoders{coders: coders, workspace: s}, s), s, nil
 }
 
 func (s *Workspace) ensure() error {
-	for _, dir := range []string{s.workspace, s.memoryDir, s.uploadRoot} {
+	for _, dir := range []string{s.instances, s.memoryDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create assistant directory %s: %w", dir, err)
 		}
@@ -108,56 +145,96 @@ func (s *Workspace) ensure() error {
 	return s.Sync()
 }
 
-// Workspace is the working directory every turn runs in.
-func (s *Workspace) Workspace() string { return s.workspace }
+// Dir is the workspace of one instance, the directory its turns run in. It is
+// the path alone; Workdir is what creates it.
+func (s *Workspace) Dir(instanceID string) string {
+	return filepath.Join(s.instances, instanceID, workspaceDirName)
+}
 
-// ValidatePath implements conversation.Projects. The assistant is bound to its
-// workspace and to nothing else, so an empty binding resolves to it and any
-// other path is refused.
-func (s *Workspace) ValidatePath(raw string) (string, error) {
-	dir := strings.TrimSpace(raw)
-	if dir == "" || dir == s.workspace {
-		if info, err := os.Stat(s.workspace); err != nil || !info.IsDir() {
-			if err := s.ensure(); err != nil {
-				return "", errors.New("The assistant workspace is not available.")
-			}
-		}
-		return s.workspace, nil
+// Workdir implements Projects: the workspace of one instance, created when it
+// is missing. An assistant comes to its directory the way every directory here
+// comes to be, on first use: the turn that needs it creates it, and so does a
+// path that is about to be handed out. The files folder is created with it,
+// because the instructions name that folder as the place to write and it has
+// to exist before the first turn runs.
+func (s *Workspace) Workdir(instanceID string) (string, error) {
+	if !ValidID(instanceID) {
+		return "", errors.New("Invalid assistant.")
 	}
-	return "", errors.New("The assistant runs in its own workspace.")
+	dir := s.Dir(instanceID)
+	if err := os.MkdirAll(filepath.Join(dir, FilesDirName), 0o700); err != nil {
+		return "", errors.New("The assistant workspace is not available.")
+	}
+	return dir, nil
 }
 
-// ProjectNameFor implements conversation.Projects. The assistant has no project, and
-// an empty name keeps the project badge off its pages.
-func (s *Workspace) ProjectNameFor(string) string { return "" }
-
-// syncingCoders refreshes the generated instruction files before a turn
-// starts. The assistant edits its own memory with its normal file tools, so
-// the files a coder reads at startup have to be rebuilt from the memory
-// directory right before the coder reads them, not only when the UI writes.
-type syncingCoders struct {
-	coders Coders
-	sync   func() error
+// IsWorkdir reports whether dir is the workspace of some instance, one that
+// exists or one that is gone. The check session sweep asks it: a check always
+// runs in the workspace of the assistant whose job it is, so a stray check
+// session is recognized by where it ran, whoever that assistant was.
+func (s *Workspace) IsWorkdir(dir string) bool {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return false
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	rel, err := filepath.Rel(s.instances, filepath.Clean(dir))
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	return len(parts) == 2 && ValidID(parts[0]) && parts[1] == workspaceDirName
 }
 
-func (c syncingCoders) Available() []CoderInfo {
+// Prepare is what runs right before a turn starts in an instance's workspace:
+// the directory exists and its instruction files are rebuilt from the memory.
+// The assistant edits its own memory with its normal file tools, so the files
+// a coder reads at startup have to be rebuilt right before the coder reads
+// them, not only when the UI writes.
+func (s *Workspace) Prepare(instanceID string) error {
+	if _, err := s.Workdir(instanceID); err != nil {
+		return err
+	}
+	return s.syncInstance(instanceID)
+}
+
+// preparingCoders readies an instance's workspace before a turn starts in it:
+// the instruction files, and the trust the coder's CLI wants for a directory
+// it has never seen.
+type preparingCoders struct {
+	coders    Coders
+	workspace *Workspace
+}
+
+func (c preparingCoders) Available() []CoderInfo {
 	all := c.coders.Available()
 	out := make([]CoderInfo, 0, len(all))
 	for _, info := range all {
-		info.Runner = syncingRunner{Runner: info.Runner, sync: c.sync}
+		info.Runner = preparingRunner{Runner: info.Runner, workspace: c.workspace}
 		out = append(out, info)
 	}
 	return out
 }
 
-type syncingRunner struct {
+type preparingRunner struct {
 	Runner
-	sync func() error
+	workspace *Workspace
 }
 
-func (r syncingRunner) Command(req TurnRequest) (Command, error) {
-	if err := r.sync(); err != nil {
-		return Command{}, errors.New("The assistant memory could not be prepared.")
+func (r preparingRunner) Command(req TurnRequest) (Command, error) {
+	if err := r.workspace.Prepare(req.Instance); err != nil {
+		return Command{}, errors.New("The assistant workspace could not be prepared.")
+	}
+	// A CLI that stops an unknown directory on its trust dialog would hold
+	// this turn there, and a non interactive turn cannot answer. Best effort
+	// on purpose, like the coder manager's: a CLI whose config cannot be
+	// written still gets its turn, and the reason goes to the log.
+	if truster, ok := r.Runner.(WorkdirTruster); ok {
+		if err := truster.TrustWorkdir(req.Workdir); err != nil {
+			log.Printf("assistant: %s was not marked as trusted, the turn may come up on the trust dialog: %v", req.Workdir, err)
+		}
 	}
 	return r.Runner.Command(req)
 }
@@ -190,15 +267,21 @@ func MediaKind(name string) string {
 }
 
 // ResolveWorkspaceFile turns a path an answer mentions into an absolute path
-// inside the workspace. Anything pointing outside is refused, so a rendered
-// answer can never link to a file the assistant does not own.
-func (s *Workspace) ResolveWorkspaceFile(rel string) (string, error) {
+// inside that instance's workspace. Anything pointing outside is refused, so a
+// rendered answer can never link to a file the assistant does not own: a link
+// is read in the workspace of the assistant whose answer carries it, which is
+// where its instructions tell it to write.
+func (s *Workspace) ResolveWorkspaceFile(instanceID, rel string) (string, error) {
+	if !ValidID(instanceID) {
+		return "", errors.New("Invalid assistant.")
+	}
 	clean := strings.TrimSpace(rel)
 	if clean == "" {
 		return "", errors.New("A file is required.")
 	}
-	target := filepath.Join(s.workspace, filepath.FromSlash(clean))
-	if !filesystem.IsUnder(target, s.workspace) {
+	workspace := s.Dir(instanceID)
+	target := filepath.Join(workspace, filepath.FromSlash(clean))
+	if !filesystem.IsUnder(target, workspace) {
 		return "", errors.New("Refusing to access a file outside the assistant workspace.")
 	}
 	// The name alone is not the file. The assistant writes into this workspace,
@@ -209,9 +292,9 @@ func (s *Workspace) ResolveWorkspaceFile(rel string) (string, error) {
 	if err != nil {
 		return "", errors.New("File not found.")
 	}
-	root, err := filepath.EvalSymlinks(s.workspace)
+	root, err := filepath.EvalSymlinks(workspace)
 	if err != nil {
-		root = s.workspace
+		root = workspace
 	}
 	if !filesystem.IsUnder(real, root) {
 		return "", errors.New("Refusing to access a file outside the assistant workspace.")

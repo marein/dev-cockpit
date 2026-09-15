@@ -5,8 +5,9 @@ import "github.com/marein/dev-cockpit/internal/notify"
 // The Terminals button of the rail and the tabbar says that a terminal has
 // news, and a terminal is a coder or a shell. What only runs in one is not one
 // and has no business in that mark: a compose action, a backup job, a standing
-// git question, and the assistant, which carries its own mark on its own
-// button. The bell is the one surface that still counts all of it.
+// git question, and the assistants, which carry their own mark on their own
+// button and get their own narrowing below. The bell is the one surface that
+// still counts all of it.
 //
 // The test is positive and asked of the session lists rather than of the id's
 // shape: a target kind nobody has thought of yet does not count until a coder
@@ -89,8 +90,40 @@ type notifyPayload struct {
 	// Terminals news dot reads. Targets itself stays whole, the bell counts
 	// from it.
 	Terminals []string `json:"terminals"`
+	// Assistants is the same narrowing for the assistant area, and it needs one
+	// of its own for the same reason: its entry points carry one dot for the
+	// whole area, so they ask whether any assistant is new, not whether a
+	// particular one is. Naming a single assistant on the mark is what made it
+	// stay dark for news in every other one.
+	Assistants []string `json:"assistants"`
 }
 
 func (s *Server) notifyPayload(ev notify.Event) notifyPayload {
-	return notifyPayload{Event: ev, Terminals: s.terminalTargets(ev.Targets)}
+	return notifyPayload{
+		Event:      ev,
+		Terminals:  s.terminalTargets(ev.Targets),
+		Assistants: s.assistantTargets(ev.Targets),
+	}
+}
+
+// assistantTargets keeps the targets an assistant answers to, in the order they
+// came in. It asks the index, the same list every render of the area reads, so
+// an assistant that was deleted while its news stood drops out of the mark and
+// keeps its entry in the bell, exactly like a deleted terminal does.
+func (s *Server) assistantTargets(ids []string) []string {
+	out := []string{}
+	if len(ids) == 0 || s.assistants == nil {
+		return out
+	}
+	known := map[string]bool{}
+	for _, entry := range s.assistants.List() {
+		known[entry.ID] = true
+	}
+	for _, id := range ids {
+		if known[id] {
+			out = append(out, id)
+			delete(known, id)
+		}
+	}
+	return out
 }

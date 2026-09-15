@@ -13,8 +13,8 @@ import (
 	"github.com/marein/dev-cockpit/internal/notify"
 )
 
-// oneCoder is an assistant with a single installed coder, enough to open a
-// conversation. The runner stays nil, this test never runs a turn.
+// oneCoder is a single installed coder, enough to start an assistant. The
+// runner stays nil, this test never runs a turn.
 type oneCoder struct{}
 
 func (oneCoder) Available() []assistant.CoderInfo {
@@ -22,11 +22,11 @@ func (oneCoder) Available() []assistant.CoderInfo {
 }
 
 // The page's reads must leave the notification unread. The page pulls its
-// conversation, its list column and its memory again on every assistant
-// event, in background windows too, so a server side read in any of them
-// would land before the push dispatcher re-checks unread, and assistant news
-// would never toast, jingle or push. Reading is the client's decision, posted
-// only for a surface that is visible in a focused window.
+// thread, its list column and its memory again on every assistant event, in
+// background windows too, so a server side read in any of them would land
+// before the push dispatcher re-checks unread, and assistant news would never
+// toast, jingle or push. Reading is the client's decision, posted only for a
+// surface that is visible in a focused window.
 func TestThePageReadsLeaveTheNotificationUnread(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	stateDir := t.TempDir()
@@ -34,9 +34,9 @@ func TestThePageReadsLeaveTheNotificationUnread(t *testing.T) {
 	if err != nil {
 		t.Fatalf("assistant: %v", err)
 	}
-	current, err := conversations.Open("")
+	current, err := conversations.Create("")
 	if err != nil {
-		t.Fatalf("open conversation: %v", err)
+		t.Fatalf("create the assistant: %v", err)
 	}
 	notifier := notify.NewService(filepath.Join(stateDir, "notifications.json"), nil)
 	notifier.Add(current.ID)
@@ -44,10 +44,10 @@ func TestThePageReadsLeaveTheNotificationUnread(t *testing.T) {
 		t.Fatalf("the notification has to start unread")
 	}
 	s := &Server{
-		conversations: conversations,
-		assistant:     workspace,
-		watcher:       assistant.NewWatcher(conversations, assistant.NewJobStore(stateDir), nil),
-		notifier:      notifier,
+		assistants: conversations,
+		workspace:  workspace,
+		watcher:    assistant.NewWatcher(conversations, assistant.NewJobs(assistant.NewStore(stateDir)), nil, nil),
+		notifier:   notifier,
 	}
 
 	// The three reads the page is made of, behind the session middleware the
@@ -55,24 +55,24 @@ func TestThePageReadsLeaveTheNotificationUnread(t *testing.T) {
 	// which needs the whole server; the reads are what could mark anything.
 	r := gin.New()
 	r.Use(ginsessions.Sessions("session", cookie.NewStore([]byte("test-key"))))
-	r.GET("/assistant/:id", func(c *gin.Context) {
-		conversation, err := s.conversations.Get(c.Param("id"))
+	r.GET("/assistants/:id", func(c *gin.Context) {
+		instance, err := s.assistants.Get(c.Param("id"))
 		if err != nil {
 			c.String(http.StatusNotFound, err.Error())
 			return
 		}
-		data := s.assistantData(conversation, false)
+		data := s.assistantData(instance, false)
 		data.Ctx = s.assistantCtxData(c, data.Path, "assistant-ctx-new")
 		_ = s.assistantMemoryData(c, "memory")
-		if data.Ctx.Current == nil || data.Ctx.Current.ID != conversation.ID {
-			c.String(http.StatusInternalServerError, "the column does not carry the live conversation")
+		if len(data.Ctx.Assistants) != 1 || data.Ctx.Assistants[0].ID != instance.ID {
+			c.String(http.StatusInternalServerError, "the column does not carry the assistant")
 			return
 		}
 		c.Status(http.StatusOK)
 	})
 
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assistant/"+current.ID, nil))
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assistants/"+current.ID, nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("page reads failed: %d: %s", rec.Code, rec.Body.String())
 	}

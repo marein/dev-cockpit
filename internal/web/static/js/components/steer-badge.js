@@ -20,7 +20,7 @@ class SteerBadge extends HTMLElement {
   // torn down controller.
   refresh() {
     if (!this.ac) return;
-    const src = this.getAttribute("src") || "/assistant/jobs";
+    const src = this.getAttribute("src") || "/assistants/jobs";
     if (this.inFlight) {
       this.dirty = true;
       return;

@@ -41,12 +41,15 @@ const (
 // location, a file or a directory. The mapping is resolved against the
 // current registry on import, so an archive stays portable across homes.
 // Skip names relative slash paths below Path the export leaves out, a
-// directory in it takes its subtree with it. The import knows nothing about
-// it: an older archive that still carries such a file keeps importing it.
+// directory in it takes its subtree with it, and SkipNames names files by
+// their base name left out at any depth, for a file that is generated into
+// every directory of a tree. The import knows nothing about either: an older
+// archive that still carries such a file keeps importing it.
 type Source struct {
-	Name string
-	Path string
-	Skip []string
+	Name      string
+	Path      string
+	SkipNames []string
+	Skip      []string
 }
 
 // Section is one selectable unit of the export and import. Requires names
@@ -196,15 +199,26 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 				// the projects.
 				{Name: "recent-terminals.json", Path: st("recent-terminals.json")}},
 			Requires: []string{"projects", "claude-sessions", "copilot-sessions"}},
-		{ID: "assistant", Group: "Cockpit", Label: "Assistant",
-			Description: "Its memory, its conversations, the jobs it steers and the files a message carried. The generated instruction files stay out, the next start writes them from the memory again.",
+		{ID: "assistant", Group: "Cockpit", Label: "Assistants",
+			Description: "The shared memory and every assistant's thread with the jobs it steers, its workspace and the files a message carried. The generated instruction files stay out, the next turn writes them from the memory again.",
 			Sources: []Source{
 				{Name: "assistant.json", Path: st("assistant/assistant.json")},
+				{Name: "memory", Path: st("assistant/memory")},
+				// One directory per assistant, holding its transcript, its
+				// jobs and its workspace, so what belongs together travels
+				// together. CLAUDE.md, AGENTS.md and the cockpit wrapper in a
+				// workspace are written before every turn (see
+				// internal/assistant/memory.go) and carry this host's absolute
+				// paths and version, so they are noise.
+				{Name: "instances", Path: st("assistant/instances"), SkipNames: []string{"CLAUDE.md", "AGENTS.md", "cockpit"}},
+				// The three names the last release wrote its archives with.
+				// They are absent on export from this layout and land an old
+				// archive in the layout the startup move reads, so a backup
+				// taken before the assistants moved into instances still
+				// imports. TODO(v2.0.0): drop them once such an archive can no
+				// longer exist.
 				{Name: "conversations", Path: st("assistant/conversations")},
 				{Name: "jobs.json", Path: st("assistant/jobs.json")},
-				// CLAUDE.md and AGENTS.md are written from workspace/memory
-				// before every turn (see internal/assistant/memory.go) and carry
-				// this host's absolute paths and version, so they are noise.
 				{Name: "workspace", Path: st("assistant/workspace"), Skip: []string{"CLAUDE.md", "AGENTS.md"}}},
 			Requires: []string{"projects", "claude-sessions", "copilot-sessions"}},
 
@@ -346,7 +360,7 @@ func (s *Service) Export(w io.Writer, ids []string) error {
 		sec := s.section(id)
 		entry := ManifestSection{ID: sec.ID, Label: sec.Label}
 		for _, src := range sec.Sources {
-			if err := collectPath(tw, "data/"+sec.ID+"/"+src.Name, src.Path, src.Skip, &entry); err != nil {
+			if err := collectPath(tw, "data/"+sec.ID+"/"+src.Name, src.Path, src.Skip, src.SkipNames, &entry); err != nil {
 				return err
 			}
 		}
@@ -354,7 +368,7 @@ func (s *Service) Export(w io.Writer, ids []string) error {
 			// The dotfiles set is discovered at export time, whatever dot
 			// files sit in the home directory right now.
 			for _, name := range s.HomeDotfiles() {
-				if err := collectPath(tw, "data/"+sec.ID+"/"+name, filepath.Join(s.home, name), nil, &entry); err != nil {
+				if err := collectPath(tw, "data/"+sec.ID+"/"+name, filepath.Join(s.home, name), nil, nil, &entry); err != nil {
 					return err
 				}
 			}
@@ -377,9 +391,9 @@ func (s *Service) Export(w io.Writer, ids []string) error {
 }
 
 // collectPath streams one source into the archive under key. skip holds
-// relative slash paths below root the export leaves out, an empty skip costs
-// nothing.
-func collectPath(tw *tar.Writer, key, root string, skip []string, entry *ManifestSection) error {
+// relative slash paths below root the export leaves out, skipNames base names
+// left out at any depth, an empty list costs nothing.
+func collectPath(tw *tar.Writer, key, root string, skip, skipNames []string, entry *ManifestSection) error {
 	info, err := os.Lstat(root)
 	if err != nil {
 		return nil
@@ -398,7 +412,7 @@ func collectPath(tw *tar.Writer, key, root string, skip []string, entry *Manifes
 		name := key
 		if rel, err := filepath.Rel(root, p); err == nil && rel != "." {
 			rel = filepath.ToSlash(rel)
-			if slices.Contains(skip, rel) {
+			if slices.Contains(skip, rel) || slices.Contains(skipNames, d.Name()) {
 				if d.IsDir() {
 					return fs.SkipDir
 				}

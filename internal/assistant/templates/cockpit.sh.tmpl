@@ -1,0 +1,5 @@
+#!/bin/sh
+# Written by dev-cockpit before every turn, edit nothing here.
+# The cockpit's own commands for the assistant {{.ID}}: this cockpit's
+# directories and the assistant's id are carried here, every argument goes on.
+exec {{quote .Executable}} assistant{{with .StateDir}} --state-dir {{quote .}}{{end}}{{with .ProjectsDir}} --projects-dir {{quote .}}{{end}} --as {{quote .ID}} "$@"

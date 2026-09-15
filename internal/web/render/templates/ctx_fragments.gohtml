@@ -21,12 +21,16 @@
      when it opens, so no page pays for it. */}}
 {{define "assistant_memory_sheet.gohtml"}}
 <div class="offcanvas offcanvas-end dc-assistant-memory d-print-none" tabindex="-1" id="assistant-memory" aria-label="Memory" data-assistant-memory-sheet>
-  <div class="offcanvas-header border-bottom py-2">
-    <h2 class="offcanvas-title h4 m-0">Memory</h2>
+  {{/* The head is the column's head (`dc-ctx-head`, `dc-ctx-title`), not one of
+       its own: a sheet that stands beside a page has to end its head where the
+       page ends its own, and there is one place that says how tall a head is
+       and how big its title. */}}
+  <div class="dc-ctx-head">
+    <h2 class="dc-ctx-title">Memory</h2>
     <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#assistant-memory" aria-label="Close"></button>
   </div>
   <div class="offcanvas-body d-flex flex-column gap-3">
-    <dc-assistant-list list-url="/assistant/memory" quiet memory data-assistant-memory-list>
+    <dc-assistant-list list-url="/assistants/memory" quiet memory data-assistant-memory-list>
       <div data-assistant-body><div class="text-secondary small text-center py-3" data-assistant-memory-loading>Loading…</div></div>
     </dc-assistant-list>
     <div class="text-secondary small">The assistant reads the memory before every answer.</div>

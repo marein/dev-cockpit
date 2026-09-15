@@ -8,17 +8,13 @@ import { applyFold } from "@dc/fold";
 import { ensureOk, getText, landingURL, postForm, postJSON } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
 import { splitCreateItems } from "@dc/split";
+import { RowDrag } from "@dc/rowdrag";
 import { get } from "@dc/store";
 import { notifyError, notifySuccess } from "@dc/toast";
 import { releaseCoder, steerCoder } from "@dc/steer";
 import { openFormModal } from "dc-form-modal";
 
-const DRAG_THRESHOLD = 6;
-const EDGE_ZONE = 32;
-const EDGE_STEP = 12;
 const RESUME_FOLD_LIMIT = 3;
-const GROUP_ZONE_RATIO = 0.3;
-const GROUP_DWELL_MS = 220;
 
 class TerminalTabs extends HTMLElement {
   connectedCallback() {
@@ -28,9 +24,7 @@ class TerminalTabs extends HTMLElement {
     this.switcherOnly = this.hasAttribute("hidden");
     this.vertical = this.hasAttribute("data-tabs-vertical");
     this.ac = new AbortController();
-    this.drag = null;
     this.switcher = null;
-    this.suppressClick = false;
     this.confirming = false;
     this.resuming = false;
     this.inFlight = false;
@@ -70,11 +64,7 @@ class TerminalTabs extends HTMLElement {
       this.paintMenuSelection();
     }, { signal });
     this.strip.addEventListener("wheel", (event) => this.onWheel(event), { signal, passive: false });
-    this.strip.addEventListener("dragstart", (event) => event.preventDefault(), { signal });
-    this.strip.addEventListener("pointerdown", (event) => this.onPointerDown(event), { signal });
-    this.strip.addEventListener("pointermove", (event) => this.onPointerMove(event), { signal });
-    this.strip.addEventListener("pointerup", (event) => this.onPointerUp(event), { signal });
-    this.strip.addEventListener("pointercancel", () => this.cancelDrag(), { signal });
+    this.wireDrag(signal);
     this.strip.addEventListener("click", (event) => this.onClick(event), { signal, capture: true });
     this.strip.addEventListener("contextmenu", (event) => this.onContextMenu(event), { signal });
     document.addEventListener("keydown", (event) => this.onKeydown(event), { signal, capture: true });
@@ -124,7 +114,7 @@ class TerminalTabs extends HTMLElement {
 
   disconnectedCallback() {
     this.closeSwitcher();
-    this.cancelDrag();
+    this.rowDrag?.cancel();
     this.ac?.abort();
     this.ac = null;
   }
@@ -234,14 +224,8 @@ class TerminalTabs extends HTMLElement {
       event.stopPropagation();
       return;
     }
-    if (!this.suppressClick) {
-      const split = event.target.closest(".terminal-tab-split");
-      if (split) this.aimSplit(split);
-      return;
-    }
-    this.suppressClick = false;
-    event.preventDefault();
-    event.stopPropagation();
+    const split = event.target.closest(".terminal-tab-split");
+    if (split) this.aimSplit(split);
   }
 
   aimSplit(tab) {
@@ -260,7 +244,7 @@ class TerminalTabs extends HTMLElement {
   }
 
   openRowMenu(tab, x, y) {
-    this.cancelDrag();
+    this.rowDrag?.cancel();
     const dataset = { ...tab.dataset };
     const split = dataset.tabKind === "split";
     const items = [];
@@ -493,193 +477,42 @@ class TerminalTabs extends HTMLElement {
     }
   }
 
-  axisClient(event) {
-    return this.vertical ? event.clientY : event.clientX;
-  }
-
-  contentPos(client) {
-    const rect = this.strip.getBoundingClientRect();
-    return this.vertical ? client - rect.top + this.strip.scrollTop : client - rect.left + this.strip.scrollLeft;
-  }
-
-  onPointerDown(event) {
-    if (event.button !== 0 || this.switcher || event.target.closest("[data-tab-close], [data-tab-menu]")) return;
-    if (event.pointerType === "touch" && !event.target.closest("[data-tab-grip]")) return;
-    const tab = event.target.closest(".terminal-tab, .terminal-tab-member");
-    if (!tab) return;
-    this.suppressClick = false;
-    this.drag = {
-      tab,
-      pointerId: event.pointerId,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      lastClient: this.axisClient(event),
-      active: false,
-      raf: 0,
-    };
-    try {
-      tab.setPointerCapture(event.pointerId);
-    } catch (error) {
-      void error;
-    }
-  }
-
-  onPointerMove(event) {
-    const drag = this.drag;
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    if (!drag.active) {
-      if (!(event.buttons & 1)) {
-        this.drag = null;
-        return;
-      }
-      if (Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY) < DRAG_THRESHOLD) return;
-      this.beginDrag(event);
-    }
-    event.preventDefault();
-    drag.lastClient = this.axisClient(event);
-    this.updateDrag();
-  }
-
-  onPointerUp(event) {
-    const drag = this.drag;
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    this.drag = null;
-    if (drag.active) {
-      window.cancelAnimationFrame(drag.raf);
-      this.suppressClick = true;
-      window.setTimeout(() => { this.suppressClick = false; }, 0);
-      this.settleDrag(drag);
-      if (drag.groupTarget >= 0 && drag.tabs[drag.groupTarget]) {
-        void this.groupTabs(drag.tabs[drag.groupTarget], drag.tab);
-      } else if (drag.toIndex !== drag.fromIndex) {
-        const others = drag.tabs.filter((tab) => tab !== drag.tab);
-        const anchor = others[drag.toIndex] || (drag.member ? others[others.length - 1].nextSibling : null);
-        for (const row of drag.units[drag.fromIndex]) this.strip.insertBefore(row, anchor);
-        if (drag.member) this.persistMemberOrder(drag.member);
+  // The drag is @dc/rowdrag, the cockpit's one hand sorting gesture: a mouse
+  // drags a row from anywhere, a finger from its grip, and the strip owns only
+  // what is its own. A split row travels with its member rows, a member row is
+  // dragged among its own siblings (no group target there, and its seat at the
+  // end is before whatever follows the last member, not the end of the strip),
+  // and a row resting on another one makes a split view of the two.
+  wireDrag(signal) {
+    this.rowDrag = new RowDrag(this.strip, {
+      rowSelector: ".terminal-tab, .terminal-tab-member",
+      ignoreSelector: "[data-tab-close], [data-tab-menu]",
+      blocked: () => Boolean(this.switcher),
+      vertical: () => this.vertical,
+      scroller: () => (this.vertical ? this.strip.closest(".dc-ctx-body") || this.strip : this.strip),
+      rows: (row) => (this.memberGroup(row)
+        ? Array.from(this.strip.querySelectorAll(`.terminal-tab-member[data-tab-group="${this.memberGroup(row)}"]`))
+        : this.tabs()),
+      unitRows: (row) => (this.memberGroup(row) ? [row] : this.unitRows(row)),
+      grouping: (row) => !this.memberGroup(row),
+      endAnchor: (row, others) => (this.memberGroup(row) ? others[others.length - 1].nextSibling : null),
+      onDrop: ({ row, groupRow }) => {
+        if (groupRow) {
+          void this.groupTabs(groupRow, row);
+          return;
+        }
+        const group = this.memberGroup(row);
+        if (group) this.persistMemberOrder(group);
         else this.persistOrder();
-      }
-    }
-    // Flush any event that arrived while the drag held the strip.
-    this.tryRefresh();
-  }
-
-  cancelDrag() {
-    const drag = this.drag;
-    this.drag = null;
-    if (!drag || !drag.active) return;
-    window.cancelAnimationFrame(drag.raf);
-    this.settleDrag(drag);
-  }
-
-  settleDrag(drag) {
-    this.strip.classList.remove("terminal-tabs-strip-dragging");
-    for (const row of drag.units.flat()) {
-      row.style.transform = "";
-      row.classList.remove("terminal-tab-dragging", "terminal-tab-group-target");
-    }
-  }
-
-  beginDrag(event) {
-    const drag = this.drag;
-    drag.active = true;
-    drag.member = drag.tab.classList.contains("terminal-tab-member") ? drag.tab.dataset.tabGroup : "";
-    drag.tabs = drag.member
-      ? Array.from(this.strip.querySelectorAll(`.terminal-tab-member[data-tab-group="${drag.member}"]`))
-      : this.tabs();
-    drag.units = drag.tabs.map((tab) => (drag.member ? [tab] : this.unitRows(tab)));
-    drag.fromIndex = drag.tabs.indexOf(drag.tab);
-    drag.toIndex = drag.fromIndex;
-    const size = (rect) => (this.vertical ? rect.height : rect.width);
-    const start = (rect) => (this.vertical ? rect.top : rect.left);
-    const stripStart = start(this.strip.getBoundingClientRect());
-    const scrolled = this.vertical ? this.strip.scrollTop : this.strip.scrollLeft;
-    drag.widths = drag.units.map((rows) => rows.reduce((sum, row) => sum + size(row.getBoundingClientRect()), 0));
-    drag.width = drag.widths[drag.fromIndex];
-    drag.centers = drag.units.map((rows, i) => start(rows[0].getBoundingClientRect()) + drag.widths[i] / 2 - stripStart + scrolled);
-    drag.startContentX = this.contentPos(this.axisClient(event));
-    drag.groupTarget = -1;
-    drag.groupPending = -1;
-    drag.groupSince = 0;
-    this.strip.classList.add("terminal-tabs-strip-dragging");
-    for (const row of drag.units[drag.fromIndex]) row.classList.add("terminal-tab-dragging");
-    drag.raf = window.requestAnimationFrame(() => this.tickEdgeScroll());
-  }
-
-  groupCandidate(drag, draggedCenter) {
-    if (drag.member) return -1;
-    for (let i = 0; i < drag.tabs.length; i += 1) {
-      if (i === drag.fromIndex) continue;
-      let shift = 0;
-      if (i > drag.fromIndex && i <= drag.toIndex) shift = -drag.width;
-      else if (i < drag.fromIndex && i >= drag.toIndex) shift = drag.width;
-      const visualCenter = drag.centers[i] + shift;
-      if (Math.abs(draggedCenter - visualCenter) < drag.widths[i] * GROUP_ZONE_RATIO) {
-        return i;
-      }
-    }
-    return -1;
-  }
-
-  updateDrag() {
-    const drag = this.drag;
-    if (!drag || !drag.active) return;
-    const dx = this.contentPos(drag.lastClient) - drag.startContentX;
-    const draggedCenter = drag.centers[drag.fromIndex] + dx;
-    let toIndex = 0;
-    for (let i = 0; i < drag.centers.length; i += 1) {
-      if (i !== drag.fromIndex && drag.centers[i] < draggedCenter) toIndex += 1;
-    }
-    drag.toIndex = toIndex;
-    const candidate = this.groupCandidate(drag, draggedCenter);
-    if (candidate === -1) {
-      drag.groupPending = -1;
-      drag.groupTarget = -1;
-    } else if (candidate !== drag.groupPending) {
-      drag.groupPending = candidate;
-      drag.groupSince = Date.now();
-      drag.groupTarget = -1;
-    } else if (drag.groupTarget === -1 && Date.now() - drag.groupSince >= GROUP_DWELL_MS) {
-      drag.groupTarget = candidate;
-    }
-    drag.tabs.forEach((tab, i) => {
-      tab.classList.toggle("terminal-tab-group-target", i === drag.groupTarget);
+      },
+      // Flush any event that arrived while the drag held the strip.
+      onEnd: () => this.tryRefresh(),
     });
-    const move = this.vertical ? "translateY" : "translateX";
-    drag.units.forEach((rows, i) => {
-      let shift = 0;
-      if (i === drag.fromIndex) shift = dx;
-      else if (i > drag.fromIndex && i <= drag.toIndex) shift = -drag.width;
-      else if (i < drag.fromIndex && i >= drag.toIndex) shift = drag.width;
-      const transform = shift ? move + "(" + shift + "px)" : "";
-      for (const row of rows) row.style.transform = transform;
-    });
+    this.rowDrag.wire(signal);
   }
 
-  tickEdgeScroll() {
-    const drag = this.drag;
-    if (!drag || !drag.active) return;
-    const scroller = this.vertical ? this.strip.closest(".dc-ctx-body") || this.strip : this.strip;
-    const rect = scroller.getBoundingClientRect();
-    const lower = this.vertical ? rect.top : rect.left;
-    const upper = this.vertical ? rect.bottom : rect.right;
-    let delta = 0;
-    if (drag.lastClient < lower + EDGE_ZONE) delta = -EDGE_STEP;
-    else if (drag.lastClient > upper - EDGE_ZONE) delta = EDGE_STEP;
-    if (delta) {
-      const max = this.vertical ? scroller.scrollHeight - scroller.clientHeight : scroller.scrollWidth - scroller.clientWidth;
-      const current = this.vertical ? scroller.scrollTop : scroller.scrollLeft;
-      const next = Math.max(0, Math.min(current + delta, max));
-      if (next !== current) {
-        if (this.vertical) scroller.scrollTop = next;
-        else scroller.scrollLeft = next;
-        this.updateDrag();
-      }
-    }
-    if (drag.groupPending >= 0 && drag.groupTarget === -1
-      && Date.now() - drag.groupSince >= GROUP_DWELL_MS) {
-      this.updateDrag();
-    }
-    drag.raf = window.requestAnimationFrame(() => this.tickEdgeScroll());
+  memberGroup(row) {
+    return row.classList.contains("terminal-tab-member") ? row.dataset.tabGroup : "";
   }
 
   trackTap(event) {
@@ -894,14 +727,14 @@ class TerminalTabs extends HTMLElement {
         role: "option",
         class: "terminal-switcher-item",
         dataset: {
-          switcherUrl: link.getAttribute("href") || "/assistant",
+          switcherUrl: link.getAttribute("href") || "/assistants",
           switcherName: "assistant",
           switcherSection: "assistant",
           switcherAssistant: "1",
         },
       },
       icon ? icon.cloneNode(true) : el("span", { class: "terminal-tab-icon dc-term-icon assistant", "aria-hidden": "true" }, el("i", { class: "ti ti-sparkles" })),
-      el("span", { class: "terminal-switcher-name text-truncate" }, "Assistant"),
+      el("span", { class: "terminal-switcher-name text-truncate" }, "Assistants"),
     );
     row.addEventListener("click", () => this.openAssistant(), { signal: this.ac.signal });
     return row;
@@ -909,7 +742,7 @@ class TerminalTabs extends HTMLElement {
 
   // The assistant is a page: the row navigates to the live conversation.
   openAssistant() {
-    this.navigate(this.querySelector("[data-tabs-assistant]")?.getAttribute("href") || "/assistant");
+    this.navigate(this.querySelector("[data-tabs-assistant]")?.getAttribute("href") || "/assistants");
   }
 
   actionRow(link) {
@@ -1042,7 +875,7 @@ class TerminalTabs extends HTMLElement {
       sections.push({ key, node });
       listNodes.push(node, ...nodes);
     };
-    addSection("assistant", "Assistant", assistantRows);
+    addSection("assistant", "Assistants", assistantRows);
     addSection("inactive", "Inactive coders", inactiveNodes);
     addSection("editors", "Editors", editorRows);
     addSection("new", "New", actionRows);
@@ -1051,7 +884,7 @@ class TerminalTabs extends HTMLElement {
   }
 
   openSwitcher(direction) {
-    this.cancelDrag();
+    this.rowDrag?.cancel();
     const { rows, cycleRows, listNodes, sections, groupLabels } = this.buildSwitcherLists();
     if (!cycleRows.length) return;
     const input = el("input", {
@@ -1132,7 +965,7 @@ class TerminalTabs extends HTMLElement {
   // blocks it. A `terminals` event that lands during a fetch, or while a close
   // confirm or a drag owns the strip, is coalesced into `dirty` and re-run once
   // the fetch settles or the gesture releases (tryRefresh from closeTarget /
-  // onPointerUp / cancelDrag), so no live change is ever dropped. The pull carries
+  // and the drag's own onEnd), so no live change is ever dropped. The pull carries
   // this page's ?path so the active tab and the resume forms' CSRF stay right, and
   // keeps the + menu and switcher current so they need no refetch on open.
   refresh() {
@@ -1145,7 +978,7 @@ class TerminalTabs extends HTMLElement {
   }
 
   tryRefresh() {
-    if (!this.dirty || this.inFlight || this.confirming || this.drag || !this.dataset.tabsUrl) return;
+    if (!this.dirty || this.inFlight || this.confirming || this.rowDrag?.busy || !this.dataset.tabsUrl) return;
     this.dirty = false;
     this.inFlight = true;
     // Loading bar only in the + menu or switcher while one is open: the strip
@@ -1181,7 +1014,7 @@ class TerminalTabs extends HTMLElement {
         if (!fresh) return;
         const freshStrip = fresh.querySelector("[data-tabs-strip]");
         if (freshStrip) {
-          this.cancelDrag();
+          this.rowDrag?.cancel();
           this.strip.innerHTML = freshStrip.innerHTML;
           this.revealActive();
         }

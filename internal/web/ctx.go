@@ -15,6 +15,17 @@ import (
 // column marks the section on screen.
 func (s *Server) handleCtx(c *gin.Context) {
 	area := c.Param("area")
+	// TODO(v2.0.0): the area was called "assistant" while there was one of
+	// them. 308 keeps the method, and a page loaded before the move opens its
+	// sheet from the new address.
+	if area == "assistant" {
+		target := "/ctx/assistants"
+		if q := c.Request.URL.RawQuery; q != "" {
+			target += "?" + q
+		}
+		c.Redirect(http.StatusPermanentRedirect, target)
+		return
+	}
 	path := c.Query("path")
 	if path == "" {
 		path = "/"
@@ -36,7 +47,7 @@ func (s *Server) handleCtx(c *gin.Context) {
 		c.HTML(http.StatusOK, "ctx_settings.gohtml", render.SettingsGeneralData{Page: page, SettingsNav: s.settingsNav(settingsSectionOf(cleanPath))})
 	case "docs":
 		c.HTML(http.StatusOK, "ctx_docs.gohtml", render.DocsData{Page: page, Topics: render.DocsTopics()})
-	case "assistant":
+	case "assistants":
 		c.HTML(http.StatusOK, "ctx_assistant.gohtml", s.assistantCtxData(c, cleanPath, "assistant-sheet-new"))
 	default:
 		c.Status(http.StatusNotFound)

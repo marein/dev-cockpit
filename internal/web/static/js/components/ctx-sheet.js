@@ -127,7 +127,7 @@ class CtxSheet extends HTMLElement {
   }
 
   placeholder(area, kind) {
-    const titles = { projects: "Projects", terminals: "Terminals", settings: "Settings", docs: "Docs", assistant: "Assistant" };
+    const titles = { projects: "Projects", terminals: "Terminals", settings: "Settings", docs: "Docs", assistants: "Assistants" };
     const column = document.createElement("div");
     column.className = "dc-ctx";
     column.dataset.ctxSheetPlaceholder = kind;
@@ -175,7 +175,7 @@ class CtxSheet extends HTMLElement {
         const query = input.value.trim();
         set(key, input.value);
         if (clear) clear.classList.toggle("d-none", query === "");
-        const rows = this.panel.querySelectorAll("[data-project-index] .list-group-item, .terminal-tabs-strip .terminal-tab, .terminal-tabs-strip .terminal-tab-member");
+        const rows = this.panel.querySelectorAll("[data-project-index] .list-group-item, .terminal-tabs-strip .terminal-tab, .terminal-tabs-strip .terminal-tab-member, [data-assistant-body] [data-assistant-instance]");
         for (const row of rows) {
           const haystack = shared
             ? `${row.dataset.indexProject || ""} ${row.dataset.indexWorktreeOf || ""}`

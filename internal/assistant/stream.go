@@ -15,20 +15,21 @@ const (
 	// emphasis), so the browser never parses the stream itself: it shows the
 	// raw text as it arrives and replaces it with the rendered prefix whenever
 	// one of these lands, which also keeps model output out of any client side
-	// parser.
+	// parser. The prefix carries RenderMark where the text after it goes.
 	FrameHTML = "html"
 	// FrameTool reports that the provider is working with a tool.
 	FrameTool = "tool"
 	// FrameEnd closes a generation, carrying the final message state.
 	FrameEnd = "end"
 	// FrameMessage announces a message that appeared without a generation the
-	// page was following: a wake writing its report, or a message that queued
-	// while a turn ran. The client pulls that one message and appends or
-	// replaces it, and touches nothing else, because a chat answer may be
-	// streaming at the same time.
+	// page was following: a check writing its report, or a prompt another
+	// device sent. The client pulls that one message and appends or replaces
+	// it, and touches nothing else, because a chat answer may be streaming at
+	// the same time.
 	FrameMessage = "message"
-	// FrameGone announces a message that was removed while it waited, so every
-	// open page drops its bubble.
+	// FrameGone announces a message that was taken out of the transcript, so
+	// every open page drops its bubble. A retry is what does that: the answer
+	// it replaces leaves.
 	FrameGone = "gone"
 	// FramePing proves the stream is alive to a browser that cannot see the SSE
 	// keepalive, which is a comment and fires no event. Silence in the middle
@@ -39,8 +40,20 @@ const (
 	FramePing = "ping"
 )
 
-// StreamEvent is one frame on a conversation's own SSE stream. Conversation text never goes to
-// the app wide event bus, only the coarse conversations event does.
+// RenderMark is the one character the streaming prefix is rendered with, at
+// its very end, and the page puts the text that arrived since that render
+// where the mark came out. Only a Markdown parser can say whether the next
+// character continues the open paragraph, list item or code block or opens a
+// block of its own, so the renderer that produced the HTML says it: the page
+// looks for a character instead of parsing model output, which it never does.
+// It is a word joiner, invisible, so a render that swallows it (a table row
+// drops what follows its last bar, raw HTML is dropped whole) leaves nothing
+// on screen and the page falls back to putting the text behind the prefix,
+// where it stood before.
+const RenderMark = "\u2060"
+
+// StreamEvent is one frame on an assistant's own SSE stream. Instance text never goes to
+// the app wide event bus, only the coarse instances event does.
 type StreamEvent struct {
 	Kind      string `json:"kind"`
 	RunID     string `json:"runId,omitempty"`
@@ -65,7 +78,7 @@ type subscriber struct {
 	closed bool
 }
 
-// live is the in-memory state of one conversation's stream: its subscribers and, while
+// live is the in-memory state of one instance's stream: its subscribers and, while
 // a generation runs, the text delivered so far.
 type live struct {
 	subs      map[*subscriber]struct{}
@@ -80,26 +93,26 @@ type live struct {
 	renderedLen int
 }
 
-// hub fans generation events out to the connected conversation pages.
+// hub fans generation events out to the connected instance pages.
 type hub struct {
-	mu            sync.Mutex
-	conversations map[string]*live
+	mu        sync.Mutex
+	instances map[string]*live
 }
 
-func newHub() *hub { return &hub{conversations: map[string]*live{}} }
+func newHub() *hub { return &hub{instances: map[string]*live{}} }
 
 // subscribe attaches a listener and returns the current in-flight state in the
 // same critical section. Doing both atomically is what lets a reconnecting
 // page resume mid answer without a replay buffer: it either gets the running
 // text plus every later delta, or no state at all and a FrameStart when the
 // next generation begins.
-func (h *hub) subscribe(conversationID string) (StreamEvent, bool, <-chan StreamEvent, func()) {
+func (h *hub) subscribe(instanceID string) (StreamEvent, bool, <-chan StreamEvent, func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	l := h.conversations[conversationID]
+	l := h.instances[instanceID]
 	if l == nil {
 		l = &live{subs: map[*subscriber]struct{}{}}
-		h.conversations[conversationID] = l
+		h.instances[instanceID] = l
 	}
 	sub := &subscriber{ch: make(chan StreamEvent, subBuffer)}
 	l.subs[sub] = struct{}{}
@@ -119,13 +132,13 @@ func (h *hub) subscribe(conversationID string) (StreamEvent, bool, <-chan Stream
 			State:     string(StateStreaming),
 		}
 	}
-	return snapshot, l.running, sub.ch, func() { h.unsubscribe(conversationID, sub) }
+	return snapshot, l.running, sub.ch, func() { h.unsubscribe(instanceID, sub) }
 }
 
-func (h *hub) unsubscribe(conversationID string, sub *subscriber) {
+func (h *hub) unsubscribe(instanceID string, sub *subscriber) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	l := h.conversations[conversationID]
+	l := h.instances[instanceID]
 	if l == nil {
 		return
 	}
@@ -137,7 +150,7 @@ func (h *hub) unsubscribe(conversationID string, sub *subscriber) {
 		}
 	}
 	if len(l.subs) == 0 && !l.running {
-		delete(h.conversations, conversationID)
+		delete(h.instances, instanceID)
 	}
 }
 
@@ -145,13 +158,13 @@ func (h *hub) unsubscribe(conversationID string, sub *subscriber) {
 // that cannot keep up is closed instead of skipped: its page reconnects and
 // resnapshots, which is correct, while a dropped delta would leave a hole in
 // the text.
-func (h *hub) publish(conversationID string, ev StreamEvent) {
+func (h *hub) publish(instanceID string, ev StreamEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	l := h.conversations[conversationID]
+	l := h.instances[instanceID]
 	if l == nil {
 		l = &live{subs: map[*subscriber]struct{}{}}
-		h.conversations[conversationID] = l
+		h.instances[instanceID] = l
 	}
 	switch ev.Kind {
 	case FrameStart:
@@ -187,6 +200,6 @@ func (h *hub) publish(conversationID string, ev StreamEvent) {
 		}
 	}
 	if len(l.subs) == 0 && !l.running {
-		delete(h.conversations, conversationID)
+		delete(h.instances, instanceID)
 	}
 }

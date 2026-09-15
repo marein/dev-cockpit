@@ -208,7 +208,18 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		"url":     "/coders/" + res.Identifier,
 	}
 	if doneWhen != "" {
-		job, err := s.watcher.Steer(assistant.Job{
+		// Who the job belongs to is resolved the way the jobs route resolves
+		// it: a caller on the local API names itself, a browser says which
+		// assistant it is for, and with a single one there is nothing to ask.
+		// A job without an owner is refused by the watcher, so a create that
+		// skipped this started the coder and steered nobody.
+		owner, err := s.steerOwner(c)
+		if err != nil {
+			// The coder is running either way, so the answer carries it; the
+			// caller has to hear that nobody steers it.
+			answer["steerError"] = err.Error()
+		} else if job, err := s.watcher.Steer(assistant.Job{
+			Owner:    owner,
 			Terminal: res.Identifier,
 			// A coder started without a name is read under the same label
 			// every other surface shows it under.
@@ -217,10 +228,7 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 			CoderID:  co.ID(),
 			Task:     form.Task,
 			DoneWhen: doneWhen,
-		})
-		if err != nil {
-			// The coder is running either way, so the answer carries it; the
-			// caller has to hear that nobody steers it.
+		}); err != nil {
 			answer["steerError"] = err.Error()
 		} else {
 			answer["maxWakes"] = job.MaxWakes
@@ -474,11 +482,13 @@ func (s *Server) handleCoderInput(c *gin.Context) {
 		s.activity.Interrupt(id)
 	}
 	// Steering is ownership and only steer and release change it, so the
-	// user's inputs are none of the job's business. An assistant send still
-	// lands on the job: the standstill rule reads it, and a blocked job takes
-	// it as the decision it was waiting for.
-	if s.localCall(c) {
-		s.watcher.NoteAssistantInput(id)
+	// user's inputs are none of the job's business. The steering assistant's
+	// send does land on the job: the standstill rule reads it, and a blocked
+	// job takes it as the decision it was waiting for. Another assistant's send
+	// lands nowhere, anybody may write into any terminal and none of that makes
+	// the coder theirs.
+	if from := s.callingAssistant(c); from != "" {
+		s.watcher.NoteAssistantInput(id, from)
 	}
 	c.JSON(http.StatusOK, CoderInputAnswer)
 }
@@ -712,11 +722,13 @@ func (s *Server) handleCoderDelete(c *gin.Context) {
 
 // jobCalledOff ends the job of a coder that is being stopped or deleted.
 // Either way the terminal it steers will not report again, so nothing can ever
-// move the job, and one left steering would sit in the conversation as a promise
-// nobody can keep. A terminal nobody steers answers with an error, which is the
-// normal case here.
+// move the job, and one left steering would sit in its assistant's thread as a
+// promise nobody can keep. It releases whoever steers it: the coder is going,
+// and that is the user's decision about their own machine, not one assistant
+// reaching into another's. A terminal nobody steers answers with an error,
+// which is the normal case here.
 func (s *Server) jobCalledOff(id string) {
-	_ = s.watcher.Release(id)
+	_ = s.watcher.Release(id, "")
 }
 
 // jobDeleted is jobCalledOff for a session that is removed for good. A stopped
