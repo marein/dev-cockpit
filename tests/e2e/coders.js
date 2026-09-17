@@ -377,6 +377,40 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       await page.keyboard.press("Escape").catch(() => {});
     });
 
+    // A browser calls every clipboard image image.png, so the second pasted
+    // screenshot used to replace the first on disk. A taken name counts up in
+    // front of the extension, and the first file keeps its own bytes.
+    await run("files: a second image.png pasted onto the terminal lands beside the first", async () => {
+      await page.goto(sessionUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
+      await sleep(1000);
+      const pasteImage = (body) => page.evaluate((text) => {
+        const data = new DataTransfer();
+        data.items.add(new File([text], "image.png", { type: "image/png" }));
+        if (!data.files.length) return false;
+        document.querySelector(".xterm-helper-textarea").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+        return true;
+      }, body);
+      const listedNames = () => page.evaluate(() => [...document.querySelectorAll('[data-coder-files-content] a[href*="/files/download"]')]
+        .map((a) => new URL(a.href).searchParams.get("name")));
+      const hasName = (name) => page.waitForFunction((n) => [...document.querySelectorAll('[data-coder-files-content] a[href*="/files/download"]')]
+        .some((a) => new URL(a.href).searchParams.get("name") === n), name, { timeout: 15000 });
+      const first = `first ${tag}`, second = `second ${tag}`;
+      assert(await pasteImage(first), "the engine builds no file clipboard");
+      await modalShown(page, "coder-files-modal");
+      await hasName("image.png");
+      assert(await pasteImage(second), "the engine builds no file clipboard");
+      await hasName("image-2.png");
+      const images = (await listedNames()).filter((n) => /^image(-\d+)?\.png$/.test(n));
+      assert(images.length === 2, `the list holds ${images.join(", ")}`);
+      const links = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('[data-coder-files-content] a[href*="/files/download"]')]
+        .map((a) => [new URL(a.href).searchParams.get("name"), a.getAttribute("href")])));
+      const body = async (name) => (await page.context().request.get(BASE + links[name])).text();
+      assert((await body("image.png")) === first, "the first paste was replaced");
+      assert((await body("image-2.png")) === second, "the second paste does not hold its own bytes");
+      await page.keyboard.press("Escape").catch(() => {});
+    });
+
     await run("legacy /sessions URLs redirect to /coders", async () => {
       await page.goto(`${BASE}/sessions/new?project=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
       assert(page.url().includes("/coders/new"), `not redirected: ${page.url()}`);

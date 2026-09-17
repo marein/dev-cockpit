@@ -801,6 +801,24 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     return "the input, not the message's link";
   });
 
+  // A browser calls every clipboard image image.png, so two screenshots in one
+  // message used to be one file: the second upload replaced the first on disk
+  // while the tray showed two chips. A taken name counts up on the server, and
+  // the chip carries the name the server chose, which the send posts back.
+  await run("two files named image.png attach as image.png and image-2.png", async () => {
+    await attach(page, [
+      { name: "image.png", mimeType: "image/png", buffer: PNG },
+      { name: "image.png", mimeType: "image/png", buffer: PNG },
+    ]);
+    const names = await page.evaluate(() => [...document.querySelectorAll("[data-assistant-attachments] [data-assistant-attachment]")]
+      .map((chip) => chip.getAttribute("data-assistant-attachment")));
+    assert(names.length === 2 && names.includes("image.png") && names.includes("image-2.png"), `the tray holds ${names.join(", ")}`);
+    for (const name of names) {
+      await page.click(`[data-assistant-attachment-remove="${name}"]`);
+    }
+    await page.waitForFunction(() => document.querySelectorAll("[data-assistant-attachment]").length === 0, null, { timeout: 8000 });
+  });
+
   await run("the attachment reaches the coder as a path it can open", async () => {
     const text = await page.locator('[data-role="user"]').last().innerText();
     assert(!text.includes("Attached files:"), "the path note leaked into the transcript");

@@ -3,11 +3,14 @@ package filesystem
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 )
 
 type File struct {
@@ -56,6 +59,19 @@ func ListFiles(dir string) ([]File, error) {
 	return files, nil
 }
 
+// maxSaveNameTries bounds the hunt for a free name, so a directory that keeps
+// answering "exists" (a filesystem that lies, a name that is a folder) cannot
+// spin forever. A thousand copies of one name is far past what one session's
+// files dialog holds.
+const maxSaveNameTries = 1000
+
+// SaveFile writes src into dir under the cleaned name and never replaces a
+// file that is already there: a taken name gets a counter before its
+// extension chain (image.png, image-2.png, image-3.png). The name is claimed
+// with a hard link from the finished temp file, which fails when the target
+// exists, so the check and the placement are one step and two uploads of one
+// name that arrive together cannot both land on the same file. The File that
+// comes back carries the name that was actually written.
 func SaveFile(dir, rawName string, src io.Reader) (File, error) {
 	name, err := CleanBaseName(rawName)
 	if err != nil {
@@ -73,11 +89,8 @@ func SaveFile(dir, rawName string, src io.Reader) (File, error) {
 		return File{}, err
 	}
 	tmpName := tmp.Name()
-	cleanup := true
 	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpName)
-		}
+		_ = os.Remove(tmpName)
 	}()
 	if _, err := io.Copy(tmp, src); err != nil {
 		_ = tmp.Close()
@@ -90,10 +103,23 @@ func SaveFile(dir, rawName string, src io.Reader) (File, error) {
 	if err := tmp.Close(); err != nil {
 		return File{}, err
 	}
-	if err := os.Rename(tmpName, target); err != nil {
-		return File{}, err
+	stem, ext := splitExtChain(name)
+	for try := 1; ; try++ {
+		if try > 1 {
+			name = stem + "-" + strconv.Itoa(try) + ext
+			target = filepath.Join(dir, name)
+		}
+		err := os.Link(tmpName, target)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return File{}, err
+		}
+		if try == maxSaveNameTries {
+			return File{}, errors.New("Too many files with that name already.")
+		}
 	}
-	cleanup = false
 	info, err := os.Stat(target)
 	if err != nil {
 		return File{}, err
@@ -101,6 +127,39 @@ func SaveFile(dir, rawName string, src io.Reader) (File, error) {
 	out := sessionFileFromInfo(info, target)
 	out.Name = name
 	return out, nil
+}
+
+// splitExtChain cuts a file name into the stem and the extension chain a
+// counter has to stay in front of. The chain is the last dot part, plus every
+// part before it that is one to four letters, so archive.tar.gz, bundle.min.js
+// and types.d.ts stay whole, while a number or a longer word before the last
+// dot stays in the stem: backup.2026.sql counts as backup.2026-2.sql and
+// my.notes.txt as my.notes-2.txt. A name without a dot, or with the dot in
+// front (a dotfile), has no chain and counts at its end.
+func splitExtChain(name string) (stem, ext string) {
+	cut := strings.LastIndexByte(name, '.')
+	if cut <= 0 {
+		return name, ""
+	}
+	for {
+		prev := strings.LastIndexByte(name[:cut], '.')
+		if prev <= 0 || !isShortWord(name[prev+1:cut]) {
+			break
+		}
+		cut = prev
+	}
+	return name[:cut], name[cut:]
+}
+
+func isShortWord(part string) bool {
+	letters := 0
+	for _, r := range part {
+		if !unicode.IsLetter(r) {
+			return false
+		}
+		letters++
+	}
+	return letters >= 1 && letters <= 4
 }
 
 func OpenFile(dir, rawName string) (OpenedFile, error) {
