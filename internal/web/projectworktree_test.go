@@ -284,6 +284,16 @@ func TestWorktreePlanResolvesTheBranchChoice(t *testing.T) {
 	if err != nil || plan.Branch != "wip" || plan.Start != "master" {
 		t.Fatalf("a new branch answered %+v, %v", plan, err)
 	}
+
+	// What is typed for a new branch becomes a name git takes, a space is a
+	// dash and not a refusal.
+	plan, err = worktreePlan(ctx, src, projectCreateForm{BranchMode: "new", NewBranch: "fix login bug", Start: "master"})
+	if err != nil || plan.Branch != "fix-login-bug" || plan.Start != "master" {
+		t.Fatalf("a typed name answered %+v, %v", plan, err)
+	}
+	if _, err := worktreePlan(ctx, src, projectCreateForm{BranchMode: "new", NewBranch: "???", Start: "master"}); err == nil {
+		t.Fatal("a name with nothing git takes was not refused")
+	}
 }
 
 // Everything the form can name is checked against the repository first, so

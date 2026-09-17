@@ -908,11 +908,11 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert(branch.trim() === "topic/alpha-login", `the working copy stands on ${branch}`);
     });
 
-    await run("create a worktree on a new branch starting at a picked one", async () => {
+    await run("create a worktree on a new branch typed with a space, starting at a picked one", async () => {
       const name = `${source}-wt2`;
       await openCreateForm();
       await page.selectOption("[data-branch-mode]", "new");
-      await page.fill("#new_branch", "wip/e2e");
+      await page.fill("#new_branch", "wip/e2e two");
       await page.click("#start");
       await menuRows("#start");
       await page.fill("#start", "logout");
@@ -931,7 +931,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await page.waitForSelector(`[data-project-name="${name}"]`, { timeout: 10000 });
       const path = sourcePath.replace(source, name);
       const branch = await git(path, ["rev-parse", "--abbrev-ref", "HEAD"]);
-      assert(branch.trim() === "wip/e2e", `the new branch is not checked out: ${branch}`);
+      assert(branch.trim() === "wip/e2e-two", `the typed name did not become a branch git takes: ${branch}`);
       const base = await git(path, ["rev-parse", "topic/beta-logout"]);
       const head = await git(path, ["rev-parse", "HEAD"]);
       assert(base.trim() === head.trim(), "the new branch does not start where it was told to");

@@ -419,11 +419,15 @@ func catchUpWorktree(ctx context.Context, dir, branch string) (string, error) {
 // A remote branch is not checked out as itself. It becomes the local branch
 // that follows it, created at the remote ref, which is what checking one out
 // does everywhere else in the cockpit.
+//
+// A new branch's name goes through typedBranchName like the editor's New
+// branch, so a space or another character git refuses becomes a dash instead
+// of git's refusal, and the flash names the branch as it was made.
 func worktreePlan(ctx context.Context, src project.Project, form projectCreateForm) (git.NewWorktree, error) {
 	if form.BranchMode == "new" {
-		name := strings.TrimSpace(form.NewBranch)
-		if name == "" {
-			return git.NewWorktree{}, errors.New("A name for the new branch is required.")
+		name, err := typedBranchName(form.NewBranch)
+		if err != nil {
+			return git.NewWorktree{}, err
 		}
 		start := strings.TrimSpace(form.Start)
 		ref, err := worktreeRef(ctx, src, start)

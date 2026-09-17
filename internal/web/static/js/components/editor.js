@@ -5131,7 +5131,7 @@ async function init(root) {
     // A branch is created here and touches no remote, so it opens no bridge.
     const data = await gitRun("branch", { branch: name }, `Creating "${name}"…`, "branch");
     if (!data) return;
-    notifySuccess(`On the new branch "${name}".`);
+    notifySuccess(`On the new branch "${data.branch || name}".`);
     void loadGitStatus();
   }
 

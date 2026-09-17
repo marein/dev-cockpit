@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -39,6 +40,33 @@ func (r *Repo) CreateBranch(ctx context.Context, name string) error {
 	w.timeout = checkoutTimeout
 	_, err := w.run(ctx, []string{"switch", "-c", name}, nil)
 	return err
+}
+
+var (
+	branchNameOther   = regexp.MustCompile(`[^\w./-]+`)
+	branchNameDots    = regexp.MustCompile(`\.{2,}`)
+	branchNameSlashes = regexp.MustCompile(`/{2,}`)
+	branchNameDotOpen = regexp.MustCompile(`(^|/)\.+`)
+	branchNameDotEnd  = regexp.MustCompile(`\.+/`)
+	branchNameLock    = regexp.MustCompile(`\.lock(/|$)`)
+)
+
+// NormalizeBranchName turns what somebody typed into a name git takes, the
+// same rule the editor's New branch applies before it shows what it will
+// create: a run of anything but ASCII letters, digits, underscore, dot,
+// slash and dash becomes one dash, repeated dots and slashes fold into one,
+// a path part neither opens nor closes with a dot, .lock is dropped where it
+// would end a part, and no separator is left at either end. Whatever remains
+// is git's call, see validBranchArg. An empty answer means nothing usable was
+// typed; the caller words that.
+func NormalizeBranchName(raw string) string {
+	name := branchNameOther.ReplaceAllString(strings.TrimSpace(raw), "-")
+	name = branchNameDots.ReplaceAllString(name, ".")
+	name = branchNameSlashes.ReplaceAllString(name, "/")
+	name = branchNameDotOpen.ReplaceAllString(name, "${1}")
+	name = branchNameDotEnd.ReplaceAllString(name, "/")
+	name = branchNameLock.ReplaceAllString(name, "${1}")
+	return strings.Trim(name, "-/.")
 }
 
 // validBranchArg refuses what could read as an option; everything else about

@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -1442,6 +1443,23 @@ const gitUnknownCopy = "The repository could not be read, so this action was not
 // working copy are no lock. Resolving costs the one rev-parse every git read
 // starts with, milliseconds in front of a write that runs for seconds or
 // minutes.
+// typedBranchName turns what somebody typed for a new branch into the name
+// git takes, see git.NormalizeBranchName, and words the two ways nothing
+// usable was typed: nothing at all, or nothing that survives the rule. The
+// worktree create and the editor's New branch share it, one rule on the
+// server for what either surface sends.
+func typedBranchName(raw string) (string, error) {
+	typed := strings.TrimSpace(raw)
+	if typed == "" {
+		return "", errors.New("A name for the new branch is required.")
+	}
+	name := git.NormalizeBranchName(typed)
+	if name == "" {
+		return "", fmt.Errorf("%q leaves nothing git takes as a branch name.", typed)
+	}
+	return name, nil
+}
+
 func gitWriteKeys(c *gin.Context, p project.Project) ([]string, bool) {
 	key, inRepo, err := git.New(p.Path).WorkingCopy(c.Request.Context())
 	if err != nil {
@@ -1767,6 +1785,8 @@ type editorBranchRequest struct {
 
 // handleEditorGitBranch creates a branch at the current HEAD and switches to
 // it. The commit under HEAD does not move, so the event says the base stood.
+// The name is normalized here the way the client previews it, see
+// typedBranchName, and the answer names the branch as it was made.
 // Nothing on this path can ask anything, so no bridge is opened here and the
 // request carries no prompt key to open one with; the client agrees, it runs
 // this action with `ask: false` and has no key to send.
@@ -1780,18 +1800,23 @@ func (s *Server) handleEditorGitBranch(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
 		return
 	}
+	name, err := typedBranchName(req.Branch)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	writeKeys, ok := s.takeGitWrite(c, p)
 	if !ok {
 		return
 	}
 	defer s.gitWrites.release(writeKeys...)
-	if err := git.New(p.Path).CreateBranch(gitWriteContext(c), req.Branch); err != nil {
+	if err := git.New(p.Path).CreateBranch(gitWriteContext(c), name); err != nil {
 		log.Printf("editor git branch %s: %v", p.Path, err)
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
 	s.publishGit(p.Name, false)
-	c.JSON(http.StatusOK, gin.H{"branch": req.Branch})
+	c.JSON(http.StatusOK, gin.H{"branch": name})
 }
 
 type editorTagRequest struct {

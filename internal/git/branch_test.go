@@ -123,3 +123,31 @@ func TestBranchNamesThatReadAsOptionsAreRefused(t *testing.T) {
 		}
 	}
 }
+
+// The rule mirrors normalizeBranchName in the editor's JS, one name for what
+// somebody typed on either surface.
+func TestNormalizeBranchNameTurnsWhatGitRefusesIntoDashes(t *testing.T) {
+	cases := map[string]string{
+		"fix login bug":      "fix-login-bug",
+		"  wip  ":            "wip",
+		"feature/name":       "feature/name",
+		"wip//x":             "wip/x",
+		"a..b":               "a.b",
+		"/.hidden/.x":        "hidden/x",
+		"dir./x":             "dir/x",
+		"name.lock":          "name",
+		"dir.lock/x":         "dir/x",
+		"ümlaut über":        "mlaut-ber",
+		"tilde~caret^colon:": "tilde-caret-colon",
+		"--force":            "force",
+		"???":                "",
+		"":                   "",
+		"Ticket #42: Do it!": "Ticket-42-Do-it",
+		"release/v1.2.3":     "release/v1.2.3",
+	}
+	for in, want := range cases {
+		if got := NormalizeBranchName(in); got != want {
+			t.Errorf("NormalizeBranchName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
