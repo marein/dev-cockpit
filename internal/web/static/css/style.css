@@ -433,6 +433,7 @@ button.dc-status-item, a.dc-status-item { cursor: pointer; }
    stay the terminal's own colours: the canvas covers whole cells, so the host
    shows through below the last row and right of the last column. */
 .attach-terminal {
+  --dc-terminal-inset: 3px;
   flex: 1 1 auto; min-height: 0;
   background: #ffffff;
   overflow: clip; padding: 0; cursor: text;
@@ -451,6 +452,11 @@ button.dc-status-item, a.dc-status-item { cursor: pointer; }
   pointer-events: none;
 }
 .attach-terminal .xterm, .attach-terminal .xterm * { box-sizing: content-box; }
+/* The inset keeps the first column and row off the pane edge. It sits on the
+   xterm element and never on the host: the fit addon reads the host's border
+   box and subtracts only this padding, so padding on the host would fit a row
+   and a column that the clip then cuts off. */
+.attach-terminal .xterm { padding: var(--dc-terminal-inset); }
 /* Read-only mirror: keep xterm's input textarea out of the way. Interactive
    (desktop) terminals leave it in place so they can take focus and type. */
 .attach-terminal:not(.attach-terminal-interactive) .xterm-helper-textarea { display: none !important; pointer-events: none !important; }

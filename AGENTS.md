@@ -2693,7 +2693,11 @@ free floating page scripts.
   box**: the split fills the work body, the panes divide it, and each island
   takes its rows from the box it is given (the `fitAddon` path), so grouping
   or stacking never changes the page height. Nothing is ever drawn outside
-  that box and nothing inside it scrolls. The host is `overflow: clip`: a
+  that box and nothing inside it scrolls. The inset between the pane edge
+  and the first cell (`--dc-terminal-inset`, 3px) is padding on `.xterm`,
+  never on the host: the fit addon reads the host's border box and subtracts
+  only the padding of `.xterm`, so padding on the host would fit a row and a
+  column that the clip cuts off. The host is `overflow: clip`: a
   canvas past the box, a subpixel or a server size beyond it, is cut
   silently and never draws a scrollbar (with `overflow: auto` every pixel
   of overhang drew bars in both directions on a 2x2 split).
