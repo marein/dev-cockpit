@@ -144,6 +144,39 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert((await visible()) === 9, "expand did not reveal all chips");
     });
 
+    // Stop and Delete on a chip act in place: the request asks for JSON, the
+    // toast says what the flash used to, and the terminals event redraws the
+    // chips inside the row. The row is never replaced, so the unfold survives.
+    // Ten shells, so the nine that remain would fold again if the flag went.
+    await run("deleting a shell from its chip toasts and keeps the list unfolded", async () => {
+      shellUrls.push(await L.createShell(page, project));
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      const row = `#project-${project}`;
+      const toggle = page.locator(`${row} [data-chips-toggle]`);
+      await toggle.waitFor({ state: "visible", timeout: 8000 });
+      await toggle.click(); await sleep(400);
+      const visible = () => page.locator(`${row} [data-chip]:not(.d-none)`).count();
+      assert((await visible()) === 10, "expand did not reveal all chips");
+      await page.evaluate((sel) => { document.querySelector(sel).dataset.probe = "stands"; }, row);
+      const chip = page.locator(`${row} [data-chip][data-chip-kind="shell"]:not(.d-none)`).last();
+      const id = await chip.getAttribute("data-chip-id");
+      const name = await chip.getAttribute("data-chip-name");
+      await chip.locator("[data-chip-x] button").click();
+      await confirmSwal(page);
+      await page.waitForSelector(`.dc-toast:has-text('Shell "${name}" deleted.')`, { state: "visible", timeout: 8000 });
+      assert((await page.locator(".dc-toast .ti-alert-circle").count()) === 0, "an error toast came with it");
+      await page.waitForSelector(`${row} [data-chip][data-chip-id="${id}"]`, { state: "detached", timeout: 10000 });
+      const after = await page.evaluate((sel) => {
+        const r = document.querySelector(sel);
+        return { probe: r.dataset.probe, expanded: r.querySelector("[data-sessions-body]").dataset.terminalsExpanded, url: location.pathname };
+      }, row);
+      assert(after.probe === "stands", "the row was replaced");
+      assert(after.expanded === "1", "the unfold flag is gone");
+      assert(after.url === "/projects", `the page moved to ${after.url}`);
+      assert((await visible()) === 9, `the list folded again: ${await visible()} chips visible`);
+      shellUrls.splice(shellUrls.findIndex((u) => u.endsWith(`/${id}`)), 1);
+    });
+
     await run("chip context menu renames a shell (right click)", async () => {
       const chip = page.locator(`#project-${project} [data-chip][data-chip-kind="shell"]:not(.d-none)`).first();
       await chip.click({ button: "right" });

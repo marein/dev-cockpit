@@ -223,7 +223,8 @@ class ProjectList extends HTMLElement {
       await this.deleteProject(form);
       return;
     }
-    this.ajaxRefresh(form);
+    const chip = form.closest("[data-chip]");
+    if (chip) await this.actOnChip(chip, form.action, form.querySelector("button"));
   }
 
   async deleteProject(form) {
@@ -330,21 +331,38 @@ class ProjectList extends HTMLElement {
   }
 
   // The server stops the coder before it drops the conversation, so the chip
-  // goes away in one request. The terminals event refreshes the row behind it.
+  // goes away in one request.
   async deleteCoder(chip) {
-    const name = chip.dataset.chipName || "";
+    const ok = await confirm({
+      title: `Delete coder "${chip.dataset.chipName || ""}"?`,
+      text: "It is stopped first, its conversation cannot be resumed afterwards.",
+      confirmText: "Delete",
+    });
+    if (ok) await this.actOnChip(chip, `/coders/${chip.dataset.chipId}/delete`);
+  }
+
+  // A chip's Stop or Delete acts in place: the server answers JSON, the toast
+  // says what the flash would have said, and the terminals event draws the
+  // row. The row itself is never replaced, which is what keeps the chip list
+  // unfolded. Until the event lands the chip wears the working ring and its
+  // button is dead, so it does not read as a chip that ignored the click. A
+  // refusal shows as a toast and leaves the chip as it was.
+  async actOnChip(chip, action, button) {
+    const stop = action.endsWith("/stop");
+    const shell = chip.dataset.chipKind === "shell";
+    const icon = chip.querySelector(".dc-term-icon");
+    if (button) button.disabled = true;
+    icon?.classList.add("working");
     try {
-      const ok = await confirm({
-        title: `Delete coder "${name}"?`,
-        text: "It is stopped first, its conversation cannot be resumed afterwards.",
-        confirmText: "Delete",
-      });
-      if (!ok) return;
-      const response = await postForm(`/coders/${chip.dataset.chipId}/delete`, {});
-      await ensureOk(response, "Could not delete the coder.");
-      chip.remove();
+      const response = await postForm(action, {});
+      await ensureOk(response, stop ? "Could not stop the coder." : shell ? "Could not delete the shell." : "Could not delete the coder.");
+      const data = await response.json().catch(() => null);
+      const name = (data && data.name) || chip.dataset.chipName || "";
+      notifySuccess(stop ? `Coder "${name}" stopped.` : shell ? `Shell "${name}" deleted.` : `Coder "${name}" deleted.`);
     } catch (error) {
       notifyError(error.message);
+      if (button) button.disabled = false;
+      icon?.classList.remove("working");
     }
   }
 
@@ -556,28 +574,6 @@ class ProjectList extends HTMLElement {
     window.app.loadElements(body);
     syncAnimations(body);
     this.foldChips(body);
-  }
-
-  // Re-renders just the project row from the redirected /projects response.
-  ajaxRefresh(form) {
-    const section = form.closest('[id^="project-"]');
-    fetch(form.action, { method: "POST", body: new URLSearchParams(new FormData(form)) })
-      .then((response) => {
-        if (!response.ok) throw new Error("submit failed");
-        return response.text();
-      })
-      .then((html) => {
-        const fresh = section ? new DOMParser().parseFromString(html, "text/html").getElementById(section.id) : null;
-        if (!fresh || !section) throw new Error("section not found");
-        section.replaceWith(fresh);
-        window.app.loadElements(fresh);
-        syncAnimations(fresh);
-        const body = fresh.querySelector("[data-sessions-body]");
-        if (body) this.foldChips(body);
-        this.applyGroups();
-        document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: fresh } }));
-      })
-      .catch(() => window.pe.submit(form));
   }
 
   setupSort() {

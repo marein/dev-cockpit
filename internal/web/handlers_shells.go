@@ -125,6 +125,10 @@ func (s *Server) handleShellName(c *gin.Context) {
 	c.String(http.StatusOK, sh.Name)
 }
 
+// handleShellDelete answers a caller that asked for JSON the way the coder
+// stop and delete do (the shape of coderJSON, a refusal as {error}): the
+// projects page deletes a shell from its chip in place and lets the terminals
+// event draw the row. A form post keeps the redirect plus flash.
 func (s *Server) handleShellDelete(c *gin.Context) {
 	id := c.Param("id")
 	project := ""
@@ -133,11 +137,24 @@ func (s *Server) handleShellDelete(c *gin.Context) {
 	}
 	name, err := s.shells.Delete(id)
 	if err != nil {
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
 	s.notifier.MarkTargetRead(id)
 	s.publishTerminals(project)
+	if wantsJSON(c.Request) {
+		c.JSON(http.StatusOK, gin.H{
+			"id":      id,
+			"name":    name,
+			"project": project,
+			"url":     projectLanding(project),
+		})
+		return
+	}
 	s.redirectWithProjectFlash(c, project, "Shell \""+name+"\" deleted.", "")
 }
 
