@@ -812,8 +812,17 @@ function initTerminalAttach(host) {
         if (event.ctrlKey) {
           return;
         }
-        event.preventDefault();
+        // A wheel event without a vertical part, or one whose horizontal part
+        // dominates, is a trackpad swipe, the browser's back and forward
+        // gesture. Preventing it would tell the browser the page consumed the
+        // gesture, so it is left to the browser. The terminal never scrolls
+        // sideways, so nothing is lost. Propagation still stops: xterm has no
+        // scrollback and would turn the vertical remainder into cursor keys.
         event.stopPropagation();
+        if (event.deltaY === 0 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+          return;
+        }
+        event.preventDefault();
         if (event.deltaMode === 0) {
           if (event.timeStamp - wheelPixelsAt > WHEEL_GESTURE_GAP_MS) {
             wheelPixels = 0;
