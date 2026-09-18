@@ -2412,6 +2412,17 @@ test. Update this file when a convention changes.
   runners and the notifications reserve for the cards): `dc-project-list`
   applies the chosen mode to the index along with the board and again on
   every `dc:rendered` swap of the column.
+  The index is `dc-project-index` (`components/project-index.js`), the list
+  element itself, so every swap wires its own rows; an open menu stands
+  through a swap and acts on the facts its row carried. The three dots
+  (`[data-index-menu]`), a right click and a touch long press open: open
+  project, open editor, new coder (the create dialog), new shell (`POST
+  /shells/new` with `data-index-path`, lands on the shell), the board's git
+  entries, the compose entries where the project has stacks, Delete project
+  with the board's confirm and `ProjectRow.DeleteNote`. The row carries what
+  the board's buttons carry, `@dc/project-actions` builds the entries for
+  both (`gitMenuItems`, `composeMenuItems`, `deleteProject`), and the
+  projects event takes a deleted row off every surface.
 - **The list column remembers its width and its place per area:** the
   `[data-ctx-resize]` handle at the column's right edge (desktop only) drags
   `--dc-ctx-w` on `.dc-app`, 200px up to half the window, a double click puts
@@ -2590,6 +2601,9 @@ free floating page scripts.
   iOS hands the long press to its own gesture recognizer, which ends the
   pointer stream early and, with the callout suppressed, raises no
   `contextmenu`, so only a touch-owned press survives to open the menu.
+  Every row with the gesture sets `-webkit-touch-callout: none` and
+  `user-select: none` in style.css, or iOS answers the hold with its link
+  preview.
   iOS also ignores `draggable="false"` on links and its drag lift ends the
   touch stream too, so the handler prevents `dragstart` on rows and
   `touchcancel` does not kill an armed press (a real scroll delivers
@@ -2599,8 +2613,8 @@ free floating page scripts.
   does.
   A menu opened by a resting finger ignores that finger's wobble for a moment
   (`noteTouchOpen`), otherwise its own `touchmove` closes it at once. The editor
-  tabs, the editor file tree and the projects page chips use it; the terminal
-  tab strip has its own strip gesture and calls `openMenu` directly.
+  tabs, the file tree, the chips, the project index, the assistants list and
+  the tab strip use it.
 - **Custom elements:** `internal/web/static/js/components/`, one element per
   file, registered with `customElements.define`. Each imports only from `@dc/*`,
   never from another component, so the import map stays flat.

@@ -699,6 +699,32 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await closeTabMenu();
     });
 
+    // The same gesture every list column carries (wireRowMenus): a finger
+    // resting on a row opens its menu, checked on the timer path with a touch
+    // pointer, which needs no touch device. The page still stands on the shell
+    // of the right click above, its tab in the strip.
+    await run("a touch long press on a tab opens the same menu (timer path)", async () => {
+      await page.waitForSelector(tabSel(ids[2]), { state: "visible", timeout: 8000 });
+      const hold = await page.$eval(tabSel(ids[2]), (el) => {
+        const style = getComputedStyle(el);
+        return { callout: style.getPropertyValue("-webkit-touch-callout"), select: style.getPropertyValue("user-select") || style.getPropertyValue("-webkit-user-select") };
+      });
+      assert(hold.callout === "none" || hold.callout === "", `the tab keeps the iOS callout: ${hold.callout}`);
+      assert(hold.select === "none", `the tab's text is selectable on a hold: ${hold.select}`);
+      await page.$eval(tabSel(ids[2]), (el) => {
+        const r = el.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true, cancelable: true, pointerId: 7, pointerType: "touch", clientX: r.x + 8, clientY: r.y + 8,
+        }));
+      });
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+      const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => e.textContent.trim()));
+      assert(labels.includes("Rename") && labels.includes("Delete"), `the long press menu reads ${labels.join(", ")}`);
+      await closeTabMenu();
+      // The window that swallows a contextmenu right after a timer-opened menu.
+      await sleep(700);
+    });
+
     await run("context menu rename posts and the tab updates over the event stream", async () => {
       const newName = `ctx-renamed-${tag}`;
       await openTabMenu(tabSel(ids[2]));

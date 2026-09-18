@@ -1631,6 +1631,186 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await mp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
     });
 
+    // The index rows: the list column beside the board and the phone's sheet
+    // carry the project's menu behind the three dots at the row's end, on a
+    // right click on the desktop and on a touch long press. The entries are
+    // the board's, built out of the attributes the board's git and compose
+    // buttons carry, and the delete asks the board's question with the
+    // board's note. The column is swapped whole on every terminals event, so
+    // the wiring has to be the row's own render: the menu is opened once, a
+    // shell is started from within the page, and the fresh rows open it again.
+    const indexRow = (name) => `.dc-app > .dc-ctx [data-index-project="${name}"]`;
+    const indexMenu = async (name, label) => {
+      await page.click(indexRow(name), { button: "right" });
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+      if (label) await page.click(`.dc-context-menu .dropdown-item:has-text("${label}")`);
+    };
+    const sheetRow = (name) => `dc-ctx-sheet:not([hidden]) [data-index-project="${name}"]`;
+    const openSheet = async (mp) => {
+      await mp.click('.dc-tabbar button[data-ctx-area="projects"]');
+      await mp.waitForSelector(sheetRow(project), { state: "visible", timeout: 8000 });
+      await sleep(300);
+    };
+    const sheetMenu = async (mp, name) => {
+      await mp.click(`${sheetRow(name)} [data-index-menu]`);
+      await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+    };
+    const sheetMenuClose = async (mp) => {
+      await mp.keyboard.press("Escape");
+      await mp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+      await sleep(400);
+    };
+
+    await run("index row menu: a right click on the column's row lists the project's actions in order", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(indexRow(source), { state: "visible", timeout: 8000 });
+      await indexMenu(source);
+      const main = await menuLabels();
+      assert(
+        JSON.stringify(main) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "New worktree", "Fetch", "Commit changes", "Compare revisions", "Delete project"]),
+        `the main repository's row menu reads ${JSON.stringify(main)}`,
+      );
+      const hrefs = await page.$$eval(".dc-context-menu a.dropdown-item", (els) => els.map((e) => e.getAttribute("href")));
+      assert(hrefs.includes(`/projects#project-${source}`), `Open project leads elsewhere: ${hrefs.join(", ")}`);
+      assert(hrefs.includes(`/projects/${source}/editor`), `Open editor leads elsewhere: ${hrefs.join(", ")}`);
+      assert(hrefs.includes(`/coders/new?project=${source}&return=%2Fprojects`), `New coder leads elsewhere: ${hrefs.join(", ")}`);
+      // A shell needs nothing asked, so its entry acts instead of leading to
+      // the form.
+      assert((await page.locator('.dc-context-menu button.dropdown-item:has-text("New shell")').count()) === 1, "New shell is a link, not an action");
+      assert(hrefs.includes(`/projects/new?create=worktree%3A${source}`), `New worktree leads elsewhere: ${hrefs.join(", ")}`);
+      assert((await page.locator('.dc-context-menu .dropdown-item.text-danger:has-text("Delete project")').count()) === 1, "Delete project is not the danger entry");
+      await closeMenu();
+      await indexMenu(`${source}-wt1`);
+      const worktree = await menuLabels();
+      assert(
+        JSON.stringify(worktree) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Fetch", "Commit changes", "Compare revisions", "Delete project"]),
+        `the worktree's row menu reads ${JSON.stringify(worktree)}`,
+      );
+      await closeMenu();
+      await indexMenu(project);
+      const plain = await menuLabels();
+      assert(
+        JSON.stringify(plain) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Delete project"]),
+        `a plain directory's row menu reads ${JSON.stringify(plain)}`,
+      );
+      await closeMenu();
+    });
+
+    await run("index row menu: New shell starts a shell in the project at once and lands on it", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(indexRow(project), { state: "visible", timeout: 8000 });
+      await indexMenu(project, "New shell");
+      await page.waitForURL(/\/shells\/(?!new)[^/]+$/, { timeout: 15000 });
+      shellUrls.push(page.url());
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
+      assert((await page.locator("[data-form-modal].show").count()) === 0, "the create dialog opened for a shell");
+    });
+
+    await run("index row menu: the three dots open it in the sheet at 390px and the sheet stays", async () => {
+      const mp = await mobilePage();
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(mp);
+      await openSheet(mp);
+      const box = await mp.locator(`${sheetRow(project)} [data-index-menu]`).boundingBox();
+      assert(box && box.x >= 0 && box.x + box.width <= 390, `the dots stand outside the sheet: ${JSON.stringify(box)}`);
+      // The hold must reach the menu, not iOS's link preview: the callout is
+      // off on the row. Neither headless engine knows the iOS property and
+      // both answer "" for it, so only WebKit on a device reads "none" here.
+      const hold = await mp.$eval(sheetRow(project), (el) => {
+        const style = getComputedStyle(el);
+        return { callout: style.getPropertyValue("-webkit-touch-callout"), select: style.getPropertyValue("user-select") || style.getPropertyValue("-webkit-user-select") };
+      });
+      assert(hold.callout === "none" || hold.callout === "", `the row keeps the iOS callout: ${hold.callout}`);
+      assert(hold.select === "none", `the row's text is selectable on a hold: ${hold.select}`);
+      await sheetMenu(mp, project);
+      assert((await mp.locator("dc-ctx-sheet:not([hidden])").count()) === 1, "the dots closed the sheet");
+      assert(mp.url().endsWith("/projects"), `the dots followed the row's link: ${mp.url()}`);
+      const labels = (await mp.locator(".dc-context-menu .dropdown-item").allTextContents()).map((t) => t.trim());
+      assert(
+        JSON.stringify(labels) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Delete project"]),
+        `the sheet's row menu reads ${JSON.stringify(labels)}`,
+      );
+      const fit = await mp.evaluate(() => {
+        const r = document.querySelector(".dc-context-menu").getBoundingClientRect();
+        return r.left >= 0 && r.right <= window.innerWidth && r.top >= 0 && r.bottom <= window.innerHeight;
+      });
+      assert(fit, "the menu leaves the viewport");
+      await sheetMenuClose(mp);
+    });
+
+    await run("index row menu: stands through the re-render a started shell brings, and opens again on the fresh rows", async () => {
+      const path = await L.projectPath(page, project);
+      const mp = await mobilePage();
+      await mp.waitForSelector(sheetRow(project), { state: "visible", timeout: 8000 });
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(indexRow(project), { state: "visible", timeout: 8000 });
+      await sheetMenu(mp, project);
+      await sheetMenuClose(mp);
+      await mp.$eval(sheetRow(project), (el) => { el.dataset.probe = "stands"; });
+      await page.$eval(indexRow(project), (el) => { el.dataset.probe = "stands"; });
+      // The column's menu is open while the list is swapped under it: it has
+      // to stand, an event is no reason to lose what somebody is looking at.
+      await indexMenu(project);
+      // The shell starts from within the phone's page, so neither page moves
+      // and the terminals event is what redraws both lists.
+      const shellUrl = await mp.evaluate(async (p) => {
+        const token = document.querySelector('meta[name="csrf-token"]')?.content || "";
+        const r = await fetch("/shells/new", {
+          method: "POST",
+          headers: { "X-CSRF-Token": token, "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ project: p }).toString(),
+        });
+        return r.ok ? r.url : `${r.status}`;
+      }, path);
+      assert(/\/shells\/[^/]+$/.test(shellUrl), `the shell did not start: ${shellUrl}`);
+      shellUrls.push(shellUrl);
+      await mp.waitForSelector(`${sheetRow(project)}:not([data-probe])`, { state: "attached", timeout: 10000 });
+      await page.waitForSelector(`${indexRow(project)}:not([data-probe])`, { state: "attached", timeout: 10000 });
+      await sleep(300);
+      assert((await page.locator(".dc-context-menu").count()) === 1, "the re-render closed the open menu");
+      await closeMenu();
+      await sheetMenu(mp, project);
+      assert((await mp.locator(".dc-context-menu .dropdown-item").count()) === 5, "the fresh sheet row opens a different menu");
+      await sheetMenuClose(mp);
+      await indexMenu(project);
+      assert((await menuLabels()).length === 5, "the fresh column row opens a different menu");
+      await closeMenu();
+    });
+
+    await run("index row menu: Delete project asks with the board's note, toasts, and takes the row off the board, the column and the sheet without a reload", async () => {
+      const throwaway = `zzidx-${tag}`;
+      await L.createProject(page, throwaway);
+      await page.waitForSelector(indexRow(throwaway), { state: "visible", timeout: 8000 });
+      // The note is the board's: a main repository names the worktree
+      // projects that go with it.
+      await indexMenu(source, "Delete project");
+      await page.waitForSelector(".swal2-container", { state: "visible", timeout: 5000 });
+      const title = (await page.textContent(".swal2-title")).trim();
+      assert(title === `Delete project "${source}"?`, `the confirm asks ${title}`);
+      const note = (await page.textContent(".swal2-html-container")).replace(/\s+/g, " ").trim();
+      assert(note.includes(`"${source}-wt1"`), `the note does not name the worktree: ${note}`);
+      await page.click(".swal2-cancel");
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 5000 });
+      await sleep(400);
+      assert((await page.locator(`#project-${source}`).count()) === 1, "cancel deleted the repository");
+      const before = page.url();
+      await page.evaluate(() => { document.querySelector("dc-project-list").dataset.probe = "stands"; });
+      await indexMenu(throwaway, "Delete project");
+      await confirmSwal(page);
+      await page.waitForSelector(`.dc-toast:has-text('Project "${throwaway}" deleted.')`, { state: "visible", timeout: 8000 });
+      await page.waitForSelector(`#project-${throwaway}`, { state: "detached", timeout: 10000 });
+      await page.waitForSelector(indexRow(throwaway), { state: "detached", timeout: 10000 });
+      assert(page.url() === before, `the deletion moved the page to ${page.url()}`);
+      assert(await page.evaluate(() => document.querySelector("dc-project-list").dataset.probe) === "stands", "the page reloaded");
+      const mp = await mobilePage();
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(mp);
+      await openSheet(mp);
+      assert((await mp.locator(`dc-ctx-sheet [data-index-project="${throwaway}"]`).count()) === 0, "the sheet still lists the deleted project");
+      await mp.click('.dc-tabbar button[data-ctx-area="projects"]');
+      await mp.waitForSelector("dc-ctx-sheet[hidden]", { state: "attached", timeout: 4000 });
+    });
+
     await run("the list column remembers its width and its scroll position per area", async () => {
       const filler = [];
       for (let i = 0; i < 8; i += 1) { const name = `zzfill-${tag.slice(-4)}-${i}`; await L.createProject(page, name); filler.push(name); }
@@ -1689,5 +1869,6 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
     await L.deleteProject(page, remote).catch(() => {});
     await L.deleteProject(page, solo).catch(() => {});
     await L.deleteProject(page, asker).catch(() => {});
+    await L.deleteProject(page, `zzidx-${tag}`).catch(() => {});
   }
 });

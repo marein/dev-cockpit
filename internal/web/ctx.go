@@ -40,7 +40,12 @@ func (s *Server) handleCtx(c *gin.Context) {
 		// compose action of the project, the same way it wears a working
 		// session. It is the page's own join, one cache read, no daemon call.
 		projects := s.projectsWithRunners()
-		c.HTML(http.StatusOK, "ctx_projects.gohtml", render.ProjectsListData{Page: page, Projects: projects, Docker: s.dockerByProject(projects)})
+		c.HTML(http.StatusOK, "ctx_projects.gohtml", render.ProjectsListData{
+			Page:          page,
+			Projects:      projects,
+			Docker:        s.dockerByProject(projects),
+			DockerActions: render.DockerButtons(s.composeActions()),
+		})
 	case "terminals":
 		c.HTML(http.StatusOK, "ctx_terminals.gohtml", page)
 	case "settings":

@@ -92,8 +92,7 @@
         <a href="/projects/{{.Name}}/editor" class="btn btn-sm btn-icon btn-ghost-secondary" aria-label="Open editor for project {{.Name}}" title="Editor">
           <i class="ti ti-code icon"></i>
         </a>
-        {{$wtNote := deleteWorktreeNote .Project}}{{$dockerNote := ""}}{{with index $.Docker .Name}}{{if .Containers}}{{$dockerNote = "Its directory goes, and its containers are brought down with compose first, volumes included."}}{{end}}{{end}}
-        <form method="post" action="/projects/delete" data-project-delete data-ajax-refresh data-confirm="Delete project &quot;{{.Name}}&quot;?"{{if or $dockerNote $wtNote}} data-confirm-text="{{$dockerNote}}{{if and $dockerNote $wtNote}} {{end}}{{$wtNote}}"{{end}} data-confirm-button="Delete">
+        <form method="post" action="/projects/delete" data-project-delete data-ajax-refresh data-confirm="Delete project &quot;{{.Name}}&quot;?"{{with .DeleteNote}} data-confirm-text="{{.}}"{{end}} data-confirm-button="Delete">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="project" value="{{.Name}}">
           <button type="submit" class="btn btn-sm btn-icon btn-ghost-secondary tone-danger" aria-label="Delete project {{.Name}}" title="Delete">

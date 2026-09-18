@@ -8,7 +8,7 @@ import { matchesTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
 import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
 import { ensureOk, postForm } from "@dc/http";
-import { notifyError, notifyInfo, notifySuccess } from "@dc/toast";
+import { notifyError, notifySuccess } from "@dc/toast";
 import { releaseCoder, steerCoder } from "@dc/steer";
 
 const FILTER_KEY = "dc-project-filter";
@@ -227,25 +227,15 @@ class ProjectList extends HTMLElement {
     if (chip) await this.actOnChip(chip, form.action, form.querySelector("button"));
   }
 
+  // The deletion itself is @dc/project-actions', shared with the index row's
+  // menu; the toast says what was started or done.
   async deleteProject(form) {
     const name = new FormData(form).get("project");
     if (typeof name !== "string" || !name) {
       notifyError("Could not delete the project.");
       return;
     }
-    try {
-      const response = await postForm(form.action, { project: name });
-      await ensureOk(response, "Could not delete the project.");
-      // A project with containers is deleted in the background: its stacks go
-      // down first. The row then renders as working until the projects event
-      // says it is gone, so this only says what was started.
-      const data = await response.json().catch(() => null);
-      if (data && data.deleting) notifyInfo(`Deleting project "${name}"…`);
-      else notifySuccess(`Project "${name}" deleted.`);
-      this.refreshProjectList();
-    } catch (error) {
-      notifyError(error.message);
-    }
+    if (await projectActions.deleteProject(name)) this.refreshProjectList();
   }
 
   // The chip actions, offered on right click and on touch long press through

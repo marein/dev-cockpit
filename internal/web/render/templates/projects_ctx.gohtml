@@ -15,7 +15,12 @@
      icon wears, so a row says in one place that its terminals have something
      new. It names the resumable coders among its targets for that, they hold
      news without running. A project with no live terminal has no count to
-     carry it and keeps the dot of its own at the end of the row. */}}
+     carry it and keeps the dot of its own at the end of the row.
+
+     Every row ends in the strip's three dots, which open the project's menu
+     (dc-project-index, right click and long press too). The row carries what
+     the board's git and compose buttons carry, so @dc/project-actions builds
+     the same entries; the delete note is the board's DeleteNote. */}}
 {{define "projects_ctx.gohtml"}}
 {{template "ctx_start.gohtml" (dict "Title" "Projects" "KeepScroll" true)}}
 <div class="dc-ctx-tools">
@@ -33,16 +38,25 @@
   </div>
 {{template "ctx_filter.gohtml" "Filter projects…"}}
   <div class="dc-ctx-body">
-<nav class="list-group list-group-flush dc-rows" aria-label="Project index" data-project-index data-ctx-list="projects">
+<dc-project-index class="list-group list-group-flush dc-rows" role="navigation" aria-label="Project index" data-project-index data-ctx-list="projects">
   {{range .Rows}}
-  <a class="list-group-item list-group-item-action{{if .Grouped}} is-nested{{end}}" href="/projects#project-{{.Name}}" data-dc-focus="work" data-index-project="{{.Name}}" data-index-active="{{if .Active}}true{{else}}false{{end}}" data-index-used="{{.LastUsedUnix}}"{{if .Grouped}} data-index-worktree-of="{{.GitWorktreeOf}}"{{end}}>
+  {{$name := .Name}}{{$editorURL := print "/projects/" .Name "/editor"}}
+  <a class="list-group-item list-group-item-action{{if .Grouped}} is-nested{{end}}" href="/projects#project-{{.Name}}" data-dc-focus="work" data-index-project="{{.Name}}" data-index-path="{{.Path}}" data-index-active="{{if .Active}}true{{else}}false{{end}}" data-index-used="{{.LastUsedUnix}}"{{if .Grouped}} data-index-worktree-of="{{.GitWorktreeOf}}"{{end}}
+     {{- if .GitRepo}} data-git-project="{{.Name}}"{{if not .GitWorktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{$editorURL}}?view=commit" data-git-compare="{{$editorURL}}?view=compare"{{end}}
+     {{- with index $.Docker .Name}}{{if .Stacks}} data-docker-project="{{$name}}"{{end}}{{end}}
+     {{- with .DeleteNote}} data-index-delete-note="{{.}}"{{end}}>
     {{if .Grouped}}<i class="ti ti-git-fork" aria-hidden="true"></i>{{end}}<span class="dc-mono dc-trunc flex-fill">{{.Name}}</span>
     {{if .ActiveRefs}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}" data-notify-targets="{{.TerminalIDs}}" title="{{.CountTitle}}">{{len .ActiveRefs}}{{template "news_dot.gohtml"}}</span>{{end}}
     {{if .DockerShown}}<span class="dc-term-icon{{with .DockerTone}} {{.}}{{end}}{{if .DockerWorking}} dc-docker-working{{end}}" title="{{.DockerTitle}}"><i class="ti ti-brand-docker" aria-hidden="true"></i></span>{{end}}
     {{if not .ActiveRefs}}{{template "news_dot.gohtml" (dict "Hidden" (not .HasNews) "Scope" true "Projects" (print "project-" .Name) "Label" "Something new in this project")}}{{end}}
+    {{with index $.Docker .Name}}{{if .Stacks}}
+    {{range .Stacks}}<span hidden data-docker-stack data-stack-label="{{.Label}}" data-stack-running="{{.Running}}" data-stack-total="{{.Total}}"{{if .Busy}} data-stack-busy="1"{{end}}{{if .RunID}} data-stack-run="{{.RunID}}" data-stack-run-action="{{.RunAction}}"{{if .RunGoing}} data-stack-run-going="1"{{end}}{{end}}></span>{{end}}
+    {{range $.DockerActions}}<span hidden data-docker-action data-action-id="{{.ID}}" data-action-icon="{{.Icon}}" data-action-label="{{.Label}}" data-action-command="{{.Command}}"{{if .Confirm}} data-action-confirm="1"{{end}}></span>{{end}}
+    {{end}}{{end}}
+    <span class="terminal-tab-menu" data-index-menu role="button" tabindex="-1" aria-label="Options for {{.Name}}" title="Options"><i class="ti ti-dots" aria-hidden="true"></i></span>
   </a>
   {{end}}
   {{if not .Rows}}<div class="p-3 text-secondary small">No projects yet.</div>{{end}}
-</nav>
+</dc-project-index>
 {{template "ctx_end.gohtml"}}
 {{end}}

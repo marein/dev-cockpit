@@ -1,4 +1,4 @@
-import { openMenu } from "@dc/contextmenu";
+import { openMenu, wireRowMenus } from "@dc/contextmenu";
 import { confirm, promptText } from "@dc/dialog";
 import { el } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
@@ -66,7 +66,13 @@ class TerminalTabs extends HTMLElement {
     this.strip.addEventListener("wheel", (event) => this.onWheel(event), { signal, passive: false });
     this.wireDrag(signal);
     this.strip.addEventListener("click", (event) => this.onClick(event), { signal, capture: true });
-    this.strip.addEventListener("contextmenu", (event) => this.onContextMenu(event), { signal });
+    // The row menu on the right click and on the touch long press, the shared
+    // gesture every list column carries.
+    wireRowMenus(this.strip, ".terminal-tab, .terminal-tab-member", (row, x, y) => {
+      if (!row) return false;
+      this.openRowMenu(row, x, y);
+      return true;
+    }, { signal });
     document.addEventListener("keydown", (event) => this.onKeydown(event), { signal, capture: true });
     document.addEventListener("keyup", (event) => this.onKeyup(event), { signal, capture: true });
     // A modifier click is not a bare modifier tap.
@@ -234,13 +240,6 @@ class TerminalTabs extends HTMLElement {
     const href = tab.getAttribute("href") || "";
     tab.setAttribute("href", href.split("?")[0] + "?focus=" + encodeURIComponent(focus));
     window.setTimeout(() => tab.setAttribute("href", href), 0);
-  }
-
-  onContextMenu(event) {
-    const tab = event.target.closest(".terminal-tab");
-    if (!tab) return;
-    event.preventDefault();
-    this.openRowMenu(tab, event.clientX, event.clientY);
   }
 
   openRowMenu(tab, x, y) {

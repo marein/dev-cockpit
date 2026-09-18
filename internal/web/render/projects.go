@@ -366,6 +366,24 @@ type ProjectRow struct {
 	DockerRunning bool
 	DockerUnwell  bool
 	DockerWorking bool
+	// DockerContainers says the project has containers at all, up or down,
+	// which is what its deletion has to bring down first.
+	DockerContainers bool
+}
+
+// DeleteNote is the sentence under the delete confirm, the same one on the
+// board's delete form and in the index row's menu: the containers that go
+// down first, then what DeleteWorktreeNote says about the repository's
+// worktrees. Empty when neither applies.
+func (r ProjectRow) DeleteNote() string {
+	var parts []string
+	if r.DockerContainers {
+		parts = append(parts, "Its directory goes, and its containers are brought down with compose first, volumes included.")
+	}
+	if note := DeleteWorktreeNote(r.Project); note != "" {
+		parts = append(parts, note)
+	}
+	return strings.Join(parts, " ")
 }
 
 // CountTitle words the session count. The number is running coders and shells,
@@ -507,6 +525,7 @@ func (d ProjectsListData) withRunState(r ProjectRow) ProjectRow {
 	r.DockerRunning = dock.AnyRunning()
 	r.DockerUnwell = dock.AnyUnwell()
 	r.DockerWorking = dock.Working()
+	r.DockerContainers = len(dock.Containers) > 0
 	return r
 }
 
