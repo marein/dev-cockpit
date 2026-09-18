@@ -2586,7 +2586,21 @@ free floating page scripts.
   and takes a row selector, so a second list of rows walks the same way
   instead of growing its own: the editor's sheets are that second one.
   `focusRow` is the one that reaches a row, and it scrolls the container it
-  was given, never the page. Row menus
+  was given, never the page. A menu opened from the keyboard opens on its
+  first row, a menu opened with a pointer marks nothing: what decides is the
+  last input before the open (`openedByKeyboard`, a keydown sets it, a
+  pointerdown clears it). `openMenu` focuses that row, one `shown.bs.dropdown`
+  listener in app.js does the same for every Bootstrap dropdown unless the
+  menu already holds the focus or walks its rows itself (`data-own-selection`,
+  the plus menus, which read the same flag for their own mark). A pointer
+  moving over a row marks it, the same mark the keys move on, and leaving
+  the menu clears it (`followPointer`, `focusFollowsPointer` for the menus
+  that mark by focus; a touch pointer does not hover and is left out), so
+  the arrows continue from where the mouse stands. The menu's
+  keys are caught on the window in the capture phase: Bootstrap's dropdown
+  data api listens on the document in the capture phase and answers the
+  arrows inside any `.dropdown-menu` by opening the nearest toggle, which for
+  a body mounted menu is the first toggle in the body, the bell. Row menus
   (right click plus touch
   long press) go through its `wireRowMenus(container, rowSelector, openFor)`,
   never a hand-rolled press timer. It runs three paths because no single one

@@ -5,7 +5,7 @@
 // still works.
 import { notifyError, notifySuccess } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
-import { focusRow, labelNodes, menuJustClosed, openMenu, revealRow, rowsOf, stepRowFocus, wireRowMenus } from "@dc/contextmenu";
+import { focusRow, followPointer, labelNodes, menuJustClosed, openMenu, openedByKeyboard, revealRow, rowsOf, stepRowFocus, wireRowMenus } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { applyFold } from "@dc/fold";
 import { escapeHtml } from "@dc/dom";
@@ -9839,7 +9839,6 @@ async function init(root) {
   let termFocusOwner = false;
   let termResumeExpanded = false;
   let termMenuOpen = false;
-  let termMenuFromKey = false;
   let termMenuIndex = -1;
   const termApplies = () => pointerMedia.matches && !mobileMedia.matches;
   const termPanesEl = () => termBodyEl.querySelector("[data-editor-term-panes]");
@@ -10190,7 +10189,6 @@ async function init(root) {
 
   function openTermNewMenu() {
     if (!termPlusBtn || !window.bootstrap?.Dropdown) return;
-    termMenuFromKey = true;
     window.bootstrap.Dropdown.getOrCreateInstance(termPlusBtn).show();
     termPlusBtn.blur();
   }
@@ -10229,6 +10227,12 @@ async function init(root) {
     if (!rows.length) return;
     if (termMenuIndex < 0) termMenuIndex = delta > 0 ? 0 : rows.length - 1;
     else termMenuIndex = (termMenuIndex + delta + rows.length) % rows.length;
+    paintTermMenuSelection();
+  }
+
+  function markTermMenuRow(index) {
+    if (index === termMenuIndex) return;
+    termMenuIndex = index;
     paintTermMenuSelection();
   }
 
@@ -10440,14 +10444,21 @@ async function init(root) {
   const termPlusDrop = termPlusBtn?.closest(".dropdown");
   termPlusDrop?.addEventListener("shown.bs.dropdown", () => {
     termMenuOpen = true;
-    termMenuIndex = termMenuFromKey ? 0 : -1;
-    termMenuFromKey = false;
+    termMenuIndex = openedByKeyboard() ? 0 : -1;
     paintTermMenuSelection();
   }, { signal });
   termPlusDrop?.addEventListener("hidden.bs.dropdown", () => {
     termMenuOpen = false;
     paintTermMenuSelection();
   }, { signal });
+  const termNewMenu = termPlusDrop?.querySelector(".editor-term-new-menu");
+  if (termNewMenu) {
+    followPointer(termNewMenu, {
+      signal,
+      enter: (row) => markTermMenuRow(termMenuRows().indexOf(row)),
+      leave: () => markTermMenuRow(-1),
+    });
+  }
   onServerEvent("terminals", (event) => {
     if (!termLoaded) return;
     const project = event.detail && event.detail.project;

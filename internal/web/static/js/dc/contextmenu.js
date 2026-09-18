@@ -3,6 +3,14 @@ import { el } from "@dc/dom";
 let current = null;
 let closedAt = 0;
 let touchOpenAt = 0;
+let keyboardInput = false;
+
+document.addEventListener("keydown", () => { keyboardInput = true; }, { capture: true, passive: true });
+document.addEventListener("pointerdown", () => { keyboardInput = false; }, { capture: true, passive: true });
+
+export function openedByKeyboard() {
+  return keyboardInput;
+}
 
 export function menuJustClosed() {
   return Date.now() - closedAt < 350;
@@ -81,6 +89,30 @@ export function stepRowFocus(container, step, selector = MENU_ROW) {
   return focusRow(container, next);
 }
 
+export function followPointer(container, { selector = MENU_ROW, signal, enter, leave }) {
+  container.addEventListener("pointermove", (event) => {
+    if (event.pointerType === "touch" || !(event.target instanceof Element)) return;
+    const row = event.target.closest(selector);
+    if (row && !row.disabled) enter(row);
+  }, { signal });
+  container.addEventListener("pointerleave", (event) => {
+    if (event.pointerType !== "touch") leave();
+  }, { signal });
+}
+
+export function focusFollowsPointer(container, home, { selector = MENU_ROW, signal } = {}) {
+  followPointer(container, {
+    selector,
+    signal,
+    enter: (row) => {
+      if (row !== document.activeElement) row.focus({ preventScroll: true });
+    },
+    leave: () => {
+      if (rowsOf(container, selector).includes(document.activeElement)) home.focus({ preventScroll: true });
+    },
+  });
+}
+
 export function openMenu({ x, y, items, signal }) {
   closeMenu();
   const openedAt = Date.now();
@@ -135,6 +167,7 @@ export function openMenu({ x, y, items, signal }) {
   document.body.appendChild(node);
   place(node, x, y);
   node.focus({ preventScroll: true });
+  if (openedByKeyboard()) stepRowFocus(node, 1);
   const capture = { signal: ac.signal, capture: true };
   // The finger that opened the menu is still down and now rests over the menu,
   // so its lift would activate whatever landed under it. That one lift is
@@ -160,7 +193,8 @@ export function openMenu({ x, y, items, signal }) {
   document.addEventListener("pointerdown", (event) => {
     if (!node.contains(event.target)) closeMenu();
   }, capture);
-  document.addEventListener("keydown", (event) => onKeydown(event, node), capture);
+  window.addEventListener("keydown", (event) => onKeydown(event, node), capture);
+  focusFollowsPointer(node, node, { signal: ac.signal });
   document.addEventListener("wheel", (event) => {
     if (!node.contains(event.target)) closeMenu();
   }, { signal: ac.signal, capture: true, passive: true });

@@ -132,6 +132,30 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert(/alpha/i.test(cur2 || "") || cur1 === cur2, `sort not persisted '${cur1}' vs '${cur2}'`);
     });
 
+    await run("the sort menu opens on its first row from the keyboard, on none from the mouse, the pointer marks rows", async () => {
+      const marked = () => page.evaluate(() => document.activeElement?.getAttribute("data-project-sort-option") || "");
+      const vp = page.viewportSize();
+      await page.click("[data-project-sort-toggle]");
+      await page.waitForSelector('[data-project-sort-option="alpha"]', { state: "visible", timeout: 5000 });
+      assert((await marked()) === "", `a click opened the sort menu on "${await marked()}"`);
+      await page.hover('[data-project-sort-option="active"]');
+      assert((await marked()) === "active", `the pointer did not mark the hovered row: "${await marked()}"`);
+      await page.keyboard.press("ArrowDown");
+      assert((await marked()) === "recent", `the arrow did not continue from the hovered row: "${await marked()}"`);
+      await page.mouse.move(vp.width - 2, vp.height - 2);
+      assert((await marked()) === "", `leaving the menu left "${await marked()}" marked`);
+      await page.keyboard.press("ArrowDown");
+      assert((await marked()) === "alpha", `the arrow after leaving landed on "${await marked()}"`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector('[data-project-sort-option="alpha"]', { state: "hidden", timeout: 5000 });
+      await page.focus("[data-project-sort-toggle]");
+      await page.keyboard.press("Enter");
+      await page.waitForSelector('[data-project-sort-option="alpha"]', { state: "visible", timeout: 5000 });
+      assert((await marked()) === "alpha", `Enter on the toggle opened the sort menu on "${await marked()}"`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector('[data-project-sort-option="alpha"]', { state: "hidden", timeout: 5000 });
+    });
+
     await run("more than 8 sessions folds the chips behind a +N toggle", async () => {
       for (let i = 0; i < 9; i++) shellUrls.push(await L.createShell(page, project));
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });

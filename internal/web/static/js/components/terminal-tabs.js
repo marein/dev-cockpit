@@ -1,4 +1,4 @@
-import { openMenu, wireRowMenus } from "@dc/contextmenu";
+import { followPointer, openMenu, openedByKeyboard, wireRowMenus } from "@dc/contextmenu";
 import { confirm, promptText } from "@dc/dialog";
 import { el } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
@@ -31,7 +31,6 @@ class TerminalTabs extends HTMLElement {
     this.dirty = false;
     this.pendingIndex = null;
     this.menuOpen = false;
-    this.menuFromKey = false;
     this.menuIndex = -1;
     this.tap = new DoubleTap();
     const signal = this.ac.signal;
@@ -54,8 +53,7 @@ class TerminalTabs extends HTMLElement {
     this.addEventListener("shown.bs.dropdown", (event) => {
       if (!newMenuEvent(event)) return;
       this.menuOpen = true;
-      this.menuIndex = this.menuFromKey ? 0 : -1;
-      this.menuFromKey = false;
+      this.menuIndex = openedByKeyboard() ? 0 : -1;
       this.paintMenuSelection();
     }, { signal });
     this.addEventListener("hidden.bs.dropdown", (event) => {
@@ -63,6 +61,14 @@ class TerminalTabs extends HTMLElement {
       this.menuOpen = false;
       this.paintMenuSelection();
     }, { signal });
+    const newMenu = this.querySelector(".terminal-tabs-new-menu");
+    if (newMenu) {
+      followPointer(newMenu, {
+        signal,
+        enter: (row) => this.markMenuRow(this.menuRows().indexOf(row)),
+        leave: () => this.markMenuRow(-1),
+      });
+    }
     this.strip.addEventListener("wheel", (event) => this.onWheel(event), { signal, passive: false });
     this.wireDrag(signal);
     this.strip.addEventListener("click", (event) => this.onClick(event), { signal, capture: true });
@@ -603,7 +609,6 @@ class TerminalTabs extends HTMLElement {
   openNewMenu() {
     const toggle = this.querySelector("[data-tabs-new-menu]");
     if (!toggle || !toggle.offsetParent || !window.bootstrap?.Dropdown) return false;
-    this.menuFromKey = true;
     window.bootstrap.Dropdown.getOrCreateInstance(toggle).show();
     toggle.blur();
     return true;
@@ -644,6 +649,12 @@ class TerminalTabs extends HTMLElement {
     if (!rows.length) return;
     if (this.menuIndex < 0) this.menuIndex = delta > 0 ? 0 : rows.length - 1;
     else this.menuIndex = (this.menuIndex + delta + rows.length) % rows.length;
+    this.paintMenuSelection();
+  }
+
+  markMenuRow(index) {
+    if (index === this.menuIndex) return;
+    this.menuIndex = index;
     this.paintMenuSelection();
   }
 

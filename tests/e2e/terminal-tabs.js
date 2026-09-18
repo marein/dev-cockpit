@@ -69,7 +69,10 @@ const { assert, sleep, BASE } = L;
 // also answers Cmd+T (Cmd is no terminal modifier, so nothing is taken from the
 // pane): the menu opens with its first row selected and the arrows walk it,
 // Enter takes the row, Esc closes. Opened with the mouse it selects nothing,
-// the pointer is the pointer; the arrows still reach the rows from there. The
+// the pointer is the pointer; the arrows still reach the rows from there. What
+// decides is the last input before the open (`openedByKeyboard` in
+// @dc/contextmenu), so Enter on the focused + button opens on the first row
+// like Cmd+T. The
 // selection is a class on the row and
 // never the focus, like the switcher's: the menu hangs in the sticky strip and
 // focusing anything in there scrolls the page under it, which is what made
@@ -572,6 +575,27 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.keyboard.press("ArrowDown");
       sel = await selected();
       assert(sel.row === "coder" && sel.count === 1, `the arrow did not take the first row: ${JSON.stringify(sel)}`);
+      // The pointer marks the row it moves over, the arrows continue from
+      // there, and leaving the menu clears the mark.
+      await page.hover('terminal-tabs .terminal-tabs-new-menu [data-tabs-new="shell"]');
+      sel = await selected();
+      assert(sel.row === "shell" && sel.count === 1, `the pointer did not mark the hovered row: ${JSON.stringify(sel)}`);
+      await page.keyboard.press("ArrowUp");
+      sel = await selected();
+      assert(sel.row === "coder", `the arrow did not continue from the hovered row: ${JSON.stringify(sel)}`);
+      const vp = page.viewportSize();
+      await page.mouse.move(vp.width - 2, vp.height - 2);
+      sel = await selected();
+      assert(sel.count === 0, `leaving the menu left a row marked: ${JSON.stringify(sel)}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "detached", timeout: 4000 });
+
+      // Enter on the focused + button is a keyboard open too.
+      await page.focus("terminal-tabs [data-tabs-new-menu]");
+      await page.keyboard.press("Enter");
+      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "visible", timeout: 4000 });
+      sel = await selected();
+      assert(sel.row === "coder" && sel.count === 1, `Enter on the + button did not open on the first row: ${JSON.stringify(sel)}`);
       await page.keyboard.press("Escape");
       await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "detached", timeout: 4000 });
       return "keyboard opens on the first row, the mouse on none";
@@ -696,6 +720,49 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       }
       assert(!labels.includes("Stop"), "shell menu offers Stop");
       assert(!labels.includes("Mark read"), "menu offers Mark read without news");
+      await closeTabMenu();
+    });
+
+    await run("the context menu's arrows stay inside it, a right click marks no row, the menu key opens on the first", async () => {
+      const focused = () => page.evaluate(() => {
+        const rows = [...document.querySelectorAll(".dc-context-menu .dropdown-item")];
+        return {
+          index: rows.indexOf(document.activeElement),
+          bell: Boolean(document.querySelector(".dc-notify-menu.show")),
+          ring: getComputedStyle(document.activeElement).outlineStyle !== "none",
+        };
+      });
+      await openTabMenu(tabSel(ids[2]));
+      let at = await focused();
+      assert(at.index === -1, `a right click opened the menu with the focus on row ${at.index}`);
+      await page.keyboard.press("ArrowDown");
+      at = await focused();
+      assert(at.index === 0 && !at.bell, `the first arrow landed on row ${at.index}, bell ${at.bell}`);
+      assert(!at.ring, "the focused row draws a focus ring on top of its surface");
+      await page.keyboard.press("ArrowDown");
+      at = await focused();
+      assert(at.index === 1 && !at.bell, `the second arrow landed on row ${at.index}, bell ${at.bell}`);
+      await page.hover(".dc-context-menu .dropdown-item >> nth=3");
+      at = await focused();
+      assert(at.index === 3, `the pointer did not mark the hovered row: ${at.index}`);
+      await page.keyboard.press("ArrowUp");
+      at = await focused();
+      assert(at.index === 2, `the arrow did not continue from the hovered row: ${at.index}`);
+      const vp = page.viewportSize();
+      await page.mouse.move(vp.width - 2, vp.height - 2);
+      at = await focused();
+      assert(at.index === -1, `leaving the menu left row ${at.index} marked`);
+      await page.keyboard.press("ArrowDown");
+      at = await focused();
+      assert(at.index === 0 && !at.bell, `the arrow after leaving landed on row ${at.index}, bell ${at.bell}`);
+      await closeTabMenu();
+      assert(!(await focused()).bell, "closing the menu opened the notification menu");
+
+      await page.focus(tabSel(ids[2]));
+      await page.keyboard.press("ContextMenu");
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+      at = await focused();
+      assert(at.index === 0 && !at.bell, `the menu key opened the menu on row ${at.index}, bell ${at.bell}`);
       await closeTabMenu();
     });
 

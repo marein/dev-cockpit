@@ -2,6 +2,7 @@ import { confirm, isVisible as dialogVisible } from "@dc/dialog";
 import { notifyError } from "@dc/toast";
 import "@dc/theme";
 import { watchCtx, initCtxLayout } from "@dc/ctx";
+import { rowsOf, focusRow, focusFollowsPointer, openedByKeyboard } from "@dc/contextmenu";
 
 // The glue around pe.js: a lazy custom element loader, the loading bar and the
 // pe:* hooks. Every page is server rendered HTML, custom elements enhance it.
@@ -15,6 +16,28 @@ import { watchCtx, initCtxLayout } from "@dc/ctx";
 document.addEventListener("hide.bs.dropdown", (event) => {
   if (dialogVisible()) event.preventDefault();
 });
+
+document.addEventListener("shown.bs.dropdown", (event) => {
+  const dropdown = dropdownOf(event.target);
+  if (!dropdown || dropdown.menu.hasAttribute("data-own-selection")) return;
+  const { toggle, menu } = dropdown;
+  const ac = new AbortController();
+  event.target.addEventListener("hidden.bs.dropdown", () => ac.abort(), { once: true, signal: ac.signal });
+  focusFollowsPointer(menu, toggle, { signal: ac.signal });
+  if (!openedByKeyboard() || menu.contains(document.activeElement)) return;
+  const row = rowsOf(menu).find((item) => item.offsetParent);
+  if (row) focusRow(menu, row);
+});
+
+function dropdownOf(target) {
+  if (!(target instanceof Element)) return null;
+  const toggle = target.matches('[data-bs-toggle="dropdown"]') ? target : target.querySelector('[data-bs-toggle="dropdown"]');
+  if (!toggle) return null;
+  const isMenu = (node) => node?.classList.contains("dropdown-menu");
+  const menu = [toggle.nextElementSibling, toggle.previousElementSibling].find(isMenu)
+    ?? toggle.parentElement?.querySelector(".dropdown-menu");
+  return menu ? { toggle, menu } : null;
+}
 
 const bootBuild = buildId(document);
 
