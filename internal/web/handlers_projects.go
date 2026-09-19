@@ -505,16 +505,21 @@ func (s *Server) purgeProjectRunners(path string) {
 			if filesystem.IsUnder(r.CWD, path) {
 				_, _ = sessions.Stop(r.Identifier)
 				s.notifier.MarkTargetRead(r.Identifier)
-				// The terminal is gone with the project, so its job is too:
-				// nothing will ever report on it again.
-				s.jobCalledOff(r.Identifier)
+				// The terminal goes with the project, so it takes the same road
+				// a deleted coder takes: its open job is closed with that
+				// reason, and what could only ever have fired on it goes. What
+				// fell is not counted for an answer here: the deletion cascades
+				// into worktree projects and a project with containers is
+				// answered before its purge runs, so one number in that answer
+				// would be short as often as right.
+				s.jobDeleted(r.Identifier)
 			}
 		}
 		for _, r := range snap.Resumable {
 			if filesystem.IsUnder(r.CWD, path) {
 				_, _ = sessions.DeleteResumable(r.SessionID)
 				s.notifier.MarkTargetRead(r.SessionID)
-				s.jobCalledOff(r.SessionID)
+				s.jobDeleted(r.SessionID)
 			}
 		}
 	}

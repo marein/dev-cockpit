@@ -92,6 +92,13 @@ type Service struct {
 	onChange func()
 	onDone   func(instanceID string)
 	render   func(string) (string, error)
+
+	// events is the reactor: where an event a source publishes goes, and where
+	// the triggers live. Built with the service, see newReactor.
+	events *Reactor
+	// slots is the one cap on the turns nobody asked for interactively, the
+	// checks and the reactions. The watcher sets its limit from the setting.
+	slots *checkSlots
 }
 
 // renderFloor is the shortest gap between two rendered prefixes while an answer
@@ -122,8 +129,10 @@ func newService(store *Store, runs *RunStore, coders Coders, workdirs Workdirs) 
 		hub:      newHub(),
 		running:  map[string]*activeRun{},
 		reserved: map[string]bool{},
+		slots:    newCheckSlots(nil),
 	}
 	s.reconcile()
+	newReactor(s, NewTriggers(store), NewJobs(store))
 	return s
 }
 
@@ -183,7 +192,9 @@ func (s *Service) Get(id string) (Instance, error) {
 // instances where a word appears in the title or in a message,
 // compared case insensitively. An empty word returns the whole index. The
 // title is answered from the index alone, the message match loads the
-// transcript; nothing here writes.
+// transcript; nothing here writes. A message is matched by Message.carries,
+// the same rule Transcript narrows a thread with, so the list that says an
+// assistant holds the word and the reading that shows where cannot disagree.
 func (s *Service) Search(word string) []Summary {
 	entries := s.store.List()
 	word = strings.ToLower(strings.TrimSpace(word))
@@ -201,7 +212,7 @@ func (s *Service) Search(word string) []Summary {
 			continue
 		}
 		for _, m := range c.Messages {
-			if strings.Contains(strings.ToLower(m.Content), word) {
+			if m.carries(word) {
 				out = append(out, entry)
 				break
 			}
@@ -225,10 +236,26 @@ const TranscriptMessageRunes = 600
 // entries zero or less means the default window, budget zero or less keeps
 // every message whole. The second return is how many older messages the
 // window dropped. It only reads, the stored transcript stays as it is.
-func (s *Service) Transcript(id string, entries, budget int) (Instance, int, error) {
+//
+// A contains word narrows the thread to the messages carrying it, and it
+// narrows before the window the way `job-list --contains` filters before its
+// cap: a match older than the last entries is exactly what somebody searching
+// a long thread is after, and a filter behind the window would never reach
+// it. MessageCount stays the whole thread's, so the reading can say how much
+// of it the matches are.
+func (s *Service) Transcript(id, contains string, entries, budget int) (Instance, int, error) {
 	c, ok := s.store.Load(id)
 	if !ok {
 		return Instance{}, 0, errors.New("Assistant not found.")
+	}
+	if word := strings.ToLower(strings.TrimSpace(contains)); word != "" {
+		kept := make([]Message, 0, len(c.Messages))
+		for _, m := range c.Messages {
+			if m.carries(word) {
+				kept = append(kept, m)
+			}
+		}
+		c.Messages = kept
 	}
 	if entries <= 0 {
 		entries = TranscriptEntriesShown
@@ -256,18 +283,19 @@ func cutMessage(text string, max int) string {
 	return fmt.Sprintf("%s… [cut: %d of %d runes shown, use --full for the whole message]", string(runes[:max]), max, len(runes))
 }
 
-// LastAnswer returns the newest assistant message of an assistant. The
-// notification for a finished turn is raised right after that turn ended, so
-// this is the message it is about: it names the answer in the entry and lets
-// the entry link straight at it.
+// LastAnswer returns the newest message that can ring: an assistant's answer
+// or a note the cockpit wrote, a check's report. The notification for a
+// finished turn is raised right after that turn ended, so this is the message
+// it is about: it names the answer in the entry and lets the entry link
+// straight at it.
 func (s *Service) LastAnswer(id string) (Message, bool) {
 	c, ok := s.store.Load(id)
 	if !ok {
 		return Message{}, false
 	}
 	for i := len(c.Messages) - 1; i >= 0; i-- {
-		if c.Messages[i].Role == RoleAssistant {
-			return c.Messages[i], true
+		if m := c.Messages[i]; m.Role == RoleAssistant || m.IsNote() {
+			return m, true
 		}
 	}
 	return Message{}, false
@@ -453,11 +481,14 @@ func (s *Service) Send(id, prompt string, attachments []Attachment) (Run, error)
 		CreatedAt:   now,
 		State:       StateComplete,
 	}
+	// What the cockpit wrote since the last answer is read before the prompt
+	// joins the transcript, and its headlines ride along in front of it.
+	since := notesSince(c)
 	c.Messages = append(c.Messages, user)
 	if c.Title == "" || c.Title == DefaultTitle {
 		c.Title = deriveTitle(text, attachments)
 	}
-	r, err := s.startLocked(&c, co, withAttachments(text, attachments), user.ID)
+	r, err := s.startLocked(&c, co, withNotes(since, withAttachments(text, attachments)), user.ID)
 	s.mu.Unlock()
 	if err != nil {
 		return Run{}, err
@@ -683,8 +714,10 @@ func (s *Service) flushReady(instanceID string) {
 		c.Title = deriveTitle(queued[0].Content, queued[0].Attachments)
 	}
 	// The waiting entries go out with the new turn; every open page pulls them
-	// fresh so their bubbles stop saying so.
-	_, err := s.startLocked(&c, co, queuedPrompt(queued), flushed...)
+	// fresh so their bubbles stop saying so. The one line about what the
+	// cockpit wrote since the last answer rides along the way it does on a
+	// send.
+	_, err := s.startLocked(&c, co, withNotes(notesSince(c), queuedPrompt(queued)), flushed...)
 	s.mu.Unlock()
 	if err != nil {
 		// Nothing was written, the messages stay waiting, and the next end of a
@@ -802,6 +835,7 @@ func (s *Service) Delete(id string) error {
 		return err
 	}
 	s.drafts.Forget(id)
+	s.events.Dropped(id)
 	s.release(c.CoderID, c.NativeSessionID)
 	s.mu.Unlock()
 
@@ -856,6 +890,121 @@ func queuedPrompt(msgs []Message) string {
 		fmt.Fprintf(&b, "\n--- Message %d ---\n%s\n", i+1, withAttachments(m.Content, m.Attachments))
 	}
 	return b.String()
+}
+
+// noteLine is one line of the summary in front of a chat prompt: the headline
+// the cockpit already wrote for that message, how many messages stand behind
+// it and whether the turn that produced it broke off. Nothing is formulated
+// here, the headline is read off the message.
+type noteLine struct {
+	headline string
+	brokeOff bool
+	count    int
+}
+
+// noteLineOf reads the line a message the cockpit wrote is summarized by: a
+// note's own headline, or the headline of the event a pushed answer reacted
+// to. Anything else is not the cockpit speaking and answers false.
+func noteLineOf(m Message) (noteLine, bool) {
+	switch {
+	case m.IsNote():
+		return noteLine{headline: oneLine(m.Note.Headline), count: 1}, true
+	case m.Role == RoleAssistant && m.Auto:
+		line := noteLine{count: 1, brokeOff: m.State == StateFailed || m.State == StateInterrupted}
+		if m.Origin != nil {
+			line.headline = oneLine(m.Origin.Headline)
+		}
+		return line, true
+	}
+	return noteLine{}, false
+}
+
+// notesSince is what the cockpit wrote into the thread since the assistant's
+// last chat answer, newest first: the notes, a check's reports, and the
+// answers a reaction pushed, which are assistant messages too. A chat turn's
+// prompt used to be the user's text and nothing else, so an assistant learned
+// about its own jobs only when the user told it. The walk stops only at a
+// chat answer, never at a pushed one, because a pushed answer came out of a
+// session that saw nothing of the thread. Equal headlines fold into one line
+// with a count, which is what keeps a schedule firing every half hour from
+// writing the same line twenty times; a turn that broke off folds only with
+// another one that broke off, because that is the line an assistant must not
+// read past.
+func notesSince(c Instance) []noteLine {
+	type key struct {
+		headline string
+		brokeOff bool
+	}
+	var lines []noteLine
+	at := map[key]int{}
+	for i := len(c.Messages) - 1; i >= 0; i-- {
+		m := c.Messages[i]
+		if m.Role == RoleAssistant && !m.Auto {
+			break
+		}
+		line, ok := noteLineOf(m)
+		if !ok {
+			continue
+		}
+		k := key{line.headline, line.brokeOff}
+		if pos, seen := at[k]; seen {
+			lines[pos].count++
+			continue
+		}
+		at[k] = len(lines)
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// maxNoteLines bounds that summary. Equal headlines fold, so fifty lines is
+// the guard against an outlier and never the everyday case; what is cut is
+// the oldest, and the last line says how much.
+const maxNoteLines = 50
+
+// withNotes puts the summary of what the cockpit wrote since the last answer
+// in front of a user's prompt: the count, where the whole of it stands, and
+// one headline per line. The headline is what lets an assistant decide
+// whether any of it touches the message it is answering. A bare count could
+// not, so it had to read every job to find out, or guess.
+func withNotes(lines []noteLine, prompt string) string {
+	if len(lines) == 0 {
+		return prompt
+	}
+	notes := 0
+	for _, l := range lines {
+		notes += l.count
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Since your last answer the cockpit wrote %d note%s into this thread, newest first. job-list and assistant-show on yourself say what, look only when the user's message needs it.\n", notes, plural(notes))
+	shown := lines
+	if len(shown) > maxNoteLines {
+		shown = shown[:maxNoteLines]
+	}
+	for _, l := range shown {
+		b.WriteString("- ")
+		if l.count > 1 {
+			fmt.Fprintf(&b, "%dx ", l.count)
+		}
+		b.WriteString(l.headline)
+		if l.brokeOff {
+			b.WriteString(" (broke off)")
+		}
+		b.WriteString("\n")
+	}
+	if rest := len(lines) - len(shown); rest > 0 {
+		fmt.Fprintf(&b, "  and %d older\n", rest)
+	}
+	b.WriteString("\n")
+	b.WriteString(prompt)
+	return b.String()
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // withAttachments is the prompt the coder receives. The files are named by

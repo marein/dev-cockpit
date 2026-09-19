@@ -57,6 +57,16 @@ export function jumpTextEdge(event, input) {
   return true;
 }
 
+const GROW_SHARE = 0.35;
+
+export function growTextarea(input, surface) {
+  if (!input) return;
+  input.style.height = "auto";
+  const max = Math.round(surface() * GROW_SHARE);
+  input.style.height = `${Math.min(input.scrollHeight, max)}px`;
+  input.style.overflowY = input.scrollHeight > max ? "auto" : "hidden";
+}
+
 const ESCAPE = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
 // The one escape in the app, imported by everything that builds markup from a

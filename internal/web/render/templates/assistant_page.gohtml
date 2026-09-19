@@ -5,8 +5,9 @@
      is the empty state and the only control on it is the one that makes the
      first one. The work column
      is the dc-assistant element itself, so the head's voice menu and the
-     composer are its own children, and the steered coders and the memory
-     stand in an aside that is inline from xl up and a sheet below.
+     composer are its own children, and what the assistant carries on by
+     itself, the coders it steers and the triggers it waits for, stands in an
+     aside that is inline from xl up and a sheet below.
 
      The head's sparkle belongs to the phone alone and stays there: `d-lg-none`
      is on it in every state, the desktop head is the title and nothing else,
@@ -61,7 +62,7 @@
       </div>
     </div>
     {{end}}
-    {{template "assistant_jobs_button.gohtml" .}}
+    {{template "assistant_watching_button.gohtml" .}}
     {{template "shell_head_tools.gohtml" .}}
   </div>
   <div class="dc-work-body dc-work-fill">
@@ -73,10 +74,13 @@
         </div>
         {{template "assistant_composer.gohtml" .}}
       </div>
-      {{/* The aside holds the steered coders: beside the conversation from xl
-           up, below xl the sheet the head's steering wheel opens. The memory
-           sheet is the layout's, opened from the list column's head. */}}
-      <aside class="offcanvas-xl offcanvas-end dc-assistant-aside" tabindex="-1" id="assistant-aside" aria-label="Steered coders" data-assistant-aside>
+      {{/* The aside holds what the assistant carries on by itself: the coders
+           it steers and the triggers it waits for. Two tabs of equal
+           standing, built alike, because they are one thing to the reader,
+           work that goes on without being asked again. Beside the conversation
+           from xl up, below xl the sheet the head's eye opens. The memory sheet
+           is the layout's, opened from the list column's head. */}}
+      <aside class="offcanvas-xl offcanvas-end dc-assistant-aside" tabindex="-1" id="assistant-aside" aria-label="Watching" data-assistant-aside>
         {{/* The same head the list column and the thread wear, so all three end
              on one line; see the memory sheet in ctx_fragments.gohtml. It is
              the sheet's head alone: from xl up the aside stands beside the
@@ -85,14 +89,39 @@
              breakpoint of `offcanvas-xl`), never by the offcanvas state, the
              element is the same one in both sizes. */}}
         <div class="dc-ctx-head d-xl-none">
-          <h2 class="dc-ctx-title">Steered coders</h2>
+          <h2 class="dc-ctx-title">Watching</h2>
           <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#assistant-aside" aria-label="Close"></button>
         </div>
+        {{/* Two tabs, one list each, and the strip stands outside the body a
+             list swaps, so a refresh leaves the chosen half and every unfolded
+             row exactly as they were. */}}
         <div class="offcanvas-body dc-assistant-aside-body">
-          <dc-assistant-list list-url="{{.JobsListURL}}" data-assistant-jobs-list>
-            {{template "assistant_jobs_list.gohtml" .}}
-          </dc-assistant-list>
-          <div class="text-secondary small">These are the coders this assistant steers. They are checked on their own schedule, and the reports land in this thread.</div>
+          {{template "assistant_watching_tabs.gohtml" .}}
+          <div class="tab-content">
+            <dc-assistant-list class="tab-pane active" id="assistant-coders" role="tabpanel" aria-labelledby="assistant-coders-tab" list-url="{{.JobsListURL}}" data-assistant-jobs-list>
+              {{template "assistant_jobs_list.gohtml" .}}
+            </dc-assistant-list>
+            <dc-assistant-list class="tab-pane" id="assistant-triggers" role="tabpanel" aria-labelledby="assistant-triggers-tab" list-url="{{.TriggersListURL}}" data-assistant-triggers-list>
+              {{/* What makes a trigger stands at the head of the triggers, the
+                   plus with the word beside it. It is the tab pane's own child,
+                   so the tab carries it and nothing switches a visibility by
+                   hand, and it stands outside the body the list swaps, so an
+                   event of the assistant leaves it where it is. The empty state
+                   below says what a trigger is for and offers nothing, because
+                   this button is already the line above it.
+
+                   It runs the full width and carries no colour of its own: a
+                   coloured block beside nothing reads as a thing dropped in,
+                   while the full width closes the strip off above the list. Its
+                   weight is the aside's own, `btn btn-sm`, what a trigger row's
+                   Open coder and Change wear one level down, and colour is left
+                   to the one action that destroys something. */}}
+              <a href="{{.TriggersNewURL}}" class="btn btn-sm w-100 mb-2" data-assistant-trigger-new>
+                <i class="ti ti-plus me-1" aria-hidden="true"></i>New trigger
+              </a>
+              {{template "assistant_triggers_list.gohtml" .Triggers}}
+            </dc-assistant-list>
+          </div>
         </div>
       </aside>
     </div>

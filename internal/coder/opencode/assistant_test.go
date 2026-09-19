@@ -229,17 +229,17 @@ func TestSessionExistsAnswersUnderTheCockpitId(t *testing.T) {
 // the text.
 func TestTextPartsKeepTheirBlankLine(t *testing.T) {
 	fixture := strings.Join([]string{
-		textLine(nativeID, "msg_1", "Wasser trägt Leben."),
+		textLine(nativeID, "msg_1", "Water carries life."),
 		toolLine(nativeID, "bash"),
 		stepFinishLine(nativeID, "tool-calls"),
-		textLine(nativeID, "msg_2", "Feuer verlangt Respekt."),
+		textLine(nativeID, "msg_2", "Fire demands respect."),
 		stepFinishLine(nativeID, "stop"),
 	}, "\n")
 	events := runTurn(t, testRunner(t), fixture)
 	if err := errorOf(events); err != nil {
 		t.Fatalf("want a clean turn, got %v", err)
 	}
-	if got := textOf(events); got != "Wasser trägt Leben.\n\nFeuer verlangt Respekt." {
+	if got := textOf(events); got != "Water carries life.\n\nFire demands respect." {
 		t.Fatalf("want the two blocks apart, got %q", got)
 	}
 	var tools []string

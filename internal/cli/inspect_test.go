@@ -172,6 +172,12 @@ func TestJobsOutputCarriesEveryFieldADecisionNeeds(t *testing.T) {
 	if strings.Contains(out, "-1h") || strings.Contains(out, "0m left  id bbb") {
 		t.Fatalf("a closed job must not print a countdown:\n%s", out)
 	}
+	// And it stands as that line alone: the criterion and the last report are
+	// the longest lines of this output and say nothing a closed job needs
+	// said. `job-show` and `--full` bring them back.
+	if strings.Contains(out, "go test ./... passes") {
+		t.Fatalf("a closed job must not print its criterion:\n%s", out)
+	}
 }
 
 // A host collects jobs for weeks, and the report a check leaves is a paragraph.
@@ -180,6 +186,11 @@ func TestJobsOutputCarriesEveryFieldADecisionNeeds(t *testing.T) {
 // as everything there is.
 func TestJobsOutputCapsTheClosedTailAndTheLongNotes(t *testing.T) {
 	report := jobsReport{Now: time.Now()}
+	report.Jobs = append(report.Jobs, jobLine{
+		Terminal: "open", Name: "running", State: "steering", Open: true, MaxWakes: 10,
+		DoneWhen: "the tests pass",
+		Note:     strings.Repeat("a very long report ", 40),
+	})
 	for i := 0; i < maxClosedJobsShown+6; i++ {
 		report.Jobs = append(report.Jobs, jobLine{
 			Terminal: "x", Name: "old", State: "stopped", MaxWakes: 10,
@@ -195,8 +206,16 @@ func TestJobsOutputCapsTheClosedTailAndTheLongNotes(t *testing.T) {
 	if !strings.Contains(out, "and 6 older") {
 		t.Fatalf("the dropped tail has to be named:\n%s", out)
 	}
-	if got := strings.Count(out, "done when:"); got != maxClosedJobsShown {
-		t.Fatalf("want %d printed jobs, got %d", maxClosedJobsShown, got)
+	if got := strings.Count(out, "id x"); got != maxClosedJobsShown {
+		t.Fatalf("want %d printed closed jobs, got %d", maxClosedJobsShown, got)
+	}
+	// The closed ones carry their line and nothing else, so the criterion and
+	// the report of the open one are the only ones in this output.
+	if got := strings.Count(out, "done when:"); got != 1 {
+		t.Fatalf("want the criterion of the open job alone, got %d:\n%s", got, out)
+	}
+	if got := strings.Count(out, "last check:"); got != 1 {
+		t.Fatalf("want the report of the open job alone, got %d:\n%s", got, out)
 	}
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, "last check:") && len([]rune(line)) > maxJobNoteRunes+40 {
@@ -383,11 +402,32 @@ func TestAllListsEveryClosedJob(t *testing.T) {
 	}
 
 	out := formatJobs(report)
-	if got := strings.Count(out, "done when:"); got != maxClosedJobsShown+6 {
+	if got := strings.Count(out, "id x"); got != maxClosedJobsShown+6 {
 		t.Fatalf("want every closed job printed, got %d", got)
 	}
 	if strings.Contains(out, "older") {
 		t.Fatalf("nothing is left over with --all:\n%s", out)
+	}
+}
+
+// A closed job's criterion and its last report are left out of the list, and
+// `--full` is the way back to them without a terminal id: a `--contains` hit
+// that fell in one of the two has to be readable where it was found.
+func TestFullGivesAClosedJobItsTwoLinesBack(t *testing.T) {
+	report := jobsReport{
+		Now:    time.Now(),
+		Filter: jobsFilter{Full: true},
+		Jobs: []jobLine{{
+			Terminal: "aaa", Name: "old", State: "done", MaxWakes: 10,
+			DoneWhen: "the tests pass", Note: "everything was green",
+		}},
+	}
+
+	out := formatJobs(report)
+	for _, want := range []string{"done when: the tests pass", "last check: everything was green"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("--full has to bring back %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -611,16 +651,22 @@ func TestNotificationsOutputIsEmptyWhenNothingIsUnread(t *testing.T) {
 func TestNotificationsOutputNamesTargetProjectAndLink(t *testing.T) {
 	at := time.Date(2026, 3, 4, 9, 30, 0, 0, time.UTC)
 	out := formatNotifications([]notify.Notification{
+		// A coder writes no text of its own, so its second line is the coder
+		// alone, and the project stands in its own column.
 		{
-			TargetName: "Fix the tabs", Title: "Coder has news.", Detail: `"Fix the tabs" - cockpit`,
+			TargetName: "Fix the tabs", Title: "Coder has news.", Detail: "Fix the tabs",
 			Project: "cockpit", URL: "/coders/aaa", CreatedAt: at,
 		},
-		{Title: "Backup ready.", Detail: `"nightly"`, URL: "/settings/backup", CreatedAt: at},
+		// An assistant writes one, and the job it is about opens that line.
+		{
+			TargetName: "Release work", Title: "Job done.",
+			Detail: "wake-event: The README is written.", URL: "/assistants/bbb", CreatedAt: at,
+		},
 	})
 	for _, want := range []string{
 		"Unread notifications (2)",
-		"cockpit", `Coder has news.  "Fix the tabs" - cockpit`, "/coders/aaa",
-		`Backup ready.  "nightly"`, "/settings/backup",
+		"cockpit", "Coder has news.  Fix the tabs", "/coders/aaa",
+		"Job done.  wake-event: The README is written.", "/assistants/bbb",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("notification-list output is missing %q:\n%s", want, out)
@@ -854,13 +900,13 @@ func TestAssistantShowReadsOneTranscript(t *testing.T) {
 	})
 
 	var out strings.Builder
-	if err := runAssistantShow(&out, inspectOptions{stateDir: dir}, "abc", 0, false); err != nil {
+	if err := runAssistantShow(&out, inspectOptions{stateDir: dir}, "abc", "", 0, false); err != nil {
 		t.Fatalf("assistant-show: %v", err)
 	}
 	if gotPath != assistantsPath+"/abc" || gotQuery != "" {
 		t.Fatalf("want the bare assistant route, got %q with query %q", gotPath, gotQuery)
 	}
-	if err := runAssistantShow(&out, inspectOptions{stateDir: dir}, "abc", 3, true); err != nil {
+	if err := runAssistantShow(&out, inspectOptions{stateDir: dir}, "abc", "", 3, true); err != nil {
 		t.Fatalf("assistant-show with entries and full: %v", err)
 	}
 	if gotQuery != "entries=3&full=1" {
@@ -875,6 +921,65 @@ func TestAssistantShowReadsOneTranscript(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("assistant-show output is missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// --contains travels as a query beside entries and full, and the server
+// narrows before it windows, so the command only prints. The head line names
+// the matches and the whole thread, or three hits read as the whole history,
+// and a headline the filter searched stands over its message, or a hit that
+// fell in one would be invisible in what is printed.
+func TestAssistantShowPassesTheContainsWord(t *testing.T) {
+	var gotQuery string
+	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"abc","title":"Fix the tabs","coderId":"claude","messageCount":40,"dropped":3,` +
+			`"messages":[{"role":"user","content":"the release notes are wrong","createdAt":"2026-03-04T09:30:00Z"},` +
+			`{"role":"cockpit","content":"the suite is green","headline":"Job done: release-task","createdAt":"2026-03-04T09:31:00Z"}]}`))
+	})
+
+	var out strings.Builder
+	if err := runAssistantShow(&out, inspectOptions{stateDir: dir}, "abc", "release notes", 2, true); err != nil {
+		t.Fatalf("assistant-show with contains: %v", err)
+	}
+	if gotQuery != "entries=2&full=1&contains=release+notes" {
+		t.Fatalf("want the escaped word beside entries and full, got %q", gotQuery)
+	}
+	for _, want := range []string{
+		`Assistant "Fix the tabs" on coder claude, 5 of 40 messages contain "release notes".`,
+		"Showing the last 2; 3 older matches are not shown",
+		"[cockpit 2026-03-04 09:31] Job done: release-task",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("assistant-show output is missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// A filter that matched nothing says so as a filter. The unfiltered line
+// claims the assistant never said anything, which under a word is a different
+// statement and a wrong one.
+func TestAssistantShowSaysWhenNothingCarriesTheWord(t *testing.T) {
+	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"abc","title":"Fix the tabs","coderId":"claude","messageCount":40,"dropped":0,"messages":[]}`))
+	})
+
+	var out strings.Builder
+	if err := runAssistantShow(&out, inspectOptions{stateDir: dir}, "abc", "nowhere", 0, false); err != nil {
+		t.Fatalf("assistant-show without a match: %v", err)
+	}
+	for _, want := range []string{
+		`0 of 40 messages contain "nowhere".`,
+		"No message carries that word.",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("assistant-show output is missing %q:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "has no messages yet") {
+		t.Fatalf("a filtered reading must not claim an empty thread:\n%s", out.String())
 	}
 }
 

@@ -58,6 +58,19 @@ func (s *Server) createLanded(c *gin.Context, location, message, errMsg string) 
 	c.JSON(http.StatusOK, gin.H{"location": location})
 }
 
+// formStayed answers a form whose result is on the page it already stands on:
+// there is nowhere to navigate, so the dialog closes and says what happened
+// while the lists behind it update themselves on the event the action
+// published. It reports whether it answered; every other caller reads on and
+// gets the redirect or the JSON it always got.
+func (s *Server) formStayed(c *gin.Context, message string) bool {
+	if !inFormModal(c) {
+		return false
+	}
+	c.JSON(http.StatusOK, gin.H{"message": message})
+	return true
+}
+
 // createLandedProject is createLanded for a create that lands on the projects
 // page, where the flash belongs to the new row and not to the top of the page
 // (see redirectWithProjectFlash).

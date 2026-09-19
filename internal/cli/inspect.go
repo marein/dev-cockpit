@@ -342,6 +342,7 @@ func formatAssistants(contains, own string, answer map[string]any) string {
 func newAssistantCommandShow(opts *inspectOptions) *cobra.Command {
 	entries := 0
 	full := false
+	contains := ""
 	cmd := &cobra.Command{
 		Use:   "assistant-show <id>",
 		Short: "Show the messages of one assistant",
@@ -350,41 +351,49 @@ func newAssistantCommandShow(opts *inspectOptions) *cobra.Command {
 			"assistant's: reading across is allowed, writing is not. The reading is capped " +
 			"by default, and a cut message says how much of it is shown; `--full` lifts the cap " +
 			"and composes with `--entries`: `--entries 1 --full` is the whole last message. " +
-			"Reads only, changes nothing.",
+			"`--contains` keeps only the messages carrying a word, in the text or in the " +
+			"headline a note of the cockpit and an answer a trigger pushed stand under, " +
+			"compared case insensitively the way `assistant-list --contains` compares. It " +
+			"narrows before the cap, so it reaches messages the capped reading never shows, " +
+			"and it composes with `--entries` and `--full`. The first line then says how many " +
+			"messages carry the word and how many the thread holds, so a short list is never " +
+			"read as the whole thread. Reads only, changes nothing.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAssistantShow(cmd.OutOrStdout(), *opts, args[0], entries, full)
+			return runAssistantShow(cmd.OutOrStdout(), *opts, args[0], contains, entries, full)
 		},
 	}
 	cmd.Flags().IntVar(&entries, "entries", 0, "how many messages to show (default the recent ones)")
 	cmd.Flags().BoolVar(&full, "full", false, "show the messages whole, without the cap on each one")
+	cmd.Flags().StringVar(&contains, "contains", "", "show only the messages carrying this word in the text or in a headline")
 	return cmd
 }
 
-func runAssistantShow(out io.Writer, opts inspectOptions, id string, entries int, full bool) error {
+func runAssistantShow(out io.Writer, opts inspectOptions, id, contains string, entries int, full bool) error {
 	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
 	path := assistantsPath + "/" + strings.TrimSpace(id)
-	query := ""
+	contains = strings.TrimSpace(contains)
+	var query []string
 	if entries > 0 {
-		query = "entries=" + strconv.Itoa(entries)
+		query = append(query, "entries="+strconv.Itoa(entries))
 	}
 	if full {
-		if query != "" {
-			query += "&"
-		}
-		query += "full=1"
+		query = append(query, "full=1")
 	}
-	if query != "" {
-		path += "?" + query
+	if contains != "" {
+		query = append(query, "contains="+url.QueryEscape(contains))
+	}
+	if len(query) > 0 {
+		path += "?" + strings.Join(query, "&")
 	}
 	answer, err := client.GetJSON(path, assistantReadTimeout)
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(out, formatAssistantThread(answer))
+	_, err = io.WriteString(out, formatAssistantThread(contains, answer))
 	return err
 }
 
@@ -393,8 +402,16 @@ func runAssistantShow(out io.Writer, opts inspectOptions, id string, entries int
 const assistantsPath = "/assistants/instances"
 
 // formatAssistantThread renders one transcript: a line saying what is shown,
-// then the messages, newest last, each under a line naming who said it and when.
-func formatAssistantThread(answer map[string]any) string {
+// then the messages, newest last, each under a line naming who said it and
+// when. A headline stands on that line where the message has one, a note of
+// the cockpit and an answer a trigger pushed, because it is part of what
+// `--contains` searches and a hit has to be readable in what is printed.
+//
+// Under a filter the first line names the matches and the whole thread, so
+// three hits are never read as three messages: the matches are what was shown
+// plus what the window dropped, which is the same sum that makes the total
+// without one.
+func formatAssistantThread(contains string, answer map[string]any) string {
 	title, _ := answer["title"].(string)
 	coder, _ := answer["coderId"].(string)
 	raw, _ := answer["messages"].([]any)
@@ -406,11 +423,20 @@ func formatAssistantThread(answer map[string]any) string {
 	if coder != "" {
 		fmt.Fprintf(&b, " on coder %s", coder)
 	}
-	fmt.Fprintf(&b, ", %d messages.\n", total)
+	if contains != "" {
+		fmt.Fprintf(&b, ", %d of %d messages contain %s.\n", len(raw)+dropped, total, quoted(contains))
+	} else {
+		fmt.Fprintf(&b, ", %d messages.\n", total)
+	}
 	if dropped > 0 {
-		fmt.Fprintf(&b, "Showing the last %d; %d older are not shown, --entries brings them back.\n", len(raw), dropped)
+		fmt.Fprintf(&b, "Showing the last %d; %d older %s not shown, --entries brings them back.\n",
+			len(raw), dropped, matchWord(contains, dropped))
 	}
 	if len(raw) == 0 {
+		if contains != "" {
+			b.WriteString("No message carries that word.\n")
+			return b.String()
+		}
 		b.WriteString("This assistant has no messages yet.\n")
 		return b.String()
 	}
@@ -424,7 +450,11 @@ func formatAssistantThread(answer map[string]any) string {
 		if when := jsonTime(m["createdAt"]); when != "" {
 			header += " " + when
 		}
-		fmt.Fprintf(&b, "\n[%s]\n", header)
+		fmt.Fprintf(&b, "\n[%s]", header)
+		if headline, _ := m["headline"].(string); strings.TrimSpace(headline) != "" {
+			fmt.Fprintf(&b, " %s", strings.TrimSpace(headline))
+		}
+		b.WriteString("\n")
 		content, _ := m["content"].(string)
 		if strings.TrimSpace(content) == "" {
 			b.WriteString("(no text)\n")
@@ -434,6 +464,19 @@ func formatAssistantThread(answer map[string]any) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// matchWord is what the dropped tail is called: messages without a filter,
+// matches under one, so the line says what the window left out and not what
+// the thread holds.
+func matchWord(contains string, dropped int) string {
+	if contains == "" {
+		return "are"
+	}
+	if dropped == 1 {
+		return "match is"
+	}
+	return "matches are"
 }
 
 // jsonTime renders a timestamp the way the other lists do. The JSON answer
@@ -478,12 +521,15 @@ func newJobsCommand(opts *inspectOptions) *cobra.Command {
 			"write into; every other terminal belongs to the user or to another assistant. " +
 			"It lists your own jobs; `--assistant all` lists every assistant's, each line " +
 			"naming who steers it, and `--assistant <id>` lists one other's. Run outside a " +
-			"turn it lists everybody's, there is nobody to be. " +
+			"turn it lists everybody's. " +
 			"Every open job is listed; the closed ones are capped at the recent ones, " +
-			"counted per state under their header, and a long criterion is cut and says so. " +
+			"counted per state under their header, and stand as their line alone: their state " +
+			"says what became of them, and `job-show <terminal>` brings the criterion and the " +
+			"last report back whole. A long criterion is cut and says so. " +
 			"`--contains`, `--state` and `--since` narrow the list before the cap, so they " +
 			"reach jobs the capped list never shows; `--full` prints the criteria whole and " +
-			"composes with them; `--all` lifts the cap. Reads only, changes nothing.",
+			"gives a closed job those two lines back, and composes with them; `--all` lifts " +
+			"the cap. Reads only, changes nothing.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ready, err := filter.parse(since, time.Now())
@@ -933,6 +979,16 @@ func writeJobLines(b *strings.Builder, now time.Time, job jobLine, full bool) {
 	// every job is noise paid for in the answer that carries it.
 	if job.OwnerName != "" {
 		fmt.Fprintf(b, "    steered by: %s\n", job.OwnerName)
+	}
+	// A closed job says what became of it in its state, and that is everything
+	// a list has to say about it. Its criterion and the report of its last
+	// check are the two longest lines of this output and they describe work
+	// nobody can move any more: `job-show <terminal>` brings both back whole
+	// whenever one is wanted, and `--full` prints them here again, so a
+	// `--contains` hit that fell in one of them can be read where it was
+	// found.
+	if !job.Open && !full {
+		return
 	}
 	// A criterion may be stored as several lines, one check per line; the list
 	// folds them to one line and `job-show` shows them as they stand. A job without

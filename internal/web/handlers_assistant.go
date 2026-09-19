@@ -155,6 +155,11 @@ func (s *Server) handleAssistantPage(c *gin.Context) {
 	}
 	data.Page = s.page(c, title, "assistants")
 	data.Ctx = s.assistantCtxData(c, data.Path, "assistant-ctx-new")
+	data.Triggers = s.assistantTriggersData(c, current.ID)
+	// The one number on the button that opens the aside: both kinds of standing
+	// work, because the aside holds both and the button is the only thing a
+	// phone sees of it.
+	data.WatchingOpen = data.JobsOpen + data.Triggers.Open
 	c.HTML(http.StatusOK, "assistant_page.gohtml", data)
 }
 
@@ -235,34 +240,36 @@ func (s *Server) assistantData(current assistant.Instance, all bool) render.Assi
 		sttURL = base + "/stt"
 	}
 	return render.AssistantData{
-		ID:             current.ID,
-		Path:           base,
-		CoderID:        current.CoderID,
-		CoderLabel:     render.CoderLabel(current.CoderID),
-		Coders:         s.assistantCoderOptions(),
-		Messages:       messages,
-		EarlierCount:   earlier,
-		AllURL:         allURL,
-		Running:        s.assistants.Running(current.ID),
-		Blocked:        blocked,
-		NewCoderID:     s.assistantNewCoderID(current),
-		Jobs:           jobs,
-		JobsOpen:       openJobs(jobs),
-		JobsOlder:      olderJobs,
-		JobsURL:        assistantJobsPath,
-		JobsListURL:    assistantJobsPath + "?assistant=" + url.QueryEscape(current.ID),
-		StreamURL:      streamURL,
-		PostURL:        base,
-		MessageURL:     base + "/messages/",
-		UploadURL:      base + "/user-upload",
-		SttURL:         sttURL,
-		TTS:            !s.voiceTTSOff(),
-		MaxPromptBytes: assistant.MaxPromptBytes,
-		MaxUploadBytes: s.maxUploadBytes(),
-		Draft:          draft.Text,
-		DraftFiles:     s.assistantDraftFiles(current.ID, draft),
-		DraftURL:       base + "/draft",
-		ContextPercent: assistantContextPercent(current),
+		ID:              current.ID,
+		Path:            base,
+		CoderID:         current.CoderID,
+		CoderLabel:      render.CoderLabel(current.CoderID),
+		Coders:          s.assistantCoderOptions(),
+		Messages:        messages,
+		EarlierCount:    earlier,
+		AllURL:          allURL,
+		Running:         s.assistants.Running(current.ID),
+		Blocked:         blocked,
+		NewCoderID:      s.assistantNewCoderID(current),
+		Jobs:            jobs,
+		JobsOpen:        openJobs(jobs),
+		JobsOlder:       olderJobs,
+		JobsURL:         assistantJobsPath,
+		JobsListURL:     assistantJobsPath + "?assistant=" + url.QueryEscape(current.ID),
+		TriggersListURL: assistantTriggersPath + "?assistant=" + url.QueryEscape(current.ID),
+		TriggersNewURL:  assistantTriggersPath + "?form=new&assistant=" + url.QueryEscape(current.ID),
+		StreamURL:       streamURL,
+		PostURL:         base,
+		MessageURL:      base + "/messages/",
+		UploadURL:       base + "/user-upload",
+		SttURL:          sttURL,
+		TTS:             !s.voiceTTSOff(),
+		MaxPromptBytes:  assistant.MaxPromptBytes,
+		MaxUploadBytes:  s.maxUploadBytes(),
+		Draft:           draft.Text,
+		DraftFiles:      s.assistantDraftFiles(current.ID, draft),
+		DraftURL:        base + "/draft",
+		ContextPercent:  assistantContextPercent(current),
 	}
 }
 
@@ -478,32 +485,6 @@ func (s *Server) assistantJobViews(owner string) ([]render.AssistantJobView, int
 	return out, older
 }
 
-// assistantWakeView describes where a message came from when a check wrote it.
-// The report carries the name of the job it was written for, so the page says
-// which job reported, not an id. A report from before the note carried a name
-// falls back to the store, which is right for as long as that job is the one
-// standing on the terminal.
-func (s *Server) assistantWakeView(note *assistant.WakeNote) *render.AssistantWakeView {
-	if note == nil {
-		return nil
-	}
-	view := &render.AssistantWakeView{
-		Terminal: note.Terminal,
-		Name:     note.Terminal,
-		Verdict:  note.Verdict,
-		Done:     note.Verdict == string(assistant.VerdictDone),
-		Blocked:  note.Verdict == string(assistant.VerdictBlocked),
-		Expired:  note.Verdict == string(assistant.VerdictExpired),
-		URL:      "/coders/" + note.Terminal,
-	}
-	if note.Name != "" {
-		view.Name = note.Name
-	} else if job, ok := s.watcher.Get(note.Terminal); ok && job.Name != "" {
-		view.Name = job.Name
-	}
-	return view
-}
-
 // assistantMessageViews renders the transcript. A blocked assistant takes no
 // new turn, so it offers no retry and lets no waiting message be removed.
 func (s *Server) assistantMessageViews(current assistant.Instance, blocked bool) []render.AssistantMessageView {
@@ -517,17 +498,21 @@ func (s *Server) assistantMessageViews(current assistant.Instance, blocked bool)
 
 func (s *Server) assistantMessageView(instanceID string, m assistant.Message, retryable, writable bool, coder string) render.AssistantMessageView {
 	view := render.AssistantMessageView{
-		ID:         m.ID,
-		RunID:      m.RunID,
-		User:       m.Role == assistant.RoleUser,
-		Wake:       s.assistantWakeView(m.Wake),
-		Author:     coder,
-		Text:       m.Content,
-		State:      string(m.State),
-		Error:      m.Error,
-		Streaming:  m.State == assistant.StateStreaming,
-		Failed:     m.State == assistant.StateFailed || m.State == assistant.StateInterrupted,
-		CanRetry:   retryable && m.Role == assistant.RoleAssistant && m.State.Retryable(),
+		ID:        m.ID,
+		RunID:     m.RunID,
+		User:      m.Role == assistant.RoleUser,
+		Note:      s.assistantNoteView(m.Note, m.Content),
+		Auto:      m.Auto,
+		Origin:    s.assistantNoteView(m.Origin, m.Content),
+		Author:    coder,
+		Text:      m.Content,
+		State:     string(m.State),
+		Error:     m.Error,
+		Streaming: m.State == assistant.StateStreaming,
+		Failed:    m.State == assistant.StateFailed || m.State == assistant.StateInterrupted,
+		// A turn a note bought is never sent again by hand: what bought it
+		// was an event, and that event is spent.
+		CanRetry:   retryable && m.Role == assistant.RoleAssistant && m.State.Retryable() && !m.Auto,
 		Queued:     m.State == assistant.StateQueued,
 		CanDiscard: writable && m.State == assistant.StateQueued,
 		Time:       machineTime(m.CreatedAt),
@@ -544,16 +529,19 @@ func (s *Server) assistantMessageView(instanceID string, m assistant.Message, re
 			Height:   height,
 		})
 	}
+	if view.Note != nil {
+		view.Author = "Cockpit"
+	}
 	if view.User {
 		view.Author = "You"
 		view.HTML = plainTextHTML(m.Content)
 	} else if m.Content != "" {
 		view.HTML = s.assistantMarkdown(instanceID, m.Content)
 	}
-	// The speaker renders only on a finished answer with words in it, and
-	// only while text to speech is on; the audio route repeats those checks
-	// for a page from before a settings change.
-	if !view.User && m.Content != "" && m.State == assistant.StateComplete && !s.voiceTTSOff() {
+	// The speaker renders on every message that can be read aloud, a check's
+	// report included, and only while text to speech is on; the audio route
+	// asks Speakable again for a page from before a settings change.
+	if m.Speakable() && !s.voiceTTSOff() {
 		view.AudioURL = "/assistants/" + instanceID + "/messages/" + m.ID + "/audio"
 	}
 	return view
@@ -1326,9 +1314,10 @@ func (s *Server) handleAssistantInstances(c *gin.Context) {
 
 // handleAssistantInstanceRead serves one transcript as JSON for the
 // `assistant-show` command, windowed and cut the way the activity route cuts a
-// coder's record: entries picks the window, full lifts the per message cut. Any
-// assistant may read any other's, which is the point of it. Reads only, it
-// marks nothing read.
+// coder's record: entries picks the window, full lifts the per message cut, and
+// contains narrows to the messages carrying a word before the window is taken,
+// the way the instances route narrows the list. Any assistant may read any
+// other's, which is the point of it. Reads only, it marks nothing read.
 func (s *Server) handleAssistantInstanceRead(c *gin.Context) {
 	entries, err := strconv.Atoi(c.DefaultQuery("entries", "0"))
 	if err != nil || entries < 0 {
@@ -1339,18 +1328,29 @@ func (s *Server) handleAssistantInstanceRead(c *gin.Context) {
 	if full, _ := strconv.ParseBool(c.DefaultQuery("full", "false")); full {
 		budget = 0
 	}
-	instance, dropped, err := s.assistants.Transcript(c.Param("id"), entries, budget)
+	instance, dropped, err := s.assistants.Transcript(c.Param("id"), c.Query("contains"), entries, budget)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
 	messages := make([]gin.H, 0, len(instance.Messages))
 	for _, m := range instance.Messages {
-		messages = append(messages, gin.H{
+		entry := gin.H{
 			"role":      string(m.Role),
 			"content":   m.Content,
 			"createdAt": m.CreatedAt,
-		})
+		}
+		// The headline is the line the thread shows over a note and over an
+		// answer a trigger pushed, and it is searched, so it travels: a
+		// filtered reading whose hit fell in a headline has to show what it
+		// hit.
+		for _, note := range []*assistant.Note{m.Note, m.Origin} {
+			if note != nil && strings.TrimSpace(note.Headline) != "" {
+				entry["headline"] = note.Headline
+				break
+			}
+		}
+		messages = append(messages, entry)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"id":            instance.ID,

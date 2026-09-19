@@ -1540,7 +1540,7 @@ func TestContainerNames(t *testing.T) {
 	if containerName("tsgo", long) == containerName("tsgo", longer) {
 		t.Fatal("capping collided behind the short server name")
 	}
-	for _, name := range []string{spaced, containerName("gopls", "über app"), containerName("gopls", long), containerName("intelephense", longer),
+	for _, name := range []string{spaced, containerName("gopls", "café app"), containerName("gopls", long), containerName("intelephense", longer),
 		tsPlain, containerName("tsgo", long), containerName("tsgo", "my app")} {
 		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`).MatchString(name) {
 			t.Fatalf("name %q is not a valid container name", name)

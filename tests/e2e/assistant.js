@@ -1,5 +1,7 @@
 const L = require("./lib");
 const { assert, BASE, sleep } = L;
+const fs = require("fs");
+const path = require("path");
 
 // Assistants: the cockpit's own conversation partners, a page of their own.
 // Several of them live side by side, each with its own thread and its own
@@ -78,6 +80,17 @@ async function dismissUpdate(page) {
 
 const READY = "dc-assistant[ready]";
 
+// The inbox the coder's Stop hook drops into, mounted like wake.js mounts it.
+// Only the show earlier check rings a coder, and without the mount it runs
+// without the note instead of failing.
+const NOTIFY_DIR = process.env.NOTIFY_DIR || "";
+function ring(sessionID) {
+  const name = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const payload = JSON.stringify({ session_id: sessionID, hook_event_name: "Stop" });
+  fs.writeFileSync(path.join(NOTIFY_DIR, `${name}.tmp`), payload);
+  fs.renameSync(path.join(NOTIFY_DIR, `${name}.tmp`), path.join(NOTIFY_DIR, `${name}.json`));
+}
+
 // openAssistant lands on one assistant. With an id it opens that one, which is
 // what every check that has a thread of its own wants. Without one it takes the
 // area's own address, which resolves to the assistant last looked at the way
@@ -131,7 +144,7 @@ async function openView(page, view, readySelector) {
   // assistant's own page counts as being there already.
   if (!/^\/assistants\/[^/]+$/.test(new URL(page.url()).pathname)) await openAssistant(page);
   if (view === "jobs" && !(await page.locator("#assistant-aside").isVisible())) {
-    await page.click("[data-assistant-jobs-button]");
+    await page.click("[data-assistant-watching-button]");
     await page.waitForSelector("#assistant-aside.show", { timeout: 8000 });
   }
   if (view === "memory" && !(await page.locator("#assistant-memory.show").count())) {
@@ -139,6 +152,17 @@ async function openView(page, view, readySelector) {
     await page.waitForSelector("#assistant-memory.show", { timeout: 8000 });
   }
   await page.waitForSelector(readySelector, { timeout: 15000 });
+}
+
+// unfoldJob opens a steered coder's row. The fold holds the text, what the
+// coder was sent, what it is measured against and what came back, so a check
+// that reads one of those opens the row first, the way a person does. The
+// actions stand outside the fold and need no opening.
+async function unfoldJob(page, id) {
+  const row = page.locator(`[data-assistant-job="${id}"]`);
+  if (await row.locator("[data-assistant-job-details].show").count()) return;
+  await row.locator("[data-assistant-job-fold]").click();
+  await page.waitForSelector(`[data-assistant-job="${id}"] [data-assistant-job-details].show`, { timeout: 8000 });
 }
 
 // NEW_MENU is the new assistant control on a host with several coders. Its
@@ -403,7 +427,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     await send(page, "MAGIC what is the word");
     await waitSettled(page);
     const text = await page.locator('[data-role="assistant"]').last().innerText();
-    assert(text.includes("FLUGHAFEN"), `answer missing: ${text}`);
+    assert(text.includes("AIRPORT"), `answer missing: ${text}`);
   });
 
   await run("the transcript survives a reload of the page", async () => {
@@ -532,7 +556,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
 
     await waitSettled(page, 30000);
     const final = (await page.locator('[data-role="assistant"] [data-assistant-text]').last().innerText()).trim();
-    assert(final === "Der Workspace sagt nur, wo du gestartet bist, nicht wo du gerade bist.",
+    assert(final === "The workspace only says where you started, never where you are working now.",
       `the finished answer is not the one sentence: ${JSON.stringify(final)}`);
 
     const seams = shots.filter((s) => s.state === "streaming" && s.tail.length && s.text.length);
@@ -563,7 +587,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
   // the same words are there after a page change and on the next device, the
   // files that were uploaded for them come along, and sending takes both.
   await run("an unsent message waits in the assistant, on every device", async () => {
-    const draft = "eine Frage, die ich noch nicht abgeschickt habe";
+    const draft = "a question I have not sent off yet";
     await page.fill("[data-assistant-input]", draft);
     await attach(page, [{ name: "draft.png", mimeType: "image/png", buffer: PNG }]);
     // One path saves the draft, the debounce after the typing stops, so the
@@ -599,7 +623,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     await openConversation(mp, chatID);
     await openConversation(page, chatID);
 
-    const typed = "vom Telefon aus getippt";
+    const typed = "typed on the phone";
     await mp.fill("[data-assistant-input]", typed);
     await page.waitForFunction(
       (text) => document.querySelector("[data-assistant-input]").value === text,
@@ -609,7 +633,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
 
     // Sending on one device empties the other one's box the same way.
     await idle(page);
-    await page.fill("[data-assistant-input]", "MAGIC weiter");
+    await page.fill("[data-assistant-input]", "MAGIC carry on");
     await sleep(1400);
     await page.click("[data-assistant-send]");
     await waitSettled(page);
@@ -631,7 +655,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     await openConversation(mp, chatID);
     await openConversation(page, chatID);
 
-    const typed = "MAGIC vom Telefon geschickt";
+    const typed = "MAGIC sent from the phone";
     await send(mp, typed);
     await page.waitForFunction(
       (needle) => Array.from(document.querySelectorAll('[data-role="user"]'))
@@ -650,7 +674,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
       return {
         copies: mine.length,
         above: Boolean(mine.length && last) && nodes.indexOf(mine[0]) < nodes.indexOf(last),
-        answered: Boolean(last && last.innerText.includes("FLUGHAFEN")),
+        answered: Boolean(last && last.innerText.includes("AIRPORT")),
       };
     }, typed);
 
@@ -1156,12 +1180,12 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     // settled last bubble: right after the flush started, the last thing in the
     // transcript is the flushed question and it is settled already.
     await page.waitForFunction(
-      () => [...document.querySelectorAll('[data-role="assistant"]')].some((m) => m.innerText.includes("FLUGHAFEN")),
+      () => [...document.querySelectorAll('[data-role="assistant"]')].some((m) => m.innerText.includes("AIRPORT")),
       null,
       { timeout: 60000 },
     ).catch(() => {});
     const texts = await page.locator('[data-role="assistant"]').allInnerTexts();
-    assert(texts.some((t) => t.includes("FLUGHAFEN")), "the waiting message was never answered");
+    assert(texts.some((t) => t.includes("AIRPORT")), "the waiting message was never answered");
     const asked = await page.locator('[data-role="user"]').allInnerTexts();
     assert(!asked.some((t) => t.includes("taken back")), "the message that was taken back went out anyway");
     return "one waited, one was taken back, the composer stayed open";
@@ -1186,7 +1210,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     await send(page, "MAGIC answer me now");
     await waitSettled(page);
     const text = await page.locator('[data-role="assistant"]').last().innerText();
-    assert(text.includes("FLUGHAFEN"), `the other assistant did not answer: ${text}`);
+    assert(text.includes("AIRPORT"), `the other assistant did not answer: ${text}`);
 
     await openConversation(page, chatID);
     await page.click("[data-assistant-cancel]");
@@ -1304,12 +1328,12 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
       await L.login(np);
       await openConversation(np, chatID);
       assert(!(await np.locator("#assistant-aside").isVisible()), "the aside stands open below xl before its button is pressed");
-      await np.click("[data-assistant-jobs-button]");
+      await np.click("[data-assistant-watching-button]");
       await np.waitForSelector("#assistant-aside.show", { timeout: 8000 });
       await sleep(500);
       sheet = await shape(np);
       assert(!sheet.inline && sheet.headShown && sheet.closeShown, `the sheet has no head to close it by: ${JSON.stringify(sheet)}`);
-      assert(sheet.title === "Steered coders", `the sheet's head reads ${sheet.title}`);
+      assert(sheet.title === "Watching", `the sheet's head reads ${sheet.title}`);
       await np.click("#assistant-aside .dc-ctx-head .btn-close");
       await np.waitForSelector("#assistant-aside.show", { state: "detached", timeout: 8000 });
       await np.waitForSelector(".offcanvas-backdrop", { state: "detached", timeout: 8000 });
@@ -1657,14 +1681,17 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
       return (data.notifications || []).find((n) => n.targetId === id) || null;
     }, chatID);
     assert(entry, "no notification for the assistant");
-    // One bell rings for all of them, so every entry has to say which one
-    // answered: the title is that assistant's own name.
-    assert(entry.title === `${answeredBy} answered.`,
-      `the title does not name the assistant that answered (${answeredBy}): ${entry.title}`);
-    // The title only says that an answer arrived, so the line below it carries
-    // the first words of it, which is what the list, the toast and the phone show.
-    assert((entry.detail || "").length > 0, "the entry carries no words of the answer");
-    assert(!entry.detail.includes("\n") && [...entry.detail].length <= 141,
+    // The title is what happened and nothing else, because a phone's push
+    // gives it one line: the assistant's name is not in it at all.
+    assert(/^Answer ready\.$/.test(entry.title || ""),
+      `the title is not what happened alone (${answeredBy}): ${entry.title}`);
+    assert([...(entry.title || "")].length <= 32,
+      `the title runs past what a push shows: ${entry.title}`);
+    // The name opens the line below instead, in front of the first words of
+    // the answer, which is what the list, the toast and the phone show.
+    assert((entry.detail || "").startsWith(`${answeredBy.slice(0, 12)}`),
+      `the detail does not open with the assistant (${answeredBy}): ${entry.detail}`);
+    assert(!entry.detail.includes("\n") && [...entry.detail].length <= 175,
       `the detail is not one short line: ${entry.detail}`);
     assert(entry.url.startsWith(`/assistants/${chatID}`), `the entry does not name the assistant's page: ${entry.url}`);
     const answered = entry.url.split("#message-")[1];
@@ -1784,6 +1811,71 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     assert(after.above > 0, "no earlier messages extend above the anchor");
   });
 
+  // The reader's frame moves by nothing at all: the message they looked at
+  // keeps its place on the screen, measured against the viewport and not
+  // against the scroller, because what once moved was the whole app grid
+  // under an unchanged scroller. A note in the thread is the case that found
+  // it (its badge's hidden label stood outside the scroller), so one is
+  // written first when the inbox is mounted.
+  await run("show earlier messages keeps the reader's place on the phone and on the desktop", async () => {
+    let noted = "no note, NOTIFY_DIR is not set";
+    if (NOTIFY_DIR) {
+      await L.createProject(page, jobsProject).catch(() => {});
+      const jobsDir = await L.projectPath(page, jobsProject);
+      const created = await startCoder(page, jobsDir, "place-task", "Write the README.");
+      assert(created.status === 200, `create answered ${created.status}`);
+      const steered = await postJobs(page, {
+        form: "steer",
+        assistant: chatID,
+        terminal: created.body.id,
+        task: "Write the README",
+        done_when: "WAKE_DONE: README.md exists",
+      });
+      assert(steered.status === 200, `steer answered ${steered.status}: ${JSON.stringify(steered.body)}`);
+      await openAssistant(page, chatID);
+      ring(created.body.id);
+      await page.waitForSelector('[data-assistant-wake="done"]', { timeout: 30000 });
+      await L.stopSession(page, `${BASE}/coders/${created.body.id}`);
+      noted = "a note in the thread";
+    }
+    const mp = await mobilePage();
+    for (const [label, p] of [["desktop", page], ["phone", mp]]) {
+      await openAssistant(p, chatID);
+      const all = p.locator("[data-assistant-all]");
+      assert(await all.isVisible(), `${label}: no way back to the earlier messages`);
+      const shown = await p.locator("[data-assistant-message]").count();
+      const place = await p.evaluate(() => {
+        const scroller = document.querySelector("[data-assistant-scroll]");
+        scroller.scrollTop = 0;
+        const message = scroller.querySelector("[data-assistant-message][data-message-id]");
+        return {
+          id: message.getAttribute("data-message-id"),
+          top: message.getBoundingClientRect().top,
+          thread: scroller.getBoundingClientRect().top,
+        };
+      });
+      await sleep(300);
+      // The element's own click, not the driver's: the driver scrolls a
+      // button into view first, and the place is read on the click.
+      await p.evaluate(() => document.querySelector("[data-assistant-all]").click());
+      await p.waitForFunction((count) => document.querySelectorAll("[data-assistant-message]").length > count, shown, { timeout: 15000 });
+      await p.waitForSelector(READY, { timeout: 15000 });
+      await sleep(500);
+      const after = await p.evaluate((id) => {
+        const scroller = document.querySelector("[data-assistant-scroll]");
+        const message = scroller?.querySelector(`[data-message-id="${id}"]`);
+        if (!message) return null;
+        return { top: message.getBoundingClientRect().top, thread: scroller.getBoundingClientRect().top };
+      }, place.id);
+      assert(after, `${label}: the anchor message is gone from the full transcript`);
+      assert(Math.abs(after.top - place.top) < 2,
+        `${label}: the anchor message moved from ${Math.round(place.top)} to ${Math.round(after.top)} on the screen`);
+      assert(Math.abs(after.thread - place.thread) < 2,
+        `${label}: the thread moved from ${Math.round(place.thread)} to ${Math.round(after.thread)} on the screen`);
+    }
+    return `${noted}, the anchor stands where it stood on both`;
+  });
+
   await run("the assistants, memory and jobs lists serve their own fragments", async () => {
     for (const path of [`/ctx/assistants?path=/assistants/${chatID}`, "/assistants/memory", "/assistants/jobs"]) {
       const fragment = await page.evaluate(async (p) => {
@@ -1800,12 +1892,12 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     await L.createProject(page, jobsProject).catch(() => {});
     const jobsDir = await L.projectPath(page, jobsProject);
     await openAssistant(page, chatID);
-    const badge = page.locator("[data-assistant-jobs-button] .dc-steer-badge");
+    const badge = page.locator("[data-assistant-watching-button] .dc-steer-badge");
     assert(await badge.count() === 1, "no badge on the jobs button in the page head");
     assert((await badge.first().getAttribute("class")).includes("d-none"),
       "the badge claims a steered job before there is one");
-    assert((await page.locator("[data-assistant-jobs-button]").getAttribute("title")) === "Steered coders",
-      "the jobs button does not say Steered coders");
+    assert((await page.locator("[data-assistant-watching-button]").getAttribute("title")) === "Watching",
+      "the button that opens the aside does not say Watching");
 
     const created = await startCoder(page, jobsDir, "jobs-task", "Write the README.");
     assert(created.status === 200, `create answered ${created.status}`);
@@ -1825,7 +1917,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     // Live, over the assistant event: no reload, no polling.
     await page.waitForFunction(
       () => {
-        const mark = document.querySelector("[data-assistant-jobs-button] .dc-steer-badge");
+        const mark = document.querySelector("[data-assistant-watching-button] .dc-steer-badge");
         return mark && !mark.classList.contains("d-none") && Number(mark.textContent) > 0;
       },
       null,
@@ -1835,7 +1927,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     // A count in the icon's corner, in the steered purple, not a number
     // standing next to the wheel.
     const mark = await page.evaluate(() => {
-      const el = document.querySelector("[data-assistant-jobs-button] .dc-steer-badge");
+      const el = document.querySelector("[data-assistant-watching-button] .dc-steer-badge");
       const own = getComputedStyle(el);
       const steer = getComputedStyle(document.documentElement).getPropertyValue("--dc-steer-rgb").trim();
       return { position: own.position, background: own.backgroundColor, steer: `rgb(${steer})` };
@@ -1844,20 +1936,29 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     assert(mark.background === mark.steer, `the steer badge is ${mark.background}, not ${mark.steer}`);
 
     await openView(page, "jobs", `[data-assistant-job="${jobCoder}"]`);
+    // The state is the row's own icon, not a word beside it: the marker
+    // carries it and the icon names itself for whoever reads by a label.
     await page.waitForFunction(
-      (id) => (document.querySelector(`[data-assistant-job="${id}"]`)?.innerText || "").includes("steering"),
+      (id) => document.querySelector(`[data-assistant-job="${id}"] [data-assistant-job-state]`)?.dataset.assistantJobState === "steering",
       jobCoder,
       { timeout: 15000 },
     );
+    const icon = page.locator(`[data-assistant-job="${jobCoder}"] [data-assistant-job-state]`);
+    assert((await icon.getAttribute("aria-label")) === "Steering",
+      "the steering job's icon does not name its state");
     assert((await page.locator(".modal.show").count()) === 0, "the jobs list opened a modal");
     assert((await page.locator(".modal-backdrop").count()) === 0, "the jobs list left a backdrop");
-    // The page speaks of coders, the word job stays in the code and the CLI.
+    // The aside holds both kinds of standing work, so its own head names them
+    // together; the page speaks of coders inside it, the word job stays in the
+    // code and the CLI.
     const head = await page.locator("#assistant-aside .dc-ctx-title").textContent();
-    assert(head.includes("Steered coders"), `the jobs sheet is not headed Steered coders: ${head}`);
+    assert(head.includes("Watching"), `the aside's sheet is not headed Watching: ${head}`);
+    const section = await page.locator("[data-assistant-coders-tab]").textContent();
+    assert(section.includes("Steered coders"), `the first tab is not named Steered coders: ${section}`);
     // The task and the criterion sit folded under the row, so the words are
     // read from the content, not from what is on screen.
     const text = await page.locator(`[data-assistant-job="${jobCoder}"]`).textContent();
-    for (const want of ["jobs-task", "steering", "WAKE_NOTHING", "Write the README", "0 of"]) {
+    for (const want of ["jobs-task", "WAKE_NOTHING", "Write the README", "0 of"]) {
       assert(text.includes(want), `the job row misses ${want}:\n${text}`);
     }
     // One row per terminal. The list is the assistant's, not the conversation's,
@@ -1869,17 +1970,18 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
 
   await run("stopping a job asks first and the view acts in place", async () => {
     const row = page.locator(`[data-assistant-job="${jobCoder}"]`);
+    await unfoldJob(page, jobCoder);
     await row.locator("[data-assistant-job-stop]").click();
     await page.waitForSelector(".swal2-container", { state: "visible", timeout: 8000 });
     await page.click(".swal2-cancel");
     await page.waitForSelector(".swal2-container", { state: "detached", timeout: 8000 });
-    assert((await row.locator("[data-assistant-job-state]").innerText()).trim() === "steering",
+    assert((await row.locator("[data-assistant-job-state]").getAttribute("data-assistant-job-state")) === "steering",
       "a cancelled confirmation stopped the job anyway");
 
     await row.locator("[data-assistant-job-stop]").click();
     await L.confirmSwal(page);
     await page.waitForFunction(
-      (id) => document.querySelector(`[data-assistant-job="${id}"] [data-assistant-job-state]`)?.textContent.trim() === "stopped",
+      (id) => document.querySelector(`[data-assistant-job="${id}"] [data-assistant-job-state]`)?.dataset.assistantJobState === "stopped",
       jobCoder,
       { timeout: 15000 },
     );
@@ -1889,9 +1991,10 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
 
   await run("a stopped job can be steered again with the same criterion", async () => {
     const row = page.locator(`[data-assistant-job="${jobCoder}"]`);
+    await unfoldJob(page, jobCoder);
     await row.locator("[data-assistant-job-again]").click();
     await page.waitForFunction(
-      (id) => document.querySelector(`[data-assistant-job="${id}"] [data-assistant-job-state]`)?.textContent.trim() === "steering",
+      (id) => document.querySelector(`[data-assistant-job="${id}"] [data-assistant-job-state]`)?.dataset.assistantJobState === "steering",
       jobCoder,
       { timeout: 15000 },
     );
@@ -1915,8 +2018,9 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
   await run("on a phone the jobs sheet is thumb sized", async () => {
     const mp = await mobilePage();
     await openConversation(mp, chatID);
-    await mp.click("[data-assistant-jobs-button]");
+    await mp.click("[data-assistant-watching-button]");
     await mp.waitForSelector(`#assistant-aside.show [data-assistant-job="${jobCoder}"]`, { timeout: 15000 });
+    await unfoldJob(mp, jobCoder);
     await sleep(400);
     const fit = await mp.evaluate((id) => {
       const stop = document.querySelector(`[data-assistant-job="${id}"] [data-assistant-job-stop]`);
@@ -1937,20 +2041,24 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     }, jobCoder);
     assert(fit === "", `the view is not usable with a thumb: ${fit}`);
 
-    // The first row stands as far from the head as from the sides: one gap,
-    // the sheet body's own padding.
+    // The aside starts with the head of its first section, and that head stands
+    // as far from the top as the rows stand from the sides: one gap, the sheet
+    // body's own padding. The rows below it keep it too.
     const gaps = await mp.evaluate(() => {
       const body = document.querySelector("#assistant-aside .offcanvas-body");
+      const head = document.querySelector("#assistant-aside [data-assistant-coders-tab]");
       const content = document.querySelector("#assistant-aside [data-assistant-job] .d-flex");
       const b = body.getBoundingClientRect();
+      const h = head.getBoundingClientRect();
       const c = content.getBoundingClientRect();
       return {
-        top: Math.round(c.top - b.top),
+        top: Math.round(h.top - b.top),
+        headLeft: Math.round(h.left - b.left),
         left: Math.round(c.left - b.left),
         right: Math.round(b.right - c.right),
       };
     });
-    assert(gaps.top === gaps.left && gaps.top === gaps.right,
+    assert(gaps.top === gaps.left && gaps.top === gaps.right && gaps.headLeft === gaps.left,
       `the sheet's gaps differ: ${JSON.stringify(gaps)}`);
     return `full width, reachable, gaps ${gaps.top}/${gaps.left}/${gaps.right}`;
   });
@@ -1960,6 +2068,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
   // is the tab bar's sparkle and the current conversation's row.
   await run("the way from a job to its coder leaves and comes back clean", async () => {
     const mp = await mobilePage();
+    await unfoldJob(mp, jobCoder);
     await mp.click(`[data-assistant-job="${jobCoder}"] [data-assistant-job-open]`);
     await mp.waitForURL((url) => url.pathname.includes(jobCoder), { timeout: 15000 });
     await sleep(400);
@@ -2005,8 +2114,8 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
   await run("a job stands in the aside of the assistant that steers it and nowhere else", async () => {
     const owner = await openAssistant(page, chatID);
     await openView(page, "jobs", `[data-assistant-job="${jobCoder}"]`);
-    const state = await page.locator(`[data-assistant-job="${jobCoder}"] [data-assistant-job-state]`).innerText();
-    assert(state.trim() === "steering", `the job is not steering: ${state}`);
+    const state = await page.locator(`[data-assistant-job="${jobCoder}"] [data-assistant-job-state]`).getAttribute("data-assistant-job-state");
+    assert(state === "steering", `the job is not steering: ${state}`);
 
     const other = await newConversation(page);
     assert(other !== owner, "the second assistant did not open");

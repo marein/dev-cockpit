@@ -125,6 +125,9 @@ body {
   border-radius: 7px; background: var(--dc-steer); color: #fff;
   font-size: 8px; line-height: 14px; text-align: center; font-weight: 600;
 }
+[data-assistant-tab-label] > .dc-steer-badge {
+  top: auto; bottom: 50%; right: auto; left: 100%; margin-left: 0.25rem;
+}
 .dc-rail-gap { flex: 1; }
 .dc-rail-foot { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .dc-rail-mini, .dc-rail .dc-notify-bell {
@@ -366,6 +369,9 @@ button.dc-status-item, a.dc-status-item { cursor: pointer; }
 .dc-term-icon > .dc-news-dot, .dc-news-anchor > .dc-news-dot { position: absolute; top: -3px; right: -3px; }
 .dc-term-icon > .dc-news-dot:not([data-notify-any]) { display: none; }
 .dc-term-icon.news > .dc-news-dot, .dc-term-icon.changed > .dc-news-dot { display: inline-block; }
+/* A count on a session icon hangs where the news dot hangs, so the two marks
+   keep one distance from the tile: the trigger row's waiting events. */
+.dc-term-icon > .dc-steer-badge { top: -3px; right: -3px; }
 .coder-icon { width: 1em; height: 1em; vertical-align: -0.125em; }
 /* The project board: one card per project, its worktrees folded under it. */
 .dc-board { display: flex; flex-direction: column; gap: 10px; max-width: 1100px; }
@@ -1168,21 +1174,36 @@ dc-assistant[dropping] .assistant-composer {
   overscroll-behavior: contain;
   padding: 1rem;
 }
-/* The message box grows while typing and never by hand, a dragged corner
-   would tear the composer apart. The aside's textareas resize only
-   downwards, sideways they would break out of it. */
-textarea[data-assistant-input] { resize: none; }
-.dc-assistant-aside textarea { resize: vertical; }
+/* A box that grows with what is typed carries no handle. Both of these
+   follow their content through growTextarea, and a dragged corner works
+   against that: the composer would tear apart under one, and the trigger's
+   task would pull itself wider than the dialog it stands in. */
+textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
 .dc-assistant-aside, .dc-assistant-memory { --tblr-offcanvas-width: 420px; }
-.dc-assistant-aside .dc-assistant-aside-body { display: flex; flex-direction: column; gap: 12px; }
-.dc-assistant-aside [data-assistant-jobs] > .list-group-item:first-child { padding-top: 0; }
+.dc-assistant-aside .dc-assistant-aside-body { display: flex; flex-direction: column; }
 .dc-assistant-aside .card { box-shadow: none; }
-.dc-aside-head { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--tblr-secondary); }
-.dc-aside-head .ti { font-size: 14px; }
-.dc-aside-head .badge { font-size: 10px; }
 .dc-folded { display: none !important; }
-[data-assistant-job-fold] .ti { transition: transform 0.15s ease; }
-[data-assistant-job-fold][aria-expanded="true"] .ti { transform: rotate(180deg); }
+[data-assistant-job-fold] .ti, [data-assistant-trigger-fold] .ti { transition: transform 0.15s ease; }
+[data-assistant-job-fold][aria-expanded="true"] .ti, [data-assistant-trigger-fold][aria-expanded="true"] .ti { transform: rotate(180deg); }
+[data-assistant-note-fold] > .ti, [data-assistant-held-more] > .ti, [data-assistant-held-note] > .ti { transition: transform 0.15s ease; }
+[data-assistant-note-fold][aria-expanded="true"] > .ti, [data-assistant-held-more][aria-expanded="true"] > .ti, [data-assistant-held-note][aria-expanded="true"] > .ti { transform: rotate(180deg); }
+[data-assistant-held-note], [data-assistant-held-more] {
+  --tblr-btn-hover-color: var(--tblr-btn-color);
+  --tblr-btn-hover-bg: var(--tblr-btn-bg);
+  --tblr-btn-hover-border-color: var(--tblr-btn-border-color);
+  --tblr-btn-active-color: var(--tblr-btn-color);
+  --tblr-btn-active-bg: var(--tblr-btn-bg);
+  --tblr-btn-active-border-color: var(--tblr-btn-border-color);
+  --tblr-btn-active-shadow: none;
+}
+[data-assistant-held-note]:focus-visible, [data-assistant-held-more]:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: -2px; }
+.dc-tap { min-height: 2.75rem; }
+/* The fold of a note and a pushed answer, and the rows of the held bar, are
+   small buttons a finger has to hit; on a touch screen they take the tap
+   height, on a desktop they stay a line. */
+@media (pointer: coarse) {
+  [data-assistant-note-fold], [data-assistant-held-note], [data-assistant-held-more] { min-height: 2.75rem; }
+}
 @media (min-width: 1200px) {
   .dc-assistant-body > .dc-assistant-aside {
     flex: 0 0 380px; min-width: 0; display: flex; flex-direction: column; overflow: auto;

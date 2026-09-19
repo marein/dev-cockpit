@@ -88,10 +88,19 @@ type AssistantData struct {
 	// Jobs are the coders this assistant steers. Empty when nothing is
 	// steered, which is the normal state.
 	Jobs []AssistantJobView
-	// JobsOpen is how many of them still wake the assistant. It is what the
-	// button that opens the list shows without being opened: the icon carries
-	// it the way every other status in the cockpit does, through its colour.
-	JobsOpen int
+	// Triggers are the events this assistant reacts to; TriggersListURL is
+	// what the page pulls when one of them moved and TriggersNewURL what the
+	// plus in the aside's strip opens.
+	Triggers        AssistantTriggersData
+	TriggersListURL string
+	TriggersNewURL  string
+	// JobsOpen is how many of them still wake the assistant, TriggersOpen how
+	// many triggers still fire, and WatchingOpen the two together. The button
+	// that opens the aside shows the sum, because the aside holds both kinds
+	// and one number has to stand for both: which of them it is stands a touch
+	// later, on the two section heads inside.
+	JobsOpen     int
+	WatchingOpen int
 	// JobsOlder is how many closed jobs the list holds back, so nothing is
 	// dropped silently. The open jobs always all render.
 	JobsOlder int
@@ -208,6 +217,152 @@ type AssistantMemoryData struct {
 	Prefix string
 }
 
+// AssistantTriggerView is one trigger on the assistant page: what fires it,
+// what it asks for, and where it stands.
+type AssistantTriggerView struct {
+	ID string
+	// Short is the id cut for a row, the whole id stays in the title.
+	Short string
+	// Owner is what the assistant holding it is called, rendered only in a
+	// list that spans several; OwnerID is the same one as an id.
+	Owner   string
+	OwnerID string
+	Source  string
+	Kind    string
+	// Name is what the user called it, empty for a trigger nobody named. With
+	// one it is the row's heading and the event moves to the line under it,
+	// without one the event is the heading, the way it always was.
+	Name string
+	// Label is what the event is called, Where narrows it: the coder's name,
+	// "any job of mine", the schedule.
+	Label string
+	Where string
+	// Heading is what the row reads by and what an answer calls it: the name
+	// where there is one, the event and where it listens otherwise. One
+	// reading, so the row, the confirm and the flash cannot say three things.
+	Heading string
+	// TargetURL opens the coder a terminal target names, empty without one.
+	TargetURL string
+	Spec      string
+	// Timezone is the IANA name a schedule is read in, empty on every other
+	// event. It stands on the same line as the cron fields, in Where.
+	Timezone string
+	Task     string
+	Once     bool
+	State    string
+	Open     bool
+	Fired    int
+	// Next is the next tick of a schedule, already written out as the wall
+	// clock of the schedule's own zone with that zone named, because a
+	// schedule is a statement about wall clock time and dc-time would answer
+	// in the browser's zone. Until is the expiry, which is a moment and not a
+	// wall clock, so it stays a machine stamp (RFC3339) for dc-time. Both are
+	// empty where there is none.
+	Next  string
+	Until string
+	// Note is the last thing that happened to it, one line.
+	Note string
+	// EditURL opens the form that changes it, empty on one that is over: a
+	// spent trigger cannot be changed, and the row carrying nothing is what
+	// keeps the button off it.
+	EditURL string
+	// Pending says events wait in the open batch window right now, Reacting
+	// that the reaction it bought runs right now, in a session of its own, and
+	// Broke that the last one ended without arriving.
+	Pending  int
+	Reacting bool
+	Broke    bool
+}
+
+// AssistantTriggerTarget is one terminal the form offers as a target, for the
+// job or the coder events.
+type AssistantTriggerTarget struct {
+	Terminal string
+	Name     string
+	Project  string
+	// Picked says this terminal is one the form opens on, which is what an
+	// edit and a trigger begun on a coder's row carry.
+	Picked bool
+}
+
+// AssistantTriggersData is the model of the triggers fragment: the rows of one
+// assistant and what its form offers.
+type AssistantTriggersData struct {
+	Page
+	Owner    string
+	Triggers []AssistantTriggerView
+	// Open is how many still fire.
+	Open int
+	// Older is how many spent triggers the list holds back, so nothing is
+	// dropped in silence, the way the closed jobs say it.
+	Older int
+	// URL is the path a row's own action posts to.
+	URL string
+	// Owners says the list spans several assistants, so every row names
+	// whose it is.
+	Owners bool
+}
+
+// AssistantTriggerFormData is the one form that makes a trigger and the one
+// that changes it: the page renders it in a card, the create dialog asks for
+// the same GET with modal=1 and gets it alone, the way the create forms do.
+// Every field starts on the stand the server rendered into it, so an edit is
+// the same markup filled and nothing fills a form in the browser.
+type AssistantTriggerFormData struct {
+	Page
+	Modal bool
+	// Edit is the trigger this form changes, empty for a new one. It is what
+	// the POST dispatches on and what locks the event: another event is
+	// another trigger.
+	Edit string
+	// Owner is the assistant the trigger belongs to, URL the path it posts to
+	// and Return where the page's way out leads.
+	Owner  string
+	URL    string
+	Return string
+	// Events are the kinds the form offers, every one the CLI offers too.
+	Events []AssistantEventOption
+	// Jobs and Coders are the terminals it offers as targets: the owner's open
+	// jobs for a job event, the running coders for a coder event. A target the
+	// stand names that neither list holds any more rides along picked, so
+	// saving does not drop it.
+	Jobs   []AssistantTriggerTarget
+	Coders []AssistantTriggerTarget
+	// What every other field stands on.
+	Event string
+	// Name is the optional heading, and MaxName how long it may be, which is
+	// what the field's maxlength says before the server has to refuse it.
+	Name    string
+	MaxName int
+	Task    string
+	Spec    string
+	// Timezone is the zone the schedule is read in: what the trigger carries
+	// on a change, and the default a new one starts on. It is always filled,
+	// so the field never stands empty and nobody has to guess what a schedule
+	// with nothing in it would mean.
+	Timezone string
+	Mode     string
+	Once     bool
+	Batch    int
+	// The expiry as the form asks for it: a number with the unit beside it,
+	// and the box that says there is none. UntilCount is zero where nothing
+	// expires, which is where a new trigger starts, and the field then stands
+	// empty with the box ticked. Until is the moment that stands, a machine
+	// stamp for dc-time, shown as the hint beside the two fields so an edit
+	// reads the date as well as the span. Empty is no expiry.
+	UntilCount int
+	UntilUnit  string
+	Until      string
+}
+
+// AssistantEventOption is one event the form's select offers.
+type AssistantEventOption struct {
+	Name   string
+	Source string
+	Label  string
+	Help   string
+}
+
 // AssistantMessageView is one rendered message. User text stays plain,
 // assistant answers are rendered from Markdown server-side with raw HTML
 // disabled.
@@ -215,9 +370,15 @@ type AssistantMessageView struct {
 	ID    string
 	RunID string
 	User  bool
-	// Wake is set on a message a check wrote: which coder it was about and what
-	// it concluded. It never renders as something the user said.
-	Wake        *AssistantWakeView
+	// Note is set on a message the cockpit wrote, the third role: a check's
+	// report. It never renders as something the user said.
+	Note *AssistantNoteView
+	// Auto marks an answer started without the user: a reaction to an event
+	// pushed it, and Origin is the one line it is read by, the header over the
+	// answer. What the trigger was given is not rendered: the thread holds the
+	// result, the way a check's report does.
+	Auto        bool
+	Origin      *AssistantNoteView
 	Author      string
 	Text        string
 	HTML        template.HTML
@@ -233,22 +394,35 @@ type AssistantMessageView struct {
 	Queued     bool
 	CanDiscard bool
 	Time       string
-	// AudioURL serves this answer spoken, set only while text to speech is on
-	// and the answer is complete; the speaker button renders from it.
+	// AudioURL serves this message spoken, set only while text to speech is on
+	// and the message can be read aloud at all, a check's report as much as an
+	// answer; the speaker button hangs on it alone, in both headers.
 	AudioURL string
 }
 
-// AssistantWakeView describes the check a message came from.
-type AssistantWakeView struct {
+// AssistantNoteView describes a note: where it came from and the line it is
+// read by. A check's report carries its verdict and the coder it was about.
+// What the note holds beyond that line stays out of it: the event, the task
+// and the events one reaction bundles are read on the trigger and in the
+// headline, never in the thread.
+type AssistantNoteView struct {
+	Source   string
+	Headline string
+	Verdict  string
 	Terminal string
 	Name     string
-	Verdict  string
 	Done     bool
 	Blocked  bool
 	// Expired marks the one message a job writes when it ran out of checks or
 	// out of time, so the reader knows nobody is looking any more.
 	Expired bool
-	URL     string
+	// URL opens the coder the note is about, empty without one.
+	URL string
+	// Preview is the first words of the message this note stands over, cut to
+	// what a push carries; Rest says the message holds more than that, which
+	// unfolds under the preview on a tap.
+	Preview string
+	Rest    bool
 }
 
 // AssistantMessageData is the model for the single-message fragment the browser

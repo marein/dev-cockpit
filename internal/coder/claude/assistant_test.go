@@ -184,20 +184,20 @@ func TestTurnAssemblesDeltas(t *testing.T) {
 // before the call, and the answer after it. The stream names every one of those
 // boundaries, so the blank line between two markdown blocks is read from the
 // output. Without it the two blocks are appended into one word, which is what
-// "coder.Projekt tetris steht" was.
+// "coder.Project tetris is up" was.
 func TestSeparateTextBlocksKeepTheirBlankLine(t *testing.T) {
 	fixture := strings.Join([]string{
 		initLine(`"Bash"`),
 		`{"type":"stream_event","event":{"type":"message_start"}}`,
 		textBlockStart(),
-		deltaLine("Ich schaue beim coder"),
+		deltaLine("I am looking at the coder"),
 		deltaLine("."),
 		blockStop(),
 		toolBlockStart("Bash"),
 		blockStop(),
 		`{"type":"stream_event","event":{"type":"message_start"}}`,
 		textBlockStart(),
-		deltaLine("Projekt tetris steht"),
+		deltaLine("Project tetris is up"),
 		blockStop(),
 		resultLine(sessionID),
 	}, "\n")
@@ -206,7 +206,7 @@ func TestSeparateTextBlocksKeepTheirBlankLine(t *testing.T) {
 	if err := errorOf(events); err != nil {
 		t.Fatalf("want a clean turn, got %v", err)
 	}
-	if got := textOf(events); got != "Ich schaue beim coder.\n\nProjekt tetris steht" {
+	if got := textOf(events); got != "I am looking at the coder.\n\nProject tetris is up" {
 		t.Fatalf("want the two blocks apart, got %q", got)
 	}
 }
@@ -218,15 +218,15 @@ func TestDeltasOfOneBlockAreJoinedUntouched(t *testing.T) {
 	fixture := strings.Join([]string{
 		`{"type":"stream_event","event":{"type":"message_start"}}`,
 		textBlockStart(),
-		deltaLine("Wasser"),
-		deltaLine(" trägt"),
-		deltaLine(" Leben"),
+		deltaLine("Water"),
+		deltaLine(" carries"),
+		deltaLine(" life"),
 		deltaLine("."),
 		blockStop(),
 		resultLine(sessionID),
 	}, "\n")
 
-	if got := textOf(runTurn(t, fixture)); got != "Wasser trägt Leben." {
+	if got := textOf(runTurn(t, fixture)); got != "Water carries life." {
 		t.Fatalf("want the deltas of one block joined and the answer untouched at both ends, got %q", got)
 	}
 }
@@ -234,10 +234,10 @@ func TestDeltasOfOneBlockAreJoinedUntouched(t *testing.T) {
 // The fallback that reads the assembled message needs the same seam, or the
 // blocks stick together there whenever the delta stream stays silent.
 func TestAssembledBlocksKeepTheirBlankLine(t *testing.T) {
-	fixture := `{"type":"assistant","message":{"content":[{"type":"text","text":"Ich schaue beim coder."},{"type":"tool_use","name":"Bash"},{"type":"text","text":"Projekt tetris steht"}]}}` +
+	fixture := `{"type":"assistant","message":{"content":[{"type":"text","text":"I am looking at the coder."},{"type":"tool_use","name":"Bash"},{"type":"text","text":"Project tetris is up"}]}}` +
 		"\n" + resultLine(sessionID)
 
-	if got := textOf(runTurn(t, fixture)); got != "Ich schaue beim coder.\n\nProjekt tetris steht" {
+	if got := textOf(runTurn(t, fixture)); got != "I am looking at the coder.\n\nProject tetris is up" {
 		t.Fatalf("want the assembled blocks apart, got %q", got)
 	}
 }

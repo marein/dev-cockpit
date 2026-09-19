@@ -258,7 +258,7 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     # Answers only after the caller had time to navigate away, so a test can
     # observe news that nobody has read yet.
     sleep 3
-    answer="FLUGHAFEN"
+    answer="AIRPORT"
     ;;
   *PAUSE_CHAT*)
     # Half the answer, then nothing at all for longer than the page's watchdog
@@ -272,11 +272,11 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     # One sentence in many small deltas, so a check can read the bubble while
     # the text is still growing: the rendered prefix and the raw tail meet
     # inside the sentence, which is where a break must never appear.
-    for part in "Der Workspace sagt " "nur, wo du " "gestartet bist, " "nicht wo " "du gerade "; do
+    for part in "The workspace only says " "where you started, " "never where " "you are "; do
       emit "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"$part\"}}}"
       sleep 0.25
     done
-    answer="bist."
+    answer="working now."
     ;;
   *RESTART_CHAT*)
     # Half the answer, then the server that started this turn is killed and
@@ -286,7 +286,13 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     sleep 3
     answer="and after it"
     ;;
-  *MAGIC*) answer="FLUGHAFEN" ;;
+  *MAGIC*) answer="AIRPORT" ;;
+  # A turn an event bought answers under the note's contract: NOTHING on the
+  # first line is nothing to do or say, which the page folds away.
+  *EVENT_NOTHING*) answer="NOTHING" ;;
+  # An answer past the preview a note stands over, so the message really folds:
+  # the fold is the preview's alone, a short answer stands unfolded.
+  *EVENT_LONG*) answer="I read every file the coder touched and the report it left behind, and this is what came of it, which is more than the one line over a folded message can hold, so the rest of it waits behind the fold." ;;
   *FILELINK*)
     # A file written into the workspace the turn runs in and handed over the
     # way the instructions say: a link relative to that workspace. The check
@@ -311,6 +317,9 @@ case "$prompt" in
   *"you are steering"*)
     case "$prompt" in
       *WAKE_DONE*)    answer="DONE: the job is finished, the file is there." ;;
+      # A report past the preview, the report's own half of EVENT_LONG: a note
+      # folds what the preview cut and nothing else.
+      *WAKE_LONG*)    answer="DONE: the job is finished, every file it was about is written and the tests it left running came back green, which is more than the one line over a folded report can hold." ;;
       *WAKE_BLOCKED*) answer="BLOCKED: it needs a decision from you." ;;
       *WAKE_NOTHING*) answer="NOTHING" ;;
       # The check survives a restart of the cockpit as well: it is killed

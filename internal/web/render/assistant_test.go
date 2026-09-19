@@ -126,3 +126,153 @@ func TestAssistantImageWithoutASizeSaysNothing(t *testing.T) {
 		}
 	}
 }
+
+// The header over a pushed answer holds one line, so a trigger the user named
+// stands there under that name, and without a name the event that fired it
+// stands there instead. Under that line stands the answer and nothing else:
+// that it was answered unasked is what the icon and the name say already, the
+// occasion is the headline itself, and the task is what the user wrote on the
+// trigger, which is where it is read.
+func TestAPushedAnswerReadsByItsHeadlineAndHoldsNothingButTheAnswer(t *testing.T) {
+	const answer = "<p>It is done.</p>"
+	named := renderAssistantMessage(t, AssistantMessageView{
+		ID: "m1", Auto: true, Author: "Cockpit", Time: "2026-09-20T10:00:00Z", HTML: answer,
+		Origin: &AssistantNoteView{Source: "event", Headline: "nightly readme"},
+	})
+	if !strings.Contains(named, `data-assistant-note-headline>nightly readme<`) {
+		t.Fatalf("want the name as the header's one line, got %q", named)
+	}
+
+	bare := renderAssistantMessage(t, AssistantMessageView{
+		ID: "m2", Auto: true, Author: "Cockpit", Time: "2026-09-20T10:00:00Z", HTML: answer,
+		Origin: &AssistantNoteView{Source: "event", Headline: "Job done: readme-task in dev-cockpit"},
+	})
+	if !strings.Contains(bare, `data-assistant-note-headline>Job done: readme-task in dev-cockpit<`) {
+		t.Fatalf("want the event as the header of a trigger nobody named, got %q", bare)
+	}
+
+	for name, out := range map[string]string{"the named one": named, "the bare one": bare} {
+		for _, unwanted := range []string{"answered without you", "Event:", "Task:", "events in one window", "data-assistant-origin-task"} {
+			if strings.Contains(out, unwanted) {
+				t.Fatalf("%s carries %q beside the answer: %q", name, unwanted, out)
+			}
+		}
+		if !strings.Contains(out, answer) {
+			t.Fatalf("%s lost the answer itself: %q", name, out)
+		}
+	}
+}
+
+// A check's report and a pushed answer are the two messages nobody asked for,
+// and they read the same way: a header that carries no switch, one control
+// under it that is the chevron and the preview together, and the whole text
+// folded below it, closed until somebody opens it. Two shapes for the same
+// kind of message is what this pins away: the switch stood on the right of
+// one header and under the other, and one of the two arrived open.
+func TestANoteAndAPushedAnswerFoldTheSameWay(t *testing.T) {
+	report := renderAssistantMessage(t, AssistantMessageView{
+		ID: "m1", Author: "Cockpit", Time: "2026-09-20T10:00:00Z", HTML: "<p>It is done.</p>",
+		Note: &AssistantNoteView{
+			Source: "check", Headline: "DONE: readme-task", Verdict: "done", Done: true,
+			Preview: "It is done, the file is there.", Rest: true,
+		},
+	})
+	pushed := renderAssistantMessage(t, AssistantMessageView{
+		ID: "m2", Auto: true, Author: "Cockpit", Time: "2026-09-20T10:00:00Z", HTML: "<p>It is done.</p>",
+		Origin: &AssistantNoteView{
+			Source: "event", Headline: "nightly readme",
+			Preview: "It is done, the file is there.", Rest: true,
+		},
+	})
+	for name, out := range map[string]string{"the report": report, "the pushed answer": pushed} {
+		if strings.Count(out, "data-assistant-note-fold") != 1 {
+			t.Fatalf("%s does not carry exactly one fold control: %q", name, out)
+		}
+		if !strings.Contains(out, `data-assistant-note-preview>It is done, the file is there.<`) {
+			t.Fatalf("%s does not show the preview beside the chevron: %q", name, out)
+		}
+		if !strings.Contains(out, `aria-expanded="false"`) || !strings.Contains(out, `class="collapse" id="note-`) {
+			t.Fatalf("%s does not start folded: %q", name, out)
+		}
+		// The header is the badge, the headline and the time, and nothing that
+		// toggles: the chevron is the preview's, and it is the only one.
+		start := strings.Index(out, `class="d-flex align-items-center gap-2 mb-1"`)
+		head := out[start : start+strings.Index(out[start:], "</div>")]
+		if strings.Contains(head, `data-bs-toggle="collapse"`) {
+			t.Fatalf("%s still switches from its header: %q", name, head)
+		}
+	}
+}
+
+// A pushed answer holds nothing but its answer, so a short one folds nothing:
+// a fold with the whole text already in its preview is a control that opens
+// onto what the reader is looking at. It is the report's own behaviour, which
+// is what the two were pulled together on.
+func TestAShortPushedAnswerFoldsNothing(t *testing.T) {
+	for name, view := range map[string]AssistantMessageView{
+		"the pushed answer": {
+			ID: "m1", Auto: true, Author: "Cockpit", Time: "2026-09-20T10:00:00Z", HTML: "<p>AIRPORT</p>",
+			Origin: &AssistantNoteView{Source: "event", Headline: "nightly readme", Preview: "AIRPORT"},
+		},
+		"the report": {
+			ID: "m2", Author: "Cockpit", Time: "2026-09-20T10:00:00Z", HTML: "<p>AIRPORT</p>",
+			Note: &AssistantNoteView{Source: "check", Headline: "DONE: readme-task", Verdict: "done", Done: true, Preview: "AIRPORT"},
+		},
+	} {
+		out := renderAssistantMessage(t, view)
+		if strings.Contains(out, "data-assistant-note-fold") {
+			t.Fatalf("%s folds a text its preview holds whole: %q", name, out)
+		}
+		if strings.Contains(out, "data-assistant-note-rest") {
+			t.Fatalf("%s hides its answer behind a collapse: %q", name, out)
+		}
+		if !strings.Contains(out, "<p>AIRPORT</p>") {
+			t.Fatalf("%s lost its answer: %q", name, out)
+		}
+	}
+}
+
+// The speaker hangs on the audio URL alone, so it stands on a check's report
+// like it stands on an answer: the three kinds of message the user did not
+// write render the same button out of one template. It used to hang on the
+// origin as well, which left a report with the audio behind it and no way to
+// ask for it.
+func TestTheSpeakerStandsOnEveryMessageThatCanBeSpoken(t *testing.T) {
+	const audio = "/assistants/a1/messages/m1/audio"
+	kinds := map[string]AssistantMessageView{
+		"the report": {
+			ID: "m1", Author: "Cockpit", AudioURL: audio, HTML: "<p>It is done.</p>",
+			Note: &AssistantNoteView{Source: "check", Headline: "DONE: readme-task", Verdict: "done", Done: true},
+		},
+		"the pushed answer": {
+			ID: "m1", Auto: true, Author: "Cockpit", AudioURL: audio, HTML: "<p>It is done.</p>",
+			Origin: &AssistantNoteView{Source: "event", Headline: "nightly readme"},
+		},
+		"the answer": {ID: "m1", Author: "Claude", AudioURL: audio, HTML: "<p>It is done.</p>"},
+	}
+	button := ""
+	for name, view := range kinds {
+		out := renderAssistantMessage(t, view)
+		start := strings.Index(out, "<button type=\"button\" class=\"btn btn-icon")
+		if start < 0 {
+			t.Fatalf("%s carries no speaker: %q", name, out)
+		}
+		one := out[start : start+strings.Index(out[start:], "</button>")]
+		if !strings.Contains(one, `data-assistant-speak="`+audio+`"`) {
+			t.Fatalf("%s does not speak its own audio: %q", name, one)
+		}
+		if button != "" && one != button {
+			t.Fatalf("%s renders a different speaker: %q against %q", name, one, button)
+		}
+		button = one
+	}
+
+	// And a message without audio carries none: the button is the URL's.
+	silent := renderAssistantMessage(t, AssistantMessageView{
+		ID: "m2", Author: "Cockpit", HTML: "<p>It is done.</p>",
+		Note: &AssistantNoteView{Source: "check", Headline: "DONE: readme-task", Verdict: "done", Done: true},
+	})
+	if strings.Contains(silent, "data-assistant-speak") {
+		t.Fatalf("a message with no audio still offers a speaker: %q", silent)
+	}
+}

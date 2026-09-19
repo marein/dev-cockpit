@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/assistant"
@@ -76,5 +77,69 @@ func TestCoderCreateChecksTheDoneWhenBeforeTheSessionExists(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "too long") {
 		t.Fatalf("a valid criterion must reach the session start, got %q", rec.Body.String())
+	}
+}
+
+// A sequel hangs on a job's end, so a --then without a done-when is refused
+// before anything starts, with a sentence that says what is missing. The
+// arrangement itself is made in this very request, see handleCoderCreate: a
+// job can close before a second call could make the trigger.
+func TestCoderCreateRefusesASequelWithoutAJob(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	projects := project.NewRepository(root, recent.New(filepath.Join(t.TempDir(), "recent.json")))
+	s := &Server{
+		coders:   []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), codercopilot.New(), projects)},
+		projects: projects,
+	}
+
+	form := url.Values{
+		"name":    {"probe"},
+		"project": {filepath.Join(root, "missing")},
+		"then":    {"start a reviewer on it"},
+	}
+	rec := createCoder(t, s, form)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want the create refused, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "A sequel needs a steered job") {
+		t.Fatalf("want the refusal to say a sequel needs a job, got %q", rec.Body.String())
+	}
+
+	// With a criterion the request reaches the session start and fails there,
+	// on the missing project: the sequel is no longer what stops it.
+	form.Set("done_when", "the tests pass")
+	rec = createCoder(t, s, form)
+	if strings.Contains(rec.Body.String(), "A sequel needs a steered job") {
+		t.Fatalf("a sequel with a job must reach the session start, got %q", rec.Body.String())
+	}
+}
+
+// The sequel expires with the job it waits for. A trigger nobody bounds
+// stands until it is removed, so without this the handover would sit on a job
+// that closed blocked forever, waiting for an end that can never come.
+func TestTheSequelExpiresWithItsJob(t *testing.T) {
+	left := 3 * time.Hour
+	job := assistant.Job{
+		Owner:     "8f1f2f4c9c0a4a2f9b7d6e5c4b3a2918",
+		Terminal:  "term-1",
+		Name:      "reviewer",
+		ExpiresAt: time.Now().Add(left),
+	}
+
+	spec := sequelSpec(job, "hand it to a reviewer")
+	if off := spec.Until - left; off > time.Second || off < -time.Second {
+		t.Fatalf("want the job's own %s left, got %s", left, spec.Until)
+	}
+	// A span and never Never: the one is what a trigger carries when nobody
+	// bounds it, and that is exactly what a sequel must not be.
+	if spec.Never {
+		t.Fatalf("want the sequel bounded by its job, got no expiry: %+v", spec)
+	}
+	if spec.Owner != job.Owner || spec.Targets[0].Terminal != job.Terminal || !spec.Once {
+		t.Fatalf("want a one shot on the job's own terminal and owner, got %+v", spec)
+	}
+	if spec.Name != job.Name || !spec.NameSet {
+		t.Fatalf("want the coder's name on the trigger, got %q", spec.Name)
 	}
 }

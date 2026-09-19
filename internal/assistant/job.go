@@ -575,7 +575,9 @@ type Watcher struct {
 	// slots is the one global cap on checks, whatever happens in the cockpit.
 	// It is a queue and not a limit that drops: a second job whose coder
 	// reports while a check runs waits its turn instead of going silent. A chat
-	// turn never waits for this, it has no cap of its own at all.
+	// turn never waits for this, it has no cap of its own at all. The slots
+	// are the service's, shared with the reactions, which are turns nobody
+	// asked for interactively like the checks are.
 	slots *checkSlots
 }
 
@@ -649,6 +651,7 @@ func (s *checkSlots) bound() int {
 // asked again before every check, so the setting behind it applies without a
 // restart; nil means the default.
 func NewWatcher(service *Service, jobs *Jobs, sessions Sessions, maxChecks func() int) *Watcher {
+	service.slots.limit = maxChecks
 	return &Watcher{
 		service:     service,
 		jobs:        jobs,
@@ -659,7 +662,7 @@ func NewWatcher(service *Service, jobs *Jobs, sessions Sessions, maxChecks func(
 		vanishAfter: vanishGrace,
 		running:     map[string]bool{},
 		pending:     map[string]bool{},
-		slots:       newCheckSlots(maxChecks),
+		slots:       service.slots,
 	}
 }
 
@@ -890,22 +893,40 @@ func ReleasedNames(released []Job) string {
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1] + " are yours again."
 }
 
-// Forget removes the job of a terminal that is gone for good. Release is the
-// end of a job whose terminal stays: it leaves the entry standing, so the user
-// can see what happened to it. A deleted session has nothing left to show it
-// next to, its entry would be read on every look at the store forever, and
-// nothing can ever move it again, so it goes. A check that is still running is
-// killed like on a release, for the same reason: nobody pays for its answer.
-func (w *Watcher) Forget(terminal string) {
+// TerminalDeleted is what a session removed for good does to the arrangements
+// an assistant made about it, and it is the one path every surface takes: the
+// page's delete button, the chip, the pane, the editor's panel and
+// `coder-delete` all reach it through the same handler, and a project's
+// deletion takes its terminals through it one by one. Release is the end of a
+// job whose terminal stays, which is what stopping a coder is: the session
+// keeps its identifier and can be resumed under it, so its entry and its
+// triggers stand.
+//
+// A job that was still open is closed first, the way the heartbeat closes one
+// whose terminal vanished, with the reason the user will read: a deleted coder
+// can never report again, so the job's end is now or never, and the report is
+// what fires a trigger waiting for it. Then the entry goes, because a deleted
+// session has nothing left to show it next to, its entry would be read on
+// every look at the store forever, and nothing can ever move it again. A check
+// that is still running is killed like on a release, for the same reason:
+// nobody pays for its answer. What the reactor then drops is answered, for the
+// sentence the user reads.
+func (w *Watcher) TerminalDeleted(terminal string) []Trigger {
 	terminal = strings.TrimSpace(terminal)
-	job, ok := w.jobs.Find(terminal)
-	if !ok {
-		return
+	name, project := "", ""
+	if job, ok := w.jobs.Find(terminal); ok {
+		name, project = job.Name, job.Project
+		if job.State.Open() {
+			w.expire(job, "the coder was deleted")
+		}
+		w.jobs.Of(job.Owner).Delete(terminal)
+		w.service.killChecks(terminal)
+		w.service.changed()
+		w.announceChange(job.Project)
 	}
-	w.jobs.Of(job.Owner).Delete(terminal)
-	w.service.killChecks(terminal)
-	w.service.changed()
-	w.announceChange(job.Project)
+	// A terminal nobody steers can still be a trigger's target, so this runs
+	// whether or not there was a job.
+	return w.service.terminalGone(terminal, name, project)
 }
 
 // Get returns one job by the terminal it steers, whoever steers it.
@@ -1535,9 +1556,11 @@ const (
 func (v Verdict) News() bool { return v == VerdictDone || v == VerdictBlocked }
 
 // verdictPattern reads the verdict at the front of an answer. The separator is
-// optional and may be a colon or a dash, because that is the formatting a model
-// drifts into; the word itself is the contract.
-var verdictPattern = regexp.MustCompile(`(?i)^\s*[*_#>\s]*(done|blocked|working|nothing)\b[*_]*\s*[:\-–]?\s*[*_]*\s*`)
+// optional and may be a colon, a dash or a full stop, because that is the
+// formatting a model drifts into; the word itself is the contract. A verdict
+// that ends its own sentence is the everyday shape of the bare one, "Nothing.",
+// and reading the stop as punctuation left it standing in front of the report.
+var verdictPattern = regexp.MustCompile(`(?i)^\s*[*_#>\s]*(done|blocked|working|nothing)\b[*_]*\s*[:\-–.]?\s*[*_]*\s*`)
 
 // verdictInText finds the contract form of a verdict after a model talked first:
 // upper case and followed by a colon, which prose never is. Everything before it

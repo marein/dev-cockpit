@@ -223,13 +223,18 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       assert(state.count === 1 && state.id === first, `expected the same single unread entry, got ${JSON.stringify(state)}`);
     });
 
-    await run("center lists the entry unread with coder + project", async () => {
+    await run("center lists the entry unread, the coder in the line below the title", async () => {
       await page.locator(".dc-notify-bell:visible").first().click();
       await page.waitForSelector(".dc-notify-menu.show", { timeout: 6000 });
       const item = page.locator(`.dc-notify-menu.show a[data-notify-target="${coderId}"]`).first();
       await item.waitFor({ state: "visible", timeout: 6000 });
       const text = await item.textContent();
-      assert(text.includes(coderName) && text.includes(project), `item text: ${text}`);
+      // The title is the kind alone, the line under it is the coder: the row
+      // shows the detail where it used to show the project, so which coder
+      // this is stands in the list and the project no longer does. Two rows
+      // of one kind are told apart down there.
+      assert(text.includes("Coder has news.") && text.includes(coderName), `item text: ${text}`);
+      assert(!text.includes(project), `the project still stands in the row: ${text}`);
       assert(await item.evaluate((el) => el.classList.contains("dc-notify-unread")), "entry not marked unread");
     });
 
@@ -363,8 +368,11 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       while (Date.now() < deadline && !hookHits.some((h) => h.includes(coderName))) await sleep(250);
       assert(hookHits.some((h) => h.includes(coderName)), `no webhook hit for unread news: ${JSON.stringify(hookHits)}`);
       const payload = JSON.parse(hookHits.find((h) => h.includes(coderName)));
+      // The title is what happened and nothing else, the body is which coder:
+      // a lock screen gives the title one line and the body three or four, so
+      // the name is read whole down there.
       assert(payload.title === "Coder has news.", `payload title: ${JSON.stringify(payload)}`);
-      assert(payload.body === `"${coderName}" - ${project}`, `payload body: ${JSON.stringify(payload)}`);
+      assert(payload.body === coderName, `payload body: ${JSON.stringify(payload)}`);
     });
 
     await run("a visible but unfocused coder page does not auto-read, news toasts and pushes, focus reconciles", async () => {

@@ -13,7 +13,7 @@ const (
 	toolUseLine   = `{"type":"assistant","sessionId":"s1","cwd":"/projects/demo","timestamp":"2026-07-26T10:00:01Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Write","input":{}}]}}`
 	toolResultLn  = `{"type":"user","sessionId":"s1","cwd":"/projects/demo","timestamp":"2026-07-26T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`
 	answerLine    = `{"type":"assistant","sessionId":"s1","cwd":"/projects/demo","timestamp":"2026-07-26T10:00:03Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"The README is written."}]}}`
-	draftLine     = `{"type":"last-prompt","lastPrompt":"Escape soll neutral sein, nimm es raus","leafUuid":"u1","sessionId":"s1"}`
+	draftLine     = `{"type":"last-prompt","lastPrompt":"Escape should be neutral, take it out","leafUuid":"u1","sessionId":"s1"}`
 	queuedLine    = `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-07-26T10:00:04Z","sessionId":"s1","content":"and now the tests"}`
 	modeLine      = `{"type":"mode","mode":"normal","sessionId":"s1"}`
 	sidechainLine = `{"type":"assistant","isSidechain":true,"sessionId":"s1","cwd":"/projects/demo","timestamp":"2026-07-26T10:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"subagent talking"}]}}`
@@ -88,7 +88,7 @@ func TestACodersOwnDraftIsNotAUserMessage(t *testing.T) {
 	if !activity.Finished {
 		t.Fatalf("a draft in the input line ended the turn:\n%s", activity.Text)
 	}
-	if strings.Contains(activity.Text, "Escape soll neutral sein") {
+	if strings.Contains(activity.Text, "Escape should be neutral") {
 		t.Fatalf("the draft reached the reading:\n%s", activity.Text)
 	}
 	if strings.Contains(activity.Text, "and now the tests") {

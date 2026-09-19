@@ -1,26 +1,71 @@
+{{/* One speaker for both headers. It hangs on the audio URL alone, which the
+     server sets on every message that can be read aloud (assistant.Message
+     Speakable), so a check's report offers it exactly like an answer does;
+     an origin decides what the header says, never whether it can be spoken.
+     The button keeps the small button's visible height so the row never
+     moves; px-2 widens it a little, and the absolutely positioned overlay is
+     the touch target, 8px past the box on every side without any layout
+     impact. */}}
+{{define "assistant_speaker"}}{{if .}}<button type="button" class="btn btn-icon btn-sm btn-ghost-secondary px-2 position-relative ms-auto flex-shrink-0" aria-label="Read this answer aloud" title="Read aloud" data-assistant-speak="{{.}}"><span class="position-absolute" style="inset:-.5rem" aria-hidden="true"></span><i class="ti ti-volume"></i></button>{{end}}{{end}}
+
 {{define "assistant_message.gohtml"}}
 {{with .Message}}
-<div id="message-{{.ID}}" class="dc-msg{{if .User}} dc-msg-user{{else if .Wake}} dc-msg-info{{else}} dc-msg-assistant{{end}}" data-assistant-message data-no-pe data-role="{{if .User}}user{{else}}assistant{{end}}" data-message-id="{{.ID}}" data-run-id="{{.RunID}}" data-state="{{.State}}">
-  {{with .Wake}}
-  <div class="d-flex align-items-center gap-2 mb-1" data-assistant-wake="{{.Verdict}}">
-    <span class="badge {{if .Done}}bg-green-lt{{else if .Blocked}}bg-orange-lt{{else}}bg-secondary-lt{{end}}">
-      <i class="ti {{if .Expired}}ti-steering-wheel-off{{else}}ti-steering-wheel{{end}} me-1"></i>{{if .Done}}Done{{else if .Blocked}}Blocked{{else if .Expired}}Stopped{{else}}Checked{{end}}
+<div id="message-{{.ID}}" class="dc-msg{{if .User}} dc-msg-user{{else if or .Note .Auto}} dc-msg-info{{else}} dc-msg-assistant{{end}}" data-assistant-message data-no-pe data-role="{{if .User}}user{{else if .Note}}cockpit{{else}}assistant{{end}}" data-message-id="{{.ID}}" data-run-id="{{.RunID}}" data-state="{{.State}}"{{if .Auto}} data-assistant-auto{{end}}>
+  {{/* A note and a pushed answer are the two things the cockpit puts into a
+       thread without being asked, and they read the same way. The header says
+       who spoke and carries no switch: a badge that says where it came from,
+       the one line it is read by, the time. What stands under it is the
+       result and nothing else: where the preview cut the text, one control
+       holds the chevron and that preview together and the message unfolds
+       below it, closed until somebody opens it, and a message the preview
+       holds whole stands as it is. The preview is as long as the push on a
+       phone carries (assistant.PreviewRunes), so the thread reads like the
+       message that brought the reader here, and one line of half a sentence
+       no longer stands for the report it introduces. */}}
+  {{$note := .Note}}{{if not $note}}{{$note = .Origin}}{{end}}
+  {{with $note}}
+  <div class="d-flex align-items-center gap-2 mb-1"{{if $.Message.Note}} data-assistant-note="{{.Source}}"{{if eq .Source "check"}} data-assistant-wake="{{.Verdict}}"{{end}}{{else}} data-assistant-origin{{end}}>
+    {{/* The badge is the icon alone, coloured by what it says: the headline
+         beside it already carries the word, "DONE: readme-task", and a
+         phone has no room for it twice. The word stays for a reader that
+         hears the page, as the badge's own label and never as a visually
+         hidden span: that span is absolutely positioned and the thread's
+         scroller is not, so it stands outside the scroller and grows the
+         app grid to the transcript's height, which a hash scroll then
+         moves. A check is the one source a note has, so the word an event
+         carries is the one a pushed answer reads by. */}}
+    {{$word := "Started by an event"}}{{if .Done}}{{$word = "Done"}}{{else if .Blocked}}{{$word = "Blocked"}}{{else if .Expired}}{{$word = "Stopped"}}{{else if eq .Source "check"}}{{$word = "Checked"}}{{end}}
+    <span class="badge flex-shrink-0 {{if .Done}}bg-green-lt{{else if .Blocked}}bg-orange-lt{{else if eq .Source "check"}}bg-secondary-lt{{else}}bg-purple-lt{{end}}" role="img" title="{{$word}}" aria-label="{{$word}}">
+      <i class="ti {{if .Expired}}ti-steering-wheel-off{{else if eq .Source "check"}}ti-steering-wheel{{else}}ti-bolt{{end}}" aria-hidden="true"></i>
     </span>
-    <a href="{{.URL}}" class="text-secondary small text-truncate">{{.Name}}</a>
+    <span class="fw-medium text-truncate min-w-0 flex-fill" data-assistant-note-headline>{{.Headline}}</span>
+    {{if $.Message.Queued}}<span class="badge bg-secondary-lt flex-shrink-0" data-assistant-queued>{{if $.Message.CanDiscard}}Waiting{{else}}Not sent{{end}}</span>{{end}}
+    {{/* Relative, the full stamp in its title: a note is read by its
+         headline, and on a phone the headline needs the room. */}}
+    {{if $.Message.Time}}<dc-time datetime="{{$.Message.Time}}" relative class="text-secondary small flex-shrink-0"></dc-time>{{end}}
+    {{template "assistant_speaker" $.Message.AudioURL}}
   </div>
+  {{if .Rest}}
+  {{/* A plain button, not a .btn: Tabler fills an expanded ghost button,
+       and a fold must not turn into a pill when it opens. The chevron is a
+       flex item beside the preview and never inline in it, so the second and
+       third line of the preview stand under the first and not under the
+       chevron. */}}
+  <button type="button" class="bg-transparent border-0 p-0 w-100 d-flex align-items-start gap-1 text-start text-secondary" data-bs-toggle="collapse" data-bs-target="#note-{{$.Message.ID}}" aria-expanded="false" aria-controls="note-{{$.Message.ID}}" data-assistant-note-fold><i class="ti ti-chevron-down flex-shrink-0" aria-hidden="true"></i><span class="flex-fill min-w-0 text-break" data-assistant-note-preview>{{.Preview}}</span></button>
   {{end}}
+  <div{{if .Rest}} class="collapse" id="note-{{$.Message.ID}}" data-assistant-note-rest{{end}}>
+    <div class="text-break markdown mt-1" data-assistant-text>{{$.Message.HTML}}</div>
+  </div>
+  {{else}}
   <div class="d-flex align-items-baseline gap-2 mb-1">
     <span class="text-secondary small fw-medium text-truncate">{{.Author}}</span>
     {{if .Time}}<dc-time datetime="{{.Time}}" class="text-secondary small flex-shrink-0"></dc-time>{{end}}
     {{if .Streaming}}<span class="spinner-border spinner-border-sm text-secondary ms-auto flex-shrink-0" role="status" aria-label="Answering"></span>{{end}}
     {{if .Queued}}<span class="badge bg-secondary-lt ms-auto flex-shrink-0" data-assistant-queued>{{if .CanDiscard}}Waiting{{else}}Not sent{{end}}</span>{{end}}
-    {{/* The speaker keeps the small button's visible height so the answer
-         layout never moves; px-2 widens it a little, and the absolutely
-         positioned overlay is the touch target, 8px past the box on every
-         side without any layout impact. */}}
-    {{if .AudioURL}}<button type="button" class="btn btn-icon btn-sm btn-ghost-secondary px-2 position-relative ms-auto flex-shrink-0" aria-label="Read this answer aloud" title="Read aloud" data-assistant-speak="{{.AudioURL}}"><span class="position-absolute" style="inset:-.5rem" aria-hidden="true"></span><i class="ti ti-volume"></i></button>{{end}}
+    {{template "assistant_speaker" .AudioURL}}
   </div>
   <div class="text-break{{if not .User}} markdown{{end}}" data-assistant-text>{{.HTML}}</div>
+  {{end}}
   {{if .Attachments}}
   <div class="d-flex flex-column gap-2 mt-2" data-assistant-files>
     {{range .Attachments}}

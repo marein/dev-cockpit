@@ -154,9 +154,12 @@ L.runFeature("BACKUP", async ({ page, run }) => {
     const note = (data.notifications || []).find((n) => n.targetId === "backup");
     assert(note, "backup notification missing");
     assert(note.url === "/settings/backup", `unexpected notification ${JSON.stringify(note)}`);
+    // What happened, and nothing else: the title is the kind alone.
     assert(note.title === "Backup ready.", `unexpected title ${note.title}`);
-    // A backup belongs to no project, so the archive name is the whole line.
-    assert(/^"dev-cockpit-backup_.*"$/.test(note.detail || ""), `unexpected detail ${note.detail}`);
+    assert([...(note.title || "")].length <= 32, `the title runs past a phone's line: ${note.title}`);
+    // A backup writes no text, so the line below it is the archive alone,
+    // whole, where a title would have cut it.
+    assert(/^dev-cockpit-backup_.*\.dcbackup$/.test(note.detail || ""), `unexpected detail ${note.detail}`);
     assert(note.read === true, "visiting the backup page should have marked the notification read");
   });
 

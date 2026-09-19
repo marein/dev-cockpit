@@ -9,7 +9,7 @@ import { applyFold } from "@dc/fold";
 import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
 import { ensureOk, postForm } from "@dc/http";
 import { notifyError, notifySuccess } from "@dc/toast";
-import { releaseCoder, steerCoder } from "@dc/steer";
+import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
 
 const FILTER_KEY = "dc-project-filter";
 const GROUPS_KEY = "dc-project-worktrees-open";
@@ -348,7 +348,7 @@ class ProjectList extends HTMLElement {
       await ensureOk(response, stop ? "Could not stop the coder." : shell ? "Could not delete the shell." : "Could not delete the coder.");
       const data = await response.json().catch(() => null);
       const name = (data && data.name) || chip.dataset.chipName || "";
-      notifySuccess(stop ? `Coder "${name}" stopped.` : shell ? `Shell "${name}" deleted.` : `Coder "${name}" deleted.`);
+      notifySuccess(alsoDropped(stop ? `Coder "${name}" stopped.` : shell ? `Shell "${name}" deleted.` : `Coder "${name}" deleted.`, data));
     } catch (error) {
       notifyError(error.message);
       if (button) button.disabled = false;

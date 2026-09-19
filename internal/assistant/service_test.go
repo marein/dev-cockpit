@@ -1734,11 +1734,11 @@ func TestTheRenderedPrefixMarksWhereTheNextTextGoes(t *testing.T) {
 		prefix string
 		want   string
 	}{
-		{"mid sentence", "wo du gestartet bist, nicht wo", "wo" + RenderMark + "</p>"},
-		{"after a closed emphasis", "das ist *wichtig*", "</em>" + RenderMark + "</p>"},
+		{"mid sentence", "where you started, never where", "where" + RenderMark + "</p>"},
+		{"after a closed emphasis", "this one is *important*", "</em>" + RenderMark + "</p>"},
 		{"inside an open code fence", "```go\nfunc main() {", "func main() {" + RenderMark + "\n</code>"},
 		{"inside the open list item", "- one\n- two", "two" + RenderMark + "</li>"},
-		{"behind a finished block", "Der Satz steht.\n\n", "<p>" + RenderMark + "</p>"},
+		{"behind a finished block", "The sentence stands.\n\n", "<p>" + RenderMark + "</p>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			html, err := markdown.RenderGFM(tc.prefix + RenderMark)
@@ -2190,6 +2190,22 @@ func TestSearchMatchesTitleAndMessageContentCaseInsensitively(t *testing.T) {
 	if none := svc.Search("nowhere"); len(none) != 0 {
 		t.Fatalf("a word nobody wrote must match nothing, got %+v", none)
 	}
+
+	// The list and `assistant-show --contains` read a message with one rule,
+	// so a headline the thread search finds makes the assistant carry the word
+	// here too. Two searches in one tool that answer differently are worse
+	// than one search.
+	store.Save(Instance{
+		Summary: Summary{ID: "33333333-3333-4333-8333-333333333333", Title: "Nightly", CoderID: "claude"},
+		Messages: []Message{{
+			ID: "m3", Role: RoleCockpit, Content: "the check found nothing to say", CreatedAt: old.Add(2 * time.Hour), State: StateComplete,
+			Note: &Note{Source: NoteCheck, Headline: "Job done: release-task", Verdict: "DONE"},
+		}},
+	})
+	byHeadline := svc.Search("release-task")
+	if len(byHeadline) != 1 || byHeadline[0].ID != "33333333-3333-4333-8333-333333333333" {
+		t.Fatalf("a word in a note's headline has to match, got %+v", byHeadline)
+	}
 }
 
 // Transcript is the read behind the `assistant-show` command: the last entries,
@@ -2208,7 +2224,7 @@ func TestTranscriptWindowsAndCutsVisibly(t *testing.T) {
 	}
 	store.Save(Instance{Summary: Summary{ID: id, Title: "long", CoderID: "claude"}, Messages: messages})
 
-	c, dropped, err := svc.Transcript(id, 0, 20)
+	c, dropped, err := svc.Transcript(id, "", 0, 20)
 	if err != nil {
 		t.Fatalf("transcript: %v", err)
 	}
@@ -2223,7 +2239,7 @@ func TestTranscriptWindowsAndCutsVisibly(t *testing.T) {
 		t.Fatalf("a cut message has to say how much of it is shown, got %q", last.Content)
 	}
 
-	whole, droppedMore, err := svc.Transcript(id, 2, 0)
+	whole, droppedMore, err := svc.Transcript(id, "", 2, 0)
 	if err != nil {
 		t.Fatalf("transcript without a budget: %v", err)
 	}
@@ -2236,8 +2252,106 @@ func TestTranscriptWindowsAndCutsVisibly(t *testing.T) {
 	if stored, err := svc.Get(id); err != nil || strings.Contains(stored.Messages[len(stored.Messages)-1].Content, "[cut:") {
 		t.Fatalf("the stored transcript must never carry a cut note, got %v", err)
 	}
-	if _, _, err := svc.Transcript("99999999-9999-4999-8999-999999999999", 0, 0); err == nil {
+	if _, _, err := svc.Transcript("99999999-9999-4999-8999-999999999999", "", 0, 0); err == nil {
 		t.Fatal("an unknown conversation has to be refused")
+	}
+}
+
+// `assistant-show --contains` narrows a thread the way `job-list --contains`
+// narrows the jobs: before the cap. A word somebody searches a long thread for
+// sits older than the last entries as often as not, and a filter behind the
+// window would answer nothing at all. Searched is the body and the headline a
+// note of the cockpit and an answer a trigger pushed stand under: a schedule's
+// tick carries its spec there and nowhere else. The window, the cut and
+// `--full` then work over the matches like over any other reading.
+func TestTranscriptContainsNarrowsBeforeTheWindow(t *testing.T) {
+	svc, store, _ := newTestService(t, nil)
+	id := "44444444-4444-4444-8444-444444444444"
+	at := func(i int) time.Time { return time.Date(2026, 3, 4, 9, i, 0, 0, time.UTC) }
+	// The first match stands at the very front, older than the default window.
+	messages := []Message{{
+		ID: "asked", Role: RoleUser, State: StateComplete,
+		Content: "the RELEASE notes are wrong", CreatedAt: at(0),
+	}}
+	for i := 1; i <= TranscriptEntriesShown+2; i++ {
+		messages = append(messages, Message{
+			ID: fmt.Sprintf("m%d", i), Role: RoleAssistant, State: StateComplete,
+			Content: "nothing to see here", CreatedAt: at(i),
+		})
+	}
+	// A note carries the word in its headline alone, and a pushed answer
+	// carries a schedule in its origin, which stands in no body anywhere.
+	messages = append(messages,
+		Message{
+			ID: "note", Role: RoleCockpit, State: StateComplete,
+			Note:    &Note{Source: NoteCheck, Headline: "Job done: release-task", Verdict: "DONE"},
+			Content: "the coder reported the suite green", CreatedAt: at(20),
+		},
+		Message{
+			ID: "reaction", Role: RoleAssistant, State: StateComplete, Auto: true,
+			Origin:  &Note{Source: NoteEvent, Headline: "Schedule 0 9 * * 1 ticked at 09:00"},
+			Content: "nothing to do", CreatedAt: at(21),
+		},
+	)
+	store.Save(Instance{Summary: Summary{ID: id, Title: "long", CoderID: "claude"}, Messages: messages})
+
+	hit, dropped, err := svc.Transcript(id, "release", 0, 0)
+	if err != nil {
+		t.Fatalf("transcript: %v", err)
+	}
+	if len(hit.Messages) != 2 || dropped != 0 {
+		t.Fatalf("want the body match and the headline match, got %d with %d dropped", len(hit.Messages), dropped)
+	}
+	if hit.Messages[0].ID != "asked" || hit.Messages[1].ID != "note" {
+		t.Fatalf("a match older than the window has to survive it, got %q and %q", hit.Messages[0].ID, hit.Messages[1].ID)
+	}
+	if hit.MessageCount != len(messages) {
+		t.Fatalf("the total has to stay the whole thread's, got %d of %d", hit.MessageCount, len(messages))
+	}
+	if lower, _, _ := svc.Transcript(id, "ReLeAsE", 0, 0); len(lower.Messages) != 2 {
+		t.Fatalf("the word has to compare case insensitively, got %d", len(lower.Messages))
+	}
+	if spec, _, _ := svc.Transcript(id, "0 9 * * 1", 0, 0); len(spec.Messages) != 1 || spec.Messages[0].ID != "reaction" {
+		t.Fatalf("a word that only the origin headline carries has to match it, got %+v", spec.Messages)
+	}
+
+	// --entries windows the matches, not the thread, and counts the older
+	// matches it left out.
+	last, droppedOne, err := svc.Transcript(id, "release", 1, 0)
+	if err != nil {
+		t.Fatalf("transcript with entries: %v", err)
+	}
+	if len(last.Messages) != 1 || droppedOne != 1 || last.Messages[0].ID != "note" {
+		t.Fatalf("want the newest match alone with 1 dropped, got %d with %d", len(last.Messages), droppedOne)
+	}
+
+	// The per message cut composes with the filter, and a zero budget, which
+	// is what --full asks for, keeps a match whole.
+	cut, _, err := svc.Transcript(id, "release", 0, 8)
+	if err != nil {
+		t.Fatalf("transcript with a budget: %v", err)
+	}
+	if !strings.Contains(cut.Messages[0].Content, "runes shown, use --full") {
+		t.Fatalf("a cut match has to say how much of it is shown, got %q", cut.Messages[0].Content)
+	}
+	if strings.Contains(hit.Messages[0].Content, "[cut:") {
+		t.Fatalf("--full has to keep a match whole, got %q", hit.Messages[0].Content)
+	}
+
+	// A word nobody wrote answers an empty thread, and still knows how long
+	// the thread is, so the reading can say the filter took everything out.
+	none, droppedNone, err := svc.Transcript(id, "nowhere", 0, 0)
+	if err != nil {
+		t.Fatalf("transcript without a match: %v", err)
+	}
+	if len(none.Messages) != 0 || droppedNone != 0 {
+		t.Fatalf("want nothing shown and nothing dropped, got %d with %d", len(none.Messages), droppedNone)
+	}
+	if none.MessageCount != len(messages) {
+		t.Fatalf("an empty match still knows the thread, got %d", none.MessageCount)
+	}
+	if stored, err := svc.Get(id); err != nil || len(stored.Messages) != len(messages) {
+		t.Fatalf("a filtered reading must never touch the stored transcript, got %v", err)
 	}
 }
 

@@ -130,7 +130,7 @@ func TestATurnFindsItsInstructionsAndATrustedWorkspace(t *testing.T) {
 	}
 	for _, name := range instructionFiles {
 		text := mustRead(t, filepath.Join(workspace.Dir(created.ID), name))
-		for _, want := range []string{"You are `" + created.ID + "`", `called "Release work"`, "\n./cockpit status", workspace.Wrapper(created.ID)} {
+		for _, want := range []string{"You are `" + created.ID + "`", "\n./cockpit status", workspace.Wrapper(created.ID)} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s is missing %q", name, want)
 			}

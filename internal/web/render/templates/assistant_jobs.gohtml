@@ -1,11 +1,37 @@
+{{/* The coders one assistant steers, the first of the aside's two tabs. A row
+     is folded: the coder, where it works, how it stands. What it was sent,
+     what it is measured against and what came back are three named parts of
+     the fold, because three grey lines under each other are one text nobody
+     reads.
+
+     The fold holds that text and nothing else. The actions stand below it and
+     outside it, so opening a coder, its editor, a trigger on it or taking it
+     back is one press from a closed row: reading what it was sent is a
+     question somebody asks now and then, acting on it is the everyday case,
+     and a closed row that answers neither is a row that has to be opened
+     before it is of any use. The row is taller for it, deliberately. */}}
 {{define "assistant_jobs_list.gohtml"}}
 <div data-assistant-body data-assistant-jobs-open="{{.JobsOpen}}">
   {{if .Jobs}}
   <div class="list-group list-group-flush" data-assistant-jobs>
     {{range .Jobs}}
     <div class="list-group-item px-0" data-assistant-job="{{.Terminal}}">
+      {{/* The icon carries the state alone: purple while the assistant holds
+           this coder, purple with the dot running along its edge while a check
+           is on it, red where the job ended without arriving, grey where it is
+           simply over and there is nothing to do. The word is off the screen
+           and stands as the icon's own label, the way a note's badge in the
+           thread names itself, because a colour and a word beside it are two
+           renderings of one fact that can disagree, and once did: an open
+           trigger's icon read green while the badge next to it read blue. */}}
+      {{$tone := ""}}{{$word := "Stopped"}}
+      {{- if .Open}}{{$tone = "steered"}}{{$word = "Steering"}}
+      {{- else if eq .State "done"}}{{$word = "Done"}}
+      {{- else if eq .State "blocked"}}{{$tone = "text-danger"}}{{$word = "Blocked"}}
+      {{- else if eq .State "expired"}}{{$tone = "text-danger"}}{{$word = "Expired"}}{{end}}
+      {{- if .Checking}}{{$word = "Checking"}}{{end}}
       <div class="d-flex align-items-center gap-2">
-        <span class="dc-term-icon" aria-hidden="true"><i class="ti ti-steering-wheel"></i></span>
+        <span class="dc-term-icon{{if $tone}} {{$tone}}{{end}}{{if .Checking}} working{{end}}" role="img" title="{{$word}}" aria-label="{{$word}}" data-assistant-job-state="{{.State}}"{{if .Checking}} data-assistant-working="check"{{end}}><i class="ti ti-steering-wheel" aria-hidden="true"></i></span>
         {{/* The two names are the two things behind the row, so they are the
              way there: the coder's name opens the coder, the project's name
              opens the project. */}}
@@ -15,23 +41,34 @@
                assistant's own page the answer is always the same. */}}
           <div class="text-secondary small text-truncate">{{if .Owner}}{{.Owner}}{{if .Project}} · {{end}}{{end}}{{if .Project}}<a class="link-secondary text-decoration-none" href="/projects#project-{{.Project}}" data-assistant-job-project-link>{{.Project}}</a>{{end}}</div>
         </div>
-        {{if .Checking}}<span class="badge bg-purple-lt flex-shrink-0" data-assistant-job-checking><span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>checking</span>{{end}}
-        <span class="badge flex-shrink-0 {{if .Open}}bg-blue-lt{{else if eq .State "done"}}bg-green-lt{{else if eq .State "blocked"}}bg-orange-lt{{else}}bg-secondary-lt{{end}}" data-assistant-job-state>{{.State}}</span>
-        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary flex-shrink-0" data-bs-toggle="collapse" data-bs-target="#assistant-job-{{.Terminal}}-details" aria-expanded="false" aria-controls="assistant-job-{{.Terminal}}-details" aria-label="Task and criterion" title="Task and criterion" data-assistant-job-fold><i class="ti ti-chevron-down" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary flex-shrink-0" data-bs-toggle="collapse" data-bs-target="#assistant-job-{{.Terminal}}-details" aria-expanded="false" aria-controls="assistant-job-{{.Terminal}}-details" aria-label="Details" title="Details" data-assistant-job-fold><i class="ti ti-chevron-down" aria-hidden="true"></i></button>
       </div>
-      {{/* The task and the criterion fold away by default, the row stays a
-           name, a state and the last report. */}}
-      <div class="collapse" id="assistant-job-{{.Terminal}}-details" data-assistant-job-details>
-        {{if .Task}}<div class="small text-secondary text-break mt-2">{{.Task}}</div>{{end}}
-        <div class="small text-secondary text-break" data-assistant-job-done-when><i class="ti ti-flag-check me-1"></i>{{if .DoneWhen}}{{.DoneWhen}}{{else}}What the session's own task says{{end}}</div>
+      <div class="collapse" id="assistant-job-{{.Terminal}}-details" data-assistant-fold data-assistant-job-details>
+        {{if .Task}}
+        <div class="mt-2">
+          <div class="datagrid-title mb-1">Prompt</div>
+          <div class="small text-break" data-assistant-job-task>{{.Task}}</div>
+        </div>
+        {{end}}
+        <div class="mt-2">
+          <div class="datagrid-title mb-1">Done when</div>
+          <div class="small text-break" data-assistant-job-done-when>{{if .DoneWhen}}{{.DoneWhen}}{{else}}What the session's own task says{{end}}</div>
+        </div>
+        {{if .Note}}
+        <div class="mt-2">
+          <div class="datagrid-title mb-1">Last report</div>
+          <div class="small text-break" data-assistant-job-note>{{.Note}}</div>
+        </div>
+        {{end}}
+        <div class="text-secondary small mt-2">{{.Wakes}} of {{.MaxWakes}} checks{{if and .Open .Expires}} · until <dc-time datetime="{{.Expires}}"></dc-time>{{end}}</div>
       </div>
-      {{if .Note}}<div class="small text-break mt-1" data-assistant-job-note>{{.Note}}</div>{{end}}
-      <div class="text-secondary small mt-1">{{.Wakes}} of {{.MaxWakes}} checks{{if and .Open .Expires}} · until <dc-time datetime="{{.Expires}}"></dc-time>{{end}}</div>
       {{/* Two ways to look at a steered coder, the screen it types on and the
            files it writes; the editor is offered where the coder works in a
-           project. The row wraps, so the actions stand side by side in the
-           inline aside and under each other in the phone's sheet. */}}
-      <div class="d-flex flex-wrap gap-2 mt-3">
+           project, and then the coder is handed back or taken on again. The
+           row wraps, so the actions stand side by side in the inline aside and
+           under each other in the phone's sheet. They sit outside the fold
+           above them, so they stand whether it is open or shut. */}}
+      <div class="d-flex flex-wrap gap-2 mt-2">
         <a href="{{.URL}}" class="btn btn-sm flex-fill" data-assistant-job-open>
           <i class="ti ti-terminal-2 me-1"></i>Open coder
         </a>
@@ -72,21 +109,7 @@
     {{end}}
   </div>
   {{else}}
-  <div class="text-center text-secondary py-4" data-assistant-jobs-empty>
-    <div class="mb-2"><i class="ti ti-steering-wheel-off icon-lg"></i></div>
-    <p class="mb-0">This assistant steers nothing right now. Ask it to keep an eye on a coder and say when it is done, then it stands here.</p>
-  </div>
+  <div class="text-secondary small py-2" data-assistant-jobs-empty>Nothing steered. Ask the assistant to keep an eye on a coder and say when it is done, then it stands here.</div>
   {{end}}
 </div>
-{{end}}
-
-{{/* The head's way to the steered coders: below xl the aside is a sheet this
-     button opens, from xl up the aside stands beside the thread and the button
-     gives way. The badge counts this assistant's open jobs either way. */}}
-{{define "assistant_jobs_button.gohtml"}}
-<button type="button" class="btn btn-icon btn-ghost-secondary flex-shrink-0 position-relative d-xl-none" data-bs-toggle="offcanvas" data-bs-target="#assistant-aside"
-        aria-label="Steered coders" title="Steered coders" data-assistant-jobs-button>
-  <i class="ti ti-steering-wheel" aria-hidden="true"></i>
-  <dc-steer-badge class="dc-steer-badge{{if not .JobsOpen}} d-none{{end}}" src="{{.JobsListURL}}" aria-hidden="true">{{.JobsOpen}}</dc-steer-badge>
-</button>
 {{end}}

@@ -293,14 +293,14 @@ func TestSearchSnippetTrimsLongLines(t *testing.T) {
 // units, so a character outside the basic plane counts twice.
 func TestSearchReportsMatchBounds(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "a.txt", "  Ärger needle kommt\n🙂 needle\n")
+	writeFile(t, root, "a.txt", "  Œuvre needle here\n🙂 needle\n")
 
 	matches, _, err := SearchFiles(root, "needle", false, DefaultExclusionSet(), SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []SearchMatch{
-		{Path: "a.txt", Line: 1, Text: "Ärger needle kommt", MatchStart: 6, MatchLen: 6},
+		{Path: "a.txt", Line: 1, Text: "Œuvre needle here", MatchStart: 6, MatchLen: 6},
 		{Path: "a.txt", Line: 2, Text: "🙂 needle", MatchStart: 3, MatchLen: 6},
 	}
 	if !reflect.DeepEqual(matches, want) {

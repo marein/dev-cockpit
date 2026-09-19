@@ -12,7 +12,7 @@ import { escapeHtml } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { matchesTokens } from "@dc/filter";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
-import { releaseCoder, steerCoder } from "@dc/steer";
+import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
 import { isDark } from "@dc/theme";
 import * as dockerApi from "@dc/docker";
 import * as editorLSP from "@dc/editor-lsp";
@@ -10103,8 +10103,9 @@ async function init(root) {
       notifyError("Could not close the session.");
       return;
     }
-    notifySuccess(drop ? `Coder "${sessionName}" deleted.`
-      : coder ? `Coder "${sessionName}" stopped.` : `Shell "${sessionName}" deleted.`);
+    const data = await res.json().catch(() => null);
+    notifySuccess(alsoDropped(drop ? `Coder "${sessionName}" deleted.`
+      : coder ? `Coder "${sessionName}" stopped.` : `Shell "${sessionName}" deleted.`, data));
     await loadTerminals({ focus: wasActive });
     if (wasActive && !termActiveId) editor.focus();
   }

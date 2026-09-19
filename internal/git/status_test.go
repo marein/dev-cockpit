@@ -162,8 +162,8 @@ func TestParseStatusRenameCarriesItsSource(t *testing.T) {
 	// The entry after it proves the source is consumed and not read as an entry
 	// of its own.
 	out := record(
-		"2 R. N... 100644 100644 100644 aaaa bbbb R100 docs/Übersicht neu.md",
-		"docs/Übersicht alt.md",
+		"2 R. N... 100644 100644 100644 aaaa bbbb R100 docs/Résumé new.md",
+		"docs/Résumé old.md",
 		"1 .M N... 100644 100644 100644 cccc dddd README.md",
 	)
 
@@ -172,10 +172,10 @@ func TestParseStatusRenameCarriesItsSource(t *testing.T) {
 	if len(files) != 2 {
 		t.Fatalf("files: %d (%v)", len(files), files)
 	}
-	if files[0].Path != "docs/Übersicht neu.md" {
+	if files[0].Path != "docs/Résumé new.md" {
 		t.Fatalf("rename target: %q", files[0].Path)
 	}
-	if files[0].From != "docs/Übersicht alt.md" {
+	if files[0].From != "docs/Résumé old.md" {
 		t.Fatalf("rename source: %q", files[0].From)
 	}
 	if files[0].Index != "R" || files[0].Worktree != "." {

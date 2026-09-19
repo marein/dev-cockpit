@@ -1,0 +1,292 @@
+{{/* The triggers of one assistant: what it reacts to. They are the aside's
+     second tab, built like the first: a folded row with the text in the fold
+     and the actions standing under it, outside, so they are one press away
+     whether the row is open or shut. The list is a dc-assistant-list that
+     refreshes itself from /assistants/triggers?assistant=<id> on the
+     assistant event, so a fired trigger moves its row without a reload. */}}
+{{define "assistant_triggers_list.gohtml"}}
+<div data-assistant-body data-assistant-triggers-open="{{.Open}}">
+  {{if .Triggers}}
+  <div class="list-group list-group-flush" data-assistant-triggers>
+    {{range .Triggers}}
+    <div class="list-group-item px-0" data-assistant-trigger="{{.ID}}">
+      {{/* The icon carries the state alone, the same colours a steered coder's
+           row reads by: purple while it stands, purple with the dot running
+           along its edge while its reaction is on, red where it ended without
+           arriving, which is an expiry that never fired and a reaction that
+           broke off, grey where it is done. Never green: green says "running"
+           on every terminal icon in the cockpit, and the same colour for
+           "finished" in the same aside would give it two meanings. The word is
+           the icon's own label, the way a note's badge in the thread names
+           itself, and the events waiting in the batch window ride the corner
+           of the icon as the count the tabs above already wear. */}}
+      {{$tone := "steered"}}{{$word := "Standing"}}{{if .Once}}{{$word = "Once"}}{{end}}
+      {{- if eq .State "done"}}{{$tone = ""}}{{$word = "Done"}}
+      {{- else if eq .State "expired"}}{{$word = "Expired"}}{{$tone = ""}}{{if not .Fired}}{{$tone = "text-danger"}}{{end}}{{end}}
+      {{- if .Broke}}{{$tone = "text-danger"}}{{$word = "Broke off"}}{{end}}
+      {{- if .Reacting}}{{$tone = "steered"}}{{$word = "Reacting"}}{{end}}
+      {{- if .Pending}}{{$word = printf "%s, %d waiting" $word .Pending}}{{end}}
+      <div class="d-flex align-items-center gap-2">
+        <span class="dc-term-icon{{if $tone}} {{$tone}}{{end}}{{if .Reacting}} working{{end}}" role="img" title="{{$word}}" aria-label="{{$word}}" data-assistant-trigger-state="{{if and .Open .Once}}once{{else}}{{.State}}{{end}}"{{if .Reacting}} data-assistant-working="react"{{end}}><i class="ti {{if eq .Source "cron"}}ti-clock-hour-4{{else}}ti-bolt{{end}}" aria-hidden="true"></i>{{if .Pending}}<span class="dc-steer-badge" data-assistant-trigger-pending aria-hidden="true">{{.Pending}}</span>{{end}}</span>
+        {{/* A name is the heading and the event, the target or the schedule
+             drops to the line under it, where a steered coder's row carries
+             its project; without a name the event is the heading, which is
+             what every trigger read by before names existed. It is one
+             element either way, its class says which of the two lines it is,
+             so a reader and a test find the event wherever it stands. */}}
+        <div class="min-w-0 flex-fill">
+          {{if .Name}}<div class="fw-medium text-truncate" title="{{.Name}}" data-assistant-trigger-name>{{.Name}}</div>{{end}}
+          {{/* A schedule's zone never takes the cut: the five fields shrink and
+               it stands, the way a tab lets the directory hint yield before the
+               file name. A row too narrow for both loses the part somebody can
+               work out, not the part they would guess wrong. */}}
+          <div class="{{if .Name}}text-secondary small{{else}}fw-medium{{end}} d-flex text-nowrap" title="{{.Label}}{{if .Where}}, {{.Where}}{{end}}" data-assistant-trigger-event>{{if .Timezone}}<span class="text-truncate">{{.Label}} <span{{if not .Name}} class="text-secondary fw-normal"{{end}}>· {{.Spec}}</span></span><span class="flex-shrink-0{{if not .Name}} text-secondary fw-normal{{end}}" data-assistant-trigger-zone>&nbsp;{{.Timezone}}</span>{{else}}<span class="text-truncate">{{.Label}}{{if .Where}} <span{{if not .Name}} class="text-secondary fw-normal"{{end}}>· {{.Where}}</span>{{end}}</span>{{end}}</div>
+          {{if .Owner}}<div class="text-secondary small text-truncate">{{.Owner}}</div>{{end}}
+        </div>
+        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary flex-shrink-0" data-bs-toggle="collapse" data-bs-target="#assistant-trigger-{{.ID}}-details" aria-expanded="false" aria-controls="assistant-trigger-{{.ID}}-details" aria-label="Details" title="Details" data-assistant-trigger-fold><i class="ti ti-chevron-down" aria-hidden="true"></i></button>
+      </div>
+      <div class="collapse" id="assistant-trigger-{{.ID}}-details" data-assistant-fold data-assistant-trigger-details>
+        <div class="mt-2">
+          <div class="datagrid-title mb-1">Then</div>
+          <div class="small text-break" data-assistant-trigger-task>{{.Task}}</div>
+        </div>
+        {{if .Note}}
+        <div class="mt-2">
+          <div class="datagrid-title mb-1">Last fire</div>
+          <div class="small text-break" data-assistant-trigger-note>{{.Note}}</div>
+        </div>
+        {{end}}
+        {{/* The next tick is written out by the server in the schedule's own zone
+             with that zone named, never handed to dc-time: dc-time answers in the
+             browser's zone, and a schedule that says nine in Berlin would read as
+             eight on a laptop in London. The expiry is a moment and not a wall
+             clock, so it stays dc-time's. */}}
+        <div class="text-secondary small mt-2" data-assistant-trigger-facts>fired {{.Fired}}{{if .Next}} · next <span data-assistant-trigger-next>{{.Next}}</span>{{end}}{{if .Until}} · until <dc-time datetime="{{.Until}}"></dc-time>{{else}} · no expiry{{end}}</div>
+      </div>
+      {{/* The actions stand where a steered coder's stand, under the row and
+           outside its fold: the coder it waits for, the form that changes it,
+           and the one that ends it. A spent trigger cannot be changed any
+           more, so only its removal is offered. */}}
+      <div class="d-flex flex-wrap gap-2 mt-2">
+        {{if .TargetURL}}
+        <a href="{{.TargetURL}}" class="btn btn-sm flex-fill" data-assistant-trigger-open>
+          <i class="ti ti-terminal-2 me-1"></i>Open coder
+        </a>
+        {{end}}
+        {{if .EditURL}}
+        <a href="{{.EditURL}}" class="btn btn-sm flex-fill" data-assistant-trigger-edit>
+          <i class="ti ti-pencil me-1"></i>Change
+        </a>
+        {{end}}
+        <form method="post" action="{{$.URL}}" class="flex-fill d-flex" data-ajax-refresh
+              data-confirm="Remove &#34;{{.Heading}}&#34;? The assistant stops reacting to it. What it already did stays in the thread."
+              data-confirm-button="Remove">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="form" value="remove">
+          <input type="hidden" name="id" value="{{.ID}}">
+          <button type="submit" class="btn btn-sm btn-outline-danger flex-fill" data-assistant-trigger-remove>
+            <i class="ti ti-trash me-1"></i>Remove
+          </button>
+        </form>
+      </div>
+    </div>
+    {{end}}
+    {{if .Older}}
+    <div class="list-group-item px-0 text-secondary small">and {{.Older}} older</div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="py-2" data-assistant-triggers-empty>
+    <div class="text-secondary small">Nothing waiting. Ask the assistant to act on its own when a job ends, a coder asks or a schedule comes round, then it stands here.</div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{/* The page around the form, for every way to it that is not the dialog: a
+     deep link, a login with a return, a browser without JS. The dialog asks
+     for the same address with modal=1 and gets the form alone, the way the
+     create forms do. */}}
+{{define "assistant_trigger_new.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<a class="btn btn-icon btn-ghost-secondary" href="{{.Return}}" aria-label="Back" title="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+<h1 class="dc-work-title">{{if .Edit}}Change trigger{{else}}New trigger{{end}}</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow dc-form-width">
+  <div class="card">
+    {{template "assistant_trigger_form.gohtml" .}}
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* The one form that makes a trigger and the one that changes it: same
+     fields, same path, and the hidden form field says which of the two it is.
+     Every field is a flag of `trigger-new` and of `trigger-edit`,
+     nothing is page only, and every one of them posts, so what stands here is
+     what is saved.
+
+     The event picks which target field shows: the owner's open jobs for a job
+     event, the running coders for a coder event, the schedule for cron; the
+     element dc-assistant-trigger switches them. On a change the event is
+     locked and posts nothing, because another event is another trigger.
+
+     The hidden empty value in front of the terminal selects and the once box
+     is what lets a change clear them: a multiple select with nothing picked
+     and an unchecked box post nothing at all, and a field that is not there is
+     one nobody named, which leaves what stands. */}}
+{{define "assistant_trigger_form.gohtml"}}
+{{/* In the dialog the body is the scroller (data-form-scrollable, which puts
+     Bootstrap's modal-dialog-scrollable on it), so the growing task field
+     never carries Cancel and Save off the screen. That only works while every
+     box between the content and the body may shrink: the element and the form
+     stand between them, so both are a flex column that clips, which is what
+     gives a flex item the automatic minimum of zero. On the page the card
+     grows with the text as a card does. */}}
+<dc-assistant-trigger class="{{if .Modal}}d-flex flex-column overflow-hidden{{else}}d-block{{end}}">
+<form method="post" action="{{.URL}}{{if .Modal}}?modal=1{{end}}" autocomplete="off" data-assistant-trigger-form{{if .Modal}} class="d-flex flex-column overflow-hidden" data-form-scrollable data-form-title="{{if .Edit}}Change trigger{{else}}New trigger{{end}}" data-form-wait="{{if .Edit}}Saving the trigger…{{else}}Adding the trigger…{{end}}"{{end}}>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="form" value="{{if .Edit}}edit{{else}}new{{end}}">
+  <input type="hidden" name="id" value="{{.Edit}}">
+  <input type="hidden" name="assistant" value="{{.Owner}}">
+  <div class="{{if .Modal}}modal-body{{else}}card-body{{end}}">
+    {{/* The name stands first because it is what the user looks for in the
+         list afterwards, and the placeholder says it may be left out: without
+         one the row reads by the event, which is what it always did. It posts
+         on every save, so an emptied field clears the name rather than leaving
+         the old one standing.
+
+         That word stands in the box and not beside the label, where Tabler's
+         form-label-description puts it at the far right of the label row, as
+         far from the field as the row is wide. In the box it is where the
+         answer goes, and a name that stands covers it, which is right: the
+         question is only open while the box is empty. */}}
+    <div class="mb-2">
+      <label class="form-label" for="assistant-trigger-name">Name</label>
+      <input type="text" class="form-control" name="name" id="assistant-trigger-name" value="{{.Name}}" maxlength="{{.MaxName}}" placeholder="Optional, what you call it">
+      <div class="form-hint">What you want to find it by. Without one the row reads by the event.</div>
+    </div>
+    <div class="mb-2">
+      <label class="form-label" for="assistant-trigger-event">Event</label>
+      <select class="form-select" name="event" id="assistant-trigger-event" data-trigger-event{{if .Edit}} disabled{{end}}>
+        {{range .Events}}<option value="{{.Name}}"{{if eq .Name $.Event}} selected{{end}} data-source="{{.Source}}" title="{{.Help}}">{{.Label}}</option>{{end}}
+      </select>
+      {{if .Edit}}<div class="form-hint">Another event is another trigger, so this one stays.</div>{{end}}
+    </div>
+    <div class="mb-2" data-trigger-target="job">
+      <label class="form-label" for="assistant-trigger-job">Jobs</label>
+      <input type="hidden" name="terminal" value="">
+      <select class="form-select" name="terminal" id="assistant-trigger-job" multiple size="4">
+        {{range .Jobs}}<option value="{{.Terminal}}"{{if .Picked}} selected{{end}}>{{.Name}}{{if .Project}} · {{.Project}}{{end}}</option>{{end}}
+      </select>
+      <div class="form-hint">Nothing picked is any job of mine.</div>
+    </div>
+    <div class="mb-2" data-trigger-target="coder" hidden>
+      <label class="form-label" for="assistant-trigger-coder">Coders</label>
+      <input type="hidden" name="terminal" value="" disabled>
+      <select class="form-select" name="terminal" id="assistant-trigger-coder" multiple size="4" disabled>
+        {{range .Coders}}<option value="{{.Terminal}}"{{if .Picked}} selected{{end}}>{{.Name}}{{if .Project}} · {{.Project}}{{end}}</option>{{end}}
+      </select>
+      <div class="form-hint">Nothing picked is any coder.</div>
+    </div>
+    {{/* With several terminals picked the mode decides: any of them fires it,
+         or every one has to, which is a barrier that answers once with every
+         report in one turn. */}}
+    <div class="mb-2" data-trigger-mode>
+      <label class="form-label" for="assistant-trigger-mode">Fires on</label>
+      <select class="form-select" name="mode" id="assistant-trigger-mode">
+        <option value="any"{{if ne .Mode "all"}} selected{{end}}>Any of them</option>
+        <option value="all"{{if eq .Mode "all"}} selected{{end}}>All of them</option>
+      </select>
+      <div class="form-hint">All waits for every picked terminal and answers in one turn.</div>
+    </div>
+    {{/* The zone stands with the schedule, because the five fields are only
+         half of what a schedule says. It is a plain text field with a
+         datalist: the browser's own list of zones fills it where the browser
+         has one, typing works where it does not, and the server refuses a
+         name it cannot load either way, so nothing here is a list somebody
+         had to curate. Picking one is also what moves the stored default:
+         this is the field the user sees, and only a choice they saw may move
+         what every schedule after it starts on. */}}
+    <div class="mb-2" data-trigger-target="cron" hidden>
+      <label class="form-label" for="assistant-trigger-spec">Schedule</label>
+      <input type="text" class="form-control font-monospace" name="spec" id="assistant-trigger-spec" value="{{.Spec}}" placeholder="*/30 9-17 * * 1-5" disabled>
+      <div class="form-hint">Minute, hour, day, month, weekday.</div>
+      <label class="form-label mt-2" for="assistant-trigger-timezone">Time zone</label>
+      <input type="text" class="form-control" name="timezone" id="assistant-trigger-timezone" value="{{.Timezone}}" list="assistant-trigger-zones" placeholder="Europe/Berlin" autocapitalize="off" autocorrect="off" spellcheck="false" disabled data-trigger-timezone>
+      <datalist id="assistant-trigger-zones" data-trigger-zones></datalist>
+      <div class="form-hint">The wall clock the schedule is read on. Saved as the zone the next schedule starts on.</div>
+    </div>
+    {{/* The hint is what makes a task that only speaks up when something is
+         wrong writable at all: without it nobody knows that an answer may end
+         in nothing, and every trigger has to say something on every fire. */}}
+    <div class="mb-2">
+      <label class="form-label" for="assistant-trigger-task">Task</label>
+      <textarea class="form-control" name="task" id="assistant-trigger-task" rows="2" placeholder="What to do when it fires" required autofocus data-trigger-task>{{.Task}}</textarea>
+      <div class="form-hint">A reaction answering NOTHING pushes nothing into the thread and notifies nobody.</div>
+    </div>
+    <div class="row g-2">
+      {{/* A new trigger stands until somebody removes it, so the span is what
+           bounds one that is only wanted for a while, "for the next five
+           minutes", which neither a schedule nor a one shot can say. It is a
+           number with the unit beside it and not a handful of guessed spans,
+           so the field can say everything `--until` can say and no more:
+           nobody has to know a notation, and on a phone it is a number and one
+           tap. No expiry stands in that same select, because it answers the
+           same question, how long, and it is the answer that leaves nothing to
+           count: picked, the number has nothing to measure and the element
+           greys it out, which is a disabled field whose reason stands right
+           beside it. The markup disables nothing, the select wins on the
+           server anyway, and a page whose JS never ran has to be able to pick
+           a unit and type. It takes the whole line for the room the number
+           needs: beside the window there was none left to read a placeholder
+           in. A change opens on what the trigger has left, in the unit that
+           keeps that number whole, or an edit of the task would take the
+           expiry with it. */}}
+      <div class="col-12">
+        <label class="form-label" for="assistant-trigger-until">Until</label>
+        <div class="input-group">
+          <input type="number" class="form-control" name="until" id="assistant-trigger-until" value="{{if .UntilCount}}{{.UntilCount}}{{end}}" min="1" max="9999" inputmode="numeric" placeholder="How long" data-trigger-span>
+          <select class="form-select w-auto flex-grow-0" name="untilUnit" aria-label="Unit" data-trigger-unit>
+            <option value="m"{{if eq .UntilUnit "m"}} selected{{end}}>minutes</option>
+            <option value="h"{{if eq .UntilUnit "h"}} selected{{end}}>hours</option>
+            <option value="d"{{if eq .UntilUnit "d"}} selected{{end}}>days</option>
+            <option value="never"{{if eq .UntilUnit "never"}} selected{{end}}>No expiry</option>
+          </select>
+        </div>
+        {{if .Until}}<div class="form-hint">Expires <dc-time datetime="{{.Until}}"></dc-time></div>{{end}}
+      </div>
+      {{/* The window goes with the schedule: a tick is never seconds from the
+           next one, so there is nothing for it to fold. It shares its line
+           with the one shot box, so the form is no taller than it was and
+           neither of them falls under the fold of a dialog that scrolls. */}}
+      <div class="col-12 col-sm-6" data-trigger-batch>
+        <label class="form-label" for="assistant-trigger-batch">Batch window, seconds</label>
+        <input type="number" class="form-control" name="batch" id="assistant-trigger-batch" value="{{.Batch}}" min="0" max="3600" inputmode="numeric">
+      </div>
+      <div class="col-12 col-sm-6 d-flex align-items-end">
+        <label class="form-check mb-2">
+          <input type="hidden" name="once" value="">
+          <input type="checkbox" class="form-check-input" name="once"{{if .Once}} checked{{end}}>
+          <span class="form-check-label">Once</span>
+        </label>
+      </div>
+    </div>
+  </div>
+  {{if .Modal}}
+  <div class="modal-footer">
+    <button type="button" class="btn btn-link link-secondary dc-tap" data-bs-dismiss="modal">Cancel</button>
+    <button type="submit" class="btn btn-primary dc-tap">{{if .Edit}}Save trigger{{else}}Add trigger{{end}}</button>
+  </div>
+  {{else}}
+  <div class="card-footer">
+    <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+      <a class="btn btn-ghost-secondary" href="{{.Return}}">Cancel</a>
+      <button type="submit" class="btn btn-primary">{{if .Edit}}Save trigger{{else}}Add trigger{{end}}</button>
+    </div>
+  </div>
+  {{end}}
+</form>
+</dc-assistant-trigger>
+{{end}}

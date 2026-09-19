@@ -137,7 +137,7 @@ func TestNormalizeBranchNameTurnsWhatGitRefusesIntoDashes(t *testing.T) {
 		"dir./x":             "dir/x",
 		"name.lock":          "name",
 		"dir.lock/x":         "dir/x",
-		"ümlaut über":        "mlaut-ber",
+		"ñandu ñu":           "andu-u",
 		"tilde~caret^colon:": "tilde-caret-colon",
 		"--force":            "force",
 		"???":                "",

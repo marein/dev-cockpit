@@ -27,8 +27,8 @@ const dedupeWindow = 30 * time.Second
 
 // Notification is one entry in the notification center: this target (a
 // coder or shell) has news. URL is the page the entry links to. Every entry
-// is written as two lines: Title says what happened, Detail says which one it
-// happened in. Title, when set, replaces the generic "Something new in ..."
+// is written as two lines: Title says what happened, Detail says what it
+// happened to. Title, when set, replaces the generic "Something new in ..."
 // wording everywhere the entry surfaces; an entry without one is a target
 // nobody could resolve or an entry from an older build, and falls back to it.
 type Notification struct {
@@ -37,10 +37,12 @@ type Notification struct {
 	TargetName string `json:"targetName"`
 	Title      string `json:"title,omitempty"`
 	// Detail is the line below the title, shown where the project would
-	// stand (list, toast, push body). A title that only says that something
-	// happened leaves the reader guessing what about, so this names it: the
-	// coder, shell, job or backup in quotes plus its project, or the first
-	// words of the assistant's answer.
+	// stand (list, toast, push body). The title says what happened and
+	// nothing else, so this line says what it happened to: the identifier
+	// of the coder, the shell, the job, the trigger, and behind it the text
+	// that was written where there is one, an assistant's answer, a check's
+	// report, a reaction's answer. A target that writes no text is that
+	// identifier alone.
 	Detail    string    `json:"detail,omitempty"`
 	Project   string    `json:"project"`
 	URL       string    `json:"url"`
@@ -143,6 +145,9 @@ type Service struct {
 	turnOpen func(targetID string)
 	// silent decides whether a target's news is written quietly, see SetSilent.
 	silent func(targetID string) bool
+	// event hears a signal together with the raw hook name it arrived under,
+	// see SetEvent.
+	event func(targetID, kind string)
 
 	mu   sync.Mutex
 	subs map[chan Event]struct{}
@@ -173,6 +178,25 @@ func (s *Service) SetSignal(listen func(targetID string)) { s.signal = listen }
 // makes no entry, and this service still classifies nothing. Set it before
 // the pollers start.
 func (s *Service) SetTurnOpen(listen func(targetID string)) { s.turnOpen = listen }
+
+// SetEvent installs a listener that hears every signal together with the hook
+// name it arrived under, "Stop" for a turn that ended and "Notification" for a
+// coder that wants attention, the raw names the coders' own hooks use. The
+// assistant's triggers listen here. Like the signal listener it is the raw
+// fact and nothing else: this service still classifies nothing, it passes the
+// name on as it came. A bell has no name, see the caller in main. Set it
+// before the pollers start.
+func (s *Service) SetEvent(listen func(targetID, kind string)) { s.event = listen }
+
+// Event is one signal with its hook name: the notification for the person,
+// the raw fact for the signal listener, and the named fact for the event
+// listener.
+func (s *Service) Event(targetID, kind string) {
+	s.Signal(targetID)
+	if s.event != nil {
+		s.event(targetID, kind)
+	}
+}
 
 // SetSilent installs the predicate that decides whether a target's news is
 // written read from the start. It exists for the one case where somebody else

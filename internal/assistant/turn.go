@@ -109,6 +109,8 @@ func (s *Service) follow(a *activeRun, runner Runner) {
 	switch a.rec.Kind {
 	case RunCheck:
 		s.settleCheck(a, text, turnErr)
+	case RunReaction:
+		s.settleReaction(a, text, turnErr)
 	default:
 		// The context reading only travels with a chat turn. Every other kind
 		// runs in a provider session of its own that nothing continues, a
@@ -390,6 +392,47 @@ func (s *Service) retire(a *activeRun) {
 	s.runs.Delete(a.rec.ID)
 }
 
+// settleReaction ends a reaction the way a check ends: it writes nothing
+// anywhere, the reactor is waiting on done and decides what the answer means
+// for the thread. The session is the reaction's own and goes with it.
+func (s *Service) settleReaction(a *activeRun, text string, turnErr error) {
+	a.outcome, a.err = reactionOutcome(text, turnErr, a.cancelled.Load())
+
+	s.mu.Lock()
+	s.dropSessionLocked(Instance{
+		Summary:         Summary{CoderID: a.rec.CoderID},
+		NativeSessionID: a.rec.SessionID,
+	})
+	s.mu.Unlock()
+
+	s.retire(a)
+
+	s.mu.Lock()
+	delete(s.running, a.rec.ID)
+	s.mu.Unlock()
+}
+
+// reactionOutcome is what a reaction answered: the text as it came, under no
+// verdict but the one word NOTHING the reactor reads for itself. An end
+// without words is an error like any other, so a reaction never disappears
+// without a trace.
+//
+// What the turn wrote before it stopped travels with the error, it is not
+// thrown away: it says more about what the reaction was doing than the error
+// does, and the reactor pushes it into the thread beside it.
+func reactionOutcome(text string, turnErr error, cancelled bool) (wakeOutcome, error) {
+	out := wakeOutcome{Text: strings.TrimSpace(text)}
+	switch {
+	case cancelled:
+		return out, errors.New("The reaction was stopped.")
+	case turnErr != nil:
+		return out, turnErr
+	case out.Text == "":
+		return out, errors.New("The reaction ended without saying anything.")
+	}
+	return out, nil
+}
+
 // checkOutcome reads what a check concluded out of its answer.
 func checkOutcome(text string, turnErr error, cancelled bool) (wakeOutcome, error) {
 	switch {
@@ -430,6 +473,7 @@ type AdoptedCheck struct {
 // runs.
 func (s *Service) Recover() []AdoptedCheck {
 	var adopted []AdoptedCheck
+	var reactions []*activeRun
 	followed := map[string]bool{}
 	s.mu.Lock()
 	s.recovering = true
@@ -470,6 +514,11 @@ func (s *Service) Recover() []AdoptedCheck {
 			seen := rec.Context
 			seen.MessageID = rec.MessageID
 			adopted = append(adopted, AdoptedCheck{Terminal: rec.Terminal, Context: seen, run: a})
+		case RunReaction:
+			// A reaction runs in a session of its own like a check, and the
+			// reactor is the one that knows what its answer is for.
+			s.reserve(rec.CoderID, rec.SessionID)
+			reactions = append(reactions, a)
 		default:
 			followed[rec.MessageID] = true
 			// The page gets the whole answer again: the file is read from its
@@ -485,6 +534,7 @@ func (s *Service) Recover() []AdoptedCheck {
 
 	s.markLostTurns(followed)
 	s.runs.Sweep()
+	s.events.adopt(reactions)
 
 	s.mu.Lock()
 	s.recovering = false
@@ -501,12 +551,20 @@ func (s *Service) Recover() []AdoptedCheck {
 func (s *Service) orphan(rec RunRecord, cause error) {
 	a := &activeRun{rec: rec, done: make(chan struct{}), orphaned: true}
 	close(a.done)
-	if rec.Kind == RunCheck {
+	switch rec.Kind {
+	case RunCheck:
 		a.err = cause
 		s.runs.Delete(rec.ID)
-		return
+	case RunReaction:
+		// Nobody waits on a lost reaction, so its trigger is told here. The
+		// run says it was orphaned, so the answer it pushes reads as one the
+		// restart interrupted and not as one that failed.
+		a.err = cause
+		s.runs.Delete(rec.ID)
+		s.events.conclude(a, wakeOutcome{}, cause)
+	default:
+		s.settleChat(a, "", nil, cause)
 	}
-	s.settleChat(a, "", nil, cause)
 }
 
 // markLostTurns closes the answers no register entry accounts for. A turn is

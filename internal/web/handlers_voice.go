@@ -228,17 +228,13 @@ func (s *Server) handleAssistantMessageAudio(c *gin.Context) {
 	var message assistant.Message
 	found := false
 	for _, m := range current.Messages {
-		if m.ID == wanted && m.Role == assistant.RoleAssistant {
+		if m.ID == wanted && m.Speakable() {
 			message, found = m, true
 			break
 		}
 	}
 	if !found {
-		c.String(http.StatusNotFound, "Message not found.")
-		return
-	}
-	if message.State != assistant.StateComplete {
-		c.String(http.StatusBadRequest, "The answer is not finished.")
+		c.String(http.StatusNotFound, "There is nothing to read aloud here.")
 		return
 	}
 	wav, err := s.speakAnswer(c.Request.Context(), id, message)

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/assistant"
@@ -34,6 +35,12 @@ type coderCreateForm struct {
 	// without its job, and a repeated call would start a second session on
 	// the same task.
 	DoneWhen string `form:"done_when"`
+	// Then is the sequel: what happens once that job closes done. It becomes a
+	// one shot trigger on this very terminal, made in this request, so there
+	// is no window between the coder starting and the arrangement standing. A
+	// job can close before a second call could make the trigger, and the
+	// sequel would then never fire.
+	Then string `form:"then"`
 }
 
 type terminalInputItem struct {
@@ -164,6 +171,31 @@ func (s *Server) handleCoderName(c *gin.Context) {
 	c.String(http.StatusOK, running.Name)
 }
 
+// sequelSpec is the trigger a `coder-new --then` wires onto the job that was
+// just steered: one shot, on that job's own terminal, fired when it closes
+// done.
+//
+// Two things it takes from the job instead of from a default of its own. The
+// name, because nobody types one on this way in, so the trigger reads by the
+// coder it waits for; a session name longer than a trigger's name may be
+// leaves it without one, the fallback every trigger has, because a readable
+// row must never cost the sequel. And the expiry: a trigger nobody bounds
+// stands until somebody removes it, and a sequel that outlives its job waits
+// for an event that can never come, so this one takes the job's own clock and
+// goes out with it.
+func sequelSpec(job assistant.Job, task string) assistant.TriggerSpec {
+	return assistant.TriggerSpec{
+		Owner:   job.Owner,
+		Name:    assistant.FitTriggerName(job.Name),
+		NameSet: true,
+		Event:   assistant.EventJob + "-" + string(assistant.JobDone),
+		Targets: []assistant.TriggerTarget{{Terminal: job.Terminal}},
+		Task:    task,
+		Once:    true,
+		Until:   time.Until(job.ExpiresAt),
+	}
+}
+
 func (s *Server) handleCoderCreate(c *gin.Context) {
 	var form coderCreateForm
 	if !s.decodeForm(c, &form, "/coders/new") {
@@ -184,6 +216,13 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 			s.formRefused(c, "/coders/new", err.Error())
 			return
 		}
+	}
+	// A sequel hangs on the job's end, so without a job there is nothing for
+	// it to hang on. Refused here, before anything runs, like the criterion.
+	sequel := strings.TrimSpace(form.Then)
+	if sequel != "" && doneWhen == "" {
+		s.formRefused(c, "/coders/new", "A sequel needs a steered job: give the done-when that says when it is finished.")
+		return
 	}
 	res, err := co.Start(
 		form.Name.String(),
@@ -236,6 +275,16 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 			// bounded, and a cut copy must not stay silent.
 			if _, notice := assistant.TruncateTask(form.Task); notice != "" {
 				answer["notice"] = notice
+			}
+			// The sequel rides on the job that now stands: one shot, on this
+			// terminal, so the handover is wired before the coder can finish.
+			if sequel != "" {
+				trigger, err := s.assistants.Events().Add(sequelSpec(job, sequel))
+				if err != nil {
+					answer["thenError"] = err.Error()
+				} else {
+					answer["trigger"] = trigger.ID
+				}
 			}
 		}
 	}
@@ -294,7 +343,7 @@ func (s *Server) handleCoderStop(c *gin.Context) {
 	// that never comes. Stopping is the same decision as deleting for the job.
 	s.jobCalledOff(id)
 	s.publishTerminals(project)
-	if s.coderJSON(c, id, name, running.CWD, projectLanding(project)) {
+	if s.coderJSON(c, id, name, running.CWD, projectLanding(project), "") {
 		return
 	}
 	s.redirectWithProjectFlash(c, project, "Coder \""+name+"\" stopped.", "")
@@ -592,7 +641,7 @@ func (s *Server) handleCoderResume(c *gin.Context) {
 	id := c.Param("id")
 	// Already running (e.g. resumed in another tab): just go to its page.
 	if _, running, err := s.resolveRunning(id); err == nil {
-		if s.coderJSON(c, running.Identifier, running.Name, running.CWD, "/coders/"+running.Identifier) {
+		if s.coderJSON(c, running.Identifier, running.Name, running.CWD, "/coders/"+running.Identifier, "") {
 			return
 		}
 		c.Redirect(http.StatusSeeOther, "/coders/"+running.Identifier)
@@ -616,7 +665,7 @@ func (s *Server) handleCoderResume(c *gin.Context) {
 	}
 	s.styleSessionPane(stored.SessionID)
 	s.publishTerminals(s.projects.ProjectNameFor(stored.CWD))
-	if s.coderJSON(c, stored.SessionID, stored.Name, stored.CWD, "/coders/"+stored.SessionID) {
+	if s.coderJSON(c, stored.SessionID, stored.Name, stored.CWD, "/coders/"+stored.SessionID, "") {
 		return
 	}
 	c.Redirect(http.StatusSeeOther, "/coders/"+stored.SessionID)
@@ -629,17 +678,32 @@ func (s *Server) handleCoderResume(c *gin.Context) {
 // never follows a redirect, and the action's own URL has no GET, so a client
 // that navigates to the response URL lands on "Method not allowed". Reports
 // whether it answered.
-func (s *Server) coderJSON(c *gin.Context, id, name, cwd, landing string) bool {
+func (s *Server) coderJSON(c *gin.Context, id, name, cwd, landing, dropped string) bool {
 	if !wantsJSON(c.Request) {
 		return false
 	}
-	c.JSON(http.StatusOK, gin.H{
+	answer := gin.H{
 		"id":      id,
 		"name":    name,
 		"project": s.projects.ProjectNameFor(cwd),
 		"url":     landing,
-	})
+	}
+	// What a deletion took with it, in the one wording every surface shows: the
+	// toast appends it, the flash does, and the CLI prints it.
+	if dropped != "" {
+		answer["dropped"] = dropped
+	}
+	c.JSON(http.StatusOK, answer)
 	return true
+}
+
+// deletedCoderFlash is what the page says about a deleted coder: what went, and
+// what the deletion dropped with it where it dropped something.
+func deletedCoderFlash(name, dropped string) string {
+	if dropped == "" {
+		return "Coder \"" + name + "\" deleted."
+	}
+	return "Coder \"" + name + "\" deleted, " + dropped + "."
 }
 
 // projectLanding is the page a stopped or deleted coder leaves the browser on,
@@ -689,12 +753,12 @@ func (s *Server) handleCoderDelete(c *gin.Context) {
 	if err != nil {
 		// A coder stopped before it wrote a session leaves nothing to delete.
 		if stopped != "" {
-			s.jobDeleted(id)
+			dropped := assistant.DroppedNote(s.jobDeleted(id))
 			s.publishTerminals(project)
-			if s.coderJSON(c, id, stopped, cwd, projectLanding(project)) {
+			if s.coderJSON(c, id, stopped, cwd, projectLanding(project), dropped) {
 				return
 			}
-			s.redirectWithProjectFlash(c, project, "Coder \""+stopped+"\" deleted.", "")
+			s.redirectWithProjectFlash(c, project, deletedCoderFlash(stopped, dropped), "")
 			return
 		}
 		if coderRefused(c, err) {
@@ -712,12 +776,12 @@ func (s *Server) handleCoderDelete(c *gin.Context) {
 		return
 	}
 	project = s.projects.ProjectNameFor(stored.CWD)
-	s.jobDeleted(id)
+	dropped := assistant.DroppedNote(s.jobDeleted(id))
 	s.publishTerminals(project)
-	if s.coderJSON(c, id, stored.Name, stored.CWD, projectLanding(project)) {
+	if s.coderJSON(c, id, stored.Name, stored.CWD, projectLanding(project), dropped) {
 		return
 	}
-	s.redirectWithProjectFlash(c, project, "Coder \""+stored.Name+"\" deleted.", "")
+	s.redirectWithProjectFlash(c, project, deletedCoderFlash(stored.Name, dropped), "")
 }
 
 // jobCalledOff ends the job of a coder that is being stopped or deleted.
@@ -732,9 +796,12 @@ func (s *Server) jobCalledOff(id string) {
 }
 
 // jobDeleted is jobCalledOff for a session that is removed for good. A stopped
-// coder can be resumed, so its job stays readable next to it; a deleted one
-// leaves nothing to read it next to, and the entry would be parsed on every
-// look at the store from here on.
-func (s *Server) jobDeleted(id string) {
-	s.watcher.Forget(id)
+// coder can be resumed, so its job stays readable next to it and its triggers
+// stand; a deleted one leaves nothing to read it next to and nothing that can
+// ever report again, so its open job is closed with that reason, its entry
+// goes, and the triggers that can only ever have fired on it go with it.
+// Answers what was dropped; assistant.DroppedNote is the one sentence about
+// it, which the flash, the JSON answer and the CLI all show.
+func (s *Server) jobDeleted(id string) []assistant.Trigger {
+	return s.watcher.TerminalDeleted(id)
 }

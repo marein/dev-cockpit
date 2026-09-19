@@ -1,13 +1,21 @@
 package assistant
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
-// Role distinguishes the two message authors.
+// Role distinguishes the three message authors: the user, the assistant, and
+// the cockpit itself, which writes a note when something happened that nobody
+// typed and the assistant did not answer, a check's report or an event.
 type Role string
 
 const (
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
+	// RoleCockpit is the third kind of message, a note: the cockpit speaks. It
+	// is never the user's words and never the assistant's, see Note.
+	RoleCockpit Role = "cockpit"
 )
 
 // State is the delivery state of one message.
@@ -50,6 +58,15 @@ const (
 	MaxQueuedMessages = 20
 	// MaxTitleRunes bounds an assistant's name.
 	MaxTitleRunes = 120
+	// PreviewRunes is how much of a message a preview carries, wherever one
+	// stands: the body of a push, the line a toast and the bell's list hold,
+	// and the line the thread folds a note and a pushed answer under. It is
+	// written for the narrowest of them, a phone's notification body, which
+	// gives it three or four lines; the thread reads the same words, so the
+	// message that brought somebody here is what stands in front of them when
+	// they arrive. One number, because two would put more in one surface than
+	// in the other for no reason anybody could name.
+	PreviewRunes = 140
 	// DefaultTitle names an assistant that has not seen a prompt yet. The first
 	// prompt renames it, and the user may rename it at any time.
 	DefaultTitle = "New assistant"
@@ -148,13 +165,147 @@ type Message struct {
 	// Error is a curated, user facing sentence. Provider stderr, argv and
 	// paths never reach it.
 	Error string `json:"error,omitempty"`
-	// Wake marks a message a check wrote, so the page can show where it came
-	// from. A check's prompt is never stored, only what it concluded, which is
-	// why nothing in a transcript can look like something the user said.
+	// Note is set on a message the cockpit wrote, the third role: a check's
+	// report. It says where the message came from and carries its headline;
+	// Content is the body. A check's prompt is never stored, only what it
+	// concluded, which is why nothing in a transcript can look like something
+	// the user said.
+	Note *Note `json:"note,omitempty"`
+	// Auto marks an answer that was started without the user: a reaction to an
+	// event the assistant set a trigger on, run in a session of its own and
+	// pushed into the thread. Origin says which event and which task, the page
+	// shows it as a folded header over the answer.
+	Auto   bool  `json:"auto,omitempty"`
+	Origin *Note `json:"origin,omitempty"`
+	// Wake is the shape a check's report was stored in before notes existed.
+	// It is read once, on load, and turned into a Note (see Store.load);
+	// nothing writes it any more. TODO(v2.0.0): drop the key and the type.
 	Wake *WakeNote `json:"wake,omitempty"`
 }
 
-// WakeNote says which terminal a check was about and what it concluded.
+// Note is what the cockpit says when it writes into a thread: where the
+// message comes from and one line to read it by. The body is the message's
+// Content. Source says what wrote it: a check's report (NoteCheck, the verdict
+// it concluded in Verdict) is a note of its own, and an event that fired a
+// trigger (NoteEvent, the trigger in Trigger, its task in Task and the events
+// it carries in Count) is the origin a pushed answer carries, never a note in
+// the thread.
+type Note struct {
+	Source string `json:"source"`
+	// Headline is the one line this note is read by, and it is the one every
+	// surface with room for a single line takes: the notification and its
+	// push, the header over a pushed answer, the line a chat prompt is
+	// preceded by. A trigger the user named stands here under that name, and
+	// what happened moves into Event, so the name reaches every one of them
+	// at once, which is what a name is for.
+	Headline string `json:"headline"`
+	// Event is what fired a named trigger, the headline this note would have
+	// carried without a name. Empty where the headline already says it, so a
+	// surface with room for both renders it exactly where the name pushed
+	// something out, see Occasion.
+	Event string `json:"event,omitempty"`
+	// Verdict is what a check concluded, for a check's report; an event note
+	// carries the kind of its event here (done, blocked, ended, tick, ...).
+	Verdict string `json:"verdict,omitempty"`
+	// Terminal, Name and Project say which coder the note is about, written
+	// down at the time: the job is gone by the time somebody reads it, or the
+	// terminal is steered again and a lookup would answer with its successor.
+	Terminal string `json:"terminal,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Project  string `json:"project,omitempty"`
+	// Trigger is the trigger an event fired, Task what that trigger asks the
+	// assistant to do, Count how many events the reaction bundles (a batch
+	// window turns several into one turn).
+	Trigger string `json:"trigger,omitempty"`
+	Task    string `json:"task,omitempty"`
+	Count   int    `json:"count,omitempty"`
+}
+
+// The note sources.
+const (
+	NoteCheck = "check"
+	NoteEvent = "event"
+)
+
+// Occasion is what happened, for the readers with room for the name and it
+// both: the event's own headline, which is the headline itself wherever no
+// name pushed it out.
+func (n Note) Occasion() string {
+	if n.Event != "" {
+		return n.Event
+	}
+	return n.Headline
+}
+
+// IsNote reports whether the cockpit wrote this message.
+func (m Message) IsNote() bool { return m.Role == RoleCockpit && m.Note != nil }
+
+// Speakable reports whether this message can be read aloud: the user did not
+// write it, it holds words, and it is finished. A note is one of them, a
+// check's report is spoken like every other message the reader did not ask
+// for. It is the one reading of that question: the transcript renders the
+// speaker from it and the audio route asks it again for a page from before a
+// settings change, so a button that stands and a route that answers cannot
+// disagree.
+func (m Message) Speakable() bool {
+	return m.Role != RoleUser && m.Content != "" && m.State == StateComplete
+}
+
+// carries answers whether a message holds the word, compared case
+// insensitively the way `job-list --contains` compares; the word arrives
+// already lowered and trimmed. Searched is what a reader of the thread sees:
+// the body, and the headline standing over it. A headline is the one text
+// that is nowhere else, a schedule's tick carries its spec there and a job's
+// note the coder and the verdict, and it is what rides into the next prompt,
+// so it is what a note is remembered by. The task behind a fold is left out
+// on purpose: a trigger's task is the same words on every fire and would make
+// one trigger a hit on every answer it ever pushed, which is not what tells
+// two of them apart; it is searched where it is written, on the trigger.
+func (m Message) carries(word string) bool {
+	fields := []string{m.Content}
+	for _, note := range []*Note{m.Note, m.Origin} {
+		if note != nil {
+			fields = append(fields, note.Headline)
+		}
+	}
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field), word) {
+			return true
+		}
+	}
+	return false
+}
+
+// noteFromWake turns a report stored before notes existed into the note it
+// is: a check's report, headline built the way recordWake builds it now.
+// TODO(v2.0.0): goes with WakeNote.
+func noteFromWake(w *WakeNote) *Note {
+	return &Note{
+		Source:   NoteCheck,
+		Headline: checkHeadline(w.Verdict, w.Name, w.Terminal),
+		Verdict:  w.Verdict,
+		Terminal: w.Terminal,
+		Name:     w.Name,
+		Project:  w.Project,
+	}
+}
+
+// checkHeadline is the one line a check's report is read by: the verdict in
+// capitals and the job's name, "DONE: readme-task".
+func checkHeadline(verdict, name, terminal string) string {
+	word := strings.ToUpper(strings.TrimSpace(verdict))
+	if word == "" {
+		word = "CHECKED"
+	}
+	if strings.TrimSpace(name) == "" {
+		name = terminal
+	}
+	return word + ": " + strings.TrimSpace(name)
+}
+
+// WakeNote says which terminal a check was about and what it concluded. It is
+// the stored shape of a report from before notes existed, read on load and
+// written nowhere. TODO(v2.0.0): drop with Message.Wake.
 type WakeNote struct {
 	Terminal string `json:"terminal"`
 	// Name is the coder's name as the job carried it when this report was

@@ -24,7 +24,7 @@ func instructionsText(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	return workspace.instructions(instructionsID, "Release work")
+	return workspace.instructions(instructionsID)
 }
 
 // pinned asserts that every phrase stands in the generated instructions.
@@ -132,6 +132,22 @@ func TestTheInstructionsPointAtTheHelpForTheFlags(t *testing.T) {
 	)
 }
 
+// Searching is the one way past a cap that has to be named rather than left in
+// the help: a turn that does not know a thread can be searched reads it whole
+// or gives up on it, and both are paid for in the answer that carries them.
+// So `--contains` stands on the assistant-show line and in the sentence about
+// the caps, with what it does and not with its flags.
+func TestTheInstructionsSayAThreadIsSearched(t *testing.T) {
+	pinned(t,
+		"assistant-show <id> [--contains <word>]",
+		"A long thread and a long job list are searched, never paged through",
+		"keeps what carries the word and searches past the cap",
+		// And the moment the question is "what happened yesterday", which is
+		// the other filter that reaches past a cap.
+		"`--since` narrows the same way on `job-list` and `trigger-list`",
+	)
+}
+
 // The command that shows what is unread is called `notification-list`, the
 // object first and the verb last like every other one. Pinned because the
 // instructions are what the assistant runs, so an old name here is a command
@@ -139,7 +155,6 @@ func TestTheInstructionsPointAtTheHelpForTheFlags(t *testing.T) {
 func TestTheInstructionsNameTheNotificationsCommand(t *testing.T) {
 	pinned(t,
 		"notification-list   # the unread notifications",
-		"`notification-list` for what is unread",
 	)
 	for _, gone := range []string{"assistant news", "assistant notifications"} {
 		if text := instructionsText(t); strings.Contains(text, gone) {
@@ -157,10 +172,11 @@ func TestTheInstructionsNameTheAssistantFilesFolder(t *testing.T) {
 	)
 }
 
-// The instructions are one assistant's: they carry its id, its name and its
-// workspace, and every command they list runs through the wrapper of that
-// workspace by its absolute path, so a turn knows who it is from the file it
-// reads at startup and never has to spell a flag.
+// The instructions are one assistant's: they carry its id and its workspace,
+// and every command they list runs through the wrapper of that workspace by
+// its absolute path, so a turn knows who it is from the file it reads at
+// startup and never has to spell a flag. The name it is called is not in
+// there: nothing a turn does needs it.
 func TestTheInstructionsCarryTheIdentityAndTheWrapper(t *testing.T) {
 	dir := t.TempDir()
 	_, workspace, err := New(dir, fakeCoders{runner: &fakeRunner{dir: t.TempDir()}}, Cockpit{
@@ -169,10 +185,10 @@ func TestTheInstructionsCarryTheIdentityAndTheWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	text := workspace.instructions(instructionsID, "Release work")
+	text := workspace.instructions(instructionsID)
 	wrapper := workspace.Wrapper(instructionsID)
 	for _, want := range []string{
-		"You are `" + instructionsID + "`, called \"Release work\"",
+		"You are `" + instructionsID + "`, and your workspace is",
 		"Every cockpit command is `./cockpit …`",
 		"run any other way, a command is refused wherever an owner is needed",
 		"From another directory it is `" + wrapper + "`, which is what a line like `cd <project> && …` needs",
@@ -221,8 +237,35 @@ func TestTheInstructionsExplainSeveralAssistants(t *testing.T) {
 		"You may read another assistant whole, its messages and its files, and you write only your own",
 		"There is no way to message another assistant",
 		"You cannot delete yourself either",
+		// A delete takes the whole assistant, the triggers with it, so the
+		// one sentence that says what goes has to name them: an assistant
+		// that leaves them out tells the user its schedules survive.
+		"removes it for good, thread, jobs and triggers",
 		"the user typing into a terminal does not",
 	)
+}
+
+// What a check does with what it found lives in the check's own prompt, which
+// only a check pays for. What stayed in the file every turn, every check and
+// every reaction carries is the chat side of it: steering buys a turn that
+// gets the coder going again and answers with a verdict, and a steered coder
+// is the assistant's to write into only until its job closes. Both hung on
+// the section this file no longer carries, so they are pinned here together
+// with its absence.
+func TestTheInstructionsKeepOnlyTheChatSideOfACheck(t *testing.T) {
+	pinned(t,
+		"a turn of its own that reads the job, gets the coder going again and answers with a verdict",
+		"a coder you steer is yours to write into while its job is open, and the user's again once it closes",
+	)
+	for _, gone := range []string{
+		"### When a check wakes you",
+		"Answer with `DONE:`",
+		"Only DONE and BLOCKED reach the user",
+	} {
+		if text := instructionsText(t); strings.Contains(text, gone) {
+			t.Fatalf("the check's own prompt stands in the instructions again: %q", gone)
+		}
+	}
 }
 
 // A file in the workspace reaches the user as a relative link: the render
@@ -250,13 +293,15 @@ func TestTheInstructionsNameTheMemoryDirectory(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 	_, _, memory := Paths(dir)
-	if text := workspace.instructions(instructionsID, "x"); !strings.Contains(text, "write it into `"+memory+"/<name>.md`") {
+	if text := workspace.instructions(instructionsID); !strings.Contains(text, "write it into `"+memory+"/<name>.md`") {
 		t.Fatalf("the instructions do not name the memory directory:\n%s", text)
 	}
 }
 
 // Every assistant gets the instruction files of its own workspace, written
-// with its own name, and a memory change reaches all of them.
+// with its own id, and a memory change reaches all of them. The name it was
+// given stays out: a turn reads its id from the file and recognises itself by
+// it, which is what every path and every command of its own is built on.
 func TestSyncWritesEveryAssistantsOwnInstructions(t *testing.T) {
 	dir := t.TempDir()
 	svc, workspace, err := New(dir, fakeCoders{runner: &fakeRunner{dir: t.TempDir()}}, Cockpit{})
@@ -277,13 +322,16 @@ func TestSyncWritesEveryAssistantsOwnInstructions(t *testing.T) {
 	if _, err := workspace.SaveMemory("", "Likes Go", "the user writes Go"); err != nil {
 		t.Fatalf("save memory: %v", err)
 	}
-	for _, c := range []struct{ id, title string }{{one.ID, DefaultTitle}, {two.ID, "Second one"}} {
+	for _, id := range []string{one.ID, two.ID} {
 		for _, name := range instructionFiles {
-			text := mustRead(t, filepath.Join(workspace.Dir(c.id), name))
-			for _, want := range []string{"You are `" + c.id + "`", "called " + fmt.Sprintf("%q", c.title), "the user writes Go"} {
+			text := mustRead(t, filepath.Join(workspace.Dir(id), name))
+			for _, want := range []string{"You are `" + id + "`", "the user writes Go"} {
 				if !strings.Contains(text, want) {
-					t.Fatalf("%s of %s is missing %q", name, c.id, want)
+					t.Fatalf("%s of %s is missing %q", name, id, want)
 				}
+			}
+			if strings.Contains(text, "Second one") || strings.Contains(text, DefaultTitle) {
+				t.Fatalf("%s of %s carries the name it is called: %s", name, id, text)
 			}
 		}
 	}

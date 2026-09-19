@@ -268,6 +268,20 @@ class AssistantList extends HTMLElement {
     }
   }
 
+  // A row the reader unfolded stays unfolded over a swap: the ids that stand
+  // open are carried onto the rows that arrive, as the class and the state of
+  // the control, which is what Bootstrap reads before it ever instantiates a
+  // collapse. Without it every event of the assistant closes what somebody is
+  // reading.
+  keepUnfolded(current, fresh) {
+    for (const fold of current.querySelectorAll("[data-assistant-fold].show")) {
+      const next = fresh.querySelector(`#${CSS.escape(fold.id)}[data-assistant-fold]`);
+      if (!next) continue;
+      next.classList.add("show");
+      fresh.querySelector(`[aria-controls="${CSS.escape(fold.id)}"]`)?.setAttribute("aria-expanded", "true");
+    }
+  }
+
   async refresh() {
     // A swap in the middle of a drag would take the row out from under the
     // pointer, so the pull waits for the gesture and runs when it ends.
@@ -288,8 +302,10 @@ class AssistantList extends HTMLElement {
       const fresh = holder.querySelector("[data-assistant-body]");
       const current = this.querySelector("[data-assistant-body]");
       if (fresh && current) {
+        this.keepUnfolded(current, fresh);
         current.replaceWith(fresh);
         this.revealActive();
+        document.dispatchEvent(new CustomEvent("dc:assistant-counts"));
       }
     } catch {
       void 0;

@@ -1,7 +1,7 @@
 import { postForm, ensureOk, getText, getJSON, csrfHeaders } from "@dc/http";
 import { notifyError, showToast } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
-import { jumpTextEdge } from "@dc/dom";
+import { growTextarea, jumpTextEdge } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 
 const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
@@ -360,7 +360,14 @@ class Assistant extends HTMLElement {
       const moved = lastMessage(fresh) !== lastMessage(this) || fresh.hasAttribute("blocked") !== this.hasAttribute("blocked");
       if (!moved || composerHoldsUnsavedWords(this, fresh) || this.running) return;
       const app = this.closest(".dc-app");
-      this.replaceWith(document.adoptNode(fresh));
+      const next = document.adoptNode(fresh);
+      // The aside holds what the reader put where: the open tab, an unfolded
+      // row, where it is scrolled. Its two lists refresh themselves on this
+      // same event, so the one that stands comes along instead of being
+      // rebuilt under the hand that opened it.
+      const aside = this.querySelector("[data-assistant-aside]");
+      if (aside) next.querySelector("[data-assistant-aside]")?.replaceWith(aside);
+      this.replaceWith(next);
       if (app) await window.app?.loadElements?.(app);
     } catch (error) {
       void error;
@@ -518,10 +525,7 @@ class Assistant extends HTMLElement {
   autoGrow() {
     if (!this.input) return;
     const wasPinned = this.pinned;
-    this.input.style.height = "auto";
-    const max = Math.round(this.viewportHeight() * 0.35);
-    this.input.style.height = `${Math.min(this.input.scrollHeight, max)}px`;
-    this.input.style.overflowY = this.input.scrollHeight > max ? "auto" : "hidden";
+    growTextarea(this.input, () => this.viewportHeight());
     if (wasPinned) this.stickToEnd();
   }
 
@@ -734,6 +738,10 @@ class Assistant extends HTMLElement {
       case "start":
         this.pending = { runId: frame.runId, messageId: frame.messageId };
         this.setRunning(true);
+        // A new answer is followed when the reader stands at the end, or a
+        // note's height above it: notes that landed unpinned them, and the
+        // app's own rule for "at the end" pins them again.
+        this.repinIfNear();
         this.setText(frame.messageId, frame.html, frame.text);
         break;
       case "delta":
@@ -750,7 +758,10 @@ class Assistant extends HTMLElement {
         // report, a message queued while a turn ran, or another device sent a
         // prompt. Pull that one message and append or replace it: a chat answer
         // may be streaming right now, and this must not touch its state.
-        void this.replaceMessage(frame.messageId, "complete");
+        // Whether it waits above the composer is decided here, at the frame:
+        // the pull takes a moment, a turn may start meanwhile, and a note
+        // announced before that start stands before the answer.
+        void this.replaceMessage(frame.messageId, "complete", this.running);
         break;
       case "gone":
         this.bubble(frame.messageId)?.remove();
@@ -761,6 +772,12 @@ class Assistant extends HTMLElement {
         this.pendingMessageId = null;
         this.stopWatchdog();
         this.setContext(frame.context);
+        // The notes held back while the answer streamed go under it now, in
+        // arrival order, before the finished answer is pulled: the bubble is
+        // already in place, so what lands after it lands where the transcript
+        // has it, and a note flushed into the next turn stands above that
+        // turn's bubble.
+        this.landHeld();
         // The settled state arrives with the finished message, not before it:
         // the streamed text is still the partial one until the fragment lands,
         // and a bubble that says "complete" over half an answer is a lie.
@@ -886,14 +903,37 @@ class Assistant extends HTMLElement {
   // pulls of the same message can be in flight at once (the stream frame and
   // the send response race for a queued message), and a lookup from before the
   // await appends a duplicate next to what the other pull already put there.
-  async replaceMessage(messageId, state) {
-    this.reserveBubble(messageId);
+  // hold says an answer was streaming when this message was announced, so a
+  // note is held back instead of taking a place: its place in the transcript
+  // is under that answer. Without it the message keeps the place its frame
+  // gave it, a slot reserved before the pull.
+  async replaceMessage(messageId, state, hold = false) {
+    if (!this.heldEntry(messageId) && !hold) this.reserveBubble(messageId);
     try {
       const html = await getText(this.messageUrl + encodeURIComponent(messageId));
       const holder = document.createElement("div");
       holder.innerHTML = html;
       const fresh = holder.firstElementChild;
       if (!fresh) throw new Error("empty message fragment");
+      // A note arriving while an answer streams is held back, and so is the
+      // answer a reaction pushed, which arrives the same way: its place in
+      // the transcript is under the streaming answer, and a text growing
+      // under a moving text makes it hard to tell what is live and what
+      // arrived. The bar above the composer shows its headline meanwhile,
+      // and the end frame lands it. One already held, pulled again because
+      // its state moved, only replaces what the bar holds. One announced
+      // during a stream that ended while it was pulled lands at the end,
+      // where the transcript has it.
+      const held = this.heldEntry(messageId);
+      if (held) {
+        held.node = fresh;
+        this.renderHeld();
+        return;
+      }
+      if (hold && this.running && (fresh.getAttribute("data-role") === "cockpit" || fresh.hasAttribute("data-assistant-auto"))) {
+        this.holdNote(messageId, fresh);
+        return;
+      }
       const node = this.bubble(messageId);
       if (node) node.replaceWith(fresh);
       else this.log.append(fresh);
@@ -911,6 +951,154 @@ class Assistant extends HTMLElement {
       node?.querySelector(".spinner-border")?.remove();
       if (state) node?.setAttribute("data-state", state);
     }
+  }
+
+  heldEntry(messageId) {
+    return (this.held || []).find((entry) => entry.id === messageId) || null;
+  }
+
+  holdNote(messageId, node) {
+    this.bubble(messageId)?.remove();
+    this.held = this.held || [];
+    this.held.push({ id: messageId, node });
+    this.renderHeld();
+  }
+
+  // The bar above the composer: the headline of every held note, up to two
+  // of them as rows of their own, from three on one line with the count and
+  // an unfold. A tap on a headline opens the whole note there, as it will
+  // stand in the thread. It is not in the scroller, so the answer above
+  // keeps its place; only the scroller's box shrinks, and a follower is
+  // brought back to the end of it.
+  renderHeld() {
+    const held = this.held || [];
+    if (!held.length) {
+      this.heldBar?.remove();
+      this.heldBar = null;
+      return;
+    }
+    if (!this.heldBar) {
+      this.heldBar = document.createElement("div");
+      this.heldBar.className = "border-top bg-body px-3 py-2";
+      this.heldBar.setAttribute("data-assistant-held", "");
+      this.heldBar.setAttribute("role", "status");
+      this.heldBar.setAttribute("aria-live", "polite");
+      this.heldBar.addEventListener("click", (event) => {
+        const row = event.target.closest("[data-assistant-held-note]");
+        if (row) {
+          event.preventDefault();
+          const full = this.heldBar.querySelector(`[data-assistant-held-full="${CSS.escape(row.dataset.assistantHeldNote)}"]`);
+          if (full) {
+            full.hidden = !full.hidden;
+            row.setAttribute("aria-expanded", full.hidden ? "false" : "true");
+          }
+          return;
+        }
+        const more = event.target.closest("[data-assistant-held-more]");
+        if (more) {
+          event.preventDefault();
+          const list = this.heldBar.querySelector("[data-assistant-held-list]");
+          if (list) {
+            list.hidden = !list.hidden;
+            more.setAttribute("aria-expanded", list.hidden ? "false" : "true");
+          }
+        }
+      });
+      if (this.footer) this.footer.before(this.heldBar);
+      else this.append(this.heldBar);
+    }
+    const open = new Set(Array.from(this.heldBar.querySelectorAll("[data-assistant-held-full]:not([hidden])")).map((full) => full.dataset.assistantHeldFull));
+    const listOpen = this.heldBar.querySelector("[data-assistant-held-list]")?.hidden === false;
+    const rows = document.createElement("div");
+    rows.className = "d-flex flex-column gap-1";
+    rows.setAttribute("data-assistant-held-rows", "");
+    for (const entry of held) {
+      const head = entry.node.querySelector("[data-assistant-note], [data-assistant-origin]");
+      const badge = head?.querySelector(".badge")?.cloneNode(true);
+      const headline = head?.querySelector("[data-assistant-note-headline]")?.textContent || "";
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "btn btn-sm btn-ghost-secondary d-flex align-items-center gap-2 w-100 px-2 text-start";
+      row.setAttribute("data-assistant-held-note", entry.id);
+      row.setAttribute("aria-expanded", open.has(entry.id) ? "true" : "false");
+      if (badge) row.append(badge);
+      const text = document.createElement("span");
+      text.className = "text-truncate flex-fill fw-medium";
+      text.textContent = headline;
+      row.append(text);
+      const chevron = document.createElement("i");
+      chevron.className = "ti ti-chevron-down flex-shrink-0";
+      chevron.setAttribute("aria-hidden", "true");
+      row.append(chevron);
+      rows.append(row);
+      // The whole text, and only the text: the row above is the headline.
+      const wrap = document.createElement("div");
+      wrap.className = "px-2 pb-1 text-secondary";
+      wrap.setAttribute("data-assistant-held-full", entry.id);
+      wrap.hidden = !open.has(entry.id);
+      for (const part of entry.node.querySelectorAll("[data-assistant-text]")) {
+        const copy = part.cloneNode(true);
+        copy.removeAttribute("data-assistant-text");
+        copy.classList.add("text-break");
+        wrap.append(copy);
+      }
+      rows.append(wrap);
+    }
+    const fresh = document.createElement("div");
+    if (held.length >= 3) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "btn btn-sm btn-ghost-secondary d-flex align-items-center gap-2 w-100 px-2 text-start";
+      more.setAttribute("data-assistant-held-more", "");
+      more.setAttribute("aria-expanded", listOpen ? "true" : "false");
+      more.innerHTML = `<span class="badge bg-secondary-lt flex-shrink-0">${held.length}</span><span class="text-truncate flex-fill fw-medium">${held.length} notes arrived</span><i class="ti ti-chevron-down flex-shrink-0" aria-hidden="true"></i>`;
+      rows.hidden = !listOpen;
+      rows.setAttribute("data-assistant-held-list", "");
+      fresh.append(more, rows);
+    } else {
+      fresh.append(rows);
+    }
+    this.heldBar.replaceChildren(...fresh.childNodes);
+    window.app?.loadElements?.(this.heldBar);
+    this.stickToEnd();
+  }
+
+  // landHeld puts the held notes into the thread, under the answer they
+  // waited for, in arrival order. The page does not follow them: the answer
+  // stays where the reader is, the notes stand under it. The resize the
+  // landing causes is what the pin would answer, so it is masked until the
+  // frame after the one that lays the notes out, and the reader is unpinned:
+  // the finished answer's own fragment lands a moment later and would pull
+  // the page to the new end otherwise, which is the notes. The next answer
+  // pins again when they still stand near the end, see repinIfNear.
+  landHeld() {
+    const held = this.held || [];
+    this.held = [];
+    if (!held.length) {
+      this.renderHeld();
+      return;
+    }
+    this.landing = true;
+    this.pinned = false;
+    for (const entry of held) {
+      const node = this.bubble(entry.id);
+      if (node) node.replaceWith(entry.node);
+      else this.log.append(entry.node);
+      window.app?.loadElements?.(entry.node);
+    }
+    this.renderHeld();
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => { this.landing = false; });
+    });
+  }
+
+  // repinIfNear pins the reader again when they stand within the distance
+  // trackPin reads as the end. It only ever pins: a reader who scrolled away
+  // stays away.
+  repinIfNear() {
+    if (this.pinned) return;
+    const remaining = this.scrollLength() - this.scrollPosition() - this.viewportHeight();
+    if (remaining < 120) this.pinned = true;
   }
 
   appendUserMessage(text, attachments = []) {
@@ -1725,7 +1913,7 @@ class Assistant extends HTMLElement {
   // as the reader.
   stickToEnd() {
     this.notePlace(this.scrollLength() - this.viewportHeight());
-    if (!this.pinned) return;
+    if (!this.pinned || this.landing) return;
     if (this.scrollQueued) return;
     this.scrollQueued = true;
     window.requestAnimationFrame(() => {

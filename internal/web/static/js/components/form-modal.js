@@ -1,10 +1,10 @@
 import { postForm } from "@dc/http";
 import { closeMenu } from "@dc/contextmenu";
-import { errorText } from "@dc/toast";
+import { errorText, notifySuccess } from "@dc/toast";
 
-// One dialog for the create forms, so starting a coder or a shell never leaves
-// the page you are on. It fetches the very page a link points at, with modal=1,
-// and the server answers the same form alone; the marker rides the form's
+// One dialog for the forms that make something, so starting a coder or adding
+// a trigger never leaves the page you are on. It fetches the very page a link
+// points at, with modal=1, and the server answers the same form alone; the marker rides the form's
 // action back out through the POST, so the path a form posts to is still the
 // path that rendered it. The pages stay pages: a deep link, a login with a
 // return and a browser without JS all still get them, and so does this dialog
@@ -14,7 +14,7 @@ import { errorText } from "@dc/toast";
 // comment dialog: this is server rendered markup with selects, custom elements
 // and a POST target of its own, and the app's pe.js glue already closes open
 // modals and drops their backdrop on every boosted navigation.
-const PATHS = ["/coders/new", "/shells/new", "/projects/new"];
+const PATHS = ["/coders/new", "/shells/new", "/projects/new", "/assistants/triggers"];
 
 // A touch keyboard must not jump up over the dialog the moment it opens, so
 // only a fine pointer gets the field focused, the same rule the editor's
@@ -136,6 +136,8 @@ class FormModal extends HTMLElement {
       return;
     }
     if (this.titleEl) this.titleEl.textContent = form.dataset.formTitle || "";
+    this.modal.querySelector(".modal-dialog")
+      ?.classList.toggle("modal-dialog-scrollable", "formScrollable" in form.dataset);
     await window.app?.loadElements?.(this.content);
     if (standing) {
       this.focusFirst(form);
@@ -145,10 +147,13 @@ class FormModal extends HTMLElement {
     window.bootstrap.Modal.getOrCreateInstance(this.modal).show();
   }
 
-  // The first field of the form takes the focus, and nothing scrolls doing it.
+  // The field the form asks for takes the focus, and nothing scrolls doing
+  // it. A form that names one (autofocus) means it: on the trigger form every
+  // other field stands on a value already and the task is what is typed.
   focusFirst(form) {
     if (!POINTER.matches) return;
-    form.querySelector("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled])")
+    (form.querySelector("[autofocus]:not([disabled])")
+      || form.querySelector("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled])"))
       ?.focus({ preventScroll: true });
   }
 
@@ -200,6 +205,14 @@ class FormModal extends HTMLElement {
         return;
       }
       const data = await response.json().catch(() => null);
+      // A form whose result is on the page it stands on has nowhere to go: the
+      // dialog closes and says what happened, and the lists behind it update
+      // themselves on the event the action published.
+      if (data?.message) {
+        window.bootstrap?.Modal.getInstance(this.modal)?.hide();
+        notifySuccess(data.message);
+        return;
+      }
       this.leave(data?.location || response.url);
     } catch (error) {
       restore();

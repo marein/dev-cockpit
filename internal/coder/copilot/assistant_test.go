@@ -157,20 +157,20 @@ func TestTurnFallsBackToTheFullMessage(t *testing.T) {
 
 // Recorded from the GitHub Copilot CLI: a turn with a tool call answers in two
 // messages, and the id on the records is what says where one ends and the next
-// begins. Appended without that seam the run produced "verbergen.Feuer", two
+// begins. Appended without that seam the run produced "depth.Fire", two
 // markdown blocks welded into one word.
 func TestSeparateMessagesKeepTheirBlankLine(t *testing.T) {
 	const first = "80052770-f70b-495b-85e2-86c9c0c7d97f"
 	const second = "c8d2365e-2789-49df-818d-58c366163a11"
 	fixture := strings.Join([]string{
 		`{"type":"assistant.message_start","data":{"messageId":"` + first + `"}}`,
-		deltaLine(first, "Wasser trägt Leben und findet geduldig seinen Weg."),
-		deltaLine(first, " Seine ruhige Oberfläche kann große Tiefe verbergen."),
-		messageLine(first, "Wasser trägt Leben und findet geduldig seinen Weg. Seine ruhige Oberfläche kann große Tiefe verbergen."),
+		deltaLine(first, "Water carries life and finds its way patiently."),
+		deltaLine(first, " Its calm surface can hide great depth."),
+		messageLine(first, "Water carries life and finds its way patiently. Its calm surface can hide great depth."),
 		`{"type":"tool.execution_start","data":{"toolName":"bash","arguments":{}}}`,
 		`{"type":"assistant.message_start","data":{"messageId":"` + second + `"}}`,
-		deltaLine(second, "Feuer spendet Wärme, verlangt aber Respekt."),
-		messageLine(second, "Feuer spendet Wärme, verlangt aber Respekt."),
+		deltaLine(second, "Fire gives warmth, but it demands respect."),
+		messageLine(second, "Fire gives warmth, but it demands respect."),
 		resultLine(sessionID),
 	}, "\n")
 
@@ -178,8 +178,8 @@ func TestSeparateMessagesKeepTheirBlankLine(t *testing.T) {
 	if err := errorOf(events); err != nil {
 		t.Fatalf("want a clean turn, got %v", err)
 	}
-	want := "Wasser trägt Leben und findet geduldig seinen Weg. Seine ruhige Oberfläche kann große Tiefe verbergen." +
-		"\n\nFeuer spendet Wärme, verlangt aber Respekt."
+	want := "Water carries life and finds its way patiently. Its calm surface can hide great depth." +
+		"\n\nFire gives warmth, but it demands respect."
 	if got := textOf(events); got != want {
 		t.Fatalf("want the two messages apart, got %q", got)
 	}
@@ -190,15 +190,15 @@ func TestSeparateMessagesKeepTheirBlankLine(t *testing.T) {
 // nothing behind its last either, so the stored answer keeps its own ends.
 func TestDeltasOfOneMessageAreJoinedUntouched(t *testing.T) {
 	fixture := strings.Join([]string{
-		deltaLine("m1", "Wasser"),
-		deltaLine("m1", " trägt"),
-		deltaLine("m1", " Leben"),
+		deltaLine("m1", "Water"),
+		deltaLine("m1", " carries"),
+		deltaLine("m1", " life"),
 		deltaLine("m1", "."),
-		messageLine("m1", "Wasser trägt Leben."),
+		messageLine("m1", "Water carries life."),
 		resultLine(sessionID),
 	}, "\n")
 
-	if got := textOf(runTurn(t, fixture)); got != "Wasser trägt Leben." {
+	if got := textOf(runTurn(t, fixture)); got != "Water carries life." {
 		t.Fatalf("want the deltas of one message joined and the answer untouched at both ends, got %q", got)
 	}
 }
@@ -207,13 +207,13 @@ func TestDeltasOfOneMessageAreJoinedUntouched(t *testing.T) {
 // messages stick together whenever a version stops sending deltas.
 func TestFullMessagesKeepTheirBlankLine(t *testing.T) {
 	fixture := strings.Join([]string{
-		messageLine("m1", "Ich schaue beim coder."),
+		messageLine("m1", "I am looking at the coder."),
 		`{"type":"tool.execution_start","data":{"toolName":"bash","arguments":{}}}`,
-		messageLine("m2", "Projekt tetris steht"),
+		messageLine("m2", "Project tetris is up"),
 		resultLine(sessionID),
 	}, "\n")
 
-	if got := textOf(runTurn(t, fixture)); got != "Ich schaue beim coder.\n\nProjekt tetris steht" {
+	if got := textOf(runTurn(t, fixture)); got != "I am looking at the coder.\n\nProject tetris is up" {
 		t.Fatalf("want the two full messages apart, got %q", got)
 	}
 }

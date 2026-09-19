@@ -133,7 +133,7 @@ case "$prompt" in
     sleep 3
     answer="and after it"
     ;;
-  *MAGIC*) answer="FLUGHAFEN" ;;
+  *MAGIC*) answer="AIRPORT" ;;
 esac
 
 # A check on a watched job. The criterion travels in the prompt, so the test

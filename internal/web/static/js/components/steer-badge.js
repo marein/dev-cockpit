@@ -1,13 +1,22 @@
-import { onServerEvent } from "@dc/events";
-import { getText } from "@dc/http";
+// A count on the aside's furniture: how many coders this assistant steers, how
+// many triggers still fire, or both together on the button that opens the
+// aside. Which one it counts is the count attribute, one word or both.
+//
+// It reads the two lists that stand on the page instead of asking the server
+// for them again: both are dc-assistant-list elements that refresh themselves
+// on the assistant event and write the number onto the body they swap in, so
+// the answer is already here and a fetch of its own would be the same request
+// a third time. The lists say when they swapped, and every badge recounts.
+const COUNTS = {
+  jobs: ["[data-assistant-jobs-open]", "assistantJobsOpen"],
+  triggers: ["[data-assistant-triggers-open]", "assistantTriggersOpen"],
+};
 
 class SteerBadge extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
     this.ac = new AbortController();
-    this.inFlight = false;
-    this.dirty = false;
-    onServerEvent("assistant", () => this.refresh(), { signal: this.ac.signal });
+    document.addEventListener("dc:assistant-counts", () => this.refresh(), { signal: this.ac.signal });
   }
 
   disconnectedCallback() {
@@ -15,31 +24,16 @@ class SteerBadge extends HTMLElement {
     this.ac = null;
   }
 
-  // A badge whose view was swapped away mid-fetch is gone: the finally below
-  // re-enters, and without this the aborted element would reach for its own
-  // torn down controller.
   refresh() {
     if (!this.ac) return;
-    const src = this.getAttribute("src") || "/assistants/jobs";
-    if (this.inFlight) {
-      this.dirty = true;
-      return;
+    let open = 0;
+    for (const name of (this.getAttribute("count") || "jobs").split(/\s+/)) {
+      const count = COUNTS[name];
+      if (!count) continue;
+      open += Number(document.querySelector(count[0])?.dataset[count[1]]) || 0;
     }
-    this.inFlight = true;
-    this.dirty = false;
-    getText(src, { signal: this.ac.signal })
-      .then((html) => {
-        const holder = document.createElement("div");
-        holder.innerHTML = html;
-        const open = Number(holder.querySelector("[data-assistant-body]")?.dataset.assistantJobsOpen || 0);
-        this.textContent = String(open);
-        this.classList.toggle("d-none", open === 0);
-      })
-      .catch(() => {})
-      .finally(() => {
-        this.inFlight = false;
-        if (this.dirty) this.refresh();
-      });
+    this.textContent = String(open);
+    this.classList.toggle("d-none", open === 0);
   }
 }
 

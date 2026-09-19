@@ -119,6 +119,55 @@ test. Update this file when a convention changes.
   the one exception, it is about the whole cockpit.
   What is not exempt is the group itself, `serve` and `hash-password`:
   those are what a person and a start script use.
+- **Every reading is capped, and `--contains` is the one way past a cap.** The
+  lists and the threads an assistant reads are bounded on purpose, and what a
+  bound left out is counted, never dropped in silence. The way back to it is one
+  flag with one behaviour wherever it stands (`job-list`, `assistant-list`,
+  `assistant-show`, `line-comment-list`, `trigger-list`): a word compared case
+  insensitively, narrowing **before** the cap, so it reaches what the plain
+  reading never
+  shows, composing with the flags that widen a reading (`--entries`, `--full`,
+  `--all`) and replacing none of them. What it searches is what the surface
+  shows a reader and nothing behind it: a job's name, task, criterion and last
+  report, a trigger's name, event, task and last fire, and in a thread the body
+  of every message plus the headline a note of
+  the cockpit and an answer a trigger pushed stand under. That thread rule is
+  one function, `Message.carries`, read by `Service.Search` for the list and by
+  `Service.Transcript` for the reading, so the list that says an assistant
+  carries a word and the reading that shows where cannot disagree; a headline
+  it searched therefore travels in the JSON and stands over its message in the
+  output, a hit nobody can see is no hit. The task a trigger gave is
+  deliberately out of it, it is the same words on every fire and would make one
+  trigger a hit on every answer it ever pushed. A filtered output says in its
+  first line that it is one, with the hits and the whole count, or three
+  matches are read as the whole history. Two searches in one tool that behave
+  differently are worse than none, so a new one reuses these.
+  **`--since` is the second way past a cap, the one a moment answers.** It
+  stands where a reading is about when something happened, `job-list` and
+  `trigger-list`, and it behaves like the word: a span back from now (`24h`)
+  or a date (`2026-03-04`, with a time of day where somebody writes one),
+  narrowing **before** the cap and composing with everything else, so "what
+  happened yesterday" reaches what the plain reading never shows. What counts
+  as having happened is the entry's own `UpdatedAt`, which a job writes on
+  every move and a trigger on every fire, every end and every edit. There is
+  one parser and it stands where the flag is typed (`parseSince` in
+  `internal/cli`), because a refusal belongs to whoever wrote the word; the
+  resolved moment is what travels to the server (`querySince`), which refuses
+  a stamp it cannot read rather than answering a narrowed call with
+  everything.
+  **What is over is history and stands as one line.** A closed job and a spent
+  trigger cannot move again, so the two lists print them the way `status`
+  prints its inactive sessions: the tail capped at the recent ones with the
+  rest counted (`maxClosedJobsShown`, `spentTriggersShown`, the same five the
+  page's aside caps at in `closedJobsShown`), and the two long lines left off,
+  a closed job's criterion and last report and a spent trigger's task and
+  bounds, because its state already says what became of it. `job-show
+  <terminal>` is the whole single view, and `--full` gives either of them
+  those lines back, so a `--contains` hit that fell in one of them can be read
+  where it was found. The trigger reading is capped on
+  the route both surfaces take (`narrowTriggers`), the aside and the JSON
+  `trigger-list` reads, and only that command's `--all` lifts it: a page that
+  caps and a command that does not is the same list disagreeing with itself.
 - **Work that has to outlive the cockpit goes through `internal/detach`.** One
   package, no caller's subject in it: it starts a program in a session of its
   own (`Setsid`), writes its output into files instead of pipes, and takes an
@@ -187,9 +236,12 @@ test. Update this file when a convention changes.
   A check runs in a provider session of its own, which is also why only a chat
   turn (`RunChat`) may write what a turn reports about the context window onto
   the assistant: a check's consumption is not the thread's. On the page a
-  person reads coders, not jobs (the aside, the button and the empty state say
-  steered coders); code, routes, state values, the `dev-cockpit assistant`
-  commands and the notification titles keep job.
+  person reads coders, not jobs (the aside's first tab, its rows and its
+  empty state say steered coders); code, routes, state values, the
+  `dev-cockpit assistant` commands and the notification titles keep job. A
+  trigger is not split that way, it is called trigger everywhere, on the page
+  and below it alike, which is the word the notification titles always used.
+  What holds both is the aside, see the page rule below.
 - **One chat turn per assistant, and the queue is that assistant's.** A second
   prompt into an assistant that is answering waits: it goes into the transcript
   as `StateQueued`, the page shows it as Waiting and offers to take it back
@@ -259,11 +311,15 @@ test. Update this file when a convention changes.
   generated `CLAUDE.md`/`AGENTS.md` in an instance's workspace are that
   assistant's, rebuilt from the memory right before every turn of its
   (`Workspace.Prepare`, through `preparingRunner`) and by the memory page for
-  every assistant that has a workspace: they carry its id, its name, its
-  workspace path, the memory, and every cockpit command through its wrapper.
-  Nothing is said in a prompt, so the transcript keeps showing what the user
-  typed, and a check reads the same file because it runs in the same
-  workspace.
+  every assistant that has a workspace: they carry its id, its workspace
+  path, the memory, and every cockpit command through its wrapper. The name
+  it is called is deliberately not in them: the id is what every path into
+  `assistant-files/`, every reaction's prompt and every `assistant-show` of
+  its own is built on, while `assistant-list` marks its own row with a star,
+  so a turn recognises itself without a name and never needed one to act
+  (dropped 2026-09-21). Nothing is said in a prompt, so the transcript keeps
+  showing what the user typed, and a check reads the same file because it
+  runs in the same workspace.
 - **A cockpit command is `./cockpit`, the wrapper.** Every workspace carries a
   generated executable, `<workspace>/cockpit` (`Workspace.Wrapper`, written by
   `Workspace.write` with the instruction files, so it is rewritten before every
@@ -284,6 +340,21 @@ test. Update this file when a convention changes.
   answer does, and every ability struck from a check would have to be written
   back in one by one, the next gap noticed only when a job dies of it
   (decided 2026-09-16 after both had been built and taken out again).
+- **A flag the prose requires stands in the example block too.** The
+  instruction file is read by a model that copies an example and fills in its
+  task, not by one that reads a paragraph and composes a call from it. So a
+  flag the prose requires, `--name` on every trigger and `--once` on a
+  schedule meant to fire once, carries its own example line; one the user's
+  own words decide, `--until` and `--tz`, does not. A flag whose **value**
+  carries a requirement the call cannot check is written out whatever decides
+  the flag itself: `coder-new --then`'s sequel task wakes hours later in a
+  session of its own, so it names the project, what to start and where the
+  report goes, and one that does not is taken and breaks then, while the
+  `--done-when` that same flag needs is refused on the spot and corrects
+  itself. The example carries the value, not the placeholder.
+  Moving a detail into a `--help` is only a saving where the detail is one
+  nobody needs before the call: what is needed every time and shown nowhere is
+  paid for twice, once as a failed call and once as the `--help` that follows.
 - **The texts the cockpit writes for an assistant are templates.**
   `internal/assistant/templates/*.tmpl`, text/template files embedded by
   `templates.go` and filled through `render`: the instruction files, the
@@ -296,7 +367,14 @@ test. Update this file when a convention changes.
   coder as WORKING with what was sent, and a verdict comes in time whatever is
   still open; the assistant's own instructions say the same from the writing
   side, long runs into the coder's task with the proof in the criterion) and
-  the three reports a check ends in. They read like text and are edited as
+  the three reports a check ends in. **What a check does with what it found
+  is that prompt's alone**: the verdict forms, which of them reach the user,
+  what a check may start and how it moves a coder stood in the instruction
+  file as well, which every turn and every reaction pays for while only a
+  check ever acts on them (dropped 2026-09-21). What stayed there is what a
+  chat turn decides on, that steering buys a check which gets the coder going
+  again and answers with a verdict, and that a steered coder is the
+  assistant's to write into until its job closes. They read like text and are edited as
   text; the Go side hands over typed data (`instructionsData`, `wrapperData`,
   `wakeData`, `reportData`) and nothing else. A paragraph stays on one line in
   a template, so a pinned sentence in a test matches the file. The
@@ -355,6 +433,365 @@ test. Update this file when a convention changes.
   because several things live behind it; the page title of one open assistant
   ("Name - Assistant") and the `dev-cockpit assistant` command group stay
   singular, they name one.
+- **A note is the third message kind: the cockpit speaks.** Next to the
+  user's and the assistant's messages a thread holds notes, `RoleCockpit`
+  with a `Note` (source, headline, verdict where there is one, the body in
+  `Content`). A check's report is the one source (`NoteCheck`, written by
+  `recordWake`). The old `wake` key on a report is read once on load and
+  becomes a note (`Store.load`, TODO(v2.0.0)). **The stripe says who spoke
+  and whether anybody asked**, and it means one thing each: blue the user,
+  purple an answer to what the user asked, grey the cockpit unasked. So the
+  grey covers a note and the answer a reaction pushed alike, which is the one
+  condition `assistant_message.gohtml` reads, `.Note` or `.Auto`, the pair
+  `replaceMessage` in `assistant.js` already holds back as one kind. Purple on
+  both would cost the stripe the difference between an answer and a message
+  nobody ordered, which is the only thing it still says on its own. **A note
+  and a pushed answer read the same way**, one shape in
+  `assistant_message.gohtml` for both: a header that says who spoke and
+  carries no switch (the badge, the headline, the time), under it one control
+  that is the chevron and a preview of the text together, and the message
+  folded below it, closed until somebody opens it. The switch used to stand
+  on the right of the one header and under the other, and one of the two
+  arrived open, which is two things to learn for one kind of message. **The
+  speaker is one button in one place**, the `assistant_speaker` template both
+  headers call, and it hangs on the audio URL alone. What can be read aloud
+  is `assistant.Message.Speakable`, not the user's, words in it, finished:
+  the view sets `AudioURL` from it and the audio route asks the same question
+  again for a page from before a settings change, so the button that stands
+  and the route that answers cannot disagree. An origin decides what the
+  header says, never whether a message can be spoken, and a check's report
+  therefore speaks like an answer. **The preview is as long as the push
+  carries** (`assistant.PreviewRunes`, 140,
+  cut by `markdown.Excerpt`, the very line `answerExcerpt` builds for the
+  notification), so what brought a reader here is what stands in front of
+  them when they arrive; it folds the body's own line breaks into one run of
+  words, because one line of a report is half a sentence as often as not
+  while three are usually the result and its reason. A message the preview
+  holds whole folds nothing, there is nothing behind it, and a pushed answer
+  is no exception: **under the header stands the result and nothing else.**
+  That nobody asked for it is what the bolt and the name over it say, the
+  occasion is that very headline, and the task is the user's own words on the
+  trigger, where they are read; one of those lines said it twice and the
+  other was a wall of the user's own text on every unfold, thousands of
+  characters on a chain of jobs. So `Note.Task` stays in the record, it says
+  which task this reaction really ran with and an edit may have moved the
+  trigger's since, and nothing renders it. The check's report always read
+  this way, and the reaction was pulled onto it (2026-09-21).
+  While an answer streams the page holds every arriving note, and every
+  answer a reaction pushed, in a bar above the composer (`holdNote` in
+  `assistant.js`, decided at the frame, two headlines, from three on the
+  count with an unfold) and lands them under the finished answer in arrival
+  order without scrolling (`landHeld`, the pin masked for the frame the
+  landing lays out, the reader unpinned and pinned again by the next answer
+  within `repinIfNear`'s distance). A row of that bar is a fold and paints
+  nothing under a pointer: the one rule it carries puts Tabler's hover and
+  active button variables back onto the resting ones, the pressed shadow
+  included, because a headline that greys out under the finger reads as a
+  place the reader is being sent to while it only unfolds in place. What it
+  keeps is the focus ring, `:focus-visible` alone, which is the keyboard
+  saying where it stands and no pointer's doing. The transcript keeps
+  chronological order, a reload mid stream shows it. The composer is the user's alone: Send and
+  Stop are what they are on master. A badge in the thread that shows an
+  icon alone names itself with `aria-label`, never with a visually hidden
+  span: that span is absolutely positioned while the thread's scroller is
+  not, so it stands outside the scroller, the app grid grows to the
+  transcript's height, and the hash scroll of the show earlier link then
+  moves the whole page by the head's height under an unchanged scroller. What the cockpit wrote since the
+  assistant's last chat answer, notes and pushed answers alike, rides into the
+  next chat prompt as a short summary (`notesSince`, `withNotes`): the count,
+  a pointer at `job-list` and `assistant-show`, and one headline per line,
+  newest first, never the text of anything. The headline is the one a note or
+  a pushed answer's origin already carries, nothing is formulated a second
+  time, and a reaction whose turn broke off says so on its line, because that
+  is the one an assistant must not read past. Equal headlines fold into one
+  line with a count, which is what keeps a schedule firing every half hour out
+  of the prompt, and `maxNoteLines` bounds the list at fifty with the rest
+  summarized the way `status` summarizes its older coders. A bare count was
+  what stood here, and it carried nothing an assistant could decide on: it
+  either read every job to find out or guessed. The walk stops only at a chat
+  answer, never at a pushed one.
+- **An assistant reacts to events in a session of its own, and every bound
+  is enforced.** `CockpitEvent` is the one small type a source publishes
+  (source, kind, target, time, headline, body, plus the owner for a job's
+  event); the sources are a job's end (published by `recordWake`), a coder's
+  signal out of the notify inbox (`notify.SetEvent` hands the raw hook name
+  on, `Reactor.Coder` reads Notification as asks and everything else as
+  ended, a bell included) and a cron tick (`cron.go`, five crontab fields
+  parsed here, no dependency).
+  **A schedule is a wall clock somewhere, so it carries the zone it is read
+  in.** An IANA name on the trigger (`Timezone`, `Trigger.Zone`), never an
+  offset, which carries no changeover rules and is wrong for half the year,
+  and never `time.Local`, which means a different schedule on every host. It
+  is resolved when the trigger is written and stored on it, always, so moving
+  the default later moves nothing that already stands; the zone database
+  travels in the binary (the blank `time/tzdata` import in `cron.go`, pinned
+  by a test), because a slim image carries no `/usr/share/zoneinfo` and every
+  name but UTC would be refused there. Three sources in order, and the surface
+  resolves them because the settings store is its: what the caller named
+  (`--tz`, the form's field), the stored default (`assistant-timezone`,
+  `AssistantTimezone`), the zone this server runs in (`ServerZone`: `$TZ`,
+  then what `/etc/localtime` points at, then UTC, because `time.Local` answers
+  "Local" and a name nothing loads is no name to store). **Only an explicit
+  choice moves the stored one**, the form's select and `timezone-set`, never
+  `--tz`: in the browser a person picks a zone and sees the field, while a
+  turn picks one out of a sentence on the user's behalf, and a choice somebody
+  derived must not become everybody's default. Drawing that line with its own
+  verb puts it in the tool instead of in a rule somebody has to keep.
+  **Daylight saving is taken as the wall clock hands it over, never worked
+  around**, which is what a crontab does and what `Next` does: a local time
+  the spring changeover skips exists on no clock that day, matches no minute,
+  and the schedule falls out once; an hour the autumn changeover repeats
+  exists twice, matches twice, and it fires twice. Both are pinned by a test.
+  What a turn reads about it is `trigger-new --help`'s: the instructions carry
+  the rules alone, which zone each verb is for, never to invent one and to
+  quote the zone and the next tick from the command's own answer, and that
+  last one forbids working a time out, so a changeover is a lookup for a
+  question and never a step in one.
+  That holds only because `skipTo` collapses the minutes a month, a day or an
+  hour cannot match **while the zone stands still** and takes its ordinary
+  minute where the offset at the target differs from the offset here: a wall
+  clock built with `time.Date` picks one side of a changeover without saying
+  which, and landing on the later side of a repeated hour steps over an hour
+  of minutes the schedule may match. **The zone is always shown**, never only
+  where it differs from the reader's own: it stands on the line with the
+  crontab fields (`Where`, the row and `trigger-list` alike) and the next tick
+  is written out by the server in that zone with the zone named
+  (`triggerNextText`, `zonedStamp`), never handed to `dc-time`, which answers
+  in the browser's zone. A zone that is sometimes there carries meaning by
+  being absent, and that is read wrong. `trigger-new` and `trigger-edit`
+  answer the zone that was applied and the next tick in it, and `trigger-list`
+  says which zone is in force and whether anybody stored it, because a
+  crontab expression plus a zone name is arithmetic a person and a model get
+  wrong around a changeover, with conviction.
+  **Two kinds are umbrellas**, and
+  `umbrellaKind` is the one place that says which: `job-closed` takes every
+  way a job ends, `coder-news` every signal a coder sends, whichever of the
+  two that classifier read it as, and `Trigger.matches` asks for the
+  exact kind or that one. **A coder has that one event and no narrower one.**
+  The classification reads the hook name and does not hold everywhere: claude
+  and opencode carry one, copilot has no hook path at all, only the terminal
+  bell, and a bell is read as ended whatever it rang for. A trigger on ended
+  alone would therefore be a promise the cockpit cannot keep for every coder,
+  so `EventOptions` offers the umbrella and nothing under it, and the two
+  narrow kinds stay what they always were, the reading an event carries. The
+  way back to a choice is a bell classified from the coder's own record
+  instead of a hook name it never had. Nothing of the difference is lost to a
+  reaction meanwhile: a published event always carries the kind it was
+  classified as, never the umbrella, so the headline still says which of the
+  two it was. It is called news and not signal because news is the word the
+  cockpit already uses for this event where the user reads it, "Coder has
+  news", while signal is what the mechanism below passes around. A `Trigger` belongs to one assistant like
+  a job, stored in `instances/<id>/triggers.json` through
+  `internal/statefile` (so it rides in the backup's instances source and goes
+  with the delete), and carries its filter, its task and its bounds: once or
+  standing, an expiry nobody has to give (none by default, so a trigger stands
+  until it is removed: eight hours were the default once and they took an
+  alarm set for the next morning away before it could ring), a batch window
+  (30s, none for cron, which `applyTrigger` clears on every write because a
+  tick is never seconds from the next one, and the surfaces say where somebody
+  named one anyway, the CLI in its answer and the form by taking the field
+  away). **A name is optional and it is the row's heading.** `Name` is the
+  user's own word for a trigger, at most `MaxTriggerNameRunes` (32, the same
+  32 a coder's label is cut to; the head line leaves the name 330px in the
+  420px aside, 290px in the 380px one a 1280 window gives it and 275px in the
+  phone's sheet at 390px, over 40 runes of prose at the row's 14px even there,
+  so the cap is the one number and not the width), refused rather than cut because a name a
+  person typed is theirs, and collapsed to one line because a heading is one. With one the row reads by it and the event, the
+  target or the schedule moves to the line under it, where a steered coder's
+  row carries its project, so a schedule stops reading by `*/30 9-17 * * 1-5`,
+  which says when it fires and never what for; without one that line is the
+  heading and everything is exactly as it was before names existed, which is
+  why there is no migration. It is one element either way, marked
+  `data-assistant-trigger-event` wherever it stands, and one reading decides
+  what the row, the remove confirm and every answer call it
+  (`AssistantTriggerView.Heading`). The cockpit itself derives a name from
+  nothing but the coder a sequel waits for (`FitTriggerName`):
+  a trigger nobody named has none, the form's first field says optional, and
+  the empty value is a value, so the page posting an emptied field clears the
+  name while a request without the field leaves what stands (`Name` with its
+  `NameSet`, the way `Once` and `All` carry theirs). **The assistant is told
+  to write one anyway**, two or three words for what the trigger is for, in
+  the generated instructions and nowhere else, `trigger-new --help` carrying
+  the cap alone: that is a decision for whoever writes the trigger and a rule
+  rides in every turn, while a help is read when somebody asks for it. The
+  rule stands under the example block and the first example carries `--name`,
+  because a block without it writes a nameless trigger at the one place a
+  turn copies from. It is
+  never a field the code fills in, and it is there because the name is the one
+  line the row, the notification and the line in front of the next chat prompt
+  all read a trigger by, while
+  `*/30 9-17 * * 1-5` says when it fires and never what for.
+  **Below the page the name travels in the note, and one line decides it.**
+  Everything a fire leaves behind is read off the origin `Note` the fire
+  builds, so `Reactor.fire` puts the name into `Note.Headline`, the field
+  whose whole job is to be the one line a note is read by, and moves what
+  fired it into `Note.Event`. The notification and its push
+  (`assistantNews`), the header over the pushed answer and the line the next
+  chat prompt is preceded by (`notesSince`) therefore take the name without
+  any of them knowing that names exist, and the `--contains` search keeps
+  searching what stands on the screen. Where there is room for the name and
+  the occasion both, the reader asks for it: `Note.Occasion` (the event, or
+  the headline where no name pushed it out) is what the reaction's own prompt
+  is built from, because a turn has to be told what happened and not what the
+  trigger is called, and what the trigger's own note line says, because that
+  line stands under the row's heading, which is the name already, which is
+  why `trigger-list` renders both. The thread renders neither, see the note
+  rule above. Without a name `Event` is empty, `Occasion` is the headline,
+  and every surface reads exactly what it read before names existed. **A trigger waits for terminals, not for one terminal**:
+  `Targets` is the list (`TriggerTarget`, the id plus the name it had when
+  the trigger was made, because a deleted terminal has none left to look
+  up), none of them is any of them, and `All` turns several into a barrier, one
+  turn once every one of them arrived, with the batch window folding their
+  events into it (`Waiting`, the per target `Met` taken back with the events it
+  spends, so a standing barrier waits for all of them again). A barrier belongs
+  on `job-closed`, which the instructions say and nothing enforces: on
+  `job-done` a job that closes blocked never arrives. What it would otherwise
+  lose is the race at its own creation, three coders started one after another
+  and the first finished before the third exists, so `seedArrived` takes the
+  jobs of its targets that are closed already, through the same `jobEvent` the
+  recovery publishes, report included. `Target` and `TargetName` are read once
+  out of a file written before the list and dropped by the next write
+  (TODO(v2.0.0)). The `Reactor` (`events.go`, one per service) matches, collects
+  inside the window, and fires a reaction: a run of `RunReaction` through
+  `startOwnSession`, the same path a check takes (`startWake`): a fresh
+  provider session reserved and dropped with the turn, the owner's workspace
+  and instruction file, the wake slot (`Service.slots`, shared with the
+  watcher), the run register with the origin on the entry, so
+  `Service.Recover` follows it on and the reactor concludes it. Nothing is
+  written into the owner's chat session for an event, no user turn, no
+  envelope, no queue. The prompt is the event plus the task, the cockpit
+  speaking (`reactionPrompt`), and it carries the rule a check's prompt
+  carries about its first line, for the opposite reason: a check may think out
+  loud because `parseVerdict` throws away everything before the verdict, while
+  a reaction is pushed as it stands and only a sentence or two of its first
+  line reaches a phone, so the result comes first and an announcement in front
+  of it eats the message. It says too that `DONE`, `BLOCKED` and `WORKING`
+  belong to a check, because the reaction reads the assistant's own
+  instruction file, which says a check answers with a verdict. It names its deadline the way a check's prompt names the same
+  one, and for a sharper reason: a check that runs into it has a next check
+  to carry on, a reaction has nothing and reaches the thread as one that
+  broke off, so a task it cannot finish is answered with what it has and what
+  is still open. Its answer is pushed into the owner's thread
+  (`pushReaction`) as an assistant message with `Auto` and `Origin` (the
+  event's headline, the task), rendered in the note's own shape, see the note
+  rule above, announced on a frame of its own so a streaming page holds it, and it rings
+  as what it is: the title says that a trigger fired, the line below it names
+  what fired it and carries the reaction's own answer
+  (`assistantNews`), because nobody asked for this answer. **A turn that broke
+  off goes that very way**, the same message, the same notification, the same
+  push, marked as the turn it was (`activeRun.turnState`, the reading a chat
+  turn gets: `StateInterrupted` where a restart took it, `StateFailed`
+  otherwise), carrying what it had written before it stopped, which
+  `reactionOutcome` keeps for it, and the sentence that says why under it. A
+  failure on the trigger's line alone is a failure nobody sees, the next event
+  overwrites that line, and "Trigger broke off" in `assistantNews` is the title
+  it arrives under. An answer of NOTHING pushes nothing and
+  notifies nobody, and what finds that word is the check's own `parseVerdict`
+  and never a second reading (`quietAnswer`): a reaction that thinks out loud
+  and writes its NOTHING behind the preamble decided what a bare one decided,
+  and two readings of that one habit drift apart, which is how a reaction that
+  had decided right rang the user anyway. What keeps a real answer out of it is
+  that reading's own guards plus what is left over, because text behind the
+  word is an answer to push, and a turn that wrote nothing at all wrote no
+  contract. The writing side of it stands in the generated instructions, that a
+  task wanting a trigger to speak only in the exceptional case has to ask for
+  NOTHING by name, because the contract stood in the reaction's prompt alone
+  and whoever writes the task never reads that. A turn that broke off is never
+  read as that contract; a
+  an expiry shows on the
+  trigger's line and state alone, never in the thread; the trigger
+  counts every fire, whatever came back, and says `reacting` while the run
+  is on. **One trigger reacts once at a time.** While its reaction runs
+  the events stay in its window, whatever the window says, and the end of
+  that reaction spends them as one turn: two reactions of one trigger
+  would answer one thread about the same thing twice and out of order. What holds the
+  window open is `ReactingSince`, cleared where a reaction ends (`conclude`,
+  `adopt`), so a held window always has an end that reaches it, and the tick
+  is its backstop; the window is on disk with everything else, so a process
+  that dies mid reaction leaves it for the next one. The page and the CLI
+  (`trigger-new`, `trigger-list`, `trigger-edit`,
+  `trigger-delete`, `timezone-get`, `timezone-set`) share
+  `/assistants/triggers` and `assistant.EventOptions`, so nothing is
+  page only; which zone is in force is its own reading (`?timezone=1`),
+  because a caller that only wants to know which clock a schedule would be
+  read on must not pay for the whole list to find out; the generated instructions list every kind with an example and
+  say that the task must be self contained or point to a file in
+  `assistant-files/`.
+  **A standing trigger is changed, not made again, and a field nobody
+  names does not move.** One reading of the form decides that for both ways
+  in (`assistantTriggerSpec`): a field the request does not carry is one
+  nobody named, which on a create takes the default and on an edit leaves
+  what stands, so the page posts every field and `trigger-edit` posts
+  the flags `cmd.Flags().Changed` says were typed. Two of them have no zero
+  that could say "no": a multiple select with nothing picked and an unchecked
+  box post nothing at all, so the form carries a hidden empty `terminal` and
+  `once` in front of them and clearing is a value, not an absence. One
+  function then writes a trigger whichever way in the caller took
+  (`applyTrigger`, which `newTrigger` runs over an entry seeded
+  with the defaults and `editTrigger` over the one that stands), so
+  there is one validation and one meaning of every bound. `Reactor.Edit`
+  holds the reactor's lock, the one a fire and the tick take, and answers the
+  line naming what moved (`triggerChanges`), so the CLI's output and the
+  page's toast are not written twice. What never moves is the event, another
+  event is another trigger; what an edit never touches is the count, the
+  moment it was made, the events waiting in the window and a running
+  reaction, which keeps the task it was handed. The targets are replaced as a
+  list and each one keeps what it reached (`mergedTargets`), so a barrier
+  goes on waiting for the ones that have not arrived, a target named for the
+  first time is caught up by `seedArrivedLocked` where its job is closed
+  already (which skips one that arrived, or an end would land in the window
+  twice) and checked by `nameJobTargets` like a fresh one, while a target
+  that stood is left alone, its job may well have closed since. A schedule
+  that moved works its next tick out again, one nobody touched keeps it. A
+  trigger that is done or expired is spent and is refused with a
+  sentence. On the page it is the create dialog's form rendered on the stand
+  it opens, see the form rule below: Change stands on a row only while it
+  still fires, the form posts to the same path with `form=edit`, the event
+  select is locked and therefore posts nothing, and the expiry opens on what
+  the trigger has left, because what is stored is a moment while the field
+  asks for a span. **The sequel of a job is wired in the call that starts
+  it**, `coder-new --then "<task>"` (the `then` field of `/coders/new`, beside
+  `done_when`): one job-done trigger with `--once` on the new terminal,
+  made in that same request right after the steer, and the answer names it. It
+  expires with that job (`Until: time.Until(job.ExpiresAt)`, the expiry the
+  steer one line above just wrote), never on the trigger's own default: the
+  two defaults sit in two files knowing nothing of each other, and the day one
+  of them moves the chain would die in silence, an expiry showing on the
+  trigger's line and never in the thread.
+  Nobody types a name on that way in, so it takes the name of the coder it
+  waits for (`assistant.FitTriggerName`), and a session name longer than a
+  trigger's name may be leaves it without one rather than refusing the sequel:
+  no name is the fallback every trigger has anyway.
+  Without a `done_when` it is refused, a sequel hangs on a steered job.
+  Deferring the arrangement to a later call loses the race, a job can close
+  before the second call goes out, which is what a handover must not do. A
+  check is no handover: it is one narrow turn with a verdict and carries
+  nothing on, and the instructions say so.
+  **A deleted terminal is the last thing it ever does, and one path clears up
+  after it**: `Watcher.TerminalDeleted` (what every surface reaches through
+  `Server.jobDeleted`, the page's button, the chip, the pane, the editor's
+  panel, `coder-delete` and a project delete's purge one terminal at a time).
+  An open job is closed first, the way the heartbeat closes one whose terminal
+  vanished, with the reason that the coder was deleted, so `job-closed` and
+  `job-expired` fire and `job-done` does not; then the entry goes, and
+  `Reactor.TerminalGone` marks the target gone in every trigger that names
+  it, fires a coder trigger once for the deletion (`Kind` is the
+  trigger's own, so a `coder-news` trigger hears it exactly once and no
+  phantom event is published beside it), and removes
+  the ones with no terminal left (`Vanished`), spending their window on the
+  way out because
+  nothing can come from a gone terminal. A barrier counts a gone target as
+  arrived and the event says it was deleted, not finished. Triggers
+  without targets and cron are untouched, and `coder-stop` clears up nothing at
+  all: the session keeps its identifier and comes back under it, so its
+  arrangements stand, and the heartbeat's own vanish path is unchanged. What
+  fell is one sentence, `assistant.DroppedNote`, and every surface says that
+  one: the flash, the `dropped` field of the delete's JSON answer (appended to
+  the toast by `alsoDropped` in `@dc/steer`, so no surface writes a second
+  wording) and what `coder-delete` prints. A project delete goes the same path
+  and reports nothing, its answer may leave before the purge runs and it
+  cascades into worktree projects, so one number in it would be short as often
+  as right.
 - **A turn's answer is blocks, and the seam between two of them is read, never
   guessed.** An answer that works with tools arrives in several text blocks, and
   every runner hands them over as one stream of deltas the turn appends as it
@@ -2883,27 +3320,205 @@ free floating page scripts.
   (`class="dc-work"`, so the head's voice menu and the composer are its
   children), and an aside (`offcanvas-xl offcanvas-end`,
   never with the plain `offcanvas` class, which would keep it fixed) that
-  stands inline from xl up with the steered coders as a self refreshing list
-  (each row offers both ways to look at that coder, its screen and the editor
-  on the project it works in, the second one only where there is a project, and
-  the two names on the row are those ways too: the coder's name opens the
-  coder, the project's name the project),
-  and below xl is the sheet the head's steering wheel (`d-xl-none`) opens.
+  stands inline from xl up and below xl is the sheet the head's eye
+  (`d-xl-none`) opens.
+  **The aside is one thing with two halves, and it is called Watching**: the
+  coders this assistant steers and the triggers it waits for, which to a reader
+  are one thing, work the assistant carries on by itself without being asked
+  again. They are **two tabs** and not two sections under each other
+  (`assistant_watching_tabs.gohtml`, Bootstrap's own `data-bs-toggle="tab"` in
+  a `nav nav-bordered`, one `tab-pane` per list): under each other the second
+  one starts below the fold on every window that matters, and a half nobody
+  scrolls to is a half nobody uses. Each tab carries an icon, a name and a
+  count, each pane one self refreshing list with a one line empty state, and
+  the strip stands outside the body a list swaps, so a refresh leaves the
+  chosen tab alone. **The two tabs share the row in equal halves**, Bootstrap's
+  `nav-justified` (`flex-basis: 0` plus `flex-grow: 1` on every link) and never
+  `nav-fill`, which divides by the text and hands the longer name the larger
+  share; they carry `justify-content-center` because Tabler makes a `.nav-link`
+  a flex box, so `nav-justified`'s own `text-align` reaches nothing, and there
+  is no gap between them, `nav-bordered` takes a link's horizontal padding off
+  so the active half's border runs to the middle of the row and says where the
+  half ends. Equal halves hold only while the longer name fits into one, which
+  is measured on the phone, the narrowest the aside ever is; if it ever stops
+  fitting the name is shortened, never the type. **What makes a trigger stands
+  in the triggers**, at the head of that pane: it is the pane's own child, so
+  the tab carries it and no visibility is switched by hand, and it stands
+  outside the swapped body like the strip does. Beside the two tabs it read as
+  a control for both while it only ever made a trigger. It runs the full width
+  of the list and carries no colour, at `btn btn-sm`, the weight a trigger
+  row's own Open coder and Change wear: a coloured block beside nothing reads
+  as dropped in, the full width closes the strip off above the list, and colour
+  in this aside is left to the one action that destroys something. The empty
+  state stays one line and offers nothing, because that button is already the
+  line above it. **A row is folded and the fold holds the text**: the head
+  says who it is and where it stands (a coder's name and project, a trigger's
+  event and where it listens), and the fold under it holds the named parts
+  (`datagrid-title`, prompt, criterion and last report on a coder; task and
+  last fire on a trigger) and the counters, because three grey lines under
+  each other were one text nobody read. **The actions stand outside that
+  fold**, under the row and always: opening the coder, its editor, taking it
+  back, and a trigger's Open coder, Change and Remove are one press from a
+  shut row. Reading what a coder was sent is a question somebody
+  asks now and then, acting on it is the everyday case, and a shut row that
+  answers neither has to be opened before it is of any use. A shut row is
+  taller for it and several of them are a column of buttons: that is the price
+  and it was weighed and taken (2026-09-20), so do not fold them again or make
+  them a size of their own. A steered coder's row offers both ways to look at that coder, its
+  screen and the editor on the project it works in, the second one only where
+  there is a project, and the two names on the row are those ways too: the
+  coder's name opens the coder, the project's name the project. Nothing on that
+  row makes a trigger: the one way to a new one is the button over the trigger
+  list (removed 2026-09-20, the row's own Add trigger).
+  **The row's own icon is the state, and it is the only thing that says it.**
+  One fact is drawn once: the steering wheel of a job and the bolt or the
+  clock of a trigger carry the colour, and the word that stood in a badge
+  beside them is now the icon's `aria-label` and `title`, the way a note's
+  icon badge in the thread names itself. Two renderings of one fact drift
+  apart, and did: an open trigger's icon read `running`, which is green, while
+  the badge next to it read blue for the same state. The colours mean the same
+  on both kinds. Purple (`steered`) is alive, a job being steered and a
+  trigger that still stands. Purple with the dot running along the icon's edge
+  (`working`, the same pair every session icon uses) is a turn of this
+  assistant on it right now, a check on the job or the trigger's reaction, and
+  the marker `data-assistant-working` says which. Red (`text-danger`) is over
+  without arriving: a job closed blocked or expired, a trigger that expired
+  having never fired, and a trigger whose last reaction broke off
+  (`Trigger.Broke`, written where a reaction concludes and cleared by the next
+  one that comes back whole). Grey, the icon's resting tint, is done and
+  nothing to do: a job done or released, a trigger done, and one that expired
+  after it had fired at least once, which arrived. Green is deliberately
+  not used here, it says "running" on every terminal icon in the cockpit and a
+  second meaning in one aside is no meaning. The state itself travels as the
+  icon's `data-assistant-job-state` / `data-assistant-trigger-state`, which is
+  what a test reads. The events waiting in a trigger's batch window ride the
+  corner of that icon as `.dc-steer-badge`, the count the tabs above wear, at
+  the offset the news dot hangs at, and they stand in the icon's label too.
+  None of it is painted over by the row: an aside row is a plain
+  `list-group-item` and no `list-group-item-action`, so hover and active leave
+  it and its icon exactly as they are.
+  **The trigger form is the create dialog, and the stand is rendered into it.**
+  `GET /assistants/triggers?form=new|edit` answers the form, alone with
+  `modal=1` and inside its page without, the way the create forms do (see that
+  rule below); the POST is the same path with the same `form` field it always
+  had, so the page and `trigger-new`/`trigger-edit` still post the
+  same fields to the same route. What fills it is the server
+  (`assistantTriggerForm`): a new one on the defaults, one begun on a
+  coder's row on `?job=<terminal>`, a change on `?id=<id>` with every field on
+  what stands, the event locked, the expiry on what the trigger has left,
+  and a picked terminal the selects no longer offer appended so a save cannot
+  drop it. Nothing fills a form in the browser any more, which is what took the
+  form out of the aside, `triggerEditJSON` and `jobTriggerJSON` out of the
+  server and `fill` out of `dc-assistant-trigger`; what is left there is the
+  switching of the fields, one rule for all of them (`showBox`): a field that
+  is hidden is disabled with it, so it posts nothing, and a field nobody named
+  is one the server leaves standing. The target fields show for their own
+  event, the mode and the batch window for every event but a schedule, which
+  has no window to fold anything into. Nothing writes a value into a field any
+  more; the form once put a zero into the window for a schedule, which a
+  stored value had to be defended from.
+  **The expiry is a number with a unit beside it**, minutes, hours or days,
+  and **No expiry is the fourth entry of that select**. Five guessed spans
+  stood here and the page could say less than `--until` could; every value
+  these two fields produce is a span the command takes and nothing beyond it,
+  so nobody has to know a notation and a phone answers with a number and one
+  tap. The unit is where the reading starts and the number carries it where
+  there is one (`untilUnit` onto `until`, `triggerNoExpiry` the word both the
+  select and `--until` spell `never`), so one reading and one parser serve the
+  form and the command alike. No expiry belongs in that select and not in a
+  box beside it because it answers the same question, how long, and it is the
+  answer that leaves the number nothing to count: the element greys the number
+  out while it stands (`data-trigger-unit` over `data-trigger-span`, the one
+  switching beside the target fields it still does), which is a disabled field
+  whose reason stands right next to it, where a box left it a field that was
+  dead for no visible reason. The markup disables nothing, the select wins over
+  the number on the server anyway, or a page whose JS never ran could pick a
+  unit and still not type. The field takes the whole row (`col-12`, with the
+  batch window and the one shot box sharing the line below it, so the form is
+  no taller than it was): beside the window the number was too narrow to read
+  its own placeholder in. A change opens on what the trigger has left in the
+  largest unit that keeps that number whole (`triggerSpan`, so 90 minutes reads
+  as 90 minutes and never as 1.5 hours), because an empty number puts the
+  select on No expiry: a form that opened empty on a trigger that expires would
+  take its expiry away with the next save of the task. What is stored stays a
+  moment while the field asks for a span, so saving re-anchors the expiry to
+  now, which is what the field says it does. **The task
+  field follows what is typed, and there is one computation of that in the
+  app**: `growTextarea` in `@dc/dom`, the assistant composer's growth, the
+  height reset to the content's and capped, the box scrolling past the cap.
+  The share is the helper's (`GROW_SHARE`) and a caller hands over only the
+  surface its field sits in, asked for after the reset: the composer's
+  transcript scroller, the form's window. A measured limit was built first and
+  taken out again: the trigger form is the taller kind and already fills a
+  laptop window on its own, so the room left around it is nothing and the field
+  stayed at its two rows, which is the peephole this fixes. What the growth
+  needs instead is a dialog that stays put while its content grows, so **a form
+  whose field grows says so** (`data-form-scrollable`, read by
+  `dc-form-modal`, which puts `modal-dialog-scrollable` on the dialog for that
+  one form): the header and Cancel and Save stand still and the body scrolls.
+  It is per form and not the dialog's default, because a body that scrolls
+  clips what stands inside it, and the project form's branch picker is a
+  `dropdown-menu` that has to reach past the body it is in. The growth is asked
+  on every keystroke, on the event switch that reshapes the form, and on
+  `shown.bs.modal`, which is what makes a stored task stand grown before
+  anything is typed: the dialog is `display: none` while the form is put into
+  it, and a field measured there reads zero.
   The aside's own head (`dc-ctx-head` with the title and the close, the
   sheet's way out) wears `d-xl-none` too: inline it stands under the page's
   head, nothing is there to close, and the list starts at once. The width
   decides, never the offcanvas state, it is one element in both sizes; Tabler
-  hid the old `offcanvas-header` the same way. That wheel carries the open jobs as a count in its corner, not as a number
-  beside it: `.dc-steer-badge` is absolute in the button, `var(--dc-steer)` on
-  white. Its size is set against the head button, not copied from the rail's
+  hid the old `offcanvas-header` the same way. **One number outside, the split one touch later.** The button
+  carries the open jobs plus the triggers that still fire, because it is all a
+  phone sees of the aside and a half it cannot count is a half nobody finds;
+  which of them it was stands on the two tabs inside, one count each, and the
+  two add up to the button by construction (`WatchingOpen`). Every count hides
+  at zero instead of standing as an empty pill. No badge fetches:
+  `dc-steer-badge` reads the number off the list bodies that already stand on
+  the page, which carry it as `data-assistant-jobs-open` and
+  `data-assistant-triggers-open`, and every list says
+  `dc:assistant-counts` when it swapped one in, so a badge costs no request of
+  its own. All three are the one badge, `.dc-steer-badge`, out of the flow and
+  `var(--dc-steer)` on white, because a number that comes and goes must move
+  nothing around it. Only where it hangs differs, and it follows what it
+  belongs to: on the button the corner of the glyph, on a tab the end of the
+  label (`data-assistant-tab-label`, the anchor, with the badge growing to the
+  right of it at the gap the icon keeps to the word). **On a tab it stands
+  raised**, its bottom edge on the label's middle line (`bottom: 50%`, no
+  transform), so it covers the upper half of the word's ink, the share a corner
+  badge covers of its glyph, and reads as a note at the word instead of a
+  second word beside it. Raised it still ends inside the tab's own padding, so
+  it reaches neither the row above nor the scroller's edge and the row keeps
+  its height. The tab is no anchor: it
+  is half the aside wide with its label centered, so every corner of it stands
+  a different distance from each of the two words, 16px from Steered coders and
+  38px from Triggers, and the first tab's corner lands on the seam between the
+  halves. **What the badge must survive is the surface under it**, and the row
+  paints two: `nav-bordered` takes Tabler's 4% wash off `:hover` but not off
+  `:focus`, which keeps it (`.nav-link:focus, .nav-link:hover` sets
+  `--tblr-nav-link-hover-bg`), so a focused tab is washed while a hovered one
+  is not, and pressed and active paint nothing, the active half being the 2px
+  border and the primary colour alone. The badge is opaque and reads the same
+  over either, which is the whole reason it is this badge and not a translucent
+  `bg-*-lt` pill, the one that went muddy over that wash. The focus ring is a
+  box shadow outside the button's border box and never reaches it. **A live update leaves what the reader put where**: a list swap
+  carries the ids of the rows that stand unfolded onto the rows that arrive
+  (`keepUnfolded`, the `show` class and the control's `aria-expanded`, which is
+  what Bootstrap reads before it instantiates a collapse), the strip and the
+  scroller are outside what is swapped, and the transcript's own swap
+  (`syncFromServer`) moves the standing aside into the fresh surface instead of
+  rebuilding it, because its two lists keep themselves up to date anyway. An
+  event of the assistant arrives every few seconds while coders work, and a
+  fold that closes under the hand is worse than a row that is a moment old.
+  Its size is set against the head button, not copied from the rail's
   count: the head's `btn-icon` is 28px where the rail's is 40px, so a 16px mark
   would sit on the wheel instead of beside it. 14px in the corner leaves the
   same third of the glyph covered that the pre-redesign badge left (18.4px at
   2.6px in a 40px button, 33 percent of a 14px glyph), which is why the wheel
   stays readable. The sheet and the inline aside start their
-  list at the same distance from every edge: the first job row drops its top
-  padding at every width (the rule sits outside the xl block), so the gap above
-  it is the offcanvas body's padding, like left and right.
+  list at the same distance from every edge, which is the offcanvas body's own
+  padding: the aside's body spaces its children by hand and not by a flex gap,
+  so a head sits on its own list and the second section keeps its distance from
+  the first.
   The memory is a sheet of the layout (`assistant_memory_sheet.gohtml`,
   `#assistant-memory`, a plain `offcanvas` next to the ctx sheet on every
   page), opened by the brain in the list's head, from the assistant page's
@@ -2955,7 +3570,8 @@ free floating page scripts.
   itself as the anchor. The upload and draft answers carry the size too, so
   the bubble the composer paints stands where the server's does.
 - **The create forms open in a dialog, and stay pages.** `/coders/new`,
-  `/shells/new` and `/projects/new` open in `dc-form-modal` (layout, next to the
+  `/shells/new`, `/projects/new` and the trigger form
+  (`/assistants/triggers?form=new|edit`) open in `dc-form-modal` (layout, next to the
   swapped region, Bootstrap modal like the editor's comment dialog). It fetches
   the same GET with `modal=1`, the server answers the form alone
   (`*_new_form.gohtml`, one template for page and dialog, body/footer classes and
@@ -2969,6 +3585,12 @@ free floating page scripts.
   not the destination (`formmodal.go`): a refusal comes back as the message
   (`formRefused`) so the dialog keeps the typed values, a create answers the
   location the redirect would have taken (`createLanded`, flash in the session).
+  A form whose result is on the page it already stands on answers a `message`
+  instead (`formStayed`, the trigger form): the dialog closes, says it in a
+  toast and navigates nowhere, because the lists behind it update themselves on
+  the event the action published, and a navigation would rebuild the very
+  thread the person is reading. The field a form marks `autofocus` is the one
+  the dialog focuses, on a fine pointer as always.
   The chips that create without a form stay one click. The first field takes the
   focus on opening, fine pointer only, no scroll. While a create runs the form
   hides behind a spinner and one line (`data-form-wait`), a refusal brings it
@@ -3092,18 +3714,55 @@ job on a coder, its report is the message that reaches the user, so the raw
 signal counts as no unread, marks nothing, carries no `Added` (no toast, no
 jingle, no push) and only keeps the history complete. Such an entry replaces
 the target's previous silent one and never touches an unread entry.
-Every notification is written the same way, two lines: `Notification.Title`
-says what happened ("Coder has news.", "Command finished.", "Job done." /
-"blocked." / "expired.", "Assistant answered.", "Assistant could not
-finish.", "Backup ready." / "failed."), `Notification.Detail` is the line
-below it and names what it happened in, the name in quotes plus the project
-(`"git" - dev-cockpit`), for the assistant the first words of the answer. It
-is shown where the project stands (list, toast, push body). No name ever
-stands in a title, and no title classifies a coder's signal. The wording of
-every case lives together next to `notifyResolver` in `main.go`
-(`coderNews`, `shellNews`, `backupNews`, `assistantNews`), never in notify,
-which classifies nothing; a job report takes its name and project from the
-message's own `WakeNote`, never from a lookup. An entry without a title (a
+**Every notification is written the same way round, and one builder writes
+them all**: `Notification.Title` is what happened and nothing else, one fixed
+sentence per kind, and `Notification.Detail` is what it happened to. A coder,
+a shell, a backup, a git question, a compose run and an assistant all read
+alike, so nobody has to work out which pattern a line follows: "Coder has
+news.", "Command finished.", "Backup ready.", "Git asks a question.",
+"Compose finished.", and for an assistant `Job done.`, `Job blocked.`, `Job
+expired.`, `Trigger fired.`, `Trigger broke off.`, `Answer ready.` or `Answer
+broke off.`. Nothing is composed out of user text up there and nothing is
+ever cut, so `newsTitleRunes` is no budget the code spends, it is the bound
+the wording is written to and the test pins: 32 runes, the narrowest of the
+three surfaces, a phone's push, where iOS gives the title one line and writes
+the app's name on the second (a lock screen of this cockpit's own pushes ran
+out at exactly 32 with the system's mark among them). The bell's list and a
+toast hold 40 to 46, so a sentence that fits the push stands whole in all
+three. The wider two decided that line while it still ended in an identifier
+that could be shortened; a sentence cannot be shortened, so the narrowest one
+decides it now.
+**The identifier opens the line below, and it is the most precise one there
+is** (`newsDetail`): a job's name for a report, a trigger's headline, which
+is its name where the user gave it one, the coder, the shell, the archive,
+the action, the command for the kinds that write no text, and for an answer
+somebody asked for, where nothing narrower exists, the assistant it came
+from. That last one is the same rule and no exception, and it lands the name
+in exactly the case where several assistants could be confused; a report from
+before the note carried a name falls back the same way. Behind the identifier
+stands a colon and then the text that was written, an assistant's answer, a
+check's report, a reaction's answer, and the kinds that write none stop after
+the identifier. It stands there **whole**: a phone gives the title one line
+and the body three or four, so this is the one place a name is read to its
+end, and what a push clamps off this line is the tail of an excerpt, by
+construction the cheapest part of it. Nothing cuts it, every identifier is
+already a label where it is written (`coder.ShortTitle` for a session title
+and for the assistant's own name through `assistantNewsName`, `MaxTriggerNameRunes`
+where a trigger's name is typed). `answerExcerptRunes` stays at 140: it is
+written for the bell and the toast, which show the whole line, while the push
+clamps at the reader's own screen, so raising it would only add runes past a
+clamp and lowering it would take text off the two surfaces that have the
+room. **The project no longer surfaces for the textless kinds**: their line
+is the identifier, so `Notification.Project` falls back only for an entry
+nobody could resolve, and in the CLI's list, which keeps a column of its own
+for it. A report's excerpt never repeats the verdict its title already says,
+`parseVerdict` takes that word off the check's answer before the report is
+written down. No title classifies a coder's signal. The wording of
+every case lives together next to `notifyResolver` in `internal/cli`
+(`coderNews`, `shellNews`, `backupNews`, `gitPromptNews`, `composeNews`,
+`assistantNews`), never in notify,
+which classifies nothing; a job report takes its name from the message's own
+`Note`, never from a lookup. An entry without a title (a
 target the resolver could not resolve, an entry an older build stored) falls
 back to `Something new in "..."` in the list, the toast, the push and
 `dev-cockpit assistant notification-list`.

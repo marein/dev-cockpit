@@ -190,7 +190,7 @@ func (s *Workspace) Sync() error {
 		if info, err := os.Stat(s.Dir(entry.ID)); err != nil || !info.IsDir() {
 			continue
 		}
-		if err := s.write(entry.ID, entry.Title); err != nil {
+		if err := s.write(entry.ID); err != nil {
 			return err
 		}
 	}
@@ -200,20 +200,7 @@ func (s *Workspace) Sync() error {
 // syncInstance rebuilds the instruction files of one assistant, right before
 // a turn of its starts.
 func (s *Workspace) syncInstance(instanceID string) error {
-	return s.write(instanceID, s.titleOf(instanceID))
-}
-
-// titleOf is what an assistant is called, read from the index, the one place
-// that holds it without loading a transcript.
-func (s *Workspace) titleOf(instanceID string) string {
-	var index []Summary
-	statefile.Load(s.indexPath, &index)
-	for _, entry := range index {
-		if entry.ID == instanceID {
-			return entry.Title
-		}
-	}
-	return DefaultTitle
+	return s.write(instanceID)
 }
 
 // write puts the generated files of one assistant into its workspace: the
@@ -225,10 +212,10 @@ func (s *Workspace) titleOf(instanceID string) string {
 // the process id because a second serve process on the same state directory is
 // possible and one fixed name would have them overwriting each other's half
 // written file.
-func (s *Workspace) write(instanceID, title string) error {
+func (s *Workspace) write(instanceID string) error {
 	syncMu.Lock()
 	defer syncMu.Unlock()
-	instructions := []byte(s.instructions(instanceID, title))
+	instructions := []byte(s.instructions(instanceID))
 	for _, name := range instructionFiles {
 		if err := replace(filepath.Join(s.Dir(instanceID), name), instructions, 0o600); err != nil {
 			return err
@@ -260,7 +247,6 @@ func replace(path string, want []byte, mode os.FileMode) error {
 type instructionsData struct {
 	Header string
 	ID     string
-	Title  string
 	// Workspace is this assistant's own directory, Instances the directory the
 	// other assistants' workspaces stand under.
 	Workspace        string
@@ -284,14 +270,17 @@ type instructionsData struct {
 
 // instructions is what a coder reads before the first message of a turn: who
 // it is here, what it knows about the user, and how to remember something new.
-// They are one assistant's: the id, the name, the workspace and the wrapper
-// every cockpit command runs through are written in, so a turn knows who it is
-// from the file it reads at startup and nothing has to be said in a prompt.
-func (s *Workspace) instructions(instanceID, title string) string {
+// They are one assistant's: the id, the workspace and the wrapper every
+// cockpit command runs through are written in, so a turn knows who it is from
+// the file it reads at startup and nothing has to be said in a prompt. The
+// name an assistant carries is deliberately not in it: the id is what every
+// path, every reaction's prompt and every command of its own needs, while
+// `assistant-list` marks its own row, so a name would be decoration a turn
+// never acts on.
+func (s *Workspace) instructions(instanceID string) string {
 	return render("instructions.md.tmpl", instructionsData{
 		Header:           generatedHeader,
 		ID:               instanceID,
-		Title:            title,
 		Workspace:        s.Dir(instanceID),
 		Instances:        s.instances,
 		WorkspaceDirName: workspaceDirName,
