@@ -2177,6 +2177,35 @@ func TestTheWakePromptKeepsLongRunsWithTheCoder(t *testing.T) {
 	}
 }
 
+// A check that finds the criterion met and releases its own job instead of
+// answering DONE kills itself: the release ends the running checks, the job
+// closes as stopped and the report never lands, so the user hears nothing. The
+// prompt says so, in both spellings of the command.
+func TestTheWakePromptKeepsTheReleaseWithTheAssistant(t *testing.T) {
+	job := Job{Terminal: "term-1", DoneWhen: "the tests pass"}
+	activity := Activity{Text: "the coder stopped", Finished: true}
+	for name, prompt := range map[string]string{
+		"plain":   wakePrompt(job, activity),
+		"wrapper": wakePromptWith(job, activity, "./cockpit", "/w/cockpit"),
+	} {
+		for _, want := range []string{
+			"DONE and BLOCKED close the job by themselves. Do not run `",
+			"only a chat turn or the user releases a job",
+			"a check that releases its own job kills itself, so its report never lands",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("the %s prompt misses %q:\n%s", name, want, prompt)
+			}
+		}
+	}
+	if plain := wakePrompt(job, activity); !strings.Contains(plain, "Do not run `dev-cockpit assistant coder-release` in this turn") {
+		t.Fatalf("the plain prompt has to spell the release with the plain command names:\n%s", plain)
+	}
+	if wrapped := wakePromptWith(job, activity, "./cockpit", "/w/cockpit"); !strings.Contains(wrapped, "Do not run `./cockpit coder-release` in this turn") {
+		t.Fatalf("the wrapper prompt has to spell the release through the wrapper:\n%s", wrapped)
+	}
+}
+
 // A criterion about a project's conventions or gates is judged against what
 // the project itself says, so the check is told to look for the project's
 // instruction files and read them first, without being told which files those
