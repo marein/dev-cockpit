@@ -78,3 +78,38 @@ func TestCoderCreateChecksTheDoneWhenBeforeTheSessionExists(t *testing.T) {
 		t.Fatalf("a valid criterion must reach the session start, got %q", rec.Body.String())
 	}
 }
+
+// A sequel hangs on a job's end, so a --then without a done-when is refused
+// before anything starts, with a sentence that says what is missing. The
+// arrangement itself is made in this very request, see handleCoderCreate: a
+// job can close before a second call could subscribe.
+func TestCoderCreateRefusesASequelWithoutAJob(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	projects := project.NewRepository(root, recent.New(filepath.Join(t.TempDir(), "recent.json")))
+	s := &Server{
+		coders:   []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), codercopilot.New(), projects)},
+		projects: projects,
+	}
+
+	form := url.Values{
+		"name":    {"probe"},
+		"project": {filepath.Join(root, "missing")},
+		"then":    {"start a reviewer on it"},
+	}
+	rec := createCoder(t, s, form)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want the create refused, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "A sequel needs a steered job") {
+		t.Fatalf("want the refusal to say a sequel needs a job, got %q", rec.Body.String())
+	}
+
+	// With a criterion the request reaches the session start and fails there,
+	// on the missing project: the sequel is no longer what stops it.
+	form.Set("done_when", "the tests pass")
+	rec = createCoder(t, s, form)
+	if strings.Contains(rec.Body.String(), "A sequel needs a steered job") {
+		t.Fatalf("a sequel with a job must reach the session start, got %q", rec.Body.String())
+	}
+}

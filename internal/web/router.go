@@ -144,6 +144,11 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// `dev-cockpit assistant coder-steer` posts to.
 	auth.GET("/assistants/jobs", s.handleAssistantJobs)
 	auth.POST("/assistants/jobs", s.handleAssistantJobsAction)
+	// The subscriptions live the same way: one path for every assistant's,
+	// the list narrowed with `?assistant=`, the two actions on it, and the
+	// path `dev-cockpit assistant subscription-new` posts to.
+	auth.GET("/assistants/subscriptions", s.handleAssistantSubscriptions)
+	auth.POST("/assistants/subscriptions", s.handleAssistantSubscriptionsAction)
 	// The two reads answer the `assistant-list` and `assistant-show` commands
 	// as JSON: this is how assistants see each other. The page renders its own
 	// list from fragments, not from these.

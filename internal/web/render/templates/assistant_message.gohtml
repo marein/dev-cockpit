@@ -1,14 +1,59 @@
 {{define "assistant_message.gohtml"}}
 {{with .Message}}
-<div id="message-{{.ID}}" class="dc-msg{{if .User}} dc-msg-user{{else if .Wake}} dc-msg-info{{else}} dc-msg-assistant{{end}}" data-assistant-message data-no-pe data-role="{{if .User}}user{{else}}assistant{{end}}" data-message-id="{{.ID}}" data-run-id="{{.RunID}}" data-state="{{.State}}">
-  {{with .Wake}}
-  <div class="d-flex align-items-center gap-2 mb-1" data-assistant-wake="{{.Verdict}}">
-    <span class="badge {{if .Done}}bg-green-lt{{else if .Blocked}}bg-orange-lt{{else}}bg-secondary-lt{{end}}">
-      <i class="ti {{if .Expired}}ti-steering-wheel-off{{else}}ti-steering-wheel{{end}} me-1"></i>{{if .Done}}Done{{else if .Blocked}}Blocked{{else if .Expired}}Stopped{{else}}Checked{{end}}
+<div id="message-{{.ID}}" class="dc-msg{{if .User}} dc-msg-user{{else if .Note}} dc-msg-info{{else}} dc-msg-assistant{{end}}" data-assistant-message data-no-pe data-role="{{if .User}}user{{else if .Note}}cockpit{{else}}assistant{{end}}" data-message-id="{{.ID}}" data-run-id="{{.RunID}}" data-state="{{.State}}"{{if .Auto}} data-assistant-auto{{end}}>
+  {{with .Note}}
+  {{/* A note: the cockpit speaks. The headline stands first with the badge
+       that says where it came from, and the body shows its first line;
+       whatever stands behind that line unfolds on a tap. A check's report
+       carries its verdict. */}}
+  <div class="d-flex align-items-center gap-2 mb-1" data-assistant-note="{{.Source}}"{{if eq .Source "check"}} data-assistant-wake="{{.Verdict}}"{{end}}>
+    {{/* The badge is the icon alone, coloured by what it says: the headline
+         beside it already carries the word, "DONE: readme-task", and a
+         phone has no room for it twice. The word stays for a reader that
+         hears the page, as the badge's own label and never as a visually
+         hidden span: that span is absolutely positioned and the thread's
+         scroller is not, so it stands outside the scroller and grows the
+         app grid to the transcript's height, which a hash scroll then
+         moves. */}}
+    {{$word := "Event"}}{{if .Done}}{{$word = "Done"}}{{else if .Blocked}}{{$word = "Blocked"}}{{else if .Expired}}{{$word = "Stopped"}}{{else if eq .Source "check"}}{{$word = "Checked"}}{{end}}
+    <span class="badge flex-shrink-0 {{if .Done}}bg-green-lt{{else if .Blocked}}bg-orange-lt{{else if eq .Source "check"}}bg-secondary-lt{{else}}bg-purple-lt{{end}}" role="img" title="{{$word}}" aria-label="{{$word}}">
+      <i class="ti {{if .Expired}}ti-steering-wheel-off{{else if eq .Source "check"}}ti-steering-wheel{{else}}ti-bolt{{end}}" aria-hidden="true"></i>
     </span>
-    <a href="{{.URL}}" class="text-secondary small text-truncate">{{.Name}}</a>
+    <span class="fw-medium text-truncate min-w-0 flex-fill" data-assistant-note-headline>{{.Headline}}</span>
+    {{if $.Message.Queued}}<span class="badge bg-secondary-lt flex-shrink-0" data-assistant-queued>{{if $.Message.CanDiscard}}Waiting{{else}}Not sent{{end}}</span>{{end}}
+    {{/* Relative, the full stamp in its title: a note is read by its
+         headline, and on a phone the headline needs the room. */}}
+    {{if $.Message.Time}}<dc-time datetime="{{$.Message.Time}}" relative class="text-secondary small flex-shrink-0"></dc-time>{{end}}
   </div>
+  {{if .Rest}}
+  <div class="d-flex align-items-start gap-2" data-assistant-note-first>
+    {{/* A plain button, not a .btn: Tabler fills an expanded ghost button,
+         and a fold must not turn into a pill when it opens. */}}
+    <button type="button" class="bg-transparent border-0 p-0 flex-fill text-start text-secondary text-truncate d-block min-w-0" data-bs-toggle="collapse" data-bs-target="#note-{{$.Message.ID}}" aria-expanded="false" aria-controls="note-{{$.Message.ID}}" title="{{.First}}" data-assistant-note-fold><i class="ti ti-chevron-down me-1" aria-hidden="true"></i>{{.First}}</button>
+  </div>
+  <div class="collapse" id="note-{{$.Message.ID}}" data-assistant-note-rest>
+    <div class="text-break markdown mt-1" data-assistant-text>{{$.Message.HTML}}</div>
+  </div>
+  {{else}}
+  <div class="text-break markdown text-secondary" data-assistant-text>{{$.Message.HTML}}</div>
   {{end}}
+  {{if .Task}}<div class="text-secondary small mt-1 text-truncate" title="{{.Task}}" data-assistant-note-task><i class="ti ti-arrow-forward me-1" aria-hidden="true"></i>{{.Task}}</div>{{end}}
+  {{else}}
+  {{/* A reaction's answer carries where it came from as a folded header: the
+       event's headline, and behind a tap the task the subscription gave it.
+       The headline row is what the held bar reads while a chat answer
+       streams. A chat answer has the author row it always had. */}}
+  {{with .Origin}}
+  <div class="d-flex align-items-center gap-2 mb-1" data-assistant-origin>
+    <span class="badge bg-purple-lt flex-shrink-0" role="img" title="Started by an event" aria-label="Started by an event"><i class="ti ti-bolt" aria-hidden="true"></i></span>
+    <button type="button" class="bg-transparent border-0 p-0 flex-fill min-w-0 d-flex align-items-center gap-2 text-start text-reset" data-bs-toggle="collapse" data-bs-target="#origin-{{$.Message.ID}}" aria-expanded="false" aria-controls="origin-{{$.Message.ID}}" title="{{.Headline}}" data-assistant-origin-fold><span class="fw-medium text-truncate flex-fill" data-assistant-note-headline>{{.Headline}}</span><i class="ti ti-chevron-down flex-shrink-0" aria-hidden="true"></i></button>
+    {{if $.Message.Time}}<dc-time datetime="{{$.Message.Time}}" relative class="text-secondary small flex-shrink-0"></dc-time>{{end}}
+    {{if $.Message.AudioURL}}<button type="button" class="btn btn-icon btn-sm btn-ghost-secondary px-2 position-relative flex-shrink-0" aria-label="Read this answer aloud" title="Read aloud" data-assistant-speak="{{$.Message.AudioURL}}"><span class="position-absolute" style="inset:-.5625rem" aria-hidden="true"></span><i class="ti ti-volume"></i></button>{{end}}
+  </div>
+  <div class="collapse" id="origin-{{$.Message.ID}}">
+    <div class="text-secondary small mb-1 text-break" data-assistant-origin-task>{{$.Message.Author}} answered without you{{if .Count}}{{if gt .Count 1}}, {{.Count}} events in one window{{end}}{{end}}.{{if .Task}} Task: {{.Task}}{{end}}</div>
+  </div>
+  {{else}}
   <div class="d-flex align-items-baseline gap-2 mb-1">
     <span class="text-secondary small fw-medium text-truncate">{{.Author}}</span>
     {{if .Time}}<dc-time datetime="{{.Time}}" class="text-secondary small flex-shrink-0"></dc-time>{{end}}
@@ -20,7 +65,9 @@
          side without any layout impact. */}}
     {{if .AudioURL}}<button type="button" class="btn btn-icon btn-sm btn-ghost-secondary px-2 position-relative ms-auto flex-shrink-0" aria-label="Read this answer aloud" title="Read aloud" data-assistant-speak="{{.AudioURL}}"><span class="position-absolute" style="inset:-.5rem" aria-hidden="true"></span><i class="ti ti-volume"></i></button>{{end}}
   </div>
+  {{end}}
   <div class="text-break{{if not .User}} markdown{{end}}" data-assistant-text>{{.HTML}}</div>
+  {{end}}
   {{if .Attachments}}
   <div class="d-flex flex-column gap-2 mt-2" data-assistant-files>
     {{range .Attachments}}

@@ -264,11 +264,16 @@ L.runFeature("wake", async ({ page, run }) => {
     );
     const wake = page.locator('[data-assistant-wake="done"]').last();
     await wake.waitFor({ state: "attached", timeout: 10000 });
+    // A report is a note: the cockpit speaks, the third role next to the
+    // user's and the assistant's, and never the user's words.
     const bubble = page.locator("[data-assistant-message]").last();
-    assert((await bubble.getAttribute("data-role")) === "assistant", "a check must never look like a user message");
+    assert((await bubble.getAttribute("data-role")) === "cockpit", "a check's report is a note of the cockpit, never a user message");
+    // The headline carries the verdict on purpose, "DONE: wake-task"; the
+    // body under it is the report and must not.
     const text = await bubble.innerText();
     assert(text.includes("job is finished"), `the report is missing: ${text}`);
-    assert(!text.includes("DONE:"), `the verdict leaked into the text: ${text}`);
+    const body = await bubble.locator("[data-assistant-text]").innerText();
+    assert(!body.includes("DONE:"), `the verdict leaked into the text: ${body}`);
 
     // The job flips to done in place, and the news is there for the phone,
     // naming the job it is about.
@@ -279,13 +284,18 @@ L.runFeature("wake", async ({ page, run }) => {
       return data.notifications || [];
     });
     const news = stored.filter((n) => n.targetId === conversation);
-    // One bell for every assistant, so the title names the one that reported.
-    assert(news.length >= 1 && /: job done\.$/.test(news[0].title || ""),
+    // The title says how the job ended before it says anything else, because
+    // the front of the line is the part every surface shows. The job's own
+    // name rides behind it, from the report's note and without any lookup,
+    // while there is room for it.
+    assert(news.length >= 1 && /^Job done[ ,.]/.test(news[0].title || ""),
       `unexpected news ${JSON.stringify(news)}`);
-    // The name and the project come from the report's own note, the job the
-    // check was about, so the lower line names it without any lookup.
-    assert(new RegExp(`^".+" - ${project}$`).test(news[0].detail || ""),
-      `the news does not name the job: ${JSON.stringify(news[0])}`);
+    // The line below it is the report itself: an entry that only said "Job
+    // done." left the user without a word about what the coder did.
+    assert(/job is finished/.test(news[0].detail || ""),
+      `the news does not carry the report: ${JSON.stringify(news[0])}`);
+    assert(!/DONE/.test(news[0].detail || ""),
+      `the verdict is in the excerpt twice: ${JSON.stringify(news[0])}`);
     // The signal that bought the check rang nowhere: while a job is open the
     // assistant's report is the message the user gets, so the coder's own
     // entry is written read and only keeps the history complete.
@@ -677,8 +687,19 @@ L.runFeature("wake", async ({ page, run }) => {
     await page.goto(`${BASE}/assistants/${conversation}`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
     await page.waitForSelector("dc-assistant[ready]", { timeout: 15000 });
-    await waitJobState(page, doomed, "stopped");
-    return "project gone, job closed";
+    // The terminals go with the project, so each one walks the path a deleted
+    // coder walks: its job closes with that reason, reported into the thread,
+    // and the entry goes with the terminal it can no longer be read next to.
+    const deadline = Date.now() + 15000;
+    let shown = await jobState(page, doomed);
+    while (shown !== null && Date.now() < deadline) {
+      await sleep(400);
+      shown = await jobState(page, doomed);
+    }
+    assert(shown === null, `the job of a deleted project's coder is still listed as ${JSON.stringify(shown)}`);
+    const report = await page.evaluate(() => [...document.querySelectorAll("[data-assistant-note-headline]")].map((n) => n.textContent.trim()));
+    assert(report.some((line) => /EXPIRED: wake-doomed/.test(line)), `no report about the deleted coder: ${JSON.stringify(report)}`);
+    return "project gone, job closed and its entry with it";
   });
 
   // A job stays with the assistant that steered it when another one is

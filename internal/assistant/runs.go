@@ -22,9 +22,11 @@ import (
 // parse its output, where the output is, which process is writing it, and what
 // the turn is allowed to do while it runs.
 
-// RunKind separates the two turns that exist. They differ in what finishing
+// RunKind separates the turns that exist. They differ in what finishing
 // means: a chat turn writes into the message it already has, a check hands its
-// verdict to the watcher, which decides whether the user hears about it at all.
+// verdict to the watcher, which decides whether the user hears about it at
+// all, and a reaction hands its answer to the reactor, which pushes it into
+// the thread or, on NOTHING, nowhere.
 type RunKind string
 
 const (
@@ -32,6 +34,8 @@ const (
 	RunChat RunKind = "chat"
 	// RunCheck is a turn a steered job asked for.
 	RunCheck RunKind = "check"
+	// RunReaction is a turn an event asked for, through a subscription.
+	RunReaction RunKind = "reaction"
 )
 
 // RunRecord is one turn as it exists outside this process.
@@ -62,6 +66,11 @@ type RunRecord struct {
 	// started.
 	Terminal string       `json:"terminal,omitempty"`
 	Context  checkContext `json:"context,omitempty"`
+	// Origin is what a reaction needs to be concluded by whoever finds it:
+	// the event and the task, the subscription that fired, and MessageID is
+	// the id its answer is pushed under, so a reaction concluded after a
+	// restart pushes exactly one message.
+	Origin *Note `json:"origin,omitempty"`
 	// Output is the provider's raw output, Errors its standard error.
 	Output string `json:"output"`
 	Errors string `json:"errors"`

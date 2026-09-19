@@ -49,7 +49,7 @@ func TestAnExpiredJobReportsFromTheHeartbeat(t *testing.T) {
 	}
 	var reports []Message
 	for _, m := range conversation.Messages {
-		if m.Wake != nil {
+		if m.IsNote() {
 			reports = append(reports, m)
 		}
 	}
@@ -130,7 +130,7 @@ func TestAJobWhoseTerminalIsGoneIsEndedAndReported(t *testing.T) {
 	}
 	conversation, _ := f.svc.Get(c.ID)
 	last, ok := conversation.Last()
-	if !ok || last.Wake == nil {
+	if !ok || !last.IsNote() {
 		t.Fatal("want the end of the job reported")
 	}
 	if !strings.Contains(last.Content, "is gone") {

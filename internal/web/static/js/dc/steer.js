@@ -124,3 +124,14 @@ export async function releaseCoder({ terminal, name }) {
     return false;
   }
 }
+
+// alsoDropped appends what a deletion took with it to the sentence a surface
+// says about it. Deleting a coder closes its job and drops the subscriptions
+// that could only ever have fired on that terminal, and the server answers the
+// one wording for it (`dropped`), which the page's flash and the CLI print too,
+// so no surface writes a second one. Without it the sentence stands as it was.
+export function alsoDropped(message, answer) {
+  const dropped = answer?.dropped;
+  if (!dropped) return message;
+  return `${message.replace(/\.$/, "")}, ${dropped}.`;
+}

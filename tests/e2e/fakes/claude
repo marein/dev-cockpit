@@ -287,6 +287,9 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     answer="and after it"
     ;;
   *MAGIC*) answer="FLUGHAFEN" ;;
+  # A turn an event bought answers under the note's contract: NOTHING on the
+  # first line is nothing to do or say, which the page folds away.
+  *EVENT_NOTHING*) answer="NOTHING" ;;
   *FILELINK*)
     # A file written into the workspace the turn runs in and handed over the
     # way the instructions say: a link relative to that workspace. The check

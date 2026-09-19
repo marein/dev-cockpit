@@ -155,6 +155,7 @@ func (s *Server) handleAssistantPage(c *gin.Context) {
 	}
 	data.Page = s.page(c, title, "assistants")
 	data.Ctx = s.assistantCtxData(c, data.Path, "assistant-ctx-new")
+	data.Subscriptions = s.assistantSubscriptionsData(c, current.ID)
 	c.HTML(http.StatusOK, "assistant_page.gohtml", data)
 }
 
@@ -235,34 +236,35 @@ func (s *Server) assistantData(current assistant.Instance, all bool) render.Assi
 		sttURL = base + "/stt"
 	}
 	return render.AssistantData{
-		ID:             current.ID,
-		Path:           base,
-		CoderID:        current.CoderID,
-		CoderLabel:     render.CoderLabel(current.CoderID),
-		Coders:         s.assistantCoderOptions(),
-		Messages:       messages,
-		EarlierCount:   earlier,
-		AllURL:         allURL,
-		Running:        s.assistants.Running(current.ID),
-		Blocked:        blocked,
-		NewCoderID:     s.assistantNewCoderID(current),
-		Jobs:           jobs,
-		JobsOpen:       openJobs(jobs),
-		JobsOlder:      olderJobs,
-		JobsURL:        assistantJobsPath,
-		JobsListURL:    assistantJobsPath + "?assistant=" + url.QueryEscape(current.ID),
-		StreamURL:      streamURL,
-		PostURL:        base,
-		MessageURL:     base + "/messages/",
-		UploadURL:      base + "/user-upload",
-		SttURL:         sttURL,
-		TTS:            !s.voiceTTSOff(),
-		MaxPromptBytes: assistant.MaxPromptBytes,
-		MaxUploadBytes: s.maxUploadBytes(),
-		Draft:          draft.Text,
-		DraftFiles:     s.assistantDraftFiles(current.ID, draft),
-		DraftURL:       base + "/draft",
-		ContextPercent: assistantContextPercent(current),
+		ID:                   current.ID,
+		Path:                 base,
+		CoderID:              current.CoderID,
+		CoderLabel:           render.CoderLabel(current.CoderID),
+		Coders:               s.assistantCoderOptions(),
+		Messages:             messages,
+		EarlierCount:         earlier,
+		AllURL:               allURL,
+		Running:              s.assistants.Running(current.ID),
+		Blocked:              blocked,
+		NewCoderID:           s.assistantNewCoderID(current),
+		Jobs:                 jobs,
+		JobsOpen:             openJobs(jobs),
+		JobsOlder:            olderJobs,
+		JobsURL:              assistantJobsPath,
+		JobsListURL:          assistantJobsPath + "?assistant=" + url.QueryEscape(current.ID),
+		SubscriptionsListURL: assistantSubscriptionsPath + "?assistant=" + url.QueryEscape(current.ID),
+		StreamURL:            streamURL,
+		PostURL:              base,
+		MessageURL:           base + "/messages/",
+		UploadURL:            base + "/user-upload",
+		SttURL:               sttURL,
+		TTS:                  !s.voiceTTSOff(),
+		MaxPromptBytes:       assistant.MaxPromptBytes,
+		MaxUploadBytes:       s.maxUploadBytes(),
+		Draft:                draft.Text,
+		DraftFiles:           s.assistantDraftFiles(current.ID, draft),
+		DraftURL:             base + "/draft",
+		ContextPercent:       assistantContextPercent(current),
 	}
 }
 
@@ -478,32 +480,6 @@ func (s *Server) assistantJobViews(owner string) ([]render.AssistantJobView, int
 	return out, older
 }
 
-// assistantWakeView describes where a message came from when a check wrote it.
-// The report carries the name of the job it was written for, so the page says
-// which job reported, not an id. A report from before the note carried a name
-// falls back to the store, which is right for as long as that job is the one
-// standing on the terminal.
-func (s *Server) assistantWakeView(note *assistant.WakeNote) *render.AssistantWakeView {
-	if note == nil {
-		return nil
-	}
-	view := &render.AssistantWakeView{
-		Terminal: note.Terminal,
-		Name:     note.Terminal,
-		Verdict:  note.Verdict,
-		Done:     note.Verdict == string(assistant.VerdictDone),
-		Blocked:  note.Verdict == string(assistant.VerdictBlocked),
-		Expired:  note.Verdict == string(assistant.VerdictExpired),
-		URL:      "/coders/" + note.Terminal,
-	}
-	if note.Name != "" {
-		view.Name = note.Name
-	} else if job, ok := s.watcher.Get(note.Terminal); ok && job.Name != "" {
-		view.Name = job.Name
-	}
-	return view
-}
-
 // assistantMessageViews renders the transcript. A blocked assistant takes no
 // new turn, so it offers no retry and lets no waiting message be removed.
 func (s *Server) assistantMessageViews(current assistant.Instance, blocked bool) []render.AssistantMessageView {
@@ -517,17 +493,21 @@ func (s *Server) assistantMessageViews(current assistant.Instance, blocked bool)
 
 func (s *Server) assistantMessageView(instanceID string, m assistant.Message, retryable, writable bool, coder string) render.AssistantMessageView {
 	view := render.AssistantMessageView{
-		ID:         m.ID,
-		RunID:      m.RunID,
-		User:       m.Role == assistant.RoleUser,
-		Wake:       s.assistantWakeView(m.Wake),
-		Author:     coder,
-		Text:       m.Content,
-		State:      string(m.State),
-		Error:      m.Error,
-		Streaming:  m.State == assistant.StateStreaming,
-		Failed:     m.State == assistant.StateFailed || m.State == assistant.StateInterrupted,
-		CanRetry:   retryable && m.Role == assistant.RoleAssistant && m.State.Retryable(),
+		ID:        m.ID,
+		RunID:     m.RunID,
+		User:      m.Role == assistant.RoleUser,
+		Note:      s.assistantNoteView(m.Note, m.Content),
+		Auto:      m.Auto,
+		Origin:    s.assistantNoteView(m.Origin, ""),
+		Author:    coder,
+		Text:      m.Content,
+		State:     string(m.State),
+		Error:     m.Error,
+		Streaming: m.State == assistant.StateStreaming,
+		Failed:    m.State == assistant.StateFailed || m.State == assistant.StateInterrupted,
+		// A turn a note bought is never sent again by hand: what bought it
+		// was an event, and that event is spent.
+		CanRetry:   retryable && m.Role == assistant.RoleAssistant && m.State.Retryable() && !m.Auto,
 		Queued:     m.State == assistant.StateQueued,
 		CanDiscard: writable && m.State == assistant.StateQueued,
 		Time:       machineTime(m.CreatedAt),
@@ -543,6 +523,9 @@ func (s *Server) assistantMessageView(instanceID string, m assistant.Message, re
 			Width:    width,
 			Height:   height,
 		})
+	}
+	if view.Note != nil {
+		view.Author = "Cockpit"
 	}
 	if view.User {
 		view.Author = "You"

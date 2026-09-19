@@ -1183,6 +1183,17 @@ textarea[data-assistant-input] { resize: none; }
 .dc-folded { display: none !important; }
 [data-assistant-job-fold] .ti { transition: transform 0.15s ease; }
 [data-assistant-job-fold][aria-expanded="true"] .ti { transform: rotate(180deg); }
+[data-assistant-note-fold] > .ti, [data-assistant-origin-fold] > .ti, [data-assistant-held-more] > .ti, [data-assistant-held-note] > .ti { transition: transform 0.15s ease; }
+[data-assistant-note-fold][aria-expanded="true"] > .ti, [data-assistant-origin-fold][aria-expanded="true"] > .ti, [data-assistant-held-more][aria-expanded="true"] > .ti, [data-assistant-held-note][aria-expanded="true"] > .ti { transform: rotate(180deg); }
+.dc-tap { min-height: 2.75rem; }
+/* A note's fold, a pushed answer's origin fold and the rows of the held bar
+   are small buttons a finger has to hit; on a touch screen they take the tap
+   height, on a desktop they stay a line. */
+@media (pointer: coarse) {
+  [data-assistant-note-fold], [data-assistant-origin-fold], [data-assistant-held-note], [data-assistant-held-more] { min-height: 2.75rem; }
+}
+[data-assistant-subscribe-open] .ti { transition: transform 0.15s ease; }
+[data-assistant-subscribe-open][aria-expanded="true"] .ti { transform: rotate(45deg); }
 @media (min-width: 1200px) {
   .dc-assistant-body > .dc-assistant-aside {
     flex: 0 0 380px; min-width: 0; display: flex; flex-direction: column; overflow: auto;

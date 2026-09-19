@@ -38,9 +38,10 @@ type Notification struct {
 	Title      string `json:"title,omitempty"`
 	// Detail is the line below the title, shown where the project would
 	// stand (list, toast, push body). A title that only says that something
-	// happened leaves the reader guessing what about, so this names it: the
-	// coder, shell, job or backup in quotes plus its project, or the first
-	// words of the assistant's answer.
+	// happened leaves the reader guessing what about, so this carries the
+	// text that was written: the assistant's answer, a check's report, a
+	// reaction's answer. A target that writes none, a coder, a shell, a
+	// backup, is named here instead, in quotes plus its project.
 	Detail    string    `json:"detail,omitempty"`
 	Project   string    `json:"project"`
 	URL       string    `json:"url"`
@@ -143,6 +144,9 @@ type Service struct {
 	turnOpen func(targetID string)
 	// silent decides whether a target's news is written quietly, see SetSilent.
 	silent func(targetID string) bool
+	// event hears a signal together with the raw hook name it arrived under,
+	// see SetEvent.
+	event func(targetID, kind string)
 
 	mu   sync.Mutex
 	subs map[chan Event]struct{}
@@ -173,6 +177,25 @@ func (s *Service) SetSignal(listen func(targetID string)) { s.signal = listen }
 // makes no entry, and this service still classifies nothing. Set it before
 // the pollers start.
 func (s *Service) SetTurnOpen(listen func(targetID string)) { s.turnOpen = listen }
+
+// SetEvent installs a listener that hears every signal together with the
+// hook name it arrived under, "Stop" for a turn that ended and
+// "Notification" for a coder that wants attention, the raw names the
+// coders' own hooks use. The assistant's subscriptions listen here. Like the
+// signal listener it is the raw fact and nothing else: this service still
+// classifies nothing, it passes the name on as it came. A bell has no name,
+// see the caller in main. Set it before the pollers start.
+func (s *Service) SetEvent(listen func(targetID, kind string)) { s.event = listen }
+
+// Event is one signal with its hook name: the notification for the person,
+// the raw fact for the signal listener, and the named fact for the event
+// listener.
+func (s *Service) Event(targetID, kind string) {
+	s.Signal(targetID)
+	if s.event != nil {
+		s.event(targetID, kind)
+	}
+}
 
 // SetSilent installs the predicate that decides whether a target's news is
 // written read from the start. It exists for the one case where somebody else

@@ -78,7 +78,53 @@ type wakeOutcome struct {
 // restart in the middle costs nothing: the check keeps running and whoever comes
 // back reads its verdict out of the file.
 func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
-	c, err := s.Get(spec.Owner)
+	if strings.TrimSpace(spec.Prompt) == "" {
+		return nil, errors.New("A check needs a prompt.")
+	}
+	return s.startOwnSession(spec.Owner, spec.Prompt, wakeSessionName, RunRecord{
+		Kind: RunCheck,
+		// The report this check may write carries its id from here, so a check
+		// that is concluded twice still writes exactly one message.
+		MessageID: statefile.NewID(),
+		Terminal:  spec.Terminal,
+		Context:   spec.Context,
+	})
+}
+
+// startReaction spends one turn on an event a subscription fired, the way a
+// check is spent: a provider session of its own, the wake slot, the register.
+// The reaction sees the owner's instruction file, the memory and the
+// workspace files, and nothing of the conversation; what its answer means
+// for the thread is the reactor's decision, and the id that answer is pushed
+// under is reserved here so a restart pushes it once.
+func (s *Service) startReaction(owner string, origin Note, prompt string) (*activeRun, error) {
+	if strings.TrimSpace(prompt) == "" {
+		return nil, errors.New("A reaction needs a prompt.")
+	}
+	return s.startOwnSession(owner, prompt, reactionSessionName, RunRecord{
+		Kind:      RunReaction,
+		MessageID: statefile.NewID(),
+		Origin:    &origin,
+	})
+}
+
+// startOwnSession runs one turn for an assistant in a provider session of its
+// own, deliberately not a chat turn:
+//
+//   - it runs in a session of its own, so the instance's session stays free
+//     for the user and the turn does not drag the whole chat history along,
+//   - it holds a wake slot, never a chat slot,
+//   - it writes nothing anywhere. What the answer means is the caller's
+//     decision, the watcher's for a check and the reactor's for a reaction.
+//
+// Like a chat turn it is a detached process with an output file of its own,
+// so a restart in the middle costs nothing: the turn keeps running and whoever
+// comes back reads its answer out of the file. The session is kept out of the
+// coder lists while it exists and removed when the turn is over, so it leaves
+// no resumable ghost behind. It runs in the workspace of the assistant it
+// belongs to, so its instructions say who it acts as.
+func (s *Service) startOwnSession(owner, prompt string, name func(string) string, rec RunRecord) (*activeRun, error) {
+	c, err := s.Get(owner)
 	if err != nil {
 		return nil, err
 	}
@@ -86,43 +132,28 @@ func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
 	if !ok {
 		return nil, errors.New("The coder of this assistant is not available right now.")
 	}
-	if strings.TrimSpace(spec.Prompt) == "" {
-		return nil, errors.New("A check needs a prompt.")
-	}
 	workdir, err := s.workdirs.Workdir(c.ID)
 	if err != nil {
 		return nil, err
 	}
-
-	// A session of its own, kept out of the coder lists while it exists and
-	// removed when the check is over: a wake leaves no resumable ghost behind.
 	sessionID, err := terminal.NewKey()
 	if err != nil {
-		return nil, errors.New("The check could not be started.")
+		return nil, errors.New("The turn could not be started.")
 	}
 	s.reserve(c.CoderID, sessionID)
 
-	a := &activeRun{rec: RunRecord{
-		ID:   statefile.NewID(),
-		Kind: RunCheck,
-		// The report this check may write carries its id from here, so a check
-		// that is concluded twice still writes exactly one message.
-		MessageID: statefile.NewID(),
-		CoderID:   c.CoderID,
-		SessionID: sessionID,
-
-		Terminal: spec.Terminal,
-		Context:  spec.Context,
-		Deadline: s.now().UTC().Add(wakeTimeout),
-	}, done: make(chan struct{})}
-	// A check runs in the workspace of the assistant whose job it is, so its
-	// instructions say who it acts as and every command it runs says so.
+	rec.ID = statefile.NewID()
+	rec.Instance = c.ID
+	rec.CoderID = c.CoderID
+	rec.SessionID = sessionID
+	rec.Deadline = s.now().UTC().Add(wakeTimeout)
+	a := &activeRun{rec: rec, done: make(chan struct{})}
 	p, err := s.launch(&a.rec, co.Runner, TurnRequest{
 		Instance:  c.ID,
 		SessionID: sessionID,
-		Title:     wakeSessionName(c.Title),
+		Title:     name(c.Title),
 		Workdir:   workdir,
-		Prompt:    spec.Prompt,
+		Prompt:    prompt,
 	})
 	if err != nil {
 		s.mu.Lock()
@@ -202,21 +233,30 @@ func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text st
 		}
 	}
 	now := s.now().UTC()
+	name := strings.TrimSpace(job.Name)
+	project := strings.TrimSpace(job.Project)
 	message := Message{
 		ID:        messageID,
-		Role:      RoleAssistant,
+		Role:      RoleCockpit,
 		Content:   text,
 		CreatedAt: now,
 		State:     StateComplete,
-		Wake: &WakeNote{
+		// A report is a note, the first source there was: the cockpit says
+		// what a check concluded. The job's name and project travel with it,
+		// so whoever reads it later says which job this was without asking
+		// the store, see Note.
+		Note: &Note{
+			Source:   NoteCheck,
+			Headline: checkHeadline(string(verdict), name, job.Terminal),
+			Verdict:  string(verdict),
 			Terminal: job.Terminal,
-			// The job's name and project travel with the report, so whoever
-			// reads it later says which job this was without asking the store,
-			// see WakeNote.
-			Name:    strings.TrimSpace(job.Name),
-			Project: strings.TrimSpace(job.Project),
-			Verdict: string(verdict),
+			Name:     name,
+			Project:  project,
 		},
+		// The shape the release before notes read a report in, written
+		// alongside for one more release so a binary rolled back to it still
+		// shows the report as a check's. TODO(v2.0.0): drop with WakeNote.
+		Wake: &WakeNote{Terminal: job.Terminal, Name: name, Project: project, Verdict: string(verdict)},
 	}
 	c.Messages = append(c.Messages, message)
 	c.UpdatedAt = now
@@ -230,26 +270,47 @@ func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text st
 	if s.onDone != nil {
 		s.onDone(c.ID)
 	}
+	// The report is also an event: a subscription on this job's end fires
+	// on it, in the owner's own thread.
+	s.publishEvent(CockpitEvent{
+		Source:   EventJob,
+		Kind:     string(verdict),
+		Target:   job.Terminal,
+		Owner:    job.Owner,
+		Time:     now,
+		Headline: "Job " + strings.ToLower(string(verdict)) + ": " + noteName(name, job.Terminal) + inProject(project),
+		Body:     text,
+	})
 	return message.ID
 }
 
-// checkSessionPrefix marks the provider session of a check. A check drops its
-// session when it is over, but a process that is killed mid check never gets
-// there, and the session it reserved becomes a resumable ghost as soon as the
-// reservation dies with the process. The name is what survives, so it is the
-// one thing that can identify such a leftover afterwards.
-const checkSessionPrefix = "cockpit check: "
+// checkSessionPrefix marks the provider session of a check, and
+// reactionSessionPrefix that of a reaction. Such a turn drops its session when
+// it is over, but a process that is killed mid turn never gets there, and the
+// session it reserved becomes a resumable ghost as soon as the reservation
+// dies with the process. The name is what survives, so it is the one thing
+// that can identify such a leftover afterwards.
+const (
+	checkSessionPrefix    = "cockpit check: "
+	reactionSessionPrefix = "cockpit reaction: "
+)
 
 // wakeSessionName names the provider session of a check, so a stray session is
-// recognizable in a provider's own list.
+// recognizable in a provider's own list; reactionSessionName that of a
+// reaction.
 func wakeSessionName(title string) string {
 	return SessionName(checkSessionPrefix + strings.TrimSpace(title))
 }
 
-// IsCheckSession reports whether a stored provider session was a check's own.
-// Used at startup to sweep what a hard restart left behind: nothing running
-// answers to these names, because a live check keeps its session reserved and
-// invisible for as long as it runs.
+func reactionSessionName(title string) string {
+	return SessionName(reactionSessionPrefix + strings.TrimSpace(title))
+}
+
+// IsCheckSession reports whether a stored provider session was a check's or a
+// reaction's own. Used at startup to sweep what a hard restart left behind:
+// nothing running answers to these names, because a live one keeps its
+// session reserved and invisible for as long as it runs.
 func IsCheckSession(name string) bool {
-	return strings.HasPrefix(strings.TrimSpace(name), strings.TrimSpace(checkSessionPrefix))
+	name = strings.TrimSpace(name)
+	return strings.HasPrefix(name, strings.TrimSpace(checkSessionPrefix)) || strings.HasPrefix(name, strings.TrimSpace(reactionSessionPrefix))
 }

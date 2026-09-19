@@ -175,7 +175,7 @@ func (f *jobFixture) waitReport(t *testing.T, owner string) Instance {
 		fresh, err := f.svc.Get(owner)
 		if err == nil {
 			for _, m := range fresh.Messages {
-				if m.Wake != nil {
+				if m.IsNote() {
 					return fresh
 				}
 			}
@@ -473,16 +473,16 @@ func TestWakeWithNewsWritesOneMarkedMessageAndNotifies(t *testing.T) {
 		t.Fatalf("want exactly one message, got %d", len(fresh.Messages))
 	}
 	message := fresh.Messages[0]
-	if message.Role != RoleAssistant {
-		t.Fatalf("a check never writes as the user, got role %q", message.Role)
+	if message.Role != RoleCockpit {
+		t.Fatalf("a check's report is a note, the cockpit speaks, got role %q", message.Role)
 	}
-	if message.Wake == nil || message.Wake.Terminal != "term-1" || message.Wake.Verdict != string(VerdictDone) {
-		t.Fatalf("want the message marked as a check, got %+v", message.Wake)
+	if message.Note == nil || message.Note.Terminal != "term-1" || message.Note.Verdict != string(VerdictDone) {
+		t.Fatalf("want the message marked as a check, got %+v", message.Note)
 	}
 	// The report names the job on its own, so the notification about it needs
 	// no lookup that could answer with a successor.
-	if message.Wake.Name != "readme-task" || message.Wake.Project != "demo" {
-		t.Fatalf("want the job named and placed in the note, got %+v", message.Wake)
+	if message.Note.Name != "readme-task" || message.Note.Project != "demo" {
+		t.Fatalf("want the job named and placed in the note, got %+v", message.Note)
 	}
 	if !strings.Contains(message.Content, "README is written") {
 		t.Fatalf("want the report as the message, got %q", message.Content)
@@ -571,7 +571,7 @@ func TestAReportLandsInTheAssistantThatSteered(t *testing.T) {
 		}
 		count := 0
 		for _, m := range fresh.Messages {
-			if m.Wake != nil {
+			if m.IsNote() {
 				count++
 			}
 		}
@@ -806,7 +806,7 @@ func TestChatTurnAndCheckRunAtTheSameTime(t *testing.T) {
 	var chat, wake int
 	for _, m := range fresh.Messages {
 		switch {
-		case m.Wake != nil:
+		case m.IsNote():
 			wake++
 		case m.Role == RoleAssistant && m.Content == "chat answer":
 			chat++
@@ -976,8 +976,8 @@ func TestAJobThatRunsOutReportsOnce(t *testing.T) {
 		t.Fatalf("want exactly one report, got %d messages", len(fresh.Messages))
 	}
 	message := fresh.Messages[0]
-	if message.Role != RoleAssistant || message.Wake == nil || message.Wake.Verdict != string(VerdictExpired) {
-		t.Fatalf("want one message marked as a stopped job, got %+v", message.Wake)
+	if message.Role != RoleCockpit || message.Note == nil || message.Note.Verdict != string(VerdictExpired) {
+		t.Fatalf("want one message marked as a stopped job, got %+v", message.Note)
 	}
 	for _, want := range []string{"stopped steering", "readme-task", "used up", "README.md exists"} {
 		if !strings.Contains(message.Content, want) {
@@ -1060,8 +1060,8 @@ func TestAStandingJobIsNotReportedAsWorking(t *testing.T) {
 		t.Fatalf("want the standstill reported once, got %d messages", len(fresh.Messages))
 	}
 	report := fresh.Messages[0]
-	if report.Wake == nil || report.Wake.Verdict != string(VerdictBlocked) {
-		t.Fatalf("want it reported as blocked, got %+v", report.Wake)
+	if report.Note == nil || report.Note.Verdict != string(VerdictBlocked) {
+		t.Fatalf("want it reported as blocked, got %+v", report.Note)
 	}
 	for _, want := range []string{"is idle and the job is not done", "did not send it anything",
 		"README.md exists", "the coder is still on it", "needs a decision"} {
@@ -1509,7 +1509,7 @@ func TestACheckSurvivesARestart(t *testing.T) {
 			return false
 		}
 		for _, m := range fresh.Messages {
-			if m.Wake != nil {
+			if m.IsNote() {
 				return true
 			}
 		}
@@ -1533,7 +1533,7 @@ func TestACheckSurvivesARestart(t *testing.T) {
 	}
 	var reports []Message
 	for _, m := range fresh.Messages {
-		if m.Wake != nil {
+		if m.IsNote() {
 			reports = append(reports, m)
 		}
 	}
@@ -1608,7 +1608,7 @@ func TestAnOverdueFinishedCheckStillDeliversItsVerdict(t *testing.T) {
 	}
 	found := false
 	for _, m := range fresh.Messages {
-		if m.Wake != nil {
+		if m.IsNote() {
 			if m.Content != "the job is finished" {
 				t.Fatalf("want the verdict, not a timeout, got %q", m.Content)
 			}
@@ -1636,7 +1636,7 @@ func TestAReportIsWrittenOnce(t *testing.T) {
 	fresh, _ := f.svc.Get(c.ID)
 	reports := 0
 	for _, m := range fresh.Messages {
-		if m.Wake != nil {
+		if m.IsNote() {
 			reports++
 		}
 	}
@@ -1657,10 +1657,10 @@ func TestAReportCarriesTheJobsName(t *testing.T) {
 	// The job is closed before its report is written, so the state alone is too
 	// early to read the transcript on.
 	fresh := f.waitReport(t, c.ID)
-	if len(fresh.Messages) != 1 || fresh.Messages[0].Wake == nil {
+	if len(fresh.Messages) != 1 || fresh.Messages[0].Note == nil {
 		t.Fatalf("want one report marked as a check, got %+v", fresh.Messages)
 	}
-	if name := fresh.Messages[0].Wake.Name; name != "readme-task" {
+	if name := fresh.Messages[0].Note.Name; name != "readme-task" {
 		t.Fatalf("want the job's name on the report, got %q", name)
 	}
 
@@ -1674,7 +1674,7 @@ func TestAReportCarriesTheJobsName(t *testing.T) {
 		t.Fatalf("steer: %v", err)
 	}
 	again, _ := f.svc.Get(c.ID)
-	if name := again.Messages[0].Wake.Name; name != "readme-task" {
+	if name := again.Messages[0].Note.Name; name != "readme-task" {
 		t.Fatalf("want the report to keep the name of its own job, got %q", name)
 	}
 }
@@ -1689,10 +1689,10 @@ func TestTheReportOfAJobThatRanOutNamesIt(t *testing.T) {
 	f.watcher.Handle("term-1")
 	f.waitJobState(t, "term-1", JobExpired)
 	fresh, _ := f.svc.Get(c.ID)
-	if len(fresh.Messages) != 1 || fresh.Messages[0].Wake == nil {
+	if len(fresh.Messages) != 1 || fresh.Messages[0].Note == nil {
 		t.Fatalf("want one report, got %+v", fresh.Messages)
 	}
-	if name := fresh.Messages[0].Wake.Name; name != "readme-task" {
+	if name := fresh.Messages[0].Note.Name; name != "readme-task" {
 		t.Fatalf("want the job's name on the report, got %q", name)
 	}
 }
@@ -2076,22 +2076,31 @@ func TestAChangedFileIsReadAgain(t *testing.T) {
 	}
 }
 
-// Deleting a coder deletes its job. Release is for a terminal that stays: the
-// entry keeps standing so the user sees what became of it. A deleted session
-// has nothing to stand next to.
-func TestForgetRemovesTheJobOfADeletedCoder(t *testing.T) {
+// Deleting a coder deletes its job, and an open one is closed with the reason
+// first: nothing will ever report on that terminal again, so its end is now or
+// never, and the user reads what happened to it. Release is for a terminal that
+// stays: the entry keeps standing so the user sees what became of it, and a
+// deleted session has nothing to stand next to.
+func TestDeletingACoderClosesAndRemovesItsJob(t *testing.T) {
 	f := newJobFixture(t, "NOTHING")
 	f.steered(t)
 
-	f.watcher.Forget("term-1")
+	f.watcher.TerminalDeleted("term-1")
 	if _, ok := f.jobs.Get("term-1"); ok {
 		t.Fatal("the job of a deleted coder is still in the store")
 	}
 	if jobs := f.watcher.List(); len(jobs) != 0 {
 		t.Fatalf("want no jobs left, got %+v", jobs)
 	}
+	fresh := f.waitReport(t, f.owner.ID)
+	report := fresh.Messages[len(fresh.Messages)-1]
+	if !report.IsNote() || report.Note.Verdict != string(VerdictExpired) || !strings.Contains(report.Content, "the coder was deleted") {
+		t.Fatalf("want a report saying the coder was deleted, got %+v", report)
+	}
 	// A terminal nobody steers is the normal case here and answers with nothing.
-	f.watcher.Forget("term-1")
+	if dropped := f.watcher.TerminalDeleted("term-1"); len(dropped) != 0 {
+		t.Fatalf("want nothing dropped the second time, got %+v", dropped)
+	}
 }
 
 // The store keys on the terminal, so steering one again renews its job instead

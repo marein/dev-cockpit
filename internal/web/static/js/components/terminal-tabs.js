@@ -11,7 +11,7 @@ import { splitCreateItems } from "@dc/split";
 import { RowDrag } from "@dc/rowdrag";
 import { get } from "@dc/store";
 import { notifyError, notifySuccess } from "@dc/toast";
-import { releaseCoder, steerCoder } from "@dc/steer";
+import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
 import { openFormModal } from "dc-form-modal";
 
 const RESUME_FOLD_LIMIT = 3;
@@ -1145,8 +1145,9 @@ class TerminalTabs extends HTMLElement {
         : kind === "coder" ? `/coders/${id}/stop` : `/shells/${id}/delete`;
       const response = await postForm(action, {});
       await ensureOk(response, "Could not close the session.");
-      notifySuccess(drop ? `Coder "${name}" deleted.`
-        : kind === "coder" ? `Coder "${name}" stopped.` : `Shell "${name}" deleted.`);
+      const data = await response.json().catch(() => null);
+      notifySuccess(alsoDropped(drop ? `Coder "${name}" deleted.`
+        : kind === "coder" ? `Coder "${name}" stopped.` : `Shell "${name}" deleted.`, data));
       if (tab.dataset.tabGroup) {
         this.removeTab(id);
         if (window.location.pathname === "/splits/" + tab.dataset.tabGroup && window.app?.navigate) {

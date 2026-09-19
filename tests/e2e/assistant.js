@@ -1,5 +1,7 @@
 const L = require("./lib");
 const { assert, BASE, sleep } = L;
+const fs = require("fs");
+const path = require("path");
 
 // Assistants: the cockpit's own conversation partners, a page of their own.
 // Several of them live side by side, each with its own thread and its own
@@ -77,6 +79,17 @@ async function dismissUpdate(page) {
 }
 
 const READY = "dc-assistant[ready]";
+
+// The inbox the coder's Stop hook drops into, mounted like wake.js mounts it.
+// Only the show earlier check rings a coder, and without the mount it runs
+// without the note instead of failing.
+const NOTIFY_DIR = process.env.NOTIFY_DIR || "";
+function ring(sessionID) {
+  const name = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const payload = JSON.stringify({ session_id: sessionID, hook_event_name: "Stop" });
+  fs.writeFileSync(path.join(NOTIFY_DIR, `${name}.tmp`), payload);
+  fs.renameSync(path.join(NOTIFY_DIR, `${name}.tmp`), path.join(NOTIFY_DIR, `${name}.json`));
+}
 
 // openAssistant lands on one assistant. With an id it opens that one, which is
 // what every check that has a thread of its own wants. Without one it takes the
@@ -1657,14 +1670,17 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
       return (data.notifications || []).find((n) => n.targetId === id) || null;
     }, chatID);
     assert(entry, "no notification for the assistant");
-    // One bell rings for all of them, so every entry has to say which one
-    // answered: the title is that assistant's own name.
-    assert(entry.title === `${answeredBy} answered.`,
-      `the title does not name the assistant that answered (${answeredBy}): ${entry.title}`);
-    // The title only says that an answer arrived, so the line below it carries
-    // the first words of it, which is what the list, the toast and the phone show.
-    assert((entry.detail || "").length > 0, "the entry carries no words of the answer");
-    assert(!entry.detail.includes("\n") && [...entry.detail].length <= 141,
+    // The title is what happened and nothing else, because a phone's push
+    // gives it one line: the assistant's name is not in it at all.
+    assert(/^Answer ready\.$/.test(entry.title || ""),
+      `the title is not what happened alone (${answeredBy}): ${entry.title}`);
+    assert([...(entry.title || "")].length <= 32,
+      `the title runs past what a push shows: ${entry.title}`);
+    // The name opens the line below instead, in front of the first words of
+    // the answer, which is what the list, the toast and the phone show.
+    assert((entry.detail || "").startsWith(`${answeredBy.slice(0, 12)}`),
+      `the detail does not open with the assistant (${answeredBy}): ${entry.detail}`);
+    assert(!entry.detail.includes("\n") && [...entry.detail].length <= 175,
       `the detail is not one short line: ${entry.detail}`);
     assert(entry.url.startsWith(`/assistants/${chatID}`), `the entry does not name the assistant's page: ${entry.url}`);
     const answered = entry.url.split("#message-")[1];
@@ -1782,6 +1798,71 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     assert(Math.abs(after.top - place.top) < 8,
       `the anchor message moved from ${Math.round(place.top)} to ${Math.round(after.top)}`);
     assert(after.above > 0, "no earlier messages extend above the anchor");
+  });
+
+  // The reader's frame moves by nothing at all: the message they looked at
+  // keeps its place on the screen, measured against the viewport and not
+  // against the scroller, because what once moved was the whole app grid
+  // under an unchanged scroller. A note in the thread is the case that found
+  // it (its badge's hidden label stood outside the scroller), so one is
+  // written first when the inbox is mounted.
+  await run("show earlier messages keeps the reader's place on the phone and on the desktop", async () => {
+    let noted = "no note, NOTIFY_DIR is not set";
+    if (NOTIFY_DIR) {
+      await L.createProject(page, jobsProject).catch(() => {});
+      const jobsDir = await L.projectPath(page, jobsProject);
+      const created = await startCoder(page, jobsDir, "place-task", "Write the README.");
+      assert(created.status === 200, `create answered ${created.status}`);
+      const steered = await postJobs(page, {
+        form: "steer",
+        assistant: chatID,
+        terminal: created.body.id,
+        task: "Write the README",
+        done_when: "WAKE_DONE: README.md exists",
+      });
+      assert(steered.status === 200, `steer answered ${steered.status}: ${JSON.stringify(steered.body)}`);
+      await openAssistant(page, chatID);
+      ring(created.body.id);
+      await page.waitForSelector('[data-assistant-wake="done"]', { timeout: 30000 });
+      await L.stopSession(page, `${BASE}/coders/${created.body.id}`);
+      noted = "a note in the thread";
+    }
+    const mp = await mobilePage();
+    for (const [label, p] of [["desktop", page], ["phone", mp]]) {
+      await openAssistant(p, chatID);
+      const all = p.locator("[data-assistant-all]");
+      assert(await all.isVisible(), `${label}: no way back to the earlier messages`);
+      const shown = await p.locator("[data-assistant-message]").count();
+      const place = await p.evaluate(() => {
+        const scroller = document.querySelector("[data-assistant-scroll]");
+        scroller.scrollTop = 0;
+        const message = scroller.querySelector("[data-assistant-message][data-message-id]");
+        return {
+          id: message.getAttribute("data-message-id"),
+          top: message.getBoundingClientRect().top,
+          thread: scroller.getBoundingClientRect().top,
+        };
+      });
+      await sleep(300);
+      // The element's own click, not the driver's: the driver scrolls a
+      // button into view first, and the place is read on the click.
+      await p.evaluate(() => document.querySelector("[data-assistant-all]").click());
+      await p.waitForFunction((count) => document.querySelectorAll("[data-assistant-message]").length > count, shown, { timeout: 15000 });
+      await p.waitForSelector(READY, { timeout: 15000 });
+      await sleep(500);
+      const after = await p.evaluate((id) => {
+        const scroller = document.querySelector("[data-assistant-scroll]");
+        const message = scroller?.querySelector(`[data-message-id="${id}"]`);
+        if (!message) return null;
+        return { top: message.getBoundingClientRect().top, thread: scroller.getBoundingClientRect().top };
+      }, place.id);
+      assert(after, `${label}: the anchor message is gone from the full transcript`);
+      assert(Math.abs(after.top - place.top) < 2,
+        `${label}: the anchor message moved from ${Math.round(place.top)} to ${Math.round(after.top)} on the screen`);
+      assert(Math.abs(after.thread - place.thread) < 2,
+        `${label}: the thread moved from ${Math.round(place.thread)} to ${Math.round(after.thread)} on the screen`);
+    }
+    return `${noted}, the anchor stands where it stood on both`;
   });
 
   await run("the assistants, memory and jobs lists serve their own fragments", async () => {

@@ -206,6 +206,18 @@ func DocsTopics() []DocsTopic {
 					Desc:     `The coders one assistant steers stand beside its thread on a wide window; below that the steering-wheel button <i class="ti ti-steering-wheel align-text-bottom" aria-hidden="true"></i> in the head opens them, its badge counts the ones still steered. A steered coder names its criterion, the last report, the checks it used and until when it runs, and takes the same criterion again once it is over.`,
 				},
 				{
+					Title:    "A note: the cockpit speaks",
+					Tag:      "Notes",
+					TagClass: "bg-blue-lt",
+					Desc:     `A grey message in the thread is a note, the third kind next to yours and the assistant's: a check's report. It shows its headline and the first line, the rest unfolds on a tap. While an answer streams no note enters the thread, and neither does an answer a reaction pushed: a bar above the composer shows the headline, two at most, from three on the count with an unfold, and a tap opens the full text there. When the answer is done they land under it, in arrival order, without moving the page. The next message you send tells the assistant how many notes and pushed answers arrived since its last answer and where to read them, so it knows what its jobs did without being told.`,
+				},
+				{
+					Title:    "It reacts to events",
+					Tag:      "Subscriptions",
+					TagClass: "bg-blue-lt",
+					Desc:     `A subscription hangs the assistant onto an event: a job of its closing done, blocked or expired, a coder ending its turn or asking a question, a cron schedule. When it fires, the reaction runs in a session of its own like a check, with the task, the assistant's instructions, the memory and its workspace files, never in the conversation, so nothing of yours waits for it. Its answer is pushed into the thread marked <i class="ti ti-bolt align-text-bottom" aria-hidden="true"></i> as started by an event, the event and the task folded above it, and it notifies like any other news, the title saying that a trigger fired and what fired it, and the line below showing the assistant and the answer, never that the assistant answered, because you did not ask for it; an answer whose first line is NOTHING pushes nothing and rings nobody. Two events inside the batch window become one turn, and so does everything that arrives while a reaction of that subscription still runs: one subscription reacts once at a time. Bounds on every one: once or standing, an expiry, at most so many turns per hour; a refused turn shows on the subscription's row alone. One subscription may name several terminals, and Fires on says which of them does it: any of them, or all of them, which waits until every one produced an event and answers once with every report in that one turn. Deleting a coder ends what was arranged about it, because nothing can come from that terminal again: its steered job is closed with that reason, a subscription waiting for it reacts once to the deletion, all of them counts it as arrived, and a subscription with no terminal left is removed, which the answer to the delete says. Stopping a coder keeps its subscriptions, it comes back under the same identifier. They stand under the steered coders in the aside, with the plus <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> to make one and the menu of a row to edit or remove it, and a row says when its reaction runs; the assistant makes, changes and removes its own through the CLI, with the same events and bounds. Edit opens that same form filled with the row: the task, the terminals with their mode, a schedule and the bounds move, the event does not, because another event is another subscription, and what the subscription already did stands, how often it fired and the events waiting in its window included. A terminal that stays keeps what it reached, so a barrier goes on waiting for the ones that have not arrived. One that is done or expired is spent and carries no Edit. They survive a restart, a running reaction, an open batch window and a due schedule included.`,
+				},
+				{
 					Title:    "Steer and release where the coder is",
 					Tag:      "Ownership",
 					TagClass: "bg-blue-lt",
@@ -565,7 +577,7 @@ func DocsTopics() []DocsTopic {
 			Title: "Notifications",
 			Icon:  "ti-bell-ringing",
 			Lead:  "When a coder or shell has news, and where it shows.",
-			Intro: `A notification means that a coder or shell has news. Every one of them reads the same way: one line saying what happened, and below it what it happened in, the name in quotes with its project. Each target has at most one unread entry, and follow-up signals within 30 seconds are intentionally grouped. Opening a visible coder, shell, or split pane marks its news as read everywhere. Terminal icons double as status lights throughout the app: green means busy, blue means unread notifications, gray means idle.`,
+			Intro: `A notification means that a coder or shell has news. Every one of them reads the same way round: one line saying what happened and which coder, shell, job or command it happened to, and below it a piece of what was written, an answer or a report; a coder or a shell writes nothing of its own, so its second line is the project it ran in. Each target has at most one unread entry, and follow-up signals within 30 seconds are intentionally grouped. Opening a visible coder, shell, or split pane marks its news as read everywhere. Terminal icons double as status lights throughout the app: green means busy, blue means unread notifications, gray means idle.`,
 			Items: []DocsItem{
 				{
 					Title: "Coders",
@@ -579,7 +591,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "The assistant",
 					Tag:      "Sparkles",
 					TagClass: "bg-blue-lt",
-					Desc:     `An answer shows its first words below the title, in the entry, in the toast and on the phone. A report about a job says how it ended, done, blocked, or expired, and names the job below that.`,
+					Desc:     `Whatever the assistant sends you, the line below the title carries the first words of it, in the entry, in the toast and on the phone: an answer, a check's report, or the answer a trigger produced. The title says what it is first, an answer, a job that ended done, blocked or expired, or a trigger that fired, then the job or the event behind that, shortened where it is long but never left out, because that is what tells two of the same kind apart. The assistant it came from opens the line below instead: a phone gives a notification one line for the title and three or four for the body.`,
 				},
 				{
 					Title: "In the browser",

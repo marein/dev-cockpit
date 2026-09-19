@@ -92,6 +92,13 @@ type Service struct {
 	onChange func()
 	onDone   func(instanceID string)
 	render   func(string) (string, error)
+
+	// events is the reactor: where an event a source publishes goes, and
+	// where the subscriptions live. Built with the service, see newReactor.
+	events *Reactor
+	// slots is the one cap on the turns nobody asked for interactively, the
+	// checks and the reactions. The watcher sets its limit from the setting.
+	slots *checkSlots
 }
 
 // renderFloor is the shortest gap between two rendered prefixes while an answer
@@ -122,8 +129,10 @@ func newService(store *Store, runs *RunStore, coders Coders, workdirs Workdirs) 
 		hub:      newHub(),
 		running:  map[string]*activeRun{},
 		reserved: map[string]bool{},
+		slots:    newCheckSlots(nil),
 	}
 	s.reconcile()
+	newReactor(s, NewSubscriptions(store), NewJobs(store))
 	return s
 }
 
@@ -256,18 +265,19 @@ func cutMessage(text string, max int) string {
 	return fmt.Sprintf("%s… [cut: %d of %d runes shown, use --full for the whole message]", string(runes[:max]), max, len(runes))
 }
 
-// LastAnswer returns the newest assistant message of an assistant. The
-// notification for a finished turn is raised right after that turn ended, so
-// this is the message it is about: it names the answer in the entry and lets
-// the entry link straight at it.
+// LastAnswer returns the newest message that can ring: an assistant's answer
+// or a note the cockpit wrote, a check's report. The notification for a
+// finished turn is raised right after that turn ended, so this is the message
+// it is about: it names the answer in the entry and lets the entry link
+// straight at it.
 func (s *Service) LastAnswer(id string) (Message, bool) {
 	c, ok := s.store.Load(id)
 	if !ok {
 		return Message{}, false
 	}
 	for i := len(c.Messages) - 1; i >= 0; i-- {
-		if c.Messages[i].Role == RoleAssistant {
-			return c.Messages[i], true
+		if m := c.Messages[i]; m.Role == RoleAssistant || m.IsNote() {
+			return m, true
 		}
 	}
 	return Message{}, false
@@ -453,11 +463,14 @@ func (s *Service) Send(id, prompt string, attachments []Attachment) (Run, error)
 		CreatedAt:   now,
 		State:       StateComplete,
 	}
+	// What the cockpit wrote since the last answer is counted before the
+	// prompt joins the transcript, and the count rides along as one line.
+	since := notesSince(c)
 	c.Messages = append(c.Messages, user)
 	if c.Title == "" || c.Title == DefaultTitle {
 		c.Title = deriveTitle(text, attachments)
 	}
-	r, err := s.startLocked(&c, co, withAttachments(text, attachments), user.ID)
+	r, err := s.startLocked(&c, co, withNotes(since, withAttachments(text, attachments)), user.ID)
 	s.mu.Unlock()
 	if err != nil {
 		return Run{}, err
@@ -683,8 +696,10 @@ func (s *Service) flushReady(instanceID string) {
 		c.Title = deriveTitle(queued[0].Content, queued[0].Attachments)
 	}
 	// The waiting entries go out with the new turn; every open page pulls them
-	// fresh so their bubbles stop saying so.
-	_, err := s.startLocked(&c, co, queuedPrompt(queued), flushed...)
+	// fresh so their bubbles stop saying so. The one line about what the
+	// cockpit wrote since the last answer rides along the way it does on a
+	// send.
+	_, err := s.startLocked(&c, co, withNotes(notesSince(c), queuedPrompt(queued)), flushed...)
 	s.mu.Unlock()
 	if err != nil {
 		// Nothing was written, the messages stay waiting, and the next end of a
@@ -802,6 +817,7 @@ func (s *Service) Delete(id string) error {
 		return err
 	}
 	s.drafts.Forget(id)
+	s.events.Dropped(id)
 	s.release(c.CoderID, c.NativeSessionID)
 	s.mu.Unlock()
 
@@ -856,6 +872,45 @@ func queuedPrompt(msgs []Message) string {
 		fmt.Fprintf(&b, "\n--- Message %d ---\n%s\n", i+1, withAttachments(m.Content, m.Attachments))
 	}
 	return b.String()
+}
+
+// notesSince counts what the cockpit wrote into the thread since the
+// assistant's last chat answer: the notes, a check's reports, and the
+// answers a reaction pushed, which are assistant messages too. A chat turn's
+// prompt used to be the user's text and nothing else, so an assistant learned
+// about its own jobs only when the user told it. The walk stops only at a
+// chat answer, never at a pushed one, because a pushed answer came out of a
+// session that saw nothing of the thread.
+func notesSince(c Instance) int {
+	n := 0
+	for i := len(c.Messages) - 1; i >= 0; i-- {
+		m := c.Messages[i]
+		if m.Role == RoleAssistant && !m.Auto {
+			break
+		}
+		if m.IsNote() || (m.Role == RoleAssistant && m.Auto) {
+			n++
+		}
+	}
+	return n
+}
+
+// withNotes puts one line in front of a user's prompt saying how much the
+// cockpit wrote into the thread since the last answer, and where to read it:
+// a count and not the text, so the thread's own context stays small and the
+// assistant looks only when the user's message needs it.
+func withNotes(n int, prompt string) string {
+	if n == 0 {
+		return prompt
+	}
+	return fmt.Sprintf("Since your last answer the cockpit wrote %d note%s into this thread. job-list and assistant-show on yourself say what, look only when the user's message needs it.\n\n%s", n, plural(n), prompt)
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // withAttachments is the prompt the coder receives. The files are named by

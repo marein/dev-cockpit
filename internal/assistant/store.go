@@ -145,6 +145,16 @@ func (s *Store) load(id string) (Instance, bool) {
 	if c.ID == "" {
 		return Instance{}, false
 	}
+	// A report stored before notes existed carried its check on the wake
+	// key and the assistant's role. It is a note, the cockpit spoke, so it
+	// is read as one: the next save writes the note and drops the old key.
+	// TODO(v2.0.0): drop with WakeNote.
+	for i := range c.Messages {
+		if m := &c.Messages[i]; m.Wake != nil && m.Note == nil {
+			m.Role = RoleCockpit
+			m.Note = noteFromWake(m.Wake)
+		}
+	}
 	return c, true
 }
 

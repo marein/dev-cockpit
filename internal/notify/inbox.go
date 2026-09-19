@@ -58,7 +58,7 @@ func (s *Service) ingestInboxEvent(data []byte) {
 	}
 	switch ev.HookEventName {
 	case "Stop":
-		s.Signal(targetID)
+		s.Event(targetID, ev.HookEventName)
 	case "Notification":
 		// Claude's Notification hook also fires after 60s of plain input
 		// idling, which would re-raise a target the user already saw finish;
@@ -67,7 +67,7 @@ func (s *Service) ingestInboxEvent(data []byte) {
 		if strings.Contains(ev.Message, "waiting for your input") {
 			return
 		}
-		s.Signal(targetID)
+		s.Event(targetID, ev.HookEventName)
 	case "TurnStart":
 		// The opposite raw fact, a coder starting to work, dropped by a
 		// coder whose record only its own process can read. It is nobody's

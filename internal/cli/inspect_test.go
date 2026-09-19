@@ -611,16 +611,22 @@ func TestNotificationsOutputIsEmptyWhenNothingIsUnread(t *testing.T) {
 func TestNotificationsOutputNamesTargetProjectAndLink(t *testing.T) {
 	at := time.Date(2026, 3, 4, 9, 30, 0, 0, time.UTC)
 	out := formatNotifications([]notify.Notification{
+		// A coder writes no text of its own, so it carries no second line and
+		// the project stands in its own column.
 		{
-			TargetName: "Fix the tabs", Title: "Coder has news.", Detail: `"Fix the tabs" - cockpit`,
+			TargetName: "Fix the tabs", Title: "Coder has news, Fix the tabs.",
 			Project: "cockpit", URL: "/coders/aaa", CreatedAt: at,
 		},
-		{Title: "Backup ready.", Detail: `"nightly"`, URL: "/settings/backup", CreatedAt: at},
+		// An assistant does, and its line rides behind the title here.
+		{
+			TargetName: "Release work", Title: "Job done, wake-event.",
+			Detail: "Release work: The README is written.", URL: "/assistants/bbb", CreatedAt: at,
+		},
 	})
 	for _, want := range []string{
 		"Unread notifications (2)",
-		"cockpit", `Coder has news.  "Fix the tabs" - cockpit`, "/coders/aaa",
-		`Backup ready.  "nightly"`, "/settings/backup",
+		"cockpit", "Coder has news, Fix the tabs.", "/coders/aaa",
+		"Job done, wake-event.  Release work: The README is written.", "/assistants/bbb",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("notification-list output is missing %q:\n%s", want, out)

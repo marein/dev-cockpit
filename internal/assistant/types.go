@@ -1,13 +1,21 @@
 package assistant
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
-// Role distinguishes the two message authors.
+// Role distinguishes the three message authors: the user, the assistant, and
+// the cockpit itself, which writes a note when something happened that nobody
+// typed and the assistant did not answer, a check's report or an event.
 type Role string
 
 const (
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
+	// RoleCockpit is the third kind of message, a note: the cockpit speaks. It
+	// is never the user's words and never the assistant's, see Note.
+	RoleCockpit Role = "cockpit"
 )
 
 // State is the delivery state of one message.
@@ -148,13 +156,90 @@ type Message struct {
 	// Error is a curated, user facing sentence. Provider stderr, argv and
 	// paths never reach it.
 	Error string `json:"error,omitempty"`
-	// Wake marks a message a check wrote, so the page can show where it came
-	// from. A check's prompt is never stored, only what it concluded, which is
-	// why nothing in a transcript can look like something the user said.
+	// Note is set on a message the cockpit wrote, the third role: a check's
+	// report. It says where the message came from and carries its headline;
+	// Content is the body. A check's prompt is never stored, only what it
+	// concluded, which is why nothing in a transcript can look like something
+	// the user said.
+	Note *Note `json:"note,omitempty"`
+	// Auto marks an answer that was started without the user: a reaction to
+	// an event the assistant subscribed to, run in a session of its own and
+	// pushed into the thread. Origin says which event and which task, the
+	// page shows it as a folded header over the answer.
+	Auto   bool  `json:"auto,omitempty"`
+	Origin *Note `json:"origin,omitempty"`
+	// Wake is the shape a check's report was stored in before notes existed.
+	// It is read once, on load, and turned into a Note (see Store.load);
+	// nothing writes it any more. TODO(v2.0.0): drop the key and the type.
 	Wake *WakeNote `json:"wake,omitempty"`
 }
 
-// WakeNote says which terminal a check was about and what it concluded.
+// Note is what the cockpit says when it writes into a thread: where the
+// message comes from and one line to read it by. The body is the message's
+// Content. Source says what wrote it: a check's report (NoteCheck, the
+// verdict it concluded in Verdict) is a note of its own, and an event that
+// fired a subscription (NoteEvent, the subscription in Subscription, its task
+// in Task and the events it carries in Count) is the origin a pushed answer
+// carries, never a note in the thread.
+type Note struct {
+	Source   string `json:"source"`
+	Headline string `json:"headline"`
+	// Verdict is what a check concluded, for a check's report; an event note
+	// carries the kind of its event here (done, blocked, ended, tick, ...).
+	Verdict string `json:"verdict,omitempty"`
+	// Terminal, Name and Project say which coder the note is about, written
+	// down at the time: the job is gone by the time somebody reads it, or the
+	// terminal is steered again and a lookup would answer with its successor.
+	Terminal string `json:"terminal,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Project  string `json:"project,omitempty"`
+	// Subscription is the subscription an event fired, Task what that
+	// subscription asks the assistant to do, Count how many events the
+	// reaction bundles (a batch window turns several into one turn).
+	Subscription string `json:"subscription,omitempty"`
+	Task         string `json:"task,omitempty"`
+	Count        int    `json:"count,omitempty"`
+}
+
+// The note sources.
+const (
+	NoteCheck = "check"
+	NoteEvent = "event"
+)
+
+// IsNote reports whether the cockpit wrote this message.
+func (m Message) IsNote() bool { return m.Role == RoleCockpit && m.Note != nil }
+
+// noteFromWake turns a report stored before notes existed into the note it
+// is: a check's report, headline built the way recordWake builds it now.
+// TODO(v2.0.0): goes with WakeNote.
+func noteFromWake(w *WakeNote) *Note {
+	return &Note{
+		Source:   NoteCheck,
+		Headline: checkHeadline(w.Verdict, w.Name, w.Terminal),
+		Verdict:  w.Verdict,
+		Terminal: w.Terminal,
+		Name:     w.Name,
+		Project:  w.Project,
+	}
+}
+
+// checkHeadline is the one line a check's report is read by: the verdict in
+// capitals and the job's name, "DONE: readme-task".
+func checkHeadline(verdict, name, terminal string) string {
+	word := strings.ToUpper(strings.TrimSpace(verdict))
+	if word == "" {
+		word = "CHECKED"
+	}
+	if strings.TrimSpace(name) == "" {
+		name = terminal
+	}
+	return word + ": " + strings.TrimSpace(name)
+}
+
+// WakeNote says which terminal a check was about and what it concluded. It is
+// the stored shape of a report from before notes existed, read on load and
+// written nowhere. TODO(v2.0.0): drop with Message.Wake.
 type WakeNote struct {
 	Terminal string `json:"terminal"`
 	// Name is the coder's name as the job carried it when this report was

@@ -277,6 +277,7 @@ func newAssistantCommand() *cobra.Command {
 		newAssistantsCommand(opts), newAssistantCommandShow(opts), newDeleteAssistantCommand(opts),
 		newJobsCommand(opts), newJobCommand(opts),
 		newNotificationsCommand(opts),
+		newSubscribeCommand(opts), newSubscriptionsCommand(opts), newSubscriptionEditCommand(opts), newUnsubscribeCommand(opts),
 		newProjectCommand(opts), newDeleteProjectCommand(opts),
 		newLineCommentListCommand(opts), newLineCommentAddCommand(opts), newLineCommentRemoveCommand(opts),
 		newOutputCommand(opts),
@@ -490,10 +491,8 @@ func runServe(opts serveOptions) error {
 	// wired further down with the server.
 	askBroker := askpass.New(cfg.StateDir)
 
-	notifier := notify.NewService(
-		notify.StorePath(cfg.StateDir),
-		notifyResolver(coders, shells, conversations, projectRepo, backups, dockerService, askBroker),
-	)
+	resolveTarget := notifyResolver(coders, shells, conversations, projectRepo, backups, dockerService, askBroker)
+	notifier := notify.NewService(notify.StorePath(cfg.StateDir), resolveTarget)
 	// The push channels subscribe before any watcher starts, so an inbox
 	// backlog ingested right after boot cannot slip past them.
 	pushService, err := push.NewService(cfg.StateDir)
@@ -621,6 +620,22 @@ func runServe(opts serveOptions) error {
 		watcher.Handle(targetID)
 		tracker.SetTurn(targetID, false, false, time.Now())
 	})
+	// The same signal, with the hook name it arrived under, is a coder event
+	// the assistants may subscribe to: a Notification hook is a coder that
+	// asks a question or wants a permission, every other name is a turn that
+	// ended. The headline names the coder the way a notification does.
+	events := conversations.Events()
+	events.SetCoderNamer(func(terminal string) (string, string) {
+		info := resolveTarget(terminal)
+		return info.Name, info.Project
+	})
+	notifier.SetEvent(func(targetID, hook string) {
+		kind := assistant.CoderKindEnded
+		if hook == "Notification" {
+			kind = assistant.CoderKindAsks
+		}
+		events.Coder(targetID, kind)
+	})
 	// And the opposite fact from the one coder whose record arrives as push
 	// events instead of a readable file.
 	notifier.SetTurnOpen(func(targetID string) {
@@ -689,6 +704,12 @@ func runServe(opts serveOptions) error {
 	adopted := conversations.Recover()
 	watcher.Recover(adopted)
 	sweepCheckSessions(coders, assistantService.IsWorkdir)
+	// The subscriptions are on disk with everything they were in the middle
+	// of, so the reactor only catches up on what happened while nobody was
+	// listening: a job that closed in the gap, a cron tick that fell due, a
+	// batch window that closed. After the turns above, because a turn it
+	// starts has to see whether a chat turn is running.
+	events.Recover()
 	// The compose runs of the previous process are detached the same way and
 	// keep going too. This puts their busy marks and their directory claims
 	// back, and reports the ones that finished while nobody was there to hear
@@ -701,6 +722,7 @@ func runServe(opts serveOptions) error {
 	// is worth one. It also ends the jobs whose time or budget is up, because a
 	// job that goes quiet has no signal left to write that report with.
 	go watcher.RunHeartbeat(0)
+	go events.Run(0)
 
 	for _, c := range selected {
 		go notifier.RunInbox(notify.InboxDir(cfg.StateDir, c.ID()), time.Second)
@@ -738,8 +760,10 @@ func runServe(opts serveOptions) error {
 			if err := codercopilot.EnsureBeepSetting(); err != nil {
 				log.Printf("copilot beep setting: %v", err)
 			}
+			// A bell has no hook name; it rings for a turn that ended and
+			// for a question alike, and it is read as the former.
 			onBell = func(targetID string) {
-				notifier.Signal(targetID)
+				notifier.Event(targetID, "Bell")
 			}
 		}
 		// A session entering the running set brings its coder's chosen
@@ -854,7 +878,7 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 			if action := askBroker.Find(project); action != nil {
 				actionName = action.Name()
 			}
-			info.Title, info.Detail = gitPromptNews(actionName, project)
+			info.Title, info.Detail = gitPromptNews(actionName)
 			return info
 		}
 		if notify.IsDockerTarget(targetID) {
@@ -890,19 +914,19 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 			if entry.ID != targetID {
 				continue
 			}
-			// One bell for all of them, and every entry names the assistant
-			// that rang it: with several of them "the assistant answered" would
-			// send the user looking through threads for which one. The name is
-			// what it is called, falling back to the surface's own word for an
-			// assistant nobody has named yet. The link is that assistant's
-			// page, and the fragment names the answer the page scrolls to.
+			// One bell for all of them. The name is what this assistant is
+			// called, cut to a label, and it opens the line below the title.
+			// The link is that assistant's page, and the fragment names the
+			// answer the page scrolls to. An assistant with nothing in it goes
+			// through the same wording with an empty message, so there is one
+			// sentence for the branch and not two.
 			info.Name = assistantNewsName(entry)
 			info.URL = "/assistants/" + entry.ID
-			info.Title = fmt.Sprintf("%s answered.", info.Name)
-			if m, ok := conversations.LastAnswer(entry.ID); ok {
+			m, ok := conversations.LastAnswer(entry.ID)
+			if ok {
 				info.URL += "#message-" + m.ID
-				info.Title, info.Detail = assistantNews(info.Name, m)
 			}
+			info.Title, info.Detail = assistantNews(info.Name, m)
 			return info
 		}
 		if targetID == notify.BackupTarget {
@@ -922,7 +946,7 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 					info.Name = r.Name
 					info.Project = projects.ProjectNameFor(r.CWD)
 					info.URL = "/coders/" + r.Identifier
-					info.Title, info.Detail = coderNews(info.Name, info.Project)
+					info.Title, info.Detail = coderNews(info.Name)
 					return info
 				}
 			}
@@ -931,7 +955,7 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 					info.Name = stored.Name
 					info.Project = projects.ProjectNameFor(stored.CWD)
 					info.URL = "/coders/" + stored.SessionID
-					info.Title, info.Detail = coderNews(info.Name, info.Project)
+					info.Title, info.Detail = coderNews(info.Name)
 					return info
 				}
 			}
@@ -941,7 +965,7 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 				info.Name = sh.Name
 				info.Project = projects.ProjectNameFor(sh.CWD)
 				info.URL = "/shells/" + sh.Identifier
-				info.Title, info.Detail = shellNews(info.Name, info.Project)
+				info.Title, info.Detail = shellNews(info.Name)
 				return info
 			}
 		}
@@ -958,112 +982,208 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 // it stays one wording. internal/notify writes the entries and classifies
 // nothing, so nothing of this belongs there.
 
-// newsTarget writes that lower line for a named target: the name in quotes,
-// because a name made of ordinary words would otherwise read as part of a
-// sentence, and the project behind it when there is one.
-func newsTarget(name, project string) string {
-	name = strings.TrimSpace(name)
-	project = strings.TrimSpace(project)
-	if name == "" {
-		return ""
-	}
-	if project == "" {
-		return fmt.Sprintf("%q", name)
-	}
-	return fmt.Sprintf("%q - %s", name, project)
-}
+// The kinds below write no text of their own, so their lower line stays empty
+// and the entry falls back to Notification.Project, which every surface already
+// draws in its place: with a folder in front of it in the bell's list and in a
+// toast, as the body of a push, in a column of its own in the CLI's list. That
+// is the one thing left to say once the identifier stands in the title, and
+// saying the identifier twice would spend the only line there is on a word the
+// reader has already read.
 
-// coderNews is what a coder's signal says, and it says no more than that there
-// is news: whether the coder finished its turn, asks a question or waits for a
+// coderNews is what a coder's signal says: that there is news, and in which
+// coder. Whether the coder finished its turn, asks a question or waits for a
 // permission is what this cockpit deliberately does not classify, see
 // internal/notify.
-func coderNews(name, project string) (title, detail string) {
-	return "Coder has news.", newsTarget(name, project)
+func coderNews(name string) (title, detail string) {
+	return newsTitle("Coder has news", name), ""
 }
 
 // shellNews is what a shell's signal says. A shell reports when a foreground
-// command ended, so that is what the title says.
-func shellNews(name, project string) (title, detail string) {
-	return "Command finished.", newsTarget(name, project)
+// command ended, so that is what the title says, with the shell behind it.
+func shellNews(name string) (title, detail string) {
+	return newsTitle("Command finished", name), ""
 }
 
-// backupNews is what a finished backup job says. A backup belongs to no
-// project, so its lower line is the archive name alone.
+// backupNews is what a finished backup job says, with the archive behind how
+// it went. A backup belongs to no project, so nothing stands below it.
 func backupNews(name string, ok bool) (title, detail string) {
-	title = "Backup failed."
+	kind := "Backup failed"
 	if ok {
-		title = "Backup ready."
+		kind = "Backup ready"
 	}
-	return title, newsTarget(name, "")
+	return newsTitle(kind, name), ""
 }
 
-// gitPromptNews is what a standing askpass question says: git is waiting for
-// an answer, and the line below names the action and the project it runs in.
-// The entry is marked read again the moment the question no longer stands,
-// however it went, so the title may speak in the present.
-func gitPromptNews(action, project string) (title, detail string) {
-	return "Git asks a question.", newsTarget(action, project)
+// gitPromptNews is what a standing askpass question says: git is waiting for an
+// answer, and the action it is waiting in stands behind that. The entry is
+// marked read again the moment the question no longer stands, however it went,
+// so the title may speak in the present.
+func gitPromptNews(action string) (title, detail string) {
+	return newsTitle("Git asks a question", action), ""
 }
 
-// composeNews is what a finished docker compose run says: the command that
-// ran as the name, the project it ran for behind it.
+// composeNews is what a finished docker compose run says: how it went, and the
+// command that ran behind it.
 func composeNews(run docker.RunView) (title, detail string) {
-	title = "Compose finished."
+	kind := "Compose finished"
 	if run.Failure != "" {
-		title = "Compose failed."
+		kind = "Compose failed"
 	}
 	name := run.Action
 	if name == "" {
 		name = "compose"
 	}
-	return title, newsTarget(name, run.Project)
+	return newsTitle(kind, name), ""
 }
 
 // assistantNewsName is the name a notification is rung under: what this
 // assistant is called, and the surface's own word for one that has not been
-// named yet.
+// named yet. That name is the conversation's title, which is written from the
+// first message somebody typed and is a whole paragraph as often as not, so it
+// goes through the same cut a coder's session title does. A paragraph is
+// unusable in every surface that shows it: the head of a notification's lower
+// line, and the "Something new in ..." an unresolved entry falls back to.
 func assistantNewsName(entry assistant.Summary) string {
 	if title := strings.TrimSpace(entry.Title); title != "" && title != assistant.DefaultTitle {
-		return title
+		return coder.ShortTitle(title)
 	}
 	return assistant.Name
 }
 
-// assistantNews is what a notification about one assistant says: a report about
-// a job says how the job ended and names it below, everything else says that an
-// answer arrived and shows the first words of it, because that title says that
-// something arrived and not what. who is the assistant it comes from, so the
-// user knows which thread to open before they open one.
+// assistantNews is what a notification about one assistant says, and it says
+// it in two lines that divide the work. The title is what happened and what it
+// happened to, see assistantTitle. The line below it is the assistant this
+// comes from and then an excerpt of what was written, see assistantDetail: an
+// entry that only said that something happened would send the user into the
+// thread to find out what.
 //
-// The job's name and project come from the message's own note, never from a
-// lookup: this resolver runs before the job store exists, and a terminal that is
-// steered again would hand back the successor's job. A report from before the
-// note carried them names what it can.
+// Every kind names a thing and what became of it, so the first word already
+// tells a job from a trigger from an answer, and the second tells the endings
+// of each apart. That is the whole point of the wording: a line cut after a
+// handful of runes still has to say what this is.
+//
+// A report's excerpt does not repeat the verdict its title already says: the
+// report is stored without it, parseVerdict cuts the word off the answer
+// before it is ever written down.
+//
+// The job's name comes from the message's own note, never from a lookup: this
+// resolver runs before the job store exists, and a terminal that is steered
+// again would hand back the successor's job. A report from before the note
+// carried one names what it can.
 func assistantNews(who string, m assistant.Message) (title, detail string) {
-	if m.Wake != nil {
+	detail = assistantDetail(who, answerExcerpt(m.Content))
+	if m.Note != nil && m.Note.Source == assistant.NoteCheck {
 		// A job ends in one of three states and the title says which one, in
-		// the words of the JobState it was closed with.
-		switch m.Wake.Verdict {
+		// the words of the JobState it was closed with, with the job behind
+		// it: the report below says what happened, the title says to what.
+		switch m.Note.Verdict {
 		case string(assistant.VerdictDone):
-			title = "Job done."
+			return newsTitle("Job done", m.Note.Name), detail
 		case string(assistant.VerdictBlocked):
-			title = "Job blocked."
+			return newsTitle("Job blocked", m.Note.Name), detail
 		case string(assistant.VerdictExpired):
-			title = "Job expired."
-		}
-		if title != "" && who != "" {
-			title = who + ": " + strings.ToLower(title[:1]) + title[1:]
-		}
-		if title != "" {
-			return title, newsTarget(m.Wake.Name, m.Wake.Project)
+			return newsTitle("Job expired", m.Note.Name), detail
 		}
 	}
-	if m.State == assistant.StateFailed || m.State == assistant.StateInterrupted {
+	unfinished := m.State == assistant.StateFailed || m.State == assistant.StateInterrupted
+	// Nobody asked for this answer, so the title says a trigger fired rather
+	// than that the assistant answered, and it says it for a turn that broke
+	// off too: what is on the screen has to be recognizable as a reaction
+	// either way.
+	if m.Origin != nil && m.Origin.Source == assistant.NoteEvent {
+		kind := "Trigger fired"
+		if unfinished {
+			// The word the thread and the code use for a turn that stopped
+			// before it was done.
+			kind = "Trigger broke off"
+		}
+		ident := m.Origin.Headline
+		if m.Origin.Count > 1 {
+			// A batch window folded several events into this one turn, and
+			// how many they were is what the title says then, rather than one
+			// of the headlines standing for all of them.
+			ident = fmt.Sprintf("%d events", m.Origin.Count)
+		}
+		return newsTitle(kind, ident), detail
+	}
+	if unfinished {
 		// Whatever was written before it broke off is still the best line
 		// about what the turn was doing.
-		return fmt.Sprintf("%s could not finish.", who), answerExcerpt(m.Content)
+		return newsTitle("Answer broke off", ""), detail
 	}
-	return fmt.Sprintf("%s answered.", who), answerExcerpt(m.Content)
+	return newsTitle("Answer ready", ""), detail
+}
+
+// newsTitleRunes bounds the upper line of a notification. It surfaces as one
+// line in three places of different widths: the bell's list and a toast, which
+// hold 40 to 46 runes, and a phone's push, where iOS gives the title one line
+// and writes the app's own name on the second, and a lock screen of this
+// cockpit's own pushes ran out at 32 runes with the system's mark among them.
+//
+// It follows the wider two. Writing for the push would mean the list and the
+// toast throwing away room they have, and what a push cuts is by construction
+// the cheapest part of the line: the identifier stands last and is already
+// shortened here, so iOS takes a few runes off an end that is a shortening
+// either way, and never the kind, which stands first and is what the reader
+// cannot get anywhere else.
+const newsTitleRunes = 40
+
+// newsTitle writes that upper line, and every kind of notification goes
+// through it: what happened, and the identifier of what it happened to behind
+// a comma. A reader should never have to work out which pattern a line was
+// built on, so a coder, a shell, a backup, a git question, a compose run and
+// an assistant all read the same way round.
+//
+// The kind is never cut, without it the line says nothing at all. The
+// identifier is never left out either: it is the one part that tells two
+// messages of the same kind apart, and no other line of the entry carries it,
+// the assistant's excerpt being the text that was written rather than a word
+// about the job, and the other kinds writing no text at all. So it is
+// shortened to what the kind leaves, by the same cut every other line of a
+// notification goes through: at a word boundary where it has one, and at the
+// rune for a name like "notification-titel-reihenfolge", which has none.
+//
+// Nothing else is in the line. For an assistant that is the point: the name it
+// comes from opens the line below instead, see assistantDetail, because four
+// jobs of one assistant all reading "Job done." tell nobody which one ended.
+func newsTitle(kind, ident string) string {
+	// ", " stands in front of the identifier and comes out of its room.
+	room := newsTitleRunes - utf8.RuneCountInString(kind) - 2
+	if ident = oneLine(ident); ident == "" || room <= 1 {
+		return kind + "."
+	}
+	// An identifier that fits with the full stop beside it gets one.
+	if utf8.RuneCountInString(ident) <= room-1 {
+		return kind + ", " + ident + "."
+	}
+	// Otherwise the identifier is what ends the line: shortened, with the mark
+	// that says so, or filling the room to the last rune, which leaves none
+	// for a stop and loses nothing by it. A stop behind the mark would only
+	// read as a fourth dot.
+	return kind + ", " + cutLine(ident, room)
+}
+
+// assistantDetail writes the lower line: the assistant this comes from, then
+// an excerpt of what was written. The name stands here and nowhere else,
+// because a phone gives the title one line and the body three or four, and it
+// is put in front of the excerpt rather than taken out of it, so what was
+// written keeps its whole length. It is already a label by the time it gets
+// here, see assistantNewsName.
+func assistantDetail(who, excerpt string) string {
+	who = oneLine(who)
+	switch {
+	case who == "":
+		return excerpt
+	case excerpt == "":
+		return who
+	}
+	return who + ": " + excerpt
+}
+
+// oneLine folds every line break and indent into one space: a title and an
+// excerpt land on a single line wherever they surface.
+func oneLine(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // answerExcerptRunes is how much of an answer a notification carries: enough
@@ -1077,23 +1197,47 @@ const answerExcerptRunes = 140
 // becomes one space: this lands in a single line wherever it surfaces. The cut
 // sits on a word boundary, a word torn in half reads as a rendering fault.
 func answerExcerpt(content string) string {
-	plain := strings.Join(strings.Fields(markdown.Plain(content)), " ")
-	if utf8.RuneCountInString(plain) <= answerExcerptRunes {
+	return cutExcerpt(oneLine(markdown.Plain(content)))
+}
+
+// cutExcerpt cuts one line to what a notification carries, on a word boundary.
+func cutExcerpt(plain string) string {
+	return cutLine(plain, answerExcerptRunes)
+}
+
+// cutLine cuts one line to max runes, the mark that says it goes on included,
+// so a budget means the same thing wherever it is measured. The cut sits on a
+// word boundary, a word torn in half reads as a rendering fault, but only
+// where that boundary is past half of the room: a line with no boundary at all
+// ("notification-titel-reihenfolge") and one whose last boundary sits near its
+// start ("Coder asks: git" in twelve runes) are cut at the rune instead,
+// because giving up more than half the room buys a whole word with what was
+// the difference between two of these lines. That is the same trade
+// coder.ShortTitle makes for a session label.
+func cutLine(plain string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(plain) <= max {
 		return plain
 	}
-	cut := plain
-	runes := 0
-	for i := range plain {
-		if runes == answerExcerptRunes {
-			cut = plain[:i]
-			break
-		}
-		runes++
-	}
-	if space := strings.LastIndexByte(cut, ' '); space > 0 {
+	cut := runePrefix(plain, max-1)
+	if space := strings.LastIndexByte(cut, ' '); space > max/2 {
 		cut = cut[:space]
 	}
 	return cut + "…"
+}
+
+// runePrefix is the first max runes of s.
+func runePrefix(s string, max int) string {
+	runes := 0
+	for i := range s {
+		if runes == max {
+			return s[:i]
+		}
+		runes++
+	}
+	return s
 }
 
 // assistantCoders adapts the installed coders to what the assistant needs,

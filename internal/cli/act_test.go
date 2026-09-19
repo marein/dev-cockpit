@@ -120,7 +120,7 @@ func TestNewCoderStartsWithTheTaskInOneRequest(t *testing.T) {
 
 	var out strings.Builder
 	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
-	if err := runNewCoder(&out, opts, "demo", "readme-task", "claude", "", "Write the README.", ""); err != nil {
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "claude", "", "Write the README.", "", ""); err != nil {
 		t.Fatalf("coder-new: %v", err)
 	}
 	if len(paths) != 1 || paths[0] != "/coders/new" {
@@ -160,7 +160,7 @@ func TestNewCoderSteersInTheSameRequest(t *testing.T) {
 
 	var out strings.Builder
 	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
-	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "Write the README.", "README.md exists"); err != nil {
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "Write the README.", "README.md exists", ""); err != nil {
 		t.Fatalf("coder-new: %v", err)
 	}
 	if len(paths) != 1 || paths[0] != "/coders/new" {
@@ -174,6 +174,55 @@ func TestNewCoderSteersInTheSameRequest(t *testing.T) {
 	}
 }
 
+// The sequel is wired in the same request as the job it hangs on: nothing
+// stands between the coder starting and the arrangement standing, so a job
+// that is done in a minute cannot outrun it. The answer names the
+// subscription, which is how a turn can drop it again.
+func TestNewCoderWiresTheSequelInTheSameRequest(t *testing.T) {
+	var paths []string
+	var form url.Values
+	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		paths = append(paths, r.URL.Path)
+		form, _ = url.ParseQuery(string(body))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cid-1","project":"demo","url":"/coders/cid-1","maxWakes":10,"subscription":"9f2c0a1b7d3e4f50"}`))
+	})
+
+	var out strings.Builder
+	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "Write the README.", "README.md exists", "start a reviewer on demo"); err != nil {
+		t.Fatalf("coder-new: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "/coders/new" {
+		t.Fatalf("want one create request carrying job and sequel, got %v", paths)
+	}
+	if form.Get("then") != "start a reviewer on demo" {
+		t.Fatalf("the sequel did not travel with the create request: %q", form.Get("then"))
+	}
+	if !strings.Contains(out.String(), "subscription 9f2c0a1b7d3e4f50 fires once when that job is done") {
+		t.Fatalf("the output has to name the subscription, got %q", out.String())
+	}
+}
+
+// A sequel the server refused is a failure of the command: the coder runs and
+// the job stands, but nobody would carry the work on.
+func TestNewCoderReportsASequelThatCouldNotBeWired(t *testing.T) {
+	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cid-1","project":"demo","url":"/coders/cid-1","maxWakes":10,"thenError":"This assistant already holds 50 standing subscriptions. Remove one first."}`))
+	})
+
+	var out strings.Builder
+	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "demo", "task", "", "", "", "README.md exists", "start a reviewer")
+	if err == nil || !strings.Contains(err.Error(), "already holds 50") {
+		t.Fatalf("want the server's own sentence as the error, got %v", err)
+	}
+	if !strings.Contains(out.String(), "steering it") {
+		t.Fatalf("the output has to say the job stands either way, got %q", out.String())
+	}
+}
+
 // A coder that started but could not be steered is a failure of the command,
 // and the output still says what runs.
 func TestNewCoderReportsAJobThatCouldNotBeAttached(t *testing.T) {
@@ -183,7 +232,7 @@ func TestNewCoderReportsAJobThatCouldNotBeAttached(t *testing.T) {
 	})
 
 	var out strings.Builder
-	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "demo", "task", "", "", "", "README.md exists")
+	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "demo", "task", "", "", "", "README.md exists", "")
 	if err == nil || !strings.Contains(err.Error(), "already steered") {
 		t.Fatalf("want the server's own sentence as the error, got %v", err)
 	}
@@ -197,7 +246,7 @@ func TestNewCoderReportsAJobThatCouldNotBeAttached(t *testing.T) {
 func TestNewCoderReportsTheRefusal(t *testing.T) {
 	dir := refusing(t, "Selected project does not exist: /projects/nope")
 	var out strings.Builder
-	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "nope", "task", "", "", "", "")
+	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "nope", "task", "", "", "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("want the handler's own sentence, got %v", err)
 	}
@@ -283,7 +332,7 @@ func TestSteerAndNewCoderHandOnTheTaskCutNotice(t *testing.T) {
 
 	out.Reset()
 	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
-	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "a long briefing", "README.md exists"); err != nil {
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "a long briefing", "README.md exists", ""); err != nil {
 		t.Fatalf("coder-new: %v", err)
 	}
 	if !strings.Contains(out.String(), "task was cut at 16000 runes") {

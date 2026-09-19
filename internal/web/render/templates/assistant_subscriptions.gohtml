@@ -1,0 +1,139 @@
+{{/* The subscriptions of one assistant: what it reacts to. They stand in the
+     aside under the steered coders, a section of their own with the form that
+     makes one behind the plus in its head. The list is a dc-assistant-list
+     that refreshes itself from /assistants/subscriptions?assistant=<id> on
+     the assistant event, so a fired subscription moves its row without a
+     reload; the form stands outside the swapped body, so typing into it
+     survives a refresh. */}}
+{{define "assistant_subscriptions_list.gohtml"}}
+<div data-assistant-body data-assistant-subscriptions-open="{{.Open}}">
+  {{if .Subscriptions}}
+  <div class="list-group list-group-flush" data-assistant-subscriptions>
+    {{range .Subscriptions}}
+    <div class="list-group-item px-0" data-assistant-subscription="{{.ID}}" data-assistant-subscription-label="{{.Label}}{{if .Where}}, {{.Where}}{{end}}"{{if .TargetURL}} data-assistant-subscription-url="{{.TargetURL}}"{{end}}{{if .Edit}} data-assistant-subscription-edit="{{.Edit}}"{{end}}>
+      <div class="d-flex align-items-center gap-2">
+        <span class="dc-term-icon{{if .Open}} running{{end}}" aria-hidden="true"><i class="ti {{if eq .Source "cron"}}ti-clock-hour-4{{else}}ti-bolt{{end}}"></i></span>
+        <div class="min-w-0 flex-fill">
+          <div class="fw-medium text-truncate" data-assistant-subscription-event>{{.Label}}{{if .Where}} <span class="text-secondary fw-normal">· {{.Where}}</span>{{end}}</div>
+          <div class="text-secondary small text-truncate" title="{{.Task}}" data-assistant-subscription-task>{{.Task}}</div>
+        </div>
+        {{if .Reacting}}<span class="badge bg-purple-lt flex-shrink-0" data-assistant-subscription-reacting><span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>reacting</span>{{end}}
+        {{if .Pending}}<span class="badge bg-purple-lt flex-shrink-0" data-assistant-subscription-pending><span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>{{.Pending}}</span>{{end}}
+        <span class="badge flex-shrink-0 {{if .Open}}bg-blue-lt{{else if eq .State "done"}}bg-green-lt{{else}}bg-secondary-lt{{end}}" data-assistant-subscription-state>{{if and .Open .Once}}once{{else}}{{.State}}{{end}}</span>
+        {{/* The three dots open the row's menu, the same menu a right click
+             and a long press open; the overlay makes the small button a
+             finger's target. */}}
+        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary flex-shrink-0 position-relative" aria-label="Subscription actions" title="Actions" data-assistant-subscription-menu><span class="position-absolute" style="inset:-.5625rem" aria-hidden="true"></span><i class="ti ti-dots" aria-hidden="true"></i></button>
+      </div>
+      <div class="text-secondary small mt-1" data-assistant-subscription-facts>{{if .Owner}}{{.Owner}} · {{end}}fired {{.Fired}}{{if .Next}} · next <dc-time datetime="{{.Next}}"></dc-time>{{end}}{{if .Until}} · until <dc-time datetime="{{.Until}}"></dc-time>{{else}} · no expiry{{end}}</div>
+      {{if .Note}}<div class="small text-break text-secondary mt-1" data-assistant-subscription-note>{{.Note}}</div>{{end}}
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="text-secondary small py-2" data-assistant-subscriptions-empty>Nothing yet. Subscribe to a job's end, a coder's question or a schedule, and the assistant reacts on its own, in this thread.</div>
+  {{end}}
+</div>
+{{end}}
+
+{{/* The form that makes one, and the form that changes one: the row's Edit
+     fills these very fields and posts them to the same path with form=edit,
+     so there is one form and one set of fields. The event picks which target
+     field shows: the owner's open jobs for a job event, the running coders
+     for a coder event, the schedule for cron; the element
+     dc-assistant-subscribe switches them and posts the form. Both terminal
+     fields take several, and the mode beside them says whether any of them
+     fires it or every one has to. Every field here is a flag of
+     `subscription-new` and of `subscription-edit`, nothing is page only.
+
+     The hidden empty value in front of the terminal selects and the once box
+     is what lets a change clear them: a multiple select with nothing picked
+     and an unchecked box post nothing at all, and a field that is not there
+     is one nobody named, which leaves what stands. */}}
+{{define "assistant_subscriptions_form.gohtml"}}
+<dc-assistant-subscribe class="d-block" data-assistant-subscribe>
+  <div class="dc-aside-head mt-2" data-assistant-subscriptions-head>
+    <i class="ti ti-bolt" aria-hidden="true"></i><span>Subscriptions</span>
+    <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary ms-auto position-relative" data-bs-toggle="collapse" data-bs-target="#assistant-subscribe-form" aria-expanded="false" aria-controls="assistant-subscribe-form" aria-label="New subscription" title="New subscription" data-assistant-subscribe-open><span class="position-absolute" style="inset:-.5625rem" aria-hidden="true"></span><i class="ti ti-plus" aria-hidden="true"></i></button>
+  </div>
+  <form method="post" action="{{.URL}}" class="collapse mt-2" id="assistant-subscribe-form" data-assistant-subscribe-form autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="hidden" name="form" value="new" data-subscribe-form-field>
+    <input type="hidden" name="id" value="" data-subscribe-id>
+    <input type="hidden" name="assistant" value="{{.Owner}}">
+    <div class="mb-2">
+      <label class="form-label" for="assistant-subscribe-event">Event</label>
+      <select class="form-select" name="event" id="assistant-subscribe-event" data-subscribe-event>
+        {{range .Events}}<option value="{{.Name}}" data-source="{{.Source}}" title="{{.Help}}">{{.Label}}</option>{{end}}
+      </select>
+    </div>
+    <div class="mb-2" data-subscribe-target="job">
+      <label class="form-label" for="assistant-subscribe-job">Jobs</label>
+      <input type="hidden" name="terminal" value="">
+      <select class="form-select" name="terminal" id="assistant-subscribe-job" multiple size="4">
+        {{range .Jobs}}<option value="{{.Terminal}}">{{.Name}}{{if .Project}} · {{.Project}}{{end}}</option>{{end}}
+      </select>
+      <div class="form-hint">Nothing picked is any job of mine.</div>
+    </div>
+    <div class="mb-2" data-subscribe-target="coder" hidden>
+      <label class="form-label" for="assistant-subscribe-coder">Coders</label>
+      <input type="hidden" name="terminal" value="" disabled>
+      <select class="form-select" name="terminal" id="assistant-subscribe-coder" multiple size="4" disabled>
+        {{range .Coders}}<option value="{{.Terminal}}">{{.Name}}{{if .Project}} · {{.Project}}{{end}}</option>{{end}}
+      </select>
+      <div class="form-hint">Nothing picked is any coder.</div>
+    </div>
+    {{/* With several terminals picked the mode decides: any of them fires it,
+         or every one has to, which is a barrier that answers once with every
+         report in one turn. */}}
+    <div class="mb-2" data-subscribe-mode>
+      <label class="form-label" for="assistant-subscribe-mode">Fires on</label>
+      <select class="form-select" name="mode" id="assistant-subscribe-mode">
+        <option value="any" selected>Any of them</option>
+        <option value="all">All of them</option>
+      </select>
+      <div class="form-hint">All waits for every picked terminal and answers in one turn.</div>
+    </div>
+    <div class="mb-2" data-subscribe-target="cron" hidden>
+      <label class="form-label" for="assistant-subscribe-spec">Schedule</label>
+      <input type="text" class="form-control font-monospace" name="spec" id="assistant-subscribe-spec" placeholder="*/30 9-17 * * 1-5" disabled>
+      <div class="form-hint">Minute, hour, day, month, weekday. Local time.</div>
+    </div>
+    <div class="mb-2">
+      <label class="form-label" for="assistant-subscribe-task">Task</label>
+      <textarea class="form-control" name="task" id="assistant-subscribe-task" rows="2" placeholder="What to do when it fires" required></textarea>
+    </div>
+    <div class="row g-2 mb-2">
+      <div class="col-6">
+        <label class="form-label" for="assistant-subscribe-until">Until</label>
+        <select class="form-select" name="until" id="assistant-subscribe-until">
+          <option value="1h">1 hour</option>
+          <option value="8h" selected>8 hours</option>
+          <option value="24h">24 hours</option>
+          <option value="7d">7 days</option>
+          <option value="never">Never</option>
+        </select>
+      </div>
+      <div class="col-6">
+        <label class="form-label" for="assistant-subscribe-cap">Turns per hour</label>
+        <input type="number" class="form-control" name="max_per_hour" id="assistant-subscribe-cap" value="6" min="1" max="60" inputmode="numeric">
+      </div>
+      <div class="col-6">
+        <label class="form-label" for="assistant-subscribe-batch">Batch window, seconds</label>
+        <input type="number" class="form-control" name="batch" id="assistant-subscribe-batch" value="30" min="0" max="3600" inputmode="numeric" data-subscribe-batch>
+      </div>
+      <div class="col-6 d-flex align-items-end">
+        <label class="form-check mb-2">
+          <input type="hidden" name="once" value="">
+          <input type="checkbox" class="form-check-input" name="once">
+          <span class="form-check-label">Once</span>
+        </label>
+      </div>
+    </div>
+    <div class="d-flex gap-2 mt-3">
+      <button type="submit" class="btn btn-primary flex-fill dc-tap" data-assistant-subscribe-submit>Subscribe</button>
+      <button type="button" class="btn flex-fill dc-tap" data-bs-toggle="collapse" data-bs-target="#assistant-subscribe-form" aria-controls="assistant-subscribe-form">Cancel</button>
+    </div>
+  </form>
+</dc-assistant-subscribe>
+{{end}}

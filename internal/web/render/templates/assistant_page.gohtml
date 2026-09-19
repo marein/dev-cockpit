@@ -93,6 +93,13 @@
             {{template "assistant_jobs_list.gohtml" .}}
           </dc-assistant-list>
           <div class="text-secondary small">These are the coders this assistant steers. They are checked on their own schedule, and the reports land in this thread.</div>
+          {{/* The subscriptions under the coders: what this assistant reacts
+               to on its own. The form stands ahead of the list, outside the
+               body the list swaps. */}}
+          {{template "assistant_subscriptions_form.gohtml" .Subscriptions}}
+          <dc-assistant-list list-url="{{.SubscriptionsListURL}}" subscriptions data-assistant-subscriptions-list>
+            {{template "assistant_subscriptions_list.gohtml" .Subscriptions}}
+          </dc-assistant-list>
         </div>
       </aside>
     </div>

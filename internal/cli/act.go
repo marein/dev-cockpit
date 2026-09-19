@@ -128,7 +128,8 @@ func newStopCoderCommand(opts *inspectOptions) *cobra.Command {
 			"session and its transcript stay, and `coder-resume` brings it back under the same " +
 			"identifier. Use it when a coder is done or is running on something the user does " +
 			"not want any more. A job steering this coder ends with it, because a stopped " +
-			"coder cannot report again.",
+			"coder cannot report again, while a subscription on this terminal stands: the " +
+			"session keeps its identifier and `coder-resume` brings it back under it.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStopCoder(cmd.OutOrStdout(), *opts, args[0])
@@ -153,7 +154,10 @@ func newDeleteCoderCommand(opts *inspectOptions) *cobra.Command {
 		Long: "Delete a coder session: it is stopped if it runs, and its session is removed " +
 			"from the coder. There is no way back, the transcript is gone and `coder-resume` cannot " +
 			"bring it up again. Use `coder-stop` when the work may still be needed. Because it " +
-			"cannot be undone, the call has to say so: `--yes`.",
+			"cannot be undone, the call has to say so: `--yes`. Nothing can ever come from that " +
+			"terminal again, so an open job of it is closed with that reason, a subscription " +
+			"waiting for the terminal fires once for the deletion, and one that had no other " +
+			"terminal left is removed; the answer says how many went.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDeleteCoder(cmd.OutOrStdout(), *opts, args[0], confirmed)
@@ -173,7 +177,13 @@ func runDeleteCoder(out io.Writer, opts inspectOptions, target string, confirmed
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "coder %s deleted\n", text(deleted["name"]))
+	line := "coder " + text(deleted["name"]) + " deleted"
+	// What the deletion took with it, in the server's own words: the page's
+	// flash and the toast say the same sentence, there is one source for it.
+	if dropped := text(deleted["dropped"]); dropped != "" {
+		line += ", " + dropped
+	}
+	fmt.Fprintln(out, line)
 	return nil
 }
 
@@ -188,31 +198,37 @@ func postCoderAction(opts inspectOptions, target, action string) (map[string]any
 }
 
 func newCoderCommand(opts *inspectOptions) *cobra.Command {
-	var coderID, agent, prompt, doneWhen string
+	var coderID, agent, prompt, doneWhen, then string
 	cmd := &cobra.Command{
 		Use:   "coder-new <project> [name]",
 		Short: "Start a coder in a project",
 		Long: "Start a coder session the same way the new coder form does. The project is " +
 			"a name from `status` or an absolute path, the name is what the " +
 			"session is called and may be left out, it is then named after its first prompt. " +
-			"Prints the identifier, which is what `coder-send-prompt` takes.",
+			"Prints the identifier, which is what `coder-send-prompt` takes.\n\n" +
+			"--then is the sequel: what happens once this job closes done. It is wired in this " +
+			"call, so nothing can finish before the arrangement stands, and it fires once. The " +
+			"sequel runs in a session of its own, so its task has to be self contained: the " +
+			"project, what to start, where the report goes. It needs --done-when, a sequel " +
+			"hangs on a steered job.",
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := ""
 			if len(args) > 1 {
 				name = args[1]
 			}
-			return runNewCoder(cmd.OutOrStdout(), *opts, args[0], name, coderID, agent, prompt, doneWhen)
+			return runNewCoder(cmd.OutOrStdout(), *opts, args[0], name, coderID, agent, prompt, doneWhen, then)
 		},
 	}
 	cmd.Flags().StringVar(&coderID, "coder", "", "which coder answers (default: the cockpit's first installed one)")
 	cmd.Flags().StringVar(&agent, "agent", "", "agent the session starts with")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "task the coder starts working on")
 	cmd.Flags().StringVar(&doneWhen, "done-when", "", "steer the coder until this is true, then report")
+	cmd.Flags().StringVar(&then, "then", "", "what to do once this job closes done, wired in this call, fires once")
 	return cmd
 }
 
-func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, agent, prompt, doneWhen string) error {
+func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, agent, prompt, doneWhen, then string) error {
 	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
@@ -240,6 +256,12 @@ func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, age
 	if doneWhen = strings.TrimSpace(doneWhen); doneWhen != "" {
 		form.Set("done_when", doneWhen)
 	}
+	// The sequel travels with the same request as the criterion it hangs on:
+	// a job can close before a second call could subscribe, and that race is
+	// exactly what a handover must not have.
+	if then = strings.TrimSpace(then); then != "" {
+		form.Set("then", then)
+	}
 	created, err := client.PostForm("/coders/new", form, actionTimeout)
 	if err != nil {
 		return err
@@ -265,6 +287,15 @@ func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, age
 	if notice, _ := created["notice"].(string); notice != "" {
 		fmt.Fprintln(out, notice)
 	}
+	if then == "" {
+		return nil
+	}
+	// The coder runs and the job stands; a sequel that could not be wired is
+	// a failure of the command, and the output above says what is in place.
+	if thenError, _ := created["thenError"].(string); thenError != "" {
+		return errors.New(thenError)
+	}
+	fmt.Fprintf(out, "subscription %v fires once when that job is done\n", created["subscription"])
 	return nil
 }
 

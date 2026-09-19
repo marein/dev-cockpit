@@ -355,6 +355,157 @@ test. Update this file when a convention changes.
   because several things live behind it; the page title of one open assistant
   ("Name - Assistant") and the `dev-cockpit assistant` command group stay
   singular, they name one.
+- **A note is the third message kind: the cockpit speaks.** Next to the
+  user's and the assistant's messages a thread holds notes, `RoleCockpit`
+  with a `Note` (source, headline, verdict where there is one, the body in
+  `Content`). A check's report is the one source (`NoteCheck`, written by
+  `recordWake`). The old `wake` key on a report is read once on load and
+  becomes a note (`Store.load`, TODO(v2.0.0)). On the page a note is grey,
+  headline first, the first line of the body shown and the rest behind a tap;
+  while an answer streams the page holds every arriving note, and every
+  answer a reaction pushed, in a bar above the composer (`holdNote` in
+  `assistant.js`, decided at the frame, two headlines, from three on the
+  count with an unfold) and lands them under the finished answer in arrival
+  order without scrolling (`landHeld`, the pin masked for the frame the
+  landing lays out, the reader unpinned and pinned again by the next answer
+  within `repinIfNear`'s distance). The transcript keeps chronological order,
+  a reload mid stream shows it. The composer is the user's alone: Send and
+  Stop are what they are on master. A badge in the thread that shows an
+  icon alone names itself with `aria-label`, never with a visually hidden
+  span: that span is absolutely positioned while the thread's scroller is
+  not, so it stands outside the scroller, the app grid grows to the
+  transcript's height, and the hash scroll of the show earlier link then
+  moves the whole page by the head's height under an unchanged scroller. What the cockpit wrote since the
+  assistant's last chat answer, notes and pushed answers alike, rides into the
+  next chat prompt as one line with the count (`notesSince`, `withNotes`),
+  pointing at `job-list` and `assistant-show`, never the text; the walk stops
+  only at a chat answer, never at a pushed one.
+- **An assistant reacts to events in a session of its own, and every bound
+  is enforced.** `CockpitEvent` is the one small type a source publishes
+  (source, kind, target, time, headline, body, plus the owner for a job's
+  event); the sources are a job's end (published by `recordWake`), a coder's
+  signal out of the notify inbox (`notify.SetEvent` hands the raw hook name
+  on, `Reactor.Coder` reads Notification as asks and everything else as
+  ended, a bell included) and a cron tick (`cron.go`, five crontab fields
+  parsed here, no dependency). A `Subscription` belongs to one assistant like
+  a job, stored in `instances/<id>/subscriptions.json` through
+  `internal/statefile` (so it rides in the backup's instances source and goes
+  with the delete), and carries its filter, its task and its bounds: once or
+  standing, expiry (8h default), a cap per hour (6), a batch window (30s, none
+  for cron). **A subscription waits for terminals, not for one terminal**:
+  `Targets` is the list (`SubscriptionTarget`, the id plus the name it had when
+  the subscription was made, because a deleted terminal has none left to look
+  up), none of them is any of them, and `All` turns several into a barrier, one
+  turn once every one of them arrived, with the batch window folding their
+  events into it (`Waiting`, the per target `Met` taken back with the events it
+  spends, so a standing barrier waits for all of them again). A barrier belongs
+  on `job-closed`, which the instructions say and nothing enforces: on
+  `job-done` a job that closes blocked never arrives. What it would otherwise
+  lose is the race at its own creation, three coders started one after another
+  and the first finished before the third exists, so `seedArrived` takes the
+  jobs of its targets that are closed already, through the same `jobEvent` the
+  recovery publishes, report included. `Target` and `TargetName` are read once
+  out of a file written before the list and dropped by the next write
+  (TODO(v2.0.0)). The `Reactor` (`events.go`, one per service) matches, collects
+  inside the window, and fires a reaction: a run of `RunReaction` through
+  `startOwnSession`, the same path a check takes (`startWake`): a fresh
+  provider session reserved and dropped with the turn, the owner's workspace
+  and instruction file, the wake slot (`Service.slots`, shared with the
+  watcher), the run register with the origin on the entry, so
+  `Service.Recover` follows it on and the reactor concludes it. Nothing is
+  written into the owner's chat session for an event, no user turn, no
+  envelope, no queue. The prompt is the event plus the task, the cockpit
+  speaking (`reactionPrompt`). Its answer is pushed into the owner's thread
+  (`pushReaction`) as an assistant message with `Auto` and `Origin` (the
+  event's headline, the task), rendered as a folded header over the answer,
+  announced on a frame of its own so a streaming page holds it, and it rings
+  as what it is: the title says that a trigger fired and names what fired it
+  where there is room, the line below it is the reaction's own answer
+  (`assistantNews`), because nobody asked for this answer. An answer whose first line is NOTHING pushes nothing and
+  notifies nobody; a turn a bound refuses and an expiry show on the
+  subscription's line and state alone, never in the thread; the subscription
+  counts every fire, whatever came back, and says `reacting` while the run
+  is on. **One subscription reacts once at a time.** While its reaction runs
+  the events stay in its window, whatever the window says, and the end of
+  that reaction spends them as one turn: two reactions of one subscription
+  would answer one thread about the same thing twice and out of order, and
+  the cap per hour bounds what is bought, not the order. What holds the
+  window open is `ReactingSince`, cleared where a reaction ends (`conclude`,
+  `adopt`), so a held window always has an end that reaches it, and the tick
+  is its backstop; the window is on disk with everything else, so a process
+  that dies mid reaction leaves it for the next one. The page and the CLI
+  (`subscription-new`, `subscription-list`, `subscription-edit`,
+  `subscription-delete`) share
+  `/assistants/subscriptions` and `assistant.EventOptions`, so nothing is
+  page only; the generated instructions list every kind with an example and
+  say that the task must be self contained or point to a file in
+  `assistant-files/`.
+  **A standing subscription is changed, not made again, and a field nobody
+  names does not move.** One reading of the form decides that for both ways
+  in (`assistantSubscriptionSpec`): a field the request does not carry is one
+  nobody named, which on a create takes the default and on an edit leaves
+  what stands, so the page posts every field and `subscription-edit` posts
+  the flags `cmd.Flags().Changed` says were typed. Two of them have no zero
+  that could say "no": a multiple select with nothing picked and an unchecked
+  box post nothing at all, so the form carries a hidden empty `terminal` and
+  `once` in front of them and clearing is a value, not an absence. One
+  function then writes a subscription whichever way in the caller took
+  (`applySubscription`, which `newSubscription` runs over an entry seeded
+  with the defaults and `editSubscription` over the one that stands), so
+  there is one validation and one meaning of every bound. `Reactor.Edit`
+  holds the reactor's lock, the one a fire and the tick take, and answers the
+  line naming what moved (`subscriptionChanges`), so the CLI's output and the
+  page's toast are not written twice. What never moves is the event, another
+  event is another subscription; what an edit never touches is the count, the
+  moment it was made, the events waiting in the window and a running
+  reaction, which keeps the task it was handed. The targets are replaced as a
+  list and each one keeps what it reached (`mergedTargets`), so a barrier
+  goes on waiting for the ones that have not arrived, a target named for the
+  first time is caught up by `seedArrivedLocked` where its job is closed
+  already (which skips one that arrived, or an end would land in the window
+  twice) and checked by `nameJobTargets` like a fresh one, while a target
+  that stood is left alone, its job may well have closed since. A schedule
+  that moved works its next tick out again, one nobody touched keeps it. A
+  subscription that is done or expired is spent and is refused with a
+  sentence. On the page it is the row's own form: the row carries the stand
+  of every field as JSON (`subscriptionEditJSON`, only while it still fires,
+  which is what keeps Edit out of a spent row's menu), the menu's Edit fills
+  the one form there is and posts it to the same path with `form=edit`, the
+  event select is locked and therefore posts nothing, and the expiry starts
+  on an entry that changes nothing because what is stored is a moment while
+  the field asks for a span. **The sequel of a job is wired in the call that starts
+  it**, `coder-new --then "<task>"` (the `then` field of `/coders/new`, beside
+  `done_when`): one job-done subscription with `--once` on the new terminal,
+  made in that same request right after the steer, and the answer names it.
+  Without a `done_when` it is refused, a sequel hangs on a steered job.
+  Deferring the arrangement to a later call loses the race, a job can close
+  before the second call goes out, which is what a handover must not do. A
+  check is no handover: it is one narrow turn with a verdict and carries
+  nothing on, and the instructions say so.
+  **A deleted terminal is the last thing it ever does, and one path clears up
+  after it**: `Watcher.TerminalDeleted` (what every surface reaches through
+  `Server.jobDeleted`, the page's button, the chip, the pane, the editor's
+  panel, `coder-delete` and a project delete's purge one terminal at a time).
+  An open job is closed first, the way the heartbeat closes one whose terminal
+  vanished, with the reason that the coder was deleted, so `job-closed` and
+  `job-expired` fire and `job-done` does not; then the entry goes, and
+  `Reactor.TerminalGone` marks the target gone in every subscription that names
+  it, fires a coder subscription once for the deletion (`Kind` is the
+  subscription's own, so `coder-ended` and `coder-asks` each hear it once and
+  no phantom event is published for the other), and removes the ones with no
+  terminal left (`Vanished`), spending their window on the way out because
+  nothing can come from a gone terminal. A barrier counts a gone target as
+  arrived and the event says it was deleted, not finished. Subscriptions
+  without targets and cron are untouched, and `coder-stop` clears up nothing at
+  all: the session keeps its identifier and comes back under it, so its
+  arrangements stand, and the heartbeat's own vanish path is unchanged. What
+  fell is one sentence, `assistant.DroppedNote`, and every surface says that
+  one: the flash, the `dropped` field of the delete's JSON answer (appended to
+  the toast by `alsoDropped` in `@dc/steer`, so no surface writes a second
+  wording) and what `coder-delete` prints. A project delete goes the same path
+  and reports nothing, its answer may leave before the purge runs and it
+  cascades into worktree projects, so one number in it would be short as often
+  as right.
 - **A turn's answer is blocks, and the seam between two of them is read, never
   guessed.** An answer that works with tools arrives in several text blocks, and
   every runner hands them over as one stream of deltas the turn appends as it
@@ -3092,18 +3243,55 @@ job on a coder, its report is the message that reaches the user, so the raw
 signal counts as no unread, marks nothing, carries no `Added` (no toast, no
 jingle, no push) and only keeps the history complete. Such an entry replaces
 the target's previous silent one and never touches an unread entry.
-Every notification is written the same way, two lines: `Notification.Title`
-says what happened ("Coder has news.", "Command finished.", "Job done." /
-"blocked." / "expired.", "Assistant answered.", "Assistant could not
-finish.", "Backup ready." / "failed."), `Notification.Detail` is the line
-below it and names what it happened in, the name in quotes plus the project
-(`"git" - dev-cockpit`), for the assistant the first words of the answer. It
-is shown where the project stands (list, toast, push body). No name ever
-stands in a title, and no title classifies a coder's signal. The wording of
-every case lives together next to `notifyResolver` in `main.go`
-(`coderNews`, `shellNews`, `backupNews`, `assistantNews`), never in notify,
-which classifies nothing; a job report takes its name and project from the
-message's own `WakeNote`, never from a lookup. An entry without a title (a
+**Every notification is written the same way round, and one builder writes
+them all**: `Notification.Title` is what happened, then the identifier of
+what it happened to behind a comma, and nothing else (`newsTitle`). A coder,
+a shell, a backup, a git question, a compose run and an assistant all read
+alike, so nobody has to work out which pattern a line follows: "Coder has
+news, fix-login.", "Command finished, git.", "Backup ready, nightly.", "Git
+asks a question, push.", "Compose finished, up -d.", and for an assistant
+the kind is `Job done`, `Job blocked`, `Job expired`, `Trigger fired`,
+`Trigger broke off`, `Answer ready` or `Answer broke off` with a job's name,
+a headline or a batch's count behind it. `newsTitleRunes` bounds that line
+at 40 runes. It surfaces in three widths, the bell's list and a toast at 40
+to 46 runes and a phone's push at about 32 (iOS gives the title one line and
+writes the app's name on the second; a lock screen of this cockpit's own
+pushes ran out at exactly 32 with the system's mark among them), and **it
+follows the wider two**: writing for the push would make the list and the
+toast throw away room they have, and what the push cuts is by construction
+the cheapest part, the tail of an identifier this code already shortened,
+never the kind, which stands first. **The kind is never cut and the
+identifier is never dropped**: the identifier is the one part that tells two
+messages of the same kind apart, four jobs all reading "Job done." name none
+of them, and no other line carries it. So it is shortened to what the kind
+leaves, through the one `cutLine` every line of a notification goes through,
+at a word boundary past half the room and at the rune otherwise
+("notification-titel-reihenfolge" has none); a shortened identifier ends the
+line with its mark instead of a full stop, and one that fills the room to
+the last rune ends it without either.
+`Notification.Detail` is the second line and belongs to the kinds that write
+a text: an assistant's answer, a check's report, a reaction's answer, in
+full length, with **the assistant's own name in front of it**
+(`assistantDetail`). That name is never in the title, in no branch and
+however short it is: a phone gives the title one line and the body three or
+four. It is the conversation's title, written from the first message
+somebody typed and a paragraph as often as not, so `assistantNewsName` cuts
+it to a label through the same `coder.ShortTitle` a coder's session title
+goes through, for that line and for the `TargetName` an unresolved entry
+falls back to alike. **The kinds that write no text leave `Detail` empty**,
+because their identifier now stands in the title and saying it twice would
+spend the only line there is on a word already read; the entry then falls
+back to `Notification.Project`, which every surface already draws in its
+place, with a folder in front of it in the list and in a toast, as the body
+of a push, in a column of its own in the CLI's list. A
+report's excerpt never repeats the verdict its title already says,
+`parseVerdict` takes that word off the check's answer before the report is
+written down. No title classifies a coder's signal. The wording of
+every case lives together next to `notifyResolver` in `internal/cli`
+(`coderNews`, `shellNews`, `backupNews`, `gitPromptNews`, `composeNews`,
+`assistantNews`), never in notify,
+which classifies nothing; a job report takes its name from the message's own
+`Note`, never from a lookup. An entry without a title (a
 target the resolver could not resolve, an entry an older build stored) falls
 back to `Something new in "..."` in the list, the toast, the push and
 `dev-cockpit assistant notification-list`.

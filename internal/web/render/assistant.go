@@ -88,6 +88,11 @@ type AssistantData struct {
 	// Jobs are the coders this assistant steers. Empty when nothing is
 	// steered, which is the normal state.
 	Jobs []AssistantJobView
+	// Subscriptions are the events this assistant reacts to, with what the
+	// form to make one offers; SubscriptionsListURL is what the page pulls
+	// when one of them moved.
+	Subscriptions        AssistantSubscriptionsData
+	SubscriptionsListURL string
 	// JobsOpen is how many of them still wake the assistant. It is what the
 	// button that opens the list shows without being opened: the icon carries
 	// it the way every other status in the cockpit does, through its colour.
@@ -208,6 +213,85 @@ type AssistantMemoryData struct {
 	Prefix string
 }
 
+// AssistantSubscriptionView is one subscription on the assistant page: what
+// fires it, what it asks for, and where it stands.
+type AssistantSubscriptionView struct {
+	ID string
+	// Short is the id cut for a row, the whole id stays in the title.
+	Short string
+	// Owner is what the assistant holding it is called, rendered only in a
+	// list that spans several; OwnerID is the same one as an id.
+	Owner   string
+	OwnerID string
+	Source  string
+	Kind    string
+	// Label is what the event is called, Where narrows it: the coder's name,
+	// "any job of mine", the schedule.
+	Label string
+	Where string
+	// TargetURL opens the coder a terminal target names, empty without one.
+	TargetURL string
+	Spec      string
+	Task      string
+	Once      bool
+	State     string
+	Open      bool
+	Fired     int
+	// Next is the next tick of a schedule, Until the expiry, both machine
+	// stamps (RFC3339) for dc-time, empty where there is none.
+	Next  string
+	Until string
+	// Note is the last thing that happened to it, one line.
+	Note string
+	// Edit is the stand of every field the form offers, as JSON, so the row's
+	// Edit opens that same form filled without a request of its own. It stands
+	// only on a subscription that still fires: one that is over cannot be
+	// changed, and the row carrying nothing is what keeps the entry out of its
+	// menu.
+	Edit string
+	// Pending says events wait in the open batch window right now, Reacting
+	// that the reaction it bought runs right now, in a session of its own.
+	Pending  int
+	Reacting bool
+}
+
+// AssistantSubscriptionTarget is one terminal the form offers as a target,
+// for the job or the coder events.
+type AssistantSubscriptionTarget struct {
+	Terminal string
+	Name     string
+	Project  string
+}
+
+// AssistantSubscriptionsData is the model of the subscriptions fragment: the
+// rows of one assistant and what its form offers.
+type AssistantSubscriptionsData struct {
+	Page
+	Owner         string
+	Subscriptions []AssistantSubscriptionView
+	// Open is how many still fire.
+	Open int
+	// Events are the kinds the form offers, every one the CLI offers too.
+	Events []AssistantEventOption
+	// Jobs and Coders are the terminals the form offers as targets: the
+	// owner's open jobs for a job event, the running coders for a coder
+	// event.
+	Jobs   []AssistantSubscriptionTarget
+	Coders []AssistantSubscriptionTarget
+	URL    string
+	// Owners says the list spans several assistants, so every row names
+	// whose it is.
+	Owners bool
+}
+
+// AssistantEventOption is one event the form's select offers.
+type AssistantEventOption struct {
+	Name   string
+	Source string
+	Label  string
+	Help   string
+}
+
 // AssistantMessageView is one rendered message. User text stays plain,
 // assistant answers are rendered from Markdown server-side with raw HTML
 // disabled.
@@ -215,9 +299,14 @@ type AssistantMessageView struct {
 	ID    string
 	RunID string
 	User  bool
-	// Wake is set on a message a check wrote: which coder it was about and what
-	// it concluded. It never renders as something the user said.
-	Wake        *AssistantWakeView
+	// Note is set on a message the cockpit wrote, the third role: a check's
+	// report. It never renders as something the user said.
+	Note *AssistantNoteView
+	// Auto marks an answer started without the user: a reaction to an event
+	// pushed it, and Origin says which event and which task, rendered as a
+	// folded header over the answer.
+	Auto        bool
+	Origin      *AssistantNoteView
 	Author      string
 	Text        string
 	HTML        template.HTML
@@ -238,17 +327,28 @@ type AssistantMessageView struct {
 	AudioURL string
 }
 
-// AssistantWakeView describes the check a message came from.
-type AssistantWakeView struct {
+// AssistantNoteView describes a note: where it came from and the line it is
+// read by. A check's report carries its verdict and the coder it was about;
+// an event note the subscription and how many events it bundles.
+type AssistantNoteView struct {
+	Source   string
+	Headline string
+	Verdict  string
 	Terminal string
 	Name     string
-	Verdict  string
 	Done     bool
 	Blocked  bool
 	// Expired marks the one message a job writes when it ran out of checks or
 	// out of time, so the reader knows nobody is looking any more.
 	Expired bool
-	URL     string
+	Count   int
+	Task    string
+	// URL opens the coder the note is about, empty without one.
+	URL string
+	// First is the first line of the body, shown folded; Rest says there is
+	// more behind it, which unfolds on tap.
+	First string
+	Rest  bool
 }
 
 // AssistantMessageData is the model for the single-message fragment the browser

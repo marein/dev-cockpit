@@ -2,7 +2,7 @@ import { openMenu } from "@dc/contextmenu";
 import { confirm, promptText } from "@dc/dialog";
 import { ensureOk, postForm, postJSON } from "@dc/http";
 import { splitCreateItems } from "@dc/split";
-import { releaseCoder, steerCoder } from "@dc/steer";
+import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
 import { notifyError, notifySuccess } from "@dc/toast";
 
 const DRAG_THRESHOLD = 6;
@@ -404,8 +404,9 @@ class TerminalSplit extends HTMLElement {
         : paneKind === "coder" ? `/coders/${paneId}/stop` : `/shells/${paneId}/delete`;
       const response = await postForm(action, {});
       await ensureOk(response, "Could not close the session.");
-      notifySuccess(drop ? `Coder "${paneName}" deleted.`
-        : paneKind === "coder" ? `Coder "${paneName}" stopped.` : `Shell "${paneName}" deleted.`);
+      const data = await response.json().catch(() => null);
+      notifySuccess(alsoDropped(drop ? `Coder "${paneName}" deleted.`
+        : paneKind === "coder" ? `Coder "${paneName}" stopped.` : `Shell "${paneName}" deleted.`, data));
       this.refreshPage();
     } catch (error) {
       notifyError(error.message);

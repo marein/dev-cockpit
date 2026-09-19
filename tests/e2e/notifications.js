@@ -363,8 +363,10 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       while (Date.now() < deadline && !hookHits.some((h) => h.includes(coderName))) await sleep(250);
       assert(hookHits.some((h) => h.includes(coderName)), `no webhook hit for unread news: ${JSON.stringify(hookHits)}`);
       const payload = JSON.parse(hookHits.find((h) => h.includes(coderName)));
-      assert(payload.title === "Coder has news.", `payload title: ${JSON.stringify(payload)}`);
-      assert(payload.body === `"${coderName}" - ${project}`, `payload body: ${JSON.stringify(payload)}`);
+      // The title is what happened and which coder, the body is the project:
+      // the coder writes no text of its own, so its second line is where it ran.
+      assert(payload.title === `Coder has news, ${coderName}.`, `payload title: ${JSON.stringify(payload)}`);
+      assert(payload.body === project, `payload body: ${JSON.stringify(payload)}`);
     });
 
     await run("a visible but unfocused coder page does not auto-read, news toasts and pushes, focus reconciles", async () => {

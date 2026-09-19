@@ -154,9 +154,12 @@ L.runFeature("BACKUP", async ({ page, run }) => {
     const note = (data.notifications || []).find((n) => n.targetId === "backup");
     assert(note, "backup notification missing");
     assert(note.url === "/settings/backup", `unexpected notification ${JSON.stringify(note)}`);
-    assert(note.title === "Backup ready.", `unexpected title ${note.title}`);
-    // A backup belongs to no project, so the archive name is the whole line.
-    assert(/^"dev-cockpit-backup_.*"$/.test(note.detail || ""), `unexpected detail ${note.detail}`);
+    // What happened, then the archive it happened to, shortened to the line.
+    assert(/^Backup ready, dev-cockpit-backup_.*$/.test(note.title || ""), `unexpected title ${note.title}`);
+    assert([...(note.title || "")].length <= 40, `the title runs past its line: ${note.title}`);
+    // A backup writes no text and belongs to no project, so nothing stands
+    // below it: the archive is in the line above.
+    assert(!note.detail, `unexpected detail ${note.detail}`);
     assert(note.read === true, "visiting the backup page should have marked the notification read");
   });
 

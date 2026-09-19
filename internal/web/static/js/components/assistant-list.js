@@ -42,6 +42,21 @@ class AssistantList extends HTMLElement {
 
     if (this.hasAttribute("memory")) this.wireMemory(this.ac.signal);
 
+    // A subscription row carries the app's menu: remove it, open the coder it
+    // is about. The whole row is the finger's target, the three dots the
+    // mouse's, and a right click or a long press opens the same menu.
+    if (this.hasAttribute("subscriptions")) {
+      wireRowMenus(this, "[data-assistant-subscription]", (row, x, y) => this.openSubscriptionMenu(row, x, y), { signal: this.ac.signal });
+      this.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-assistant-subscription-menu]");
+        if (!button) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = button.getBoundingClientRect();
+        this.openSubscriptionMenu(button.closest("[data-assistant-subscription]"), rect.left, rect.bottom + 4);
+      }, { signal: this.ac.signal });
+    }
+
     // Opening is the moment where being current matters most; closing drops the
     // work nobody is looking at. A list inside a sheet renders empty and pulls
     // itself every time the sheet opens.
@@ -186,6 +201,59 @@ class AssistantList extends HTMLElement {
     if (window.location.pathname === url) {
       if (window.app?.navigate) window.app.navigate("/assistants");
       else window.location.assign("/assistants");
+      return;
+    }
+    await this.refresh();
+  }
+
+  openSubscriptionMenu(row, x, y) {
+    if (!row) return null;
+    const id = row.dataset.assistantSubscription;
+    const label = row.dataset.assistantSubscriptionLabel || "";
+    const items = [];
+    if (row.dataset.assistantSubscriptionUrl) {
+      items.push({ label: "Open coder", icon: "ti-terminal-2", href: row.dataset.assistantSubscriptionUrl });
+    }
+    // Only a subscription that still fires carries its stand, and that is what
+    // decides whether it can be changed: one that is over is spent.
+    if (row.dataset.assistantSubscriptionEdit) {
+      items.push({ label: "Edit", icon: "ti-pencil", action: () => void this.editSubscription(row.dataset.assistantSubscriptionEdit) });
+    }
+    items.push({ label: "Remove", icon: "ti-trash", danger: true, action: () => void this.removeSubscription(id, label) });
+    return openMenu({ x, y, signal: this.ac.signal, items });
+  }
+
+  // Editing opens the form that makes one, filled with this subscription: one
+  // form, one set of fields, one path. The aside holds both, so the row hands
+  // its stand over and the form does the rest.
+  async editSubscription(stand) {
+    const form = document.querySelector("[data-assistant-subscribe]");
+    if (!form) return;
+    await customElements.whenDefined("dc-assistant-subscribe");
+    let data = null;
+    try {
+      data = JSON.parse(stand);
+    } catch {
+      return;
+    }
+    form.fill?.(data);
+    form.scrollIntoView({ block: "nearest" });
+  }
+
+  async removeSubscription(id, label) {
+    const ok = await confirm({
+      title: label ? `Remove "${label}"?` : "Remove this subscription?",
+      text: "The assistant stops reacting to it. What it already did stays in the thread.",
+      confirmText: "Remove",
+      target: this.sheet?.classList.contains("show") ? this.sheet : undefined,
+      heightAuto: false,
+    });
+    if (!ok) return;
+    try {
+      const response = await postForm(this.url.split("?")[0], { form: "remove", id });
+      await ensureOk(response, "The subscription could not be removed.");
+    } catch (err) {
+      notifyError(err?.message || "The subscription could not be removed.");
       return;
     }
     await this.refresh();
