@@ -56,6 +56,10 @@ const pollInterval = 40 * time.Millisecond
 type Command struct {
 	Name string
 	Args []string
+	// Env is what a coder needs in its environment on top of what this server
+	// inherits, KEY=VALUE strings. It is read once, when the process starts, so
+	// a turn picked up after a restart needs nothing from it.
+	Env []string
 }
 
 // eventBuffer is how many events a turn may run ahead of its reader. The
@@ -103,9 +107,17 @@ func start(c Command, workdir, outPath, errPath, lockPath string) (detach.Proces
 	if strings.TrimSpace(c.Name) == "" {
 		return detach.Process{}, errors.New("The coder could not be started.")
 	}
+	// detach replaces the whole environment when one is set and inherits this
+	// process's own when none is, so the coder's variables go on top of a
+	// copy of it, and a command without any leaves the option nil.
+	var env []string
+	if len(c.Env) > 0 {
+		env = append(os.Environ(), c.Env...)
+	}
 	p, err := detach.Start(detach.Options{
 		Command: append([]string{c.Name}, c.Args...),
 		Dir:     workdir,
+		Env:     env,
 		Out:     outPath,
 		Err:     errPath,
 		Lock:    lockPath,

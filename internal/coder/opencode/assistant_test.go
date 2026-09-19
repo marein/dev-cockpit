@@ -188,6 +188,32 @@ func TestATurnCarriesADashLeadingPromptAsText(t *testing.T) {
 	}
 }
 
+// A turn runs headless, and --auto answers permissions only: a model that
+// called the question tool left the run waiting forever for an answer nobody
+// could give. So every turn takes the tool away through opencode's config
+// environment, exactly this JSON, which is what 1.18.30 was verified against.
+func TestATurnTakesTheQuestionToolAway(t *testing.T) {
+	cmd, err := testRunner(t).Command(assistant.TurnRequest{
+		SessionID: cockpitID, Resume: true, Workdir: t.TempDir(), Prompt: "hello",
+	})
+	if err != nil {
+		t.Fatalf("command: %v", err)
+	}
+	const want = `OPENCODE_CONFIG_CONTENT={"tools":{"question":false}}`
+	if len(cmd.Env) != 1 || cmd.Env[0] != want {
+		t.Fatalf("want the environment %q, got %v", want, cmd.Env)
+	}
+	var parsed struct {
+		Tools map[string]bool `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(assistantConfig), &parsed); err != nil {
+		t.Fatalf("the config has to be valid JSON: %v", err)
+	}
+	if enabled, ok := parsed.Tools["question"]; !ok || enabled {
+		t.Fatalf("want the question tool switched off, got %v", parsed.Tools)
+	}
+}
+
 func TestSessionExistsAnswersUnderTheCockpitId(t *testing.T) {
 	r := testRunner(t)
 	if !r.SessionExists(cockpitID) {

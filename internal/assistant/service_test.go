@@ -42,7 +42,12 @@ type fakeRunner struct {
 	unfinished bool
 	// stderr is what the process writes to standard error, which is where a CLI
 	// that never got going says why.
-	stderr     string
+	stderr string
+	// env is what the command asks for in its environment, the way opencode
+	// asks for its config. When set, the process writes what it found under
+	// DC_FAKE_TURN and whether PATH came along into env-<seq>, so a test can
+	// read what the turn really ran with.
+	env        []string
 	exists     bool
 	deleted    []string
 	deleteFn   func(string) error
@@ -101,6 +106,7 @@ func (r *fakeRunner) Command(req TurnRequest) (Command, error) {
 	after := r.after
 	unfinished := r.unfinished
 	stderr := r.stderr
+	env := r.env
 	commandErr := r.commandErr
 	gate := r.commandGate
 	r.seq++
@@ -131,6 +137,10 @@ func (r *fakeRunner) Command(req TurnRequest) (Command, error) {
 	}
 
 	var script strings.Builder
+	if env != nil {
+		seen := filepath.Join(dir, fmt.Sprintf("env-%d", seq))
+		fmt.Fprintf(&script, "printf '%%s\n%%s\n' \"${DC_FAKE_TURN-unset}\" \"${PATH:+inherited}\" > %s\n", seen)
+	}
 	if stderr != "" {
 		// Through a file, so a complaint spanning several lines travels without
 		// a second meaning in the shell.
@@ -172,7 +182,22 @@ func (r *fakeRunner) Command(req TurnRequest) (Command, error) {
 	if !unfinished {
 		script.WriteString("printf 'R\\n'\n")
 	}
-	return Command{Name: "/bin/sh", Args: []string{"-c", script.String()}}, nil
+	return Command{Name: "/bin/sh", Args: []string{"-c", script.String()}, Env: env}, nil
+}
+
+// envSeen reads what the process of turn seq found in its environment: the
+// value under DC_FAKE_TURN, and whether PATH was inherited.
+func (r *fakeRunner) envSeen(t *testing.T, seq int) (value string, inherited bool) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(r.dir, fmt.Sprintf("env-%d", seq)))
+	if err != nil {
+		t.Fatalf("the turn wrote no environment record: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("unexpected environment record %q", data)
+	}
+	return lines[0], lines[1] == "inherited"
 }
 
 func (r *fakeRunner) Parse(sessionID string, events chan<- Event) Parser {
@@ -481,6 +506,46 @@ func TestSendStreamsAndCompletes(t *testing.T) {
 	turns := runner.turns()
 	if len(turns) != 1 || turns[0].Resume || turns[0].SessionID != created.ID || turns[0].Instance != created.ID || filepath.Base(turns[0].Workdir) != created.ID {
 		t.Fatalf("unexpected first turn: %+v", turns)
+	}
+}
+
+// What a coder asks for in its environment reaches its process, on top of
+// what this server inherits: opencode carries its config that way, and a
+// variable that stayed behind would put the question tool back into a headless
+// run. A command asking for nothing inherits the environment untouched.
+func TestATurnRunsWithTheCommandsEnvironment(t *testing.T) {
+	runner := &fakeRunner{
+		events: []Event{{Kind: EventDelta, Text: "ok"}},
+		env:    []string{"DC_FAKE_TURN=from the command"},
+	}
+	svc, _, _ := newTestService(t, runner)
+	created, _ := svc.create("claude")
+	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if final := waitIdle(t, svc, created.ID); final.State != StateComplete {
+		t.Fatalf("want the turn complete, got %s", final.State)
+	}
+	value, inherited := runner.envSeen(t, 1)
+	if value != "from the command" {
+		t.Fatalf("want the command's variable in the process, got %q", value)
+	}
+	if !inherited {
+		t.Fatal("want the server's own environment kept under the command's variables")
+	}
+
+	runner.mu.Lock()
+	runner.env = []string{}
+	runner.mu.Unlock()
+	if _, err := svc.Send(created.ID, "again", nil); err != nil {
+		t.Fatalf("second send: %v", err)
+	}
+	if final := waitIdle(t, svc, created.ID); final.State != StateComplete {
+		t.Fatalf("want the second turn complete, got %s", final.State)
+	}
+	value, inherited = runner.envSeen(t, 2)
+	if value != "unset" || !inherited {
+		t.Fatalf("want a command without variables to inherit the environment alone, got %q inherited=%v", value, inherited)
 	}
 }
 

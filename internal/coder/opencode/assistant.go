@@ -16,6 +16,16 @@ import (
 // conversations only, its terminal integration is untouched.
 var assistantFlags = []string{"--session", "--format", "--auto"}
 
+// assistantConfig is the configuration every turn carries in
+// OPENCODE_CONFIG_CONTENT, on top of whatever the user's own config says. It
+// takes the question tool away: a headless run cannot answer a
+// question, and --auto covers permissions only, so a model that called the
+// tool left the run waiting forever for an answer nobody could give. Without
+// the tool the model asks in plain text instead, which ends the turn the
+// normal way (verified on 1.18.30). Deliberately not a permission deny, that
+// leaves the tool in the list the model sees and only errors every call.
+const assistantConfig = `{"tools":{"question":false}}`
+
 // A conversation lives in a provider session the service addresses by an id
 // it chose, and opencode cannot create a session under a caller's id. So the
 // first turn creates the session through opencode's own API instead
@@ -76,7 +86,8 @@ func (r *runner) DeleteSession(sessionID string) error {
 // against opencode's own id. A conversation has the same tools as a coder
 // terminal, and a non-interactive run cannot ask, so every turn carries
 // --auto: without it opencode auto-rejects every permission it would have
-// asked for.
+// asked for. What --auto cannot cover, the question tool, is taken out of
+// the model's reach through the environment, see assistantConfig.
 //
 // The prompt goes last, behind the end of options separator: run's message is
 // positional, and the separator is what keeps a prompt that starts with a
@@ -99,7 +110,11 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 		"--auto",
 		"--", req.Prompt,
 	}
-	return assistant.Command{Name: "opencode", Args: args}, nil
+	return assistant.Command{
+		Name: "opencode",
+		Args: args,
+		Env:  []string{"OPENCODE_CONFIG_CONTENT=" + assistantConfig},
+	}, nil
 }
 
 // Parse reads opencode's JSONL run output. It is called again when a turn is
