@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -109,10 +110,21 @@ func start(c Command, workdir, outPath, errPath, lockPath string) (detach.Proces
 	}
 	// detach replaces the whole environment when one is set and inherits this
 	// process's own when none is, so the coder's variables go on top of a
-	// copy of it, and a command without any leaves the option nil.
+	// copy of it, and a command without any leaves the option nil. PWD stands
+	// between the two because os/exec writes it for the working directory only
+	// when it inherits (go.dev/issue/50599), and opencode reads its project
+	// root off PWD before it asks the kernel: without that line a copy carries
+	// the server's own, and the turn runs against the directory the server was
+	// started from.
 	var env []string
 	if len(c.Env) > 0 {
-		env = append(os.Environ(), c.Env...)
+		pwd, err := filepath.Abs(workdir)
+		if err != nil {
+			log.Printf("assistant: start %s: %v", c.Name, err)
+			return detach.Process{}, errors.New("The coder could not be started.")
+		}
+		env = append(os.Environ(), "PWD="+pwd)
+		env = append(env, c.Env...)
 	}
 	p, err := detach.Start(detach.Options{
 		Command: append([]string{c.Name}, c.Args...),
