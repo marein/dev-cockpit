@@ -7883,7 +7883,7 @@ async function init(root) {
 
   function filterChip(text, remove) {
     const chip = document.createElement("span");
-    chip.className = "badge bg-secondary-lt d-inline-flex align-items-center gap-1";
+    chip.className = "badge text-bg-success badge-pill d-inline-flex align-items-center gap-1";
     const label = document.createElement("span");
     label.className = "text-truncate";
     label.textContent = text;
