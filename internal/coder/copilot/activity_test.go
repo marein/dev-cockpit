@@ -17,6 +17,9 @@ const (
 	toolDoneEvent     = `{"type":"tool.execution_complete","data":{"toolCallId":"c1"},"id":"e4"}`
 	answerEvent       = `{"type":"assistant.message","data":{"messageId":"m1","content":"The README is written.","phase":"final_answer"},"id":"e5"}`
 	turnEndEvent      = `{"type":"assistant.turn_end","data":{"turnId":"0"},"id":"e6"}`
+	// What a boot writes before anybody typed.
+	permissionsEvent = `{"type":"session.permissions_changed","data":{"previousAllowAllPermissions":false,"allowAllPermissions":true},"id":"e0a"}`
+	modelChangeEvent = `{"type":"session.model_change","data":{"source":"startup","newModel":"claude-sonnet-5","previousModel":"claude-sonnet-5"},"id":"e0b"}`
 )
 
 func writeEvents(t *testing.T, root, id string, lines ...string) {
@@ -297,16 +300,25 @@ func TestAShellEscapeEndsWithItsCompletion(t *testing.T) {
 // Before any turn the log holds only session bookkeeping, and a turn that
 // was never recorded is not open. The record watcher relies on this: a fresh
 // session must not read as working.
-func TestALogWithoutAnyTurnIsOver(t *testing.T) {
+func TestALogWithoutAnyTurnIsEmptyAndOver(t *testing.T) {
 	root := t.TempDir()
 	r := &sessionRepository{stateRoot: root}
-	writeEvents(t, root, "s1", sessionStartEvent)
+	writeEvents(t, root, "s1", sessionStartEvent, permissionsEvent, modelChangeEvent)
 	activity, err := r.activity("s1", 0, coder.ActivityBudget)
 	if err != nil {
 		t.Fatalf("activity: %v", err)
 	}
-	if !activity.Finished {
-		t.Fatal("a log without any turn has no open turn")
+	if !activity.Finished || !activity.Empty {
+		t.Fatalf("a log without any turn has no open turn and no account, got %+v", activity)
+	}
+
+	writeEvents(t, root, "s1", sessionStartEvent, permissionsEvent, modelChangeEvent, userEvent)
+	activity, err = r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if activity.Finished || activity.Empty {
+		t.Fatalf("the first prompt opens a turn, got %+v", activity)
 	}
 }
 

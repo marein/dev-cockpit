@@ -48,6 +48,16 @@ type Activity struct {
 	// behind: a coder touches its record with bookkeeping at boot and exit,
 	// so the file moving proves nothing about the conversation moving.
 	LastMessageAt time.Time
+	// Empty says the record holds no message yet, neither the user's nor the
+	// coder's, and nothing else that speaks of a turn: only the bookkeeping
+	// a coder writes at boot. claude notes which instruction files it loaded
+	// into the transcript before anybody typed, so the file exists and moves
+	// while nothing has been said. Such a reading is no account of a turn
+	// and Finished is no answer in it: the record watcher reports nothing
+	// for it (openTurn), so the movement shelf stays in charge until the
+	// first message, and coder-activity says so instead of calling the turn
+	// running. A screen reading is never empty in this sense.
+	Empty bool
 }
 
 // ActivityBudget is how many runes a whole activity reading may cost by
@@ -144,12 +154,13 @@ func (s *Manager) Activity(rawID string, entries, budget int) (Activity, error) 
 			return activity, nil
 		}
 		// A session that is running but has recorded nothing yet is starting,
-		// not finished. Saying "I cannot read it" would reach the watcher as a
-		// coder that is gone, and a gone coder is idle by definition: a job
-		// checked in the first seconds of its coder would be reported as
-		// standing still while the coder is coming up.
+		// not finished: an empty reading, see Activity.Empty. Saying "I cannot
+		// read it" would reach the watcher as a coder that is gone, and a gone
+		// coder is idle by definition: a job checked in the first seconds of
+		// its coder would be reported as standing still while the coder is
+		// coming up.
 		if _, running := s.ResolveRunning(id); running == nil {
-			return Activity{Text: "", Finished: false}, nil
+			return Activity{Empty: true}, nil
 		}
 		return Activity{}, err
 	}

@@ -133,6 +133,14 @@ func (r *sessionRepository) activity(sessionID string, entries, budget int) (cod
 // readActivity parses the recorded messages of a transcript, keeping the last
 // entries of them (the default when entries is zero or less), spending at most
 // budget runes on the reading (zero or less means unlimited).
+//
+// A transcript without a single message reads as empty, see
+// coder.Activity.Empty. Since claude 2.1.277 the file exists before the first
+// prompt: at boot claude writes a `system` note saying which instruction files
+// it loaded (`agents-md: no CLAUDE.md found; AGENTS.md loaded`), next to the
+// modes, an empty draft and the cost state. None of that is a message, so the
+// tail is empty, and a reading that judged such a transcript by the file's
+// stamp read a coder that had only booted as a prompt just received.
 func readActivity(source io.Reader, entries, budget int) (coder.Activity, error) {
 	keep, line := activityBounds(entries, budget)
 	var tail []transcriptLine
@@ -162,6 +170,7 @@ func readActivity(source io.Reader, entries, budget int) (coder.Activity, error)
 		Finished:      turnFinished(tail),
 		InToolCall:    inToolCall(tail),
 		LastMessageAt: lastMessageAt(tail),
+		Empty:         len(tail) == 0,
 	}, nil
 }
 

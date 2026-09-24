@@ -157,12 +157,14 @@ func readActivity(source io.Reader, entries, budget int) (coder.Activity, error)
 		tools = nil
 		trim()
 	}
-	// A log holds session bookkeeping before any turn, and a turn that was
-	// never recorded is not open: the reading starts finished and only what
-	// opens a turn below takes that back. The claude reader answers the same
-	// through its transcript, which does not exist before the first exchange.
+	// A log holds session bookkeeping before any turn, session.start and the
+	// boot's permission and model changes, and a turn that was never recorded
+	// is not open: the reading starts finished and empty, and only what
+	// speaks of a turn below takes both back, see coder.Activity.Empty. The
+	// claude reader marks the note its coder writes at boot the same way.
 	finished := true
 	awaiting := false
+	empty := true
 
 	scanner := bufio.NewScanner(source)
 	scanner.Buffer(make([]byte, 64*1024), activityTailBytes+4096)
@@ -216,16 +218,21 @@ func readActivity(source io.Reader, entries, budget int) (coder.Activity, error)
 		case "session.shutdown", "session.resume":
 			// A turn does not survive its process: whatever the log left
 			// open before a shutdown, and whatever a resumed session boots
-			// on top of, ended with the process that ran it.
+			// on top of, ended with the process that ran it. It speaks of
+			// no turn of its own, so it leaves the reading empty.
 			finished = true
 			awaiting = false
+			continue
+		default:
+			continue
 		}
+		empty = false
 	}
 	if err := scanner.Err(); err != nil {
 		return coder.Activity{}, err
 	}
 	flushTools()
-	return coder.Activity{Text: spendBudget(lines, line, budget), Finished: finished, AwaitingApproval: awaiting}, nil
+	return coder.Activity{Text: spendBudget(lines, line, budget), Finished: finished, AwaitingApproval: awaiting, Empty: empty}, nil
 }
 
 // spendBudget spends the budget asymmetrically on the rendered lines, the

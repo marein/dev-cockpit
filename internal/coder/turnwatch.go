@@ -5,8 +5,9 @@ import (
 )
 
 // turnReadBudget is what one record reading of the watcher may cost. Only
-// the Finished, InToolCall, AwaitingApproval and LastMessageAt answers are
-// used, so the smallest budget that still parses the tail is enough.
+// the Empty, Finished, InToolCall, AwaitingApproval and LastMessageAt
+// answers are used, so the smallest budget that still parses the tail is
+// enough.
 const turnReadBudget = 200
 
 // RunTurnWatch follows every running session of this manager for the
@@ -27,7 +28,10 @@ const turnReadBudget = 200
 // A stamp is taken per session per tick and the record is only read when the
 // stamp moved, so an idle session costs one stat per tick. A session whose
 // record cannot be stamped or read yet reports nothing at all: no account is
-// exactly what the movement fallback is for. Blocks; run it in a goroutine.
+// exactly what the movement fallback is for. A record that holds no message
+// yet (Activity.Empty) is the same case with a file: a coder that notes its
+// boot into the record before anybody typed has no account to give, see
+// openTurn. Blocks; run it in a goroutine.
 func (s *Manager) RunTurnWatch(interval time.Duration, onSeen func(id string, startedAt time.Time), onTurn func(id string, open, inTool bool, at time.Time), onGone func(id string), onRenamed func(id, name, cwd string)) {
 	watchRecord := s.coder.ActivityProfile().WatchRecord
 	stamper, _ := s.coder.(ActivityStamper)
@@ -80,14 +84,28 @@ func (s *Manager) RunTurnWatch(interval time.Duration, onSeen func(id string, st
 			if err != nil {
 				continue
 			}
-			onTurn(id, openTurn(activity, stamp, r.StartedAt), activity.InToolCall, stamp)
+			open, spoken := openTurn(activity, stamp, r.StartedAt)
+			if !spoken {
+				continue
+			}
+			onTurn(id, open, activity.InToolCall, stamp)
 		}
 	}
 }
 
-// openTurn decides what the watcher reports as open. The reading answers
-// for the record; what it cannot know is whether its newest message belongs
-// to the terminal it is read for. A message older than the terminal was
+// openTurn decides what the watcher reports as open, and whether it reports
+// at all. A reading without a single message (Activity.Empty) is no account
+// of a turn and spoken is false for it: claude writes the transcript at boot
+// with a note about the instruction files it loaded, so the file exists and
+// carries a stamp after the start while nobody has said a word, and judged by
+// that stamp below it read as a prompt just received and pinned the working
+// mark from the start until the cap or the first prompt. Reporting it as
+// over instead would silence the movement shelf, which is the one reading
+// left for a session nobody has talked to yet.
+//
+// A reading with messages answers for the record; what it cannot know is
+// whether its newest message belongs to the terminal it is read for. A
+// message older than the terminal was
 // left by a previous life, a turn aborted without a written end, stopped
 // and resumed later, and taking its word would pin the working mark until
 // the backstop. Such a turn is reported as over, not skipped: over is what
@@ -96,10 +114,13 @@ func (s *Manager) RunTurnWatch(interval time.Duration, onSeen func(id string, st
 // that cannot date its messages is judged by the record's stamp instead,
 // which a serve restart over a live turn still passes: the pane survives
 // the restart, so whatever the turn wrote was written in this life.
-func openTurn(activity Activity, stamp, startedAt time.Time) bool {
+func openTurn(activity Activity, stamp, startedAt time.Time) (open, spoken bool) {
+	if activity.Empty {
+		return false, false
+	}
 	wordAt := activity.LastMessageAt
 	if wordAt.IsZero() {
 		wordAt = stamp
 	}
-	return !activity.Finished && !activity.AwaitingApproval && !wordAt.Before(startedAt)
+	return !activity.Finished && !activity.AwaitingApproval && !wordAt.Before(startedAt), true
 }

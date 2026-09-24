@@ -604,6 +604,7 @@ func (s *Server) handleCoderActivity(c *gin.Context) {
 			"text":     activity.Text,
 			"finished": activity.Finished,
 			"screen":   activity.Screen,
+			"empty":    activity.Empty,
 		})
 		return
 	}

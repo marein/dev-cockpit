@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/spf13/cobra"
 )
@@ -179,7 +180,10 @@ func runDeleteCoder(out io.Writer, opts inspectOptions, target string, confirmed
 	line := "coder " + text(deleted["name"]) + " deleted"
 	// What the deletion took with it, in the server's own words: the page's
 	// flash and the toast say the same sentence, there is one source for it.
-	if dropped := text(deleted["dropped"]); dropped != "" {
+	// The answer carries the field only when something went, so it is read
+	// raw: text() spells an absent value as a question mark, which is right
+	// for a name and turned every plain deletion into "deleted, ?".
+	if dropped, _ := deleted["dropped"].(string); dropped != "" {
 		line += ", " + dropped
 	}
 	fmt.Fprintln(out, line)
@@ -545,11 +549,18 @@ func reportDeletedWorktrees(out io.Writer, deleted map[string]any) {
 
 // projectPath is what the create form expects: the absolute directory. A name
 // is resolved against the projects root, so a caller can say what the user
-// says instead of repeating the layout.
+// says instead of repeating the layout. The root is expanded first, because
+// the flag's default spells the home as `~`, which the server expands for its
+// own flag at start and never for a path it is handed: joined raw, a name
+// travelled as `~/projects/<name>` and the server answered that no such
+// project exists.
 func projectPath(projectsDir, project string) string {
 	project = strings.TrimSpace(project)
 	if project == "" || filepath.IsAbs(project) {
 		return project
+	}
+	if expanded, err := filesystem.ExpandHome(projectsDir); err == nil {
+		projectsDir = expanded
 	}
 	return filepath.Join(projectsDir, project)
 }

@@ -482,6 +482,51 @@ func TestSessionCommandsPostOneRequestEach(t *testing.T) {
 	}
 }
 
+// The dropped note is the server's and stands only where something went: a
+// plain deletion ends at "deleted". The answer's field was read through
+// text(), which spells an absent value as a question mark, and every plain
+// deletion printed "deleted, ?".
+func TestDeleteOutputCarriesTheDroppedNoteOnlyWhereOneIs(t *testing.T) {
+	for _, tc := range []struct {
+		body map[string]any
+		want string
+	}{
+		{map[string]any{"id": "abc", "name": "readme-task", "project": "demo"}, "coder readme-task deleted\n"},
+		{map[string]any{"id": "abc", "name": "readme-task", "project": "demo", "dropped": "1 trigger dropped"}, "coder readme-task deleted, 1 trigger dropped\n"},
+	} {
+		dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(tc.body)
+		})
+		var out strings.Builder
+		if err := runDeleteCoder(&out, inspectOptions{stateDir: dir}, "abc", true); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		if out.String() != tc.want {
+			t.Fatalf("want %q, got %q", tc.want, out.String())
+		}
+	}
+}
+
+// The projects root of the flag spells the home as `~`, which the server
+// expands for its own flag and never for a path it is handed. A name is
+// therefore joined onto the expanded root, or it travels as `~/projects/<name>`
+// and the server answers that no such project exists. An absolute path and an
+// empty one pass as they are.
+func TestProjectPathExpandsTheHomeOfTheRoot(t *testing.T) {
+	t.Setenv("HOME", "/home/probe")
+	for _, tc := range []struct{ root, project, want string }{
+		{"~/projects", "demo", "/home/probe/projects/demo"},
+		{"/srv/projects", " demo ", "/srv/projects/demo"},
+		{"~/projects", "/elsewhere/demo", "/elsewhere/demo"},
+		{"~/projects", "", ""},
+	} {
+		if got := projectPath(tc.root, tc.project); got != tc.want {
+			t.Fatalf("projectPath(%q, %q) = %q, want %q", tc.root, tc.project, got, tc.want)
+		}
+	}
+}
+
 // A refusal is the cockpit's sentence, not a status code: the caller has to be
 // able to tell the user what is wrong with that session.
 func TestSessionCommandsPassOnTheRefusal(t *testing.T) {

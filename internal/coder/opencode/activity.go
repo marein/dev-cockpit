@@ -116,7 +116,9 @@ func (r *sessionRepository) activity(sessionID string, entries, budget int) (cod
 // renderActivity turns the rows into the lines a reader judges, newest last.
 // A turn is over when the newest message is the coder's own answer, its end
 // is written down (or it died with an error, which writes no end), and its
-// finish reason does not hand on into a tool call.
+// finish reason does not hand on into a tool call. A session row without a
+// message is a session recorded and nothing said yet: the reading is empty,
+// see coder.Activity.Empty.
 func renderActivity(rows []activityRow, keep, line, budget int) coder.Activity {
 	type message struct {
 		id    string
@@ -167,7 +169,7 @@ func renderActivity(rows []activityRow, keep, line, budget int) coder.Activity {
 			lines = append(lines, "coder ran "+strings.Join(m.tools, ", "))
 		}
 	}
-	return coder.Activity{Text: spendBudget(lines, line, budget), Finished: finished}
+	return coder.Activity{Text: spendBudget(lines, line, budget), Finished: finished, Empty: len(messages) == 0}
 }
 
 // spendBudget spends the budget asymmetrically on the rendered lines, the

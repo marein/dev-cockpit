@@ -202,21 +202,29 @@ const activityTimeout = 30 * time.Second
 
 // formatActivity renders the answer of the activity route. A reading that came
 // from the screen says so before the text: it carries the coder's input line,
-// and whoever reads it has to know that the draft there is nobody's message.
+// and whoever reads it has to know that the draft there is nobody's message. A
+// record that holds no message yet says that instead of judging a turn: the
+// coder booted and no prompt has reached it, so neither running nor over would
+// be true, see coder.Activity.Empty.
 func formatActivity(target string, answer map[string]any) string {
 	text, _ := answer["text"].(string)
 	finished, _ := answer["finished"].(bool)
 	screen, _ := answer["screen"].(bool)
+	empty, _ := answer["empty"].(bool)
 
 	var b strings.Builder
-	if screen {
+	switch {
+	case screen:
 		state := "the picture was still changing while it was read"
 		if finished {
 			state = "the picture stood still while it was read"
 		}
 		fmt.Fprintf(&b, "Session %s keeps no record of its own, so this is its screen; %s.\n", target, state)
 		b.WriteString("The line at the bottom is the coder's input box, and whatever stands in it is the coder's own draft, not a message.\n\n")
-	} else {
+	case empty:
+		fmt.Fprintf(&b, "Session %s has not recorded a message yet: no prompt has reached it since it started, so nothing says whether a turn is running.\n", target)
+		return b.String()
+	default:
 		state := "its turn is still running"
 		if finished {
 			state = "its turn is over"

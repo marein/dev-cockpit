@@ -17,6 +17,11 @@ const (
 	queuedLine    = `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-07-26T10:00:04Z","sessionId":"s1","content":"and now the tests"}`
 	modeLine      = `{"type":"mode","mode":"normal","sessionId":"s1"}`
 	sidechainLine = `{"type":"assistant","isSidechain":true,"sessionId":"s1","cwd":"/projects/demo","timestamp":"2026-07-26T10:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"subagent talking"}]}}`
+	// What claude 2.1.277 and later write at boot, before anybody typed.
+	permissionModeLine = `{"type":"permission-mode","permissionMode":"auto","sessionId":"s1"}`
+	agentsMdLine       = `{"parentUuid":null,"isSidechain":false,"type":"system","subtype":"informational","content":"agents-md: no CLAUDE.md found; AGENTS.md loaded: /projects/demo/AGENTS.md","isMeta":false,"timestamp":"2026-07-26T09:59:50Z","uuid":"u0","level":"notice","userType":"external","entrypoint":"cli","cwd":"/projects/demo","sessionId":"s1","version":"2.1.281","gitBranch":"master"}`
+	bootDraftLine      = `{"type":"last-prompt","leafUuid":"u0","sessionId":"s1"}`
+	costStateLine      = `{"type":"cost-state","sessionId":"s1","totalCostUSD":0,"totalAPIDuration":0,"totalDuration":12256,"startTime":1753523990000,"modelUsage":{},"hasUnknownModelCost":false}`
 )
 
 // A turn that ended is visible in the transcript: the coder's own answer is the
@@ -56,8 +61,8 @@ func TestATranscriptSaysWhenTheCoderIsStillWorking(t *testing.T) {
 		{"a tool it still has to run", []string{userLine, toolUseLine}},
 		{"a result it has not answered", []string{userLine, toolUseLine, toolResultLn}},
 		{"a prompt it just received", []string{answerLine, userLine}},
+		{"a prompt it just received after the boot note", []string{modeLine, permissionModeLine, agentsMdLine, bootDraftLine, costStateLine, userLine}},
 		{"a subagent working for it", []string{userLine, toolUseLine, sidechainLine}},
-		{"nothing recorded yet", []string{modeLine}},
 	}
 	for _, tc := range cases {
 		writeTranscript(t, root, "demo", "s1", tc.lines...)
@@ -65,9 +70,47 @@ func TestATranscriptSaysWhenTheCoderIsStillWorking(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: activity: %v", tc.name, err)
 		}
-		if activity.Finished {
-			t.Fatalf("%s: want the coder reported as working:\n%s", tc.name, activity.Text)
+		if activity.Finished || activity.Empty {
+			t.Fatalf("%s: want the coder reported as working, got %+v", tc.name, activity)
 		}
+	}
+}
+
+// A transcript without a single message is no account of a turn. claude
+// writes the file at boot since 2.1.277, before anybody typed: the modes, a
+// `system` note saying which instruction files it loaded, an empty draft and
+// the cost state. Judged by the file's stamp such a transcript read as a
+// prompt just received and pinned the working mark from the start until the
+// cap or the first prompt, so the reading says that it is empty, the watcher
+// reports nothing for it and coder-activity calls no turn running. The prompt
+// that follows the boot note is what it always was, a message dated at its
+// own time and an open turn.
+func TestABootNoteAloneIsNoTurn(t *testing.T) {
+	root := t.TempDir()
+	r := &sessionRepository{stateRoot: root}
+
+	writeTranscript(t, root, "demo", "s1", modeLine, permissionModeLine, agentsMdLine, bootDraftLine, costStateLine)
+	activity, err := r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if !activity.Empty {
+		t.Fatalf("want the reading marked empty, got %+v", activity)
+	}
+	if activity.Text != "" || !activity.LastMessageAt.IsZero() {
+		t.Fatalf("a boot note is not a message, got %+v", activity)
+	}
+
+	writeTranscript(t, root, "demo", "s1", modeLine, permissionModeLine, agentsMdLine, bootDraftLine, costStateLine, userLine)
+	activity, err = r.activity("s1", 0, coder.ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if activity.Empty || activity.Finished {
+		t.Fatalf("want the prompt read as an open turn, got %+v", activity)
+	}
+	if want := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC); !activity.LastMessageAt.Equal(want) {
+		t.Fatalf("LastMessageAt = %v, want %v", activity.LastMessageAt, want)
 	}
 }
 

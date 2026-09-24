@@ -106,6 +106,23 @@ func TestScreenErrorSaysWhatIsWrongWithTheTerminal(t *testing.T) {
 	}
 }
 
+// A record that holds no message yet says nothing about a turn. Calling it
+// running was what an assistant read for a coder that had only booted, and
+// its answer then waited for a turn that had never started.
+func TestActivityOutputSaysWhenNothingWasRecorded(t *testing.T) {
+	out := formatActivity("t1", map[string]any{"text": "", "finished": false, "empty": true})
+	if strings.Contains(out, "still running") || strings.Contains(out, "is over") {
+		t.Fatalf("an empty record judges no turn:\n%s", out)
+	}
+	if !strings.Contains(out, "has not recorded a message yet") {
+		t.Fatalf("want the empty record named:\n%s", out)
+	}
+	out = formatActivity("t1", map[string]any{"text": "user: write the README", "finished": false})
+	if !strings.Contains(out, "its turn is still running") || !strings.Contains(out, "user: write the README") {
+		t.Fatalf("a prompt just received is a running turn:\n%s", out)
+	}
+}
+
 // --all lifts the cap: every inactive coder is printed and no tail line claims
 // anything was dropped. The default stays the capped list, so the flag is the
 // only way to pay for the whole tail.

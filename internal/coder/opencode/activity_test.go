@@ -157,14 +157,15 @@ func TestASessionWithoutARecordIsAnError(t *testing.T) {
 }
 
 // A pre-created session that has not spoken yet answers its own row without
-// a message: recorded, nothing said, not finished.
+// a message: recorded, nothing said, not finished, and marked empty so that
+// nobody reads a turn into it.
 func TestAnEmptySessionReadsAsStarting(t *testing.T) {
 	r := activityRepository(t, []map[string]any{sessionOnly()})
 	activity, err := r.activity("ses_aaa", 0, coder.ActivityBudget)
 	if err != nil {
 		t.Fatalf("activity: %v", err)
 	}
-	if activity.Text != "" || activity.Finished {
+	if activity.Text != "" || activity.Finished || !activity.Empty {
 		t.Fatalf("want an empty unfinished reading, got %+v", activity)
 	}
 }
