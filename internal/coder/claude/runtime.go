@@ -22,7 +22,9 @@ func (runtime) Env() map[string]string { return map[string]string{"CLAUDE_CODE_N
 // positional prompt (`claude [options] [prompt]`), so the session comes up
 // already working on it. It goes behind endOfOptions, because the shell quoting
 // protects the shell and not claude's own flag parser: a task that starts with a
-// dash would otherwise be parsed as an option and never reach the session.
+// dash would otherwise be parsed as an option and never reach the session. A
+// model rides behind --model and only on a start: a resume carries none, so a
+// resumed session keeps the model it has, whatever /model set inside it.
 func (r runtime) StartCommand(start coder.SessionStart) string {
 	command := fmt.Sprintf("cd %s && exec claude%s --session-id %s",
 		clirun.ShellQuote(start.Workdir), r.flags(start.AgentID, start.AutomaticApproval),
@@ -32,6 +34,9 @@ func (r runtime) StartCommand(start coder.SessionStart) string {
 	// its transcript afterwards, see promptTitle in session.go.
 	if name := strings.TrimSpace(start.Name); name != "" {
 		command += " --name " + clirun.ShellQuote(name)
+	}
+	if model := strings.TrimSpace(start.Model); model != "" {
+		command += " --model " + clirun.ShellQuote(model)
 	}
 	if task := strings.TrimSpace(start.Task); task != "" {
 		command += " " + endOfOptions + " " + clirun.ShellQuote(task)

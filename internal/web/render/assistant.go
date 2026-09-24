@@ -8,6 +8,36 @@ type AssistantCoderOption struct {
 	Label string
 }
 
+// AssistantModelOption is one entry of a model select.
+type AssistantModelOption struct {
+	Value    string
+	Label    string
+	Selected bool
+}
+
+// AssistantModelPick is one model select as the page renders it: the field it
+// posts under, the entries with the stored value selected, a stored value the
+// list does not hold standing as an entry of its own, and Current, the stored
+// value itself, which the Other… entry carries so that picking it without JS
+// changes nothing. MaxRunes is what the typed field's maxlength says before
+// the server has to refuse a name.
+type AssistantModelPick struct {
+	Field    string
+	Current  string
+	MaxRunes int
+	Options  []AssistantModelOption
+}
+
+// AssistantModels is what the ring button's menu offers: the chat model, the
+// check model and the trigger model of this assistant, each over the list its
+// coder offers, and the line that says where that list comes from.
+type AssistantModels struct {
+	Chat    AssistantModelPick
+	Check   AssistantModelPick
+	Trigger AssistantModelPick
+	Note    string
+}
+
 // AssistantAttachmentView is one file a message carries, ready to embed.
 type AssistantAttachmentView struct {
 	Name     string
@@ -144,6 +174,10 @@ type AssistantData struct {
 	// as pushed with the end frame, so opening the panel shows the number
 	// without waiting for a turn.
 	ContextPercent int
+	// Models is what that same button's menu offers: which models this
+	// assistant's chat turns and its checks run on. Nil where the composer is
+	// off, a blocked assistant has no coder to list models for.
+	Models *AssistantModels
 }
 
 // AssistantCard is one row of the assistant list: what it is called, what it
@@ -262,6 +296,9 @@ type AssistantTriggerView struct {
 	Until string
 	// Note is the last thing that happened to it, one line.
 	Note string
+	// Model is the model its reactions run on, empty for one that follows the
+	// owner's chat model, which is what most triggers do.
+	Model string
 	// EditURL opens the form that changes it, empty on one that is over: a
 	// spent trigger cannot be changed, and the row carrying nothing is what
 	// keeps the button off it.
@@ -341,9 +378,15 @@ type AssistantTriggerFormData struct {
 	// so the field never stands empty and nobody has to guess what a schedule
 	// with nothing in it would mean.
 	Timezone string
-	Mode     string
-	Once     bool
-	Batch    int
+	// Model is the select for the model the reaction runs on, over the list
+	// the owner's coder offers with the empty entry reading Same as the
+	// assistant, and ModelNote the line under it saying where that list comes
+	// from.
+	Model     AssistantModelPick
+	ModelNote string
+	Mode      string
+	Once      bool
+	Batch     int
 	// The expiry as the form asks for it: a number with the unit beside it,
 	// and the box that says there is none. UntilCount is zero where nothing
 	// expires, which is where a new trigger starts, and the field then stands

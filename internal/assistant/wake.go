@@ -81,7 +81,7 @@ func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
 	if strings.TrimSpace(spec.Prompt) == "" {
 		return nil, errors.New("A check needs a prompt.")
 	}
-	return s.startOwnSession(spec.Owner, spec.Prompt, wakeSessionName, RunRecord{
+	return s.startOwnSession(spec.Owner, spec.Prompt, wakeSessionName, "", RunRecord{
 		Kind: RunCheck,
 		// The report this check may write carries its id from here, so a check
 		// that is concluded twice still writes exactly one message.
@@ -96,15 +96,20 @@ func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
 // reaction sees the owner's instruction file, the memory and the workspace
 // files, and nothing of the conversation; what its answer means for the thread
 // is the reactor's decision, and the id that answer is pushed under is
-// reserved here so a restart pushes it once.
-func (s *Service) startReaction(owner string, origin Note, prompt string) (*activeRun, error) {
+// reserved here so a restart pushes it once. model is the trigger's own,
+// empty for one that follows the owner's Triggers pick, else the owner's
+// chat, see ModelFor.
+func (s *Service) startReaction(owner string, origin Note, prompt, model string) (*activeRun, error) {
 	if strings.TrimSpace(prompt) == "" {
 		return nil, errors.New("A reaction needs a prompt.")
 	}
-	return s.startOwnSession(owner, prompt, reactionSessionName, RunRecord{
+	return s.startOwnSession(owner, prompt, reactionSessionName, model, RunRecord{
 		Kind:      RunReaction,
 		MessageID: statefile.NewID(),
 		Origin:    &origin,
+		// A model the trigger names is the one ModelFor answers with, so this
+		// is where it is written down that the pick stands on the trigger.
+		TriggerModel: model != "",
 	})
 }
 
@@ -122,8 +127,10 @@ func (s *Service) startReaction(owner string, origin Note, prompt string) (*acti
 // comes back reads its answer out of the file. The session is kept out of the
 // coder lists while it exists and removed when the turn is over, so it leaves
 // no resumable ghost behind. It runs in the workspace of the assistant it
-// belongs to, so its instructions say who it acts as.
-func (s *Service) startOwnSession(owner, prompt string, name func(string) string, rec RunRecord) (*activeRun, error) {
+// belongs to, so its instructions say who it acts as. want is the model the
+// caller asks for over the assistant's own, a trigger's; which model the turn
+// gets is resolved here, once, by ModelFor, and written on the record.
+func (s *Service) startOwnSession(owner, prompt string, name func(string) string, want string, rec RunRecord) (*activeRun, error) {
 	c, err := s.Get(owner)
 	if err != nil {
 		return nil, err
@@ -146,6 +153,7 @@ func (s *Service) startOwnSession(owner, prompt string, name func(string) string
 	rec.Instance = c.ID
 	rec.CoderID = c.CoderID
 	rec.SessionID = sessionID
+	rec.Model = ModelFor(rec.Kind, c.Summary, want, co.ModelDefaults())
 	rec.Deadline = s.now().UTC().Add(wakeTimeout)
 	a := &activeRun{rec: rec, done: make(chan struct{})}
 	p, err := s.launch(&a.rec, co.Runner, TurnRequest{
@@ -154,6 +162,7 @@ func (s *Service) startOwnSession(owner, prompt string, name func(string) string
 		Title:     name(c.Title),
 		Workdir:   workdir,
 		Prompt:    prompt,
+		Model:     rec.Model,
 	})
 	if err != nil {
 		s.mu.Lock()

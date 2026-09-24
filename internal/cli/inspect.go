@@ -401,6 +401,244 @@ func runAssistantShow(out io.Writer, opts inspectOptions, id, contains string, e
 // own list is built from.
 const assistantsPath = "/assistants/instances"
 
+// modelsPath is where a coder's models are read, the list every select is
+// built from.
+const modelsPath = "/assistants/models"
+
+func newModelListCommand(opts *inspectOptions) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "model-list [coder]",
+		Short: "List the models a coder offers, the CLI's own and the added ones",
+		Long: "List the models a coder offers, one per line marked cli or added, then the " +
+			"defaults set for it and the note saying where the CLI's names come from; without " +
+			"a coder, every installed one. A name `--model` takes is one of these or spelled " +
+			"like one. Reads only, changes nothing.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			coderID := ""
+			if len(args) == 1 {
+				coderID = args[0]
+			}
+			return runModelList(cmd.OutOrStdout(), *opts, coderID)
+		},
+	}
+	return cmd
+}
+
+func runModelList(out io.Writer, opts inspectOptions, coderID string) error {
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
+	if err != nil {
+		return err
+	}
+	path := modelsPath
+	if coderID = strings.TrimSpace(coderID); coderID != "" {
+		path += "?coder=" + url.QueryEscape(coderID)
+	}
+	answer, err := client.GetJSON(path, assistantReadTimeout)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(out, formatModels(answer))
+	return err
+}
+
+// formatModels renders the list per coder: a head with the count, one row per
+// name with its source in front, the defaults where any is set, and the
+// coder's note as the last line. An empty list says so, so a turn reading
+// nothing knows the coder lists nothing rather than that the read failed.
+func formatModels(answer map[string]any) string {
+	raw, _ := answer["coders"].([]any)
+	if len(raw) == 0 {
+		return "No coder is installed.\n"
+	}
+	var b strings.Builder
+	for i, entry := range raw {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		models, _ := m["models"].([]any)
+		fmt.Fprintf(&b, "Models of %s (%d)\n", text(m["id"]), len(models))
+		if len(models) == 0 {
+			b.WriteString("  none, the CLI names none and none was added\n")
+		}
+		for _, e := range models {
+			em, ok := e.(map[string]any)
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(&b, "  %-6s %s\n", text(em["source"]), text(em["name"]))
+		}
+		if defaults, ok := m["defaults"].(map[string]any); ok {
+			var set []string
+			for _, purpose := range []string{"chat", "check", "trigger", "start"} {
+				if name, _ := defaults[purpose].(string); name != "" {
+					set = append(set, purpose+" "+name)
+				}
+			}
+			if len(set) > 0 {
+				fmt.Fprintf(&b, "  defaults: %s\n", strings.Join(set, ", "))
+			}
+		}
+		if note, _ := m["note"].(string); note != "" {
+			fmt.Fprintf(&b, "  %s\n", note)
+		}
+	}
+	return b.String()
+}
+
+// resolvedModelsPath is where the calling assistant's own resolutions are
+// read.
+const resolvedModelsPath = "/assistants/models/resolved"
+
+func newAssistantModelsGetCommand(opts *inspectOptions) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "assistant-models-get",
+		Short: "Show which models your own turns run on",
+		Long: "Show which model your chat turns, your checks and your triggers run on where " +
+			"nothing narrower is picked, each with where it comes from: the ring, the coder's " +
+			"own default or the CLI's default, and for the checks and the triggers " +
+			"whether that is your chat's own reading, same as chat, evaluated when the turn starts. " +
+			"The Triggers line is what a trigger without a model of its own runs on, your Triggers " +
+			"pick at the ring where one stands. It reads your own, so it needs --as. Reads only, " +
+			"changes nothing; `assistant-models-set` is what moves a pick.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAssistantModelsGet(cmd.OutOrStdout(), *opts)
+		},
+	}
+	return cmd
+}
+
+func runAssistantModelsGet(out io.Writer, opts inspectOptions) error {
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
+	if err != nil {
+		return err
+	}
+	answer, err := client.GetJSON(resolvedModelsPath, assistantReadTimeout)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(out, formatAssistantModels(answer))
+	return err
+}
+
+// modelsSetArgs are the ring's three picks as flags, each optional: what a
+// flag that was typed does is decided by whether it was named, see
+// modelsSetForm.
+type modelsSetArgs struct {
+	chat, checks, triggers string
+}
+
+func newAssistantModelsSetCommand(opts *inspectOptions) *cobra.Command {
+	var a modelsSetArgs
+	cmd := &cobra.Command{
+		Use:   "assistant-models-set",
+		Short: "Move your own picks at the ring",
+		Long: "Move the picks at the ring of the assistant running this command, the way the user " +
+			"moves them in the ring's menu: only the flags you name change anything, everything " +
+			"else stands, and `default` clears a pick back to its empty entry, the chain below it " +
+			"for the chat and Same as chat for the checks and the triggers. A name has to be one " +
+			"the coder takes, out of `model-list` or spelled like one, and a refused name changes " +
+			"nothing. The answer is the sentence the ring's save shows, what the chat, the checks " +
+			"and the triggers run on afterwards; `assistant-models-get` reads it back with where " +
+			"each comes from. It moves your own, so it needs --as.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAssistantModelsSet(cmd.OutOrStdout(), *opts, a, cmd.Flags().Changed)
+		},
+	}
+	cmd.Flags().StringVar(&a.chat, "chat", "", "the model your chat turns run on; default clears the pick")
+	cmd.Flags().StringVar(&a.checks, "checks", "", "the model the checks of your steered coders run on; default clears the pick back to Same as chat")
+	cmd.Flags().StringVar(&a.triggers, "triggers", "", "the model your triggers without a model of their own run on; default clears the pick back to Same as chat")
+	return cmd
+}
+
+// modelsSetForm is what assistant-models-set posts: form=model with one
+// field per named flag, the fields the ring's menu posts, the way
+// trigger-edit posts what was typed, so a field nobody named leaves that
+// pick standing and `default` posts the empty field that clears it. A call
+// that names nothing is refused here: it would move nothing and read as a
+// save.
+func modelsSetForm(a modelsSetArgs, named func(string) bool) (url.Values, error) {
+	form := url.Values{"form": {"model"}}
+	for _, flag := range []struct{ name, field, value string }{
+		{"chat", "model", a.chat}, {"checks", "check_model", a.checks}, {"triggers", "trigger_model", a.triggers},
+	} {
+		if named(flag.name) {
+			form.Set(flag.field, modelField(flag.value))
+		}
+	}
+	if len(form) == 1 {
+		return nil, errors.New("Name what to move: --chat, --checks or --triggers.")
+	}
+	return form, nil
+}
+
+// runAssistantModelsSet posts the picks to the calling assistant's own path,
+// the one the ring's menu posts to, and prints the sentence it answers. The
+// path is built from --as and from nothing else, so a turn moves its own
+// picks and nobody else's, and without --as there is no path to build.
+func runAssistantModelsSet(out io.Writer, opts inspectOptions, a modelsSetArgs, named func(string) bool) error {
+	form, err := modelsSetForm(a, named)
+	if err != nil {
+		return err
+	}
+	own := strings.TrimSpace(opts.assistantID)
+	if own == "" {
+		return errors.New("This command moves your own picks, so it needs --as <id>.")
+	}
+	client, err := localapi.Dial(opts.stateDir, own)
+	if err != nil {
+		return err
+	}
+	answer, err := client.PostForm("/assistants/"+own, form, actionTimeout)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, word(answer["message"]))
+	return err
+}
+
+// formatAssistantModels is three lines, one per purpose: the model and where
+// it comes from, Default where the resolution ended at empty, and for the
+// checks and the triggers the words same as chat in front of where the chat
+// resolved, because that is what an empty pick there stands for; a Triggers
+// pick of its own reads as the ring alone, like a Checks pick does.
+func formatAssistantModels(answer map[string]any) string {
+	var b strings.Builder
+	for _, row := range []struct{ label, key string }{{"Chat", "chat"}, {"Checks", "check"}, {"Triggers", "trigger"}} {
+		choice, _ := answer[row.key].(map[string]any)
+		model, _ := choice["model"].(string)
+		if model == "" {
+			model = "Default"
+		}
+		source, _ := choice["source"].(string)
+		where := modelSourceWord(source)
+		if same, _ := choice["sameAsChat"].(bool); same {
+			where = "same as chat, " + where
+		}
+		fmt.Fprintf(&b, "%s: %s (%s)\n", row.label, model, where)
+	}
+	return b.String()
+}
+
+// modelSourceWord names a resolution's origin the way the user sees it: the
+// ring, the coder's own start default, or the CLI. The Models tab is never
+// one, what it holds is copied onto a new assistant and reads as the ring.
+func modelSourceWord(source string) string {
+	switch source {
+	case "pick":
+		return "ring"
+	case "coder":
+		return "coder default"
+	}
+	return "CLI"
+}
+
 // formatAssistantThread renders one transcript: a line saying what is shown,
 // then the messages, newest last, each under a line naming who said it and
 // when. A headline stands on that line where the message has one, a note of
@@ -422,6 +660,17 @@ func formatAssistantThread(contains string, answer map[string]any) string {
 	fmt.Fprintf(&b, "Assistant %s", quoted(title))
 	if coder != "" {
 		fmt.Fprintf(&b, " on coder %s", coder)
+	}
+	// The three models stand in the header where they are set; an assistant
+	// on the coder's default says nothing about it, which is the rule.
+	if model, _ := answer["model"].(string); model != "" {
+		fmt.Fprintf(&b, ", chat model %s", model)
+	}
+	if model, _ := answer["checkModel"].(string); model != "" {
+		fmt.Fprintf(&b, ", check model %s", model)
+	}
+	if model, _ := answer["triggerModel"].(string); model != "" {
+		fmt.Fprintf(&b, ", trigger model %s", model)
 	}
 	if contains != "" {
 		fmt.Fprintf(&b, ", %d of %d messages contain %s.\n", len(raw)+dropped, total, quoted(contains))
@@ -1115,7 +1364,7 @@ func openTerminals(opts inspectOptions) (terminals, error) {
 	hidden := reservedSessions(cfg.StateDir)
 
 	out := terminals{cfg: cfg, projects: projectRepo}
-	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude")), coderopencode.New(notify.InboxDir(cfg.StateDir, "opencode")))
+	registry := coder.NewRegistry(codercopilot.New(nil), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude"), nil), coderopencode.New(notify.InboxDir(cfg.StateDir, "opencode"), nil))
 	for _, c := range registry.All() {
 		if len(clirun.MissingTools(c.RequiredTools())) > 0 {
 			continue

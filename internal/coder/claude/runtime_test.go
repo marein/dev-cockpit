@@ -39,6 +39,26 @@ func TestStartCommandLeavesTheNameOutWhenThereIsNone(t *testing.T) {
 	}
 }
 
+// A picked model rides behind --model on a start alone. A start without one
+// carries no flag, the CLI's own default is what such a session runs on, and
+// a resume carries none whatever was picked: a resumed session keeps the
+// model it has, /model inside it included.
+func TestStartCommandCarriesTheModelAndAResumeNever(t *testing.T) {
+	r := runtime{}
+	command := r.StartCommand(coder.SessionStart{SessionID: "sid", Workdir: "/work", Model: " haiku "})
+	if !strings.Contains(command, " --model 'haiku'") {
+		t.Errorf("a picked model must ride behind --model: %s", command)
+	}
+	plain := r.StartCommand(coder.SessionStart{SessionID: "sid", Workdir: "/work"})
+	if strings.Contains(plain, "--model") {
+		t.Errorf("a session without a model must not carry the flag: %s", plain)
+	}
+	resume := r.ResumeCommand("sid", "/work", true)
+	if strings.Contains(resume, "--model") {
+		t.Errorf("a resume must never carry a model: %s", resume)
+	}
+}
+
 func TestStartCommandCarriesSettings(t *testing.T) {
 	r := runtime{}
 	command := r.StartCommand(coder.SessionStart{SessionID: "sid", Name: "name", Workdir: "/work"})

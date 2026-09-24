@@ -278,6 +278,7 @@ func newAssistantCommand() *cobra.Command {
 		newNotificationsCommand(opts),
 		newTriggerNewCommand(opts), newTriggerListCommand(opts), newTriggerEditCommand(opts), newTriggerDeleteCommand(opts),
 		newTimezoneGetCommand(opts), newTimezoneSetCommand(opts),
+		newModelListCommand(opts), newAssistantModelsGetCommand(opts), newAssistantModelsSetCommand(opts),
 		newProjectCommand(opts), newDeleteProjectCommand(opts),
 		newLineCommentListCommand(opts), newLineCommentAddCommand(opts), newLineCommentRemoveCommand(opts),
 		newOutputCommand(opts),
@@ -422,7 +423,11 @@ func runServe(opts serveOptions) error {
 	if err != nil {
 		return err
 	}
-	registry := coder.NewRegistry(codercopilot.New(), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude")), coderopencode.New(notify.InboxDir(cfg.StateDir, "opencode")))
+	// The settings store stands before the coders: every coder's model
+	// repository keeps its added names in it, and the model defaults the
+	// managers and the assistant read on every start come out of it.
+	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
+	registry := coder.NewRegistry(codercopilot.New(settingsStore), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude"), settingsStore), coderopencode.New(notify.InboxDir(cfg.StateDir, "opencode"), settingsStore))
 	selected, err := selectProviders(registry)
 	if err != nil {
 		return err
@@ -434,13 +439,24 @@ func runServe(opts serveOptions) error {
 		if err := manager.StopIdleStreams(); err != nil {
 			log.Printf("failed to stop idle terminal stream(s): %v", err)
 		}
+		// A session that picks no model starts on the coder's stored start
+		// default, read on every start so the settings page applies at once.
+		coderID := c.ID()
+		manager.SetModelDefaults(func() assistant.ModelDefaults {
+			return assistant.ModelDefaultsFor(settingsStore, coderID)
+		})
 		coders = append(coders, manager)
+		// The model list of a coder that fetches it in the background starts
+		// its first fetch here, at the serve start, so the first New coder
+		// dialog and the first ring menu find it filled, whether or not the
+		// coder can hold a conversation.
+		coder.WarmModels(c)
 	}
 	// The assistant owns the browser side conversations. Its reservation filter
 	// goes into every manager before the first snapshot, otherwise a
 	// conversation's provider session would also be listed as a resumable coder.
 	executable := runningExecutable()
-	conversations, assistantService, err := assistant.New(cfg.StateDir, assistantCoders{coders: selected}, assistant.Cockpit{
+	conversations, assistantService, err := assistant.New(cfg.StateDir, assistantCoders{coders: selected, store: settingsStore}, assistant.Cockpit{
 		Executable:  executable,
 		StateDir:    cfg.StateDir,
 		ProjectsDir: cfg.ProjectsRoot,
@@ -472,7 +488,6 @@ func runServe(opts serveOptions) error {
 		}
 	}
 
-	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
 	shells := shell.NewShells(cfg, tmuxClient, projectRepo, func() bool {
 		return settingsStore.Get(shell.HistorySettingKey) == "on"
 	})
@@ -1163,7 +1178,13 @@ func answerExcerpt(content string) string {
 
 // assistantCoders adapts the installed coders to what the assistant needs,
 // keeping internal/assistant free of any dependency on internal/coder.
-type assistantCoders struct{ coders []coder.Coder }
+// assistantCoders hands the assistant the coders that can answer a turn, each
+// with the reading of its stored model defaults, the purpose fallback behind
+// an assistant's own pick, read fresh on every turn out of the settings store.
+type assistantCoders struct {
+	coders []coder.Coder
+	store  *settings.Store
+}
 
 func (c assistantCoders) Available() []assistant.CoderInfo {
 	out := make([]assistant.CoderInfo, 0, len(c.coders))
@@ -1173,7 +1194,9 @@ func (c assistantCoders) Available() []assistant.CoderInfo {
 			continue
 		}
 		id := co.ID()
-		out = append(out, assistant.CoderInfo{ID: id, Label: render.CoderLabel(id), Runner: runner})
+		out = append(out, assistant.CoderInfo{ID: id, Label: render.CoderLabel(id), Runner: runner, Defaults: func() assistant.ModelDefaults {
+			return assistant.ModelDefaultsFor(c.store, id)
+		}})
 	}
 	return out
 }

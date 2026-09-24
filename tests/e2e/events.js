@@ -413,10 +413,24 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
         numberPosts: !until.disabled,
         batchShown: box.width > 0 && box.height > 0,
         batchPosts: !form.querySelector('[name="batch"]').disabled,
+        model: {
+          options: [...form.querySelectorAll('select[name="model"] option')].map((o) => o.textContent.trim()),
+          value: form.querySelector('select[name="model"]').value,
+          typedHidden: form.querySelector("[data-model-other-input]").hidden && form.querySelector("[data-model-other-input]").disabled,
+          afterTask: form.querySelector('[name="task"]').closest(".mb-2").nextElementSibling?.contains(form.querySelector('select[name="model"]')) || false,
+        },
       };
     });
 
     const fresh = await read();
+    // The model the reaction runs on stands right after the task: the empty
+    // entry is the assistant default, named as it resolves (this assistant
+    // picked nothing, so the CLI), the coder's list follows, and Other… is
+    // the way past it, with the typed field posting nothing until it is
+    // picked.
+    assert(fresh.model.options[0] === "Assistant default (CLI)" && fresh.model.options.includes("haiku") && fresh.model.options[fresh.model.options.length - 1] === "Other…",
+      `the model select is off: ${JSON.stringify(fresh.model)}`);
+    assert(fresh.model.value === "" && fresh.model.typedHidden && fresh.model.afterTask, `the model select does not start on the assistant's own after the task: ${JSON.stringify(fresh.model)}`);
     assert(/NOTHING/.test(fresh.hint) && /notifies nobody/.test(fresh.hint),
       `the task field does not say what NOTHING does: ${JSON.stringify(fresh)}`);
     // No expiry is where a new trigger starts, and it is the unit select that
@@ -460,6 +474,35 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     await page.waitForSelector(".modal.show", { state: "hidden", timeout: 8000 });
     await page.setViewportSize({ width: 1360, height: 900 });
     return "the hint stands and the window goes with the schedule";
+  });
+
+  // A trigger keeps the model it was posted with: the row's fold and the JSON
+  // `trigger-list` reads both say it, a name no CLI takes is refused, and an
+  // empty post clears it back to the assistant's, which is what `--model
+  // default` posts.
+  await run("a trigger keeps a model of its own and an empty post clears it", async () => {
+    const made = await postTo(page, "/assistants/triggers", {
+      form: "new", assistant, event: "cron", spec: "0 3 * * *", task: "EVENT_NOTHING the modelled one", model: " haiku ",
+    });
+    assert(made.status === 200, `the trigger answered ${made.status}: ${JSON.stringify(made.body)}`);
+    const id = made.body.id;
+    const listed = async () => {
+      const res = await page.request.get(`${BASE}/assistants/triggers?assistant=${assistant}`, { headers: { Accept: "application/json" } });
+      return ((await res.json()).triggers || []).find((row) => row.id === id) || {};
+    };
+    assert((await listed()).model === "haiku", `the listing does not carry the model: ${JSON.stringify(await listed())}`);
+    await openAssistant(page, assistant);
+    const row = await waitRow(page, assistant, id, (r) => /model haiku/.test(r.facts));
+    assert(/model haiku/.test(row.facts), `the row does not say the model: ${JSON.stringify(row)}`);
+    const refused = await postTo(page, "/assistants/triggers", { form: "edit", id, model: "two words" });
+    assert(refused.status >= 400, "a model no CLI takes was accepted");
+    assert((await listed()).model === "haiku", "a refused name changed the model");
+    const cleared = await postTo(page, "/assistants/triggers", { form: "edit", id, model: "" });
+    assert(cleared.status === 200 && /the assistant default/.test(cleared.body.changed || ""), `the change does not name the model: ${JSON.stringify(cleared.body)}`);
+    assert((await listed()).model === "", "an empty post did not clear the model");
+    const gone = await postTo(page, "/assistants/triggers", { form: "remove", id });
+    assert(gone.status === 200, `the trigger could not be removed: ${JSON.stringify(gone.body)}`);
+    return "haiku on the row and in the list, refused when wrong, cleared by an empty post";
   });
 
   // The two halves are the row's width and not their text: `Steered coders` is

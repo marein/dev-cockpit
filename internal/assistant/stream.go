@@ -1,6 +1,9 @@
 package assistant
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // Stream frame kinds. Every frame carries the run and message id it belongs
 // to, so a stream that outlived a cancelled turn can never write into the
@@ -38,6 +41,14 @@ const (
 	// stamps it and drops it, and it never travels the hub: the stream handler
 	// writes it on a beat of its own.
 	FramePing = "ping"
+	// FrameModels announces that the assistant's model picks moved: the ring's
+	// three selects on every open page of it take the fresh picks, so a pick
+	// set from the CLI or on another tab shows without a reload. It is about
+	// the instance and carries no message id, SetModels publishes it, and the
+	// stream handler writes one on every connect as the stream's own snapshot,
+	// so a page whose socket was down while a pick moved catches up with the
+	// reconnect.
+	FrameModels = "models"
 )
 
 // RenderMark is the one character the streaming prefix is rendered with, at
@@ -66,6 +77,32 @@ type StreamEvent struct {
 	// stands, in percent. It is left out when the turn reported nothing or the
 	// model's window is unknown, and the page then leaves its ring as it is.
 	Context int `json:"context,omitempty"`
+	// Models rides the models frame: the picks as stored and the moment they
+	// were written.
+	Models *ModelPicks `json:"models,omitempty"`
+}
+
+// ModelPicks is what the models frame carries and what a save of the ring's
+// menu answers alike, so the page applies one shape from both ways in: the
+// assistant the picks belong to, the three picks as stored, empty where the
+// assistant follows the default, and the moment they were written, which is
+// what lets a page drop a reading older than the one it applied, the way a
+// draft's answer carries its own stamp. The frame travels the one
+// assistant's own hub channel like every message frame, so no other
+// assistant's page ever receives it, and the id is the page's own check on
+// top of that: it applies a reading only for the assistant it shows.
+type ModelPicks struct {
+	Assistant string    `json:"assistant"`
+	Chat      string    `json:"chat"`
+	Check     string    `json:"check"`
+	Trigger   string    `json:"trigger"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// ModelPicks answers the instance's picks the way the models frame carries
+// them.
+func (i Instance) ModelPicks() ModelPicks {
+	return ModelPicks{Assistant: i.ID, Chat: i.Model, Check: i.CheckModel, Trigger: i.TriggerModel, UpdatedAt: i.UpdatedAt}
 }
 
 // subBuffer is generous on purpose: a fast provider can emit hundreds of small

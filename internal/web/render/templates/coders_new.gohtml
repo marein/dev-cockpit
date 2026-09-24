@@ -46,6 +46,21 @@
       {{else}}
       <input type="hidden" name="coder" value="{{.SelectedCoder}}">
       {{end}}
+      {{/* The model the session starts on, right after the coder and before
+           the agent, one block per coder like the agent's, shown and enabled
+           for the picked coder alone: the empty entry is the CLI's own
+           default, the list is what the coder offers, Other… reveals the
+           typed way past it, and the line under it says where the list comes
+           from. A block that is not the picked coder's posts nothing, its
+           select is disabled here for a page without JS and by
+           dc-coder-select on every switch. */}}
+      {{range $co := .Coders}}
+      <div class="mb-3" data-coder-models="{{$co.ID}}" {{if ne $co.ID $.SelectedCoder}}hidden{{end}}>
+        <label class="form-label" for="model-{{$co.ID}}">Model</label>
+        {{template "assistant_model_pick.gohtml" (dict "Pick" $co.Model "ID" (printf "model-%s" $co.ID) "Disabled" (ne $co.ID $.SelectedCoder))}}
+        {{if $co.ModelNote}}<div class="form-hint">{{$co.ModelNote}}</div>{{end}}
+      </div>
+      {{end}}
       {{range $co := .Coders}}
       <div class="mb-3" data-coder-agents="{{$co.ID}}" {{if ne $co.ID $.SelectedCoder}}hidden{{end}}>
         <label class="form-label" for="agent-{{$co.ID}}">Agent</label>

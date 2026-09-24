@@ -259,6 +259,299 @@ test. Update this file when a convention changes.
   `/settings/assistant/jobs`, default `assistant.DefaultConcurrentChecks`, read
   again before every check so a change applies without a restart, and a check
   that has to wait still happens.
+- **A turn's model is a choice per purpose, and one function resolves it.**
+  Nothing picks a model by itself, the assistant inherits from the coder or
+  overrides it, and a check and a reaction inherit from the chat: a chat
+  turn takes the ring's chat pick, else the coder's own start default on its
+  settings page, the one level that knows the CLI, else empty, the CLI's own
+  default, which is what every turn ran on before; a check takes the ring's
+  check pick, else that whole chat chain, ring pick included, evaluated when
+  the check starts; a reaction the trigger's own model, else the ring's
+  Triggers pick, else the chat chain the same way, evaluated when the
+  reaction starts. That is what Same as chat means on the ring's Checks and
+  Triggers picks, and it is stored as the empty string: an assistant whose
+  chat is picked at the ring and nothing else set runs its checks and its
+  reactions on that pick, and moving the chat at the ring moves every later
+  check and every later reaction of a trigger without a model of its own,
+  with nothing stored anywhere. A trigger's own Model pick reads Assistant
+  default (<resolved>) in its empty entry (`assistantDefaultLabel`), the
+  owner's Triggers pick where one stands, else its resolved chat, and a
+  trigger carries a model only where a person set one on the form or with
+  `--model`. **Everything on the Models tab of the assistant settings is a
+  creation default** (the first tab, where the bare `/settings/assistant`
+  lands), like the coder's start default is for a session, and nothing on
+  it is read at run time: `Service.create` copies the tab's Chat default
+  onto a new assistant's `Model`, the Checks default onto its `CheckModel`
+  and the Trigger default onto its `TriggerModel`, each only where the
+  default is set and else left empty, so an assistant made before a default
+  was set keeps what it had, its chat on the coder's start default and its
+  checks and reactions following the chat. Nothing is copied onto a
+  trigger, `Reactor.Add` leaves a model nobody set empty (the form's
+  Assistant default entry, `trigger-new` without `--model` and the sequel of
+  `coder-new --then` alike). The tab says so in its one line, Applies to new
+  assistants, its Chat entry reads Coder default (<start default>) or Coder
+  default (CLI), what a new one runs on where the default is empty, and its
+  Checks and Triggers entries read Same as chat the same way. The tab's chat
+  default was the one value on it read at run time and became a creation
+  default like the other two on 2026-09-24, one rule for the whole tab:
+  `DefaultModelOrigin(RunChat)` reads `defaults.Start` and nothing else of
+  the tab, `defaults.Chat` is read by `Service.create` alone, and
+  `ModelSource` has no tab level, a copied default reads as a pick. The
+  defaults are a setting
+  per coder (`assistant.ModelDefaults`, the four keys `ModelDefaultKey`
+  names, chat, check, trigger and start), read fresh by `ModelDefaultsFor`
+  where a turn or a session starts and where an assistant is made, so a
+  save applies to the next one. An
+  assistant carries three, `Summary.Model` for its chat turns,
+  `Summary.CheckModel` for the checks of its steered jobs and
+  `Summary.TriggerModel` for the reactions of its triggers, a trigger carries
+  `Trigger.Model` for its reactions, all four `omitempty`, so a stored
+  instance and a stored trigger load unchanged. `ModelOrigin`
+  (`internal/assistant/model.go`) is the one reading and answers a
+  `ModelReading`, `ModelFor` its model alone: the pick, else
+  `DefaultModelOrigin`, the chain below a pick, which is also what a pick's
+  empty entry names and which for a check is the chat's own reading and
+  nothing else, for a reaction the ring's Triggers pick, else that same
+  reading, `defaults.Check` and `defaults.Trigger` stand in no run time
+  path. `ModelSource` travels with the answer and names the level the model
+  really stands on, whatever purpose asked, and `SameAsChat` beside it says
+  that a check or a reaction took it as the chat, so a check that landed on
+  the ring's chat pick reports the ring as the chat's (`assistant-models-get`
+  prints `Checks: fable (same as chat, ring)` for an assistant with only
+  that pick, its Checks line always prints the resolved chat with that
+  source form, and its Triggers line the ring's Triggers pick as `(ring)`
+  where one stands, else the resolved chat the same way). A trigger's model
+  and an assistant's check and trigger models are read when the turn
+  starts, and
+  `RunRecord.Model` says which model a check or a reaction really ran on,
+  pinned from `startOwnSession` into `TurnRequest.Model` and the three
+  command lines. The defaults reach
+  the service through `CoderInfo.Defaults` and a coder session's start
+  through `Manager.SetModelDefaults`, both wired in `runServe` over the
+  settings store, so `internal/assistant` still reads no store of its own for
+  a turn. It travels as `TurnRequest.Model`, each runner appends its
+  own flag (`claude --model`, `opencode -m provider/model`, `copilot --model`)
+  and nothing else about the command moves, and `RunRecord.Model` says which
+  model a run was started with. `CleanModel` is the one validation: trimmed,
+  at most `MaxModelRunes`, letters, digits and `. _ / : - [ ]`, never a first
+  rune of `-` (an argv reads that as an option, which is the one shape the
+  alphabet alone lets through), refused with a sentence otherwise, and an
+  empty value is a value, the choice cleared. What a
+  coder offers is its `coder.ModelRepository` (`internal/coder/models.go`),
+  the optional capability `coder.ModelKeeper` on the coder itself beside
+  `AssistantCapable`, never on its conversation runner: the same list serves
+  a coder session's start and an assistant's turn, and a coder without the
+  conversation capability still starts sessions. `List` answers the CLI's
+  own names and the added ones, each marked with its source, `Note` the one
+  line saying where the CLI's names come from, which the selects show under
+  themselves, `Add` remembers a name (checked by `CleanModel`, idempotent,
+  stored per coder under `ModelAddedKey` in the settings store as one JSON
+  array, in memory without a store), `Delete` forgets an added one and
+  refuses a CLI name, `Exists` reads the list. Every coder builds one with
+  `coder.NewModelRepository` in its constructor over the settings store it is
+  handed, and `ModelRepositoryFor` answers the empty one for a coder without,
+  which lists nothing and remembers nothing without refusing. The web layer
+  reads it in one place, `coderModelRepository` (`assistantmodels.go`, over
+  the coder managers), for the ring, the trigger form, the New coder dialog,
+  the two settings pages and the `model-list` read alike, and
+  `internal/assistant` knows nothing of lists. claude lists the four aliases (`fable`,
+  `opus`, `sonnet`, `haiku`, always the newest of their family, there is no
+  list command); opencode lists what `opencode models` prints, fetched in the
+  background and cached in the process for ten minutes, the next read past
+  that starting a refresh, never run on the request path (`modelList` in
+  `models.go`), every refresh under a deadline and an output cap
+  (`modelListTimeout`, `modelListMaxOutput`, `exec.CommandContext`), so a
+  hung `opencode models` is a failed refresh that keeps what stood and
+  retries after the ten minutes, never a flag that stays set for the life of
+  the process; the first fetch starts where the coders are registered for
+  serving (`coder.WarmModels` in `runServe`), on the list capability alone
+  and never on the conversation probe, because the list serves the New coder
+  dialog too, which a coder without the conversation capability still gets;
+  copilot lists `auto` plus the `recentModelIds` of
+  `~/.copilot/config.json`, the comment lines before its JSON skipped, a
+  missing file an empty list. Every select ends in Other…, which reveals a
+  text field (`dc-model-pick`, the one element every form uses; the Other…
+  entry carries the stored value so a page without JS posts what stands), a
+  name typed there goes through `Add` on the save (`rememberModel`, on the
+  ring, the trigger form, the New coder dialog and the settings pages) so it
+  stands in every later list of that coder, and a stored value the
+  repository does not hold (`Exists`) renders as the selected entry, never
+  dropped. The empty entry is worded per level and always names what it
+  resolves to (`modelDefaultLabel`, `coderDefaultLabel`): the coder page's
+  Start pick reads Default (CLI), the Models tab's Chat pick
+  Coder default (<start default>) or Coder default (CLI) and its Checks and
+  Triggers picks Same as chat, the ring's Chat pick that same Coder default
+  (<start default>) or Coder default (CLI), the chain below a chat pick
+  being the start default and the CLI and nothing else, its
+  Checks and Triggers picks Same as chat unconditionally, because that is
+  exactly what an empty pick there does, a trigger's Assistant default
+  (<resolved>) or Assistant default (CLI), and the New coder
+  dialog's Default (<start default>) or Default (CLI). No help line stands
+  under a pick; the one line a list gets is the repository's note, one short
+  line per coder, and the Models tab's one line of its own stands over the
+  coders. The assistant reads the
+  list with `model-list [coder]` (`GET /assistants/models`, one row per name
+  with its source, the defaults set for the coder, the note last, every
+  installed coder without a name), which the generated instructions name
+  next to `--model` on `coder-new` and on triggers instead of listing any
+  name: a trigger passes it unasked, the cheapest the list offers, only for a
+  task that prints a fixed sentence or answers NOTHING most of the time,
+  every other trigger only on the user's own word. They say that the model
+  is named to the user only when the
+  started or added line names it, quoted from that line, which those lines
+  do when `--model` set one the session or the reaction would not have run
+  on without the flag (`startedLine`, `addedLine`, comparing the answered
+  `model` with the answered `modelDefault`), and that otherwise nothing is
+  said about models. What an assistant's own turns run on is read with
+  `assistant-models-get` (`GET /assistants/models/resolved`, the caller's
+  own three resolutions with their origin out of `ModelOrigin`, ring, Models
+  tab, coder default or the CLI, and `sameAsChat` on the checks and the
+  triggers), named under the reads in the instructions, and moved with
+  `assistant-models-set --chat/--checks/--triggers` (`modelsSetForm`: the
+  ring's own `form=model` post to `/assistants/<own id>`, the path built from
+  `--as` and nothing else, only the named flags posted, `default` the empty
+  field that clears a pick, the answer the ring's own sentence), named under
+  the actions with the one rule a turn carries: set only when the user says
+  so, or to clear a pick the coder rejected, and name the change quoted from
+  what the command printed. No model
+  ever stands in the instruction file itself: a changed file costs every
+  assistant its cache. The user sets the
+  ring's own three at the button beside the composer, which wears the icon of
+  the coder it runs on and is a dropdown always
+  (`assistant_new_button.gohtml` with `Models`; `assistant_context_ring_icon.gohtml`
+  reuses `coder_icon.gohtml`'s own glyph, an svg kept as the ring icon itself
+  where the coder's glyph is an svg (claude, opencode, its path data shared
+  between the two templates), never a bare webfont glyph, which a font puts
+  flush left in its advance with the baseline rounded a different way on
+  every platform, so its ink stands up to half a pixel off the center of its
+  own box, which the ring around it shows; a font icon (copilot) is wrapped
+  in a span carrying the ring icon's own class and centering the same way;
+  the ring svg is sized
+  explicitly, `width` and `height` as `calc(100% - 2px)` at `top` and `left`
+  1px, never by `inset` alone: a WebKit without the inset aware replaced width
+  (an iPhone today) sizes an auto width svg from its containing block's whole
+  width and drops the over-constrained right and bottom, so the ring stood
+  38px wide one pixel right and down while a check of the centers within one
+  pixel passed, which is why the e2e reads the box and its four gaps at half a
+  pixel; its
+  selects stand inside a `.dropdown-menu`, where Bootstrap's dropdown data api
+  takes ArrowUp and ArrowDown on the document in the capture phase and puts
+  the focus on the first entry, so `dc-model-pick` takes the two keys for its
+  own select on the window in the capture phase, the editor sheet's way, and
+  the browser's own stepping is the default action left alone): the
+  Chat, the Checks and the Triggers select, and the coder's note under them.
+  It holds no
+  New with entries and no divider, so its label and its
+  `data-assistant-new-label` read only This assistant's models; a new
+  assistant is made from the list column's own button instead, which keeps
+  the message-plus icon and the old label, New assistant, the memory comes
+  along. A change posts
+  `form=model` (`model`, `check_model`, `trigger_model`) to the assistant's own path,
+  `Service.SetModels`, JSON with a toast for the page, a flash otherwise; the
+  posting form stands beside the composer's own form and the selects reach it
+  through the `form` attribute, because a form inside the composer's own form
+  is dropped by the parser, and the Save button in the menu is the way
+  without JS, hidden once the element runs. **Every open page of the assistant
+  follows a pick without a reload**: `Service.SetModels` publishes the fresh
+  picks as one `models` frame on that assistant's own stream and on no other
+  (`FrameModels`, its load `ModelPicks`: the assistant's id, the three picks
+  as stored and the stamp they were written at), the stream handler writes
+  the same frame on every connect as the stream's own snapshot, so a pick
+  that moved while a socket was down lands with the reconnect, and the
+  save's JSON answer carries the same reading under `models`. `applyModels`
+  in `assistant.js` moves the selects, for the assistant the surface shows
+  and never for another (the id is checked on top of the channel), never
+  from a reading older than the one applied (the stamp says which, so the
+  page's own answer never puts an older choice back behind a newer frame),
+  and never over a pick that holds the focus, which keeps its value and
+  takes the fresh one when the focus leaves it; the page's own answer is
+  applied over the focus, it is what was just picked, and a save going out
+  drops what waited, because its answer is the newer reading. A trigger's form has the Model
+  select after the task with the empty entry reading Assistant default
+  (<resolved>), `trigger-new` and `trigger-edit` take `--model` (`--model
+  default` clears it on an edit, the way `--until never` does, `modelField`;
+  both helps say the assistant default, evaluated when it fires),
+  `trigger-new` names the model in its added line only where `--model` set
+  one the reaction would not have run on without it, the answered
+  `modelDefault` being the owner's Triggers pick where one stands and else
+  the chat, `trigger-list`
+  prints `model <name>` on a row that sets one and the aside's fold shows it,
+  and the instance reads (`/assistants/instances`, the header of
+  `assistant-show`) carry `model`, `checkModel` and `triggerModel`. New
+  assistants start with an empty chat model and the copied Checks and
+  Trigger defaults, the ring is where all three are set afterwards.
+- **A CLI that refuses to start a turn is a named refusal, and the cockpit
+  owns the sentence.** `assistant.Refusal` (`process.go`, beside
+  `ErrNotLoggedIn`, which is its login kind, so `errors.Is` against it keeps
+  holding) carries a kind and what the CLI named, nothing else: not logged in
+  and unknown model today. A parser answers whether it happened and never how
+  it reads, each recogniser pinned on captured output: claude's assistant
+  record with `error: model_not_found` decides in `Line`, and the stderr line
+  `[claude-code:unrecognized_model] {"model":…}` names the model in
+  `Diagnose` (`unrecognizedModel`); copilot's stderr line `Error: Model "x"
+  from --model flag is not available.` (`modelRefusal`); opencode has none,
+  it answers the same opaque `UnknownError` record for a bogus provider and a
+  bogus model alike, so it takes the quote path below. `read` places the
+  refusal on its run (`Refusal.placed`, through `failureOf`), which is what
+  the sentence needs to say where to fix it: the ring button for a chat turn
+  and a check, the trigger for a reaction on the trigger's own model
+  (`RunRecord.TriggerModel`, written by `startReaction`), the ring again
+  where the trigger followed the assistant's; the model the cockpit passed
+  stands above the one the CLI echoed. **A refused check is no silence**:
+  `Watcher.conclude` closes the job as BLOCKED at once through
+  `refused_report.md.tmpl`, because the CLI will refuse again and a second
+  silent check would only put the message off; every other failure keeps its
+  one silent retry (`maxSilentChecks`, the job's own line after the first,
+  `silent_report.md.tmpl` on the second). A refused reaction and a refused
+  chat turn read the same sentence, under the pushed message and on the
+  trigger's line, under the failed message. **What no recogniser names quotes
+  the CLI once.** The frame stays the cockpit's sentence and `assistant.Quote`
+  puts one line behind it, `The coder said: <line>`: the last non empty line
+  of the stderr tail, or of the error record on standard output where a CLI
+  reports there (claude's API error text or its failed result's own,
+  opencode's `errorWording`), one line, redacted (`redact`: keys by their
+  issuer's prefix or by their name, bearer tokens, a run of token characters
+  longer than `MaxModelRunes`, the one bound both rules read, because the one
+  long run a CLI line quotes legitimately is a model name, the directories of
+  an absolute path) and at most `quoteRunes`; nothing said leaves the frame
+  alone, a quote is never doubled, and an end the cockpit decided itself, the
+  deadline and the size cap, quotes nothing. `sanitizeError` keeps the
+  sentence and the quote as two bounded parts, and the redaction reaches the
+  quoted line alone: a curated sentence is one line and the cut, never
+  redacted, so the name in the refusal sentence stands whole. The one string
+  a CLI supplies that lands inside a sentence, the model it echoed as unknown,
+  goes through `assistant.UnknownModel`, cut to `MaxModelRunes` and dropped
+  where `CleanModel` refuses it, and no parser builds the refusal itself. The
+  rule at `ErrNotLoggedIn` is therefore read as: the cockpit owns the
+  sentence, the CLI supplies at most a quoted detail behind it.
+  **A coder session starts on a model too, and a resume never passes one.** A
+  session burns context for hours, so the start is where the choice saves the
+  most. `SessionStart.Model` carries it into the runtime, `StartOptions.Model`
+  into `Manager.Start`, which cleans it with the same `CleanModel` before
+  anything exists and refuses with that rule's sentence, takes the coder's
+  start default behind an empty pick (`Manager.SetModelDefaults`, read on
+  every start), and `StartResult.Model` says what the session came up on,
+  the pick or the default, beside `AgentID`, which the create's answer
+  carries as `model`; nothing else stores it, the agent is stored nowhere
+  either. Each
+  `StartCommand` appends its own flag when one is set, quoted like every
+  value: claude `--model <m>`, copilot `--model <m>`, opencode `--model=<m>`
+  in the equals form `--prompt=` takes, in front of either start shape, and an
+  empty model is no flag at all, the CLI's own default, exactly what every
+  session did before. `ResumeCommand` takes no model and never will: a resumed
+  session keeps the model it has, and what `/model` set inside it must not be
+  overridden by a flag the cockpit puts back. The New coder dialog carries a
+  Model select per coder right after the Coder select and before the Agent
+  block, the same shape
+  (`data-coder-models`, hidden and disabled for every coder but the picked one,
+  `dc-coder-select` switching both blocks together; the pick's `Disabled` renders
+  the select disabled so a page without JS posts one `model`), built by the same
+  `modelPick` over `coderModels` with Default as the empty entry, the list, then
+  Other… (`dc-model-pick`) and the source line under it; one render,
+  `handleCoderNew`, serves the page, the dialog, the projects board, the
+  terminals area and the editor's terminal panel. It posts `model` to
+  `/coders/new`, and `coder-new --model <name>` posts the same field, while
+  `coder-resume` has no such flag.
 - **The unsent message is a file of its own.** `instances/<id>/draft.json`
   through `assistant.DraftStore`, reached by the `Drafts` registry the way the
   jobs are: a draft is saved every time the typing pauses (200ms in
@@ -609,7 +902,8 @@ test. Update this file when a convention changes.
   a trigger nobody named has none, the form's first field says optional, and
   the empty value is a value, so the page posting an emptied field clears the
   name while a request without the field leaves what stands (`Name` with its
-  `NameSet`, the way `Once` and `All` carry theirs). **The assistant is told
+  `NameSet`, the way `Once` and `All` carry theirs, and `Model` with its
+  `ModelSet` the same way, see the model rule above). **The assistant is told
   to write one anyway**, two or three words for what the trigger is for, in
   the generated instructions and nowhere else, `trigger-new --help` carrying
   the cap alone: that is a decision for whoever writes the trigger and a rule

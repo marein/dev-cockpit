@@ -109,6 +109,31 @@ func TestStartCommandFallsBackWhenTheCreationFails(t *testing.T) {
 	}
 }
 
+// A picked model rides in the equals form of --model, on every start shape,
+// the fresh one with a task and the pre-created one without, and on a start
+// alone: a start without one carries no flag, the CLI's own default is what
+// such a session runs on, and a resume carries none whatever was picked, a
+// resumed session keeps the model it has.
+func TestStartCommandCarriesTheModelAndAResumeNever(t *testing.T) {
+	r := runtime{create: func(string, string, string) (string, error) { return "ses_fc6480f13ffeS2hWoSoid3ir6k", nil }}
+	withTask := r.StartCommand(coder.SessionStart{SessionID: "sid", Workdir: "/work", Task: "go", Model: " github-copilot/gpt-5.4-mini "})
+	if !strings.Contains(withTask, " --model='github-copilot/gpt-5.4-mini' --prompt='go'") {
+		t.Errorf("a picked model must ride in the equals form in front of the task: %s", withTask)
+	}
+	created := r.StartCommand(coder.SessionStart{SessionID: "sid", Workdir: "/work", Model: "github-copilot/gpt-5.4-mini"})
+	if !strings.Contains(created, " --model='github-copilot/gpt-5.4-mini' --session ") {
+		t.Errorf("a picked model must ride the pre-created start too: %s", created)
+	}
+	plain := r.StartCommand(coder.SessionStart{SessionID: "sid", Workdir: "/work", Task: "go"})
+	if strings.Contains(plain, "--model") {
+		t.Errorf("a session without a model must not carry the flag: %s", plain)
+	}
+	resume := runtime{}.ResumeCommand("ses_fc6480f13ffeS2hWoSoid3ir6k", "/work", true)
+	if strings.Contains(resume, "--model") {
+		t.Errorf("a resume must never carry a model: %s", resume)
+	}
+}
+
 func TestStartCommandCarriesApprovalAndAgent(t *testing.T) {
 	command := runtime{}.StartCommand(coder.SessionStart{
 		SessionID: "sid", Name: "name", Workdir: "/work", AgentID: "helper",
@@ -167,7 +192,7 @@ func TestTheRuntimeSaysItsSessionsAreUnnamed(t *testing.T) {
 // input line carries the TUI's own draft. The reading itself is tested in
 // activity_test.go.
 func TestOpenCodeReportsSessionActivity(t *testing.T) {
-	var c any = New("")
+	var c any = New("", nil)
 	if _, ok := c.(coder.ActivityReporter); !ok {
 		t.Fatal("opencode keeps a record, it has to answer from it")
 	}

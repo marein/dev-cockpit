@@ -6,11 +6,17 @@ import (
 )
 
 // CoderChoice is one selectable coder in the new-coder form together with its
-// agent choices.
+// agent choices and its model choices: the select the session's model is
+// picked from (the empty entry is the CLI's own default, the list is what the
+// coder offers, Other… reveals the typed way past it, the shape the
+// assistant's selects share) and the one line under it that says where that
+// list comes from.
 type CoderChoice struct {
 	ID           string
 	Agents       []coder.AgentOption
 	DefaultAgent string
+	Model        AssistantModelPick
+	ModelNote    string
 }
 
 // CoderNewData is the model for the new-coder form. Project is chosen from a

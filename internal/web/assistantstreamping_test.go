@@ -62,3 +62,107 @@ func TestTheConversationStreamProvesItIsAliveWithAPingFrame(t *testing.T) {
 		t.Fatalf("the ping did not repeat on its beat: %q", body)
 	}
 }
+
+// The stream opens with the assistant's picks, its own connect snapshot: a
+// pick that moved while the socket was down was announced to nobody, so the
+// reconnect has to carry the reading or the page keeps the ring it rendered.
+// The frame names the assistant it is about and stands before anything
+// else the stream says.
+func TestTheConversationStreamOpensWithTheAssistantsPicks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stateDir := t.TempDir()
+	conversations, workspace, err := assistant.New(stateDir, oneCoder{}, assistant.Cockpit{StateDir: stateDir})
+	if err != nil {
+		t.Fatalf("assistant: %v", err)
+	}
+	current, err := conversations.Create("")
+	if err != nil {
+		t.Fatalf("open conversation: %v", err)
+	}
+	if _, err := conversations.SetModels(current.ID, assistant.ModelChoice{Chat: "fable", ChatSet: true, Trigger: "haiku", TriggerSet: true}); err != nil {
+		t.Fatalf("set the models: %v", err)
+	}
+
+	s := &Server{assistants: conversations, workspace: workspace, cfg: config.Config{StreamHeartbeatInterval: time.Second}}
+	r := gin.New()
+	r.GET("/assistants/:id/stream", s.handleAssistantStream)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/assistants/"+current.ID+"/stream", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.ServeHTTP(rec, request)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	body := rec.Body.String()
+	want := "event: assistant\ndata: {\"kind\":\"models\",\"models\":{\"assistant\":\"" + current.ID + "\",\"chat\":\"fable\",\"check\":\"\",\"trigger\":\"haiku\",\"updatedAt\":\""
+	at := strings.Index(body, want)
+	if at < 0 {
+		t.Fatalf("the stream did not open with the assistant's picks: %q", body)
+	}
+	if first := strings.Index(body, "event: assistant"); first != at {
+		t.Fatalf("want the picks as the first frame, got %q", body)
+	}
+}
+
+// A SetModels landing exactly between the stream reading the instance for its
+// connect snapshot and that snapshot going out over the wire must not be
+// lost: the stream has already subscribed by then, so the save's own frame
+// is already queued on the channel and follows the stale snapshot right
+// after it, as a second, newer frame, which is what wins in the browser on
+// its own stamp.
+func TestASaveBetweenTheSnapshotReadAndItsWriteStillReachesTheClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stateDir := t.TempDir()
+	conversations, workspace, err := assistant.New(stateDir, oneCoder{}, assistant.Cockpit{StateDir: stateDir})
+	if err != nil {
+		t.Fatalf("assistant: %v", err)
+	}
+	current, err := conversations.Create("")
+	if err != nil {
+		t.Fatalf("open conversation: %v", err)
+	}
+
+	assistantStreamSnapshotHook = func(id string) {
+		if _, err := conversations.SetModels(id, assistant.ModelChoice{Chat: "fable", ChatSet: true}); err != nil {
+			t.Errorf("set the models from the hook: %v", err)
+		}
+	}
+	t.Cleanup(func() { assistantStreamSnapshotHook = nil })
+
+	s := &Server{assistants: conversations, workspace: workspace, cfg: config.Config{StreamHeartbeatInterval: time.Second}}
+	r := gin.New()
+	r.GET("/assistants/:id/stream", s.handleAssistantStream)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/assistants/"+current.ID+"/stream", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.ServeHTTP(rec, request)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	body := rec.Body.String()
+	stale := "event: assistant\ndata: {\"kind\":\"models\",\"models\":{\"assistant\":\"" + current.ID + "\",\"chat\":\"\",\"check\":\"\",\"trigger\":\"\",\"updatedAt\":\""
+	fresh := "event: assistant\ndata: {\"kind\":\"models\",\"models\":{\"assistant\":\"" + current.ID + "\",\"chat\":\"fable\",\"check\":\"\",\"trigger\":\"\",\"updatedAt\":\""
+	staleAt := strings.Index(body, stale)
+	freshAt := strings.Index(body, fresh)
+	if staleAt < 0 {
+		t.Fatalf("the connect snapshot did not carry the picks from before the save: %q", body)
+	}
+	if freshAt < 0 {
+		t.Fatalf("the save's own frame never reached the client: %q", body)
+	}
+	if freshAt <= staleAt {
+		t.Fatalf("the fresh frame did not follow the stale snapshot: %q", body)
+	}
+}

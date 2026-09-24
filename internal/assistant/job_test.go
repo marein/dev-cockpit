@@ -1760,6 +1760,81 @@ func TestAnEmptyAnswerIsNotNothingToReport(t *testing.T) {
 	}
 }
 
+// A CLI that refuses to start the check is no silence to retry: it would refuse
+// again, so the job closes as blocked at once, through a report of its own that
+// says the check could not run and why, and the user hears it now and not after
+// a second silent check. The name is longModel, forty runes the redaction of a
+// quoted line would take for a token, standing whole in the report.
+func TestARefusedCheckClosesTheJobAtOnce(t *testing.T) {
+	f := newJobFixture(t, "NOTHING")
+	f.runner.answer = func(req TurnRequest) []Event {
+		if strings.Contains(req.Prompt, "you are steering") {
+			return []Event{{Kind: EventError, Err: UnknownModel(longModel)}}
+		}
+		return []Event{{Kind: EventDelta, Text: "chat answer"}}
+	}
+	c, _ := f.steered(t)
+
+	f.watcher.Handle("term-1")
+	job := f.waitJobState(t, "term-1", JobBlocked)
+	if job.Silent != 0 || job.Wakes != 0 {
+		t.Fatalf("a refused check is neither silent nor a spent wake, got %d silent and %d wakes", job.Silent, job.Wakes)
+	}
+	fresh := f.waitReport(t, c.ID)
+	if len(fresh.Messages) != 1 {
+		t.Fatalf("want one report, got %d", len(fresh.Messages))
+	}
+	report := fresh.Messages[0]
+	if report.Note == nil || report.Note.Verdict != string(VerdictBlocked) {
+		t.Fatalf("want the report marked blocked, got %+v", report.Note)
+	}
+	for _, want := range []string{"could not run", "The coder does not know the model " + longModel + ".", "ring button", "Nothing is steering this coder now"} {
+		if !strings.Contains(report.Content, want) {
+			t.Fatalf("the report does not say %q:\n%s", want, report.Content)
+		}
+	}
+	if strings.Contains(report.Content, "cannot check on") {
+		t.Fatalf("the refusal took the silent report's words:\n%s", report.Content)
+	}
+	if !strings.Contains(job.Note, "does not know the model") {
+		t.Fatalf("want the job's own line to carry the refusal, got %q", job.Note)
+	}
+	select {
+	case id := <-f.news:
+		if id != c.ID {
+			t.Fatalf("news for %s, want %s", id, c.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("want news when the check could not run")
+	}
+}
+
+// A failure nobody named keeps its one silent retry exactly as before, and
+// what the coder said rides along: in the job's line after the first one, and
+// in the report the second one closes the job with.
+func TestAnUnnamedCheckFailureQuotesTheCoderAndStillRetriesOnce(t *testing.T) {
+	f := newJobFixture(t, "")
+	f.runner.unfinished = true
+	f.runner.stderr = "loading\nError: the provider is down\n"
+	c, _ := f.steered(t)
+
+	f.watcher.Handle("term-1")
+	job := f.waitNote(t, "term-1")
+	if job.State != JobSteering || job.Silent != 1 {
+		t.Fatalf("one unnamed failure must leave the job steering with one silent check, got %q and %d", job.State, job.Silent)
+	}
+	if !strings.Contains(job.Note, "without a verdict") || !strings.Contains(job.Note, "The coder said: Error: the provider is down") {
+		t.Fatalf("want the quote in the job's line, got %q", job.Note)
+	}
+
+	f.watcher.Handle("term-1")
+	f.waitJobState(t, "term-1", JobBlocked)
+	fresh := f.waitReport(t, c.ID)
+	if !strings.Contains(fresh.Messages[0].Content, "cannot check on") || !strings.Contains(fresh.Messages[0].Content, "The coder said: Error: the provider is down") {
+		t.Fatalf("want the silent report with the quote, got:\n%s", fresh.Messages[0].Content)
+	}
+}
+
 // Not counting them cannot mean retrying forever. The second one in a row closes
 // the job and tells the user, because nothing is checking that coder any more.
 func TestTwoSilentChecksInARowReachTheUser(t *testing.T) {

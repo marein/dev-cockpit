@@ -11,7 +11,7 @@ type SettingsNav struct {
 	Active   string
 	Coders   []SettingsCoder
 	Selected string // coder id the page is scoped to, empty off the coder pages
-	Section  string // active coder section: "instructions" | "agents" | "skills"
+	Section  string // active coder section: "instructions" | "agents" | "skills" | "models"
 	Reviews  int    // open backup overwrite reviews, badge on the backup entry
 }
 

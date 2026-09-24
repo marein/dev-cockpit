@@ -17,6 +17,13 @@ class CoderSelect extends HTMLElement {
           agents.disabled = !active;
         }
       }
+      for (const group of this.querySelectorAll("[data-coder-models]")) {
+        const active = group.dataset.coderModels === coder.value;
+        group.hidden = !active;
+        for (const field of group.querySelectorAll("select, input")) {
+          field.disabled = !active || field.hidden;
+        }
+      }
     };
     coder.addEventListener("change", apply, { signal: this.abort.signal });
     apply();

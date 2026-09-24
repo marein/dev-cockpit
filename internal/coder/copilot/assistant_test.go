@@ -2,6 +2,8 @@ package copilot
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -531,5 +533,86 @@ func TestTurnWithoutAnEventLogStillPasses(t *testing.T) {
 	}
 	if usage := usageOf(events); usage.Tokens != 0 {
 		t.Fatalf("want no reading, got %+v", usage)
+	}
+}
+
+// A model the turn names rides behind --model; a turn that names none carries
+// no such flag, so copilot's own default stands as it always did.
+func TestATurnCarriesTheModelBehindItsFlag(t *testing.T) {
+	cmd, err := testRunner(t).Command(assistant.TurnRequest{SessionID: sessionID, Title: "A conversation title", Workdir: t.TempDir(), Prompt: "hello", Model: "gpt-5.4-mini"})
+	if err != nil {
+		t.Fatalf("command: %v", err)
+	}
+	argv := strings.Join(append([]string{cmd.Name}, cmd.Args...), " ")
+	if !strings.Contains(argv, " --model gpt-5.4-mini") {
+		t.Fatalf("want the model behind its flag, got %q", argv)
+	}
+	if strings.Contains(argvOf(t, false), "--model") {
+		t.Fatalf("want no model flag on a turn that names none, got %q", argvOf(t, false))
+	}
+	// A check and a reaction come as a fresh session of their own with the
+	// model the service resolved, the ring's chat pick where nothing narrower
+	// stands, and that request builds the same flag.
+	held, err := testRunner(t).Command(assistant.TurnRequest{SessionID: "99999999-2222-4333-8444-555555555555", Title: "cockpit check: readme-task", Workdir: t.TempDir(), Prompt: "check", Model: "fable"})
+	if err != nil {
+		t.Fatalf("command: %v", err)
+	}
+	argv = strings.Join(append([]string{held.Name}, held.Args...), " ")
+	if !strings.Contains(argv, " --session-id 99999999-2222-4333-8444-555555555555 ") || !strings.HasSuffix(argv, " --model fable") {
+		t.Fatalf("want a check's fresh session started on the resolved model, got %q", argv)
+	}
+}
+
+// copilot's config.json opens with comment lines before the JSON and keeps
+// the models the user ran recently under recentModelIds. The select lists
+// auto first and then those; a missing or unreadable file is auto alone.
+func TestRecentModelsReadTheConfigBehindItsComments(t *testing.T) {
+	data := []byte("// User settings belong in settings.json.\n// This file is managed automatically.\n{\n  \"appTipShown\": true,\n  \"recentModelIds\": [\n    \"gemini-3.8-flash\",\n    \"claude-sonnet-5\",\n    \"auto\",\n    \"claude-sonnet-5\",\n    \"not a model\"\n  ],\n  \"trustedFolders\": [\"/root/projects\"]\n}\n")
+	if got := recentModels(data); strings.Join(got, ",") != "gemini-3.8-flash,claude-sonnet-5" {
+		t.Fatalf("want the recent models behind the comments, once each and without auto, got %v", got)
+	}
+	if got := recentModels([]byte("// only a comment\nnot json")); got != nil {
+		t.Fatalf("want an unreadable file to read as an empty list, got %v", got)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := (&Coder{config: path}).cliModels(); strings.Join(got, ",") != "auto,gemini-3.8-flash,claude-sonnet-5" {
+		t.Fatalf("want auto first and the recent models after it, got %v", got)
+	}
+	if !strings.Contains(copilotModelsNote, "what you add") {
+		t.Fatalf("want the note to say the added names are listed too, got %q", copilotModelsNote)
+	}
+	if got := (&Coder{config: filepath.Join(t.TempDir(), "none.json")}).cliModels(); strings.Join(got, ",") != "auto" {
+		t.Fatalf("want a missing file to leave auto alone, got %v", got)
+	}
+}
+
+// A model copilot does not have is a named refusal, captured on GitHub Copilot
+// CLI 1.0.88 with `copilot -p hi --output-format json --model no-such-model`:
+// exit code 1, two ephemeral records on standard output and one line on
+// standard error, `Error: Model "no-such-model" from --model flag is not
+// available.`, which names the model between its quotes. A crash still stays
+// unnamed.
+func TestDiagnoseNamesAModelCopilotRefuses(t *testing.T) {
+	r := testRunner(t)
+	parser := r.Parse(sessionID, make(chan assistant.Event, 1))
+	generic := errors.New("The coder stopped before it finished the answer.")
+	var refusal *assistant.Refusal
+	err := parser.Diagnose(generic, "Error: Model \"no-such-model\" from --model flag is not available.\n")
+	if !errors.As(err, &refusal) || refusal.Kind != assistant.RefusalUnknownModel || refusal.Model != "no-such-model" {
+		t.Fatalf("want the unknown model refusal naming no-such-model, got %v", err)
+	}
+	if err := parser.Diagnose(generic, "panic: runtime error: index out of range"); err != nil {
+		t.Fatalf("want a crash left unnamed, got %v", err)
+	}
+	// The name copilot echoed is read under the value rule before it reaches
+	// a sentence: one past the bound arrives cut to it.
+	long := strings.Repeat("m1", assistant.MaxModelRunes)
+	err = parser.Diagnose(generic, "Error: Model \""+long+"\" from --model flag is not available.\n")
+	if !errors.As(err, &refusal) || refusal.Model != strings.Repeat("m1", assistant.MaxModelRunes/2) {
+		t.Fatalf("want the echoed name cut to %d runes, got %v", assistant.MaxModelRunes, err)
 	}
 }

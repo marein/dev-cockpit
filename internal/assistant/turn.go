@@ -148,6 +148,10 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 		renderAt  time.Time
 		renderLen int
 		expired   <-chan time.Time
+		// ownEnd marks a turn this server ended itself, at its deadline or
+		// its size cap, and not one the coder failed: only the coder's own
+		// failure gets its line quoted, see failureOf.
+		ownEnd bool
 	)
 	// A dead process cannot run past its limit: its output is finite, and
 	// reading it to the end is all that is left. An armed timer would race
@@ -197,6 +201,7 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 				if buf.Len()+len(ev.Text) > MaxResponseBytes {
 					if turnErr == nil {
 						turnErr = errors.New("The answer grew past the size this instance can hold. The part received so far is kept.")
+						ownEnd = true
 						a.proc.Kill()
 					}
 					continue
@@ -229,6 +234,7 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 			expired = nil
 			if turnErr == nil {
 				turnErr = errors.New("The turn hit its time limit before the coder answered.")
+				ownEnd = true
 			}
 			a.proc.Kill()
 		}
@@ -249,6 +255,10 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 		if named := parser.Diagnose(turnErr, tail); named != nil {
 			turnErr = named
 		}
+		// What the user reads is decided here, once the run is known: a named
+		// refusal says where the model was set, and a failure nobody named
+		// quotes the coder's last line behind the cockpit's sentence.
+		turnErr = failureOf(turnErr, a.rec, tail, !ownEnd)
 	}
 	return buf.String(), usage, turnErr
 }

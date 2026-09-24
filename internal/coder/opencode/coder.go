@@ -8,6 +8,7 @@ import (
 
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/settings"
 	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
@@ -35,12 +36,17 @@ type Coder struct {
 	// a turn needs loses the conversations only, never its terminal.
 	assistantProbe *coder.CapabilityProbe
 	runner         *runner
+	// modelCache is what `opencode models` printed, cached, and models the
+	// repository over it, see models.go.
+	modelCache *modelList
+	models     coder.ModelRepository
 }
 
 // New builds the opencode coder. notifyInbox is the directory the injected
 // notification plugin drops its event files into, claude's constructor
-// shape; empty disables the injection.
-func New(notifyInbox string) *Coder {
+// shape; empty disables the injection. store is where the model repository
+// keeps the names it was told to remember; nil keeps them in memory.
+func New(notifyInbox string, store *settings.Store) *Coder {
 	config := configDir()
 	data := dataDir()
 	sessions := &sessionRepository{
@@ -59,8 +65,10 @@ func New(notifyInbox string) *Coder {
 			notifyInbox: notifyInbox, ensurePlugin: ensureNotifyPlugin,
 			ensureConfig: ensureSessionConfig,
 		},
-		controls: terminal.DefaultControlMapper(),
+		controls:   terminal.DefaultControlMapper(),
+		modelCache: newModelList(listModels),
 	}
+	c.models = coder.NewModelRepository(store, "opencode", opencodeModelsNote, c.cliModels)
 	c.assistantProbe = coder.NewCapabilityProbe(c.probeAssistant, 10*time.Second)
 	return c
 }

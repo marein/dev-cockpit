@@ -230,6 +230,7 @@ async function stopSession(page, sessionUrl) {
 function makeRunner() {
   const results = [];
   async function run(name, fn, { soft = false } = {}) {
+    if (!matchesCheck(name)) return;
     const t0 = Date.now();
     try { const d = await fn(); results.push({ name, status: "PASS", detail: d || "", ms: Date.now() - t0 }); }
     catch (e) { results.push({ name, status: soft ? "WARN" : "FAIL", detail: e.message, ms: Date.now() - t0 }); }
@@ -255,6 +256,19 @@ function report(title, results, bag) {
 }
 
 function assert(c, m) { if (!c) throw new Error(m); }
+
+// CHECK narrows a runner to the checks whose name contains one of a comma
+// separated list of substrings (case insensitive), matched against the
+// check's own name as passed to run(), before an engine prefix joins it in
+// the report. Several terms are what a check that reads state an earlier one
+// set up needs, that earlier one named alongside it. Unset runs everything,
+// same as before it existed.
+function matchesCheck(name) {
+  const want = process.env.CHECK;
+  if (!want) return true;
+  const n = name.toLowerCase();
+  return want.split(",").some((term) => n.includes(term.trim().toLowerCase()));
+}
 
 // ---- engines + contexts ---------------------------------------------------
 const { chromium, webkit } = require("playwright-core");
@@ -294,6 +308,7 @@ async function runFeature(title, body) {
     const page = await ctx.newPage();
     wirePage(page, bag);
     const run = async (name, fn, opts) => {
+      if (!matchesCheck(name)) return;
       const t0 = Date.now();
       try { const d = await fn(); results.push({ name: `[${engine}] ${name}`, status: "PASS", detail: d || "", ms: Date.now() - t0 }); }
       catch (e) { results.push({ name: `[${engine}] ${name}`, status: (opts && opts.soft) ? "WARN" : "FAIL", detail: e.message, ms: Date.now() - t0 }); }

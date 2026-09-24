@@ -21,11 +21,16 @@ import (
 type coderCreateForm struct {
 	// Name is optional: a coder without one starts under the CLI's own title,
 	// see coder.Manager.Start.
-	Name              AlphaNumDashString `form:"name"`
-	Project           string             `form:"project" binding:"required"`
-	Coder             string             `form:"coder"`
-	Agent             string             `form:"agent"`
-	AutomaticApproval CheckboxBool       `form:"automatic_approval"`
+	Name    AlphaNumDashString `form:"name"`
+	Project string             `form:"project" binding:"required"`
+	Coder   string             `form:"coder"`
+	Agent   string             `form:"agent"`
+	// Model is the model the session starts on, empty for the CLI's own
+	// default. It is checked by the shared rule before the session exists,
+	// coder.Manager.Start refuses a name no CLI takes with that rule's own
+	// sentence, which the dialog shows like every other refusal.
+	Model             string       `form:"model"`
+	AutomaticApproval CheckboxBool `form:"automatic_approval"`
 	// Task is the first prompt the session starts with. It reaches the CLI in
 	// its argv, so it arrives whether or not the CLI already reads stdin.
 	Task string `form:"prompt"`
@@ -87,10 +92,17 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 		if agentID, err := co.Coder().AgentRepository().ValidateSelected(c.Query("agent")); err == nil {
 			defaultAgent = agentID
 		}
+		// The model select offers what this coder's repository offers, the
+		// same list the assistant's selects read, with nothing picked: a new
+		// session starts on the coder's start default, which the empty entry
+		// names, else the CLI's own, unless somebody picks otherwise.
+		repo := s.coderModelRepository(co.ID())
 		coders = append(coders, render.CoderChoice{
 			ID:           co.ID(),
 			Agents:       co.Coder().AgentRepository().Options(),
 			DefaultAgent: defaultAgent,
+			Model:        modelPick("model", "", modelDefaultLabel(s.modelDefaults(co.ID()).Start), repo),
+			ModelNote:    repo.Note(),
 		})
 	}
 	// A coder needs its whole form, so a split scoped create opens it
@@ -231,20 +243,30 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		coder.StartOptions{
 			AutomaticApproval: form.AutomaticApproval.Bool(),
 			Task:              form.Task,
+			Model:             form.Model,
 		},
 	)
 	if err != nil {
 		s.formRefused(c, "/coders/new", err.Error())
 		return
 	}
+	// A name typed under Other… is remembered by the coder's repository once
+	// the session really started on it, so it stands in every later list.
+	s.rememberModel(co.ID(), form.Model)
 	s.styleSessionPane(res.Identifier)
 	joinErr := s.joinSplit(res.Identifier, splitTargetFromRequest(c))
 	s.invalidateTerminals()
 	s.publishTerminals(s.projects.ProjectNameFor(res.Workdir))
+	// The model is the one the session came up on, the pick or the start
+	// default, and modelDefault what it would have been without a pick, so
+	// `coder-new` names the model in its started line only where the flag
+	// made a difference.
 	answer := gin.H{
-		"id":      res.Identifier,
-		"project": s.projects.ProjectNameFor(res.Workdir),
-		"url":     "/coders/" + res.Identifier,
+		"id":           res.Identifier,
+		"project":      s.projects.ProjectNameFor(res.Workdir),
+		"url":          "/coders/" + res.Identifier,
+		"model":        res.Model,
+		"modelDefault": s.modelDefaults(co.ID()).Start,
 	}
 	if doneWhen != "" {
 		// Who the job belongs to is resolved the way the jobs route resolves

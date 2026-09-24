@@ -304,6 +304,43 @@ func TestAReactionRunsInASessionOfItsOwnAndPushesItsAnswer(t *testing.T) {
 	}
 }
 
+// A CLI that does not know the model a reaction runs on is a named refusal,
+// and the sentence says where the model was set: on the trigger where the
+// trigger picked its own, at the ring button where it followed the assistant's.
+// It stands under the pushed message and on the trigger's own line alike.
+// The name is longModel, forty runes the redaction of a quoted line would
+// take for a token, standing whole because the sentence is the cockpit's.
+func TestARefusedReactionSaysWhereToPickTheModel(t *testing.T) {
+	runner := &fakeRunner{events: []Event{{Kind: EventError, Err: UnknownModel(longModel)}}}
+	f := newEventFixtureIn(t, t.TempDir(), runner)
+	f.create(t)
+	own := f.trigger(t, TriggerSpec{Event: "job-done", Task: "summarize", BatchSet: true, Model: longModel, ModelSet: true})
+
+	f.reactor.Publish(f.jobDone("readme"))
+	answer := f.waitPushed(t, 1)
+	want := "The coder does not know the model " + longModel + ". Pick another on the trigger."
+	if answer.State != StateFailed || answer.Error != want {
+		t.Fatalf("want the refusal under the pushed message, got %+v", answer)
+	}
+	fresh, _ := f.reactor.Get(own.ID)
+	if !fresh.Broke || !strings.Contains(fresh.Note, want) {
+		t.Fatalf("want the trigger marked broken with the refusal on its line, got %+v", fresh)
+	}
+	if err := f.reactor.Remove(own.ID, ""); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	following := f.trigger(t, TriggerSpec{Event: "job-done", Task: "summarize", BatchSet: true})
+	f.reactor.Publish(f.jobDone("readme"))
+	answer = f.waitPushed(t, 2)
+	if answer.Error != "The coder does not know the model "+longModel+". Pick another at the ring button of this assistant." {
+		t.Fatalf("want the ring named where the trigger followed the assistant's model, got %q", answer.Error)
+	}
+	if fresh, _ := f.reactor.Get(following.ID); !fresh.Broke {
+		t.Fatalf("want the trigger marked broken, got %+v", fresh)
+	}
+}
+
 // A reaction that stops before it is done goes the way a finished one goes:
 // the thread, the news, the phone, only marked as the turn it was. What it
 // had written is the message, the sentence under it says why it stopped, and

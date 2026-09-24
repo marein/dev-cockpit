@@ -1,12 +1,17 @@
 package opencode
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"os/exec"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/coder"
 )
 
 const cockpitID = "11111111-2222-4333-8444-555555555555"
@@ -405,5 +410,244 @@ func TestTurnWithoutARecordReportsNothing(t *testing.T) {
 		if ev.Kind == assistant.EventUsage {
 			t.Fatalf("want no reading without a record, got %+v", ev.Usage)
 		}
+	}
+}
+
+// A model the turn names rides behind -m, before the end of options separator;
+// a turn that names none carries no such flag, so opencode's own default
+// stands as it always did.
+func TestATurnCarriesTheModelBehindItsFlag(t *testing.T) {
+	cmd, err := testRunner(t).Command(assistant.TurnRequest{SessionID: cockpitID, Resume: true, Workdir: t.TempDir(), Prompt: "hello", Model: "github-copilot/claude-haiku-4.5"})
+	if err != nil {
+		t.Fatalf("command: %v", err)
+	}
+	argv := strings.Join(append([]string{cmd.Name}, cmd.Args...), " ")
+	if !strings.Contains(argv, " -m github-copilot/claude-haiku-4.5 -- hello") {
+		t.Fatalf("want the model behind -m and before the prompt, got %q", argv)
+	}
+	cmd, err = testRunner(t).Command(assistant.TurnRequest{SessionID: cockpitID, Resume: true, Workdir: t.TempDir(), Prompt: "hello"})
+	if err != nil {
+		t.Fatalf("command: %v", err)
+	}
+	if strings.Contains(strings.Join(cmd.Args, " "), " -m ") {
+		t.Fatalf("want no model flag on a turn that names none, got %v", cmd.Args)
+	}
+	// A check and a reaction come as a fresh session of their own with the
+	// model the service resolved, the ring's chat pick where nothing narrower
+	// stands, and that request builds the same flag behind the created
+	// session.
+	fresh := &runner{
+		sessions: fixtureRepository(t, sessionFixtures),
+		create: func(string, string, string) (string, error) {
+			return "ses_fresh", nil
+		},
+	}
+	held, err := fresh.Command(assistant.TurnRequest{SessionID: "99999999-2222-4333-8444-555555555555", Title: "cockpit check: readme-task", Workdir: t.TempDir(), Prompt: "check", Model: "fable"})
+	if err != nil {
+		t.Fatalf("command: %v", err)
+	}
+	argv = strings.Join(append([]string{held.Name}, held.Args...), " ")
+	if !strings.Contains(argv, " --session ses_fresh ") || !strings.Contains(argv, " -m fable -- check") {
+		t.Fatalf("want a check's fresh session started on the resolved model, got %q", argv)
+	}
+}
+
+// `opencode models` prints one provider/model per line (recorded from
+// 1.18.30). Everything that is not one is dropped: a blank line, a warning
+// printed on the way, a name no turn could carry.
+func TestTheModelListReadsOneNamePerLine(t *testing.T) {
+	names := parseModelList("opencode/big-pickle\n\ngithub-copilot/claude-haiku-4.5\nWARN some warning text\n  github-copilot/gpt-5.4-mini  \nnot a model at all\n")
+	if strings.Join(names, ",") != "opencode/big-pickle,github-copilot/claude-haiku-4.5,github-copilot/gpt-5.4-mini" {
+		t.Fatalf("want the provider/model lines alone, got %v", names)
+	}
+	if parseModelList("") != nil {
+		t.Fatal("want no names out of no output")
+	}
+}
+
+// The list is fetched in the background and never on the request path: the
+// first read answers empty and starts the fetch, a read inside the ten
+// minutes answers the cache without a process, a read past them answers the
+// cache and starts the refresh, and a refresh that failed keeps what stood.
+func TestTheModelListRefreshesInTheBackgroundAndKeepsWhatStood(t *testing.T) {
+	var mu sync.Mutex
+	runs := 0
+	fail := false
+	list := newModelList(func(context.Context) ([]string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		runs++
+		if fail {
+			return nil, errors.New("opencode is broken")
+		}
+		return []string{"opencode/big-pickle"}, nil
+	})
+	settled := func() {
+		t.Helper()
+		waitSettled(t, list)
+	}
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return runs
+	}
+
+	start := time.Now()
+	if got := list.names(start); len(got) != 0 {
+		t.Fatalf("want the first read to answer nothing while the fetch runs, got %v", got)
+	}
+	settled()
+	if count() != 1 {
+		t.Fatalf("want the first read to start one fetch, got %d", count())
+	}
+	if got := list.names(start.Add(time.Minute)); strings.Join(got, ",") != "opencode/big-pickle" || count() != 1 {
+		t.Fatalf("want the cache answered without a process inside the ten minutes, got %v after %d runs", got, count())
+	}
+
+	mu.Lock()
+	fail = true
+	mu.Unlock()
+	if got := list.names(list.at.Add(modelListTTL)); strings.Join(got, ",") != "opencode/big-pickle" {
+		t.Fatalf("want the stale cache answered while the refresh runs, got %v", got)
+	}
+	settled()
+	if count() != 2 {
+		t.Fatalf("want the read past the ten minutes to start a refresh, got %d runs", count())
+	}
+	if got := list.names(list.at.Add(time.Minute)); strings.Join(got, ",") != "opencode/big-pickle" || count() != 2 {
+		t.Fatalf("want a failed refresh to keep what stood and wait, got %v after %d runs", got, count())
+	}
+}
+
+// waitSettled waits for the refresh a read started to come back, which every
+// refresh does: a hung one is ended by its deadline.
+func waitSettled(t *testing.T, list *modelList) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		list.mu.Lock()
+		done := !list.refreshing
+		list.mu.Unlock()
+		if done {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the refresh never came back")
+}
+
+// A refresh that hangs is ended by its deadline and read as a failed one: the
+// refreshing flag is cleared, what stood is kept, and the read past the TTL
+// starts the next try instead of serving the stale list for the life of the
+// process. The fetch itself is what the deadline reaches, through its context.
+func TestAHungModelListRefreshIsEndedByItsDeadline(t *testing.T) {
+	var mu sync.Mutex
+	runs := 0
+	ended := 0
+	list := newModelList(func(ctx context.Context) ([]string, error) {
+		mu.Lock()
+		runs++
+		mu.Unlock()
+		<-ctx.Done()
+		mu.Lock()
+		ended++
+		mu.Unlock()
+		return nil, ctx.Err()
+	})
+	list.timeout = 50 * time.Millisecond
+	list.cached = []string{"opencode/big-pickle"}
+	count := func() (int, int) {
+		mu.Lock()
+		defer mu.Unlock()
+		return runs, ended
+	}
+
+	start := time.Now()
+	if got := list.names(start); strings.Join(got, ",") != "opencode/big-pickle" {
+		t.Fatalf("want what stood answered while the refresh runs, got %v", got)
+	}
+	waitSettled(t, list)
+	if runs, ended := count(); runs != 1 || ended != 1 {
+		t.Fatalf("want the one fetch started and ended by its context, got %d started and %d ended", runs, ended)
+	}
+	if got := list.names(list.at.Add(time.Minute)); strings.Join(got, ",") != "opencode/big-pickle" {
+		t.Fatalf("want a failed refresh to keep what stood, got %v", got)
+	}
+	if runs, _ := count(); runs != 1 {
+		t.Fatalf("want a read inside the TTL to start nothing, got %d runs", runs)
+	}
+	list.names(list.at.Add(modelListTTL))
+	waitSettled(t, list)
+	if runs, ended := count(); runs != 2 || ended != 2 {
+		t.Fatalf("want the read past the TTL to try again, got %d started and %d ended", runs, ended)
+	}
+}
+
+// The real fetch runs `opencode models` under the context: a process that
+// never ends is ended at the deadline and answers as a failure, never as a
+// list, and the refresh that ran it comes back.
+func TestListModelsEndsTheProcessAtTheDeadline(t *testing.T) {
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("no sleep on this host")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	names, err := listModelsWith(ctx, "sleep", "30")
+	if err == nil || names != nil {
+		t.Fatalf("want a failure and no list from a hung process, got %v and %v", names, err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("the deadline did not end the process, the call took %s", time.Since(start))
+	}
+	if !strings.Contains(err.Error(), "did not answer in time") {
+		t.Fatalf("want the deadline named, got %v", err)
+	}
+}
+
+// The warm up at the serve start is the coder's list capability alone: a coder
+// with no conversation probe at all starts its first fetch when asked, so the
+// New coder dialog of a host whose opencode cannot hold a conversation opens
+// filled the same way.
+func TestWarmingTheModelsHangsOnNoOtherCapability(t *testing.T) {
+	var mu sync.Mutex
+	runs := 0
+	c := &Coder{modelCache: newModelList(func(context.Context) ([]string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		runs++
+		return []string{"opencode/big-pickle"}, nil
+	})}
+	c.models = coder.NewModelRepository(nil, "opencode", opencodeModelsNote, c.cliModels)
+	coder.WarmModels(c)
+	waitSettled(t, c.modelCache)
+	mu.Lock()
+	defer mu.Unlock()
+	if runs != 1 {
+		t.Fatalf("want the warm up to start the first fetch, got %d runs", runs)
+	}
+}
+
+// A model opencode does not know has no refusal of its own to name: captured
+// on 1.18.32 with `opencode run --format json -m no/such-model -- hi` and
+// again with `-m github-copilot/bogus-model-xyz`, exit code 1 both times, an
+// error record naming UnknownError and its message, nothing else, no step end
+// and nothing on standard error. So it ends with the cockpit's sentence and
+// opencode's own words quoted once behind it, which is the path every error
+// record the cockpit has no name for takes.
+func TestAnErrorRecordQuotesOpencodeOnce(t *testing.T) {
+	fixture := `{"type":"error","timestamp":1790190493382,"sessionID":"` + nativeID + `","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_52011bce"}}}`
+	err := errorOf(runTurn(t, testRunner(t), fixture))
+	if err == nil || err.Error() != "The coder could not finish this answer. The coder said: UnknownError: Unexpected server error. Check server logs for details." {
+		t.Fatalf("want the cockpit's sentence with opencode quoted once, got %v", err)
+	}
+	var refusal *assistant.Refusal
+	if errors.As(err, &refusal) {
+		t.Fatalf("opencode names no model refusal, got %v", err)
+	}
+	// A record without words leaves the frame alone.
+	err = errorOf(runTurn(t, testRunner(t), `{"type":"error","timestamp":1,"sessionID":"`+nativeID+`","error":{}}`))
+	if err == nil || err.Error() != "The coder could not finish this answer." {
+		t.Fatalf("want the frame alone, got %v", err)
 	}
 }

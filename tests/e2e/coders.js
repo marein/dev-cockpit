@@ -211,6 +211,152 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       return state.error;
     });
 
+    // The model a session starts on is picked in the dialog: one block per
+    // coder right after the coder select and before the agent block, shown
+    // and enabled for the picked coder alone, Default as the empty entry, the
+    // coder's own list, Other… as the typed way past it, and the line under
+    // it saying where the list comes from. Whether a picked model reaches the
+    // command line is proven by the Go tests on the runtimes, nothing here
+    // starts a session for it.
+    await run("dialog: the model select stands between the coder and the agent select for the picked coder alone", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await dialogReady(page);
+      await page.click(`#project-${project} a[href^="/coders/new"]`);
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(400);
+      const shape = await page.evaluate(() => {
+        const form = document.querySelector("[data-form-modal] form");
+        const coderField = form.querySelector('select[name="coder"], input[name="coder"]');
+        const coder = coderField.value;
+        const follows = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+        const blocks = [...form.querySelectorAll("[data-coder-models]")].map((block) => {
+          const select = block.querySelector("[data-model-select]");
+          const options = [...select.options].map((o) => ({ value: o.value, text: o.textContent.trim() }));
+          const agents = form.querySelector(`[data-coder-agents="${block.dataset.coderModels}"]`);
+          return {
+            coder: block.dataset.coderModels,
+            hidden: block.hidden,
+            disabled: select.disabled,
+            first: options[0],
+            last: options[options.length - 1],
+            note: block.querySelector(".form-hint")?.textContent.trim() || "",
+            label: block.querySelector("label")?.textContent.trim() || "",
+            afterCoder: follows(coderField, block),
+            beforeAgent: !!agents && follows(block, agents),
+          };
+        });
+        return { coder, blocks, coders: form.querySelectorAll('select[name="coder"] option').length };
+      });
+      const picked = shape.blocks.find((b) => b.coder === shape.coder);
+      assert(picked, `no model block for the picked coder ${shape.coder}: ${JSON.stringify(shape)}`);
+      assert(!picked.hidden && !picked.disabled, `the picked coder's model select is not usable: ${JSON.stringify(picked)}`);
+      assert(picked.label === "Model" && picked.afterCoder && picked.beforeAgent, `the model select does not stand between the coder and the agent select: ${JSON.stringify(picked)}`);
+      assert(picked.first.value === "" && picked.first.text === "Default (CLI)", `the empty entry is not Default (CLI): ${JSON.stringify(picked.first)}`);
+      assert(picked.last.text === "Other…", `the list does not end in Other…: ${JSON.stringify(picked.last)}`);
+      assert(picked.note.length > 0, "no line says where the list comes from");
+      for (const other of shape.blocks.filter((b) => b.coder !== shape.coder)) {
+        assert(other.hidden && other.disabled, `another coder's model block is live: ${JSON.stringify(other)}`);
+      }
+      // Switching the coder switches the block, the way the agent block
+      // switches, and only where there is a second coder to switch to.
+      let switched = "one coder installed, nothing to switch";
+      if (shape.coders > 1) {
+        const next = await page.evaluate(() => {
+          const select = document.querySelector('[data-form-modal] select[name="coder"]');
+          const option = [...select.options].find((o) => o.value !== select.value);
+          select.value = option.value;
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+          return option.value;
+        });
+        await sleep(100);
+        const after = await page.evaluate(() => [...document.querySelectorAll("[data-form-modal] [data-coder-models]")].map((block) => ({
+          coder: block.dataset.coderModels, hidden: block.hidden, disabled: block.querySelector("[data-model-select]").disabled,
+        })));
+        for (const block of after) {
+          const live = block.coder === next;
+          assert(block.hidden === !live && block.disabled === !live, `after the switch to ${next}: ${JSON.stringify(after)}`);
+        }
+        switched = `switched to ${next}`;
+      }
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector("[data-form-modal].show"), null, { timeout: 6000 });
+      return `${shape.blocks.length} block(s), ${shape.coder} live, ${switched}`;
+    });
+
+    // Other… reveals the typed way past the list, and a name no CLI takes is
+    // refused before the session exists: the dialog stays, the message names
+    // what a model name may hold, and the typed value survives it.
+    await run("dialog: Other… reveals the text field and a refused model keeps the dialog", async () => {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await dialogReady(page);
+      await page.click(`#project-${project} a[href^="/coders/new"]`);
+      await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+      await sleep(400);
+      assert((await L.waitUpgraded(page, ["dc-model-pick"], 8000)).length === 0, "dc-model-pick not upgraded");
+      const live = '[data-form-modal] [data-coder-models]:not([hidden])';
+      await page.selectOption(`${live} [data-model-select]`, { label: "Other…" });
+      await sleep(100);
+      const revealed = await page.evaluate((live) => {
+        const block = document.querySelector(live);
+        const input = block.querySelector("[data-model-other-input]");
+        return {
+          shown: !input.hidden && !input.disabled && getComputedStyle(input).display !== "none",
+          name: input.getAttribute("name"),
+          selectNamed: block.querySelector("[data-model-select]").hasAttribute("name"),
+          focused: document.activeElement === input,
+        };
+      }, live);
+      assert(revealed.shown && revealed.name === "model" && !revealed.selectNamed, `Other… did not hand the field over: ${JSON.stringify(revealed)}`);
+      assert(revealed.focused, "the revealed field did not take the focus");
+      await page.fill(`${live} [data-model-other-input]`, "two words");
+      await page.click('[data-form-modal] button[type="submit"]');
+      await page.waitForSelector("[data-form-modal] [data-form-modal-error]", { timeout: 8000 });
+      const state = await page.evaluate((live) => ({
+        open: document.querySelector("[data-form-modal]").classList.contains("show"),
+        error: document.querySelector("[data-form-modal-error]").textContent.trim(),
+        typed: document.querySelector(`${live} [data-model-other-input]`).value,
+        submitting: document.querySelector('[data-form-modal] button[type="submit"]').disabled,
+      }), live);
+      assert(state.open, `thrown out of the dialog: ${JSON.stringify(state)}`);
+      assert(/letters, digits/.test(state.error), `the message does not say what a name may hold: ${state.error}`);
+      assert(state.typed === "two words", `the typed model is gone: ${state.typed}`);
+      assert(!state.submitting, "the submit button stayed disabled after the refusal");
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector("[data-form-modal].show"), null, { timeout: 6000 });
+      return state.error;
+    });
+
+    // A start default stored on the coder's Models section stands in the
+    // dialog's empty entry by name, so a start without a pick says what it
+    // gets; the default is cleared again at the end.
+    await run("dialog: the empty entry names the coder's stored start default", async () => {
+      const startPick = 'select[name="start"]';
+      const storeStart = async (value) => {
+        await page.goto(`${BASE}/settings/coders/claude/models`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(startPick, { timeout: 8000 });
+        await page.selectOption(startPick, value);
+        await page.click('#coder-models button[type="submit"]');
+        await page.waitForFunction(() => document.body.innerText.includes("Settings saved."), null, { timeout: 8000 });
+        const kept = await page.$eval(startPick, (s) => s.value);
+        assert(kept === value, `the start default did not come back: ${JSON.stringify(kept)}`);
+      };
+      await storeStart("haiku");
+      try {
+        await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+        await dialogReady(page);
+        await page.click(`#project-${project} a[href^="/coders/new"]`);
+        await page.waitForSelector("[data-form-modal].show form", { timeout: 8000 });
+        await sleep(400);
+        const first = await page.$eval('[data-form-modal] [data-coder-models="claude"] [data-model-select]', (s) => s.options[0].textContent.trim());
+        assert(first === "Default (haiku)", `the empty entry does not name the start default: ${first}`);
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => !document.querySelector("[data-form-modal].show"), null, { timeout: 6000 });
+      } finally {
+        await storeStart("");
+      }
+      return "Default (haiku) in the dialog, cleared again";
+    });
+
     // While the create runs the form gives way to a spinner and one line; the
     // create is held back so that state can be read.
     await run("dialog: a create shows the wait in place of the form, then lands on the new coder's page", async () => {

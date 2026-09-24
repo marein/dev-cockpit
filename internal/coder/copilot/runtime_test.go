@@ -21,6 +21,25 @@ func TestStartCommandLeavesTheNameOutWhenThereIsNone(t *testing.T) {
 	}
 }
 
+// A picked model rides behind --model on a start alone. A start without one
+// carries no flag, the CLI's own default is what such a session runs on, and
+// a resume carries none whatever was picked: a resumed session keeps the
+// model it has, /model inside it included.
+func TestStartCommandCarriesTheModelAndAResumeNever(t *testing.T) {
+	command := runtime{}.StartCommand(coder.SessionStart{SessionID: "sid", Workdir: "/work", Model: " gpt-5.4-mini "})
+	if !strings.Contains(command, " --model 'gpt-5.4-mini'") {
+		t.Errorf("a picked model must ride behind --model: %s", command)
+	}
+	plain := runtime{}.StartCommand(coder.SessionStart{SessionID: "sid", Workdir: "/work"})
+	if strings.Contains(plain, "--model") {
+		t.Errorf("a session without a model must not carry the flag: %s", plain)
+	}
+	resume := runtime{}.ResumeCommand("sid", "/work", true)
+	if strings.Contains(resume, "--model") {
+		t.Errorf("a resume must never carry a model: %s", resume)
+	}
+}
+
 // A task reaches copilot through --interactive, which starts the session and
 // runs that prompt. Typing it into the pane afterwards is what used to lose it.
 func TestStartCommandCarriesTheTask(t *testing.T) {
@@ -67,7 +86,7 @@ func TestStartCommandCarriesADashLeadingTaskAsText(t *testing.T) {
 // input line carries the CLI's own draft. The reading itself is tested in
 // activity_test.go.
 func TestCopilotReportsSessionActivity(t *testing.T) {
-	var c any = New()
+	var c any = New(nil)
 	if _, ok := c.(coder.ActivityReporter); !ok {
 		t.Fatal("copilot keeps an event log, it has to answer from it")
 	}

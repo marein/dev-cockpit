@@ -245,6 +245,29 @@ func TestTriggerListSaysWhichZoneIsInForce(t *testing.T) {
 // What a schedule answers beyond its id: the zone that was really applied and
 // the tick written out in it, so nobody has to convert a crontab expression by
 // hand. Everything that is not a schedule answers nothing here.
+// The added line names the model only when the call passed one that made a
+// difference, and then the one the cockpit answered, so what a turn reports
+// to the user is what the reaction runs on: a call without --model says
+// nothing about models, one that named the default anyway reads as if it had
+// passed nothing, and one whose answer carries no model falls back to the
+// name it passed.
+func TestTheAddedLineNamesAPassedModelAsAnswered(t *testing.T) {
+	for _, tc := range []struct {
+		model  string
+		answer map[string]any
+		want   string
+	}{
+		{"", map[string]any{"id": "t1", "summary": "Nightly build", "model": "haiku", "modelDefault": "haiku"}, "added t1: Nightly build\n"},
+		{"haiku", map[string]any{"id": "t1", "summary": "Nightly build", "model": "haiku", "modelDefault": "opus"}, "added t1: Nightly build on haiku\n"},
+		{"haiku", map[string]any{"id": "t1", "summary": "Nightly build", "model": "haiku", "modelDefault": "haiku"}, "added t1: Nightly build\n"},
+		{"haiku", map[string]any{"id": "t1", "summary": "Nightly build"}, "added t1: Nightly build on haiku\n"},
+	} {
+		if got := addedLine(tc.model, tc.answer); got != tc.want {
+			t.Fatalf("addedLine(%q, %v) = %q, want %q", tc.model, tc.answer, got, tc.want)
+		}
+	}
+}
+
 func TestAScheduleAnswersItsZoneAndItsNextTick(t *testing.T) {
 	line := scheduleLine(map[string]any{"timezone": "Europe/Berlin", "nextAt": "2026-09-22T07:00:00Z"})
 	if line != "zone Europe/Berlin, next 2026-09-22 09:00 Europe/Berlin\n" {
@@ -286,5 +309,37 @@ func TestTimezoneGetSaysWhetherAnybodyStoredOne(t *testing.T) {
 	bare := timezoneLine(map[string]any{"timezone": "UTC", "stored": false, "server": "UTC"})
 	if !strings.Contains(bare, "Nobody stored a zone") || !strings.Contains(bare, "timezone-set stores one") {
 		t.Fatalf("an unstored zone answers %q", bare)
+	}
+}
+
+// A trigger on a model of its own says so in its listing, under the state;
+// one on the assistant's chat model, the rule, says nothing about it.
+func TestTriggerListShowsAModelOfItsOwn(t *testing.T) {
+	var out strings.Builder
+	printTrigger(&out, map[string]any{
+		"id": "944456837e6ec2fd", "label": "Schedule", "where": "*/15 * * * *", "task": "EVENT_NOTHING look around",
+		"state": "standing", "open": true, "fired": float64(3), "model": "haiku",
+	}, triggerReport{})
+	if !strings.Contains(out.String(), "  model     haiku\n") {
+		t.Fatalf("the list does not name the model:\n%s", out.String())
+	}
+	out.Reset()
+	printTrigger(&out, map[string]any{
+		"id": "944456837e6ec2fd", "label": "Schedule", "where": "*/15 * * * *", "task": "look around",
+		"state": "standing", "open": true, "fired": float64(3),
+	}, triggerReport{})
+	if strings.Contains(out.String(), "model") {
+		t.Fatalf("a trigger on the assistant's model says nothing about it:\n%s", out.String())
+	}
+}
+
+// `--model default` posts the empty field, which clears a trigger's own model
+// back to the assistant's the way `--until never` clears an expiry; every
+// other value travels as typed, trimmed.
+func TestTheModelFlagReadsDefaultAsTheEmptyField(t *testing.T) {
+	for raw, want := range map[string]string{"default": "", "DEFAULT": "", " haiku ": "haiku", "": ""} {
+		if got := modelField(raw); got != want {
+			t.Fatalf("modelField(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }

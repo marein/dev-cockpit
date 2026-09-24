@@ -270,6 +270,7 @@ func (s *Server) assistantData(current assistant.Instance, all bool) render.Assi
 		DraftFiles:      s.assistantDraftFiles(current.ID, draft),
 		DraftURL:        base + "/draft",
 		ContextPercent:  assistantContextPercent(current),
+		Models:          s.assistantModelsData(current),
 	}
 }
 
@@ -660,6 +661,8 @@ func (s *Server) handleAssistantAction(c *gin.Context) {
 		s.assistantNew(c, c.PostForm("coder"))
 	case "rename":
 		s.assistantRename(c, id)
+	case "model":
+		s.assistantModels(c, id)
 	case "delete":
 		s.assistantDelete(c, id)
 	default:
@@ -1228,6 +1231,13 @@ func (s *Server) handleAssistantMedia(c *gin.Context) {
 // missed ping. A variable so a test does not have to wait out the beat.
 var assistantPingInterval = 15 * time.Second
 
+// assistantStreamSnapshotHook runs, when set, right after the stream reads
+// the instance for its connect snapshot and before that snapshot goes out.
+// Nil in production, a test uses it to land a SetModels exactly there, after
+// the subscribe so the write's frame is not lost, before the snapshot is
+// written so the snapshot itself still carries the older picks.
+var assistantStreamSnapshotHook func(id string)
+
 // handleAssistantStream is one assistant's own SSE channel. Answer text
 // never travels the app wide event stream.
 func (s *Server) handleAssistantStream(c *gin.Context) {
@@ -1248,9 +1258,25 @@ func (s *Server) handleAssistantStream(c *gin.Context) {
 	if err := writeSSERetry(w, time.Second); err != nil {
 		return
 	}
-
+	// Subscribe before reading the picks for the connect snapshot: a SetModels
+	// landing between the two would otherwise publish its frame before the
+	// subscriber exists, and the snapshot read afterwards would still carry
+	// the older picks, leaving the page on them until the next move or
+	// reconnect. Subscribed first, that save arrives as a fresh frame right
+	// behind the snapshot and wins on its own stamp.
 	snapshot, running, events, unsubscribe := s.assistants.Subscribe(id)
 	defer unsubscribe()
+	inst, err := s.assistants.Get(id)
+	if err != nil {
+		return
+	}
+	if assistantStreamSnapshotHook != nil {
+		assistantStreamSnapshotHook(id)
+	}
+	picks := inst.ModelPicks()
+	if err := writeConversationEvent(w, assistant.StreamEvent{Kind: assistant.FrameModels, Models: &picks}); err != nil {
+		return
+	}
 	if running {
 		if err := writeConversationEvent(w, snapshot); err != nil {
 			return
@@ -1304,6 +1330,9 @@ func (s *Server) handleAssistantInstances(c *gin.Context) {
 			"id":            entry.ID,
 			"title":         entry.Title,
 			"coderId":       entry.CoderID,
+			"model":         entry.Model,
+			"checkModel":    entry.CheckModel,
+			"triggerModel":  entry.TriggerModel,
 			"lastMessageAt": entry.LastMessageAt,
 			"preview":       entry.Preview,
 			"openJobs":      open[entry.ID],
@@ -1356,6 +1385,9 @@ func (s *Server) handleAssistantInstanceRead(c *gin.Context) {
 		"id":            instance.ID,
 		"title":         instance.Title,
 		"coderId":       instance.CoderID,
+		"model":         instance.Model,
+		"checkModel":    instance.CheckModel,
+		"triggerModel":  instance.TriggerModel,
 		"lastMessageAt": instance.LastMessageAt,
 		"messageCount":  instance.MessageCount,
 		"dropped":       dropped,

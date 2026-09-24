@@ -99,7 +99,10 @@ func (r *Reactor) SetCoderNamer(fn func(terminal string) (name, project string))
 // has to carry a job of that owner: any other job's end never reaches this
 // assistant, and a trigger that can never fire would stand there as a promise.
 // Open is what one target needs, because its end is still to come; a barrier
-// takes a job that already closed, see seedArrived.
+// takes a job that already closed, see seedArrived. A trigger carries a model
+// only where somebody set one on it, the form's select or `--model`: nothing
+// is copied onto one made without, so it follows the owner's Triggers pick at
+// the ring, else the owner's chat, as they stand when it fires, see ModelFor.
 func (r *Reactor) Add(spec TriggerSpec) (Trigger, error) {
 	trigger, err := newTrigger(spec, r.now().UTC())
 	if err != nil {
@@ -512,15 +515,18 @@ func (r *Reactor) fire(owner, id string) {
 		origin.Verdict = events[0].Kind
 		origin.Terminal = events[0].Target
 	}
-	go r.react(owner, origin, eventsBody(events))
+	// The trigger's own model rides along as it stands at this fire; one that
+	// names none follows the owner's chat model, read when the turn starts.
+	go r.react(owner, origin, eventsBody(events), trigger.Model)
 }
 
 // react spends one reaction: a wake slot, a turn in a session of its own,
-// and what came back concluded.
-func (r *Reactor) react(owner string, origin Note, body string) {
+// and what came back concluded. model is the trigger's own, empty for the
+// owner's chat model.
+func (r *Reactor) react(owner string, origin Note, body, model string) {
 	r.service.slots.take()
 	defer r.service.slots.release()
-	run, err := r.service.startReaction(owner, origin, reactionPrompt(origin, body))
+	run, err := r.service.startReaction(owner, origin, reactionPrompt(origin, body), model)
 	if err != nil {
 		// A turn that never started is a turn that failed, and it is concluded
 		// like any other: the run it would have been carries the record.

@@ -42,7 +42,7 @@ func TestCoderCreateChecksTheDoneWhenBeforeTheSessionExists(t *testing.T) {
 	root := t.TempDir()
 	projects := project.NewRepository(root, recent.New(filepath.Join(t.TempDir(), "recent.json")))
 	s := &Server{
-		coders:   []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), codercopilot.New(), projects)},
+		coders:   []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), codercopilot.New(nil), projects)},
 		projects: projects,
 	}
 
@@ -80,6 +80,35 @@ func TestCoderCreateChecksTheDoneWhenBeforeTheSessionExists(t *testing.T) {
 	}
 }
 
+// A model no CLI takes is refused before the session exists, with the shared
+// rule's own sentence (assistant.CleanModel through coder.Manager.Start), the
+// way the done-when is: refused afterwards it would be a session failing on
+// its own command line in the pane. The counterpart proves the order, a name
+// the rule takes reaches the session start and only fails there.
+func TestCoderCreateChecksTheModelBeforeTheSessionExists(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	projects := project.NewRepository(root, recent.New(filepath.Join(t.TempDir(), "recent.json")))
+	s := &Server{
+		coders:   []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), codercopilot.New(nil), projects)},
+		projects: projects,
+	}
+	form := url.Values{
+		"name":    {"probe"},
+		"project": {filepath.Join(root, "missing")},
+		"model":   {"two words"},
+	}
+	rec := createCoder(t, s, form)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "no spaces") {
+		t.Fatalf("want the shared rule's own refusal before anything starts, got %d: %s", rec.Code, rec.Body.String())
+	}
+	form.Set("model", "gpt-5.4-mini")
+	rec = createCoder(t, s, form)
+	if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "no spaces") {
+		t.Fatalf("a name the rule takes must reach the session start, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // A sequel hangs on a job's end, so a --then without a done-when is refused
 // before anything starts, with a sentence that says what is missing. The
 // arrangement itself is made in this very request, see handleCoderCreate: a
@@ -89,7 +118,7 @@ func TestCoderCreateRefusesASequelWithoutAJob(t *testing.T) {
 	root := t.TempDir()
 	projects := project.NewRepository(root, recent.New(filepath.Join(t.TempDir(), "recent.json")))
 	s := &Server{
-		coders:   []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), codercopilot.New(), projects)},
+		coders:   []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), codercopilot.New(nil), projects)},
 		projects: projects,
 	}
 

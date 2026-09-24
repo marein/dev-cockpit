@@ -60,7 +60,7 @@ func (s *Server) settingsNav(active string) render.SettingsNav {
 
 // coderSettingsNav builds the settings sidebar for a coder page: the page's
 // own coder is marked, and every coder entry keeps the section, so switching
-// the coder stays on instructions, agents or skills.
+// the coder stays on instructions, agents, skills or models.
 func (s *Server) coderSettingsNav(active string, co *coder.Manager, section string) render.SettingsNav {
 	nav := render.SettingsNav{
 		Active:  active,

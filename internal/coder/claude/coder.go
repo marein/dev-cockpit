@@ -2,10 +2,12 @@ package claude
 
 import (
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/settings"
 	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
@@ -29,6 +31,7 @@ type Coder struct {
 	instructions coder.GlobalInstructions
 	runtime      coder.SessionRuntime
 	controls     terminal.ControlMapper
+	models       coder.ModelRepository
 	// runner is probed on first use, see assistant.go. A CLI without the flags
 	// a turn needs loses the conversations only, never its terminal.
 	assistantProbe *coder.CapabilityProbe
@@ -37,8 +40,9 @@ type Coder struct {
 
 // New builds the claude coder. notifyInbox is the directory the injected
 // Stop/Notification hooks drop their event files into; empty disables the
-// hook injection.
-func New(notifyInbox string) *Coder {
+// hook injection. store is where the model repository keeps the names it
+// was told to remember; nil keeps them in memory.
+func New(notifyInbox string, store *settings.Store) *Coder {
 	home, err := filesystem.HomeDir()
 	if err != nil {
 		home = "/root"
@@ -52,10 +56,24 @@ func New(notifyInbox string) *Coder {
 		instructions: coder.NewFileGlobalInstructions(filepath.Join(home, ".claude", "CLAUDE.md")),
 		runtime:      runtime{notifyInbox: notifyInbox},
 		controls:     controlMapper{base: terminal.DefaultControlMapper()},
+		models:       coder.NewModelRepository(store, "claude", claudeModelsNote, func() []string { return slices.Clone(claudeModels) }),
 	}
 	c.assistantProbe = coder.NewCapabilityProbe(c.probeAssistant, 10*time.Second)
 	return c
 }
+
+// claudeModels are the names a claude session and a turn are offered: the
+// aliases, each always the newest model of its family, which is what keeps
+// this list current without a list command, claude has none. A full name
+// works too and is typed, and the repository then remembers it.
+var claudeModels = []string{"fable", "opus", "sonnet", "haiku"}
+
+// claudeModelsNote is the line under every select over that list.
+const claudeModelsNote = "Aliases, always the newest of each family."
+
+// ModelRepository implements coder.ModelKeeper, the one list the New coder
+// dialog and the assistant's selects both read.
+func (p *Coder) ModelRepository() coder.ModelRepository { return p.models }
 
 func (p *Coder) ID() string                                   { return "claude" }
 func (p *Coder) RequiredTools() []string                      { return p.tools }

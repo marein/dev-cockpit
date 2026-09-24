@@ -58,7 +58,7 @@ func TestCoderNameRefusesATerminalThatIsNotRunning(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	projects := project.NewRepository(t.TempDir(), recent.New(filepath.Join(t.TempDir(), "recent.json")))
 	s := &Server{
-		coders:   []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), codercopilot.New(), projects)},
+		coders:   []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), codercopilot.New(nil), projects)},
 		projects: projects,
 	}
 

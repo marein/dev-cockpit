@@ -178,6 +178,7 @@ class Assistant extends HTMLElement {
     this.input?.addEventListener("keydown", (event) => this.onKeydown(event), { signal });
     this.input?.addEventListener("input", () => this.onInput(), { signal });
     this.cancelButton?.addEventListener("click", () => void this.cancel(), { signal });
+    this.setupModels(signal);
     this.addEventListener("click", (event) => {
       const retry = event.target.closest("[data-assistant-retry]");
       if (retry) {
@@ -733,6 +734,10 @@ class Assistant extends HTMLElement {
     if (!frame) return;
     this.lastFrameAt = Date.now();
     if (frame.kind === "ping") return;
+    if (frame.kind === "models") {
+      this.applyModels(frame.models, false);
+      return;
+    }
     if (!frame.messageId) return;
     switch (frame.kind) {
       case "start":
@@ -859,6 +864,99 @@ class Assistant extends HTMLElement {
     line.classList.remove("d-none");
     const label = line.querySelector("[data-assistant-tool-name]");
     if (label) label.textContent = name || "";
+  }
+
+  modelPicks() {
+    const pick = (kind) => this.querySelector(`[data-assistant-models] [data-assistant-model-pick="${kind}"]`);
+    const chat = pick("chat");
+    const check = pick("check");
+    const trigger = pick("trigger");
+    return chat && check && trigger ? { chat, check, trigger } : null;
+  }
+
+  modelKey(chat, check, trigger) {
+    return `${chat}\u0000${check}\u0000${trigger}`;
+  }
+
+  setupModels(signal) {
+    this.modelForm = this.querySelector("[data-assistant-model-form]");
+    const save = this.querySelector("[data-assistant-model-save]");
+    if (save) save.hidden = true;
+    const picks = this.modelPicks();
+    if (!picks || !this.modelForm) return;
+    this.savedModels = this.modelKey(picks.chat.value, picks.check.value, picks.trigger.value);
+    this.modelsAt = "";
+    this.heldModels = {};
+    this.modelForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void this.saveModels();
+    }, { signal });
+    this.addEventListener("dc-model-change", (event) => {
+      if (!event.target.closest("[data-assistant-models]")) return;
+      void this.saveModels();
+    }, { signal });
+    // A pick that held the focus while a fresh reading arrived takes it the
+    // moment the focus leaves it, see applyModels. A focus moving from the
+    // select to its own typed field stays inside the pick.
+    this.addEventListener("focusout", (event) => {
+      const pick = event.target.closest?.("[data-assistant-models] [data-assistant-model-pick]");
+      if (!pick || pick.contains(event.relatedTarget)) return;
+      const kind = pick.getAttribute("data-assistant-model-pick");
+      if (!(kind in this.heldModels)) return;
+      const value = this.heldModels[kind];
+      delete this.heldModels[kind];
+      pick.set(value);
+    }, { signal });
+  }
+
+  // applyModels moves the ring's three selects to what the server holds, the
+  // one shape the models frame and the answer of a save both carry: a pick
+  // set on another tab or from the CLI shows without a reload, and the
+  // stream's connect snapshot carries the same reading. Only this
+  // assistant's own stream carries its frame, and the id is the check on
+  // top: a reading for another assistant is dropped. So is one older than
+  // the reading already applied, the stamp says which, which keeps the
+  // answer of this page's own save from putting an older choice back after
+  // a newer frame from elsewhere landed. A pick that holds the focus is
+  // being edited and keeps its value: the fresh one waits on it and lands
+  // when the focus leaves, unless a save from this page goes out first,
+  // whose answer is the newer reading and drops what waited. That answer is
+  // applied over the focus, it is what the person just picked, and a typed
+  // name becomes the selected entry the moment the save is answered.
+  applyModels(models, own) {
+    const picks = this.modelPicks();
+    if (!picks || !models) return;
+    if (!models.assistant || models.assistant !== this.getAttribute("assistant-id")) return;
+    const at = models.updatedAt || "";
+    if (at && this.modelsAt && Date.parse(at) < Date.parse(this.modelsAt)) return;
+    this.modelsAt = at;
+    const values = { chat: models.chat || "", check: models.check || "", trigger: models.trigger || "" };
+    this.savedModels = this.modelKey(values.chat, values.check, values.trigger);
+    if (own) this.heldModels = {};
+    for (const kind of Object.keys(values)) {
+      if (!own && picks[kind].contains(document.activeElement)) this.heldModels[kind] = values[kind];
+      else picks[kind].set(values[kind]);
+    }
+  }
+
+  async saveModels() {
+    const picks = this.modelPicks();
+    if (!picks || this.savingModels) return;
+    const fields = { form: "model", model: picks.chat.value, check_model: picks.check.value, trigger_model: picks.trigger.value };
+    if (this.modelKey(fields.model, fields.check_model, fields.trigger_model) === this.savedModels) return;
+    this.savingModels = true;
+    this.heldModels = {};
+    try {
+      const response = await postForm(this.postUrl, fields);
+      await ensureOk(response, "The models could not be saved.");
+      const data = await response.json().catch(() => ({}));
+      this.applyModels(data.models, true);
+      showToast({ icon: "success", title: data.message || "Models saved." });
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      this.savingModels = false;
+    }
   }
 
   setContext(percent) {

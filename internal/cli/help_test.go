@@ -54,7 +54,7 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 				"Every read holds the quotes against the files", "follows it to the new line on its own"}},
 		{"line-comment-remove", []string{"path", "outdated"},
 			[]string{"`--outdated` combines with `--path`", "* stays inside a path segment and ** crosses them"}},
-		{"trigger-new", []string{"name", "terminal", "all", "cron", "tz", "task", "once", "until", "batch"},
+		{"trigger-new", []string{"name", "terminal", "all", "cron", "tz", "task", "once", "until", "batch", "model"},
 			[]string{"session of its own", "Answer NOTHING on the first line", "job-done", "coder-news", "cron",
 				// The bounds are the flag table's, so the prose says only what
 				// no flag line does: that a schedule ignores a window.
@@ -67,6 +67,9 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 				// The rule for a name is the instructions'. What the help owes
 				// is the cap, because a refusal costs a call.
 				"`--name` is optional, at most",
+				// The assistant default is read when the reaction starts:
+				// the Triggers pick at the ring, else Same as chat.
+				"the assistant default, evaluated when it fires", "your Triggers pick at the ring where one stands, else Same as chat",
 				// A schedule is a wall clock somewhere, so the zone is a field
 				// of it and never an offset, and what moves the stored one is
 				// its own command.
@@ -87,7 +90,7 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 			// A trigger that can never fire again goes with the terminal,
 			// which the instructions used to say and now delegate here.
 			"one that had no other terminal left is removed", "the answer says how many went"}},
-		{"coder-new", []string{"prompt", "done-when", "then"},
+		{"coder-new", []string{"prompt", "model", "done-when", "then"},
 			[]string{"--then is the sequel", "wired in this call", "self contained", "It needs --done-when",
 				// The sequel's expiry is the job's, so a chain cannot die of
 				// two defaults drifting apart in two files.
@@ -108,13 +111,14 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 				"`--since` is what \"what happened yesterday\" asks for",
 				"changed by every fire, every end and every edit",
 				"`--full` prints the tasks whole", "`--all` lifts the cap"}},
-		{"trigger-edit", []string{"name", "terminal", "all", "cron", "tz", "task", "once", "until", "batch"},
+		{"trigger-edit", []string{"name", "terminal", "all", "cron", "tz", "task", "once", "until", "batch", "model"},
 			[]string{"only the flags you name change anything, everything else " +
 				"stands", "the name with `--name` (an empty one takes the name away", "What cannot is the event", "done or expired is spent and is refused",
 				"one that stays keeps what it reached", "a reaction that runs right now, which keeps the task " +
 					"it was given", "Only your own", "The answer names what changed",
 				"Moving the schedule or its zone works the next tick out again",
-				"neither moves the stored zone, `timezone-set` is what does"}},
+				"neither moves the stored zone, `timezone-set` is what does",
+				"`--model default` clears it back to the assistant default, evaluated when it fires"}},
 		{"trigger-delete", nil, []string{"Only your own", "`trigger-edit`"}},
 		// The zone a schedule falls back to is moved by its own verb and by
 		// nothing else, which is the line the help has to draw: `--tz` is one
@@ -124,6 +128,19 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 		// Which clock a schedule is read on is a question of its own, so it
 		// has a verb of its own instead of costing a whole listing.
 		{"timezone-get", nil, []string{"whether anybody stored it", "which zone this server runs in", "Reads only, changes nothing"}},
+		// The instructions send a turn here for the names --model takes
+		// instead of listing any, so the help has to say what a row carries.
+		{"model-list", nil, []string{"marked cli or added", "the defaults set for it", "without a coder, every installed one", "Reads only, changes nothing"}},
+		// The instructions send a turn here for its own models instead of
+		// carrying them, so the help says what the three lines are.
+		{"assistant-models-get", nil, []string{"the ring, the coder's own default or the CLI's default", "same as chat, evaluated when the turn starts", "your Triggers pick at the ring where one stands", "needs --as", "Reads only, changes nothing", "`assistant-models-set` is what moves a pick"}},
+		// The instructions say when a turn may move a pick and that the
+		// answer is quoted; what a flag does and what `default` means is
+		// read here.
+		{"assistant-models-set", []string{"chat", "checks", "triggers"},
+			[]string{"only the flags you name change anything", "`default` clears a pick back to its empty entry",
+				"Same as chat for the checks and the triggers", "out of `model-list`", "a refused name changes nothing",
+				"the sentence the ring's save shows", "needs --as"}},
 	} {
 		cmd := find(want.command)
 		for _, flag := range want.flags {

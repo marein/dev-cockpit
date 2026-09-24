@@ -126,6 +126,11 @@ type Trigger struct {
 	TargetName string `json:"targetName,omitempty"`
 	// Task is what the bought turn is asked to do.
 	Task string `json:"task"`
+	// Model is the model the reaction runs on, empty for the owner's own at
+	// fire time, its Triggers pick at the ring, else its chat: that one is read
+	// when the reaction starts (ModelFor) and never copied here, so a pick
+	// that moves later moves the reactions with it.
+	Model string `json:"model,omitempty"`
 	// The bounds: a one shot ends after its first turn, ExpiresAt ends it by
 	// the clock (zero is no expiry, which is what a trigger nobody bounded
 	// carries), and BatchSeconds is how long it waits after an event for more
@@ -609,6 +614,11 @@ type TriggerSpec struct {
 	// zone) and on an edit leaves the zone that stands.
 	Timezone string
 	Task     string
+	// Model is the reaction's own model, with the companion that says whether
+	// the request carried the field: an empty one clears it back to the
+	// owner's chat model, a request without it leaves what stands.
+	Model    string
+	ModelSet bool
 	Once     bool
 	OnceSet  bool
 	Until    time.Duration
@@ -686,6 +696,13 @@ func applyTrigger(trigger *Trigger, spec TriggerSpec, now time.Time) error {
 	}
 	if task := strings.TrimSpace(spec.Task); task != "" {
 		trigger.Task = task
+	}
+	if spec.ModelSet {
+		model, err := CleanModel(spec.Model)
+		if err != nil {
+			return err
+		}
+		trigger.Model = model
 	}
 	if spec.TargetsSet {
 		trigger.Targets = mergedTargets(*trigger, spec.Targets)
@@ -816,6 +833,13 @@ func triggerChanges(before, after Trigger) string {
 	}
 	if before.Task != after.Task {
 		out = append(out, "task")
+	}
+	if before.Model != after.Model {
+		if after.Model == "" {
+			out = append(out, "the assistant default")
+		} else {
+			out = append(out, "model "+after.Model)
+		}
 	}
 	if !slices.Equal(before.Terminals(), after.Terminals()) {
 		if len(after.Targets) == 0 {

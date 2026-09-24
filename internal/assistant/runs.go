@@ -61,6 +61,15 @@ type RunRecord struct {
 	// over.
 	CoderID   string `json:"coderId"`
 	SessionID string `json:"sessionId"`
+	// Model is the model the turn was started with, ModelFor's answer at the
+	// moment it began, so a report or a log can say which model answered.
+	// Empty is the CLI's own default.
+	Model string `json:"model,omitempty"`
+	// TriggerModel says Model is the trigger's own and not the owner's own a
+	// reaction fell back to, the Triggers pick or the chat at the ring, so a
+	// refusal of it sends the user to the trigger and not to the ring button,
+	// see Refusal.
+	TriggerModel bool `json:"triggerModel,omitempty"`
 	// Terminal and Context are what a check needs to be concluded by whoever
 	// finds it: the terminal its job steers, and what the watcher saw before it
 	// started.

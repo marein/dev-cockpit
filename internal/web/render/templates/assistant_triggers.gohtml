@@ -61,7 +61,7 @@
              browser's zone, and a schedule that says nine in Berlin would read as
              eight on a laptop in London. The expiry is a moment and not a wall
              clock, so it stays dc-time's. */}}
-        <div class="text-secondary small mt-2" data-assistant-trigger-facts>fired {{.Fired}}{{if .Next}} · next <span data-assistant-trigger-next>{{.Next}}</span>{{end}}{{if .Until}} · until <dc-time datetime="{{.Until}}"></dc-time>{{else}} · no expiry{{end}}</div>
+        <div class="text-secondary small mt-2" data-assistant-trigger-facts>fired {{.Fired}}{{if .Next}} · next <span data-assistant-trigger-next>{{.Next}}</span>{{end}}{{if .Until}} · until <dc-time datetime="{{.Until}}"></dc-time>{{else}} · no expiry{{end}}{{if .Model}} · model <span data-assistant-trigger-model>{{.Model}}</span>{{end}}</div>
       </div>
       {{/* The actions stand where a steered coder's stand, under the row and
            outside its fold: the coder it waits for, the form that changes it,
@@ -225,6 +225,18 @@
       <label class="form-label" for="assistant-trigger-task">Task</label>
       <textarea class="form-control" name="task" id="assistant-trigger-task" rows="2" placeholder="What to do when it fires" required autofocus data-trigger-task>{{.Task}}</textarea>
       <div class="form-hint">A reaction answering NOTHING pushes nothing into the thread and notifies nobody.</div>
+    </div>
+    {{/* The model the reaction runs on. The empty entry is the assistant
+         default as it stands when the event fires, the owner's Triggers pick
+         at the ring, else its chat, and the entry names what that resolves to
+         now, which is what most triggers want; a cheap model for one that
+         mostly answers NOTHING is the reason the select is here. It posts on
+         every save, so an emptied one clears the choice rather than leaving
+         the old one standing. */}}
+    <div class="mb-2">
+      <label class="form-label" for="assistant-trigger-model">Model</label>
+      {{template "assistant_model_pick.gohtml" (dict "Pick" .Model "ID" "assistant-trigger-model")}}
+      {{if .ModelNote}}<div class="form-hint">{{.ModelNote}}</div>{{end}}
     </div>
     <div class="row g-2">
       {{/* A new trigger stands until somebody removes it, so the span is what

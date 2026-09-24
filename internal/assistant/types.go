@@ -93,6 +93,15 @@ type Summary struct {
 	Unfinished bool `json:"unfinished"`
 	// MessageCount is the number of stored messages, used for the list subtitle.
 	MessageCount int `json:"messageCount"`
+	// Model is the model this assistant's chat turns run on, CheckModel the one
+	// the checks of its steered jobs run on, TriggerModel the one the reactions
+	// of its triggers run on where the trigger names none of its own. All three
+	// are empty by default, the CLI's own default, so an instance stored before
+	// models could be picked loads unchanged; what a turn really runs on is
+	// ModelFor's answer.
+	Model        string `json:"model,omitempty"`
+	CheckModel   string `json:"checkModel,omitempty"`
+	TriggerModel string `json:"triggerModel,omitempty"`
 }
 
 // Instance is one complete instance with its transcript.

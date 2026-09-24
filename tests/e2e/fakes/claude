@@ -12,6 +12,7 @@ resume=0
 tools=""
 stream=0
 partial=0
+model=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -46,6 +47,7 @@ HELP
     --name) name="$2"; shift 2 ;;
     --permission-mode) shift 2 ;;
     --settings) shift 2 ;;
+    --model) model="$2"; shift 2 ;;
     --)
       # The cockpit puts the prompt behind the end of options separator, because
       # claude reads a positional starting with a dash as an option. Everything
@@ -215,6 +217,21 @@ restart_server() {
 record_name "$name"
 
 emit "{\"type\":\"system\",\"subtype\":\"init\",\"tools\":[\"Read\",\"Edit\",\"Write\",\"Bash\",\"Glob\",\"Grep\"],\"session_id\":\"$session\",\"model\":\"fake\"}"
+
+# A model claude does not know refuses the turn before anything runs: the
+# records claude 2.1.280 writes for `--model no-such-model`, an assistant record
+# naming the error, a result marked as an API error, one tagged line on standard
+# error, exit code 1. The fake refuses exactly that name, so a run that picks it
+# at the ring or on a trigger sees the refusal land.
+if [ "$model" = "no-such-model" ]; then
+  words="There's an issue with the selected model (no-such-model). It may not exist or you may not have access to it. Run --model to pick a different model."
+  emit "{\"type\":\"system\",\"subtype\":\"status\",\"status\":\"requesting\",\"session_id\":\"$session\"}"
+  emit "{\"type\":\"assistant\",\"message\":{\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_reason\":\"stop_sequence\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"content\":[{\"type\":\"text\",\"text\":\"$words\"}]},\"parent_tool_use_id\":null,\"session_id\":\"$session\",\"error\":\"model_not_found\",\"is_api_error_message\":true}"
+  emit "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"terminal_reason\":\"api_error\",\"api_error_status\":404,\"result\":\"$words\",\"session_id\":\"$session\",\"modelUsage\":{}}"
+  echo '[claude-code:unrecognized_model] {"model":"no-such-model","query_source":"sdk"}' >&2
+  exit 1
+fi
+
 emit '{"type":"system","subtype":"status","status":"working"}'
 
 answer="Fake claude answer."
@@ -286,6 +303,9 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     sleep 3
     answer="and after it"
     ;;
+  # The model the turn was started with, which is how a pick at the ring is
+  # proven to reach the argv; a turn without the flag says so.
+  *MODEL*) answer="model: ${model:-default}" ;;
   *MAGIC*) answer="AIRPORT" ;;
   # A turn an event bought answers under the note's contract: NOTHING on the
   # first line is nothing to do or say, which the page folds away.

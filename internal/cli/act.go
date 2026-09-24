@@ -197,7 +197,7 @@ func postCoderAction(opts inspectOptions, target, action string) (map[string]any
 }
 
 func newCoderCommand(opts *inspectOptions) *cobra.Command {
-	var coderID, agent, prompt, doneWhen, then string
+	var coderID, agent, model, prompt, doneWhen, then string
 	cmd := &cobra.Command{
 		Use:   "coder-new <project> [name]",
 		Short: "Start a coder in a project",
@@ -217,18 +217,43 @@ func newCoderCommand(opts *inspectOptions) *cobra.Command {
 			if len(args) > 1 {
 				name = args[1]
 			}
-			return runNewCoder(cmd.OutOrStdout(), *opts, args[0], name, coderID, agent, prompt, doneWhen, then)
+			return runNewCoder(cmd.OutOrStdout(), *opts, args[0], name, coderID, agent, model, prompt, doneWhen, then)
 		},
 	}
 	cmd.Flags().StringVar(&coderID, "coder", "", "which coder answers (default: the cockpit's first installed one)")
 	cmd.Flags().StringVar(&agent, "agent", "", "agent the session starts with")
+	cmd.Flags().StringVar(&model, "model", "", "model the session starts on (default: the coder's own default)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "task the coder starts working on")
 	cmd.Flags().StringVar(&doneWhen, "done-when", "", "steer the coder until this is true, then report")
 	cmd.Flags().StringVar(&then, "then", "", "what to do once this job closes done, wired in this call, fires once")
 	return cmd
 }
 
-func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, agent, prompt, doneWhen, then string) error {
+// startedLine is the first line coder-new prints. The model stands on it only
+// when the call passed one that made a difference, one the session would not
+// have started on without the flag (the cockpit answers what it would have
+// been as modelDefault), and then as the cockpit answered it, so a turn that
+// names the model to the user names what runs and never what it asked for;
+// without the flag, or with the flag naming the default anyway, the line
+// stays as it was and nothing is said about models.
+func startedLine(id, project, model, prompt string, created map[string]any) string {
+	line := fmt.Sprintf("coder %s started in %s", id, project)
+	if model != "" {
+		on, _ := created["model"].(string)
+		if on == "" {
+			on = model
+		}
+		if without, _ := created["modelDefault"].(string); on != without {
+			line += " on " + on
+		}
+	}
+	if prompt != "" {
+		line += ", working on the task"
+	}
+	return line + "\n"
+}
+
+func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, agent, model, prompt, doneWhen, then string) error {
 	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
@@ -243,6 +268,12 @@ func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, age
 	}
 	if agent = strings.TrimSpace(agent); agent != "" {
 		form.Set("agent", agent)
+	}
+	// The model rides the same field the dialog posts; the server checks it
+	// with the one rule every model name goes through, before the session
+	// exists. A resume never carries one, a resumed session keeps its own.
+	if model = strings.TrimSpace(model); model != "" {
+		form.Set("model", model)
 	}
 	// The task starts the session instead of being typed into it afterwards, so
 	// there is no window in which it can be lost.
@@ -270,11 +301,7 @@ func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, age
 	if id == "" {
 		return errors.New("The cockpit started the coder but did not name it.")
 	}
-	if prompt != "" {
-		fmt.Fprintf(out, "coder %s started in %s, working on the task\n", id, project)
-	} else {
-		fmt.Fprintf(out, "coder %s started in %s\n", id, project)
-	}
+	io.WriteString(out, startedLine(id, project, model, prompt, created))
 	if doneWhen == "" {
 		return nil
 	}

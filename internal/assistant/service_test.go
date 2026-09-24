@@ -90,6 +90,12 @@ func encodeEvent(ev Event) string {
 		if ev.Err != nil {
 			text = ev.Err.Error()
 		}
+		// A refusal travels as its kind and what the CLI named, the way a
+		// real parser hands one over, so the service places it on the run.
+		var refusal *Refusal
+		if errors.As(ev.Err, &refusal) {
+			return "F" + base64.StdEncoding.EncodeToString([]byte(string(refusal.Kind)+"\n"+refusal.Model))
+		}
 		return "E" + base64.StdEncoding.EncodeToString([]byte(text))
 	default:
 		return "D" + base64.StdEncoding.EncodeToString([]byte(ev.Text))
@@ -229,6 +235,9 @@ func (p *fakeParser) Line(line []byte) error {
 		p.events <- Event{Kind: EventTool, Text: string(payload)}
 	case 'E':
 		p.events <- Event{Kind: EventError, Err: errors.New(string(payload))}
+	case 'F':
+		kind, model, _ := strings.Cut(string(payload), "\n")
+		p.events <- Event{Kind: EventError, Err: &Refusal{Kind: RefusalKind(kind), Model: model}}
 	default:
 		p.events <- Event{Kind: EventDelta, Text: string(payload)}
 	}
@@ -274,13 +283,20 @@ func (r *fakeRunner) turns() []TurnRequest {
 	return append([]TurnRequest(nil), r.requests...)
 }
 
-type fakeCoders struct{ runner *fakeRunner }
+// fakeCoders is the one coder of the tests, with the model defaults the
+// settings store would answer for it, read through CoderInfo.Defaults the way
+// the real wiring reads them, so a test can set a default and watch what a
+// turn does with it.
+type fakeCoders struct {
+	runner   *fakeRunner
+	defaults ModelDefaults
+}
 
 func (c fakeCoders) Available() []CoderInfo {
 	if c.runner == nil {
 		return nil
 	}
-	return []CoderInfo{{ID: "claude", Label: "Claude", Runner: c.runner}}
+	return []CoderInfo{{ID: "claude", Label: "Claude", Runner: c.runner, Defaults: func() ModelDefaults { return c.defaults }}}
 }
 
 // mustWorkdir is the workspace of one instance, the directory a turn of its
@@ -1011,6 +1027,44 @@ func TestAFailedTurnIsNamedFromStandardError(t *testing.T) {
 	}
 	if failed.Error != ErrNotLoggedIn.Error() {
 		t.Fatalf("want the login sentence, got %q", failed.Error)
+	}
+}
+
+// A CLI that does not know the model the chat runs on is a named refusal, and
+// the chat shows the sentence that says where to pick another: the ring
+// button, because a chat turn's model is the assistant's own. The name is
+// longModel, forty runes the redaction of a quoted line would take for a
+// token, and it stands whole because the sentence is the cockpit's.
+func TestARefusedChatTurnSaysWhereToPickTheModel(t *testing.T) {
+	runner := &fakeRunner{events: []Event{{Kind: EventError, Err: UnknownModel(longModel)}}}
+	svc, _, _ := newTestService(t, runner)
+	created, _ := svc.create("claude")
+
+	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	failed := waitIdle(t, svc, created.ID)
+	if failed.State != StateFailed {
+		t.Fatalf("want a failed turn, got %s", failed.State)
+	}
+	if failed.Error != "The coder does not know the model "+longModel+". Pick another at the ring button of this assistant." {
+		t.Fatalf("want the refusal sentence with the ring named, got %q", failed.Error)
+	}
+}
+
+// A failure nobody named reaches the chat with the coder's last line quoted
+// behind the cockpit's sentence, so the user reads why instead of the log.
+func TestAFailedTurnQuotesTheCodersLastLine(t *testing.T) {
+	runner := &fakeRunner{unfinished: true, stderr: "some warning\nError: the provider is down\n\n"}
+	svc, _, _ := newTestService(t, runner)
+	created, _ := svc.create("claude")
+
+	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	failed := waitIdle(t, svc, created.ID)
+	if failed.Error != "The coder stopped before it finished the answer. The coder said: Error: the provider is down" {
+		t.Fatalf("want the cockpit's sentence with the last line quoted, got %q", failed.Error)
 	}
 }
 

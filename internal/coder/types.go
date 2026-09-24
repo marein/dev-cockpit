@@ -24,6 +24,11 @@ type StartOptions struct {
 	// CLI's argv, never typed into the pane, so it cannot be lost to a CLI that
 	// has not read stdin yet.
 	Task string
+	// Model is the model the session starts on, the name the coder's CLI
+	// takes behind its own flag. Empty leaves the choice to the CLI, its own
+	// default. It is cleaned by the one rule every model name goes through,
+	// assistant.CleanModel, and refused with that rule's sentence.
+	Model string
 }
 
 // Snapshot captures the present state of every session category.

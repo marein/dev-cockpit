@@ -9,6 +9,7 @@
   <a class="nav-link{{if eq $nav.Section "instructions"}} active{{end}}" href="{{.Base}}/instructions"><i class="ti ti-file-description me-1 dc-hide-xs"></i>Instructions</a>
   <a class="nav-link{{if eq $nav.Section "agents"}} active{{end}}" href="{{.Base}}/agents"><i class="ti ti-robot me-1 dc-hide-xs"></i>Agents</a>
   <a class="nav-link{{if eq $nav.Section "skills"}} active{{end}}" href="{{.Base}}/skills"><i class="ti ti-tool me-1 dc-hide-xs"></i>Skills</a>
+  <a class="nav-link{{if eq $nav.Section "models"}} active{{end}}" href="{{.Base}}/models"><i class="ti ti-cpu me-1 dc-hide-xs"></i>Models</a>
 </nav>
 {{if .MultiCoder}}<span class="ms-auto d-flex align-items-center gap-2 text-secondary small flex-shrink-0"><span class="dc-term-icon" aria-hidden="true">{{template "coder_icon.gohtml" $nav.Selected}}</span><span class="dc-hide-xs">{{coderLabel $nav.Selected}}</span></span>{{end}}
 {{template "work_body.gohtml" .}}

@@ -40,7 +40,7 @@ func TestCreateInTheDialogAnswersTheRefusalInsteadOfRedirecting(t *testing.T) {
 	root := t.TempDir()
 	projects := project.NewRepository(root, recent.New(filepath.Join(t.TempDir(), "recent.json")))
 	s := &Server{
-		coders:   []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), codercopilot.New(), projects)},
+		coders:   []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), codercopilot.New(nil), projects)},
 		projects: projects,
 	}
 	missing := filepath.Join(root, "missing")

@@ -56,7 +56,10 @@ const { assert, BASE, sleep } = L;
 // - a check counts when it came back, so the counter says how many checks
 //   answered; while one runs the job carries the working assistant, marked
 //   data-assistant-working="check", which is what a wait for "a check is
-//   running" keys on.
+//   running" keys on,
+// - the fake refuses the model no-such-model with the records claude writes
+//   for one it does not know, so a check model set to it at the ring is a
+//   check the coder refuses to run: the job closes as blocked at once.
 
 const NOTIFY_DIR = process.env.NOTIFY_DIR || "";
 const fs = require("fs");
@@ -202,6 +205,7 @@ L.runFeature("wake", async ({ page, run }) => {
   let preambleCoder = "";
   let askCoder = "";
   let ringCoder = "";
+  let refusedCoder = "";
   let secondAssistant = "";
 
   await run("a coder starts with its task in the argv", async () => {
@@ -842,9 +846,70 @@ L.runFeature("wake", async ({ page, run }) => {
     return "ring still the chat's own 68 percent";
   });
 
+  await run("a check the coder refuses to run closes the job at once", async () => {
+    // The checks of this assistant run on a model the fake refuses, the way
+    // claude refuses one it does not know. A refusal is no silence to retry:
+    // the first check already closes the job as blocked, with a report that
+    // says the check could not run and where to pick another model, and not
+    // after a second silent check with the silent report's words.
+    const setModel = (check) => page.evaluate(async (model) => {
+      const body = new URLSearchParams({ form: "model", model: "", check_model: model });
+      body.set("csrf_token", document.querySelector('meta[name="csrf-token"]').content);
+      const res = await fetch(location.pathname, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body: body.toString(),
+      });
+      return res.status;
+    }, check);
+    await page.goto(`${BASE}/assistants/${conversation}`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    await page.waitForSelector("dc-assistant[ready]", { timeout: 15000 });
+    assert((await setModel("no-such-model")) === 200, "the check model could not be set");
+    try {
+      const created = await startCoder(page, projectDir, "wake-refused", "Write the file.");
+      assert(created.status === 200, `create answered ${created.status}`);
+      refusedCoder = created.body.id;
+      const steered = await post(page, {
+        form: "steer",
+        assistant: conversation,
+        terminal: refusedCoder,
+        task: "Write the file",
+        done_when: "WAKE_DONE: the file is there",
+      });
+      assert(steered.status === 200, `steer answered ${steered.status}`);
+      const before = await page.locator("[data-assistant-message]").count();
+      ring(refusedCoder);
+
+      const job = await waitJobState(page, refusedCoder, "blocked");
+      assert(/does not know the model no-such-model/.test(job.note), `the job's line does not carry the refusal: ${JSON.stringify(job)}`);
+      await page.waitForFunction(
+        (count) => document.querySelectorAll("[data-assistant-message]").length > count,
+        before,
+        { timeout: 20000 },
+      );
+      const bubble = page.locator("[data-assistant-message]").last();
+      const text = await bubble.innerText();
+      assert(text.includes("could not run"), `the report does not say the check could not run: ${text}`);
+      assert(text.includes("does not know the model no-such-model") && text.includes("ring button"),
+        `the report does not say which model and where to pick another: ${text}`);
+      assert(!text.includes("cannot check on"), `the refusal took the silent report's words: ${text}`);
+      const stored = await page.evaluate(async () => {
+        const res = await fetch("/notifications", { headers: { Accept: "application/json" } });
+        return ((await res.json()).notifications || []);
+      });
+      const news = stored.filter((n) => n.targetId === conversation);
+      assert(news.length >= 1 && news[0].title === "Job blocked.", `unexpected news ${JSON.stringify(news[0])}`);
+      return `blocked at once for ${refusedCoder.slice(0, 8)}`;
+    } finally {
+      // The checks after this one run on the default again.
+      await setModel("");
+    }
+  });
+
   // Clean up what this run started: the coders and the scratch project.
   await run("cleanup", async () => {
-    for (const id of [coderID, nothingCoder, standCoder, busyCoder, stopCoder, preambleCoder, askCoder, ringCoder].filter(Boolean)) {
+    for (const id of [coderID, nothingCoder, standCoder, busyCoder, stopCoder, preambleCoder, askCoder, ringCoder, refusedCoder].filter(Boolean)) {
       await page.evaluate(async (session) => {
         const token = document.querySelector('meta[name="csrf-token"]').content;
         await fetch(`/coders/${session}/delete`, { method: "POST", headers: { "X-CSRF-Token": token } });

@@ -1121,10 +1121,18 @@ dc-assistant[dropping] .assistant-composer {
 }
 .dc-context-ring {
   position: absolute;
-  inset: 1px;
+  top: 1px;
+  left: 1px;
+  width: calc(100% - 2px);
+  height: calc(100% - 2px);
   pointer-events: none;
 }
-.btn:has(> .dc-context-ring) > .ti-message-plus { transform: translate(0, -0.35px); }
+/* Sized and centered the same way whether the element is the coder's own svg
+   glyph (claude, opencode) or a span wrapping a font icon (copilot): the
+   font icon needs the flex centering to land its off-center ink in the
+   middle of the box, and it does nothing an svg's own centered viewBox was
+   not already doing. */
+.dc-context-ring-icon { display: inline-flex; align-items: center; justify-content: center; width: 1em; height: 1em; flex: none; }
 .dc-context-ring circle {
   fill: none;
   stroke-width: 2;
@@ -2833,6 +2841,7 @@ terminal-input { display: none; }
    dragging, and the reading beside it keeps a fixed width so the row does not
    twitch while the value counts up. */
 .dc-voice-menu { min-width: 18rem; }
+.dc-model-menu { min-width: 16rem; }
 /* Turns an icon into a spinner while something runs. It is added to the icon
    and never replaces it, which is what keeps the layout still: the glyph
    stays and only goes invisible, so the element keeps its box and its text

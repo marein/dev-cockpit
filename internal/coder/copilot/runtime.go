@@ -22,7 +22,9 @@ func (runtime) Env() map[string]string { return nil }
 // whatever it looks like (measured on GitHub Copilot CLI 1.0.78, `copilot
 // --interactive --output-format json` takes the flag itself as the task). An end
 // of options separator would therefore become the task, so this command line
-// deliberately carries none.
+// deliberately carries none. A model rides behind --model and only on a
+// start: a resume carries none, so a resumed session keeps the model it has,
+// whatever /model set inside it.
 func (runtime) StartCommand(start coder.SessionStart) string {
 	command := fmt.Sprintf("cd %s && exec copilot%s",
 		clirun.ShellQuote(start.Workdir), flags(start.AgentID, start.AutomaticApproval))
@@ -31,6 +33,9 @@ func (runtime) StartCommand(start coder.SessionStart) string {
 	// has to refuse.
 	if name := strings.TrimSpace(start.Name); name != "" {
 		command += " --name " + clirun.ShellQuote(name)
+	}
+	if model := strings.TrimSpace(start.Model); model != "" {
+		command += " --model " + clirun.ShellQuote(model)
 	}
 	if task := strings.TrimSpace(start.Task); task != "" {
 		command += " --interactive " + clirun.ShellQuote(task)

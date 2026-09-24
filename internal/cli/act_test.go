@@ -115,12 +115,12 @@ func TestNewCoderStartsWithTheTaskInOneRequest(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		createForm, _ = url.ParseQuery(string(body))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"cid-1","project":"demo","url":"/coders/cid-1"}`))
+		_, _ = w.Write([]byte(`{"id":"cid-1","project":"demo","url":"/coders/cid-1","model":"haiku"}`))
 	})
 
 	var out strings.Builder
 	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
-	if err := runNewCoder(&out, opts, "demo", "readme-task", "claude", "", "Write the README.", "", ""); err != nil {
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "claude", "", "haiku", "Write the README.", "", ""); err != nil {
 		t.Fatalf("coder-new: %v", err)
 	}
 	if len(paths) != 1 || paths[0] != "/coders/new" {
@@ -138,8 +138,36 @@ func TestNewCoderStartsWithTheTaskInOneRequest(t *testing.T) {
 	if createForm.Get("prompt") != "Write the README." {
 		t.Fatalf("the task did not travel with the create request: %q", createForm.Get("prompt"))
 	}
-	if !strings.Contains(out.String(), "coder cid-1 started in demo, working on the task") {
+	if createForm.Get("model") != "haiku" {
+		t.Fatalf("the model did not travel with the create request as the dialog's field: %q", createForm.Get("model"))
+	}
+	if !strings.Contains(out.String(), "coder cid-1 started in demo on haiku, working on the task") {
 		t.Fatalf("unexpected output %q", out.String())
+	}
+}
+
+// The started line names the model only when the call passed one that made a
+// difference, and then the one the cockpit answered, so what a turn reports
+// to the user is what runs: a call without --model says nothing about models
+// even where a stored default started the session, one that named the start
+// default anyway reads as if it had passed nothing, and one whose answer
+// carries no model falls back to the name it passed.
+func TestTheStartedLineNamesAPassedModelAsAnswered(t *testing.T) {
+	for _, tc := range []struct {
+		model, prompt string
+		created       map[string]any
+		want          string
+	}{
+		{"", "", map[string]any{"model": "haiku", "modelDefault": "haiku"}, "coder cid-1 started in demo\n"},
+		{"", "task", map[string]any{"model": "haiku"}, "coder cid-1 started in demo, working on the task\n"},
+		{"haiku", "task", map[string]any{"model": "haiku", "modelDefault": ""}, "coder cid-1 started in demo on haiku, working on the task\n"},
+		{"haiku", "task", map[string]any{"model": "haiku", "modelDefault": "opus"}, "coder cid-1 started in demo on haiku, working on the task\n"},
+		{"haiku", "task", map[string]any{"model": "haiku", "modelDefault": "haiku"}, "coder cid-1 started in demo, working on the task\n"},
+		{"haiku", "", map[string]any{}, "coder cid-1 started in demo on haiku\n"},
+	} {
+		if got := startedLine("cid-1", "demo", tc.model, tc.prompt, tc.created); got != tc.want {
+			t.Fatalf("startedLine(model %q, prompt %q, %v) = %q, want %q", tc.model, tc.prompt, tc.created, got, tc.want)
+		}
 	}
 }
 
@@ -160,7 +188,7 @@ func TestNewCoderSteersInTheSameRequest(t *testing.T) {
 
 	var out strings.Builder
 	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
-	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "Write the README.", "README.md exists", ""); err != nil {
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "", "Write the README.", "README.md exists", ""); err != nil {
 		t.Fatalf("coder-new: %v", err)
 	}
 	if len(paths) != 1 || paths[0] != "/coders/new" {
@@ -191,7 +219,7 @@ func TestNewCoderWiresTheSequelInTheSameRequest(t *testing.T) {
 
 	var out strings.Builder
 	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
-	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "Write the README.", "README.md exists", "start a reviewer on demo"); err != nil {
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "", "Write the README.", "README.md exists", "start a reviewer on demo"); err != nil {
 		t.Fatalf("coder-new: %v", err)
 	}
 	if len(paths) != 1 || paths[0] != "/coders/new" {
@@ -214,7 +242,7 @@ func TestNewCoderReportsASequelThatCouldNotBeWired(t *testing.T) {
 	})
 
 	var out strings.Builder
-	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "demo", "task", "", "", "", "README.md exists", "start a reviewer")
+	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "demo", "task", "", "", "", "", "README.md exists", "start a reviewer")
 	if err == nil || !strings.Contains(err.Error(), "already holds 50") {
 		t.Fatalf("want the server's own sentence as the error, got %v", err)
 	}
@@ -232,7 +260,7 @@ func TestNewCoderReportsAJobThatCouldNotBeAttached(t *testing.T) {
 	})
 
 	var out strings.Builder
-	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "demo", "task", "", "", "", "README.md exists", "")
+	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "demo", "task", "", "", "", "", "README.md exists", "")
 	if err == nil || !strings.Contains(err.Error(), "already steered") {
 		t.Fatalf("want the server's own sentence as the error, got %v", err)
 	}
@@ -246,7 +274,7 @@ func TestNewCoderReportsAJobThatCouldNotBeAttached(t *testing.T) {
 func TestNewCoderReportsTheRefusal(t *testing.T) {
 	dir := refusing(t, "Selected project does not exist: /projects/nope")
 	var out strings.Builder
-	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "nope", "task", "", "", "", "", "")
+	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "nope", "task", "", "", "", "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("want the handler's own sentence, got %v", err)
 	}
@@ -332,7 +360,7 @@ func TestSteerAndNewCoderHandOnTheTaskCutNotice(t *testing.T) {
 
 	out.Reset()
 	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
-	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "a long briefing", "README.md exists", ""); err != nil {
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "", "a long briefing", "README.md exists", ""); err != nil {
 		t.Fatalf("coder-new: %v", err)
 	}
 	if !strings.Contains(out.String(), "task was cut at 16000 runes") {

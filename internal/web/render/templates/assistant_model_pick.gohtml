@@ -1,0 +1,21 @@
+{{/* One model select with a way past its list. The entries are the server's,
+     the stored value selected and standing as an entry of its own where the
+     list does not hold it; the last entry is Other…, and dc-model-pick turns
+     that pick into the text field under the select. The Other… entry carries
+     the stored value, so picking it on a page whose JS never ran posts what
+     stands and changes nothing, and the text field starts disabled, so it
+     posts nothing until the element hands it the name. Form is the id of the
+     form the two fields post through where that is not the form they stand
+     in, Kind marks the pick for the composer, Small takes the compact size,
+     and Disabled renders the select disabled, so a pick standing in a block
+     the form does not show (another coder's, in the New coder dialog) posts
+     nothing on a page without JS. */}}
+{{define "assistant_model_pick.gohtml"}}
+<dc-model-pick class="d-block"{{if .Kind}} data-assistant-model-pick="{{.Kind}}"{{end}}>
+  <select class="form-select{{if .Small}} form-select-sm{{end}}" name="{{.Pick.Field}}" id="{{.ID}}"{{if .Form}} form="{{.Form}}"{{end}}{{if .Disabled}} disabled{{end}} data-model-select>
+    {{range .Pick.Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+    <option value="{{.Pick.Current}}" data-model-other>Other…</option>
+  </select>
+  <input type="text" class="form-control{{if .Small}} form-control-sm{{end}} mt-1" name="{{.Pick.Field}}"{{if .Form}} form="{{.Form}}"{{end}} placeholder="Model name" maxlength="{{.Pick.MaxRunes}}" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Model name" hidden disabled data-model-other-input>
+</dc-model-pick>
+{{end}}

@@ -85,7 +85,8 @@ func (r *runner) TrustWorkdir(dir string) error {
 // so it consumes the next word whatever it looks like (measured on GitHub
 // Copilot CLI 1.0.78, `copilot -p --output-format json` takes the flag itself as
 // the prompt). An end of options separator would therefore become the prompt, so
-// this argv deliberately carries none.
+// this argv deliberately carries none. A model the turn names rides behind
+// --model, and nothing else about the command moves for it.
 func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	args := []string{"-p", req.Prompt}
 	if req.Resume {
@@ -109,6 +110,9 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 		"--log-level", "none",
 		"--no-color",
 	)
+	if req.Model != "" {
+		args = append(args, "--model", req.Model)
+	}
 	return assistant.Command{Name: "copilot", Args: args}, nil
 }
 
@@ -250,12 +254,37 @@ func (p *copilotParser) Finish() error {
 
 // Diagnose reads what copilot said when it never got going. A run without a
 // login writes nothing to standard output at all and prints its whole complaint
-// on standard error, so the general path is the only one there is here.
+// on standard error, so the general path is the only one there is here. A
+// model copilot does not have goes the same way, one line on standard error
+// and only ephemeral records on standard output, and that line names the
+// refusal.
 func (p *copilotParser) Diagnose(err error, stderr string) error {
 	if assistant.LooksLikeLogin(stderr) {
 		return assistant.ErrNotLoggedIn
 	}
+	if name, ok := modelRefusal(stderr); ok {
+		return assistant.UnknownModel(name)
+	}
 	return nil
+}
+
+// modelRefusal reads the line copilot prints for a model it does not have,
+// `Error: Model "no-such-model" from --model flag is not available.` (GitHub
+// Copilot CLI 1.0.88), and answers the name between its quotes; false where
+// standard error carries no such line.
+func modelRefusal(stderr string) (string, bool) {
+	for _, line := range strings.Split(stderr, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Error: Model ")
+		if !ok {
+			continue
+		}
+		name := rest
+		if quoted, ok := strings.CutPrefix(rest, "\""); ok {
+			name, _, _ = strings.Cut(quoted, "\"")
+		}
+		return strings.TrimSpace(name), true
+	}
+	return "", false
 }
 
 // reportUsage sends what the finished run recorded about its context. A run

@@ -20,6 +20,7 @@ var coderPagePaths = []string{
 	"/instructions",
 	"/agents", "/agents/new", "/agents/:id", "/agents/:id/edit", "/agents/:id/delete",
 	"/skills", "/skills/new", "/skills/:id", "/skills/:id/edit", "/skills/:id/delete",
+	"/models", "/models/add", "/models/delete",
 }
 
 // registerRoutes attaches all HTTP routes to the Gin router.
@@ -90,6 +91,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		base.GET("/skills/:id/edit", s.handleSkillEdit(co))
 		base.POST("/skills/:id", s.handleSkillUpdate(co))
 		base.POST("/skills/:id/delete", s.handleSkillDelete(co))
+		base.GET("/models", s.handleCoderModels(co))
+		base.POST("/models", s.handleCoderModelsSave(co))
+		base.POST("/models/add", s.handleCoderModelAdd(co))
+		base.POST("/models/delete", s.handleCoderModelDelete(co))
 	}
 
 	// TODO(v2.0.0): drop the pre-settings coder pages, canonical is
@@ -160,6 +165,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/assistants/new", s.handleAssistantNew)
 	auth.GET("/assistants/instances", s.handleAssistantInstances)
 	auth.GET("/assistants/instances/:id", s.handleAssistantInstanceRead)
+	auth.GET("/assistants/models", s.handleAssistantModels)
+	auth.GET("/assistants/models/resolved", s.handleAssistantModelsResolved)
 	auth.GET("/assistants/:id", s.handleAssistantPage)
 	auth.POST("/assistants/:id", s.handleAssistantAction)
 	auth.GET("/assistants/:id/stream", s.handleAssistantStream)
@@ -218,6 +225,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/assistant/voice", s.handleSettingsVoiceSave)
 	auth.GET("/settings/assistant/jobs", s.handleSettingsAssistantJobs)
 	auth.POST("/settings/assistant/jobs", s.handleSettingsAssistantJobsSave)
+	auth.GET("/settings/assistant/models", s.handleSettingsAssistantModels)
+	auth.POST("/settings/assistant/models", s.handleSettingsAssistantModelsSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
 	auth.POST("/settings/general", s.handleSettingsGeneralSave)
 	// Docker is a section of its own: the daemon and the compose commands.

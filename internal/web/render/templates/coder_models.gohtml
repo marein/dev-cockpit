@@ -1,0 +1,40 @@
+{{define "coder_models.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "coder_page_start.gohtml" .}}
+<form method="post" action="{{.Base}}/models" id="coder-models">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <div class="mb-3">
+    <label class="form-label" for="model-start">Start</label>
+    {{template "assistant_model_pick.gohtml" (dict "Pick" .Start "ID" "model-start")}}
+    {{if .Note}}<div class="form-hint">{{.Note}}</div>{{end}}
+  </div>
+  <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+    <button type="submit" class="btn btn-primary">Save models</button>
+  </div>
+</form>
+<div class="mt-4" data-coder-added-models>
+  <label class="form-label">Added names</label>
+  <div class="list-group mb-2">
+    {{range .Added}}
+    <div class="list-group-item d-flex align-items-center gap-2" data-added-model="{{.}}">
+      <i class="ti ti-cpu fs-2 text-secondary"></i>
+      <div class="flex-fill min-w-0 text-truncate font-monospace">{{.}}</div>
+      <form method="post" action="{{$.Base}}/models/delete">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="name" value="{{.}}">
+        <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Remove {{.}}" title="Remove"><i class="ti ti-trash"></i></button>
+      </form>
+    </div>
+    {{else}}
+    <div class="list-group-item text-secondary" data-added-models-empty>No names added yet.</div>
+    {{end}}
+  </div>
+  <form method="post" action="{{.Base}}/models/add" class="d-flex gap-2">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="text" class="form-control" name="name" placeholder="Model name" maxlength="{{.MaxRunes}}" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+    <button type="submit" class="btn btn-icon btn-primary flex-shrink-0" aria-label="Add model name" title="Add"><i class="ti ti-plus"></i></button>
+  </form>
+</div>
+{{template "coder_page_end.gohtml"}}
+{{template "app_end.gohtml" .}}
+{{end}}

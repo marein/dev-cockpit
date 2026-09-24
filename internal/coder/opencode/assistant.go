@@ -92,7 +92,8 @@ func (r *runner) DeleteSession(sessionID string) error {
 // The prompt goes last, behind the end of options separator: run's message is
 // positional, and the separator is what keeps a prompt that starts with a
 // dash text (verified on 1.18.23, `opencode run -- -dxdebug.idekey=…`
-// delivers the words).
+// delivers the words). A model the turn names rides behind -m, in the
+// provider/model form `opencode models` prints, and nothing else moves for it.
 func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	native := ""
 	if req.Resume {
@@ -108,8 +109,11 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 		"--session", native,
 		"--format", "json",
 		"--auto",
-		"--", req.Prompt,
 	}
+	if req.Model != "" {
+		args = append(args, "-m", req.Model)
+	}
+	args = append(args, "--", req.Prompt)
 	return assistant.Command{
 		Name: "opencode",
 		Args: args,
@@ -147,9 +151,12 @@ type parser struct {
 	// into a tool call. Without it the process ended mid-turn.
 	sawStop bool
 	// failed is whether an error record arrived; authFailed names the one
-	// error the user can act on.
+	// error the user can act on, and errText carries opencode's own words
+	// about every other one, so a model it refuses ends the turn with the
+	// sentence it printed and not with the generic one.
 	failed     bool
 	authFailed bool
+	errText    string
 }
 
 type recordHead struct {
@@ -213,8 +220,31 @@ func (p *parser) Line(line []byte) error {
 		if rec.Error.Name == "ProviderAuthError" {
 			p.authFailed = true
 		}
+		p.errText = errorWording(rec)
 	}
 	return nil
+}
+
+// errorWording is opencode's own account of an error record, its name and
+// its message, empty where the record carried neither. It is what a failed
+// turn quotes behind the cockpit's sentence, because that sentence alone
+// would hide the one thing the user can act on. A model opencode does not
+// know has no record of its own to recognise: measured on 1.18.32, a bogus
+// provider and a bogus model of a real provider both end in the same
+// UnknownError record, "Unexpected server error", and nothing on standard
+// error, so that case reaches the user through this quote and never as a
+// named refusal.
+func errorWording(rec errorRecord) string {
+	name := strings.TrimSpace(rec.Error.Name)
+	message := strings.TrimSpace(rec.Error.Data.Message)
+	switch {
+	case name != "" && message != "":
+		return name + ": " + message
+	case message != "":
+		return message
+	default:
+		return name
+	}
 }
 
 // emitText sends one text part, with the block separator in front of it when
@@ -245,7 +275,7 @@ func (p *parser) Finish() error {
 		return assistant.ErrNotLoggedIn
 	}
 	if p.failed {
-		return errors.New("The coder could not finish this answer.")
+		return assistant.Quote(errors.New("The coder could not finish this answer."), p.errText)
 	}
 	if !p.sawStop {
 		return errors.New("The coder stopped before it finished the answer.")

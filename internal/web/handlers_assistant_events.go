@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/markdown"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
@@ -85,6 +86,7 @@ func (s *Server) assistantTriggersJSON(c *gin.Context, owner string) {
 			"spec":         trigger.Spec,
 			"timezone":     trigger.Timezone,
 			"task":         trigger.Task,
+			"model":        trigger.Model,
 			"once":         trigger.Once,
 			"state":        view.State,
 			"open":         view.Open,
@@ -241,19 +243,39 @@ func (s *Server) assistantTriggerNew(c *gin.Context) {
 		return
 	}
 	s.rememberAssistantZone(c, c.PostForm("timezone"))
+	s.rememberTriggerModel(owner, trigger.Model)
 	summary := s.assistantTriggerSummary(trigger)
 	if s.formStayed(c, "Trigger added: "+summary+".") {
 		return
 	}
 	if wantsJSON(c.Request) {
+		// The model is the trigger's own where it has one, and modelDefault
+		// what a reaction would run on without the flag, the assistant default
+		// the form's empty entry names: the owner's Triggers pick at the ring
+		// where one stands, else the chat as it resolves now, so `trigger-new`
+		// names the model in its added line only where the flag made a
+		// difference.
+		without := ""
+		if inst, err := s.assistants.Get(owner); err == nil {
+			without = assistant.DefaultModelFor(assistant.RunReaction, inst.Summary, s.modelDefaults(inst.CoderID))
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"id": trigger.ID, "summary": summary, "state": string(trigger.State),
 			"timezone": trigger.Timezone, "nextAt": machineTime(trigger.NextAt),
-			"ignored": assistantTriggerIgnored(c, trigger),
+			"ignored": assistantTriggerIgnored(c, trigger), "model": trigger.Model, "modelDefault": without,
 		})
 		return
 	}
 	s.redirectWithFlash(c, "/assistants/"+owner, "Trigger added: "+summary+".", "")
+}
+
+// rememberTriggerModel puts a trigger's model into its owner's coder's
+// repository, the way the ring's save does, so a name typed under Other… on
+// the trigger form stands in every later list of that coder.
+func (s *Server) rememberTriggerModel(owner, model string) {
+	if inst, err := s.assistants.Get(owner); err == nil {
+		s.rememberModel(inst.CoderID, model)
+	}
 }
 
 // assistantTriggerEdit changes one, from the row's menu on the page or from
@@ -288,6 +310,7 @@ func (s *Server) assistantTriggerEdit(c *gin.Context) {
 		return
 	}
 	s.rememberAssistantZone(c, c.PostForm("timezone"))
+	s.rememberTriggerModel(next.Owner, next.Model)
 	if s.formStayed(c, assistantTriggerChanged(changed)) {
 		return
 	}
@@ -344,6 +367,12 @@ func (s *Server) assistantTriggerSpec(c *gin.Context, source string, stood []str
 		Spec:     c.PostForm("spec"),
 		Timezone: c.PostForm("timezone"),
 		Task:     c.PostForm("task"),
+	}
+	// The model is optional and an empty one is a value, the assistant
+	// default: the page's select posts on every save and `--model default`
+	// posts the empty field, while a request without it leaves what stands.
+	if raw, ok := c.GetPostForm("model"); ok {
+		spec.Model, spec.ModelSet = raw, true
 	}
 	// The name is optional and an empty one is a value: the page posts the
 	// field on every save, so clearing it is saying so, while a request
@@ -547,6 +576,7 @@ func (s *Server) assistantTriggerForm(c *gin.Context, edit bool) {
 		data.Event = assistant.EventOption{Source: trigger.Source, Kind: trigger.Kind}.Name()
 		data.Name = trigger.Name
 		data.Task, data.Spec, data.Once = trigger.Task, trigger.Spec, trigger.Once
+		data.Model.Current = trigger.Model
 		data.Timezone = trigger.Timezone
 		data.Mode = triggerMode(trigger.All)
 		data.Batch = trigger.BatchSeconds
@@ -563,6 +593,18 @@ func (s *Server) assistantTriggerForm(c *gin.Context, edit bool) {
 		data.Event = assistant.EventOption{Source: assistant.EventJob, Kind: string(assistant.JobDone)}.Name()
 		data.Once, picked[job] = true, ""
 	}
+	// The model select offers what the owner's coder offers, with the empty
+	// entry naming the assistant default as it resolves now, the owner's
+	// Triggers pick at the ring, else its chat, stored as nothing: a trigger
+	// left on it runs on that default as it stands at fire time.
+	repo := coder.ModelRepositoryFor(nil)
+	resolved := ""
+	if owner, err := s.assistants.Get(data.Owner); err == nil {
+		repo = s.coderModelRepository(owner.CoderID)
+		resolved = assistant.DefaultModelFor(assistant.RunReaction, owner.Summary, s.modelDefaults(owner.CoderID))
+	}
+	data.Model = modelPick("model", data.Model.Current, assistantDefaultLabel(resolved), repo)
+	data.ModelNote = repo.Note()
 	for _, k := range assistant.EventOptions {
 		data.Events = append(data.Events, render.AssistantEventOption{Name: k.Name(), Source: k.Source, Label: k.Label, Help: k.Help})
 	}
@@ -663,6 +705,7 @@ func (s *Server) assistantTriggerView(trigger assistant.Trigger, owners bool) re
 		Spec:     trigger.Spec,
 		Timezone: trigger.Timezone,
 		Task:     trigger.Task,
+		Model:    trigger.Model,
 		Once:     trigger.Once,
 		State:    string(trigger.State),
 		Open:     trigger.Open(),

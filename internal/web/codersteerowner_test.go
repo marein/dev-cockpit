@@ -54,7 +54,7 @@ func steerCreateServer(t *testing.T) (*Server, *assistant.Jobs, string, string) 
 	}
 	jobs := assistant.NewJobs(assistant.NewStore(stateDir))
 	s := &Server{
-		coders:     []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), coderclaude.New(""), projects)},
+		coders:     []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), coderclaude.New("", nil), projects)},
 		projects:   projects,
 		shells:     shells,
 		assistants: conversations,

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/terminal"
@@ -47,6 +48,10 @@ type Manager struct {
 	// have to wait the gate out.
 	now   func() time.Time
 	sleep func(time.Duration)
+	// modelDefaults reads the coder's stored defaults, of which a start takes
+	// the start default. Read on every start, so a change applies to the
+	// next session; nil, which a test manager has, means none is stored.
+	modelDefaults func() assistant.ModelDefaults
 }
 
 // NewManager wires up a coder Manager with its dependencies.
@@ -74,6 +79,12 @@ func NewManager(
 func (s *Manager) SetHidden(hidden func(sessionID string) bool) {
 	s.hidden = hidden
 	s.Invalidate()
+}
+
+// SetModelDefaults installs the reading of the coder's stored model defaults,
+// see Start.
+func (s *Manager) SetModelDefaults(defaults func() assistant.ModelDefaults) {
+	s.modelDefaults = defaults
 }
 
 // visibleSessions is the stored session list with the hidden ones removed.
@@ -180,14 +191,28 @@ type StartResult struct {
 	Name       string
 	Workdir    string
 	AgentID    string
+	// Model is the model the session was started on, empty for the CLI's own
+	// default, the way AgentID says which agent it came up with.
+	Model string
 }
 
 // Start creates a new coder session. The name is optional: without one the CLI
 // gets no name flag, and what the session is called is read back from it, its
 // first prompt as a rule. Until there is a prompt DisplayName's fallback
-// stands in.
+// stands in. The model is optional the same way, and it is checked first,
+// before anything exists: a name no CLI takes is refused with the shared
+// rule's own sentence, never started and left to fail in the pane.
 func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions) (StartResult, error) {
 	name := strings.TrimSpace(rawName)
+	model, err := assistant.CleanModel(opts.Model)
+	if err != nil {
+		return StartResult{}, err
+	}
+	// The pick stands above the stored start default, and the default above
+	// the CLI's own, which an empty model leaves the choice to.
+	if model == "" && s.modelDefaults != nil {
+		model = s.modelDefaults().Start
+	}
 	workdir, err := s.projects.ValidatePath(rawProject)
 	if err != nil {
 		return StartResult{}, err
@@ -216,6 +241,7 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 		AgentID:           agentID,
 		AutomaticApproval: opts.AutomaticApproval,
 		Task:              strings.TrimSpace(opts.Task),
+		Model:             model,
 	})
 	s.trustWorkdir(workdir)
 	if err := s.tmux.NewSession(sessionKey, workdir, shellCmd, s.coder.SessionRuntime().Env()); err != nil {
@@ -232,7 +258,7 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 		identifier = s.promoteSessionKey(sessionKey, before, workdir, name)
 	}
 	s.Invalidate()
-	return StartResult{Identifier: identifier, Name: name, Workdir: workdir, AgentID: agentID}, nil
+	return StartResult{Identifier: identifier, Name: name, Workdir: workdir, AgentID: agentID, Model: model}, nil
 }
 
 // Resume brings a stored session back to life.

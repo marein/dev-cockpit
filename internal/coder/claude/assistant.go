@@ -86,7 +86,8 @@ func (r *runner) TrustWorkdir(dir string) error {
 //
 // Every flag comes first and the prompt goes last, behind endOfOptions: it is
 // claude's positional argument, so that separator is the one thing that keeps a
-// prompt somebody typed from being read as an option.
+// prompt somebody typed from being read as an option. A model the turn names
+// rides behind --model, and nothing else about the command moves for it.
 func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	args := []string{"-p"}
 	if req.Resume {
@@ -102,8 +103,11 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 		"--output-format", "stream-json",
 		"--include-partial-messages",
 		"--verbose",
-		endOfOptions, req.Prompt,
 	)
+	if req.Model != "" {
+		args = append(args, "--model", req.Model)
+	}
+	args = append(args, endOfOptions, req.Prompt)
 	return assistant.Command{Name: "claude", Args: args}, nil
 }
 
@@ -136,6 +140,14 @@ type claudeParser struct {
 	// on this machine. It is remembered instead of reported at once, because the
 	// record that closes the turn is where a turn's outcome is decided.
 	authFailed bool
+	// modelUnknown is set by the API error record claude sends for a model it
+	// does not know, remembered like authFailed and decided on the result.
+	modelUnknown bool
+	// apiError is claude's own sentence out of an API error record the cockpit
+	// has no name for: a request the API refused. It is kept for the result
+	// record the same way, and quoted behind the cockpit's sentence there, so
+	// the user reads what claude said instead of being sent to the log.
+	apiError string
 	// sentText is whether this turn has put any text out, and blockPending
 	// whether a content block boundary stands between that text and whatever
 	// comes next. The stream names those boundaries itself, so the separator
@@ -186,14 +198,21 @@ type claudeAssistantRecord struct {
 	ParentToolUseID string `json:"parent_tool_use_id"`
 	// Error names what an API error record is about, the field claude sets next
 	// to is_api_error_message. It is the machine readable half of that record,
-	// which is why it and not the text next to it decides anything.
-	Error looseString `json:"error"`
+	// which is why it and not the text next to it decides anything; the text is
+	// what the turn ends with where the error is one the cockpit has no
+	// sentence of its own for.
+	Error             looseString `json:"error"`
+	IsAPIErrorMessage bool        `json:"is_api_error_message"`
 }
 
 // claudeResultRecord is the record that closes a turn.
 type claudeResultRecord struct {
 	IsError   bool   `json:"is_error"`
 	SessionID string `json:"session_id"`
+	// Result is the answer on a turn that worked and claude's account of the
+	// failure on one that did not. It is read only on a failed turn, and only
+	// to be quoted.
+	Result string `json:"result"`
 	// ModelUsage is what the result record says about every model the turn
 	// used, keyed by the name claude called it. It carries the context window,
 	// which is why the window a claude turn is measured against never has to be
@@ -278,6 +297,22 @@ func (p *claudeParser) Line(line []byte) error {
 			p.authFailed = true
 			return nil
 		}
+		// A model claude does not know arrives the same way, measured on
+		// Claude Code 2.1.280 with `--model no-such-model`: the record names
+		// it in its error field, its text is claude's own sentence about it,
+		// and the result that follows is marked as an API error. The field
+		// decides, the text is never read.
+		if rec.Error == "model_not_found" {
+			p.modelUnknown = true
+			return nil
+		}
+		// Every other API error record carries claude's own words about what
+		// went wrong. That is no answer either, so nothing of it is streamed;
+		// it is what the failing result quotes.
+		if rec.IsAPIErrorMessage {
+			p.apiError = firstText(rec.Message.Content)
+			return nil
+		}
 		// A subagent's message is not this conversation's context: it runs on a
 		// window of its own, and its reading would understate the turn's.
 		if tokens := rec.Message.Usage.contextTokens(); tokens > 0 && rec.ParentToolUseID == "" {
@@ -323,12 +358,44 @@ func (p *claudeParser) Line(line []byte) error {
 		if p.authFailed {
 			return assistant.ErrNotLoggedIn
 		}
+		if p.modelUnknown {
+			// The name is on standard error, where Diagnose reads it; the
+			// cockpit knows what it passed anyway.
+			return &assistant.Refusal{Kind: assistant.RefusalUnknownModel}
+		}
 		if rec.IsError || (head.Subtype != "" && head.Subtype != "success") {
-			return errors.New("The coder could not finish this answer.")
+			// The cockpit's sentence, with claude's own account quoted behind
+			// it: the API error record's text where one came, else the result's
+			// own, which repeats it on a failed turn.
+			said := p.apiError
+			if said == "" {
+				said = rec.Result
+			}
+			return assistant.Quote(errors.New("The coder could not finish this answer."), said)
 		}
 		return nil
 	}
 	return nil
+}
+
+// firstText is the text of an assembled message's content, its text blocks
+// joined, empty where it holds none or cannot be read: it is only ever quoted,
+// so a shape this version does not know costs nothing.
+func firstText(content json.RawMessage) string {
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(content, &blocks); err != nil {
+		return ""
+	}
+	var parts []string
+	for _, part := range blocks {
+		if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
+			parts = append(parts, strings.TrimSpace(part.Text))
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // emitText sends one piece of assistant text, with the block separator in front
@@ -397,12 +464,37 @@ func (p *claudeParser) Finish() error {
 // a record on standard output and leaves standard error empty, measured on a CLI
 // that was never logged in, so Line already decided it. The pattern over
 // standard error stays as a fallback for a version that starts writing it there
-// after all. Nothing here looks at the raw output or at the result text: both
-// carry the answer on a turn that worked, and a turn whose answer talks about
-// logins is not a login failure.
+// after all. A model claude does not know is decided in Line the same way, and
+// standard error is where the name is: one tagged line of JSON, which is read
+// here and names the refusal Line already made. Nothing here looks at the raw
+// output or at the result text: both carry the answer on a turn that worked,
+// and a turn whose answer talks about logins is not a login failure.
 func (p *claudeParser) Diagnose(err error, stderr string) error {
 	if assistant.LooksLikeLogin(stderr) {
 		return assistant.ErrNotLoggedIn
 	}
+	if name, ok := unrecognizedModel(stderr); ok {
+		return assistant.UnknownModel(name)
+	}
 	return nil
+}
+
+// unrecognizedModel reads the line claude writes to standard error for a model
+// it does not know, `[claude-code:unrecognized_model] {"model":"no-such-model","query_source":"sdk"}`
+// (Claude Code 2.1.280): a fixed tag and JSON behind it, so the name is read
+// out of a field and not out of a sentence. A tag without a readable name
+// still says what happened.
+func unrecognizedModel(stderr string) (string, bool) {
+	for _, line := range strings.Split(stderr, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "[claude-code:unrecognized_model]")
+		if !ok {
+			continue
+		}
+		var rec struct {
+			Model string `json:"model"`
+		}
+		_ = json.Unmarshal([]byte(strings.TrimSpace(rest)), &rec)
+		return strings.TrimSpace(rec.Model), true
+	}
+	return "", false
 }

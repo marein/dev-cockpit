@@ -1188,6 +1188,25 @@ func (w *Watcher) adopt(check AdoptedCheck) {
 // is dropped whole, the successor pays for none of it.
 func (w *Watcher) conclude(job Job, seen checkContext, outcome wakeOutcome, err error) {
 	terminal := job.Terminal
+	var refusal *Refusal
+	if errors.As(err, &refusal) {
+		// The CLI refused to start the check, not logged in or a model it does
+		// not know. That is not silence to retry, it will refuse again and a
+		// second check would only put the message off, so the job closes as
+		// blocked now, with its own report: the check could not run, the
+		// sentence that says why, and that nobody steers the coder. A closed
+		// job only gets its spinner cleared, like below.
+		log.Printf("assistant: wake for %s refused: %v", terminal, err)
+		if w.markJob(job, seen, func(fresh *Job) {
+			fresh.CheckingSince = time.Time{}
+			fresh.LastWakeAt = w.now().UTC()
+		}).Terminal == "" {
+			log.Printf("assistant: dropped a late check answer for %s, the job it was started for is gone", terminal)
+			return
+		}
+		w.report(job, seen, wakeOutcome{Verdict: VerdictBlocked, Text: refusedReport(job, err)})
+		return
+	}
 	if err != nil {
 		// No verdict: the turn crashed, ran into its time limit, was killed by
 		// a release or answered nothing. It costs no wake, and on an open job
@@ -1381,6 +1400,14 @@ func report(name string, data reportData) string {
 // otherwise is the failure this whole feature exists to prevent.
 func silentReport(job Job, err error) string {
 	return report("silent_report.md.tmpl", reportData{Job: job, Reason: err.Error()})
+}
+
+// refusedReport is what the user reads when the CLI refused to run the check.
+// The job is closed like silentReport closes one, and for the same reason:
+// nobody is checking this coder, and a refusal has no second try, the CLI
+// would refuse again.
+func refusedReport(job Job, err error) string {
+	return report("refused_report.md.tmpl", reportData{Job: job, Reason: err.Error()})
 }
 
 // standstillReport says what nobody else would: the coder is idle, the job is

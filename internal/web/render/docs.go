@@ -179,7 +179,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "How full one is",
 					Tag:      "Context",
 					TagClass: "bg-blue-lt",
-					Desc:     `A ring around the new-assistant button <i class="ti ti-message-plus align-text-bottom" aria-hidden="true"></i> fills with how much of the coder's context window this assistant takes up, orange from 85 percent, red from 95. It moves once per answer and stays empty for a model whose window this cockpit does not know.`,
+					Desc:     `A ring around the button beside the composer fills with how much of the coder's context window this assistant takes up, orange from 85 percent, red from 95. Its icon is the coder this assistant runs on. It moves once per answer and stays empty for a model whose window this cockpit does not know. Its menu picks this assistant's Chat, Checks and Triggers models. Empty Chat runs on the coder's start default, empty Checks and Triggers on the chat.`,
 				},
 				{
 					Title:    "What it may do",
@@ -191,7 +191,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "It hands work over and steers it",
 					Tag:      "Jobs",
 					TagClass: "bg-blue-lt",
-					Desc:     `Changes in your projects are not its job: it starts a coder for the task, briefs it, and steers it from the start. It also resumes, stops and deletes coders, and creates and deletes projects. A job is one coder, one task and one criterion that decides the task is done, and you can steer any coder yourself. A steered coder that finishes, asks something or stops moving buys a check; only done and blocked reach you, at ten checks and eight hours per job. Exactly one assistant steers a coder.`,
+					Desc:     `Changes in your projects are not its job: it starts a coder for the task, briefs it, and steers it from the start. It also resumes, stops and deletes coders, and creates and deletes projects. A job is one coder, one task and one criterion that decides the task is done, and you can steer any coder yourself. A steered coder that finishes, asks something or stops moving buys a check; only done and blocked reach you, at ten checks and eight hours per job. Exactly one assistant steers a coder. A check the coder refuses to start, not logged in or an unknown model, closes the job as blocked and says why; any other failed check gets one more try.`,
 				},
 				{
 					Title:    "Watching: the coders and the triggers",
@@ -209,7 +209,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "It reacts to events",
 					Tag:      "Triggers",
 					TagClass: "bg-blue-lt",
-					Desc:     `A trigger hangs the assistant onto an event: a job closing done, blocked or expired, a coder ending its turn or asking, a cron schedule. Job closed covers all three job ends and Coder signals both coder signals. The reaction runs on its own, never in the conversation, and its answer is pushed into the thread marked <i class="ti ti-bolt align-text-bottom" aria-hidden="true"></i> and notified, unless its first line is NOTHING. New trigger <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> over the Triggers tab makes one, with an optional name the row and the notification then read by; Open coder, Change and Remove stand under every row, and Change moves everything but the event. A trigger stands until you remove it unless you give it an expiry, any number of minutes, hours or days, or make it a one shot, and one that names several terminals fires on any of them or waits for all of them. A schedule carries the time zone its wall clock times are read in, which stands beside its crontab fields on the row and is what the next tick is shown in; picking another one in the form is also what the next schedule then starts on. Around a daylight saving changeover a schedule follows the wall clock: a time the spring change skips falls out that day, an hour the autumn change repeats fires twice.`,
+					Desc:     `A trigger hangs the assistant onto an event: a job closing done, blocked or expired, a coder ending its turn or asking, a cron schedule. Job closed covers all three job ends and Coder signals both coder signals. The reaction runs on its own, never in the conversation, and its answer is pushed into the thread marked <i class="ti ti-bolt align-text-bottom" aria-hidden="true"></i> and notified, unless its first line is NOTHING. New trigger <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> over the Triggers tab makes one, with an optional name the row and the notification then read by; Open coder, Change and Remove stand under every row, and Change moves everything but the event. A trigger may run on a model of its own, picked in its form; empty means the assistant's Triggers pick, else its chat model. A trigger stands until you remove it unless you give it an expiry, any number of minutes, hours or days, or make it a one shot, and one that names several terminals fires on any of them or waits for all of them. A schedule carries the time zone its wall clock times are read in, which stands beside its crontab fields on the row and is what the next tick is shown in; picking another one in the form is also what the next schedule then starts on. Around a daylight saving changeover a schedule follows the wall clock: a time the spring change skips falls out that day, an hour the autumn change repeats fires twice.`,
 				},
 				{
 					Title:    "Steer and release where the coder is",
@@ -615,7 +615,13 @@ func DocsTopics() []DocsTopic {
 					Title:    "Coder instructions, agents and skills",
 					Tag:      "Coder",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Settings &rarr; Coder edits a coder's own files: its global instructions, its agents, and its skills. With more than one coder installed, the sidebar picks whose files you edit.`,
+					Desc:     `Settings &rarr; Coder edits a coder's own files: its global instructions, its agents, and its skills, and holds its Models section. With more than one coder installed, the sidebar picks whose you edit.`,
+				},
+				{
+					Title:    "Default models",
+					Tag:      "Setting",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Settings &rarr; Coder &rarr; Models holds a coder's start default, what a new session and an assistant's chat run on when nothing is picked. Settings &rarr; Assistants &rarr; Models holds the Chat, Checks and Triggers picks a new assistant is made with, empty meaning the coder's default and Same as chat.`,
 				},
 				{
 					Title:    "Back up and move your setup",

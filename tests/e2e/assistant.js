@@ -165,12 +165,17 @@ async function unfoldJob(page, id) {
   await page.waitForSelector(`[data-assistant-job="${id}"] [data-assistant-job-details].show`, { timeout: 8000 });
 }
 
-// NEW_MENU is the new assistant control on a host with several coders. Its
-// label is not a selector: it carries the context percentage, so it changes with
-// every turn. The attribute holding the label's stable part is what identifies
-// the button; the list column carries a second one, so the composer's is named
-// through its surface.
-const NEW_MENU = 'dc-assistant [data-bs-toggle="dropdown"][data-assistant-new-label]';
+// NEW_MENU is the list column's new assistant control, where making one lives
+// now that the composer's ring only carries this assistant's models. The
+// composer's own toggle carries the same attribute, so both are scoped to
+// their surface: the list column through .dc-ctx, the composer (MODEL_MENU)
+// through dc-assistant.
+const NEW_MENU = '.dc-app > .dc-ctx [data-bs-toggle="dropdown"][data-assistant-new-label]';
+
+// MODEL_MENU is the composer's own ring button, dedicated to this assistant's
+// models: the coder it runs on and the Chat and Checks selects. It carries no
+// New with entries any more, those moved to NEW_MENU in the list column.
+const MODEL_MENU = 'dc-assistant [data-bs-toggle="dropdown"][data-assistant-new-label]';
 
 // A new assistant posts through pe.js and lands on the new page, so a change
 // is seen through the swapped body: a mark set before the click is gone
@@ -186,7 +191,7 @@ async function afterSwap(page, act) {
 // host with both installed picks claude explicitly. With one coder the picker
 // is not rendered at all and the conversation already runs on it.
 async function useClaude(page) {
-  const picker = page.locator('dc-assistant [data-assistant-new="claude"]');
+  const picker = page.locator('.dc-app > .dc-ctx [data-assistant-new="claude"]');
   const onClaude = (await page.locator("dc-assistant").getAttribute("data-assistant-coder")) === "claude";
   if (!(await picker.count()) || onClaude) {
     return page.locator("dc-assistant").getAttribute("assistant-id");
@@ -204,11 +209,45 @@ async function newConversation(page) {
   const current = await page.locator("dc-assistant").getAttribute("data-assistant-coder").catch(() => null);
   const dropdown = page.locator(NEW_MENU);
   if (await dropdown.count()) await dropdown.click();
-  await afterSwap(page, () => page.locator(current ? `dc-assistant [data-assistant-new="${current}"]` : "dc-assistant [data-assistant-new]").first().click());
+  await afterSwap(page, () => page.locator(current ? `.dc-app > .dc-ctx [data-assistant-new="${current}"]` : ".dc-app > .dc-ctx [data-assistant-new]").first().click());
   const target = new URL(page.url()).pathname.split("/").pop();
   assert(target && target.length > 8, `the new assistant did not land on a page: ${page.url()}`);
   assert((await page.locator("dc-assistant").getAttribute("assistant-id")) === target, "the surface shows another assistant than the address");
   return target;
+}
+
+// SVG_CODER_VIEWBOX names the coders whose ring glyph is an svg, each with
+// the viewBox coder_icon.gohtml draws it in; every other coder (copilot
+// today) is a font icon, wrapped in a span the ring icon template centers
+// the same way.
+const SVG_CODER_VIEWBOX = { claude: "0 0 24 24", opencode: "0 0 256 320" };
+
+// coderIDs reads which coders this host actually offers, out of the New
+// assistant button's own entries in the list column, so a check that must
+// hold for every installed coder hardcodes none of them: with one coder
+// installed there is no dropdown and the assistant on screen already runs on
+// the one there is.
+async function coderIDs(page) {
+  const ids = await page.locator(".dc-app > .dc-ctx [data-assistant-new]").evaluateAll(
+    (nodes) => nodes.map((n) => n.getAttribute("data-assistant-new")),
+  );
+  if (ids.length) return [...new Set(ids)];
+  return [await page.locator("dc-assistant").getAttribute("data-assistant-coder")];
+}
+
+// switchToCoder lands the page's own assistant on the given coder, making a
+// fresh one when the one on screen runs on another (useClaude's pattern, for
+// any coder id).
+async function switchToCoder(page, coderID) {
+  if ((await page.locator("dc-assistant").getAttribute("data-assistant-coder")) === coderID) {
+    return page.locator("dc-assistant").getAttribute("assistant-id");
+  }
+  const picker = page.locator(`.dc-app > .dc-ctx [data-assistant-new="${coderID}"]`);
+  const dropdown = page.locator(NEW_MENU);
+  if (await dropdown.count()) await dropdown.click();
+  await afterSwap(page, () => picker.click());
+  await page.waitForSelector(`dc-assistant[data-assistant-coder="${coderID}"][ready]`, { timeout: 15000 });
+  return page.locator("dc-assistant").getAttribute("assistant-id");
 }
 
 // A turn that replaces the last answer (a retry) settles into a new message,
@@ -390,6 +429,14 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     assert(await page.locator("[data-assistant-empty]").isVisible(), "the run's assistant is not empty");
   });
 
+  // The empty state used to promise a model choice for a later release. That
+  // release is here, and the note now says where the choice is made.
+  await run("the empty state points at the ring button for the model", async () => {
+    const note = await page.locator("[data-assistant-empty] [role=note]").innerText();
+    assert(!/later release/i.test(note), `the empty state still promises a later release: ${note}`);
+    assert(/ring button/.test(note), `the empty state does not say where the model is picked: ${note}`);
+  });
+
   // The area's own address leads to the assistant last looked at, the way
   // /terminals leads to a terminal: the list stands in the column beside it
   // and marks its row, so the area opens on what is in it and on the thread
@@ -465,12 +512,548 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     assert(await ringFill(page) === "96 100", `the ring is not rendered on load: ${await ringFill(page)}`);
     assert(await ringLevel(page) === "full", "the level is not rendered on load");
 
-    // The button still posts its form and, with more than one coder, still opens
-    // its menu: the ring sits inside the button so it cannot break either.
-    const posts = await page.locator("[data-assistant-new]").first().evaluate((button) =>
-      button.getAttribute("form") || button.getAttribute("data-bs-toggle"));
-    assert(posts, "the new assistant button lost its form or its dropdown");
+    // The button still opens its models menu: the ring sits inside the
+    // button so it cannot break that either.
+    const opens = await page.locator(MODEL_MENU).first().getAttribute("data-bs-toggle");
+    assert(opens === "dropdown", "the ring button lost its dropdown");
     return "68, live to 96, rendered on load";
+  });
+
+  // The ring is drawn inside the button and the icon inside the ring, so the
+  // three boxes have to share one center: the button, the ring's svg and the
+  // icon, which is an svg path and not a webfont glyph because the font puts a
+  // glyph's ink flush left in its box. The svg's box is the button's padding
+  // box inset by one pixel on every side, and it is read as a box and never as
+  // a center alone: an iPhone stood the ring one pixel right and down at 38px,
+  // which is what an engine draws that sizes an auto width svg from its
+  // containing block instead of from its two insets and then drops the
+  // over-constrained right and bottom (WebKit before its inset aware replaced
+  // width), and a center within one pixel let exactly that through. So every
+  // side's gap to the padding box has to be the inset, which pins the size
+  // with the place, the track circle's own box, which carries the viewBox
+  // scaling, has to sit on the same center, and the tolerance is half a pixel.
+  // Measured on the desktop page and on the phone, in light and dark, at rest
+  // and with the button hovered and its menu open, since the halo widens the
+  // stroke there and the phone's picture was taken in that state.
+  await run("the ring fills the button's inset box and shares its center with the icon", async () => {
+    const sel = "dc-assistant .assistant-composer [data-assistant-new-label]";
+    const boxes = (p) => p.evaluate((s) => {
+      const button = document.querySelector(s);
+      const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, cx: r.x + r.width / 2, cy: r.y + r.height / 2 }; };
+      const cs = getComputedStyle(button);
+      return {
+        theme: document.documentElement.getAttribute("data-bs-theme"),
+        border: { l: parseFloat(cs.borderLeftWidth), r: parseFloat(cs.borderRightWidth), t: parseFloat(cs.borderTopWidth), b: parseFloat(cs.borderBottomWidth) },
+        button: box(button),
+        ring: box(button.querySelector("[data-assistant-ring]")),
+        track: box(button.querySelector("[data-assistant-ring] .dc-context-ring-track")),
+        icon: box(button.querySelector("[data-assistant-ring-icon]")),
+      };
+    }, sel);
+    const TOL = 0.5, INSET = 1;
+    const fmt = (v) => v.toFixed(2);
+    const check = (c, where) => {
+      for (const part of ["ring", "track", "icon"]) {
+        assert(c[part].w > 0 && c[part].h > 0, `${where}: the ${part} has no box`);
+        const dx = Math.abs(c[part].cx - c.button.cx);
+        const dy = Math.abs(c[part].cy - c.button.cy);
+        assert(dx <= TOL && dy <= TOL, `${where}: the ${part} is off the button's center by ${fmt(dx)}, ${fmt(dy)}`);
+      }
+      const gaps = {
+        left: c.ring.x - (c.button.x + c.border.l),
+        right: c.button.x + c.button.w - c.border.r - (c.ring.x + c.ring.w),
+        top: c.ring.y - (c.button.y + c.border.t),
+        bottom: c.button.y + c.button.h - c.border.b - (c.ring.y + c.ring.h),
+      };
+      for (const [side, gap] of Object.entries(gaps)) {
+        assert(Math.abs(gap - INSET) <= TOL, `${where}: the ring's ${side} gap to the padding box is ${fmt(gap)}, not ${INSET} (ring ${fmt(c.ring.w)}x${fmt(c.ring.h)} in a ${fmt(c.button.w)}x${fmt(c.button.h)} button)`);
+      }
+      const dx = Math.abs(c.icon.cx - c.ring.cx);
+      const dy = Math.abs(c.icon.cy - c.ring.cy);
+      assert(dx <= TOL && dy <= TOL, `${where}: the icon is off the ring's center by ${fmt(dx)}, ${fmt(dy)}`);
+    };
+    const states = async (p, where) => {
+      const c = await boxes(p);
+      check(c, `${where} ${c.theme} at rest`);
+      await p.click(sel);
+      await p.waitForFunction((s) => document.querySelector(s).classList.contains("show"), sel, { timeout: 5000 });
+      await p.hover(sel);
+      check(await boxes(p), `${where} ${c.theme} hovered with the menu open`);
+      await p.keyboard.press("Escape");
+      await p.waitForFunction((s) => !document.querySelector(s).classList.contains("show"), sel, { timeout: 5000 });
+      await p.mouse.move(0, 0);
+    };
+    const both = async (p, where) => {
+      await states(p, where);
+      await p.emulateMedia({ colorScheme: "dark" });
+      await p.waitForFunction(() => document.documentElement.getAttribute("data-bs-theme") === "dark", null, { timeout: 5000 });
+      await states(p, where);
+      await p.emulateMedia({ colorScheme: null });
+    };
+    await both(page, "desktop");
+    const mp = await mobilePage();
+    await openConversation(mp, chatID);
+    await both(mp, "390px");
+    return "desktop and 390px, light and dark, at rest and open, the inset box within half a pixel";
+  });
+
+  // The ring wears the icon of the coder each assistant runs on, never a
+  // fixed glyph, so the center and box math the check above ran once now
+  // runs once per coder this host installs, plus a shape check that it is
+  // really that coder's own glyph: an svg with that coder's own viewBox
+  // where the glyph is an svg (claude, opencode), a span wrapping the
+  // webfont glyph otherwise (copilot). Rest state only: the geometry itself
+  // does not change with the coder, only what is drawn inside it, so
+  // light/dark and hover/open stay the check above's job. An assistant per
+  // coder is the honest way to render each icon, and the cheap one too: a
+  // bare creation never starts the coder's own CLI, only a chat turn does,
+  // and this check sends none.
+  await run("the ring icon is the coder's own glyph, centered, for every installed coder", async () => {
+    const sel = "dc-assistant .assistant-composer [data-assistant-new-label]";
+    const shapeOf = (p) => p.evaluate((s) => {
+      const button = document.querySelector(s);
+      const icon = button.querySelector("[data-assistant-ring-icon]");
+      const box = (el) => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height, cx: r.x + r.width / 2, cy: r.y + r.height / 2 }; };
+      return {
+        tag: icon?.tagName.toLowerCase() || "",
+        viewBox: icon?.getAttribute("viewBox") || "",
+        glyph: icon?.querySelector("i")?.className || "",
+        button: box(button),
+        icon: icon ? box(icon) : null,
+      };
+    }, sel);
+    const check = (shape, coderID, where) => {
+      assert(shape.icon && shape.icon.w > 0 && shape.icon.h > 0, `${where}: ${coderID}'s ring icon has no box: ${JSON.stringify(shape)}`);
+      const dx = Math.abs(shape.icon.cx - shape.button.cx);
+      const dy = Math.abs(shape.icon.cy - shape.button.cy);
+      assert(dx <= 0.5 && dy <= 0.5,
+        `${where}: ${coderID}'s ring icon is off the button's center by ${dx.toFixed(2)}, ${dy.toFixed(2)}`);
+      const wantViewBox = SVG_CODER_VIEWBOX[coderID];
+      if (wantViewBox) {
+        assert(shape.tag === "svg" && shape.viewBox === wantViewBox,
+          `${where}: ${coderID} did not draw its own svg: ${JSON.stringify(shape)}`);
+      } else {
+        assert(coderID === "copilot" && shape.tag === "span" && shape.glyph.includes("ti-brand-github-copilot"),
+          `${where}: ${coderID} did not wrap its font glyph: ${JSON.stringify(shape)}`);
+      }
+    };
+
+    const ids = await coderIDs(page);
+    const assistants = {};
+    for (const coderID of ids) {
+      assistants[coderID] = await switchToCoder(page, coderID);
+      check(await shapeOf(page), coderID, "desktop");
+    }
+    // Every one of those assistants already exists, so the phone page opens
+    // each by id directly: no dropdown to reach, which below lg sits inside
+    // the list column's sheet and not on screen.
+    const mp = await mobilePage();
+    for (const coderID of ids) {
+      await openConversation(mp, assistants[coderID]);
+      check(await shapeOf(mp), coderID, "390px");
+    }
+    // Back to the assistant every check after this one reads.
+    await openConversation(page, chatID);
+    return `${ids.length} coder(s): ${ids.join(", ")}, desktop and 390px`;
+  });
+
+  // The ring button's menu carries this assistant's models and nothing else,
+  // making a new one moved to the list column: the button's own icon says
+  // which coder without a head line any more, a select for the chat, one
+  // for the checks and one for the triggers over that coder's list, every
+  // pick stored the moment it is made and standing after a reload, the
+  // third one round tripping through the same form=model post as
+  // trigger_model, Other… taking a name the list does not hold, which then
+  // stands as the selected entry, and the turn really carrying the pick,
+  // which the fake proves by answering MODEL with the model it was started
+  // with.
+  await run("the ring menu picks the models and the choice survives a reload", async () => {
+    const MENU = "dc-assistant [data-assistant-new-label] + .dropdown-menu";
+    const pick = (kind) => `dc-assistant [data-assistant-model-pick="${kind}"] select`;
+    const openMenu = async () => {
+      if (await page.locator(`${MENU}.show`).count()) return;
+      await page.click(MODEL_MENU);
+      await page.waitForSelector(`${MENU}.show`, { timeout: 8000 });
+    };
+    const closeMenu = async () => {
+      if (!(await page.locator(`${MENU}.show`).count())) return;
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(`${MENU}.show`, { state: "detached", timeout: 8000 });
+    };
+    const reopen = async () => {
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await dismissUpdate(page);
+      await page.waitForSelector(READY, { timeout: 15000 });
+      await openMenu();
+    };
+
+    await openMenu();
+    const shape = await page.evaluate((menuSel) => {
+      const menu = document.querySelector(menuSel);
+      const box = menu.getBoundingClientRect();
+      const options = (kind) => [...menu.querySelectorAll(`[data-assistant-model-pick="${kind}"] select option`)].map((o) => o.textContent.trim());
+      return {
+        chat: options("chat"),
+        check: options("check"),
+        trigger: options("trigger"),
+        labels: [...menu.querySelectorAll("[data-assistant-models] label")].map((l) => l.textContent.trim()),
+        chatValue: menu.querySelector('[data-assistant-model-pick="chat"] select').value,
+        checkValue: menu.querySelector('[data-assistant-model-pick="check"] select').value,
+        triggerValue: menu.querySelector('[data-assistant-model-pick="trigger"] select').value,
+        hints: [...menu.querySelectorAll(".form-hint")].map((h) => h.textContent.trim()).join(" | "),
+        saveHidden: menu.querySelector("[data-assistant-model-save]")?.hidden === true,
+        typedHidden: [...menu.querySelectorAll("[data-model-other-input]")].every((i) => i.hidden && i.disabled),
+        newWith: menu.querySelectorAll("[data-assistant-new]").length,
+        inside: box.left >= 0 && box.right <= window.innerWidth && box.top >= 0 && box.bottom <= window.innerHeight,
+      };
+    }, MENU);
+    // No head line names the coder any more, the ring icon itself is that
+    // coder's own glyph: claude's is an svg with its own viewBox, never the
+    // font glyph the plus button carries.
+    const toggleIcon = await page.locator(MODEL_MENU).evaluate((button) => ({
+      icon: !!button.querySelector("[data-assistant-ring-icon]"),
+      tag: button.querySelector("[data-assistant-ring-icon]")?.tagName.toLowerCase() || "",
+      viewBox: button.querySelector("[data-assistant-ring-icon]")?.getAttribute("viewBox") || "",
+      glyph: button.querySelector("i")?.className || "",
+    }));
+    assert(toggleIcon.icon && toggleIcon.tag === "svg" && toggleIcon.viewBox === "0 0 24 24" && !toggleIcon.glyph.includes("ti-message-plus"),
+      `the ring button did not switch to claude's own icon: ${JSON.stringify(toggleIcon)}`);
+    assert(shape.chat[0] === "Coder default (CLI)" && shape.chat.includes("haiku") && shape.chat[shape.chat.length - 1] === "Other…",
+      `the chat select is off: ${JSON.stringify(shape)}`);
+    assert(shape.check[0] === "Same as chat" && shape.check.includes("sonnet") && shape.check[shape.check.length - 1] === "Other…",
+      `the checks select is off: ${JSON.stringify(shape)}`);
+    assert(shape.trigger[0] === "Same as chat" && shape.trigger.includes("fable") && shape.trigger[shape.trigger.length - 1] === "Other…",
+      `the triggers select is off: ${JSON.stringify(shape)}`);
+    assert(shape.labels.join("|") === "Chat|Checks|Triggers", `the three picks are not labelled in order: ${JSON.stringify(shape.labels)}`);
+    assert(shape.chatValue === "" && shape.checkValue === "" && shape.triggerValue === "", `a fresh assistant starts on the coder's default: ${JSON.stringify(shape)}`);
+    assert(shape.hints === "Aliases, always the newest of each family.", `the one line under the picks is off: ${JSON.stringify(shape)}`);
+    assert(shape.saveHidden && shape.typedHidden, `the no JS parts stand while the element runs: ${JSON.stringify(shape)}`);
+    assert(shape.newWith === 0, `the ring menu still carries New with entries: ${JSON.stringify(shape)}`);
+    assert(shape.inside, `the menu stands outside the desktop viewport: ${JSON.stringify(shape)}`);
+
+    await page.selectOption(pick("chat"), "haiku");
+    await page.waitForSelector('.dc-toast:has-text("Chat, checks and triggers on haiku.")', { timeout: 8000 });
+    await page.selectOption(pick("check"), "sonnet");
+    await page.waitForSelector('.dc-toast:has-text("Chat and triggers on haiku, checks on sonnet.")', { timeout: 8000 });
+    await page.selectOption(pick("trigger"), "fable");
+    await page.waitForSelector('.dc-toast:has-text("Chat on haiku, checks on sonnet, triggers on fable.")', { timeout: 8000 });
+    assert(await page.locator(`${MENU}.show`).count(), "a pick closed the menu");
+
+    await reopen();
+    const kept = await page.evaluate((p) => ({ chat: document.querySelector(p.chat).value, check: document.querySelector(p.check).value, trigger: document.querySelector(p.trigger).value }), { chat: pick("chat"), check: pick("check"), trigger: pick("trigger") });
+    assert(kept.chat === "haiku" && kept.check === "sonnet" && kept.trigger === "fable", `the picks did not survive the reload: ${JSON.stringify(kept)}`);
+
+    // The keyboard steps the select: a real arrow on the focused select moves
+    // it to the neighbouring entry and the focus stays on it. Bootstrap's
+    // dropdown handler used to take the key on the document and move the
+    // focus among the menu's own items instead, which selectOption never
+    // notices.
+    await page.focus(pick("chat"));
+    const neighbours = await page.evaluate((p) => {
+      const s = document.querySelector(p);
+      return { above: s.options[s.selectedIndex - 1]?.value, below: s.options[s.selectedIndex + 1]?.value };
+    }, pick("chat"));
+    assert(neighbours.above !== undefined, `haiku has no entry above it to step onto: ${JSON.stringify(neighbours)}`);
+    await page.keyboard.press("ArrowUp");
+    const stepped = await page.evaluate((p) => {
+      const s = document.querySelector(p);
+      return { value: s.value, focused: document.activeElement === s, open: !!s.closest(".dropdown-menu.show") };
+    }, pick("chat"));
+    assert(stepped.value === neighbours.above && stepped.focused && stepped.open,
+      `ArrowUp did not step the focused select: ${JSON.stringify({ neighbours, stepped })}`);
+    await page.waitForSelector(`.dc-toast:has-text("Chat on ${neighbours.above}, checks on sonnet, triggers on fable.")`, { timeout: 8000 });
+    await page.keyboard.press("ArrowDown");
+    const back = await page.evaluate((p) => {
+      const s = document.querySelector(p);
+      return { value: s.value, focused: document.activeElement === s };
+    }, pick("chat"));
+    assert(back.value === "haiku" && back.focused, `ArrowDown did not step the focused select back: ${JSON.stringify(back)}`);
+    await page.waitForSelector('.dc-toast:has-text("Chat on haiku, checks on sonnet, triggers on fable.")', { timeout: 8000 });
+
+    await page.selectOption(pick("chat"), { label: "Other…" });
+    const typed = page.locator('dc-assistant [data-assistant-model-pick="chat"] [data-model-other-input]');
+    await typed.waitFor({ state: "visible", timeout: 5000 });
+    assert(await page.locator(pick("chat")).evaluate((s) => !s.hasAttribute("name")), "the select still posts beside the typed name");
+    await typed.fill("claude-haiku-4-5");
+    await typed.press("Enter");
+    await page.waitForSelector('.dc-toast:has-text("Chat on claude-haiku-4-5, checks on sonnet, triggers on fable.")', { timeout: 8000 });
+    assert(await page.locator(pick("chat")).evaluate((s) => s.value === "claude-haiku-4-5" && s.hasAttribute("name")),
+      "the typed name did not become the selected entry");
+    await reopen();
+    const typedKept = await page.evaluate((p) => {
+      const s = document.querySelector(p);
+      return { value: s.value, label: s.selectedOptions[0]?.textContent.trim() };
+    }, pick("chat"));
+    assert(typedKept.value === "claude-haiku-4-5" && typedKept.label === "claude-haiku-4-5",
+      `a stored name the list does not hold is not the selected entry: ${JSON.stringify(typedKept)}`);
+    await closeMenu();
+
+    await send(page, "MODEL which one is it");
+    await waitSettled(page);
+    const answer = await page.locator('[data-role="assistant"]').last().innerText();
+    assert(answer.includes("model: claude-haiku-4-5"), `the turn did not run on the picked model: ${answer}`);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openMenu();
+    const phone = await page.evaluate((menuSel) => {
+      const box = document.querySelector(menuSel).getBoundingClientRect();
+      return { left: Math.round(box.left), right: Math.round(box.right), width: window.innerWidth, selects: document.querySelectorAll(`${menuSel} select`).length };
+    }, MENU);
+    assert(phone.left >= 0 && phone.right <= phone.width && phone.selects === 3, `the menu does not fit the phone: ${JSON.stringify(phone)}`);
+    await closeMenu();
+    await page.setViewportSize({ width: 1360, height: 900 });
+
+    // Back to the CLI's default, so the checks after this one run the fake
+    // the way they always did. A cleared pick follows the chat pick, Same as
+    // chat, which the sentence says by folding it into the chat's clause.
+    await openMenu();
+    await page.selectOption(pick("check"), "");
+    await page.waitForSelector('.dc-toast:has-text("Chat and checks on claude-haiku-4-5, triggers on fable.")', { timeout: 8000 });
+    await page.selectOption(pick("trigger"), "");
+    await page.waitForSelector('.dc-toast:has-text("Chat, checks and triggers on claude-haiku-4-5.")', { timeout: 8000 });
+    await page.selectOption(pick("chat"), "");
+    await page.waitForSelector(".dc-toast:has-text(\"Chat, checks and triggers on the CLI's default.\")", { timeout: 8000 });
+    await closeMenu();
+    return "Claude named, haiku, sonnet and fable kept, the arrows step the focused select, a typed name kept, the turn ran on it, the menu fits a phone";
+  });
+
+  // A pick set from outside the page, on another tab or by the assistant's
+  // own assistant-models-set, which posts the same form=model, reaches the
+  // ring's selects over the assistant's own stream: the three move without a
+  // reload, a name the list does not hold stands as the selected entry with
+  // the typed field hidden, a select that holds the focus keeps its value
+  // until the focus leaves it, a save from the page itself never bounces, a
+  // second assistant open beside it keeps its own picks because the frame
+  // travels its assistant's stream alone, and a reload shows the same.
+  await run("the ring menu follows picks set from outside without a reload", async () => {
+    const id = await page.locator("dc-assistant").getAttribute("assistant-id");
+    const MENU = "dc-assistant [data-assistant-new-label] + .dropdown-menu";
+    const pick = (kind) => `dc-assistant [data-assistant-model-pick="${kind}"] select`;
+    const token = await page.locator('meta[name="csrf-token"]').getAttribute("content");
+    // The post comes from outside the page, the runner's own request with
+    // the page's cookies: the element never sees it, the way it never sees
+    // the CLI's post.
+    const setOutside = async (assistantID, fields) => {
+      const res = await page.request.post(`${BASE}/assistants/${assistantID}`, {
+        form: { csrf_token: token, form: "model", ...fields },
+        headers: { Accept: "application/json" },
+      });
+      assert(res.status() === 200, `the outside post was refused: ${res.status()} ${await res.text()}`);
+    };
+    const values = (p) => p.evaluate(() => Object.fromEntries(["chat", "check", "trigger"].map((kind) => {
+      const pick = document.querySelector(`dc-assistant [data-assistant-model-pick="${kind}"]`);
+      const select = pick.querySelector("select");
+      const typed = pick.querySelector("[data-model-other-input]");
+      return [kind, {
+        value: select.value,
+        label: select.selectedOptions[0]?.textContent.trim() || "",
+        other: select.querySelector("[data-model-other]")?.value,
+        typedAway: typed.hidden && typed.disabled,
+        named: select.hasAttribute("name"),
+      }];
+    })));
+    const waitValues = (p, want) => p.waitForFunction((expected) => ["chat", "check", "trigger"].every((kind) =>
+      document.querySelector(`dc-assistant [data-assistant-model-pick="${kind}"] select`)?.value === expected[kind]), want, { timeout: 8000 });
+    await page.evaluate(() => { document.querySelector(".dc-app").dataset.runnerLive = "1"; });
+
+    // The second assistant stands open on a page of its own with a pick that
+    // tells it apart, and its own frame moves its own ring.
+    const created = await page.request.post(`${BASE}/assistants/new`, { form: { csrf_token: token, form: "new", coder: "claude" }, headers: { Accept: "application/json" } });
+    const otherID = (await created.json().catch(() => ({}))).id || "";
+    assert(otherID && otherID !== id, `no second assistant for the check: ${created.status()}`);
+    const other = await ctx.newPage();
+    await openConversation(other, otherID);
+    await setOutside(otherID, { model: "haiku" });
+    await waitValues(other, { chat: "haiku", check: "", trigger: "" });
+
+    await setOutside(id, { model: "sonnet", check_model: "haiku", trigger_model: "claude-sonnet-4-5" });
+    await waitValues(page, { chat: "sonnet", check: "haiku", trigger: "claude-sonnet-4-5" });
+    assert(await page.evaluate(() => document.querySelector(".dc-app").dataset.runnerLive === "1"), "the page reloaded to show the picks");
+    let seen = await values(page);
+    assert(seen.trigger.label === "claude-sonnet-4-5" && seen.trigger.other === "claude-sonnet-4-5" && seen.trigger.typedAway && seen.trigger.named,
+      `a name the list does not hold is not the selected entry with the typed field away: ${JSON.stringify(seen.trigger)}`);
+    const beside = await values(other);
+    assert(beside.chat.value === "haiku" && beside.check.value === "" && beside.trigger.value === "",
+      `the other assistant's ring took the first one's picks: ${JSON.stringify(beside)}`);
+
+    // A select that holds the focus is being edited: it keeps what it shows
+    // while the others move, and takes the fresh pick once the focus leaves,
+    // here onto the next select, the way Tab moves it. The focus stays inside
+    // the menu on purpose, Escape closes it only from inside or its toggle.
+    await page.click(MODEL_MENU);
+    await page.waitForSelector(`${MENU}.show`, { timeout: 8000 });
+    await page.focus(pick("check"));
+    await setOutside(id, { model: "haiku", check_model: "fable" });
+    await waitValues(page, { chat: "haiku", check: "haiku", trigger: "claude-sonnet-4-5" });
+    const held = await page.evaluate((sel) => ({ value: document.querySelector(sel).value, focused: document.activeElement === document.querySelector(sel) }), pick("check"));
+    assert(held.value === "haiku" && held.focused, `the focused select did not keep its value: ${JSON.stringify(held)}`);
+    await page.focus(pick("trigger"));
+    await waitValues(page, { chat: "haiku", check: "fable", trigger: "claude-sonnet-4-5" });
+
+    // The page's own save answers with the same reading and its frame
+    // follows: the select shows the pick and never anything else after it.
+    const sampling = page.evaluate((sel) => new Promise((resolve) => {
+      const select = document.querySelector(sel);
+      const samples = [];
+      const until = performance.now() + 1500;
+      const tick = () => {
+        if (samples[samples.length - 1] !== select.value) samples.push(select.value);
+        if (performance.now() < until) requestAnimationFrame(tick);
+        else resolve(samples);
+      };
+      tick();
+    }), pick("chat"));
+    await page.selectOption(pick("chat"), "sonnet");
+    await page.waitForSelector('.dc-toast:has-text("Chat on sonnet, checks on fable, triggers on claude-sonnet-4-5.")', { timeout: 8000 });
+    const samples = await sampling;
+    assert(samples.join(">") === "haiku>sonnet", `the page's own save bounced the select: ${samples.join(">")}`);
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(`${MENU}.show`, { state: "detached", timeout: 8000 });
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    await page.waitForSelector(READY, { timeout: 15000 });
+    seen = await values(page);
+    assert(seen.chat.value === "sonnet" && seen.check.value === "fable" && seen.trigger.value === "claude-sonnet-4-5",
+      `the reload does not show the picks set from outside: ${JSON.stringify(seen)}`);
+
+    // Back to the CLI's default from outside, live again, and the second
+    // assistant goes with its page.
+    await setOutside(id, { model: "", check_model: "", trigger_model: "" });
+    await waitValues(page, { chat: "", check: "", trigger: "" });
+    await other.close();
+    const gone = await page.request.post(`${BASE}/assistants/${otherID}`, { form: { csrf_token: token, form: "delete" }, headers: { Accept: "application/json" } });
+    assert(gone.status() === 200, `the second assistant could not be deleted: ${gone.status()}`);
+    return "three selects moved live, a typed name as the entry, the focused select held until blur, no bounce on the page's own save, the other assistant untouched, the reload agrees";
+  });
+
+  // applyModels decides whether an incoming frame is newer than the one it
+  // already applied by comparing the two RFC3339Nano stamps, and the compare
+  // has to read them as moments in time, not as plain strings: Go marshals
+  // UpdatedAt with the fraction's trailing zeros trimmed, so a stamp that is
+  // a digit prefix of a later one in the same second ("…15.1Z" against
+  // "…15.100000001Z") sorts after it as a string, "Z" coming after every
+  // digit and after the dot, and a lexical compare would drop the newer one.
+  await run("a models frame is judged by the clock, never by the shape of its stamp", async () => {
+    const id = await page.locator("dc-assistant").getAttribute("assistant-id");
+    const chatValue = () => page.$eval('dc-assistant [data-assistant-model-pick="chat"] select', (s) => s.value);
+    const apply = (chat, updatedAt) => page.evaluate(({ assistantID, chatModel, at }) => {
+      document.querySelector("dc-assistant").applyModels(
+        { assistant: assistantID, chat: chatModel, check: "", trigger: "", updatedAt: at }, false);
+    }, { assistantID: id, chatModel: chat, at: updatedAt });
+    // No stamp stands on the element yet, so the first frame below applies
+    // whatever the clock on it says, whichever year it names.
+    await page.evaluate(() => { document.querySelector("dc-assistant").modelsAt = ""; });
+
+    await apply("haiku", "2026-01-01T00:00:15.1Z");
+    assert(await chatValue() === "haiku", "the first frame was not applied");
+
+    // The same instant to the millisecond a browser keeps, only written with
+    // more digits, so its stamp is longer and a lexical compare reads it as
+    // older, "0" sorting under "Z".
+    await apply("sonnet", "2026-01-01T00:00:15.100000001Z");
+    assert(await chatValue() === "sonnet",
+      "a frame that is no older, only a digit prefix of the one applied, was dropped");
+
+    // An actually older frame, prefix or not, still loses.
+    await apply("fable", "2026-01-01T00:00:15Z");
+    assert(await chatValue() === "sonnet", "a chronologically older frame was applied over a newer one");
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    await page.waitForSelector(READY, { timeout: 15000 });
+    return "a digit prefix stamp that is not older still wins, an actually older one still loses";
+  });
+
+  // A name typed under Other… is remembered by the coder's repository, so the
+  // trigger form, which reads the same list, offers it afterwards; the form
+  // is read the way the dialog reads it, alone with modal=1. Its empty entry
+  // names what a trigger without a model of its own runs on, the assistant
+  // default: the ring's Triggers pick where one stands, else the chat as it
+  // resolves, else the CLI, each set through the same form=model post the
+  // ring's menu sends.
+  await run("the trigger form's empty entry names the assistant default the ring resolves to", async () => {
+    const id = await page.locator("dc-assistant").getAttribute("assistant-id");
+    const options = () => page.evaluate(async (assistantID) => {
+      const res = await fetch(`/assistants/triggers?form=new&assistant=${assistantID}&modal=1`);
+      const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      return [...doc.querySelectorAll('select[name="model"] option')].map((o) => o.textContent.trim());
+    }, id);
+    const setModels = async (fields) => {
+      const answer = await postForm(page, id, { form: "model", ...fields });
+      assert(answer.status === 200, `the models could not be set: ${JSON.stringify(answer)}`);
+    };
+    let list = await options();
+    assert(list[0] === "Assistant default (CLI)" && list[list.length - 1] === "Other…", `the trigger form's list is off: ${JSON.stringify(list)}`);
+    assert(list.includes("claude-haiku-4-5"), `the trigger form's list does not carry the typed name: ${JSON.stringify(list)}`);
+    await setModels({ model: "haiku" });
+    list = await options();
+    assert(list[0] === "Assistant default (haiku)", `the empty entry does not follow the chat pick: ${JSON.stringify(list)}`);
+    await setModels({ trigger_model: "sonnet" });
+    list = await options();
+    assert(list[0] === "Assistant default (sonnet)", `the empty entry does not follow the ring's Triggers pick: ${JSON.stringify(list)}`);
+    await setModels({ model: "", trigger_model: "" });
+    list = await options();
+    assert(list[0] === "Assistant default (CLI)", `the empty entry does not fall back to the CLI: ${JSON.stringify(list)}`);
+    return "claude-haiku-4-5 offered, the entry reads CLI, then haiku from the chat, then sonnet from the Triggers pick";
+  });
+
+  // A default stored on the Models tab, the first tab of the assistant
+  // settings and where the bare path lands, is copied onto a new assistant
+  // as its own pick: the ring's Chat select stands on it over the empty
+  // entry naming the coder's default, and its turn really starts on it,
+  // which the fake proves by answering MODEL with the model it was started
+  // with. The default is cleared again at the end, so the checks after this
+  // one run the fake the way they always did.
+  await run("a default stored on the settings tab reaches a new assistant resolved", async () => {
+    const chat = 'select[name="chat-claude"]';
+    const openSettings = async () => {
+      await page.goto(`${BASE}/settings/assistant`, { waitUntil: "domcontentloaded" });
+      await dismissUpdate(page);
+      assert(new URL(page.url()).pathname === "/settings/assistant/models", `the bare assistant settings do not land on Models: ${page.url()}`);
+      await page.waitForSelector(chat, { timeout: 8000 });
+    };
+    const storeDefault = async (value) => {
+      await openSettings();
+      await page.selectOption(chat, value);
+      await page.click('#settings-assistant-models button[type="submit"]');
+      await page.waitForFunction(() => document.body.innerText.includes("Settings saved."), null, { timeout: 8000 });
+      const kept = await page.$eval(chat, (s) => s.value);
+      assert(kept === value, `the stored default did not come back: ${JSON.stringify(kept)}`);
+    };
+    await openSettings();
+    const empties = await page.evaluate(() => ({
+      first: [...document.querySelectorAll("[data-assistant-sections] a")].map((a) => a.textContent.trim())[0],
+      chat: document.querySelector('select[name="chat-claude"]').options[0].textContent.trim(),
+      check: document.querySelector('select[name="check-claude"]').options[0].textContent.trim(),
+      trigger: document.querySelector('select[name="trigger-claude"]').options[0].textContent.trim(),
+    }));
+    assert(empties.first === "Models", `Models is not the first tab: ${JSON.stringify(empties)}`);
+    assert(empties.chat === "Coder default (CLI)" && empties.check === "Same as chat" && empties.trigger === "Same as chat",
+      `the Models tab's empty entries are off: ${JSON.stringify(empties)}`);
+    await storeDefault("haiku");
+    try {
+      await openAssistant(page, chatID);
+      await newConversation(page);
+      const MENU = "dc-assistant [data-assistant-new-label] + .dropdown-menu";
+      await page.click(MODEL_MENU);
+      await page.waitForSelector(`${MENU}.show`, { timeout: 8000 });
+      const chatPick = await page.$eval('dc-assistant [data-assistant-model-pick="chat"] select', (s) => ({ value: s.value, empty: s.options[0].textContent.trim() }));
+      assert(chatPick.value === "haiku" && chatPick.empty === "Coder default (CLI)",
+        `the stored default did not land on the new assistant's chat pick: ${JSON.stringify(chatPick)}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(`${MENU}.show`, { state: "detached", timeout: 8000 });
+      await send(page, "MODEL which one is it");
+      await waitSettled(page);
+      const answer = await page.locator('[data-role="assistant"]').last().innerText();
+      assert(answer.includes("model: haiku"), `the turn did not run on the stored default: ${answer}`);
+    } finally {
+      await storeDefault("");
+      // The checks after this one start on the run's assistant, where the
+      // ring check left the page.
+      await openAssistant(page, chatID);
+    }
+    return "Coder default (CLI) first, haiku stored, the new assistant's ring stands on haiku, the turn ran on it, cleared again";
   });
 
   // Frames stop in the middle of every real answer: thinking sends nothing at

@@ -658,3 +658,119 @@ func TestTurnIgnoresASubagentsUsage(t *testing.T) {
 		t.Fatalf("want the turn's own reading, got %d", usage.Tokens)
 	}
 }
+
+// A model the turn names rides behind --model, in front of the end of options
+// separator like every flag; a turn that names none carries no such flag, so
+// the CLI's own default stands as it always did.
+func TestATurnCarriesTheModelBehindItsFlag(t *testing.T) {
+	r := &runner{sessions: stubSessions{}}
+	cmd, err := r.Command(assistant.TurnRequest{SessionID: sessionID, Title: "A conversation title", Workdir: t.TempDir(), Prompt: "hello", Model: "haiku"})
+	if err != nil {
+		t.Fatalf("command: %v", err)
+	}
+	argv := strings.Join(append([]string{cmd.Name}, cmd.Args...), " ")
+	if !strings.Contains(argv, " --model haiku ") || strings.Index(argv, "--model haiku") > strings.Index(argv, " -- hello") {
+		t.Fatalf("want the model behind its flag and before the prompt, got %q", argv)
+	}
+	if strings.Contains(argvOf(t, false), "--model") {
+		t.Fatalf("want no model flag on a turn that names none, got %q", argvOf(t, false))
+	}
+	// A check and a reaction come as a fresh session of their own with the
+	// model the service resolved, the ring's chat pick where nothing narrower
+	// stands, and that request builds the same flag.
+	held, err := r.Command(assistant.TurnRequest{SessionID: "99999999-2222-4333-8444-555555555555", Title: "cockpit check: readme-task", Workdir: t.TempDir(), Prompt: "check", Model: "fable"})
+	if err != nil {
+		t.Fatalf("command: %v", err)
+	}
+	argv = strings.Join(append([]string{held.Name}, held.Args...), " ")
+	if !strings.Contains(argv, " --session-id 99999999-2222-4333-8444-555555555555 ") || !strings.Contains(argv, " --model fable ") {
+		t.Fatalf("want a check's fresh session started on the resolved model, got %q", argv)
+	}
+}
+
+// The list a claude turn is offered: the aliases, always the newest of their
+// family, every one the CLI's own. claude has no list command, so this is
+// what keeps the list current.
+func TestTheModelListIsTheAliases(t *testing.T) {
+	repo := New("", nil).ModelRepository()
+	var names []string
+	for _, m := range repo.List() {
+		if m.Added {
+			t.Fatalf("want every alias marked as the CLI's own, got %+v", m)
+		}
+		names = append(names, m.Name)
+	}
+	if strings.Join(names, ",") != "fable,opus,sonnet,haiku" {
+		t.Fatalf("want the four aliases, got %v", names)
+	}
+	if !strings.Contains(repo.Note(), "newest of each family") {
+		t.Fatalf("want the note to say what an alias is, got %q", repo.Note())
+	}
+}
+
+// A model claude does not know ends the turn with claude's own sentence about
+// it, recorded from claude 2.1.280 with `--model bogus-model-xyz`: the API
+// error record carries the words and the result closes the turn as an error.
+// Nothing of that sentence is streamed as an answer, and the generic failure
+// sentence stays out of it, because the model name is the one thing the user
+// can act on.
+func TestAModelClaudeRejectsIsANamedRefusal(t *testing.T) {
+	// Captured on Claude Code 2.1.280 with `claude -p --output-format
+	// stream-json --model no-such-model -- hi`, exit code 1: the assistant
+	// record names the error, the result is marked as an API error and
+	// repeats claude's sentence, and standard error carries one tagged line
+	// with the model as JSON.
+	words := "There's an issue with the selected model (no-such-model). It may not exist or you may not have access to it. Run --model to pick a different model."
+	fixture := strings.Join([]string{
+		`{"type":"system","subtype":"init","session_id":"` + sessionID + `","tools":["Read"],"model":"no-such-model"}`,
+		`{"type":"system","subtype":"status","status":"requesting","session_id":"` + sessionID + `"}`,
+		`{"type":"assistant","message":{"id":"14b309a6","model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","usage":{"input_tokens":0,"output_tokens":0},"content":[{"type":"text","text":"` + words + `"}]},"parent_tool_use_id":null,"session_id":"` + sessionID + `","error":"model_not_found","request_id":"req_011CfLtk38KaYvrnXyLSdW1h","is_api_error_message":true}`,
+		`{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","api_error_status":404,"result":"` + words + `","session_id":"` + sessionID + `","modelUsage":{}}`,
+	}, "\n")
+
+	events := runTurnStderr(t, fixture, `[claude-code:unrecognized_model] {"model":"no-such-model","query_source":"sdk"}`)
+	var refusal *assistant.Refusal
+	if err := errorOf(events); !errors.As(err, &refusal) || refusal.Kind != assistant.RefusalUnknownModel || refusal.Model != "no-such-model" {
+		t.Fatalf("want the unknown model refusal naming no-such-model, got %v", err)
+	}
+	if got := textOf(events); got != "" {
+		t.Fatalf("want nothing of the error streamed as an answer, got %q", got)
+	}
+	// The record decides on its own: a version that writes nothing to
+	// standard error still ends in the refusal, only without the name.
+	if err := errorOf(runTurn(t, fixture)); !errors.As(err, &refusal) || refusal.Kind != assistant.RefusalUnknownModel || refusal.Model != "" {
+		t.Fatalf("want the refusal from the record alone, got %v", err)
+	}
+	// And a tag without a readable name still says what happened.
+	if err := errorOf(runTurnStderr(t, fixture, "[claude-code:unrecognized_model] garbage")); !errors.As(err, &refusal) || refusal.Model != "" {
+		t.Fatalf("want the refusal read off the tag alone, got %v", err)
+	}
+	// The name claude echoed is read under the value rule before it reaches a
+	// sentence: one past the bound arrives cut to it.
+	long := strings.Repeat("m1", assistant.MaxModelRunes)
+	if err := errorOf(runTurnStderr(t, fixture, `[claude-code:unrecognized_model] {"model":"`+long+`","query_source":"sdk"}`)); !errors.As(err, &refusal) || refusal.Model != strings.Repeat("m1", assistant.MaxModelRunes/2) {
+		t.Fatalf("want the echoed name cut to %d runes, got %v", assistant.MaxModelRunes, err)
+	}
+}
+
+// An API error the cockpit has no name for ends with the cockpit's sentence
+// and claude's own words quoted once behind it, from the API error record;
+// a failed result without such a record quotes the result's own text.
+func TestAnUnnamedAPIErrorQuotesClaudeOnce(t *testing.T) {
+	words := "Your credit balance is too low to access the Anthropic API."
+	fixture := strings.Join([]string{
+		`{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"` + words + `"}],"usage":{"input_tokens":0}},"parent_tool_use_id":null,"error":"billing_error","is_api_error_message":true,"session_id":"` + sessionID + `"}`,
+		`{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","result":"` + words + `","session_id":"` + sessionID + `"}`,
+	}, "\n")
+	err := errorOf(runTurnStderr(t, fixture, "some stderr line"))
+	if err == nil || err.Error() != "The coder could not finish this answer. The coder said: "+words {
+		t.Fatalf("want the cockpit's sentence with claude quoted once, got %v", err)
+	}
+	if got := textOf(runTurn(t, fixture)); got != "" {
+		t.Fatalf("want nothing of the error streamed, got %q", got)
+	}
+	err = errorOf(runTurn(t, `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Execution failed","session_id":"`+sessionID+`"}`))
+	if err == nil || err.Error() != "The coder could not finish this answer. The coder said: Execution failed" {
+		t.Fatalf("want the result's own text quoted, got %v", err)
+	}
+}

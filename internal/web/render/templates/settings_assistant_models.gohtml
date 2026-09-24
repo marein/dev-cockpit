@@ -1,0 +1,32 @@
+{{define "settings_assistant_models.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "assistant_settings_start.gohtml" .}}
+<form method="post" action="/settings/assistant/models" id="settings-assistant-models">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  {{if .Coders}}<div class="form-hint mb-3" data-model-defaults-note>Applies to new assistants.</div>{{end}}
+  {{range .Coders}}
+  <div class="mb-4" data-model-defaults="{{.ID}}">
+    <div class="d-flex align-items-center gap-2 fw-medium mb-2"><span class="dc-term-icon" aria-hidden="true">{{template "coder_icon.gohtml" .ID}}</span><span>{{.Label}}</span></div>
+    <div class="row">
+      <div class="col-12 col-lg-4 mb-3">
+        <label class="form-label" for="model-chat-{{.ID}}">Chat</label>
+        {{template "assistant_model_pick.gohtml" (dict "Pick" .Chat "ID" (printf "model-chat-%s" .ID))}}
+      </div>
+      <div class="col-12 col-lg-4 mb-3">
+        <label class="form-label" for="model-check-{{.ID}}">Checks</label>
+        {{template "assistant_model_pick.gohtml" (dict "Pick" .Check "ID" (printf "model-check-%s" .ID))}}
+      </div>
+      <div class="col-12 col-lg-4 mb-3">
+        <label class="form-label" for="model-trigger-{{.ID}}">Triggers</label>
+        {{template "assistant_model_pick.gohtml" (dict "Pick" .Trigger "ID" (printf "model-trigger-%s" .ID))}}
+      </div>
+    </div>
+    {{if .Note}}<div class="form-hint">{{.Note}}</div>{{end}}
+  </div>
+  {{end}}
+  {{if not .Coders}}<div class="text-secondary small mb-3">No coder is installed.</div>{{end}}
+  <button type="submit" class="btn btn-primary">Save</button>
+</form>
+{{template "assistant_settings_end.gohtml"}}
+{{template "app_end.gohtml" .}}
+{{end}}

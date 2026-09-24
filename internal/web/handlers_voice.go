@@ -39,7 +39,7 @@ const (
 )
 
 func (s *Server) handleSettingsAssistant(c *gin.Context) {
-	c.Redirect(http.StatusSeeOther, voiceSettingsPath)
+	c.Redirect(http.StatusSeeOther, assistantModelsSettingsPath)
 }
 
 // voiceChoice normalizes one stored value onto the three the select offers,

@@ -21,6 +21,11 @@ type TurnRequest struct {
 	// Workdir is the instance's workspace, the directory the process runs in.
 	Workdir string
 	Prompt  string
+	// Model is the model the turn runs on, the name the coder's CLI takes
+	// behind its own flag. Empty leaves the choice to the CLI, which is what
+	// every turn ran on before a model could be picked; which model a turn
+	// gets is ModelFor's answer.
+	Model string
 }
 
 // MaxSessionNameBytes bounds the name a provider session is created with. A
@@ -109,6 +114,17 @@ type CoderInfo struct {
 	ID     string
 	Label  string
 	Runner Runner
+	// Defaults reads the coder's stored model defaults, the purpose fallback
+	// behind an assistant's own pick, fresh on every turn. Nil means none.
+	Defaults func() ModelDefaults
+}
+
+// ModelDefaults answers the coder's stored defaults, empty without a reading.
+func (c CoderInfo) ModelDefaults() ModelDefaults {
+	if c.Defaults == nil {
+		return ModelDefaults{}
+	}
+	return c.Defaults()
 }
 
 // Coders resolves the coders that can answer a turn of this installation. Implemented

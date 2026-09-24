@@ -376,11 +376,21 @@ func (s *Service) create(coderID string) (Instance, error) {
 		return Instance{}, err
 	}
 	now := s.now().UTC()
+	// The three defaults of the Models tab are creation defaults, copied onto
+	// the new assistant's chat, check and trigger model where one is set and
+	// left empty otherwise, the coder's start default for the chat and Same
+	// as chat for the other two. Nothing on that tab is read at run time, and
+	// a trigger takes nothing at all, it carries a model only where somebody
+	// set one on it.
+	defaults := co.ModelDefaults()
 	c := Instance{
 		Summary: Summary{
 			ID:            id,
 			Title:         DefaultTitle,
 			CoderID:       co.ID,
+			Model:         defaults.Chat,
+			CheckModel:    defaults.Check,
+			TriggerModel:  defaults.Trigger,
 			CreatedAt:     now,
 			LastMessageAt: now,
 		},
@@ -597,6 +607,7 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 		Title:     c.Title,
 		Workdir:   workdir,
 		Prompt:    prompt,
+		Model:     ModelFor(RunChat, c.Summary, "", co.ModelDefaults()),
 	}
 	rec := RunRecord{
 		ID:        runID,
@@ -605,6 +616,7 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 		MessageID: msg.ID,
 		CoderID:   co.ID,
 		SessionID: c.NativeSessionID,
+		Model:     req.Model,
 	}
 	for _, id := range announce {
 		s.hub.publish(c.ID, StreamEvent{Kind: FrameMessage, MessageID: id})
@@ -759,6 +771,63 @@ func (s *Service) Rename(id, rawTitle string) error {
 
 	s.changed()
 	return nil
+}
+
+// ModelChoice is what a save of the ring's three model selects names: the
+// chat model, the check model and the trigger model, each with whether the
+// request carried the field at all, so a field nobody named leaves what
+// stands and an empty one clears it, the way a trigger's spec reads its
+// fields.
+type ModelChoice struct {
+	Chat, Check, Trigger          string
+	ChatSet, CheckSet, TriggerSet bool
+}
+
+// SetModels stores which models an assistant's own turns run on. Every name
+// goes through CleanModel, so what is stored is what a runner may put behind
+// its flag, and a refused name changes nothing. It answers the instance as it
+// stands afterwards, which is what the surfaces word their confirmation from
+// and what the save's answer carries as the picks with their stamp. The
+// fresh picks go out on the assistant's own stream as one models frame, so
+// every open page of it moves its ring's selects without a reload, whether
+// the pick was set on that page, on another tab or from the CLI.
+func (s *Service) SetModels(id string, choice ModelChoice) (Instance, error) {
+	chat, err := CleanModel(choice.Chat)
+	if err != nil {
+		return Instance{}, err
+	}
+	check, err := CleanModel(choice.Check)
+	if err != nil {
+		return Instance{}, err
+	}
+	trigger, err := CleanModel(choice.Trigger)
+	if err != nil {
+		return Instance{}, err
+	}
+
+	s.mu.Lock()
+	c, ok := s.store.Load(id)
+	if !ok {
+		s.mu.Unlock()
+		return Instance{}, errors.New("Assistant not found.")
+	}
+	if choice.ChatSet {
+		c.Model = chat
+	}
+	if choice.CheckSet {
+		c.CheckModel = check
+	}
+	if choice.TriggerSet {
+		c.TriggerModel = trigger
+	}
+	c.UpdatedAt = s.now().UTC()
+	s.store.Save(c)
+	s.mu.Unlock()
+
+	picks := c.ModelPicks()
+	s.hub.publish(c.ID, StreamEvent{Kind: FrameModels, Models: &picks})
+	s.changed()
+	return c, nil
 }
 
 // SaveDraft stores what the composer holds without sending it and says whether
@@ -1045,11 +1114,20 @@ func oneLine(s string) string {
 
 // sanitizeError keeps a provider failure short and one line. Runners already
 // return curated sentences, this is the backstop that keeps a stray path or a
-// stack trace out of the browser.
+// stack trace out of the browser. A failure that quotes the coder is two
+// bounded parts, the sentence and the line behind it, each kept under the same
+// bound, so the quote is never what cuts the sentence off. The redaction
+// reaches the quoted line alone (quoteLine, before it got here): a sentence
+// the cockpit wrote carries nothing to redact, and the one it writes for a
+// refused model carries the name, which the redaction would take for a token.
 func sanitizeError(err error) string {
-	msg := oneLine(err.Error())
+	var said *Said
+	if errors.As(err, &said) {
+		return sanitizeError(said.Err) + " The coder said: " + said.Line
+	}
+	msg := truncateRunes(oneLine(err.Error()), quoteRunes)
 	if msg == "" {
 		return "The coder could not answer this message."
 	}
-	return truncateRunes(msg, 200)
+	return msg
 }

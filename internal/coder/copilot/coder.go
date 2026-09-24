@@ -6,6 +6,7 @@ import (
 
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/settings"
 	"github.com/marein/dev-cockpit/internal/terminal"
 )
 
@@ -21,9 +22,15 @@ type Coder struct {
 	// a turn needs loses the conversations only, never its terminal.
 	assistantProbe *coder.CapabilityProbe
 	runner         *runner
+	// config is copilot's own config.json, where it remembers the models the
+	// user ran recently; the model selects read them, see models.go.
+	config string
+	models coder.ModelRepository
 }
 
-func New() *Coder {
+// New builds the copilot coder. store is where the model repository keeps
+// the names it was told to remember; nil keeps them in memory.
+func New(store *settings.Store) *Coder {
 	home, err := filesystem.HomeDir()
 	if err != nil {
 		home = "/root"
@@ -37,7 +44,9 @@ func New() *Coder {
 		instructions: coder.NewFileGlobalInstructions(filepath.Join(home, ".copilot", "copilot-instructions.md")),
 		runtime:      runtime{},
 		controls:     terminal.DefaultControlMapper(),
+		config:       filepath.Join(home, ".copilot", "config.json"),
 	}
+	c.models = coder.NewModelRepository(store, "copilot", copilotModelsNote, c.cliModels)
 	c.assistantProbe = coder.NewCapabilityProbe(c.probeAssistant, 10*time.Second)
 	return c
 }

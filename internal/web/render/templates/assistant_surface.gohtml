@@ -18,7 +18,7 @@
   <p class="text-secondary mb-1">Start another assistant for work that has nothing to do with this one. We share what you tell us to remember, and each of us keeps its own coders.</p>
   <p class="text-secondary mb-0">All of this is customizable, just tell me when I should <em>remember something</em>.</p>
   <div class="d-inline-block border rounded text-secondary small mt-4 px-3 py-2" role="note">
-    <i class="ti ti-info-circle me-1" aria-hidden="true"></i>The assistant runs on the default model, choosing a model comes in a later release.
+    <i class="ti ti-info-circle me-1" aria-hidden="true"></i>Which model answers is picked at the ring button beside the message box, for the chat, for the checks and for the triggers.
   </div>
 </div>
 {{end}}
@@ -40,14 +40,21 @@
   </div>
 </div>
 {{else}}
-{{template "assistant_new_forms.gohtml" (dict "Coders" .Coders "CoderID" .CoderID "PostURL" .PostURL "CSRFToken" .CSRFToken "Prefix" "assistant-new")}}
+{{/* The form the ring's model selects post to, beside the composer for the
+     same reason the new forms stand here: the composer is itself a form. The
+     selects reach it through the form attribute; the element posts it with
+     fetch, and without JS the menu's Save button submits it. */}}
+<form method="post" action="{{.PostURL}}" id="assistant-new-model" class="d-none" data-assistant-model-form data-no-pe>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="form" value="model">
+</form>
 <form method="post" action="{{.PostURL}}" class="assistant-composer" data-assistant-form data-assistant-footer data-no-pe>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <input type="hidden" name="form" value="message">
   <input type="file" class="d-none" multiple data-assistant-file accept="image/*,video/*,audio/*,.pdf,.txt,.md,.json,.csv,.log,.zip">
   <div class="d-flex flex-wrap gap-2 mb-2 d-none" data-assistant-attachments aria-label="Attached files"></div>
   <div class="d-flex align-items-end gap-2">
-    {{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .CoderID "ContextPercent" .ContextPercent "NewClass" "btn btn-icon btn-ghost-secondary flex-shrink-0" "Prefix" "assistant-new")}}
+    {{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .CoderID "Models" .Models "ContextPercent" .ContextPercent "NewClass" "btn btn-icon btn-ghost-secondary flex-shrink-0" "Prefix" "assistant-new")}}
     <button type="button" class="btn btn-icon btn-ghost-secondary flex-shrink-0" aria-label="Attach a file" title="Attach a file, or drop it anywhere on the page" data-assistant-attach>
       <i class="ti ti-paperclip"></i>
     </button>
@@ -79,12 +86,11 @@
 {{end}}
 {{end}}
 
-{{/* The new assistant control sits in the composer row, whose own element is
-     the message form. A form inside a form is dropped by the parser, and the
-     button would then post the message form with a stray form=new field, so
-     the posting forms render beside the composer and the buttons reach them by
-     id through the form attribute. The prefix keeps the ids apart between the
-     composer, the list column and the phone's sheet, which all render in one
+{{/* The new assistant control's button stands outside any form of its own in
+     the list column head and in the empty state, the two places it still
+     makes one, so it reaches its posting form by id through the form
+     attribute. The prefix keeps the ids apart between the list column and
+     the phone's sheet, which is that same column rendered again in the same
      document. */}}
 {{define "assistant_new_forms.gohtml"}}
 {{if gt (len .Coders) 1}}
@@ -109,22 +115,51 @@
      stay the toggle's next sibling and the plain branch reaches its posting form
      through a form attribute, so a wrapper element would break one or the other.
      The label carries the number as words, because a ring alone is not readable
-     without a pointer. */}}
+     without a pointer.
+
+     With Models the button always opens a dropdown, wears the icon of the
+     coder this assistant runs on (see the ring icon template below, so the
+     ring says at a glance which coder it is) and is labelled for what it now
+     only does, this assistant's models: the Chat, the Checks and the
+     Triggers select over that coder's list, and the coder's own note under
+     them. It holds no New with entries and no divider, a new assistant is
+     made from the list column's own button instead. The selects post through
+     the model form beside the composer (the form attribute), the element
+     saves a change with fetch, and the Save button is the way without JS,
+     hidden once the element runs. Without Models (the list column, the empty
+     state) the button keeps its old shape and its old job, making a new
+     assistant: a dropdown with several coders and the message-plus icon, a
+     plain button with one. */}}
 {{define "assistant_new_button.gohtml"}}
 {{$base := "New assistant, the memory comes along"}}
+{{$toggleBase := $base}}{{if .Models}}{{$toggleBase = "This assistant's models"}}{{end}}
 {{$label := $base}}{{if .ContextPercent}}{{$label = printf "%s. Context %d percent" $base .ContextPercent}}{{end}}
-{{if gt (len .Coders) 1}}
+{{$toggleLabel := $toggleBase}}{{if .ContextPercent}}{{$toggleLabel = printf "%s. Context %d percent" $toggleBase .ContextPercent}}{{end}}
+{{if or .Models (gt (len .Coders) 1)}}
 <div class="dropdown flex-shrink-0">
-  <button type="button" class="{{.NewClass}} position-relative" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" data-assistant-new-label="{{$base}}" aria-label="{{$label}}" title="{{$label}}">
-    <i class="ti ti-message-plus"></i>
+  <button type="button" class="{{.NewClass}} position-relative" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" data-assistant-new-label="{{$toggleBase}}" aria-label="{{$toggleLabel}}" title="{{$toggleLabel}}">
+    {{if .Models}}{{template "assistant_context_ring_icon.gohtml" .CoderID}}{{else}}<i class="ti ti-message-plus"></i>{{end}}
     {{if not .NoRing}}{{template "assistant_context_ring.gohtml" .ContextPercent}}{{end}}
   </button>
-  <div class="dropdown-menu dropdown-menu-end">
+  <div class="dropdown-menu dropdown-menu-end{{if .Models}} dc-model-menu{{end}}">
+    {{if .Models}}
+    <div class="px-3 pb-2 pt-2" data-assistant-models>
+      <label class="form-label mb-1" for="{{.Prefix}}-model-chat">Chat</label>
+      {{template "assistant_model_pick.gohtml" (dict "Pick" .Models.Chat "ID" (printf "%s-model-chat" .Prefix) "Form" (printf "%s-model" .Prefix) "Small" true "Kind" "chat")}}
+      <label class="form-label mb-1 mt-2" for="{{.Prefix}}-model-check">Checks</label>
+      {{template "assistant_model_pick.gohtml" (dict "Pick" .Models.Check "ID" (printf "%s-model-check" .Prefix) "Form" (printf "%s-model" .Prefix) "Small" true "Kind" "check")}}
+      <label class="form-label mb-1 mt-2" for="{{.Prefix}}-model-trigger">Triggers</label>
+      {{template "assistant_model_pick.gohtml" (dict "Pick" .Models.Trigger "ID" (printf "%s-model-trigger" .Prefix) "Form" (printf "%s-model" .Prefix) "Small" true "Kind" "trigger")}}
+      {{if .Models.Note}}<div class="form-hint mt-2" data-assistant-model-note>{{.Models.Note}}</div>{{end}}
+      <button type="submit" form="{{.Prefix}}-model" class="btn btn-sm mt-2" data-assistant-model-save>Save models</button>
+    </div>
+    {{else}}
     {{range .Coders}}
     <button type="submit" form="{{$.Prefix}}-{{.ID}}" class="dropdown-item d-flex align-items-center gap-2" data-assistant-new="{{.ID}}">
       <span class="dc-term-icon" aria-hidden="true">{{template "coder_icon.gohtml" .ID}}</span>
       <span>New with {{.Label}}</span>
     </button>
+    {{end}}
     {{end}}
   </div>
 </div>
@@ -150,3 +185,18 @@
   <circle class="dc-context-ring-fill" cx="18" cy="18" r="15.9155" transform="rotate(-90 18 18)" stroke-dasharray="{{.}} 100" data-assistant-ring-fill></circle>
 </svg>
 {{end}}
+
+{{/* The icon inside the ring is the coder this assistant runs on, the same
+     glyph coder_icon.gohtml renders elsewhere: the ring says at a glance
+     which coder is behind the composer. Where that glyph is an svg (claude,
+     opencode) this template stays that svg itself, carrying the ring's own
+     class and data attribute directly, so the centering CSS below keeps
+     applying to the element it always applied to; the path data is
+     coder_icon.gohtml's own, never a second copy. Never the webfont glyph
+     (copilot) unwrapped: the font puts every glyph's outline flush left in
+     its advance, so its ink sits off the center of its own box, and every
+     platform rounds the baseline its own way too, none of which shows until
+     a ring is drawn around it, while an svg's ink is centered in its viewBox
+     by construction. So a font glyph is wrapped in a span carrying the same
+     class and attribute, centering it the way the svg centers itself. */}}
+{{define "assistant_context_ring_icon.gohtml"}}{{if eq . "claude"}}<svg class="dc-context-ring-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" data-assistant-ring-icon>{{template "coder_icon_claude_paths.gohtml"}}</svg>{{else if eq . "opencode"}}<svg class="dc-context-ring-icon" viewBox="0 0 256 320" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" data-assistant-ring-icon>{{template "coder_icon_opencode_paths.gohtml"}}</svg>{{else if eq . "copilot"}}<span class="dc-context-ring-icon" aria-hidden="true" data-assistant-ring-icon><i class="ti ti-brand-github-copilot"></i></span>{{else}}<span class="dc-context-ring-icon" aria-hidden="true" data-assistant-ring-icon>{{coderLabel .}}</span>{{end}}{{end}}

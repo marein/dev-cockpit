@@ -118,10 +118,19 @@ func (r runtime) injectNotifyPlugin() {
 // coder, and the TUI resumes it with --session. A creation that fails is
 // logged and falls back to a plain start: the session then works, only its
 // stored record appears late and stays under opencode's own naming.
+//
+// A model rides in front of either shape, in the equals form for the reason
+// --prompt takes it, yargs reads `--model=x` as one thing whatever x starts
+// with (`-m, --model  model to use in the format of provider/model`, verified
+// on 1.18.32). It rides on a start alone: a resume carries none, so a resumed
+// session keeps the model it has, whatever was set inside it.
 func (r runtime) StartCommand(start coder.SessionStart) string {
 	r.injectNotifyPlugin()
 	base := fmt.Sprintf("cd %s && exec opencode%s",
 		clirun.ShellQuote(start.Workdir), flags(start.AgentID, start.AutomaticApproval))
+	if model := strings.TrimSpace(start.Model); model != "" {
+		base += " --model=" + clirun.ShellQuote(model)
+	}
 	if task := strings.TrimSpace(start.Task); task != "" {
 		// The equals form is what keeps a task that starts with a dash text:
 		// yargs reads a separate `--prompt -dfoo` as the flag without a value
