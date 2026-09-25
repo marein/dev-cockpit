@@ -3942,6 +3942,20 @@ free floating page scripts.
   `.cm-content`, `!important` because the library's hiding rule is. The terminal
   brings nothing of its own here: its mirror layer is never selectable, and
   copying happens in the history sheet, which is ordinary text.
+  **Every floating menu wears one look**, set once on `.dropdown-menu` in
+  style.css out of three variables per scheme (`--dc-float-bg`,
+  `--dc-float-border`, `--dc-float-shadow`): a real border, the palettes'
+  shadow, and in the dark scheme a surface a step above the cards
+  (`--tblr-bg-surface-secondary`) with a border a step above
+  `--tblr-border-color`, because Tabler 1.5.1 draws no border on a dropdown,
+  only a 1px ring inside `--tblr-shadow-dropdown`, which is black on black
+  in the dark scheme. `.dc-context-menu` is a `.dropdown-menu` and takes it
+  with no rule of its own; never put the `shadow` utility on a dropdown, it
+  is `!important` and drops the ring with the shadow; the one menu that stays
+  bare is `.editor-sheet-body .dropdown-menu`, embedded in the sheet. The
+  bottom sheets (`.dc-sheet-panel`, `.editor-sheet-panel`) share
+  `--dc-sheet-radius`. Palettes, CodeMirror tooltips, SweetAlert and toasts
+  are untouched by it.
   The terminal screen has its own palette, picked
   in the settings menu (`dc-terminal-theme` in localStorage, every scheme
   follows the effective theme between a light and dark variant), defined in
