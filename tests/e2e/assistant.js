@@ -356,6 +356,31 @@ async function attach(page, files) {
   );
 }
 
+// stubMicrophone stands a WebAudio tone in for the microphone, so a recording
+// runs in a headless browser with no device, and answerSTT answers the
+// transcription route with a fixed message, so no speech engine ever starts.
+async function stubMicrophone(page) {
+  await page.evaluate(() => {
+    navigator.mediaDevices.getUserMedia = async () => {
+      const audio = new AudioContext();
+      await audio.resume().catch(() => {});
+      const tone = audio.createOscillator();
+      const out = audio.createMediaStreamDestination();
+      tone.connect(out);
+      tone.start();
+      return out.stream;
+    };
+  });
+}
+
+function answerSTT(route) {
+  return route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ text: "MAGIC spoken words" }),
+  });
+}
+
 // startCoder and postForm are what the jobs checks need: a coder to steer and
 // the conversation's own dispatch route, the same one the page's forms and
 // the assistant's commands post to.
@@ -1429,6 +1454,316 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
   await run("the attachment reaches the coder as a path it can open", async () => {
     const text = await page.locator('[data-role="user"]').last().innerText();
     assert(!text.includes("Attached files:"), "the path note leaked into the transcript");
+  });
+
+  // The button beside the message box wears two faces: the microphone while
+  // nothing stands in the composer, the send once words or a finished
+  // attachment do, following every change, the send that empties the box and
+  // a draft the page loads included. Holding the microphone records, the
+  // release sends, sliding left discards, sliding up locks the recording so
+  // the finger may leave, and a click, the keyboard on the button and Alt Alt
+  // lock it from the start. The recorder runs on a WebAudio tone standing in
+  // for the microphone, and the runner answers the transcription route itself,
+  // so no speech engine ever starts.
+  await run("the button beside the box is the microphone on an empty composer and the send on words or a file", async () => {
+    await idle(page);
+    const id = await page.locator("dc-assistant").getAttribute("assistant-id");
+    const face = () => page.locator("[data-assistant-send] i").getAttribute("class");
+    const pressed = () => page.locator("[data-assistant-send]").getAttribute("aria-pressed");
+    const shown = (selector) => page.locator(selector).evaluate((n) => getComputedStyle(n).display !== "none");
+    const hintText = () => page.locator("[data-assistant-talk-hint-text]").textContent();
+    const userCount = () => page.locator('[data-role="user"]').count();
+    const spokenCount = () => page.locator('[data-role="user"]', { hasText: "spoken words" }).count();
+    const sentSpoken = (count) => page.waitForFunction(
+      (n) => [...document.querySelectorAll('[data-role="user"]')].filter((node) => node.textContent.includes("spoken words")).length > n,
+      count,
+      { timeout: 15000 },
+    );
+    const locked = () => page.waitForSelector('[data-assistant-send][aria-label="Send the recording"]', { timeout: 8000 });
+    const holding = () => page.waitForSelector('[data-assistant-send][aria-pressed="true"]', { timeout: 8000 });
+    const resting = () => page.waitForSelector('[data-assistant-send][aria-label="Hold to record"]', { timeout: 20000 });
+    const center = async () => {
+      const box = await page.locator("[data-assistant-send]").boundingBox();
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    };
+
+    await page.fill("[data-assistant-input]", "");
+    assert((await face()).includes("ti-microphone"), `an empty composer shows ${await face()}`);
+    assert(!(await shown("[data-assistant-talk-discard]")), "the trash shows without a recording");
+    if (process.env.SHOTS_DIR) {
+      await page.screenshot({ path: path.join(process.env.SHOTS_DIR, "assistant-mic.png") });
+      const mp = await mobilePage();
+      await openConversation(mp, id);
+      await mp.fill("[data-assistant-input]", "");
+      await mp.screenshot({ path: path.join(process.env.SHOTS_DIR, "assistant-mic-phone.png") });
+    }
+    await page.fill("[data-assistant-input]", "words");
+    assert((await face()).includes("ti-send"), `words in the box show ${await face()}`);
+    assert((await pressed()) === null, "the send face reads as a toggle");
+    await page.fill("[data-assistant-input]", "");
+    assert((await face()).includes("ti-microphone"), `an emptied box shows ${await face()}`);
+
+    await attach(page, [{ name: "face.png", mimeType: "image/png", buffer: PNG }]);
+    assert((await face()).includes("ti-send"), `a file alone shows ${await face()}`);
+    await page.click('[data-assistant-attachment-remove="face.png"]');
+    await page.waitForFunction(() => document.querySelectorAll("[data-assistant-attachment]").length === 0, null, { timeout: 8000 });
+    assert((await face()).includes("ti-microphone"), `a taken back file leaves ${await face()}`);
+
+    await send(page, "MAGIC and the face comes back");
+    await waitSettled(page);
+    assert((await face()).includes("ti-microphone"), `the emptied box after a send shows ${await face()}`);
+
+    // A draft the page loads is words in the box, so the send stands; the
+    // debounce is the one path that saves it.
+    await page.fill("[data-assistant-input]", "a draft the face has to read");
+    await sleep(1600);
+    await openConversation(page, id);
+    assert((await page.inputValue("[data-assistant-input]")) !== "", "the draft did not come back");
+    assert((await face()).includes("ti-send"), `a loaded draft shows ${await face()}`);
+    await page.fill("[data-assistant-input]", "");
+    await sleep(1600);
+    await openConversation(page, id);
+    assert((await face()).includes("ti-microphone"), `a cleared draft shows ${await face()}`);
+
+    await stubMicrophone(page);
+    await page.route("**/stt", answerSTT);
+    try {
+      let before = await userCount();
+
+      // A click keeps recording without a finger on the button: the send
+      // face, the clock, the level trace and the trash stand, and the trash
+      // throws the clip away.
+      await page.click("[data-assistant-send]");
+      await locked();
+      assert(await shown("[data-assistant-talk-discard]"), "the trash is missing while a locked recording runs");
+      assert(await shown("[data-assistant-talk-timer]"), "the clock is missing while a locked recording runs");
+      assert(await shown("[data-assistant-talk-wave]"), "the level trace is missing while a locked recording runs");
+      await page.click("[data-assistant-talk-discard]");
+      await resting();
+      assert((await hintText()).includes("discarded"), `after the trash the hint reads ${await hintText()}`);
+      assert(!(await shown("[data-assistant-talk-discard]")), "the trash stays after the discard");
+      await sleep(1200);
+      assert((await userCount()) === before, "a discarded recording sent a message");
+
+      await page.click("[data-assistant-send]");
+      await locked();
+      await page.keyboard.press("Escape");
+      await resting();
+      await sleep(1200);
+      assert((await userCount()) === before, "an escaped recording sent a message");
+
+      // With words in the box Alt Alt records nothing and sends nothing.
+      await page.fill("[data-assistant-input]", "words");
+      await page.keyboard.press("Alt");
+      await page.keyboard.press("Alt");
+      await sleep(400);
+      assert((await pressed()) === null && (await face()).includes("ti-send"), "Alt Alt recorded over words in the box");
+      assert((await userCount()) === before, "Alt Alt sent the words in the box");
+      await page.fill("[data-assistant-input]", "");
+
+      // A locked recording is sent by the send button.
+      let spoken = await spokenCount();
+      await page.click("[data-assistant-send]");
+      await locked();
+      await sleep(1100);
+      await page.click("[data-assistant-send]");
+      await sentSpoken(spoken);
+      await waitSettled(page);
+      await resting();
+      spoken = await spokenCount();
+
+      // Alt Alt locks a recording and Alt Alt again sends it.
+      await page.keyboard.press("Alt");
+      await page.keyboard.press("Alt");
+      await locked();
+      await sleep(1100);
+      await page.keyboard.press("Alt");
+      await page.keyboard.press("Alt");
+      await sentSpoken(spoken);
+      await waitSettled(page);
+      await resting();
+      spoken = await spokenCount();
+
+      // Holding with the mouse: red and grown under the pointer, the lock
+      // pill over it, Slide to cancel in the box, and the release sends.
+      let at = await center();
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await holding();
+      const held = await page.locator("[data-assistant-send]").evaluate((n) => ({
+        red: n.classList.contains("btn-danger"),
+        grown: getComputedStyle(n).transform !== "none",
+      }));
+      assert(held.red && held.grown, `a held button is ${JSON.stringify(held)}`);
+      assert(await shown("[data-assistant-talk-lock]"), "the lock pill is missing while holding");
+      assert((await hintText()) === "Slide to cancel", `while holding the hint reads ${await hintText()}`);
+      await sleep(1300);
+      await page.mouse.up();
+      await sentSpoken(spoken);
+      await waitSettled(page);
+      await resting();
+      assert(!(await shown("[data-assistant-talk-lock]")), "the lock pill stays after the release");
+      spoken = await spokenCount();
+      before = await userCount();
+
+      // Sliding left while holding throws the clip away.
+      at = await center();
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await holding();
+      const width = await page.locator("[data-assistant-talk-hint]").evaluate((n) => n.getBoundingClientRect().width);
+      await page.mouse.move(at.x - width / 3 - 10, at.y, { steps: 8 });
+      await page.waitForFunction(() => document.querySelector("[data-assistant-talk-hint-text]")?.textContent.includes("discarded"), null, { timeout: 5000 });
+      await page.mouse.up();
+      await sleep(1200);
+      assert((await userCount()) === before, "a slide to the left sent a message");
+      await resting();
+
+      // Sliding up locks: the finger may leave, and the send sends.
+      at = await center();
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await holding();
+      const lockDy = await page.evaluate(() => {
+        const button = document.querySelector("[data-assistant-send]").getBoundingClientRect();
+        const lock = document.querySelector("[data-assistant-talk-lock]").getBoundingClientRect();
+        return button.top + button.height / 2 - (lock.top + lock.height / 2);
+      });
+      assert(lockDy > 0, `the lock pill stands ${lockDy}px above the button`);
+      await page.mouse.move(at.x, at.y - lockDy - 10, { steps: 8 });
+      await locked();
+      await page.mouse.up();
+      await sleep(400);
+      assert((await page.locator("[data-assistant-send]").getAttribute("aria-label")) === "Send the recording", "the recording did not stay locked after the release");
+      assert(await shown("[data-assistant-talk-discard]"), "the trash is missing after the lock");
+      await sleep(800);
+      await page.click("[data-assistant-send]");
+      await sentSpoken(spoken);
+      await waitSettled(page);
+      await resting();
+    } finally {
+      await page.unroute("**/stt");
+    }
+    return "microphone on empty, send on words and files, click and Alt Alt lock, hold sends, slide left discards, slide up locks";
+  });
+
+  // On a touch screen a tap is not a hold: it says how the button works and
+  // records nothing, a hold records and the release sends, a slide to the
+  // left throws the clip away and a slide up locks it. The touches come in
+  // over the devtools protocol, the one way a finger can stay down.
+  await run("on a phone a tap on the microphone only says how, a hold records and the slides cancel or lock", async () => {
+    const id = await page.locator("dc-assistant").getAttribute("assistant-id");
+    const mp = await mobilePage();
+    await openConversation(mp, id);
+    await idle(mp);
+    await mp.fill("[data-assistant-input]", "");
+    await mp.waitForSelector('[data-assistant-send][aria-label="Hold to record"]', { timeout: 8000 });
+    await stubMicrophone(mp);
+    await mp.route("**/stt", answerSTT);
+    const cdp = await mp.context().newCDPSession(mp);
+    const touch = (type, touchPoints) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints });
+    const hintText = () => mp.locator("[data-assistant-talk-hint-text]").textContent();
+    const userCount = () => mp.locator('[data-role="user"]').count();
+    const spokenCount = () => mp.locator('[data-role="user"]', { hasText: "spoken words" }).count();
+    const sentSpoken = (count) => mp.waitForFunction(
+      (n) => [...document.querySelectorAll('[data-role="user"]')].filter((node) => node.textContent.includes("spoken words")).length > n,
+      count,
+      { timeout: 15000 },
+    );
+    const holding = () => mp.waitForSelector('[data-assistant-send][aria-pressed="true"]', { timeout: 8000 });
+    const resting = () => mp.waitForSelector('[data-assistant-send][aria-label="Hold to record"]', { timeout: 20000 });
+    const center = async () => {
+      const box = await mp.locator("[data-assistant-send]").boundingBox();
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    };
+    try {
+      let before = await userCount();
+      let at = await center();
+      await touch("touchStart", [{ x: at.x, y: at.y }]);
+      await touch("touchEnd", []);
+      await mp.waitForFunction(() => document.querySelector("[data-assistant-talk-hint-text]")?.textContent.includes("Hold to record"), null, { timeout: 5000 });
+      await sleep(1200);
+      assert((await userCount()) === before, "a tap sent a message");
+      assert(!(await mp.locator("dc-assistant").evaluate((n) => n.talkActive())), "a tap left a recording running");
+      await resting();
+
+      at = await center();
+      await touch("touchStart", [{ x: at.x, y: at.y }]);
+      await holding();
+      assert((await hintText()) === "Slide to cancel", `while holding the hint reads ${await hintText()}`);
+      let spoken = await spokenCount();
+      await sleep(1300);
+      await touch("touchEnd", []);
+      await sentSpoken(spoken);
+      await waitSettled(mp);
+      await resting();
+      spoken = await spokenCount();
+      before = await userCount();
+
+      at = await center();
+      await touch("touchStart", [{ x: at.x, y: at.y }]);
+      await holding();
+      const width = await mp.locator("[data-assistant-talk-hint]").evaluate((n) => n.getBoundingClientRect().width);
+      for (let step = 1; step <= 6; step += 1) {
+        await touch("touchMove", [{ x: at.x - ((width / 3 + 10) * step) / 6, y: at.y }]);
+      }
+      await mp.waitForFunction(() => document.querySelector("[data-assistant-talk-hint-text]")?.textContent.includes("discarded"), null, { timeout: 5000 });
+      await touch("touchEnd", []);
+      await sleep(1200);
+      assert((await userCount()) === before, "a slide to the left sent a message");
+      await resting();
+
+      at = await center();
+      await touch("touchStart", [{ x: at.x, y: at.y }]);
+      await holding();
+      const lockDy = await mp.evaluate(() => {
+        const button = document.querySelector("[data-assistant-send]").getBoundingClientRect();
+        const lock = document.querySelector("[data-assistant-talk-lock]").getBoundingClientRect();
+        return button.top + button.height / 2 - (lock.top + lock.height / 2);
+      });
+      for (let step = 1; step <= 6; step += 1) {
+        await touch("touchMove", [{ x: at.x, y: at.y - ((lockDy + 10) * step) / 6 }]);
+      }
+      await mp.waitForSelector('[data-assistant-send][aria-label="Send the recording"]', { timeout: 8000 });
+      await touch("touchEnd", []);
+      await sleep(400);
+      assert((await mp.locator("[data-assistant-send]").getAttribute("aria-label")) === "Send the recording", "the recording did not stay locked after the finger left");
+      await sleep(800);
+      at = await center();
+      await touch("touchStart", [{ x: at.x, y: at.y }]);
+      await touch("touchEnd", []);
+      await sentSpoken(spoken);
+      await waitSettled(mp);
+      await resting();
+    } finally {
+      await mp.unroute("**/stt");
+      await cdp.detach().catch(() => {});
+    }
+    return "tap says how, hold sends, slide left discards, slide up locks";
+  });
+
+  // Without a microphone the button never wears one: a browser that offers no
+  // media devices keeps the server rendered send on an empty box, and a tap
+  // there sends nothing because there is nothing to send.
+  await run("without a microphone the button stays the send on an empty composer", async () => {
+    const id = await page.locator("dc-assistant").getAttribute("assistant-id");
+    const bare = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1360, height: 900 } });
+    try {
+      await bare.addInitScript(() => { Object.defineProperty(navigator, "mediaDevices", { value: undefined }); });
+      const bp = await bare.newPage();
+      await L.login(bp);
+      await openConversation(bp, id);
+      await bp.fill("[data-assistant-input]", "");
+      const cls = await bp.locator("[data-assistant-send] i").getAttribute("class");
+      assert(cls.includes("ti-send"), `without media devices an empty composer shows ${cls}`);
+      const before = await bp.locator('[data-role="user"]').count();
+      await bp.click("[data-assistant-send]");
+      await sleep(800);
+      assert((await bp.locator('[data-role="user"]').count()) === before, "a tap on an empty composer sent something");
+      assert((await bp.locator("[data-assistant-send]").getAttribute("aria-pressed")) === null, "a browser without a microphone reads the button as a toggle");
+    } finally {
+      await bare.close();
+    }
   });
 
   await run("markdown renders and model HTML is dropped", async () => {

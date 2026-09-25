@@ -2700,33 +2700,61 @@ test. Update this file when a convention changes.
   Speech to text is `POST /assistants/:id/stt`: the clip is whatever
   MediaRecorder produced, webm/opus mostly and mp4/aac on Safari, the engine
   decodes either, and whisper detects the language per utterance, so German,
-  English and mixed input work without a language setting. Push to talk lives
-  on the send button, deliberately no button of its own in the composer's
-  width: a press held past `SEND_HOLD_MS` records (the button goes solid red
-  and wears the microphone), releasing transcribes and sends right away with
-  existing composer text prepended, and a shorter press stays the plain send,
-  decided by nothing but the clock; the click a hold's release still raises
-  is swallowed (`swallowSubmitUntil`) or it would send the empty composer
-  beside the clip. Sliding left past `TALK_CANCEL_PX` while holding cancels,
-  the messenger gesture, finger and mouse alike through the captured
-  pointermove: the clip is discarded, nothing is sent, and the cancel is
-  final for that press. While a held recording runs, a slide-to-cancel hint
-  overlays the message box (Bootstrap position utilities, `pe-none`, no
-  stylesheet rule), follows the pull, and lingers briefly as the cancel
-  confirmation; the release after a cancel only spends the click
-  (`holdCancelled` in `endHold`), or lifting the finger off a cancelled hold
-  would send the typed text. Escape cancels a running recording either way, and only
-  then: the listener sits on the document in the capture phase, is armed with
-  the recording state and taken off with it, so no other Escape in the app
-  ever sees a press that meant cancel and every press outside a recording
-  still reaches the dialog, the editor or the terminal that owns it. A held
-  press takes the slide's own cancel path, so its release only spends the
-  click. The hint says which way out this recording has, the slide arrow under
-  a held press and Esc under a hands free one. The keyboard way is
-  Alt Alt through the `@dc/doubletap` machine, wired by the surface on the
-  document's capture phase so it works from anywhere on the assistant page
-  (`toggleTalk`): the first double tap starts recording, the second stops
-  and sends. Only a bare Alt counts, so Alt+<key> combos never half-arm it
+  English and mixed input work without a language setting. **The button
+  beside the message box wears two faces, and one function paints it**
+  (`syncSendFace`, the only writer of that button): the microphone while the
+  composer holds neither words nor a finished attachment and speech to text
+  is available (`talkFace`), the send as soon as anything stands in it, an
+  attachment alone included, it is a message on its own. The face follows
+  every change of the box, the typing, the send that empties it, an
+  attachment coming or going and a draft the page loads, because `onInput`
+  and `renderAttachments` both end in that one paint. A host without the
+  engine (no `stt-url`) or without a microphone (`talkReady` false) never
+  paints, so the server rendered send stands and nothing there ever records.
+  **Holding the microphone records, and the release decides.** The press is
+  one pointer capture on the button (`beginPress`, `movePress`, `endPress`):
+  the recorder starts on the way down, the button goes solid red and grows
+  under the finger, the hint over the message box carries the red dot with
+  the clock and Slide to cancel, and a pill with an open lock stands over the
+  button. Sliding left past a third of the message box's width
+  (`press.cancelDx`, measured at the press, never a fixed number of pixels)
+  throws the clip away, the hint slides along and fades so the way out reads
+  before it is taken; sliding up as far as the lock pill stands
+  (`press.lockDy`, measured from the pill's own place) locks the recording:
+  the finger may leave, the button turns into the send, the hint shows the
+  clock, a live level trace (`startWave`, an AnalyserNode on the same
+  stream, one sample every `WAVE_SAMPLE_MS`, bars of `WAVE_BAR_PX` at
+  `WAVE_STEP_PX`, drawn in the hint's own text colour) and the trash
+  (`[data-assistant-talk-discard]`), and then the send button sends and the
+  trash discards. A release with at least `MIN_CLIP_MS` of recording sends,
+  a shorter one is a tap: on touch it throws the clip away and the hint says
+  Hold to record, release to send, with a mouse it locks, a click is how the
+  hands free recording is started there. A press whose pointer the browser
+  takes away (`pointercancel`, a lost capture) locks too, nothing is sent and
+  nothing is lost. The click that still follows every release is spent
+  (`swallowSubmitUntil`), or the composer would be sent beside the clip; a
+  submit that reaches `onSubmit` with the microphone face is therefore the
+  keyboard's, Space or Enter on the button, and starts the hands free
+  recording the way Alt Alt does, while one that reaches it during a
+  recording sends it. The recorder runs on a timeslice (`TALK_SLICE_MS`) and
+  stops itself and sends where the next slice would pass the upload limit
+  the route refuses at (`max-file-bytes`, the same `maxUploadBytes` the STT
+  route reads), so a recording nobody ends still lands. Escape throws a
+  recording away whatever started it, held or locked: the listener sits on
+  the document in the capture phase, is armed with the recording state and
+  taken off with it, so no other Escape in the app ever sees a press that
+  meant cancel and every press outside a recording still reaches the dialog,
+  the editor or the terminal that owns it. Nothing about the gesture is a
+  stylesheet rule: the growth, the slide and the pill's travel are
+  transforms the element writes, the pill and the hint are Bootstrap
+  position utilities, the dot is Tabler's animated status dot. The keyboard
+  way is Alt Alt through the `@dc/doubletap` machine, wired by the surface on
+  the document's capture phase so it works from anywhere on the assistant
+  page (`toggleTalk`): the first double tap starts a locked recording, the
+  second stops and sends, during a held press it locks, and it records only
+  where the button would, so with words or a file in the box Alt Alt starts
+  nothing and sends nothing. Only a bare
+  Alt counts, so Alt+<key> combos never half-arm it
   and nothing leaks into a terminal or an editable field, where a bare Alt
   types nothing; the default is taken off every clean tap's keyup, because
   Firefox on Windows otherwise hands a bare Alt keyup to its menu bar and
@@ -2758,7 +2786,7 @@ test. Update this file when a convention changes.
   `ti-volume-off`) is the whole state display. The menu holds the two per
   device choices, both in localStorage like the terminal's settings: autoplay
   (`dc-assistant-voice-mode`) reads a finished answer aloud by itself,
-  standing on the muted play the push to talk press spends on the audio
+  standing on the muted play the microphone tap spends on the audio
   element, because autoplay needs a user gesture once, and switching it on is
   itself that gesture; and the volume (`dc-assistant-voice-volume`, whole
   percent, unreadable or out of range reads as full). The volume rides on the

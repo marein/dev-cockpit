@@ -30,16 +30,13 @@ const VOICE_VOLUME_KEY = "dc-assistant-voice-volume";
 const VOICE_VOLUME_DEFAULT = 100;
 const PLACE_KEY = "dc-assistant-place";
 
-// How long the send button has to be held before the press means talking
-// instead of sending; a shorter press stays the plain send it always was.
-const SEND_HOLD_MS = 250;
+const MIN_CLIP_MS = 1000;
+const TALK_SLICE_MS = 1000;
+const WAVE_SAMPLE_MS = 50;
+const WAVE_STEP_PX = 4;
+const WAVE_BAR_PX = 2;
 
-// How far left the holding finger or mouse has to slide to cancel the
-// recording, the messenger gesture: past this nothing is transcribed and
-// nothing is sent.
-const TALK_CANCEL_PX = 80;
-
-// One silent sample. Played muted inside the push to talk press or the voice
+// One silent sample. Played muted inside the microphone press or the voice
 // mode toggle, the two user gestures, it unlocks the audio element for the
 // programmatic play a finished answer asks for later.
 const SILENT_WAV = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
@@ -168,12 +165,7 @@ class Assistant extends HTMLElement {
 
     this.form?.addEventListener("submit", (event) => {
       event.preventDefault();
-      // Releasing a talk hold raises the button's ordinary click and with it
-      // this submit, which would send the composer while the clip is still
-      // transcribing; a submit right after a hold's release is that click
-      // and is spent here.
-      if (this.swallowSubmitUntil && Date.now() < this.swallowSubmitUntil) return;
-      void this.send();
+      this.onSubmit();
     }, { signal });
     this.input?.addEventListener("keydown", (event) => this.onKeydown(event), { signal });
     this.input?.addEventListener("input", () => this.onInput(), { signal });
@@ -496,12 +488,13 @@ class Assistant extends HTMLElement {
 
   disconnectedCallback() {
     window.clearTimeout(this.draftTimer);
-    window.clearTimeout(this.holdTimer);
     window.clearTimeout(this.hintTimer);
-    this.holdTimer = null;
-    this.holdFired = false;
-    this.holdCancelled = false;
+    window.clearTimeout(this.lockTimer);
+    window.clearInterval(this.clockTimer);
     this.hintLinger = false;
+    this.lockTimer = null;
+    this.press = null;
+    this.stopWave();
     this.removeAttribute("ready");
     this.sizer?.disconnect();
     this.sizer = null;
@@ -668,6 +661,7 @@ class Assistant extends HTMLElement {
   onInput() {
     this.queueDraft();
     this.autoGrow();
+    this.syncSendFace();
     if (!this.input || !this.counter) return;
     const used = new TextEncoder().encode(this.input.value).length;
     const over = used > this.maxBytes;
@@ -1290,13 +1284,14 @@ class Assistant extends HTMLElement {
     }
   }
 
-  // Push to talk and the spoken answers. Holding the talk button records;
-  // releasing transcribes and sends the result right away, existing composer
-  // text prepended, so a spoken exchange costs no extra tap. The keyboard
-  // way is the Alt Alt double tap, wired in the panel element because it
-  // works with the overlay closed too; it lands here as toggleTalk. A
-  // finished answer then reads itself aloud while voice mode is on, and the
-  // speaker on every answer replays it.
+  // The microphone and the spoken answers. The one button beside the message
+  // box is the microphone while the box is empty and the send once anything
+  // stands in it. Holding the microphone records, releasing sends the
+  // transcript right away, sliding left while holding throws the clip away,
+  // sliding up keeps the recording going without a finger on it, and a click
+  // or the Alt Alt double tap keeps it going the same way. A finished answer
+  // then reads itself aloud while voice mode is on, and the speaker on every
+  // answer replays it.
   setupVoice(signal) {
     this.sttUrl = this.getAttribute("stt-url");
     this.voiceButton = this.querySelector("[data-assistant-voice]");
@@ -1326,100 +1321,181 @@ class Assistant extends HTMLElement {
     if (!this.sttUrl || !this.sendButton) return;
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return;
     this.talkReady = true;
+    this.talkMode = "";
+    this.press = null;
     this.talkHint = this.querySelector("[data-assistant-talk-hint]");
-    // Push to talk lives on the send button: a press held past the threshold
-    // records, its release stops and sends the transcript, and a shorter
-    // press stays the plain send it always was, decided by nothing but the
-    // clock. The capture keeps the release on the button wherever the finger
-    // drifted, and the long press must never become a scroll, a text
-    // selection or the context menu.
-    this.sendButton.style.touchAction = "none";
-    this.sendButton.addEventListener("contextmenu", (event) => event.preventDefault(), { signal });
-    this.sendButton.addEventListener("pointerdown", (event) => {
-      if (event.pointerType === "mouse" && event.button !== 0) return;
-      this.sendButton.setPointerCapture?.(event.pointerId);
-      this.holdStartX = event.clientX;
-      window.clearTimeout(this.holdTimer);
-      this.holdTimer = window.setTimeout(() => {
-        this.holdTimer = null;
-        this.holdFired = true;
-        this.unlockSpeech();
-        void this.startTalk();
-      }, SEND_HOLD_MS);
-    }, { signal });
-    // The capture routes the moves here wherever the pointer drifts, finger
-    // and mouse alike: sliding left past the threshold cancels the recording
-    // mid hold, the messenger gesture, and the hint follows the slide so the
-    // way out is readable before it is taken.
-    this.sendButton.addEventListener("pointermove", (event) => {
-      if (!this.holdFired || this.holdCancelled) return;
-      const pull = Math.min(0, event.clientX - this.holdStartX);
-      this.slideTalkHint(pull);
-      if (pull <= -TALK_CANCEL_PX) this.cancelTalk();
-    }, { signal });
-    this.sendButton.addEventListener("pointerup", () => this.endHold(false), { signal });
-    this.sendButton.addEventListener("pointercancel", () => this.endHold(true), { signal });
+    this.talkLock = this.querySelector("[data-assistant-talk-lock]");
+    this.talkClock = this.querySelector("[data-assistant-talk-clock]");
+    this.talkWave = this.querySelector("[data-assistant-talk-wave]");
+    this.discardButton = this.querySelector("[data-assistant-talk-discard]");
+    this.discardButton?.addEventListener("click", () => this.discardTalk(), { signal });
+    const button = this.sendButton;
+    button.style.touchAction = "none";
+    button.style.transition = "transform 0.15s";
+    button.addEventListener("contextmenu", (event) => event.preventDefault(), { signal });
+    button.addEventListener("pointerdown", (event) => this.beginPress(event), { signal });
+    button.addEventListener("pointermove", (event) => this.movePress(event), { signal });
+    button.addEventListener("pointerup", (event) => this.endPress(event), { signal });
+    button.addEventListener("pointercancel", (event) => this.endPress(event, true), { signal });
+    button.addEventListener("lostpointercapture", (event) => this.endPress(event, true), { signal });
+    this.renderTalk();
   }
 
-  // endHold settles one press on the send button. A press the timer never
-  // turned into a recording is a plain send and the following click carries
-  // it; one that recorded ends the recording instead, and the click that
-  // still follows the release is marked to be swallowed. A press that was
-  // cancelled by the slide already ended its recording, so the release only
-  // spends the click: without that the finger lifting off a cancelled hold
-  // would send the typed text nobody asked to send.
-  endHold(abort) {
-    window.clearTimeout(this.holdTimer);
-    this.holdTimer = null;
-    if (this.holdCancelled) {
-      this.holdCancelled = false;
-      this.swallowSubmitUntil = Date.now() + 350;
+  onSubmit() {
+    if (this.swallowSubmitUntil && Date.now() < this.swallowSubmitUntil) return;
+    if (this.talkActive() || this.talkFace()) {
+      this.toggleTalk();
       return;
     }
-    if (!this.holdFired) return;
-    this.holdFired = false;
-    this.swallowSubmitUntil = Date.now() + 350;
-    this.stopTalk(abort);
+    void this.send();
   }
 
-  // cancelTalk ends a held recording without sending: the clip is thrown
-  // away, the hint confirms it, and the cancel is final for this press, a
-  // slide back to the right resumes nothing.
-  cancelTalk() {
-    if (!this.holdFired) return;
-    this.holdFired = false;
-    this.holdCancelled = true;
-    this.stopTalk(true);
-    this.confirmTalkCancel();
+  talkFace() {
+    return Boolean(this.talkReady) && !this.talkActive() && !this.transcribing && !this.composerFilled();
   }
 
-  // The hint sits over the message box while a recording runs: an arrow and
-  // the words, sliding along with the pull and thinning towards the
-  // threshold, so the gesture reads before it triggers.
-  slideTalkHint(pull) {
+  composerFilled() {
+    return Boolean(this.input?.value.trim()) || (this.attached || []).some((file) => file.progress >= 1);
+  }
+
+  beginPress(event) {
+    if (!this.talkReady || this.press) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (this.talkActive() || !this.talkFace()) return;
+    event.preventDefault();
+    try {
+      this.sendButton.setPointerCapture(event.pointerId);
+    } catch {
+      void 0;
+    }
+    this.press = { id: event.pointerId, type: event.pointerType, x: event.clientX, y: event.clientY, lockDy: 0, cancelDx: 0 };
+    this.talkMode = "hold";
+    this.unlockSpeech();
+    if (event.pointerType === "touch") navigator.vibrate?.(20);
+    void this.startTalk();
+    this.renderTalk();
+    const box = this.sendButton.getBoundingClientRect();
+    const lock = this.talkLock?.getBoundingClientRect();
+    const hint = this.talkHint?.getBoundingClientRect();
+    if (lock && lock.height) this.press.lockDy = box.top + box.height / 2 - (lock.top + lock.height / 2);
+    if (hint) this.press.cancelDx = hint.width / 3;
+  }
+
+  movePress(event) {
+    const press = this.press;
+    if (!press || event.pointerId !== press.id || this.talkMode !== "hold") return;
+    const dx = Math.min(0, event.clientX - press.x);
+    const dy = Math.min(0, event.clientY - press.y);
+    if (press.lockDy > 0 && -dy >= press.lockDy) {
+      this.lockTalk();
+      return;
+    }
+    this.followPress(dx, dy);
+    if (press.cancelDx > 0 && -dx >= press.cancelDx) this.discardTalk();
+  }
+
+  followPress(dx, dy) {
     const slide = this.talkHint?.querySelector("[data-assistant-talk-slide]");
-    if (!slide) return;
-    slide.style.transform = pull ? `translateX(${Math.round(pull / 2)}px)` : "";
-    slide.style.opacity = pull ? String(Math.max(0.3, 1 + pull / (TALK_CANCEL_PX * 2))) : "";
+    if (slide) {
+      slide.style.transform = dx ? `translateX(${Math.round(dx / 2)}px)` : "";
+      slide.style.opacity = dx && this.press?.cancelDx ? String(Math.max(0.2, 1 + dx / this.press.cancelDx)) : "";
+    }
+    if (this.talkLock) this.talkLock.style.transform = dy ? `translateY(${Math.round(dy / 2)}px)` : "";
   }
 
-  showTalkHint(mode = "slide") {
+  endPress(event, lost = false) {
+    const press = this.press;
+    if (!press || (event && event.pointerId !== press.id)) return;
+    this.press = null;
+    this.swallowSubmitUntil = Date.now() + 350;
+    this.followPress(0, 0);
+    if (this.talkMode !== "hold") {
+      this.renderTalk();
+      return;
+    }
+    if (lost) {
+      this.lockTalk();
+      return;
+    }
+    const clipMs = this.recorder ? Date.now() - this.talkStartedAt : 0;
+    if (clipMs >= MIN_CLIP_MS) {
+      this.stopTalk(false);
+      return;
+    }
+    if (press.type === "touch") {
+      this.stopTalk(true);
+      this.paintHint("tap");
+      return;
+    }
+    this.lockTalk();
+  }
+
+  lockTalk() {
+    if (this.talkMode !== "hold") return;
+    this.talkMode = "locked";
+    navigator.vibrate?.(20);
+    const icon = this.talkLock?.querySelector("i");
+    if (icon) icon.className = "ti ti-lock";
+    window.clearTimeout(this.lockTimer);
+    this.lockTimer = window.setTimeout(() => {
+      this.lockTimer = null;
+      this.paintLock();
+    }, 600);
+    this.renderTalk();
+  }
+
+  renderTalk() {
+    this.syncSendFace();
+    this.paintLock();
+    if (this.talkState === "recording" || (this.talkHeld && this.talkMode)) this.paintHint(this.talkMode === "locked" ? "locked" : "hold");
+    else this.hideTalkHint();
+  }
+
+  paintLock() {
+    const pill = this.talkLock;
+    if (!pill) return;
+    pill.style.transform = "";
+    if (this.talkMode === "hold" && this.press) {
+      window.clearTimeout(this.lockTimer);
+      this.lockTimer = null;
+      const icon = pill.querySelector("i");
+      if (icon) icon.className = "ti ti-lock-open";
+      pill.classList.remove("d-none");
+      return;
+    }
+    if (this.lockTimer) return;
+    pill.classList.add("d-none");
+  }
+
+  paintHint(mode) {
     const hint = this.talkHint;
     if (!hint) return;
     window.clearTimeout(this.hintTimer);
     this.hintLinger = false;
+    const recording = mode === "hold" || mode === "locked";
+    hint.querySelector("[data-assistant-talk-timer]")?.classList.toggle("d-none", !recording);
+    this.talkWave?.classList.toggle("d-none", mode !== "locked");
+    this.discardButton?.classList.toggle("d-none", mode !== "locked");
     const slide = hint.querySelector("[data-assistant-talk-slide]");
     if (slide) {
-      slide.classList.remove("text-danger");
+      slide.classList.toggle("d-none", mode === "locked");
       slide.style.transform = "";
       slide.style.opacity = "";
     }
-    const icon = hint.querySelector("i");
-    if (icon) icon.className = mode === "escape" ? "ti ti-keyboard" : "ti ti-arrow-left";
+    hint.classList.toggle("text-danger", mode === "discarded");
+    hint.classList.toggle("text-secondary", mode !== "discarded");
+    const icon = slide?.querySelector("i");
+    if (icon) icon.className = mode === "hold" ? "ti ti-chevron-left" : mode === "discarded" ? "ti ti-trash" : "ti ti-hand-finger";
     const text = hint.querySelector("[data-assistant-talk-hint-text]");
-    if (text) text.textContent = mode === "escape" ? "Esc to cancel" : "Slide to cancel";
+    if (text) text.textContent = mode === "hold" ? "Slide to cancel" : mode === "discarded" ? "Recording discarded" : "Hold to record, release to send";
     hint.classList.remove("d-none");
     hint.classList.add("d-flex");
+    if (recording) return;
+    this.hintLinger = true;
+    this.hintTimer = window.setTimeout(() => {
+      this.hintLinger = false;
+      this.hideTalkHint();
+    }, mode === "tap" ? 1500 : 900);
   }
 
   // While a recording runs, Escape throws it away. The listener goes on the
@@ -1433,7 +1509,7 @@ class Assistant extends HTMLElement {
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      this.escapeTalk();
+      this.discardTalk();
     };
     document.addEventListener("keydown", this.talkEscape, { capture: true });
   }
@@ -1444,24 +1520,15 @@ class Assistant extends HTMLElement {
     this.talkEscape = null;
   }
 
-  // escapeTalk throws the clip away whichever way the recording was started.
-  // A held press takes the slide's own path, so the release that still
-  // follows only spends its click instead of sending; a hands free recording
-  // ends right here and says so where the hint stands.
-  escapeTalk() {
-    if (this.holdFired) {
-      this.cancelTalk();
-      return;
-    }
+  discardTalk() {
     if (!this.talkActive()) return;
     this.stopTalk(true);
-    this.showTalkHint("escape");
-    this.confirmTalkCancel();
+    this.paintHint("discarded");
   }
 
-  // hideTalkHint steps aside while the cancel confirmation still stands: the
-  // recorder's stop resets the button right away, but the person who slid
-  // left has to read that the cancel took.
+  // hideTalkHint steps aside while a confirmation still stands: the
+  // recorder's stop resets the button right away, but the person who threw
+  // the clip away has to read that it took.
   hideTalkHint() {
     if (this.hintLinger) return;
     window.clearTimeout(this.hintTimer);
@@ -1469,45 +1536,116 @@ class Assistant extends HTMLElement {
     this.talkHint?.classList.remove("d-flex");
   }
 
-  confirmTalkCancel() {
-    const hint = this.talkHint;
-    if (!hint) return;
-    const slide = hint.querySelector("[data-assistant-talk-slide]");
-    if (slide) {
-      slide.classList.add("text-danger");
-      slide.style.transform = "";
-      slide.style.opacity = "";
-    }
-    const icon = hint.querySelector("i");
-    if (icon) icon.className = "ti ti-x";
-    const text = hint.querySelector("[data-assistant-talk-hint-text]");
-    if (text) text.textContent = "Recording cancelled";
-    this.hintLinger = true;
-    this.hintTimer = window.setTimeout(() => {
-      this.hintLinger = false;
-      this.hideTalkHint();
-    }, 900);
+  startClock() {
+    window.clearInterval(this.clockTimer);
+    this.paintClock();
+    this.clockTimer = window.setInterval(() => this.paintClock(), 250);
   }
 
-  // talkActive reports a recording or a pending microphone grab; the panel's
-  // Alt Alt gesture asks before it decides between start and stop.
+  stopClock() {
+    window.clearInterval(this.clockTimer);
+    this.clockTimer = null;
+    this.paintClock();
+  }
+
+  paintClock() {
+    if (!this.talkClock) return;
+    const seconds = this.recorder ? Math.max(0, Math.floor((Date.now() - this.talkStartedAt) / 1000)) : 0;
+    this.talkClock.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+
+  startWave(stream) {
+    const canvas = this.talkWave;
+    if (!canvas || !window.AudioContext) return;
+    try {
+      const audio = new AudioContext();
+      const analyser = audio.createAnalyser();
+      analyser.fftSize = 512;
+      audio.createMediaStreamSource(stream).connect(analyser);
+      this.wave = { audio, analyser, data: new Uint8Array(analyser.fftSize), levels: [], frame: 0, sampledAt: 0 };
+    } catch {
+      return;
+    }
+    const draw = () => {
+      const wave = this.wave;
+      if (!wave) return;
+      const now = performance.now();
+      if (now - wave.sampledAt >= WAVE_SAMPLE_MS) {
+        wave.sampledAt = now;
+        wave.analyser.getByteTimeDomainData(wave.data);
+        let sum = 0;
+        for (const value of wave.data) {
+          const offset = (value - 128) / 128;
+          sum += offset * offset;
+        }
+        wave.levels.push(Math.min(1, Math.sqrt(sum / wave.data.length) * 3));
+        this.drawWave();
+      }
+      wave.frame = window.requestAnimationFrame(draw);
+    };
+    this.wave.frame = window.requestAnimationFrame(draw);
+  }
+
+  drawWave() {
+    const canvas = this.talkWave;
+    const wave = this.wave;
+    if (!canvas || !wave) return;
+    const box = canvas.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const scale = window.devicePixelRatio || 1;
+    const width = Math.round(box.width * scale);
+    const height = Math.round(box.height * scale);
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    const step = WAVE_STEP_PX * scale;
+    const bar = WAVE_BAR_PX * scale;
+    const count = Math.floor(width / step);
+    if (wave.levels.length > count) wave.levels.splice(0, wave.levels.length - count);
+    const context = canvas.getContext("2d");
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = getComputedStyle(canvas).color;
+    wave.levels.forEach((level, index) => {
+      const tall = Math.max(bar, level * height);
+      const x = width - (wave.levels.length - index) * step;
+      context.fillRect(x, (height - tall) / 2, bar, tall);
+    });
+  }
+
+  stopWave() {
+    const wave = this.wave;
+    if (!wave) return;
+    this.wave = null;
+    window.cancelAnimationFrame(wave.frame);
+    wave.audio.close().catch(() => {});
+  }
+
+  // talkActive reports a recording or a pending microphone grab; the press
+  // and the Alt Alt gesture ask before they decide between start and stop.
   talkActive() {
     return Boolean(this.recorder || this.talkHeld);
   }
 
-  // toggleTalk is push to talk without the hold, for the Alt Alt gesture:
-  // the first call starts recording, the second stops and sends, the same
-  // path the button's release takes. A call while the microphone permission
-  // prompt still stands takes the grab back instead of recording into a
+  // toggleTalk records without a finger on the button, for a click, the
+  // keyboard on the button and the Alt Alt gesture alike: the first call
+  // starts recording, the second stops and sends. A recording starts only
+  // where the button wears the microphone, so with words or a file in the
+  // composer none of them records; a call while the microphone permission
+  // prompt still stands takes the grab back instead of recording into an
   // assistant nobody watches.
   toggleTalk() {
     if (!this.talkReady) return;
     if (this.talkActive()) {
-      this.stopTalk(false);
+      if (this.press) this.lockTalk();
+      else this.stopTalk(false);
       return;
     }
+    if (!this.talkFace()) return;
+    this.talkMode = "locked";
     this.unlockSpeech();
     void this.startTalk();
+    this.renderTalk();
   }
 
   onVoiceWarming(data) {
@@ -1527,7 +1665,7 @@ class Assistant extends HTMLElement {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      this.talkHeld = false;
+      this.dropTalk();
       notifyError("The microphone is not available.");
       return;
     }
@@ -1546,61 +1684,101 @@ class Assistant extends HTMLElement {
         : new MediaRecorder(stream);
     } catch {
       stream.getTracks().forEach((track) => track.stop());
-      this.talkHeld = false;
+      this.dropTalk();
       notifyError("Recording is not supported here.");
       return;
     }
     const chunks = [];
+    let bytes = 0;
     recorder.addEventListener("dataavailable", (event) => {
-      if (event.data?.size) chunks.push(event.data);
+      if (!event.data?.size) return;
+      chunks.push(event.data);
+      bytes += event.data.size;
+      if (this.maxFileBytes && bytes + event.data.size > this.maxFileBytes && this.recorder === recorder) this.stopTalk(false);
     });
     recorder.addEventListener("stop", () => {
       stream.getTracks().forEach((track) => track.stop());
+      this.stopWave();
       const type = recorder.mimeType || "audio/webm";
       const send = this.talkSend;
       this.recorder = null;
-      this.setTalkState("");
       const clip = new Blob(chunks, { type });
-      if (!send || !clip.size) return;
-      void this.transcribe(clip);
+      if (send && clip.size) {
+        void this.transcribe(clip);
+        return;
+      }
+      this.setTalkState("");
     });
     this.recorder = recorder;
     this.talkSend = false;
-    recorder.start();
+    recorder.start(TALK_SLICE_MS);
+    this.talkStartedAt = Date.now();
+    this.startWave(stream);
     this.setTalkState("recording");
+  }
+
+  dropTalk() {
+    this.talkHeld = false;
+    this.talkMode = "";
+    this.renderTalk();
   }
 
   stopTalk(abort) {
     this.talkHeld = false;
-    if (!this.recorder) return;
+    this.talkMode = "";
+    if (!this.recorder) {
+      if (this.talkState) this.setTalkState("");
+      else this.renderTalk();
+      return;
+    }
     this.talkSend = !abort;
     if (this.recorder.state !== "inactive") this.recorder.stop();
+    if (!abort) this.setTalkState("busy");
   }
 
-  // The recording state has to be readable at arm's length: the send button
-  // goes solid red and wears the microphone while it records, the spinner
-  // while the clip transcribes, and its plain blue send face otherwise. The
-  // reset hands the disabled flag back to the length rule the composer's
-  // input applies.
+  // setTalkState moves the recording through its states, recording, busy
+  // while the clip transcribes, and none, and paints everything for it.
+  // Escape means cancel exactly as long as a recording runs: the listener
+  // lives exactly as long, so the key keeps every other meaning it has in the
+  // app the rest of the time. The reset hands the disabled flag back to the
+  // length rule the composer's input applies.
   setTalkState(state) {
+    this.talkState = state;
     if (!this.sendButton) return;
-    this.sendButton.classList.toggle("btn-danger", state === "recording");
-    this.sendButton.classList.toggle("btn-primary", state !== "recording");
-    this.sendButton.setAttribute("aria-pressed", state === "recording" ? "true" : "false");
-    const icon = this.sendButton.querySelector("i");
-    if (icon) icon.className = state === "recording" ? "ti ti-microphone" : state === "busy" ? "ti ti-send dc-icon-spinner" : "ti ti-send";
-    // Each way of recording gets the way out it can actually take: a held
-    // press slides, a hands free recording has no press to slide, so it is
-    // told about Escape instead.
-    if (state === "recording") this.showTalkHint(this.holdFired ? "slide" : "escape");
-    else this.hideTalkHint();
-    // Escape only means cancel while a recording runs. The listener lives
-    // exactly as long as the recording, so the key keeps every other meaning
-    // it has in the app the rest of the time.
-    if (state === "recording") this.armTalkEscape();
-    else this.disarmTalkEscape();
-    if (state === "busy") this.sendButton.disabled = true;
-    else this.onInput();
+    if (state === "recording") {
+      this.armTalkEscape();
+      this.startClock();
+    } else {
+      this.disarmTalkEscape();
+      this.stopClock();
+    }
+    if (state === "busy") {
+      this.sendButton.disabled = true;
+      this.renderTalk();
+    } else {
+      this.onInput();
+      this.renderTalk();
+    }
+  }
+
+  syncSendFace() {
+    const button = this.sendButton;
+    if (!button || !this.talkReady) return;
+    const holding = this.talkMode === "hold";
+    const locked = this.talkMode === "locked";
+    const busy = this.talkState === "busy";
+    const mic = holding || (!locked && !busy && this.talkFace());
+    button.classList.toggle("btn-danger", holding);
+    button.classList.toggle("btn-primary", !holding);
+    button.style.transform = holding && this.press ? "scale(1.5)" : "";
+    const icon = button.querySelector("i");
+    if (icon) icon.className = mic ? "ti ti-microphone" : busy ? "ti ti-send dc-icon-spinner" : "ti ti-send";
+    if (holding) button.setAttribute("aria-pressed", "true");
+    else if (mic) button.setAttribute("aria-pressed", "false");
+    else button.removeAttribute("aria-pressed");
+    button.setAttribute("aria-label", holding ? "Recording, release to send" : locked ? "Send the recording" : mic ? "Hold to record" : "Send message");
+    if (mic && !holding) button.title = "Hold to record and release to send. Slide left to cancel, slide up to keep recording without holding. A click keeps recording too, and Alt Alt does from anywhere";
+    else button.removeAttribute("title");
   }
 
   // The released clip becomes the message: transcribed, prepended with what
@@ -1832,6 +2010,7 @@ class Assistant extends HTMLElement {
   }
 
   renderAttachments() {
+    this.syncSendFace();
     if (!this.attachTray) return;
     this.attachTray.classList.toggle("d-none", this.attached.length === 0);
     this.attachTray.replaceChildren(...this.attached.map((file) => {

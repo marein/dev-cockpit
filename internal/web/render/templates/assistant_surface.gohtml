@@ -61,17 +61,33 @@
     <div class="flex-fill min-w-0 position-relative">
       <textarea class="form-control" name="message" rows="1" data-assistant-input placeholder="What to do?" aria-label="Message" autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true">{{.Draft}}</textarea>
       {{if .SttURL}}
-      <div class="position-absolute top-0 start-0 w-100 h-100 d-none align-items-center justify-content-center bg-body rounded pe-none" data-assistant-talk-hint aria-live="polite">
-        <span class="d-inline-flex align-items-center gap-2 text-secondary" data-assistant-talk-slide>
-          <i class="ti ti-arrow-left" aria-hidden="true"></i><span data-assistant-talk-hint-text>Slide to cancel</span>
-        </span>
+      {{/* Stands over the message box while a recording runs: the red dot with
+           the clock, Slide to cancel while a finger holds the button, the
+           trash and the live level trace once the recording is locked, and for
+           a moment afterwards the word that the clip was thrown away or how
+           the button is held. The element paints it, nothing here decides. */}}
+      <div class="position-absolute top-0 start-0 w-100 h-100 d-none align-items-center gap-2 px-2 bg-body rounded pe-none text-secondary" data-assistant-talk-hint aria-live="polite">
+        <button type="button" class="btn btn-icon btn-sm btn-ghost-danger pe-auto flex-shrink-0 d-none" aria-label="Discard the recording" title="Discard the recording, Esc does the same" data-assistant-talk-discard><i class="ti ti-trash"></i></button>
+        <span class="d-inline-flex align-items-center gap-2 flex-shrink-0 d-none" data-assistant-talk-timer><span class="status-dot status-dot-animated status-red"></span><span class="font-monospace" data-assistant-talk-clock>0:00</span></span>
+        <span class="flex-fill min-w-0 d-inline-flex align-items-center justify-content-center gap-1 small" data-assistant-talk-slide><i class="ti ti-chevron-left" aria-hidden="true"></i><span data-assistant-talk-hint-text>Slide to cancel</span></span>
+        <canvas class="flex-fill w-100 min-w-0 d-none" height="24" data-assistant-talk-wave aria-hidden="true"></canvas>
       </div>
       {{end}}
     </div>
+    {{/* The button beside the box wears two faces: the microphone while nothing
+         stands in the box, the send once words or a finished attachment do.
+         The server renders the send, the face a host without the engine or
+         without a microphone keeps, and the element paints the microphone once
+         it knows both are there (syncSendFace). Over it stands the lock pill a
+         held recording is slid up into, shown by the element while a finger
+         holds the button. */}}
     {{if .SttURL}}
-    <button type="submit" class="btn btn-icon btn-primary flex-shrink-0" aria-label="Send message, hold to talk" aria-pressed="false" title="Tap to send. Hold to talk, release to send what you said; Alt Alt starts and stops from anywhere" data-assistant-send>
-      <i class="ti ti-send"></i>
-    </button>
+    <div class="position-relative flex-shrink-0">
+      <span class="badge bg-secondary-lt text-secondary rounded-pill position-absolute bottom-100 start-50 translate-middle-x mb-3 d-inline-flex flex-column align-items-center gap-1 py-2 px-2 d-none" data-assistant-talk-lock aria-hidden="true"><i class="ti ti-lock-open"></i><i class="ti ti-chevron-up"></i></span>
+      <button type="submit" class="btn btn-icon btn-primary" aria-label="Send message" data-assistant-send>
+        <i class="ti ti-send"></i>
+      </button>
+    </div>
     {{else}}
     <button type="submit" class="btn btn-icon btn-primary flex-shrink-0" aria-label="Send message" data-assistant-send>
       <i class="ti ti-send"></i>

@@ -144,7 +144,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Talk to it",
 					Tag:      "Voice",
 					TagClass: "bg-blue-lt",
-					Desc:     `Hold the send button <i class="ti ti-send align-text-bottom" aria-hidden="true"></i>: it turns red and records, release and what you said is transcribed and sent, anything already typed going in front of it. Sliding left while holding cancels, a short tap is the plain send, and <kbd>Alt</kbd> twice starts and stops it from the keyboard. German and English both work without a language setting. The first hold waits once while the cockpit builds the container.`,
+					Desc:     `With an empty message box the button beside it is the microphone <i class="ti ti-microphone align-text-bottom" aria-hidden="true"></i>: hold it and it records, release and what you said is transcribed and sent. Slide left while holding to cancel, slide up to keep recording without holding, then the trash <i class="ti ti-trash align-text-bottom" aria-hidden="true"></i> discards and the send <i class="ti ti-send align-text-bottom" aria-hidden="true"></i> sends. A click keeps recording without holding too, <kbd>Alt</kbd> twice does the same from anywhere, <kbd>Esc</kbd> discards, and with anything typed or attached the button is the plain send. German and English both work without a language setting. The first recording waits once while the cockpit builds the container.`,
 				},
 				{
 					Title:    "It talks back",
