@@ -36,6 +36,10 @@ const assistantConfig = `{"tools":{"question":false}}`
 type runner struct {
 	sessions *sessionRepository
 	create   createFunc
+	// window answers how much context a model holds, out of the coder's
+	// cached model list (modelWindow in models.go); nil where no list stands,
+	// which reads as unknown.
+	window func(model string) int
 }
 
 // AssistantRunner returns the conversation capability, or nil when the
@@ -53,7 +57,7 @@ func (p *Coder) probeAssistant() bool {
 		log.Printf("opencode conversations disabled, the installed CLI has no %s", strings.Join(missing, ", "))
 		return false
 	}
-	p.runner = &runner{sessions: p.sessions, create: createSession}
+	p.runner = &runner{sessions: p.sessions, create: createSession, window: p.modelWindow}
 	return true
 }
 
@@ -129,6 +133,7 @@ func (r *runner) Parse(sessionID string, events chan<- assistant.Event) assistan
 		nativeID: r.sessions.nativeID(sessionID),
 		events:   events,
 		sessions: r.sessions,
+		window:   r.window,
 	}
 }
 
@@ -142,6 +147,7 @@ type parser struct {
 	nativeID string
 	events   chan<- assistant.Event
 	sessions *sessionRepository
+	window   func(model string) int
 	// sentText is whether this turn has put any text out. Every text record
 	// is a block of its own, so the separator goes in front of every one
 	// after the first, never in front of the turn's first and never behind
@@ -293,10 +299,12 @@ func (p *parser) Diagnose(err error, stderr string) error {
 	return nil
 }
 
-// usageQuery reads what the newest assistant message consumed. The context is
+// usageQuery reads what the newest assistant message consumed and which model
+// it was, the provider and the model id the record keeps apart. The context is
 // everything that went in, cached or not: a cache read is context the model
 // saw, it was only cheaper to send.
-const usageQuery = `SELECT json_extract(data,'$.modelID') AS model,` +
+const usageQuery = `SELECT json_extract(data,'$.providerID') AS provider,` +
+	` json_extract(data,'$.modelID') AS model,` +
 	` COALESCE(json_extract(data,'$.tokens.input'),0)` +
 	` + COALESCE(json_extract(data,'$.tokens.cache.read'),0)` +
 	` + COALESCE(json_extract(data,'$.tokens.cache.write'),0) AS tokens` +
@@ -305,9 +313,15 @@ const usageQuery = `SELECT json_extract(data,'$.modelID') AS model,` +
 
 // reportUsage sends what the finished run recorded about its context. A run
 // that recorded nothing readable reports nothing, so the page keeps the last
-// number it had instead of showing a guess. The window stays unmeasured until
-// a reading proves what an opencode model holds, an unknown window shows
-// tokens without a fill.
+// number it had instead of showing a guess. The model is named the way
+// opencode names it everywhere else, provider/model, what the -m flag takes
+// and what the list shows, and the window is the prompt bound opencode's own
+// metadata puts on that model, `limit.input` where `opencode models
+// --verbose` names one and else `limit.context` (windowOf in models.go), read
+// out of the coder's cached list, the way claude's parser takes the window
+// off the run's own result record; the table stands behind it for a model
+// the list does not hold. A window nobody could resolve stays zero, so the
+// tokens show without a fill rather than against a guess.
 func (p *parser) reportUsage() {
 	if p.sessions == nil {
 		return
@@ -324,18 +338,35 @@ func (p *parser) reportUsage() {
 		return
 	}
 	var rows []struct {
-		Model  string `json:"model"`
-		Tokens int    `json:"tokens"`
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+		Tokens   int    `json:"tokens"`
 	}
 	if err := json.Unmarshal(out, &rows); err != nil || len(rows) == 0 || rows[0].Tokens <= 0 {
 		return
 	}
-	p.events <- assistant.Event{
-		Kind: assistant.EventUsage,
-		Usage: &assistant.ContextUsage{
-			Model:  rows[0].Model,
-			Tokens: rows[0].Tokens,
-			Window: assistant.ContextWindow("opencode", rows[0].Model, ""),
-		},
+	model := modelName(rows[0].Provider, rows[0].Model)
+	window := 0
+	if p.window != nil {
+		window = p.window(model)
 	}
+	if window == 0 {
+		window = assistant.ContextWindow("opencode", model, "")
+	}
+	p.events <- assistant.Event{
+		Kind:  assistant.EventUsage,
+		Usage: &assistant.ContextUsage{Model: model, Tokens: rows[0].Tokens, Window: window},
+	}
+}
+
+// modelName is the provider/model form opencode names a model by, out of the
+// two fields its message record keeps apart. A record without a provider
+// keeps the bare model id, which matches no entry of the list and so stays
+// without a window.
+func modelName(provider, model string) string {
+	provider, model = strings.TrimSpace(provider), strings.TrimSpace(model)
+	if provider == "" || model == "" {
+		return model
+	}
+	return provider + "/" + model
 }

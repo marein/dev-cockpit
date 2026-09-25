@@ -388,17 +388,65 @@ func usageOf(events []assistant.Event) assistant.ContextUsage {
 }
 
 // opencode writes what a turn consumed onto the assistant message in its
-// store; the window stays unmeasured until a reading proves what an opencode
-// model holds, so the page shows tokens without a fill.
+// store, the provider and the model id apart; the window is what opencode's
+// own model metadata says under the provider/model name, read out of the
+// coder's cached list, so the reading fills the ring the way a claude turn's
+// does.
 func TestTurnReportsTheContextFromTheStore(t *testing.T) {
-	r := usageRunner(t, []map[string]any{{"model": "big-pickle", "tokens": 8471}})
+	r := usageRunner(t, []map[string]any{{"provider": "opencode", "model": "big-pickle", "tokens": 8471}})
+	asked := ""
+	r.window = func(model string) int {
+		asked = model
+		return 200_000
+	}
 	events := runTurn(t, r, textLine(nativeID, "msg_1", "ok")+"\n"+stepFinishLine(nativeID, "stop"))
 	usage := usageOf(events)
-	if usage.Tokens != 8471 || usage.Model != "big-pickle" {
-		t.Fatalf("want the store's reading, got %+v", usage)
+	if usage.Tokens != 8471 || usage.Model != "opencode/big-pickle" {
+		t.Fatalf("want the store's reading under the provider/model name, got %+v", usage)
 	}
-	if usage.Window != 0 || usage.Known() {
-		t.Fatalf("want no window until a reading proves one, got %d", usage.Window)
+	if asked != "opencode/big-pickle" {
+		t.Fatalf("want the window looked up under the provider/model name, got %q", asked)
+	}
+	if usage.Window != 200_000 || !usage.Known() || usage.Percent() != 4 {
+		t.Fatalf("want the window the list names and the fill out of it, got %+v", usage)
+	}
+	if got := usage.PercentIn("opencode"); got != 4 {
+		t.Fatalf("want the reading's own window kept on the later lookup, got %d", got)
+	}
+}
+
+// A model the list does not hold, a list that never came back and a record
+// without a provider all leave the window unknown: the tokens still travel,
+// the ring shows no fill, and nothing is guessed.
+func TestTurnLeavesAnUnknownWindowUnknown(t *testing.T) {
+	cases := []struct {
+		name   string
+		row    map[string]any
+		window func(string) int
+		model  string
+	}{
+		{"model the list does not hold", map[string]any{"provider": "opencode", "model": "no-such", "tokens": 8471}, func(string) int { return 0 }, "opencode/no-such"},
+		{"no list at all", map[string]any{"provider": "opencode", "model": "big-pickle", "tokens": 8471}, nil, "opencode/big-pickle"},
+		// The list is keyed by the pair, so the bare model id of a record
+		// without a provider reaches no entry, even one that would match
+		// under its provider.
+		{"record without a provider", map[string]any{"model": "big-pickle", "tokens": 8471}, func(model string) int {
+			if model == "opencode/big-pickle" {
+				return 200_000
+			}
+			return 0
+		}, "big-pickle"},
+	}
+	for _, c := range cases {
+		r := usageRunner(t, []map[string]any{c.row})
+		r.window = c.window
+		usage := usageOf(runTurn(t, r, textLine(nativeID, "msg_1", "ok")+"\n"+stepFinishLine(nativeID, "stop")))
+		if usage.Tokens != 8471 || usage.Model != c.model {
+			t.Fatalf("%s: want the tokens and the name as recorded, got %+v", c.name, usage)
+		}
+		if usage.Window != 0 || usage.Known() || usage.Percent() != 0 {
+			t.Fatalf("%s: want no window and no fill, got %+v", c.name, usage)
+		}
 	}
 }
 
@@ -452,16 +500,185 @@ func TestATurnCarriesTheModelBehindItsFlag(t *testing.T) {
 	}
 }
 
-// `opencode models` prints one provider/model per line (recorded from
-// 1.18.30). Everything that is not one is dropped: a blank line, a warning
-// printed on the way, a name no turn could carry.
+// verboseModelList is `opencode models --verbose` as 1.18.32 prints it, the
+// first block whole and the rest cut to the fields the parser reads plus
+// what tests the seams: a model with an input bound below its context, one
+// with a context alone, one whose limit names neither, a name without a
+// block, a block under a line that is no name, and a block that is no JSON.
+const verboseModelList = `opencode/big-pickle
+{
+  "id": "big-pickle",
+  "providerID": "opencode",
+  "name": "Big Pickle",
+  "family": "big-pickle",
+  "api": {
+    "id": "big-pickle",
+    "url": "https://opencode.ai/zen/v1",
+    "npm": "@ai-sdk/openai-compatible"
+  },
+  "status": "active",
+  "headers": {},
+  "options": {},
+  "cost": {
+    "input": 0,
+    "output": 0,
+    "cache": {
+      "read": 0,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 200000,
+    "input": 160000,
+    "output": 32000
+  },
+  "capabilities": {
+    "temperature": true,
+    "reasoning": true,
+    "toolcall": true,
+    "interleaved": {
+      "field": "reasoning_content"
+    }
+  },
+  "release_date": "2025-10-17",
+  "variants": {}
+}
+github-copilot/claude-haiku-4.5
+{
+  "id": "claude-haiku-4.5",
+  "providerID": "github-copilot",
+  "limit": {
+    "context": 144000,
+    "input": 128000,
+    "output": 32000
+  }
+}
+opencode/mimo-v2.6-flash-free
+{
+  "id": "mimo-v2.6-flash-free",
+  "providerID": "opencode",
+  "limit": {
+    "context": 200000,
+    "output": 32000
+  }
+}
+opencode/no-bound
+{
+  "id": "no-bound",
+  "providerID": "opencode",
+  "limit": {
+    "output": 32768
+  }
+}
+opencode/no-block
+WARN some warning text
+{
+  "id": "orphan",
+  "providerID": "opencode",
+  "limit": {
+    "context": 999999
+  }
+}
+  github-copilot/gpt-5.4-mini  
+{
+  "id": "gpt-5.4-mini",
+  not json at all
+}
+not a model at all
+`
+
+func TestTheModelListReadsTheNamesAndTheirWindows(t *testing.T) {
+	entries := parseModelList(verboseModelList)
+	want := []modelEntry{
+		{Name: "opencode/big-pickle", Window: 160_000},
+		{Name: "github-copilot/claude-haiku-4.5", Window: 128_000},
+		{Name: "opencode/mimo-v2.6-flash-free", Window: 200_000},
+		{Name: "opencode/no-bound"},
+		{Name: "opencode/no-block"},
+		{Name: "github-copilot/gpt-5.4-mini"},
+	}
+	if len(entries) != len(want) {
+		t.Fatalf("want %d models, got %v", len(want), entries)
+	}
+	for i := range want {
+		if entries[i] != want[i] {
+			t.Fatalf("entry %d: want %+v, got %+v", i, want[i], entries[i])
+		}
+	}
+	if parseModelList("") != nil {
+		t.Fatal("want no entries out of no output")
+	}
+}
+
+// The window is the prompt bound: `limit.input` where the metadata names one,
+// which is what opencode's own compaction check measures a turn against and
+// what copilot's CLI calls max_prompt_tokens, else `limit.context`, else
+// unknown. A zero input reads as none, the way opencode reads it.
+func TestTheWindowIsThePromptBound(t *testing.T) {
+	cases := []struct {
+		name  string
+		block string
+		want  int
+	}{
+		{"input below the context", `{"limit": {"context": 200000, "input": 160000, "output": 32000}}`, 160_000},
+		{"context alone", `{"limit": {"context": 262144, "output": 32768}}`, 262_144},
+		{"neither", `{"limit": {"output": 32768}}`, 0},
+		{"no limit at all", `{"id": "x"}`, 0},
+		{"zero input", `{"limit": {"context": 200000, "input": 0}}`, 200_000},
+		{"not json", `{"limit": `, 0},
+	}
+	for _, c := range cases {
+		if got := windowOf(c.block); got != c.want {
+			t.Fatalf("%s: want %d, got %d", c.name, c.want, got)
+		}
+	}
+}
+
+// The plain list, one provider/model per line as 1.18.30 printed it, reads
+// the same way with every bound unknown, so a CLI that prints no metadata
+// still fills the selects. Everything that is not a name is dropped: a blank
+// line, a warning printed on the way, a name no turn could carry.
 func TestTheModelListReadsOneNamePerLine(t *testing.T) {
-	names := parseModelList("opencode/big-pickle\n\ngithub-copilot/claude-haiku-4.5\nWARN some warning text\n  github-copilot/gpt-5.4-mini  \nnot a model at all\n")
+	entries := parseModelList("opencode/big-pickle\n\ngithub-copilot/claude-haiku-4.5\nWARN some warning text\n  github-copilot/gpt-5.4-mini  \nnot a model at all\n")
+	var names []string
+	for _, entry := range entries {
+		if entry.Window != 0 {
+			t.Fatalf("want no bound without metadata, got %+v", entry)
+		}
+		names = append(names, entry.Name)
+	}
 	if strings.Join(names, ",") != "opencode/big-pickle,github-copilot/claude-haiku-4.5,github-copilot/gpt-5.4-mini" {
 		t.Fatalf("want the provider/model lines alone, got %v", names)
 	}
-	if parseModelList("") != nil {
-		t.Fatal("want no names out of no output")
+}
+
+// The window is read off the same cache the names come from: nothing before
+// the first fetch came back, which also starts it, then the bound the
+// metadata named, zero for a name the list does not hold and for a model
+// whose metadata named none.
+func TestTheWindowIsReadOffTheSameList(t *testing.T) {
+	list := newModelList(func(context.Context) ([]modelEntry, error) {
+		return []modelEntry{{Name: "opencode/big-pickle", Window: 160_000}, {Name: "opencode/no-bound"}}, nil
+	})
+	start := time.Now()
+	if got := list.window("opencode/big-pickle", start); got != 0 {
+		t.Fatalf("want nothing while the first fetch runs, got %d", got)
+	}
+	waitSettled(t, list)
+	if got := list.window("opencode/big-pickle", start.Add(time.Minute)); got != 160_000 {
+		t.Fatalf("want the bound the metadata named, got %d", got)
+	}
+	for _, name := range []string{"opencode/no-bound", "opencode/no-such", "big-pickle", ""} {
+		if got := list.window(name, start.Add(time.Minute)); got != 0 {
+			t.Fatalf("want no window for %q, got %d", name, got)
+		}
+	}
+	c := &Coder{modelCache: list}
+	if got := c.modelWindow("opencode/big-pickle"); got != 160_000 {
+		t.Fatalf("want the coder to answer out of its cache, got %d", got)
+	}
+	if got := (&Coder{}).modelWindow("opencode/big-pickle"); got != 0 {
+		t.Fatalf("want nothing from a coder without a cache, got %d", got)
 	}
 }
 
@@ -473,14 +690,14 @@ func TestTheModelListRefreshesInTheBackgroundAndKeepsWhatStood(t *testing.T) {
 	var mu sync.Mutex
 	runs := 0
 	fail := false
-	list := newModelList(func(context.Context) ([]string, error) {
+	list := newModelList(func(context.Context) ([]modelEntry, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		runs++
 		if fail {
 			return nil, errors.New("opencode is broken")
 		}
-		return []string{"opencode/big-pickle"}, nil
+		return []modelEntry{{Name: "opencode/big-pickle", Window: 160_000}}, nil
 	})
 	settled := func() {
 		t.Helper()
@@ -544,7 +761,7 @@ func TestAHungModelListRefreshIsEndedByItsDeadline(t *testing.T) {
 	var mu sync.Mutex
 	runs := 0
 	ended := 0
-	list := newModelList(func(ctx context.Context) ([]string, error) {
+	list := newModelList(func(ctx context.Context) ([]modelEntry, error) {
 		mu.Lock()
 		runs++
 		mu.Unlock()
@@ -555,7 +772,7 @@ func TestAHungModelListRefreshIsEndedByItsDeadline(t *testing.T) {
 		return nil, ctx.Err()
 	})
 	list.timeout = 50 * time.Millisecond
-	list.cached = []string{"opencode/big-pickle"}
+	list.cached = []modelEntry{{Name: "opencode/big-pickle"}}
 	count := func() (int, int) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -612,11 +829,11 @@ func TestListModelsEndsTheProcessAtTheDeadline(t *testing.T) {
 func TestWarmingTheModelsHangsOnNoOtherCapability(t *testing.T) {
 	var mu sync.Mutex
 	runs := 0
-	c := &Coder{modelCache: newModelList(func(context.Context) ([]string, error) {
+	c := &Coder{modelCache: newModelList(func(context.Context) ([]modelEntry, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		runs++
-		return []string{"opencode/big-pickle"}, nil
+		return []modelEntry{{Name: "opencode/big-pickle"}}, nil
 	})}
 	c.models = coder.NewModelRepository(nil, "opencode", opencodeModelsNote, c.cliModels)
 	coder.WarmModels(c)

@@ -5,10 +5,12 @@ import "strings"
 // How full the coder's context window stands is the one number an assistant
 // cannot work out for itself. The assistant runs headless, so nobody sees the
 // statusline a coder terminal shows, and the numbers only exist inside the
-// provider's own output. Both CLIs report what a turn consumed, neither one
-// reports how much fits, so the window is resolved in two steps: what the turn
-// itself said, and otherwise the table below. A model that answers neither shows
-// no fill at all, because a wrong percentage is worse than none.
+// provider's own output. Every CLI reports what a turn consumed; how much fits
+// is what differs: claude says it on the run's result record, opencode in the
+// metadata its model list prints, copilot nowhere. So the window is resolved
+// in two steps: what the coder itself says, and otherwise the table below. A
+// model that answers neither shows no fill at all, because a wrong percentage
+// is worse than none.
 
 // ContextUsage is how full a coder's context window stood at the end of one
 // turn. It is a per turn reading, not a running total: after a compact the
@@ -95,6 +97,20 @@ type contextTiers struct {
 //     no billing block. Verified on 2026-07-29 against CLI 1.0.76, which reports
 //     no window of its own anywhere: the `maxPromptTokens` its older builds
 //     carried on a `model.call_*` record is gone.
+//   - opencode: no rows, on purpose. Its own CLI answers the window: `opencode
+//     models --verbose` prints every model's metadata with its limits
+//     (verified on 2026-09-25 against 1.18.32, every one of the 26 listed
+//     models carried `limit.context`, 21 of them `limit.input` as well), and
+//     the parser reads the prompt bound out of the coder's cached list under
+//     the provider/model name the message record names, `limit.input` where
+//     the model names one and else `limit.context` (`windowOf` and
+//     `reportUsage` in `internal/coder/opencode`). That is the bound
+//     opencode's own compaction check measures a turn against, and it is the
+//     same quantity the copilot rows above carry: under the github-copilot
+//     provider `limit.input` is number for number copilot's
+//     `max_prompt_tokens` (`claude-haiku-4.5` 128000, `gpt-5.3-codex` 272000,
+//     `kimi-k2.7-code` 224000), so one bound is read from two CLIs. A row
+//     here would only ever shadow what the CLI says.
 //
 // A model that is not in here shows no fill. Add a row when a reading proves it,
 // not before.

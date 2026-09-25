@@ -356,7 +356,15 @@ test. Update this file when a convention changes.
   the two settings pages and the `model-list` read alike, and
   `internal/assistant` knows nothing of lists. claude lists the four aliases (`fable`,
   `opus`, `sonnet`, `haiku`, always the newest of their family, there is no
-  list command); opencode lists what `opencode models` prints, fetched in the
+  list command); opencode lists what `opencode models --verbose` prints,
+  the one run answering the names and the context windows alike (the prompt
+  bound of each model's metadata, `limit.input` where it names one and else
+  `limit.context`, the bound opencode's own compaction check reads and for
+  the github-copilot provider copilot's own `max_prompt_tokens`, is what an
+  opencode turn's ring is measured against, `windowOf` in `models.go`, read
+  by `reportUsage` in its `assistant.go` under the provider/model name the
+  message record names, which is why the `contextWindows` table carries no
+  opencode rows), fetched in the
   background and cached in the process for ten minutes, the next read past
   that starting a refresh, never run on the request path (`modelList` in
   `models.go`), every refresh under a deadline and an output cap
