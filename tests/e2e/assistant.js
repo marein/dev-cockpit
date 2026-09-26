@@ -1048,12 +1048,12 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     };
     await openSettings();
     const empties = await page.evaluate(() => ({
-      first: [...document.querySelectorAll("[data-assistant-sections] a")].map((a) => a.textContent.trim())[0],
+      tabs: [...document.querySelectorAll("[data-assistant-sections] a")].map((a) => a.textContent.trim()),
       chat: document.querySelector('select[name="chat-claude"]').options[0].textContent.trim(),
       check: document.querySelector('select[name="check-claude"]').options[0].textContent.trim(),
       trigger: document.querySelector('select[name="trigger-claude"]').options[0].textContent.trim(),
     }));
-    assert(empties.first === "Models", `Models is not the first tab: ${JSON.stringify(empties)}`);
+    assert(empties.tabs.join(",") === "Models,Approvals,Voice,Jobs", `the assistant settings tabs are out of order: ${JSON.stringify(empties)}`);
     assert(empties.chat === "Coder default (CLI)" && empties.check === "Same as chat" && empties.trigger === "Same as chat",
       `the Models tab's empty entries are off: ${JSON.stringify(empties)}`);
     await storeDefault("haiku");

@@ -3,6 +3,7 @@
 {{template "work_start.gohtml" .}}
 <nav class="nav nav-bordered dc-work-tabs" aria-label="Sections" data-assistant-sections>
   <a class="nav-link{{if eq .Section "models"}} active{{end}}" href="/settings/assistant/models"><i class="ti ti-cpu me-1 dc-hide-xs"></i>Models</a>
+  <a class="nav-link{{if eq .Section "approvals"}} active{{end}}" href="/settings/assistant/approvals"><i class="ti ti-shield-check me-1 dc-hide-xs"></i>Approvals</a>
   <a class="nav-link{{if eq .Section "voice"}} active{{end}}" href="/settings/assistant/voice"><i class="ti ti-microphone me-1 dc-hide-xs"></i>Voice</a>
   <a class="nav-link{{if eq .Section "jobs"}} active{{end}}" href="/settings/assistant/jobs"><i class="ti ti-steering-wheel me-1 dc-hide-xs"></i>Jobs</a>
 </nav>

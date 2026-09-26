@@ -90,8 +90,14 @@ func (s *Server) handleSettingsDocker(c *gin.Context) {
 }
 
 // handleSettingsDockerSave stores the host and the command list together, the
-// one form the page has.
+// one form the page has. A local call is refused: the command lines and their
+// ask first flags are what the compose approval stands on, and an assistant
+// that could rewrite them would switch its own question off.
 func (s *Server) handleSettingsDockerSave(c *gin.Context) {
+	if s.localCall(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": composeActionsLocalRefusal})
+		return
+	}
 	host := strings.TrimSpace(c.PostForm("docker_host"))
 	if host != "" {
 		if err := docker.ValidateHost(host); err != nil {

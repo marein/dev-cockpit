@@ -790,7 +790,9 @@ type ModelChoice struct {
 // and what the save's answer carries as the picks with their stamp. The
 // fresh picks go out on the assistant's own stream as one models frame, so
 // every open page of it moves its ring's selects without a reload, whether
-// the pick was set on that page, on another tab or from the CLI.
+// the pick was set on that page, on another tab or from the CLI. A save that
+// moves nothing writes, stamps and publishes nothing. One that moves a pick
+// stamps UpdatedAt, because that stamp is what orders the models frames.
 func (s *Service) SetModels(id string, choice ModelChoice) (Instance, error) {
 	chat, err := CleanModel(choice.Chat)
 	if err != nil {
@@ -811,6 +813,7 @@ func (s *Service) SetModels(id string, choice ModelChoice) (Instance, error) {
 		s.mu.Unlock()
 		return Instance{}, errors.New("Assistant not found.")
 	}
+	was := [3]string{c.Model, c.CheckModel, c.TriggerModel}
 	if choice.ChatSet {
 		c.Model = chat
 	}
@@ -819,6 +822,10 @@ func (s *Service) SetModels(id string, choice ModelChoice) (Instance, error) {
 	}
 	if choice.TriggerSet {
 		c.TriggerModel = trigger
+	}
+	if [3]string{c.Model, c.CheckModel, c.TriggerModel} == was {
+		s.mu.Unlock()
+		return c, nil
 	}
 	c.UpdatedAt = s.now().UTC()
 	s.store.Save(c)

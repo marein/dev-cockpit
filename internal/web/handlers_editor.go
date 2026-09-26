@@ -18,7 +18,6 @@ import (
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/git"
-	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
@@ -2038,20 +2037,30 @@ func (s *Server) gitPromptViews() []gitPromptView {
 	questions := s.askpassBroker.Questions()
 	views := make([]gitPromptView, 0, len(questions))
 	for _, q := range questions {
-		view := gitPromptView{Question: q}
-		if q.External {
-			view.Target = notify.GitPromptTarget(q.Project)
-		}
-		views = append(views, view)
+		views = append(views, gitPromptView{Question: q, Target: questionTarget(q)})
 	}
 	return views
 }
 
+// gitPromptAnswer is what the dialog posts back. Key names the action the
+// way the question carried it; Project is the older spelling of the same
+// thing, a page from before approvals existed still posts it. Answer and
+// Cancel are a git question's, Approve and Remember an approval's: Remember
+// turns that kind of approval off for every assistant, and means nothing on a
+// denial.
 type gitPromptAnswer struct {
-	Project string `json:"project"`
-	ID      string `json:"id"`
-	Answer  string `json:"answer"`
-	Cancel  bool   `json:"cancel"`
+	Key      string `json:"key"`
+	Project  string `json:"project"`
+	ID       string `json:"id"`
+	Answer   string `json:"answer"`
+	Cancel   bool   `json:"cancel"`
+	Approve  bool   `json:"approve"`
+	Remember bool   `json:"remember"`
+}
+
+// decision is the approval the answer carries. A denial remembers nothing.
+func (a gitPromptAnswer) decision() askpass.Decision {
+	return askpass.Decision{Approved: a.Approve, Remember: a.Approve && a.Remember}
 }
 
 // handleGitPromptAnswer carries the typed answer, or the cancel, back to the
@@ -2070,9 +2079,26 @@ func (s *Server) handleGitPromptAnswer(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": false})
 		return
 	}
-	action := s.askpassBroker.Find(req.Project)
+	key := req.Key
+	if key == "" {
+		key = req.Project
+	}
+	action := s.askpassBroker.Find(key)
 	if action == nil {
 		c.JSON(http.StatusOK, gin.H{"ok": false})
+		return
+	}
+	if action.Approval() {
+		// An approval means the user said yes, so it is answered in a
+		// browser and never over the local socket, where the assistant that
+		// asked could answer itself.
+		if s.localCall(c) {
+			c.JSON(http.StatusForbidden, gin.H{"error": approvalLocalRefusal})
+			return
+		}
+		// A decision and never a line: the answer route reads which of the
+		// two it was handed off the action, not off the request.
+		c.JSON(http.StatusOK, gin.H{"ok": action.Decide(req.ID, req.decision())})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": action.Answer(req.ID, req.Answer, req.Cancel)})

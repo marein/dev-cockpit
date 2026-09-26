@@ -1099,6 +1099,10 @@ func (s *Server) assistantSteerTarget(raw string) (steerTarget, error) {
 // go with the directory, and nothing about them is changed before the delete
 // went through: a delete that fails keeps the assistant with its jobs
 // steering, the answer says kept and means it.
+//
+// Its compose runs go the same way: a parked one is declined, nobody started
+// it, and a running one becomes the user's, so its end rings the project like
+// a run the user started instead of vanishing with the thread it was for.
 func (s *Server) assistantDelete(c *gin.Context, id string) {
 	if from := s.callingAssistant(c); from == id {
 		s.assistantActionError(c, id, errors.New(assistant.SelfDeleteRefusal))
@@ -1111,6 +1115,8 @@ func (s *Server) assistantDelete(c *gin.Context, id string) {
 		return
 	}
 	s.watcher.Dropped(id, held)
+	s.declineOwnerApprovals(id)
+	s.docker.Disown(id)
 	s.notifier.MarkTargetRead(id)
 	handedBack := assistant.ReleasedNames(held)
 	if wantsJSON(c.Request) {

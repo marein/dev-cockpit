@@ -67,6 +67,97 @@ func (s *Server) handleSettingsAssistantJobsSave(c *gin.Context) {
 	s.redirectWithFlash(c, assistantJobsSettingsPath, "Settings saved.", "")
 }
 
+// assistantApprovalsSettingsPath is the approvals tab of the assistant
+// settings: one switch per kind of approval, each saying for every assistant
+// whether that kind of action waits for the user.
+const assistantApprovalsSettingsPath = "/settings/assistant/approvals"
+
+// An approval is one kind of action an assistant may only take once the user
+// said yes. Each kind is one entry of approvalKinds and one key in the
+// settings store, assistant-approval-<id>, on until it is switched off: the
+// key is read against "off", so an install that never saved it asks, and
+// switching it on again removes the key rather than storing a copy of the
+// default. A new kind is one more entry, the tab and the save read the list.
+type approvalKind struct {
+	ID    string
+	Label string
+	Hint  string
+}
+
+// approvalComposeActions is whether a confirm compose action an assistant
+// starts waits for the user's approval.
+const approvalComposeActions = "compose-actions"
+
+var approvalKinds = []approvalKind{{
+	ID:    approvalComposeActions,
+	Label: "Compose actions approval",
+	Hint:  "Compose commands marked to ask first under Settings › Docker wait for your approval.",
+}}
+
+// approvalKey is where one kind is stored.
+func approvalKey(id string) string { return "assistant-approval-" + id }
+
+// ApprovalAsks is one kind's switch, read fresh on every action it guards. A
+// store that is not there, which the handler tests build, asks.
+func ApprovalAsks(store *settings.Store, id string) bool {
+	return store == nil || store.Get(approvalKey(id)) != "off"
+}
+
+// setApprovalAsks stores one kind's switch.
+func setApprovalAsks(store *settings.Store, id string, ask bool) {
+	if store == nil {
+		return
+	}
+	if ask {
+		store.Delete(approvalKey(id))
+		return
+	}
+	store.Set(approvalKey(id), "off")
+}
+
+func (s *Server) handleSettingsAssistantApprovals(c *gin.Context) {
+	data := render.SettingsAssistantApprovalsData{
+		Page:        s.page(c, "Settings", "settings"),
+		SettingsNav: s.settingsNav("assistant"),
+		Section:     "approvals",
+	}
+	for _, kind := range approvalKinds {
+		data.Approvals = append(data.Approvals, render.ApprovalRow{
+			ID:    kind.ID,
+			Label: kind.Label,
+			Hint:  kind.Hint,
+			Ask:   ApprovalAsks(s.settings, kind.ID),
+		})
+	}
+	c.HTML(http.StatusOK, "settings_assistant_approvals.gohtml", data)
+}
+
+// handleSettingsAssistantApprovalsSave moves the switches the form carried.
+// The hidden field in front of every switch is what makes an unticked box a
+// posted value, and a kind the form did not post is left alone.
+func (s *Server) handleSettingsAssistantApprovalsSave(c *gin.Context) {
+	if s.localCall(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": approvalLocalRefusal})
+		return
+	}
+	for _, kind := range approvalKinds {
+		if values := c.PostFormArray("approval-" + kind.ID); len(values) > 0 {
+			setApprovalAsks(s.settings, kind.ID, values[len(values)-1] == "1")
+		}
+	}
+	s.redirectWithFlash(c, assistantApprovalsSettingsPath, "Settings saved.", "")
+}
+
+// approvalLocalRefusal is what a local call reads when it tries to answer an
+// approval or to move an approval switch: both are the user's word, given in a
+// browser.
+const approvalLocalRefusal = "Approvals are the user's to give, in the browser. Ask the user."
+
+// composeActionsLocalRefusal is what a local call reads when it tries to
+// change the compose commands: which of them ask first is the approval's
+// ground, so they are the user's to configure, in the browser.
+const composeActionsLocalRefusal = "The compose commands are the user's to configure, in the browser. Ask the user."
+
 // assistantTimezoneKey holds the zone a new schedule is read in when nobody
 // named one for it. It is stored and not derived so that a schedule keeps
 // meaning what it said: the name is resolved once, onto the trigger, and

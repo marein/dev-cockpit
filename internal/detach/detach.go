@@ -36,6 +36,10 @@ var HoldArgs = []string{"run-detached"}
 // lock check is a file open, so this is deliberately unhurried.
 const pollInterval = 500 * time.Millisecond
 
+// lockFD is the descriptor the lock arrives on in the hold process: the first
+// of cmd.ExtraFiles, which the child sees right behind standard error.
+const lockFD = 3
+
 // timeoutExitCode is what a run that was killed for taking too long reports.
 // It is what coreutils' timeout uses, so the number reads the same here.
 const timeoutExitCode = 124
@@ -167,6 +171,15 @@ func Start(opts Options) (Process, error) {
 		return Process{}, err
 	}
 
+	// The process number goes into the lock file right away, so a server that
+	// dies before it wrote the number down anywhere else still leaves it where
+	// the next one finds it (LockPID). The hold process writes the same number
+	// itself as its first act, which covers a server that dies before this
+	// line: a held lock then never stays without a number to signal.
+	if err := lock.Truncate(0); err == nil {
+		_, _ = lock.WriteAt([]byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0)
+	}
+
 	p := Process{pid: cmd.Process.Pid, lock: opts.Lock, exited: make(chan struct{})}
 	// The child is reaped for as long as this server lives, so it never sits
 	// around as a zombie that still looks alive. A server that goes away leaves
@@ -182,6 +195,7 @@ func Start(opts Options) (Process, error) {
 // separated so a program's own arguments can never be read as ours.
 func holdArgv(opts Options) []string {
 	argv := append([]string{}, HoldArgs...)
+	argv = append(argv, "--lock-fd", strconv.Itoa(lockFD))
 	if opts.Result != "" {
 		argv = append(argv, "--result", opts.Result)
 	}
@@ -200,13 +214,17 @@ func holdArgv(opts Options) []string {
 // the server before this process started, and the program's exit code is
 // returned as this process's own.
 func Hold(args []string) int {
-	resultPath, timeout, argv, err := parseHoldArgs(args)
+	opts, err := parseHoldArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "run-detached:", err)
-		writeResult(resultPath, 1)
+		writeResult(opts.result, 1)
 		return 1
 	}
-	code := runHeld(argv, timeout, resultPath)
+	if opts.lockFD > 0 {
+		recordPID(opts.lockFD)
+	}
+	resultPath := opts.result
+	code := runHeld(opts.argv, opts.timeout, resultPath)
 	// The result is written before this process ends, so it is on disk by the
 	// time the lock is released, which is what a reader waits for. A timeout
 	// already wrote it inside runHeld, before it took the group down; writing
@@ -215,30 +233,49 @@ func Hold(args []string) int {
 	return code
 }
 
-func parseHoldArgs(args []string) (result string, timeout time.Duration, argv []string, err error) {
+// holdOptions is what the hold process reads off its own argv.
+type holdOptions struct {
+	result  string
+	timeout time.Duration
+	// lockFD is the inherited descriptor of the run's lock, zero when the
+	// caller named none.
+	lockFD int
+	argv   []string
+}
+
+func parseHoldArgs(args []string) (holdOptions, error) {
+	var opts holdOptions
 	for len(args) > 0 {
 		switch {
 		case args[0] == "--":
 			args = args[1:]
 			if len(args) == 0 {
-				return result, timeout, nil, errors.New("nothing to run")
+				return opts, errors.New("nothing to run")
 			}
-			return result, timeout, args, nil
+			opts.argv = args
+			return opts, nil
 		case args[0] == "--result" && len(args) > 1:
-			result, args = args[1], args[2:]
+			opts.result, args = args[1], args[2:]
 		case args[0] == "--timeout" && len(args) > 1:
-			timeout, err = time.ParseDuration(args[1])
+			timeout, err := time.ParseDuration(args[1])
 			if err != nil {
-				return result, 0, nil, fmt.Errorf("--timeout %s: %w", args[1], err)
+				return opts, fmt.Errorf("--timeout %s: %w", args[1], err)
 			}
-			args = args[2:]
+			opts.timeout, args = timeout, args[2:]
+		case args[0] == "--lock-fd" && len(args) > 1:
+			fd, err := strconv.Atoi(args[1])
+			if err != nil || fd <= 2 {
+				return opts, fmt.Errorf("--lock-fd %s: not a descriptor behind standard error", args[1])
+			}
+			opts.lockFD, args = fd, args[2:]
 		default:
 			// No separator: everything left is the program, the shape an older
 			// caller uses.
-			return result, timeout, args, nil
+			opts.argv = args
+			return opts, nil
 		}
 	}
-	return result, timeout, nil, errors.New("nothing to run")
+	return opts, errors.New("nothing to run")
 }
 
 // runHeld runs the program and answers its exit code. A timeout says so in the
@@ -313,6 +350,22 @@ func Result(path string) (int, bool) {
 		return 0, false
 	}
 	return code, true
+}
+
+// LockPID reads the hold process a run's lock file names, which Start writes
+// there the moment the process exists. Zero says no number was ever written:
+// nothing was started over that lock, or the server died in the instant
+// between the start and the write.
+func LockPID(lock string) int {
+	raw, err := os.ReadFile(lock)
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 0 {
+		return 0
+	}
+	return pid
 }
 
 // TimedOut reports whether a code is the one a run killed for taking too long

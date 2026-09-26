@@ -280,6 +280,7 @@ func newAssistantCommand() *cobra.Command {
 		newTimezoneGetCommand(opts), newTimezoneSetCommand(opts),
 		newModelListCommand(opts), newAssistantModelsGetCommand(opts), newAssistantModelsSetCommand(opts),
 		newProjectCommand(opts), newDeleteProjectCommand(opts),
+		newComposeListCommand(opts), newComposeStartCommand(opts), newComposeShowCommand(opts), newComposeStopCommand(opts),
 		newLineCommentListCommand(opts), newLineCommentAddCommand(opts), newLineCommentRemoveCommand(opts),
 		newOutputCommand(opts),
 		newRunTurnCommand(),
@@ -896,6 +897,28 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 			info.Title, info.Detail = gitPromptNews(actionName)
 			return info
 		}
+		if notify.IsApprovalTarget(targetID) {
+			// The entry is written while the question stands, so the run's
+			// standing question is the one it is about: who asks, what for
+			// and where, and the run page it leads to. A question that
+			// vanished in between keeps the generic words.
+			key := askpass.ApprovalKey(notify.ApprovalTargetRun(targetID))
+			info.Name = "Approval"
+			info.URL = "/projects"
+			who, what, project := "", "", ""
+			for _, q := range askBroker.Questions() {
+				if q.Key == key {
+					who, what, project = q.Assistant, q.Action, q.Project
+					if q.URL != "" {
+						info.URL = q.URL
+					}
+					break
+				}
+			}
+			info.Project = project
+			info.Title, info.Detail = approvalNews(who, what, project)
+			return info
+		}
 		if notify.IsDockerTarget(targetID) {
 			project := notify.DockerTargetProject(targetID)
 			info.Name = "Compose"
@@ -1030,6 +1053,23 @@ func gitPromptNews(action string) (title, detail string) {
 	return "Git asks a question.", newsDetail(action, "")
 }
 
+// approvalNews is what a standing approval says: an assistant asks, and below
+// it which one, and the command and the project it wants to run it in. The
+// assistant's name is already a label where it is written (assistantNewsName),
+// the command's label is what the settings page holds.
+func approvalNews(who, action, project string) (title, detail string) {
+	if who == "" {
+		who = assistant.Name
+	}
+	if action == "" {
+		action = "a compose command"
+	}
+	if project != "" {
+		action += " in " + project
+	}
+	return "Assistant asks approval.", newsDetail(who, action)
+}
+
 // composeNews is what a finished docker compose run says: how it went, and
 // the command that ran below it.
 func composeNews(run docker.RunView) (title, detail string) {
@@ -1060,8 +1100,8 @@ func assistantNewsName(entry assistant.Summary) string {
 
 // assistantNews is what a notification about one assistant says, and it says
 // it in two lines that divide the work. The title is the kind alone, one of
-// seven fixed sentences: the first word tells a job from a trigger from an
-// answer, and the second tells the endings of each apart. The line below it
+// ten fixed sentences: the first word tells a job from a compose run from a
+// trigger from an answer, and the second tells the endings of each apart. The line below it
 // names which one it was and then carries an excerpt of what was written, see
 // newsDetail: an entry that only said that something happened would send the
 // user into the thread to find out what.
@@ -1093,6 +1133,19 @@ func assistantNews(who string, m assistant.Message) (title, detail string) {
 		case string(assistant.VerdictExpired):
 			title, ident = "Job expired.", m.Note.Name
 		}
+	}
+	if m.Note != nil && m.Note.Source == assistant.NoteCompose {
+		// A compose run of the assistant ends in one of three ways, in the
+		// words of the note's own verdict, and the command names it.
+		switch m.Note.Verdict {
+		case assistant.ComposeKindDone:
+			title = "Compose done."
+		case assistant.ComposeKindFailed:
+			title = "Compose failed."
+		case assistant.ComposeKindDeclined:
+			title = "Compose declined."
+		}
+		ident = m.Note.Name
 	}
 	unfinished := m.State == assistant.StateFailed || m.State == assistant.StateInterrupted
 	// Nobody asked for this answer, so the title says a trigger fired rather

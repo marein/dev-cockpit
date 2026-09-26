@@ -8,8 +8,8 @@ import { growTextarea } from "@dc/dom";
 // What is left is the switching and the zone list: the picked event decides
 // which target field shows, the jobs of the assistant, the running coders or a cron schedule, and
 // only the shown one posts. Both target fields take several terminals, so the
-// mode beside them shows wherever they do: any of them fires it, or every one
-// has to. The batch window goes the other way round and stands for everything
+// mode beside them shows wherever they do and nowhere else: any of them fires
+// it, or every one has to, and a compose run has no terminal. The batch window goes the other way round and stands for everything
 // but a schedule, which has no window to fold anything into. The expiry's unit
 // switches the same way: No expiry stands among the units, and picked it
 // leaves the number nothing to measure, so the number goes out with it.
@@ -66,14 +66,14 @@ class AssistantTrigger extends HTMLElement {
   }
 
   // One target field at a time: the others are hidden and disabled, so only
-  // the shown one posts under its name. The mode and the batch window are the
-  // two that stand for every event but a schedule, so they go the same way.
+  // the shown one posts under its name. The mode goes with the two terminal
+  // fields, the batch window stands for every event but a schedule.
   syncFields() {
     const source = this.source();
     for (const box of this.querySelectorAll("[data-trigger-target]")) {
       this.showBox(box, box.dataset.triggerTarget === source);
     }
-    this.showBox(this.mode, source !== "cron");
+    this.showBox(this.mode, source === "job" || source === "coder");
     this.showBox(this.batch, source !== "cron");
     this.grow();
   }

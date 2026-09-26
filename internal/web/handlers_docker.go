@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/notify"
@@ -223,6 +224,13 @@ func (s *Server) linkMatcher() docker.LinkMatcher {
 // move; the word at the end is a notification, like a backup's, and it comes
 // from the service's one completion callback (see composeDone), because a run
 // outlives this request and may well outlive this whole process.
+//
+// An assistant reaches the same route over the local socket and its run is
+// owned: the word at the end goes into its thread instead of the user's bell.
+// A command that asks first asks the user first for an assistant too, unless
+// the user turned the Compose actions approval off: the run is parked, the
+// answer carries the id at once, and the question stands for the user
+// wherever they are, see awaitComposeApproval.
 func (s *Server) handleDockerCompose(c *gin.Context) {
 	p, stack, ok := s.composeStack(c)
 	if !ok {
@@ -233,18 +241,137 @@ func (s *Server) handleDockerCompose(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown compose action."})
 		return
 	}
-	id, err := s.docker.RunCompose(docker.ComposeOptions{
+	// Only the browser runs a compose command as the user. A local call is an
+	// assistant's, and one that names no live assistant is refused rather
+	// than read as the user: the question a confirm action asks exists for
+	// exactly the calls that would slip through here otherwise.
+	owner := ""
+	if s.localCall(c) {
+		from, err := s.assistantCaller(c)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		owner = from
+	}
+	opts := docker.ComposeOptions{
 		Dir:    stack.Dir,
 		Root:   p.Path,
 		Label:  p.Name,
 		Action: action,
-	})
+		Owner:  owner,
+	}
+	answer := gin.H{"ok": true, "action": action.Label, "stack": stack.Label, "project": p.Name}
+	if owner != "" && action.Confirm && s.assistantAsksForCompose() {
+		id, err := s.docker.ParkCompose(opts)
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		run, _ := s.docker.ComposeRunByID(id)
+		bridge, err := s.askComposeApproval(owner, p, action, run)
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		if bridge != nil {
+			go s.awaitComposeApproval(bridge, id)
+		}
+		s.bus.Publish(eventbus.Event{Type: "docker"})
+		answer["run"], answer["url"], answer["pending"] = id, dockerRunPath(p.Name, id), true
+		c.JSON(http.StatusOK, answer)
+		return
+	}
+	id, err := s.docker.RunCompose(opts)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
 	s.bus.Publish(eventbus.Event{Type: "docker"})
-	c.JSON(http.StatusOK, gin.H{"ok": true, "run": id, "url": dockerRunPath(p.Name, id)})
+	answer["run"], answer["url"] = id, dockerRunPath(p.Name, id)
+	c.JSON(http.StatusOK, answer)
+}
+
+// handleProjectDocker answers one project's docker picture as JSON for the
+// assistant's `compose-list`: the stacks it can drive with where their newest
+// run stands, the configured commands, and the containers. It is the editor's
+// view without the editor: off the editor group, so a reading by an assistant
+// never counts as somebody working in the project.
+func (s *Server) handleProjectDocker(c *gin.Context) {
+	p, err := s.projects.FindByName(c.Param("name"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Unknown project."})
+		return
+	}
+	state := s.docker.State()
+	stacks := make([]gin.H, 0)
+	containers := make([]gin.H, 0)
+	if state.Available {
+		for _, stack := range state.StacksForDir(p.Path) {
+			entry := gin.H{
+				"label":   stack.Label,
+				"dir":     stack.Dir,
+				"running": stack.Running,
+				"total":   stack.Total,
+				"busy":    s.docker.ComposeBusy(stack.Dir),
+			}
+			if runs := s.docker.ComposeRunsForDir(stack.Dir); len(runs) > 0 {
+				entry["run"] = composeRunJSON(p.Name, runs[0])
+			}
+			stacks = append(stacks, entry)
+		}
+		for _, container := range state.ForDir(p.Path) {
+			containers = append(containers, gin.H{
+				"name":    container.DisplayName(),
+				"running": container.Running(),
+				"unwell":  container.Unwell(),
+			})
+		}
+	}
+	actions := make([]gin.H, 0)
+	for _, action := range s.composeActions() {
+		actions = append(actions, gin.H{
+			"id":      action.ID,
+			"label":   action.Label,
+			"command": action.Command,
+			"timeout": action.Duration().String(),
+			"confirm": action.Confirm,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"project":    p.Name,
+		"available":  state.Available,
+		"cli":        s.docker.CLI(),
+		"stacks":     stacks,
+		"containers": containers,
+		"actions":    actions,
+	})
+}
+
+// composeRunJSON is one run the way the JSON readings say it, the run page's
+// poll and the assistant's `compose-show` alike, so both read the same facts.
+func composeRunJSON(project string, run docker.RunView) gin.H {
+	entry := gin.H{
+		"id":        run.ID,
+		"action":    run.Action,
+		"command":   run.Command,
+		"status":    render.DockerRunStatus(run),
+		"running":   run.Running,
+		"pending":   run.Pending,
+		"declined":  run.Declined,
+		"failed":    run.Failure != "",
+		"failure":   run.Failure,
+		"exited":    run.Exited,
+		"exit":      run.Exit,
+		"cancelled": run.Cancelled,
+		"owner":     run.Owner,
+		"startedAt": run.StartedAt,
+		"url":       dockerRunPath(project, run.ID),
+	}
+	if !run.EndedAt.IsZero() {
+		entry["endedAt"] = run.EndedAt
+	}
+	return entry
 }
 
 // handleDockerActionsRestore is the one way back to the default commands, the
@@ -256,7 +383,13 @@ func (s *Server) handleDockerCompose(c *gin.Context) {
 // would leave the setting reading as answered, and this install would then keep
 // today's list forever, which is exactly what the absent state exists to
 // prevent: a default nobody stored is a default a later version may improve.
+//
+// A local call is refused like the settings save it stands beside.
 func (s *Server) handleDockerActionsRestore(c *gin.Context) {
+	if s.localCall(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": composeActionsLocalRefusal})
+		return
+	}
 	s.settings.Delete(docker.ActionsSettingKey)
 	s.bus.Publish(eventbus.Event{Type: "docker"})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -314,10 +447,7 @@ func (s *Server) handleDockerRun(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", "Unknown compose run.")
 		return
 	}
-	// Being here is seeing a run's outcome, so the project's compose
-	// notification reads itself, like opening an attach page does for a
-	// terminal.
-	s.notifier.MarkTargetRead(notify.DockerTarget(p.Name))
+	s.readComposeNews(p.Name, run.ID)
 	c.HTML(http.StatusOK, "docker_run.gohtml", render.DockerRunData{
 		Page:      s.page(c, run.Action, "projects"),
 		Project:   p.Name,
@@ -330,33 +460,77 @@ func (s *Server) handleDockerRun(c *gin.Context) {
 	})
 }
 
+// readComposeNews marks the project's compose notification read when the run
+// being looked at is the one it is about: being there is seeing that outcome,
+// like opening an attach page is for a terminal. The target speaks for the
+// newest finished run without an owner (LastComposeRun), so reading an
+// assistant's run, or an older run of the user's, leaves news about another
+// run standing.
+func (s *Server) readComposeNews(project, runID string) {
+	if last, ok := s.docker.LastComposeRun(project); ok && last.ID == runID {
+		s.notifier.MarkTargetRead(notify.DockerTarget(project))
+	}
+}
+
 // handleDockerRunOutput answers what the page repaints from while a run goes.
 func (s *Server) handleDockerRunOutput(c *gin.Context) {
-	_, run, ok := s.composeRun(c)
+	p, run, ok := s.composeRun(c)
 	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"running": run.Running,
-		"status":  render.DockerRunStatus(run),
-		"failed":  run.Failure != "",
-		"output":  s.docker.ComposeRunOutput(run.ID),
-	})
+	entry := composeRunJSON(p.Name, run)
+	entry["stack"] = stackLabel(p.Path, run.Dir)
+	entry["output"] = s.docker.ComposeRunOutput(run.ID)
+	c.JSON(http.StatusOK, entry)
 }
 
 // handleDockerRunStop calls a running command off. The kill goes at the hold
 // process, never at this server: the run is detached and the server that
 // started it may be long gone.
+//
+// The user stops any run. An assistant stops only its own, the line a job
+// draws for releasing: calling off somebody else's run, the user's or another
+// assistant's, would also decline a question that was never its to answer.
 func (s *Server) handleDockerRunStop(c *gin.Context) {
 	_, run, ok := s.composeRun(c)
 	if !ok {
 		return
 	}
-	if err := s.docker.CancelCompose(run.ID); err != nil {
+	local := s.localCall(c)
+	if local {
+		from, err := s.assistantCaller(c)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		if from != run.Owner {
+			c.JSON(http.StatusForbidden, gin.H{"error": s.composeStopRefusal(run.Owner)})
+			return
+		}
+	}
+	// A cancel from the browser is the user's own click: a parked run it
+	// declines still reports into its owner's thread, but rings nobody.
+	if err := s.docker.CancelCompose(run.ID, !local); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
+	// A parked run has a question standing for it; the run is over, so the
+	// question goes with it instead of waiting out its bound on every page.
+	if run.Pending && s.askpassBroker != nil {
+		if bridge := s.askpassBroker.Find(askpass.ApprovalKey(run.ID)); bridge != nil {
+			bridge.End()
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// composeStopRefusal is what an assistant reads when it tries to stop a run
+// that is not its own, naming whose it is.
+func (s *Server) composeStopRefusal(owner string) string {
+	if owner == "" {
+		return "That run belongs to the user. Only the user stops it."
+	}
+	return "That run belongs to " + s.assistantName(owner) + ". Only the user or that assistant stops it."
 }
 
 // stackLabel is what a stack directory is called inside its project, empty for
@@ -375,16 +549,41 @@ func stackLabel(root, dir string) string {
 // a run that outlived it ends, and the user is owed the word either way. The
 // busy flag moved and a failed run raises no container event at all, so the
 // surfaces are told directly.
+//
+// Who hears the word is decided per run and never per project: a run an
+// assistant started reports into that assistant's thread and rings nobody,
+// while a run the user started on the same project still writes the
+// project's notification.
+//
+// An owner that is gone by the time its run ends, a delete racing the end or
+// a run registered right after its owner was deleted, has no thread to take
+// the report. That run is handed to the user here, where the end lands, and
+// rings the project like a run the user started: Disown at the delete closes
+// the common case, this closes every window around it. A declined run is
+// left out, it never started and nobody is waiting for its word, and so is
+// its report: the delete declines every parked run of the assistant it just
+// removed, and each of them would only log that its thread is gone.
 func (s *Server) composeDone(run docker.ComposeRun, err error, output string) {
 	if err != nil {
 		log.Printf("docker %q in %s: %v: %s", run.Action, run.Dir, err, output)
 	}
-	// A quiet run only speaks when it failed: the project deletion runs its
-	// compose down as a step of itself, and the row disappearing is the word.
-	// The target is the project, so two projects finishing at the same moment
-	// are two pieces of news, while one project's down and up seconds apart
-	// still collapse into one.
-	if err != nil || !run.Quiet {
+	if run.Owner != "" && run.Declined && s.assistants != nil {
+		if _, gone := s.assistants.Get(run.Owner); gone != nil {
+			return
+		}
+	}
+	if run.Owner != "" {
+		recorded := s.assistants != nil && s.assistants.RecordCompose(s.composeReport(run, err, output)) != ""
+		if !recorded && !run.Declined && s.docker.DisownRun(run.ID) {
+			run.Owner = ""
+		}
+	}
+	if run.Owner == "" && (err != nil || !run.Quiet) {
+		// A quiet run only speaks when it failed: the project deletion runs
+		// its compose down as a step of itself, and the row disappearing is
+		// the word. The target is the project, so two projects finishing at
+		// the same moment are two pieces of news, while one project's down
+		// and up seconds apart still collapse into one.
 		s.notifier.Add(notify.DockerTarget(run.Label))
 	}
 	s.bus.Publish(eventbus.Event{Type: "docker"})

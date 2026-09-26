@@ -1094,6 +1094,27 @@ test. Update this file when a convention changes.
   and reports nothing, its answer may leave before the purge runs and it
   cascades into worktree projects, so one number in it would be short as often
   as right.
+- **An assistant runs compose commands through the click's route.**
+  `compose-list`, `compose-start`, `compose-show` and `compose-stop` hit the
+  project's docker routes and need a live `--as` (`assistantCaller`). An owned
+  run reports into its thread instead of `docker:<project>` (`RecordCompose`,
+  kinds `done`, `failed`, `declined`, umbrella `ended`), and an end the user
+  caused rings nobody (`ComposeRun.ByUser`).
+- **A confirm action of an assistant waits for the user's approval.**
+  `ParkCompose` starts nothing and refuses a busy stack, a second park per
+  owner and directory, and more than `MaxPendingPerOwner`. The question is
+  askpass `KindApproval` with news `approval:<run>`, and one switch covers
+  every assistant (`approvalKinds`, key `assistant-approval-<kind>`).
+- **Every move out of `Pending` holds `docker.Service.pending`**, direct
+  starts and a run's end included, so racing moves end in one outcome.
+  `Launching` is written before `detach.Start` and settled in
+  `recoverLaunch`, so a restart never declines a started run. A deleted
+  assistant or project declines its parked runs (`DeclinePending`) and hands
+  its running runs to the user (`Disown`, `DisownRun`).
+- **Who may do what.** The user stops any run, an assistant only its own
+  (`composeStopRefusal`). The local socket is refused on approval answers,
+  `/settings/assistant/approvals`, `/settings/docker`,
+  `/docker/actions/restore`, `/settings/backup` and `/settings/backup/merge`.
 - **A turn's answer is blocks, and the seam between two of them is read, never
   guessed.** An answer that works with tools arrives in several text blocks, and
   every runner hands them over as one stream of deltas the turn appends as it
@@ -2912,8 +2933,8 @@ test. Update this file when a convention changes.
   name the wrong one. A failed run resolves as urgent news
   (`TargetInfo.Urgent`), which the notify dedupe window never swallows as a
   follow-up of a fresh success, and opening a run's output page marks the
-  project's docker target read (`handleDockerRun`), the way an attach page
-  reads a terminal's news.
+  project's docker target read (`readComposeNews`), only for the run
+  `LastComposeRun` names.
   **What those runs are is configuration, not code.** The compose buttons are a
   list in the settings store (`docker-compose-actions`, one JSON value,
   `internal/docker/actions.go`): icon, label, command line, timeout, and
@@ -4121,8 +4142,9 @@ sentence per kind, and `Notification.Detail` is what it happened to. A coder,
 a shell, a backup, a git question, a compose run and an assistant all read
 alike, so nobody has to work out which pattern a line follows: "Coder has
 news.", "Command finished.", "Backup ready.", "Git asks a question.",
-"Compose finished.", and for an assistant `Job done.`, `Job blocked.`, `Job
-expired.`, `Trigger fired.`, `Trigger broke off.`, `Answer ready.` or `Answer
+"Compose finished.", "Assistant asks approval.", and for an assistant `Job done.`, `Job blocked.`, `Job
+expired.`, `Compose done.`, `Compose failed.`, `Compose declined.`,
+`Trigger fired.`, `Trigger broke off.`, `Answer ready.` or `Answer
 broke off.`. Nothing is composed out of user text up there and nothing is
 ever cut, so `newsTitleRunes` is no budget the code spends, it is the bound
 the wording is written to and the test pins: 32 runes, the narrowest of the

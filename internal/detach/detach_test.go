@@ -2,6 +2,7 @@ package detach
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -85,7 +86,12 @@ func TestAnAdoptedRunIsAliveWhileItHoldsTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	adopted := Adopt(p.PID(), lock)
+	// A server that died before it wrote the process number down finds it in
+	// the lock file.
+	if got := LockPID(lock); got != p.PID() {
+		t.Fatalf("the lock file names process %d, the run is %d", got, p.PID())
+	}
+	adopted := Adopt(LockPID(lock), lock)
 	if !adopted.Alive() {
 		t.Fatal("a running run does not read as alive")
 	}
@@ -100,6 +106,20 @@ func TestAnAdoptedRunIsAliveWhileItHoldsTheLock(t *testing.T) {
 		t.Fatal("a killed run left a result behind")
 	}
 	p.Wait()
+}
+
+// A lock file nothing was started over names no process.
+func TestLockPIDOfNothingStartedIsZero(t *testing.T) {
+	_, lock, _ := files(t)
+	if got := LockPID(lock); got != 0 {
+		t.Fatalf("a missing lock file names process %d", got)
+	}
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := LockPID(lock); got != 0 {
+		t.Fatalf("an empty lock file names process %d", got)
+	}
 }
 
 // The timeout belongs to the hold process, not to the server that asked for the
@@ -164,25 +184,77 @@ func TestStartRefusesWhatItCannotRun(t *testing.T) {
 }
 
 func TestParseHoldArgs(t *testing.T) {
-	result, timeout, argv, err := parseHoldArgs([]string{"--result", "/tmp/r", "--timeout", "5m", "--", "docker", "compose", "--timeout", "1"})
+	opts, err := parseHoldArgs([]string{"--lock-fd", "3", "--result", "/tmp/r", "--timeout", "5m", "--", "docker", "compose", "--timeout", "1"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if result != "/tmp/r" || timeout != 5*time.Minute {
-		t.Fatalf("parse answered %q, %s", result, timeout)
+	if opts.result != "/tmp/r" || opts.timeout != 5*time.Minute || opts.lockFD != 3 {
+		t.Fatalf("parse answered %+v", opts)
 	}
 	// Everything behind the separator is the program's, including arguments
 	// that read like ours.
-	if strings.Join(argv, " ") != "docker compose --timeout 1" {
-		t.Fatalf("argv answered %v", argv)
+	if strings.Join(opts.argv, " ") != "docker compose --timeout 1" {
+		t.Fatalf("argv answered %v", opts.argv)
 	}
-	if _, _, argv, err = parseHoldArgs([]string{"echo", "hi"}); err != nil || strings.Join(argv, " ") != "echo hi" {
-		t.Fatalf("a bare command answered %v, %v", argv, err)
+	if opts, err = parseHoldArgs([]string{"echo", "hi"}); err != nil || strings.Join(opts.argv, " ") != "echo hi" || opts.lockFD != 0 {
+		t.Fatalf("a bare command answered %+v, %v", opts, err)
 	}
-	if _, _, _, err = parseHoldArgs(nil); err == nil {
+	if _, err = parseHoldArgs(nil); err == nil {
 		t.Fatal("nothing to run was accepted")
 	}
-	if _, _, _, err = parseHoldArgs([]string{"--timeout", "soon", "--", "echo"}); err == nil {
+	if _, err = parseHoldArgs([]string{"--timeout", "soon", "--", "echo"}); err == nil {
 		t.Fatal("an unreadable timeout was accepted")
 	}
+	if _, err = parseHoldArgs([]string{"--lock-fd", "1", "--", "echo"}); err == nil {
+		t.Fatal("standard output was accepted as the lock")
+	}
+}
+
+// A server that dies between starting the hold process and writing its number
+// into the lock leaves a held lock without a number, and a cancel would have
+// nothing to signal. The hold process writes the number itself, so the lock
+// names it anyway and the run can still be killed.
+func TestTheHoldProcessNamesItselfInTheLock(t *testing.T) {
+	out, lock, result := files(t)
+	opts := Options{Command: []string{"sleep", "30"}, Out: out, Lock: lock, Result: result}
+	self, err := selfExecutable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := takeLock(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outFile, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer outFile.Close()
+	// Start without its own write of the number: the server died right there.
+	cmd := exec.Command(self, holdArgv(opts)...)
+	cmd.Stdout, cmd.Stderr = outFile, outFile
+	cmd.ExtraFiles = []*os.File{file}
+	if err := detach(cmd); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
+	waitFor(t, "the hold process to name itself", func() bool { return LockPID(lock) == cmd.Process.Pid })
+	if !Alive(0, lock) {
+		t.Fatal("the run does not hold its lock")
+	}
+	Kill(LockPID(lock), lock)
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run named by its lock survived the kill")
+	}
+	waitFor(t, "the lock to be released", func() bool { return !Alive(0, lock) })
 }

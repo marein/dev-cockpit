@@ -356,7 +356,7 @@ func TestACancelledRunSaysSo(t *testing.T) {
 	if view, ok := service.ComposeRunByID(id); !ok || !view.Running {
 		t.Fatalf("the fresh run reads as %+v, %v", view, ok)
 	}
-	if err := service.CancelCompose(id); err != nil {
+	if err := service.CancelCompose(id, true); err != nil {
 		t.Fatal(err)
 	}
 	got := waitDone(t, done)
@@ -367,7 +367,7 @@ func TestACancelledRunSaysSo(t *testing.T) {
 	if !ok || view.Running || !view.Cancelled {
 		t.Fatalf("the cancelled run reads as %+v, %v", view, ok)
 	}
-	if err := service.CancelCompose(id); err == nil {
+	if err := service.CancelCompose(id, true); err == nil {
 		t.Fatal("a run that is over was cancelled again")
 	}
 	if runs := service.ComposeRunsForDir(dir); len(runs) != 1 || runs[0].ID != id {

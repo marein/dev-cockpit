@@ -28,7 +28,7 @@ import (
 
 // keptRuns is how many finished runs the register holds on to. The output of
 // the last handful is what a person looks at; older ones are disk.
-const keptRuns = 20
+const keptRuns = 50
 
 // ComposeRecord is one compose run as it exists outside this process.
 type ComposeRecord struct {
@@ -48,6 +48,21 @@ type ComposeRecord struct {
 	Timeout time.Duration `json:"timeout"`
 	// Quiet keeps a run that went through silent, see ComposeOptions.
 	Quiet bool `json:"quiet,omitempty"`
+	// Owner is the assistant that asked for the run, empty for a person, see
+	// ComposeOptions. It is written down here because the word at the end
+	// goes to that assistant's thread, and the run may end in another process
+	// than the one that took the request.
+	Owner string `json:"owner,omitempty"`
+	// Pending marks a run parked for the user's approval: registered, its
+	// command resolved, nothing started. It has no process and holds no
+	// directory; ApproveCompose starts it and DeclineCompose ends it.
+	Pending bool `json:"pending,omitempty"`
+	// Launching marks a run whose start was decided and may be under way: it
+	// is written before the process is started and taken off, together with
+	// Pending, once the process is written down. A process that finds it at
+	// its start asks the run's lock and result files whether a process ever
+	// existed, instead of reading a run an approval started as still parked.
+	Launching bool `json:"launching,omitempty"`
 	// PID is the hold process. Whether the run is still going is decided by
 	// its lock file alone.
 	PID       int       `json:"pid"`
@@ -55,6 +70,9 @@ type ComposeRecord struct {
 	// Cancelled marks a run somebody called off, so the end reads as that and
 	// not as a run that ended without a result.
 	Cancelled bool `json:"cancelled,omitempty"`
+	// CancelledByUser says that cancel was the user's own click, so its end
+	// rings nobody, see ComposeRun.ByUser.
+	CancelledByUser bool `json:"cancelledByUser,omitempty"`
 	// Finished and everything below it are written once, when the run is over
 	// and has been reported. An entry carrying it is never taken up again.
 	Finished bool      `json:"finished,omitempty"`
@@ -64,6 +82,10 @@ type ComposeRecord struct {
 	Exited  bool   `json:"exited,omitempty"`
 	Exit    int    `json:"exit,omitempty"`
 	Failure string `json:"failure,omitempty"`
+	// Declined marks a parked run that never started: denied, its approval
+	// unanswered past the bound, or lost with the process that held the
+	// question. Failure says which.
+	Declined bool `json:"declined,omitempty"`
 }
 
 // runStore persists the register. One file, read through on every call like

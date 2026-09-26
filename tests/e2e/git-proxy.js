@@ -209,7 +209,7 @@ L.runFeature("GIT PROXY", async ({ page, ctx, run }) => {
       assert(seen.length === 1, `want one entry with no page open, got ${seen.length}`);
       assert(!seen[0].read, "a question nobody has seen must be unread");
       assert(/Git asks a question/.test(seen[0].title), `unexpected title: ${seen[0].title}`);
-      assert(new RegExp(`"push".*${PROJECT}`).test(seen[0].detail || ""), `unexpected detail: ${seen[0].detail}`);
+      assert(seen[0].detail === "push", `unexpected detail: ${seen[0].detail}`);
 
       // Now somebody opens the app, on the page furthest from the action.
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });

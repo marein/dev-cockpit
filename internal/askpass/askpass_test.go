@@ -139,7 +139,7 @@ func TestAskIsDeniedWhenTheActionEndsWhileTheQuestionIsParked(t *testing.T) {
 	// lock: the maps are cleared and pending was read as nil.
 	a.broker.mu.Lock()
 	delete(a.broker.byToken, a.token)
-	delete(a.broker.byProject, a.project)
+	delete(a.broker.byKey, a.key)
 	a.broker.mu.Unlock()
 	a.mu.Lock()
 	a.pending = nil

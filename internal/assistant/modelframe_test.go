@@ -59,3 +59,23 @@ func TestSetModelsPublishesTheFreshPicksOnTheAssistantsOwnStream(t *testing.T) {
 		t.Fatalf("want the answered instance to carry the same reading, got %+v and %+v", first.ModelPicks(), second.ModelPicks())
 	}
 }
+
+// A setting is no activity and a save that moves nothing is no news: a models
+// save that moves no pick writes, stamps and announces nothing.
+func TestASettingThatMovesNothingAnnouncesNothing(t *testing.T) {
+	svc, store, _ := newTestService(t, &fakeRunner{})
+	a, _ := svc.Create("claude")
+	changes := 0
+	svc.SetHooks(func() { changes++ }, nil)
+	before, _ := store.Load(a.ID)
+
+	if _, err := svc.SetModels(a.ID, ModelChoice{Chat: "", ChatSet: true}); err != nil || changes != 0 {
+		t.Fatalf("an unchanged pick announced %d changes: %v", changes, err)
+	}
+	if stored, _ := store.Load(a.ID); !stored.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatal("an unchanged pick moved UpdatedAt")
+	}
+	if _, err := svc.SetModels(a.ID, ModelChoice{Chat: "opus", ChatSet: true}); err != nil || changes != 1 {
+		t.Fatalf("a moved pick announced %d changes: %v", changes, err)
+	}
+}

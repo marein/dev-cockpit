@@ -42,6 +42,15 @@ type Service struct {
 	kick chan struct{}
 
 	compose composeState
+	// pending serializes every move into and out of a parked run's Pending:
+	// the park with its per owner bounds, the approval with its launch, a
+	// decline, a cancel and the restart's decline. Each of them reads the
+	// entry fresh under it, so exactly one of two racing moves finds the run
+	// still parked and the other reads it as what the first one made of it.
+	// Every launch, a direct start included, and the end of a run stand
+	// under it too, so a cancel never lands between an entry and its process
+	// and a handed over owner never between the end's read and its write.
+	pending sync.Mutex
 	// runs is the register of compose runs, the part of this service that
 	// outlives the process.
 	runs    *runStore
@@ -211,6 +220,11 @@ func (s *Service) relist(ctx context.Context, client *Client, host string) bool 
 	s.setState(State{Available: true, Host: host, Containers: containers})
 	return true
 }
+
+// SetStateForTest writes the cached picture the way a watcher round does. It
+// is the seam a test in another package stands a daemon in with, and the name
+// says so: production code reads the state and never writes it from outside.
+func (s *Service) SetStateForTest(next State) { s.setState(next) }
 
 func (s *Service) setState(next State) {
 	s.mu.Lock()

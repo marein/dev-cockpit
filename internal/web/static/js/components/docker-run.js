@@ -39,7 +39,7 @@ class DockerRun extends HTMLElement {
       const data = await response.json();
       this.failures = 0;
       this.apply(data);
-      if (data.running) this.schedule();
+      if (data.running || data.pending) this.schedule();
     } catch {
       if (!this.ac) return;
       this.failures += 1;
@@ -52,9 +52,9 @@ class DockerRun extends HTMLElement {
     if (this.output && this.output.textContent !== data.output) this.output.textContent = data.output;
     if (this.status) {
       this.status.textContent = data.status;
-      this.status.className = "badge " + (data.running ? "bg-blue-lt" : data.failed ? "bg-red-lt" : "bg-green-lt");
+      this.status.className = "badge " + (data.pending ? "bg-yellow-lt" : data.running ? "bg-blue-lt" : data.failed ? "bg-red-lt" : "bg-green-lt");
     }
-    if (this.stopButton) this.stopButton.hidden = !data.running;
+    if (this.stopButton) this.stopButton.hidden = !(data.running || data.pending);
     if (stick) this.toBottom();
   }
 

@@ -54,8 +54,21 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 				"Every read holds the quotes against the files", "follows it to the new line on its own"}},
 		{"line-comment-remove", []string{"path", "outdated"},
 			[]string{"`--outdated` combines with `--path`", "* stays inside a path segment and ** crosses them"}},
+		// The instructions carry the rules of a compose run; what a stack is,
+		// what a parked run does, how long it waits, where the question is
+		// turned off and how the output is capped is read here.
+		{"compose-list", nil, []string{"one per directory with a compose file", "the id `compose-start` takes", "whether it asks the user first", "Reads only, changes nothing"}},
+		{"compose-start", []string{"stack"}, []string{"prints the run id at once and never waits", "do not wait, sleep or poll `compose-show`", "Every command starts this way, whatever its id", "the user is notified by it", "`--stack` names the stack by its label",
+			"waits for the user's approval", "ends declined when they deny it or let half an hour pass", "restarts while it waits", "Do not start it again while it waits",
+			"off for every assistant", "Compose actions approval", "Settings › Assistants › Approvals; you cannot",
+			"compose-done", "compose-failed", "compose-declined", "compose-ended", "refuses a second one"}},
+		{"compose-show", []string{"lines"}, []string{"capped at the tail", "`--lines` sets how many", "0 prints everything", "Reads only, changes nothing"}},
+		{"compose-stop", nil, []string{"ends as cancelled", "does not wait for that end", "waits for the user's approval is declined", "already over is refused"}},
 		{"trigger-new", []string{"name", "terminal", "all", "cron", "tz", "task", "once", "until", "batch", "model"},
 			[]string{"session of its own", "Answer NOTHING on the first line", "job-done", "coder-news", "cron",
+				// A compose run's end is an event like a job's, so the help
+				// names its kinds where it names the others.
+				"compose-done", "compose-ended",
 				// The bounds are the flag table's, so the prose says only what
 				// no flag line does: that a schedule ignores a window.
 				"end the trigger after its first turn", "expiry as a span from now", "it stands until removed",

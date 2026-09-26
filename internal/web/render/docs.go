@@ -212,6 +212,12 @@ func DocsTopics() []DocsTopic {
 					Desc:     `A trigger hangs the assistant onto an event: a job closing done, blocked or expired, a coder ending its turn or asking, a cron schedule. Job closed covers all three job ends and Coder signals both coder signals. The reaction runs on its own, never in the conversation, and its answer is pushed into the thread marked <i class="ti ti-bolt align-text-bottom" aria-hidden="true"></i> and notified, unless its first line is NOTHING. New trigger <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> over the Triggers tab makes one, with an optional name the row and the notification then read by; Open coder, Change and Remove stand under every row, and Change moves everything but the event. A trigger may run on a model of its own, picked in its form; empty means the assistant's Triggers pick, else its chat model. A trigger stands until you remove it unless you give it an expiry, any number of minutes, hours or days, or make it a one shot, and one that names several terminals fires on any of them or waits for all of them. A schedule carries the time zone its wall clock times are read in, which stands beside its crontab fields on the row and is what the next tick is shown in; picking another one in the form is also what the next schedule then starts on. Around a daylight saving changeover a schedule follows the wall clock: a time the spring change skips falls out that day, an hour the autumn change repeats fires twice.`,
 				},
 				{
+					Title:    "Compose commands",
+					Tag:      "Docker",
+					TagClass: "bg-blue-lt",
+					Desc:     `An assistant runs a project's compose commands in the background, and each end lands as a grey note in its thread that rings you: done, failed or declined, with exit code, output tail and a link to the run. A command marked to ask first waits for your <em>Approve</em>; <em>Deny</em>, half an hour without an answer or a restart decline it, and your own Deny or Cancel rings nobody. <em>Approve and don't ask again</em>, or the switch under Settings &rsaquo; Assistants &rsaquo; Approvals, turns the question off for every assistant.`,
+				},
+				{
 					Title:    "Steer and release where the coder is",
 					Tag:      "Ownership",
 					TagClass: "bg-blue-lt",
@@ -498,7 +504,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Compose actions",
-					Desc:  `A project with a compose file carries a compose button <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> next to its row actions, also while nothing runs yet. Its menu opens every address the project's containers answer on, follows the whole stack in one <em>Logs</em> terminal, and lists one entry per configured command. Each runs in the background, the chips following live and a notification telling when it finished or failed, and it keeps going when the cockpit restarts.`,
+					Desc:  `A project with a compose file carries a compose button <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> next to its row actions, also while nothing runs yet. Its menu opens every address the project's containers answer on, follows the whole stack in one <em>Logs</em> terminal, and lists one entry per configured command. Each runs in the background, the chips following live and a notification telling when it finished or failed, and it keeps going when the cockpit restarts. An assistant's run reports into its thread instead, see Assistants.`,
 				},
 				{
 					Title: "What a run wrote",
@@ -548,6 +554,10 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "A git question",
 					Desc:  `A <code>dev-cockpit git</code> command waiting for a passphrase is news like any other, one entry per place, so it reaches you with no cockpit page open, phone included. Opening any page shows the dialog, and the entry marks itself read once the dialog stands in front of you. The editor's own git actions raise none of this, you started them on a page that already shows the dialog.`,
+				},
+				{
+					Title: "An approval",
+					Desc:  `A compose command an assistant waits to run is news, one entry per run, leading to the run's page. It marks itself read once you decided or the question ran out.`,
 				},
 			},
 		},

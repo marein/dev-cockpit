@@ -225,6 +225,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/assistant/voice", s.handleSettingsVoiceSave)
 	auth.GET("/settings/assistant/jobs", s.handleSettingsAssistantJobs)
 	auth.POST("/settings/assistant/jobs", s.handleSettingsAssistantJobsSave)
+	auth.GET("/settings/assistant/approvals", s.handleSettingsAssistantApprovals)
+	auth.POST("/settings/assistant/approvals", s.handleSettingsAssistantApprovalsSave)
 	auth.GET("/settings/assistant/models", s.handleSettingsAssistantModels)
 	auth.POST("/settings/assistant/models", s.handleSettingsAssistantModelsSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
@@ -330,6 +332,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// and its reads must not count as somebody working in that project.
 	auth.GET("/projects/:name/branches", s.handleProjectBranches)
 	auth.POST("/projects/:name/fetch", s.handleProjectFetch)
+	auth.GET("/projects/:name/docker", s.handleProjectDocker)
 	auth.POST("/projects/:name/docker/compose", s.handleDockerCompose)
 	auth.POST("/projects/:name/docker/logs", s.handleDockerComposeLogs)
 	// A compose run outlives the request that started it, so its output is a

@@ -3107,6 +3107,11 @@ dc-notify-volume { display: block; max-width: 24rem; }
   white-space: pre-wrap;
 }
 .dc-toast-clickable { cursor: pointer; }
+.dc-prompt-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.dc-prompt-command { max-height: 12rem; }
 .dc-page-progress {
   z-index: 10000;
   top: 0;

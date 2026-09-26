@@ -31,10 +31,12 @@ func newTriggerNewCommand(opts *inspectOptions) *cobra.Command {
 			"the task must be self contained; its answer is pushed into your " +
 			"thread, marked as started without the user. Answer NOTHING on the first line when there " +
 			"is nothing to do or say, then nothing is pushed and nobody is notified. The events are " +
-			strings.Join(eventNames(), ", ") + ". Two of them stand over several kinds: job-closed takes every " +
-			"way a job ends, and coder-news every signal a coder sends, a turn that ended and a question " +
+			strings.Join(eventNames(), ", ") + ". Three of them stand over several kinds: job-closed takes every " +
+			"way a job ends, coder-news every signal a coder sends, a turn that ended and a question " +
 			"alike; there is no narrower coder event, and which of the two arrived stands in the event's " +
-			"headline. `--name` is optional, at most " + strconv.Itoa(assistant.MaxTriggerNameRunes) +
+			"headline; and compose-ended every way a compose command you started ends, done, failed or " +
+			"declined, the three narrow compose events taking one each. A compose event is about a run " +
+			"and takes no `--terminal`. `--name` is optional, at most " + strconv.Itoa(assistant.MaxTriggerNameRunes) +
 			" runes; with one the row and `trigger-list` read by it. `--terminal` narrows a job or coder event to one " +
 			"terminal and may be repeated for several, left out it is any job of yours or any " +
 			"coder; a job event only ever reaches the assistant whose job it is. With several " +

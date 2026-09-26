@@ -174,9 +174,20 @@ func (s *Server) backupImport(id string) (*render.BackupImport, error) {
 	return imp, nil
 }
 
+// backupLocalRefusal is what a local call reads when it tries to import or
+// merge a backup: what an import writes is the user's configuration.
+const backupLocalRefusal = "Restoring a backup is the user's to do, in the browser. Ask the user."
+
 // handleSettingsBackupSave dispatches the backup page forms on their hidden
-// form field, so every form POSTs to the path that renders it.
+// form field, so every form POSTs to the path that renders it. A local call is
+// refused like on the other settings saves: an import writes the settings the
+// approvals and the compose commands stand on, and restoring configuration is
+// the user's act.
 func (s *Server) handleSettingsBackupSave(c *gin.Context) {
+	if s.localCall(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": backupLocalRefusal})
+		return
+	}
 	switch c.PostForm("form") {
 	case "inspect":
 		s.backupInspect(c)
@@ -268,8 +279,13 @@ func (s *Server) handleSettingsBackupMerge(c *gin.Context) {
 }
 
 // handleSettingsBackupMergeSave dispatches the merge page forms on their
-// hidden form field, all POSTing to the path that renders the page.
+// hidden form field, all POSTing to the path that renders the page. A local
+// call is refused for the reason the import is.
 func (s *Server) handleSettingsBackupMergeSave(c *gin.Context) {
+	if s.localCall(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": backupLocalRefusal})
+		return
+	}
 	id := c.PostForm("id")
 	restart := s.backups.ReviewNeedsRestart(id)
 	switch c.PostForm("form") {

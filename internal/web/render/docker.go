@@ -33,6 +33,8 @@ func (d DockerRunData) Failed() bool { return d.Run.Failure != "" }
 // going, the exit code it ended with, or what went wrong instead.
 func DockerRunStatus(run docker.RunView) string {
 	switch {
+	case run.Pending:
+		return "Awaiting approval"
 	case run.Running:
 		return "Running"
 	case run.Failure != "":
