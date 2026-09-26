@@ -124,6 +124,16 @@ function linkUrl(link) {
   return `${prefix}//${host}${port}${link.path || ""}`;
 }
 
+const HOSTLESS = /^(?:([a-z][a-z0-9+.-]*):)?\/\/:(\d+)(\/.*)?$/i;
+
+export function resolveHostlessLinks(root) {
+  root?.querySelectorAll?.('a[href*="//:"]').forEach((anchor) => {
+    const found = HOSTLESS.exec(anchor.getAttribute("href"));
+    if (!found) return;
+    anchor.setAttribute("href", linkUrl({ scheme: found[1] || "", port: Number(found[2]), path: found[3] || "" }));
+  });
+}
+
 // linkAddress is the address as a person reads it, the same shape the settings
 // preview shows: a route is its host and path, a published port is the port.
 function linkAddress(link) {

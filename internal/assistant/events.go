@@ -513,7 +513,15 @@ func (r *Reactor) fire(owner, id string) {
 	}
 	if len(events) == 1 {
 		origin.Verdict = events[0].Kind
-		origin.Terminal = events[0].Target
+		// The target is a terminal for a job's and a coder's event and the
+		// run for a compose event, and only a terminal belongs in Terminal:
+		// every reader of it opens a coder.
+		if events[0].Source == EventJob || events[0].Source == EventCoder {
+			origin.Terminal = events[0].Target
+		}
+		if events[0].Source == EventCompose {
+			origin.Run = events[0].Target
+		}
 	}
 	// The trigger's own model rides along as it stands at this fire; one that
 	// names none follows the owner's chat model, read when the turn starts.

@@ -30,3 +30,6 @@ func Kill(int, string) {}
 // killOwnGroup is a no-op without process groups; a timeout then ends the
 // program alone.
 func killOwnGroup() {}
+
+// recordPID has no lock to write into without a unix system.
+func recordPID(int) {}

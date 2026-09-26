@@ -5,6 +5,13 @@
 // so any signed-in page shows the question, the typed answer travels back to
 // the helper, which prints it and lets the action continue.
 //
+// The same broker carries a second kind of question, an approval: the cockpit
+// itself asks whether an assistant may run a compose command that asks first,
+// and the answer is a decision, approve or deny, instead of a typed line. It
+// is keyed by the run and never by a project, so it collides with no git
+// question, and it rides the same standing list, the same dialog and the same
+// notification path, see BeginApproval.
+//
 // The rules the whole package is built around:
 //
 //   - only an action somebody started gets a bridge: nothing here is wired
@@ -159,19 +166,59 @@ func shellQuote(value string) string {
 // recognise: the same `git push` means different things in two checkouts of
 // one repository, and the caller picked its project through a working
 // directory nobody in the browser can see.
+//
+// Key is what an answer names to reach its question, the key its action was
+// begun under: the project for a git question, the run for an approval. Kind
+// tells the two apart, empty for a git question; an approval carries who asks
+// (Assistant), the stack the command runs on and the page that shows the run.
 type Question struct {
-	ID       string `json:"id"`
-	Project  string `json:"project"`
-	Action   string `json:"action"`
-	Prompt   string `json:"prompt"`
-	External bool   `json:"external,omitempty"`
-	Command  string `json:"command,omitempty"`
-	Dir      string `json:"dir,omitempty"`
+	ID        string `json:"id"`
+	Key       string `json:"key"`
+	Kind      string `json:"kind,omitempty"`
+	Project   string `json:"project"`
+	Action    string `json:"action"`
+	Prompt    string `json:"prompt"`
+	External  bool   `json:"external,omitempty"`
+	Command   string `json:"command,omitempty"`
+	Dir       string `json:"dir,omitempty"`
+	Assistant string `json:"assistant,omitempty"`
+	Stack     string `json:"stack,omitempty"`
+	URL       string `json:"url,omitempty"`
+}
+
+// KindApproval marks a question whose answer is a decision, see BeginApproval.
+const KindApproval = "approval"
+
+// approvalKeyPrefix is what a compose run's approval stands under in the
+// broker. It carries a slash and starts with a letter, so it is never a
+// project's name, which is one path segment, and never a proxied git call's
+// scope, which is an absolute path: the two kinds of question cannot meet.
+const approvalKeyPrefix = "approval/"
+
+// ApprovalKey is the broker key of one run's approval question.
+func ApprovalKey(run string) string { return approvalKeyPrefix + run }
+
+// ApprovalRun answers the run a key names, and whether it names one at all.
+func ApprovalRun(key string) (string, bool) {
+	return strings.CutPrefix(key, approvalKeyPrefix)
+}
+
+// Decision is what an approval question is answered with: whether the run may
+// go, and whether the person does not want to be asked again. Only an
+// approval carries Remember, and what it turns off is the asker's to decide.
+type Decision struct {
+	Approved bool
+	Remember bool
 }
 
 type answer struct {
-	text string
-	deny bool
+	text     string
+	deny     bool
+	decision Decision
+	// ended marks the denial the action's end sends: nobody decided, the
+	// question went with the action, which an approval reads apart from a
+	// denial somebody pressed.
+	ended bool
 }
 
 type question struct {
@@ -180,20 +227,23 @@ type question struct {
 	reply chan answer
 }
 
-// Action is one user-triggered git call's bridge. The helper side finds it by
-// the one-time token, the browser side by the project it runs in: the write
-// lock lets one write per working copy through, so a project never runs two.
+// Action is one user-triggered git call's bridge, or one approval's. The
+// helper side finds it by the one-time token, the browser side by its key,
+// the project a git call runs in: the write lock lets one write per working
+// copy through, so a project never runs two. An approval is keyed by its run.
 type Action struct {
-	broker  *Broker
-	token   string
-	project string
-	action  string
+	broker *Broker
+	token  string
+	key    string
+	action string
 	// external says the caller is not in the app, command is the proxied
 	// command line it was started with and dir the working copy it runs in;
 	// see Question.External for what hangs on the first of them.
 	external bool
 	command  string
 	dir      string
+	// approval is the question an approval action asks, nil for a git call.
+	approval *Question
 
 	mu        sync.Mutex
 	pending   *question
@@ -220,9 +270,9 @@ type Broker struct {
 	// and End takes the two locks the other way around.
 	seq atomic.Uint64
 
-	mu        sync.Mutex
-	byToken   map[string]*Action
-	byProject map[string]*Action
+	mu      sync.Mutex
+	byToken map[string]*Action
+	byKey   map[string]*Action
 }
 
 // New builds a broker for the state directory's socket path. Serve is the
@@ -231,7 +281,7 @@ func New(stateDir string) *Broker {
 	return &Broker{
 		socketPath: SocketPath(stateDir),
 		byToken:    map[string]*Action{},
-		byProject:  map[string]*Action{},
+		byKey:      map[string]*Action{},
 	}
 }
 
@@ -266,11 +316,29 @@ func (b *Broker) BeginCommand(project, action, command, dir string) *Action {
 	return b.begin(project, action, true, command, dir)
 }
 
-func (b *Broker) begin(project, action string, external bool, command, dir string) *Action {
+// BeginApproval opens an action whose one question is the cockpit's own: may
+// this run go. key is the caller's, one per run, and it is the caller's job
+// that it can never be a project's name or path, which keeps an approval and
+// a git question from ever meeting in the map. The question's project, action,
+// command and stack are what the dialog shows; it is external by nature, the
+// person it is for may have no page open, so it becomes news and rides the
+// push channels like a proxied git question. AskApproval parks it and waits.
+func (b *Broker) BeginApproval(key string, q Question) *Action {
+	a := b.begin(key, q.Action, true, q.Command, q.Dir)
+	if a == nil {
+		return nil
+	}
+	q.Kind = KindApproval
+	q.External = true
+	a.approval = &q
+	return a
+}
+
+func (b *Broker) begin(key, action string, external bool, command, dir string) *Action {
 	a := &Action{
 		broker:   b,
 		token:    randomToken(),
-		project:  project,
+		key:      key,
 		action:   action,
 		external: external,
 		command:  command,
@@ -281,19 +349,20 @@ func (b *Broker) begin(project, action string, external bool, command, dir strin
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if _, taken := b.byProject[project]; taken {
+	if _, taken := b.byKey[key]; taken {
 		return nil
 	}
 	b.byToken[a.token] = a
-	b.byProject[project] = a
+	b.byKey[key] = a
 	return a
 }
 
-// Find answers the browser's side of a project's running action.
-func (b *Broker) Find(project string) *Action {
+// Find answers the browser's side of a running action by its key: the
+// project of a git call, the run of an approval.
+func (b *Broker) Find(key string) *Action {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.byProject[project]
+	return b.byKey[key]
 }
 
 // Questions answers the standing questions of every running action, oldest
@@ -302,8 +371,8 @@ func (b *Broker) Find(project string) *Action {
 // projects and both hit a prompt.
 func (b *Broker) Questions() []Question {
 	b.mu.Lock()
-	actions := make([]*Action, 0, len(b.byProject))
-	for _, a := range b.byProject {
+	actions := make([]*Action, 0, len(b.byKey))
+	for _, a := range b.byKey {
 		actions = append(actions, a)
 	}
 	b.mu.Unlock()
@@ -330,6 +399,11 @@ func (b *Broker) Questions() []Question {
 // Name answers what the action is called, the word the dialog and the
 // notification carry as this server's truth ("push", "pull").
 func (a *Action) Name() string { return a.action }
+
+// Approval reports whether this action asks for a decision rather than a
+// typed answer, which is what the answer route reads to know which of the two
+// it was handed.
+func (a *Action) Approval() bool { return a.approval != nil }
 
 // Env is what the spawned git call carries so its helpers can call home.
 func (a *Action) Env() []string {
@@ -360,7 +434,7 @@ func (a *Action) Question() *Question {
 // helper fails, the action ends in git's words, and Cancelled remembers why.
 func (a *Action) Answer(id, text string, deny bool) bool {
 	a.mu.Lock()
-	if a.pending == nil || a.pending.ID != id {
+	if a.approval != nil || a.pending == nil || a.pending.ID != id {
 		a.mu.Unlock()
 		return false
 	}
@@ -377,6 +451,42 @@ func (a *Action) Answer(id, text string, deny bool) bool {
 	}
 	a.broker.notify()
 	return true
+}
+
+// Decide resolves a pending approval question. It is Answer for the second
+// kind: the decision travels instead of a line, and a denial is what a cancel
+// is to a git question.
+func (a *Action) Decide(id string, decision Decision) bool {
+	a.mu.Lock()
+	if a.approval == nil || a.pending == nil || a.pending.ID != id {
+		a.mu.Unlock()
+		return false
+	}
+	q := a.pending
+	a.pending = nil
+	if !decision.Approved {
+		a.cancelled = true
+	}
+	a.mu.Unlock()
+	q.reply <- answer{deny: !decision.Approved, decision: decision}
+	select {
+	case a.answered <- struct{}{}:
+	default:
+	}
+	a.broker.notify()
+	return true
+}
+
+// AskApproval parks the approval question and waits for its decision or the
+// action's end, the way a helper waits for its line. decided is false where
+// the action ended before anybody decided, which is what a timeout looks
+// like; a denial is a decision, with Approved false.
+func (a *Action) AskApproval() (decision Decision, decided bool) {
+	if a.approval == nil {
+		return Decision{}, false
+	}
+	got, ok := a.park(*a.approval)
+	return got.decision, ok && !got.ended
 }
 
 // Cancelled reports whether somebody pressed cancel on a question of this
@@ -396,14 +506,14 @@ func (a *Action) End() {
 	a.ended.Do(func() {
 		a.broker.mu.Lock()
 		delete(a.broker.byToken, a.token)
-		delete(a.broker.byProject, a.project)
+		delete(a.broker.byKey, a.key)
 		a.broker.mu.Unlock()
 		a.mu.Lock()
 		pending := a.pending
 		a.pending = nil
 		a.mu.Unlock()
 		if pending != nil {
-			pending.reply <- answer{deny: true}
+			pending.reply <- answer{deny: true, ended: true}
 		}
 		close(a.done)
 		// Ending took the standing question along, so every open dialog has to
@@ -418,33 +528,45 @@ func (a *Action) End() {
 // ask is the helper's side: park the question and wait for its answer or the
 // action's end. One question at a time per action, the way ssh asks.
 func (a *Action) ask(prompt string) (string, bool) {
-	q := &question{
-		Question: Question{
-			ID:       randomToken(),
-			Project:  a.project,
-			Action:   a.action,
-			Prompt:   prompt,
-			External: a.external,
-			Command:  a.command,
-			Dir:      a.dir,
-		},
-		seq:   a.broker.seq.Add(1),
-		reply: make(chan answer, 1),
+	got, ok := a.park(Question{
+		Project:  a.key,
+		Action:   a.action,
+		Prompt:   prompt,
+		External: a.external,
+		Command:  a.command,
+		Dir:      a.dir,
+	})
+	if !ok || got.deny {
+		return "", false
+	}
+	return got.text, true
+}
+
+// park puts one question up and waits for what comes back: the answer, or
+// the end of the action, which counts as a denial. It is the one waiting for
+// both kinds of question; the id, the key and the order are written here.
+func (a *Action) park(q Question) (answer, bool) {
+	q.ID = randomToken()
+	q.Key = a.key
+	parked := &question{
+		Question: q,
+		seq:      a.broker.seq.Add(1),
+		reply:    make(chan answer, 1),
 	}
 	a.mu.Lock()
 	if a.pending != nil {
 		// A second asker while one question stands would interleave two
 		// dialogs; deny it, the action is already in trouble.
 		a.mu.Unlock()
-		return "", false
+		return answer{}, false
 	}
 	select {
 	case <-a.done:
 		a.mu.Unlock()
-		return "", false
+		return answer{}, false
 	default:
 	}
-	a.pending = q
+	a.pending = parked
 	a.mu.Unlock()
 	select {
 	case a.asked <- struct{}{}:
@@ -457,13 +579,10 @@ func (a *Action) ask(prompt string) (string, bool) {
 	// it and waiting on the reply alone would block until the helper's own
 	// budget runs out, minutes after the action it belonged to.
 	select {
-	case got := <-q.reply:
-		if got.deny {
-			return "", false
-		}
-		return got.text, true
+	case got := <-parked.reply:
+		return got, true
 	case <-a.done:
-		return "", false
+		return answer{}, false
 	}
 }
 

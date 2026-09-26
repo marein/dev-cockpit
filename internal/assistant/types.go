@@ -228,12 +228,16 @@ type Note struct {
 	Trigger string `json:"trigger,omitempty"`
 	Task    string `json:"task,omitempty"`
 	Count   int    `json:"count,omitempty"`
+	// Run is the compose run a compose note is about, the id compose-show
+	// takes; Name then carries the command's label and Project the project.
+	Run string `json:"run,omitempty"`
 }
 
 // The note sources.
 const (
-	NoteCheck = "check"
-	NoteEvent = "event"
+	NoteCheck   = "check"
+	NoteEvent   = "event"
+	NoteCompose = "compose"
 )
 
 // Occasion is what happened, for the readers with room for the name and it

@@ -24,7 +24,7 @@
        no longer stands for the report it introduces. */}}
   {{$note := .Note}}{{if not $note}}{{$note = .Origin}}{{end}}
   {{with $note}}
-  <div class="d-flex align-items-center gap-2 mb-1"{{if $.Message.Note}} data-assistant-note="{{.Source}}"{{if eq .Source "check"}} data-assistant-wake="{{.Verdict}}"{{end}}{{else}} data-assistant-origin{{end}}>
+  <div class="d-flex align-items-center gap-2 mb-1"{{if $.Message.Note}} data-assistant-note="{{.Source}}"{{if eq .Source "check"}} data-assistant-wake="{{.Verdict}}"{{end}}{{if .Compose}} data-assistant-compose="{{.Verdict}}"{{end}}{{else}} data-assistant-origin{{end}}>
     {{/* The badge is the icon alone, coloured by what it says: the headline
          beside it already carries the word, "DONE: readme-task", and a
          phone has no room for it twice. The word stays for a reader that
@@ -34,9 +34,9 @@
          app grid to the transcript's height, which a hash scroll then
          moves. A check is the one source a note has, so the word an event
          carries is the one a pushed answer reads by. */}}
-    {{$word := "Started by an event"}}{{if .Done}}{{$word = "Done"}}{{else if .Blocked}}{{$word = "Blocked"}}{{else if .Expired}}{{$word = "Stopped"}}{{else if eq .Source "check"}}{{$word = "Checked"}}{{end}}
-    <span class="badge flex-shrink-0 {{if .Done}}bg-green-lt{{else if .Blocked}}bg-orange-lt{{else if eq .Source "check"}}bg-secondary-lt{{else}}bg-purple-lt{{end}}" role="img" title="{{$word}}" aria-label="{{$word}}">
-      <i class="ti {{if .Expired}}ti-steering-wheel-off{{else if eq .Source "check"}}ti-steering-wheel{{else}}ti-bolt{{end}}" aria-hidden="true"></i>
+    {{$word := "Started by an event"}}{{if .Compose}}{{$word = "Compose done"}}{{if .Failed}}{{$word = "Compose failed"}}{{else if .Declined}}{{$word = "Compose declined"}}{{end}}{{else if .Done}}{{$word = "Done"}}{{else if .Blocked}}{{$word = "Blocked"}}{{else if .Expired}}{{$word = "Stopped"}}{{else if eq .Source "check"}}{{$word = "Checked"}}{{end}}
+    <span class="badge flex-shrink-0 {{if .Done}}bg-green-lt{{else if .Failed}}bg-red-lt{{else if .Blocked}}bg-orange-lt{{else if or .Declined (eq .Source "check")}}bg-secondary-lt{{else}}bg-purple-lt{{end}}" role="img" title="{{$word}}" aria-label="{{$word}}">
+      <i class="ti {{if .Compose}}ti-brand-docker{{else if .Expired}}ti-steering-wheel-off{{else if eq .Source "check"}}ti-steering-wheel{{else}}ti-bolt{{end}}" aria-hidden="true"></i>
     </span>
     <span class="fw-medium text-truncate min-w-0 flex-fill" data-assistant-note-headline>{{.Headline}}</span>
     {{if $.Message.Queued}}<span class="badge bg-secondary-lt flex-shrink-0" data-assistant-queued>{{if $.Message.CanDiscard}}Waiting{{else}}Not sent{{end}}</span>{{end}}

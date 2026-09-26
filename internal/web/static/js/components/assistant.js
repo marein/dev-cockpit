@@ -3,6 +3,7 @@ import { notifyError, showToast } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
 import { growTextarea, jumpTextEdge } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
+import { resolveHostlessLinks } from "@dc/docker";
 
 const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
@@ -139,6 +140,7 @@ class Assistant extends HTMLElement {
     this.maxBytes = Number(this.getAttribute("max-bytes")) || 32768;
     this.maxFileBytes = Number(this.getAttribute("max-file-bytes")) || 0;
     this.log = this.querySelector("[data-assistant-log]");
+    resolveHostlessLinks(this.log);
     this.form = this.querySelector("[data-assistant-form]");
     this.footer = this.querySelector("[data-assistant-footer]");
     this.input = this.querySelector("[data-assistant-input]");
@@ -841,6 +843,7 @@ class Assistant extends HTMLElement {
     const body = this.body(messageId);
     if (!body) return;
     body.innerHTML = html || "";
+    resolveHostlessLinks(body);
     this.tail(body).textContent = text || "";
     this.stickToEnd();
   }
@@ -1007,6 +1010,7 @@ class Assistant extends HTMLElement {
       holder.innerHTML = html;
       const fresh = holder.firstElementChild;
       if (!fresh) throw new Error("empty message fragment");
+      resolveHostlessLinks(fresh);
       // A note arriving while an answer streams is held back, and so is the
       // answer a reaction pushed, which arrives the same way: its place in
       // the transcript is under the streaming answer, and a text growing
@@ -1268,6 +1272,7 @@ class Assistant extends HTMLElement {
       holder.innerHTML = html;
       const fresh = holder.firstElementChild;
       if (!fresh || fresh.getAttribute("data-state") === "streaming") return;
+      resolveHostlessLinks(fresh);
       if (this.pendingMessageId !== messageId) return;
       const node = this.bubble(messageId);
       if (node) node.replaceWith(fresh);

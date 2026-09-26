@@ -203,6 +203,12 @@ func (s Trigger) Terminals() []string {
 	return out
 }
 
+// takesTerminals reports whether a trigger of that source waits for
+// terminals, a job's or a coder's, and so whether any and all mean anything.
+func takesTerminals(source string) bool {
+	return source == EventJob || source == EventCoder
+}
+
 // holds reports whether this trigger names that terminal.
 func (s Trigger) holds(terminal string) bool {
 	return slices.ContainsFunc(s.Targets, func(t TriggerTarget) bool { return t.Terminal == terminal })
@@ -291,6 +297,8 @@ func umbrellaKind(source string) string {
 		return JobKindClosed
 	case EventCoder:
 		return CoderKindNews
+	case EventCompose:
+		return ComposeKindEnded
 	}
 	return ""
 }
@@ -508,16 +516,30 @@ func SortTriggers(list []Trigger) {
 // was". With nothing under it left to choose from it no longer says that,
 // while news is what the cockpit already calls this very event where the user
 // reads it, "Coder has news". One thing, one word, in both places.
+//
+// A compose run an assistant started ends in one of three ways, and ended is
+// the umbrella over them the way closed is over a job's: done is a command
+// that went through, failed one that started and did not, whether it exited
+// non zero, timed out or was cancelled while it ran, or one approved that
+// could not start, and declined one that never started: denied by the user,
+// cancelled while it waited, unanswered past the bound, lost in a restart, or
+// ended with its project. The event's target is the run, so a terminal is no
+// filter on it.
 const (
-	EventJob   = "job"
-	EventCoder = "coder"
-	EventCron  = "cron"
+	EventJob     = "job"
+	EventCoder   = "coder"
+	EventCron    = "cron"
+	EventCompose = "compose"
 
-	JobKindClosed  = "closed"
-	CoderKindEnded = "ended"
-	CoderKindAsks  = "asks"
-	CoderKindNews  = "news"
-	CronKindTick   = "tick"
+	JobKindClosed       = "closed"
+	CoderKindEnded      = "ended"
+	CoderKindAsks       = "asks"
+	CoderKindNews       = "news"
+	CronKindTick        = "tick"
+	ComposeKindDone     = "done"
+	ComposeKindFailed   = "failed"
+	ComposeKindDeclined = "declined"
+	ComposeKindEnded    = "ended"
 )
 
 // EventOptions are the kinds a trigger may name, per source, in the order the
@@ -541,6 +563,10 @@ var EventOptions = []EventOption{
 	{Source: EventJob, Kind: string(JobExpired), Label: "Job expired", Help: "a job of yours ran out of checks or time"},
 	{Source: EventJob, Kind: JobKindClosed, Label: "Job closed", Help: "a job of yours ended, done, blocked or expired"},
 	{Source: EventCoder, Kind: CoderKindNews, Label: "Coder has news", Help: "a coder's turn ended or it asks, every signal either way"},
+	{Source: EventCompose, Kind: ComposeKindDone, Label: "Compose done", Help: "a compose command you started went through"},
+	{Source: EventCompose, Kind: ComposeKindFailed, Label: "Compose failed", Help: "a compose command you started ran and failed, timed out or was cancelled, or could not start once approved"},
+	{Source: EventCompose, Kind: ComposeKindDeclined, Label: "Compose declined", Help: "a compose command you started never ran: denied, cancelled while waiting, unanswered, or lost in a restart"},
+	{Source: EventCompose, Kind: ComposeKindEnded, Label: "Compose ended", Help: "a compose command you started ended, done, failed or declined"},
 	{Source: EventCron, Kind: CronKindTick, Label: "Schedule", Help: "a cron schedule ticks"},
 }
 
@@ -710,6 +736,11 @@ func applyTrigger(trigger *Trigger, spec TriggerSpec, now time.Time) error {
 	if spec.AllSet {
 		trigger.All = spec.All
 	}
+	if !takesTerminals(trigger.Source) {
+		// Any or all is a question about terminals, and a schedule and a
+		// compose run have none: a mode posted for one is no barrier.
+		trigger.All = false
+	}
 	if spec.OnceSet {
 		trigger.Once = spec.Once
 	}
@@ -779,6 +810,19 @@ func applyTrigger(trigger *Trigger, spec TriggerSpec, now time.Time) error {
 				return err
 			}
 			trigger.NextAt = next
+		}
+	case EventCompose:
+		if trigger.Spec != "" {
+			return errors.New("Only a schedule takes cron fields.")
+		}
+		if trigger.Timezone != "" {
+			return errors.New("Only a schedule takes a zone: the other events happen when they happen.")
+		}
+		if len(trigger.Targets) > 0 {
+			// The event is about a run and no terminal; a terminal named on
+			// it would filter every event out and the trigger would never
+			// fire, which is worse than a refusal.
+			return errors.New("A compose event is about no terminal, leave --terminal out: it fires on every compose command you start.")
 		}
 	default:
 		if trigger.Spec != "" {

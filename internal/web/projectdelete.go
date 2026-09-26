@@ -211,6 +211,7 @@ func stacksToStop(state docker.State, path string) []docker.Stack {
 // is a torso or gone at all is what removing it means.
 func (s *Server) deleteProjectWithCompose(p project.Project) {
 	s.purgeProjectRunners(p.Path)
+	s.declineProjectApprovals(p.Path)
 	s.publishTerminals("") // the purge removed this project's coders and shells everywhere
 	for _, stack := range s.composeStacksToStop(p.Path) {
 		if err := s.composeDown(stack, p); err != nil {
@@ -310,6 +311,7 @@ func (s *Server) runDeleteCascade(p project.Project, children []project.Project)
 // Publishing stays with the caller.
 func (s *Server) removeProjectNow(p project.Project) error {
 	s.purgeProjectRunners(p.Path)
+	s.declineProjectApprovals(p.Path)
 	s.closeProjectLSP(p.Name)
 	if err := s.projects.Remove(p); err != nil {
 		return err

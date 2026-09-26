@@ -5,6 +5,7 @@ package detach
 import (
 	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
 )
 
@@ -87,4 +88,15 @@ func Kill(pid int, lock string) {
 	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
 		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
+}
+
+// recordPID writes this process's number into the inherited lock, the same
+// line Start writes from the other side. It goes through the raw descriptor
+// and never through an *os.File, whose finalizer would close it: the program
+// and its helpers hold the lock through this very descriptor.
+func recordPID(fd int) {
+	if err := syscall.Ftruncate(fd, 0); err != nil {
+		return
+	}
+	_, _ = syscall.Pwrite(fd, []byte(strconv.Itoa(os.Getpid())+"\n"), 0)
 }

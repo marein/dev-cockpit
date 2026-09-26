@@ -9,11 +9,11 @@
   <div class="card">
     <div class="card-body">
       <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
-        <span class="badge{{if .Run.Running}} bg-blue-lt{{else if .Failed}} bg-red-lt{{else}} bg-green-lt{{end}}" data-run-status>{{.Status}}</span>
+        <span class="badge{{if .Run.Pending}} bg-yellow-lt{{else if .Run.Running}} bg-blue-lt{{else if .Failed}} bg-red-lt{{else}} bg-green-lt{{end}}" data-run-status>{{.Status}}</span>
         {{if .Stack}}<span class="text-secondary small">{{.Stack}}</span>{{end}}
         <span class="text-secondary small font-monospace text-break">{{.Run.Command}}</span>
         <div class="ms-auto">
-          <button type="button" class="btn btn-sm btn-ghost-danger" data-run-stop{{if not .Run.Running}} hidden{{end}}>
+          <button type="button" class="btn btn-sm btn-ghost-danger" data-run-stop{{if not (or .Run.Running .Run.Pending)}} hidden{{end}}>
             <i class="ti ti-player-stop me-1"></i>Cancel
           </button>
         </div>

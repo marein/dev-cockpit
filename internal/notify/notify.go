@@ -105,6 +105,26 @@ func GitPromptTargetProject(targetID string) string {
 	return strings.TrimPrefix(targetID, GitPromptTargetPrefix)
 }
 
+// ApprovalTargetPrefix names the targets of standing approval questions, one
+// per compose run an assistant wants to start (`approval:<run>`), under the
+// same rules as the git question targets: the entry is how the question
+// reaches somebody with no page open, phone included, and it marks itself
+// read again the moment the question is decided, expired or lost.
+const ApprovalTargetPrefix = "approval:"
+
+// ApprovalTarget is the target id one run's approval question reports under.
+func ApprovalTarget(run string) string { return ApprovalTargetPrefix + run }
+
+// IsApprovalTarget reports whether an id is one of them.
+func IsApprovalTarget(targetID string) bool {
+	return strings.HasPrefix(targetID, ApprovalTargetPrefix)
+}
+
+// ApprovalTargetRun answers the run such an id names.
+func ApprovalTargetRun(targetID string) string {
+	return strings.TrimPrefix(targetID, ApprovalTargetPrefix)
+}
+
 // TargetInfo carries display context resolved at ingest time.
 type TargetInfo struct {
 	Name    string

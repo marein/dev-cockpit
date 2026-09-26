@@ -119,8 +119,9 @@ type Server struct {
 	// fast, which is also what the tests run with.
 	askpassBroker *askpass.Broker
 	askpassScript string
-	// gitPromptNoticed is which projects' standing askpass questions have an
-	// unread entry in the notification center right now, guarded by its own
+	// gitPromptNoticed is which notification targets of standing askpass
+	// questions (questionTarget: a proxied git question's project, an
+	// approval's run) have an unread entry right now, guarded by its own
 	// mutex because the broker's change hook fires from git's helpers.
 	gitPromptNoticedMu sync.Mutex
 	gitPromptNoticed   map[string]bool
@@ -377,7 +378,7 @@ func requestIsSecure(c *gin.Context) bool {
 // entry a killed process left unread would claim a question forever.
 func (s *Server) SetAskpass(broker *askpass.Broker, script string) {
 	for target := range s.notifier.UnreadTargets() {
-		if notify.IsGitPromptTarget(target) {
+		if notify.IsGitPromptTarget(target) || notify.IsApprovalTarget(target) {
 			s.notifier.MarkTargetRead(target)
 		}
 	}
@@ -418,26 +419,28 @@ func (s *Server) SetAskpass(broker *askpass.Broker, script string) {
 // longer holds the project, and the push channels would carry it to a phone
 // two seconds later. Nothing the broker calls takes this lock, and the broker
 // calls its hook outside its own locks, so this order has no other side.
+//
+// An approval question goes the same way under its own target, one per run
+// (questionTarget), so the map holds target ids and not projects.
 func (s *Server) reconcileGitPromptNews(broker *askpass.Broker) {
 	s.gitPromptNoticedMu.Lock()
 	defer s.gitPromptNoticedMu.Unlock()
 	standing := map[string]bool{}
 	for _, q := range broker.Questions() {
-		if !q.External {
-			continue
-		}
-		standing[q.Project] = true
-	}
-	for project := range standing {
-		if !s.gitPromptNoticed[project] {
-			s.gitPromptNoticed[project] = true
-			s.notifier.Add(notify.GitPromptTarget(project))
+		if target := questionTarget(q); target != "" {
+			standing[target] = true
 		}
 	}
-	for project := range s.gitPromptNoticed {
-		if !standing[project] {
-			delete(s.gitPromptNoticed, project)
-			s.notifier.MarkTargetRead(notify.GitPromptTarget(project))
+	for target := range standing {
+		if !s.gitPromptNoticed[target] {
+			s.gitPromptNoticed[target] = true
+			s.notifier.Add(target)
+		}
+	}
+	for target := range s.gitPromptNoticed {
+		if !standing[target] {
+			delete(s.gitPromptNoticed, target)
+			s.notifier.MarkTargetRead(target)
 		}
 	}
 }

@@ -128,6 +128,23 @@ func (l Link) Address() string {
 	return address
 }
 
+// URL is what the link opens, built the way the browser's linkUrl in
+// @dc/docker builds it: the scheme where the link pins one and else none, so
+// the link is protocol relative, then the host, the port and the path. A
+// published port has no host and comes out as http://:<port>, which the browser
+// completes with the host its page was reached on, the part only it knows.
+func (l Link) URL() string {
+	prefix := ""
+	if l.Scheme != "" {
+		prefix = l.Scheme + ":"
+	}
+	port := ""
+	if l.Port != 0 {
+		port = ":" + strconv.Itoa(l.Port)
+	}
+	return prefix + "//" + l.Host + port + l.Path
+}
+
 // State is one reading of the cache: whether a daemon answers, which host it
 // is, and what it runs.
 type State struct {

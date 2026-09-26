@@ -1,0 +1,10 @@
+On {{.Where}}: {{if .Declined}}never ran, {{oneLine .Reason}}.{{else if .Failed}}failed, {{oneLine .Reason}}.{{else}}went through{{if .Exited}}, exit status {{.Exit}}{{end}}.{{end}}
+{{if .Output}}
+```
+{{.Output}}
+```
+{{end}}
+[Open the run]({{.URL}})
+{{if .Links}}
+Answers on: {{range $i, $l := .Links}}{{if $i}}, {{end}}{{$l}}{{end}}
+{{end}}

@@ -1,6 +1,9 @@
 package docker
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // route writes an address the way these tests read best.
 func route(scheme, host, path string) Link {
@@ -371,6 +374,60 @@ func TestLinkAddress(t *testing.T) {
 	} {
 		if got := tc.link.Address(); got != tc.want {
 			t.Fatalf("%+v reads as %q, want %q", tc.link, got, tc.want)
+		}
+	}
+}
+
+// A stack's addresses are its own containers' routes first, then their
+// published ports ascending, each address once; a nested stack's containers
+// and the ones of another directory stay out.
+func TestStackLinksPutRoutesBeforePorts(t *testing.T) {
+	state := State{Available: true, Containers: []Container{
+		{Name: "web", WorkingDir: "/p/shop", Ports: []Port{{Public: 8443, Private: 443}},
+			Labels: map[string]string{"traefik.http.routers.web.rule": "Host(`shop.example.com`)"}},
+		{Name: "db", WorkingDir: "/p/shop", Ports: []Port{{Public: 5432, Private: 5432}}},
+		{Name: "admin", WorkingDir: "/p/shop", Ports: []Port{{Public: 8443, Private: 443}},
+			Labels: map[string]string{"traefik.http.routers.admin.rule": "Host(`admin.example.com`) && PathPrefix(`/api`)"}},
+		{Name: "ops", WorkingDir: "/p/shop/ops", Ports: []Port{{Public: 9000, Private: 9000}}},
+		{Name: "other", WorkingDir: "/p/blog", Labels: map[string]string{"traefik.http.routers.b.rule": "Host(`blog.example.com`)"}},
+	}}
+	var got []string
+	for _, link := range defaultMatcher().StackLinks(state, "/p/shop") {
+		got = append(got, link.Address())
+	}
+	want := []string{"shop.example.com", "admin.example.com/api", ":5432", ":8443"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("the stack answers on %v, want %v", got, want)
+	}
+	if links := defaultMatcher().StackLinks(state, "/p/none"); len(links) != 0 {
+		t.Fatalf("a stack without containers answers on %v", links)
+	}
+}
+
+// Only a command that leaves the stack running names where it answers.
+func TestOnlyStartAndRestartBringAStackUp(t *testing.T) {
+	for _, intent := range IconNames {
+		if want := intent == "start" || intent == "restart"; BringsUp(intent) != want {
+			t.Fatalf("BringsUp(%q) = %v", intent, !want)
+		}
+	}
+}
+
+// A link's URL is built the way the browser's linkUrl builds it: protocol
+// relative unless the link pins a scheme, and a published port without a host,
+// which the browser completes with its own.
+func TestALinkURLLeavesTheBrowserWhatOnlyItKnows(t *testing.T) {
+	for _, c := range []struct {
+		link Link
+		want string
+	}{
+		{Link{Host: "shop.example.com"}, "//shop.example.com"},
+		{Link{Host: "shop.example.com", Path: "/api"}, "//shop.example.com/api"},
+		{Link{Scheme: "https", Host: "shop.example.com", Port: 8443}, "https://shop.example.com:8443"},
+		{Link{Scheme: "http", Port: 8080}, "http://:8080"},
+	} {
+		if got := c.link.URL(); got != c.want {
+			t.Fatalf("%+v reads %q, want %q", c.link, got, c.want)
 		}
 	}
 }

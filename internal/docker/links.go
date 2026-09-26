@@ -3,6 +3,7 @@ package docker
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
@@ -252,6 +253,43 @@ func (m LinkMatcher) Links(c Container) []Link {
 		out = append(out, Link{Scheme: scheme, Port: port.Public})
 	}
 	return out
+}
+
+// StackLinks answers every address one stack's containers answer on: the
+// routes of all of them first, then their published ports, each address once.
+// It is what the compose menu offers container by container, read as one list
+// for the stack, the containers standing in the order ForDir gives them.
+func (m LinkMatcher) StackLinks(state State, dir string) []Link {
+	keys := map[string]bool{filepath.Clean(dir): true}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		keys[filepath.Clean(resolved)] = true
+	}
+	var routes, ports []Link
+	seen := map[string]bool{}
+	for _, c := range state.ForDir(dir) {
+		if !keys[c.WorkingDir] {
+			continue
+		}
+		for _, link := range m.Links(c) {
+			if seen[link.Address()] {
+				continue
+			}
+			seen[link.Address()] = true
+			if link.Host != "" {
+				routes = append(routes, link)
+			} else {
+				ports = append(ports, link)
+			}
+		}
+	}
+	sort.SliceStable(ports, func(i, j int) bool { return ports[i].Port < ports[j].Port })
+	return append(routes, ports...)
+}
+
+// BringsUp says whether a command of this intent leaves the stack running,
+// which is when the addresses it answers on are worth naming at its end.
+func BringsUp(intent string) bool {
+	return intent == "start" || intent == "restart"
 }
 
 // links applies one rule to one container's labels.

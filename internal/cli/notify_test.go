@@ -69,6 +69,12 @@ func TestEveryKindIsBuiltTheSameWayRound(t *testing.T) {
 		{"backup", "Backup ready.", "nightly", func() (string, string) { return backupNews("nightly", true) }},
 		{"git question", "Git asks a question.", "push", func() (string, string) { return gitPromptNews("push") }},
 		{"compose", "Compose finished.", "Compose up", run("Compose up", "")},
+		{"approval", "Assistant asks approval.", "Ops: Compose down with volumes in shop", func() (string, string) {
+			return approvalNews("Ops", "Compose down with volumes", "shop")
+		}},
+		{"approval nobody names", "Assistant asks approval.", "Assistant: a compose command", func() (string, string) {
+			return approvalNews("", "", "")
+		}},
 		{"compose failed", "Compose failed.", "Compose up", run("Compose up", "exit 1")},
 		{"long coder", "Coder has news.", "notification-titel-reihenfolge", func() (string, string) {
 			return coderNews("notification-titel-reihenfolge")
@@ -384,11 +390,18 @@ func TestATitleIsTheKindAndNothingElse(t *testing.T) {
 		return assistant.Message{Role: assistant.RoleAssistant, State: state, Auto: true, Content: long,
 			Origin: &assistant.Note{Source: assistant.NoteEvent, Headline: headline, Count: 1}}
 	}
+	compose := func(kind, name string) assistant.Message {
+		return assistant.Message{Role: assistant.RoleCockpit, State: assistant.StateComplete, Content: long,
+			Note: &assistant.Note{Source: assistant.NoteCompose, Run: "run-1", Name: name, Project: long, Verdict: kind}}
+	}
 	cases := []struct {
 		want   string
 		first  assistant.Message
 		second assistant.Message
 	}{
+		{"Compose done.", compose(assistant.ComposeKindDone, "Compose up"), compose(assistant.ComposeKindDone, long)},
+		{"Compose failed.", compose(assistant.ComposeKindFailed, "Compose up"), compose(assistant.ComposeKindFailed, long)},
+		{"Compose declined.", compose(assistant.ComposeKindDeclined, "Compose up"), compose(assistant.ComposeKindDeclined, long)},
 		{"Answer ready.", assistant.Message{State: assistant.StateComplete, Content: long}, assistant.Message{State: assistant.StateComplete, Content: "x"}},
 		{"Answer broke off.", assistant.Message{State: assistant.StateFailed, Content: long}, assistant.Message{State: assistant.StateInterrupted, Content: "x"}},
 		{"Job done.", check(assistant.VerdictDone, "readme-task"), check(assistant.VerdictDone, long)},
@@ -508,5 +521,18 @@ func TestTheNameIsOnlyInTheLineOfAnAnsweredTurn(t *testing.T) {
 				t.Fatalf("want the name opening an answer's line, got %q", detail)
 			}
 		}
+	}
+}
+
+// A compose run an assistant started rings as what it is, under the command
+// that ran, with the note's first line behind it, which names the command no
+// second time.
+func TestAComposeNoteRingsUnderItsCommand(t *testing.T) {
+	m := assistant.Message{Role: assistant.RoleCockpit, State: assistant.StateComplete,
+		Content: "On shop: went through, exit status 0.",
+		Note:    &assistant.Note{Source: assistant.NoteCompose, Run: "run-1", Name: "Compose up", Project: "shop", Verdict: assistant.ComposeKindDone}}
+	title, detail := assistantNews("Bro", m)
+	if title != "Compose done." || detail != "Compose up: On shop: went through, exit status 0." {
+		t.Fatalf("the news reads %q / %q", title, detail)
 	}
 }

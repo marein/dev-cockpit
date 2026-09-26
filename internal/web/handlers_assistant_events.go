@@ -733,6 +733,10 @@ func (s *Server) assistantTriggerView(trigger assistant.Trigger, owners bool) re
 		// statement about a wall clock, the zone is half of that statement,
 		// and a half that is sometimes there is read wrong when it is not.
 		view.Where = strings.TrimSpace(trigger.Spec + " " + trigger.Timezone)
+	case trigger.Source == assistant.EventCompose:
+		// A compose event is about a run and never a terminal: it fires on
+		// every compose command this assistant starts.
+		view.Where = "any compose run of mine"
 	case len(trigger.Targets) == 0 && trigger.Source == assistant.EventJob:
 		view.Where = "any job of mine"
 	case len(trigger.Targets) == 0:
@@ -835,6 +839,12 @@ func (s *Server) assistantNoteView(note *assistant.Note, content string) *render
 		view.Done = note.Verdict == string(assistant.VerdictDone)
 		view.Blocked = note.Verdict == string(assistant.VerdictBlocked)
 		view.Expired = note.Verdict == string(assistant.VerdictExpired)
+	}
+	if note.Source == assistant.NoteCompose {
+		view.Compose = true
+		view.Done = note.Verdict == assistant.ComposeKindDone
+		view.Failed = note.Verdict == assistant.ComposeKindFailed
+		view.Declined = note.Verdict == assistant.ComposeKindDeclined
 	}
 	if note.Terminal != "" {
 		view.URL = "/coders/" + note.Terminal

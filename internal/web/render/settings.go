@@ -140,6 +140,24 @@ type SettingsVoiceData struct {
 	DockerOK bool
 }
 
+// SettingsAssistantApprovalsData is the Approvals tab: one switch per kind
+// of approval, each for every assistant.
+type SettingsAssistantApprovalsData struct {
+	Page
+	SettingsNav SettingsNav
+	Section     string
+	Approvals   []ApprovalRow
+}
+
+// ApprovalRow is one kind of approval on that tab; Ask is whether it waits for
+// the user.
+type ApprovalRow struct {
+	ID    string
+	Label string
+	Hint  string
+	Ask   bool
+}
+
 // SettingsAssistantJobsData feeds the assistant settings page's jobs tab. One
 // number: how many checks may run at once across every assistant. Section marks
 // the open tab the way the voice tab does.
