@@ -2,6 +2,9 @@ package git
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -118,6 +121,112 @@ func TestBlameUnderTheOutputCapIsWholeAndNotLarge(t *testing.T) {
 	}
 }
 
+// Every commit names its first parent and the root commit none: the line menu
+// shows a commit against its parent and has to know when there is none.
+func TestBlameNamesEachCommitsFirstParent(t *testing.T) {
+	dir := t.TempDir()
+	commitRepo(t, dir)
+	writeAt(t, dir, "p.txt", "one\n")
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-qm", "root")
+	writeAt(t, dir, "p.txt", "one\ntwo\n")
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-qm", "second")
+
+	blame, err := New(dir).Blame(context.Background(), "p.txt")
+
+	if err != nil {
+		t.Fatalf("blame: %v", err)
+	}
+	if len(blame.Commits) != 2 {
+		t.Fatalf("commits: %+v", blame.Commits)
+	}
+	root, second := blame.Commits[0], blame.Commits[1]
+	if root.Summary != "root" {
+		root, second = second, root
+	}
+	if root.Parent != "" {
+		t.Fatalf("the root commit names a parent: %q", root.Parent)
+	}
+	if second.Parent != root.SHA {
+		t.Fatalf("the second commit's parent is %q, the root is %q", second.Parent, root.SHA)
+	}
+}
+
+// The newest commit is the one that landed last and only one is marked, even
+// where two commits share the author and the day, and a file of a single
+// commit marks none.
+func TestBlameMarksOneNewestCommitAndNoneForASingleCommit(t *testing.T) {
+	dir := t.TempDir()
+	commitRepo(t, dir)
+	writeAt(t, dir, "one.txt", "one\n")
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-qm", "only")
+	single, err := New(dir).Blame(context.Background(), "one.txt")
+	if err != nil {
+		t.Fatalf("blame: %v", err)
+	}
+	if len(single.Commits) != 1 || single.Commits[0].Newest {
+		t.Fatalf("a single commit is marked newest: %+v", single.Commits)
+	}
+
+	writeAt(t, dir, "two.txt", "one\n")
+	runGit(t, dir, "add", "-A")
+	runGitEnv(t, dir, []string{"GIT_AUTHOR_DATE=2024-01-02T10:00:00Z", "GIT_COMMITTER_DATE=2024-01-02T10:00:00Z"}, "commit", "-qm", "older")
+	writeAt(t, dir, "two.txt", "one\ntwo\n")
+	runGit(t, dir, "add", "-A")
+	runGitEnv(t, dir, []string{"GIT_AUTHOR_DATE=2024-01-02T09:00:00Z", "GIT_COMMITTER_DATE=2024-01-02T11:00:00Z"}, "commit", "-qm", "rebased")
+	blame, err := New(dir).Blame(context.Background(), "two.txt")
+	if err != nil {
+		t.Fatalf("blame: %v", err)
+	}
+	marked := []string{}
+	for _, commit := range blame.Commits {
+		if commit.Newest {
+			marked = append(marked, commit.Summary)
+		}
+	}
+	if len(marked) != 1 || marked[0] != "rebased" {
+		t.Fatalf("newest by commit time must be the rebased commit alone, marked: %v", marked)
+	}
+}
+
+// blame follows a rename, and the commit that wrote a line before it names
+// the path the file had then, relative to the project, with the path of the
+// version before it where there is one.
+func TestBlameNamesThePathAFileHadInEachCommit(t *testing.T) {
+	root := t.TempDir()
+	commitRepo(t, root)
+	writeAt(t, root, "sub/old.txt", "one\n")
+	runGit(t, root, "add", "-A")
+	runGit(t, root, "commit", "-qm", "create")
+	writeAt(t, root, "sub/old.txt", "one\ntwo\n")
+	runGit(t, root, "add", "-A")
+	runGit(t, root, "commit", "-qm", "grow")
+	runGit(t, root, "mv", "sub/old.txt", "sub/new.txt")
+	runGit(t, root, "commit", "-qm", "rename")
+
+	blame, err := New(filepath.Join(root, "sub")).Blame(context.Background(), "new.txt")
+
+	if err != nil {
+		t.Fatalf("blame: %v", err)
+	}
+	bySummary := map[string]Commit{}
+	for _, commit := range blame.Commits {
+		bySummary[commit.Summary] = commit
+	}
+	grow, ok := bySummary["grow"]
+	if !ok {
+		t.Fatalf("commits: %+v", blame.Commits)
+	}
+	if grow.Path != "old.txt" || grow.PreviousPath != "old.txt" {
+		t.Fatalf("grow names %q before %q, want old.txt relative to the project", grow.Path, grow.PreviousPath)
+	}
+	if create := bySummary["create"]; create.Path != "old.txt" || create.PreviousPath != "" {
+		t.Fatalf("create names %q before %q", create.Path, create.PreviousPath)
+	}
+}
+
 func TestBlameWithoutRepositoryIsEmptyAndNoError(t *testing.T) {
 	dir := t.TempDir()
 
@@ -148,5 +257,19 @@ func TestRepoPathStaysInsideTheProject(t *testing.T) {
 	}
 	if got, _ := repoPath("sub/file.txt"); got != "./sub/file.txt" {
 		t.Fatalf("plain path: %q", got)
+	}
+}
+
+// runGitEnv is runGit with extra environment, the dates a commit is made with.
+func runGitEnv(t *testing.T, dir string, env []string, args ...string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
 	}
 }

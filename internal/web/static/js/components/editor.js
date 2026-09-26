@@ -1560,9 +1560,9 @@ async function init(root) {
     tab.dirty = on;
     renderTabs();
     updateActionStates();
-    // The blame gutter belongs to the file on disk, so it goes while the buffer
-    // is ahead of it and comes back when the save catches up.
-    void applyBlame();
+    // The blame gutter follows the buffer while it is ahead of the disk, and
+    // git is asked again once the save has caught up.
+    if (!on && tab.path === activePath) void applyBlame(true);
   }
 
   // Dirty means "differs from the saved content", not "was touched": undoing
@@ -1657,6 +1657,7 @@ async function init(root) {
       if (!t.diffRev && !t.blameOn && !t.previewOn && !view) return t.path;
       const entry = { type: "file", path: t.path };
       if (t.diffRev) entry.diff = t.diffRev;
+      if (t.diffRev && t.diffFrom) entry.diffFrom = t.diffFrom;
       if (t.blameOn) entry.blame = true;
       if (t.previewOn) entry.preview = true;
       if (view) entry.view = view;
@@ -1742,7 +1743,10 @@ async function init(root) {
     for (let i = 0; i < results.length; i++) {
       if (results[i].status !== "fulfilled" || !results[i].value || tabByPath(results[i].value.path)) continue;
       const tab = results[i].value;
-      if (entries[i].type === "file" && entries[i].diff) tab.diffRev = entries[i].diff;
+      if (entries[i].type === "file" && entries[i].diff) {
+        tab.diffRev = entries[i].diff;
+        tab.diffFrom = typeof entries[i].diffFrom === "string" ? entries[i].diffFrom : "";
+      }
       if (entries[i].type === "file" && entries[i].blame && !tab.kind) tab.blameOn = true;
       // The two share the surface, so a stored state that somehow carries both
       // keeps the diff and drops the preview.
@@ -2405,9 +2409,11 @@ async function init(root) {
       if (gitRepo) startGitWatch();
       // A tab restored into a diff waits for this answer, see applyTabDiff.
       if (gitRepo) void resumeTabDiff();
-      // A line that moved belongs to a different commit than it did before, so
-      // the gutter is read again whenever the file could have moved under it.
-      void applyBlame(true);
+      // The first answer that says there is a repository puts the gutter up.
+      // After that a save asks git itself (markDirty) and a moved HEAD clears
+      // blameFor (dropChangeHeads), so a status round that only follows a
+      // save costs no second blame.
+      void applyBlame();
       void applyChangeBars();
     } catch (err) {
       if (signal.aborted) return;
@@ -4126,6 +4132,20 @@ async function init(root) {
     if (pointerMedia.matches) revdiffFilterEl.focus();
   }
 
+  // openRevdiffAt opens the comparison on a pair somebody named, the way a
+  // picked side does: stored per device like every pick, and a standing panel
+  // compares again instead of keeping the pair it had.
+  function openRevdiffAt(from, to) {
+    revdiffPair.from = from || "";
+    revdiffPair.to = to || "";
+    storeRevdiffPair();
+    if (revdiffOn) {
+      paintRevdiffHead();
+      void loadRevdiff();
+    }
+    openRevdiff();
+  }
+
   function closeRevdiff() {
     if (!revdiffOn) return;
     revdiffOn = false;
@@ -4204,6 +4224,13 @@ async function init(root) {
       ? answer.from.name
       : `${answer.from.name} at the split (${answer.base.slice(0, 7)})`;
     const rightLabel = answer.to.name;
+    await openRevisionCompare({ leftRev, rightRev, leftPath, rightPath, leftLabel, rightLabel });
+  }
+
+  // openRevisionCompare opens a file at two revisions as a read only compare
+  // tab, or brings the one that stands to the front with the labels renamed.
+  async function openRevisionCompare(spec) {
+    const { leftRev, rightRev, rightPath, leftLabel, rightLabel } = spec;
     const path = revdiffPath(leftRev, rightRev, rightPath);
     closeDrawer();
     const existing = tabByPath(path);
@@ -4221,7 +4248,7 @@ async function init(root) {
     }
     status("Loading…");
     try {
-      const tab = await revdiffTabFor({ leftRev, rightRev, leftPath, rightPath, leftLabel, rightLabel });
+      const tab = await revdiffTabFor(spec);
       if (signal.aborted) return;
       if (!tab) {
         status("That file holds binary content or is too large to diff.", "error");
@@ -4514,20 +4541,31 @@ async function init(root) {
   // it belongs to: the history keeps standing where it was scrolled to, which
   // a drilled sheet level could not do, it renders itself and its Back put
   // the reader back at the top of a freshly loaded list.
+  // diffItem and hashItem are the two entries a commit carries wherever it is
+  // offered, the history's cells and a line's menu: the file diffed against
+  // the commit, read under the path it had there, and the hash.
+  function diffItem(path, commit, label, from = "") {
+    return {
+      label: path ? label : "Show the diff",
+      icon: "ti-git-compare",
+      disabled: !path,
+      action: () => {
+        closeSheet();
+        void diffAgainst(path, commit.sha, from);
+      },
+    };
+  }
+
+  function hashItem(commit) {
+    return { label: "Copy the hash", icon: "ti-copy", action: () => void copyHash(commit.sha) };
+  }
+
   function commitMenuItems(commit, path, paintChips) {
     const diffTab = path ? null : activeTab();
     const diffPath = path || (diffTab && !diffTab.kind && !diffTab.compare && !diffTab.external ? diffTab.path : "");
     const items = [
-      {
-        label: diffPath ? `Diff ${baseName(diffPath)} against this` : "Show the diff",
-        icon: "ti-git-compare",
-        disabled: !diffPath,
-        action: () => {
-          closeSheet();
-          void diffAgainst(diffPath, commit.sha);
-        },
-      },
-      { label: "Copy the hash", icon: "ti-copy", action: () => void copyHash(commit.sha) },
+      diffItem(diffPath, commit, `Diff ${baseName(diffPath)} against this`),
+      hashItem(commit),
       { divider: true },
       { label: "Tag this commit", icon: "ti-tag", action: () => void tagDialog(commit, paintChips) },
     ];
@@ -4713,8 +4751,10 @@ async function init(root) {
 
   // diffAgainst opens a file's diff against a revision: an open tab switches
   // in place, a closed file opens into it. The history and the revision
-  // picker both land here, filling the same field the HEAD switch fills.
-  async function diffAgainst(path, rev) {
+  // picker both land here, filling the same field the HEAD switch fills. from
+  // is the path the file had in that revision where a rename lies between,
+  // it rides on the tab as diffFrom beside the revision and goes with it.
+  async function diffAgainst(path, rev, from = "") {
     let tab = tabByPath(path);
     if (!tab) {
       await openPath(path);
@@ -4725,10 +4765,11 @@ async function init(root) {
     // way out, not only when openPath opened the file fresh.
     closeDrawer();
     if (tab.path === activePath) {
-      await applyDiff(rev);
+      await applyDiff(rev, { from });
       return;
     }
     tab.diffRev = rev;
+    tab.diffFrom = from;
     tab.diffOriginal = null;
     persistTabs();
     activateTab(path);
@@ -5439,6 +5480,7 @@ async function init(root) {
     // Hiding only clears the wish the background tab carries; showing brings
     // the tab to the front, where activateTab builds the diff.
     tab.diffRev = next;
+    tab.diffFrom = "";
     if (!next) {
       tab.diffOriginal = null;
       persistTabs();
@@ -5465,12 +5507,13 @@ async function init(root) {
   // applyDiff compares the active tab against rev; an empty rev takes the
   // comparison off again. ask is false only where the person already answered
   // the size question.
-  async function applyDiff(rev, { ask = true, scroll = null, expanded = null } = {}) {
+  async function applyDiff(rev, { ask = true, scroll = null, expanded = null, from = "" } = {}) {
     const tab = activeTab();
     if (!tab || tab.kind || tab.compare || tab.external || !editor.canDiff) return;
     const seq = ++diffSeq;
     const current = () => seq === diffSeq && activeTab() === tab;
     tab.diffRev = "";
+    tab.diffFrom = "";
     tab.diffOriginal = null;
     if (!rev) {
       await editor.setDiff({ mode: "off", name: tab.name, valid: current });
@@ -5481,7 +5524,7 @@ async function init(root) {
     }
     let data;
     try {
-      data = await fetchRev(tab.path, rev);
+      data = await fetchRev(from || tab.path, rev);
     } catch (err) {
       if (!current()) return;
       if (!signal.aborted) status(err.message, "error");
@@ -5520,6 +5563,7 @@ async function init(root) {
       syncPreview();
     }
     tab.diffRev = rev;
+    tab.diffFrom = from;
     tab.diffOriginal = original;
     try {
       await editor.setDiff({
@@ -5537,6 +5581,7 @@ async function init(root) {
       console.error("diff failed", err);
       editor.exitDiff();
       tab.diffRev = "";
+      tab.diffFrom = "";
       tab.diffOriginal = null;
       status("The diff could not be built, the file is open as usual.");
       notifyError(err.message || "The diff could not be built.");
@@ -5564,6 +5609,7 @@ async function init(root) {
       return;
     }
     await applyDiff(tab.diffRev, {
+      from: tab.diffFrom || "",
       scroll: { top: tab.handle.scrollTop || 0, left: tab.handle.scrollLeft || 0 },
       expanded: tab.handle.expanded || [],
     });
@@ -5588,7 +5634,7 @@ async function init(root) {
     if (!tab || tab.kind || tab.compare || tab.external || !tab.diffRev || tab.diffOriginal == null) return;
     const seq = diffSeq;
     try {
-      const data = await fetchRev(tab.path, tab.diffRev);
+      const data = await fetchRev(tab.diffFrom || tab.path, tab.diffRev);
       if (data.binary || activeTab() !== tab || seq !== diffSeq) return;
       if (!tab.diffRev || tab.diffOriginal == null) return;
       const fresh = data.content || "";
@@ -5652,8 +5698,12 @@ async function init(root) {
       || (diffSettings.maxKiB > 0 && kib > diffSettings.maxKiB);
   }
 
+  // HEAD may have moved, so every text read at it goes, and the blame is read
+  // again: git answers a line for a commit, and a commit, a checkout or a pull
+  // moves that without a byte of the file changing.
   function dropChangeHeads() {
     for (const t of tabs) t.changeHead = undefined;
+    blameFor = "";
   }
 
   // ---- blame -----------------------------------------------------------------
@@ -5700,19 +5750,24 @@ async function init(root) {
   async function applyBlame(force = false) {
     const tab = activeTab();
     const textTab = tab && !tab.kind && !tab.compare && !tab.external ? tab : null;
-    // The gutter says what git has, and git has what is on disk. An unsaved
-    // buffer no longer lines up with it line for line, so it goes away rather
-    // than pointing at the wrong commits, and comes back with the save.
-    if (!textTab || !textTab.blameOn || !gitRepo || !editor.canBlame || textTab.dirty) {
+    if (!textTab || !textTab.blameOn || !gitRepo || !editor.canBlame) {
       blameFor = "";
       editor.setBlame(null);
       return;
     }
+    // The gutter says what git has, and git has what is on disk. While the
+    // buffer is ahead of it the gutter follows the edits on its own, a new or
+    // changed line reading as uncommitted, and git is asked again with the
+    // save, so nothing is taken away and put back in between.
+    if (textTab.dirty) return;
     if (!force && blameFor === textTab.path) return;
     const seq = ++blameSeq;
     try {
       const data = await getJSON(`${base}/git/blame?path=${encodeURIComponent(textTab.path)}`, { signal });
-      if (seq !== blameSeq || activeTab() !== textTab || !textTab.blameOn) return;
+      // A buffer that moved on while the answer was on its way is ahead of
+      // it again: the gutter keeps following the edits and the next clean
+      // buffer asks anew, so a stale answer never lands on fresh lines.
+      if (seq !== blameSeq || activeTab() !== textTab || !textTab.blameOn || textTab.dirty) return;
       blameFor = textTab.path;
       const has = !!data.repo && (data.lines || []).length > 0;
       editor.setBlame(has ? data : null);
@@ -5982,6 +6037,47 @@ async function init(root) {
     }
   }
 
+  // commitGroup is what the line's commit can do, read off the blame gutter:
+  // headed by the commit, the file against it, what the commit changed in the
+  // file (the file at the commit's first parent against the commit), the
+  // revision comparison started on that pair, the file's history and the
+  // hash. The two entries that need a parent are dead for a root commit. A
+  // file blame followed through a rename is read under the path it had in
+  // that commit, and the parent side under the one it had before. A line
+  // without a commit, the gutter off or the line uncommitted, gets none of it.
+  function commitGroup(tab, line) {
+    const commit = editor.blameAt ? editor.blameAt(line) : null;
+    if (!commit) return [];
+    const file = baseName(tab.path);
+    const at = commit.path || tab.path;
+    return [
+      { divider: true },
+      {
+        label: `${commit.short} · ${commit.author} · ${logDate(commit.time)}`,
+        icon: "ti-git-commit",
+        disabled: true,
+        title: `${commit.author} · ${commitDate(commit.time)}\n${commit.summary}`,
+      },
+      diffItem(tab.path, commit, `Diff ${file} against ${commit.short}`, at === tab.path ? "" : at),
+      {
+        label: `Show what ${commit.short} changed in ${file}`,
+        icon: "ti-file-diff",
+        disabled: !commit.parent,
+        action: () => void openRevisionCompare({
+          leftRev: commit.parent,
+          rightRev: commit.sha,
+          leftPath: commit.previousPath || at,
+          rightPath: at,
+          leftLabel: `${commit.short}^`,
+          rightLabel: commit.short,
+        }),
+      },
+      { label: "Compare revisions", icon: "ti-git-compare", disabled: !commit.parent, action: () => openRevdiffAt(commit.parent, commit.sha) },
+      { label: "File history", icon: "ti-history", action: () => openFileHistory(tab.path) },
+      hashItem(commit),
+    ];
+  }
+
   function openGutterMenu(tab, line, x, y) {
     const existing = commentAt(tab.path, line);
     openMenu({
@@ -5995,6 +6091,7 @@ async function init(root) {
         existing ? { label: "Delete comment", icon: "ti-trash", danger: true, action: () => void deleteCommentDialog(existing) } : null,
         { label: "Copy path:line", icon: "ti-copy", action: () => void copyPathLine(tab.path, line) },
         blameMenuItem(tab),
+        ...commitGroup(tab, line),
       ],
     });
   }
@@ -7384,7 +7481,10 @@ async function init(root) {
     // The surface belongs to one of them: a preview takes it back from a diff.
     if (tab.previewOn && tab.diffRev) {
       if (tab.path === activePath) void applyDiff("");
-      else tab.diffRev = "";
+      else {
+        tab.diffRev = "";
+        tab.diffFrom = "";
+      }
     }
     persistTabs();
     if (tab.path === activePath) syncPreview();
@@ -11272,22 +11372,30 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   // document at the first screenful.
   const fillsTheBox = EditorView.theme({ "&": { height: "100%" }, ".cm-scroller": { overflow: "auto" } });
 
-  // The blame gutter: the short commit and the author next to every line, with
-  // the whole message in the tooltip. It is a compartment, so switching it on
-  // and off never rebuilds the document, and it rides in the writable side's
-  // extensions so a rebuilt side by side view keeps it.
+  // The blame gutter: the day and the author next to every line, with the
+  // hash and the whole message in the tooltip. It is a compartment, so
+  // switching it on and off never rebuilds the document, and a rebuilt state,
+  // the side by side view going up or down, carries the standing sheet over
+  // (carryBlame). The data travels as an effect into a state field, so a fresh
+  // answer after a save moves the entries inside the standing gutter instead
+  // of replacing it.
   const blameConf = new Compartment();
-  let blameData = null;
+  const blameEffect = StateEffect.define();
 
   class BlameMarker extends view.GutterMarker {
-    constructor(text, title) {
+    constructor(text, title, newest, commit) {
       super();
       this.text = text;
       this.title = title;
+      this.newest = newest;
+      this.commit = commit;
     }
 
+    // The title carries the hash, so two commits of one day and one author
+    // are two markers: a cell that shows one must never keep the other's
+    // tooltip.
     eq(other) {
-      return other.text === this.text;
+      return other.text === this.text && other.newest === this.newest && other.title === this.title;
     }
 
     toDOM() {
@@ -11295,35 +11403,150 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       el.textContent = this.text;
       el.title = this.title;
       // Inline, because one gutter is not worth a stylesheet rule: quiet enough
-      // to read past, wide enough not to wrap.
+      // to read past, wide enough not to wrap. The newest commit's entries are
+      // bold and undimmed, so the latest change stands out of the grey column
+      // in either scheme without a colour of their own.
       el.style.cssText = "display:inline-block;padding:0 8px 0 4px;opacity:0.55;white-space:nowrap;font-size:85%";
+      if (this.newest) el.style.cssText += ";font-weight:700;opacity:1";
       return el;
     }
   }
 
-  // blameMarkers turns the answer into one marker per commit, which is what
-  // makes a file of a few thousand lines cost a handful of DOM nodes' worth of
-  // description instead of one per line.
-  function blameExtension(data) {
-    if (!data || !Array.isArray(data.lines) || data.lines.length === 0) return [];
-    const lines = data.lines;
-    const markers = (data.commits || []).map((commit) => new BlameMarker(
-      commit.pending ? "uncommitted" : `${commit.short} ${shortName(commit.author)}`,
-      commit.pending
-        ? "Not committed yet"
-        : `${commit.short} · ${commit.author} · ${commitDate(commit.time)}\n${commit.summary}`,
-    ));
-    if (markers.length === 0) return [];
-    return view.gutter({
-      class: "cm-blame",
-      lineMarker(active, block) {
-        const at = lines[active.state.doc.lineAt(block.from).number - 1];
-        return at === undefined ? null : markers[at] || null;
-      },
-      // The gutter keeps its width from the first commit, so the text next to it
-      // does not shift while scrolling through.
-      initialSpacer: () => markers[0],
+  // A line the buffer changed no longer belongs to the commit git named, so it
+  // reads as uncommitted until the save lets git answer for it again.
+  const blamePending = new BlameMarker("uncommitted", "Not committed yet", false, null);
+
+  // One line of the gutter: the commit's entry and the line of the file git
+  // saw it on, so an edited line gets its entry back the moment it carries
+  // that text again, the way a line comment heals on its quote.
+  class BlameLine extends view.GutterMarker {
+    constructor(entry, origin) {
+      super();
+      this.entry = entry;
+      this.origin = origin;
+    }
+
+    eq(other) {
+      return other.entry.eq(this.entry);
+    }
+
+    toDOM() {
+      return this.entry.toDOM();
+    }
+  }
+
+  const hasBlame = (data) => !!data && Array.isArray(data.lines) && data.lines.length > 0 && (data.commits || []).length > 0;
+
+  // blameMarkerAt answers the line marker that starts exactly at pos, which
+  // is a line's start: every line carries at most one.
+  function blameMarkerAt(set, pos) {
+    let found = null;
+    set.between(pos, pos, (from, to, value) => {
+      if (from !== pos) return undefined;
+      found = value;
+      return false;
     });
+    return found;
+  }
+
+  // blameSheet turns the answer into one marker per commit and one line per
+  // line of the file, which is what makes a file of a few thousand lines cost
+  // a handful of DOM nodes' worth of description instead of one per line. An
+  // entry is the day and the author, the hash stays in the tooltip and in the
+  // line's menu, where it can be acted on. Which commit is the newest is the
+  // server's answer. The spacer is the longest text as a newest entry: the
+  // gutter is monospace, so that is its widest entry, and it holds the width
+  // for the whole file, or the text next to the gutter would shift whenever a
+  // wider entry scrolled into view. The sheet keeps the file as git saw it,
+  // which is what an edited line is read against afterwards.
+  function blameSheet(data, doc) {
+    const markers = data.commits.map((commit) => (commit.pending ? blamePending : new BlameMarker(
+      [isoDate(commit.time), shortName(commit.author)].filter(Boolean).join(" "),
+      `${commit.short} · ${commit.author} · ${commitDate(commit.time)}\n${commit.summary}`,
+      !!commit.newest,
+      commit,
+    )));
+    const entries = [];
+    const ranges = [];
+    data.lines.forEach((at, i) => {
+      if (i >= doc.lines || !markers[at]) return;
+      entries[i] = markers[at];
+      ranges.push(new BlameLine(markers[at], i + 1).range(doc.line(i + 1).from));
+    });
+    let widest = blamePending;
+    for (const marker of markers) if (marker.text.length > widest.text.length) widest = marker;
+    return { base: doc, entries, set: state.RangeSet.of(ranges, true), spacer: new BlameMarker(widest.text, "", true, null) };
+  }
+
+  // blameFollow carries the sheet through an edit. The lines move with the
+  // text, then every line the change reached is read again against the file
+  // git saw: a line that carries the text of the line it came from keeps that
+  // line's entry, any other reads as uncommitted and remembers where it came
+  // from, so an edit taken back or a line split off gets its entry back the
+  // moment its text is git's again. Mapping alone would leave two lines on a
+  // line that swallowed its neighbour and none on a line typed in front of,
+  // so the reached lines are written down again, one each, however many
+  // changes of one transaction reached a line: a replace all or several
+  // cursors put many into one.
+  function blameFollow(sheet, tr) {
+    const doc = tr.newDoc;
+    const was = tr.startState.doc;
+    const judge = (line, came) => {
+      for (const c of came) {
+        const entry = sheet.entries[c.origin - 1];
+        if (entry && sheet.base.line(c.origin).text === line.text) return new BlameLine(entry, c.origin);
+      }
+      return new BlameLine(blamePending, came.length ? came[0].origin : 0);
+    };
+    const reached = new Map();
+    tr.changes.iterChanges((fromA, toA, fromB, toB) => {
+      const first = doc.lineAt(fromB).number;
+      const last = doc.lineAt(toB).number;
+      const before = blameMarkerAt(sheet.set, was.lineAt(fromA).from);
+      const after = blameMarkerAt(sheet.set, was.lineAt(toA).from);
+      for (let n = first; n <= last; n++) {
+        const came = reached.get(n) || [];
+        if (n === first && before && !came.includes(before)) came.push(before);
+        if (n === last && after && !came.includes(after)) came.push(after);
+        reached.set(n, came);
+      }
+    });
+    const lines = [...reached.keys()].sort((x, y) => x - y);
+    const add = lines.map((n) => judge(doc.line(n), reached.get(n)).range(doc.line(n).from));
+    const set = sheet.set.map(tr.changes).update({
+      add,
+      filter: (from) => !reached.has(doc.lineAt(from).number),
+      filterFrom: doc.line(lines[0]).from,
+      filterTo: doc.line(lines[lines.length - 1]).to,
+    });
+    return { ...sheet, set };
+  }
+
+  const blameField = StateField.define({
+    create: () => null,
+    update(sheet, tr) {
+      for (const e of tr.effects) if (e.is(blameEffect)) return blameSheet(e.value, tr.newDoc);
+      return tr.docChanged && sheet ? blameFollow(sheet, tr) : sheet;
+    },
+  });
+
+  const blameGutter = view.gutter({
+    class: "cm-blame",
+    markers: (v) => v.state.field(blameField).set,
+    initialSpacer: (v) => v.state.field(blameField).spacer,
+    updateSpacer: (spacer, update) => update.state.field(blameField).spacer,
+  });
+
+  function blameExtension(data) {
+    return hasBlame(data) ? [blameField.init((st) => blameSheet(data, st.doc)), blameGutter] : [];
+  }
+
+  // carryBlame hands a standing sheet to a state built over the same text, so
+  // what the gutter followed through an unsaved edit survives the rebuild
+  // instead of being worked out again from git's answer for the saved file.
+  function carryBlame(st) {
+    const sheet = st.field(blameField, false);
+    return sheet ? [blameField.init(() => sheet), blameGutter] : [];
   }
 
   const commentsConf = new Compartment();
@@ -11571,7 +11794,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     return true;
   };
 
-  const editableExtensions = (langExt) => [
+  const editableExtensions = (langExt, blame = []) => [
     keymap.of([
       { key: "Ctrl-o", run: () => true },
       { key: "Ctrl-f", run: search.openSearchPanel },
@@ -11595,7 +11818,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     keymap.of([indentWithTab]),
     lspExtension,
     mergeConf.of([]),
-    blameConf.of(blameExtension(blameData)),
+    blameConf.of(blame),
     commentsConf.of(commentsExtension(commentData)),
     EditorView.updateListener.of((u) => {
       if (u.docChanged) hooks.onDocChanged?.(u);
@@ -11608,7 +11831,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     }),
   ];
 
-  const baseExtensions = (langExt) => [editableExtensions(langExt), changesConf.of([]), fillsTheBox];
+  const baseExtensions = (langExt, blame = []) => [editableExtensions(langExt, blame), changesConf.of([]), fillsTheBox];
 
   // The other side of a diff is a revision, not a file on disk, so it is read
   // only and reports nothing: the status bar follows the working copy.
@@ -11857,8 +12080,6 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     // included, would address the wrong document. The caller says what still
     // counts, and nothing above touches the surface, so leaving is free.
     if (spec.valid && !spec.valid()) return;
-    // Blame belongs to one file, so it does not ride into this view.
-    blameData = null;
     dropMergeView();
     // Built without a parent and hung up afterwards, so a constructor that
     // throws leaves no empty surface behind, exactly like setDiff.
@@ -11903,13 +12124,14 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       // Read after the loads, never before: what was typed while they ran
       // belongs to the buffer, and a snapshot from before would drop it.
       const doc = workView().state.doc;
+      const blame = carryBlame(workView().state);
       dropMergeView();
       // Built first, without a parent, and only then put on screen: a
       // constructor that throws must leave the plain editor where it was
       // instead of an empty surface nobody can read anything from.
       const view = new merge.MergeView({
         a: { doc: spec.original, extensions: readOnlyExtensions(langExt) },
-        b: { doc, extensions: editableExtensions(langExt) },
+        b: { doc, extensions: editableExtensions(langExt, blame) },
         collapseUnchanged: collapseOption(spec),
         highlightChanges: true,
         gutter: true,
@@ -11934,8 +12156,9 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       // Coming back from side by side: the text the person has now is what the
       // plain editor continues with.
       const text = mergeView.b.state.doc;
+      const blame = carryBlame(mergeView.b.state);
       dropMergeView();
-      editorView.setState(EditorState.create({ doc: text, extensions: baseExtensions(langExt) }));
+      editorView.setState(EditorState.create({ doc: text, extensions: baseExtensions(langExt, blame) }));
     }
     if (merge) buildUnified(merge, spec);
     else dropUnified();
@@ -12031,9 +12254,25 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     exitDiff,
     setCompare,
     canBlame: true,
+    // blameAt answers the commit the gutter shows for a line, null for a line
+    // without one: the gutter off, a line the buffer changed, or git's own
+    // uncommitted one.
+    blameAt(lineNo) {
+      const st = workView().state;
+      const sheet = st.field(blameField, false);
+      if (!sheet || lineNo < 1 || lineNo > st.doc.lines) return null;
+      const found = blameMarkerAt(sheet.set, st.doc.line(lineNo).from);
+      return found ? found.entry.commit : null;
+    },
     setBlame(data) {
-      blameData = data;
-      workView().dispatch({ effects: blameConf.reconfigure(blameExtension(data)) });
+      const v = workView();
+      // A fresh answer moves the entries inside the standing gutter, only
+      // switching the gutter on or off touches the compartment.
+      if (hasBlame(data) && v.state.field(blameField, false)) {
+        v.dispatch({ effects: blameEffect.of(data) });
+      } else {
+        v.dispatch({ effects: blameConf.reconfigure(blameExtension(data)) });
+      }
     },
     canComments: true,
     setComments(data) {
@@ -12155,7 +12394,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       // be handed back to the plain editor. Its text can, so the tab keeps that
       // and rebuilds a plain state from it.
       if (mergeView) {
-        tab.handle.state = EditorState.create({ doc: mergeView.b.state.doc, extensions: baseExtensions([]) });
+        tab.handle.state = EditorState.create({ doc: mergeView.b.state.doc, extensions: baseExtensions([], carryBlame(mergeView.b.state)) });
       } else {
         tab.handle.state = editorView.state;
       }
@@ -12532,6 +12771,15 @@ function setupIndentControl(root, editor, settings) {
 function commitDate(seconds) {
   if (!seconds) return "";
   return new Date(seconds * 1000).toLocaleString();
+}
+
+// isoDate is the compact form for a gutter, the local day as 2026-09-25. The
+// whole date stands in the tooltip through commitDate.
+function isoDate(seconds) {
+  if (!seconds) return "";
+  const d = new Date(seconds * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 // shortName keeps a gutter narrow. The full name is in the tooltip.

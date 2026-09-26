@@ -1955,12 +1955,68 @@ test. Update this file when a convention changes.
   toggle. It is reachable only from the file's own context menu, on its tab and
   on its tree row (`blameMenuItem`); a tree row whose file is not open opens it
   with the gutter on. It renders through a compartment so turning it on and off
-  never rebuilds the document. `.../git/blame` answers the
+  never rebuilds the document, and the data travels as a state effect into a
+  field, so a fresh answer moves the entries inside the standing gutter
+  (`blameEffect`, `blameField`). A tab's state is built without a gutter and
+  `applyBlame` gives it the one of its own file; a state rebuilt over the same
+  text, the side by side view going up or down, takes the standing sheet along
+  (`carryBlame`), never git's answer again, which would put the saved file's
+  commits on an edited buffer. `.../git/blame` answers the
   commits once and one index per line, so a few thousand lines cost a handful of
-  entries; the gutter shows what git has, so a dirty buffer drops it until the
-  save catches up rather than attributing moved lines to the wrong commits, and
-  a file git has never seen answers empty, which the status line says instead of
-  an empty gutter. The porcelain format costs a multiple of the file it
+  entries. **An entry is the day and the author, the newest commit's entries
+  bold and undimmed** (full opacity against the column's 0.55, no colour of
+  their own, so it holds in both schemes), the hash with the whole date and
+  the message in the tooltip. Two commits of one day and one author read the
+  same, so a marker is equal to another only with the same tooltip, or a
+  reused cell keeps the other commit's hash. Which commit is the newest is the
+  server's answer (`Commit.Newest`): the first of the `rev-list --no-walk`
+  that names the parents, newest first by commit time, since the author time
+  survives a rebase, exactly one, and none in a file of a single commit. **The hash is acted on in the line's menu**: with
+  the gutter on, `openGutterMenu` appends `commitGroup` after a divider, headed
+  by the commit (short hash, author, day, as a disabled row), then the file
+  diffed against it (`diffAgainst`), what the commit changed in the file (the
+  file at its first parent against it through `openRevisionCompare`, the read
+  only compare tab the comparison panel's Enter opens too, disabled for a root
+  commit), Compare revisions prefilled with parent and commit
+  (`openRevdiffAt`), the file history and Copy the hash. The commit comes out
+  of the gutter's own field (`editor.blameAt`), a line the buffer changed or
+  git's uncommitted one has none and gets no group, and the parent travels in
+  the answer as `Commit.Parent` (`fillParents`, one `rev-list --no-walk
+  --parents` over the answer's commits, the porcelain names no parent). Both
+  entries that need a parent are dead for a root commit. blame follows a
+  rename, so every commit carries the path the file had in it and in the
+  version before (`Commit.Path`, `Commit.PreviousPath`, out of the porcelain's
+  `filename` and `previous`, cut to the project); the diff reads the revision
+  under that path (`tab.diffFrom` beside `tab.diffRev`, persisted as
+  `diffFrom`, cleared wherever the revision is) and the comparison reads each
+  side under its own. The diff entry and the hash entry are one pair of
+  builders for the history and the line menu (`diffItem`, `hashItem`).
+  **The gutter keeps one width for the whole file**: CodeMirror renders only
+  the viewport's gutter cells and `.cm-gutter` is a flex column with no width
+  of its own, so a wider entry scrolling into view once widened the gutter and
+  pushed the text right; the spacer is therefore the longest entry as a newest
+  one (the gutter is monospace, so that is the widest), never the first
+  commit's.
+  **A dirty buffer keeps the gutter and follows the edits itself**
+  (`blameFollow`): the lines are mapped through every change and every line a
+  change reached is read again against the file as git saw it, which the sheet
+  keeps (`base`). A line that carries the text of the line it came from keeps
+  that line's entry, any other reads as `uncommitted` and remembers its origin
+  (`BlameLine`, the entry plus the line it came from), so an edit taken back or
+  a line split off gets its entry back the moment its text is git's again, the
+  rule a line comment heals by. One line per reached line is written down
+  again, since mapping alone leaves two on a joined line and none on a line
+  typed in front of, however many changes of one transaction reach it (a
+  replace all, several cursors). Git is asked again when the buffer turns
+  clean, by a save or an undo, an answer that arrives after the buffer moved
+  on is dropped, and the answer that lands does so in the standing gutter, so
+  nothing is taken away and put back in between (taking it away while dirty
+  was what made the text jump left and right around every autosave). A save
+  costs one blame: the status round that follows it asks only for a file not
+  blamed yet, and a moved HEAD clears that (`dropChangeHeads` empties
+  `blameFor`). Only toggling the gutter on
+  inside a dirty buffer waits for the save. A file git has never seen answers empty, which the
+  status line says instead of an empty gutter. The porcelain format costs a multiple of the file it
   describes, so a file the editor still opens can fill git's output cap: that
   answer carries `large` and no lines at all, because half a blame would
   attribute the head of the file and leave the rest looking untouched.
@@ -2066,7 +2122,8 @@ test. Update this file when a convention changes.
   scrolling); the line comes from `editor.lineAtGutter` (workView only, so a
   diff's revision side answers nothing), and the menu holds, in this order:
   add or edit the comment, on a commented line the danger `Delete comment`,
-  `Copy path:line`, and the blame toggle (`blameMenuItem`); deleting lives
+  `Copy path:line`, the blame toggle (`blameMenuItem`) and, with the blame
+  on, the line's commit group (see the blame rule); deleting lives
   only in the menus, the dialog itself only creates and edits.
   The dialog is a Bootstrap modal, deliberately not SweetAlert
   (`data-editor-comment-modal`, the one exception the feature carries):

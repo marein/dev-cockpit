@@ -4798,6 +4798,56 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
 
     // ---- blame ---------------------------------------------------------------
 
+    // blameMarks reads the entries the gutter shows, top down and in line
+    // order, without the hidden spacer that only holds the width; blameSpacer
+    // reads that spacer; blameBox the gutter's width, where the text starts and
+    // whether the gutter is still the element it was when it was marked, which
+    // is what an entry scrolling in, a keystroke and a save must not move.
+    const blameMarks = () => page.evaluate(() => [...document.querySelectorAll(".cm-blame .cm-gutterElement")]
+      .filter((el) => el.style.visibility !== "hidden")
+      .flatMap((el) => [...el.querySelectorAll("span")])
+      .filter((el) => el.textContent.trim())
+      .map((el) => ({ text: el.textContent, title: el.title, weight: getComputedStyle(el).fontWeight, opacity: getComputedStyle(el).opacity })));
+    const blameSpacer = () => page.evaluate(() => {
+      const el = [...document.querySelectorAll(".cm-blame .cm-gutterElement")].find((e) => e.style.visibility === "hidden");
+      const span = el && el.querySelector("span");
+      return span ? { text: span.textContent, weight: getComputedStyle(span).fontWeight } : null;
+    });
+    const blameBox = () => page.evaluate(() => {
+      const gutter = document.querySelector(".cm-blame");
+      const content = gutter && gutter.closest(".cm-editor").querySelector(".cm-content");
+      return {
+        width: gutter ? gutter.getBoundingClientRect().width : 0,
+        left: content ? content.getBoundingClientRect().left : 0,
+        node: gutter ? gutter.dataset.e2eNode || "" : "",
+      };
+    });
+    const scrollBlame = (bottom) => page.evaluate((toBottom) => {
+      const scroller = document.querySelector(".cm-blame").closest(".cm-editor").querySelector(".cm-scroller");
+      scroller.scrollTop = toBottom ? scroller.scrollHeight : 0;
+    }, bottom);
+    const blameShows = (pattern) => page.waitForFunction((source) => {
+      const re = new RegExp(source);
+      return [...document.querySelectorAll(".cm-blame .cm-gutterElement")]
+        .filter((el) => el.style.visibility !== "hidden")
+        .some((el) => re.test(el.textContent));
+    }, pattern, { timeout: 15000 });
+    const bold = (weight) => weight === "700" || weight === "bold";
+    // The newest commit's entries stand out of the dimmed column: bold and at
+    // full opacity, the others at the column's own 0.55.
+    const standsOut = (m) => bold(m.weight) && m.opacity === "1";
+    const rests = (m) => !bold(m.weight) && m.opacity !== "1";
+    // lineCell is the line number cell of a line, the row the line's menu opens
+    // on; menuLabels reads the one open menu, text and whether an entry is live.
+    const lineCell = (n) => page.locator(".cm-lineNumbers .cm-gutterElement:visible").filter({ hasText: new RegExp(`^${n}$`) }).first();
+    const menuLabels = () => page.evaluate(() => [...document.querySelectorAll(".dc-context-menu .dropdown-item")]
+      .map((el) => ({ text: el.textContent.trim().replace(/\s+/g, " "), disabled: el.disabled })));
+    const openLineMenu = async (n) => {
+      await lineCell(n).click({ button: "right" });
+      await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
+      return menuLabels();
+    };
+
     await run("blame answers per line and refuses a path outside the project", async () => {
       const blame = await page.evaluate(([b]) =>
         fetch(`${b}/git/blame?path=root.txt`, { headers: { Accept: "application/json" } }).then((r) => r.json()), [editorBase]);
@@ -4832,16 +4882,10 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
 
       await pick('.editor-tab[data-path="root.txt"]', "Show git blame");
       await page.waitForSelector(".cm-blame", { timeout: 20000 });
-      const shown = await page.evaluate(() => {
-        const marks = [...document.querySelectorAll(".cm-blame .cm-gutterElement span")].filter((el) => el.textContent.trim());
-        return {
-          count: marks.length,
-          text: marks[0] ? marks[0].textContent : "",
-          title: marks[0] ? marks[0].title : "",
-        };
-      });
+      const marks = await blameMarks();
+      const shown = { count: marks.length, text: marks[0] ? marks[0].text : "", title: marks[0] ? marks[0].title : "" };
       assert(shown.count > 0, "the gutter is empty");
-      assert(/^[0-9a-f]{7} \S/.test(shown.text), `the gutter says ${JSON.stringify(shown.text)}`);
+      assert(/^\d{4}-\d{2}-\d{2} \S/.test(shown.text), `the gutter says ${JSON.stringify(shown.text)}`);
       assert(/·/.test(shown.title) && shown.title.split("\n").length === 2, `the tooltip says ${JSON.stringify(shown.title)}`);
       assert(await menuLabel('.editor-tab[data-path="root.txt"]', "git blame") === "Hide git blame",
         "the entry does not read as on");
@@ -4874,17 +4918,20 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         fetch("/settings/editor/git", { headers: { Accept: "text/html" } }).then((r) => r.text()));
       assert(!/blame/i.test(settings), "the settings page carries a blame setting");
 
-      // The gutter is what git has, so an unsaved buffer takes it away and the
-      // save brings it back: a line that moved would otherwise point at the
-      // wrong commit.
+      // The gutter stands through an edit and through the save: its lines
+      // follow the typing (covered below) and git is asked again once the save
+      // caught up, nothing is taken away in between.
       await page.locator(".cm-content").first().click({ force: true });
       await page.keyboard.press("Control+Home");
       await page.keyboard.type("moved\n");
       await page.waitForSelector('.editor-tab[data-path="root.txt"].dirty', { timeout: 8000 });
-      await page.waitForSelector(".cm-blame", { state: "detached", timeout: 8000 });
+      assert(await page.locator(".cm-blame").count() === 1, "the gutter left with the first keystroke");
+      const refetched = page.waitForResponse((r) => r.url().includes("/git/blame?path=root.txt") && r.ok(), { timeout: 20000 });
       await page.click("[data-editor-save]");
       await page.waitForSelector('.editor-tab[data-path="root.txt"]:not(.dirty)', { timeout: 10000 });
-      await page.waitForSelector(".cm-blame", { timeout: 25000 });
+      await refetched;
+      await sleep(300);
+      assert(await page.locator(".cm-blame").count() === 1, "the gutter did not stand through the save");
 
       // Off from the tree row's menu, the other door to the same switch.
       await pick('.editor-item[data-path="root.txt"]', "Hide git blame");
@@ -4893,6 +4940,389 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       const off = (after.open || []).find((e) => e && e.path === "root.txt");
       assert(!off || off.blame !== true, `switching it off was not remembered: ${JSON.stringify(after.open)}`);
       return `${shown.count} lines attributed, "${shown.text}"`;
+    });
+
+    // A file with two commits by two authors, the short name on the 120 lines
+    // at the top and the long one on the 40 lines below, dated apart so the day
+    // in every entry and the newest commit are known. It stands taller than the
+    // viewport on purpose: the gutter is read at the top, where only the short
+    // entries are in view, and again at the bottom.
+    const blamed = "blame.txt";
+    await run("the blame gutter keeps one width over the whole file, scrolling moves no text", async () => {
+      const dated = (day, name) => `GIT_AUTHOR_DATE=${day}T12:00:00+00:00 GIT_COMMITTER_DATE=${day}T12:00:00+00:00 `
+        + `git -c user.email=${name.toLowerCase()}@example.com -c user.name=${name} -c commit.gpgsign=false commit -qm ${name}`;
+      assert(await runInShell(`printf 'al %s\\n' $(seq 1 120) > ${blamed} && git add ${blamed} && ${dated("2024-01-02", "Al")}`
+        + ` && printf 'bart %s\\n' $(seq 1 40) >> ${blamed} && git add ${blamed} && ${dated("2025-03-04", "Bartholomew")}\r`) === 200,
+      "the shell refused the fixture");
+      let blame = null;
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
+        blame = await page.evaluate(([b, f]) =>
+          fetch(`${b}/git/blame?path=${f}`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => null), [editorBase, blamed]);
+        if (blame && (blame.commits || []).length === 2) break;
+        await sleep(500);
+      }
+      assert(blame && blame.commits.length === 2, `the fixture never reached two commits: ${JSON.stringify(blame).slice(0, 200)}`);
+
+      await openEditor(page);
+      await page.waitForSelector(`.editor-item[data-path="${blamed}"]`, { timeout: 15000 });
+      await page.click(`.editor-item[data-path="${blamed}"]`);
+      await page.waitForSelector(`.editor-tab[data-path="${blamed}"].active`, { timeout: 10000 });
+      await diffReady(page);
+      await pick(`.editor-tab[data-path="${blamed}"]`, "Show git blame");
+      await page.waitForSelector(".cm-blame", { timeout: 20000 });
+      await blameShows(" Al$");
+      await page.evaluate(() => { document.querySelector(".cm-blame").dataset.e2eNode = "kept"; });
+      const top = await blameMarks();
+      assert(top.length > 0 && top.every((m) => / Al$/.test(m.text)), `the top of the file shows ${JSON.stringify(top.map((m) => m.text).slice(0, 3))}`);
+      const before = await blameBox();
+      assert(before.width > 0, "the gutter has no width");
+      await scrollBlame(true);
+      await blameShows(" Bartholomew$");
+      await sleep(300);
+      const after = await blameBox();
+      assert(Math.abs(after.width - before.width) < 0.5, `the gutter grew from ${before.width} to ${after.width} when a wider entry came into view`);
+      assert(Math.abs(after.left - before.left) < 0.5, `the text moved from ${before.left} to ${after.left}`);
+      // What holds the width is the spacer, the widest entry in bold, which
+      // was not in view at the top.
+      const spacer = await blameSpacer();
+      assert(spacer && / Bartholomew$/.test(spacer.text), `the spacer is not the widest entry: ${JSON.stringify(spacer)}`);
+      assert(bold(spacer.weight), `the spacer is not bold: ${spacer.weight}`);
+      await scrollBlame(false);
+      await blameShows(" Al$");
+      return `gutter ${before.width.toFixed(1)}px at the top, ${after.width.toFixed(1)}px at the bottom`;
+    });
+
+    await run("every blame entry carries the day of its commit, the tooltip the whole date", async () => {
+      const marks = await blameMarks();
+      assert(marks.length > 0, "no entries to read");
+      for (const m of marks) {
+        assert(/^2024-01-02 Al$/.test(m.text), `an entry reads ${JSON.stringify(m.text)}`);
+        assert(/^[0-9a-f]{7} · Al · .*2024.*\nAl$/.test(m.title), `a tooltip reads ${JSON.stringify(m.title)}`);
+      }
+      return `${marks.length} entries dated 2024-01-02, the tooltip ${JSON.stringify(marks[0].title.split("\n")[0])}`;
+    });
+
+    await run("the newest commit's blame entries stand out, bold and undimmed, the older ones rest dimmed", async () => {
+      const top = await blameMarks();
+      assert(top.length > 0 && top.every(rests), `the older commit's entries read ${JSON.stringify(top.slice(0, 2).map((m) => [m.weight, m.opacity]))}`);
+      await scrollBlame(true);
+      await blameShows(" Bartholomew$");
+      const bottom = (await blameMarks()).filter((m) => / Bartholomew$/.test(m.text));
+      assert(bottom.length > 0, "the newest commit's lines never came into view");
+      for (const m of bottom) {
+        assert(/^2025-03-04 Bartholomew$/.test(m.text), `a newest entry reads ${JSON.stringify(m.text)}`);
+        assert(standsOut(m), `a newest entry weighs ${m.weight} at opacity ${m.opacity}`);
+      }
+      await scrollBlame(false);
+      await blameShows(" Al$");
+      return `${bottom.length} entries of 2025-03-04 at ${bottom[0].weight}/${bottom[0].opacity}, the rest at ${top[0].weight}/${top[0].opacity}`;
+    });
+
+    await run("the line menu offers the line's commit with blame on, nothing on an uncommitted line, and its first entry opens the diff", async () => {
+      const blame = await page.evaluate(([b, f]) =>
+        fetch(`${b}/git/blame?path=${f}`, { headers: { Accept: "application/json" } }).then((r) => r.json()), [editorBase, blamed]);
+      const al = blame.commits.find((c) => c.author === "Al");
+      assert(al && /^[0-9a-f]{40}$/.test(al.parent || ""), `Al's commit carries no parent: ${JSON.stringify(al)}`);
+
+      // A committed line: the group after a divider, headed by the commit as a
+      // dead row, then its entries in order, the second one live since Al's
+      // commit has the init commit as its parent.
+      const day = await page.evaluate((t) => new Date(t * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }), al.time);
+      let labels = await openLineMenu(1);
+      const wanted = [
+        `${al.short} · Al · ${day}`,
+        `Diff ${blamed} against ${al.short}`,
+        `Show what ${al.short} changed in ${blamed}`,
+        "Compare revisions",
+        "File history",
+        "Copy the hash",
+      ];
+      const order = wanted.map((w) => labels.findIndex((l) => l.text === w));
+      assert(order.every((i) => i >= 0), `the menu lacks entries of the group: ${JSON.stringify(labels.map((l) => l.text))}`);
+      assert(order.every((i, k) => k === 0 || i > order[k - 1]), `the group is out of order: ${JSON.stringify(order)}`);
+      assert(order[0] > labels.findIndex((l) => /git blame/.test(l.text)), "the group does not come after the blame switch");
+      assert(labels[order[0]].disabled, "the commit heading is a live entry");
+      assert(!labels[order[2]].disabled, "what the commit changed is dead although the commit has a parent");
+      assert(await page.locator(".dc-context-menu .dropdown-divider").count() >= 1, "no divider before the group");
+      await page.keyboard.press("Escape");
+      await sleep(200);
+
+      // An uncommitted line gets no group.
+      await page.locator(".cm-content").first().click({ force: true });
+      await page.keyboard.press("Control+Home");
+      await page.keyboard.press("End");
+      await page.keyboard.type("!");
+      await page.waitForSelector(`.editor-tab[data-path="${blamed}"].dirty`, { timeout: 8000 });
+      await blameShows("^uncommitted$");
+      labels = await openLineMenu(1);
+      assert(!labels.some((l) => l.text === "Copy the hash" || /^Diff |^Show what /.test(l.text)),
+        `an uncommitted line offers a commit: ${JSON.stringify(labels.map((l) => l.text))}`);
+      await page.keyboard.press("Escape");
+      await sleep(200);
+      await page.locator(".cm-content").first().click({ force: true });
+      await page.keyboard.press("Control+Home");
+      await page.keyboard.press("End");
+      await page.keyboard.press("Backspace");
+      await page.waitForSelector(`.editor-tab[data-path="${blamed}"]:not(.dirty)`, { timeout: 8000 });
+      await blameShows("^2024-01-02 Al$");
+
+      // A root commit has nothing earlier to compare the file with: root.txt's
+      // second line is the init commit's, and that entry is dead there.
+      const rootBlame = await page.evaluate(([b]) =>
+        fetch(`${b}/git/blame?path=root.txt`, { headers: { Accept: "application/json" } }).then((r) => r.json()), [editorBase]);
+      const init = rootBlame.commits.find((c) => c.summary === "init");
+      assert(init && !init.parent, `the init commit names a parent: ${JSON.stringify(init)}`);
+      await page.click('.editor-tab[data-path="root.txt"]');
+      await page.waitForSelector('.editor-tab[data-path="root.txt"].active', { timeout: 10000 });
+      await pick('.editor-tab[data-path="root.txt"]', "Show git blame");
+      await page.waitForSelector(".cm-blame", { timeout: 20000 });
+      await blameShows(" e2e$");
+      labels = await openLineMenu(2);
+      const dead = labels.find((l) => l.text === `Show what ${init.short} changed in root.txt`);
+      assert(dead && dead.disabled, `the root commit's entry is not dead: ${JSON.stringify(labels.map((l) => [l.text, l.disabled]))}`);
+      const compare = labels.find((l) => l.text === "Compare revisions");
+      assert(compare && compare.disabled, "Compare revisions is live for a root commit, the panel would fill the empty side with a default");
+      assert(labels.some((l) => l.text === `Diff root.txt against ${init.short}` && !l.disabled), "the diff against the root commit is not offered");
+      await page.keyboard.press("Escape");
+      await sleep(200);
+      await pick('.editor-tab[data-path="root.txt"]', "Hide git blame");
+      await page.waitForSelector(".cm-blame", { state: "detached", timeout: 8000 });
+      await page.click(`.editor-tab[data-path="${blamed}"]`);
+      await page.waitForSelector(".cm-blame", { timeout: 20000 });
+      await blameShows(" Al$");
+
+      // The first entry opens the file's diff against the commit, the very
+      // switch the tab menu carries, and the gutter rides into the diff.
+      await openLineMenu(1);
+      await menuItem(`^Diff ${blamed} against ${al.short}$`).first().click();
+      await page.waitForSelector(".cm-mergeView", { state: "visible", timeout: 15000 });
+      assert(await diffPressed(page), "the tab menu does not read the diff as on");
+      assert(await page.locator(".cm-blame").count() >= 1, "the gutter left with the diff");
+      await toggleDiff(page);
+      await page.waitForSelector(".cm-mergeView", { state: "detached", timeout: 10000 });
+      await page.waitForSelector(".cm-blame", { timeout: 20000 });
+
+      // The second opens the file at the commit's parent against the commit
+      // as a read only comparison, and the third the revision comparison on
+      // that pair.
+      await openLineMenu(1);
+      await menuItem(`^Show what ${al.short} changed in ${blamed}$`).first().click();
+      await page.waitForSelector('.editor-tab[data-path^="//revdiff/"].active', { timeout: 20000 });
+      await page.waitForSelector("[data-editor-compare]:not([hidden])", { timeout: 10000 });
+      const bar = (await page.locator("[data-editor-compare]").textContent()).replace(/\s+/g, " ");
+      assert(bar.includes(`${al.short}^`) && bar.includes(al.short), `the comparison bar reads ${JSON.stringify(bar)}`);
+      await page.click(".editor-tab.active .editor-tab-state");
+      await page.waitForSelector('.editor-tab[data-path^="//revdiff/"]', { state: "detached", timeout: 8000 });
+      await page.click(`.editor-tab[data-path="${blamed}"]`);
+      await page.waitForSelector(".cm-blame", { timeout: 20000 });
+      await openLineMenu(1);
+      await menuItem("^Compare revisions$").first().click();
+      await page.waitForSelector("[data-editor-revdiff]:not([hidden])", { timeout: 10000 });
+      const pair = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) || "{}"), `dc-editor-revdiff:${project}`);
+      assert(pair.from === al.parent && pair.to === al.sha, `the comparison opened on ${JSON.stringify(pair)}`);
+      await page.click("[data-editor-revdiff-close]");
+      await page.waitForSelector("[data-editor-revdiff]", { state: "hidden", timeout: 8000 });
+      return `${wanted.length} entries headed ${JSON.stringify(wanted[0])}, dead on an uncommitted line and for a root commit's parent`;
+    });
+
+    await run("typing with blame on keeps the gutter standing, its lines follow the buffer and the save refreshes them in place", async () => {
+      // The gutter standing now is the one that has to stand through every
+      // edit below, so it is marked here and read back after each of them.
+      await page.evaluate(() => { document.querySelector(".cm-blame").dataset.e2eNode = "kept"; });
+      const start = await blameBox();
+      const was = await blameMarks();
+      const same = (box, what) => {
+        assert(box.node === "kept", `the gutter was replaced ${what}`);
+        assert(Math.abs(box.width - start.width) < 0.5 && Math.abs(box.left - start.left) < 0.5,
+          `the text moved ${what}: ${JSON.stringify(start)} to ${JSON.stringify(box)}`);
+      };
+      const until = async (test, what) => {
+        const deadline = Date.now() + 30000;
+        for (;;) {
+          const marks = await blameMarks();
+          if (test(marks)) return marks;
+          assert(Date.now() < deadline, `${what}: ${JSON.stringify(marks.slice(0, 3).map((m) => m.text))}`);
+          await sleep(300);
+        }
+      };
+
+      // A character into the first line: that line reads as uncommitted, the
+      // line under it keeps its entry, and nothing leaves or moves.
+      await page.locator(".cm-content").first().click({ force: true });
+      await page.keyboard.press("Control+Home");
+      await page.keyboard.press("End");
+      await page.keyboard.type("!");
+      await page.waitForSelector(`.editor-tab[data-path="${blamed}"].dirty`, { timeout: 8000 });
+      let marks = await until((m) => m[0] && m[0].text === "uncommitted", "the changed line never read as uncommitted");
+      assert(marks[0].title === "Not committed yet", `the tooltip reads ${JSON.stringify(marks[0].title)}`);
+      assert(marks[1].text === was[1].text, `the line under it reads ${JSON.stringify(marks[1].text)}`);
+      same(await blameBox(), "by the keystroke");
+
+      // Taken back, the buffer is clean again and git is asked: the line gets
+      // its commit back inside the very gutter that stood the whole time.
+      await page.keyboard.press("Backspace");
+      await page.waitForSelector(`.editor-tab[data-path="${blamed}"]:not(.dirty)`, { timeout: 8000 });
+      marks = await until((m) => m[0] && m[0].text === was[0].text, "the undone line never got its commit back");
+      same(await blameBox(), "by the undo");
+
+      // A new line on top reads as uncommitted and pushes the entries down
+      // with their lines. The save keeps the gutter standing, and git's answer
+      // for the saved file still calls the new line uncommitted.
+      await page.keyboard.press("Control+Home");
+      await page.keyboard.type("added\n");
+      await page.waitForSelector(`.editor-tab[data-path="${blamed}"].dirty`, { timeout: 8000 });
+      marks = await until((m) => m[0] && m[0].text === "uncommitted" && m[1] && m[1].text === was[0].text, "the new line and the one under it never read right");
+      assert(marks[2].text === was[1].text, `the third line reads ${JSON.stringify(marks[2].text)}`);
+      same(await blameBox(), "by the new line");
+      await page.click("[data-editor-save]");
+      await page.waitForSelector(`.editor-tab[data-path="${blamed}"]:not(.dirty)`, { timeout: 10000 });
+      await sleep(1000);
+      marks = await blameMarks();
+      assert(marks[0].text === "uncommitted" && marks[1].text === was[0].text, `after the save the top reads ${JSON.stringify(marks.slice(0, 2).map((m) => m.text))}`);
+      same(await blameBox(), "by the save");
+
+      // Committed through the shell, the git event brings the fresh answer
+      // into the standing gutter: the new line names the commit, in bold now
+      // that it is the newest, and the gutter still has not moved.
+      assert(await runInShell(`git add ${blamed} && git ${author} commit -qm added\r`) === 200, "the shell refused the commit");
+      marks = await until((m) => m[0] && /^\d{4}-\d{2}-\d{2} e2e$/.test(m[0].text), "the commit never reached the gutter");
+      assert(standsOut(marks[0]) && rests(marks[1]), `the newest commit does not stand out: ${JSON.stringify(marks.slice(0, 2).map((m) => [m.weight, m.opacity]))}`);
+      assert(marks[1].text === was[0].text, `the second line reads ${JSON.stringify(marks[1].text)}`);
+      same(await blameBox(), "by the commit");
+
+      // Back to what the checks below found: the switch off and the file
+      // closed, so no round after this one carries a blame request.
+      await pick(`.editor-tab[data-path="${blamed}"]`, "Hide git blame");
+      await page.waitForSelector(".cm-blame", { state: "detached", timeout: 8000 });
+      await page.click(`.editor-tab[data-path="${blamed}"] .editor-tab-state`);
+      await page.waitForSelector(`.editor-tab[data-path="${blamed}"]`, { state: "detached", timeout: 8000 });
+      await sleep(300);
+      return `uncommitted while typing, ${JSON.stringify(marks[0].text)} after the commit, the gutter ${start.width.toFixed(1)}px throughout`;
+    });
+
+    // Two commits of one day by one author read the same in the gutter, and a
+    // third, later one is the newest, so neither of the two is bold either:
+    // their markers differ in the hash alone. The file is also where one
+    // transaction reaches one line twice, a replace all over a line holding
+    // the word twice.
+    const sameday = "sameday.txt";
+    const cellEntries = () => page.evaluate(() => [...document.querySelectorAll(".cm-blame .cm-gutterElement")]
+      .filter((el) => el.style.visibility !== "hidden" && el.getBoundingClientRect().height > 0)
+      .map((el) => [...el.querySelectorAll("span")].filter((span) => span.textContent.trim()).map((span) => ({ text: span.textContent, title: span.title }))));
+    const cleanAgain = async (path) => {
+      const deadline = Date.now() + 15000;
+      while (await page.locator(`.editor-tab[data-path="${path}"].dirty`).count()) {
+        assert(Date.now() < deadline, `${path} never got clean again`);
+        await page.keyboard.press("Control+z");
+        await sleep(150);
+      }
+    };
+    await run("two commits of one day and one author keep their own tooltip when the lines move under them", async () => {
+      const dated = (stamp, name, line) => `printf '${line}\\n' >> ${sameday} && git add ${sameday} && `
+        + `GIT_AUTHOR_DATE=${stamp} GIT_COMMITTER_DATE=${stamp} git -c user.email=x@example.com -c user.name=${name} -c commit.gpgsign=false commit -qm '${line}'`;
+      assert(await runInShell(`${dated("2024-01-02T10:00:00+00:00", "Al", "x x")} && ${dated("2024-01-02T11:00:00+00:00", "Al", "y y")}`
+        + ` && ${dated("2025-05-06T12:00:00+00:00", "Bo", "z z")}\r`) === 200, "the shell refused the fixture");
+      let blame = null;
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
+        blame = await page.evaluate(([b, f]) =>
+          fetch(`${b}/git/blame?path=${f}`, { headers: { Accept: "application/json" } }).then((r) => r.json()).catch(() => null), [editorBase, sameday]);
+        if (blame && (blame.commits || []).length === 3) break;
+        await sleep(500);
+      }
+      assert(blame && blame.commits.length === 3, `the fixture never reached three commits: ${JSON.stringify(blame).slice(0, 200)}`);
+      const x = blame.commits.find((c) => c.summary === "x x");
+      const y = blame.commits.find((c) => c.summary === "y y");
+      assert(blame.commits.filter((c) => c.newest).map((c) => c.summary).join() === "z z", `the newest is not the later commit alone: ${JSON.stringify(blame.commits.map((c) => [c.summary, c.newest]))}`);
+
+      await openEditor(page);
+      await page.click('[data-editor-refresh]');
+      await page.waitForSelector(`.editor-item[data-path="${sameday}"]`, { timeout: 15000 });
+      await page.click(`.editor-item[data-path="${sameday}"]`);
+      await page.waitForSelector(`.editor-tab[data-path="${sameday}"].active`, { timeout: 10000 });
+      await pick(`.editor-tab[data-path="${sameday}"]`, "Show git blame");
+      await page.waitForSelector(".cm-blame", { timeout: 20000 });
+      await blameShows(" Bo$");
+      let cells = await cellEntries();
+      assert(cells[0][0].text === cells[1][0].text && cells[0][0].title !== cells[1][0].title,
+        `the fixture does not read the same for two commits: ${JSON.stringify(cells.slice(0, 2))}`);
+      assert(cells[0][0].title.startsWith(x.short) && cells[1][0].title.startsWith(y.short), `the tooltips start ${JSON.stringify(cells.slice(0, 2))}`);
+
+      // A line in front moves every entry one cell down: each cell now shows
+      // the commit of the line above it and must say so in its tooltip.
+      await page.locator(".cm-content").first().click({ force: true });
+      await page.keyboard.press("Control+Home");
+      await page.keyboard.type("new\n");
+      await page.waitForSelector(`.editor-tab[data-path="${sameday}"].dirty`, { timeout: 8000 });
+      await blameShows("^uncommitted$");
+      cells = await cellEntries();
+      assert(cells[1][0].title.startsWith(x.short), `the line of ${x.short} shows the tooltip ${JSON.stringify(cells[1][0].title)}`);
+      assert(cells[2][0].title.startsWith(y.short), `the line of ${y.short} shows the tooltip ${JSON.stringify(cells[2][0].title)}`);
+      await cleanAgain(sameday);
+      return `${x.short} and ${y.short} both read ${JSON.stringify(cells[1][0].text)} and keep their own tooltip`;
+    });
+
+    await run("a replace all that reaches one line twice while the buffer is dirty leaves one entry on it and the width alone", async () => {
+      const width = (await blameBox()).width;
+      await page.locator(".cm-content").first().click({ force: true });
+      await page.keyboard.press("Control+Home");
+      await page.keyboard.press("Control+f");
+      await page.waitForSelector(".cm-search input[name=search]", { timeout: 5000 });
+      await page.fill(".cm-search input[name=search]", "x");
+      await page.fill(".cm-search input[name=replace]", "q");
+      await page.click(".cm-search button[name=replaceAll]");
+      await page.waitForSelector(`.editor-tab[data-path="${sameday}"].dirty`, { timeout: 8000 });
+      await blameShows("^uncommitted$");
+      await page.keyboard.press("Escape");
+      const cells = await cellEntries();
+      assert(cells.length >= 3 && cells.every((c) => c.length <= 1), `a line carries more than one entry: ${JSON.stringify(cells.map((c) => c.map((e) => e.text)))}`);
+      assert(cells[0][0].text === "uncommitted" && / Al$/.test(cells[1][0].text) && / Bo$/.test(cells[2][0].text),
+        `the lines read ${JSON.stringify(cells.map((c) => c.map((e) => e.text)))}`);
+      const after = (await blameBox()).width;
+      assert(Math.abs(after - width) < 0.5, `the gutter went from ${width} to ${after}`);
+      await page.locator(".cm-content").first().click({ force: true });
+      await cleanAgain(sameday);
+      return "one entry per line after two replacements on the first";
+    });
+
+    await run("a dirty buffer keeps what its gutter followed when it goes into side by side and back", async () => {
+      await setDiffView(page, "side");
+      await page.locator(".cm-content").first().click({ force: true });
+      await page.keyboard.press("Control+Home");
+      await page.keyboard.press("End");
+      await page.keyboard.type("!");
+      await page.waitForSelector(`.editor-tab[data-path="${sameday}"].dirty`, { timeout: 8000 });
+      await blameShows("^uncommitted$");
+      const read = async () => (await cellEntries()).map((c) => (c[0] ? c[0].text : ""));
+      const dirty = await read();
+      assert(dirty[0] === "uncommitted" && / Al$/.test(dirty[1]), `the dirty buffer reads ${JSON.stringify(dirty)}`);
+
+      await toggleDiff(page);
+      await page.waitForSelector(".cm-mergeView", { state: "visible", timeout: 15000 });
+      await page.waitForSelector(".cm-mergeView .cm-blame", { timeout: 10000 });
+      const side = await read();
+      assert(side.slice(0, 3).join() === dirty.slice(0, 3).join(), `side by side reads ${JSON.stringify(side)} where the buffer read ${JSON.stringify(dirty)}`);
+
+      await toggleDiff(page);
+      await page.waitForSelector(".cm-mergeView", { state: "detached", timeout: 10000 });
+      await page.waitForSelector(".cm-blame", { timeout: 10000 });
+      const back = await read();
+      assert(back.slice(0, 3).join() === dirty.slice(0, 3).join(), `back from side by side it reads ${JSON.stringify(back)}`);
+      assert(await page.locator(`.editor-tab[data-path="${sameday}"].dirty`).count() === 1, "the buffer lost its edit");
+
+      // Side by side costs the undo history, so the edit is taken back by hand.
+      await page.locator(".cm-content").first().click({ force: true });
+      await page.keyboard.press("Control+Home");
+      await page.keyboard.press("End");
+      await page.keyboard.press("Backspace");
+      await page.waitForSelector(`.editor-tab[data-path="${sameday}"]:not(.dirty)`, { timeout: 8000 });
+      await setDiffView(page, "auto");
+      await pick(`.editor-tab[data-path="${sameday}"]`, "Hide git blame");
+      await page.waitForSelector(".cm-blame", { state: "detached", timeout: 8000 });
+      await page.click(`.editor-tab[data-path="${sameday}"] .editor-tab-state`);
+      await page.waitForSelector(`.editor-tab[data-path="${sameday}"]`, { state: "detached", timeout: 8000 });
+      return `${JSON.stringify(dirty.slice(0, 2))} in, in side by side and back`;
     });
 
     // ---- what happens when git cannot answer -------------------------------

@@ -23,6 +23,21 @@ type Commit struct {
 	// repository stands, a tag says what this commit is.
 	Tags    []string `json:"tags,omitempty"`
 	Pending bool     `json:"pending,omitempty"`
+	// Parent is the first parent's sha, empty for a root commit and for the
+	// pending one: it is what the commit is shown against, and a commit
+	// without one has nothing earlier to compare a file with.
+	Parent string `json:"parent,omitempty"`
+	// Path is where the file stood in this commit, relative to the project,
+	// and PreviousPath where it stood in the version before it. blame follows
+	// a rename, so both may differ from the path that was asked about, and a
+	// revision read under the path of today finds nothing. Empty where git
+	// named a path outside the project, which the project has no name for.
+	Path         string `json:"path,omitempty"`
+	PreviousPath string `json:"previousPath,omitempty"`
+	// Newest marks the one commit of the answer that landed last, by commit
+	// time, and only where the answer holds more than one: a file of a single
+	// commit has no latest change to point out.
+	Newest bool `json:"newest,omitempty"`
 }
 
 // Blame is who last touched each line of a file. The commits are listed once
@@ -56,7 +71,8 @@ func (r *Repo) Blame(ctx context.Context, file string) (Blame, error) {
 	if err != nil {
 		return blame, err
 	}
-	if _, ok := r.resolve(ctx); !ok {
+	info, ok := r.resolve(ctx)
+	if !ok {
 		return blame, nil
 	}
 	blame.Repo = true
@@ -87,7 +103,74 @@ func (r *Repo) Blame(ctx context.Context, file string) (Blame, error) {
 		return blame, nil
 	}
 	blame.Commits, blame.Lines = parseBlame(out)
+	for i := range blame.Commits {
+		blame.Commits[i].Path = projectPath(blame.Commits[i].Path, info.prefix)
+		blame.Commits[i].PreviousPath = projectPath(blame.Commits[i].PreviousPath, info.prefix)
+	}
+	r.fillParents(ctx, blame.Commits)
 	return blame, nil
+}
+
+// projectPath turns a path git names relative to the repository root into one
+// relative to the project, empty for a path outside it. A path git had to
+// quote comes back unquoted, and one that cannot be read reads as outside.
+func projectPath(path, prefix string) string {
+	if strings.HasPrefix(path, `"`) {
+		unquoted, err := strconv.Unquote(path)
+		if err != nil {
+			return ""
+		}
+		path = unquoted
+	}
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	return strings.TrimPrefix(path, prefix)
+}
+
+// fillParents writes each commit's first parent onto it, out of one rev-list
+// over every commit of the answer: the porcelain format names no parent, and
+// asking per commit would be a process per commit. The same list answers
+// which commit is the newest, it comes newest first by commit time, which is
+// when a change landed, where the author time is kept through a rebase. A
+// rev-list that fails leaves the parents empty and marks nothing, which reads
+// as nothing to compare against and never as an error, the blame itself is
+// whole.
+func (r *Repo) fillParents(ctx context.Context, commits []Commit) {
+	args := []string{"rev-list", "--no-walk", "--parents"}
+	at := map[string]int{}
+	for i, commit := range commits {
+		if commit.Pending {
+			continue
+		}
+		at[commit.SHA] = i
+		args = append(args, commit.SHA)
+	}
+	if len(at) == 0 {
+		return
+	}
+	out, err := r.run(ctx, args, nil)
+	if err != nil {
+		return
+	}
+	first := true
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		i, ok := at[fields[0]]
+		if !ok {
+			continue
+		}
+		if first && len(at) > 1 {
+			commits[i].Newest = true
+		}
+		first = false
+		if len(fields) > 1 {
+			commits[i].Parent = fields[1]
+		}
+	}
 }
 
 // hasCommit answers whether HEAD resolves to anything. A repository that was
@@ -150,6 +233,14 @@ func parseBlame(out []byte) ([]Commit, []int) {
 			commits[current].Time, _ = strconv.ParseInt(value, 10, 64)
 		case "summary":
 			commits[current].Summary = value
+		case "filename":
+			if commits[current].Path == "" {
+				commits[current].Path = value
+			}
+		case "previous":
+			if _, previous, found := strings.Cut(value, " "); found && commits[current].PreviousPath == "" {
+				commits[current].PreviousPath = previous
+			}
 		}
 	}
 	return commits, lines
