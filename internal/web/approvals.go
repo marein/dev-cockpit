@@ -32,7 +32,7 @@ func (s *Server) newApprovals(stateDir string) *approval.Service {
 		Path:       filepath.Join(stateDir, "approvals.json"),
 		Asks:       func(kind string) bool { return ApprovalAsks(s.settings, kind) },
 		StopAsking: func(kind string) { setApprovalAsks(s.settings, kind, false) },
-		Asker:      s.assistantLabel,
+		Asker:      func(owner string) string { return withShortID(s.assistantLabel(owner), owner) },
 		Ended:      s.approvalEnded,
 	})
 }
@@ -73,6 +73,13 @@ func (s *Server) approvalEnded(a approval.Approval, outcome approval.Outcome) {
 		}
 	}
 	s.assistants.RecordApproval(report)
+}
+
+// withShortID is how an approval names an assistant or a coder: names repeat,
+// two assistants may share a title and every untitled one reads the same, so
+// the short id stands behind the name and tells them apart.
+func withShortID(name, id string) string {
+	return name + " · " + coder.ShortID(id)
 }
 
 // assistantLabel is what a question calls an assistant: its title cut to a

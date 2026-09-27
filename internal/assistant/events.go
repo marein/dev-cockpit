@@ -290,7 +290,10 @@ func (r *Reactor) Dropped(owner string) {
 // that it was finished. A trigger every target of which is gone can never fire
 // again, so the entry goes, and its window is spent on the way out rather than
 // waiting for something that cannot come. Answers what was dropped, which is
-// the sentence the user reads.
+// the sentence the user reads. That is only ever a trigger that still stood:
+// a spent one, a fired sequel or an expired wait, keeps its entry with its
+// outcome in the spent list, its target merely marked gone, because it is
+// history and nothing was lost with the terminal.
 //
 // The job of that terminal is closed before this runs, see
 // Watcher.TerminalDeleted, so a job trigger already has that report in its
@@ -305,6 +308,7 @@ func (r *Reactor) TerminalGone(terminal, name, project string) []Trigger {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var dropped []Trigger
+	moved := false
 	for _, trigger := range r.triggers.All() {
 		if !trigger.holds(terminal) {
 			continue
@@ -313,8 +317,13 @@ func (r *Reactor) TerminalGone(terminal, name, project string) []Trigger {
 		fresh, ok := store.Update(trigger.ID, func(s *Trigger) bool {
 			return s.mark(terminal, func(t *TriggerTarget) { t.Gone = true })
 		})
-		if !ok {
+		if ok {
+			moved = true
+		} else {
 			fresh = trigger
+		}
+		if !trigger.Open() {
+			continue
 		}
 		if fresh.Source == EventCoder {
 			r.take(fresh, CockpitEvent{
@@ -331,9 +340,10 @@ func (r *Reactor) TerminalGone(terminal, name, project string) []Trigger {
 		}
 		r.fire(fresh.Owner, fresh.ID)
 		store.Delete(fresh.ID)
+		moved = true
 		dropped = append(dropped, fresh)
 	}
-	if len(dropped) > 0 {
+	if moved {
 		r.service.changed()
 	}
 	return dropped

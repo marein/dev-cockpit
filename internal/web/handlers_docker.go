@@ -318,14 +318,14 @@ func (s *Server) composeApproval(owner string, p project.Project, stack docker.S
 	}
 	name, label, actionID := p.Name, stack.Label, action.ID
 	return approval.Request{
-		Owner:   owner,
-		Kind:    approvalComposeActions,
-		Key:     strings.Join([]string{name, label, actionID}, "\n"),
-		What:    what,
-		Details: details,
-		Command: command,
-		Dir:     stack.Dir,
-		Project: name,
+		Owner:    owner,
+		Kind:     approvalComposeActions,
+		Key:      strings.Join([]string{name, label, actionID}, "\n"),
+		What:     what,
+		Details:  details,
+		Command:  command,
+		Dir:      stack.Dir,
+		Projects: []string{name},
 		Run: func() (string, error) {
 			p, err := s.projects.FindByName(name)
 			if err != nil {

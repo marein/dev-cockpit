@@ -53,19 +53,19 @@ type Run func() (string, error)
 // shop"), the notification and the note name it; Details are the rows the
 // dialog shows; Command and Dir, where the action runs a program, are the
 // command line and the directory it runs in, shown the way a proxied git
-// call's are; Project, where the action belongs to one, names the project
+// call's are; Projects, where the action touches any, name the projects
 // whose deletion ends the approval; Run is what happens once the user
 // approves.
 type Request struct {
-	Owner   string
-	Kind    string
-	Key     string
-	What    string
-	Details []askpass.Detail
-	Command string
-	Dir     string
-	Project string
-	Run     Run
+	Owner    string
+	Kind     string
+	Key      string
+	What     string
+	Details  []askpass.Detail
+	Command  string
+	Dir      string
+	Projects []string
+	Run      Run
 }
 
 // Approval is one action waiting for the user, as it stands on disk: the
@@ -79,7 +79,7 @@ type Approval struct {
 	Details   []askpass.Detail `json:"details,omitempty"`
 	Command   string           `json:"command,omitempty"`
 	Dir       string           `json:"dir,omitempty"`
-	Project   string           `json:"project,omitempty"`
+	Projects  []string         `json:"projects,omitempty"`
 	CreatedAt time.Time        `json:"createdAt"`
 }
 
@@ -152,7 +152,7 @@ func (s *Service) Ask(req Request) (waiting bool, err error) {
 		Details:   req.Details,
 		Command:   req.Command,
 		Dir:       req.Dir,
-		Project:   req.Project,
+		Projects:  req.Projects,
 		CreatedAt: time.Now().UTC(),
 	}
 	bridge, err := s.park(a)
@@ -258,8 +258,8 @@ func (s *Service) DeclineOwner(owner string) {
 	}
 }
 
-// DeclineProject takes down the approvals of a project that was deleted,
-// questions included. Nothing is left for them to act on, and each owner
+// DeclineProject takes down the approvals touching a project that was
+// deleted, questions included. Nothing is left for them to act on, and each owner
 // hears why.
 func (s *Service) DeclineProject(name string) {
 	if name == "" {
@@ -268,7 +268,7 @@ func (s *Service) DeclineProject(name string) {
 	s.mu.Lock()
 	var ids []string
 	for id, a := range s.load() {
-		if a.Project == name {
+		if slices.Contains(a.Projects, name) {
 			ids = append(ids, id)
 		}
 	}

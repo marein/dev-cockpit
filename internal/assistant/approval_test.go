@@ -82,7 +82,10 @@ func TestTheKindOutcomesRead(t *testing.T) {
 	if got := ComposeStarted("r1", "Down", "shop", "api"); !strings.HasPrefix(got, "Run r1 started: Down on ") || !strings.Contains(got, "compose-show") {
 		t.Fatalf("the compose outcome reads %q", got)
 	}
-	if got := ProjectDeleted("shop", []string{"shop-a", "shop-b"}); got != "Project shop is deleted, its terminals stopped and its directory removed. Its worktree projects went with it: shop-a, shop-b." {
+	if got := ProjectDeleted("shop", []string{"shop-a", "shop-b"}, false); got != "Project shop is deleted, its terminals stopped and its directory removed. Its worktree projects went with it: shop-a, shop-b." {
 		t.Fatalf("the delete outcome reads %q", got)
+	}
+	if got := ProjectDeleted("shop", nil, true); got != "Project shop is being deleted, its terminals stopped and its containers going down first." {
+		t.Fatalf("the running delete outcome reads %q", got)
 	}
 }

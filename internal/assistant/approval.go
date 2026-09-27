@@ -79,13 +79,15 @@ func (s *Service) RecordApproval(report ApprovalReport) string {
 	return id
 }
 
-// ProjectDeleted is the outcome an approved project delete reads in the
-// thread: gone, with the worktree projects that went along.
-func ProjectDeleted(name string, worktrees []string) string {
+// ProjectDeleted is the outcome of a project delete: gone, or still going
+// where its containers go down first, with the worktree projects that went
+// along.
+func ProjectDeleted(name string, worktrees []string, deleting bool) string {
 	return strings.TrimSuffix(render("approval_project_deleted.md.tmpl", struct {
 		Name      string
 		Worktrees []string
-	}{name, worktrees}), "\n")
+		Deleting  bool
+	}{name, worktrees, deleting}), "\n")
 }
 
 // CoderDeleted is the outcome an approved coder delete reads in the thread:

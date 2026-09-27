@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -291,24 +292,26 @@ func TestDecliningAnOwnerTakesItsApprovalsDown(t *testing.T) {
 	}
 }
 
-// A deleted project takes its approvals and their questions down, each owner
-// hears why, and approvals of another project or of none keep standing.
+// A deleted project takes down every approval touching it, one of several
+// projects included, each owner hears why, and approvals of another project
+// or of none keep standing.
 func TestDecliningAProjectTakesItsApprovalsDown(t *testing.T) {
 	f := newFixture(t)
 	ran := 0
 	shop := deleting("bot", "shop", counting(&ran, nil))
-	shop.Project = "shop"
-	compose := Request{Owner: "other", Kind: "compose", Key: "shop up", What: "Up in shop", Project: "shop", Run: counting(&ran, nil)}
+	shop.Projects = []string{"shop"}
+	compose := Request{Owner: "other", Kind: "compose", Key: "shop up", What: "Up in shop", Projects: []string{"shop"}, Run: counting(&ran, nil)}
+	coders := Request{Owner: "bot", Kind: "coder", Key: "c1\nc2", What: "Delete 2 coders", Projects: []string{"cart", "shop"}, Run: counting(&ran, nil)}
 	cart := deleting("bot", "cart", counting(&ran, nil))
-	cart.Project = "cart"
+	cart.Projects = []string{"cart"}
 	none := Request{Owner: "bot", Kind: "assistant", Key: "a1", What: "Delete assistant Ops", Run: counting(&ran, nil)}
-	for _, req := range []Request{shop, compose, cart, none} {
+	for _, req := range []Request{shop, compose, coders, cart, none} {
 		if _, err := f.s.Ask(req); err != nil {
 			t.Fatal(err)
 		}
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for len(f.broker.Questions()) != 4 {
+	for len(f.broker.Questions()) != 5 {
 		if time.Now().After(deadline) {
 			t.Fatal("the questions never stood")
 		}
@@ -317,9 +320,9 @@ func TestDecliningAProjectTakesItsApprovalsDown(t *testing.T) {
 	f.s.DeclineProject("")
 	f.s.DeclineProject("shop")
 	owners := map[string]bool{}
-	for range 2 {
+	for range 3 {
 		e := f.ending(t)
-		if e.approval.Project != "shop" || e.outcome != (Outcome{Verdict: Declined, Text: "the project was deleted"}) {
+		if !slices.Contains(e.approval.Projects, "shop") || e.outcome != (Outcome{Verdict: Declined, Text: "the project was deleted"}) {
 			t.Fatalf("the project's delete ended %+v", e)
 		}
 		owners[e.approval.Owner] = true
@@ -344,7 +347,7 @@ func TestDecliningAProjectTakesItsApprovalsDown(t *testing.T) {
 		t.Fatalf("the register holds %+v", list)
 	}
 	for _, a := range list {
-		if a.Project == "shop" {
+		if slices.Contains(a.Projects, "shop") {
 			t.Fatalf("the register kept %+v", a)
 		}
 	}

@@ -109,7 +109,7 @@ func TestAnAssistantsCoderDeleteWaitsForTheApproval(t *testing.T) {
 		t.Fatal("a delete that waits removed the session")
 	}
 	q := f.waitQuestion(t)
-	want := []askpass.Detail{{Label: "Coder", Value: "worker"}, {Label: "Project", Value: "shop"}}
+	want := []askpass.Detail{{Label: "Coder", Value: "worker · 22222222"}, {Label: "Project", Value: "shop"}}
 	if q.Kind != askpass.KindApproval || q.Action != "Delete coder worker" || !reflect.DeepEqual(q.Details, want) {
 		t.Fatalf("the question reads %+v", q)
 	}
@@ -231,7 +231,7 @@ func TestAnAssistantsAssistantDeleteWaitsForTheApproval(t *testing.T) {
 		t.Fatal("a delete that waits removed the assistant")
 	}
 	q := f.waitQuestion(t)
-	if q.Action != "Delete assistant Helper" || !reflect.DeepEqual(q.Details, []askpass.Detail{{Label: "Assistant", Value: "Helper"}}) {
+	if q.Action != "Delete assistant Helper" || !reflect.DeepEqual(q.Details, []askpass.Detail{{Label: "Assistant", Value: "Helper · " + coder.ShortID(other)}}) {
 		t.Fatalf("the question reads %+v", q)
 	}
 	f.decide(t, q, true, false)
@@ -329,8 +329,29 @@ func TestADeletedProjectDeclinesItsApprovals(t *testing.T) {
 // of the worktree project too, and its owner reads why.
 func TestADeletedProjectDeclinesTheApprovalsOfItsWorktrees(t *testing.T) {
 	f := newDeleteFixture(t)
-	root := filepath.Dir(f.dir)
-	worktree := filepath.Join(root, "shop-feature")
+	worktree := f.addWorktreeProject(t)
+	if rec := f.post(t, "/projects/delete", url.Values{"project": {"shop-feature"}}, true, f.owner); decodeJSON(t, rec)["pending"] != true {
+		t.Fatalf("the worktree delete did not wait: %s", rec.Body.String())
+	}
+	f.waitQuestion(t)
+	if rec := f.post(t, "/projects/delete", url.Values{"project": {f.project}}, false, ""); rec.Code != http.StatusOK {
+		t.Fatalf("the delete answered %d: %s", rec.Code, rec.Body.String())
+	}
+	if exists(f.dir) || exists(worktree) {
+		t.Fatal("the delete left a directory")
+	}
+	note := f.waitApprovalNotes(t, f.owner, 1)[0]
+	if note.Note.Verdict != approval.Declined || note.Note.Name != "Delete project shop-feature" || !strings.Contains(note.Content, "the project was deleted") {
+		t.Fatalf("the note reads %+v\n%s", note.Note, note.Content)
+	}
+	f.waitNoQuestion(t)
+}
+
+// addWorktreeProject makes shop-feature a linked worktree project of the
+// fixture's project and answers its directory.
+func (f *composeFixture) addWorktreeProject(t *testing.T) string {
+	t.Helper()
+	worktree := filepath.Join(filepath.Dir(f.dir), "shop-feature")
 	gitDir := filepath.Join(f.dir, ".git", "worktrees", "shop-feature")
 	for path, content := range map[string]string{
 		filepath.Join(f.dir, ".git", "HEAD"): "ref: refs/heads/master\n",
@@ -350,19 +371,5 @@ func TestADeletedProjectDeclinesTheApprovalsOfItsWorktrees(t *testing.T) {
 	if err != nil || len(main.GitWorktrees) != 1 || main.GitWorktrees[0].Project != "shop-feature" {
 		t.Fatalf("the main project reads %+v, %v", main, err)
 	}
-	if rec := f.post(t, "/projects/delete", url.Values{"project": {"shop-feature"}}, true, f.owner); decodeJSON(t, rec)["pending"] != true {
-		t.Fatalf("the worktree delete did not wait: %s", rec.Body.String())
-	}
-	f.waitQuestion(t)
-	if rec := f.post(t, "/projects/delete", url.Values{"project": {f.project}}, false, ""); rec.Code != http.StatusOK {
-		t.Fatalf("the delete answered %d: %s", rec.Code, rec.Body.String())
-	}
-	if exists(f.dir) || exists(worktree) {
-		t.Fatal("the delete left a directory")
-	}
-	note := f.waitApprovalNotes(t, f.owner, 1)[0]
-	if note.Note.Verdict != approval.Declined || note.Note.Name != "Delete project shop-feature" || !strings.Contains(note.Content, "the project was deleted") {
-		t.Fatalf("the note reads %+v\n%s", note.Note, note.Content)
-	}
-	f.waitNoQuestion(t)
+	return worktree
 }

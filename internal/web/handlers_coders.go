@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
@@ -763,12 +762,13 @@ func (s *Server) handleCoderDelete(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
 		}
-		req, err := s.coderDeleteApproval(owner, id)
+		kind := s.coderDeleteKind()
+		target, err := kind.Resolve(id)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if s.askApproval(c, req) {
+		if s.askApproval(c, deletesApproval(owner, kind, []deleteTarget{target})) {
 			return
 		}
 	}
@@ -837,37 +837,37 @@ func (s *Server) coderSession(id string) (string, string, error) {
 	return coder.DisplayName(stored.Name, id), stored.CWD, nil
 }
 
-// coderDeleteApproval is the approval an assistant's delete of the coder
-// waits for. Its run looks the session up again, the approval may come half
-// an hour later, and the note says what went.
-func (s *Server) coderDeleteApproval(owner, id string) (approval.Request, error) {
-	name, cwd, err := s.coderSession(id)
-	if err != nil {
-		return approval.Request{}, err
-	}
-	details := []askpass.Detail{{Label: "Coder", Value: name}}
-	project := s.projects.ProjectNameFor(cwd)
-	if project != "" {
-		details = append(details, askpass.Detail{Label: "Project", Value: project})
-	}
-	return approval.Request{
-		Owner:   owner,
-		Kind:    approvalCoderDelete,
-		Key:     id,
-		What:    "Delete coder " + name,
-		Details: details,
-		Project: project,
-		Run: func() (string, error) {
-			if _, _, err := s.coderSession(id); err != nil {
-				return "", errors.New("the coder no longer exists")
-			}
-			deleted, err := s.deleteCoder(id)
-			if err != nil {
-				return "", err
-			}
-			return assistant.CoderDeleted(coder.DisplayName(deleted.Name, id), deleted.Dropped), nil
-		},
-	}, nil
+// coderDeleteKind is the coder delete an assistant asks for: a target names
+// the coder and its project, and its delete looks the session up again and
+// says what went.
+func (s *Server) coderDeleteKind() deleteKind {
+	return deleteKind{ID: approvalCoderDelete, Plural: "coders", Resolve: func(id string) (deleteTarget, error) {
+		name, cwd, err := s.coderSession(id)
+		if err != nil {
+			return deleteTarget{}, err
+		}
+		details := []askpass.Detail{{Label: "Coder", Value: withShortID(name, id)}}
+		project := s.projects.ProjectNameFor(cwd)
+		if project != "" {
+			details = append(details, askpass.Detail{Label: "Project", Value: project})
+		}
+		return deleteTarget{
+			Key:     id,
+			Name:    "coder " + name,
+			Details: details,
+			Project: project,
+			Delete: func(bool) (string, []string, error) {
+				if _, _, err := s.coderSession(id); err != nil {
+					return "", nil, errors.New("the coder no longer exists")
+				}
+				deleted, err := s.deleteCoder(id)
+				if err != nil {
+					return "", nil, err
+				}
+				return assistant.CoderDeleted(coder.DisplayName(deleted.Name, id), deleted.Dropped), nil, nil
+			},
+		}, nil
+	}}
 }
 
 // jobCalledOff ends the job of a coder that is being stopped or deleted.

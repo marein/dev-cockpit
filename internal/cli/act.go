@@ -159,8 +159,8 @@ func keepRetiredYes(cmd *cobra.Command) *cobra.Command {
 
 func newDeleteCoderCommand(opts *inspectOptions) *cobra.Command {
 	return keepRetiredYes(&cobra.Command{
-		Use:   "coder-delete <terminal>",
-		Short: "Delete a coder session for good, once the user approves",
+		Use:   "coder-delete <terminal>...",
+		Short: "Delete coder sessions for good, once the user approves",
 		Long: "Delete a coder session: it is stopped if it runs, and its session is removed " +
 			"from the coder. There is no way back, the transcript is gone and `coder-resume` cannot " +
 			"bring it up again. Use `coder-stop` when the work may still be needed. Nothing can " +
@@ -174,9 +174,12 @@ func newDeleteCoderCommand(opts *inspectOptions) *cobra.Command {
 			"do not run the delete again while it waits, a second one is refused. The user can " +
 			"turn the question off for every assistant, when approving or with the Coder delete " +
 			"approval under Settings › Assistants › Approvals; you cannot. With the question off " +
-			"the delete runs at once and prints what it deleted.",
-		Args: cobra.ExactArgs(1),
+			"the delete runs at once and prints what it deleted." + deleteManyHelp("coders"),
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				return runDeleteMany(cmd.OutOrStdout(), *opts, "/coders/delete", "terminal", args)
+			}
 			return runDeleteCoder(cmd.OutOrStdout(), *opts, args[0])
 		},
 	})
@@ -424,8 +427,8 @@ const assistantJobsPath = "/assistants/jobs"
 // clean up.
 func newDeleteAssistantCommand(opts *inspectOptions) *cobra.Command {
 	return keepRetiredYes(&cobra.Command{
-		Use:   "assistant-delete <id>",
-		Short: "Delete an assistant for good, once the user approves",
+		Use:   "assistant-delete <id>...",
+		Short: "Delete assistants for good, once the user approves",
 		Long: "Delete an assistant: its thread, its uploads, its jobs and its triggers are gone, and the " +
 			"coders it was steering are handed back to the user, named in the outcome. There " +
 			"is no way back. The id is from `assistant-list`. The delete asks the user first: " +
@@ -436,9 +439,12 @@ func newDeleteAssistantCommand(opts *inspectOptions) *cobra.Command {
 			"you; do not wait, sleep or poll for it, and do not run the delete again while it " +
 			"waits, a second one is refused. The user can turn the question off for every " +
 			"assistant, when approving or with the Assistant delete approval under Settings › " +
-			"Assistants › Approvals; you cannot. With the question off the delete runs at once.",
-		Args: cobra.ExactArgs(1),
+			"Assistants › Approvals; you cannot. With the question off the delete runs at once." + deleteManyHelp("assistants"),
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				return runDeleteMany(cmd.OutOrStdout(), *opts, "/assistants/delete", "assistant", args)
+			}
 			return runDeleteAssistant(cmd.OutOrStdout(), *opts, args[0])
 		},
 	})
@@ -493,8 +499,8 @@ func runNewProject(out io.Writer, opts inspectOptions, name string) error {
 
 func newDeleteProjectCommand(opts *inspectOptions) *cobra.Command {
 	return keepRetiredYes(&cobra.Command{
-		Use:   "project-delete <name>",
-		Short: "Delete a project and everything in it, once the user approves",
+		Use:   "project-delete <name>...",
+		Short: "Delete projects and everything in them, once the user approves",
 		Long: "Delete a project the same way the projects page does: its coders and shells " +
 			"are stopped and the directory is removed with everything in it. A project that " +
 			"is the main repository of linked worktree projects takes those with it, and the " +
@@ -510,9 +516,12 @@ func newDeleteProjectCommand(opts *inspectOptions) *cobra.Command {
 			"a second one is refused. The user can turn the question off for every assistant, " +
 			"when approving or with the Project delete approval under Settings › Assistants › " +
 			"Approvals; you cannot. With the question off the delete runs at once and prints " +
-			"what it deleted, or that it is being deleted where its containers go down first.",
-		Args: cobra.ExactArgs(1),
+			"what it deleted, or that it is being deleted where its containers go down first." + deleteManyHelp("projects"),
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				return runDeleteMany(cmd.OutOrStdout(), *opts, "/projects/delete", "project", args)
+			}
 			return runDeleteProject(cmd.OutOrStdout(), *opts, args[0])
 		},
 	})
@@ -557,6 +566,52 @@ func reportDeletedWorktrees(out io.Writer, deleted map[string]any) {
 	if len(names) > 0 {
 		fmt.Fprintf(out, "its worktree projects went with it: %s\n", strings.Join(names, ", "))
 	}
+}
+
+// deleteManyHelp is the paragraph every delete command's help closes with.
+func deleteManyHelp(plural string) string {
+	return "\n\nSeveral " + plural + " in one call are one question, one approval and one note: " +
+		"every one of them is deleted, a failure of one does not stop the others, and the note " +
+		"names what went and each failure with its reason. With the question off each one " +
+		"prints its own outcome."
+}
+
+// runDeleteMany deletes several targets of one kind in one request, so the
+// user answers one question for all of them. Every target's outcome is
+// printed, and the command fails when any of them failed.
+func runDeleteMany(out io.Writer, opts inspectOptions, path, field string, targets []string) error {
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
+	if err != nil {
+		return err
+	}
+	form := url.Values{}
+	for _, target := range targets {
+		form.Add(field, strings.TrimSpace(target))
+	}
+	// The deletes run one after another, each with the bound one gets alone.
+	answer, err := client.PostForm(path, form, actionTimeout*time.Duration(len(targets)))
+	if err != nil {
+		return err
+	}
+	if jsonBool(answer["pending"]) {
+		_, err = io.WriteString(out, approvalLine(answer))
+		return err
+	}
+	results, _ := answer["results"].([]any)
+	failed := 0
+	for _, item := range results {
+		result, _ := item.(map[string]any)
+		if reason, _ := result["error"].(string); reason != "" {
+			failed++
+			fmt.Fprintf(out, "%s not deleted: %s\n", text(result["name"]), reason)
+			continue
+		}
+		fmt.Fprintln(out, text(result["deleted"]))
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d not deleted", failed, len(results))
+	}
+	return nil
 }
 
 // approvalLine is what a command that asks the user first prints when the

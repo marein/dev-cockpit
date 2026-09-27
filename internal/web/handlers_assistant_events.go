@@ -744,9 +744,10 @@ func (s *Server) assistantTriggerView(trigger assistant.Trigger, owners bool) re
 		view.Where = "any coder"
 	default:
 		view.Where = triggerWhere(trigger)
-		if len(trigger.Targets) == 1 {
+		if len(trigger.Targets) == 1 && !trigger.Targets[0].Gone {
 			// One terminal is one place to go; with several the row leads
-			// nowhere, there is no such thing as opening three coders.
+			// nowhere, there is no such thing as opening three coders, and a
+			// deleted one, which a spent trigger keeps naming, is no place.
 			view.TargetURL = "/coders/" + trigger.Targets[0].Terminal
 		}
 	}

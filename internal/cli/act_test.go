@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -765,4 +766,51 @@ func captureStreams(t *testing.T, fn func()) (string, string) {
 		return string(b)
 	}
 	return read(outFile), read(errFile)
+}
+
+// Several targets are one request to the kind's list route, every name in the
+// one field: a delete that waits says so once, and one that ran prints every
+// target's outcome and fails when any of them failed.
+func TestDeletingSeveralIsOneRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, field string
+		cmd               func(*inspectOptions) *cobra.Command
+	}{
+		{"coder-delete", "/coders/delete", "terminal", newDeleteCoderCommand},
+		{"assistant-delete", "/assistants/delete", "assistant", newDeleteAssistantCommand},
+		{"project-delete", "/projects/delete", "project", newDeleteProjectCommand},
+	} {
+		answer := `{"pending":true,"what":"Delete 2 things"}`
+		var paths []string
+		var forms []url.Values
+		dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			paths = append(paths, r.URL.Path)
+			forms = append(forms, r.PostForm)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(answer))
+		})
+		run := func() (string, error) {
+			var out strings.Builder
+			cmd := tc.cmd(&inspectOptions{stateDir: dir})
+			cmd.SetOut(&out)
+			cmd.SetErr(io.Discard)
+			cmd.SilenceUsage = true
+			cmd.SetArgs([]string{"a", "b"})
+			err := cmd.Execute()
+			return out.String(), err
+		}
+		out, err := run()
+		if err != nil || out != "Delete 2 things waits for the user's approval. A note lands in your thread once they decide; do not run it again.\n" {
+			t.Fatalf("%s: the waiting delete reads %q, %v", tc.name, out, err)
+		}
+		if len(paths) != 1 || paths[0] != tc.path || !reflect.DeepEqual(forms[0][tc.field], []string{"a", "b"}) {
+			t.Fatalf("%s: want one request to %s, got %v %v", tc.name, tc.path, paths, forms)
+		}
+		answer = `{"results":[{"name":"x a","deleted":"A is deleted."},{"name":"x b","error":"gone"}]}`
+		out, err = run()
+		if out != "A is deleted.\nx b not deleted: gone\n" || err == nil || err.Error() != "1 of 2 not deleted" {
+			t.Fatalf("%s: the ran delete reads %q, %v", tc.name, out, err)
+		}
+	}
 }

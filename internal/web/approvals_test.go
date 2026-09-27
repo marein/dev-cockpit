@@ -18,6 +18,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/filesystem"
@@ -168,7 +169,7 @@ func TestAConfirmActionOfAnAssistantWaitsForTheApproval(t *testing.T) {
 	}
 	q := f.waitQuestion(t)
 	id, ok := askpass.ApprovalID(q.Key)
-	if q.Kind != askpass.KindApproval || !ok || q.Assistant != assistant.Name || q.Action != "Compose down with volumes in shop" || q.Project != "" || q.Command != "docker compose down -v" || q.Dir != f.dir {
+	if q.Kind != askpass.KindApproval || !ok || q.Assistant != assistant.Name+" · "+coder.ShortID(f.owner) || q.Action != "Compose down with volumes in shop" || q.Project != "" || q.Command != "docker compose down -v" || q.Dir != f.dir {
 		t.Fatalf("the question reads %+v", q)
 	}
 	if want := []askpass.Detail{{Label: "Action", Value: "Compose down with volumes"}, {Label: "Stack", Value: "project root"}, {Label: "Project", Value: "shop"}}; !reflect.DeepEqual(q.Details, want) {
@@ -573,7 +574,7 @@ func newDeleteFixture(t *testing.T) *composeFixture {
 	s.deletes = newProjectDeletes(f.stateDir)
 	s.restorer = restore.New(filepath.Join(f.stateDir, "terminal-restore.json"), func() bool { return false },
 		nil, s.shells, tmux.New(), s.notifier, nil, func() []string { return nil })
-	f.router.POST("/projects/delete", s.handleProjectDelete)
+	f.router.POST("/projects/delete", s.handleDeletes(s.projectDeleteKind(), "project", s.handleProjectDelete))
 	return f
 }
 

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/filesystem"
@@ -1114,11 +1113,13 @@ func (s *Server) assistantDelete(c *gin.Context, id string) {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
 		}
-		if _, err := s.assistants.Get(id); err != nil {
+		kind := s.assistantDeleteKind()
+		target, err := kind.Resolve(id)
+		if err != nil {
 			s.assistantActionError(c, id, err)
 			return
 		}
-		if s.askApproval(c, s.assistantDeleteApproval(owner, id)) {
+		if s.askApproval(c, deletesApproval(owner, kind, []deleteTarget{target})) {
 			return
 		}
 	}
@@ -1159,29 +1160,31 @@ func (s *Server) deleteAssistant(id string) ([]assistant.Job, error) {
 	return held, nil
 }
 
-// assistantDeleteApproval is the approval an assistant's delete of the
-// assistant waits for. Its run looks the assistant up again, the approval may
-// come half an hour later. An assistant that deleted itself reads no note,
-// its thread is gone with it.
-func (s *Server) assistantDeleteApproval(owner, id string) approval.Request {
-	name := s.assistantName(id)
-	return approval.Request{
-		Owner:   owner,
-		Kind:    approvalAssistantDelete,
-		Key:     id,
-		What:    "Delete assistant " + name,
-		Details: []askpass.Detail{{Label: "Assistant", Value: name}},
-		Run: func() (string, error) {
-			if _, err := s.assistants.Get(id); err != nil {
-				return "", errors.New("the assistant no longer exists")
-			}
-			held, err := s.deleteAssistant(id)
-			if err != nil {
-				return "", err
-			}
-			return assistant.AssistantDeleted(name, held), nil
-		},
-	}
+// assistantDeleteKind is the assistant delete an assistant asks for. A
+// target's delete looks the assistant up again. An assistant that deleted
+// itself reads no note, its thread is gone with it.
+func (s *Server) assistantDeleteKind() deleteKind {
+	return deleteKind{ID: approvalAssistantDelete, Plural: "assistants", Resolve: func(id string) (deleteTarget, error) {
+		if _, err := s.assistants.Get(id); err != nil {
+			return deleteTarget{}, err
+		}
+		name := s.assistantName(id)
+		return deleteTarget{
+			Key:     id,
+			Name:    "assistant " + name,
+			Details: []askpass.Detail{{Label: "Assistant", Value: withShortID(name, id)}},
+			Delete: func(bool) (string, []string, error) {
+				if _, err := s.assistants.Get(id); err != nil {
+					return "", nil, errors.New("the assistant no longer exists")
+				}
+				held, err := s.deleteAssistant(id)
+				if err != nil {
+					return "", nil, err
+				}
+				return assistant.AssistantDeleted(name, held), nil, nil
+			},
+		}, nil
+	}}
 }
 
 // assistantActionError answers a refused action.

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/eventbus"
@@ -437,7 +436,7 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
 		}
-		if s.askApproval(c, s.projectDeleteApproval(owner, p.Name)) {
+		if s.askApproval(c, deletesApproval(owner, s.projectDeleteKind(), []deleteTarget{s.projectTarget(p.Name)})) {
 			return
 		}
 	}
@@ -526,33 +525,42 @@ func (s *Server) deleteProject(p project.Project, wait bool) (projectDeleteResul
 	return projectDeleteResult{Worktrees: worktrees}, nil
 }
 
-// projectDeleteApproval is the approval an assistant's delete of the project
-// named waits for. Its run looks the project up again by name, the approval
-// may come half an hour later, and waits for the deletion's end, so the note
-// says whether the project is gone, a compose down that failed included. A
-// delete that was already running is not this run's, so its end is not known
-// here and the note says so instead of calling the project gone.
-func (s *Server) projectDeleteApproval(owner, name string) approval.Request {
-	return approval.Request{
-		Owner:   owner,
-		Kind:    approvalProjectDelete,
+// projectDeleteKind is the project delete an assistant asks for.
+func (s *Server) projectDeleteKind() deleteKind {
+	return deleteKind{ID: approvalProjectDelete, Plural: "projects", Resolve: func(name string) (deleteTarget, error) {
+		p, err := s.projects.FindByName(name)
+		if err != nil {
+			return deleteTarget{}, err
+		}
+		return s.projectTarget(p.Name), nil
+	}}
+}
+
+// projectTarget is one project a delete names. Its delete looks the project
+// up again by name, and with wait it waits for the deletion's end, so the
+// note says whether the project is gone, a compose down that failed
+// included. A delete that was already running is not this one's, so its end
+// is not known here and the note says so instead of calling the project gone.
+// Without wait a project that runs containers is answered as being deleted.
+func (s *Server) projectTarget(name string) deleteTarget {
+	return deleteTarget{
 		Key:     name,
-		What:    "Delete project " + name,
+		Name:    "project " + name,
 		Details: []askpass.Detail{{Label: "Project", Value: name}},
 		Project: name,
-		Run: func() (string, error) {
+		Delete: func(wait bool) (string, []string, error) {
 			p, err := s.projects.FindByName(name)
 			if err != nil {
-				return "", errors.New("the project no longer exists")
+				return "", nil, errors.New("the project no longer exists")
 			}
-			result, err := s.deleteProject(p, true)
+			result, err := s.deleteProject(p, wait)
 			if err != nil {
-				return "", err
+				return "", nil, err
 			}
-			if result.Already {
-				return "", errors.New("a delete of the project is already running")
+			if result.Already && wait {
+				return "", nil, errors.New("a delete of the project is already running")
 			}
-			return assistant.ProjectDeleted(name, result.Worktrees), nil
+			return assistant.ProjectDeleted(name, result.Worktrees, result.Deleting), result.Worktrees, nil
 		},
 	}
 }

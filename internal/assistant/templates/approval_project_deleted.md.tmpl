@@ -1,1 +1,1 @@
-Project {{.Name}} is deleted, its terminals stopped and its directory removed.{{if .Worktrees}} Its worktree projects went with it: {{range $i, $w := .Worktrees}}{{if $i}}, {{end}}{{$w}}{{end}}.{{end}}
+Project {{.Name}} {{if .Deleting}}is being deleted, its terminals stopped and its containers going down first{{else}}is deleted, its terminals stopped and its directory removed{{end}}.{{if .Worktrees}} Its worktree projects went with it: {{range $i, $w := .Worktrees}}{{if $i}}, {{end}}{{$w}}{{end}}.{{end}}

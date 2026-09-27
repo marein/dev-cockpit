@@ -176,7 +176,7 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     const what = (await page.textContent(`${DIALOG} [data-approval-what]`)).trim();
     assert(what === `Compose down with volumes in ${NAME}`, `the dialog's first line reads "${what}"`);
     const rows = await dialogRows(page);
-    const want = [["Asked by", "Assistant"], ["Action", "Compose down with volumes"], ["Stack", "project root"], ["Project", NAME]];
+    const want = [["Asked by", `Assistant · ${assistantID.slice(0, 8)}`], ["Action", "Compose down with volumes"], ["Stack", "project root"], ["Project", NAME]];
     assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);
     const command = (await page.textContent(`${DIALOG} [data-gitprompt-command]`)).trim().split("\n");
     assert(command.length === 2 && command[0].startsWith("cwd: /") && command[0].endsWith(`/${NAME}`) && command[1] === "$ docker compose down -v", `the command block reads ${JSON.stringify(command)}`);
@@ -330,8 +330,9 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     const what = (await page.textContent(`${DIALOG} [data-approval-what]`)).trim();
     const rows = await dialogRows(page);
     const labels = rows.map(([label]) => label);
-    assert(JSON.stringify(labels) === JSON.stringify(["Asked by", "Assistant"]) && rows[0][1] === "Assistant" && rows[1][1], `the dialog's rows read ${JSON.stringify(rows)}`);
-    assert(what === `Delete assistant ${rows[1][1]}`, `the dialog's first line reads "${what}"`);
+    const suffix = ` · ${otherID.slice(0, 8)}`;
+    assert(JSON.stringify(labels) === JSON.stringify(["Asked by", "Assistant"]) && rows[0][1] === `Assistant · ${assistantID.slice(0, 8)}` && rows[1][1].endsWith(suffix), `the dialog's rows read ${JSON.stringify(rows)}`);
+    assert(what === `Delete assistant ${rows[1][1].slice(0, -suffix.length)}`, `the dialog's first line reads "${what}"`);
     assert(await page.locator(`${DIALOG} [data-gitprompt-command]`).count() === 0, "a delete shows a command line");
     await page.click(`${DIALOG} .swal2-deny`);
     await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });

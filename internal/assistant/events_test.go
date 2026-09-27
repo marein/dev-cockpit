@@ -1148,6 +1148,59 @@ func TestADeletedCoderClosesItsJobAndDropsWhatOnlyItCouldFire(t *testing.T) {
 	}
 }
 
+// A trigger that was already spent, a sequel that fired, is history: it keeps
+// its entry with its outcome and only its target reads as gone. The one that
+// still stood can never fire now, so it goes and is the one the sentence counts.
+func TestADeletedCoderDropsTheStandingTriggerAndKeepsTheSpentOne(t *testing.T) {
+	f := newEventFixture(t)
+	f.create(t)
+	f.steerJob(t, "doomed")
+	spent := f.trigger(t, TriggerSpec{
+		Event: "job-done", Once: true, Task: "MAGIC sequel",
+		Targets: targets("term-doomed"), BatchSet: true,
+	})
+	if _, ok := f.reactor.triggers.Of(f.owner.ID).Update(spent.ID, func(s *Trigger) bool {
+		s.State = TriggerDone
+		s.Fired = 1
+		return true
+	}); !ok {
+		t.Fatal("could not spend the sequel")
+	}
+	standing := f.trigger(t, TriggerSpec{
+		Event: "coder-news", Task: "MAGIC answer it",
+		Targets: targets("term-doomed"), BatchSet: true,
+	})
+
+	watcher := NewWatcher(f.svc, NewJobs(f.store), nil, nil)
+	dropped := watcher.TerminalDeleted("term-doomed")
+	if len(dropped) != 1 || dropped[0].ID != standing.ID {
+		t.Fatalf("want only the standing trigger reported, got %+v", dropped)
+	}
+	if got := DroppedNote(dropped); got != "1 trigger dropped" {
+		t.Fatalf("want one trigger in the sentence, got %q", got)
+	}
+	if _, ok := f.reactor.Get(standing.ID); ok {
+		t.Fatal("the standing trigger survived its only terminal")
+	}
+	kept, ok := f.reactor.Get(spent.ID)
+	if !ok {
+		t.Fatal("the spent trigger was deleted with its terminal")
+	}
+	if kept.State != TriggerDone || kept.Fired != 1 {
+		t.Fatalf("the spent trigger lost its outcome: state %s, fired %d", kept.State, kept.Fired)
+	}
+	if len(kept.Targets) != 1 || !kept.Targets[0].Gone {
+		t.Fatalf("the spent trigger's target is not marked gone: %+v", kept.Targets)
+	}
+	listed := false
+	for _, trigger := range f.reactor.ListOf(f.owner.ID) {
+		listed = listed || trigger.ID == spent.ID
+	}
+	if !listed {
+		t.Fatal("the spent trigger is not listed")
+	}
+}
+
 // A trigger stored before several targets were possible carries one target and
 // its name. It reads as a list of one and still fires on that terminal.
 // TODO(v2.0.0)

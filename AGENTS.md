@@ -1131,9 +1131,30 @@ test. Update this file when a convention changes.
   delete the coder and its project, assistant delete the assistant, compose
   the action, the stack or project root, the project), `Command` and `Dir`
   where the action runs a program (compose: the resolved command line and
-  the stack's directory, shown as the git proxy's cwd block) and `Run`. The
+  the stack's directory, shown as the git proxy's cwd block), `Projects`
+  (every project it touches, which `DeclineProject` reads) and `Run`. The
   dialog knows no kind: `What` as its first line, Asked by (the assistant)
-  as its first row, then the details and the command block.
+  as its first row, then the details and the command block. An assistant or
+  a coder is named with its short id behind the name (`withShortID`, the
+  Asked by row and the delete rows alike), because names repeat and every
+  untitled assistant reads the same.
+  **The three deletes take a list, and a list is one approval**
+  (`internal/web/deletes.go`): a kind resolves each name into a
+  `deleteTarget` (key, name, rows, project, delete), and `deletesApproval`
+  builds one request over all of them with no kind in it: the key is the
+  sorted keys, so the same set waits once in any order, `What` names the one
+  target or counts them ("Delete 3 coders"), the rows are every target's,
+  and the run deletes every target, goes on past a failure and ends Failed
+  when any failed, the failures with their reason first in the note. A
+  target an earlier one of the same run took along (a worktree project in
+  its main's cascade) counts as deleted and the note says with which. One
+  target is exactly the old request. Every kind is one route through
+  `handleDeletes`: `/projects/delete` (repeated `project`), `/coders/delete`
+  (`terminal`) and `/assistants/delete` (`assistant`), and a route that
+  answered one target before, `/projects/delete`, hands a single target to
+  its old handler; a name nothing answers to refuses the whole request, and
+  with the switch off every target is deleted at once and the answer lists
+  each outcome.
   With the kind's switch off (`approvalKinds`, key
   `assistant-approval-<kind>`, Settings › Assistants › Approvals) `Ask` asks
   nothing and the route goes on exactly as for the user, so a command answers
@@ -1158,8 +1179,9 @@ test. Update this file when a convention changes.
   approval a surviving turn asks for in between keeps waiting. Taking an
   approval out of the register ends its question with it, so no question
   stands without one; a deleted assistant's approvals go silently
-  (`DeclineOwner`). A local `/projects/delete`, `/coders/<id>/delete`, an
-  assistant's `form=delete` and a local compose need a live `--as`; the
+  (`DeclineOwner`). A local `/projects/delete`, `/coders/<id>/delete`,
+  `/coders/delete`, `/assistants/delete`, an assistant's `form=delete` and a
+  local compose need a live `--as`; the
   browser deletes as the user and is never asked. The approval is the
   confirmation: the `--yes` the three delete commands took before it stays
   parseable, hidden, deprecated and ignored (`keepRetiredYes`, TODO(v2.0.0)).
