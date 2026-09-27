@@ -24,13 +24,6 @@ import (
 // globally is the checks, the turns nobody asked for interactively, see
 // DefaultConcurrentChecks.
 
-// SelfDeleteRefusal is what an assistant asking to delete itself reads. It
-// would be deleting the transcript its own answer is being written into, and
-// there would be nobody left to tell the user what happened. Two places refuse
-// it, the command before it asks anything and the server at the door, and they
-// say the same sentence because it is the same rule.
-const SelfDeleteRefusal = "An assistant cannot delete itself. Ask the user, or another assistant."
-
 // Run identifies a started generation for the browser. ReplacedID names the
 // message a retry dropped, so the page can remove that bubble instead of
 // showing the failed turn next to its replacement.

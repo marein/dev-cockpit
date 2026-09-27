@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/spf13/cobra"
@@ -405,18 +404,17 @@ func runRelease(out io.Writer, opts inspectOptions, terminal string) error {
 // command carries no conversation of its own.
 const assistantJobsPath = "/assistants/jobs"
 
-// newDeleteAssistantCommand removes another assistant for good. Deleting is in
-// this group because assistants see each other and the user may ask one of them
-// to clean up; deleting yourself is refused by the cockpit, there would be
-// nobody left to say what happened.
+// newDeleteAssistantCommand removes an assistant for good. Deleting is in this
+// group because assistants see each other and the user may ask one of them to
+// clean up.
 func newDeleteAssistantCommand(opts *inspectOptions) *cobra.Command {
 	var confirmed bool
 	cmd := &cobra.Command{
 		Use:   "assistant-delete <id> --yes",
-		Short: "Delete another assistant for good",
+		Short: "Delete an assistant for good",
 		Long: "Delete an assistant: its thread, its uploads, its jobs and its triggers are gone, and the " +
 			"coders it was steering are handed back to the user, named in the answer. There " +
-			"is no way back. You cannot delete yourself. The id is from `assistant-list`. " +
+			"is no way back. The id is from `assistant-list`. " +
 			"Because it cannot be undone, the call has to say so: `--yes`.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -429,15 +427,6 @@ func newDeleteAssistantCommand(opts *inspectOptions) *cobra.Command {
 
 func runDeleteAssistant(out io.Writer, opts inspectOptions, id string, confirmed bool) error {
 	id = strings.TrimSpace(id)
-	// Whether the call is allowed at all comes before whether it was
-	// confirmed. An assistant asking to delete itself is refused however it
-	// confirms, so answering with the --yes hint first would send it back to
-	// repeat a call that can never work, and it would read the real reason
-	// only on the second try. The server refuses it too, at its own door; this
-	// is the same sentence, said earlier.
-	if own := strings.TrimSpace(opts.assistantID); own != "" && own == id {
-		return errors.New(assistant.SelfDeleteRefusal)
-	}
 	if !confirmed {
 		return errors.New("Deleting an assistant cannot be undone, its whole thread goes with it. Repeat the call with --yes.")
 	}

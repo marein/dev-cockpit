@@ -98,7 +98,7 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 		// name the same three, because an assistant that answers "your
 		// schedules survive" is wrong on both surfaces at once.
 		{"assistant-delete", []string{"yes"}, []string{"its jobs and its triggers are gone",
-			"handed back to the user, named in the answer", "You cannot delete yourself"}},
+			"handed back to the user, named in the answer"}},
 		{"coder-delete", []string{"yes"}, []string{"an open job of it is closed with that reason", "fires once for the deletion",
 			// A trigger that can never fire again goes with the terminal,
 			// which the instructions used to say and now delegate here.

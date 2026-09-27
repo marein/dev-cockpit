@@ -1087,10 +1087,9 @@ func (s *Server) assistantSteerTarget(raw string) (steerTarget, error) {
 	return steerTarget{}, fmt.Errorf("No running coder with id %q.", id)
 }
 
-// assistantDelete removes one assistant for good. An assistant cannot delete
-// itself: it would be deleting the transcript the answer it is writing goes
-// into, and there would be nobody left to tell the user what happened. The user
-// deletes it, or another assistant they asked to.
+// assistantDelete removes one assistant for good, on the user's word, by
+// another assistant or by itself. A self delete stops the turn that asked,
+// like any delete stops a running turn.
 //
 // Its jobs go with it. They can never be checked again once their owner is
 // gone, so the coders they steered are the user's again, and the answer names
@@ -1104,10 +1103,6 @@ func (s *Server) assistantSteerTarget(raw string) (steerTarget, error) {
 // it, and a running one becomes the user's, so its end rings the project like
 // a run the user started instead of vanishing with the thread it was for.
 func (s *Server) assistantDelete(c *gin.Context, id string) {
-	if from := s.callingAssistant(c); from == id {
-		s.assistantActionError(c, id, errors.New(assistant.SelfDeleteRefusal))
-		return
-	}
 	name := s.assistantName(id)
 	held := s.watcher.OpenJobs(id)
 	if err := s.assistants.Delete(id); err != nil {

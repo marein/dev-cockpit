@@ -236,7 +236,10 @@ func TestTheInstructionsExplainSeveralAssistants(t *testing.T) {
 		"The other workspaces stand at",
 		"You may read another assistant whole, its messages and its files, and you write only your own",
 		"There is no way to message another assistant",
-		"You cannot delete yourself either",
+		// A self delete ends the turn mid answer, so the goodbye has to be
+		// written before the command runs.
+		"Your own id deletes you, only on the user's explicit request",
+		"write the user a short goodbye as text before you run it",
 		// A delete takes the whole assistant, the triggers with it, so the
 		// one sentence that says what goes has to name them: an assistant
 		// that leaves them out tells the user its schedules survive.

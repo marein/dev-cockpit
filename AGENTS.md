@@ -212,7 +212,10 @@ test. Update this file when a convention changes.
   conversation is separated by its directory, and that separation is **order,
   not protection**: an assistant may read another's transcript and another's
   workspace, it writes only its own. There is no way to send another assistant
-  anything, work is handed to coders, and no assistant may delete itself.
+  anything, work is handed to coders. An assistant may delete itself, on the
+  user's explicit word (`assistant-delete <own id> --yes`, the instructions
+  tell it to write its goodbye first); the delete stops the asking turn like
+  any delete stops a running turn.
   **A job carries its owner**, and the owner is the directory it was read from
   (`Job.Owner`, `json:"-"`, filled by `Jobs.Of`). A check wakes that assistant
   and its report is written into that thread, never into whoever is on screen.

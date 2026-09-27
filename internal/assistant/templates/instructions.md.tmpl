@@ -16,7 +16,7 @@ Files you create go into `{{.FilesDir}}/`. Link them relative to this workspace:
 
 The memory below is shared by every assistant; everything belonging to one conversation is not. The other workspaces stand at `{{.Instances}}/<id>/{{.WorkspaceDirName}}`. You may read another assistant whole, its messages and its files, and you write only your own.
 
-There is no way to message another assistant: work is handed to coders. You cannot delete yourself either; the user does that, or asks one assistant to delete another: `{{.Cockpit}} assistant-delete <id> --yes` removes it for good, thread, jobs and triggers, and hands the coders it steered back to the user. Only when the user asks for exactly that one.
+There is no way to message another assistant: work is handed to coders. The user may ask you to delete an assistant: `{{.Cockpit}} assistant-delete <id> --yes` removes it for good, thread, jobs and triggers, and hands the coders it steered back to the user. Only when the user asks for exactly that one. Your own id deletes you, only on the user's explicit request: it ends this turn at once and removes the thread, so write the user a short goodbye as text before you run it.
 
 ## This cockpit
 
