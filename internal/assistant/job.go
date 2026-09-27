@@ -876,21 +876,27 @@ func (w *Watcher) Dropped(owner string, jobs []Job) {
 // ReleasedNames is the sentence the user reads about the coders an assistant
 // gave back, empty when it held none.
 func ReleasedNames(released []Job) string {
-	if len(released) == 0 {
+	names := jobNames(released)
+	switch len(names) {
+	case 0:
 		return ""
+	case 1:
+		return names[0] + " is yours again."
 	}
-	names := make([]string, 0, len(released))
-	for _, job := range released {
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1] + " are yours again."
+}
+
+// jobNames is what the jobs are called, a job without a name by its terminal.
+func jobNames(jobs []Job) []string {
+	names := make([]string, 0, len(jobs))
+	for _, job := range jobs {
 		if name := strings.TrimSpace(job.Name); name != "" {
 			names = append(names, name)
 			continue
 		}
 		names = append(names, job.Terminal)
 	}
-	if len(names) == 1 {
-		return names[0] + " is yours again."
-	}
-	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1] + " are yours again."
+	return names
 }
 
 // TerminalDeleted is what a session removed for good does to the arrangements

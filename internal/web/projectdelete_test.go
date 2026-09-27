@@ -126,6 +126,7 @@ func deletionServer(t *testing.T, stateDir string, projects *project.Repository)
 	}
 	s.restorer = restore.New(filepath.Join(stateDir, "terminal-restore.json"), func() bool { return false },
 		nil, shells, tmux.New(), notifier, nil, func() []string { return nil })
+	s.approvals = s.newApprovals(stateDir)
 	return s
 }
 

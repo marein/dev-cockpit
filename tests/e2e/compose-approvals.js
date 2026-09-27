@@ -6,18 +6,18 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // asks for: the assistant reaches POST /projects/:name/docker/compose over the
 // local API socket the way its `compose-start` does (the socket is mounted
 // into the runner, APISOCK names it, the X-Dev-Cockpit-Assistant header says
-// who calls), a command marked to ask first parks the run instead of starting
-// it (the answer carries `pending`, the run page reads Awaiting approval with
-// its Cancel showing), the question is news of its own (`approval:<run>`,
-// "Assistant asks approval.", read through the request API because an open
-// page reads the entry by showing the dialog) and stands on any page as the
-// app-wide dialog (@dc/gitprompt's second kind: the assistant, the project,
-// the stack and the command, Approve and Deny, one "Approve and don't ask
-// again" box). Deny ends the run declined and the assistant's thread holds a
-// grey compose note saying so (data-assistant-compose="declined"); Approve
-// runs it, the note says done, and the next confirm action still asks, and
-// nothing about an assistant's run rings the bell (no docker:<project> entry
-// for it). The Compose actions approval under /settings/assistant/approvals
+// who calls), a command marked to ask first starts nothing yet (the answer
+// carries `pending` and no run), the question is news of its own
+// (`approval:<id>`, "Assistant asks approval.", leading home, read through the
+// request API because an open page reads the entry by showing the dialog) and
+// stands on any page as the app-wide dialog (@dc/gitprompt's second kind: the
+// action as its first line, Asked by, the action, the stack or project root,
+// the project, the cwd and command line block, Approve and Deny, one "Approve
+// and don't ask again" box; a delete shows its rows and no command). Deny runs nothing and the assistant's thread holds a
+// grey approval note saying so (data-assistant-approval="declined"); Approve
+// starts the run, the approval note names it, the run's own note says done,
+// and the next confirm action still asks, and nothing about an assistant's run
+// rings the bell (no docker:<project> entry for it). The Compose actions approval under /settings/assistant/approvals
 // is one switch for every assistant (on by default, off lets every confirm
 // action run, the socket refused, on the Docker settings too), the dialog's
 // box turns it off for every assistant, and the trigger form hides any or all
@@ -90,6 +90,44 @@ async function notifications(page) {
   return (await res.json()).notifications || [];
 }
 
+// startedRun reads the run id out of the note an approved command ends in,
+// "Run <id> started: ...".
+function startedRun(text) {
+  return ((text || "").match(/Run (\w+) started/) || [])[1] || "";
+}
+
+// visit navigates and tries again when a compose run moved the docker
+// networks under the browser: a down removes the fixture's network, an up
+// makes it again, and Chromium aborts a navigation it caught in between.
+async function visit(page, url) {
+  for (let i = 0; ; i += 1) {
+    try {
+      return await page.goto(url, { waitUntil: "domcontentloaded" });
+    } catch (error) {
+      if (i >= 5 || !/ERR_NETWORK_CHANGED|interrupted by another navigation/.test(String(error))) throw error;
+      await sleep(500);
+    }
+  }
+}
+
+// dialogRows reads the approval dialog's rows as label and value pairs.
+async function dialogRows(page) {
+  return page.locator(`${DIALOG} dl[data-approval-details]`).evaluate((list) => {
+    const labels = [...list.querySelectorAll("dt")].map((dt) => dt.textContent.trim());
+    return [...list.querySelectorAll("dd")].map((dd, i) => [labels[i], dd.textContent.trim()]);
+  });
+}
+
+// approvalNote waits until the assistant's page shows count approval notes
+// with the verdict and answers the last one's text.
+async function approvalNote(page, id, verdict, count) {
+  await visit(page, `${BASE}/assistants/${id}`);
+  const notes = page.locator(`[data-assistant-note="approval"][data-assistant-approval-note="${verdict}"]`);
+  await waitFor(async () => (await notes.count()) >= count, `${count} ${verdict} approval notes`, 60);
+  const last = notes.nth(count - 1);
+  return { headline: (await last.locator("[data-assistant-note-headline]").textContent()).trim(), text: await last.locator("xpath=..").textContent() };
+}
+
 async function waitFor(fn, what, tries = 40) {
   for (let i = 0; i < tries; i += 1) {
     if (await fn()) return;
@@ -100,7 +138,6 @@ async function waitFor(fn, what, tries = 40) {
 
 L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
   let assistantID = "";
-  let parked = "";
 
   await run("an assistant is made for the checks", async () => {
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
@@ -112,76 +149,70 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     return assistantID;
   });
 
-  await run("a confirm command started by the assistant parks the run, rings as an approval and asks on any page", async () => {
+  await run("a confirm command started by the assistant starts nothing, rings as an approval and asks on any page", async () => {
     // Off every page first: the entry has to exist before a page shows the
     // dialog and reads it.
     await page.goto("about:blank");
     const before = (await notifications(page)).map((n) => n.id);
     const answer = await asAssistant(assistantID, `/projects/${NAME}/docker/compose`, { stack: "", action: "down-volumes" });
     assert(answer.status === 200, `the socket answered ${answer.status}: ${answer.raw}`);
-    assert(answer.json.pending === true && answer.json.run, `the confirm action did not park: ${answer.raw}`);
-    parked = answer.json.run;
+    assert(answer.json.pending === true && !answer.json.run && answer.json.what === `Compose down with volumes in ${NAME}`, `the confirm action did not wait: ${answer.raw}`);
     let fresh = [];
     await waitFor(async () => {
       fresh = (await notifications(page)).filter((n) => !before.includes(n.id));
       return fresh.length > 0;
     }, "the approval entry");
-    const entry = fresh.find((n) => n.targetId === `approval:${parked}`);
+    const entry = fresh.find((n) => (n.targetId || "").startsWith("approval:"));
     assert(entry, `no entry for the approval, only ${JSON.stringify(fresh.map((n) => n.targetId))}`);
     assert(entry.title === "Assistant asks approval.", `the entry's title reads "${entry.title}"`);
     assert((entry.detail || entry.body || "").includes(`Compose down with volumes in ${NAME}`), `the entry's line reads "${entry.detail || entry.body}"`);
     assert(!entry.read, "the entry was read before anybody saw it");
-    assert((entry.url || "").endsWith(`/docker/runs/${parked}`), `the entry leads to ${entry.url}`);
+    assert((entry.url || "").endsWith("/projects"), `the entry leads to ${entry.url}`);
 
-    await page.goto(`${BASE}/projects/${NAME}/docker/runs/${parked}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(`${DIALOG} .swal2-title`, { timeout: 15000 });
     const title = await page.textContent(`${DIALOG} .swal2-title`);
     assert(/asks for approval/.test(title), `the dialog's title reads "${title}"`);
-    const details = await page.textContent(`${DIALOG} [data-approval-details]`);
-    for (const word of ["Assistant", NAME, "Compose down with volumes"]) {
-      assert(details.includes(word), `the dialog does not say ${word}: ${details}`);
-    }
-    const command = await page.textContent(`${DIALOG} [data-gitprompt-command]`);
-    assert(command.includes("docker compose down -v"), `the dialog does not show the command line: ${command}`);
+    const what = (await page.textContent(`${DIALOG} [data-approval-what]`)).trim();
+    assert(what === `Compose down with volumes in ${NAME}`, `the dialog's first line reads "${what}"`);
+    const rows = await dialogRows(page);
+    const want = [["Asked by", "Assistant"], ["Action", "Compose down with volumes"], ["Stack", "project root"], ["Project", NAME]];
+    assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);
+    const command = (await page.textContent(`${DIALOG} [data-gitprompt-command]`)).trim().split("\n");
+    assert(command.length === 2 && command[0].startsWith("cwd: /") && command[0].endsWith(`/${NAME}`) && command[1] === "$ docker compose down -v", `the command block reads ${JSON.stringify(command)}`);
     assert(await page.locator(`${DIALOG} .swal2-confirm`).textContent() === "Approve", "the confirm button is not Approve");
     assert(await page.locator(`${DIALOG} .swal2-deny`).textContent() === "Deny", "the deny button is not Deny");
     const remember = (await page.locator(`${DIALOG} .swal2-checkbox`).textContent()).trim();
     assert(remember === "Approve and don't ask again", `the box reads "${remember}"`);
-    assert(await page.locator(`${DIALOG} .swal2-radio`).isHidden(), "the dialog still offers scopes");
     assert(!(await page.locator(`${DIALOG} .swal2-checkbox input`).isChecked()), "the dialog does not start on asking again");
-    assert(await page.locator(`${DIALOG} dl[data-approval-details] dt`).count() === 4, "the details are no list of four");
-    // The page under it is the run's, already saying what it waits for.
-    const status = await page.textContent("[data-run-status]");
-    assert(status.trim() === "Awaiting approval", `the run page reads "${status}"`);
-    assert(await page.locator("[data-run-stop]").isVisible(), "a parked run hides its Cancel");
-    await waitFor(async () => (await notifications(page)).filter((n) => n.targetId === `approval:${parked}` && !n.read).length === 0, "the shown entry to read itself");
-    return `run ${parked} parked`;
+    await waitFor(async () => (await notifications(page)).filter((n) => n.targetId === entry.targetId && !n.read).length === 0, "the shown entry to read itself");
+    return entry.targetId;
   });
 
-  await run("Deny ends the run declined and tells the assistant in its thread", async () => {
+  await run("Deny runs nothing and tells the assistant in its thread", async () => {
     await page.click(`${DIALOG} .swal2-deny`);
     await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
-    const run = await waitRun(page, parked, (r) => !r.pending, "left its question");
-    assert(run.declined === true && run.failure === "declined by the user", `the denied run reads ${JSON.stringify(run)}`);
-    await waitFor(async () => (await page.textContent("[data-run-status]")).trim() === "Declined by the user", "the page to say declined");
-    await page.goto(`${BASE}/assistants/${assistantID}`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector('[data-assistant-note="compose"][data-assistant-compose="declined"]', { timeout: 15000 });
-    const headline = await page.textContent('[data-assistant-compose="declined"] [data-assistant-note-headline]');
-    assert(headline.trim() === `Compose declined: Compose down with volumes on ${NAME}`, `the note reads "${headline}"`);
+    const note = await approvalNote(page, assistantID, "declined", 1);
+    assert(note.headline === `Declined: Compose down with volumes in ${NAME}`, `the note reads "${note.headline}"`);
+    assert(note.text.includes("Not done, declined by the user."), `the note says "${note.text}"`);
     const bell = (await notifications(page)).filter((n) => n.targetId === `docker:${NAME}` && !n.read);
-    assert(bell.length === 0, "an assistant's run rang the project's docker target");
-    return headline.trim();
+    assert(bell.length === 0, "an assistant's action rang the project's docker target");
+    return note.headline;
   });
 
-  await run("Approve runs it, the note says done, and the next confirm command still asks", async () => {
+  await run("Approve starts the run, the notes name it and say done, and the next confirm command still asks", async () => {
     const answer = await asAssistant(assistantID, `/projects/${NAME}/docker/compose`, { stack: "", action: "down-volumes" });
-    assert(answer.json.pending === true, `the second confirm action did not park: ${answer.raw}`);
-    const id = answer.json.run;
+    assert(answer.json.pending === true && !answer.json.run, `the second confirm action did not wait: ${answer.raw}`);
     await page.waitForSelector(`${DIALOG} .swal2-confirm`, { timeout: 15000 });
     await page.click(`${DIALOG} .swal2-confirm`);
     await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
-    const done = await waitRun(page, id, (r) => !r.pending && !r.running, "finished after the approval");
+    const approved = await approvalNote(page, assistantID, "done", 1);
+    assert(approved.headline === `Approved: Compose down with volumes in ${NAME}`, `the approval note reads "${approved.headline}"`);
+    const id = startedRun(approved.text);
+    assert(id, `the approval note names no run: ${approved.text}`);
+    const done = await waitRun(page, id, (r) => !r.running, "finished after the approval");
     assert(done.exited === true && done.exit === 0 && done.status === "Exit status 0", `the approved run reads ${JSON.stringify(done)}`);
+    await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-assistant-note="compose"][data-assistant-compose="done"]', { timeout: 15000 });
     const headline = await page.textContent('[data-assistant-compose="done"] [data-assistant-note-headline]');
     assert(headline.trim() === `Compose done: Compose down with volumes on ${NAME}`, `the done note reads "${headline}"`);
@@ -194,7 +225,7 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     await page.waitForSelector(`${DIALOG} .swal2-deny`, { timeout: 15000 });
     await page.click(`${DIALOG} .swal2-deny`);
     await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
-    await waitRun(page, again.json.run, (r) => !r.pending, "was declined");
+    await approvalNote(page, assistantID, "declined", 2);
     const up = await asAssistant(assistantID, `/projects/${NAME}/docker/compose`, { stack: "", action: "up" });
     assert(up.status === 200 && up.json.run, `bringing the fixture back answered ${up.raw}`);
     await waitRun(page, up.json.run, (r) => !r.running, "brought the fixture back");
@@ -221,7 +252,7 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
       assert(links.route === `//${LINK_HOST}`, `${when}, the route links ${links.route}`);
       assert(links.port === `http://${links.host}:18088`, `${when}, the port links ${links.port} on a page of ${links.host}`);
     }
-    return `approved once, asked again, fixture back up; up note: Answers on: ${answers}`;
+    return `approved run ${id}, asked again, fixture back up; up note: Answers on: ${answers}`;
   });
 
   const composeSwitch = '[data-assistant-approval="compose-actions"] input[type="checkbox"]';
@@ -231,9 +262,10 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
   ]);
 
   await run("the Compose actions approval is one switch for every assistant, and the socket cannot move it or the compose commands", async () => {
-    await page.goto(`${BASE}/settings/assistant/approvals`, { waitUntil: "domcontentloaded" });
+    await visit(page, `${BASE}/settings/assistant/approvals`);
     await dismissUpdate(page);
-    assert(await page.locator("[data-assistant-approval]").count() === 1, "the tab lists more than the one approval");
+    const kinds = await page.locator("[data-assistant-approval]").evaluateAll((rows) => rows.map((row) => row.dataset.assistantApproval));
+    assert(JSON.stringify(kinds) === JSON.stringify(["compose-actions", "project-delete", "coder-delete", "assistant-delete"]), `the tab lists ${JSON.stringify(kinds)}`);
     const label = (await page.textContent('[data-assistant-approval="compose-actions"]')).trim();
     assert(label.startsWith("Compose actions approval"), `the row reads "${label}"`);
     assert(await page.locator(`[data-assistant-approval="${assistantID}"]`).count() === 0, "the tab still carries a row per assistant");
@@ -242,7 +274,7 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     await saveApprovals();
     assert(!(await page.locator(composeSwitch).isChecked()), "the switch did not stay off");
     const free = await asAssistant(assistantID, `/projects/${NAME}/docker/compose`, { stack: "", action: "down-volumes" });
-    assert(free.status === 200 && free.json.pending !== true, `a confirm action was parked with the approval off: ${free.raw}`);
+    assert(free.status === 200 && free.json.pending !== true && free.json.run && free.json.action === "Compose down with volumes" && (free.json.url || "").endsWith(`/docker/runs/${free.json.run}`), `a confirm action with the approval off did not answer like any start: ${free.raw}`);
     await waitRun(page, free.json.run, (r) => !r.running, "finished");
     const refused = await asAssistant(assistantID, "/settings/assistant/approvals", { "approval-compose-actions": "1" });
     assert(refused.status === 403, `the socket moved the approval: ${refused.status}`);
@@ -264,15 +296,17 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     const created = await page.request.post(`${BASE}/assistants/new`, { form: { csrf_token: await csrfOf(page), form: "new", coder: "claude" }, headers: { Accept: "application/json" } });
     const otherID = (await created.json().catch(() => ({}))).id || "";
     assert(otherID, `no second assistant: ${created.status()}`);
-    const parkedRun = await asAssistant(assistantID, `/projects/${NAME}/docker/compose`, { stack: "", action: "down-volumes" });
-    assert(parkedRun.json.pending === true, `the confirm action did not park: ${parkedRun.raw}`);
+    const waiting = await asAssistant(assistantID, `/projects/${NAME}/docker/compose`, { stack: "", action: "down-volumes" });
+    assert(waiting.json.pending === true, `the confirm action did not wait: ${waiting.raw}`);
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(`${DIALOG} .swal2-checkbox input`, { timeout: 15000 });
     await page.check(`${DIALOG} .swal2-checkbox input`);
     await page.click(`${DIALOG} .swal2-confirm`);
     await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
-    await waitRun(page, parkedRun.json.run, (r) => !r.pending && !r.running, "finished after the approval");
+    const approved = await approvalNote(page, assistantID, "done", 2);
+    await waitRun(page, startedRun(approved.text), (r) => !r.running, "finished after the approval");
     const other = await asAssistant(otherID, `/projects/${NAME}/docker/compose`, { stack: "", action: "down-volumes" });
-    assert(other.status === 200 && other.json.pending !== true, `another assistant was still asked: ${other.raw}`);
+    assert(other.status === 200 && other.json.pending !== true && other.json.run, `another assistant was still asked: ${other.raw}`);
     await waitRun(page, other.json.run, (r) => !r.running, "finished");
     await page.goto(`${BASE}/settings/assistant/approvals`, { waitUntil: "domcontentloaded" });
     assert(!(await page.locator(composeSwitch).isChecked()), "the box left the approval on");
@@ -283,6 +317,27 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     const gone = await page.request.post(`${BASE}/assistants/${otherID}`, { form: { csrf_token: await csrfOf(page), form: "delete" }, headers: { Accept: "application/json" } });
     assert(gone.status() === 200, `the second assistant's delete answered ${gone.status()}`);
     return "off from the dialog for both, back on";
+  });
+
+  await run("a delete dialog names the action, who asks and what it acts on, and shows no command", async () => {
+    const created = await page.request.post(`${BASE}/assistants/new`, { form: { csrf_token: await csrfOf(page), form: "new", coder: "claude" }, headers: { Accept: "application/json" } });
+    const otherID = (await created.json().catch(() => ({}))).id || "";
+    assert(otherID, `no second assistant: ${created.status()}`);
+    const waiting = await asAssistant(assistantID, `/assistants/${otherID}`, { form: "delete" });
+    assert(waiting.status === 200 && waiting.json.pending === true, `the delete did not wait: ${waiting.raw}`);
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(`${DIALOG} [data-approval-what]`, { timeout: 15000 });
+    const what = (await page.textContent(`${DIALOG} [data-approval-what]`)).trim();
+    const rows = await dialogRows(page);
+    const labels = rows.map(([label]) => label);
+    assert(JSON.stringify(labels) === JSON.stringify(["Asked by", "Assistant"]) && rows[0][1] === "Assistant" && rows[1][1], `the dialog's rows read ${JSON.stringify(rows)}`);
+    assert(what === `Delete assistant ${rows[1][1]}`, `the dialog's first line reads "${what}"`);
+    assert(await page.locator(`${DIALOG} [data-gitprompt-command]`).count() === 0, "a delete shows a command line");
+    await page.click(`${DIALOG} .swal2-deny`);
+    await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
+    const gone = await page.request.post(`${BASE}/assistants/${otherID}`, { form: { csrf_token: await csrfOf(page), form: "delete" }, headers: { Accept: "application/json" } });
+    assert(gone.status() === 200, `the second assistant's delete answered ${gone.status()}`);
+    return what;
   });
 
   await run("the trigger form offers no any or all for a compose event", async () => {

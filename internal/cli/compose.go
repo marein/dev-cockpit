@@ -17,7 +17,7 @@ import (
 // settings allow and nothing more. A run is detached and answers its id at
 // once; how it went reaches the assistant's thread as a note, and
 // `compose-show` reads it any time. A command marked to ask first waits for
-// the user, see the web layer's approvals.
+// the user and has no run before the approval, see the web layer's approvals.
 
 // composeShowTail is how many lines of a run's output `compose-show` prints
 // unless asked for more. The end of the output is where a failure says why.
@@ -137,14 +137,16 @@ func newComposeStartCommand(opts *inspectOptions) *cobra.Command {
 			"cockpit writes a note into your thread and the user is notified by it, and the events " +
 			"`compose-done`, `compose-failed`, `compose-declined` and `compose-ended` fire on it; " +
 			"`compose-show` is for when the user asks where a run stands. `--stack` names the " +
-			"stack by its label and may be left out where the project has one. A command that asks the user first is parked instead of " +
-			"started: the answer says `waits for the user's approval`, the user sees the question " +
-			"on every page and on their phone, and the run starts when they approve, ends declined " +
-			"when they deny it or let half an hour pass, and ends declined when the cockpit restarts " +
-			"while it waits. Do not start it again while it waits. The user can turn the question " +
-			"off for every assistant, when approving or with the Compose actions approval under " +
-			"Settings › Assistants › Approvals; you cannot. A stack already running a " +
-			"command refuses a second one.",
+			"stack by its label and may be left out where the project has one. A command that asks " +
+			"the user first starts nothing yet: the answer says `waits for the user's approval` and " +
+			"carries no run id, the user sees the question on every page and on their phone, and " +
+			"the run starts when they approve; a note in your thread then names the run id. When " +
+			"they deny it, let half an hour pass or the cockpit restarts while it waits, nothing " +
+			"runs, the note says so and `compose-declined` fires. Do not start it again while it " +
+			"waits, a second one is refused. The user can turn the question off for every " +
+			"assistant, when approving or with the Compose actions approval under Settings › " +
+			"Assistants › Approvals; you cannot. With the question off the command starts like any " +
+			"other and prints its run id. A stack already running a command refuses a second one.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runComposeStart(cmd.OutOrStdout(), *opts, args[0], args[1], stack)
@@ -171,7 +173,11 @@ func runComposeStart(out io.Writer, opts inspectOptions, project, action, stack 
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(out, startedRunLine(answer))
+	line := startedRunLine(answer)
+	if jsonBool(answer["pending"]) {
+		line = approvalLine(answer)
+	}
+	_, err = io.WriteString(out, line)
 	return err
 }
 
@@ -224,14 +230,12 @@ func chooseStack(project, stack string, answer map[string]any) (string, error) {
 	return "", fmt.Errorf("%s has no stack %q. The stacks are %s.", project, stackWord(stack), strings.Join(words, ", "))
 }
 
-// startedRunLine is the one line compose-start prints: the run id, what it
-// runs where, and whether it waits for the user instead of running.
+// startedRunLine is the one line compose-start prints for a command that
+// started: the run id and what it runs where, whether or not the command asks
+// the user first, as long as nobody is asked. One that waits for the user
+// answers no run, see approvalLine.
 func startedRunLine(answer map[string]any) string {
 	where := stackWord(answer["stack"]) + " in " + text(answer["project"])
-	if pending, _ := answer["pending"].(bool); pending {
-		return fmt.Sprintf("run %s waits for the user's approval: %s on %s. It starts when they approve and ends declined when they deny it or half an hour passes; do not start it again.\n",
-			text(answer["run"]), text(answer["action"]), where)
-	}
 	return fmt.Sprintf("run %s started: %s on %s. compose-show reads where it stands, a note lands in your thread when it ends.\n",
 		text(answer["run"]), text(answer["action"]), where)
 }
@@ -242,7 +246,7 @@ func newComposeShowCommand(opts *inspectOptions) *cobra.Command {
 		Use:   "compose-show <project> <run>",
 		Short: "Where a compose run stands, with the tail of its output",
 		Long: "Show one compose run by the id `compose-start` printed: what it runs where, whether " +
-			"it waits for the user's approval, runs, or ended, the exit code where it wrote one, and " +
+			"it runs or ended, the exit code where it wrote one, and " +
 			"the last lines of its output. The output is capped at the tail; `--lines` sets how " +
 			"many, and 0 prints everything the run wrote so far. Reads only, changes nothing.",
 		Args: cobra.ExactArgs(2),
@@ -279,12 +283,8 @@ func formatComposeShow(answer map[string]any, lines int) string {
 	fmt.Fprintf(&b, "command: %s\n", text(answer["command"]))
 	status := text(answer["status"])
 	switch {
-	case jsonBool(answer["pending"]):
-		status = "waits for the user's approval"
 	case jsonBool(answer["running"]):
 		status = "running"
-	case jsonBool(answer["declined"]):
-		status = "declined, never ran: " + text(answer["failure"])
 	case jsonBool(answer["failed"]):
 		status = "failed: " + text(answer["failure"])
 	default:
@@ -334,8 +334,9 @@ func newComposeStopCommand(opts *inspectOptions) *cobra.Command {
 		Long: "End a compose run that is still going, by the id `compose-start` printed: the " +
 			"command's whole process group is killed and the run ends as cancelled, which its note " +
 			"and `compose-show` then say. It answers at once and does not wait for that end, the " +
-			"note comes into your thread like every other end. A run that waits for the user's approval is declined by " +
-			"it. A run that is already over is refused, and so is one that is not yours: the user's " +
+			"note comes into your thread like every other end. A command that waits for the user's " +
+			"approval has no run yet and nothing to stop. A run that is already over is refused, " +
+			"and so is one that is not yours: the user's " +
 			"runs and another assistant's are theirs to stop.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {

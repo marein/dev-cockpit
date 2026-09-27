@@ -1,0 +1,1 @@
+{{if eq .Verdict "declined"}}Not done, {{oneLine .Text}}.{{else if eq .Verdict "failed"}}Approved, and it failed: {{oneLine .Text}}{{else}}{{.Text}}{{end}}

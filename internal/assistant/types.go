@@ -235,9 +235,10 @@ type Note struct {
 
 // The note sources.
 const (
-	NoteCheck   = "check"
-	NoteEvent   = "event"
-	NoteCompose = "compose"
+	NoteCheck    = "check"
+	NoteEvent    = "event"
+	NoteCompose  = "compose"
+	NoteApproval = "approval"
 )
 
 // Occasion is what happened, for the readers with room for the name and it

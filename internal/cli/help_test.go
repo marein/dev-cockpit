@@ -55,15 +55,17 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 		{"line-comment-remove", []string{"path", "outdated"},
 			[]string{"`--outdated` combines with `--path`", "* stays inside a path segment and ** crosses them"}},
 		// The instructions carry the rules of a compose run; what a stack is,
-		// what a parked run does, how long it waits, where the question is
-		// turned off and how the output is capped is read here.
+		// what a command that asks first does, how long it waits, where the
+		// question is turned off and how the output is capped is read here.
 		{"compose-list", nil, []string{"one per directory with a compose file", "the id `compose-start` takes", "its intent (start, stop, restart, build, pull, purge or command)", "proxy routes first and published ports after", "whether it asks the user first", "Reads only, changes nothing"}},
 		{"compose-start", []string{"stack"}, []string{"prints the run id at once and never waits", "do not wait, sleep or poll `compose-show`", "Every command starts this way, whatever its id", "the user is notified by it", "`--stack` names the stack by its label",
-			"waits for the user's approval", "ends declined when they deny it or let half an hour pass", "restarts while it waits", "Do not start it again while it waits",
+			"waits for the user's approval", "carries no run id", "a note in your thread then names the run id",
+			"When they deny it, let half an hour pass or the cockpit restarts while it waits, nothing runs", "Do not start it again while it waits",
 			"off for every assistant", "Compose actions approval", "Settings › Assistants › Approvals; you cannot",
+			"With the question off the command starts like any other and prints its run id",
 			"compose-done", "compose-failed", "compose-declined", "compose-ended", "refuses a second one"}},
 		{"compose-show", []string{"lines"}, []string{"capped at the tail", "`--lines` sets how many", "0 prints everything", "Reads only, changes nothing"}},
-		{"compose-stop", nil, []string{"ends as cancelled", "does not wait for that end", "waits for the user's approval is declined", "already over is refused"}},
+		{"compose-stop", nil, []string{"ends as cancelled", "does not wait for that end", "has no run yet and nothing to stop", "already over is refused"}},
 		{"trigger-new", []string{"name", "terminal", "all", "cron", "tz", "task", "once", "until", "batch", "model"},
 			[]string{"session of its own", "Answer NOTHING on the first line", "job-done", "coder-news", "cron",
 				// A compose run's end is an event like a job's, so the help
@@ -97,12 +99,23 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 		// is the one place somebody reads before running it. The instructions
 		// name the same three, because an assistant that answers "your
 		// schedules survive" is wrong on both surfaces at once.
-		{"assistant-delete", []string{"yes"}, []string{"its jobs and its triggers are gone",
-			"handed back to the user, named in the answer"}},
-		{"coder-delete", []string{"yes"}, []string{"an open job of it is closed with that reason", "fires once for the deletion",
+		{"assistant-delete", nil, []string{"its jobs and its triggers are gone",
+			"handed back to the user, named in the outcome", "waits for the user's approval", "never waits for the decision",
+			"unless the assistant deleted is you", "do not run the delete again while it waits",
+			"Assistant delete approval", "Settings › Assistants › Approvals; you cannot", "With the question off the delete runs at once"}},
+		{"coder-delete", nil, []string{"an open job of it is closed with that reason", "fires once for the deletion",
 			// A trigger that can never fire again goes with the terminal,
 			// which the instructions used to say and now delegate here.
-			"one that had no other terminal left is removed", "the answer says how many went"}},
+			"one that had no other terminal left is removed", "the outcome says how many went",
+			"waits for the user's approval", "never waits for the decision", "do not run the delete again while it waits",
+			"Coder delete approval", "Settings › Assistants › Approvals; you cannot", "With the question off the delete runs at once and prints what it deleted"}},
+		// A project delete asks the user first, like a compose command that
+		// asks first: the instructions carry the rule, what the answer says,
+		// how the question ends and where it is turned off is read here.
+		{"project-delete", nil, []string{"takes those with it, and the outcome names them", "only run this when the user asked for exactly this project",
+			"waits for the user's approval", "never waits for the decision", "When they deny it, let half an hour pass or the cockpit restarts while it waits, the project stays",
+			"a note lands in your thread with the outcome", "do not run the delete again while it waits",
+			"off for every assistant", "Project delete approval", "Settings › Assistants › Approvals; you cannot", "With the question off the delete runs at once and prints what it deleted", "once the project is gone, its containers brought down first"}},
 		{"coder-new", []string{"prompt", "model", "done-when", "then"},
 			[]string{"--then is the sequel", "wired in this call", "self contained", "It needs --done-when",
 				// The sequel's expiry is the job's, so a chain cannot die of

@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/approval"
+	"github.com/marein/dev-cockpit/internal/askpass"
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/project"
@@ -424,6 +427,60 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
+	// Only the browser deletes a project as the user. A local call is an
+	// assistant's, and one that names no live assistant is refused rather than
+	// read as the user: the question the delete asks exists for exactly the
+	// calls that would slip through here otherwise.
+	if s.localCall(c) {
+		owner, err := s.assistantCaller(c)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		if s.askApproval(c, s.projectDeleteApproval(owner, p.Name)) {
+			return
+		}
+	}
+	result, err := s.deleteProject(p, false)
+	if err != nil {
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		s.redirectWithFlash(c, "/projects", "", err.Error())
+		return
+	}
+	if !wantsJSON(c.Request) {
+		c.Redirect(http.StatusSeeOther, "/projects")
+		return
+	}
+	answer := gin.H{"name": p.Name, "path": p.Path}
+	if !result.Already {
+		answer["worktrees"] = result.Worktrees
+	}
+	if result.Deleting {
+		answer["deleting"] = true
+		c.JSON(http.StatusAccepted, answer)
+		return
+	}
+	c.JSON(http.StatusOK, answer)
+}
+
+// projectDeleteResult is where a delete stands when its asker is answered:
+// Deleting when it goes on off the request, compose first, Already when
+// another delete of the project was under way and this one claimed nothing,
+// and the worktree projects the cascade takes along.
+type projectDeleteResult struct {
+	Deleting  bool
+	Already   bool
+	Worktrees []string
+}
+
+// deleteProject deletes p the way the projects page does, for the page and
+// for an assistant's delete alike. A project that runs containers is deleted
+// off the request; wait says the caller is off the request already and wants
+// the deletion's real end instead, compose down included.
+func (s *Server) deleteProject(p project.Project, wait bool) (projectDeleteResult, error) {
 	// Every deletion is claimed before any work starts, the main and its
 	// worktree projects alike: the entries are the crash markers the next start
 	// resumes from, and the publish inside the claim puts the working rows on
@@ -431,12 +488,7 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 	// is answered like the running deletion it is.
 	children, worktrees, ok := s.claimDeleteCascade(p)
 	if !ok {
-		if wantsJSON(c.Request) {
-			c.JSON(http.StatusAccepted, gin.H{"name": p.Name, "path": p.Path, "deleting": true})
-			return
-		}
-		c.Redirect(http.StatusSeeOther, "/projects")
-		return
+		return projectDeleteResult{Deleting: true, Already: true}, nil
 	}
 	// The worktree projects go first, the cascade the confirm announced: they
 	// are dead without the main. A failure still publishes, part of the cascade
@@ -444,12 +496,7 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 	if err := s.runDeleteCascade(p, children); err != nil {
 		s.publishTerminals("")
 		s.publishProjects()
-		if wantsJSON(c.Request) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		s.redirectWithFlash(c, "/projects", "", err.Error())
-		return
+		return projectDeleteResult{}, err
 	}
 	// A project that runs containers is deleted off the request: compose down
 	// takes as long as it takes and no page may wait on it. A project that runs
@@ -459,13 +506,11 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 	// goroutine finishes it.
 	if len(s.composeStacksToStop(p.Path)) > 0 || s.docker.ComposeBusyUnder(p.Path) {
 		s.publishTerminals("") // a worktree cascade may have purged coders and shells
-		go s.deleteProjectWithCompose(p)
-		if wantsJSON(c.Request) {
-			c.JSON(http.StatusAccepted, gin.H{"name": p.Name, "path": p.Path, "deleting": true, "worktrees": worktrees})
-			return
+		if wait {
+			return projectDeleteResult{Worktrees: worktrees}, s.deleteProjectWithCompose(p)
 		}
-		c.Redirect(http.StatusSeeOther, "/projects")
-		return
+		go s.deleteProjectWithCompose(p)
+		return projectDeleteResult{Deleting: true, Worktrees: worktrees}, nil
 	}
 	if err := s.removeProjectNow(p); err != nil {
 		// The failure travels inline like before, the entry carries none: the
@@ -473,21 +518,43 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 		s.deletes.finish(p.Name, "")
 		s.publishTerminals("")
 		s.publishProjects()
-		if wantsJSON(c.Request) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		s.redirectWithFlash(c, "/projects", "", err.Error())
-		return
+		return projectDeleteResult{}, err
 	}
 	s.deletes.finish(p.Name, "")
 	s.publishTerminals("") // the purges removed the coders and shells everywhere
 	s.publishProjects()
-	if wantsJSON(c.Request) {
-		c.JSON(http.StatusOK, gin.H{"name": p.Name, "path": p.Path, "worktrees": worktrees})
-		return
+	return projectDeleteResult{Worktrees: worktrees}, nil
+}
+
+// projectDeleteApproval is the approval an assistant's delete of the project
+// named waits for. Its run looks the project up again by name, the approval
+// may come half an hour later, and waits for the deletion's end, so the note
+// says whether the project is gone, a compose down that failed included. A
+// delete that was already running is not this run's, so its end is not known
+// here and the note says so instead of calling the project gone.
+func (s *Server) projectDeleteApproval(owner, name string) approval.Request {
+	return approval.Request{
+		Owner:   owner,
+		Kind:    approvalProjectDelete,
+		Key:     name,
+		What:    "Delete project " + name,
+		Details: []askpass.Detail{{Label: "Project", Value: name}},
+		Project: name,
+		Run: func() (string, error) {
+			p, err := s.projects.FindByName(name)
+			if err != nil {
+				return "", errors.New("the project no longer exists")
+			}
+			result, err := s.deleteProject(p, true)
+			if err != nil {
+				return "", err
+			}
+			if result.Already {
+				return "", errors.New("a delete of the project is already running")
+			}
+			return assistant.ProjectDeleted(name, result.Worktrees), nil
+		},
 	}
-	c.Redirect(http.StatusSeeOther, "/projects")
 }
 
 // purgeProjectRunners tears down everything a project has running before the

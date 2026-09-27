@@ -75,10 +75,9 @@ func TestAComposeEndIsANoteAndAnEventOfItsOwner(t *testing.T) {
 	}
 }
 
-// A failed run and a declined run read as what they are, in the headline,
-// in the text and in the event's kind; a declined run carries no exit code
-// and quotes no output.
-func TestAFailedAndADeclinedComposeEndReadAsSuch(t *testing.T) {
+// A failed run reads as what it is, in the headline, in the text and in the
+// event's kind.
+func TestAFailedComposeEndReadsAsSuch(t *testing.T) {
 	svc, _, _ := newTestService(t, &fakeRunner{})
 	owner, _ := svc.Create("claude")
 	watch, err := svc.Events().Add(TriggerSpec{Owner: owner.ID, Event: "compose-ended", Task: "say so"})
@@ -88,27 +87,19 @@ func TestAFailedAndADeclinedComposeEndReadAsSuch(t *testing.T) {
 
 	svc.RecordCompose(ComposeReport{Owner: owner.ID, Run: "r-fail", Project: "shop", Action: "Compose build", URL: "/x",
 		Failed: true, Reason: "exit status 1", Exited: true, Exit: 1, Output: "ERROR: build failed"})
-	svc.RecordCompose(ComposeReport{Owner: owner.ID, Run: "r-no", Project: "shop", Action: "Compose down with volumes", URL: "/y",
-		Failed: true, Declined: true, Reason: "declined by the user"})
 	fresh, _ := svc.Get(owner.ID)
-	if len(fresh.Messages) != 2 {
+	if len(fresh.Messages) != 1 {
 		t.Fatalf("the thread holds %d messages", len(fresh.Messages))
 	}
-	failed, declined := fresh.Messages[0], fresh.Messages[1]
+	failed := fresh.Messages[0]
 	if failed.Note.Headline != "Compose failed: Compose build on shop" || failed.Note.Verdict != ComposeKindFailed {
 		t.Fatalf("the failed note reads %+v", failed.Note)
 	}
 	if !strings.Contains(failed.Content, "On shop: failed, exit status 1.") || !strings.Contains(failed.Content, "ERROR: build failed") {
 		t.Fatalf("the failed note says:\n%s", failed.Content)
 	}
-	if declined.Note.Headline != "Compose declined: Compose down with volumes on shop" || declined.Note.Verdict != ComposeKindDeclined {
-		t.Fatalf("the declined note reads %+v", declined.Note)
-	}
-	if !strings.Contains(declined.Content, "On shop: never ran, declined by the user.") || strings.Contains(declined.Content, "```") || strings.Contains(declined.Content, "exit status") {
-		t.Fatalf("the declined note says:\n%s", declined.Content)
-	}
 	got, _ := svc.Events().Get(watch.ID)
-	if len(got.Pending) != 2 || got.Pending[0].Kind != ComposeKindFailed || got.Pending[1].Kind != ComposeKindDeclined {
+	if len(got.Pending) != 1 || got.Pending[0].Kind != ComposeKindFailed {
 		t.Fatalf("the events read %+v", got.Pending)
 	}
 }
@@ -196,8 +187,8 @@ func TestAComposeTriggerIgnoresTheMode(t *testing.T) {
 	}
 }
 
-// The end of an owned run rings the user as news of the owner's thread, done,
-// failed and declined alike, once per run and for the owner alone.
+// The end of an owned run rings the user as news of the owner's thread, done
+// and failed alike, once per run and for the owner alone.
 func TestRecordComposeRingsTheOwnersThread(t *testing.T) {
 	svc, _, _ := newTestService(t, &fakeRunner{})
 	owner, _ := svc.Create("claude")
@@ -206,7 +197,6 @@ func TestRecordComposeRingsTheOwnersThread(t *testing.T) {
 	for _, report := range []ComposeReport{
 		{Owner: owner.ID, Run: "run-1", Project: "shop", Action: "Compose up", Exited: true},
 		{Owner: owner.ID, Run: "run-2", Project: "shop", Action: "Compose up", Failed: true, Reason: "exit status 1"},
-		{Owner: owner.ID, Run: "run-3", Project: "shop", Action: "Compose down", Declined: true, Reason: "declined by the user"},
 	} {
 		if svc.RecordCompose(report) == "" {
 			t.Fatalf("no note for %s", report.Run)
@@ -229,33 +219,33 @@ func TestRecordComposeRingsTheOwnersThread(t *testing.T) {
 	}
 }
 
-// An end the user made themselves, a Deny or a Cancel of a parked run, is
-// written into the thread and published like every other, and rings nobody:
-// it is no news to the one who clicked.
+// An end the user made themselves, a Cancel on the run page, is written into
+// the thread and published like every other, and rings nobody: it is no news
+// to the one who clicked.
 func TestAComposeEndTheUserMadeRingsNobody(t *testing.T) {
 	svc, _, _ := newTestService(t, &fakeRunner{})
 	owner, _ := svc.Create("claude")
-	trigger, err := svc.Events().Add(TriggerSpec{Owner: owner.ID, Event: "compose-declined", Task: "say so"})
+	trigger, err := svc.Events().Add(TriggerSpec{Owner: owner.ID, Event: "compose-failed", Task: "say so"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	news := make(chan string, 2)
 	svc.SetHooks(func() {}, func(id string) { news <- id })
-	id := svc.RecordCompose(ComposeReport{Owner: owner.ID, Run: "run-1", Project: "shop", Action: "Compose down", Failed: true, Declined: true, Reason: "declined by the user", ByUser: true})
+	id := svc.RecordCompose(ComposeReport{Owner: owner.ID, Run: "run-1", Project: "shop", Action: "Compose down", Failed: true, Reason: "the run was cancelled", ByUser: true})
 	if id == "" {
 		t.Fatal("no note was written")
 	}
 	if len(news) != 0 {
-		t.Fatal("the user's own decline rang")
+		t.Fatal("the user's own cancel rang")
 	}
-	if got, _ := svc.Events().Get(trigger.ID); len(got.Pending) != 1 || got.Pending[0].Kind != ComposeKindDeclined {
+	if got, _ := svc.Events().Get(trigger.ID); len(got.Pending) != 1 || got.Pending[0].Kind != ComposeKindFailed {
 		t.Fatalf("the event did not fire: %+v", got.Pending)
 	}
 }
 
 // A run that went through names the addresses it was handed, in their order,
 // on one line under the link to the run; no addresses write no line, and a
-// failed or a declined run names none even when handed some.
+// failed run names none even when handed some.
 func TestAComposeNoteNamesTheAddressesOfARunThatWentThrough(t *testing.T) {
 	links := []ComposeLink{
 		{Address: "shop.example.com", URL: "//shop.example.com"},
@@ -271,12 +261,7 @@ func TestAComposeNoteNamesTheAddressesOfARunThatWentThrough(t *testing.T) {
 	if bare := composeNote(ComposeReport{Project: "shop", Action: "Compose up", URL: "/r", Exited: true}); strings.Contains(bare, "Answers on") || !strings.HasSuffix(bare, "[Open the run](/r)") {
 		t.Fatalf("a note without addresses reads:\n%s", bare)
 	}
-	for _, report := range []ComposeReport{
-		{Project: "shop", Action: "Compose up", URL: "/r", Failed: true, Reason: "exit status 1", Links: links},
-		{Project: "shop", Action: "Compose up", URL: "/r", Failed: true, Declined: true, Reason: "declined by the user", Links: links},
-	} {
-		if note := composeNote(report); strings.Contains(note, "Answers on") {
-			t.Fatalf("a run that did not go through names addresses:\n%s", note)
-		}
+	if note := composeNote(ComposeReport{Project: "shop", Action: "Compose up", URL: "/r", Failed: true, Reason: "exit status 1", Links: links}); strings.Contains(note, "Answers on") {
+		t.Fatalf("a run that did not go through names addresses:\n%s", note)
 	}
 }

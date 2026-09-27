@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/approval"
+	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/markdown"
@@ -1099,20 +1101,33 @@ func (s *Server) assistantSteerTarget(raw string) (steerTarget, error) {
 // went through: a delete that fails keeps the assistant with its jobs
 // steering, the answer says kept and means it.
 //
-// Its compose runs go the same way: a parked one is declined, nobody started
-// it, and a running one becomes the user's, so its end rings the project like
-// a run the user started instead of vanishing with the thread it was for.
+// Its approvals are declined, nobody is left to hear how they would end, and
+// its running compose runs become the user's, so their end rings the project
+// like a run the user started instead of vanishing with the thread it was for.
 func (s *Server) assistantDelete(c *gin.Context, id string) {
+	// Only the browser deletes as the user. A local call is an assistant's,
+	// and it waits for the user's approval where the Assistant delete approval
+	// asks, the way a project delete does.
+	if s.localCall(c) {
+		owner, err := s.assistantCaller(c)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		if _, err := s.assistants.Get(id); err != nil {
+			s.assistantActionError(c, id, err)
+			return
+		}
+		if s.askApproval(c, s.assistantDeleteApproval(owner, id)) {
+			return
+		}
+	}
 	name := s.assistantName(id)
-	held := s.watcher.OpenJobs(id)
-	if err := s.assistants.Delete(id); err != nil {
+	held, err := s.deleteAssistant(id)
+	if err != nil {
 		s.assistantActionError(c, id, err)
 		return
 	}
-	s.watcher.Dropped(id, held)
-	s.declineOwnerApprovals(id)
-	s.docker.Disown(id)
-	s.notifier.MarkTargetRead(id)
 	handedBack := assistant.ReleasedNames(held)
 	if wantsJSON(c.Request) {
 		answer := gin.H{"deleted": true}
@@ -1127,6 +1142,46 @@ func (s *Server) assistantDelete(c *gin.Context, id string) {
 		flash += " " + handedBack
 	}
 	s.redirectWithFlash(c, "/assistants", flash, "")
+}
+
+// deleteAssistant removes an assistant for good, for the page and for an
+// approved delete alike, and answers the jobs it held, whose coders it hands
+// back to the user.
+func (s *Server) deleteAssistant(id string) ([]assistant.Job, error) {
+	held := s.watcher.OpenJobs(id)
+	if err := s.assistants.Delete(id); err != nil {
+		return nil, err
+	}
+	s.watcher.Dropped(id, held)
+	s.approvals.DeclineOwner(id)
+	s.docker.Disown(id)
+	s.notifier.MarkTargetRead(id)
+	return held, nil
+}
+
+// assistantDeleteApproval is the approval an assistant's delete of the
+// assistant waits for. Its run looks the assistant up again, the approval may
+// come half an hour later. An assistant that deleted itself reads no note,
+// its thread is gone with it.
+func (s *Server) assistantDeleteApproval(owner, id string) approval.Request {
+	name := s.assistantName(id)
+	return approval.Request{
+		Owner:   owner,
+		Kind:    approvalAssistantDelete,
+		Key:     id,
+		What:    "Delete assistant " + name,
+		Details: []askpass.Detail{{Label: "Assistant", Value: name}},
+		Run: func() (string, error) {
+			if _, err := s.assistants.Get(id); err != nil {
+				return "", errors.New("the assistant no longer exists")
+			}
+			held, err := s.deleteAssistant(id)
+			if err != nil {
+				return "", err
+			}
+			return assistant.AssistantDeleted(name, held), nil
+		},
+	}
 }
 
 // assistantActionError answers a refused action.

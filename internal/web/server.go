@@ -16,6 +16,7 @@ import (
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/activity"
+	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/backup"
@@ -156,7 +157,10 @@ type Server struct {
 	// deletes are the project deletions that run past their request, the ones
 	// that bring compose stacks down first.
 	deletes *projectDeletes
-	handler http.Handler
+	// approvals are the actions assistants asked for that wait for the
+	// user's approval.
+	approvals *approval.Service
+	handler   http.Handler
 }
 
 // localCallKey marks a request that arrived on the local socket, see
@@ -247,6 +251,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		s.bus.Publish(eventbus.Event{Type: "docker"})
 	})
 	dockerService.OnComposeDone(s.composeDone)
+	s.approvals = s.newApprovals(cfg.StateDir)
 	// A project's indexing picture moved (a server preparing, announcing
 	// progress, dying, closing): every open editor of the project pulls the
 	// status itself, the same way it follows the git event. No poll stands
@@ -385,6 +390,7 @@ func (s *Server) SetAskpass(broker *askpass.Broker, script string) {
 	s.gitPromptNoticed = map[string]bool{}
 	s.askpassBroker = broker
 	s.askpassScript = script
+	s.approvals.SetBroker(broker)
 	// The hook goes on last and reads the broker it was built from, not the
 	// field: a question parked between the two lines would have found the field
 	// still empty, and the field is written here while the broker's helper
@@ -420,8 +426,8 @@ func (s *Server) SetAskpass(broker *askpass.Broker, script string) {
 // two seconds later. Nothing the broker calls takes this lock, and the broker
 // calls its hook outside its own locks, so this order has no other side.
 //
-// An approval question goes the same way under its own target, one per run
-// (questionTarget), so the map holds target ids and not projects.
+// An approval question goes the same way under its own target, one per
+// approval (questionTarget), so the map holds target ids and not projects.
 func (s *Server) reconcileGitPromptNews(broker *askpass.Broker) {
 	s.gitPromptNoticedMu.Lock()
 	defer s.gitPromptNoticedMu.Unlock()

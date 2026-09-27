@@ -521,10 +521,10 @@ func SortTriggers(list []Trigger) {
 // the umbrella over them the way closed is over a job's: done is a command
 // that went through, failed one that started and did not, whether it exited
 // non zero, timed out or was cancelled while it ran, or one approved that
-// could not start, and declined one that never started: denied by the user,
-// cancelled while it waited, unanswered past the bound, lost in a restart, or
-// ended with its project. The event's target is the run, so a terminal is no
-// filter on it.
+// could not start, and declined a command that asked the user first and was
+// never run: denied, unanswered past the bound, or lost in a restart. The
+// event's target is the run, empty where none was ever started, so a terminal
+// is no filter on it.
 const (
 	EventJob     = "job"
 	EventCoder   = "coder"
@@ -564,8 +564,8 @@ var EventOptions = []EventOption{
 	{Source: EventJob, Kind: JobKindClosed, Label: "Job closed", Help: "a job of yours ended, done, blocked or expired"},
 	{Source: EventCoder, Kind: CoderKindNews, Label: "Coder has news", Help: "a coder's turn ended or it asks, every signal either way"},
 	{Source: EventCompose, Kind: ComposeKindDone, Label: "Compose done", Help: "a compose command you started went through"},
-	{Source: EventCompose, Kind: ComposeKindFailed, Label: "Compose failed", Help: "a compose command you started ran and failed, timed out or was cancelled, or could not start once approved"},
-	{Source: EventCompose, Kind: ComposeKindDeclined, Label: "Compose declined", Help: "a compose command you started never ran: denied, cancelled while waiting, unanswered, or lost in a restart"},
+	{Source: EventCompose, Kind: ComposeKindFailed, Label: "Compose failed", Help: "a compose command you started ran and failed, timed out or was cancelled, or could not start once the user approved it"},
+	{Source: EventCompose, Kind: ComposeKindDeclined, Label: "Compose declined", Help: "a compose command you started never ran: the user denied it, left it unanswered, or a restart took the question"},
 	{Source: EventCompose, Kind: ComposeKindEnded, Label: "Compose ended", Help: "a compose command you started ended, done, failed or declined"},
 	{Source: EventCron, Kind: CronKindTick, Label: "Schedule", Help: "a cron schedule ticks"},
 }

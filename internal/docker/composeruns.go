@@ -57,16 +57,6 @@ type ComposeRecord struct {
 	// goes to that assistant's thread, and the run may end in another process
 	// than the one that took the request.
 	Owner string `json:"owner,omitempty"`
-	// Pending marks a run parked for the user's approval: registered, its
-	// command resolved, nothing started. It has no process and holds no
-	// directory; ApproveCompose starts it and DeclineCompose ends it.
-	Pending bool `json:"pending,omitempty"`
-	// Launching marks a run whose start was decided and may be under way: it
-	// is written before the process is started and taken off, together with
-	// Pending, once the process is written down. A process that finds it at
-	// its start asks the run's lock and result files whether a process ever
-	// existed, instead of reading a run an approval started as still parked.
-	Launching bool `json:"launching,omitempty"`
 	// PID is the hold process. Whether the run is still going is decided by
 	// its lock file alone.
 	PID       int       `json:"pid"`
@@ -86,10 +76,6 @@ type ComposeRecord struct {
 	Exited  bool   `json:"exited,omitempty"`
 	Exit    int    `json:"exit,omitempty"`
 	Failure string `json:"failure,omitempty"`
-	// Declined marks a parked run that never started: denied, its approval
-	// unanswered past the bound, or lost with the process that held the
-	// question. Failure says which.
-	Declined bool `json:"declined,omitempty"`
 }
 
 // runStore persists the register. One file, read through on every call like

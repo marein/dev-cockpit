@@ -6,6 +6,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/docker"
@@ -70,10 +71,10 @@ func TestEveryKindIsBuiltTheSameWayRound(t *testing.T) {
 		{"git question", "Git asks a question.", "push", func() (string, string) { return gitPromptNews("push") }},
 		{"compose", "Compose finished.", "Compose up", run("Compose up", "")},
 		{"approval", "Assistant asks approval.", "Ops: Compose down with volumes in shop", func() (string, string) {
-			return approvalNews("Ops", "Compose down with volumes", "shop")
+			return approvalNews("Ops", "Compose down with volumes in shop")
 		}},
-		{"approval nobody names", "Assistant asks approval.", "Assistant: a compose command", func() (string, string) {
-			return approvalNews("", "", "")
+		{"approval nobody names", "Assistant asks approval.", "Assistant: an action", func() (string, string) {
+			return approvalNews("", "")
 		}},
 		{"compose failed", "Compose failed.", "Compose up", run("Compose up", "exit 1")},
 		{"long coder", "Coder has news.", "notification-titel-reihenfolge", func() (string, string) {
@@ -394,14 +395,20 @@ func TestATitleIsTheKindAndNothingElse(t *testing.T) {
 		return assistant.Message{Role: assistant.RoleCockpit, State: assistant.StateComplete, Content: long,
 			Note: &assistant.Note{Source: assistant.NoteCompose, Run: "run-1", Name: name, Project: long, Verdict: kind}}
 	}
+	approved := func(verdict, name string) assistant.Message {
+		return assistant.Message{Role: assistant.RoleCockpit, State: assistant.StateComplete, Content: long,
+			Note: &assistant.Note{Source: assistant.NoteApproval, Name: name, Verdict: verdict}}
+	}
 	cases := []struct {
 		want   string
 		first  assistant.Message
 		second assistant.Message
 	}{
+		{"Action approved.", approved(approval.Done, "Delete project shop"), approved(approval.Done, long)},
+		{"Approved action failed.", approved(approval.Failed, "Delete project shop"), approved(approval.Failed, long)},
+		{"Action declined.", approved(approval.Declined, "Delete project shop"), approved(approval.Declined, long)},
 		{"Compose done.", compose(assistant.ComposeKindDone, "Compose up"), compose(assistant.ComposeKindDone, long)},
 		{"Compose failed.", compose(assistant.ComposeKindFailed, "Compose up"), compose(assistant.ComposeKindFailed, long)},
-		{"Compose declined.", compose(assistant.ComposeKindDeclined, "Compose up"), compose(assistant.ComposeKindDeclined, long)},
 		{"Answer ready.", assistant.Message{State: assistant.StateComplete, Content: long}, assistant.Message{State: assistant.StateComplete, Content: "x"}},
 		{"Answer broke off.", assistant.Message{State: assistant.StateFailed, Content: long}, assistant.Message{State: assistant.StateInterrupted, Content: "x"}},
 		{"Job done.", check(assistant.VerdictDone, "readme-task"), check(assistant.VerdictDone, long)},
@@ -533,6 +540,18 @@ func TestAComposeNoteRingsUnderItsCommand(t *testing.T) {
 		Note:    &assistant.Note{Source: assistant.NoteCompose, Run: "run-1", Name: "Compose up", Project: "shop", Verdict: assistant.ComposeKindDone}}
 	title, detail := assistantNews("Bro", m)
 	if title != "Compose done." || detail != "Compose up: On shop: went through, exit status 0." {
+		t.Fatalf("the news reads %q / %q", title, detail)
+	}
+}
+
+// An action the user was asked about rings as what it is, under the action's
+// own line, with the note's text behind it.
+func TestAnApprovalNoteRingsUnderItsAction(t *testing.T) {
+	m := assistant.Message{Role: assistant.RoleCockpit, State: assistant.StateComplete,
+		Content: "Not done, the approval expired unanswered.",
+		Note:    &assistant.Note{Source: assistant.NoteApproval, Name: "Delete project shop", Verdict: approval.Declined}}
+	title, detail := assistantNews("Bro", m)
+	if title != "Action declined." || detail != "Delete project shop: Not done, the approval expired unanswered." {
 		t.Fatalf("the news reads %q / %q", title, detail)
 	}
 }

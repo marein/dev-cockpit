@@ -209,14 +209,17 @@ func stacksToStop(state docker.State, path string) []docker.Stack {
 // than handed in (the ones already down are not among them any more), a down
 // somebody else is still running is waited out, and removing a directory that
 // is a torso or gone at all is what removing it means.
-func (s *Server) deleteProjectWithCompose(p project.Project) {
+//
+// It answers how the deletion ended, for the one caller that waits for it,
+// an assistant's delete of the project once the user approved it; everybody
+// else reads the row.
+func (s *Server) deleteProjectWithCompose(p project.Project) error {
 	s.purgeProjectRunners(p.Path)
-	s.declineProjectApprovals(p.Path)
 	s.publishTerminals("") // the purge removed this project's coders and shells everywhere
 	for _, stack := range s.composeStacksToStop(p.Path) {
 		if err := s.composeDown(stack, p); err != nil {
 			s.abortProjectDelete(p, err)
-			return
+			return err
 		}
 	}
 	// Nothing may still be running compose in there when the directory goes.
@@ -225,12 +228,14 @@ func (s *Server) deleteProjectWithCompose(p project.Project) {
 	// that run belongs to nobody here, it was only adopted, and pulling its
 	// directory away mid-run is the one thing this deletion must not do.
 	if !s.waitComposeIdle(p.Path, func() bool { return s.docker.ComposeBusyUnder(p.Path) }) {
-		s.abortProjectDelete(p, errors.New("A compose run in the project would not end, nothing was removed."))
-		return
+		err := errors.New("A compose run in the project would not end, nothing was removed.")
+		s.abortProjectDelete(p, err)
+		return err
 	}
 	s.closeProjectLSP(p.Name)
 	failure := ""
-	if err := s.projects.Remove(p); err != nil {
+	err := s.projects.Remove(p)
+	if err != nil {
 		log.Printf("delete project %s: %v", p.Name, err)
 		failure = err.Error()
 	} else {
@@ -238,6 +243,7 @@ func (s *Server) deleteProjectWithCompose(p project.Project) {
 		s.searchDrafts.Delete(p.Name)
 		s.lineComments.Clear(p.Name)
 		s.quickOpen.Forget(p.Path)
+		s.approvals.DeclineProject(p.Name)
 		// The project's compose and askpass news read themselves with it, and
 		// deliberately only on success: an aborted deletion keeps its compose
 		// failure notification unread, that is the one word about why nothing
@@ -247,6 +253,7 @@ func (s *Server) deleteProjectWithCompose(p project.Project) {
 	}
 	s.deletes.finish(p.Name, failure)
 	s.publishProjects()
+	return err
 }
 
 // claimDeleteCascade enters a deletion in the deletes state before any work
@@ -311,7 +318,6 @@ func (s *Server) runDeleteCascade(p project.Project, children []project.Project)
 // Publishing stays with the caller.
 func (s *Server) removeProjectNow(p project.Project) error {
 	s.purgeProjectRunners(p.Path)
-	s.declineProjectApprovals(p.Path)
 	s.closeProjectLSP(p.Name)
 	if err := s.projects.Remove(p); err != nil {
 		return err
@@ -320,6 +326,7 @@ func (s *Server) removeProjectNow(p project.Project) error {
 	s.searchDrafts.Delete(p.Name)
 	s.lineComments.Clear(p.Name)
 	s.quickOpen.Forget(p.Path)
+	s.approvals.DeclineProject(p.Name)
 	return nil
 }
 

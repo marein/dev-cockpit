@@ -1,6 +1,7 @@
 package askpass
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -10,20 +11,19 @@ import (
 // under its own key and its own kind.
 func TestAnApprovalStandsAndTakesADecision(t *testing.T) {
 	b := New(t.TempDir())
-	moved := 0
-	b.OnChange = func() { moved++ }
+	var moved atomic.Int32
+	b.OnChange = func() { moved.Add(1) }
 	a := b.BeginApproval(ApprovalKey("abc"), Question{
-		Project: "shop", Action: "Compose down with volumes", Command: "docker compose down -v",
-		Dir: "/srv/shop", Assistant: "Ops", Stack: "ops", URL: "/projects/shop/docker/runs/abc",
+		Assistant: "Ops", Action: "Compose down in shop", Details: []Detail{{Label: "Project", Value: "shop"}},
 	})
 	if a == nil || !a.Approval() {
 		t.Fatal("the approval action was not opened")
 	}
 	if b.Find(ApprovalKey("abc")) != a || b.Find("shop") != nil {
-		t.Fatal("the approval is keyed by its project instead of its run")
+		t.Fatal("the approval is keyed by its project instead of its id")
 	}
-	if _, ok := ApprovalRun("shop"); ok {
-		t.Fatal("the approval is keyed by its project instead of its run")
+	if _, ok := ApprovalID("shop"); ok {
+		t.Fatal("the approval is keyed by its project instead of its id")
 	}
 	got := make(chan Decision, 1)
 	go func() {
@@ -45,11 +45,11 @@ func TestAnApprovalStandsAndTakesADecision(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if q.Kind != KindApproval || q.Key != ApprovalKey("abc") || !q.External || q.Assistant != "Ops" || q.Stack != "ops" || q.URL == "" || q.Command == "" {
+	if q.Kind != KindApproval || q.Key != ApprovalKey("abc") || !q.External || q.Assistant != "Ops" || q.Action != "Compose down in shop" || len(q.Details) != 1 || q.Details[0].Value != "shop" {
 		t.Fatalf("the question reads %+v", q)
 	}
-	if run, ok := ApprovalRun(q.Key); !ok || run != "abc" {
-		t.Fatal("the key the approval stands under does not name its run")
+	if run, ok := ApprovalID(q.Key); !ok || run != "abc" {
+		t.Fatal("the key the approval stands under does not name its id")
 	}
 	if a.Answer(q.ID, "opensesame", false) {
 		t.Fatal("an approval took a typed answer")
@@ -68,8 +68,8 @@ func TestAnApprovalStandsAndTakesADecision(t *testing.T) {
 	if len(b.Questions()) != 0 {
 		t.Fatal("the decided question still stands")
 	}
-	if moved < 2 {
-		t.Fatalf("the change hook fired %d times, want the park and the decision", moved)
+	if n := moved.Load(); n < 2 {
+		t.Fatalf("the change hook fired %d times, want the park and the decision", n)
 	}
 }
 

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -11,7 +12,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/askpass"
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/notify"
@@ -188,14 +191,21 @@ func (s *Server) composeStack(c *gin.Context) (project.Project, docker.Stack, bo
 		c.JSON(http.StatusNotFound, gin.H{"error": "Unknown project."})
 		return project.Project{}, docker.Stack{}, false
 	}
-	label := c.PostForm("stack")
-	for _, stack := range s.docker.State().StacksForDir(p.Path) {
-		if stack.Label == label {
-			return p, stack, true
-		}
+	if stack, ok := s.findStack(p, c.PostForm("stack")); ok {
+		return p, stack, true
 	}
 	c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown compose stack."})
 	return project.Project{}, docker.Stack{}, false
+}
+
+// findStack answers the project's compose stack under its label.
+func (s *Server) findStack(p project.Project, label string) (docker.Stack, bool) {
+	for _, stack := range s.docker.State().StacksForDir(p.Path) {
+		if stack.Label == label {
+			return stack, true
+		}
+	}
+	return docker.Stack{}, false
 }
 
 // composeActions answers the configured compose commands. The setting is
@@ -227,10 +237,9 @@ func (s *Server) linkMatcher() docker.LinkMatcher {
 //
 // An assistant reaches the same route over the local socket and its run is
 // owned: the word at the end goes into its thread instead of the user's bell.
-// A command that asks first asks the user first for an assistant too, unless
-// the user turned the Compose actions approval off: the run is parked, the
-// answer carries the id at once, and the question stands for the user
-// wherever they are, see awaitComposeApproval.
+// A command that asks first asks the user first for an assistant too, the way
+// the compose menu's confirm comes before any request: nothing is started
+// until the user approves, and the run and its id come with the approval.
 func (s *Server) handleDockerCompose(c *gin.Context) {
 	p, stack, ok := s.composeStack(c)
 	if !ok {
@@ -254,42 +263,89 @@ func (s *Server) handleDockerCompose(c *gin.Context) {
 		}
 		owner = from
 	}
-	opts := docker.ComposeOptions{
+	if owner != "" && action.Confirm && s.askApproval(c, s.composeApproval(owner, p, stack, action)) {
+		return
+	}
+	id, err := s.startCompose(p, stack, action, owner)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ok": true, "action": action.Label, "stack": stack.Label, "project": p.Name,
+		"run": id, "url": dockerRunPath(p.Name, id),
+	})
+}
+
+// startCompose starts one compose command on one stack, owned by an
+// assistant where owner names one.
+func (s *Server) startCompose(p project.Project, stack docker.Stack, action docker.Action, owner string) (string, error) {
+	id, err := s.docker.RunCompose(docker.ComposeOptions{
 		Dir:    stack.Dir,
 		Root:   p.Path,
 		Label:  p.Name,
 		Action: action,
 		Owner:  owner,
-	}
-	answer := gin.H{"ok": true, "action": action.Label, "stack": stack.Label, "project": p.Name}
-	if owner != "" && action.Confirm && s.assistantAsksForCompose() {
-		id, err := s.docker.ParkCompose(opts)
-		if err != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-			return
-		}
-		run, _ := s.docker.ComposeRunByID(id)
-		bridge, err := s.askComposeApproval(owner, p, action, run)
-		if err != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-			return
-		}
-		if bridge != nil {
-			go s.awaitComposeApproval(bridge, id)
-		}
-		s.bus.Publish(eventbus.Event{Type: "docker"})
-		answer["run"], answer["url"], answer["pending"] = id, dockerRunPath(p.Name, id), true
-		c.JSON(http.StatusOK, answer)
-		return
-	}
-	id, err := s.docker.RunCompose(opts)
+	})
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		return
+		return "", err
 	}
 	s.bus.Publish(eventbus.Event{Type: "docker"})
-	answer["run"], answer["url"] = id, dockerRunPath(p.Name, id)
-	c.JSON(http.StatusOK, answer)
+	return id, nil
+}
+
+// composeApproval is the approval a confirm compose command of an assistant
+// waits for. The same command on the same stack waits once. Its run resolves
+// the project, the stack and the command again by name, the settings may have
+// moved in the half hour the question may stand.
+func (s *Server) composeApproval(owner string, p project.Project, stack docker.Stack, action docker.Action) approval.Request {
+	what := action.Label + " in " + p.Name
+	where := "project root"
+	if stack.Label != "" {
+		what = action.Label + " on " + stack.Label + " in " + p.Name
+		where = stack.Label
+	}
+	details := []askpass.Detail{
+		{Label: "Action", Value: action.Label},
+		{Label: "Stack", Value: where},
+		{Label: "Project", Value: p.Name},
+	}
+	// The line the run will start, resolved the way the run resolves it; one
+	// that does not resolve fails the run, and the dialog shows it as written.
+	command := action.Command
+	if argv, _, err := action.Resolve(stack.Dir, p.Path); err == nil {
+		command = strings.Join(argv, " ")
+	}
+	name, label, actionID := p.Name, stack.Label, action.ID
+	return approval.Request{
+		Owner:   owner,
+		Kind:    approvalComposeActions,
+		Key:     strings.Join([]string{name, label, actionID}, "\n"),
+		What:    what,
+		Details: details,
+		Command: command,
+		Dir:     stack.Dir,
+		Project: name,
+		Run: func() (string, error) {
+			p, err := s.projects.FindByName(name)
+			if err != nil {
+				return "", errors.New("the project no longer exists")
+			}
+			stack, ok := s.findStack(p, label)
+			if !ok {
+				return "", errors.New("the compose stack no longer exists")
+			}
+			action, ok := docker.ActionByID(s.composeActions(), actionID)
+			if !ok {
+				return "", errors.New("the compose command no longer exists")
+			}
+			run, err := s.startCompose(p, stack, action, owner)
+			if err != nil {
+				return "", err
+			}
+			return assistant.ComposeStarted(run, action.Label, p.Name, stack.Label), nil
+		},
+	}
 }
 
 // handleProjectDocker answers one project's docker picture as JSON for the
@@ -370,8 +426,6 @@ func composeRunJSON(project string, run docker.RunView) gin.H {
 		"command":   run.Command,
 		"status":    render.DockerRunStatus(run),
 		"running":   run.Running,
-		"pending":   run.Pending,
-		"declined":  run.Declined,
 		"failed":    run.Failure != "",
 		"failure":   run.Failure,
 		"exited":    run.Exited,
@@ -502,8 +556,7 @@ func (s *Server) handleDockerRunOutput(c *gin.Context) {
 // started it may be long gone.
 //
 // The user stops any run. An assistant stops only its own, the line a job
-// draws for releasing: calling off somebody else's run, the user's or another
-// assistant's, would also decline a question that was never its to answer.
+// draws for releasing.
 func (s *Server) handleDockerRunStop(c *gin.Context) {
 	_, run, ok := s.composeRun(c)
 	if !ok {
@@ -521,18 +574,11 @@ func (s *Server) handleDockerRunStop(c *gin.Context) {
 			return
 		}
 	}
-	// A cancel from the browser is the user's own click: a parked run it
-	// declines still reports into its owner's thread, but rings nobody.
+	// A cancel from the browser is the user's own click: the run still
+	// reports into its owner's thread, but rings nobody.
 	if err := s.docker.CancelCompose(run.ID, !local); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
-	}
-	// A parked run has a question standing for it; the run is over, so the
-	// question goes with it instead of waiting out its bound on every page.
-	if run.Pending && s.askpassBroker != nil {
-		if bridge := s.askpassBroker.Find(askpass.ApprovalKey(run.ID)); bridge != nil {
-			bridge.End()
-		}
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
@@ -572,22 +618,14 @@ func stackLabel(root, dir string) string {
 // a run registered right after its owner was deleted, has no thread to take
 // the report. That run is handed to the user here, where the end lands, and
 // rings the project like a run the user started: Disown at the delete closes
-// the common case, this closes every window around it. A declined run is
-// left out, it never started and nobody is waiting for its word, and so is
-// its report: the delete declines every parked run of the assistant it just
-// removed, and each of them would only log that its thread is gone.
+// the common case, this closes every window around it.
 func (s *Server) composeDone(run docker.ComposeRun, err error, output string) {
 	if err != nil {
 		log.Printf("docker %q in %s: %v: %s", run.Action, run.Dir, err, output)
 	}
-	if run.Owner != "" && run.Declined && s.assistants != nil {
-		if _, gone := s.assistants.Get(run.Owner); gone != nil {
-			return
-		}
-	}
 	if run.Owner != "" {
 		recorded := s.assistants != nil && s.assistants.RecordCompose(s.composeReport(run, err, output)) != ""
-		if !recorded && !run.Declined && s.docker.DisownRun(run.ID) {
+		if !recorded && s.docker.DisownRun(run.ID) {
 			run.Owner = ""
 		}
 	}
@@ -676,4 +714,60 @@ func (s *Server) handleEditorDocker(c *gin.Context) {
 		"containers": containers,
 		"actions":    actions,
 	})
+}
+
+// composeReport is what the assistant's thread is told about an owned run
+// that ended: the run, where it ran, how it went, the tail of what it wrote
+// and the page that shows the rest. The stack is named the way the compose
+// menu names it; a project that is gone by then leaves the directory.
+func (s *Server) composeReport(run docker.ComposeRun, err error, output string) assistant.ComposeReport {
+	report := assistant.ComposeReport{
+		Owner:   run.Owner,
+		Run:     run.ID,
+		Project: run.Label,
+		Stack:   run.Dir,
+		Action:  run.Action,
+		URL:     dockerRunPath(run.Label, run.ID),
+		Failed:  run.Failed,
+		Exited:  run.Exited,
+		Exit:    run.Exit,
+		Output:  output,
+		ByUser:  run.ByUser,
+	}
+	if err != nil {
+		report.Reason = err.Error()
+	}
+	if p, perr := s.projects.FindByName(run.Label); perr == nil {
+		report.Stack = stackLabel(p.Path, run.Dir)
+	}
+	if !run.Failed && docker.BringsUp(run.Intent) {
+		report.Links = s.composeLinks(run)
+	}
+	return report
+}
+
+// composeLinksWait bounds how long the note of a stack brought up waits for
+// the cache to read the containers the run started. The cache reads the list
+// again only once the event burst settled, a moment after an up -d returned.
+const composeLinksWait = 2 * time.Second
+
+// composeLinks are the addresses a stack brought up answers on, routes first.
+// They are read once, off the first reading the cache took after the run
+// ended, or off what it holds when none came within composeLinksWait; the
+// stack's claim is already given back, only the note waits. Without a daemon
+// no reading comes, and nothing is waited for.
+func (s *Server) composeLinks(run docker.ComposeRun) []assistant.ComposeLink {
+	if !s.docker.State().Available {
+		return nil
+	}
+	s.docker.AwaitReload(run.Reloads, composeLinksWait)
+	state := s.docker.State()
+	if !state.Available {
+		return nil
+	}
+	var out []assistant.ComposeLink
+	for _, link := range s.linkMatcher().StackLinks(state, run.Dir) {
+		out = append(out, assistant.ComposeLink{Address: link.Address(), URL: link.URL()})
+	}
+	return out
 }

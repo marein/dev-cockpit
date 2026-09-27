@@ -77,21 +77,49 @@ const assistantApprovalsSettingsPath = "/settings/assistant/approvals"
 // settings store, assistant-approval-<id>, on until it is switched off: the
 // key is read against "off", so an install that never saved it asks, and
 // switching it on again removes the key rather than storing a copy of the
-// default. A new kind is one more entry, the tab and the save read the list.
+// default. A new kind is one more entry, the tab and the save read the list,
+// and Event is what an end of one of its approvals publishes beyond the note
+// (approvalEnded), empty for a kind that publishes nothing.
 type approvalKind struct {
 	ID    string
 	Label string
 	Hint  string
+	Event assistant.ApprovalEvent
 }
 
 // approvalComposeActions is whether a confirm compose action an assistant
 // starts waits for the user's approval.
 const approvalComposeActions = "compose-actions"
 
+// approvalProjectDelete is whether a project delete an assistant asks for
+// waits for the user's approval.
+const approvalProjectDelete = "project-delete"
+
+// approvalCoderDelete is whether a coder delete an assistant asks for waits
+// for the user's approval.
+const approvalCoderDelete = "coder-delete"
+
+// approvalAssistantDelete is whether an assistant delete an assistant asks
+// for waits for the user's approval.
+const approvalAssistantDelete = "assistant-delete"
+
 var approvalKinds = []approvalKind{{
 	ID:    approvalComposeActions,
 	Label: "Compose actions approval",
 	Hint:  "Compose commands marked to ask first under Settings › Docker wait for your approval.",
+	Event: assistant.ComposeApprovalEvent,
+}, {
+	ID:    approvalProjectDelete,
+	Label: "Project delete approval",
+	Hint:  "A project an assistant wants to delete stays until you approve.",
+}, {
+	ID:    approvalCoderDelete,
+	Label: "Coder delete approval",
+	Hint:  "A coder an assistant wants to delete stays until you approve.",
+}, {
+	ID:    approvalAssistantDelete,
+	Label: "Assistant delete approval",
+	Hint:  "An assistant one of them wants to delete, itself included, stays until you approve.",
 }}
 
 // approvalKey is where one kind is stored.

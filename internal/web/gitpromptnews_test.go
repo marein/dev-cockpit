@@ -29,6 +29,7 @@ func promptNewsServer(t *testing.T) (*Server, *askpass.Broker, string) {
 		notifier: notify.NewService(filepath.Join(dir, "notifications.json"), nil),
 		bus:      eventbus.New(),
 	}
+	s.approvals = s.newApprovals(dir)
 	return s, broker, askpass.SocketPath(dir)
 }
 

@@ -6,9 +6,10 @@
 // the helper, which prints it and lets the action continue.
 //
 // The same broker carries a second kind of question, an approval: the cockpit
-// itself asks whether an assistant may run a compose command that asks first,
-// and the answer is a decision, approve or deny, instead of a typed line. It
-// is keyed by the run and never by a project, so it collides with no git
+// itself asks whether an assistant may take an action that waits for the user,
+// a compose command that asks first or a project delete, and the answer is a
+// decision, approve or deny, instead of a typed line. It is keyed by the
+// approval's id and never by a project, so it collides with no git
 // question, and it rides the same standing list, the same dialog and the same
 // notification path, see BeginApproval.
 //
@@ -168,43 +169,52 @@ func shellQuote(value string) string {
 // directory nobody in the browser can see.
 //
 // Key is what an answer names to reach its question, the key its action was
-// begun under: the project for a git question, the run for an approval. Kind
-// tells the two apart, empty for a git question; an approval carries who asks
-// (Assistant), the stack the command runs on and the page that shows the run.
+// begun under: the project for a git question, the approval's id for an
+// approval. Kind tells the two apart, empty for a git question; an approval
+// carries who asks (Assistant), the one line it is read by in its Action
+// ("Delete project shop"), the rows the dialog shows (Details, written by
+// the asker, so the dialog knows no kind of action) and, for an action that
+// runs a program, its Command and Dir.
 type Question struct {
-	ID        string `json:"id"`
-	Key       string `json:"key"`
-	Kind      string `json:"kind,omitempty"`
-	Project   string `json:"project"`
-	Action    string `json:"action"`
-	Prompt    string `json:"prompt"`
-	External  bool   `json:"external,omitempty"`
-	Command   string `json:"command,omitempty"`
-	Dir       string `json:"dir,omitempty"`
-	Assistant string `json:"assistant,omitempty"`
-	Stack     string `json:"stack,omitempty"`
-	URL       string `json:"url,omitempty"`
+	ID        string   `json:"id"`
+	Key       string   `json:"key"`
+	Kind      string   `json:"kind,omitempty"`
+	Project   string   `json:"project"`
+	Action    string   `json:"action"`
+	Prompt    string   `json:"prompt"`
+	External  bool     `json:"external,omitempty"`
+	Command   string   `json:"command,omitempty"`
+	Dir       string   `json:"dir,omitempty"`
+	Assistant string   `json:"assistant,omitempty"`
+	Details   []Detail `json:"details,omitempty"`
+}
+
+// Detail is one row an approval dialog shows: a label and its value.
+type Detail struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
 }
 
 // KindApproval marks a question whose answer is a decision, see BeginApproval.
 const KindApproval = "approval"
 
-// approvalKeyPrefix is what a compose run's approval stands under in the
-// broker. It carries a slash and starts with a letter, so it is never a
-// project's name, which is one path segment, and never a proxied git call's
-// scope, which is an absolute path: the two kinds of question cannot meet.
+// approvalKeyPrefix is what an approval stands under in the broker. It
+// carries a slash and starts with a letter, so it is never a project's name,
+// which is one path segment, and never a proxied git call's scope, which is an
+// absolute path: the two kinds of question cannot meet.
 const approvalKeyPrefix = "approval/"
 
-// ApprovalKey is the broker key of one run's approval question.
-func ApprovalKey(run string) string { return approvalKeyPrefix + run }
+// ApprovalKey is the broker key of one approval question, by the approval's
+// id.
+func ApprovalKey(id string) string { return approvalKeyPrefix + id }
 
-// ApprovalRun answers the run a key names, and whether it names one at all.
-func ApprovalRun(key string) (string, bool) {
+// ApprovalID answers the id a key names, and whether it names one at all.
+func ApprovalID(key string) (string, bool) {
 	return strings.CutPrefix(key, approvalKeyPrefix)
 }
 
-// Decision is what an approval question is answered with: whether the run may
-// go, and whether the person does not want to be asked again. Only an
+// Decision is what an approval question is answered with: whether the action
+// may go, and whether the person does not want to be asked again. Only an
 // approval carries Remember, and what it turns off is the asker's to decide.
 type Decision struct {
 	Approved bool
@@ -230,7 +240,7 @@ type question struct {
 // Action is one user-triggered git call's bridge, or one approval's. The
 // helper side finds it by the one-time token, the browser side by its key,
 // the project a git call runs in: the write lock lets one write per working
-// copy through, so a project never runs two. An approval is keyed by its run.
+// copy through, so a project never runs two. An approval is keyed by its id.
 type Action struct {
 	broker *Broker
 	token  string
@@ -317,14 +327,14 @@ func (b *Broker) BeginCommand(project, action, command, dir string) *Action {
 }
 
 // BeginApproval opens an action whose one question is the cockpit's own: may
-// this run go. key is the caller's, one per run, and it is the caller's job
-// that it can never be a project's name or path, which keeps an approval and
-// a git question from ever meeting in the map. The question's project, action,
-// command and stack are what the dialog shows; it is external by nature, the
-// person it is for may have no page open, so it becomes news and rides the
-// push channels like a proxied git question. AskApproval parks it and waits.
+// this action go. key is the caller's, one per action, and it is the caller's
+// job that it can never be a project's name or path, which keeps an approval
+// and a git question from ever meeting in the map. The question's details are
+// what the dialog shows; it is external by nature, the person it is for may
+// have no page open, so it becomes news and rides the push channels like a
+// proxied git question. AskApproval parks it and waits.
 func (b *Broker) BeginApproval(key string, q Question) *Action {
-	a := b.begin(key, q.Action, true, q.Command, q.Dir)
+	a := b.begin(key, q.Action, true, "", "")
 	if a == nil {
 		return nil
 	}
@@ -358,7 +368,7 @@ func (b *Broker) begin(key, action string, external bool, command, dir string) *
 }
 
 // Find answers the browser's side of a running action by its key: the
-// project of a git call, the run of an approval.
+// project of a git call, the waiting action of an approval.
 func (b *Broker) Find(key string) *Action {
 	b.mu.Lock()
 	defer b.mu.Unlock()

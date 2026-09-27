@@ -145,35 +145,50 @@ func runStopCoder(out io.Writer, opts inspectOptions, target string) error {
 	return nil
 }
 
-func newDeleteCoderCommand(opts *inspectOptions) *cobra.Command {
-	var confirmed bool
-	cmd := &cobra.Command{
-		Use:   "coder-delete <terminal> --yes",
-		Short: "Delete a coder session for good",
-		Long: "Delete a coder session: it is stopped if it runs, and its session is removed " +
-			"from the coder. There is no way back, the transcript is gone and `coder-resume` cannot " +
-			"bring it up again. Use `coder-stop` when the work may still be needed. Because it " +
-			"cannot be undone, the call has to say so: `--yes`. Nothing can ever come from that " +
-			"terminal again, so an open job of it is closed with that reason, a trigger " +
-			"waiting for the terminal fires once for the deletion, and one that had no other " +
-			"terminal left is removed; the answer says how many went.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDeleteCoder(cmd.OutOrStdout(), *opts, args[0], confirmed)
-		},
-	}
-	cmd.Flags().BoolVar(&confirmed, "yes", false, "confirm that this session is removed for good")
+// keepRetiredYes keeps the --yes flag the delete commands took before the
+// user's approval became the confirmation. It is parsed and ignored, so a call
+// written for the old commands still runs, and hidden, so no help offers it.
+// TODO(v2.0.0): drop the --yes flag entirely.
+func keepRetiredYes(cmd *cobra.Command) *cobra.Command {
+	flags := cmd.Flags()
+	var ignored bool
+	flags.BoolVar(&ignored, "yes", false, "ignored, the user's approval replaced it")
+	_ = flags.MarkDeprecated("yes", "the user's approval replaced it")
 	return cmd
 }
 
-func runDeleteCoder(out io.Writer, opts inspectOptions, target string, confirmed bool) error {
-	// The confirmation is part of the call, not a prompt: this runs unattended
-	// as often as not, and a session removed by accident cannot be brought back.
-	if !confirmed {
-		return errors.New("Deleting a coder cannot be undone. Repeat the call with --yes, or use coder-stop, which keeps the session resumable.")
-	}
+func newDeleteCoderCommand(opts *inspectOptions) *cobra.Command {
+	return keepRetiredYes(&cobra.Command{
+		Use:   "coder-delete <terminal>",
+		Short: "Delete a coder session for good, once the user approves",
+		Long: "Delete a coder session: it is stopped if it runs, and its session is removed " +
+			"from the coder. There is no way back, the transcript is gone and `coder-resume` cannot " +
+			"bring it up again. Use `coder-stop` when the work may still be needed. Nothing can " +
+			"ever come from that terminal again, so an open job of it is closed with that reason, " +
+			"a trigger waiting for the terminal fires once for the deletion, and one that had no " +
+			"other terminal left is removed; the outcome says how many went. The delete asks the " +
+			"user first: the answer says `waits for the user's approval` at once and never waits " +
+			"for the decision, and the coder is deleted when they approve. When they deny it, let " +
+			"half an hour pass or the cockpit restarts while it waits, the coder stays. Either way " +
+			"a note lands in your thread with the outcome; do not wait, sleep or poll for it, and " +
+			"do not run the delete again while it waits, a second one is refused. The user can " +
+			"turn the question off for every assistant, when approving or with the Coder delete " +
+			"approval under Settings › Assistants › Approvals; you cannot. With the question off " +
+			"the delete runs at once and prints what it deleted.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDeleteCoder(cmd.OutOrStdout(), *opts, args[0])
+		},
+	})
+}
+
+func runDeleteCoder(out io.Writer, opts inspectOptions, target string) error {
 	deleted, err := postCoderAction(opts, target, "delete")
 	if err != nil {
+		return err
+	}
+	if jsonBool(deleted["pending"]) {
+		_, err = io.WriteString(out, approvalLine(deleted))
 		return err
 	}
 	line := "coder " + text(deleted["name"]) + " deleted"
@@ -408,34 +423,39 @@ const assistantJobsPath = "/assistants/jobs"
 // group because assistants see each other and the user may ask one of them to
 // clean up.
 func newDeleteAssistantCommand(opts *inspectOptions) *cobra.Command {
-	var confirmed bool
-	cmd := &cobra.Command{
-		Use:   "assistant-delete <id> --yes",
-		Short: "Delete an assistant for good",
+	return keepRetiredYes(&cobra.Command{
+		Use:   "assistant-delete <id>",
+		Short: "Delete an assistant for good, once the user approves",
 		Long: "Delete an assistant: its thread, its uploads, its jobs and its triggers are gone, and the " +
-			"coders it was steering are handed back to the user, named in the answer. There " +
-			"is no way back. The id is from `assistant-list`. " +
-			"Because it cannot be undone, the call has to say so: `--yes`.",
+			"coders it was steering are handed back to the user, named in the outcome. There " +
+			"is no way back. The id is from `assistant-list`. The delete asks the user first: " +
+			"the answer says `waits for the user's approval` at once and never waits for the " +
+			"decision, and the assistant is deleted when they approve. When they deny it, let " +
+			"half an hour pass or the cockpit restarts while it waits, the assistant stays. Either " +
+			"way a note lands in your thread with the outcome, unless the assistant deleted is " +
+			"you; do not wait, sleep or poll for it, and do not run the delete again while it " +
+			"waits, a second one is refused. The user can turn the question off for every " +
+			"assistant, when approving or with the Assistant delete approval under Settings › " +
+			"Assistants › Approvals; you cannot. With the question off the delete runs at once.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDeleteAssistant(cmd.OutOrStdout(), *opts, args[0], confirmed)
+			return runDeleteAssistant(cmd.OutOrStdout(), *opts, args[0])
 		},
-	}
-	cmd.Flags().BoolVar(&confirmed, "yes", false, "confirm that this assistant is removed for good")
-	return cmd
+	})
 }
 
-func runDeleteAssistant(out io.Writer, opts inspectOptions, id string, confirmed bool) error {
+func runDeleteAssistant(out io.Writer, opts inspectOptions, id string) error {
 	id = strings.TrimSpace(id)
-	if !confirmed {
-		return errors.New("Deleting an assistant cannot be undone, its whole thread goes with it. Repeat the call with --yes.")
-	}
 	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
 	answer, err := client.PostForm("/assistants/"+id, url.Values{"form": {"delete"}}, actionTimeout)
 	if err != nil {
+		return err
+	}
+	if jsonBool(answer["pending"]) {
+		_, err = io.WriteString(out, approvalLine(answer))
 		return err
 	}
 	fmt.Fprintf(out, "assistant %s deleted\n", id)
@@ -472,50 +492,54 @@ func runNewProject(out io.Writer, opts inspectOptions, name string) error {
 }
 
 func newDeleteProjectCommand(opts *inspectOptions) *cobra.Command {
-	var confirmed bool
-	cmd := &cobra.Command{
-		Use:   "project-delete <name> --yes",
-		Short: "Delete a project and everything in it",
+	return keepRetiredYes(&cobra.Command{
+		Use:   "project-delete <name>",
+		Short: "Delete a project and everything in it, once the user approves",
 		Long: "Delete a project the same way the projects page does: its coders and shells " +
 			"are stopped and the directory is removed with everything in it. A project that " +
 			"is the main repository of linked worktree projects takes those with it, and the " +
-			"output names them. There is no " +
-			"undo, so only run this when the user asked for exactly this project. Because it " +
-			"cannot be undone, the call has to say so: `--yes`.",
+			"outcome names them. There is no undo, so only run this when the user asked for " +
+			"exactly this project. The delete asks the user first: the answer says `waits for " +
+			"the user's approval` at once and never waits for the decision, the user sees the " +
+			"question on every page and on their phone, and the project is deleted when they " +
+			"approve. When they deny it, let half an hour pass or the cockpit restarts while it " +
+			"waits, the project stays. Either way a note lands in your thread with the outcome, " +
+			"for an approved delete once the project is gone, its containers brought down first, " +
+			"or with the reason it is not; " +
+			"do not wait, sleep or poll for it, and do not run the delete again while it waits, " +
+			"a second one is refused. The user can turn the question off for every assistant, " +
+			"when approving or with the Project delete approval under Settings › Assistants › " +
+			"Approvals; you cannot. With the question off the delete runs at once and prints " +
+			"what it deleted, or that it is being deleted where its containers go down first.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDeleteProject(cmd.OutOrStdout(), *opts, args[0], confirmed)
+			return runDeleteProject(cmd.OutOrStdout(), *opts, args[0])
 		},
-	}
-	cmd.Flags().BoolVar(&confirmed, "yes", false, "confirm that this project is removed for good")
-	return cmd
+	})
 }
 
-func runDeleteProject(out io.Writer, opts inspectOptions, name string, confirmed bool) error {
-	// The confirmation is part of the call, not a prompt, for the same reason
-	// coder-delete carries it: this runs unattended, and a directory removed by
-	// accident cannot be brought back.
-	if !confirmed {
-		return errors.New("Deleting a project cannot be undone. Repeat the call with --yes if the user asked for exactly this project.")
-	}
+func runDeleteProject(out io.Writer, opts inspectOptions, name string) error {
 	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
-	deleted, err := client.PostForm("/projects/delete", url.Values{"project": {strings.TrimSpace(name)}}, actionTimeout)
+	answer, err := client.PostForm("/projects/delete", url.Values{"project": {strings.TrimSpace(name)}}, actionTimeout)
 	if err != nil {
+		return err
+	}
+	if jsonBool(answer["pending"]) {
+		_, err = io.WriteString(out, approvalLine(answer))
 		return err
 	}
 	// A project that runs containers is deleted in the background: its compose
 	// stacks are brought down first, and the cockpit answers before that is
 	// through, so the word here says what is true at this moment.
-	if running, _ := deleted["deleting"].(bool); running {
-		fmt.Fprintf(out, "project %s is being deleted, its containers go down first\n", text(deleted["name"]))
-		reportDeletedWorktrees(out, deleted)
-		return nil
+	if jsonBool(answer["deleting"]) {
+		fmt.Fprintf(out, "project %s is being deleted, its containers go down first\n", text(answer["name"]))
+	} else {
+		fmt.Fprintf(out, "project %s deleted\n", text(answer["name"]))
 	}
-	fmt.Fprintf(out, "project %s deleted\n", text(deleted["name"]))
-	reportDeletedWorktrees(out, deleted)
+	reportDeletedWorktrees(out, answer)
 	return nil
 }
 
@@ -530,10 +554,16 @@ func reportDeletedWorktrees(out io.Writer, deleted map[string]any) {
 			names = append(names, s)
 		}
 	}
-	if len(names) == 0 {
-		return
+	if len(names) > 0 {
+		fmt.Fprintf(out, "its worktree projects went with it: %s\n", strings.Join(names, ", "))
 	}
-	fmt.Fprintf(out, "its worktree projects went with it: %s\n", strings.Join(names, ", "))
+}
+
+// approvalLine is what a command that asks the user first prints when the
+// action waits for the approval. Without a question the command answers the
+// way it answers for an action nobody has to approve.
+func approvalLine(answer map[string]any) string {
+	return text(answer["what"]) + " waits for the user's approval. A note lands in your thread once they decide; do not run it again.\n"
 }
 
 // projectPath is what the create form expects: the absolute directory. A name

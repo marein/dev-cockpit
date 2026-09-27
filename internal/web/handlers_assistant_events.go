@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/markdown"
@@ -844,7 +845,12 @@ func (s *Server) assistantNoteView(note *assistant.Note, content string) *render
 		view.Compose = true
 		view.Done = note.Verdict == assistant.ComposeKindDone
 		view.Failed = note.Verdict == assistant.ComposeKindFailed
-		view.Declined = note.Verdict == assistant.ComposeKindDeclined
+	}
+	if note.Source == assistant.NoteApproval {
+		view.Approval = true
+		view.Done = note.Verdict == approval.Done
+		view.Failed = note.Verdict == approval.Failed
+		view.Declined = note.Verdict == approval.Declined
 	}
 	if note.Terminal != "" {
 		view.URL = "/coders/" + note.Terminal

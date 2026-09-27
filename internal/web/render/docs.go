@@ -215,7 +215,13 @@ func DocsTopics() []DocsTopic {
 					Title:    "Compose commands",
 					Tag:      "Docker",
 					TagClass: "bg-blue-lt",
-					Desc:     `An assistant runs a project's compose commands in the background, and each end lands as a grey note in its thread that rings you: done, failed or declined, with exit code, output tail and a link to the run, and after a start or a restart that went through, the addresses the stack answers on as links. It picks the command by its intent, the icon it carries in Settings &rsaquo; Docker, and asks you when that leaves a choice. A command marked to ask first waits for your <em>Approve</em>; <em>Deny</em>, half an hour without an answer or a restart decline it, and your own Deny or Cancel rings nobody. <em>Approve and don't ask again</em>, or the switch under Settings &rsaquo; Assistants &rsaquo; Approvals, turns the question off for every assistant.`,
+					Desc:     `An assistant runs a project's compose commands in the background, and each end lands as a grey note in its thread that rings you: done or failed, with exit code, output tail and a link to the run, and after a start or a restart that went through, the addresses the stack answers on as links. It picks the command by its intent, the icon it carries in Settings &rsaquo; Docker, and asks you when that leaves a choice. A command marked to ask first starts only once you approve it, see Approvals. Your own Cancel rings nobody.`,
+				},
+				{
+					Title:    "Approvals",
+					Tag:      "Approval",
+					TagClass: "bg-blue-lt",
+					Desc:     `A compose command marked to ask first and an assistant's delete of a project, a coder or an assistant wait for your <em>Approve</em> in a dialog on every page, which names the action, the assistant asking and what it acts on: the stack and the project with the command line and its directory, the project, the coder and its project, or the assistant. Nothing runs before it. <em>Approve</em> runs it as things stand then, and anything gone meanwhile fails it; <em>Deny</em>, half an hour without an answer or a restart decline it. Either way a grey note lands in the assistant's thread, and it rings you only when nobody decided or the approved action failed. <em>Approve and don't ask again</em>, or its switch under Settings &rsaquo; Assistants &rsaquo; Approvals, turns that question off for every assistant.`,
 				},
 				{
 					Title:    "Steer and release where the coder is",
@@ -557,7 +563,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "An approval",
-					Desc:  `A compose command an assistant waits to run is news, one entry per run, leading to the run's page. It marks itself read once you decided or the question ran out.`,
+					Desc:  `A compose command an assistant waits to run, or a project, coder or assistant it waits to delete, is news, one entry per question; the dialog shows on every page. It marks itself read once you decided or the question ran out.`,
 				},
 			},
 		},

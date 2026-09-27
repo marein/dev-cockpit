@@ -3,8 +3,10 @@ package assistant
 import (
 	"log"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
@@ -21,22 +23,20 @@ type ComposeReport struct {
 	Stack   string
 	Action  string
 	URL     string
-	// Failed covers every way the run did not go through; Declined narrows it
-	// to a run that never started. Reason is the sentence that says why.
-	Failed   bool
-	Declined bool
-	Reason   string
-	Exited   bool
-	Exit     int
+	// Failed covers every way the run did not go through, Reason is the
+	// sentence that says why.
+	Failed bool
+	Reason string
+	Exited bool
+	Exit   int
 	// Output is the tail of what the run wrote, already bounded by the
 	// docker layer; the note cuts it once more to what a thread carries.
 	Output string
 	// Links are the addresses the stack answers on, route first and ports
 	// after, handed over only for a start or a restart that went through.
 	Links []ComposeLink
-	// ByUser says the user ended the run themselves, a Deny, or a Cancel of a
-	// parked or a running run: the note and the event stand, the ring does
-	// not.
+	// ByUser says the user ended the run themselves, a Cancel on the run
+	// page: the note and the event stand, the ring does not.
 	ByUser bool
 }
 
@@ -74,10 +74,7 @@ const composeOutputRunes = 600
 // Kind is the event kind this end publishes under, the same words the trigger
 // options list.
 func (r ComposeReport) Kind() string {
-	switch {
-	case r.Declined:
-		return ComposeKindDeclined
-	case r.Failed:
+	if r.Failed {
 		return ComposeKindFailed
 	}
 	return ComposeKindDone
@@ -85,16 +82,15 @@ func (r ComposeReport) Kind() string {
 
 // composeNoteData is what the note template is handed.
 type composeNoteData struct {
-	Action   string
-	Where    string
-	Failed   bool
-	Declined bool
-	Reason   string
-	Exited   bool
-	Exit     int
-	Output   string
-	Links    []string
-	URL      string
+	Action string
+	Where  string
+	Failed bool
+	Reason string
+	Exited bool
+	Exit   int
+	Output string
+	Links  []string
+	URL    string
 }
 
 // composeWhere is what the note calls the place a run ran: the stack inside
@@ -119,11 +115,8 @@ func composeWhere(project, stack string) string {
 // headline and the notification's identifier already name it.
 func composeHeadline(report ComposeReport) string {
 	word := "done"
-	switch report.Kind() {
-	case ComposeKindFailed:
+	if report.Failed {
 		word = "failed"
-	case ComposeKindDeclined:
-		word = "declined"
 	}
 	return "Compose " + word + ": " + strings.TrimSpace(report.Action) + " on " + composeWhere(report.Project, report.Stack)
 }
@@ -142,22 +135,21 @@ func composeNote(report ComposeReport) string {
 	// Addresses belong to a run that went through; the caller decides which
 	// intents bring a stack up.
 	var links []string
-	if !report.Failed && !report.Declined {
+	if !report.Failed {
 		for _, link := range report.Links {
 			links = append(links, link.markdown())
 		}
 	}
 	return strings.TrimSuffix(render("compose_note.md.tmpl", composeNoteData{
-		Action:   strings.TrimSpace(report.Action),
-		Where:    composeWhere(report.Project, report.Stack),
-		Failed:   report.Failed,
-		Declined: report.Declined,
-		Reason:   report.Reason,
-		Exited:   report.Exited,
-		Exit:     report.Exit,
-		Output:   output,
-		Links:    links,
-		URL:      report.URL,
+		Action: strings.TrimSpace(report.Action),
+		Where:  composeWhere(report.Project, report.Stack),
+		Failed: report.Failed,
+		Reason: report.Reason,
+		Exited: report.Exited,
+		Exit:   report.Exit,
+		Output: output,
+		Links:  links,
+		URL:    report.URL,
 	}), "\n")
 }
 
@@ -172,29 +164,53 @@ func composeNote(report ComposeReport) string {
 // notification stays off for it, the thread's is the one. Returns the message
 // id, empty when the owner is gone.
 func (s *Service) RecordCompose(report ComposeReport) string {
-	s.mu.Lock()
-	c, ok := s.store.Load(report.Owner)
-	if !ok {
-		s.mu.Unlock()
+	text := composeNote(report)
+	note := Note{
+		Source:   NoteCompose,
+		Headline: composeHeadline(report),
+		Verdict:  report.Kind(),
+		Name:     strings.TrimSpace(report.Action),
+		Project:  strings.TrimSpace(report.Project),
+		Run:      report.Run,
+	}
+	id, now := s.recordNote(report.Owner, note, text, report.ByUser)
+	if id == "" {
 		log.Printf("assistant: the assistant of compose run %s is gone, dropping its report", report.Run)
 		return ""
 	}
+	s.publishEvent(CockpitEvent{
+		Source:   EventCompose,
+		Kind:     report.Kind(),
+		Target:   report.Run,
+		Owner:    report.Owner,
+		Time:     now,
+		Headline: note.Headline,
+		Body:     text,
+	})
+	return id
+}
+
+// recordNote appends one note of the cockpit to the owner's thread, announces
+// it on the thread's own frame and rings the user through onDone unless the
+// user made the outcome themselves (byUser). It is what every end of an
+// action the assistant waited on in the background writes, a compose run and
+// an approval alike. Returns the message id and its stamp, an empty id
+// when the owner is gone.
+func (s *Service) recordNote(owner string, note Note, text string, byUser bool) (string, time.Time) {
+	s.mu.Lock()
+	c, ok := s.store.Load(owner)
+	if !ok {
+		s.mu.Unlock()
+		return "", time.Time{}
+	}
 	now := s.now().UTC()
-	text := composeNote(report)
 	message := Message{
 		ID:        statefile.NewID(),
 		Role:      RoleCockpit,
 		Content:   text,
 		CreatedAt: now,
 		State:     StateComplete,
-		Note: &Note{
-			Source:   NoteCompose,
-			Headline: composeHeadline(report),
-			Verdict:  report.Kind(),
-			Name:     strings.TrimSpace(report.Action),
-			Project:  strings.TrimSpace(report.Project),
-			Run:      report.Run,
-		},
+		Note:      &note,
 	}
 	c.Messages = append(c.Messages, message)
 	c.UpdatedAt = now
@@ -203,17 +219,27 @@ func (s *Service) RecordCompose(report ComposeReport) string {
 
 	s.hub.publish(c.ID, StreamEvent{Kind: FrameMessage, MessageID: message.ID})
 	s.changed()
-	if s.onDone != nil && !report.ByUser {
+	if s.onDone != nil && !byUser {
 		s.onDone(c.ID)
 	}
-	s.publishEvent(CockpitEvent{
-		Source:   EventCompose,
-		Kind:     report.Kind(),
-		Target:   report.Run,
-		Owner:    report.Owner,
-		Time:     now,
-		Headline: message.Note.Headline,
-		Body:     text,
-	})
-	return message.ID
+	return message.ID, now
+}
+
+// ComposeApprovalEvent is what a compose approval's end publishes: failed
+// where the approved run could not start, declined where it never ran. A run
+// that started publishes its own end through RecordCompose.
+var ComposeApprovalEvent = ApprovalEvent{
+	Source: EventCompose,
+	Kinds: map[string]string{
+		approval.Failed:   ComposeKindFailed,
+		approval.Declined: ComposeKindDeclined,
+	},
+}
+
+// ComposeStarted is the outcome an approved compose command reads in the
+// thread: the run it started and where.
+func ComposeStarted(run, action, project, stack string) string {
+	return strings.TrimSuffix(render("approval_compose_started.md.tmpl", struct {
+		Run, Action, Where string
+	}{run, strings.TrimSpace(action), composeWhere(project, stack)}), "\n")
 }

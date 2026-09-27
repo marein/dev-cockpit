@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/marein/dev-cockpit/internal/activity"
+	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/backup"
@@ -731,6 +732,12 @@ func runServe(opts serveOptions) error {
 	// back, and reports the ones that finished while nobody was there to hear
 	// it. It runs before anything can start a run of its own.
 	dockerService.Recover()
+	// An approval waited on a question the last process held; nobody can
+	// answer it now, so each is declined and its assistant reads why. Which
+	// ones those are was read when the server was built, before the local API
+	// served: an approval a surviving turn asked for since is this process's
+	// own and keeps waiting.
+	srv.RecoverApprovals()
 	// A job is looked at even when nothing reports: a coder that stopped, that
 	// ran out of room to think in or that waits on a question sends nothing at
 	// all, and that is exactly the job that needs looking at. The pass reads what
@@ -898,25 +905,22 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 			return info
 		}
 		if notify.IsApprovalTarget(targetID) {
-			// The entry is written while the question stands, so the run's
-			// standing question is the one it is about: who asks, what for
-			// and where, and the run page it leads to. A question that
-			// vanished in between keeps the generic words.
-			key := askpass.ApprovalKey(notify.ApprovalTargetRun(targetID))
+			// The entry is written while the question stands, so the
+			// approval's standing question is the one it is about: who asks
+			// and the one line it is read by. A question that vanished in
+			// between keeps the generic words. The dialog is app-wide, so the
+			// entry leads home like a git question's.
+			key := askpass.ApprovalKey(notify.ApprovalTargetID(targetID))
 			info.Name = "Approval"
 			info.URL = "/projects"
-			who, what, project := "", "", ""
+			who, what := "", ""
 			for _, q := range askBroker.Questions() {
 				if q.Key == key {
-					who, what, project = q.Assistant, q.Action, q.Project
-					if q.URL != "" {
-						info.URL = q.URL
-					}
+					who, what = q.Assistant, q.Action
 					break
 				}
 			}
-			info.Project = project
-			info.Title, info.Detail = approvalNews(who, what, project)
+			info.Title, info.Detail = approvalNews(who, what)
 			return info
 		}
 		if notify.IsDockerTarget(targetID) {
@@ -1054,20 +1058,18 @@ func gitPromptNews(action string) (title, detail string) {
 }
 
 // approvalNews is what a standing approval says: an assistant asks, and below
-// it which one, and the command and the project it wants to run it in. The
-// assistant's name is already a label where it is written (assistantNewsName),
-// the command's label is what the settings page holds.
-func approvalNews(who, action, project string) (title, detail string) {
+// it which one and what it waits to do, the question's own action line
+// ("Compose down in shop", "Delete project shop"), which the asker writes
+// because only it knows what kind of action waits. The assistant's name is
+// already a label where it is written (assistantNewsName).
+func approvalNews(who, what string) (title, detail string) {
 	if who == "" {
 		who = assistant.Name
 	}
-	if action == "" {
-		action = "a compose command"
+	if what == "" {
+		what = "an action"
 	}
-	if project != "" {
-		action += " in " + project
-	}
-	return "Assistant asks approval.", newsDetail(who, action)
+	return "Assistant asks approval.", newsDetail(who, what)
 }
 
 // composeNews is what a finished docker compose run says: how it went, and
@@ -1100,8 +1102,9 @@ func assistantNewsName(entry assistant.Summary) string {
 
 // assistantNews is what a notification about one assistant says, and it says
 // it in two lines that divide the work. The title is the kind alone, one of
-// ten fixed sentences: the first word tells a job from a compose run from a
-// trigger from an answer, and the second tells the endings of each apart. The line below it
+// twelve fixed sentences: the words tell a job from a compose run from an
+// approval from a trigger from an answer, and the endings of each apart. The
+// line below it
 // names which one it was and then carries an excerpt of what was written, see
 // newsDetail: an entry that only said that something happened would send the
 // user into the thread to find out what.
@@ -1135,15 +1138,26 @@ func assistantNews(who string, m assistant.Message) (title, detail string) {
 		}
 	}
 	if m.Note != nil && m.Note.Source == assistant.NoteCompose {
-		// A compose run of the assistant ends in one of three ways, in the
+		// A compose run of the assistant ends in one of two ways, in the
 		// words of the note's own verdict, and the command names it.
 		switch m.Note.Verdict {
 		case assistant.ComposeKindDone:
 			title = "Compose done."
 		case assistant.ComposeKindFailed:
 			title = "Compose failed."
-		case assistant.ComposeKindDeclined:
-			title = "Compose declined."
+		}
+		ident = m.Note.Name
+	}
+	if m.Note != nil && m.Note.Source == assistant.NoteApproval {
+		// An action the user was asked about ends in one of three ways, and
+		// the action's own line names it.
+		switch m.Note.Verdict {
+		case approval.Done:
+			title = "Action approved."
+		case approval.Failed:
+			title = "Approved action failed."
+		case approval.Declined:
+			title = "Action declined."
 		}
 		ident = m.Note.Name
 	}

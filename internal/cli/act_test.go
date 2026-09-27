@@ -5,11 +5,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/web"
+	"github.com/spf13/cobra"
 )
 
 // cockpit stands in for a running server: it answers on the local socket of a
@@ -295,7 +298,7 @@ func TestProjectCommandsPostTheBrowserForms(t *testing.T) {
 	if err := runNewProject(&out, inspectOptions{stateDir: dir}, "demo"); err != nil {
 		t.Fatalf("project-new: %v", err)
 	}
-	if err := runDeleteProject(&out, inspectOptions{stateDir: dir}, "demo", true); err != nil {
+	if err := runDeleteProject(&out, inspectOptions{stateDir: dir}, "demo"); err != nil {
 		t.Fatalf("project-delete: %v", err)
 	}
 	if paths[0] != "/projects" || forms[0].Get("project_name") != "demo" {
@@ -307,7 +310,7 @@ func TestProjectCommandsPostTheBrowserForms(t *testing.T) {
 	if !strings.Contains(out.String(), "created at /projects/demo") || !strings.Contains(out.String(), "deleted") {
 		t.Fatalf("unexpected output %q", out.String())
 	}
-	if !strings.Contains(out.String(), "its worktree projects went with it: demo-feature") {
+	if !strings.Contains(out.String(), "project demo deleted\n") || !strings.Contains(out.String(), "its worktree projects went with it: demo-feature") {
 		t.Fatalf("the cascade is not named in the output %q", out.String())
 	}
 }
@@ -455,7 +458,7 @@ func TestSessionCommandsPostOneRequestEach(t *testing.T) {
 			path: "/coders/abc/delete",
 			body: map[string]any{"id": "abc", "name": "readme-task", "project": "demo"},
 			run: func(out *strings.Builder, dir string) error {
-				return runDeleteCoder(out, inspectOptions{stateDir: dir}, "abc", true)
+				return runDeleteCoder(out, inspectOptions{stateDir: dir}, "abc")
 			},
 			want: "coder readme-task deleted",
 		},
@@ -498,7 +501,7 @@ func TestDeleteOutputCarriesTheDroppedNoteOnlyWhereOneIs(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(tc.body)
 		})
 		var out strings.Builder
-		if err := runDeleteCoder(&out, inspectOptions{stateDir: dir}, "abc", true); err != nil {
+		if err := runDeleteCoder(&out, inspectOptions{stateDir: dir}, "abc"); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 		if out.String() != tc.want {
@@ -533,7 +536,7 @@ func TestSessionCommandsPassOnTheRefusal(t *testing.T) {
 	for name, run := range map[string]func(io.Writer) error{
 		"resume": func(out io.Writer) error { return runResumeCoder(out, inspectOptions{stateDir: dir}, "abc") },
 		"stop":   func(out io.Writer) error { return runStopCoder(out, inspectOptions{stateDir: dir}, "abc") },
-		"delete": func(out io.Writer) error { return runDeleteCoder(out, inspectOptions{stateDir: dir}, "abc", true) },
+		"delete": func(out io.Writer) error { return runDeleteCoder(out, inspectOptions{stateDir: dir}, "abc") },
 	} {
 		var out strings.Builder
 		err := run(&out)
@@ -606,72 +609,160 @@ func TestActivitySaysWhenTheReadingIsTheScreen(t *testing.T) {
 	}
 }
 
-// Deleting a project removes terminals and the whole directory, so it carries
-// the same lock as coder-delete. Without --yes nothing leaves the machine.
-func TestDeletingAProjectNeedsTheConfirmation(t *testing.T) {
+// Deleting a project waits for the user's approval instead of a flag the
+// caller sets itself: the command posts at once and a delete that waits says
+// so.
+func TestDeletingAProjectWaitsForTheApproval(t *testing.T) {
 	calls := 0
 	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"name":"demo"}`))
+		_, _ = w.Write([]byte(`{"pending":true,"what":"Delete project demo"}`))
 	})
 
 	var out strings.Builder
-	err := runDeleteProject(&out, inspectOptions{stateDir: dir}, "demo", false)
-	if err == nil {
-		t.Fatal("want an error without the confirmation")
+	if err := runDeleteProject(&out, inspectOptions{stateDir: dir}, "demo"); err != nil {
+		t.Fatalf("project-delete: %v", err)
 	}
-	if !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("the error has to name what is missing, got %q", err.Error())
+	if calls != 1 {
+		t.Fatalf("want one request, got %d", calls)
 	}
-	if calls != 0 {
-		t.Fatalf("want no request at all, got %d", calls)
-	}
-}
-
-// Deleting cannot be undone, so the call has to say so. Without --yes nothing
-// leaves the machine at all.
-func TestDeletingACoderNeedsTheConfirmation(t *testing.T) {
-	calls := 0
-	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-
-	var out strings.Builder
-	err := runDeleteCoder(&out, inspectOptions{stateDir: dir}, "abc", false)
-	if err == nil {
-		t.Fatal("want an error without the confirmation")
-	}
-	if !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("the error has to name what is missing, got %q", err.Error())
-	}
-	if calls != 0 {
-		t.Fatalf("want no request at all, got %d", calls)
-	}
-}
-
-// Deleting an assistant cannot be undone, so the command wants --yes, and it
-// wants it the same way whoever is deleted: another assistant, the caller
-// itself, or one a person names at a shell without --as. Nothing leaves the
-// process before the confirmation.
-func TestDeletingAnAssistantWantsTheConfirmation(t *testing.T) {
-	const own = "11111111-1111-4111-8111-111111111111"
-	const other = "22222222-2222-4222-8222-222222222222"
-	// No cockpit is dialled in any of these, so a stray request would hang on
-	// the socket instead of answering.
-	t.Setenv("DEV_COCKPIT_DIAL_BUDGET", "0s")
-	as := func(id string) inspectOptions { return inspectOptions{stateDir: t.TempDir(), assistantID: id} }
-
-	var out strings.Builder
-	for _, call := range []struct{ caller, id string }{{own, own}, {own, other}, {"", own}} {
-		err := runDeleteAssistant(&out, as(call.caller), call.id, false)
-		if err == nil || !strings.Contains(err.Error(), "--yes") {
-			t.Fatalf("%q deleting %q: want the confirmation asked for, got %v", call.caller, call.id, err)
+	for _, want := range []string{"Delete project demo waits for the user's approval", "do not run it again"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("the output misses %q:\n%s", want, out.String())
 		}
 	}
-	if out.Len() != 0 {
-		t.Fatalf("an unconfirmed delete printed something: %q", out.String())
+	if strings.Contains(out.String(), "deleted\n") {
+		t.Fatalf("a waiting delete reads as done:\n%s", out.String())
 	}
+}
+
+// Deleting a coder or an assistant waits for the user's approval the way a
+// project delete does: the command posts at once, and a delete that waits says
+// so instead of reading as done.
+func TestDeletingACoderOrAnAssistantWaitsForTheApproval(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, what string
+		run              func(io.Writer, inspectOptions) error
+	}{
+		{"coder-delete", "/coders/abc/delete", "Delete coder readme-task",
+			func(out io.Writer, opts inspectOptions) error { return runDeleteCoder(out, opts, "abc") }},
+		{"assistant-delete", "/assistants/abc", "Delete assistant Helper",
+			func(out io.Writer, opts inspectOptions) error { return runDeleteAssistant(out, opts, "abc") }},
+	} {
+		var paths []string
+		dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+			paths = append(paths, r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"pending": true, "what": tc.what})
+		})
+		var out strings.Builder
+		if err := tc.run(&out, inspectOptions{stateDir: dir}); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(paths) != 1 || paths[0] != tc.path {
+			t.Fatalf("%s: want one request to %s, got %v", tc.name, tc.path, paths)
+		}
+		if out.String() != tc.what+" waits for the user's approval. A note lands in your thread once they decide; do not run it again.\n" {
+			t.Fatalf("%s: the output reads %q", tc.name, out.String())
+		}
+	}
+}
+
+// The --yes the delete commands took before the approval stays parseable, so a
+// call written for them still runs: it is ignored, the request and the output
+// are the ones without it, the deprecation notice goes to stderr alone, and no
+// help offers it. The command writes to the process streams the way the binary
+// does, so the test reads those rather than setting a writer of its own, which
+// cobra would hand the notice to as well.
+func TestTheRetiredYesIsAcceptedAndIgnored(t *testing.T) {
+	for _, tc := range []struct {
+		name, path string
+		cmd        func(*inspectOptions) *cobra.Command
+	}{
+		{"coder-delete", "/coders/abc/delete", newDeleteCoderCommand},
+		{"assistant-delete", "/assistants/abc", newDeleteAssistantCommand},
+		{"project-delete", "/projects/delete", newDeleteProjectCommand},
+	} {
+		type call struct{ path, body string }
+		run := func(args ...string) ([]call, string, string) {
+			var calls []call
+			dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+				_ = r.ParseForm()
+				calls = append(calls, call{r.URL.Path, r.PostForm.Encode()})
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"pending":true,"what":"Delete it"}`))
+			})
+			cmd := tc.cmd(&inspectOptions{stateDir: dir})
+			cmd.SetArgs(args)
+			stdout, stderr := captureStreams(t, func() {
+				if err := cmd.Execute(); err != nil {
+					t.Fatalf("%s %v: %v", tc.name, args, err)
+				}
+			})
+			return calls, stdout, stderr
+		}
+		plainCalls, plainOut, plainErr := run("abc")
+		if plainErr != "" {
+			t.Fatalf("%s: without --yes stderr reads %q", tc.name, plainErr)
+		}
+		for _, args := range [][]string{{"abc", "--yes"}, {"--yes", "abc"}, {"abc", "--yes=false"}} {
+			calls, out, errOut := run(args...)
+			if len(calls) != 1 || calls[0].path != tc.path || calls[0] != plainCalls[0] {
+				t.Fatalf("%s %v: want the request %v, got %v", tc.name, args, plainCalls, calls)
+			}
+			if out != plainOut {
+				t.Fatalf("%s %v: the output reads %q, without --yes %q", tc.name, args, out, plainOut)
+			}
+			if errOut != "Flag --yes has been deprecated, the user's approval replaced it\n" {
+				t.Fatalf("%s %v: stderr reads %q", tc.name, args, errOut)
+			}
+		}
+
+		cmd := tc.cmd(&inspectOptions{})
+		flag := cmd.Flags().Lookup("yes")
+		if flag == nil || !flag.Hidden || flag.Deprecated != "the user's approval replaced it" {
+			t.Fatalf("%s: want --yes hidden and deprecated, got %+v", tc.name, flag)
+		}
+		var help strings.Builder
+		cmd.SetOut(&help)
+		cmd.SetArgs([]string{"--help"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("%s --help: %v", tc.name, err)
+		}
+		if strings.Contains(help.String(), "--yes") {
+			t.Fatalf("%s: the help offers --yes:\n%s", tc.name, help.String())
+		}
+	}
+}
+
+// captureStreams runs fn with the process's stdout and stderr pointed at
+// files of its own and answers what each received.
+func captureStreams(t *testing.T, fn func()) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	open := func(name string) *os.File {
+		f, err := os.Create(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	outFile, errFile := open("stdout"), open("stderr")
+	defer outFile.Close()
+	defer errFile.Close()
+	oldOut, oldErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outFile, errFile
+	func() {
+		defer func() { os.Stdout, os.Stderr = oldOut, oldErr }()
+		fn()
+	}()
+	read := func(f *os.File) string {
+		b, err := os.ReadFile(f.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	return read(outFile), read(errFile)
 }

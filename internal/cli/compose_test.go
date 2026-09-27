@@ -47,16 +47,17 @@ func TestComposeListReadsStacksAndCommands(t *testing.T) {
 	}
 }
 
-// compose-start says one line: the run id and where it runs, or that it
-// waits for the user, which is the line a turn quotes to the user.
+// compose-start says one line: the run id and where it runs, or, for a
+// command that waits for the user, that it waits and has no run yet, which is
+// the line a turn quotes to the user.
 func TestComposeStartLineSaysWhetherItWaits(t *testing.T) {
 	started := startedRunLine(map[string]any{"run": "r1", "action": "Compose up", "stack": "", "project": "shop"})
 	if !strings.HasPrefix(started, "run r1 started: Compose up on . in shop.") {
 		t.Fatalf("started reads %q", started)
 	}
-	parked := startedRunLine(map[string]any{"run": "r2", "action": "Compose down with volumes", "stack": "ops", "project": "shop", "pending": true})
-	if !strings.HasPrefix(parked, "run r2 waits for the user's approval: Compose down with volumes on ops in shop.") || !strings.Contains(parked, "do not start it again") {
-		t.Fatalf("parked reads %q", parked)
+	waiting := approvalLine(map[string]any{"pending": true, "what": "Compose down with volumes on ops in shop"})
+	if !strings.HasPrefix(waiting, "Compose down with volumes on ops in shop waits for the user's approval.") || !strings.Contains(waiting, "do not run it again") {
+		t.Fatalf("waiting reads %q", waiting)
 	}
 }
 
@@ -86,10 +87,8 @@ func TestComposeShowCapsTheTail(t *testing.T) {
 		fields map[string]any
 		want   string
 	}{
-		{map[string]any{"pending": true, "status": "Awaiting approval"}, "status: waits for the user's approval"},
 		{map[string]any{"running": true, "status": "Running"}, "status: running"},
 		{map[string]any{"failed": true, "failure": "exit status 1", "exited": true, "exit": 1.0}, "status: failed: exit status 1"},
-		{map[string]any{"failed": true, "declined": true, "failure": "declined by the user"}, "status: declined, never ran: declined by the user"},
 	} {
 		if out := formatComposeShow(tc.fields, 5); !strings.Contains(out, tc.want) || !strings.Contains(out, "output: nothing yet") {
 			t.Fatalf("want %q in:\n%s", tc.want, out)

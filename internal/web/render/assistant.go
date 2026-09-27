@@ -425,12 +425,15 @@ type AssistantNoteView struct {
 	// Expired marks the one message a job writes when it ran out of checks or
 	// out of time, so the reader knows nobody is looking any more.
 	Expired bool
-	// Compose marks the end of a compose run the assistant started; Done,
-	// Failed and Declined say how it went, and the note's text carries the
-	// link to the run.
+	// Compose marks the end of a compose run the assistant started; Done and
+	// Failed say how it went, and the note's text carries the link to the
+	// run.
 	Compose  bool
 	Failed   bool
 	Declined bool
+	// Approval marks the end of an action the assistant asked for and the
+	// user was asked about; Done, Failed and Declined say how it went.
+	Approval bool
 	// URL opens the coder the note is about, empty without one.
 	URL string
 	// Preview is the first words of the message this note stands over, cut to

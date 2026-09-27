@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/approval"
+	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/terminal"
@@ -750,62 +752,122 @@ func coderRefused(c *gin.Context, err error) bool {
 	return true
 }
 
-// handleCoderDelete removes a coder for good. A running one is stopped first,
-// DeleteResumable refuses to touch a live session and its tmux session would
-// outlive the store otherwise, so the delete entries in the menus and the swipe
-// actions need no second request.
+// handleCoderDelete removes a coder for good. Only the browser deletes as the
+// user: a local call is an assistant's, and it waits for the user's approval
+// where the Coder delete approval asks, the way a project delete does.
 func (s *Server) handleCoderDelete(c *gin.Context) {
 	id := c.Param("id")
-	stopped := ""
-	project := ""
-	cwd := ""
+	if s.localCall(c) {
+		owner, err := s.assistantCaller(c)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		req, err := s.coderDeleteApproval(owner, id)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if s.askApproval(c, req) {
+			return
+		}
+	}
+	deleted, err := s.deleteCoder(id)
+	if err != nil {
+		if coderRefused(c, err) {
+			return
+		}
+		s.redirectWithFlash(c, "/projects", "", err.Error())
+		return
+	}
+	project := s.projects.ProjectNameFor(deleted.CWD)
+	if s.coderJSON(c, id, deleted.Name, deleted.CWD, projectLanding(project), deleted.Dropped) {
+		return
+	}
+	s.redirectWithProjectFlash(c, project, deletedCoderFlash(deleted.Name, deleted.Dropped), "")
+}
+
+// deletedCoder is what a delete took: the session's name and directory, and
+// what the deletion dropped with it, assistant.DroppedNote's sentence.
+type deletedCoder struct {
+	Name    string
+	CWD     string
+	Dropped string
+}
+
+// deleteCoder removes a coder for good, for the page and for an approved
+// delete alike. A running one is stopped first, DeleteResumable refuses to
+// touch a live session and its tmux session would outlive the store
+// otherwise, so the delete entries in the menus and the swipe actions need no
+// second request.
+func (s *Server) deleteCoder(id string) (deletedCoder, error) {
+	deleted := deletedCoder{}
 	if co, running, err := s.resolveRunning(id); err == nil {
-		project = s.projects.ProjectNameFor(running.CWD)
-		cwd = running.CWD
 		name, err := co.Stop(id)
 		if err != nil {
-			if coderRefused(c, err) {
-				return
-			}
-			s.redirectWithFlash(c, "/projects", "", err.Error())
-			return
+			return deletedCoder{}, err
 		}
-		stopped = name
+		deleted = deletedCoder{Name: name, CWD: running.CWD}
 		s.notifier.MarkTargetRead(id)
 	}
-	co, _, err := s.resolveResumable(id)
+	if co, _, err := s.resolveResumable(id); err == nil {
+		stored, err := co.DeleteResumable(id)
+		if err != nil {
+			return deletedCoder{}, err
+		}
+		deleted = deletedCoder{Name: stored.Name, CWD: stored.CWD}
+	} else if deleted.Name == "" {
+		return deletedCoder{}, err
+	}
+	// A coder stopped before it wrote a session leaves nothing more to delete.
+	deleted.Dropped = assistant.DroppedNote(s.jobDeleted(id))
+	s.publishTerminals(s.projects.ProjectNameFor(deleted.CWD))
+	return deleted, nil
+}
+
+// coderSession is the name and directory of a coder, running or stored.
+func (s *Server) coderSession(id string) (string, string, error) {
+	if _, running, err := s.resolveRunning(id); err == nil {
+		return coder.DisplayName(running.Name, id), running.CWD, nil
+	}
+	_, stored, err := s.resolveResumable(id)
 	if err != nil {
-		// A coder stopped before it wrote a session leaves nothing to delete.
-		if stopped != "" {
-			dropped := assistant.DroppedNote(s.jobDeleted(id))
-			s.publishTerminals(project)
-			if s.coderJSON(c, id, stopped, cwd, projectLanding(project), dropped) {
-				return
+		return "", "", err
+	}
+	return coder.DisplayName(stored.Name, id), stored.CWD, nil
+}
+
+// coderDeleteApproval is the approval an assistant's delete of the coder
+// waits for. Its run looks the session up again, the approval may come half
+// an hour later, and the note says what went.
+func (s *Server) coderDeleteApproval(owner, id string) (approval.Request, error) {
+	name, cwd, err := s.coderSession(id)
+	if err != nil {
+		return approval.Request{}, err
+	}
+	details := []askpass.Detail{{Label: "Coder", Value: name}}
+	project := s.projects.ProjectNameFor(cwd)
+	if project != "" {
+		details = append(details, askpass.Detail{Label: "Project", Value: project})
+	}
+	return approval.Request{
+		Owner:   owner,
+		Kind:    approvalCoderDelete,
+		Key:     id,
+		What:    "Delete coder " + name,
+		Details: details,
+		Project: project,
+		Run: func() (string, error) {
+			if _, _, err := s.coderSession(id); err != nil {
+				return "", errors.New("the coder no longer exists")
 			}
-			s.redirectWithProjectFlash(c, project, deletedCoderFlash(stopped, dropped), "")
-			return
-		}
-		if coderRefused(c, err) {
-			return
-		}
-		s.redirectWithFlash(c, "/projects", "", err.Error())
-		return
-	}
-	stored, err := co.DeleteResumable(id)
-	if err != nil {
-		if coderRefused(c, err) {
-			return
-		}
-		s.redirectWithFlash(c, "/projects", "", err.Error())
-		return
-	}
-	project = s.projects.ProjectNameFor(stored.CWD)
-	dropped := assistant.DroppedNote(s.jobDeleted(id))
-	s.publishTerminals(project)
-	if s.coderJSON(c, id, stored.Name, stored.CWD, projectLanding(project), dropped) {
-		return
-	}
-	s.redirectWithProjectFlash(c, project, deletedCoderFlash(stored.Name, dropped), "")
+			deleted, err := s.deleteCoder(id)
+			if err != nil {
+				return "", err
+			}
+			return assistant.CoderDeleted(coder.DisplayName(deleted.Name, id), deleted.Dropped), nil
+		},
+	}, nil
 }
 
 // jobCalledOff ends the job of a coder that is being stopped or deleted.

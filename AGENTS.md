@@ -213,9 +213,10 @@ test. Update this file when a convention changes.
   not protection**: an assistant may read another's transcript and another's
   workspace, it writes only its own. There is no way to send another assistant
   anything, work is handed to coders. An assistant may delete itself, on the
-  user's explicit word (`assistant-delete <own id> --yes`, the instructions
-  tell it to write its goodbye first); the delete stops the asking turn like
-  any delete stops a running turn.
+  user's explicit word (`assistant-delete <own id>`, an approval like every
+  assistant delete, the instructions tell it to write its goodbye first); the
+  delete stops a running turn like any delete does, and the approval's note
+  is dropped with the thread it would land in.
   **A job carries its owner**, and the owner is the directory it was read from
   (`Job.Owner`, `json:"-"`, filled by `Jobs.Of`). A check wakes that assistant
   and its report is written into that thread, never into whoever is on screen.
@@ -1101,8 +1102,8 @@ test. Update this file when a convention changes.
   `compose-list`, `compose-start`, `compose-show` and `compose-stop` hit the
   project's docker routes and need a live `--as` (`assistantCaller`). An owned
   run reports into its thread instead of `docker:<project>` (`RecordCompose`,
-  kinds `done`, `failed`, `declined`, umbrella `ended`), and an end the user
-  caused rings nobody (`ComposeRun.ByUser`). A command's icon word is its
+  kinds `done`, `failed`, umbrella `ended`), and a Cancel the user clicked
+  rings nobody (`ComposeRun.ByUser`). A command's icon word is its
   intent, and the assistant picks by it. A stack's addresses are one list,
   routes before ports (`LinkMatcher.StackLinks`), in `compose-list` and in
   the note of a start or restart that went through (`docker.BringsUp`). The
@@ -1113,17 +1114,49 @@ test. Update this file when a convention changes.
   (`Link.URL`, the dropdown's `linkUrl` in Go); a port renders without a host
   (`http://:8080`) and `resolveHostlessLinks` in `@dc/docker` completes it
   in the thread with the page's host, through that same `linkUrl`.
-- **A confirm action of an assistant waits for the user's approval.**
-  `ParkCompose` starts nothing and refuses a busy stack, a second park per
-  owner and directory, and more than `MaxPendingPerOwner`. The question is
-  askpass `KindApproval` with news `approval:<run>`, and one switch covers
-  every assistant (`approvalKinds`, key `assistant-approval-<kind>`).
-- **Every move out of `Pending` holds `docker.Service.pending`**, direct
-  starts and a run's end included, so racing moves end in one outcome.
-  `Launching` is written before `detach.Start` and settled in
-  `recoverLaunch`, so a restart never declines a started run. A deleted
-  assistant or project declines its parked runs (`DeclinePending`) and hands
-  its running runs to the user (`Disown`, `DisownRun`).
+- **An action an assistant takes only with the user's yes is an approval.**
+  `internal/approval` is the one domain and knows no kind by name. A kind
+  hands in an `approval.Request`: `Key` (the action's stable identity, the
+  same kind and key wait once), `What` (the notification line and the
+  headline), `Details` (the dialog's rows: project delete the project, coder
+  delete the coder and its project, assistant delete the assistant, compose
+  the action, the stack or project root, the project), `Command` and `Dir`
+  where the action runs a program (compose: the resolved command line and
+  the stack's directory, shown as the git proxy's cwd block) and `Run`. The
+  dialog knows no kind: `What` as its first line, Asked by (the assistant)
+  as its first row, then the details and the command block.
+  With the kind's switch off (`approvalKinds`, key
+  `assistant-approval-<kind>`, Settings › Assistants › Approvals) `Ask` asks
+  nothing and the route goes on exactly as for the user, so a command answers
+  one shape whether or not a question could have come; else it parks the
+  approval, puts the question into the askpass broker (`KindApproval`, news
+  `approval:<id>`, no URL, the notification leads home) and answers
+  `pending`. **A run resolves what it acts on again by name** when the user
+  approves, and refuses where one is gone; nothing captured at the ask is
+  trusted across the wait. Approve runs it, Deny or `approval.Timeout`
+  declines, and every end is one generic note (`NoteApproval`,
+  `RecordApproval`); what an end publishes beyond it is the kind's
+  `approvalKind.Event` (compose: `compose-failed`, `compose-declined`). The
+  outcome texts a run writes for the model are templates
+  (`assistant.ComposeStarted`, `assistant.ProjectDeleted`,
+  `assistant.CoderDeleted`, `assistant.AssistantDeleted`), and an approved
+  project delete waits for the deletion's real end, compose down included.
+  Only news rings: a decision that went as clicked is quiet, a failed run
+  and an expiry ring. An owner waits for at most `approval.MaxPerOwner`.
+  `approvals.json` holds the entries without their run, only so a restart
+  declines them and tells the owner (`RecoverApprovals`, no backup): which
+  ones is read when the service is built, before the local API serves, so an
+  approval a surviving turn asks for in between keeps waiting. Taking an
+  approval out of the register ends its question with it, so no question
+  stands without one; a deleted assistant's approvals go silently
+  (`DeclineOwner`). A local `/projects/delete`, `/coders/<id>/delete`, an
+  assistant's `form=delete` and a local compose need a live `--as`; the
+  browser deletes as the user and is never asked. The approval is the
+  confirmation: the `--yes` the three delete commands took before it stays
+  parseable, hidden, deprecated and ignored (`keepRetiredYes`, TODO(v2.0.0)).
+- **A deleted assistant hands its running runs to the user** (`Disown`,
+  `DisownRun`); `docker.Service.entries` serializes a cancel and a handed over
+  owner with a run's end.
 - **Who may do what.** The user stops any run, an assistant only its own
   (`composeStopRefusal`). The local socket is refused on approval answers,
   `/settings/assistant/approvals`, `/settings/docker`,
@@ -4203,8 +4236,8 @@ a shell, a backup, a git question, a compose run and an assistant all read
 alike, so nobody has to work out which pattern a line follows: "Coder has
 news.", "Command finished.", "Backup ready.", "Git asks a question.",
 "Compose finished.", "Assistant asks approval.", and for an assistant `Job done.`, `Job blocked.`, `Job
-expired.`, `Compose done.`, `Compose failed.`, `Compose declined.`,
-`Trigger fired.`, `Trigger broke off.`, `Answer ready.` or `Answer
+expired.`, `Compose done.`, `Compose failed.`, `Action approved.`,
+`Approved action failed.`, `Action declined.`, `Trigger fired.`, `Trigger broke off.`, `Answer ready.` or `Answer
 broke off.`. Nothing is composed out of user text up there and nothing is
 ever cut, so `newsTitleRunes` is no budget the code spends, it is the bound
 the wording is written to and the test pins: 32 runes, the narrowest of the

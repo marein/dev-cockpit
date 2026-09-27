@@ -23,23 +23,20 @@ function commandBlock(question) {
 }
 
 function approvalBlock(question) {
-  const rows = [
-    ["Assistant", question.assistant],
-    ["Project", question.project],
-    ["Stack", question.stack || "project root"],
-    ["Command", question.action],
-  ];
+  const rows = [{ label: "Asked by", value: question.assistant }, ...(question.details || [])];
   const list = rows
-    .map(([label, value]) => `<dt class="col-4 fw-normal text-secondary">${escapeHtml(label)}</dt><dd class="col-8 mb-1 text-break">${escapeHtml(value || "")}</dd>`)
+    .map((row) => `<dt class="col-4 fw-normal text-secondary">${escapeHtml(row.label)}</dt><dd class="col-8 mb-1 text-break">${escapeHtml(row.value || "")}</dd>`)
     .join("");
-  return `<dl class="row mb-0 text-start" data-approval-details>${list}</dl>` + commandBlock(question);
+  return `<div class="fw-bold mb-3 text-break" data-approval-what>${escapeHtml(question.action)}</div>`
+    + `<dl class="row mb-0 text-start" data-approval-details>${list}</dl>`
+    + commandBlock(question);
 }
 
 async function showApproval(question) {
   const result = await fire({
     title: "An assistant asks for approval",
     html: approvalBlock(question),
-    footer: "The run waits until you decide, for half an hour at most. Denying it tells the assistant.",
+    footer: "It waits until you decide, for half an hour at most. Denying it tells the assistant.",
     input: "checkbox",
     inputValue: 0,
     inputPlaceholder: "Approve and don't ask again",

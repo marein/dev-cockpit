@@ -17,6 +17,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/settings"
 )
 
 // sessionTurnCoder runs a turn the way a coder runs a command: in a session of
@@ -51,8 +52,9 @@ func (quietParser) Diagnose(err error, _ string) error { return err }
 // An assistant deleting itself asks from a command of its own turn, and the
 // delete stops that turn and waits for it. The coder runs the command in a
 // session of its own, out of reach of the kill and holding the run's lock,
-// waiting for this very answer. The delete must still go through at once: a
-// run this server started ends with its hold process, not with its lock.
+// waiting for this very answer. With the Assistant delete approval off the
+// delete must still go through at once: a run this server started ends with
+// its hold process, not with its lock.
 func TestASelfDeleteDoesNotWaitForTheCommandThatAsked(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	dir, stateDir := t.TempDir(), t.TempDir()
@@ -74,6 +76,9 @@ func TestASelfDeleteDoesNotWaitForTheCommandThatAsked(t *testing.T) {
 		notifier:   notify.NewService(filepath.Join(stateDir, "notifications.json"), nil),
 		bus:        eventbus.New(),
 	}
+	s.settings = settings.New(filepath.Join(stateDir, "settings.json"))
+	setApprovalAsks(s.settings, approvalAssistantDelete, false)
+	s.approvals = s.newApprovals(stateDir)
 	if _, err := assistants.Send(own.ID, "delete yourself", nil); err != nil {
 		t.Fatal(err)
 	}
