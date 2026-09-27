@@ -29,6 +29,6 @@ type ShellAttachData struct {
 	StreamURL   string
 	ResizeURL   string
 	InputURL    string
-	CopyURL     string
+	TextURL     string
 	RenameURL   string
 }

@@ -1,183 +1,225 @@
-import { notifyError } from "@dc/toast";
+import { copyText } from "@dc/dom";
 import { get, set } from "@dc/store";
+import { notifyError } from "@dc/toast";
 
-// The copy sheet. A terminal draws to a canvas, so there is no text in it to
-// select; this is where the text lives. It pulls what the terminal has said
-// from the server when it opens and puts it into the page as plain text, which
-// makes selecting, scrolling and copying the browser's job and, on a phone, the
-// system's own: long press, handles, the copy menu everybody already knows.
+// The copy view of a terminal. A terminal draws to a canvas, so there is no
+// text in it to select; this view puts what the terminal has said into the
+// page in the terminal's place, which makes selecting, scrolling and copying
+// the browser's job and, on a phone, the system's own.
 //
-// What it shows is a snapshot from the moment it opened. Copying from a target
-// that keeps moving is the one thing nobody wants, so it does not follow the
-// live stream.
+// One frame, two faces. A coder's conversation is its record as bubbles, the
+// newest page first and older pages on demand. Plain text is a shell's history
+// counted in lines, or a coder's screen, the only place a prompt somebody is
+// still typing exists; a coder draws on the alternate screen, which keeps no
+// scrollback, so its screen carries no amount.
 //
-// What the sheet shows is one choice, and it carries both halves of it: which
-// source, and how much of it. A coder has two sources and they are not the same
-// thing. Its record is what was said, which is what somebody copies an answer
-// from. Its screen is what stands there right now, which is the only place a
-// prompt somebody is still typing exists, because a draft was never said and is
-// in no record. Everything else has one source, its own text, counted in lines.
-// The screen carries no amount: a coder draws on the alternate screen, which
-// keeps no scrollback, so there is exactly one picture to have.
-//
-// The first step is what somebody who has never chosen gets: the sheet is
-// opened to copy something that just happened, so it opens small and fast, and
-// reaching further back is one choice away.
-const MESSAGES = [50, 200, 1000, 5000];
-const LINES = [500, 2000, 10000, 50000];
-const SCREEN = "screen";
-// Kept per kind: a choice about a coder says nothing about a shell.
-const choiceKey = (kind) => `dc-copy-${kind === "coder" ? "coder" : "terminal"}`;
+// What it shows is a snapshot from the moment it opened, copying from a target
+// that keeps moving is the one thing nobody wants.
+const LINES_KEY = "dc-copy-lines";
+const COPIED_MS = 1500;
+const CONVERSATION = "conversation";
+const TEXT = "text";
 
 class TerminalCopy extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
     this.ac = new AbortController();
-    this.modal = document.getElementById("terminal-copy-modal");
-    if (!this.modal) return;
-    this.text = this.modal.querySelector("[data-copy-text]");
-    this.body = this.modal.querySelector(".modal-body");
-    this.amount = this.modal.querySelector("[data-copy-amount]");
-    this.waiting = this.modal.querySelector("[data-copy-waiting]");
-    this.url = "";
-    this.kind = "shell";
-    // A coder has a record until one is asked for and does not come back.
-    this.hasRecord = true;
-    this.choice = "";
     const signal = this.ac.signal;
-    // The buttons live in each terminal's control row, so the click says which
-    // terminal is meant, exactly like every other control button does.
+    this.terminalId = this.getAttribute("terminal-id") || "";
+    this.conversationUrl = this.getAttribute("conversation-url") || "";
+    this.textUrl = this.getAttribute("text-url") || "";
+    this.heading = this.querySelector("[data-copy-title]");
+    this.scroller = this.querySelector("[data-copy-scroll]");
+    this.log = this.querySelector("[data-copy-log]");
+    this.text = this.querySelector("[data-copy-text]");
+    this.waiting = this.querySelector("[data-copy-waiting]");
+    this.lines = this.querySelector("[data-copy-lines]");
+    this.loading = 0;
+    this.face = "";
+    this.timers = new Set();
+    this.applyFontSize(this.storedFontSize());
+    if (this.lines) {
+      const stored = get(LINES_KEY, "");
+      if ([...this.lines.options].some((o) => o.value === stored)) this.lines.value = stored;
+      this.lines.addEventListener("change", () => {
+        set(LINES_KEY, this.lines.value);
+        void this.show(TEXT, { keepPlace: true });
+      }, { signal });
+    }
     document.addEventListener("click", (event) => {
       const button = event.target.closest?.("[data-terminal-copy]");
-      if (!button) return;
+      if (!button || !this.owns(button)) return;
       event.preventDefault();
-      void this.open(button);
+      if (this.hidden) {
+        void this.open();
+      } else {
+        this.close();
+      }
     }, { signal });
-    // The sheet is laid out while it animates in, so a scroll set before it
-    // stands lands in a box that is still empty. Whichever arrives last, the
-    // text or the sheet, is what puts the view where it belongs.
-    this.modal.addEventListener("shown.bs.modal", () => this.place(), { signal });
-    this.amount?.addEventListener("change", () => {
-      this.choice = this.amount.value;
-      set(choiceKey(this.kind), this.choice);
-      void this.load({ keepPlace: true });
+    document.addEventListener("terminal-setting-change", (event) => {
+      if (event.detail?.setting === "font-size") this.applyFontSize(Number(event.detail.value));
+    }, { signal });
+    this.addEventListener("click", (event) => this.onClick(event), { signal });
+    this.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !event.defaultPrevented) {
+        event.preventDefault();
+        this.close();
+      }
     }, { signal });
   }
 
   disconnectedCallback() {
     this.ac?.abort();
     this.ac = null;
-    this.modal = null;
-    this.text = null;
+    for (const timer of this.timers) clearTimeout(timer);
+    this.timers.clear();
+    this.terminal()?.classList.remove("attach-terminal-behind");
   }
 
-  // Which island the button belongs to: the footer names it on a split page,
-  // and a page with one terminal has one island.
-  island(button) {
-    const footer = button.closest("[data-terminal-footer]");
-    const id = footer?.getAttribute("data-terminal-footer");
-    if (id) {
-      return document.querySelector(`terminal-attach[terminal-id="${CSS.escape(id)}"]`);
-    }
-    return document.querySelector("terminal-attach[active]") || document.querySelector("terminal-attach");
+  // A button in a split's footer names its pane, a page with one terminal has
+  // one view.
+  owns(button) {
+    const id = button.closest("[data-terminal-footer]")?.getAttribute("data-terminal-footer");
+    return id ? id === this.terminalId : document.querySelectorAll("terminal-copy").length === 1;
   }
 
-  // What the terminal can answer with decides what the list offers, and the
-  // answer itself says it: a coder that came back with a record has both, a
-  // coder without one has only its screen, everything else has only its text.
-  options(kind, hasRecord) {
-    if (kind !== "coder") {
-      return [{ items: LINES.map((n) => ({ value: `lines:${n}`, label: `${n} lines` })) }];
-    }
-    if (!hasRecord) {
-      return [{ items: [{ value: SCREEN, label: "Screen" }] }];
-    }
-    return [
-      { group: "Conversation", items: MESSAGES.map((n) => ({ value: `messages:${n}`, label: `${n} messages` })) },
-      { items: [{ value: SCREEN, label: "Screen" }] },
-    ];
+  terminal() {
+    return this.parentElement?.querySelector("terminal-attach") || null;
   }
 
-  chosen(groups) {
-    const values = groups.flatMap((g) => g.items.map((i) => i.value));
-    const stored = get(choiceKey(this.kind), "");
-    return values.includes(stored) ? stored : values[0];
+  toggles() {
+    return [...document.querySelectorAll("[data-terminal-copy]")].filter((button) => this.owns(button));
   }
 
-  renderAmount(groups) {
-    const wanted = groups.flatMap((g) => g.items.map((i) => i.value)).join(",");
-    if (this.amount.dataset.built !== wanted) {
-      const nodes = [];
-      for (const g of groups) {
-        const into = g.group ? document.createElement("optgroup") : null;
-        if (into) into.label = g.group;
-        for (const item of g.items) {
-          const option = document.createElement("option");
-          option.value = item.value;
-          option.textContent = item.label;
-          (into || { append: (n) => nodes.push(n) }).append(option);
-        }
-        if (into) nodes.push(into);
-      }
-      this.amount.replaceChildren(...nodes);
-      this.amount.dataset.built = wanted;
-    }
-    this.amount.value = this.choice;
-    // Nothing to choose is not a choice: one entry is a label, not a control.
-    this.amount.hidden = wanted.split(",").length < 2;
+  storedFontSize() {
+    const setting = document.querySelector('terminal-setting-select[setting="font-size"]');
+    if (!setting) return 0;
+    return parseInt(get(setting.getAttribute("storage-key") || "", ""), 10)
+      || parseInt(setting.getAttribute("default-value") || "", 10)
+      || 0;
   }
 
-  async open(button) {
-    const island = this.island(button);
-    this.url = island?.getAttribute("copy-url") || "";
-    if (!this.url) {
-      notifyError({ title: "This terminal has nothing to copy from." });
-      return;
+  applyFontSize(size) {
+    if (size > 0) this.scroller.style.fontSize = `${size}px`;
+  }
+
+  async open() {
+    this.hidden = false;
+    this.terminal()?.classList.add("attach-terminal-behind");
+    for (const button of this.toggles()) {
+      button.classList.add("active");
+      button.setAttribute("aria-pressed", "true");
     }
-    // Which kind this is stands in the url the island carries, and it decides
-    // what the first request may ask for, before any answer has come back.
-    this.kind = this.url.startsWith("/coders/") ? "coder" : "shell";
-    this.hasRecord = true;
-    this.choice = this.chosen(this.options(this.kind, true));
+    // The text and the bubbles read in the terminal's own font, which the
+    // terminal keeps on its selection layer.
+    const layer = this.terminal()?.querySelector(".attach-selection");
+    if (layer) this.text.style.fontFamily = this.log.style.fontFamily = getComputedStyle(layer).fontFamily;
+    this.scroller.focus({ preventScroll: true });
+    await this.show(this.conversationUrl ? CONVERSATION : TEXT, { keepPlace: false });
+  }
+
+  close() {
+    if (this.hidden) return;
+    const focused = document.activeElement;
+    const giveBack = !focused || focused === document.body || this.contains(focused) || this.toggles().includes(focused);
+    this.loading++;
+    this.hidden = true;
+    this.face = "";
+    this.log.replaceChildren();
     this.text.replaceChildren();
-    window.bootstrap?.Modal?.getOrCreateInstance(this.modal)?.show();
-    await this.load({ keepPlace: false });
+    this.waiting.hidden = true;
+    this.terminal()?.classList.remove("attach-terminal-behind");
+    for (const button of this.toggles()) {
+      button.classList.remove("active");
+      button.setAttribute("aria-pressed", "false");
+    }
+    if (giveBack && this.terminalId) {
+      document.dispatchEvent(new CustomEvent("dc:activate-pane", { detail: { id: this.terminalId } }));
+    }
   }
 
-  // The choice carries both halves, which source and how much of it.
-  params() {
-    const params = new URLSearchParams();
-    if (this.choice === SCREEN) {
-      params.set("source", SCREEN);
-      return params;
+  setFace(face) {
+    this.face = face;
+    const conversation = face === CONVERSATION;
+    this.heading.textContent = conversation ? "Conversation" : this.conversationUrl ? "Screen" : "History";
+    this.log.hidden = !conversation;
+    this.text.hidden = conversation;
+    for (const button of this.querySelectorAll("[data-copy-face]")) {
+      button.hidden = button.getAttribute("data-copy-face") === face;
     }
-    const [unit, amount] = this.choice.split(":");
-    params.set(unit === "messages" ? "messages" : "lines", amount);
-    return params;
+    this.log.setAttribute("aria-label", this.heading.textContent);
+  }
+
+  async show(face, { keepPlace }) {
+    const fromBottom = keepPlace ? this.scroller.scrollHeight - this.scroller.scrollTop : null;
+    this.setFace(face);
+    this.waiting.hidden = false;
+    if (this.lines) this.lines.disabled = true;
+    const done = face === CONVERSATION ? await this.fetchPage("") : await this.fetchText();
+    if (done === undefined || this.hidden || this.face !== face) return;
+    this.waiting.hidden = true;
+    if (this.lines) this.lines.disabled = false;
+    if (!done) return;
+    if (face === CONVERSATION) {
+      this.text.replaceChildren();
+      this.log.replaceChildren(done);
+    } else {
+      this.log.replaceChildren();
+      this.render(done.text);
+    }
+    window.requestAnimationFrame(() => {
+      this.scroller.scrollTop = fromBottom === null ? this.scroller.scrollHeight : Math.max(0, this.scroller.scrollHeight - fromBottom);
+    });
+  }
+
+  async fetchPage(before) {
+    const ticket = ++this.loading;
+    const params = before ? `?${new URLSearchParams({ before })}` : "";
+    try {
+      const res = await fetch(`${this.conversationUrl}${params}`, { headers: { Accept: "text/html" } });
+      const html = await res.text();
+      if (!res.ok) throw new Error(html || "The conversation could not be read.");
+      if (ticket !== this.loading) return undefined;
+      const template = document.createElement("template");
+      template.innerHTML = html;
+      return template.content;
+    } catch (error) {
+      if (ticket !== this.loading) return undefined;
+      notifyError(error.message);
+      return null;
+    }
+  }
+
+  // A coder's text is its screen, a shell's is its history in as many lines as
+  // the reader picked.
+  async fetchText() {
+    const ticket = ++this.loading;
+    const params = new URLSearchParams();
+    if (!this.conversationUrl && this.lines) params.set("lines", this.lines.value);
+    try {
+      const res = await fetch(`${this.textUrl}?${params}`, { headers: { Accept: "application/json" } });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "The terminal could not be read.");
+      if (ticket !== this.loading) return undefined;
+      return { text: data.text || "" };
+    } catch (error) {
+      if (ticket !== this.loading) return undefined;
+      notifyError(error.message);
+      return null;
+    }
   }
 
   // A web address in the text is a link, because somebody who finds one here
-  // wants to open it, not retype it. The nodes are built rather than a string
-  // of markup parsed: everything in here is a program's output, and output is
-  // never markup. A trailing bracket or full stop is punctuation around the
-  // address, not part of it, so it stays outside the link and inside the text
-  // a copy yields, which is unchanged either way.
+  // wants to open it. The nodes are built rather than markup parsed, output is
+  // never markup. Trailing punctuation stays outside the link and inside the
+  // text, so a copy yields the same text either way.
   render(text) {
     const parts = [];
-    const pattern = /https?:\/\/[^\s"'<>`]+/g;
     let at = 0;
-    for (const match of text.matchAll(pattern)) {
-      let href = match[0];
-      const trailing = href.match(/[).,;:!?\]]+$/);
-      if (trailing) {
-        href = href.slice(0, href.length - trailing[0].length);
-      }
-      if (!href) {
-        continue;
-      }
-      if (match.index > at) {
-        parts.push(document.createTextNode(text.slice(at, match.index)));
-      }
+    for (const match of text.matchAll(/https?:\/\/[^\s"'<>`]+/g)) {
+      const href = match[0].replace(/[).,;:!?\]]+$/, "");
+      if (!href) continue;
+      if (match.index > at) parts.push(document.createTextNode(text.slice(at, match.index)));
       const link = document.createElement("a");
       link.href = href;
       link.target = "_blank";
@@ -186,54 +228,74 @@ class TerminalCopy extends HTMLElement {
       parts.push(link);
       at = match.index + href.length;
     }
-    if (at < text.length) {
-      parts.push(document.createTextNode(text.slice(at)));
-    }
+    if (at < text.length) parts.push(document.createTextNode(text.slice(at)));
     this.text.replaceChildren(...parts);
   }
 
-  // place puts the view where the reading should start. The end is what
-  // somebody came for, so that is where it opens; after fetching more, the
-  // distance to the end is kept instead, which leaves the lines they are
-  // reading exactly where they were.
-  place() {
-    if (this.fromBottom === null) {
-      this.body.scrollTop = this.body.scrollHeight;
+  async onClick(event) {
+    const target = event.target;
+    if (target.closest("[data-copy-close]")) {
+      this.close();
       return;
     }
-    this.body.scrollTop = Math.max(0, this.body.scrollHeight - this.fromBottom);
+    const face = target.closest("[data-copy-face]");
+    if (face) {
+      await this.show(face.getAttribute("data-copy-face"), { keepPlace: false });
+      return;
+    }
+    const more = target.closest("[data-copy-more]");
+    if (more) {
+      more.disabled = true;
+      const page = await this.fetchPage(more.getAttribute("data-copy-more") || "");
+      if (!page) {
+        more.disabled = false;
+        return;
+      }
+      const fromBottom = this.scroller.scrollHeight - this.scroller.scrollTop;
+      more.closest("[data-copy-earlier]")?.replaceWith(page);
+      this.scroller.scrollTop = this.scroller.scrollHeight - fromBottom;
+      return;
+    }
+    const one = target.closest("[data-copy-message]");
+    if (one) {
+      const message = one.closest("[data-message-id]");
+      await this.copy(message ? this.source(message) : "", one);
+      return;
+    }
+    const all = target.closest("[data-copy-all]");
+    if (all) await this.copy(this.face === CONVERSATION ? this.conversationText() : this.text.textContent, all);
   }
 
-  async load({ keepPlace }) {
-    this.fromBottom = keepPlace ? this.body.scrollHeight - this.body.scrollTop : null;
-    const params = this.params();
-    // Reading a long record takes a moment, and an empty sheet looks like an
-    // empty terminal. The wait says it is working, and the select is out of
-    // reach meanwhile so a second answer cannot overtake the first.
-    this.waiting.hidden = false;
-    this.text.hidden = true;
-    this.amount.disabled = true;
-    try {
-      const res = await fetch(`${this.url}?${params}`, { headers: { Accept: "application/json" } });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "The terminal could not be read.");
-      // Only a request for the record can say whether there is one: an answer
-      // from the screen that nobody asked for means the coder keeps none.
-      if (data.kind === "coder" && this.choice !== SCREEN && data.screen) {
-        this.hasRecord = false;
-        this.choice = SCREEN;
-      }
-      this.renderAmount(this.options(data.kind, this.hasRecord));
-      this.render(data.text || "");
-      window.requestAnimationFrame(() => this.place());
-    } catch (error) {
-      this.text.replaceChildren();
-      notifyError({ title: "Copy", detail: error.message });
-    } finally {
-      this.waiting.hidden = true;
-      this.text.hidden = false;
-      this.amount.disabled = false;
+  conversationText() {
+    const blocks = [];
+    for (const message of this.log.querySelectorAll("[data-message-id]")) {
+      const text = this.source(message);
+      if (text) blocks.push(`${message.getAttribute("data-role") === "user" ? "user" : "coder"}:\n${text}`);
     }
+    return blocks.join("\n\n");
+  }
+
+  source(message) {
+    return message.querySelector("[data-copy-source]")?.content.textContent || "";
+  }
+
+  async copy(text, button) {
+    if (!text) return;
+    if (!(await copyText(text))) {
+      notifyError("Clipboard is not available.");
+      return;
+    }
+    const icon = button.querySelector(".ti");
+    icon?.classList.replace("ti-copy", "ti-check");
+    button.setAttribute("data-copied", "");
+    clearTimeout(button.copiedTimer);
+    this.timers.delete(button.copiedTimer);
+    button.copiedTimer = setTimeout(() => {
+      this.timers.delete(button.copiedTimer);
+      icon?.classList.replace("ti-check", "ti-copy");
+      button.removeAttribute("data-copied");
+    }, COPIED_MS);
+    this.timers.add(button.copiedTimer);
   }
 }
 

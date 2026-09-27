@@ -1057,7 +1057,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
 
     // A terminal is exactly as tall as the box it sits in, on every surface.
     // Nothing is drawn outside it and nothing scrolls: text that has left the
-    // screen is reached in the history sheet, on real text, instead of by
+    // screen is reached in the copy view, on real text, instead of by
     // making the pane taller than the window somebody has.
     await run("a terminal fits its box, and the page does not grow with its output", async () => {
       await page.evaluate(async (id) => {

@@ -21,10 +21,16 @@
 {{template "work_body_fill.gohtml" .}}
 <div class="attach-page min-w-0">
   <div class="attach-frame min-w-0 w-100">
-    <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.Identifier}}"
-                    stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" copy-url="{{.CopyURL}}">
-      <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
-    </terminal-attach>
+    {{/* The stage holds the terminal and its copy view in one cell, so the
+         terminal keeps its box and its stream while the copy view stands in
+         front of it. */}}
+    <div class="attach-stage min-w-0 w-100">
+      <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.Identifier}}"
+                      stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}">
+        <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
+      </terminal-attach>
+      {{template "terminal_copy_surface.gohtml" (dict "ID" .Identifier "TextURL" .TextURL "ConversationURL" .ConversationURL)}}
+    </div>
     <terminal-swipe-nav aria-hidden="true"></terminal-swipe-nav>
   </div>
 
@@ -34,7 +40,6 @@
 </div>
 
 {{template "terminal_shortcuts_modal.gohtml"}}
-{{template "terminal_copy_modal.gohtml"}}
 
 <div class="modal modal-blur fade" id="coder-files-modal" tabindex="-1" aria-labelledby="coder-files-modal-title-{{.Identifier}}" aria-hidden="true" data-coder-files-modal>
   <div class="modal-dialog modal-lg modal-dialog-centered">

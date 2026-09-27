@@ -49,10 +49,13 @@
             <i class="ti ti-x" aria-hidden="true"></i>
           </button>
         </div>
-        <terminal-attach class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.ID}}" split-group="{{$.GroupID}}"{{if eq .ID $.Focus}} active{{if $.FocusExplicit}} split-focused{{end}}{{end}}
-                        stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" copy-url="{{.CopyURL}}"{{if .ScrollHistory}} scroll-history{{end}}>
-          <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
-        </terminal-attach>
+        <div class="attach-stage min-w-0 w-100">
+          <terminal-attach class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.ID}}" split-group="{{$.GroupID}}"{{if eq .ID $.Focus}} active{{if $.FocusExplicit}} split-focused{{end}}{{end}}
+                          stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}"{{if .ScrollHistory}} scroll-history{{end}}>
+            <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
+          </terminal-attach>
+          {{template "terminal_copy_surface.gohtml" (dict "ID" .ID "TextURL" .TextURL "ConversationURL" .ConversationURL)}}
+        </div>
         <terminal-input terminal-id="{{.ID}}" input-url="{{.InputURL}}"{{if .ScrollHistory}} scroll-history{{end}}></terminal-input>
       </div>
       {{end}}
@@ -68,7 +71,6 @@
 </div>
 
 {{template "terminal_shortcuts_modal.gohtml"}}
-{{template "terminal_copy_modal.gohtml"}}
 
 {{range .Members}}{{if .FilesData}}
 <div class="modal modal-blur fade" id="coder-files-modal-{{.ID}}" tabindex="-1" aria-labelledby="coder-files-modal-title-{{.ID}}" aria-hidden="true" data-coder-files-modal>

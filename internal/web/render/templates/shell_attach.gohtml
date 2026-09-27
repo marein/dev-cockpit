@@ -20,10 +20,13 @@
 {{template "work_body_fill.gohtml" .}}
 <div class="attach-page min-w-0">
   <div class="attach-frame min-w-0 w-100">
-    <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.Shell.Identifier}}"
-                    stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" copy-url="{{.CopyURL}}" scroll-history>
-      <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
-    </terminal-attach>
+    <div class="attach-stage min-w-0 w-100">
+      <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.Shell.Identifier}}"
+                      stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
+        <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
+      </terminal-attach>
+      {{template "terminal_copy_surface.gohtml" (dict "ID" .Shell.Identifier "TextURL" .TextURL)}}
+    </div>
     <terminal-swipe-nav aria-hidden="true"></terminal-swipe-nav>
   </div>
 
@@ -33,7 +36,6 @@
 </div>
 
 {{template "terminal_shortcuts_modal.gohtml"}}
-{{template "terminal_copy_modal.gohtml"}}
 
 <terminal-input terminal-id="{{.Shell.Identifier}}" input-url="{{.InputURL}}" scroll-history></terminal-input>
 {{template "app_end.gohtml" .}}

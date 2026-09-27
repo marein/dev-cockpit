@@ -64,21 +64,29 @@ func activityBounds(entries, budget int) (keep, line int) {
 // timestamp dates the message itself, which matters because claude also
 // touches the file with bookkeeping at boot and exit: the file moving
 // proves nothing about the conversation moving.
+//
+// The conversation reading takes the same line and reads a few marks more:
+// the entry's id, and what the CLI wrote in the user's role, IsMeta on its
+// own notes and IsCompactSummary on the summary a compaction left behind.
 type transcriptLine struct {
-	Type        string `json:"type"`
-	IsSidechain bool   `json:"isSidechain"`
-	Timestamp   string `json:"timestamp"`
-	Message     struct {
+	Type             string `json:"type"`
+	UUID             string `json:"uuid"`
+	IsSidechain      bool   `json:"isSidechain"`
+	IsMeta           bool   `json:"isMeta"`
+	IsCompactSummary bool   `json:"isCompactSummary"`
+	Timestamp        string `json:"timestamp"`
+	Message          struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 }
 
 // contentBlock is one part of a message: text, the coder's own thinking, a tool
-// call, or the result of one.
+// call with its input, or the result of one.
 type contentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-	Name string `json:"name"`
+	Type  string          `json:"type"`
+	Text  string          `json:"text"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
 }
 
 // SessionActivity reports what a session last did and whether its turn is over,
@@ -180,10 +188,7 @@ func lastMessageAt(tail []transcriptLine) time.Time {
 	if len(tail) == 0 {
 		return time.Time{}
 	}
-	at, err := time.Parse(time.RFC3339Nano, tail[len(tail)-1].Timestamp)
-	if err != nil {
-		return time.Time{}
-	}
+	at, _ := coder.ParseTimestamp(tail[len(tail)-1].Timestamp)
 	return at
 }
 
@@ -353,7 +358,11 @@ func spendBudget(lines []string, lineRunes, budget int) string {
 // blocks reads a message's content, which is either plain text or a list of
 // blocks.
 func blocks(entry transcriptLine) []contentBlock {
-	raw := entry.Message.Content
+	return contentOf(entry.Message.Content)
+}
+
+// contentOf reads a message's content from its raw form.
+func contentOf(raw json.RawMessage) []contentBlock {
 	if len(raw) == 0 {
 		return nil
 	}

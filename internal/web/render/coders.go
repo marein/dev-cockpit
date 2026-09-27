@@ -64,7 +64,9 @@ type CoderAttachData struct {
 	StreamURL       string
 	ResizeURL       string
 	InputURL        string
-	CopyURL         string
+	TextURL         string
+	// ConversationURL serves the pages of the copy view.
+	ConversationURL string
 }
 
 // CoderFilesData is the model for the coder files HTML fragment.

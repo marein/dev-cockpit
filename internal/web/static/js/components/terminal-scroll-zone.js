@@ -315,7 +315,7 @@
     }
 
     // The zone is the terminal's gesture surface and nothing else. Selecting
-    // text happens in the copy sheet, on real text, so there is no mode here to
+    // text happens in the copy view, on real text, so there is no mode here to
     // switch off any more.
     syncState() {
       this.setAttribute("aria-hidden", this.isActive() ? "false" : "true");

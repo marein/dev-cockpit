@@ -183,7 +183,7 @@ func (s *Server) handleSplitAttach(c *gin.Context) {
 			StreamURL:     base + "/stream",
 			ResizeURL:     base + "/resize",
 			InputURL:      base + "/input",
-			CopyURL:       base + "/copy",
+			TextURL:       base + "/copy",
 			ScrollHistory: m.Kind == "shell",
 			Col:           cells[i].Col,
 			Row:           cells[i].Row,
@@ -191,6 +191,7 @@ func (s *Server) handleSplitAttach(c *gin.Context) {
 			Order:         cells[i].Order,
 		}
 		if m.Kind == "coder" {
+			sm.ConversationURL = base + "/conversation"
 			if co, running, err := s.resolveRunning(m.ID); err == nil {
 				if files, err := co.Coder().SessionRepository().ListFiles(running.Identifier); err == nil {
 					sm.FilesData = &render.CoderFilesData{

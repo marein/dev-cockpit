@@ -1,7 +1,5 @@
 package render
 
-import "html/template"
-
 // AssistantCoderOption is one selectable coder on the new assistant control.
 type AssistantCoderOption struct {
 	ID    string
@@ -409,39 +407,7 @@ type AssistantEventOption struct {
 // AssistantMessageView is one rendered message. User text stays plain,
 // assistant answers are rendered from Markdown server-side with raw HTML
 // disabled.
-type AssistantMessageView struct {
-	ID    string
-	RunID string
-	User  bool
-	// Note is set on a message the cockpit wrote, the third role: a check's
-	// report. It never renders as something the user said.
-	Note *AssistantNoteView
-	// Auto marks an answer started without the user: a reaction to an event
-	// pushed it, and Origin is the one line it is read by, the header over the
-	// answer. What the trigger was given is not rendered: the thread holds the
-	// result, the way a check's report does.
-	Auto        bool
-	Origin      *AssistantNoteView
-	Author      string
-	Text        string
-	HTML        template.HTML
-	Attachments []AssistantAttachmentView
-	State       string
-	Error       string
-	Streaming   bool
-	Failed      bool
-	CanRetry    bool
-	// Queued marks a message still waiting for the running turn to end, and
-	// CanDiscard says the page may still take it back. A waiting entry in a
-	// blocked assistant renders without the button.
-	Queued     bool
-	CanDiscard bool
-	Time       string
-	// AudioURL serves this message spoken, set only while text to speech is on
-	// and the message can be read aloud at all, a check's report as much as an
-	// answer; the speaker button hangs on it alone, in both headers.
-	AudioURL string
-}
+type AssistantMessageView = ChatMessageView
 
 // AssistantNoteView describes a note: where it came from and the line it is
 // read by. A check's report carries its verdict and the coder it was about.
@@ -476,6 +442,4 @@ type AssistantNoteView struct {
 
 // AssistantMessageData is the model for the single-message fragment the browser
 // pulls when a streamed answer finished.
-type AssistantMessageData struct {
-	Message AssistantMessageView
-}
+type AssistantMessageData = ChatMessageData
