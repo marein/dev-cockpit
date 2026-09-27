@@ -637,7 +637,16 @@ test. Update this file when a convention changes.
   the same line as `cd <project> && …`. They name nothing else, so a check
   reads one spelling of a command and a turn cannot drop or misspell a flag. A
   caller without a workspace to ask (the plain `wakePrompt`) falls back to
-  `dev-cockpit assistant` and names no path.
+  `dev-cockpit assistant` and names no path. A claude turn, chat, check and
+  reaction alike, runs `claude -p` in `--permission-mode auto` with exactly
+  those two spellings pre-approved (`allowedTools` in
+  `internal/coder/claude/assistant.go`, `assistant.WrapperSpellings`):
+  `Bash(./cockpit:*)` and `Bash(<this workspace>/cockpit:*)`, so the cockpit's
+  own commands never wait on the auto mode classifier, and everything else
+  still does. Never a pattern over `instances/*`: another assistant's wrapper
+  carries that assistant's `--as`. Nothing is restricted, no
+  `--disallowedTools`, no `--tools`. The option is variadic, so each rule is
+  its own `--allowedTools=<rule>`, the equals form takes its value alone.
 - **A check runs in its assistant's workspace and reads the assistant's own
   instructions.** No directory and no shorter file of its own: every ability a
   conversation has, the files it can hand over, what it knows about the user,

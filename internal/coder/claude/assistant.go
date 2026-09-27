@@ -84,6 +84,14 @@ func (r *runner) TrustWorkdir(dir string) error {
 // starts its terminals with. A non-interactive turn cannot ask, so without it
 // every tool that needs a decision would fail instead of doing the work.
 //
+// The assistant's own wrapper is pre-approved, in both spellings a turn uses,
+// so the cockpit's commands never wait on the auto mode classifier; everything
+// else still goes through it. The rule names this workspace's wrapper by its
+// absolute path and nothing wider, because another assistant's wrapper acts as
+// that assistant. --allowedTools is variadic and would take the words behind
+// it, so every rule is passed in the equals form, one flag per rule: that form
+// takes exactly its own value, and repeating the flag adds to the list.
+//
 // Every flag comes first and the prompt goes last, behind endOfOptions: it is
 // claude's positional argument, so that separator is the one thing that keeps a
 // prompt somebody typed from being read as an option. A model the turn names
@@ -100,6 +108,9 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	}
 	args = append(args,
 		"--permission-mode", "auto",
+	)
+	args = append(args, allowedTools(req.Workdir)...)
+	args = append(args,
 		"--output-format", "stream-json",
 		"--include-partial-messages",
 		"--verbose",
@@ -109,6 +120,16 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	}
 	args = append(args, endOfOptions, req.Prompt)
 	return assistant.Command{Name: "claude", Args: args}, nil
+}
+
+// allowedTools is one --allowedTools per spelling of the turn's own wrapper,
+// each a Bash rule over the command and whatever arguments follow it.
+func allowedTools(workdir string) []string {
+	var args []string
+	for _, spelling := range assistant.WrapperSpellings(workdir) {
+		args = append(args, "--allowedTools=Bash("+spelling+":*)")
+	}
+	return args
 }
 
 // Parse reads claude's stream-json output. It is called again when a turn is

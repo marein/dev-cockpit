@@ -2,6 +2,7 @@ package claude
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -772,5 +773,55 @@ func TestAnUnnamedAPIErrorQuotesClaudeOnce(t *testing.T) {
 	err = errorOf(runTurn(t, `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Execution failed","session_id":"`+sessionID+`"}`))
 	if err == nil || err.Error() != "The coder could not finish this answer. The coder said: Execution failed" {
 		t.Fatalf("want the result's own text quoted, got %v", err)
+	}
+}
+
+// Every turn of an assistant, a chat turn, a resumed one and a check or a
+// reaction in a session of its own, pre-approves the assistant's own wrapper
+// in both spellings and nothing else: the short one of every example and the
+// absolute one of exactly this workspace, never a pattern over the instances.
+// Each rule is one flag in the equals form, so the variadic option takes its
+// own value alone, and auto mode stays for everything else.
+func TestATurnPreApprovesItsOwnWrapperAndNothingElse(t *testing.T) {
+	r := &runner{sessions: stubSessions{}}
+	for _, req := range []assistant.TurnRequest{
+		{SessionID: sessionID, Title: "A conversation title", Prompt: "hello"},
+		{SessionID: sessionID, Resume: true, Prompt: "hello"},
+		{SessionID: "99999999-2222-4333-8444-555555555555", Title: "cockpit check: readme-task", Prompt: "check", Model: "fable"},
+	} {
+		req.Workdir = filepath.Join(t.TempDir(), "instances", "abc", "workspace")
+		cmd, err := r.Command(req)
+		if err != nil {
+			t.Fatalf("command: %v", err)
+		}
+		want := []string{
+			"--allowedTools=Bash(./cockpit:*)",
+			"--allowedTools=Bash(" + filepath.Join(req.Workdir, "cockpit") + ":*)",
+		}
+		var got []string
+		end := -1
+		for i, arg := range cmd.Args {
+			if arg == endOfOptions && end < 0 {
+				end = i
+			}
+			if strings.HasPrefix(arg, "--allowedTools") || strings.HasPrefix(arg, "--allowed-tools") {
+				if end >= 0 {
+					t.Fatalf("want every rule before the end of options, got %q", cmd.Args)
+				}
+				got = append(got, arg)
+			}
+			if strings.HasPrefix(arg, "--disallowedTools") || strings.HasPrefix(arg, "--disallowed-tools") || arg == "--tools" || strings.HasPrefix(arg, "--tools=") {
+				t.Fatalf("want nothing restricted, got %q", cmd.Args)
+			}
+		}
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Fatalf("want exactly the own wrapper pre-approved, got %q", got)
+		}
+		if end < 0 || cmd.Args[end+1] != req.Prompt || len(cmd.Args) != end+2 {
+			t.Fatalf("want the prompt alone behind the end of options, got %q", cmd.Args)
+		}
+		if argv := strings.Join(cmd.Args, " "); !strings.Contains(argv, "--permission-mode auto ") {
+			t.Fatalf("want auto mode kept, got %q", argv)
+		}
 	}
 }

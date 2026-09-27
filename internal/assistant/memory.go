@@ -328,7 +328,18 @@ func (s *Workspace) wrapper(instanceID string) string {
 // the spelling the instructions and the check prompt name once for a turn
 // standing elsewhere.
 func (s *Workspace) Wrapper(instanceID string) string {
-	return filepath.Join(s.Dir(instanceID), wrapperFileName)
+	return wrapperIn(s.Dir(instanceID))
+}
+
+func wrapperIn(workdir string) string { return filepath.Join(workdir, wrapperFileName) }
+
+// WrapperSpellings are the two ways a turn running in workdir calls its own
+// wrapper, the short one of every example and the absolute one the
+// instructions name for a turn standing in another directory. A runner that
+// pre-approves the wrapper names exactly these two and never a pattern over
+// the instances: another assistant's wrapper carries that assistant's id.
+func WrapperSpellings(workdir string) []string {
+	return []string{shortCockpit, wrapperIn(workdir)}
 }
 
 // Cockpit implements cockpitNamer for the check prompt: the same wrapper the

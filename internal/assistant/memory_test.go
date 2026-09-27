@@ -438,3 +438,21 @@ func mustRead(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+// The spellings a runner pre-approves are the ones the instructions teach: the
+// short call and the wrapper of the very workspace the turn runs in, whose
+// directory is the one a TurnRequest carries.
+func TestTheWrapperSpellingsAreTheOnesTheInstructionsTeach(t *testing.T) {
+	_, workspace, err := New(t.TempDir(), fakeCoders{runner: &fakeRunner{dir: t.TempDir()}}, Cockpit{})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	workdir, err := workspace.Workdir(instructionsID)
+	if err != nil {
+		t.Fatalf("workdir: %v", err)
+	}
+	got := WrapperSpellings(workdir)
+	if len(got) != 2 || got[0] != "./cockpit" || got[1] != workspace.Wrapper(instructionsID) {
+		t.Fatalf("want the short call and this workspace's wrapper, got %q", got)
+	}
+}
