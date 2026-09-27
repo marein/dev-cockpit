@@ -1,27 +1,42 @@
-{{define "terminal_copy_modal.gohtml"}}
-{{/* The copy sheet: what the terminal has said, as text a person can select,
-     scroll and copy the way they do anywhere else. A canvas holds no
-     selectable text, so this is the one surface where copying works with the
-     browser's own means and, on a phone, with the system's own handles.
-     It renders empty and pulls its content when it opens, so no page pays for
-     it. What it shows is a snapshot from the moment it opened: a target that
-     keeps moving is the last thing anybody wants to copy from. */}}
-<div class="modal modal-blur fade" id="terminal-copy-modal" tabindex="-1" aria-labelledby="terminal-copy-modal-title" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
-    <div class="modal-content">
-      <div class="modal-header dc-copy-head">
-        <h3 class="modal-title" id="terminal-copy-modal-title">History</h3>
-        <select class="form-select form-select-sm dc-copy-amount" data-copy-amount aria-label="How much to show"></select>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body dc-copy-body">
-        <div class="dc-copy-waiting" data-copy-waiting hidden>
-          <div class="spinner-border text-secondary" role="status"></div>
-        </div>
-        <pre class="dc-copy-text" data-copy-text tabindex="0"></pre>
-      </div>
-    </div>
+{{/* The copy view of a terminal: what it has said as text a person can
+     select, scroll and copy, standing in the terminal's place inside the
+     attach stage while the terminal keeps running behind it. A canvas holds
+     no selectable text, so this is where copying works with the browser's own
+     means and, on a phone, with the system's own handles. It has two faces in
+     one frame: a coder's recorded conversation as bubbles, pulled from
+     ConversationURL, and plain text, a shell's history or a coder's screen,
+     pulled from TextURL. A coder's view ends in one line at the frame's foot,
+     outside the scroller, saying that typing goes to the terminal. The
+     terminal-copy element fills it when it opens and takes the snapshot away
+     when it closes. */}}
+{{define "terminal_copy_surface.gohtml"}}
+<terminal-copy class="dc-copy" terminal-id="{{.ID}}" text-url="{{.TextURL}}"{{if .ConversationURL}} conversation-url="{{.ConversationURL}}"{{end}} hidden>
+  <div class="dc-copy-head">
+    <span class="fw-medium text-truncate flex-fill" data-copy-title></span>
+    {{if not .ConversationURL}}<select class="form-select form-select-sm dc-copy-lines" data-copy-lines aria-label="How many lines">
+      <option value="500">500 lines</option>
+      <option value="2000">2000 lines</option>
+      <option value="10000">10000 lines</option>
+      <option value="50000">50000 lines</option>
+    </select>{{end}}
+    <button type="button" class="btn btn-sm btn-ghost-secondary" data-copy-all title="Copy everything shown"><i class="ti ti-copy me-1"></i>Copy all</button>
+    {{if .ConversationURL}}<button type="button" class="btn btn-sm btn-ghost-secondary" data-copy-face="text" title="Copy text from the screen"><i class="ti ti-terminal-2 me-1"></i>Screen</button>
+    <button type="button" class="btn btn-sm btn-ghost-secondary" data-copy-face="conversation" title="Copy from the conversation" hidden><i class="ti ti-messages me-1"></i>Conversation</button>{{end}}
+    <button type="button" class="btn btn-icon btn-sm btn-ghost-secondary" data-copy-close aria-label="Back to the terminal" title="Back to the terminal"><i class="ti ti-x"></i></button>
   </div>
-</div>
-<terminal-copy hidden></terminal-copy>
+  <div class="dc-copy-scroll" tabindex="-1" data-copy-scroll>
+    <div class="d-flex flex-column gap-3" data-copy-log aria-label="Conversation" hidden></div>
+    <pre class="dc-copy-text" data-copy-text hidden></pre>
+    <div class="text-center py-5" data-copy-waiting hidden><div class="spinner-border text-secondary" role="status"></div></div>
+  </div>
+  {{if .ConversationURL}}<div class="flex-shrink-0 text-center text-secondary small px-2 py-1" data-copy-hint>Read and copy here, type in the terminal. Chatting in this view may come later.</div>{{end}}
+</terminal-copy>
+{{end}}
+
+{{/* One page of a coder's conversation: the control that fetches the older
+     messages when there are any, then the bubbles oldest first. */}}
+{{define "coder_copy_page.gohtml"}}
+{{if .Dropped}}<div class="text-center" data-copy-earlier><button type="button" class="btn btn-sm" data-copy-more="{{.Before}}"><i class="ti ti-chevron-up me-1"></i>Show earlier messages<span class="text-secondary ms-1">({{.Dropped}})</span></button></div>{{end}}
+{{range .Messages}}{{template "chat_message.gohtml" (dict "Message" .)}}{{end}}
+{{if .Note}}<div class="text-center text-secondary py-5" data-copy-note>{{.Note}}</div>{{end}}
 {{end}}

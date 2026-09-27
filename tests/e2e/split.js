@@ -1412,7 +1412,7 @@ L.runFeature("SPLIT VIEW", async ({ browser, page, run, mobilePage, engine }) =>
       // The strip's close-all goes to the first tab that is left, or to the
       // projects page when the strip runs empty. Both are real pages.
       const landed = new URL(page.url()).pathname;
-      assert(/^\/(projects|coders|shells)/.test(landed), `close all landed on ${landed}`);
+      assert(/^\/(projects|coders|shells|terminals)/.test(landed), `close all landed on ${landed}`);
       const body = await page.textContent("body");
       assert(!/Method not allowed/i.test(body), "close all landed on an error page");
       assert(!(await page.$(tabSel(coderId))), "the coder tab survived close all");

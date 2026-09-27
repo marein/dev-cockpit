@@ -11,6 +11,7 @@
   --dc-steer: rgb(var(--dc-steer-rgb));
   --dc-selection-bg: #146ecd;
   --dc-selection-fg: #ffffff;
+  --dc-terminal-inset: 3px;
   --dc-float-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.35);
   --dc-sheet-radius: 12px;
 }
@@ -452,7 +453,6 @@ button.dc-status-item, a.dc-status-item { cursor: pointer; }
    stay the terminal's own colours: the canvas covers whole cells, so the host
    shows through below the last row and right of the last column. */
 .attach-terminal {
-  --dc-terminal-inset: 3px;
   flex: 1 1 auto; min-height: 0;
   background: #ffffff;
   overflow: clip; padding: 0; cursor: text;
@@ -521,50 +521,6 @@ button.dc-status-item, a.dc-status-item { cursor: pointer; }
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
-}
-/* The copy sheet's text. pre-wrap and not pre: a soft wrap is drawn only, the
-   text keeps its own line breaks, so a table copies exactly as it stood even
-   where the screen is too narrow to show it in one piece. Wrapping beats a
-   sideways scroll on every line, which is what pre would cost on a phone. */
-/* Installed as a web app the page runs to the very bottom edge of the device,
-   so the sheet keeps the room the system reserves for itself down there and the
-   last line never sits under the home indicator. */
-/* The head holds a name, what is in front of the reader, how much to show, and
-   the two buttons. The select takes the room that is left, which is what keeps
-   it in one line down to a phone: on a wide sheet it stops at its own width,
-   on a narrow one it shrinks instead of pushing the buttons out. */
-.dc-copy-head { gap: 0.5rem; }
-.dc-copy-head .modal-title { flex: 0 0 auto; }
-.dc-copy-head .btn-close { margin: 0; }
-.dc-copy-amount { width: auto; min-width: 0; max-width: 14rem; margin-left: auto; }
-.dc-copy-waiting { display: flex; align-items: center; justify-content: center; padding: 3rem 0; }
-/* Installed as a web app the page runs to the very bottom edge of the device,
-   so the sheet keeps the room the system reserves for itself down there and the
-   last line never sits under the home indicator. */
-/* The head carries a name, a close and two controls, which is more than a
-   phone's width holds in one line. The title and the close keep the first line,
-   the controls take the next one where there is no room for them beside it. */
-.dc-copy-head { flex-wrap: wrap; row-gap: 0.5rem; }
-.dc-copy-head .modal-title { flex: 1 1 auto; min-width: 0; }
-.dc-copy-tools { display: flex; align-items: center; gap: 0.5rem; flex: 0 0 auto; margin-left: auto; }
-.dc-copy-tools .form-select { width: auto; max-width: 12rem; }
-@media (max-width: 575.98px) {
-  .dc-copy-tools { flex: 1 0 100%; margin-left: 0; }
-  .dc-copy-tools .form-select { flex: 1 1 auto; max-width: none; }
-}
-.dc-copy-body { padding: 0 0 env(safe-area-inset-bottom, 0px); }
-.dc-copy-text {
-  margin: 0;
-  padding: 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 0.8125rem;
-  line-height: 1.45;
-  color: var(--tblr-body-color);
-  background: transparent;
-  border: 0;
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 .attach-footer {
@@ -654,7 +610,23 @@ body:has(#terminal-cursor-input:focus) .attach-footer {
   min-width: 0;
   min-height: 0;
 }
-.attach-frame .attach-terminal { flex: 1 1 auto; }
+.attach-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.attach-stage > * { grid-area: 1 / 1; min-width: 0; min-height: 0; }
+.attach-terminal-behind { visibility: hidden; }
+.dc-copy { display: flex; flex-direction: column; background: var(--tblr-body-bg); }
+.dc-copy-head { display: flex; align-items: center; gap: 0.25rem; padding: 0.25rem 0.25rem 0.25rem 0.75rem; border-bottom: 1px solid var(--tblr-border-color); }
+.dc-copy-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 1rem; outline: 0; }
+.dc-copy-scroll .markdown, .dc-copy-scroll .markdown > table, .dc-copy-scroll .markdown > blockquote, .dc-copy-scroll .dc-msg-user [data-assistant-text], .dc-copy-scroll .dc-msg .markdown code, .dc-copy-scroll .dc-msg .markdown pre, .dc-copy-scroll [data-copy-tool] { font-size: 1em; }
+.dc-copy-scroll:has(> [data-copy-text]:not([hidden])) { padding: var(--dc-terminal-inset); }
+.dc-copy-lines { width: auto; min-width: 0; flex: 0 1 auto; line-height: 1rem; }
+.dc-copy-text { margin: 0; padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 1em; line-height: 1.3; color: var(--tblr-body-color); background: transparent; border: 0; user-select: text; -webkit-user-select: text; }
 /* The panes are columns of stacked terminals, and they are one flat grid
    instead of a container per column: a pane changes its column by changing its
    placement, never its parent, because a DOM move would take the terminal
@@ -1093,6 +1065,7 @@ body .swal2-styled.swal2-deny {
 .dc-msg-user { border-left-color: var(--tblr-primary); }
 .dc-msg-assistant { border-left-color: var(--dc-steer); }
 .dc-msg-info { border-left-color: var(--tblr-border-color); }
+.dc-msg-coder { border-left-color: var(--dc-ok); }
 .dc-msg .markdown p:last-child { margin-bottom: 0; }
 .dc-msg .markdown code { font-size: 12px; }
 .dc-msg-user [data-assistant-text] { font-size: 1rem; line-height: 1.7142857; white-space: pre-wrap; }

@@ -3,6 +3,7 @@ import { postForm, postJSON } from "@dc/http";
 import { get, set } from "@dc/store";
 import { isDark } from "@dc/theme";
 import { fire as fireDialog, isVisible as dialogVisible } from "@dc/dialog";
+import { copyText } from "@dc/dom";
 
 const TERMINAL_THEMES = {
   dark: {
@@ -999,7 +1000,7 @@ function initTerminalAttach(host) {
   // text layer that follows the cell grid (line height per row, letter-spacing
   // so each glyph occupies one cell), and that layer is what the page reads the
   // screen from: it is how the login URL of a coder waiting to be logged in is
-  // found. Copying does not go through it, that is the history sheet's job, on
+  // found. Copying does not go through it, that is the copy view's job, on
   // real text; the layer stays inert, it is never selectable and never takes a
   // pointer.
   const selectionLayer = document.createElement("div");
@@ -1093,31 +1094,6 @@ function initTerminalAttach(host) {
     }
     return false;
   };
-  const copyLoginLink = async (url) => {
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(url);
-        return true;
-      } catch {
-        void 0;
-      }
-    }
-    const area = document.createElement("textarea");
-    area.value = url;
-    area.setAttribute("readonly", "");
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.body.append(area);
-    area.select();
-    let ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch {
-      ok = false;
-    }
-    area.remove();
-    return ok;
-  };
   const promptLoginLink = (url) => {
     fireDialog({
       icon: "question",
@@ -1133,7 +1109,7 @@ function initTerminalAttach(host) {
       if (result.isConfirmed) {
         window.open(url, "_blank", "noopener,noreferrer");
       } else if (result.isDenied) {
-        if (await copyLoginLink(url)) {
+        if (await copyText(url)) {
           notifySuccess("Login link copied.");
         } else {
           notifyError("Copy failed.");
@@ -1184,7 +1160,7 @@ function initTerminalAttach(host) {
   let fontSizeOverride = settingValue(fontSizeSetting, DEFAULT_FONT_SIZE);
   // Every terminal fits the box it is given, a solo page, a split pane, the
   // editor's panel and a phone alike, and nothing is ever drawn outside that
-  // box. Text that has scrolled away is reached in the copy sheet, on real
+  // box. Text that has scrolled away is reached in the copy view, on real
   // text, instead of by making the pane taller than the window somebody has.
   let lastClientCols = 0;
   let lastFitRows = 0;

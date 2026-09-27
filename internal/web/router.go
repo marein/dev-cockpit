@@ -129,6 +129,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/coders/:id/files/delete", s.handleCoderFileDelete)
 	auth.POST("/coders/:id/input", s.handleCoderInput)
 	auth.GET("/coders/:id/copy", s.handleTerminalCopy)
+	auth.GET("/coders/:id/conversation", s.handleCoderConversation)
 	auth.POST("/coders/:id/resize", s.handleCoderResize)
 	auth.GET("/coders/:id/stream", s.handleCoderStream)
 	auth.POST("/coders/:id/resume", s.handleCoderResume)

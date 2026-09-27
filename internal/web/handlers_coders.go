@@ -164,7 +164,8 @@ func (s *Server) handleCoderAttach(c *gin.Context) {
 		StreamURL:       "/coders/" + running.Identifier + "/stream",
 		ResizeURL:       "/coders/" + running.Identifier + "/resize",
 		InputURL:        "/coders/" + running.Identifier + "/input",
-		CopyURL:         "/coders/" + running.Identifier + "/copy",
+		TextURL:         "/coders/" + running.Identifier + "/copy",
+		ConversationURL: "/coders/" + running.Identifier + "/conversation",
 	})
 }
 

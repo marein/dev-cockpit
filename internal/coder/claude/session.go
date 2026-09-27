@@ -234,8 +234,15 @@ func (r *sessionRepository) findStored(sessionID string) (storedSession, error) 
 			return stored, nil
 		}
 	}
-	return storedSession{}, fmt.Errorf(`No session "%s" was found.`, id)
+	return storedSession{}, sessionNotFound(id)
 }
+
+// sessionNotFound says the store holds no transcript for the session. For a
+// running session that is a record not written yet: claude writes its file
+// with the first prompt.
+type sessionNotFound string
+
+func (e sessionNotFound) Error() string { return fmt.Sprintf(`No session "%s" was found.`, string(e)) }
 
 // maxTranscriptLine caps how much of a single transcript line is held in
 // memory. A line carrying an image the coder read, a screenshot handed to it
@@ -383,9 +390,11 @@ func (r *sessionRepository) loadTranscript(path string) (storedSession, bool) {
 
 // promptTitle turns a user message into the title of a session nobody named,
 // which is what copilot and opencode do for their own sessions. Only the text
-// a person wrote counts: tool results and the reminders the harness injects
-// carry no intent, and a slash command is read as the command it is, because
-// its wrapper says more about the transcript format than about the session.
+// a person wrote counts: tool results carry no intent, and the blocks the CLI
+// writes into the user's role are stripped the way a bubble strips them
+// (cleanUserText). A slash command is read as the command it is and a shell
+// escape as its command line, because their wrappers say more about the
+// transcript format than about the session.
 // The title is one line and bounded, it stands in tab strips, menus and lists.
 func promptTitle(raw json.RawMessage) string {
 	if len(raw) == 0 {
@@ -398,27 +407,20 @@ func promptTitle(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &message); err != nil || message.Role != "user" {
 		return ""
 	}
-	text := ""
-	if err := json.Unmarshal(message.Content, &text); err != nil {
-		var blocks []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+	var parts []string
+	for _, b := range contentOf(message.Content) {
+		if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+			parts = append(parts, b.Text)
 		}
-		if err := json.Unmarshal(message.Content, &blocks); err != nil {
-			return ""
-		}
-		var parts []string
-		for _, b := range blocks {
-			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-				parts = append(parts, b.Text)
-			}
-		}
-		text = strings.Join(parts, " ")
 	}
+	text := strings.Join(parts, " ")
 	if command := betweenTags(text, "command-name"); command != "" {
 		return coder.ShortTitle(command)
 	}
-	return coder.ShortTitle(dropTagged(text, "system-reminder"))
+	if command := betweenTags(text, "bash-input"); command != "" {
+		return coder.ShortTitle("! " + command)
+	}
+	return coder.ShortTitle(cleanUserText(text))
 }
 
 // betweenTags returns what one XML-ish wrapper in text holds.
@@ -434,20 +436,4 @@ func betweenTags(text, tag string) string {
 		return ""
 	}
 	return strings.TrimSpace(rest[:end])
-}
-
-// dropTagged removes every wrapper of one kind, contents included.
-func dropTagged(text, tag string) string {
-	openTag, closeTag := "<"+tag+">", "</"+tag+">"
-	for {
-		start := strings.Index(text, openTag)
-		if start < 0 {
-			return text
-		}
-		end := strings.Index(text[start:], closeTag)
-		if end < 0 {
-			return text[:start]
-		}
-		text = text[:start] + text[start+end+len(closeTag):]
-	}
 }

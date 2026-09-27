@@ -3590,40 +3590,14 @@ free floating page scripts.
   had left the screen, and it paid for that by laying every full screen program
   out for a height nobody can see, and by giving the view a second owner, the
   browser, which moves a scroll position of its own accord. Reaching that text
-  is the history sheet's job now. Do not bring rows past the fit back to solve
-  a reading problem.
-  **The history sheet is where text is copied from** (`terminal-copy.js`, the
-  copy button in the control row, `GET /coders/:id/copy` and
-  `/shells/:id/copy`). A terminal draws to a canvas and holds no text anybody
-  can select, so the sheet puts what the terminal has said into the page as
-  ordinary text: selecting, scrolling and copying are then the browser's job
-  and, on a phone, the system's own handles. It is a snapshot from the moment
-  it opened and never follows the live stream, because a target that keeps
-  moving is the one thing nobody can copy from. `white-space: pre-wrap` and not
-  `pre`: a soft wrap is drawn only, the text keeps its own line breaks, so a
-  table copies exactly as it stood even where the screen is too narrow to show
-  it in one piece.
-  Where the text comes from is the same order the activity reading uses, for
-  the same reason: the coder's own record first, the screen only when there is
-  none. `coder.TranscriptReader` is that capability, optional beside
-  `ActivityReporter`, and all three coders implement it, claude from its
-  transcript, copilot from its event log, opencode from its rows. It asks for
-  what was said and may not flatten or cut inside a message, which is exactly
-  what `Activity` may do; that is why it is a second method on the same record
-  and not a bigger budget on the first. It also takes less out of the record
-  than `Activity` does: a tool call leaves nothing behind here, no `coder ran`
-  line, because this is text somebody copies and that a tool ran is the coder's
-  bookkeeping. The activity reading keeps naming the tools, it answers what the
-  session last did. Everything else answers with
-  `capture-pane`, which never attaches, so the pane keeps the size the client
-  that owns it gave it.
-  How much is shown is the reader's choice and the unit follows the source,
-  messages for a record, lines for a screen, kept per unit in localStorage
-  (`dc-copy-messages`, `dc-copy-lines`). A coder answering with its screen
-  offers no choice at all: it runs on the alternate screen, which keeps no
-  scrollback, so every amount would answer with the same picture. Behind the
-  choice sits one cap that is not a product decision, `coder.TranscriptCap`,
-  so that a single pasted file cannot become the whole answer.
+  is the copy view's job now, see the rule on it below. Do not bring rows past
+  the fit back to solve a reading problem.
+  What the text face of the copy view reads is `GET /coders/:id/copy` and
+  `/shells/:id/copy`, JSON: a shell's history through `capture-pane`, which
+  never attaches, so the pane keeps the size the client that owns it gave it,
+  `?lines=` capped at `copyMaxLines`, and for a coder always its screen the
+  same way, whatever the request carries; its record is the conversation
+  face's, below.
   The size in tmux is one per session while every open view
   has a box of its own, and a `terminal-size` from the server past the box
   (another device attached or resized, a stacked pane is the smallest box
@@ -3699,6 +3673,79 @@ free floating page scripts.
   stands. Lifting that duck has been built and dropped twice, a float above
   the surface can never be covered by a dropdown inside it. The tab context
   menu mirrors the strip menu minus Open editor, plus Open terminal page.
+- **The copy button shows the terminal's text in its place, read only.**
+  A terminal draws to a canvas and holds no text anybody can select, so the
+  copy button of every footer (`data-terminal-copy`, a shell's and a coder's
+  alike) opens `terminal-copy` in the terminal's place, on the attach pages
+  and per pane of a split. It is one element with one frame
+  (the `terminal_copy_surface.gohtml` define in `terminal_copy.gohtml`,
+  rendered into every `.attach-stage`), and
+  the frame has two faces: a coder's conversation as bubbles, and plain text,
+  a shell's history or a coder's screen. The two stand in one grid cell, the
+  terminal behind the view is `visibility: hidden` and never display none, so
+  its box, its fit and its stream stay as they are and closing (the cross,
+  Escape, the copy button again) is instant. Its text size is the terminal's
+  (`dc-terminal-font-size`, followed live on `terminal-setting-change`), set
+  on the scroller with every size inside in `em`, and the text face reads in
+  the terminal's own font, taken from the terminal's selection layer when the
+  view opens. The text is page text, so selecting, scrolling and copying are
+  the browser's job and, on a phone, the system's own handles. The view is a
+  snapshot: it asks when it opens, when the face or the amount changes and
+  when somebody wants older messages, never on an event, and reopening takes
+  a fresh one, because a target that keeps moving is the one thing nobody can
+  copy from. A coder opens on its conversation: `GET
+  /coders/:id/conversation` answers the newest `coder.TranscriptPage`
+  messages as an HTML fragment (the `coder_copy_page.gohtml` define in
+  `terminal_copy.gohtml`), `?before=<message
+  id>` the page above that message; every bubble with words carries a copy
+  button with its recorded text in a `<template data-copy-source>`, and Copy
+  all joins what the view shows as `user:`/`coder:` blocks. Its Screen
+  button switches the same frame to the text face on the coder's screen,
+  which carries no amount (a coder runs on the alternate screen, which keeps
+  no scrollback), and Conversation switches back. A shell opens on the text
+  face, its history in as many lines as the select in the head says
+  (`dc-copy-lines` in localStorage, 500 unless somebody picked another), and
+  Copy all takes the whole text. The text face is a `pre` with
+  `white-space: pre-wrap` and not `pre`: a soft wrap is drawn only, the text
+  keeps its own line breaks, so a table copies exactly as it stood even where
+  the view is too narrow to show it in one piece. A web address in it is a
+  link, built as nodes, never parsed as markup. **The bubbles are one partial**, `chat_message.gohtml`,
+  rendering `render.ChatMessageView` for the assistant's thread
+  (`assistant_message.gohtml` only delegates, `AssistantMessageView` and
+  `AssistantMessageData` are aliases) and the copy view alike: the user's
+  blue stripe, a coder's green one (`dc-msg-coder`), a command as a chip, a
+  coder's turn as its parts in record order, text as markdown
+  (`markdown.RenderGFM`) and a tool call as one line naming the tool and what
+  it was about (`coder.ToolLine`, one table for every coder's spelling of the
+  tool and its arguments). **What a bubble may carry is decided in the reader
+  and pinned by fixtures shaped like real record lines**
+  (`conversation_test.go` per coder, `handlers_codercopy_test.go` greps the
+  rendered markup): a user bubble is what the person typed, and in claude's
+  record, which writes most into the user's role, `cleanUserText` (claude
+  only, the same stripping a session title gets in `promptTitle`) strips the
+  CLI's blocks wherever they stand (system reminders, ide selection, task
+  notifications, local command caveat and output, the shell escape's output),
+  unwraps a paste and drops the markers of an attached image; a command is
+  one chip (`KindCommand`): claude's slash commands and `!` escapes, and
+  copilot's `!` escape, read from its `tool.user_requested` event, while
+  opencode reads none, no captured record pins its shape; an `isMeta` entry,
+  the compaction summary and the interrupt marker are nothing; a tool result
+  and a thinking block are never anything.
+  `coder.ConversationReader` (`SessionConversation`) is the reading, the
+  second capability on the record beside `ActivityReporter`, implemented by
+  all three coders and read from the top on every call, and all three build a
+  turn with `coder.TurnBuilder`, one coder message from the user's words to
+  their next ones: copilot's `turn_end` closes a model round, not a turn,
+  which ends on the next `user.message`, an `abort` or `session.shutdown`;
+  opencode stores one message per step, the builder joins them under the
+  first step's id, and its query projects only the tool argument fields
+  `coder.ToolLineFields` names, each cut to 400 runes, plus the todo list as
+  its length (`coder.TodosField`), because a cut would break the list.
+  `Manager.Conversation` cuts the page with `coder.Window`, bounded by
+  `coder.TranscriptCap` as well, and a page asked before a message the record
+  no longer holds, claude rewrote it after a compaction or a `/clear`, answers
+  `ErrConversationChanged`, which the view shows as its note instead of the
+  newest page a second time.
 - **Terminal switcher app wide:** the attach pages render the tab strip inline
   and mark it via `Page.HasTabStrip`; every other authed page gets a hidden
   switcher-only `terminal-tabs` instance from the layout
@@ -4065,7 +4112,7 @@ free floating page scripts.
   at 2.7:1), so the rule is repeated for the layer and for the text inside
   `.cm-content`, `!important` because the library's hiding rule is. The terminal
   brings nothing of its own here: its mirror layer is never selectable, and
-  copying happens in the history sheet, which is ordinary text.
+  copying happens in the copy view, which is ordinary text.
   **Every floating menu wears one look**, set once on `.dropdown-menu` in
   style.css out of three variables per scheme (`--dc-float-bg`,
   `--dc-float-border`, `--dc-float-shadow`): a real border, the palettes'

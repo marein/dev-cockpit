@@ -12,7 +12,7 @@ const { assert, sleep } = L;
 //   - Mobile (coarse pointer, matchMedia): read-only mirror, a hidden
 //     #terminal-cursor-input at the cursor cell sends text, an .attach-cursor overlay
 //     mirrors the cursor, and the .attach-mobile toolbar is the interaction surface
-//     (control buttons + auto-repeat, ctrl modifier, history sheet, paste). Swipe
+//     (control buttons + auto-repeat, ctrl modifier, copy view, paste). Swipe
 //     scrolling on the terminal-scroll-zone overlay: proportional drag + fling.
 //     The same zone axis-locks horizontal gestures into terminal-swipe events,
 //     terminal-swipe-nav turns them into switching between the open terminals
@@ -462,17 +462,16 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await sleep(500);
     });
 
-    // The history sheet is where text is copied from: a terminal draws to a
-    // canvas and holds no selectable text at all, so the sheet puts what the
-    // terminal has said into the page as real text. pre-wrap and not pre is
-    // the rule that matters: a soft wrap is drawn only, the text keeps its own
-    // line breaks, so what a selection yields is what stood there.
-    await run("mobile: the history sheet holds the terminal's text as real text", async () => {
+    // The copy view is where text is copied from: a terminal draws to a canvas
+    // and holds no selectable text at all, so the view puts what the terminal
+    // has said into the page as real text in the terminal's place. pre-wrap and
+    // not pre is the rule that matters: a soft wrap is drawn only, the text
+    // keeps its own line breaks, so what a selection yields is what stood there.
+    await run("mobile: the copy view holds the terminal's text as real text", async () => {
       await mp.locator(".attach-mobile [data-terminal-copy]").first().click();
-      await mp.waitForSelector("#terminal-copy-modal.show", { timeout: 8000 });
-      await sleep(1200);
+      await mp.waitForFunction(() => (document.querySelector("terminal-copy [data-copy-text]") || {}).textContent?.length > 0, null, { timeout: 8000 });
       const seen = await mp.evaluate(() => {
-        const pre = document.querySelector("#terminal-copy-modal [data-copy-text]");
+        const pre = document.querySelector("terminal-copy [data-copy-text]");
         const style = getComputedStyle(pre);
         const range = document.createRange();
         range.selectNodeContents(pre);
@@ -483,12 +482,12 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
         selection.removeAllRanges();
         return { chars: pre.textContent.length, wrap: style.whiteSpace, select: style.webkitUserSelect || style.userSelect, picked: picked.length };
       });
-      assert(seen.chars > 0, "the history sheet is empty");
-      assert(seen.wrap === "pre-wrap", `the sheet wraps as ${seen.wrap}, which would change what a copy yields`);
-      assert(seen.select === "text", "the sheet's text cannot be selected");
-      assert(seen.picked === seen.chars, `a selection over the sheet yields ${seen.picked} of ${seen.chars} characters`);
-      await mp.click("#terminal-copy-modal .btn-close");
-      await sleep(400);
+      assert(seen.chars > 0, "the copy view is empty");
+      assert(seen.wrap === "pre-wrap", `the view wraps as ${seen.wrap}, which would change what a copy yields`);
+      assert(seen.select === "text", "the view's text cannot be selected");
+      assert(seen.picked === seen.chars, `a selection over the view yields ${seen.picked} of ${seen.chars} characters`);
+      await mp.click("terminal-copy [data-copy-close]");
+      await mp.waitForSelector("terminal-copy", { state: "hidden", timeout: 5000 });
     });
 
     await run("mobile: paste without clipboard shows the fallback toast", async () => {
