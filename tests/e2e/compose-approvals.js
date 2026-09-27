@@ -20,8 +20,11 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // rings the bell (no docker:<project> entry for it). The Compose actions approval under /settings/assistant/approvals
 // is one switch for every assistant (on by default, off lets every confirm
 // action run, the socket refused, on the Docker settings too), the dialog's
-// box turns it off for every assistant, and the trigger form hides any or all
-// for a compose event.
+// box turns it off for every assistant, approvals arriving while another
+// dialog stands wait for that dialog to close instead of replacing it and then
+// show one after the other, one whose dialog another dialog replaced is asked
+// again once that closes, and the trigger form hides any or all for a compose
+// event.
 //
 // Fixture the host prepares before the run: the instance's projects dir holds
 // a project named DOCKER_PROJECT (default "dockere2e") with a compose file of
@@ -339,6 +342,67 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     const gone = await page.request.post(`${BASE}/assistants/${otherID}`, { form: { csrf_token: await csrfOf(page), form: "delete" }, headers: { Accept: "application/json" } });
     assert(gone.status() === 200, `the second assistant's delete answered ${gone.status()}`);
     return what;
+  });
+
+  await run("approvals wait behind an open dialog, show one after the other once it closes, and are asked again when another dialog replaced them", async () => {
+    const others = [];
+    for (let i = 0; i < 2; i += 1) {
+      const created = await page.request.post(`${BASE}/assistants/new`, { form: { csrf_token: await csrfOf(page), form: "new", coder: "claude" }, headers: { Accept: "application/json" } });
+      const id = (await created.json().catch(() => ({}))).id || "";
+      assert(id, `no extra assistant: ${created.status()}`);
+      others.push(id);
+    }
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    const openConfirm = (title) => page.evaluate((t) => {
+      window.__dcConfirm = "open";
+      return import("@dc/dialog").then((d) => { d.confirm({ title: t }).then((v) => { window.__dcConfirm = v; }); });
+    }, title);
+    const askedAbout = async () => (await dialogRows(page))[1][1];
+    await openConfirm("E2E confirm");
+    await page.waitForSelector(`${DIALOG} .swal2-title:text-is("E2E confirm")`, { timeout: 8000 });
+    const listed = page.waitForResponse(async (res) => {
+      if (res.request().method() !== "GET" || new URL(res.url()).pathname !== "/git/prompt") return false;
+      const body = await res.json().catch(() => ({}));
+      return (body.questions || []).length === 2;
+    }, { timeout: 15000 });
+    for (const id of others) {
+      const waiting = await asAssistant(assistantID, `/assistants/${id}`, { form: "delete" });
+      assert(waiting.status === 200 && waiting.json.pending === true, `the delete did not wait: ${waiting.raw}`);
+    }
+    await listed;
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const title = await page.textContent(`${DIALOG} .swal2-title`);
+    assert(title === "E2E confirm", `an approval replaced the open confirm, the dialog reads "${title}"`);
+    assert(await page.evaluate(() => window.__dcConfirm) === "open", "the open confirm was settled by an approval");
+    assert(await page.locator(`${DIALOG} [data-approval-what]`).count() === 0, "an approval stands beside the confirm");
+
+    await page.click(`${DIALOG} .swal2-cancel`);
+    await page.waitForSelector(`${DIALOG} [data-approval-what]`, { timeout: 15000 });
+    assert(await page.evaluate(() => window.__dcConfirm) === false, "the confirm did not end on its own Cancel");
+    const first = await askedAbout();
+    assert(first.endsWith(` · ${others[0].slice(0, 8)}`), `the first approval shown is about "${first}", not the oldest`);
+
+    await openConfirm("E2E replace");
+    await page.waitForSelector(`${DIALOG} .swal2-title:text-is("E2E replace")`, { timeout: 8000 });
+    const still = await page.request.get(`${BASE}/git/prompt`, { headers: { Accept: "application/json" } });
+    const standing = ((await still.json()).questions || []).length;
+    assert(standing === 2, `the replaced approval was answered, ${standing} questions stand`);
+    await page.click(`${DIALOG} .swal2-cancel`);
+    await page.waitForSelector(`${DIALOG} [data-approval-what]`, { timeout: 15000 });
+    assert(await page.evaluate(() => window.__dcConfirm) === false, "the replacing confirm did not end on its own Cancel");
+    const again = await askedAbout();
+    assert(again === first, `after the replacing dialog the approval is about "${again}", not "${first}" again`);
+
+    await page.click(`${DIALOG} .swal2-deny`);
+    await waitFor(async () => (await page.locator(`${DIALOG} [data-approval-details]`).count()) === 1 && (await askedAbout()).endsWith(` · ${others[1].slice(0, 8)}`), "the second approval after the first was answered");
+    await page.click(`${DIALOG} .swal2-deny`);
+    await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
+    for (const id of others) {
+      const gone = await page.request.post(`${BASE}/assistants/${id}`, { form: { csrf_token: await csrfOf(page), form: "delete" }, headers: { Accept: "application/json" } });
+      assert(gone.status() === 200, `the extra assistant's delete answered ${gone.status()}`);
+    }
+    return `${first}, asked again, then the second`;
   });
 
   await run("the trigger form offers no any or all for a compose event", async () => {

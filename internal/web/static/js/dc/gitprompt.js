@@ -1,10 +1,11 @@
-import { fire } from "@dc/dialog";
+import { CLOSED_EVENT, fire, isVisible } from "@dc/dialog";
 import { onServerEvent } from "@dc/events";
 import { getJSON, postJSON, postForm } from "@dc/http";
 import { escapeHtml, windowSeen } from "@dc/dom";
 
 let shownId = "";
 let shownTarget = "";
+let shownOpen = false;
 let reconciling = false;
 let queued = false;
 
@@ -46,32 +47,33 @@ async function showApproval(question) {
     reverseButtons: true,
     allowOutsideClick: false,
   });
-  if (shownId !== question.id) return;
-  shownId = "";
-  shownTarget = "";
   const reason = window.Swal.DismissReason || {};
   const denied = result.isDenied || result.dismiss === reason.cancel || result.dismiss === reason.esc;
-  if (!result.isConfirmed && !denied) {
-    void reconcile();
-    return;
+  await settle(question, result.isConfirmed || denied, {
+    approve: result.isConfirmed,
+    remember: result.isConfirmed && result.value === 1,
+  });
+}
+
+async function settle(question, answered, answer) {
+  shownOpen = false;
+  if (shownId !== question.id) return;
+  if (answered) {
+    try {
+      await postJSON("/git/prompt", { key: question.key, project: question.project, id: question.id, ...answer });
+    } catch (error) {
+      void error;
+    }
   }
-  try {
-    await postJSON("/git/prompt", {
-      key: question.key,
-      project: question.project,
-      id: question.id,
-      approve: result.isConfirmed,
-      remember: result.isConfirmed && result.value === 1,
-    });
-  } catch (error) {
-    void error;
-  }
+  shownId = "";
+  shownTarget = "";
   void reconcile();
 }
 
 async function show(question) {
   shownId = question.id;
   shownTarget = question.target || "";
+  shownOpen = true;
   markSeen();
   if (question.kind === "approval") {
     await showApproval(question);
@@ -99,27 +101,12 @@ async function show(question) {
     reverseButtons: true,
     allowOutsideClick: false,
   });
-  if (shownId !== question.id) return;
-  shownId = "";
-  shownTarget = "";
   const reason = window.Swal.DismissReason || {};
   const cancelled = result.dismiss === reason.cancel || result.dismiss === reason.esc;
-  if (!result.isConfirmed && !cancelled) {
-    void reconcile();
-    return;
-  }
-  try {
-    await postJSON("/git/prompt", {
-      key: question.key,
-      project: question.project,
-      id: question.id,
-      answer: result.isConfirmed ? result.value || "" : "",
-      cancel: !result.isConfirmed,
-    });
-  } catch (error) {
-    void error;
-  }
-  void reconcile();
+  await settle(question, result.isConfirmed || cancelled, {
+    answer: result.isConfirmed ? result.value || "" : "",
+    cancel: !result.isConfirmed,
+  });
 }
 
 async function reconcile() {
@@ -133,12 +120,14 @@ async function reconcile() {
     if (!data || !window.Swal) return;
     const questions = data.questions || [];
     if (shownId) {
-      if (questions.some((q) => q.id === shownId)) return;
+      if (!shownOpen || questions.some((q) => q.id === shownId)) return;
       shownId = "";
       shownTarget = "";
+      shownOpen = false;
       window.Swal.close();
+      return;
     }
-    if (questions.length) void show(questions[0]);
+    if (questions.length && !isVisible()) void show(questions[0]);
   } finally {
     reconciling = false;
     if (queued) {
@@ -149,6 +138,7 @@ async function reconcile() {
 }
 
 onServerEvent("gitprompt", () => void reconcile());
+document.addEventListener(CLOSED_EVENT, () => void reconcile());
 document.addEventListener("visibilitychange", markSeen);
 window.addEventListener("focus", markSeen);
 void reconcile();

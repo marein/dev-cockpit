@@ -25,6 +25,19 @@ function popupHost() {
   return modals.length ? modals[modals.length - 1] : undefined;
 }
 
+export const CLOSED_EVENT = "dc:dialog-closed";
+
+function announcingClose(options) {
+  const own = options.didClose;
+  return {
+    ...options,
+    didClose() {
+      if (typeof own === "function") own.call(this);
+      document.dispatchEvent(new CustomEvent(CLOSED_EVENT));
+    },
+  };
+}
+
 export function fire(options = {}) {
   if (!window.Swal) {
     const message = nativeMessage(options);
@@ -35,8 +48,8 @@ export function fire(options = {}) {
     return Promise.resolve({ isConfirmed: true });
   }
   const host = options.target || popupHost();
-  if (!host) return window.Swal.fire(options);
-  const settings = { ...options, target: host };
+  if (!host) return window.Swal.fire(announcingClose(options));
+  const settings = announcingClose({ ...options, target: host });
   // heightAuto is about the page behind the popup and means nothing with a
   // target of its own; SweetAlert warns about the pair.
   if (settings.heightAuto === undefined) settings.heightAuto = false;

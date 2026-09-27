@@ -1303,7 +1303,12 @@ test. Update this file when a convention changes.
   shows, so typing survives every signal, closes when the server no longer
   lists it, which is how an answer on one device takes it down on all, and
   replaces it when a new question follows, ssh asking again after a wrong
-  passphrase. It names project and action as this server's truth above the
+  passphrase. A question never takes the screen from another dialog: while
+  one stands it waits, since firing would close that dialog and count as
+  its cancel, and it shows when that dialog closes (`dc:dialog-closed`,
+  which `@dc/dialog`'s `fire` raises for every popup that closes); a
+  question whose own popup another one replaced is asked again the same
+  way, several questions stand in line and come one at a time. It names project and action as this server's truth above the
   escaped prompt line, which is ssh's, git's or a repository hook's and
   therefore capped (`maxPrompt`); the field is masked only when the line
   names a secret, because the same helper carries user names and host key
@@ -4132,7 +4137,11 @@ free floating page scripts.
   git passphrase question from a resync inside the create dialog). `@dc/dialog`'s
   `fire` targets the topmost `.modal.show` unless the caller names a target
   (`heightAuto` off with it); every popup goes through that door,
-  `@dc/gitprompt` included.
+  `@dc/gitprompt` included. That door is also how a popup says it closed:
+  `fire` dispatches `dc:dialog-closed` on the document once a popup is gone
+  (an answer, a dismissal, `Swal.close()`, never one another popup
+  replaced), and a git question or an approval arriving while a dialog
+  stands waits for that event instead of replacing the dialog.
 - **A wait shows on its surface.** `.dc-loading-bar` is a zero height sticky
   line prepended to what is loading (the tab strip fragment). The
   project list shows no line, its refreshes swap rows in place. pe.js's button
