@@ -99,6 +99,11 @@ function lastMessage(root) {
   return last ? `${last.getAttribute("data-message-id")}:${last.getAttribute("data-state")}` : "";
 }
 
+function lacksMessage(root, fresh) {
+  const have = new Set([...root.querySelectorAll("[data-assistant-message][data-message-id]")].map((node) => node.getAttribute("data-message-id")));
+  return [...fresh.querySelectorAll("[data-assistant-message][data-message-id]")].some((node) => !have.has(node.getAttribute("data-message-id")));
+}
+
 function takeRenderMark(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let node = null;
@@ -345,17 +350,23 @@ class Assistant extends HTMLElement {
   }
 
   async syncFromServer() {
-    if (this.running || this.syncing || !this.isConnected) return;
+    if (this.syncing) {
+      this.syncAgain = true;
+      return;
+    }
+    if (this.running || !this.isConnected) return;
     this.syncing = true;
+    this.syncAgain = false;
+    let next = null;
     try {
       const html = await getText(window.location.pathname + window.location.search, { headers: { "X-DC-Pull": "1" } });
       const doc = new DOMParser().parseFromString(html, "text/html");
       const fresh = doc.querySelector("dc-assistant");
       if (!fresh || fresh.getAttribute("assistant-id") !== this.getAttribute("assistant-id")) return;
-      const moved = lastMessage(fresh) !== lastMessage(this) || fresh.hasAttribute("blocked") !== this.hasAttribute("blocked");
+      const moved = lastMessage(fresh) !== lastMessage(this) || lacksMessage(this, fresh) || fresh.hasAttribute("blocked") !== this.hasAttribute("blocked");
       if (!moved || composerHoldsUnsavedWords(this, fresh) || this.running) return;
       const app = this.closest(".dc-app");
-      const next = document.adoptNode(fresh);
+      next = document.adoptNode(fresh);
       // The aside holds what the reader put where: the open tab, an unfolded
       // row, where it is scrolled. Its two lists refresh themselves on this
       // same event, so the one that stands comes along instead of being
@@ -368,6 +379,10 @@ class Assistant extends HTMLElement {
       void error;
     } finally {
       this.syncing = false;
+      if (this.syncAgain) {
+        this.syncAgain = false;
+        void (next?.isConnected ? next : this).syncFromServer?.();
+      }
     }
   }
 
@@ -1042,6 +1057,7 @@ class Assistant extends HTMLElement {
       const node = this.bubble(messageId);
       if (node?.hasAttribute("data-assistant-slot")) {
         node.remove();
+        void this.syncFromServer();
         return;
       }
       node?.querySelector(".spinner-border")?.remove();

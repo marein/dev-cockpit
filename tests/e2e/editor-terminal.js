@@ -569,6 +569,64 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       assert(focused, "the neighbor terminal did not take focus");
     });
 
+    // The close asks for a refresh that focuses the neighbour, and the delete
+    // publishes the terminals event, whose refresh focuses nothing. Whichever
+    // of the two lands last wins, so the event's refresh is made to start
+    // after the close's own here, the order that used to drop the focus.
+    await run("desktop: a terminals refresh overtaking the close's own keeps the neighbor's focus", async () => {
+      const page2 = await page.context().newPage();
+      let thirdUrl = null;
+      try {
+        thirdUrl = await L.createShell(page2, project);
+      } finally {
+        await page2.close().catch(() => {});
+      }
+      const thirdId = new URL(thirdUrl).pathname.split("/").pop();
+      await page.waitForSelector(`${panel} [data-term-tab="${thirdId}"]`, { timeout: 8000 });
+      await page.click(`${panel} [data-term-tab="${thirdId}"]`);
+      await page.waitForSelector(`${panel} [data-term-pane="${thirdId}"].active terminal-attach[embedded]`, { timeout: 10000 });
+      await sleep(500);
+      let answered = false;
+      let overtaken = false;
+      const deletes = new RegExp(`/shells/${thirdId}/delete$`);
+      const refreshes = /\/editor\/terminals(\?|$)/;
+      await page.route(deletes, async (route) => {
+        const res = await route.fetch();
+        await sleep(1500);
+        answered = true;
+        await route.fulfill({ response: res });
+      });
+      await page.route(refreshes, async (route) => {
+        if (answered && !overtaken) {
+          overtaken = true;
+          await page.evaluate(() => document.dispatchEvent(new CustomEvent("dc:terminals", { detail: null })));
+        }
+        await route.continue();
+      });
+      try {
+        await page.hover(`${panel} [data-term-tab="${thirdId}"]`);
+        await page.click(`${panel} [data-term-tab="${thirdId}"] [data-term-close]`);
+        await confirmSwal(page);
+        await page.waitForFunction((id) => !document.querySelector(`[data-term-tab="${id}"]`), thirdId, { timeout: 10000 });
+        thirdUrl = null;
+        let focused = false;
+        for (let i = 0; i < 12; i++) {
+          focused = await page.evaluate(() => {
+            const active = document.querySelector("[data-editor-term-panel] .editor-term-pane.active");
+            return !!active && !!document.activeElement && active.contains(document.activeElement);
+          });
+          if (focused) break;
+          await sleep(400);
+        }
+        assert(overtaken, "no refresh started after the close's own, so this proves nothing");
+        assert(focused, "the neighbor terminal did not take focus");
+      } finally {
+        await page.unroute(deletes);
+        await page.unroute(refreshes);
+        if (thirdUrl) await L.deleteShell(page, thirdUrl).catch(() => {});
+      }
+    });
+
     let coderId = null;
     await run("desktop: a coder created from the + menu returns to the editor with its tab active", async () => {
       await page.click(`${panel} [data-editor-term-plus]`);

@@ -4357,7 +4357,11 @@ everything a page reads from this stream (unread state plus the bare
 `terminals`, `projects` and `docker` signals, the draft and assistant ones and
 the host reading), because a surface that asks once and then follows an event
 stands on what it saw before the socket went down until something happens to
-move: the editor's docker segment is exactly that. Then a `ping` frame every
+move: the editor's docker segment is exactly that. The stream opens with the
+first module that imports `@dc/events`, so a subscriber whose module arrives
+later has missed that snapshot: `latestServerEvent(type)` hands it the last
+frame of a type, which the bell takes for `notifications` and `activity` when
+its module loads. Then a `ping` frame every
 15s; the client forces a reconnect when the
 stream stays silent past 45s (interval timer plus visibilitychange), because a
 dead socket does not reliably fire an error. The conversation's own stream

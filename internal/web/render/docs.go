@@ -637,7 +637,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Default models",
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Settings &rarr; Coder &rarr; Models holds a coder's start default, what a new session and an assistant's chat run on when nothing is picked. Settings &rarr; Assistants &rarr; Models holds the Chat, Checks and Triggers picks a new assistant is made with, empty meaning the coder's default and Same as chat.`,
+					Desc:     `Settings &rarr; Coder &rarr; Models holds a coder's start default, what a new coder and an assistant's chat run on when nothing is picked. Settings &rarr; Assistants &rarr; Models holds the Chat, Checks and Triggers picks a new assistant is made with, empty meaning the coder's default and Same as chat.`,
 				},
 				{
 					Title:    "Back up and move your setup",

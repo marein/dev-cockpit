@@ -595,7 +595,9 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       await chip.waitFor({ state: "visible", timeout: 10000 });
       await chip.click({ button: "right" });
       await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
-      await page.click('.dc-context-menu button:text-is("Delete")');
+      // A row's label stands in a span of its own, so the whole label is
+      // matched on the row: text-is would only ever find the span.
+      await page.locator(".dc-context-menu button.dropdown-item", { hasText: /^Delete$/ }).click();
       await confirmSwal(page);
       await page.waitForSelector(`${card} [data-chip][data-chip-id="${id}"]`, { state: "detached", timeout: 10000 });
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
@@ -641,7 +643,8 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
     if (sessionUrl) await L.stopSession(page, sessionUrl).catch(() => {});
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" }).catch(() => {});
     for (let i = 0; i < 4; i++) { const d = page.locator(`#project-${project} form[action^="/coders/"][action$="/delete"]`).first(); if (await d.count() === 0) break; await d.locator("button").first().click().catch(() => {}); await confirmSwal(page).catch(() => {}); await sleep(500); await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" }).catch(() => {}); }
-    const af = await page.$(`form[action="/agents/${agentId}/delete"], form[action="/agents/${encodeURIComponent(agentId)}/delete"]`).catch(() => null);
+    await page.goto(`${BASE}/agents`, { waitUntil: "domcontentloaded" }).catch(() => {});
+    const af = await page.$(`form[action$="/agents/${agentId}/delete"], form[action$="/agents/${encodeURIComponent(agentId)}/delete"]`).catch(() => null);
     if (af) { await (await af.$("button")).click().catch(() => {}); await confirmSwal(page).catch(() => {}); await sleep(400); }
     await L.deleteProject(page, project).catch(() => {});
   }

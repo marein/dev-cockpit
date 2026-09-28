@@ -1,4 +1,4 @@
-import { onServerEvent } from "@dc/events";
+import { latestServerEvent, onServerEvent } from "@dc/events";
 import { windowSeen } from "@dc/dom";
 import { getJSON, postForm } from "@dc/http";
 import { playNotification } from "@dc/jingle";
@@ -492,3 +492,8 @@ class Notifications extends HTMLElement {
 }
 
 customElements.define("dc-notifications", Notifications);
+
+const missedNotifications = latestServerEvent("notifications");
+if (missedNotifications) channel.receive(missedNotifications);
+const missedActivity = latestServerEvent("activity");
+if (missedActivity) decorateWorking(missedActivity.targets || []);

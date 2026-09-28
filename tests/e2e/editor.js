@@ -2579,6 +2579,38 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
     });
 
+    // The row's menu makes things in the row's folder, whatever happens to the
+    // tree between opening it and picking an entry: a rebuild resets the tree's
+    // own selection to the open file, and the file landed next to that file.
+    await run("a row menu's New file lands in the row's folder when the tree is rebuilt meanwhile", async () => {
+      const dirSel = `.editor-dir[data-path="keep_${tag}"]`;
+      const made = `keep_${tag}/rebuilt.txt`;
+      await page.click(tabSel(noteFile));
+      await sleep(200);
+      await openRowMenu(page, dirSel);
+      await page.evaluate((sel) => { document.querySelector(sel).dataset.beforeRebuild = "1"; }, dirSel);
+      await page.evaluate(() => document.querySelector("[data-editor-refresh]").click());
+      await page.waitForFunction((sel) => {
+        const row = document.querySelector(sel);
+        return row && !row.dataset.beforeRebuild;
+      }, dirSel, { timeout: 8000 });
+      assert(await page.locator(".dc-context-menu").isVisible(), "the rebuild closed the row's menu, so this proves nothing");
+      await menuItem(page, "New file").click();
+      await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
+      await page.fill(".swal2-input", "rebuilt.txt");
+      await page.click(".swal2-confirm");
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      await page.waitForFunction((paths) => paths.some((p) => document.querySelector(`.editor-tab[data-path="${p}"]`)), [made, "rebuilt.txt"], { timeout: 8000 });
+      assert(!(await page.$(tabSel("rebuilt.txt"))), "the file landed in the root instead of the row's folder");
+      assert(await page.$(tabSel(made)), `no tab for ${made}`);
+      await sleep(800);
+      await openRowMenu(page, `.editor-file[data-path="${made}"]`);
+      await menuItem(page, "Delete").click();
+      await confirmSwal(page);
+      await page.waitForFunction((p) => !document.querySelector(`.editor-file[data-path="${p}"]`), made, { timeout: 8000 });
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+    });
+
     await run("Close to the right and Close others close the expected tabs", async () => {
       await newFile(`cm1_${tag}.txt`);
       await newFile(`cm2_${tag}.txt`);

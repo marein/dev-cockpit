@@ -94,6 +94,19 @@ async function dismissUpdate(page) {
   await page.waitForSelector(".swal2-container", { state: "detached", timeout: 5000 });
 }
 
+// formShown waits for the trigger form's dialog and then for Bootstrap to end
+// its show transition: a hide() that arrives while the dialog still fades in
+// is dropped, so a Cancel or a submit right after the open would leave the
+// dialog standing.
+async function formShown(page) {
+  await page.waitForSelector(".modal.show [data-assistant-trigger-form]", { timeout: 8000 });
+  await page.waitForFunction(() => {
+    const modal = document.querySelector(".modal.show");
+    const dialog = modal && window.bootstrap?.Modal.getInstance(modal);
+    return !!dialog && !dialog._isTransitioning;
+  }, null, { timeout: 8000 });
+}
+
 async function openAssistant(page, id) {
   await page.goto(`${BASE}/assistants/${id}`, { waitUntil: "domcontentloaded" });
   await dismissUpdate(page);
@@ -394,7 +407,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.click("[data-assistant-triggers-tab]");
     await page.click("#assistant-triggers [data-assistant-trigger-new]");
-    await page.waitForSelector(".modal.show [data-assistant-trigger-form]", { timeout: 8000 });
+    await formShown(page);
 
     const read = () => page.evaluate(() => {
       const form = document.querySelector(".modal.show [data-assistant-trigger-form]");
@@ -713,7 +726,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     // counts live, over the assistant event.
     await page.click("[data-assistant-triggers-tab]");
     await page.click("#assistant-triggers [data-assistant-trigger-new]");
-    await page.waitForSelector(".modal.show [data-assistant-trigger-form]", { timeout: 8000 });
+    await formShown(page);
     await sleep(300);
     await page.selectOption(".modal.show [data-trigger-event]", "job-done");
     await page.selectOption(".modal.show #assistant-trigger-job", coderID);
@@ -1094,7 +1107,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     await page.waitForSelector(`[data-assistant-trigger="${editSub}"]`, { timeout: 8000 });
     await page.click(`[data-assistant-trigger="${editSub}"] [data-assistant-trigger-fold]`);
     await page.click(`[data-assistant-trigger="${editSub}"] [data-assistant-trigger-edit]`);
-    await page.waitForSelector(".modal.show [data-assistant-trigger-form]", { timeout: 8000 });
+    await formShown(page);
 
     // The form stands filled with what is stored, and the event cannot move.
     const filled = await page.evaluate(() => {
@@ -1152,7 +1165,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     // whatever it was opened on and never the entry before it.
     await page.waitForSelector(".modal.show", { state: "hidden", timeout: 8000 });
     await page.click("[data-assistant-trigger-new]");
-    await page.waitForSelector(".modal.show [data-assistant-trigger-form]", { timeout: 8000 });
+    await formShown(page);
     const back = await page.evaluate(() => {
       const form = document.querySelector(".modal.show [data-assistant-trigger-form]");
       return {
@@ -1172,7 +1185,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     // that keeps the number whole. An empty field would put the select on No
     // expiry and the next save of the task would take the expiry away.
     await page.click(`[data-assistant-trigger="${editSub}"] [data-assistant-trigger-edit]`);
-    await page.waitForSelector(".modal.show [data-assistant-trigger-form]", { timeout: 8000 });
+    await formShown(page);
     const again = await page.evaluate(() => {
       const form = document.querySelector(".modal.show [data-assistant-trigger-form]");
       return {
@@ -1249,11 +1262,14 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     const between = (await messages(page)).filter((m) => m.auto).length;
     assert(between === pushedBefore, `the barrier answered ${between - pushedBefore} time(s) too early`);
 
-    // The one that joined closes it: one turn, all three reports in it.
+    // The one that joined closes it: one turn, all three reports in it. The
+    // barrier of an earlier check answered under the same headline, so only a
+    // fresh answer is this one's.
+    const beforeThird = pushedIDs(await messages(page));
     ring(third);
     await waitMessage(page, (m) => m.note === "check" && /DONE: grown-three/.test(m.headline));
     const answer = await waitMessage(page, (m) => m.role === "assistant" && m.auto && m.state === "complete"
-      && /3 events arrived/.test(m.headline), 120000);
+      && !beforeThird.has(m.id) && /3 events arrived/.test(m.headline), 120000);
     assert(/AIRPORT/.test(answer.text), `the grown barrier did not answer its task: ${JSON.stringify(answer)}`);
     return `the barrier waited for the target that joined it, ${grownSub}`;
   });
@@ -1267,8 +1283,15 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     });
     assert(made.status === 200, `the trigger answered ${made.status}: ${JSON.stringify(made.body)}`);
     const spent = made.body.id;
+    // The standing trigger of the check before listens on the same coder, so
+    // the ring fires it too; its answer is waited for here, or it lands in the
+    // next check and reads as that one's.
+    const pushedBefore = pushedIDs(await messages(page));
     ring(editCoder);
     const row = await waitRow(page, assistant, spent, (r) => r.state === "done", 60000);
+    await waitMessage(page, (m) => m.auto && m.state === "complete" && !pushedBefore.has(m.id)
+      && /I read every file the coder touched/.test(m.text), 60000);
+    await waitRow(page, assistant, editSub, (r) => !r.reacting, 60000);
     assert(row.edit === "", `a spent trigger still offers a change: ${JSON.stringify(row)}`);
 
     const refused = await postTo(page, "/assistants/triggers", { form: "edit", id: spent, task: "try again" });
@@ -1303,7 +1326,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.click("[data-assistant-triggers-tab]");
     await page.click("[data-assistant-trigger-new]");
-    await page.waitForSelector(".modal.show [data-assistant-trigger-form]", { timeout: 8000 });
+    await formShown(page);
     const coderEvents = await page.evaluate(() => [...document.querySelectorAll('.modal.show [name="event"] option')]
       .filter((o) => o.dataset.source === "coder")
       .map((o) => ({ value: o.value, label: o.textContent.trim(), source: o.dataset.source })));
@@ -1390,12 +1413,52 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     // Two reactions run for the one deletion and they end in their own time,
     // so the second answer is waited for: the rows above are dropped at the
     // delete itself and say nothing about a turn that is still writing.
+    let seen = [];
     const both = await waitFor(async () => {
-      const seen = (await messages(page)).filter((m) => m.auto && /Coder deleted: doomed-event/.test(m.headline));
+      seen = (await messages(page)).filter((m) => m.auto && /Coder deleted: doomed-event/.test(m.headline));
       return seen.length >= 2 ? seen : null;
     }, 60000);
-    assert(both && both.length === 2, `want one answer per trigger, got ${both ? both.length : 0}`);
+    assert(both && both.length === 2, `want one answer per trigger, got ${seen.length}: ${JSON.stringify(seen.map((m) => [m.id, m.state, m.headline]))}`);
     return `job closed, both fired once, ${deleted.body.dropped}`;
+  });
+
+  // Two answers pushed within a moment are two pulls of the page, and a pull
+  // the network ends must not cost the thread its answer: the page asks its
+  // own address again, and a message it does not hold is a change even when
+  // the newest one is. The first pull is aborted here the way a blip ends it.
+  await run("a pushed answer whose pull is cut off still lands in the thread", async () => {
+    const created = await startCoder(page, projectDir, "cut-off", "Write the file.");
+    assert(created.status === 200, `create answered ${created.status}: ${JSON.stringify(created.body)}`);
+    const cut = created.body.id;
+    for (const which of ["first", "second"]) {
+      const made = await postTo(page, "/assistants/triggers", {
+        form: "new", assistant, event: "coder-news", terminal: cut, batch: "0", task: `MAGIC the ${which} one on the cut coder`,
+      });
+      assert(made.status === 200, `the trigger answered ${made.status}: ${JSON.stringify(made.body)}`);
+    }
+    await openAssistant(page, assistant);
+    let aborted = 0;
+    const pulls = new RegExp(`/assistants/${assistant}/messages/[^/?]+$`);
+    await page.route(pulls, (route) => {
+      if (aborted > 0) return route.continue();
+      aborted++;
+      return route.abort("internetdisconnected");
+    });
+    try {
+      const deleted = await postTo(page, `/coders/${cut}/delete`, {});
+      assert(deleted.status === 200, `delete answered ${deleted.status}: ${JSON.stringify(deleted.body)}`);
+      let seen = [];
+      const both = await waitFor(async () => {
+        // Without a job the cockpit knows the coder by its id alone.
+        seen = (await messages(page)).filter((m) => m.auto && m.headline.startsWith("Coder deleted: ") && (m.headline.includes("cut-off") || m.headline.includes(cut)));
+        return seen.length >= 2 ? seen : null;
+      }, 60000);
+      assert(aborted === 1, "no pull was cut off, so this proves nothing");
+      assert(both && both.length === 2, `want both answers in the thread, got ${seen.length}: ${JSON.stringify(seen.map((m) => [m.id, m.state]))}`);
+    } finally {
+      await page.unroute(pulls);
+    }
+    return "one pull cut off, both answers stand";
   });
 
   await run("a schedule ticks and a NOTHING answer pushes nothing", async () => {
@@ -1801,7 +1864,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     assert(!asideWide, "the phone's aside overflows sideways");
     await shot(mp, "events-phone-aside.png");
     await mp.click("[data-assistant-trigger-new]");
-    await mp.waitForSelector(".modal.show [data-assistant-trigger-form]", { timeout: 8000 });
+    await formShown(mp);
     const targets = await mp.evaluate(() => [...document.querySelectorAll(".modal.show button, .modal.show select, .modal.show input:not([type=hidden]):not([type=checkbox]), .modal.show textarea")]
       .filter((el) => el.getClientRects().length)
       .map((el) => ({ tag: el.tagName, name: el.name || el.textContent.trim(), h: el.getBoundingClientRect().height })));
@@ -1817,7 +1880,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     await page.click("[data-assistant-triggers-tab]");
     await page.waitForSelector(`[data-assistant-trigger="${jobSub}"]`, { timeout: 8000 });
     await page.click("[data-assistant-trigger-new]");
-    await page.waitForSelector(".modal.show [data-assistant-trigger-form]", { timeout: 8000 });
+    await formShown(page);
     await sleep(600);
     await shot(page, "events-desktop-form.png");
     await page.click('.modal.show .modal-footer [data-bs-dismiss="modal"]');

@@ -1133,14 +1133,21 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
       // The client holds a fresh entry for a short grace period before it
       // shows, so the rows are waited for, never read right off the click.
       await page.waitForFunction(() => document.querySelectorAll(".dc-notify-menu.show .dc-notify-list a").length >= 2, null, { timeout: 8000 });
-      const lines = await page.locator(".dc-notify-menu.show .dc-notify-list a").allTextContents();
-      const named = (project) => lines.some((line) => line.includes(project));
-      assert(named(NAME), `no entry for ${NAME}: ${JSON.stringify(lines)}`);
-      assert(named(scratch), `no entry for ${scratch}: ${JSON.stringify(lines)}`);
-      // Each one leads to its own run's output, not to the other project's.
-      const hrefs = await page.locator(".dc-notify-menu.show .dc-notify-list a").evaluateAll((nodes) => nodes.map((n) => n.getAttribute("href")));
-      assert(hrefs.some((h) => h.includes(`/projects/${NAME}/docker/runs/`)), `the fixture's entry links at ${JSON.stringify(hrefs)}`);
-      assert(hrefs.some((h) => h.includes(`/projects/${scratch}/docker/runs/`)), `the scratch entry links at ${JSON.stringify(hrefs)}`);
+      // The line under a compose entry's title is the action, not the project
+      // (the identifier opens that line, and a textless kind writes nothing
+      // behind it), so each project's entry is found by its own target and
+      // read for its own run.
+      const rows = await page.locator(".dc-notify-menu.show .dc-notify-list a").evaluateAll((nodes) =>
+        nodes.map((n) => ({ target: n.dataset.notifyTarget, unread: n.classList.contains("dc-notify-unread"), text: n.textContent, href: n.getAttribute("href") })));
+      for (const project of [NAME, scratch]) {
+        // The list keeps what was read before, and a target holds at most one
+        // unread entry, which is the one this run wrote.
+        const own = rows.filter((r) => r.target === `docker:${project}` && r.unread);
+        assert(own.length === 1, `want one unread entry for ${project}, got ${own.length}: ${JSON.stringify(rows)}`);
+        assert(/Compose (finished|failed)\./.test(own[0].text) && own[0].text.includes("build"), `the entry for ${project} does not read as its build: ${JSON.stringify(own[0])}`);
+        // Each one leads to its own run's output, not to the other project's.
+        assert(own[0].href && own[0].href.includes(`/projects/${project}/docker/runs/`), `the entry for ${project} links at ${own[0].href}`);
+      }
       await page.keyboard.press("Escape");
       await postAs(page, "/notifications/read", { all: "1" });
     } finally {

@@ -327,6 +327,16 @@ L.runFeature("SPLIT VIEW", async ({ browser, page, run, mobilePage, engine }) =>
       const pair = pairUrls.map((u) => new URL(u).pathname.split("/").pop());
       const extras = extraUrls.map((u) => new URL(u).pathname.split("/").pop());
       const group = await groupVia(pair);
+      // Terminals nobody placed stand in the order they started, which tmux
+      // keeps in whole seconds, so shells made in one second fall in no given
+      // order. The strip is put the way the check reads it, the pair between
+      // three shells on either side, the way a drag would put it.
+      const ordered = await page.evaluate(async (ids) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const r = await fetch("/terminal-tabs/order", { method: "POST", headers: { "X-CSRF-Token": token, "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+        return r.status;
+      }, [...extras.slice(0, 3), ...pair, ...extras.slice(3)]);
+      assert(ordered === 204, `the strip order was refused: ${ordered}`);
       try {
         await mp.goto(`${L.BASE}/splits/${group.id}?focus=${pair[1]}`, { waitUntil: "domcontentloaded" });
         await mp.waitForSelector(`terminal-attach[terminal-id="${pair[1]}"] .xterm-screen canvas`, { timeout: 15000 });

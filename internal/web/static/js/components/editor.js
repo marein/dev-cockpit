@@ -2006,27 +2006,34 @@ async function init(root) {
     return row;
   }
 
+  let uploadDir = null;
+
+  function pickUpload(input, dir) {
+    uploadDir = dir;
+    input.click();
+  }
+
   function clearTreeSelection() {
     selected = null;
     treeEl.querySelectorAll(".editor-item.selected").forEach((el) => el.classList.remove("selected"));
   }
 
   function treeMenuItems(entry) {
+    const dir = entry ? (entry.isDir ? entry.path : parentDir(entry.path)) : "";
     const items = [
-      { label: "New file", icon: "ti-file-plus", action: () => createFile() },
-      { label: "New folder", icon: "ti-folder-plus", action: () => createFolder() },
-      { label: "Upload files", icon: "ti-upload", action: () => uploadInput.click() },
-      { label: "Upload folder", icon: "ti-folder-up", action: () => uploadDirInput.click() },
+      { label: "New file", icon: "ti-file-plus", action: () => createFile(dir) },
+      { label: "New folder", icon: "ti-folder-plus", action: () => createFolder(dir) },
+      { label: "Upload files", icon: "ti-upload", action: () => pickUpload(uploadInput, dir) },
+      { label: "Upload folder", icon: "ti-folder-up", action: () => pickUpload(uploadDirInput, dir) },
     ];
     // The clipboard is this browser's own; paste targets the row's folder, or
     // the project root from the empty area below the tree.
-    const pasteDir = entry ? (entry.isDir ? entry.path : parentDir(entry.path)) : "";
     if (clipboard) {
       items.push({ divider: true });
       items.push({
         label: `Paste "${baseName(clipboard.path)}"`,
         icon: "ti-clipboard",
-        action: () => void pasteInto(pasteDir),
+        action: () => void pasteInto(dir),
       });
     }
     if (!entry) {
@@ -6907,8 +6914,7 @@ async function init(root) {
     }
   }
 
-  async function createFile() {
-    const dir = targetDir();
+  async function createFile(dir = targetDir()) {
     const fileName = await promptName("file", dir);
     if (!fileName) return;
     const path = dir ? `${dir}/${fileName}` : fileName;
@@ -6925,8 +6931,7 @@ async function init(root) {
     }
   }
 
-  async function createFolder() {
-    const dir = targetDir();
+  async function createFolder(dir = targetDir()) {
     const folderName = await promptName("folder", dir);
     if (!folderName) return;
     const path = dir ? `${dir}/${folderName}` : folderName;
@@ -9105,12 +9110,12 @@ async function init(root) {
       file,
       rel: (file.webkitRelativePath || "").split("/").slice(0, -1).join("/"),
     }));
-    uploadFiles(items, targetDir());
+    uploadFiles(items, uploadDir ?? targetDir());
     uploadDirInput.value = "";
   }, { signal });
 
   uploadInput.addEventListener("change", () => {
-    uploadFiles(uploadInput.files, targetDir());
+    uploadFiles(uploadInput.files, uploadDir ?? targetDir());
     uploadInput.value = "";
   }, { signal });
   findItem.addEventListener("click", () => {
@@ -9933,6 +9938,7 @@ async function init(root) {
   let termLoaded = false;
   let termActiveId = store.get(termActiveKey, "") || null;
   let termSeq = 0;
+  let termFocusPending = false;
   let termDragging = false;
   let termRefreshHeld = false;
   let termSuppressClick = false;
@@ -10067,6 +10073,7 @@ async function init(root) {
   }
 
   async function loadTerminals({ focus = false } = {}) {
+    if (focus) termFocusPending = true;
     if (termDragging) {
       termRefreshHeld = true;
       return;
@@ -10077,11 +10084,16 @@ async function init(root) {
       text = await getText(`${base}/terminals`, { signal });
     } catch (err) {
       void err;
-      if (seq === termSeq) status("Terminals could not be loaded.", "error");
+      if (seq === termSeq) {
+        termFocusPending = false;
+        status("Terminals could not be loaded.", "error");
+      }
       return;
     }
     if (seq !== termSeq) return;
-    reconcileTerminals(new DOMParser().parseFromString(text, "text/html"), { focus });
+    const wantFocus = termFocusPending;
+    termFocusPending = false;
+    reconcileTerminals(new DOMParser().parseFromString(text, "text/html"), { focus: wantFocus });
   }
 
   function paintTermPanel() {

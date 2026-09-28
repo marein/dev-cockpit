@@ -18,6 +18,7 @@ const STALE_MS = 45000;
 const WATCHDOG_MS = 15000;
 let source = null;
 let lastFrameAt = 0;
+const latest = new Map();
 
 function open() {
   if (source) return;
@@ -36,6 +37,7 @@ function open() {
     // "ping" only exists to prove the stream is alive (see lastFrameAt above); it
     // carries no state, so it dispatches no DOM event.
     if (message && message.type && message.type !== "ping") {
+      latest.set(message.type, message.data ?? null);
       document.dispatchEvent(new CustomEvent("dc:" + message.type, { detail: message.data ?? null }));
     }
   });
@@ -82,4 +84,8 @@ export function onServerEvent(type, handler, options) {
   const name = "dc:" + type;
   document.addEventListener(name, handler, options);
   return () => document.removeEventListener(name, handler, options);
+}
+
+export function latestServerEvent(type) {
+  return latest.get(type);
 }

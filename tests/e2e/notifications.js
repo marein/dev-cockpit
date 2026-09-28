@@ -258,6 +258,34 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       await page.setViewportSize({ width: 1360, height: 900 });
     });
 
+    // The stream opens with the first module that imports it, and its connect
+    // snapshot is the only frame that says what stood before: a bell whose
+    // module arrives after that frame must still count it.
+    await run("a bell loaded after the stream's first frame still counts the news that stood", async () => {
+      const late = await page.context().newPage();
+      try {
+        await late.route(/\/js\/components\/notifications\.[^/]*js$/, async (route) => {
+          await sleep(1500);
+          await route.continue();
+        });
+        await late.addInitScript(() => {
+          window.__framesBeforeBell = 0;
+          document.addEventListener("dc:notifications", () => {
+            if (!customElements.get("dc-notifications")) window.__framesBeforeBell++;
+          });
+        });
+        await late.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+        await late.waitForFunction(() => !!customElements.get("dc-notifications"), null, { timeout: 15000 });
+        assert(await late.evaluate(() => window.__framesBeforeBell) > 0, "no frame arrived before the bell, so this proves nothing");
+        await late.waitForFunction(() => {
+          const badge = document.querySelector(".dc-notify-badge:not(.d-none)");
+          return badge && parseInt(badge.textContent, 10) >= 1 && /^\(\d+/.test(document.title);
+        }, null, { timeout: 4000 });
+      } finally {
+        await late.close();
+      }
+    });
+
     await run("the news dot and the title counter survive a boosted navigation", async () => {
       // The app-wide event stream does not reconnect on a pe.js swap, so the
       // fresh body's dot only shows because dc-notifications re-applies the
@@ -344,10 +372,23 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       try {
         await other.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
         await sleep(1500);
+        // News another coder left unread stands in the badge already, so what
+        // is watched is whether it rises and whether this coder shows news.
+        await other.evaluate((sid) => {
+          const count = () => {
+            const badge = document.querySelector(".dc-notify-badge:not(.d-none)");
+            return badge ? parseInt(badge.textContent, 10) || 0 : 0;
+          };
+          window.__grace = { before: count(), most: count(), own: false };
+          new MutationObserver(() => {
+            window.__grace.most = Math.max(window.__grace.most, count());
+            if (document.querySelector(`[data-notify-target="${sid}"].news`)) window.__grace.own = true;
+          }).observe(document.body, { subtree: true, attributes: true, childList: true, characterData: true });
+        }, coderId);
         injectCopilotDone(coderId);
         await sleep(2500);
-        const bumped = await other.evaluate(() => !!document.querySelector(".dc-notify-badge:not(.d-none)"));
-        assert(!bumped, "badge bumped on the other tab despite the grace read");
+        const grace = await other.evaluate(() => window.__grace);
+        assert(grace.most <= grace.before && !grace.own, `badge bumped on the other tab despite the grace read: ${JSON.stringify(grace)}`);
       } finally {
         await other.close();
       }

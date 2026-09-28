@@ -11,6 +11,7 @@ L.runFeature("SECURITY", async ({ page, ctx, run }) => {
   const tag = `sec-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   let shellUrl = null;
+  let webhook = null;
   try {
     await L.createProject(page, project);
     shellUrl = await L.createShell(page, project);
@@ -24,13 +25,31 @@ L.runFeature("SECURITY", async ({ page, ctx, run }) => {
       assert((await page.textContent("[data-rename-label]")).trim() === name, "rename did not persist (header CSRF path broke)");
     });
 
+    // The shell's own page carries no delete form any more (the work head holds
+    // no stop or delete), so the form path runs on the webhook list: a plain
+    // server rendered form with the hidden csrf_token field, confirmed through
+    // data-confirm and submitted by pe.js, whose request carries no header.
     await run("form path: data-confirm delete redirects, not the 403 page", async () => {
-      await page.goto(shellUrl, { waitUntil: "domcontentloaded" });
-      const delPath = new URL(shellUrl).pathname + "/delete";
-      await page.click(`form[action="${delPath}"] button[type="submit"], form[action="${delPath}"] button`);
+      const hook = `http://127.0.0.1:9/${tag}`;
+      const row = page.locator(`dc-push-settings .list-group-item:has-text("${hook}")`);
+      await page.goto(`${BASE}/settings/notifications`, { waitUntil: "domcontentloaded" });
+      await page.fill('dc-push-settings input[name="url"]', hook);
+      await Promise.all([
+        page.waitForURL(/\/settings\/notifications(#[a-z-]+)?$/, { timeout: 10000 }),
+        page.locator('form:has(input[name="url"]) button[type="submit"]').click(),
+      ]);
+      await row.waitFor({ state: "visible", timeout: 6000 });
+      webhook = hook;
+      const posted = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/settings/notifications", { timeout: 10000 });
+      await row.locator('form[data-confirm] button[type="submit"]').click();
       await confirmSwal(page);
-      await page.waitForURL((u) => !new RegExp(new URL(shellUrl).pathname + "$").test(u.toString()), { timeout: 10000 });
-      shellUrl = null;
+      const res = await posted;
+      assert(res.status() !== 403, "the confirmed form post was refused as a CSRF failure");
+      assert(!res.request().headers()["x-csrf-token"], "the form path sent the header, so the hidden field went unproven");
+      await row.waitFor({ state: "detached", timeout: 6000 });
+      assert(/\/settings\/notifications(#[a-z-]+)?$/.test(page.url()), `landed on ${page.url()}`);
+      assert(await page.locator("text=Forbidden").count() === 0, "the 403 page is showing");
+      webhook = null;
     });
 
     await run("negative: wrong CSRF token -> 403", async () => {
@@ -43,6 +62,17 @@ L.runFeature("SECURITY", async ({ page, ctx, run }) => {
       assert(res.status() === 403, `expected 403, got ${res.status()}`);
     });
   } finally {
+    if (webhook) {
+      await page.goto(`${BASE}/settings/notifications`, { waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.evaluate(async (hook) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        for (const marker of document.querySelectorAll('input[name="form"][value="webhook-remove"]')) {
+          if (!marker.closest(".list-group-item")?.textContent.includes(hook)) continue;
+          const id = marker.parentElement.querySelector('input[name="id"]').value;
+          await fetch("/settings/notifications", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-Token": token }, body: "form=webhook-remove&id=" + encodeURIComponent(id) });
+        }
+      }, webhook).catch(() => {});
+    }
     if (shellUrl) await L.deleteShell(page, shellUrl).catch(() => {});
     await L.deleteProject(page, project).catch(() => {});
   }
