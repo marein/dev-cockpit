@@ -4154,6 +4154,56 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       return `dc-swipe-pill at ${shown.top}px, "${shown.name}"`;
     });
 
+    // A file switch has nothing to wait for, so the pill never turns pending,
+    // and a cancelled pointer takes the pill and the frame's travel away with
+    // it and leaves the file where it was.
+    await run("mobile: the file swipe never waits and a cancelled swipe switches nothing", async () => {
+      const mp = await mobilePage();
+      await setWrap(mp, true);
+      const before = await activeName(mp);
+      const drag = (end, dir = -1) => mp.evaluate(async ({ end, dir }) => {
+        const el = document.querySelector("[data-editor-surface]");
+        const r = el.getBoundingClientRect();
+        const y = Math.round(r.top + r.height / 2);
+        const x0 = Math.round(r.left + r.width / 2);
+        const send = (type, x) => el.dispatchEvent(new PointerEvent(type, {
+          bubbles: true, cancelable: true, pointerId: 62, pointerType: "touch", isPrimary: true,
+          clientX: x, clientY: y, buttons: type === "pointerup" || type === "pointercancel" ? 0 : 1,
+        }));
+        send("pointerdown", x0);
+        for (let i = 1; i <= 10; i++) {
+          send("pointermove", x0 + dir * i * 15);
+          await new Promise((done) => setTimeout(done, 16));
+        }
+        const pill = document.querySelector("[data-editor-swipe-pill]");
+        const mid = {
+          pill: Boolean(pill),
+          pending: Boolean(pill && pill.classList.contains("dc-swipe-pill-pending")),
+          moved: Boolean(el.style.transform),
+        };
+        send(end, x0 + dir * 150);
+        return mid;
+      }, { end, dir });
+      const mid = await drag("pointercancel");
+      assert(mid.pill && mid.moved, `the swipe did not arm before the cancel: ${JSON.stringify(mid)}`);
+      assert(!mid.pending, "the editor's pill waits for something");
+      await sleep(400);
+      const after = await mp.evaluate(() => ({
+        pill: Boolean(document.querySelector("[data-editor-swipe-pill]")),
+        moved: document.querySelector("[data-editor-surface]").style.transform,
+      }));
+      assert(!after.pill && !after.moved, `the cancelled swipe left something standing: ${JSON.stringify(after)}`);
+      assert(await activeName(mp) === before, `the cancelled swipe switched to ${await activeName(mp)}`);
+      await drag("pointerup");
+      await sleep(400);
+      assert(await activeName(mp) !== before, "the same swipe released did not switch the file");
+      assert(!(await mp.locator("[data-editor-swipe-pill]").count()), "the committed swipe left the pill standing");
+      await drag("pointerup", 1);
+      await sleep(400);
+      assert(await activeName(mp) === before, `swiping back landed on ${await activeName(mp)}, not ${before}`);
+      return `cancel kept ${before}, release switched, swiping back returned`;
+    });
+
     // The check above drives the gesture with synthetic pointer events, which
     // skip the browser's own scroll arbitration, and that arbitration is
     // exactly what broke this. Chromium can be given a real

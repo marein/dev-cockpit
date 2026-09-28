@@ -10,6 +10,7 @@ import { available as dialogAvailable, confirm as confirmDialog, fire as fireDia
 import { applyFold } from "@dc/fold";
 import { escapeHtml } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
+import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, SwipeNav, pushSample, releaseVelocity } from "@dc/swipe";
 import { matchesTokens } from "@dc/filter";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
@@ -9263,10 +9264,9 @@ async function init(root) {
 
   // A horizontal swipe on the editor surface goes to the next or the previous
   // open file, in the order the sheet lists them, wrapping around at both ends
-  // like the terminal swipe and like Ctrl+Tab does here. Threshold, damping and
-  // abort are the terminal swipe's (terminal-scroll-zone locks the axis at
-  // 12px, terminal-swipe-nav commits at 72px or a fling and lets the frame
-  // follow damped), because it is the same gesture on the same devices.
+  // like the terminal swipe and like Ctrl+Tab does here. Threshold, damping,
+  // pill and abort are the terminal swipe's, SwipeNav from @dc/swipe, because
+  // it is the same gesture on the same devices; only the recognizer is ours.
   //
   // Its stability comes from doing what the terminal's zone does rather than
   // from listening harder: the whole gesture is taken from the browser (see
@@ -9284,22 +9284,6 @@ async function init(root) {
   // that starts on a selection is the selection's, and one in a focused editor
   // is the cursor's: dragging it along the line has to keep working while
   // someone types.
-  const SWIPE_AXIS_LOCK_PX = 12;
-  const SWIPE_COMMIT_PX = 72;
-  const SWIPE_FLING_VX = 0.5;
-  const SWIPE_MAX_TX = 56;
-  const SWIPE_FOLLOW = 0.35;
-  const SWIPE_VELOCITY_WINDOW_MS = 100;
-  const SWIPE_VELOCITY_MIN_SPAN_MS = 15;
-  // Scrolling the text is ours too now, the way the terminal's zone scrolls its
-  // history: the finger moves the content 1:1, a fast release keeps it moving
-  // and decays, and a touch during that catches it. The terminal caps its start
-  // speed against the round trip because its scroll travels the network; this
-  // one is a scrollTop on the spot, so it only has the ceiling.
-  const SWIPE_FLING_START_V = 0.35;
-  const SWIPE_FLING_STOP_V = 0.04;
-  const SWIPE_FLING_TAU_MS = 325;
-  const SWIPE_FLING_MAX_V = 4;
   // Which gestures the browser may still take inside the surface. It decides
   // the axis itself at the first pixels, so pan-y answered every swipe that
   // drifted downwards with pointercancel and scrolled the page instead. The
@@ -9321,8 +9305,19 @@ async function init(root) {
 
   function wireSurfaceSwipe() {
     let gesture = null;
-    let pill = null;
     let flingFrame = 0;
+    // The pill names the file the swipe would go to. No pending state here, a
+    // file switch has nothing to wait for.
+    const nav = new SwipeNav({
+      frame: surfaceEl,
+      host: paneColEl,
+      pillData: { editorSwipePill: "" },
+      stops: () => (tabs.some((t) => t.path === activePath)
+        ? tabs.map((t) => ({ id: t.path, name: t.name, active: t.path === activePath }))
+        : []),
+      go: (stop) => activateTab(stop.id),
+    });
+    signal.addEventListener("abort", () => nav.destroy());
     const stopFling = () => {
       if (flingFrame) cancelAnimationFrame(flingFrame);
       flingFrame = 0;
@@ -9351,49 +9346,21 @@ async function init(root) {
       }
       if (Math.abs(left) >= 0.5) window.scrollBy(0, left);
     };
+    // The terminal caps its fling's start speed against the round trip because
+    // its scroll travels the network; this one is a scrollTop on the spot, so
+    // it only has the ceiling.
     const startFling = (sc, vy) => {
-      let v = Math.max(-SWIPE_FLING_MAX_V, Math.min(SWIPE_FLING_MAX_V, vy));
-      if (Math.abs(v) < SWIPE_FLING_START_V) return;
+      let v = Math.max(-FLING_MAX_V, Math.min(FLING_MAX_V, vy));
+      if (Math.abs(v) < FLING_START_V) return;
       let last = performance.now();
       const step = (now) => {
         const dt = Math.min(64, now - last);
         last = now;
         scrollBy(sc, -v * dt);
-        v *= Math.exp(-dt / SWIPE_FLING_TAU_MS);
-        flingFrame = Math.abs(v) > SWIPE_FLING_STOP_V ? requestAnimationFrame(step) : 0;
+        v *= Math.exp(-dt / FLING_TAU_MS);
+        flingFrame = Math.abs(v) > FLING_STOP_V ? requestAnimationFrame(step) : 0;
       };
       flingFrame = requestAnimationFrame(step);
-    };
-    const removePill = () => {
-      pill?.remove();
-      pill = null;
-    };
-    // The same pill the terminal swipe shows, same class and same place: what
-    // you would land on belongs in one spot, not one per feature. No pending
-    // state here, a file switch has nothing to wait for.
-    const showPill = (tab, dir, progress) => {
-      if (!pill) {
-        pill = document.createElement("div");
-        pill.className = "dc-swipe-pill";
-        pill.dataset.editorSwipePill = "";
-        paneColEl.appendChild(pill);
-      }
-      if (pill.dataset.name !== tab.name + dir) {
-        pill.dataset.name = tab.name + dir;
-        pill.innerHTML = `${dir < 0 ? '<i class="ti ti-chevron-left" aria-hidden="true"></i>' : ""}<span class="dc-swipe-pill-name text-truncate">${escapeHtml(tab.name)}</span>${dir > 0 ? '<i class="ti ti-chevron-right" aria-hidden="true"></i>' : ""}`;
-      }
-      pill.style.opacity = String(0.35 + 0.65 * progress);
-    };
-    const resetSurface = () => {
-      if (!surfaceEl.style.transform) {
-        surfaceEl.style.transition = "";
-        return;
-      }
-      surfaceEl.style.transition = "transform 0.18s ease";
-      surfaceEl.style.transform = "";
-      setTimeout(() => {
-        surfaceEl.style.transition = "";
-      }, 200);
     };
     const endGesture = (pointerId) => {
       if (gesture && gesture.axis && pointerId !== undefined) {
@@ -9404,20 +9371,6 @@ async function init(root) {
         }
       }
       gesture = null;
-      resetSurface();
-      removePill();
-    };
-    const targetOf = (dx) => {
-      const i = tabs.findIndex((t) => t.path === activePath);
-      if (i < 0 || tabs.length < 2) return null;
-      return tabs[(i + (dx < 0 ? 1 : -1) + tabs.length) % tabs.length];
-    };
-    const velocity = (now, axis) => {
-      const recent = gesture.samples.filter((s) => now - s.t <= SWIPE_VELOCITY_WINDOW_MS);
-      if (recent.length < 2) return 0;
-      const span = recent[recent.length - 1].t - recent[0].t;
-      if (span < SWIPE_VELOCITY_MIN_SPAN_MS) return 0;
-      return (recent[recent.length - 1][axis] - recent[0][axis]) / span;
     };
     surfaceEl.addEventListener("pointerdown", (e) => {
       stopFling();
@@ -9431,7 +9384,7 @@ async function init(root) {
         startX: e.clientX,
         startY: e.clientY,
         lastY: e.clientY,
-        dx: 0,
+        dx: null,
         axis: null,
         scroller: scrollerFor(e.target),
         samples: [{ t: e.timeStamp, x: e.clientX, y: e.clientY }],
@@ -9439,12 +9392,11 @@ async function init(root) {
     }, { signal });
     surfaceEl.addEventListener("pointermove", (e) => {
       if (!gesture || e.pointerId !== gesture.pointerId) return;
-      gesture.samples.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
-      while (gesture.samples.length > 1 && e.timeStamp - gesture.samples[0].t > SWIPE_VELOCITY_WINDOW_MS) gesture.samples.shift();
+      pushSample(gesture.samples, { t: e.timeStamp, x: e.clientX, y: e.clientY });
       const dx = e.clientX - gesture.startX;
       const dy = e.clientY - gesture.startY;
       if (gesture.axis === null) {
-        if (Math.hypot(dx, dy) < SWIPE_AXIS_LOCK_PX) return;
+        if (Math.hypot(dx, dy) < AXIS_LOCK_PX) return;
         gesture.axis = Math.abs(dy) >= Math.abs(dx) ? "v" : "h";
         // From here the gesture is ours, whatever the page around it does.
         try {
@@ -9459,33 +9411,24 @@ async function init(root) {
         gesture.lastY = e.clientY;
         return;
       }
+      nav.onSwipe({ phase: "move", dx, begin: gesture.dx === null });
       gesture.dx = dx;
-      const target = targetOf(dx);
-      const tx = Math.max(-SWIPE_MAX_TX, Math.min(SWIPE_MAX_TX, dx * SWIPE_FOLLOW));
-      surfaceEl.style.transition = "none";
-      surfaceEl.style.transform = target && tx ? `translateX(${tx}px)` : "";
-      if (target) showPill(target, dx < 0 ? 1 : -1, Math.min(1, Math.abs(dx) / SWIPE_COMMIT_PX));
-      else removePill();
     }, { passive: false, signal });
     surfaceEl.addEventListener("pointerup", (e) => {
       if (!gesture || e.pointerId !== gesture.pointerId) return;
-      const dx = gesture.dx;
-      const axis = gesture.axis;
-      const scroller = gesture.scroller;
-      const vx = velocity(e.timeStamp, "x");
-      const vy = velocity(e.timeStamp, "y");
-      const target = targetOf(dx);
+      const { dx, axis, scroller, samples } = gesture;
       endGesture(e.pointerId);
       if (axis === "v") {
-        startFling(scroller, vy);
+        startFling(scroller, releaseVelocity(samples, e.timeStamp, "y"));
         return;
       }
-      if (axis !== "h" || !target) return;
-      const fling = Math.abs(vx) > SWIPE_FLING_VX && Math.sign(vx) === Math.sign(dx);
-      if (Math.abs(dx) > SWIPE_COMMIT_PX || fling) activateTab(target.path);
+      if (axis === "h") nav.onSwipe({ phase: "end", dx: dx ?? 0, vx: releaseVelocity(samples, e.timeStamp, "x") });
     }, { signal });
     surfaceEl.addEventListener("pointercancel", (e) => {
-      if (gesture && e.pointerId === gesture.pointerId) endGesture(e.pointerId);
+      if (!gesture || e.pointerId !== gesture.pointerId) return;
+      const horizontal = gesture.axis === "h";
+      endGesture(e.pointerId);
+      if (horizontal) nav.onSwipe({ phase: "cancel" });
     }, { signal });
   }
 

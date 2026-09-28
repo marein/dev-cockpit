@@ -1961,6 +1961,447 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     return `stepped both ways over ${ids.length} rows and wrapped`;
   });
 
+  await run("on a phone a swipe on the transcript steps through the assistants, never over a selection, a field or a code block", async () => {
+    const mp = await mobilePage();
+    await openConversation(mp, chatID);
+    await idle(mp);
+    const ids = await mp.locator(".dc-app > .dc-ctx[data-assistant-rows] [data-assistant-instance]")
+      .evaluateAll((rows) => rows.map((row) => row.dataset.assistantInstance));
+    assert(ids.length >= 2, `the column holds ${ids.length} assistants, expected at least 2`);
+    const at = ids.indexOf(chatID);
+    const cdp = await mp.context().newCDPSession(mp);
+    const touch = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points });
+    const scrollerBox = async () => mp.locator("[data-assistant-scroll]").boundingBox();
+    const drag = async (from, dx, dy, opts = {}) => {
+      await touch("touchStart", [{ x: from.x, y: from.y, id: 1 }]);
+      if (opts.hold) await sleep(opts.hold);
+      let mid = null;
+      for (let i = 1; i <= 10; i += 1) {
+        await touch("touchMove", [{ x: Math.round(from.x + dx * i / 10), y: Math.round(from.y + dy * i / 10), id: 1 }]);
+        await sleep(16);
+        if (i === 8) {
+          mid = await mp.evaluate(() => {
+            const pill = document.querySelector(".dc-swipe-pill");
+            return {
+              pill: pill ? pill.textContent.trim() : "",
+              top: pill ? Math.round(pill.getBoundingClientRect().top) : -1,
+              moved: Boolean(document.querySelector("[data-assistant-scroll]").style.transform),
+            };
+          });
+        }
+      }
+      await touch("touchEnd", []);
+      return mid;
+    };
+    const middle = async () => {
+      const box = await scrollerBox();
+      return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+    };
+    const landsOn = async (id) => {
+      await mp.waitForURL(new RegExp(`/assistants/${id}$`), { timeout: 10000 });
+      await mp.waitForSelector(READY, { timeout: 15000 });
+      await sleep(300);
+    };
+    const staysOn = async (id, why) => {
+      await sleep(900);
+      assert(new URL(mp.url()).pathname === `/assistants/${id}`, `${why} navigated to ${mp.url()}`);
+      assert(!(await mp.locator(".dc-swipe-pill").count()), `${why} left a pill standing`);
+    };
+
+    const next = ids[(at + 1) % ids.length];
+    const name = await mp.locator(`.dc-app > .dc-ctx [data-assistant-instance="${next}"]`).getAttribute("data-assistant-name");
+    const box = await scrollerBox();
+    const left = await drag({ x: Math.round(box.x + box.width * 0.8), y: Math.round(box.y + box.height / 2) }, -150, 6);
+    assert(left.pill.includes(name || "New assistant"), `the pill reads "${left.pill}", expected the next row "${name}"`);
+    assert(left.top >= 0 && left.top < 200, `the pill is not at the top: ${left.top}px`);
+    assert(left.moved, "the transcript did not follow the finger");
+    await landsOn(next);
+    let b = await scrollerBox();
+    await drag({ x: Math.round(b.x + b.width * 0.2), y: Math.round(b.y + b.height / 2) }, 150, -6);
+    await landsOn(chatID);
+
+    await openConversation(mp, ids[0]);
+    await idle(mp);
+    b = await scrollerBox();
+    await drag({ x: Math.round(b.x + b.width * 0.2), y: Math.round(b.y + b.height / 2) }, 150, 0);
+    await landsOn(ids[ids.length - 1]);
+
+    await openConversation(mp, chatID);
+    await idle(mp);
+    const short = await drag(await middle(), -40, 0);
+    assert(short.pill, "a short drag showed no pill while the finger was down");
+    await staysOn(chatID, "a drag short of the commit distance");
+
+    await drag(await middle(), -150, 0, { hold: 600 });
+    await staysOn(chatID, "a long press that then slid sideways");
+
+    const input = await mp.locator("[data-assistant-input]").boundingBox();
+    await drag({ x: Math.round(input.x + input.width * 0.8), y: Math.round(input.y + input.height / 2) }, -150, 0);
+    await staysOn(chatID, "a swipe inside the message box");
+    await mp.evaluate(() => document.activeElement?.blur());
+
+    await mp.evaluate(() => {
+      if (document.querySelector("[data-assistant-log] [data-assistant-text]")) return;
+      const probe = document.createElement("div");
+      probe.className = "text-break markdown";
+      probe.dataset.assistantText = "";
+      probe.dataset.swipeProbe = "";
+      probe.innerHTML = "<p>A message to select and copy.</p>";
+      document.querySelector("[data-assistant-log]").append(probe);
+    });
+    const bubble = mp.locator("[data-assistant-log] [data-assistant-text]").last();
+    await bubble.scrollIntoViewIfNeeded();
+    const selected = await bubble.evaluate((node) => {
+      window.getSelection().selectAllChildren(node);
+      return window.getSelection().toString().length;
+    });
+    assert(selected > 0, "the message holds no text to select");
+    const text = await bubble.boundingBox();
+    await drag({ x: Math.round(text.x + text.width * 0.8), y: Math.round(text.y + Math.min(text.height, 40) / 2) }, -150, 0);
+    await staysOn(chatID, "a swipe over a standing selection");
+    await mp.evaluate(() => window.getSelection().removeAllRanges());
+
+    const wide = await bubble.evaluate((node) => {
+      const pre = document.createElement("pre");
+      pre.dataset.swipeProbe = "";
+      pre.innerHTML = "<code>" + "wide_code_line_".repeat(40) + "</code>";
+      node.append(pre);
+      pre.scrollIntoView({ block: "center", behavior: "instant" });
+      return pre.scrollWidth > pre.clientWidth;
+    });
+    assert(wide, "the probe code block does not scroll sideways");
+    const pre = await mp.locator("pre[data-swipe-probe]").boundingBox();
+    await drag({ x: Math.round(pre.x + pre.width * 0.8), y: Math.round(pre.y + pre.height / 2) }, -150, 0);
+    await staysOn(chatID, "a swipe on a code block");
+    const scrolled = await mp.locator("pre[data-swipe-probe]").evaluate((node) => node.scrollLeft);
+    assert(scrolled > 0, "the code block did not scroll sideways under the finger");
+
+    await mp.evaluate(() => {
+      document.querySelectorAll("[data-swipe-probe]").forEach((node) => node.remove());
+      const pad = document.createElement("div");
+      pad.dataset.swipeProbe = "";
+      pad.style.height = "3000px";
+      document.querySelector("[data-assistant-log]").prepend(pad);
+    });
+    await sleep(200);
+    const top0 = await mp.locator("[data-assistant-scroll]").evaluate((node) => node.scrollTop);
+    const m = await middle();
+    await drag({ x: m.x, y: m.y - 100 }, 20, 220);
+    await sleep(400);
+    const top1 = await mp.locator("[data-assistant-scroll]").evaluate((node) => node.scrollTop);
+    assert(top1 < top0 - 100, `a vertical drag scrolled the transcript from ${top0} to ${top1}`);
+    await staysOn(chatID, "a vertical drag");
+    await openConversation(mp, chatID);
+    return `stepped both ways over ${ids.length} rows and wrapped; selection, box, code block, long press and scroll left alone`;
+  });
+
+  // The pill stays as the pending indicator until the page arrives, even when
+  // the surface is swapped for a fresher one meanwhile, and a second swipe
+  // chains from where the first was heading. Every way a gesture is taken away
+  // (a second finger, touchcancel, a context menu, a selection) ends it
+  // without a switch, and a field inside the transcript keeps its own drag.
+  await run("on a phone a swipe waits with a pending pill, chains from it, and gives up when the gesture is taken away", async () => {
+    const mp = await mobilePage();
+    await openConversation(mp, chatID);
+    await idle(mp);
+    const rowIDs = () => mp.locator(".dc-app > .dc-ctx[data-assistant-rows] [data-assistant-instance]")
+      .evaluateAll((rows) => rows.map((row) => row.dataset.assistantInstance));
+    let ids = await rowIDs();
+    if (ids.length < 3) {
+      const token = await mp.locator('meta[name="csrf-token"]').getAttribute("content");
+      for (let i = ids.length; i < 3; i += 1) {
+        const made = await mp.request.post(`${BASE}/assistants/new`, { form: { csrf_token: token, form: "new", coder: "claude" }, headers: { Accept: "application/json" } });
+        assert((await made.json().catch(() => ({}))).id, `no extra assistant for the chain: ${made.status()}`);
+      }
+      await openConversation(mp, chatID);
+      await idle(mp);
+      ids = await rowIDs();
+    }
+    assert(ids.length >= 3, `the column holds ${ids.length} assistants, the chain needs 3`);
+    const at = ids.indexOf(chatID);
+    const one = ids[(at + 1) % ids.length];
+    const two = ids[(at + 2) % ids.length];
+    const cdp = await mp.context().newCDPSession(mp);
+    const touch = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points });
+    const startAt = async (share) => {
+      const box = await mp.locator("[data-assistant-scroll]").boundingBox();
+      return { x: Math.round(box.x + box.width * share), y: Math.round(box.y + box.height / 2) };
+    };
+    const gesture = async (from, dx, { mid = null, end = "touchEnd" } = {}) => {
+      await touch("touchStart", [{ x: from.x, y: from.y, id: 1 }]);
+      for (let i = 1; i <= 10; i += 1) {
+        const point = { x: Math.round(from.x + dx * i / 10), y: from.y, id: 1 };
+        await touch("touchMove", [point]);
+        await sleep(16);
+        if (i === 5 && mid) await mid(point);
+      }
+      await touch(end, []);
+    };
+    const pill = () => mp.evaluate(() => {
+      const node = document.querySelector(".dc-swipe-pill");
+      return node ? { key: node.dataset.key || "", pending: node.classList.contains("dc-swipe-pill-pending") } : null;
+    });
+    const pathIs = (id) => new URL(mp.url()).pathname === `/assistants/${id}`;
+    const landsOn = async (id) => {
+      await mp.waitForURL(new RegExp(`/assistants/${id}$`), { timeout: 10000 });
+      await mp.waitForSelector(READY, { timeout: 15000 });
+      await sleep(300);
+    };
+    let release = () => {};
+    const hold = () => new Promise((done) => { release = done; });
+    let held = hold();
+    const slowed = (url) => url.pathname === `/assistants/${one}` || url.pathname === `/assistants/${two}`;
+    await mp.route(slowed, async (route) => {
+      await held;
+      await route.continue().catch(() => {});
+    });
+    try {
+      await gesture(await startAt(0.8), -150);
+      await sleep(300);
+      let seen = await pill();
+      assert(seen && seen.pending && seen.key === `${one}:1`, `no pending pill for ${one} while the page loads: ${JSON.stringify(seen)}`);
+      assert(pathIs(chatID), `the page left before the load came back: ${mp.url()}`);
+
+      const deadline = await mp.evaluate(() => document.querySelector("dc-assistant").swipeNav?.deadline || 0);
+      assert(deadline > 0, "the pending swipe armed no failsafe deadline");
+      await sleep(200);
+      await mp.evaluate(() => {
+        const surface = document.querySelector("dc-assistant");
+        surface.dataset.runnerOld = "1";
+        surface.toggleAttribute("blocked");
+        document.dispatchEvent(new CustomEvent("dc:assistant"));
+      });
+      await mp.waitForSelector("dc-assistant[ready]:not([data-runner-old])", { timeout: 10000 });
+      seen = await pill();
+      assert(seen && seen.pending && seen.key === `${one}:1`, `the pending pill went with the swapped surface: ${JSON.stringify(seen)}`);
+      const adopted = await mp.evaluate(() => document.querySelector("dc-assistant").swipeNav?.deadline || 0);
+      assert(adopted === deadline, `the swap moved the failsafe deadline from ${deadline} to ${adopted}`);
+
+      await gesture(await startAt(0.8), -150);
+      await sleep(300);
+      seen = await pill();
+      assert(seen && seen.pending && seen.key === `${two}:1`, `the second swipe did not chain from the pending stop to ${two}: ${JSON.stringify(seen)}`);
+      release();
+      await landsOn(two);
+      assert(!(await pill()), "the pill outlived the page it waited for");
+
+      held = hold();
+      await gesture(await startAt(0.2), 150);
+      await sleep(300);
+      seen = await pill();
+      assert(seen && seen.pending && seen.key === `${one}:-1`, `no pending pill on the way back: ${JSON.stringify(seen)}`);
+      await gesture(await startAt(0.8), -150);
+      await sleep(300);
+      assert(!(await pill()), "swiping back onto the open page left the pill standing");
+      release();
+      await sleep(1200);
+      assert(pathIs(two), `swiping back onto the open page still navigated to ${mp.url()}`);
+    } finally {
+      release();
+      await mp.unroute(slowed).catch(() => {});
+    }
+
+    await openConversation(mp, chatID);
+    await idle(mp);
+    const untouched = async (why) => {
+      await sleep(900);
+      assert(pathIs(chatID), `${why} navigated to ${mp.url()}`);
+      assert(!(await pill()), `${why} left a pill standing`);
+      const moved = await mp.locator("[data-assistant-scroll]").evaluate((node) => node.style.transform);
+      assert(!moved, `${why} left the transcript at ${moved}`);
+    };
+    const midPill = async () => {
+      const seen = await pill();
+      assert(seen, "the gesture showed no pill before it was taken away");
+    };
+
+    {
+      const from = await startAt(0.8);
+      await touch("touchStart", [{ x: from.x, y: from.y, id: 1 }]);
+      let point = null;
+      for (let i = 1; i <= 5; i += 1) {
+        point = { x: Math.round(from.x - 150 * i / 10), y: from.y, id: 1 };
+        await touch("touchMove", [point]);
+        await sleep(16);
+      }
+      await midPill();
+      await touch("touchStart", [point, { x: point.x - 40, y: point.y + 60, id: 2 }]);
+      await sleep(50);
+      const after = await mp.evaluate(() => ({
+        pill: Boolean(document.querySelector(".dc-swipe-pill")),
+        moved: document.querySelector("[data-assistant-scroll]").style.transform,
+      }));
+      await touch("touchEnd", []);
+      assert(!after.pill && !after.moved, `the second finger's touchstart alone did not end the swipe: ${JSON.stringify(after)}`);
+    }
+    await untouched("a second finger");
+
+    await gesture(await startAt(0.8), -150, { mid: midPill, end: "touchCancel" });
+    await untouched("a touchcancel");
+
+    await gesture(await startAt(0.8), -150, {
+      mid: async () => {
+        await midPill();
+        await mp.locator("[data-assistant-scroll]").evaluate((node) => {
+          node.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+        });
+      },
+    });
+    await untouched("a context menu");
+
+    await mp.evaluate(() => {
+      const probe = document.createElement("div");
+      probe.className = "text-break markdown";
+      probe.dataset.swipeProbe = "";
+      probe.innerHTML = "<p>A message a selection lands on mid gesture.</p>";
+      document.querySelector("[data-assistant-log]").append(probe);
+      probe.scrollIntoView({ block: "center", behavior: "instant" });
+    });
+    await gesture(await startAt(0.8), -150, {
+      mid: async () => {
+        await midPill();
+        await mp.evaluate(() => window.getSelection().selectAllChildren(document.querySelector("[data-swipe-probe]")));
+        await sleep(50);
+      },
+    });
+    await untouched("a selection appearing mid gesture");
+    await mp.evaluate(() => {
+      window.getSelection().removeAllRanges();
+      document.querySelectorAll("[data-swipe-probe]").forEach((node) => node.remove());
+    });
+
+    await mp.evaluate(() => {
+      const field = document.createElement("textarea");
+      field.dataset.swipeProbe = "";
+      field.style.width = "100%";
+      field.style.height = "120px";
+      field.value = "a field inside the transcript";
+      document.querySelector("[data-assistant-log]").append(field);
+      field.scrollIntoView({ block: "center", behavior: "instant" });
+    });
+    const field = await mp.locator("textarea[data-swipe-probe]").boundingBox();
+    await gesture({ x: Math.round(field.x + field.width * 0.8), y: Math.round(field.y + field.height / 2) }, -150);
+    await untouched("a swipe inside a field in the transcript");
+    await mp.evaluate(() => document.activeElement?.blur());
+
+    const blocked = await mp.evaluate(async () => {
+      const map = JSON.parse(document.querySelector('script[type="importmap"]').textContent);
+      const { swipeBlockedAt } = await import(map.imports["@dc/swipe"]);
+      const scroller = document.querySelector("[data-assistant-scroll]");
+      const log = document.querySelector("[data-assistant-log]");
+      const probe = (html) => {
+        const box = document.createElement("div");
+        box.dataset.swipeProbe = "";
+        box.innerHTML = html;
+        log.append(box);
+        return box.querySelector("[data-hit]");
+      };
+      const out = {
+        textarea: swipeBlockedAt(probe("<textarea data-hit></textarea>"), scroller),
+        input: swipeBlockedAt(probe("<input data-hit>"), scroller),
+        editable: swipeBlockedAt(probe("<div contenteditable><b data-hit>rich</b></div>"), scroller),
+        notEditable: swipeBlockedAt(probe("<div contenteditable=\"false\"><b data-hit>fixed</b></div>"), scroller),
+        wide: swipeBlockedAt(probe("<pre style=\"overflow-x:auto\"><code data-hit>" + "wide_line_".repeat(80) + "</code></pre>"), scroller),
+        text: swipeBlockedAt(probe("<p><span data-hit>plain text</span></p>"), scroller),
+        textNode: swipeBlockedAt(probe("<p data-hit>plain</p>").firstChild, scroller),
+      };
+      document.querySelectorAll("[data-swipe-probe]").forEach((node) => node.remove());
+      return out;
+    });
+    const want = { textarea: true, input: true, editable: true, notEditable: false, wide: true, text: false, textNode: false };
+    for (const [key, value] of Object.entries(want)) {
+      assert(blocked[key] === value, `swipeBlockedAt ${key} is ${blocked[key]}, expected ${value}: ${JSON.stringify(blocked)}`);
+    }
+    await openConversation(mp, chatID);
+    return `pending pill kept across a swap, chained to ${ids.indexOf(two)}, swiping back aborted; second finger, touchcancel, context menu, selection and a field left alone`;
+  });
+
+  // ?all=1 is the same thread shown whole, so a round that lands back on the
+  // assistant already open aborts the load in flight and keeps that address,
+  // for Ctrl+Tab and for the swipe alike. Every other assistant's page is held
+  // back, so each step after the first chains from the pending one: once a
+  // step back, once a whole round forward over every row. A same page check
+  // that compares the query again reads the open row's plain address as
+  // another page and loads it.
+  await run("a step or a swipe back onto the open assistant keeps ?all=1 and loads nothing", async () => {
+    const round = async (p, label, steps) => {
+      await p.goto(`${BASE}/assistants/${chatID}?all=1`, { waitUntil: "domcontentloaded" });
+      await dismissUpdate(p);
+      await p.waitForSelector(READY, { timeout: 15000 });
+      await idle(p);
+      const ids = await p.locator(".dc-app > .dc-ctx[data-assistant-rows] [data-assistant-instance]")
+        .evaluateAll((rows) => rows.map((row) => row.dataset.assistantInstance));
+      assert(ids.length >= 2, `${label}: the column holds ${ids.length} assistants, expected at least 2`);
+      let release = () => {};
+      const held = new Promise((done) => { release = done; });
+      const slowed = (url) => url.pathname.startsWith("/assistants/") && url.pathname !== `/assistants/${chatID}`
+        && ids.includes(url.pathname.slice("/assistants/".length));
+      await p.route(slowed, async (route) => {
+        await held;
+        await route.continue().catch(() => {});
+      });
+      const plain = [];
+      const aborted = [];
+      const watch = (request) => {
+        const url = new URL(request.url());
+        if (url.pathname === `/assistants/${chatID}` && url.search !== "?all=1") plain.push(request.url());
+      };
+      const failed = (request) => {
+        if (slowed(new URL(request.url()))) aborted.push(request.url());
+      };
+      p.on("request", watch);
+      p.on("requestfailed", failed);
+      try {
+        for (const step of steps(ids.length)) {
+          await step();
+          await sleep(300);
+        }
+        assert(aborted.length > 0, `${label}: landing back on the open assistant left the load in flight`);
+        release();
+        await sleep(1200);
+      } finally {
+        release();
+        p.off("request", watch);
+        p.off("requestfailed", failed);
+        await p.unroute(slowed).catch(() => {});
+      }
+      const url = new URL(p.url());
+      assert(url.pathname === `/assistants/${chatID}` && url.search === "?all=1", `${label} back onto the open assistant left ${p.url()}`);
+      assert(!plain.length, `${label} back onto the open assistant loaded the plain page: ${plain.join(" ")}`);
+      assert((await p.locator("[data-assistant-all]").count()) === 0, `${label}: the whole transcript went away`);
+      assert(!(await p.locator(".dc-swipe-pill").count()), `${label} left a pill standing`);
+    };
+    const back = (forward, backward) => () => [forward, backward];
+    const whole = (forward) => (count) => Array.from({ length: count }, () => forward);
+
+    const ctrlTab = () => page.keyboard.press("Control+Tab");
+    const ctrlShiftTab = () => page.keyboard.press("Control+Shift+Tab");
+    await round(page, "Ctrl+Tab", back(ctrlTab, ctrlShiftTab));
+    await round(page, "a round of Ctrl+Tab", whole(ctrlTab));
+
+    const mp = await mobilePage();
+    const cdp = await mp.context().newCDPSession(mp);
+    const touch = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points });
+    const swipe = async (share, dx) => {
+      const box = await mp.locator("[data-assistant-scroll]").boundingBox();
+      const from = { x: Math.round(box.x + box.width * share), y: Math.round(box.y + box.height / 2) };
+      await touch("touchStart", [{ x: from.x, y: from.y, id: 1 }]);
+      for (let i = 1; i <= 10; i += 1) {
+        await touch("touchMove", [{ x: Math.round(from.x + dx * i / 10), y: from.y, id: 1 }]);
+        await sleep(16);
+      }
+      await touch("touchEnd", []);
+    };
+    const swipeOn = () => swipe(0.8, -150);
+    const swipeBack = () => swipe(0.2, 150);
+    await round(mp, "a swipe", back(swipeOn, swipeBack));
+    await round(mp, "a round of swipes", whole(swipeOn));
+
+    await openConversation(page, chatID);
+    await openConversation(mp, chatID);
+    return "a step back and a whole round, by Ctrl+Tab and by swipe, came back to ?all=1, aborted the load and loaded nothing";
+  });
+
   // A name is how several of them are told apart, so the list column renames
   // in place and the page's head follows.
   await run("an assistant is renamed from its row", async () => {

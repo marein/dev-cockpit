@@ -176,6 +176,12 @@ func DocsTopics() []DocsTopic {
 					Desc:  `Steps through the list in the order it stands in and wraps at either end.`,
 				},
 				{
+					Title:    "Swipe to the next assistant",
+					Tag:      "Touch",
+					TagClass: "bg-blue-lt",
+					Desc:     `On a phone swipe left or right on the conversation to go to the next or the previous assistant in the list, wrapping at both ends, and a pill names the one you would land on. Up and down stays scrolling. The swipe steps aside while text is selected, after a long press, in the message box and on a code block that scrolls sideways.`,
+				},
+				{
 					Title:    "How full one is",
 					Tag:      "Context",
 					TagClass: "bg-blue-lt",

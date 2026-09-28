@@ -1,3 +1,5 @@
+import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, pushSample, releaseVelocity } from "@dc/swipe";
+
 (() => {
   // Proportional swipe scrolling. While the finger is down, travel is streamed
   // as pixel deltas through the terminal-scroll event, the consumer in
@@ -11,15 +13,8 @@
   // this in-flight glide stays under a fraction of the screen at the measured
   // round trip time, on a fast link the cap never binds, on a slow one the
   // fling slows down instead of overshooting.
-  const AXIS_LOCK_PX = 12; // travel to commit to an axis
   const TAP_MOVE_MAX_PX = 24; // travel that turns a tap into a swipe (no focus)
   const TAP_MAX_MS = 300; // longer than this is a long-press (select), not a dismiss tap
-  const VELOCITY_WINDOW_MS = 100; // pointer samples that feed the release velocity
-  const VELOCITY_MIN_SPAN_MS = 15; // shorter sample spans give no usable velocity
-  const FLING_START_VELOCITY = 0.35; // px/ms release speed that starts a fling
-  const FLING_STOP_VELOCITY = 0.04; // px/ms, the fling ends below this
-  const FLING_DECAY_TAU_MS = 325; // exponential decay time constant
-  const FLING_MAX_VELOCITY = 4; // px/ms hard ceiling, even on a LAN
   const FLING_CAP_MIN_VELOCITY = 0.5; // px/ms floor, keeps flings usable on bad links
   const FLING_OVERSHOOT_FRACTION = 0.4; // of the zone height in flight at the rtt
   const RTT_DEFAULT_MS = 150; // assumed round trip before the first measurement
@@ -398,9 +393,9 @@
       }
       this.consumePointerEvent(event);
       const axis = this.axis;
-      const velocity = axis === "v" ? this.releaseVelocity(event.timeStamp) : 0;
+      const velocity = axis === "v" ? releaseVelocity(this.samples, event.timeStamp, "y") : 0;
       const horizontal = axis === "h"
-        ? { dx: event.clientX - this.startX, vx: this.releaseVelocityX(event.timeStamp) }
+        ? { dx: event.clientX - this.startX, vx: releaseVelocity(this.samples, event.timeStamp, "x") }
         : null;
       this.axis = null; // consumed here, cancelDrag must not emit a swipe cancel
       this.cancelDrag();
@@ -412,41 +407,7 @@
     }
 
     recordSample(t, x, y) {
-      this.samples.push({ t, x, y });
-      while (this.samples.length > 1 && t - this.samples[0].t > VELOCITY_WINDOW_MS) {
-        this.samples.shift();
-      }
-    }
-
-    // Velocity over the recent sample window, in finger px/ms. A finger that
-    // rested before lifting leaves only stale samples, that is not a fling.
-    releaseVelocity(now) {
-      const recent = this.samples.filter((sample) => now - sample.t <= VELOCITY_WINDOW_MS);
-      if (recent.length < 2) {
-        return 0;
-      }
-      const first = recent[0];
-      const last = recent[recent.length - 1];
-      const span = last.t - first.t;
-      if (span < VELOCITY_MIN_SPAN_MS) {
-        return 0;
-      }
-      return (last.y - first.y) / span;
-    }
-
-    // Same window, horizontal axis, feeds the swipe navigation's fling commit.
-    releaseVelocityX(now) {
-      const recent = this.samples.filter((sample) => now - sample.t <= VELOCITY_WINDOW_MS);
-      if (recent.length < 2) {
-        return 0;
-      }
-      const first = recent[0];
-      const last = recent[recent.length - 1];
-      const span = last.t - first.t;
-      if (span < VELOCITY_MIN_SPAN_MS) {
-        return 0;
-      }
-      return (last.x - first.x) / span;
+      pushSample(this.samples, { t, x, y });
     }
 
     // The glide after a catch is roughly velocity times round trip, capping the
@@ -454,11 +415,11 @@
     flingVelocityCap() {
       const height = this.zone?.clientHeight || 600;
       const cap = (FLING_OVERSHOOT_FRACTION * height) / Math.max(this.rtt, 1);
-      return Math.min(FLING_MAX_VELOCITY, Math.max(FLING_CAP_MIN_VELOCITY, cap));
+      return Math.min(FLING_MAX_V, Math.max(FLING_CAP_MIN_VELOCITY, cap));
     }
 
     maybeFling(velocity) {
-      if (Math.abs(velocity) < FLING_START_VELOCITY) {
+      if (Math.abs(velocity) < FLING_START_V) {
         return;
       }
       const cap = this.flingVelocityCap();
@@ -470,13 +431,13 @@
     flingStep(now) {
       const dt = Math.max(0, now - this.flingLastTime);
       this.flingLastTime = now;
-      const decay = Math.exp(-dt / FLING_DECAY_TAU_MS);
-      const dy = this.flingVelocity * FLING_DECAY_TAU_MS * (1 - decay);
+      const decay = Math.exp(-dt / FLING_TAU_MS);
+      const dy = this.flingVelocity * FLING_TAU_MS * (1 - decay);
       this.flingVelocity *= decay;
       if (dy !== 0) {
         this.emitScroll(dy, false);
       }
-      if (Math.abs(this.flingVelocity) < FLING_STOP_VELOCITY) {
+      if (Math.abs(this.flingVelocity) < FLING_STOP_V) {
         this.flingFrame = null;
         return;
       }

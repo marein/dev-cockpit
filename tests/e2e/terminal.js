@@ -26,6 +26,7 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
   const project = `zztc-${tag}`;
   let shellUrl = null;
   let shellUrl2 = null;
+  let shellUrl3 = null;
   try {
     await L.createProject(page, project);
     shellUrl = await L.createShell(page, project);
@@ -462,6 +463,88 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await sleep(500);
     });
 
+    // On a slow line the pill stays as the pending indicator until the page
+    // arrives, a second swipe chains from where the first was heading, and a
+    // swipe back onto the page already showing gives the load up. A cancelled
+    // pointer ends the gesture without a switch.
+    await run("mobile: a pending swipe keeps its pill, chains from it, and gives up on the way back or a cancel", async () => {
+      shellUrl3 = await L.createShell(mp, project);
+      const idOf = (url) => new URL(url).pathname.split("/").pop();
+      const [firstId, secondId, thirdId] = [shellUrl, shellUrl2, shellUrl3].map(idOf);
+      await mp.goto(shellUrl, { waitUntil: "domcontentloaded" });
+      await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
+      await sleep(800);
+      const order = await mp.$$eval("terminal-tabs .terminal-tab", (els) => els.map((e) => e.dataset.tabId));
+      const at = order.indexOf(firstId);
+      assert(order[at + 1] === secondId && order[at + 2] === thirdId, `the chain needs ours in a row: ${order}`);
+      const drag = (dir, end = "pointerup") => mp.evaluate(async ({ dir, end }) => {
+        const zone = document.querySelector("terminal-scroll-zone").shadowRoot.querySelector(".zone");
+        const rect = zone.getBoundingClientRect();
+        let x = rect.left + rect.width * (dir < 0 ? 0.8 : 0.2);
+        const y = rect.top + rect.height / 2;
+        const ev = (type, opts) => zone.dispatchEvent(new PointerEvent(type, Object.assign({ bubbles: true, composed: true, pointerId: 11, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, clientX: x, clientY: y }, opts)));
+        const tick = () => new Promise((resolve) => setTimeout(resolve, 16));
+        ev("pointerdown", {});
+        for (let i = 0; i < 10; i++) { x += dir * 12; ev("pointermove", { clientX: x }); await tick(); }
+        const mid = Boolean(document.querySelector(".terminal-swipe-pill"));
+        ev(end, { buttons: 0, clientX: x });
+        return mid;
+      }, { dir, end });
+      const pill = () => mp.evaluate(() => {
+        const node = document.querySelector(".terminal-swipe-pill");
+        return node ? { key: node.dataset.key || "", pending: node.classList.contains("dc-swipe-pill-pending") } : null;
+      });
+      const on = (id) => new URL(mp.url()).pathname.endsWith(`/${id}`);
+      let release = () => {};
+      const hold = () => new Promise((done) => { release = done; });
+      let held = hold();
+      const slowed = (url) => url.pathname.endsWith(`/${secondId}`) || url.pathname.endsWith(`/${thirdId}`);
+      await mp.route(slowed, async (route) => {
+        await held;
+        await route.continue().catch(() => {});
+      });
+      try {
+        await drag(-1);
+        await sleep(200);
+        let seen = await pill();
+        assert(seen && seen.pending && seen.key === `${secondId}:1`, `no pending pill for the right neighbour: ${JSON.stringify(seen)}`);
+        assert(on(firstId), `the page left before its load came back: ${mp.url()}`);
+        await drag(-1);
+        await sleep(200);
+        seen = await pill();
+        assert(seen && seen.pending && seen.key === `${thirdId}:1`, `the second swipe did not chain from the pending target: ${JSON.stringify(seen)}`);
+        release();
+        await mp.waitForURL(new RegExp(thirdId), { timeout: 8000 });
+        await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
+        await sleep(500);
+        assert(!(await pill()), "the pill outlived the page it waited for");
+
+        held = hold();
+        await drag(1);
+        await sleep(200);
+        seen = await pill();
+        assert(seen && seen.pending && seen.key === `${secondId}:-1`, `no pending pill on the way back: ${JSON.stringify(seen)}`);
+        await drag(-1);
+        await sleep(200);
+        assert(!(await pill()), "swiping back onto the open page left the pill standing");
+        release();
+        await sleep(1200);
+        assert(on(thirdId), `swiping back onto the open page still navigated to ${mp.url()}`);
+      } finally {
+        release();
+        await mp.unroute(slowed).catch(() => {});
+      }
+
+      assert(await drag(-1, "pointercancel"), "the cancelled swipe showed no pill before the cancel");
+      await sleep(900);
+      assert(on(thirdId), `a cancelled swipe navigated to ${mp.url()}`);
+      assert(!(await pill()), "a cancelled swipe left the pill standing");
+      const moved = await mp.evaluate(() => document.getElementById("terminal").style.transform);
+      assert(!moved, `a cancelled swipe left the frame at ${moved}`);
+      await mp.goto(shellUrl, { waitUntil: "domcontentloaded" });
+      await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
+    });
+
     // The copy view is where text is copied from: a terminal draws to a canvas
     // and holds no selectable text at all, so the view puts what the terminal
     // has said into the page as real text in the terminal's place. pre-wrap and
@@ -495,6 +578,7 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await mp.waitForFunction(() => /not available|clipboard/i.test(document.body.innerText), null, { timeout: 5000 });
     }, { soft: true });
   } finally {
+    if (shellUrl3) await L.deleteShell(page, shellUrl3).catch(() => {});
     if (shellUrl2) await L.deleteShell(page, shellUrl2).catch(() => {});
     if (shellUrl) await L.deleteShell(page, shellUrl).catch(() => {});
     await L.deleteProject(page, project).catch(() => {});

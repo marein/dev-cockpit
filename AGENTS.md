@@ -589,7 +589,27 @@ test. Update this file when a convention changes.
   rows while a page loads). It hangs on `dc-assistant` in the document's
   capture phase, so it is caught with the cursor in the composer, and it reads
   the rows of the page's own column (`.dc-app > .dc-ctx[data-assistant-rows]`),
-  never the phone's sheet, which holds the same rows a second time. A row says
+  never the phone's sheet, which holds the same rows a second time. **On a
+  phone the swipe steps through the same rows**, and it is the terminal's
+  swipe: `@dc/swipe` holds the numbers, the release velocity, the fling
+  constants, the pill and the navigation (`SwipeNav`, which
+  `terminal-swipe-nav` and the editor's file swipe run on too, the editor
+  through `go`, a switch on the spot with nothing pending), only the
+  recognizer differs, and no surface keeps a copy of any of it. A surface
+  that `syncFromServer` swaps while a switch is pending hands its pill to the
+  new one (`SwipeNav.adopt`), and "already on this page" is one URL based
+  comparison (`isCurrentPage`), for the swipe and Ctrl+Tab alike: path and
+  query for a terminal, whose split members differ only in `?focus=`, the
+  path alone for an assistant (`ignoreQuery`), so a round that lands back on
+  the thread standing on `?all=1` aborts the load and keeps the whole
+  transcript instead of loading the plain page. The terminal's zone owns vertical scrolling, the transcript does
+  not: `watchSwipe` listens to touch events, takes nothing from the browser
+  before the axis locked horizontal, and steps aside for a second finger, a
+  standing or appearing selection, a finger that rested `LONG_PRESS_MS`
+  before it moved, the long press's contextmenu, a field, and anything that
+  scrolls sideways on its own (`swipeBlockedAt`). It watches the
+  `[data-assistant-scroll]` region alone, so the composer and its slide to
+  cancel are never in its reach. A row says
   the name, the coder, how many messages and when, and its badges keep the
   right edge whatever the name is: a title long enough to truncate must not
   carry them out of line with the rows above. The preview of the last message
@@ -2490,10 +2510,11 @@ test. Update this file when a convention changes.
   focus (`syncSwipeZone`, called from `afterActiveChanged`, `onCursor` and
   `onFocusChange`). That last hook is an `updateListener` on `focusChanged` in
   the shared extensions, so both editors of a side by side view report it, not
-  a listener on the document. The pill naming the target is one thing app wide,
-  `.dc-swipe-pill`, shared with the terminal swipe and fixed near the top of
-  the viewport; only the terminal adds the pulsing pending state, because only
-  it waits for a navigation. A tree row is `draggable` on a fine pointer only:
+  a listener on the document. The gesture's numbers, pill and commit are
+  `SwipeNav` from `@dc/swipe`, the recognizer is the editor's own. The pill
+  naming the target is one thing app wide, `.dc-swipe-pill`, fixed near the
+  top of the viewport; the pulsing pending state belongs to the swipes that
+  wait for a navigation, terminals and assistants, never to a file switch. A tree row is `draggable` on a fine pointer only:
   a row that carries it hands the long press to the browser's own drag lift,
   and iOS then never lets that press become the row's context menu, which is
   the one way to reach a file's actions with a finger.

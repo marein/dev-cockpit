@@ -787,7 +787,7 @@ terminal-swipe-nav { display: none; }
     pointer-events: none;
   }
 }
-/* The one pill both swipes use, terminals and editor files alike: what you
+/* The one pill every swipe uses, terminals, editor files and assistants: what you
    would land on, named the same way in the same place. Fixed to the viewport,
    not to the frame it belongs to: with many rows the terminal's top edge can be
    scrolled far off screen, and the editor's surface moves under the finger. */
@@ -812,8 +812,8 @@ terminal-swipe-nav { display: none; }
   pointer-events: none;
 }
 .dc-swipe-pill-name { min-width: 0; }
-/* Only the terminal waits for a navigation, so only it pulses. */
-.terminal-swipe-pill-pending { animation: dc-swipe-pending 1s ease-in-out infinite; }
+/* A swipe that waits for a navigation pulses until the page arrives. */
+.dc-swipe-pill-pending { animation: dc-swipe-pending 1s ease-in-out infinite; }
 @keyframes dc-swipe-pending {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
@@ -1146,6 +1146,9 @@ dc-assistant[dropping] .assistant-composer {
 [data-assistant-none] { max-width: 60rem; margin-inline: auto; flex: none; }
 .dc-assistant-body { flex: 1; display: flex; min-height: 0; min-width: 0; }
 .dc-assistant-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+@media (pointer: coarse) {
+  .dc-assistant-main { overflow-x: clip; }
+}
 /* Both empty states stand at the top of the work area, under the head, and
    centred across it: that is the form .dc-empty gives every other empty area,
    and the text belongs to the head it stands under. The margins are sideways

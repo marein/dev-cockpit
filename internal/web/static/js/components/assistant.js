@@ -4,6 +4,7 @@ import { onServerEvent } from "@dc/events";
 import { growTextarea, jumpTextEdge } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { resolveHostlessLinks } from "@dc/docker";
+import { SwipeNav, isCurrentPage, swipeBlockedAt, watchSwipe } from "@dc/swipe";
 
 const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
@@ -277,6 +278,15 @@ class Assistant extends HTMLElement {
     // so it works with the cursor in the composer too.
     this.pendingIndex = null;
     document.addEventListener("keydown", (event) => this.onStepKeydown(event), { signal, capture: true });
+    if (this.scroller) {
+      const coarse = window.matchMedia("(pointer: coarse)");
+      this.swipeNav = new SwipeNav({ frame: this.scroller, host: this, stops: () => this.swipeStops(), ignoreQuery: true });
+      watchSwipe(this.scroller, {
+        signal,
+        startable: (target) => coarse.matches && !swipeBlockedAt(target, this.scroller),
+        onSwipe: (detail) => this.swipeNav?.onSwipe(detail),
+      });
+    }
 
     this.setRunning(this.running);
     this.openStream();
@@ -373,7 +383,12 @@ class Assistant extends HTMLElement {
       // rebuilt under the hand that opened it.
       const aside = this.querySelector("[data-assistant-aside]");
       if (aside) next.querySelector("[data-assistant-aside]")?.replaceWith(aside);
+      const swipeNav = this.swipeNav;
+      this.swipeNav = null;
       this.replaceWith(next);
+      next.pendingIndex = this.pendingIndex;
+      if (next.swipeNav) next.swipeNav.adopt(swipeNav);
+      else swipeNav?.destroy();
       if (app) await window.app?.loadElements?.(app);
     } catch (error) {
       void error;
@@ -397,6 +412,17 @@ class Assistant extends HTMLElement {
     return column ? Array.from(column.querySelectorAll("[data-assistant-instance]")) : [];
   }
 
+  swipeStops() {
+    const id = this.getAttribute("assistant-id");
+    return this.assistantRows().map((row) => ({
+      id: row.dataset.assistantInstance,
+      name: row.dataset.assistantName || row.querySelector(".dc-trunc")?.textContent.trim() || "",
+      url: row.dataset.assistantUrl || "/assistants/" + row.dataset.assistantInstance,
+      icon: row.querySelector(".dc-term-icon"),
+      active: row.dataset.assistantInstance === id,
+    }));
+  }
+
   onStepKeydown(event) {
     if (event.key !== "Tab" || !event.ctrlKey || event.altKey || event.metaKey) return;
     const rows = this.assistantRows();
@@ -417,7 +443,7 @@ class Assistant extends HTMLElement {
     this.pendingIndex = next;
     const row = rows[next];
     const url = row.dataset.assistantUrl || "/assistants/" + row.dataset.assistantInstance;
-    if (new URL(url, window.location.href).pathname === window.location.pathname) {
+    if (isCurrentPage(url, { ignoreQuery: true })) {
       window.pe?.abortController?.abort();
       return;
     }
@@ -512,6 +538,8 @@ class Assistant extends HTMLElement {
     this.lockTimer = null;
     this.press = null;
     this.stopWave();
+    this.swipeNav?.destroy();
+    this.swipeNav = null;
     this.removeAttribute("ready");
     this.sizer?.disconnect();
     this.sizer = null;
