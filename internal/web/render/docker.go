@@ -23,6 +23,9 @@ type DockerRunData struct {
 	// off while it is still going.
 	OutputURL string
 	StopURL   string
+	// Back is where the arrow leads: the page the run was opened from where
+	// its link carried one, else the project's row.
+	Back string
 }
 
 // Failed reports whether the run has something to complain about, the one

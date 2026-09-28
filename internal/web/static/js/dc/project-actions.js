@@ -57,7 +57,7 @@ export function openDockerMenu(chip, x, y, { signal } = {}) {
 // and hidden spans, so the entries can stand in a menu of their own or inside
 // a row's menu; onDrill(items) is how the drill in reopens the menu, and
 // onDrill(null) is the way back.
-export function composeMenuItems(holder, { section, onDrill } = {}) {
+export function composeMenuItems(holder, { section, onDrill, back = true } = {}) {
   const project = holder.dataset.dockerProject || "";
   const stacks = Array.from(holder.querySelectorAll("[data-docker-stack]")).map((span) => ({
     label: span.dataset.stackLabel || "",
@@ -96,6 +96,7 @@ export function composeMenuItems(holder, { section, onDrill } = {}) {
       if (data && data.url) docker.navigate(data.url);
     },
     onDrill,
+    back,
   });
 }
 
@@ -105,7 +106,7 @@ export function openComposeMenu(button, { section, signal } = {}) {
   const y = Math.round(rect.bottom);
   // onDrill(null) is the way back, which is this menu built again.
   const open = (items) => {
-    const list = items || composeMenuItems(button, { section, onDrill: open });
+    const list = items || composeMenuItems(button, { section, onDrill: open, back: false });
     if (!list.length) return;
     openMenu({ x, y, items: list, signal });
   };

@@ -524,7 +524,18 @@ func (s *Server) handleDockerRun(c *gin.Context) {
 		Output:    s.docker.ComposeRunOutput(run.ID),
 		OutputURL: dockerRunPath(p.Name, run.ID) + "/output",
 		StopURL:   dockerRunPath(p.Name, run.ID) + "/stop",
+		Back:      dockerRunBack(c, p.Name),
 	})
+}
+
+// dockerRunBack is the run page's way back, the `return` a link carried the
+// way the create forms take it, cockpit paths only, and the project's row
+// without one: a notification or a fresh tab has no page to go back to.
+func dockerRunBack(c *gin.Context, project string) string {
+	if back := safeRedirectPath(strings.TrimSpace(c.Query("return"))); back != "/" {
+		return back
+	}
+	return "/projects#project-" + project
 }
 
 // readComposeNews marks the project's compose notification read when the run
@@ -716,6 +727,16 @@ func (s *Server) handleEditorDocker(c *gin.Context) {
 	})
 }
 
+// composeReportURL is the run page the note links, with the owner's thread as
+// its way back.
+func composeReportURL(run docker.ComposeRun) string {
+	path := dockerRunPath(run.Label, run.ID)
+	if run.Owner == "" {
+		return path
+	}
+	return path + "?return=" + url.QueryEscape("/assistants/"+run.Owner)
+}
+
 // composeReport is what the assistant's thread is told about an owned run
 // that ended: the run, where it ran, how it went, the tail of what it wrote
 // and the page that shows the rest. The stack is named the way the compose
@@ -727,7 +748,7 @@ func (s *Server) composeReport(run docker.ComposeRun, err error, output string) 
 		Project: run.Label,
 		Stack:   run.Dir,
 		Action:  run.Action,
-		URL:     dockerRunPath(run.Label, run.ID),
+		URL:     composeReportURL(run),
 		Failed:  run.Failed,
 		Exited:  run.Exited,
 		Exit:    run.Exit,

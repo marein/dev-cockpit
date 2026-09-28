@@ -219,9 +219,28 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     await page.waitForSelector('[data-assistant-note="compose"][data-assistant-compose="done"]', { timeout: 15000 });
     const headline = await page.textContent('[data-assistant-compose="done"] [data-assistant-note-headline]');
     assert(headline.trim() === `Compose done: Compose down with volumes on ${NAME}`, `the done note reads "${headline}"`);
-    assert(await page.locator('[data-assistant-compose="done"]').locator("xpath=..").locator("a[href$='/docker/runs/" + id + "']").count() === 1, "the note carries no link to the run");
+    const runLink = page.locator('[data-assistant-compose="done"]').locator("xpath=..").locator("a[href*='/docker/runs/" + id + "']");
+    assert(await runLink.count() === 1, "the note carries no link to the run");
     const purged = await page.locator('[data-assistant-compose="done"]').locator("xpath=..").textContent();
     assert(!purged.includes("Answers on"), `a purge names addresses: ${purged}`);
+
+    // Opened from the thread, the run page's arrow leads back to it.
+    const thread = new URL(page.url()).pathname;
+    const fold = page.locator('[data-assistant-compose="done"]').locator("xpath=..").locator("[data-assistant-note-fold]");
+    if (await fold.count() && !(await runLink.isVisible())) await fold.click();
+    await runLink.waitFor({ state: "visible", timeout: 4000 });
+    await Promise.all([
+      page.waitForURL(/\/docker\/runs\//, { timeout: 15000 }),
+      runLink.click(),
+    ]);
+    await page.waitForSelector("dc-docker-run", { timeout: 8000 });
+    const back = await page.locator("[data-run-back]").getAttribute("href");
+    assert(back === `/assistants/${assistantID}`, `the run page's arrow leads to "${back}"`);
+    await Promise.all([
+      page.waitForURL((u) => u.pathname === thread, { timeout: 15000 }),
+      page.click("[data-run-back]"),
+    ]);
+    await page.waitForSelector('[data-assistant-note="compose"][data-assistant-compose="done"]', { timeout: 15000 });
 
     const again = await asAssistant(assistantID, `/projects/${NAME}/docker/compose`, { stack: "", action: "down-volumes" });
     assert(again.json.pending === true, `an approval without the box stopped the asking: ${again.raw}`);

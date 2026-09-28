@@ -510,7 +510,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Compose actions",
-					Desc:  `A project with a compose file carries a compose button <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> next to its row actions, also while nothing runs yet. Its menu opens every address the project's containers answer on, follows the whole stack in one <em>Logs</em> terminal, and lists one entry per configured command. Each runs in the background, the chips following live and a notification telling when it finished or failed, and it keeps going when the cockpit restarts. An assistant's run reports into its thread instead, see Assistants.`,
+					Desc:  `A project with a compose file carries a compose button <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> next to its row actions, also while nothing runs yet. Its menu opens every address the project's containers answer on, follows the whole stack in one <em>Logs</em> terminal, and lists one entry per configured command. Each runs in the background, the chips following live and a notification telling when it finished or failed, and it keeps going when the cockpit restarts. The arrow on a run's output page leads back to the page it was opened from, from this menu and from a notification to the project's row. An assistant's run reports into its thread instead, see Assistants.`,
 				},
 				{
 					Title: "What a run wrote",

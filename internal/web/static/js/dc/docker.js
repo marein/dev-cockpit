@@ -11,6 +11,13 @@ export function navigate(url) {
   else window.location.href = url;
 }
 
+// withReturn hands the run page the way back to the page it is opened from,
+// the `return` the create forms take.
+function withReturn(url) {
+  const here = window.location.pathname + window.location.search + window.location.hash;
+  return `${url}${url.includes("?") ? "&" : "?"}return=${encodeURIComponent(here)}`;
+}
+
 export async function lifecycleAction(id, action, name) {
   try {
     const response = await postForm(`/docker/${id}/${action}`, {});
@@ -234,7 +241,7 @@ export function containerMenuItems(info, { onShell } = {}) {
 // many there are, and opening it opens the same menu again with that
 // container's addresses and a way back (onDrill). Picking the first of a
 // dozen hosts for somebody is precisely what the cockpit cannot know.
-export function projectMenuItems({ project, containers = [], stacks = [], actions = [], onLogs, onDrill } = {}) {
+export function projectMenuItems({ project, containers = [], stacks = [], actions = [], onLogs, onDrill, back = true } = {}) {
   const items = [];
   containers.forEach((container) => {
     const links = container.links || [];
@@ -261,12 +268,12 @@ export function projectMenuItems({ project, containers = [], stacks = [], action
   });
   stacks.forEach((stack) => {
     if (items.length) items.push({ divider: true });
-    items.push(...stackMenuItems(stack, project, actions, onLogs));
+    items.push(...stackMenuItems(stack, project, actions, onLogs, back));
   });
   return items;
 }
 
-function stackMenuItems(stack, project, actions, onLogs) {
+function stackMenuItems(stack, project, actions, onLogs, back) {
   const items = [];
   const suffix = stack.label ? ` (${stack.label})` : "";
   items.push({
@@ -290,7 +297,7 @@ function stackMenuItems(stack, project, actions, onLogs) {
       label: stack.run.running ? `${stack.run.action} is running…` : `Output of ${stack.run.action}`,
       icon: stack.run.running ? "ti-loader-2" : "ti-file-description",
       iconClass: stack.run.running ? "dc-spin" : "",
-      href: stack.run.url,
+      href: back ? withReturn(stack.run.url) : stack.run.url,
     });
   }
   if (stack.busy) return items;

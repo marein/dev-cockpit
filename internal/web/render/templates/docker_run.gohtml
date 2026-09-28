@@ -1,9 +1,9 @@
 {{define "docker_run.gohtml"}}
 {{template "app_start.gohtml" .}}
 {{template "work_start.gohtml" .}}
-{{template "project_back.gohtml" .Project}}
+<a href="{{.Back}}" class="btn btn-icon btn-ghost-secondary" aria-label="Back" title="Back" data-run-back><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
 <h1 class="dc-work-title">{{.Run.Action}}</h1>
-{{if .Project}}<span class="text-secondary small dc-trunc dc-hide-xs">{{.Project}}</span>{{end}}
+{{if .Project}}<a class="text-secondary small dc-trunc dc-hide-xs text-decoration-none flex-shrink-0" href="/projects#project-{{.Project}}" title="Back to {{.Project}}">{{.Project}}</a>{{end}}
 {{template "work_body.gohtml" .}}
 <dc-docker-run class="d-block" output-url="{{.OutputURL}}" stop-url="{{.StopURL}}">
   <div class="card">

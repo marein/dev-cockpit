@@ -3107,7 +3107,11 @@ test. Update this file when a convention changes.
   sets the working directory. Every run, whichever entry it came from, lands on
   the same output page (`GET /projects/:name/docker/runs/:id`, JSON at
   `/output`, `dc-docker-run` repaints it while it goes), reachable from the
-  stack's own menu entry and from the notification; cancelling goes at the hold
+  stack's own menu entry and from the notification, its arrow leading to the
+  `return` its link carried (the create forms' `safeRedirectPath`: the page the
+  menu stood on, an assistant's thread for its note) and to the project's row
+  without one (`dockerRunBack`), which the projects page's own compose button
+  carries on purpose (`back: false` in `openComposeMenu`); cancelling goes at the hold
   process (`POST .../stop` to `Service.CancelCompose`), never at the server that
   asked, which may be long gone. A container shell is a normal cockpit shell
   started with a

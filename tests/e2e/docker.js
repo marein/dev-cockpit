@@ -570,6 +570,9 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     assert(/Exit status 0/.test(status), `the finished run reads "${status}"`);
     assert(/docker compose up -d/.test(await page.locator("dc-docker-run").textContent()), "the page does not name the command line");
     assert(await page.locator("[data-run-stop]:not([hidden])").count() === 0, "a finished run still offers Cancel");
+    // Opened from the projects page, the arrow leads to the project's row.
+    const back = await page.locator("[data-run-back]").getAttribute("href");
+    assert(back === `/projects#project-${NAME}`, `the run page's arrow leads to "${back}"`);
     // The output is readable in both themes: Tabler's own pre, a dark block
     // with light text, so the gap between the text and what it stands on is
     // large under either scheme. The broken state was a light background kept
@@ -686,6 +689,67 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await closeMenu(page);
     await page.click("[data-editor-sheet-close]");
     await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 4000 });
+  });
+
+  // The run page leads back where it was opened from: out of the editor's
+  // docker sheet the arrow is the editor, and a plain open without a way back
+  // (a notification, a fresh tab) is the project's row, as it always was.
+  await run("the run page opened from the editor leads back to the editor", async () => {
+    const editor = `/projects/${NAME}/editor`;
+    await page.goto(`${BASE}${editor}`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    await page.waitForSelector("[data-editor-docker-status]:not([hidden])", { timeout: 15000 });
+    await page.click("[data-editor-docker-status]");
+    const row = page.locator("[data-editor-docker-list] .dropdown-item", { hasText: /^Output of / });
+    await row.first().waitFor({ state: "visible", timeout: 8000 });
+    await Promise.all([
+      page.waitForURL(/\/docker\/runs\//, { timeout: 15000 }),
+      row.first().click(),
+    ]);
+    await page.waitForSelector("dc-docker-run", { timeout: 8000 });
+    const back = await page.locator("[data-run-back]").getAttribute("href");
+    assert(back === editor, `the run page's arrow leads to "${back}"`);
+    await Promise.all([
+      page.waitForURL((u) => u.pathname === editor, { timeout: 15000 }),
+      page.click("[data-run-back]"),
+    ]);
+    await page.waitForSelector("[data-editor-docker-status]", { state: "attached", timeout: 15000 });
+    const runs = await page.request.get(`${BASE}/projects/${NAME}/editor/docker`, { headers: { Accept: "application/json" } });
+    const stack = ((await runs.json()).stacks || []).find((s) => s.run);
+    assert(stack, "the editor's docker answer names no run");
+    await page.goto(`${BASE}${stack.run.url}`, { waitUntil: "domcontentloaded" });
+    const fallback = await page.locator("[data-run-back]").getAttribute("href");
+    assert(fallback === `/projects#project-${NAME}`, `a plain open leads to "${fallback}"`);
+    const foreign = `${BASE}${stack.run.url}?return=${encodeURIComponent("//evil.example/x")}`;
+    await page.goto(foreign, { waitUntil: "domcontentloaded" });
+    const refused = await page.locator("[data-run-back]").getAttribute("href");
+    assert(refused === `/projects#project-${NAME}`, `a foreign way back was taken: "${refused}"`);
+    await page.goto(`${BASE}${editor}`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-editor-docker-status]:not([hidden])", { timeout: 15000 });
+  });
+
+  // The project the run page's head names is a link to the project's row, the
+  // one the attach pages' heads carry.
+  await run("the run page's head links its project", async () => {
+    const runs = await page.request.get(`${BASE}/projects/${NAME}/editor/docker`, { headers: { Accept: "application/json" } });
+    const stack = ((await runs.json()).stacks || []).find((s) => s.run);
+    assert(stack, "the editor's docker answer names no run");
+    await page.goto(`${BASE}${stack.run.url}`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("dc-docker-run", { timeout: 8000 });
+    const link = page.locator(`.dc-work-head a[href="/projects#project-${NAME}"]:not([data-run-back])`);
+    assert(await link.count() === 1, "the head names its project without a link");
+    assert((await link.textContent()).trim() === NAME, `the link reads "${await link.textContent()}"`);
+    assert(await link.getAttribute("title") === `Back to ${NAME}`, "the link carries another title");
+    const cls = await link.getAttribute("class");
+    assert(cls === "text-secondary small dc-trunc dc-hide-xs text-decoration-none flex-shrink-0", `the link wears "${cls}"`);
+    assert(await link.isVisible(), "the project link is not visible");
+    await Promise.all([
+      page.waitForURL((u) => u.pathname === "/projects" && u.hash === `#project-${NAME}`, { timeout: 15000 }),
+      link.click(),
+    ]);
+    await page.waitForSelector(`#project-${NAME}`, { timeout: 15000 });
+    await page.goto(`${BASE}/projects/${NAME}/editor`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-editor-docker-status]:not([hidden])", { timeout: 15000 });
   });
 
   // The sheet is a list of rows and the keyboard walks it: it opens with the

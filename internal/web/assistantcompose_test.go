@@ -275,7 +275,7 @@ func TestAnAssistantsRunIsSilentAndReportsIntoItsThread(t *testing.T) {
 	if note.Note.Run != id || note.Note.Verdict != assistant.ComposeKindDone || note.Note.Project != "shop" || note.Note.Name != "Compose up" {
 		t.Fatalf("the note reads %+v", note.Note)
 	}
-	if !strings.Contains(note.Content, "[Open the run](/projects/shop/docker/runs/"+id+")") || !strings.Contains(note.Content, "compose says hi") {
+	if !strings.Contains(note.Content, "[Open the run](/projects/shop/docker/runs/"+id+"?return=%2Fassistants%2F"+f.owner+")") || !strings.Contains(note.Content, "compose says hi") {
 		t.Fatalf("the note says:\n%s", note.Content)
 	}
 	if f.notifier.UnreadTargets()[notify.DockerTarget("shop")] {
