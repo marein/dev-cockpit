@@ -3,6 +3,24 @@
 {{template "editor_page_start.gohtml" .}}
 <form method="post" action="/settings/editor/lsp" id="settings-editor-lsp">
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <div class="mb-3 row">
+    <div class="col-12 col-sm-7 col-lg-5">
+      <label class="form-label" for="editor-lsp-idle">Idle timeout</label>
+      <div class="input-group">
+        <input class="form-control" type="number" id="editor-lsp-idle" name="idle_seconds" min="{{.LSPIdleMin}}" max="{{.LSPIdleMax}}" step="1" required value="{{.LSPIdleSeconds}}">
+        <span class="input-group-text">seconds</span>
+      </div>
+      <div class="form-text">Stops a project's servers when its editor was not used for this long. Default {{.LSPIdleDefault}}, minimum {{.LSPIdleMin}}, maximum {{.LSPIdleMax}}.</div>
+    </div>
+  </div>
+  <div class="mb-3 row">
+    <div class="col-12 col-sm-7 col-lg-5">
+      <label class="form-label" for="editor-lsp-max-projects">Max running projects</label>
+      <input class="form-control" type="number" id="editor-lsp-max-projects" name="max_projects" min="{{.LSPMaxProjectsMin}}" max="{{.LSPMaxProjectsMax}}" step="1" required value="{{.LSPMaxProjects}}">
+      <div class="form-text">Projects with running servers at the same time, all languages of a project count as one. Another project stops the least recently used one, unless all are busy. Default {{.LSPMaxProjectsDefault}}, minimum {{.LSPMaxProjectsMin}}, maximum {{.LSPMaxProjectsMax}}.</div>
+    </div>
+  </div>
+  <hr class="my-4">
   <div class="text-secondary small mb-3">Go to definition and Find usages ask a language server per language, which the cockpit runs in a container, its image built on this host on first use. Automatic runs it while the Docker daemon answers and stays off otherwise; Off takes the surface away for that language entirely.</div>
   <div class="mb-3 row">
     <div class="col-12 col-lg-6">

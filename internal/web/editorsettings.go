@@ -2,6 +2,7 @@ package web
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/filesystem"
@@ -20,7 +21,47 @@ const (
 	editorAutosaveKey        = "editor-autosave"
 	editorDiffMaxLinesKey    = "editor-diff-max-lines"
 	editorDiffMaxKiBKey      = "editor-diff-max-kib"
+	// editorLSPIdleSecondsKey is how long a project's language servers stay
+	// up without editor action. No profile is called idle-seconds, so it
+	// cannot meet a key of editorLSPServerKey.
+	editorLSPIdleSecondsKey = "editor-lsp-idle-seconds"
+	// editorLSPMaxProjectsKey is how many projects may run language
+	// servers at once. No profile is called max-projects either.
+	editorLSPMaxProjectsKey = "editor-lsp-max-projects"
 )
+
+// The idle timeout's range in seconds, the service's own bounds.
+var (
+	lspIdleSecondsDefault = int(editorintelligence.DefaultIdleTimeout / time.Second)
+	lspIdleSecondsMin     = int(editorintelligence.MinIdleTimeout / time.Second)
+	lspIdleSecondsMax     = int(editorintelligence.MaxIdleTimeout / time.Second)
+)
+
+// lspIdleSeconds reads the language servers' idle timeout in seconds. The
+// intelligence service asks it before every janitor round, so a save applies
+// without a restart.
+func (s *Server) lspIdleSeconds() int {
+	return s.settingInt(editorLSPIdleSecondsKey, lspIdleSecondsDefault, lspIdleSecondsMin, lspIdleSecondsMax)
+}
+
+// lspIdleTimeout is lspIdleSeconds as the duration the service reads.
+func (s *Server) lspIdleTimeout() time.Duration {
+	return time.Duration(s.lspIdleSeconds()) * time.Second
+}
+
+// The running projects limit's range, the service's own bounds.
+const (
+	lspMaxProjectsDefault = editorintelligence.DefaultMaxProjects
+	lspMaxProjectsMin     = editorintelligence.MinMaxProjects
+	lspMaxProjectsMax     = editorintelligence.MaxMaxProjects
+)
+
+// lspMaxProjects reads how many projects may run language servers at once.
+// The intelligence service asks it on every admission of a new project and
+// every janitor round, so a save applies without a restart.
+func (s *Server) lspMaxProjects() int {
+	return s.settingInt(editorLSPMaxProjectsKey, lspMaxProjectsDefault, lspMaxProjectsMin, lspMaxProjectsMax)
+}
 
 // editorLSPServerKey holds how a language's LSP server runs, one key per
 // profile. The stored value is the server's name with the "-docker"
@@ -154,7 +195,10 @@ func (s *Server) exclusions() filesystem.Exclusions {
 	return filesystem.ParseExclusions(raw)
 }
 
-// settingInt reads a stored number, clamped into the range the setting accepts.
+// settingInt reads a stored number, clamped into the range the setting
+// accepts: the floor under it, the ceiling over it, which is the rule
+// editorintelligence.ClampMaxProjects and ClampIdleTimeout read a value by
+// too. Only a value that is no number reads as the fallback.
 func (s *Server) settingInt(key string, fallback, min, max int) int {
 	value, err := strconv.Atoi(s.settings.Get(key))
 	if err != nil {

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -12,13 +14,35 @@ import (
 // project and profile, shared by every editor instance of the project, so a
 // page refresh reconnects to the warm index instead of building a new one.
 const (
-	maxConnections = 8
-	// A connection lives until the project saw no editor action for this
-	// long; every editor route of the project counts as action, see Touch.
-	// Short on purpose: the warm cache volume makes a fresh start cheap.
-	connIdleTimeout = 10 * time.Minute
-	janitorInterval = 30 * time.Second
-	lspErrorBackoff = 30 * time.Second
+	// The limit counts projects, not connections: an admitted project runs
+	// a server for every language it needs, so a low limit never leaves one
+	// of its languages without one. The limit is a setting read live, see
+	// SetMaxProjects, and DefaultMaxProjects stands in while none is wired
+	// or stored.
+	DefaultMaxProjects = 3
+	// MinMaxProjects is the floor: the project somebody works in has to run.
+	MinMaxProjects = 1
+	// MaxMaxProjects bounds the setting; every project may run a server per
+	// language, each with a full index in memory.
+	MaxMaxProjects = 32
+	// A connection lives until the project saw no editor action for the idle
+	// timeout; every editor route of the project counts as action, see
+	// Touch. The timeout is a setting read live, see SetIdleTimeout, and
+	// DefaultIdleTimeout stands in while none is wired or stored. Short on
+	// purpose: the warm cache makes a fresh start cheap.
+	DefaultIdleTimeout = 5 * time.Minute
+	// MinIdleTimeout is the floor: an open editor renews its watches every
+	// 15 seconds, and a timeout near that would stop a server between two
+	// renewals of a project somebody is working in.
+	MinIdleTimeout = time.Minute
+	// MaxIdleTimeout bounds the setting to a day, which is longer than any
+	// reason to keep an unused server around.
+	MaxIdleTimeout = 24 * time.Hour
+	// The janitor looks a tenth of the timeout apart, within these bounds,
+	// so the real shutdown stays close to the configured value.
+	minJanitorInterval = 5 * time.Second
+	maxJanitorInterval = 30 * time.Second
+	lspErrorBackoff    = 30 * time.Second
 	// A connection counts as warming for warmupWindow after process start.
 	// Within it, empty answers retry a few times with a short delay per
 	// request (a newer request cancels the wait), and a connection that has
@@ -32,6 +56,11 @@ const (
 	// takes far longer than idle, and a partial answer after a short wait is
 	// exactly the missed-usages bug this bound exists for.
 	indexWaitBudget = 90 * time.Second
+	// callBudget bounds one lookup as a whole: the longest index wait plus
+	// time for the answer. A server that hangs on a call would otherwise
+	// hold the call open for as long as the client waits, and a slot with a
+	// call in flight never idles out.
+	callBudget = indexWaitBudget + 30*time.Second
 	// maxLocations caps a usages answer; a symbol with more locations
 	// answers the first ones and says so.
 	maxLocations = 200
@@ -120,11 +149,14 @@ type managedConn struct {
 	root     string
 	launcher Launcher
 
-	// lastUsed and retired are guarded by Service.mu. retired marks a
-	// deliberate close (shutdown, project delete, idle expiry, eviction):
-	// watchRestart never resurrects a retired slot.
+	// lastUsed, retired and holds are guarded by Service.mu. retired marks
+	// a deliberate close (shutdown, project delete, idle expiry, eviction):
+	// watchRestart never resurrects a retired slot. holds counts the callers
+	// connFor handed the slot to that have not registered their call yet,
+	// so an eviction between the two cannot close it under them.
 	lastUsed time.Time
 	retired  bool
+	holds    int
 
 	inflightMu sync.Mutex
 	inflight   map[string]*inflightToken
@@ -166,12 +198,102 @@ type Service struct {
 	// seams below; the web layer publishes it as the `lsp` event.
 	onChange func(project string)
 
+	// idleTimeout answers the configured idle timeout, read again on every
+	// janitor round so a changed setting applies without a restart. Held
+	// atomically because the janitor runs from New on, before the web
+	// layer wires the setting in.
+	idleTimeout atomic.Pointer[func() time.Duration]
+	// maxProjects answers the configured limit of projects with running
+	// servers, read again on every admission and janitor round.
+	maxProjects atomic.Pointer[func() int]
+
 	// Seams for tests: process start, time, and the warming grace a silent
 	// connection is waited on, warmupWindow outside tests.
 	startConn   func(ctx context.Context, profile *Profile, argv, env []string, root string, initOptions any, notify func()) (*lspConn, error)
 	now         func() time.Time
-	idleTimeout time.Duration
 	warmupGrace time.Duration
+	// callBudget is the deadline of one lookup, callBudget outside tests.
+	callBudget time.Duration
+	// kick runs one janitor round at once, so a test drives the real loop
+	// without waiting out its interval.
+	kick chan struct{}
+}
+
+// SetIdleTimeout wires the idle timeout the janitor reads before every
+// round. Nil puts DefaultIdleTimeout back. Nil-receiver-safe like the other
+// web-facing entry points.
+func (s *Service) SetIdleTimeout(fn func() time.Duration) {
+	if s == nil {
+		return
+	}
+	if fn == nil {
+		s.idleTimeout.Store(nil)
+		return
+	}
+	s.idleTimeout.Store(&fn)
+}
+
+// currentIdleTimeout is the timeout in force, clamped into the range the
+// setting accepts, so a stored value that slipped past the form cannot stop
+// servers between two watch renewals.
+func (s *Service) currentIdleTimeout() time.Duration {
+	timeout := DefaultIdleTimeout
+	if fn := s.idleTimeout.Load(); fn != nil {
+		timeout = (*fn)()
+	}
+	return ClampIdleTimeout(timeout)
+}
+
+// SetMaxProjects wires the limit of projects with running servers, read on
+// every admission of a new project and every janitor round. Nil puts
+// DefaultMaxProjects back. Nil-receiver-safe like the other web-facing
+// entry points.
+func (s *Service) SetMaxProjects(fn func() int) {
+	if s == nil {
+		return
+	}
+	if fn == nil {
+		s.maxProjects.Store(nil)
+		return
+	}
+	s.maxProjects.Store(&fn)
+}
+
+// currentMaxProjects is the limit in force, clamped into the range the
+// setting accepts.
+func (s *Service) currentMaxProjects() int {
+	limit := DefaultMaxProjects
+	if fn := s.maxProjects.Load(); fn != nil {
+		limit = (*fn)()
+	}
+	return ClampMaxProjects(limit)
+}
+
+// ClampMaxProjects holds a limit between MinMaxProjects and MaxMaxProjects,
+// the rule the web layer reads a stored value with: a value under the floor
+// reads as the floor, never as the default.
+func ClampMaxProjects(limit int) int {
+	return min(max(limit, MinMaxProjects), MaxMaxProjects)
+}
+
+// ClampIdleTimeout holds a timeout between MinIdleTimeout and
+// MaxIdleTimeout, the same rule as ClampMaxProjects.
+func ClampIdleTimeout(timeout time.Duration) time.Duration {
+	return min(max(timeout, MinIdleTimeout), MaxIdleTimeout)
+}
+
+// janitorInterval is how far apart the janitor looks for a timeout: a tenth
+// of it, between minJanitorInterval and maxJanitorInterval, so a server
+// stops at most that much after its timeout passed.
+func janitorInterval(timeout time.Duration) time.Duration {
+	interval := timeout / 10
+	if interval < minJanitorInterval {
+		return minJanitorInterval
+	}
+	if interval > maxJanitorInterval {
+		return maxJanitorInterval
+	}
+	return interval
 }
 
 // OnChange registers the one listener for indexing moves; call before the
@@ -210,8 +332,9 @@ func New(projectsRoot, cacheRoot string, dockerHost func() string) *Service {
 		sweepDone:    swept,
 		startConn:    startLSPConn,
 		now:          time.Now,
-		idleTimeout:  connIdleTimeout,
 		warmupGrace:  warmupWindow,
+		callBudget:   callBudget,
+		kick:         make(chan struct{}),
 	}
 	s.wg.Add(1)
 	go s.runJanitor()
@@ -287,21 +410,32 @@ func (s *Service) closeManaged(mc *managedConn) {
 
 func (s *Service) runJanitor() {
 	defer s.wg.Done()
-	ticker := time.NewTicker(janitorInterval)
-	defer ticker.Stop()
+	// A timer set anew every round rather than a ticker: the interval
+	// follows the timeout, which may change between two rounds.
+	timer := time.NewTimer(janitorInterval(s.currentIdleTimeout()))
+	defer timer.Stop()
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			s.expireIdle()
+			s.enforceMaxProjects()
+			timer.Reset(janitorInterval(s.currentIdleTimeout()))
+		case <-s.kick:
+			s.expireIdle()
+			s.enforceMaxProjects()
 		}
 	}
 }
 
 // expireIdle closes connections idle past the timeout and drops dead ones.
+// A slot in use is not idle whatever its clock says: a lookup routes no
+// Touch, and one waiting out the indexing may stand longer than the
+// timeout, so retiring the slot under it would fail a call nobody closed.
 func (s *Service) expireIdle() {
 	now := s.now()
+	timeout := s.currentIdleTimeout()
 	s.mu.Lock()
 	var expired []*managedConn
 	var projects []string
@@ -311,8 +445,14 @@ func (s *Service) expireIdle() {
 		default:
 			continue
 		}
-		dead := mc.conn == nil || !mc.conn.alive()
-		if dead || now.Sub(mc.lastUsed) > s.idleTimeout {
+		dead := s.slotDead(mc)
+		if dead && s.restartPending(mc) {
+			continue
+		}
+		if !dead && s.inUse(mc) {
+			continue
+		}
+		if dead || now.Sub(mc.lastUsed) > timeout {
 			// A dead slot is not retired: whether its death was a restart
 			// wish stays watchRestart's call, the janitor only drops it.
 			if !dead {
@@ -371,13 +511,16 @@ func (s *Service) navigate(ctx context.Context, req Request, method string) (Res
 	if s.inBackoff(backoff) {
 		return unavailable(StatusUnavailable), nil
 	}
-	mc, status := s.connFor(ctx, req.ProjectName, req.ProjectRoot, profile, req.Launcher)
+	mc, status := s.connFor(ctx, req.ProjectName, req.ProjectRoot, profile, req.Launcher, s.now())
 	if status != "" {
 		return unavailable(status), nil
 	}
 
-	callCtx, token := mc.beginCall(ctx, req.Client, req.Path)
+	budgetCtx, cancelBudget := context.WithTimeout(ctx, s.callBudget)
+	defer cancelBudget()
+	callCtx, token := mc.beginCall(budgetCtx, req.Client, req.Path)
 	defer mc.endCall(req.Client, req.Path, token)
+	s.release(mc)
 
 	mc.conn.docMu.Lock()
 	err := mc.conn.ensureDocument(req.Client, req.Path, langID, req.Content)
@@ -440,18 +583,20 @@ func (s *Service) navigate(ctx context.Context, req Request, method string) (Res
 		return Result{Available: true, Locations: locs, Outside: outside, Truncated: truncated, Declaration: declaration}, nil
 	}
 
+	if budgetCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+		log.Printf("editor intelligence: %s %s got no answer within %s", profile.ID, method, s.callBudget)
+		return unavailable(StatusError), nil
+	}
 	if callCtx.Err() != nil {
 		return unavailable(StatusCanceled), nil
 	}
 	log.Printf("editor intelligence: %s %s failed: %v", profile.ID, method, err)
-	if !mc.conn.alive() {
+	// A death that is the launcher's restart wish is routine, the workspace
+	// watcher's doing: watchRestart swaps the replacement into the slot, so
+	// the slot stays for it and the project stays out of the error backoff.
+	if !mc.conn.alive() && !s.exitWasRestartWish(mc) {
 		s.dropConn(req.ProjectName, profile, mc)
-		// A death that is the launcher's restart wish is routine, the
-		// workspace watcher's doing, and watchRestart already starts the
-		// replacement: it must not put the project into the error backoff.
-		if !s.exitWasRestartWish(mc) {
-			s.setBackoff(backoff, lspErrorBackoff)
-		}
+		s.setBackoff(backoff, lspErrorBackoff)
 	}
 	return unavailable(StatusError), nil
 }
@@ -484,7 +629,7 @@ type WarmMode struct {
 // Warm makes sure the project's server for each given profile runs, so the
 // indexing starts when the editor page opens instead of with the first
 // lookup. It answers nothing: a profile that cannot start (not installed,
-// table full of working slots) simply stays cold and the first lookup says
+// every running project busy) simply stays cold and the first lookup says
 // why.
 func (s *Service) Warm(project, root string, modes []WarmMode) {
 	if s == nil {
@@ -493,7 +638,9 @@ func (s *Service) Warm(project, root string, modes []WarmMode) {
 	for _, mode := range modes {
 		for _, p := range profiles {
 			if p.ID == mode.ProfileID {
-				s.connFor(context.Background(), project, root, p, mode.Launcher)
+				if mc, status := s.connFor(context.Background(), project, root, p, mode.Launcher, s.now()); status == "" {
+					s.release(mc)
+				}
 			}
 		}
 	}
@@ -619,53 +766,87 @@ func (mc *managedConn) endCall(client, path string, token *inflightToken) {
 
 // connFor returns the live connection of the project and profile, starting
 // one when needed. A non empty status tells the caller why no connection is
-// available.
-func (s *Service) connFor(ctx context.Context, project, root string, profile *Profile, launcher Launcher) (*managedConn, string) {
+// available. A returned connection is held, see managedConn.holds: the
+// caller registers its call and then calls release, so no eviction can
+// close the connection between the two. used is the moment the slot's idle
+// clock is set to: a lookup passes now, a restart the old clock it carries
+// over. It only ever moves a running slot's clock forward.
+func (s *Service) connFor(ctx context.Context, project, root string, profile *Profile, launcher Launcher, used time.Time) (*managedConn, string) {
 	if launcher == nil {
 		launcher = DockerLauncher(s.cacheRoot, s.dockerHost)
 	}
 	key := connKey{project: project, profile: profile.ID}
+	// The setting is a file read and the detection a probe: both are asked
+	// before the lock, never under it. A server that is not installed is
+	// answered before anything is evicted for it.
+	limit := s.currentMaxProjects()
+	found := launcher.Detect(profile).Found
 	s.mu.Lock()
 	sweepDone := s.sweepDone
+	// A server that asked for a restart keeps its project's place: its
+	// replacement is watchRestart's, and the lookup starting it early
+	// takes that place over instead of competing for a new one.
+	admitted := false
 	if mc, ok := s.conns[key]; ok {
 		// A slot whose root or launcher no longer matches belongs to a
 		// project recreated under its name, or to a server whose way to
 		// run the settings moved: either way its answers describe
 		// something that is gone.
-		if !s.slotDead(mc) && mc.root == root && mc.launcher.ID() == launcher.ID() {
-			mc.lastUsed = s.now()
+		dead := s.slotDead(mc)
+		if !dead && mc.root == root && mc.launcher.ID() == launcher.ID() {
+			if used.After(mc.lastUsed) {
+				mc.lastUsed = used
+			}
+			mc.holds++
 			s.mu.Unlock()
 			return s.awaitConn(ctx, key, mc)
 		}
+		admitted = dead && s.restartPending(mc)
 		delete(s.conns, key)
 		go s.closeManaged(mc)
 	}
-	// A full table is not a refusal while something in it only idles: the
-	// least recently used connection with nothing in flight makes room, and
-	// busy is the answer only when every slot is actually working.
-	evicted, freed := connKey{}, false
-	if len(s.conns) >= maxConnections {
-		if evicted, freed = s.evictIdleConn(); !freed {
-			s.mu.Unlock()
-			return nil, StatusBusy
-		}
-	}
-	if !launcher.Detect(profile).Found {
+	// The limit counts projects. A project that already runs a server is
+	// admitted, its other languages start without asking; a lowered limit
+	// only takes other projects down to it. A new project needs a free
+	// place: the least recently used projects with nothing in flight make
+	// room, and busy is the answer only when too few of them idle.
+	if !found {
 		s.mu.Unlock()
 		return nil, StatusNotInstalled
+	}
+	admitted = admitted || s.projectAdmitted(project)
+	if !admitted {
+		limit--
+	}
+	evicted, ok := s.evictProjects(project, limit, !admitted)
+	if !ok {
+		s.mu.Unlock()
+		s.closeEvicted(evicted)
+		return nil, StatusBusy
 	}
 	mc := &managedConn{
 		ready:    make(chan struct{}),
 		root:     root,
 		launcher: launcher,
-		lastUsed: s.now(),
+		lastUsed: used,
+		holds:    1,
 		inflight: map[string]*inflightToken{},
 	}
 	s.conns[key] = mc
 	s.mu.Unlock()
-	if freed {
-		s.notifyChange(evicted.project)
+	s.closeEvicted(evicted)
+	if status := s.launch(ctx, key, mc, profile, sweepDone); status != "" {
+		s.release(mc)
+		return nil, status
 	}
+	return mc, ""
+}
+
+// launch starts the server of a slot that already stands in the table,
+// starting, and closes its ready channel either way. A failed start takes
+// the slot out again. A non empty status says why no server runs.
+func (s *Service) launch(ctx context.Context, key connKey, mc *managedConn, profile *Profile, sweepDone chan struct{}) string {
+	project, root, launcher := key.project, mc.root, mc.launcher
 	// The slot shows as preparing from here on.
 	s.notifyChange(project)
 
@@ -677,12 +858,12 @@ func (s *Service) connFor(ctx context.Context, project, root string, profile *Pr
 		s.removeConn(key, mc)
 		close(mc.ready)
 		s.notifyChange(project)
-		return nil, StatusCanceled
+		return StatusCanceled
 	case <-s.prepCtx.Done():
 		s.removeConn(key, mc)
 		close(mc.ready)
 		s.notifyChange(project)
-		return nil, StatusError
+		return StatusError
 	}
 	// Preparation is bounded by the service's preparation context, not the
 	// lookup's: a canceled lookup must not abort an image build another one
@@ -693,7 +874,7 @@ func (s *Service) connFor(ctx context.Context, project, root string, profile *Pr
 		close(mc.ready)
 		s.setBackoff(backoffKey(project, profile), lspErrorBackoff)
 		s.notifyChange(project)
-		return nil, StatusError
+		return StatusError
 	}
 	argv := launcher.Argv(s.projectsRoot, project, root, profile)
 	procCtx, cancel := context.WithCancel(s.ctx)
@@ -708,17 +889,24 @@ func (s *Service) connFor(ctx context.Context, project, root string, profile *Pr
 		s.setBackoff(backoffKey(project, profile), lspErrorBackoff)
 		log.Printf("editor intelligence: %v", err)
 		s.notifyChange(project)
-		return nil, StatusError
+		return StatusError
 	}
 	s.wg.Add(1)
-	go s.watchRestart(key, mc, project, root, profile, launcher)
+	go s.watchRestart(key, mc, profile)
 	if !profile.SilentStart {
 		s.wg.Add(1)
 		go s.endSilentWindow(project, mc)
 	}
 	// The handshake ended: preparing hands over to the announced indexing.
 	s.notifyChange(project)
-	return mc, ""
+	return ""
+}
+
+// release gives back the hold connFor handed out with a connection.
+func (s *Service) release(mc *managedConn) {
+	s.mu.Lock()
+	mc.holds--
+	s.mu.Unlock()
 }
 
 // endSilentWindow publishes the one moment a connection stops counting as
@@ -749,82 +937,224 @@ func (s *Service) endSilentWindow(project string, mc *managedConn) {
 // launcher reads as a restart wish, the container's workspace watcher saw
 // a relevant change, starts a fresh server for the same slot right away:
 // no backoff, no error, the indicator simply shows the new indexing, and
-// with the warm cache volume the restart is cheap. The eager restart only
-// happens while the project still sees editor action: an idle project's
-// wish is honored lazily by the next editor open, or background churn
-// alone would keep a container reindexing forever with no reader. Every
-// other death stays what it was, an error the next lookup reports.
-func (s *Service) watchRestart(key connKey, mc *managedConn, project, root string, profile *Profile, launcher Launcher) {
+// with the warm cache the restart is cheap. The replacement is swapped
+// into the slot the old server still holds, so the project keeps its place
+// among the running ones. The eager restart only happens while the project
+// still sees editor action: an idle project's wish is honored lazily by the
+// next editor open, or background churn alone would keep a container
+// reindexing forever with no reader. Every other death stays what it was,
+// an error the next lookup reports.
+func (s *Service) watchRestart(key connKey, mc *managedConn, profile *Profile) {
 	defer s.wg.Done()
 	select {
 	case <-s.ctx.Done():
 		return
 	case <-mc.conn.exited:
 	}
+	project, launcher := key.project, mc.launcher
 	if !launcher.WantsRestart(mc.conn.exitStatus()) {
 		return
 	}
+	// Both are settings or probes: asked before the lock, never under it.
+	timeout := s.currentIdleTimeout()
+	found := launcher.Detect(profile).Found
 	s.mu.Lock()
-	// A missing table entry is fine: a lookup that died with the server
-	// already dropped the slot, the restart wish still stands. Only a
-	// newer replacement or a deliberate close ends it.
-	if cur, ok := s.conns[key]; ok && cur != mc {
+	cur, held := s.conns[key]
+	if (held && cur != mc) || mc.retired {
+		// A newer replacement or a deliberate close ends the wish.
 		s.mu.Unlock()
 		return
 	}
-	if mc.retired {
-		s.mu.Unlock()
-		return
-	}
-	lastUsed := mc.lastUsed
-	idle := s.now().Sub(lastUsed) > s.idleTimeout
-	delete(s.conns, key)
-	s.mu.Unlock()
-	go s.closeManaged(mc)
-	if idle {
-		return
-	}
-	log.Printf("editor intelligence: %s server for %s asked for a restart, reindexing", profile.ID, project)
-	s.connFor(context.Background(), project, root, profile, launcher)
 	// A restart is not editor action: the fresh slot keeps the old clock,
 	// so the idle timeout keeps measuring from the last real use.
-	s.mu.Lock()
-	if cur, ok := s.conns[key]; ok && cur.root == root {
-		cur.lastUsed = lastUsed
+	lastUsed := mc.lastUsed
+	idle := s.now().Sub(lastUsed) > timeout
+	if !held || !found || idle {
+		delete(s.conns, key)
+		s.mu.Unlock()
+		go s.closeManaged(mc)
+		s.notifyChange(project)
+		switch {
+		case idle:
+			// The next editor open starts it.
+		case !found:
+			log.Printf("editor intelligence: %s server for %s asked for a restart, but it is not installed any more", profile.ID, project)
+		default:
+			s.restartOutsideSlot(project, mc.root, profile, launcher, lastUsed)
+		}
+		return
 	}
+	next := &managedConn{
+		ready:    make(chan struct{}),
+		root:     mc.root,
+		launcher: launcher,
+		lastUsed: lastUsed,
+		inflight: map[string]*inflightToken{},
+	}
+	s.conns[key] = next
+	sweepDone := s.sweepDone
 	s.mu.Unlock()
+	go s.closeManaged(mc)
+	log.Printf("editor intelligence: %s server for %s asked for a restart, reindexing", profile.ID, project)
+	if status := s.launch(s.ctx, key, next, profile, sweepDone); status != "" {
+		log.Printf("editor intelligence: %s server for %s did not come back after its restart: %s", profile.ID, project, status)
+	}
 }
 
-// evictIdleConn frees one slot by closing the least recently used
-// connection that finished starting and has nothing in flight. It answers
-// the evicted key and whether a slot was freed; the caller holds s.mu and
-// notifies after unlocking.
-func (s *Service) evictIdleConn() (connKey, bool) {
-	var lruKey connKey
-	var lru *managedConn
+// restartOutsideSlot is the restart of a server whose slot somebody took out
+// of the table before watchRestart saw the wish, a lookup that met the dead
+// server first. Without the slot the project has to be admitted again like
+// any other, and a refusal is said, not swallowed. Like the restart inside
+// the slot it is no editor action: a fresh slot starts on the old clock, and
+// a replacement a lookup started first keeps that lookup's newer one.
+func (s *Service) restartOutsideSlot(project, root string, profile *Profile, launcher Launcher, lastUsed time.Time) {
+	log.Printf("editor intelligence: %s server for %s asked for a restart, reindexing", profile.ID, project)
+	mc, status := s.connFor(s.ctx, project, root, profile, launcher, lastUsed)
+	if status != "" {
+		log.Printf("editor intelligence: %s server for %s was not restarted: %s, the next lookup starts it", profile.ID, project, status)
+		return
+	}
+	s.release(mc)
+}
+
+// inUse reports whether a lookup holds the slot or has a call registered on
+// it. Caller holds s.mu.
+func (s *Service) inUse(mc *managedConn) bool {
+	if mc.holds > 0 {
+		return true
+	}
+	mc.inflightMu.Lock()
+	defer mc.inflightMu.Unlock()
+	return len(mc.inflight) > 0
+}
+
+// projectAdmitted reports whether the project holds a live slot in the
+// table, starting, running or restarting. Caller holds s.mu.
+func (s *Service) projectAdmitted(project string) bool {
 	for key, mc := range s.conns {
+		if key.project == project && s.slotLive(mc) {
+			return true
+		}
+	}
+	return false
+}
+
+// evictProjects takes other projects out of the table until at most limit
+// projects hold slots, the least recently used first. Dead slots go first
+// and count for nobody: a crashed server is no running project, and its
+// recent use must not protect it over a live one. A project is taken only
+// as a whole and only while none of its slots is starting, restarting,
+// held or has a call in flight; keep is never taken. With strict set the
+// eviction happens only when it reaches the limit, so a refused admission
+// takes down nothing but the dead. It answers the removed slots per
+// project, for closeEvicted after the caller unlocked, and whether the
+// limit was reached. Caller holds s.mu.
+func (s *Service) evictProjects(keep string, limit int, strict bool) (map[string][]*managedConn, bool) {
+	type candidate struct {
+		project  string
+		lastUsed time.Time
+		busy     bool
+	}
+	evicted := map[string][]*managedConn{}
+	byProject := map[string]*candidate{}
+	for key, mc := range s.conns {
+		dead := s.slotDead(mc)
+		pending := dead && s.restartPending(mc)
+		if dead && !pending {
+			// Not retired: whether its death was a restart wish stays
+			// watchRestart's call, like the janitor's own drop.
+			delete(s.conns, key)
+			evicted[key.project] = append(evicted[key.project], mc)
+			continue
+		}
+		c := byProject[key.project]
+		if c == nil {
+			c = &candidate{project: key.project}
+			byProject[key.project] = c
+		}
+		if mc.lastUsed.After(c.lastUsed) {
+			c.lastUsed = mc.lastUsed
+		}
+		if pending {
+			c.busy = true
+			continue
+		}
 		select {
 		case <-mc.ready:
 		default:
+			c.busy = true
 			continue
 		}
-		mc.inflightMu.Lock()
-		busy := len(mc.inflight) > 0
-		mc.inflightMu.Unlock()
-		if busy {
+		if s.inUse(mc) {
+			c.busy = true
+		}
+	}
+	excess := len(byProject) - limit
+	if excess <= 0 {
+		return evicted, true
+	}
+	idle := make([]*candidate, 0, len(byProject))
+	for _, c := range byProject {
+		if c.project != keep && !c.busy {
+			idle = append(idle, c)
+		}
+	}
+	if strict && len(idle) < excess {
+		return evicted, false
+	}
+	sort.Slice(idle, func(i, j int) bool { return idle[i].lastUsed.Before(idle[j].lastUsed) })
+	if len(idle) > excess {
+		idle = idle[:excess]
+	}
+	for _, c := range idle {
+		for key, mc := range s.conns {
+			if key.project == c.project {
+				mc.retired = true
+				delete(s.conns, key)
+				evicted[c.project] = append(evicted[c.project], mc)
+			}
+		}
+	}
+	return evicted, len(idle) >= excess
+}
+
+// closeEvicted closes what evictProjects took out and reports each project.
+// Caller does not hold s.mu.
+func (s *Service) closeEvicted(evicted map[string][]*managedConn) {
+	for project, conns := range evicted {
+		for _, mc := range conns {
+			go s.closeManaged(mc)
+		}
+		s.notifyChange(project)
+	}
+}
+
+// enforceMaxProjects takes projects down to a lowered limit on a janitor
+// round, the least recently used idle ones first. The most recently used
+// project is never taken, whether or not it is busy right now: it is the one
+// somebody works in. What cannot go yet waits for a later round.
+func (s *Service) enforceMaxProjects() {
+	limit := s.currentMaxProjects()
+	s.mu.Lock()
+	evicted, _ := s.evictProjects(s.mostRecentProject(), limit, false)
+	s.mu.Unlock()
+	s.closeEvicted(evicted)
+}
+
+// mostRecentProject answers the project of the most recently used live
+// slot, empty when there is none. Caller holds s.mu.
+func (s *Service) mostRecentProject() string {
+	var project string
+	var last time.Time
+	for key, mc := range s.conns {
+		if !s.slotLive(mc) {
 			continue
 		}
-		if lru == nil || mc.lastUsed.Before(lru.lastUsed) {
-			lru, lruKey = mc, key
+		if project == "" || mc.lastUsed.After(last) {
+			project, last = key.project, mc.lastUsed
 		}
 	}
-	if lru == nil {
-		return connKey{}, false
-	}
-	lru.retired = true
-	delete(s.conns, lruKey)
-	go s.closeManaged(lru)
-	return lruKey, true
+	return project
 }
 
 // slotDead reports whether a table entry is finished and unusable. Starting
@@ -838,14 +1168,42 @@ func (s *Service) slotDead(mc *managedConn) bool {
 	}
 }
 
-// awaitConn waits for a starting connection to finish its handshake.
+// slotLive reports whether an entry holds its project's place: starting,
+// running, or dead with a restart pending. The server is asked once, so a
+// death between two reads cannot make one entry both. Caller holds s.mu.
+func (s *Service) slotLive(mc *managedConn) bool {
+	return !s.slotDead(mc) || s.restartPending(mc)
+}
+
+// restartPending reports whether an entry slotDead already found dead is a
+// restart watchRestart is about to swap in: its server ended with the
+// launcher's restart wish, or has not been reaped yet, so the wish cannot
+// be ruled out. Such an entry keeps its project's place. It never asks
+// whether the server is alive: the caller read that once and passes only a
+// dead entry. Caller holds s.mu.
+func (s *Service) restartPending(mc *managedConn) bool {
+	if mc.retired || mc.err != nil || mc.conn == nil {
+		return false
+	}
+	select {
+	case <-mc.conn.exited:
+		return mc.launcher.WantsRestart(mc.conn.exitStatus())
+	default:
+		return true
+	}
+}
+
+// awaitConn waits for a starting connection to finish its handshake. The
+// slot comes held; a failed wait gives the hold back.
 func (s *Service) awaitConn(ctx context.Context, key connKey, mc *managedConn) (*managedConn, string) {
 	select {
 	case <-ctx.Done():
+		s.release(mc)
 		return nil, StatusCanceled
 	case <-mc.ready:
 	}
 	if mc.err != nil || mc.conn == nil || !mc.conn.alive() {
+		s.release(mc)
 		s.removeConn(key, mc)
 		return nil, StatusError
 	}

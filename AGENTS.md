@@ -2146,9 +2146,10 @@ test. Update this file when a convention changes.
   The editor's cross-device settings live in the shared settings store
   under `editor-*` keys (`internal/web/editorsettings.go`); every default lives
   there, so an install with an empty store behaves like one that saved the
-  defaults. They are edited on `/settings/editor/git`, one form behind a
-  tab built like a coder's sections (shared frame in `editor_nav.gohtml`), so
-  the page can grow more tabs later; `/settings/editor` redirects there. What
+  defaults. They are edited on the tabs of `/settings/editor` (LSP, Search,
+  Files, Git, one form each, built like a coder's sections, shared frame in
+  `editor_nav.gohtml`); LSP is the first tab, the bare `/settings/editor` and
+  the sidebar's Editor row lead there (`editorSettingsPath`). What
   belongs to the screen in front of you goes the other way and never reaches
   the server: tab width, indentation, font size, line wrapping **and how a
   comparison looks, the view and the folding of unchanged parts**, are one
@@ -2743,11 +2744,39 @@ test. Update this file when a convention changes.
   per project as the fallback), speaks stdio JSON-RPC with `processId: null`
   (a containerized server lives in another PID namespace and would exit
   believing its parent dead), and lives until the project saw no editor action
-  for ten minutes: every route under the editor group counts through the
+  for the idle timeout, a setting at the top of the LSP tab
+  (`editor-lsp-idle-seconds`, default 300, refused under 60 because an open
+  editor renews its watches every 15s and a shorter timeout would stop a
+  server between two renewals), read by the janitor before every round
+  (`Service.SetIdleTimeout`, wired in `NewServer`), so a save applies without
+  a restart, and the janitor looks a tenth of it apart, between 5s and 30s,
+  so the real stop stays close to the value: every route under the editor group counts through the
   middleware's `Touch`, the indexing status pull and the project switcher's
   row fragment deliberately do not, both being pulls nobody working in this
-  project started. A full table evicts the least recently used idle
-  connection, busy is the answer only when every slot works. Because the
+  project started. A lookup carries a deadline of its own (`callBudget`,
+  the index wait plus time for the answer): a slot with a call in flight is
+  never expired, so a hung server without it would outlive the idle timeout.
+  **The limit counts projects, not connections**
+  (`editor-lsp-max-projects`, Max running projects right below the idle
+  timeout, default 3, at least 1, at most 32, `Service.SetMaxProjects`, wired
+  in `NewServer`): an admitted project runs every language it needs, because
+  a limit per connection would leave a Go, PHP and TypeScript project with
+  one of its languages silently cold. A project that is not running yet
+  needs a place, the least recently used projects with nothing starting and
+  nothing in flight go with all their servers, and busy is the answer only
+  when too few of them idle, in which case nothing is taken down. A dead
+  server is no running project and is dropped before anything is counted,
+  so its recent use never protects it over a live one; a server that ended
+  with the restart wish keeps its place, `watchRestart` swaps the
+  replacement into the slot the old one still holds. A connection `connFor`
+  hands out is held (`managedConn.holds`) until the lookup registered its
+  call, so no eviction closes it in between. Both settings are read before
+  the service lock and never under it, and one clamp rule reads a stored
+  value, the floor under it and the ceiling over it, in the web layer and
+  the service alike. Read on every admission and every janitor round, so a
+  lowered value takes the others down to it at the latest on the next of
+  either, the janitor never taking the most recently used project and
+  leaving what is busy to a later round. Because the
   connection is shared, a document carries the server's own version counter
   and its set of holders (didClose on the last one, cancellation per client
   and document), and a lookup re-syncs and sends under one lock, so no other

@@ -2,6 +2,7 @@ package editorintelligence
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -400,17 +401,86 @@ func TestServiceTouchKeepsProjectAlive(t *testing.T) {
 	base := time.Now()
 	// Just short of the idle timeout an editor action lands: the connection
 	// counts as used from that moment.
-	s.now = func() time.Time { return base.Add(connIdleTimeout - time.Minute) }
+	s.now = func() time.Time { return base.Add(DefaultIdleTimeout - time.Minute) }
 	s.Touch(req.ProjectName)
-	s.now = func() time.Time { return base.Add(2*connIdleTimeout - 2*time.Minute) }
+	s.now = func() time.Time { return base.Add(2*DefaultIdleTimeout - 2*time.Minute) }
 	s.expireIdle()
 	if s.ConnectionCount() != 1 {
 		t.Fatal("a touched connection must survive the sweep")
 	}
-	s.now = func() time.Time { return base.Add(3 * connIdleTimeout) }
+	s.now = func() time.Time { return base.Add(3 * DefaultIdleTimeout) }
 	s.expireIdle()
 	if s.ConnectionCount() != 0 {
 		t.Fatal("an untouched connection must expire")
+	}
+}
+
+func TestIdleTimeoutDefaultsAndClamps(t *testing.T) {
+	s := New(t.TempDir(), t.TempDir(), nil)
+	t.Cleanup(s.Close)
+	if got := s.currentIdleTimeout(); got != DefaultIdleTimeout {
+		t.Fatalf("nothing wired reads the default, got %s", got)
+	}
+	if DefaultIdleTimeout != 5*time.Minute {
+		t.Fatalf("the default is five minutes, got %s", DefaultIdleTimeout)
+	}
+	for _, tc := range []struct{ in, want time.Duration }{
+		{0, MinIdleTimeout},
+		{-time.Second, MinIdleTimeout},
+		{15 * time.Second, MinIdleTimeout},
+		{MinIdleTimeout, MinIdleTimeout},
+		{7 * time.Minute, 7 * time.Minute},
+		{48 * time.Hour, MaxIdleTimeout},
+	} {
+		in := tc.in
+		s.SetIdleTimeout(func() time.Duration { return in })
+		if got := s.currentIdleTimeout(); got != tc.want {
+			t.Fatalf("timeout %s reads %s, want %s", tc.in, got, tc.want)
+		}
+	}
+	s.SetIdleTimeout(nil)
+	if got := s.currentIdleTimeout(); got != DefaultIdleTimeout {
+		t.Fatalf("a cleared setting reads the default, got %s", got)
+	}
+}
+
+func TestJanitorIntervalFollowsTheTimeout(t *testing.T) {
+	for _, tc := range []struct{ in, want time.Duration }{
+		{MinIdleTimeout, 6 * time.Second},
+		{DefaultIdleTimeout, 30 * time.Second},
+		{2 * time.Minute, 12 * time.Second},
+		{time.Hour, 30 * time.Second},
+		{20 * time.Second, 5 * time.Second},
+	} {
+		if got := janitorInterval(tc.in); got != tc.want {
+			t.Fatalf("interval for %s is %s, want %s", tc.in, got, tc.want)
+		}
+	}
+}
+
+// The setting is read on every sweep: a change reaches the running service
+// without a restart, a longer timeout keeping a server a shorter one stops.
+func TestServiceIdleTimeoutChangesLive(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+
+	req := goRequest(t)
+	if res, _ := s.Definition(context.Background(), req); !res.Available {
+		t.Fatal("setup request failed")
+	}
+	var timeout atomic.Int64
+	timeout.Store(int64(20 * time.Minute))
+	s.SetIdleTimeout(func() time.Duration { return time.Duration(timeout.Load()) })
+	base := time.Now()
+	s.now = func() time.Time { return base.Add(10 * time.Minute) }
+	s.expireIdle()
+	if s.ConnectionCount() != 1 {
+		t.Fatal("ten idle minutes must not stop a server under a twenty minute timeout")
+	}
+	timeout.Store(int64(2 * time.Minute))
+	s.expireIdle()
+	if s.ConnectionCount() != 0 {
+		t.Fatal("the shorter timeout must apply on the next sweep")
 	}
 }
 
@@ -669,6 +739,38 @@ func TestServiceCancellation(t *testing.T) {
 	}
 }
 
+// A hung server must not hold its slot forever: a lookup without a deadline
+// of its own ends at callBudget, and the slot it held idles out afterwards.
+func TestServiceHungCallEndsAndTheSlotExpires(t *testing.T) {
+	installFakeLSP(t, "hang", "gopls")
+	s := newTestService(t)
+	s.callBudget = 500 * time.Millisecond
+
+	start := time.Now()
+	res, _ := s.Definition(context.Background(), goRequest(t))
+	if res.Status != StatusError {
+		t.Fatalf("a call past its budget answers error: %+v", res)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("hung call took %s", elapsed)
+	}
+	mc := slotOf(s, "proj", goRequest(t).Path)
+	if mc == nil {
+		t.Fatal("the slot of a hung server is not dropped by the lookup")
+	}
+	s.mu.Lock()
+	busy := s.inUse(mc)
+	s.mu.Unlock()
+	if busy {
+		t.Fatal("the ended call is still registered on the slot")
+	}
+	s.now = func() time.Time { return time.Now().Add(DefaultIdleTimeout + time.Hour) }
+	s.expireIdle()
+	if s.ConnectionCount() != 0 {
+		t.Fatalf("the hung server outlived the idle timeout: %d", s.ConnectionCount())
+	}
+}
+
 func TestServiceIdleExpiry(t *testing.T) {
 	installFakeLSP(t, "normal", "gopls")
 	s := newTestService(t)
@@ -683,7 +785,7 @@ func TestServiceIdleExpiry(t *testing.T) {
 	}
 	s.mu.Unlock()
 
-	s.now = func() time.Time { return time.Now().Add(connIdleTimeout + time.Hour) }
+	s.now = func() time.Time { return time.Now().Add(DefaultIdleTimeout + time.Hour) }
 	s.expireIdle()
 	if s.ConnectionCount() != 0 {
 		t.Fatalf("idle connection kept: %d", s.ConnectionCount())
@@ -729,48 +831,148 @@ func TestServiceCloseShutsProcessesDown(t *testing.T) {
 	}
 }
 
-func TestServiceLimitEvictsIdle(t *testing.T) {
-	installFakeLSP(t, "normal", "gopls")
-	s := newTestService(t)
-
-	// One project past the table size: the extra one evicts the least
-	// recently used idle connection instead of answering busy, so the count
-	// never passes the limit.
-	var last Result
-	for i := 0; i <= maxConnections; i++ {
-		req := goRequest(t)
-		req.ProjectName = fmt.Sprintf("proj%d", i)
-		req.ProjectRoot = t.TempDir()
-		last, _ = s.Definition(context.Background(), req)
-	}
-	if !last.Available {
-		t.Fatalf("the extra project must evict an idle connection: %+v", last)
-	}
-	if s.ConnectionCount() != maxConnections {
-		t.Fatalf("connections %d", s.ConnectionCount())
+// tickingClock answers a time that moves a second on every read, so the
+// order of the calls is the order of their lastUsed.
+func tickingClock() func() time.Time {
+	var mu sync.Mutex
+	now := time.Now()
+	return func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		now = now.Add(time.Second)
+		return now
 	}
 }
 
-func TestServiceBusyWhenEverySlotWorks(t *testing.T) {
-	installFakeLSP(t, "hang", "gopls")
+// projectsRunning answers the projects holding slots and how many slots each.
+func projectsRunning(s *Service) map[string]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	running := map[string]int{}
+	for key := range s.conns {
+		running[key.project]++
+	}
+	return running
+}
+
+var allLanguages = []WarmMode{{ProfileID: "go"}, {ProfileID: "php"}, {ProfileID: "typescript"}}
+
+func TestServiceLimitCountsProjects(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls", "intelephense", "tsgo")
+	s := newTestService(t)
+	s.now = tickingClock()
+	s.SetMaxProjects(func() int { return 1 })
+
+	// One project with three languages is one project: all three run under
+	// a limit of one.
+	s.Warm("proj0", t.TempDir(), allLanguages)
+	if got := projectsRunning(s); len(got) != 1 || got["proj0"] != 3 {
+		t.Fatalf("an admitted project runs every language: %v", got)
+	}
+}
+
+func TestServiceLimitEvictsWholeProjects(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls", "intelephense", "tsgo")
+	s := newTestService(t)
+	s.now = tickingClock()
+	s.SetMaxProjects(func() int { return 2 })
+
+	s.Warm("proj0", t.TempDir(), allLanguages)
+	s.Warm("proj1", t.TempDir(), allLanguages[:2])
+	if got := projectsRunning(s); len(got) != 2 || s.ConnectionCount() != 5 {
+		t.Fatalf("two projects fit a limit of two: %v", got)
+	}
+	// proj1 is used again, so proj0 is the least recently used one: the
+	// third project takes it down with all three of its servers.
+	s.Touch("proj1")
+	s.Warm("proj2", t.TempDir(), allLanguages[:1])
+	got := projectsRunning(s)
+	if len(got) != 2 || got["proj0"] != 0 || got["proj1"] != 2 || got["proj2"] != 1 {
+		t.Fatalf("the least recently used project goes as a whole: %v", got)
+	}
+}
+
+func TestServiceMaxProjectsDefaultAndClamp(t *testing.T) {
+	s := &Service{}
+	if got := s.currentMaxProjects(); got != 3 {
+		t.Fatalf("nothing wired reads the default of three, got %d", got)
+	}
+	for in, want := range map[int]int{-3: 1, 0: 1, 1: 1, 5: 5, MaxMaxProjects: MaxMaxProjects, MaxMaxProjects + 1: MaxMaxProjects} {
+		if got := ClampMaxProjects(in); got != want {
+			t.Fatalf("ClampMaxProjects(%d) = %d, want %d", in, got, want)
+		}
+	}
+	s.SetMaxProjects(func() int { return 0 })
+	if got := s.currentMaxProjects(); got != MinMaxProjects {
+		t.Fatalf("a zero answer reads as the floor, like a stored one in the web layer, got %d", got)
+	}
+	s.SetMaxProjects(nil)
+	if got := s.currentMaxProjects(); got != DefaultMaxProjects {
+		t.Fatalf("nil puts the default back, got %d", got)
+	}
+}
+
+func TestServiceMaxProjectsAppliesLive(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls", "intelephense")
+	s := newTestService(t)
+	s.now = tickingClock()
+	var limit atomic.Int64
+	limit.Store(3)
+	s.SetMaxProjects(func() int { return int(limit.Load()) })
+
+	for _, p := range []string{"proj0", "proj1", "proj2"} {
+		s.Warm(p, t.TempDir(), allLanguages[:1])
+	}
+	if got := projectsRunning(s); len(got) != 3 {
+		t.Fatalf("three projects fit a limit of three: %v", got)
+	}
+
+	// Lowered to two, the janitor round takes the least recently used one.
+	limit.Store(2)
+	s.enforceMaxProjects()
+	if got := projectsRunning(s); len(got) != 2 || got["proj0"] != 0 {
+		t.Fatalf("the janitor evicts down to the lowered limit: %v", got)
+	}
+
+	// Lowered to one, the next admission of an admitted project takes the
+	// others down and starts its second language.
+	limit.Store(1)
+	s.Warm("proj2", t.TempDir(), allLanguages[1:2])
+	got := projectsRunning(s)
+	if len(got) != 1 || got["proj2"] != 2 {
+		t.Fatalf("an admission evicts down to the lowered limit: %v", got)
+	}
+
+	// Raised again, a new project is admitted beside it.
+	limit.Store(2)
+	s.Warm("proj3", t.TempDir(), allLanguages[:1])
+	if got := projectsRunning(s); len(got) != 2 || got["proj2"] != 2 || got["proj3"] != 1 {
+		t.Fatalf("a raised limit admits without evicting: %v", got)
+	}
+}
+
+func TestServiceBusyWhenEveryProjectWorks(t *testing.T) {
+	installFakeLSP(t, "hang", "gopls", "intelephense")
 	s := newTestService(t)
 
-	// Every slot hangs in flight, so nothing may be evicted.
+	// Every running project hangs in flight, so nothing may be evicted.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var wg sync.WaitGroup
-	for i := 0; i < maxConnections; i++ {
+	roots := make([]string, DefaultMaxProjects)
+	for i := range roots {
+		roots[i] = t.TempDir()
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			req := goRequest(t)
 			req.ProjectName = fmt.Sprintf("proj%d", i)
-			req.ProjectRoot = t.TempDir()
+			req.ProjectRoot = roots[i]
 			_, _ = s.Definition(ctx, req)
 		}(i)
 	}
 	deadline := time.Now().Add(10 * time.Second)
-	for s.ConnectionCount() < maxConnections && time.Now().Before(deadline) {
+	for s.ConnectionCount() < DefaultMaxProjects && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	// The hanging calls register their in flight token right after the
@@ -782,7 +984,15 @@ func TestServiceBusyWhenEverySlotWorks(t *testing.T) {
 	req.ProjectRoot = t.TempDir()
 	res, _ := s.Definition(context.Background(), req)
 	if res.Status != StatusBusy {
-		t.Fatalf("every slot in flight must answer busy: %+v", res)
+		t.Fatalf("every project in flight must answer busy: %+v", res)
+	}
+	if got := projectsRunning(s); len(got) != DefaultMaxProjects {
+		t.Fatalf("a refused admission takes nothing down: %v", got)
+	}
+	// An admitted project still starts its other languages.
+	s.Warm("proj0", roots[0], allLanguages[1:2])
+	if got := projectsRunning(s); got["proj0"] != 2 {
+		t.Fatalf("a busy table never holds an admitted project's language back: %v", got)
 	}
 	cancel()
 	wg.Wait()
@@ -1613,5 +1823,457 @@ func TestServiceDefinitionAtDeclaration(t *testing.T) {
 	res, _ = s.Definition(context.Background(), other)
 	if !res.Available || res.Declaration {
 		t.Fatalf("another file must not read as the declaration: %+v", res)
+	}
+}
+
+// slotOf answers the table entry of the project's server for the file's
+// language, nil for none.
+func slotOf(s *Service, project, path string) *managedConn {
+	profile, _, _ := ProfileForPath(path)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conns[connKey{project: project, profile: profile.ID}]
+}
+
+// holdSlot takes a hold on the project's running Go server the way a
+// lookup does between connFor and its registered call.
+func holdSlot(t *testing.T, s *Service, project, root string) *managedConn {
+	t.Helper()
+	profile, _, _ := ProfileForPath("main.go")
+	mc, status := s.connFor(context.Background(), project, root, profile, nil, s.now())
+	if status != "" {
+		t.Fatalf("hold on %s: %s", project, status)
+	}
+	return mc
+}
+
+// waitFor polls cond until it holds or ten seconds passed.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Many lookups admitting projects at once, beside janitor rounds, never
+// run more projects than the limit, and every hold connFor hands out comes
+// back.
+func TestServiceConcurrentAdmissionsKeepTheLimit(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls", "intelephense", "tsgo")
+	s := newTestService(t)
+	const limit = 2
+	s.SetMaxProjects(func() int { return limit })
+
+	roots := make([]string, 5)
+	for i := range roots {
+		roots[i] = t.TempDir()
+	}
+	var over atomic.Int64
+	stop := make(chan struct{})
+	sampled := make(chan struct{})
+	go func() {
+		defer close(sampled)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			s.mu.Lock()
+			live := map[string]bool{}
+			for key, mc := range s.conns {
+				if s.slotLive(mc) {
+					live[key.project] = true
+				}
+			}
+			s.mu.Unlock()
+			if n := len(live); n > limit {
+				over.Store(int64(n))
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 8; i++ {
+				p := (g + i) % len(roots)
+				s.Warm(fmt.Sprintf("proj%d", p), roots[p], allLanguages)
+				if i%3 == 0 {
+					s.enforceMaxProjects()
+					s.expireIdle()
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	close(stop)
+	<-sampled
+	if n := over.Load(); n > 0 {
+		t.Fatalf("%d projects ran at once under a limit of %d", n, limit)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, mc := range s.conns {
+		if mc.holds != 0 {
+			t.Fatalf("%v kept %d holds after every caller let go", key, mc.holds)
+		}
+	}
+}
+
+// A slot whose server is still starting is busy: nothing evicts it, and a
+// new project finding only it is answered busy.
+func TestServiceStartingSlotBlocksEviction(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+	s.SetMaxProjects(func() int { return 1 })
+
+	// Shaped like the slot connFor puts into the table before launch: a
+	// root, a launcher, no hold, the ready channel still open.
+	starting := &managedConn{
+		ready:    make(chan struct{}),
+		root:     t.TempDir(),
+		launcher: DockerLauncher(s.cacheRoot, nil),
+		lastUsed: time.Now().Add(-time.Hour),
+		inflight: map[string]*inflightToken{},
+	}
+	s.mu.Lock()
+	s.conns[connKey{project: "starting", profile: "go"}] = starting
+	s.mu.Unlock()
+	t.Cleanup(func() {
+		starting.err = errors.New("never started")
+		close(starting.ready)
+	})
+
+	req := goRequest(t)
+	req.ProjectName = "other"
+	if res, _ := s.Definition(context.Background(), req); res.Status != StatusBusy {
+		t.Fatalf("a starting project cannot make room: %+v", res)
+	}
+	s.enforceMaxProjects()
+	if got := projectsRunning(s); len(got) != 1 || got["starting"] != 1 {
+		t.Fatalf("the starting slot stays: %v", got)
+	}
+}
+
+// A server that is not installed is answered before any room is made for
+// it: a full table loses nobody to a lookup that can start nothing.
+func TestServiceNotInstalledEvictsNobody(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+	s.now = tickingClock()
+	s.SetMaxProjects(func() int { return 1 })
+
+	s.Warm("proj0", t.TempDir(), allLanguages[:1])
+	if got := projectsRunning(s); got["proj0"] != 1 {
+		t.Fatalf("proj0 runs: %v", got)
+	}
+	s.mu.Lock()
+	var running *managedConn
+	for _, mc := range s.conns {
+		running = mc
+	}
+	s.mu.Unlock()
+
+	t.Setenv("PATH", t.TempDir())
+	req := goRequest(t)
+	req.ProjectName = "other"
+	if res, _ := s.Definition(context.Background(), req); res.Status != StatusNotInstalled {
+		t.Fatalf("status %+v", res)
+	}
+	got := projectsRunning(s)
+	if len(got) != 1 || got["proj0"] != 1 {
+		t.Fatalf("a not installed answer takes nobody down: %v", got)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if running.retired || !running.conn.alive() {
+		t.Fatal("the running server of proj0 was closed")
+	}
+}
+
+// Under a lowered limit a new project needs more room than the idle
+// projects give: it is refused and takes nobody down.
+func TestServiceStrictRefusalUnderLoweredLimit(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+	s.now = tickingClock()
+	var limit atomic.Int64
+	limit.Store(3)
+	s.SetMaxProjects(func() int { return int(limit.Load()) })
+
+	roots := map[string]string{}
+	for _, p := range []string{"proj0", "proj1", "proj2"} {
+		roots[p] = t.TempDir()
+		s.Warm(p, roots[p], allLanguages[:1])
+	}
+	held := []*managedConn{holdSlot(t, s, "proj1", roots["proj1"]), holdSlot(t, s, "proj2", roots["proj2"])}
+	limit.Store(1)
+
+	s.Warm("proj-new", t.TempDir(), allLanguages[:1])
+	if got := projectsRunning(s); len(got) != 3 || got["proj0"] != 1 || got["proj-new"] != 0 {
+		t.Fatalf("a refused admission takes the one idle project down all the same: %v", got)
+	}
+	for _, mc := range held {
+		s.release(mc)
+	}
+}
+
+// A connection connFor handed out stays until its caller registered the
+// call: an admission in between must not close it.
+func TestServiceHeldConnectionIsNotEvicted(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+	s.now = tickingClock()
+	s.SetMaxProjects(func() int { return 1 })
+
+	root := t.TempDir()
+	s.Warm("proj-a", root, allLanguages[:1])
+	mc := holdSlot(t, s, "proj-a", root)
+	s.Warm("proj-b", t.TempDir(), allLanguages[:1])
+	if got := projectsRunning(s); len(got) != 1 || got["proj-a"] != 1 || !mc.conn.alive() {
+		t.Fatalf("a held connection must not be evicted: %v", got)
+	}
+	s.release(mc)
+	s.Warm("proj-b", t.TempDir(), allLanguages[:1])
+	if got := projectsRunning(s); len(got) != 1 || got["proj-b"] != 1 {
+		t.Fatalf("a released connection is an ordinary idle one again: %v", got)
+	}
+}
+
+// A crashed server is no running project: it goes before anything is
+// counted, and its recent use never protects it over a live project.
+func TestServiceDeadSlotCountsForNobody(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+	s.now = tickingClock()
+	s.SetMaxProjects(func() int { return 2 })
+
+	s.Warm("proj-c", t.TempDir(), allLanguages[:1])
+	s.Warm("proj-a", t.TempDir(), allLanguages[:1])
+	live := slotOf(s, "proj-c", "main.go")
+	dead := slotOf(s, "proj-a", "main.go")
+	if err := dead.conn.cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	<-dead.conn.exited
+
+	s.Warm("proj-b", t.TempDir(), allLanguages[:1])
+	got := projectsRunning(s)
+	if len(got) != 2 || got["proj-a"] != 0 || got["proj-b"] != 1 || got["proj-c"] != 1 {
+		t.Fatalf("the dead slot goes, the older live project stays: %v", got)
+	}
+	if slotOf(s, "proj-c", "main.go") != live || !live.conn.alive() {
+		t.Fatal("the live server was taken down for a dead one")
+	}
+}
+
+// A server that asks for a restart keeps its project's place: the
+// replacement goes into the slot the old one holds, even while the table
+// is full and nobody could make room for a new admission.
+func TestServiceRestartKeepsTheProjectsPlace(t *testing.T) {
+	installFakeLSP(t, "exit-restart-on-request", "gopls")
+	installFakeLSP(t, "normal", "intelephense")
+	s := newTestService(t)
+	var limit atomic.Int64
+	limit.Store(2)
+	s.SetMaxProjects(func() int { return int(limit.Load()) })
+
+	holderRoot := t.TempDir()
+	s.Warm("proj-h", holderRoot, allLanguages[1:2])
+	php, _, _ := ProfileForPath("x.php")
+	held, status := s.connFor(context.Background(), "proj-h", holderRoot, php, nil, s.now())
+	if status != "" {
+		t.Fatalf("hold: %s", status)
+	}
+	defer s.release(held)
+
+	req := goRequest(t)
+	req.ProjectName = "proj-a"
+	s.Warm(req.ProjectName, req.ProjectRoot, allLanguages[:1])
+	old := slotOf(s, "proj-a", "main.go")
+	limit.Store(1)
+
+	if res, _ := s.Definition(context.Background(), req); res.Status != StatusError {
+		t.Fatalf("the lookup meets the restarting server: %+v", res)
+	}
+	waitFor(t, "the replacement server", func() bool {
+		mc := slotOf(s, "proj-a", "main.go")
+		if mc == nil || mc == old {
+			return false
+		}
+		select {
+		case <-mc.ready:
+			return mc.conn != nil && mc.conn.alive()
+		default:
+			return false
+		}
+	})
+	if got := projectsRunning(s); got["proj-h"] != 1 || got["proj-a"] != 1 {
+		t.Fatalf("both projects keep running: %v", got)
+	}
+}
+
+// A restart whose slot somebody took out first has to be admitted again,
+// and a refusal is logged instead of swallowed.
+func TestServiceRestartOutsideSlotSaysARefusal(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+	s.SetMaxProjects(func() int { return 1 })
+
+	root := t.TempDir()
+	s.Warm("proj-h", root, allLanguages[:1])
+	held := holdSlot(t, s, "proj-h", root)
+	defer s.release(held)
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	goProfile, _, _ := ProfileForPath("main.go")
+	s.restartOutsideSlot("proj-a", t.TempDir(), goProfile, DockerLauncher(s.cacheRoot, nil), time.Now())
+	if !strings.Contains(buf.String(), "go server for proj-a was not restarted: busy") {
+		t.Fatalf("the refusal must be logged, got %q", buf.String())
+	}
+	if got := projectsRunning(s); got["proj-a"] != 0 || got["proj-h"] != 1 {
+		t.Fatalf("the refused restart takes nobody's place: %v", got)
+	}
+}
+
+// A restart outside the slot is no editor action: the fresh slot starts on
+// the old clock, so the idle timeout keeps measuring from the last real use,
+// and a replacement a lookup started first keeps that lookup's newer clock.
+func TestServiceRestartOutsideSlotKeepsTheClock(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+	s.now = tickingClock()
+	goProfile, _, _ := ProfileForPath("main.go")
+	launcher := DockerLauncher(s.cacheRoot, nil)
+
+	old := s.now().Add(-time.Hour)
+	s.restartOutsideSlot("proj-a", t.TempDir(), goProfile, launcher, old)
+	s.mu.Lock()
+	if len(s.conns) != 1 {
+		s.mu.Unlock()
+		t.Fatalf("the restart starts one slot: %d", len(s.conns))
+	}
+	for _, cur := range s.conns {
+		if !cur.lastUsed.Equal(old) {
+			t.Errorf("the fresh slot must keep the old clock %v, got %v", old, cur.lastUsed)
+		}
+		if cur.holds != 0 {
+			t.Errorf("holds left: %d", cur.holds)
+		}
+	}
+	s.mu.Unlock()
+
+	root := t.TempDir()
+	mc := holdSlot(t, s, "proj-b", root)
+	s.release(mc)
+	s.mu.Lock()
+	fresh := mc.lastUsed
+	s.mu.Unlock()
+	s.restartOutsideSlot("proj-b", root, goProfile, launcher, fresh.Add(-time.Hour))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur := s.conns[connKey{project: "proj-b", profile: goProfile.ID}]
+	if cur != mc {
+		t.Fatal("the restart joins the running slot instead of replacing it")
+	}
+	if !cur.lastUsed.Equal(fresh) {
+		t.Fatalf("the lookup's clock %v was moved to %v", fresh, cur.lastUsed)
+	}
+	if cur.holds != 0 {
+		t.Fatalf("holds left: %d", cur.holds)
+	}
+}
+
+// An idle timeout that passes while a lookup runs retires nothing: the
+// lookup routes no Touch and may wait out the indexing past the timeout,
+// so the slot survives and the call answers.
+func TestServiceIdleExpirySparesARunningLookup(t *testing.T) {
+	installFakeLSP(t, "indexing", "gopls")
+	s := newTestService(t)
+	var ahead atomic.Int64
+	s.now = func() time.Time { return time.Now().Add(time.Duration(ahead.Load())) }
+
+	req := goRequest(t)
+	req.Path = "use.go"
+	type answer struct {
+		res Result
+		err error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		res, err := s.References(context.Background(), req)
+		done <- answer{res, err}
+	}()
+	waitFor(t, "the lookup to register its call", func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for _, mc := range s.conns {
+			mc.inflightMu.Lock()
+			n := len(mc.inflight)
+			mc.inflightMu.Unlock()
+			if n > 0 {
+				return true
+			}
+		}
+		return false
+	})
+
+	ahead.Store(int64(DefaultIdleTimeout + time.Hour))
+	s.expireIdle()
+	select {
+	case <-done:
+		t.Fatal("the lookup ended before the expiry ran, the test proves nothing")
+	default:
+	}
+	if s.ConnectionCount() != 1 {
+		t.Fatalf("the slot of a running lookup was retired: %d slots", s.ConnectionCount())
+	}
+
+	got := <-done
+	if got.err != nil || !got.res.Available || got.res.Outside != 1 {
+		t.Fatalf("the lookup must answer complete: %+v %v", got.res, got.err)
+	}
+	if s.ConnectionCount() != 1 {
+		t.Fatalf("the slot must stand after the lookup: %d", s.ConnectionCount())
+	}
+}
+
+// The janitor loop enforces a lowered limit on its round, never takes the
+// most recently used project and leaves a busy one to a later round.
+func TestServiceJanitorLoopEnforcesTheLimit(t *testing.T) {
+	installFakeLSP(t, "normal", "gopls")
+	s := newTestService(t)
+	s.now = tickingClock()
+	var limit atomic.Int64
+	limit.Store(3)
+	s.SetMaxProjects(func() int { return int(limit.Load()) })
+
+	root0 := t.TempDir()
+	s.Warm("proj0", root0, allLanguages[:1])
+	held := holdSlot(t, s, "proj0", root0)
+	s.Warm("proj1", t.TempDir(), allLanguages[:1])
+	s.Warm("proj2", t.TempDir(), allLanguages[:1])
+
+	limit.Store(1)
+	s.kick <- struct{}{}
+	waitFor(t, "the idle older project to go", func() bool { return projectsRunning(s)["proj1"] == 0 })
+	if got := projectsRunning(s); len(got) != 2 || got["proj0"] != 1 || got["proj2"] != 1 {
+		t.Fatalf("the busy project and the most recent one stay for now: %v", got)
+	}
+
+	s.release(held)
+	s.kick <- struct{}{}
+	waitFor(t, "the released project to go", func() bool { return projectsRunning(s)["proj0"] == 0 })
+	if got := projectsRunning(s); len(got) != 1 || got["proj2"] != 1 {
+		t.Fatalf("a later round takes the rest, the most recent project stays: %v", got)
 	}
 }

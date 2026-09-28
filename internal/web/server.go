@@ -259,6 +259,12 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 	intel.OnChange(func(project string) {
 		s.bus.Publish(eventbus.Event{Type: "lsp", Data: map[string]string{"project": project}})
 	})
+	// How long an unused server stays up is a setting, asked before every
+	// janitor round, so a save on the LSP tab applies without a restart.
+	intel.SetIdleTimeout(s.lspIdleTimeout)
+	// How many projects run servers at once is one too, asked on every
+	// admission and janitor round.
+	intel.SetMaxProjects(s.lspMaxProjects)
 	return s, nil
 }
 

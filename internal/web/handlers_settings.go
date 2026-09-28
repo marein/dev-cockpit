@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -320,7 +321,7 @@ const (
 	// editorSettingsPath is where the bare /settings/editor and the settings
 	// sidebar's Editor row lead: the leftmost tab, the way a coder's base path
 	// leads to its first section.
-	editorSettingsPath       = editorSearchSettingsPath
+	editorSettingsPath       = editorLSPSettingsPath
 	editorSearchSettingsPath = "/settings/editor/search"
 	editorFilesSettingsPath  = "/settings/editor/files"
 	editorGitSettingsPath    = "/settings/editor/git"
@@ -404,10 +405,18 @@ func (s *Server) handleSettingsEditorLSP(c *gin.Context) {
 		})
 	}
 	c.HTML(http.StatusOK, "settings_editor_lsp.gohtml", render.SettingsEditorData{
-		Page:        s.page(c, "Settings", "settings"),
-		SettingsNav: s.settingsNav("editor"),
-		Section:     "lsp",
-		LSPProfiles: profiles,
+		Page:                  s.page(c, "Settings", "settings"),
+		SettingsNav:           s.settingsNav("editor"),
+		Section:               "lsp",
+		LSPProfiles:           profiles,
+		LSPIdleSeconds:        s.lspIdleSeconds(),
+		LSPIdleDefault:        lspIdleSecondsDefault,
+		LSPIdleMin:            lspIdleSecondsMin,
+		LSPIdleMax:            lspIdleSecondsMax,
+		LSPMaxProjects:        s.lspMaxProjects(),
+		LSPMaxProjectsDefault: lspMaxProjectsDefault,
+		LSPMaxProjectsMin:     lspMaxProjectsMin,
+		LSPMaxProjectsMax:     lspMaxProjectsMax,
 	})
 }
 
@@ -415,7 +424,43 @@ func (s *Server) handleSettingsEditorLSP(c *gin.Context) {
 // default, the server's name with the Docker marker, or off. A value the
 // select never offered keeps the current setting instead of writing
 // something no option stands for.
+// The idle timeout and the running projects limit are checked first and
+// either refuses the whole save with a sentence: a timeout under the floor
+// would stop servers between two watch renewals, a limit under one would
+// leave the project somebody works in without a server, and a silent clamp
+// would store something nobody typed. A request without a field leaves its
+// stored value alone.
 func (s *Server) handleSettingsEditorLSPSave(c *gin.Context) {
+	idle, idleSet := c.GetPostForm("idle_seconds")
+	var idleSeconds int
+	if idleSet {
+		n, err := strconv.Atoi(strings.TrimSpace(idle))
+		if err != nil || n < lspIdleSecondsMin || n > lspIdleSecondsMax {
+			s.redirectWithFlash(c, editorLSPSettingsPath, "", fmt.Sprintf(
+				"Idle timeout must be a whole number of seconds from %d to %d.",
+				lspIdleSecondsMin, lspIdleSecondsMax))
+			return
+		}
+		idleSeconds = n
+	}
+	projects, projectsSet := c.GetPostForm("max_projects")
+	var maxProjects int
+	if projectsSet {
+		n, err := strconv.Atoi(strings.TrimSpace(projects))
+		if err != nil || n < lspMaxProjectsMin || n > lspMaxProjectsMax {
+			s.redirectWithFlash(c, editorLSPSettingsPath, "", fmt.Sprintf(
+				"Max running projects must be a whole number from %d to %d.",
+				lspMaxProjectsMin, lspMaxProjectsMax))
+			return
+		}
+		maxProjects = n
+	}
+	if idleSet {
+		s.settings.Set(editorLSPIdleSecondsKey, strconv.Itoa(idleSeconds))
+	}
+	if projectsSet {
+		s.settings.Set(editorLSPMaxProjectsKey, strconv.Itoa(maxProjects))
+	}
 	for _, p := range editorintelligence.Profiles() {
 		value := c.PostForm("server_" + p.ID)
 		if value != "" && lspChoice(value, p) == value {

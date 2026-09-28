@@ -108,6 +108,19 @@ type SettingsEditorData struct {
 	// LSPProfiles are the code navigation's language server profiles the
 	// LSP tab offers a server select for.
 	LSPProfiles []EditorLSPProfile
+	// LSPIdleSeconds is how long a project's language servers stay up
+	// without editor action, with its default and the range the field
+	// accepts.
+	LSPIdleSeconds int
+	LSPIdleDefault int
+	LSPIdleMin     int
+	LSPIdleMax     int
+	// LSPMaxProjects is how many projects may run language servers at
+	// once, with its default and the range the field accepts.
+	LSPMaxProjects        int
+	LSPMaxProjectsDefault int
+	LSPMaxProjectsMin     int
+	LSPMaxProjectsMax     int
 }
 
 // EditorLSPProfile is one language on the LSP tab: its select offers

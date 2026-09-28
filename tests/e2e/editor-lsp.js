@@ -623,6 +623,92 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     assert(picked === "gopls-docker", `the Docker pick survives the save, got ${picked}`);
   });
 
+  await run("settings: the idle timeout stands first, defaults to 300 and refuses less than 60", async () => {
+    await page.goto(`${BASE}/settings/editor/lsp`, { waitUntil: "domcontentloaded" });
+    await L.dismissUpdate(page);
+    const shape = await page.evaluate(() => {
+      const field = document.querySelector('#settings-editor-lsp input[name="idle_seconds"]');
+      const select = document.querySelector('#settings-editor-lsp select');
+      return {
+        value: field?.value,
+        min: field?.min,
+        first: !!(field && select && (field.compareDocumentPosition(select) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      };
+    });
+    assert(shape.value === "300", `a fresh instance reads 300 seconds, got ${shape.value}`);
+    assert(shape.min === "60", `the field's floor is 60, got ${shape.min}`);
+    assert(shape.first, "the idle field stands above the language selects");
+
+    // The browser's own min check would stop the submit, so the refusal is
+    // asked of the server the way a page without it would post.
+    await page.evaluate(() => { document.querySelector('input[name="idle_seconds"]').removeAttribute("min"); });
+    await page.fill('input[name="idle_seconds"]', "30");
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/settings/editor/lsp") && r.request().method() === "POST", { timeout: 8000 }),
+      page.click('#settings-editor-lsp button[type="submit"]'),
+    ]);
+    await page.waitForFunction(() => document.body.textContent.includes("from 60 to 86400"), null, { timeout: 8000 });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await L.dismissUpdate(page);
+    const kept = await page.$eval('input[name="idle_seconds"]', (el) => el.value);
+    assert(kept === "300", `a refused value is not stored, got ${kept}`);
+
+    await page.fill('input[name="idle_seconds"]', "120");
+    await saveLSPSettings();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await L.dismissUpdate(page);
+    const saved = await page.$eval('input[name="idle_seconds"]', (el) => el.value);
+    assert(saved === "120", `the saved timeout survives the reload, got ${saved}`);
+    await page.fill('input[name="idle_seconds"]', "300");
+    await saveLSPSettings();
+  });
+
+  await run("settings: max running projects stands below the idle timeout, defaults to 3 and refuses less than 1", async () => {
+    await page.goto(`${BASE}/settings/editor/lsp`, { waitUntil: "domcontentloaded" });
+    await L.dismissUpdate(page);
+    const shape = await page.evaluate(() => {
+      const form = document.querySelector("#settings-editor-lsp");
+      const idle = form?.querySelector('input[name="idle_seconds"]');
+      const field = form?.querySelector('input[name="max_projects"]');
+      const select = form?.querySelector("select");
+      const fields = [...(form?.querySelectorAll("input:not([type=hidden]), select") || [])];
+      return {
+        value: field?.value,
+        min: field?.min,
+        max: field?.max,
+        label: field ? document.querySelector(`label[for="${field.id}"]`)?.textContent.trim() : "",
+        next: fields.indexOf(field) === fields.indexOf(idle) + 1,
+        aboveSelects: !!(field && select && (field.compareDocumentPosition(select) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      };
+    });
+    assert(shape.value === "3", `a fresh instance runs 3 projects, got ${shape.value}`);
+    assert(shape.min === "1" && shape.max === "32", `the field accepts 1 to 32, got ${shape.min} to ${shape.max}`);
+    assert(shape.label === "Max running projects", `the label names the setting, got ${shape.label}`);
+    assert(shape.next, "the limit is the field right below the idle timeout");
+    assert(shape.aboveSelects, "the limit stands above the language selects");
+
+    await page.evaluate(() => { document.querySelector('input[name="max_projects"]').removeAttribute("min"); });
+    await page.fill('input[name="max_projects"]', "0");
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/settings/editor/lsp") && r.request().method() === "POST", { timeout: 8000 }),
+      page.click('#settings-editor-lsp button[type="submit"]'),
+    ]);
+    await page.waitForFunction(() => document.body.textContent.includes("from 1 to 32"), null, { timeout: 8000 });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await L.dismissUpdate(page);
+    const kept = await page.$eval('input[name="max_projects"]', (el) => el.value);
+    assert(kept === "3", `a refused value is not stored, got ${kept}`);
+
+    await page.fill('input[name="max_projects"]', "4");
+    await saveLSPSettings();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await L.dismissUpdate(page);
+    const saved = await page.$eval('input[name="max_projects"]', (el) => el.value);
+    assert(saved === "4", `the saved limit survives the reload, got ${saved}`);
+    await page.fill('input[name="max_projects"]', "3");
+    await saveLSPSettings();
+  });
+
   await run("settings: a language switched off loses its whole surface", async () => {
     await page.goto(`${BASE}/settings/editor/lsp`, { waitUntil: "domcontentloaded" });
     await L.dismissUpdate(page);

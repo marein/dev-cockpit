@@ -1991,15 +1991,17 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       });
 
       // The bare path and the sidebar's Editor row lead to the leftmost tab,
-      // which is Search; Files, Git and LSP follow it.
+      // which is LSP; Search, Files and Git follow it.
       await page.goto(`${BASE}/settings/editor`, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(page);
-      assert(/\/settings\/editor\/search$/.test(page.url()), `the bare path landed on ${page.url()}`);
+      assert(/\/settings\/editor\/lsp$/.test(page.url()), `the bare path landed on ${page.url()}`);
+      await page.goto(`${BASE}/settings/editor/search`, { waitUntil: "domcontentloaded" });
+      await L.dismissUpdate(page);
       const tabs = await page.locator("[data-editor-sections] .nav-link").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
-      assert(tabs.join() === "/settings/editor/search,/settings/editor/files,/settings/editor/git,/settings/editor/lsp", `the tabs are ${tabs.join(", ")}`);
+      assert(tabs.join() === "/settings/editor/lsp,/settings/editor/search,/settings/editor/files,/settings/editor/git", `the tabs are ${tabs.join(", ")}`);
       const active = await page.locator("[data-editor-sections] .nav-link.active").getAttribute("href");
       assert(active === "/settings/editor/search", `the marked tab is ${active}`);
-      assert(await page.$('[data-settings-nav] a[href="/settings/editor/search"].active'), "the Editor row is not marked in the settings nav");
+      assert(await page.$('[data-settings-nav] a[href="/settings/editor/lsp"].active'), "the Editor row is not marked in the settings nav");
       assert(await page.locator("#settings-editor-search").count() === 1, "there is not exactly one form");
 
       // A folder excluded here disappears from the palette without a restart:
@@ -2048,7 +2050,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.goto(editorURL, { waitUntil: "domcontentloaded" });
       await L.dismissUpdate(page);
       assert(await paletteHas("buried.txt"), "the folder did not come back after the setting was restored");
-      return "search tab first, exclusions round-trip, index follows without a restart";
+      return "lsp tab first, exclusions round-trip, index follows without a restart";
     });
 
     await run("settings persist to localStorage", async () => {
