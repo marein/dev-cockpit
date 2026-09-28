@@ -24,7 +24,10 @@ const { assert, sleep, BASE } = L;
 // the cursors are set last so no later click moves them. The diff checks scroll
 // the outer .cm-mergeView for the vertical axis and one side for the sideways
 // one, the sync carries the other side; the stored entry is read back before
-// the switch, so a miss tells the capture from the restore.
+// the switch, so a miss tells the capture from the restore. An in app
+// navigation into the editor (a pe.js swap, no reload) is sampled from the
+// moment dc-editor connects and for ten frames after: the stored width and
+// fold have to stand in every one of them, never the default first.
 
 L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
   const tag = `edl-${engine}-${Date.now().toString(36)}`;
@@ -525,6 +528,73 @@ L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
       const again = await mergeScroll();
       assert(near(again.top, set.top, 8) && again.left.join() === "150,150", `after the reload: ${JSON.stringify(again)} vs ${JSON.stringify(set)}`);
       return `outer ${again.top}, sides ${again.left.join("/")}, one block open`;
+    });
+    await run("an in app navigation paints the stored width and fold in the first frame", async () => {
+      const inApp = async (href) => {
+        await page.evaluate((h) => {
+          const link = document.createElement("a");
+          link.href = h;
+          link.textContent = "e2e";
+          document.querySelector("[data-page-content]").append(link);
+          link.click();
+        }, href);
+        await page.waitForFunction((h) => location.pathname === h, href, { timeout: 10000 });
+      };
+      const editorPath = `/projects/${encodeURIComponent(a)}/editor`;
+      await openEditor(a);
+      const sampled = async (width, folded) => {
+        await inApp("/projects");
+        await page.waitForSelector("dc-editor", { state: "detached", timeout: 10000 });
+        await page.evaluate(([p, w, f]) => {
+          window.__noReload = true;
+          localStorage.setItem(`dc-editor-tree-width:${p}`, w);
+          localStorage.setItem(`dc-editor-tree-folded:${p}`, f);
+          window.__treeSamples = [];
+          const seen = new WeakSet();
+          const sample = (el, at) => {
+            const col = el.querySelector(".editor-tree-col");
+            window.__treeSamples.push({
+              at,
+              w: Math.round(col.getBoundingClientRect().width),
+              display: getComputedStyle(col).display,
+              defined: !!customElements.get("dc-editor"),
+            });
+          };
+          const observer = new MutationObserver(() => {
+            const el = document.querySelector("dc-editor");
+            if (!el || seen.has(el)) return;
+            seen.add(el);
+            sample(el, "connect");
+            let frames = 0;
+            const tick = () => {
+              if (!el.isConnected) return;
+              sample(el, `frame ${frames}`);
+              if (++frames < 10) requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+            observer.disconnect();
+          });
+          observer.observe(document.body, { childList: true, subtree: true });
+        }, [a, String(width), folded ? "1" : ""]);
+        await inApp(editorPath);
+        await settle();
+        const samples = await page.evaluate(() => window.__treeSamples);
+        assert(await page.evaluate(() => window.__noReload === true), "the page reloaded instead of swapping");
+        assert(samples.length === 11 && samples.every((x) => x.defined), `the swap was not sampled from the connect on: ${JSON.stringify(samples)}`);
+        return samples;
+      };
+
+      const width = 377;
+      const wide = await sampled(width, false);
+      const off = wide.filter((x) => x.display === "none" || !near(x.w, width, 1));
+      assert(!off.length, `the column did not stand at ${width}px from the first frame: ${JSON.stringify(wide)}`);
+
+      const folded = await sampled(width, true);
+      const shown = folded.filter((x) => x.display !== "none");
+      assert(!shown.length, `the folded column showed after the swap: ${JSON.stringify(folded)}`);
+
+      await page.evaluate((p) => localStorage.setItem(`dc-editor-tree-folded:${p}`, ""), a);
+      return `${wide.length} samples at ${width}px, ${folded.length} folded`;
     });
   } finally {
     if (shellUrl) await L.deleteShell(page, shellUrl).catch(() => {});

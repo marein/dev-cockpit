@@ -95,6 +95,8 @@ async function init(root) {
   const lsp = editorLSP.createClient(base, root.dataset.editorLsp);
 
   const bodyEl = root.querySelector(".editor-body");
+  applyTreeWidth(parseInt(readLayout(TREE_WIDTH_KEY), 10) || 0);
+  root.classList.toggle("editor-tree-folded", readLayout(TREE_FOLD_KEY) === "1");
   const treeEl = root.querySelector("[data-editor-tree]");
   const compareBarEl = root.querySelector("[data-editor-compare]");
   const compareNameEls = {
@@ -243,6 +245,7 @@ async function init(root) {
   const signal = ac.signal;
   const mobileMedia = window.matchMedia("(max-width: 767.98px), (max-height: 500px)");
   const pointerMedia = window.matchMedia("(hover: hover) and (pointer: fine)");
+  const termPointerMedia = window.matchMedia("(any-pointer: fine), not all and (any-pointer: coarse)");
   const wideMedia = window.matchMedia("(min-width: 992px)");
 
   // onCursor runs from inside createEditor's first update, before the const
@@ -1090,6 +1093,7 @@ async function init(root) {
     const unwell = data.containers.some((c) => c.unwell);
     const working = (data.stacks || []).some((s) => s.busy || s.run?.running);
     dockerStatusText.textContent = data.containers.length ? `${running}/${data.containers.length}` : "";
+    dockerStatusText.hidden = !data.containers.length;
     dockerStatusBtn.title = working
       ? "Docker: a compose command is running"
       : data.containers.length
@@ -7596,7 +7600,6 @@ async function init(root) {
   }
 
   function wireSplitter() {
-    applyTreeWidth(parseInt(readLayout(TREE_WIDTH_KEY), 10) || 0);
     let dragging = false;
     let width = 0;
     let timer = 0;
@@ -9889,7 +9892,7 @@ async function init(root) {
   let termResumeExpanded = false;
   let termMenuOpen = false;
   let termMenuIndex = -1;
-  const termApplies = () => pointerMedia.matches && !mobileMedia.matches;
+  const termApplies = () => termPointerMedia.matches && !mobileMedia.matches;
   const termPanesEl = () => termBodyEl.querySelector("[data-editor-term-panes]");
   const termPaneFor = (id) => (id ? termBodyEl.querySelector(`[data-term-pane="${CSS.escape(id)}"]`) : null);
   const termTabFor = (id) => (id ? termTabsHostEl.querySelector(`[data-term-tab="${CSS.escape(id)}"]`) : null);
@@ -9936,7 +9939,7 @@ async function init(root) {
     input.setAttribute("terminal-id", id);
     input.setAttribute("input-url", pane.getAttribute("data-input-url") || "");
     if (pane.hasAttribute("data-scroll-history")) input.setAttribute("scroll-history", "");
-    pane.append(attach, input);
+    pane.prepend(attach, input);
     await window.app?.loadElements?.(pane);
     const upload = termFootsHostEl.querySelector(`[data-term-foot="${CSS.escape(id)}"] coder-file-upload`);
     if (upload) {
@@ -9967,7 +9970,7 @@ async function init(root) {
     store.set(termActiveKey, id || "");
     paintTermTabs();
     if (!pane.querySelector("terminal-attach")) await mountTermIsland(pane);
-    if (focus) document.dispatchEvent(new CustomEvent("dc:activate-pane", { detail: { id } }));
+    document.dispatchEvent(new CustomEvent("dc:activate-pane", { detail: { id, focus } }));
     markTermRead(id);
   }
 
@@ -10392,7 +10395,7 @@ async function init(root) {
       drag = null;
     };
     termTabsHostEl.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0 || !pointerMedia.matches || drag) return;
+      if (e.button !== 0 || e.pointerType === "touch" || drag) return;
       const tab = e.target.closest("[data-term-tab]");
       if (!tab || e.target.closest("[data-term-close]")) return;
       const strip = tab.closest("[data-editor-term-tabs]");
@@ -10585,6 +10588,7 @@ async function init(root) {
     }
   }, { capture: true, signal });
   mobileMedia.addEventListener("change", paintTermPanel, { signal });
+  termPointerMedia.addEventListener("change", paintTermPanel, { signal });
   wireTermSplitter();
   wireTermTabDrag();
   paintTermPanel();

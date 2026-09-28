@@ -4323,6 +4323,55 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       return `390: ${seen["390"]}, 1440: ${seen["1440"]} controls`;
     });
 
+    // A compose stack without a container: the segment shows the docker icon
+    // and no count, and the icon stands where every other icon of the bar
+    // stands, in the middle of its button and on the bar's line. The answer is
+    // the server's own with the daemon's part put in, a stack and no
+    // container, so the check needs no daemon and never skips.
+    await run("the docker icon in the statusbar is centred when no container runs", async () => {
+      const route = `**/projects/${encodeURIComponent(project)}/editor/docker`;
+      await page.route(route, async (r) => {
+        const res = await r.fetch();
+        const data = await res.json();
+        data.available = true;
+        data.stacks = [{ label: "compose.yaml", running: 0, total: 0, busy: false }];
+        data.containers = [];
+        await r.fulfill({ response: res, json: data });
+      });
+      try {
+        await page.goto(editorURL, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
+        await page.waitForSelector("[data-editor-docker-status]", { state: "visible", timeout: 8000 });
+        const geo = await page.evaluate(() => {
+          const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width }; };
+          const btn = document.querySelector("[data-editor-docker-status]");
+          const text = btn.querySelector("[data-editor-docker-status-text]");
+          const term = document.querySelector("[data-editor-term-status]");
+          return {
+            title: btn.title,
+            count: text.textContent,
+            btn: box(btn),
+            icon: box(btn.querySelector("i")),
+            textWidth: text.getBoundingClientRect().width,
+            term: term.hidden ? null : { btn: box(term), icon: box(term.querySelector("i")) },
+            bar: box(document.querySelector(".editor-statusbar")),
+          };
+        });
+        assert(geo.title === "Docker: nothing running" && geo.count === "", `not the no container state: ${JSON.stringify(geo)}`);
+        assert(geo.textWidth === 0, `an empty count still takes room: ${geo.textWidth}px`);
+        assert(Math.abs(geo.btn.x - geo.icon.x) <= 0.5 && Math.abs(geo.btn.y - geo.icon.y) <= 0.5,
+          `the icon is off the middle of its button: button ${JSON.stringify(geo.btn)}, icon ${JSON.stringify(geo.icon)}`);
+        assert(Math.abs(geo.icon.y - geo.bar.y) <= 1, `the icon is off the bar's line: icon ${geo.icon.y}, bar ${geo.bar.y}`);
+        if (geo.term) {
+          assert(Math.abs(geo.btn.w - geo.term.btn.w) <= 0.5, `the docker button is not as wide as the terminal's: ${geo.btn.w} vs ${geo.term.btn.w}`);
+          assert(Math.abs(geo.icon.y - geo.term.icon.y) <= 0.5, `the docker icon stands off the terminal icon's line: ${geo.icon.y} vs ${geo.term.icon.y}`);
+        }
+        return `icon at ${geo.icon.x.toFixed(1)}/${geo.icon.y.toFixed(1)} in a ${geo.btn.w}px button`;
+      } finally {
+        await page.unroute(route).catch(() => {});
+      }
+    });
+
     // Where the tree is a column the same button folds it away, and the fold
     // stays until it is folded back, a reload included.
     await run("the folder button folds the tree column away at 1440 and the fold survives a reload", async () => {

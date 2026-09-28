@@ -486,7 +486,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Terminal panel",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "J"}}},
-					Desc:  `<em>Terminal</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the terminal icon <i class="ti ti-terminal-2 align-text-bottom" aria-hidden="true"></i> in the statusbar, or the shortcut opens the project's coders and shells below the code. Tabs switch between them, <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> starts a new one or resumes a stopped coder, and the keys, the refresh and the file upload work like on the terminal pages. Open or closed, the active tab and the height are remembered per project. Desktop only.`,
+					Desc:  `<em>Terminal</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the terminal icon <i class="ti ti-terminal-2 align-text-bottom" aria-hidden="true"></i> in the statusbar, or the shortcut opens the project's coders and shells below the code. Tabs switch between them, <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> starts a new one or resumes a stopped coder, and the keys, the copy view, the refresh and the file upload work like on the terminal pages. Open or closed, the active tab and the height are remembered per project. Desktop only.`,
 				},
 				{
 					Title: "Docker view",

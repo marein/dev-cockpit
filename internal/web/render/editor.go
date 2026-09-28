@@ -99,19 +99,23 @@ type EditorInactiveCoder struct {
 // EditorTerminal is one session in the editor's terminal panel: the tab entry
 // and the pane the client mounts a terminal island into.
 type EditorTerminal struct {
-	ID            string
-	Name          string
-	Kind          string // "coder" or "shell"
-	Coder         string
-	URL           string
-	StreamURL     string
-	ResizeURL     string
-	InputURL      string
-	ScrollHistory bool
-	HasNews       bool
-	Working       bool
-	Steered       bool
-	SteerPrefill  string
+	ID        string
+	Name      string
+	Kind      string // "coder" or "shell"
+	Coder     string
+	URL       string
+	StreamURL string
+	ResizeURL string
+	InputURL  string
+	// TextURL serves the copy view's text face, ConversationURL its
+	// conversation face, coders only.
+	TextURL         string
+	ConversationURL string
+	ScrollHistory   bool
+	HasNews         bool
+	Working         bool
+	Steered         bool
+	SteerPrefill    string
 	// FilesData feeds a coder's files modal, the same one the attach pages
 	// carry; nil for shells and for coders whose files cannot be listed.
 	FilesData *CoderFilesData

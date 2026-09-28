@@ -889,6 +889,7 @@ func (s *Server) handleEditorTerminals(c *gin.Context) {
 			StreamURL:     t.URL + "/stream",
 			ResizeURL:     t.URL + "/resize",
 			InputURL:      t.URL + "/input",
+			TextURL:       t.URL + "/copy",
 			ScrollHistory: t.Kind == "shell",
 			HasNews:       t.HasNews,
 			Working:       t.Working,
@@ -896,6 +897,7 @@ func (s *Server) handleEditorTerminals(c *gin.Context) {
 			SteerPrefill:  prefill[t.ID],
 		}
 		if t.Kind == "coder" {
+			et.ConversationURL = t.URL + "/conversation"
 			if co, running, err := s.resolveRunning(t.ID); err == nil {
 				if files, err := co.Coder().SessionRepository().ListFiles(running.Identifier); err == nil {
 					et.FilesData = &render.CoderFilesData{

@@ -503,6 +503,7 @@ function initTerminalAttach(host) {
   listen(document, "dc:activate-pane", (event) => {
     if (!terminalId || event.detail?.id !== terminalId) return;
     claimActive();
+    if (event.detail?.focus === false) return;
     if (interactiveInput) term.focus();
     followCursor();
   });
@@ -551,7 +552,7 @@ function initTerminalAttach(host) {
   // takes focus. Pointer-precise (desktop) clients type straight into the
   // terminal: xterm encodes every keystroke, paste and composed accent into the
   // exact terminal byte stream, which we forward through the controls module.
-  const interactiveInput = !window.matchMedia("(pointer: coarse)").matches;
+  const interactiveInput = embedded || !window.matchMedia("(pointer: coarse)").matches;
   const term = new Terminal({
     allowTransparency: true,
     disableStdin: !interactiveInput,

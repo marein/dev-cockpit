@@ -3739,13 +3739,21 @@ free floating page scripts.
   position. A full post is that same operation with every slot in it. Never add
   a second order field for a new surface, and never let a surface renumber from
   one what it cannot see.
-  The editor's terminal panel embeds the same islands, desktop only: the
+  The editor's terminal panel embeds the same islands, desktop only, which
+  it reads as a screen wider than a phone where some input points finely or
+  none is coarse (`(any-pointer: fine), not all and (any-pointer: coarse)`,
+  never the primary pointer: a Windows Edge seen over a remote desktop reports
+  no pointer at all, and an iPad with a trackpad a coarse primary one), so only
+  a touch only device stays out: the
   fragment `/projects/:name/editor/terminals` renders the project's sessions
   as tabs plus empty pane divs, and `editor.js` mounts an island pair into a
   pane on its first activation, so a never shown pane holds no stream. Those
   islands carry `embedded`: rows fit the pane like everywhere else
   (`MinTerminalRows`, 5, is the server's floor), the size observer watches
-  height too, a hidden pane does not connect. Open state,
+  height too, a hidden pane does not connect, and an embedded island always
+  types straight into xterm whatever the primary pointer says, because the
+  panel has no prompt box and no scroll zone to reach the phone's cursor
+  input with. Open state,
   active tab and height are
   per project (`dc-editor-term-open:<project>`, `-active:`, `-height:`).
   Inside the panel the terminal keys mirror the attach pages; the panel
@@ -3773,8 +3781,10 @@ free floating page scripts.
 - **The copy button shows the terminal's text in its place, read only.**
   A terminal draws to a canvas and holds no text anybody can select, so the
   copy button of every footer (`data-terminal-copy`, a shell's and a coder's
-  alike) opens `terminal-copy` in the terminal's place, on the attach pages
-  and per pane of a split. It is one element with one frame
+  alike) opens `terminal-copy` in the terminal's place, on the attach pages,
+  per pane of a split and per pane of the editor's terminal panel (its button
+  in the panel head's per session block, the pane itself the stage). It is
+  one element with one frame
   (the `terminal_copy_surface.gohtml` define in `terminal_copy.gohtml`,
   rendered into every `.attach-stage`), and
   the frame has two faces: a coder's conversation as bubbles, and plain text,

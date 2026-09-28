@@ -2,11 +2,11 @@ const L = require("./lib");
 const { assert, sleep, confirmSwal, BASE } = L;
 
 // Editor terminal panel: the project's live coders and shells inside the editor
-// page, desktop only (fine pointer, wide viewport). The panel sits below the
+// page, desktop only (a fine or no pointer, wide viewport). The panel sits below the
 // editor surface in the pane column, opens through the kebab menu's Terminal
 // entry or Ctrl+J, remembers its open state and height per project
 // (dc-editor-term-open:<project> / dc-editor-term-height:<project>), and hides completely on mobile
-// widths and coarse pointers. Content comes from the fragment
+// widths and touch only devices. Content comes from the fragment
 // GET /projects/:name/editor/terminals (tabs plus empty pane divs); the client
 // mounts a terminal-attach/terminal-input island pair into a pane on first
 // activation, so hidden panes hold no stream. Islands carry the `embedded`
@@ -20,7 +20,8 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // direct create), Cmd+T opens it while focus is inside the panel and the
 // arrows walk it (bootstrap's own dropdown keys). Inside the panel Ctrl+Tab
 // steps through the terminal tabs and Ctrl/Cmd+Shift+X asks to close the
-// active one, mirroring the attach pages. Tabs drag-reorder with the mouse and
+// active one, mirroring the attach pages. Tabs drag-reorder with the mouse,
+// whatever the pointer media report, never with a touch pointer, and
 // persist through POST /terminal-tabs/order. The panel posts the project's ids
 // only, and the server reads such a subset as a permutation of the places
 // those sessions already hold: the slots stay, only who sits in which changes,
@@ -41,7 +42,12 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // the attach page's files modal (fragment-rendered per coder, kept alive
 // across refreshes like the panes) behind a [data-terminal-footer] button the
 // active island unhides, so drop and paste uploads run through
-// coder-file-upload itself.
+// coder-file-upload itself. The panel stands wherever some input points
+// finely or none is coarse, read off any pointer and never the primary one,
+// and an embedded terminal always types straight into xterm; the probes launch
+// Chromium with blink settings for each pointer setup. The copy button in the
+// panel head opens the copy view in the pane, a shell's history or a coder's
+// conversation with its Screen face.
 // Gotchas: headless renders xterm on canvas, output is read from the
 // .attach-selection mirror scoped to the panel; the swal prompt of a rename is
 // filled via its input field; the second shell arrives over SSE, so the check
@@ -123,6 +129,35 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       let text = "";
       for (let i = 0; i < 12; i++) { text = await panelText(); if (text.includes(marker)) break; await sleep(400); }
       assert(text.includes(marker), `marker not mirrored (len ${text.length})`);
+    });
+
+    // The panel's panes are stages like the attach pages', so the copy button
+    // in the panel head opens the same copy view in the terminal's place.
+    await run("desktop: the copy button shows a shell's history in the pane and Escape brings the terminal back", async () => {
+      const id = await page.evaluate(() => document.querySelector("[data-editor-term-panel] .editor-term-pane.active").getAttribute("data-term-pane"));
+      const pane = `${panel} [data-term-pane="${id}"]`;
+      const button = `${panel} [data-terminal-footer="${id}"] [data-terminal-copy]`;
+      await page.waitForSelector(button, { state: "visible", timeout: 6000 });
+      assert(await page.locator(`${button} .ti-copy`).count() === 1, "a shell's copy button does not wear the copy icon");
+      await page.click(button);
+      await page.waitForSelector(`${pane} terminal-copy:not([hidden])`, { timeout: 6000 });
+      await page.waitForFunction(([sel, want]) => (document.querySelector(sel)?.textContent || "").includes(want),
+        [`${pane} [data-copy-text]`, `ETP${tag.slice(-4)}`], { timeout: 8000 });
+      const state = await page.evaluate(([p, b]) => ({
+        behind: document.querySelector(`${p} terminal-attach`).classList.contains("attach-terminal-behind"),
+        pressed: document.querySelector(b).getAttribute("aria-pressed"),
+        copyBox: Math.round(document.querySelector(`${p} terminal-copy`).getBoundingClientRect().height),
+        paneBox: Math.round(document.querySelector(p).getBoundingClientRect().height),
+        title: document.querySelector(`${p} [data-copy-title]`).textContent,
+      }), [pane, button]);
+      assert(state.behind, "the terminal did not step behind the copy view");
+      assert(state.pressed === "true", `the copy button does not read pressed: ${state.pressed}`);
+      assert(state.copyBox === state.paneBox && state.copyBox > 0, `the copy view does not fill the pane: ${state.copyBox} of ${state.paneBox}px`);
+      assert(state.title === "History", `a shell's copy view reads ${state.title}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(`${pane} terminal-copy`, { state: "hidden", timeout: 4000 });
+      const back = await page.evaluate((p) => document.querySelector(`${p} terminal-attach`).classList.contains("attach-terminal-behind"), pane);
+      assert(!back, "the terminal stayed behind after Escape");
     });
 
     await run("desktop: the terminal fits the panel instead of scrolling to a fixed row count", async () => {
@@ -627,6 +662,45 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       }
     });
 
+    // A session that vanishes from somewhere else leaves the panel on a pane
+    // activated without focus. Its buttons must still show at once, while the
+    // keyboard stays wherever it was.
+    await run("desktop: the active session vanishing elsewhere shows the next pane's buttons without taking focus", async () => {
+      const page2 = await page.context().newPage();
+      let goneUrl = null;
+      try {
+        goneUrl = await L.createShell(page2, project);
+        const goneId = new URL(goneUrl).pathname.split("/").pop();
+        await page.waitForSelector(`${panel} [data-term-tab="${goneId}"]`, { timeout: 8000 });
+        const firstId = await page.evaluate((gone) => [...document.querySelectorAll("[data-editor-term-panel] [data-term-tab]")]
+          .map((t) => t.getAttribute("data-term-tab")).find((id) => id !== gone), goneId);
+        assert(firstId, "no other tab to fall back to, so this proves nothing");
+        await page.click(`${panel} [data-term-tab="${firstId}"]`);
+        await page.waitForSelector(`${panel} [data-term-pane="${firstId}"].active terminal-attach[embedded]`, { timeout: 10000 });
+        await page.click(`${panel} [data-term-tab="${goneId}"]`);
+        await page.waitForSelector(`${panel} [data-term-pane="${goneId}"].active terminal-attach[embedded]`, { timeout: 10000 });
+        await sleep(500);
+        const copy = `${panel} [data-terminal-footer="${firstId}"] [data-terminal-copy]`;
+        assert(!(await page.locator(copy).isVisible()), "the first pane's copy button shows while another pane is active");
+        await page.evaluate(() => document.activeElement?.blur());
+        await L.deleteShell(page2, goneUrl);
+        goneUrl = null;
+        await page.waitForFunction((id) => !document.querySelector(`[data-term-tab="${id}"]`), goneId, { timeout: 10000 });
+        await page.waitForSelector(`${panel} [data-term-pane="${firstId}"].active`, { timeout: 8000 });
+        await page.waitForSelector(copy, { state: "visible", timeout: 4000 });
+        await sleep(400);
+        const focus = await page.evaluate(() => {
+          const el = document.activeElement;
+          return { inTerminal: !!el?.closest("terminal-attach"), onBody: el === document.body };
+        });
+        assert(!focus.inTerminal, "the activation moved the focus into the terminal");
+        assert(focus.onBody, "the activation moved the focus");
+      } finally {
+        if (goneUrl) await L.deleteShell(page2, goneUrl).catch(() => {});
+        await page2.close().catch(() => {});
+      }
+    });
+
     let coderId = null;
     await run("desktop: a coder created from the + menu returns to the editor with its tab active", async () => {
       await page.click(`${panel} [data-editor-term-plus]`);
@@ -672,6 +746,48 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       assert(action === `/coders/${coderId}/files`, `upload form action is ${action}`);
       await page.click(`#coder-files-modal-${coderId} .btn-close`);
       await page.waitForFunction((id) => !document.getElementById(`coder-files-modal-${id}`)?.classList.contains("show"), coderId, { timeout: 8000 });
+    });
+
+    await run("desktop: a coder's copy button opens its conversation, Screen turns it to the screen and back", async () => {
+      assert(coderId, "no coder from the previous check");
+      const pane = `${panel} [data-term-pane="${coderId}"]`;
+      const view = `${pane} terminal-copy`;
+      const button = `${panel} [data-terminal-footer="${coderId}"] [data-terminal-copy]`;
+      await page.waitForSelector(button, { state: "visible", timeout: 6000 });
+      assert(await page.locator(`${button} .ti-messages`).count() === 1, "a coder's copy button does not wear the messages icon");
+      const conversation = page.waitForResponse((r) => r.url().endsWith(`/coders/${coderId}/conversation`), { timeout: 10000 });
+      await page.click(button);
+      await page.waitForSelector(`${view}:not([hidden])`, { timeout: 6000 });
+      assert((await conversation).ok(), "the conversation answered an error");
+      await page.waitForSelector(`${view} [data-copy-waiting]`, { state: "hidden", timeout: 10000 });
+      const face = (sel) => page.evaluate((v) => {
+        const el = document.querySelector(v);
+        return {
+          title: el.querySelector("[data-copy-title]").textContent,
+          log: !el.querySelector("[data-copy-log]").hidden,
+          text: !el.querySelector("[data-copy-text]").hidden,
+          screenBtn: !el.querySelector('[data-copy-face="text"]').hidden,
+          convBtn: !el.querySelector('[data-copy-face="conversation"]').hidden,
+          behind: document.querySelector(v.replace(" terminal-copy", " terminal-attach")).classList.contains("attach-terminal-behind"),
+        };
+      }, sel);
+      const conv = await face(view);
+      assert(conv.title === "Conversation" && conv.log && !conv.text && conv.screenBtn && !conv.convBtn && conv.behind,
+        `the coder's view did not open on its conversation: ${JSON.stringify(conv)}`);
+      const screen = page.waitForResponse((r) => r.url().includes(`/coders/${coderId}/copy`), { timeout: 10000 });
+      await page.click(`${view} [data-copy-face="text"]`);
+      assert((await screen).ok(), "the screen answered an error");
+      await page.waitForFunction((v) => (document.querySelector(`${v} [data-copy-text]`)?.textContent || "").trim().length > 0, view, { timeout: 8000 });
+      const scr = await face(view);
+      assert(scr.title === "Screen" && !scr.log && scr.text && !scr.screenBtn && scr.convBtn, `Screen did not turn the frame: ${JSON.stringify(scr)}`);
+      await page.click(`${view} [data-copy-face="conversation"]`);
+      await page.waitForFunction((v) => document.querySelector(`${v} [data-copy-title]`)?.textContent === "Conversation", view, { timeout: 8000 });
+      const again = await face(view);
+      assert(again.log && !again.text && again.screenBtn, `Conversation did not turn the frame back: ${JSON.stringify(again)}`);
+      await page.click(button);
+      await page.waitForSelector(view, { state: "hidden", timeout: 4000 });
+      const left = await face(view);
+      assert(!left.behind, "the terminal stayed behind after the copy button closed the view");
     });
 
     await run("desktop: the coder tab menu mirrors the strip entries", async () => {
@@ -734,6 +850,204 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       }
       assert(gone, "the coder did not go away after the delete");
       coderId = null;
+    });
+
+    // The panel asks whether some input points finely or none is coarse, never
+    // the primary pointer: a Windows Edge seen over a remote desktop reports no
+    // pointer and no hover at all, and an iPad with a trackpad a coarse primary
+    // pointer beside a fine one. In both the panel stands and its terminal takes
+    // the keyboard straight into xterm, the phone's cursor input would be one
+    // nothing in the panel ever focuses. No emulation reaches the media
+    // features apart, Chromium's blink settings do: a browser of its own per
+    // pointer setup, logged into the same instance.
+    const pointerProbe = async (blink, viewport, typeMarker, drag = false) => {
+      const { chromium } = require("playwright-core");
+      const b = await chromium.launch({ args: ["--no-sandbox", `--blink-settings=${blink}`] });
+      let shellId = null;
+      let dragShellId = null;
+      try {
+        const p = await (await b.newContext({ ignoreHTTPSErrors: true, viewport })).newPage();
+        await L.login(p);
+        await p.goto(`${BASE}/projects/${project}/editor`, { waitUntil: "domcontentloaded" });
+        await L.dismissUpdate(p);
+        await p.waitForSelector(".cm-editor, .editor-textarea", { state: "attached", timeout: 15000 });
+        await sleep(300);
+        const got = await p.evaluate(() => {
+          const media = {};
+          for (const q of ["(hover: hover)", "(pointer: fine)", "(pointer: coarse)", "(any-hover: hover)", "(any-pointer: fine)", "(any-pointer: coarse)"]) media[q] = matchMedia(q).matches;
+          const shown = (el) => !!el && !el.hidden && el.getBoundingClientRect().width > 0;
+          return {
+            media,
+            button: shown(document.querySelector("[data-editor-term-status]")),
+            item: !document.querySelector("[data-editor-term-item]").hidden,
+            panelDisplay: getComputedStyle(document.querySelector("[data-editor-term-panel]")).display,
+            cssDisplay: (() => {
+              const el = document.querySelector("[data-editor-term-panel]");
+              const hidden = el.hidden;
+              el.hidden = false;
+              const display = getComputedStyle(el).display;
+              el.hidden = hidden;
+              return display;
+            })(),
+          };
+        });
+        if (!got.button || !typeMarker) return got;
+        await p.click("[data-editor-term-status]");
+        await p.waitForFunction(() => document.querySelector("[data-editor-term-panel]").getBoundingClientRect().height > 0, null, { timeout: 6000 });
+        got.panel = true;
+        const known = await p.$$eval(`${panel} [data-term-tab]`, (els) => els.map((el) => el.getAttribute("data-term-tab")));
+        await p.click(`${panel} [data-editor-term-plus]`);
+        await p.waitForSelector(`${panel} .dropdown-menu.show`, { timeout: 5000 });
+        await p.click(`${panel} [data-editor-term-new]`);
+        shellId = await p.waitForFunction((k) => {
+          const tab = [...document.querySelectorAll("[data-editor-term-panel] [data-term-tab]")].find((el) => !k.includes(el.getAttribute("data-term-tab")));
+          return tab ? tab.getAttribute("data-term-tab") : null;
+        }, known, { timeout: 15000 }).then((h) => h.jsonValue());
+        const pane = `${panel} [data-term-pane="${shellId}"]`;
+        await p.waitForSelector(`${pane}.active terminal-attach[embedded] .xterm-screen canvas`, { timeout: 15000 });
+        await sleep(1400);
+        got.stayedActive = !!(await p.$(`${pane}.active`));
+        if (!got.stayedActive) {
+          await p.click(`${panel} [data-term-tab="${shellId}"]`);
+          await p.waitForSelector(`${pane}.active terminal-attach[embedded] .xterm-screen canvas`, { timeout: 15000 });
+        }
+        got.interactive = await p.evaluate((sel) => ({
+          classed: document.querySelector(`${sel} terminal-attach`).classList.contains("attach-terminal-interactive"),
+          cursorInput: !!document.querySelector(`${sel} #terminal-cursor-input`),
+        }), pane);
+        await p.click(`${pane} .xterm-screen`);
+        await p.keyboard.type(`echo ${typeMarker}`);
+        await p.keyboard.press("Enter");
+        got.echoed = await p.waitForFunction(([sel, want]) => (document.querySelector(`${sel} .attach-selection`)?.textContent || "").includes(want),
+          [pane, typeMarker], { timeout: 8000 }).then(() => true, () => false);
+        if (drag) {
+          const order = () => p.$$eval(`${panel} [data-term-tab]`, (els) => els.map((el) => el.getAttribute("data-term-tab")));
+          const mid = (box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+          if ((await order()).length < 2) {
+            const known2 = await order();
+            await p.click(`${panel} [data-editor-term-plus]`);
+            await p.waitForSelector(`${panel} .dropdown-menu.show`, { timeout: 5000 });
+            await p.click(`${panel} [data-editor-term-new]`);
+            dragShellId = await p.waitForFunction((k) => {
+              const tab = [...document.querySelectorAll("[data-editor-term-panel] [data-term-tab]")].find((el) => !k.includes(el.getAttribute("data-term-tab")));
+              return tab ? tab.getAttribute("data-term-tab") : null;
+            }, known2, { timeout: 15000 }).then((h) => h.jsonValue());
+            await sleep(900);
+          }
+          const posts = [];
+          p.on("request", (r) => {
+            if (r.url().includes("/terminal-tabs/order") && r.method() === "POST") posts.push(JSON.parse(r.postData() || "{}").ids);
+          });
+
+          const before = await order();
+          const a = await p.locator(`${panel} [data-term-tab="${before[0]}"]`).boundingBox();
+          const bb = await p.locator(`${panel} [data-term-tab="${before[1]}"]`).boundingBox();
+          await p.mouse.move(mid(a).x, mid(a).y);
+          await p.mouse.down();
+          await p.mouse.move(bb.x + bb.width - 4, mid(bb).y, { steps: 10 });
+          await p.mouse.up();
+          let mouseAfter = before;
+          for (let i = 0; i < 15 && mouseAfter[0] !== before[1]; i++) {
+            await sleep(400);
+            mouseAfter = await order();
+          }
+          got.mouseDrag = { before, posted: posts.slice(), after: mouseAfter };
+          await sleep(900);
+
+          // A real finger on the strip is taken by the browser as a pan and
+          // cancelled before any gate is asked, so the touch drag is dispatched
+          // as touch typed pointer events straight onto the tab, which is the
+          // one path where only the handler's own refusal keeps it still.
+          const touchBefore = await order();
+          const postsBefore = posts.length;
+          await p.evaluate(([sel, from, to]) => {
+            const tab = document.querySelector(`${sel} [data-term-tab="${from}"]`);
+            const target = document.querySelector(`${sel} [data-term-tab="${to}"]`).getBoundingClientRect();
+            const start = tab.getBoundingClientRect();
+            const y = start.top + start.height / 2;
+            const x0 = start.left + start.width / 2;
+            const x1 = target.right - 4;
+            const init = (x, buttons) => ({ bubbles: true, cancelable: true, composed: true, pointerId: 91, pointerType: "touch", isPrimary: true, button: 0, buttons, clientX: x, clientY: y });
+            tab.dispatchEvent(new PointerEvent("pointerdown", init(x0, 1)));
+            for (let i = 1; i <= 10; i++) tab.dispatchEvent(new PointerEvent("pointermove", init(x0 + ((x1 - x0) * i) / 10, 1)));
+            tab.dispatchEvent(new PointerEvent("pointerup", init(x1, 0)));
+          }, [panel, touchBefore[0], touchBefore[1]]);
+          await sleep(1500);
+          got.touchDrag = { before: touchBefore, posted: posts.slice(postsBefore), after: await order() };
+        }
+        return got;
+      } finally {
+        if (dragShellId) await L.deleteShell(page, `${BASE}/shells/${dragShellId}`).catch(() => {});
+        if (shellId) await L.deleteShell(page, `${BASE}/shells/${shellId}`).catch(() => {});
+        await b.close();
+      }
+    };
+    const desk = { width: 1360, height: 900 };
+    const allFalse = (m) => Object.values(m).every((v) => !v);
+
+    await run("desktop: a browser reporting no pointer and no hover gets the panel and types into its terminal", async () => {
+      if (engine !== "chromium") return "skipped, the pointer setup is a chromium launch flag";
+      const marker = `ENP${tag.slice(-4)}`;
+      const got = await pointerProbe("primaryPointerType=1,availablePointerTypes=1,primaryHoverType=1,availableHoverTypes=1", desk, marker);
+      assert(allFalse(got.media), `the pointer setup did not take: ${JSON.stringify(got.media)}`);
+      assert(got.button && got.item && got.panel, `no pointer at all hides the terminal panel: ${JSON.stringify(got)}`);
+      assert(got.interactive.classed && !got.interactive.cursorInput, `the panel terminal runs in phone mode: ${JSON.stringify(got.interactive)}`);
+      assert(got.echoed, `the typed ${marker} never reached the terminal`);
+      return `${marker} typed and echoed${got.stayedActive ? "" : ", the new tab had lost its activation to a refresh"}`;
+    });
+
+    await run("desktop: a coarse primary pointer beside a fine one gets the panel and types into its terminal", async () => {
+      if (engine !== "chromium") return "skipped, the pointer setup is a chromium launch flag";
+      const marker = `ECP${tag.slice(-4)}`;
+      const got = await pointerProbe("primaryPointerType=2,availablePointerTypes=6,primaryHoverType=1,availableHoverTypes=3", desk, marker);
+      assert(got.media["(pointer: coarse)"] && got.media["(any-pointer: fine)"], `the pointer setup did not take: ${JSON.stringify(got.media)}`);
+      assert(got.button && got.item && got.panel, `a fine any-pointer behind a coarse primary one hides the terminal panel: ${JSON.stringify(got)}`);
+      assert(got.interactive.classed && !got.interactive.cursorInput, `the panel terminal runs in phone mode: ${JSON.stringify(got.interactive)}`);
+      assert(got.echoed, `the typed ${marker} never reached the terminal`);
+      return `${marker} typed and echoed${got.stayedActive ? "" : ", the new tab had lost its activation to a refresh"}`;
+    });
+
+    // The tab drag is refused for a touch pointer and for nothing else: a mouse
+    // on a machine whose media answer no pointer, or a coarse primary one, still
+    // sorts the tabs, while a finger on the strip must not start a drag.
+    const assertDrags = (got) => {
+      const m = got.mouseDrag;
+      assert(m.posted.length === 1 && m.posted[0][0] === m.before[1] && m.posted[0][1] === m.before[0],
+        `the mouse drag posted ${JSON.stringify(m.posted)} for ${m.before.join(", ")}`);
+      assert(m.after[0] === m.before[1] && m.after[1] === m.before[0], `the mouse drag did not reorder the tabs (${m.after.join(", ")})`);
+      const t = got.touchDrag;
+      assert(t.posted.length === 0, `the touch drag posted an order: ${JSON.stringify(t.posted)}`);
+      assert(JSON.stringify(t.after) === JSON.stringify(t.before), `the touch drag reordered the tabs (${t.before.join(", ")} to ${t.after.join(", ")})`);
+    };
+
+    await run("desktop: with no pointer and no hover reported a mouse drags panel tabs, a touch does not", async () => {
+      if (engine !== "chromium") return "skipped, the pointer setup is a chromium launch flag";
+      const got = await pointerProbe("primaryPointerType=1,availablePointerTypes=1,primaryHoverType=1,availableHoverTypes=1", desk, `EDG${tag.slice(-4)}`, true);
+      assert(allFalse(got.media), `the pointer setup did not take: ${JSON.stringify(got.media)}`);
+      assertDrags(got);
+      return "mouse reordered, touch left the order alone";
+    });
+
+    await run("desktop: with a coarse primary pointer beside a fine one a mouse drags panel tabs, a touch does not", async () => {
+      if (engine !== "chromium") return "skipped, the pointer setup is a chromium launch flag";
+      const got = await pointerProbe("primaryPointerType=2,availablePointerTypes=6,primaryHoverType=1,availableHoverTypes=3", desk, `EDG${tag.slice(-4)}`, true);
+      assert(got.media["(pointer: coarse)"] && got.media["(any-pointer: fine)"], `the pointer setup did not take: ${JSON.stringify(got.media)}`);
+      assertDrags(got);
+      return "mouse reordered, touch left the order alone";
+    });
+
+    await run("desktop: a touch only device and a phone width keep the panel away", async () => {
+      if (engine !== "chromium") return "skipped, the pointer setup is a chromium launch flag";
+      const touch = await pointerProbe("primaryPointerType=2,availablePointerTypes=2,primaryHoverType=1,availableHoverTypes=1", desk, null);
+      assert(touch.media["(any-pointer: coarse)"] && !touch.media["(any-pointer: fine)"], `the pointer setup did not take: ${JSON.stringify(touch.media)}`);
+      assert(!touch.button && !touch.item && touch.panelDisplay === "none", `a touch only device offers the terminal panel: ${JSON.stringify(touch)}`);
+      assert(touch.cssDisplay === "none", `the stylesheet alone shows the panel on a touch only device: ${JSON.stringify(touch)}`);
+      const phone = await pointerProbe("primaryPointerType=1,availablePointerTypes=1,primaryHoverType=1,availableHoverTypes=1", { width: 390, height: 844 }, null);
+      assert(!phone.button && !phone.item && phone.panelDisplay === "none", `a phone width offers the terminal panel: ${JSON.stringify(phone)}`);
+      assert(phone.cssDisplay === "none", `the stylesheet alone shows the panel at a phone width: ${JSON.stringify(phone)}`);
+      const fine = await pointerProbe("primaryPointerType=4,availablePointerTypes=4,primaryHoverType=2,availableHoverTypes=2", desk, null);
+      assert(fine.cssDisplay !== "none", `the stylesheet hides the panel for a fine pointer on a desktop width: ${JSON.stringify(fine)}`);
+      return "hidden for touch only and at 390, by the stylesheet alone too";
     });
 
     await run("mobile: the panel and its menu entry stay away", async () => {

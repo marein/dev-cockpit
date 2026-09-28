@@ -2286,10 +2286,9 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   min-height: 0;
 }
 .editor-term-pane.active {
-  display: flex;
+  display: grid;
 }
 .editor-term-pane .attach-terminal {
-  flex: 1 1 auto;
   min-height: 0;
   border: 0;
   border-radius: 0;
@@ -2300,7 +2299,7 @@ body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .
   justify-content: center;
   flex: 1 1 auto;
 }
-@media (max-width: 767.98px), (max-height: 500px), (hover: none), (pointer: coarse) {
+@media (max-width: 767.98px), (max-height: 500px), (any-pointer: coarse) and (not (any-pointer: fine)) {
   .editor-term-panel {
     display: none !important;
   }

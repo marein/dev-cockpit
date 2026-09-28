@@ -15,20 +15,27 @@
 </div>
 <div class="editor-term-panes" data-editor-term-panes>
   {{range .Sessions}}
-  <div class="editor-term-pane" data-term-pane="{{.ID}}" data-term-kind="{{.Kind}}"
-       data-stream-url="{{.StreamURL}}" data-resize-url="{{.ResizeURL}}" data-input-url="{{.InputURL}}"{{if .ScrollHistory}} data-scroll-history{{end}}></div>
+  <div class="editor-term-pane attach-stage" data-term-pane="{{.ID}}" data-term-kind="{{.Kind}}"
+       data-stream-url="{{.StreamURL}}" data-resize-url="{{.ResizeURL}}" data-input-url="{{.InputURL}}"{{if .ScrollHistory}} data-scroll-history{{end}}>
+    {{template "terminal_copy_surface.gohtml" (dict "ID" .ID "TextURL" .TextURL "ConversationURL" .ConversationURL)}}
+  </div>
   {{end}}
 </div>
 <div data-editor-term-foots>
-  {{range .Sessions}}{{if .FilesData}}
-  <div class="d-flex" data-term-foot="{{.ID}}" data-terminal-footer="{{.ID}}" hidden>
-    <coder-file-upload class="d-flex">
+  {{range .Sessions}}
+  <div class="d-flex gap-1" data-term-foot="{{.ID}}" data-terminal-footer="{{.ID}}" hidden>
+    {{if .ConversationURL}}<button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-terminal-copy aria-label="Copy" aria-pressed="false" title="Copy from the conversation">
+      <i class="ti ti-messages"></i>
+    </button>{{else}}<button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-terminal-copy aria-label="Copy" aria-pressed="false" title="Copy text from this terminal">
+      <i class="ti ti-copy"></i>
+    </button>{{end}}
+    {{if .FilesData}}<coder-file-upload class="d-flex">
       <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary coder-files-button" data-coder-files-toggle data-bs-toggle="modal" data-bs-target="#coder-files-modal-{{.ID}}" aria-label="Files" title="Files">
         <i class="ti ti-upload coder-files-button-icon"></i>
       </button>
-    </coder-file-upload>
+    </coder-file-upload>{{end}}
   </div>
-  {{end}}{{end}}
+  {{end}}
 </div>
 <div data-editor-term-modals>
   {{range .Sessions}}{{if .FilesData}}
