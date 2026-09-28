@@ -5,6 +5,7 @@ import { matchesTokens } from "@dc/filter";
 import * as projectSort from "@dc/project-sort";
 import { get, set } from "@dc/store";
 
+const TITLES = { projects: "Projects", terminals: "Terminals", settings: "Settings", docs: "Docs", assistants: "Assistants", cockpit: "Cockpit", news: "Notifications" };
 const SORT_LABELS = { alpha: "Name", active: "Active first", recent: "Recently used" };
 // The sheet's filter row is the phone's only way to shorten a list, so it is
 // remembered, per area like the column's width and scroll. Under a key of its
@@ -56,21 +57,38 @@ class CtxSheet extends HTMLElement {
     if (!this.hidden && this.area === area) void this.load(area, false);
   }
 
-  async open(area) {
+  // open shows the area's column. The dialog takes the area's name and the
+  // focus, so a screen reader hears what opened and the keys act inside it;
+  // the control that opened it gets the focus back on close. A sheet opened
+  // from inside the sheet (Cockpit's Show all) keeps the first opener.
+  async open(area, opener) {
     if (!area) return;
+    if (this.hidden) {
+      const active = opener || document.activeElement;
+      this.opener = active instanceof HTMLElement && active !== document.body ? active : null;
+    }
     this.area = area;
+    this.dataset.area = area;
+    this.panel.setAttribute("aria-label", TITLES[area] || "List");
+    this.panel.tabIndex = -1;
     this.hidden = false;
     document.body.classList.add("dc-sheet-open");
+    this.panel.focus({ preventScroll: true });
     await this.load(area, true);
   }
 
   close() {
     if (this.hidden) return;
+    const inside = this.contains(document.activeElement) || document.activeElement === document.body;
     this.hidden = true;
     this.area = "";
+    delete this.dataset.area;
     this.applyFilter = null;
     this.panel.replaceChildren();
     document.body.classList.remove("dc-sheet-open");
+    const opener = this.opener;
+    this.opener = null;
+    if (inside && opener && opener.isConnected) opener.focus({ preventScroll: true });
   }
 
   async load(area, fresh) {
@@ -123,12 +141,12 @@ class CtxSheet extends HTMLElement {
       const body = column.hasAttribute("data-ctx-keep-scroll") ? column.querySelector(".dc-ctx-body") : null;
       if (body) keepCtxScroll(body, area);
     }
+    if (fresh && !this.panel.contains(document.activeElement)) this.panel.focus({ preventScroll: true });
     document.dispatchEvent(new CustomEvent("dc:rendered", { detail: { root: this.panel } }));
     syncAnimations(this.panel);
   }
 
   placeholder(area, kind) {
-    const titles = { projects: "Projects", terminals: "Terminals", settings: "Settings", docs: "Docs", assistants: "Assistants" };
     const column = document.createElement("div");
     column.className = "dc-ctx";
     column.dataset.ctxSheetPlaceholder = kind;
@@ -136,7 +154,7 @@ class CtxSheet extends HTMLElement {
       ? '<div class="spinner-border text-secondary" role="status" aria-label="Loading the list"></div>'
       : '<div class="text-secondary" data-ctx-sheet-error>The list could not be loaded.</div><button type="button" class="btn" data-ctx-sheet-retry><i class="ti ti-refresh me-1" aria-hidden="true"></i>Try again</button>';
     column.innerHTML = '<div class="dc-ctx-head"><button type="button" class="btn btn-icon btn-ghost-secondary dc-work-toggle dc-sheet-close" data-dc-focus="work" aria-label="Close" title="Close"><i class="ti ti-x" aria-hidden="true"></i></button><h1 class="dc-ctx-title">'
-      + (titles[area] || "List") + '</h1></div><div class="dc-ctx-body d-flex flex-column align-items-center justify-content-center gap-3 p-4">' + body + "</div>";
+      + (TITLES[area] || "List") + '</h1></div><div class="dc-ctx-body d-flex flex-column align-items-center justify-content-center gap-3 p-4">' + body + "</div>";
     return column;
   }
 

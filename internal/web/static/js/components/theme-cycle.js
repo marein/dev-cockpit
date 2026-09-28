@@ -31,12 +31,11 @@ class ThemeCycle extends HTMLElement {
     for (const mark of this.querySelectorAll("[data-theme-mark]")) {
       mark.hidden = mark.getAttribute("data-theme-mark") !== preference;
     }
-    for (const label of this.querySelectorAll("[data-theme-label]")) {
-      label.textContent = LABELS[preference] || preference;
-    }
     const button = this.querySelector("[data-theme-cycle]");
     if (button) {
-      const title = `Theme: ${LABELS[preference]}. ${NEXT_HINTS[nextPreference(preference)]}`;
+      const title = button.hasAttribute("data-theme-tile")
+        ? `Theme: ${LABELS[preference]}`
+        : `Theme: ${LABELS[preference]}. ${NEXT_HINTS[nextPreference(preference)]}`;
       button.setAttribute("title", title);
       button.setAttribute("aria-label", title);
     }

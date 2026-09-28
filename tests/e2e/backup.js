@@ -207,8 +207,10 @@ L.runFeature("BACKUP", async ({ page, run }) => {
     await page.waitForSelector("#settings-backup-review", { timeout: 8000 });
     const rows = page.locator("#settings-backup-review .list-group-item");
     assert((await rows.count()) === 1, `expected 1 review row, got ${await rows.count()}`);
-    assert((await page.locator('.dc-rail a[href="/settings/general"] .dc-rail-count').count()) > 0, "rail review count missing");
-    assert((await page.locator('a[href="/settings/backup"] .badge').last().textContent()).trim() === "1", "backup sub-nav badge missing the review count");
+    const railCount = page.locator('.dc-rail a[href="/settings/general"] [data-backup-reviews]');
+    assert((await railCount.textContent()).trim() === "1" && !(await railCount.evaluate((el) => el.classList.contains("d-none"))), "rail review count missing");
+    assert((await railCount.getAttribute("aria-label")) === "1 backup file to resolve", `rail review count label ${await railCount.getAttribute("aria-label")}`);
+    assert((await page.locator('a[href="/settings/backup"] [data-backup-reviews]').last().textContent()).trim() === "1", "backup sub-nav badge missing the review count");
     assert((await rows.first().textContent()).includes("settings.json"), "settings.json row missing");
     await rows.first().locator('a:has-text("Merge")').click();
     await page.waitForSelector('textarea[name="content"]', { timeout: 8000 });
@@ -219,6 +221,7 @@ L.runFeature("BACKUP", async ({ page, run }) => {
     await page.click('form:has(input[value="keep"]) button');
     await page.waitForURL(/settings\/backup(?!\/merge)/, { timeout: 8000 });
     assert(!(await page.isVisible("#settings-backup-review")), "review entry not resolved by keep");
+    assert(await page.locator('.dc-rail a[href="/settings/general"] [data-backup-reviews]').evaluate((el) => el.classList.contains("d-none")), "the rail still counts a resolved review");
     const flash = await page.textContent("#settings-backup-import");
     assert(flash.includes("Kept the imported file. All files are resolved."), `resolve flash missing: ${flash.trim().slice(0, 120)}`);
   });

@@ -55,7 +55,8 @@ const hostSampleTTL = 4 * time.Second
 // the @dc/events client re-dispatches as a dc:<type> DOM event so any custom
 // element can subscribe. On connect, including every EventSource reconnect, it
 // pushes a snapshot of the current state (unread notifications, the terminals,
-// projects and docker signals, the draft and assistant ones, the host reading),
+// projects and docker signals, the draft and assistant ones, the open backup
+// reviews, the host reading),
 // so a freshly attached or a woken background page catches up in one shot.
 func (s *Server) handleEventStream(c *gin.Context) {
 	w := c.Writer
@@ -159,6 +160,11 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	// or clears its dialog accordingly. Without this a question parked while
 	// the socket was down would wait out its whole window unseen.
 	if err := writeEnvelope(w, eventbus.Event{Type: "gitprompt"}); err != nil {
+		return
+	}
+	// The open backup reviews: they only publish when a review is added or
+	// resolved, so a page that connects after that reads the count here.
+	if err := writeEnvelope(w, eventbus.Event{Type: "backupreviews", Data: map[string]int{"count": s.backups.PendingReviewCount()}}); err != nil {
 		return
 	}
 	// The host reading rides the stream: it goes out on connect and then on its

@@ -27,6 +27,7 @@
   {
     "imports": {
       "@dc/dom": "{{asset "/js/dc/dom.js"}}",
+      "@dc/cockpit": "{{asset "/js/dc/cockpit.js"}}",
       "@dc/events": "{{asset "/js/dc/events.js"}}",
       "@dc/store": "{{asset "/js/dc/store.js"}}",
       "@dc/theme": "{{asset "/js/dc/theme.js"}}",
@@ -53,7 +54,6 @@
       "dc-notifications": "{{asset "/js/components/notifications.js"}}",
       "dc-update-check": "{{asset "/js/components/update-check.js"}}",
       "dc-host-status": "{{asset "/js/components/host-status.js"}}",
-      "dc-host-float": "{{asset "/js/components/host-float.js"}}",
       "dc-steered-mark": "{{asset "/js/components/steered-mark.js"}}",
       "dc-steer-badge": "{{asset "/js/components/steer-badge.js"}}",
       "dc-project-list": "{{asset "/js/components/project-list.js"}}",
@@ -248,7 +248,6 @@
       </div>
     </div>
   </dc-form-modal>
-  {{template "host_status_float.gohtml" .}}
   {{end}}
 </body>
 </html>{{end}}
@@ -267,7 +266,7 @@
   <a class="dc-rail-btn{{if eq .ActiveTab "assistants"}} active{{end}}" href="/assistants" title="Assistants"><span class="dc-term-icon assistant"><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" "assistant" "Hidden" (not .AssistantNews) "Label" "Something new in an assistant")}}</span><span>Assistants</span></a>
   <span class="dc-rail-gap"></span>
   <div class="dc-rail-foot">
-    <a class="dc-rail-btn{{if eq .ActiveTab "settings"}} active{{end}}" href="/settings/general"><i class="ti ti-settings icon" aria-hidden="true"></i><span>Settings</span>{{if .BackupReviewCount}}<span class="dc-rail-count" title="Backup files to resolve" aria-label="Backup files to resolve">{{.BackupReviewCount}}</span>{{end}}</a>
+    <a class="dc-rail-btn{{if eq .ActiveTab "settings"}} active{{end}}" href="/settings/general"><i class="ti ti-settings icon" aria-hidden="true"></i><span>Settings</span>{{template "backup_reviews_badge.gohtml" (dict "Count" .BackupReviewCount "Class" "dc-rail-count")}}</a>
     <a class="dc-rail-btn{{if eq .ActiveTab "docs"}} active{{end}}" href="/docs"><i class="ti ti-book icon" aria-hidden="true"></i><span>Docs</span></a>
     <span class="dc-rail-sep"></span>
     {{template "theme_cycle.gohtml" (dict "Class" "dc-rail-mini")}}
@@ -285,38 +284,11 @@
 </nav>
 {{end}}
 
-{{/* The phone has no rail, so the controls from its foot stand at the end of
-     every work head instead: the server status, the bell, and one menu with
-     the theme, the update and the logout. work_body.gohtml places it. */}}
-{{define "shell_head_tools.gohtml"}}
-{{if .User}}
-<div class="dc-head-tools d-lg-none">
-  {{template "host_status.gohtml" .}}
-  <dc-notifications>{{template "notify_bell.gohtml" ""}}</dc-notifications>
-  <div class="dropdown">
-    <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="More" title="More">
-      <i class="ti ti-dots-vertical" aria-hidden="true"></i>
-    </button>
-    <div class="dropdown-menu dropdown-menu-end">
-      {{template "theme_cycle.gohtml" (dict "Class" "dropdown-item" "Label" true)}}
-      <div class="js-update-flag d-none">
-        <div class="dropdown-divider"></div>
-        <button type="button" class="dropdown-item" data-update-open>
-          <i class="ti ti-arrow-up-circle me-2" aria-hidden="true"></i>Update to <span class="js-update-version ms-1"></span>
-        </button>
-      </div>
-      <div class="dropdown-divider"></div>
-      <form method="post" action="/logout" data-no-pe>
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button type="submit" class="dropdown-item">
-          <i class="ti ti-logout me-2" aria-hidden="true"></i>Logout
-        </button>
-      </form>
-    </div>
-  </div>
-</div>
-{{end}}
-{{end}}
+{{/* The open backup reviews as a count, where a settings entry stands: the
+     rail's Settings, the Backup row of the settings sections and the Cockpit
+     sheet's Settings head. Always rendered and hidden at zero, so
+     notifications.js can follow the backupreviews event into it. */}}
+{{define "backup_reviews_badge.gohtml"}}<span class="{{.Class}}{{if not .Count}} d-none{{end}}" data-backup-reviews title="Backup files to resolve" aria-label="{{.Count}} backup {{if eq .Count 1}}file{{else}}files{{end}} to resolve">{{.Count}}</span>{{end}}
 
 {{/* The status line under the shell: the server, the version. */}}
 {{define "shell_status.gohtml"}}
@@ -327,14 +299,24 @@
 </footer>
 {{end}}
 
-{{/* The phone's areas, one tab each, the same five as the rail. */}}
+{{/* The phone's areas, one tab each: the rail's four areas and Cockpit,
+     which holds what the rail keeps at its foot (area "cockpit",
+     /ctx/cockpit). */}}
 {{define "shell_tabbar.gohtml"}}
 <nav class="dc-tabbar d-print-none" aria-label="Areas">
   <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "projects"}} active{{end}}" data-ctx-area="projects"><i class="ti ti-folders icon" aria-hidden="true"></i><span>Projects</span></button>
   <button type="button" class="dc-tabbar-btn{{if eq $.ActiveTab "terminals"}} active{{end}}" data-ctx-area="terminals"><span class="dc-news-anchor"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" true "Hidden" (not $.QuickNav.TerminalNews) "Label" "Something new in a terminal")}}</span><span>Terminals</span></button>
   <a class="dc-tabbar-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="/editor"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>
   <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "assistants"}} active{{end}}" data-ctx-area="assistants"><span class="dc-term-icon assistant"><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" "assistant" "Hidden" (not .AssistantNews) "Label" "Something new in an assistant")}}</span><span>Assistants</span></button>
-  <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "settings"}} active{{end}}" data-ctx-area="settings"><i class="ti ti-settings icon" aria-hidden="true"></i><span>Settings</span>{{if .BackupReviewCount}}<span class="dc-tabbar-count" title="Backup files to resolve" aria-label="Backup files to resolve">{{.BackupReviewCount}}</span>{{end}}</button>
+  {{/* The Cockpit tab replaces Settings on the phone: the app's gauge is its
+       icon, colored by the worst server reading, and one plain dot says that
+       something in its sheet wants attention, an unread notification or an
+       open backup review. No number, the counts stand inside the sheet. Its
+       name carries both (CockpitLabel, @dc/cockpit live). The server renders
+       it all on every page, host-status.js and notifications.js keep it live.
+       It stands active on the settings and the docs pages, the two areas a
+       phone reaches through its sheet alone. */}}
+  <button type="button" class="dc-tabbar-btn{{if or (eq .ActiveTab "settings") (eq .ActiveTab "docs")}} active{{end}}" data-ctx-area="cockpit"{{with .CockpitLabel}} aria-label="{{.}}"{{end}}><span class="dc-news-anchor">{{template "host_status_tab.gohtml" .}}<span class="status-dot status-dot-animated status-blue dc-news-dot{{if not .CockpitNews}} d-none{{end}}" data-cockpit-dot data-unread="{{.UnreadNews}}" data-reviews="{{.BackupReviewCount}}" aria-hidden="true"></span></span><span>Cockpit</span></button>
 </nav>
 {{end}}
 
@@ -386,14 +368,12 @@
 {{end}}
 
 {{define "work_body.gohtml"}}
-    {{template "shell_head_tools.gohtml" .}}
   </div>
   <div class="dc-work-body dc-work-pad">
     {{template "flash.gohtml" .}}
 {{end}}
 
 {{define "work_body_fill.gohtml"}}
-    {{template "shell_head_tools.gohtml" .}}
   </div>
   <div class="dc-work-body dc-work-fill">
     {{template "flash.gohtml" .}}

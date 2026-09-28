@@ -43,27 +43,10 @@ type Stats struct {
 	CPULabel  string `json:"cpuLabel"`
 	MemLabel  string `json:"memLabel"`
 	DiskLabel string `json:"diskLabel"`
-
-	// Level is "", "warn" or "crit", taken from the worst of the readings.
-	Level string `json:"level"`
 }
 
 // Any reports whether the reading carries a single usable number.
 func (s Stats) Any() bool { return s.HasCPU || s.HasMem || s.HasDisk }
-
-// Worst is the highest of the readings, the one the color follows.
-func (s Stats) Worst() int {
-	worst := 0
-	for _, m := range []struct {
-		ok bool
-		v  int
-	}{{s.HasCPU, s.CPUPercent}, {s.HasMem, s.MemPercent}, {s.HasDisk, s.DiskPercent}} {
-		if m.ok && m.v > worst {
-			worst = m.v
-		}
-	}
-	return worst
-}
 
 // Bar caps a percentage at 100 for the width of a progress bar. The number
 // next to it keeps the real value.
@@ -135,13 +118,6 @@ func read(path string) Stats {
 		s.HasDisk = true
 		s.DiskPercent = percent(total-free, total)
 		s.DiskLabel = fmt.Sprintf("%s of %s free", humanBytes(free), humanBytes(total))
-	}
-	switch worst := s.Worst(); {
-	case !s.Any():
-	case worst >= Crit:
-		s.Level = "crit"
-	case worst >= Warn:
-		s.Level = "warn"
 	}
 	return s
 }

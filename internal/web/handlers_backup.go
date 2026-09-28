@@ -126,6 +126,12 @@ func (s *Server) handleSettingsBackupCreate(c *gin.Context) {
 	s.redirectWithAnchoredFlash(c, "/settings/backup", "settings-backup-export", "The backup is being created in the background.", "")
 }
 
+// publishBackupReviews tells every page how many overwrite reviews are open,
+// what the phone's Cockpit tab and the settings entries count.
+func (s *Server) publishBackupReviews(count int) {
+	s.bus.Publish(eventbus.Event{Type: "backupreviews", Data: map[string]int{"count": count}})
+}
+
 // publishBackups tells open backup lists to re-pull their fragment.
 func (s *Server) publishBackups() {
 	s.bus.Publish(eventbus.Event{Type: "backups"})

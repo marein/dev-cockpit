@@ -2,38 +2,21 @@
 const L = require("./lib");
 const { assert, sleep, BASE } = L;
 
-// Server status in the header: CPU, RAM and disk, each a percentage. The server
-// reads them in internal/hostinfo (busy cores from /proc/stat on Linux, load
-// against the cores on a Mac, memory in use, the filesystem the projects sit
-// on), renders the first values into the page and pushes every later reading as
-// a `host` event on the shared stream, on connect and on its own 5s beat.
-// dc-host-status only paints.
+// Server status in the status line: CPU, RAM and disk, each a percentage. The
+// server reads them in internal/hostinfo (busy cores from /proc/stat on Linux,
+// load against the cores on a Mac, memory in use, the filesystem the projects
+// sit on), renders the first values into the page and pushes every later
+// reading as a `host` event on the shared stream, on connect and on its own 5s
+// beat. dc-host-status only paints.
 //
-// The button sits at the right end of the header on both widths, next to the
-// assistant, and opens the same panel: one bar per metric plus the plain
-// numbers. Its icon carries the worst of the three, yellow from 80, red from 95,
-// so a quiet header means a quiet machine. The one thing that moved into the
-// burger menu is the update, as a primary button naming the version.
-//
-// The panel's Float button lifts the three values into dc-host-float, a
-// draggable one-row card of ring gauges (value inside the ring, ring colored by
-// the shared thresholds, plain numbers as tooltips) the layout mounts once next
-// to the assistant panel, outside the region pe.js swaps: a boosted navigation
-// leaves the element standing (asserted through element identity). Open state
-// and position live in localStorage (dc-host-float); the card clamps itself
-// back into the viewport on restore, drag and resize. z-order: 1045 over what
-// stands (assistant panel 1040, sticky footers 10), and
-// a body:has duck rule drops it to 5 while anything that asks for interaction
-// is open (dropdowns incl. the sheet, modals, dialogs, context menus, the
-// switcher, the editor's quick open), because the strip's dropdowns live inside
-// a z-10 sticky context no fixed number could respect.
+// The status line carries three slim bars, one per metric, filled to its
+// percent: green while quiet, yellow from 80, red from 95. Each bar names itself
+// with its value as title and aria label. The bars are the toggle of a dropup
+// with one detail row per metric plus the plain numbers. A phone has no server
+// status in its work head and no floating card any more; the same three bars
+// are its Cockpit tab's icon, which cockpit.js covers with the sheet they open.
 //
 // Gotchas:
-// - the layout mounts one dc-host-status per header breakpoint, like the bell,
-//   so every selector here is scoped to a header: DESKTOP for the wide one,
-//   MOBILE for the compact one. An unscoped query hits the hidden twin first.
-// - the float shares the [data-host-row] hooks with the dropdowns; float checks
-//   scope to dc-host-float for the same reason the header checks scope.
 // - the numbers are the real machine's, so no check asserts a specific value;
 //   what is asserted is the shape (0-100 plus a percent sign, a label, a bar
 //   width that matches) and how the surfaces react to a reading.
@@ -41,337 +24,180 @@ const { assert, sleep, BASE } = L;
 //   client re-dispatches, which is exactly what @dc/events does; that keeps the
 //   thresholds testable without loading the host.
 // - the surfaces hide through the hidden attribute, and style.css makes that
-//   win over d-flex, so checks read computed display, never the attribute.
+//   win over any display rule, so checks read computed display, never the
+//   attribute.
+// - SHOTS_DIR saves the status line in its quiet and its warn state.
 
 const DESKTOP = ".dc-status";
-const MOBILE = ".dc-head-tools";
 const number = (text) => Number(String(text).replace("%", "").trim());
+const TONES = ["bg-green", "bg-secondary", "bg-yellow", "bg-red"];
 
-L.runFeature("HOST-STATUS", async ({ browser, page, run, mobilePage }) => {
-  await run("the header carries the status button and its dropdown reads the machine", async () => {
+const reading = (detail) => (page) => page.evaluate((d) => document.dispatchEvent(new CustomEvent("dc:host", { detail: d })), detail);
+
+const meters = (page) => page.$$eval(`${DESKTOP} [data-host-meter]`, (els, tones) => els.map((el) => {
+  const bar = el.querySelector(".js-host-bar");
+  const track = el.querySelector(".dc-host-meter-track").getBoundingClientRect();
+  return {
+    key: el.dataset.hostMeter,
+    shown: getComputedStyle(el).display !== "none",
+    title: el.title,
+    label: el.getAttribute("aria-label"),
+    width: bar.style.width,
+    tone: tones.find((c) => bar.classList.contains(c)),
+    trackWidth: track.width,
+    trackHeight: track.height,
+    fill: getComputedStyle(bar).backgroundColor,
+  };
+}), TONES);
+
+async function shot(page, name) {
+  if (!process.env.SHOTS_DIR) return;
+  const box = await page.locator(DESKTOP).boundingBox();
+  await page.screenshot({
+    path: `${process.env.SHOTS_DIR}/${name}.png`,
+    clip: { x: box.x, y: Math.max(0, box.y - 150), width: Math.min(box.width, 520), height: box.height + 150 },
+  });
+}
+
+L.runFeature("HOST-STATUS", async ({ page, run, mobilePage }) => {
+  await run("the status line carries three bars filled to the machine's readings", async () => {
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     assert((await L.waitUpgraded(page, ["dc-host-status"], 8000)).length === 0, "dc-host-status not upgraded");
     const shown = await page.$eval(`${DESKTOP} dc-host-status`, (el) => getComputedStyle(el).display !== "none");
     assert(shown, "the status element stayed hidden on a machine that can be read");
-    await page.click(`${DESKTOP} [data-host-toggle]`);
-    await page.waitForSelector(`${DESKTOP} dc-host-status .dropdown-menu.show`, { timeout: 4000 });
-    const rows = await page.$$eval(`${DESKTOP} [data-host-row]`, (els) => els.map((el) => ({
-      key: el.dataset.hostRow,
-      hidden: getComputedStyle(el).display === "none",
-      value: el.querySelector(".js-host-value").textContent,
-      label: el.querySelector(".js-host-label").textContent,
-      width: el.querySelector(".js-host-bar").style.width,
-    })));
-    assert(rows.length === 3, `expected three rows, got ${rows.length}`);
-    assert(rows.map((r) => r.key).join(",") === "cpu,mem,disk", `row order ${rows.map((r) => r.key)}`);
-    for (const row of rows) {
-      if (row.hidden) continue;
-      const value = number(row.value);
-      assert(Number.isFinite(value) && value >= 0, `${row.key} value ${row.value}`);
-      assert(/%$/.test(row.value.trim()), `${row.key} value carries no percent sign: ${row.value}`);
-      assert(row.label.trim().length > 0, `${row.key} has no plain-numbers label`);
-      // The bar is capped at 100 even when the load says more.
-      assert(number(row.width) === Math.min(100, value), `${row.key} bar ${row.width} for ${row.value}`);
+    const word = await page.$eval(`${DESKTOP} [data-host-toggle]`, (el) => ({ text: el.textContent.replace(/\s+/g, " ").trim(), icon: !!el.querySelector(".ti-server") }));
+    assert(!word.icon, "the status line still wears the server icon");
+    assert(!/Server/.test(word.text), `the status line still spells Server: "${word.text}"`);
+    const bars = await meters(page);
+    assert(bars.map((b) => b.key).join(",") === "cpu,mem,disk", `bar order ${bars.map((b) => b.key)}`);
+    const names = { cpu: "CPU", mem: "RAM", disk: "Disk" };
+    for (const bar of bars) {
+      if (!bar.shown) continue;
+      const m = bar.label.match(/^(\S+) (\d+)%$/);
+      assert(m && m[1] === names[bar.key], `${bar.key} aria label "${bar.label}"`);
+      assert(bar.title.startsWith(bar.label), `${bar.key} title "${bar.title}" does not lead with "${bar.label}"`);
+      assert(number(bar.width) === Math.min(100, Number(m[2])), `${bar.key} bar ${bar.width} for ${bar.label}`);
+      assert(bar.trackWidth > 10 && bar.trackWidth < 60 && bar.trackHeight > 0 && bar.trackHeight <= 8,
+        `${bar.key} track is not a slim bar: ${bar.trackWidth}x${bar.trackHeight}`);
     }
-    const disk = rows.find((r) => r.key === "disk");
-    assert(!disk.hidden && /free/.test(disk.label), `disk label: ${disk.label}`);
-    await page.keyboard.press("Escape");
-    return rows.map((r) => `${r.key} ${r.value}`).join(", ");
+    assert(bars.find((b) => b.key === "disk").shown, "the disk bar is missing");
+    await shot(page, "server-bars-live");
+    return bars.map((b) => b.label).join(", ");
   });
 
-  await run("a reading repaints values, labels, bar widths and colors", async () => {
-    await page.evaluate(() => document.dispatchEvent(new CustomEvent("dc:host", {
-      detail: {
-        hasCpu: true, hasMem: true, hasDisk: true,
-        cpu: 12, mem: 84, disk: 97,
-        cpuLabel: "Load 0.96 on 8 cores",
-        memLabel: "13 GB of 16 GB used",
-        diskLabel: "9.9 GB of 512 GB free",
-        level: "crit",
-      },
-    })));
+  await run("a quiet reading is green, warn is yellow, crit is red", async () => {
+    await reading({
+      hasCpu: true, hasMem: true, hasDisk: true, cpu: 12, mem: 34, disk: 56,
+      cpuLabel: "Usage across 8 cores", memLabel: "5 GB of 16 GB used", diskLabel: "225 GB of 512 GB free",
+    })(page);
     await sleep(200);
-    const painted = await page.evaluate((scope) => {
-      const row = (key) => {
-        const el = document.querySelector(`${scope} [data-host-row="${key}"]`);
-        const bar = el.querySelector(".js-host-bar");
-        return {
-          value: el.querySelector(".js-host-value").textContent,
-          label: el.querySelector(".js-host-label").textContent,
-          width: bar.style.width,
-          tone: ["bg-green", "bg-yellow", "bg-red"].find((c) => bar.classList.contains(c)),
-        };
-      };
+    const quiet = await meters(page);
+    assert(quiet.every((b) => b.tone === "bg-green"), `quiet tones ${quiet.map((b) => b.tone)}`);
+    assert(quiet.map((b) => b.width).join(",") === "12%,34%,56%", `quiet widths ${quiet.map((b) => b.width)}`);
+    assert(quiet[0].title === "CPU 12% · Usage across 8 cores", `cpu title "${quiet[0].title}"`);
+    await shot(page, "server-bars-quiet");
+
+    await reading({
+      hasCpu: true, hasMem: true, hasDisk: true, cpu: 12, mem: 84, disk: 97,
+      cpuLabel: "Load 0.96 on 8 cores", memLabel: "13 GB of 16 GB used", diskLabel: "9.9 GB of 512 GB free",
+    })(page);
+    await sleep(200);
+    const loud = await meters(page);
+    assert(loud.map((b) => b.tone).join(",") === "bg-green,bg-yellow,bg-red", `tones ${loud.map((b) => b.tone)}`);
+    assert(loud[1].label === "RAM 84%" && loud[2].label === "Disk 97%", `labels ${loud.map((b) => b.label)}`);
+    assert(new Set(loud.map((b) => b.fill)).size === 3, `green, yellow and red paint alike: ${loud.map((b) => b.fill)}`);
+    await shot(page, "server-bars-warn");
+  });
+
+  await run("a click on the bars opens the dropup with the detail rows", async () => {
+    await page.click(`${DESKTOP} [data-host-toggle]`);
+    await page.waitForSelector(`${DESKTOP} dc-host-status .dropdown-menu.show`, { timeout: 4000 });
+    const rows = await page.$$eval(`${DESKTOP} [data-host-row]`, (els, tones) => els.map((el) => {
+      const bar = el.querySelector(".js-host-bar");
       return {
-        cpu: row("cpu"),
-        mem: row("mem"),
-        disk: row("disk"),
-        icon: [...document.querySelectorAll(".js-host-icon")].map((i) => i.className),
+        key: el.dataset.hostRow,
+        value: el.querySelector(".js-host-value").textContent,
+        label: el.querySelector(".js-host-label").textContent,
+        width: bar.style.width,
+        tone: tones.find((c) => bar.classList.contains(c)),
       };
-    }, DESKTOP);
-    assert(painted.cpu.value === "12%" && painted.cpu.tone === "bg-green", `cpu ${JSON.stringify(painted.cpu)}`);
-    assert(painted.mem.value === "84%" && painted.mem.tone === "bg-yellow", `mem ${JSON.stringify(painted.mem)}`);
-    assert(painted.disk.value === "97%" && painted.disk.tone === "bg-red", `disk ${JSON.stringify(painted.disk)}`);
-    assert(painted.cpu.label === "Load 0.96 on 8 cores", `cpu label ${painted.cpu.label}`);
-    assert(painted.mem.width === "84%", `mem bar ${painted.mem.width}`);
-    assert(painted.icon.every((c) => /text-red/.test(c)), `icon classes ${painted.icon}`);
+    }), TONES);
+    assert(rows.map((r) => r.key).join(",") === "cpu,mem,disk", `row order ${rows.map((r) => r.key)}`);
+    assert(rows[0].value === "12%" && rows[0].tone === "bg-green", `cpu ${JSON.stringify(rows[0])}`);
+    assert(rows[1].value === "84%" && rows[1].tone === "bg-yellow" && rows[1].width === "84%", `mem ${JSON.stringify(rows[1])}`);
+    assert(rows[2].value === "97%" && rows[2].tone === "bg-red", `disk ${JSON.stringify(rows[2])}`);
+    assert(rows[0].label === "Load 0.96 on 8 cores", `cpu label ${rows[0].label}`);
+    assert(!(await page.$(`${DESKTOP} [data-host-float-open]`)), "the panel still offers the Float button");
+    const head = await page.$eval(`${DESKTOP} dc-host-status .dropdown-menu`, (el) => ({
+      text: el.textContent.replace(/\s+/g, " ").trim(),
+      group: el.querySelector('[role="group"]')?.getAttribute("aria-label"),
+    }));
+    assert(!/\bServer\b/.test(head.text) && head.group === "Server", `the dropup still carries a heading or lost its name: ${JSON.stringify(head)}`);
+    const inside = await page.$eval(`${DESKTOP} dc-host-status .dropdown-menu`, (el) => {
+      const box = el.getBoundingClientRect();
+      return box.top >= 0 && box.bottom <= window.innerHeight && box.right <= window.innerWidth;
+    });
+    assert(inside, "the dropup hangs outside the window");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector(".dc-status .dropdown-menu.show"), null, { timeout: 4000 });
   });
 
   await run("a load past the cores keeps the number and caps the bar", async () => {
-    await page.evaluate(() => document.dispatchEvent(new CustomEvent("dc:host", {
-      detail: { hasCpu: true, cpu: 140, cpuLabel: "Load 11.2 on 8 cores", hasMem: false, hasDisk: false, level: "crit" },
-    })));
+    await reading({ hasCpu: true, cpu: 140, cpuLabel: "Load 11.2 on 8 cores", hasMem: false, hasDisk: false })(page);
     await sleep(200);
-    const cpu = await page.evaluate((scope) => {
-      const el = document.querySelector(`${scope} [data-host-row="cpu"]`);
-      return { value: el.querySelector(".js-host-value").textContent, width: el.querySelector(".js-host-bar").style.width };
-    }, DESKTOP);
-    assert(cpu.value === "140%", `value ${cpu.value}`);
-    assert(cpu.width === "100%", `bar ${cpu.width}`);
+    const bars = await meters(page);
+    assert(bars[0].label === "CPU 140%" && bars[0].width === "100%" && bars[0].tone === "bg-red", `cpu ${JSON.stringify(bars[0])}`);
+    assert(!bars[1].shown && !bars[2].shown, "a metric the machine cannot answer still showed a bar");
     const gone = await page.$$eval(`${DESKTOP} [data-host-row="mem"], ${DESKTOP} [data-host-row="disk"]`,
       (els) => els.every((el) => getComputedStyle(el).display === "none"));
     assert(gone, "a metric the machine cannot answer still showed a row");
   });
 
   await run("a machine that answers nothing takes the whole status away", async () => {
-    await page.evaluate(() => document.dispatchEvent(new CustomEvent("dc:host", {
-      detail: { hasCpu: false, hasMem: false, hasDisk: false, cpu: -1, mem: -1, disk: -1, level: "" },
-    })));
+    await reading({ hasCpu: false, hasMem: false, hasDisk: false, cpu: -1, mem: -1, disk: -1 })(page);
     await sleep(200);
-    const hidden = await page.$$eval("dc-host-status", (els) => els.every((el) => getComputedStyle(el).display === "none"));
-    assert(hidden, "the status element stayed visible with nothing to show");
+    const hidden = await page.$$eval("dc-host-status:not([data-host-worst])", (els) => els.every((el) => el.hidden));
+    assert(hidden, "a status element stayed with nothing to show");
+    const shown = await page.$eval(`${DESKTOP} dc-host-status`, (el) => getComputedStyle(el).display);
+    assert(shown === "none", "the status line kept its bars with nothing to show");
+  });
+
+  await run("the float is gone: no element, no Float button, no stored card coming back", async () => {
+    await page.evaluate(() => localStorage.setItem("dc-host-float", JSON.stringify({ open: true, x: 100, y: 100 })));
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForSelector(`${DESKTOP} dc-host-status`, { timeout: 8000 });
-  });
-
-  await run("mobile: the status button stands in the compact header and opens the same panel", async () => {
-    const mp = await mobilePage();
-    await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-    await mp.waitForSelector(`${MOBILE} dc-host-status`, { timeout: 8000 });
-    // The bell's dropdown carries a "Mark all read" button of its own, so the
-    // count has to stay on the cluster's own children: status, bell, menu.
-    const cluster = await mp.$$eval(`${MOBILE} > *`, (els) => els.map((el) => el.localName));
-    assert(cluster.join(",") === "dc-host-status,dc-notifications,div", `the head tools carry ${cluster.join(", ")}`);
-    // The update stands in the menu at the end and only while one exists.
-    const flagShown = await mp.$$eval(`${MOBILE} .js-update-flag`, (els) => els.some((el) => getComputedStyle(el).display !== "none"));
-    assert(!flagShown, "the update row shows without an update");
-    await mp.click(`${MOBILE} [data-host-toggle]`);
-    await mp.waitForSelector(`${MOBILE} dc-host-status .dropdown-menu.show`, { timeout: 4000 });
-    const rows = await mp.$$eval(`${MOBILE} [data-host-row]`, (els) => els
-      .filter((el) => getComputedStyle(el).display !== "none")
-      .map((el) => `${el.dataset.hostRow} ${el.querySelector(".js-host-value").textContent}`));
-    assert(rows.length >= 1, "the panel opened without a single reading");
-    const inside = await mp.$eval(`${MOBILE} dc-host-status .dropdown-menu`, (el) => {
-      const box = el.getBoundingClientRect();
-      return box.left >= -1 && box.right <= window.innerWidth + 1;
-    });
-    assert(inside, "the panel hangs over the edge of the phone");
-    await mp.keyboard.press("Escape");
-    return rows.join(", ");
-  });
-
-  await run("mobile: a threshold colors the button, quiet takes the color away", async () => {
-    const mp = await mobilePage();
-    const iconClass = () => mp.$eval(`${MOBILE} .js-host-icon`, (el) => el.className);
-    await mp.evaluate(() => document.dispatchEvent(new CustomEvent("dc:host", {
-      detail: {
-        hasCpu: true, hasMem: true, hasDisk: true, cpu: 10, mem: 20, disk: 88,
-        cpuLabel: "Load 0.8 on 8 cores", memLabel: "3 GB of 16 GB used", diskLabel: "60 GB of 512 GB free",
-        level: "warn",
-      },
-    })));
-    await sleep(200);
-    const warn = await iconClass();
-    assert(/text-yellow/.test(warn) && !/text-red/.test(warn), `icon at warn: ${warn}`);
-
-    await mp.evaluate(() => document.dispatchEvent(new CustomEvent("dc:host", {
-      detail: {
-        hasCpu: true, hasMem: true, hasDisk: true, cpu: 10, mem: 20, disk: 97,
-        cpuLabel: "a", memLabel: "b", diskLabel: "c", level: "crit",
-      },
-    })));
-    await sleep(200);
-    const crit = await iconClass();
-    assert(/text-red/.test(crit) && !/text-yellow/.test(crit), `icon at crit: ${crit}`);
-
-    await mp.evaluate(() => document.dispatchEvent(new CustomEvent("dc:host", {
-      detail: {
-        hasCpu: true, hasMem: true, hasDisk: true, cpu: 10, mem: 20, disk: 30,
-        cpuLabel: "a", memLabel: "b", diskLabel: "c", level: "",
-      },
-    })));
-    await sleep(200);
-    const quiet = await iconClass();
-    assert(!/text-(yellow|red)/.test(quiet), `icon stayed colored while quiet: ${quiet}`);
-  });
-
-  await run("mobile: the update is a button in the menu and names the version", async () => {
-    const mp = await mobilePage();
-    // Driven through the component itself, not by editing classes: whether this
-    // host really has an update pending is none of this runner's business.
-    const entry = await mp.evaluate(() => {
-      const el = document.querySelector(".dc-head-tools .js-update-flag");
-      const check = document.querySelector("dc-update-check");
-      if (!el || !check) return null;
-      check.renderFlags({ available: false, latest: "9.9.9" });
-      const away = getComputedStyle(el).display;
-      check.renderFlags({ available: true, latest: "9.9.9" });
-      const button = el.querySelector("[data-update-open]");
-      return {
-        away,
-        shown: getComputedStyle(el).display,
-        text: el.textContent.replace(/\s+/g, " ").trim(),
-        title: el.title,
-        button: button ? button.className : "",
-      };
-    });
-    assert(entry, "no update entry in the head menu");
-    assert(entry.away === "none", "the update entry shows without an update");
-    assert(entry.shown !== "none", "the update entry stayed hidden with an update available");
-    assert(/^Update to 9\.9\.9$/.test(entry.text), `entry reads "${entry.text}"`);
-    assert(entry.title === "Update to 9.9.9", `entry tooltip "${entry.title}"`);
-    assert(/dropdown-item/.test(entry.button), `the update is not a row of the menu: ${entry.button}`);
-  });
-
-  await run("mobile: the float squashes to mini bars with the value underneath", async () => {
-    const mp = await mobilePage();
-    await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-    await mp.waitForSelector(`${MOBILE} dc-host-status`, { timeout: 8000 });
-    await mp.click(`${MOBILE} [data-host-toggle]`);
-    await mp.waitForSelector(`${MOBILE} dc-host-status .dropdown-menu.show`, { timeout: 4000 });
-    await mp.click(`${MOBILE} [data-host-float-open]`);
-    await mp.waitForSelector("dc-host-float", { state: "visible", timeout: 4000 });
-    const shape = await mp.evaluate(() => {
-      const gauge = document.querySelector('dc-host-float [data-host-chip="cpu"]');
-      const fill = gauge.querySelector(".dc-host-gauge-mini-fill");
-      return {
-        ring: getComputedStyle(gauge.querySelector(".dc-host-gauge-ring")).display,
-        name: getComputedStyle(gauge.querySelector(".dc-host-gauge-name")).display,
-        mini: getComputedStyle(gauge.querySelector(".dc-host-gauge-mini")).display,
-        value: getComputedStyle(gauge.querySelector(".dc-host-gauge-mini-value")).display,
-        fillHeight: fill.style.height,
-        shown: gauge.querySelector(".dc-host-gauge-mini-value").textContent,
-        title: gauge.title,
-        height: document.querySelector("dc-host-float").offsetHeight,
-      };
-    });
-    assert(shape.ring === "none" && shape.name === "none", `ring/name still shown on the phone: ${JSON.stringify(shape)}`);
-    assert(shape.mini !== "none" && shape.value !== "none", `mini bar hidden on the phone: ${JSON.stringify(shape)}`);
-    const value = Math.min(100, Number(shape.shown.replace("%", "")));
-    assert(shape.fillHeight === `${value}%`, `fill ${shape.fillHeight} for ${shape.shown}`);
-    assert(/^CPU · /.test(shape.title), `the tooltip does not name the metric: ${shape.title}`);
-    assert(shape.height <= 44, `the phone card is ${shape.height}px tall, want <= 44`);
-    await mp.click("dc-host-float [data-host-float-close]");
-    return `${shape.height}px tall`;
-  });
-
-  await run("detach floats the panel, closes the dropdown, and the card carries the readings", async () => {
-    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector(`${DESKTOP} dc-host-status`, { timeout: 8000 });
-    await page.click(`${DESKTOP} [data-host-toggle]`);
-    await page.waitForSelector(`${DESKTOP} dc-host-status .dropdown-menu.show`, { timeout: 4000 });
-    await page.click(`${DESKTOP} [data-host-float-open]`);
-    await page.waitForSelector("dc-host-float", { state: "visible", timeout: 4000 });
-    assert(!(await page.$(`${DESKTOP} dc-host-status .dropdown-menu.show`)), "the dropdown stayed open after detaching");
-    const gauges = await page.$$eval("dc-host-float [data-host-chip]", (els) => els
-      .filter((el) => getComputedStyle(el).display !== "none")
-      .map((el) => ({
-        key: el.dataset.hostChip,
-        value: el.querySelector(".js-host-value").textContent,
-        dash: el.querySelector(".dc-host-gauge-bar").getAttribute("stroke-dasharray"),
-        title: el.title,
-      })));
-    assert(gauges.length >= 1 && gauges.every((g) => /%$/.test(g.value)), `float gauges: ${JSON.stringify(gauges)}`);
-    for (const gauge of gauges) {
-      const value = Math.min(100, Number(gauge.value.replace("%", "")));
-      assert(gauge.dash.startsWith(`${value} `), `${gauge.key} ring dash ${gauge.dash} for ${gauge.value}`);
-      assert(gauge.title.trim().length > 0, `${gauge.key} gauge carries no tooltip with the plain numbers`);
-    }
-    // No plain-numbers line in the card: the sentence lives in the tooltip only.
-    assert((await page.locator("dc-host-float .js-host-label").count()) === 0, "the float still carries label lines");
-    const inside = await page.$eval("dc-host-float", (el) => {
-      const box = el.getBoundingClientRect();
-      return box.left >= 0 && box.right <= window.innerWidth && box.top >= 0;
-    });
-    assert(inside, "the fresh float is not inside the viewport");
-    const width = await page.$eval("dc-host-float", (el) => el.offsetWidth);
-    assert(width < 260, `the card is not slim: ${width}px wide`);
-    return gauges.map((g) => `${g.key} ${g.value}`).join(", ") + ` (${width}px)`;
-  });
-
-  await run("the float lives outside the swapped region: a boosted navigation keeps the element", async () => {
-    await page.evaluate(() => { document.querySelector("dc-host-float").dataset.probe = "kept"; });
-    await page.click('.dc-rail a[href="/docs"]');
-    await page.waitForURL(/\/docs/, { timeout: 8000 });
-    await sleep(400);
-    const kept = await page.evaluate(() => ({
-      probe: document.querySelector("dc-host-float")?.dataset.probe,
-      visible: document.querySelector("dc-host-float") && !document.querySelector("dc-host-float").hidden,
-      insidePage: !!document.querySelector("[data-page-content] dc-host-float"),
+    await sleep(300);
+    const left = await page.evaluate(() => ({
+      float: document.querySelectorAll("dc-host-float, .dc-host-float, [data-host-float-open], [data-host-chip]").length,
+      defined: !!customElements.get("dc-host-float"),
+      mapped: !!JSON.parse(document.querySelector('script[type="importmap"]').textContent).imports["dc-host-float"],
+      statuses: document.querySelectorAll(".dc-status dc-host-status").length,
+      tab: document.querySelectorAll(".dc-tabbar dc-host-status").length,
+      all: document.querySelectorAll("dc-host-status").length,
     }));
-    assert(kept.probe === "kept", "the navigation re-created the float element");
-    assert(kept.visible, "the float closed on navigation");
-    assert(!kept.insidePage, "the float sits inside data-page-content and would flicker");
+    assert(left.float === 0, `${left.float} float nodes still in the page`);
+    assert(!left.defined && !left.mapped, "the float element is still defined or mapped");
+    assert(left.statuses === 1 && left.tab === 1 && left.all === 2, `expected the status line's and the Cockpit tab's dc-host-status, found ${JSON.stringify(left)}`);
+    await page.evaluate(() => localStorage.removeItem("dc-host-float"));
   });
 
-  await run("dragging the card by its head persists, and a reload restores the spot", async () => {
-    const grip = await page.locator("dc-host-float [data-host-float-grip]").boundingBox();
-    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(300, 400, { steps: 8 });
-    await page.mouse.up();
-    const before = await page.$eval("dc-host-float", (el) => ({ x: el.style.left, y: el.style.top }));
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await page.waitForSelector("dc-host-float", { state: "visible", timeout: 8000 });
-    const after = await page.$eval("dc-host-float", (el) => ({ x: el.style.left, y: el.style.top }));
-    assert(before.x === after.x && before.y === after.y,
-      `float moved across the reload: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+  await run("mobile: the work head carries no server status, the Cockpit tab does", async () => {
+    const mp = await mobilePage();
+    await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await mp.waitForSelector('.dc-tabbar button[data-ctx-area="cockpit"]', { timeout: 8000 });
+    const left = await mp.evaluate(() => ({
+      tools: document.querySelectorAll(".dc-head-tools").length,
+      head: document.querySelectorAll(".dc-work-head dc-host-status, .dc-work-head .ti-server, .dc-work-head [data-host-toggle]").length,
+      visible: [...document.querySelectorAll("dc-host-status, dc-host-float")]
+        .filter((el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden")
+        .map((el) => (el.closest(".dc-tabbar") ? "tab" : el.parentElement.className)),
+    }));
+    assert(left.tools === 0, "the phone's head tools are still rendered");
+    assert(left.head === 0, "the phone's work head still carries the server button");
+    assert(left.visible.join(",") === "tab", `visible server status on the phone: ${left.visible.join(", ") || "none"}`);
   });
 
-  await run("a shrinking window pushes the card back into view", async () => {
-    await page.evaluate(() => {
-      const el = document.querySelector("dc-host-float");
-      el.place(window.innerWidth - el.offsetWidth - 8, 100);
-    });
-    const parked = await page.$eval("dc-host-float", (el) => el.getBoundingClientRect().right);
-    assert(parked > 700, `expected the card at the right edge, right=${parked}`);
-    await page.setViewportSize({ width: 700, height: 700 });
-    await sleep(300);
-    const clamped = await page.$eval("dc-host-float", (el) => {
-      const box = el.getBoundingClientRect();
-      return { right: box.right, bottom: box.bottom };
-    });
-    assert(clamped.right <= 700, `the card hangs outside after the resize: right=${clamped.right}`);
-    assert(clamped.bottom <= 700, `the card hangs below after the resize: bottom=${clamped.bottom}`);
-    await page.setViewportSize({ width: 1360, height: 900 });
-    await sleep(200);
-  });
-
-  await run("z-order: over panel and footers; ducks under anything that pops up", async () => {
-    const z = await page.$eval("dc-host-float", (el) => Number(getComputedStyle(el).zIndex));
-    assert(z === 1045, `float z-index ${z}, want 1045 (over the 1040 panel)`);
-    // Any open popup has to win: an open dropdown ducks the card under everything.
-    await page.click(".dc-notify-bell:visible");
-    await page.waitForSelector(".dc-notify-menu.show", { timeout: 4000 });
-    const ducked = await page.$eval("dc-host-float", (el) => Number(getComputedStyle(el).zIndex));
-    assert(ducked === 5, `float z with an open dropdown ${ducked}, want 5 (under everything)`);
-    await page.keyboard.press("Escape");
-    await page.waitForFunction(() => !document.querySelector(".dropdown-menu.show"), null, { timeout: 4000 });
-    const back = await page.$eval("dc-host-float", (el) => Number(getComputedStyle(el).zIndex));
-    assert(back === 1045, `float z after closing the dropdown ${back}, want 1045`);
-  });
-
-  await run("the cross closes the float and the closed state survives a reload", async () => {
-    await page.click("dc-host-float [data-host-float-close]");
-    await page.waitForSelector("dc-host-float", { state: "hidden", timeout: 4000 });
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await page.waitForSelector(`${DESKTOP} dc-host-status`, { timeout: 8000 });
-    await sleep(300);
-    const hidden = await page.$eval("dc-host-float", (el) => el.hidden);
-    assert(hidden, "the float came back after being closed");
-  });
-
-  await run("the rail keeps the mark and the phone's menu rows stay off it", async () => {
+  await run("the rail keeps the mark and the icon only logout", async () => {
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".dc-rail .dc-rail-mark", { timeout: 8000 });
     const mark = await page.$eval(".dc-rail .dc-rail-mark", (el) => el.getAttribute("aria-label"));
@@ -379,15 +205,11 @@ L.runFeature("HOST-STATUS", async ({ browser, page, run, mobilePage }) => {
     const hiddenOnWide = await page.$$eval(".js-update-flag",
       (els) => els.every((el) => getComputedStyle(el).display === "none"));
     assert(hiddenOnWide, "an update button rendered without an update");
-    // Two logouts live in the layout too: the icon at the rail's foot, and the
-    // spelled-out row in the phone's head menu, which keeps its words.
     const logout = await page.$eval('.dc-rail form[action="/logout"] button', (el) => ({
       text: el.textContent.trim(),
       label: el.getAttribute("aria-label"),
     }));
     assert(logout.text === "", `logout still spells itself out: "${logout.text}"`);
     assert(logout.label === "Logout", `logout lost its label: ${logout.label}`);
-    const menuLogout = await page.$eval(`${MOBILE} form[action="/logout"] button`, (el) => el.textContent.trim());
-    assert(menuLogout === "Logout", `the menu row lost its words: "${menuLogout}"`);
   });
 });

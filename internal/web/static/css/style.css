@@ -122,7 +122,7 @@ body {
   background: var(--tblr-primary);
 }
 .dc-rail-btn[aria-disabled=true] { opacity: 0.4; pointer-events: none; }
-.dc-rail-count, .dc-tabbar-count {
+.dc-rail-count {
   position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px;
   border-radius: 8px; background: var(--tblr-primary); color: #fff;
   font-size: 9px; line-height: 16px; text-align: center; font-weight: 600;
@@ -191,11 +191,6 @@ dc-theme-cycle { display: contents; }
 }
 .dc-work-tabs::-webkit-scrollbar { display: none; }
 .dc-work-tabs .nav-link { display: flex; align-items: center; white-space: nowrap; }
-.dc-head-tools { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: none; }
-.dc-head-tools .btn-icon, .dc-head-tools .dc-notify-bell { --tblr-btn-icon-size: 1.25rem; width: 1.75rem; height: 1.75rem; min-height: 1.75rem; padding: 0; }
-.dc-head-tools .dc-notify-bell .ti { font-size: 1.25rem; }
-.dc-head-tools .dc-notify-badge { top: -0.1rem; right: -0.1rem; }
-.dc-head-tools .dropdown-item-text { white-space: nowrap; }
 .dc-work {
   grid-area: work;
   display: flex; flex-direction: column; min-width: 0; min-height: 0;
@@ -265,6 +260,9 @@ button.dc-status-item, a.dc-status-item { cursor: pointer; }
 .dc-status-gap { flex: 1; }
 .dc-status dc-host-status { display: flex; }
 .dc-status dc-host-status .dropdown-menu { min-width: 16rem; }
+.dc-host-meters { gap: 10px; }
+.dc-host-meter { display: inline-flex; align-items: center; gap: 4px; }
+.dc-host-meter-track { width: 32px; height: 5px; background: var(--tblr-border-color); }
 .dc-tabbar {
   display: none; grid-area: tabs;
   z-index: 20;
@@ -282,7 +280,14 @@ button.dc-status-item, a.dc-status-item { cursor: pointer; }
 .dc-tabbar-btn > .ti, .dc-tabbar-btn > .dc-news-anchor > .ti { --tblr-icon-size: 22px; font-size: 22px; line-height: 1; }
 .dc-tabbar-btn.active { color: var(--tblr-primary); }
 .dc-tabbar-btn[aria-disabled=true] { opacity: 0.4; pointer-events: none; }
-.dc-tabbar-count { top: 6px; right: auto; left: calc(50% + 6px); }
+dc-host-status.dc-cockpit-icon { display: flex; }
+.dc-cockpit-icon .ti { --tblr-icon-size: 22px; font-size: 22px; line-height: 1; }
+body:has(dc-ctx-sheet:is([data-area="cockpit"], [data-area="news"]):not([hidden])) .dc-tabbar-btn.active:not([data-ctx-area="cockpit"]) { color: var(--tblr-secondary); }
+body:has(dc-ctx-sheet:is([data-area="cockpit"], [data-area="news"]):not([hidden])) .dc-tabbar-btn[data-ctx-area="cockpit"] { color: var(--tblr-primary); }
+.dc-sheet-panel:focus { outline: 0; }
+.dc-cockpit-meter .dc-host-meter-track { display: flex; width: 100%; height: 4px; }
+.dc-cockpit-tile { min-width: 0; min-height: 2.5rem; white-space: nowrap; }
+.dc-cockpit-tile-square { width: 2.5rem; height: 2.5rem; }
 @media (max-width: 991.98px) {
   .dc-app, .dc-app:has(> .dc-ctx) {
     grid-template-columns: minmax(0, 1fr);
@@ -1272,118 +1277,6 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
 @keyframes dc-loading-bar {
   from { left: 0; }
   to { left: 60%; }
-}
-/* Over what stands (the assistant panel at 1040, the sticky footers at 10),
-   never over what pops up. A single number cannot do
-   both, the strip's dropdowns live inside a z-10 sticky context, so while
-   anything that asks for interaction is open the card ducks under everything
-   and comes back when it closes. */
-.dc-host-float {
-  position: fixed;
-  z-index: 1045;
-}
-/* The duck is one number for every case on purpose: an in-surface dropdown
-   could never outrank a float that stayed above the surface, and the float
-   covering what asks for interaction is the worse of the two. */
-body:has(.dropdown-menu.show, .modal.show, .swal2-container, .dc-context-menu, .terminal-switcher, [data-editor-quickopen]:not([hidden]), [data-editor-palette]:not([hidden])) .dc-host-float {
-  z-index: 5;
-}
-.dc-host-float [data-host-float-grip] {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  white-space: nowrap;
-  cursor: move;
-  user-select: none;
-  touch-action: none;
-}
-.dc-host-float .btn-close {
-  margin-top: 0.25rem;
-}
-.dc-host-float-flash {
-  animation: dc-host-float-flash 0.5s ease-out 3;
-}
-@keyframes dc-host-float-flash {
-  0% { transform: scale(1); outline: 0.375rem solid rgba(var(--tblr-primary-rgb), 1); }
-  40% { transform: scale(1.09); outline: 0.75rem solid rgba(var(--tblr-primary-rgb), 0.9); }
-  100% { transform: scale(1); outline: 1.5rem solid rgba(var(--tblr-primary-rgb), 0); }
-}
-.dc-host-gauge {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.125rem;
-}
-.dc-host-gauge-ring {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 2.75rem;
-  height: 2.75rem;
-}
-.dc-host-gauge-ring svg {
-  position: absolute;
-  inset: 0;
-  transform: rotate(-90deg);
-}
-.dc-host-gauge-ring circle {
-  fill: none;
-  stroke-width: 4;
-}
-.dc-host-gauge-track {
-  stroke: var(--tblr-border-color);
-}
-.dc-host-gauge-bar {
-  stroke: currentColor;
-  stroke-linecap: round;
-}
-.dc-host-gauge-ring .js-host-value {
-  font-size: 0.7rem;
-}
-.dc-host-gauge-name {
-  font-size: 0.7rem;
-  color: var(--tblr-secondary);
-}
-.dc-host-gauge-mini, .dc-host-gauge-mini-value {
-  display: none;
-}
-.dc-host-gauge-mini-fill {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: currentColor;
-}
-@media (max-width: 767.98px) {
-  .dc-host-float [data-host-float-grip] {
-    align-items: center;
-    gap: 0.625rem;
-    padding: 0.25rem 0.5rem;
-  }
-  .dc-host-float .btn-close {
-    margin-top: 0;
-  }
-  .dc-host-gauge {
-    gap: 0;
-  }
-  .dc-host-gauge-ring, .dc-host-gauge-name {
-    display: none;
-  }
-  .dc-host-gauge-mini {
-    display: block;
-    position: relative;
-    width: 0.5rem;
-    height: 1rem;
-    border-radius: 2px;
-    background: var(--tblr-border-color);
-    overflow: hidden;
-  }
-  .dc-host-gauge-mini-value {
-    display: block;
-    font-size: 0.65rem;
-    line-height: 1.2;
-  }
 }
 .dropdown-menu {
   --tblr-dropdown-bg: var(--dc-float-bg);

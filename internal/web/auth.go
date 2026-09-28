@@ -219,6 +219,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		Jingle:            s.selectedJingle(),
 		AssistantNews:     assistantNews,
 		BackupReviewCount: s.backups.PendingReviewCount(),
+		UnreadNews:        s.notifier.UnreadCount(),
 		Steered:           steered,
 		SteerPrefill:      prefill,
 		Working:           s.activity.Working(),

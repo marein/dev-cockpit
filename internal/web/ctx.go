@@ -12,7 +12,9 @@ import (
 // sheet: the same partials the pages render, with the same data. The path
 // query names the page the sheet opens over, so the terminals column marks
 // the current terminal, the create links carry its project and the settings
-// column marks the section on screen.
+// column marks the section on screen. The phone's Cockpit sheet (cockpit) and the
+// full notification list it opens (news) are areas of their own here, they
+// stand where the rail's foot stands on a wide screen.
 func (s *Server) handleCtx(c *gin.Context) {
 	area := c.Param("area")
 	// TODO(v2.0.0): the area was called "assistant" while there was one of
@@ -52,6 +54,10 @@ func (s *Server) handleCtx(c *gin.Context) {
 		c.HTML(http.StatusOK, "ctx_settings.gohtml", render.SettingsGeneralData{Page: page, SettingsNav: s.settingsNav(settingsSectionOf(cleanPath))})
 	case "docs":
 		c.HTML(http.StatusOK, "ctx_docs.gohtml", render.DocsData{Page: page, Topics: render.DocsTopics()})
+	case "cockpit":
+		c.HTML(http.StatusOK, "ctx_cockpit.gohtml", render.SettingsGeneralData{Page: page, SettingsNav: s.settingsNav(settingsSectionOf(cleanPath))})
+	case "news":
+		c.HTML(http.StatusOK, "ctx_news.gohtml", page)
 	case "assistants":
 		c.HTML(http.StatusOK, "ctx_assistant.gohtml", s.assistantCtxData(c, cleanPath, "assistant-sheet-new"))
 	default:

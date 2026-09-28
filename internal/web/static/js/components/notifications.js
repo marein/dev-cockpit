@@ -1,3 +1,4 @@
+import { labelCockpitTab } from "@dc/cockpit";
 import { latestServerEvent, onServerEvent } from "@dc/events";
 import { windowSeen } from "@dc/dom";
 import { getJSON, postForm } from "@dc/http";
@@ -8,10 +9,13 @@ import "@dc/gitprompt";
 
 // Notification bell + center. The element renders a bell with an unread badge
 // and a dropdown listing recent "coder finished" / "needs attention" events.
-// The header mounts one instance per breakpoint, so the toast, the title counter
-// and the shared unread state live in a module level channel shared by all
-// instances; each element only mirrors the channel state into its own DOM. The
-// server stream itself is the app-wide one in @dc/events; the channel just
+// The rail mounts the bell, and with the inline attribute the element is a
+// bare list instead (the phone's Cockpit sheet shows the newest few, limit="3",
+// and its Show all the whole list). The toast, the title counter and the
+// shared unread state live in a module level channel shared by all instances;
+// each element only mirrors the channel state into its own DOM. The channel
+// also keeps the phone's Cockpit tab dot ([data-cockpit-dot]) and the open backup
+// review counts ([data-backup-reviews]) live. The server stream itself is the app-wide one in @dc/events; the channel just
 // subscribes to its "notifications" events.
 
 const channel = {
@@ -94,6 +98,7 @@ const channel = {
     const pulse = this.unread !== null && count > this.unread;
     this.unread = count;
     updateTitle(count);
+    paintCockpit();
     decorateNews(shown, {
       terminal: this.terminals.filter((id) => !this.held.has(id)),
       assistant: this.assistants.filter((id) => !this.held.has(id)),
@@ -132,6 +137,57 @@ document.addEventListener("dc:terminal-activated", (event) => {
 });
 
 document.addEventListener("dc:assistant-shown", () => reconcileOwnTarget(channel.targets));
+
+// reviews is the open backup review count: the event's when one arrived
+// last, else what a freshly rendered page said (adoptRendered).
+let reviews = null;
+
+onServerEvent("backupreviews", (event) => {
+  adoptRendered();
+  reviews = Number(event.detail && event.detail.count) || 0;
+  paintReviews();
+  paintCockpit();
+});
+
+// A boosted navigation brings the server's render of both marks.
+window.addEventListener("dc:navigated", () => { paintReviews(); paintCockpit(); });
+
+// adoptRendered takes the review count out of a dot the server rendered and
+// nobody read yet. That render is at least as fresh as the page it came with,
+// so it stands over an older event, the way the next event stands over it.
+function adoptRendered() {
+  document.querySelectorAll("[data-cockpit-dot]:not([data-cockpit-adopted])").forEach((dot) => {
+    dot.dataset.cockpitAdopted = "";
+    reviews = Number(dot.dataset.reviews) || 0;
+  });
+}
+
+// paintReviews writes the open backup reviews onto every count of them, the
+// rail's Settings, the settings sections' Backup row and the Cockpit sheet's
+// Settings head, hidden at zero.
+function paintReviews() {
+  adoptRendered();
+  if (reviews === null) return;
+  document.querySelectorAll("[data-backup-reviews]").forEach((badge) => {
+    badge.textContent = String(reviews);
+    badge.classList.toggle("d-none", reviews === 0);
+    badge.setAttribute("aria-label", `${reviews} backup ${reviews === 1 ? "file" : "files"} to resolve`);
+  });
+}
+
+// paintCockpit shows the phone's Cockpit tab dot while anything in its sheet wants
+// attention, an unread notification or an open backup review. Until the
+// stream has spoken, the unread part is what the server rendered. The dot
+// carries no number, so the tab's own label says it.
+function paintCockpit() {
+  adoptRendered();
+  document.querySelectorAll("[data-cockpit-dot]").forEach((dot) => {
+    const unread = channel.unread !== null ? channel.unread : Number(dot.dataset.unread) || 0;
+    const news = unread > 0 || (reviews || 0) > 0;
+    dot.classList.toggle("d-none", !news);
+  });
+  labelCockpitTab();
+}
 
 function updateTitle(unread) {
   const base = document.title.replace(/^\(\d+\+?\)\s/, "");
@@ -351,7 +407,10 @@ class Notifications extends HTMLElement {
     this.ac = new AbortController();
     const { signal } = this.ac;
 
-    if (!this.querySelector(".dc-notify-bell")) {
+    this.inline = this.hasAttribute("inline");
+    this.limit = Number(this.getAttribute("limit")) || 0;
+    this.compact = this.hasAttribute("compact");
+    if (!this.inline && !this.querySelector(".dc-notify-bell")) {
       this.innerHTML = `
       <div class="dropdown">
         <button type="button" class="btn btn-icon dc-notify-bell" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-label="Notifications">
@@ -372,7 +431,7 @@ class Notifications extends HTMLElement {
     this.badge = this.querySelector(".dc-notify-badge");
     this.menu = this.querySelector(".dc-notify-menu");
     this.list = this.querySelector(".dc-notify-list");
-    this.renderEmpty("Nothing yet.");
+    if (!this.inline) this.renderEmpty("Nothing yet.");
 
     this.listener = (state) => this.apply(state);
     channel.addListener(this.listener, this.getAttribute("read-url"));
@@ -383,8 +442,9 @@ class Notifications extends HTMLElement {
     if (channel.unread !== null) channel.render();
 
     this.addEventListener("show.bs.dropdown", () => this.refresh(), { signal });
+    if (this.inline) this.queueRefresh();
 
-    this.querySelector(".dc-notify-read-all").addEventListener("click", () => {
+    this.querySelector(".dc-notify-read-all")?.addEventListener("click", () => {
       postForm(channel.readUrl, { all: "1" })
         .catch(() => {})
         .finally(() => this.refresh());
@@ -395,7 +455,7 @@ class Notifications extends HTMLElement {
       if (!item) return;
       event.preventDefault();
       // The menu closes itself before the page swaps.
-      if (window.bootstrap) window.bootstrap.Dropdown.getOrCreateInstance(this.bell).hide();
+      if (window.bootstrap && this.bell) window.bootstrap.Dropdown.getOrCreateInstance(this.bell).hide();
       openTarget({ id: item.dataset.notifyId, targetId: item.dataset.notifyTarget, url: item.getAttribute("href") });
     }, { signal });
   }
@@ -407,6 +467,12 @@ class Notifications extends HTMLElement {
   }
 
   apply(state) {
+    // An inline list only stands while its sheet is open, so it follows every
+    // move of the channel.
+    if (this.inline) {
+      this.queueRefresh();
+      return;
+    }
     const unread = state.unread || 0;
     this.badge.textContent = unread > 99 ? "99+" : String(unread);
     this.badge.classList.toggle("d-none", unread === 0);
@@ -416,6 +482,17 @@ class Notifications extends HTMLElement {
       this.bell.classList.add("dc-notify-ring");
     }
     if (this.menu.classList.contains("show")) this.refresh();
+  }
+
+  // queueRefresh folds the pulls a mount asks for in one go (the listener's
+  // first call, the channel's re-render, the mount itself) into one.
+  queueRefresh() {
+    if (this.refreshQueued) return;
+    this.refreshQueued = true;
+    queueMicrotask(() => {
+      this.refreshQueued = false;
+      if (this.ac) this.refresh();
+    });
   }
 
   refresh() {
@@ -441,10 +518,12 @@ class Notifications extends HTMLElement {
       this.renderEmpty("Nothing yet.");
       return;
     }
-    this.list.replaceChildren(...items.map((n) => this.renderItem(n)));
+    const shown = this.limit > 0 ? items.slice(0, this.limit) : items;
+    this.list.replaceChildren(...shown.map((n) => this.renderItem(n)));
   }
 
   renderItem(n) {
+    if (this.compact) return this.renderLine(n);
     const item = document.createElement("a");
     item.href = targetURL(n);
     item.dataset.notifyId = n.id;
@@ -453,6 +532,7 @@ class Notifications extends HTMLElement {
 
     const icon = document.createElement("i");
     icon.className = "ti ti-bell-ringing text-primary fs-2 dc-notify-icon";
+    icon.setAttribute("aria-hidden", "true");
 
     const body = document.createElement("div");
     body.className = "d-flex flex-column min-w-0 flex-fill";
@@ -485,7 +565,52 @@ class Notifications extends HTMLElement {
     if (!n.read) {
       const dot = document.createElement("span");
       dot.className = "status-dot status-dot-animated bg-blue mt-2 flex-shrink-0";
-      item.append(dot);
+      const said = document.createElement("span");
+      said.className = "visually-hidden";
+      said.textContent = "unread";
+      item.append(dot, said);
+    }
+    return item;
+  }
+
+  // renderLine is the Cockpit sheet's row: title, source and age on one
+  // line, the text cut where it runs out and whole in the tooltip.
+  renderLine(n) {
+    const item = document.createElement("a");
+    item.href = targetURL(n);
+    item.dataset.notifyId = n.id;
+    item.dataset.notifyTarget = n.targetId;
+    item.className = "list-group-item list-group-item-action d-flex align-items-center gap-2 py-2 small dc-notify-item" + (n.read ? "" : " dc-notify-unread");
+
+    const icon = document.createElement("i");
+    icon.className = "ti ti-bell-ringing text-primary dc-notify-icon";
+    icon.setAttribute("aria-hidden", "true");
+
+    const text = document.createElement("span");
+    text.className = "text-truncate flex-fill";
+    const title = n.title || n.targetName;
+    const source = n.detail || n.project || "";
+    text.textContent = title;
+    if (source) {
+      const rest = document.createElement("span");
+      rest.className = "text-secondary";
+      rest.textContent = ` · ${source}`;
+      text.append(rest);
+    }
+    item.title = source ? `${title} · ${source}` : title;
+
+    const time = document.createElement("span");
+    time.className = "text-secondary text-nowrap";
+    time.textContent = relativeTime(n.createdAt);
+
+    item.append(icon, text, time);
+    if (!n.read) {
+      const dot = document.createElement("span");
+      dot.className = "status-dot status-dot-animated bg-blue flex-shrink-0";
+      const said = document.createElement("span");
+      said.className = "visually-hidden";
+      said.textContent = "unread";
+      item.append(dot, said);
     }
     return item;
   }
@@ -495,5 +620,12 @@ customElements.define("dc-notifications", Notifications);
 
 const missedNotifications = latestServerEvent("notifications");
 if (missedNotifications) channel.receive(missedNotifications);
+const missedReviews = latestServerEvent("backupreviews");
+if (missedReviews) {
+  adoptRendered();
+  reviews = Number(missedReviews.count) || 0;
+  paintReviews();
+  paintCockpit();
+}
 const missedActivity = latestServerEvent("activity");
 if (missedActivity) decorateWorking(missedActivity.targets || []);

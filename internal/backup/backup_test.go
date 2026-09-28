@@ -730,3 +730,47 @@ func TestAnOldArchiveWithoutTheEntryMemoriesImports(t *testing.T) {
 		t.Fatalf("the import invented a file: %v", err)
 	}
 }
+
+// Every write of the review list tells the listener the open count, the adds
+// of an import and every way to resolve one, so the Cockpit tab's dot and the
+// settings counts follow without a reload.
+func TestReviewWritesReportTheOpenCount(t *testing.T) {
+	svc, dirs := testService(t)
+	var heard []int
+	svc.SetReviewsChanged(func(count int) { heard = append(heard, count) })
+	entries := []ReviewEntry{}
+	for _, name := range []string{"a.json", "b.json"} {
+		path := filepath.Join(dirs.state, name)
+		for _, p := range []string{path, path + preImportSuffix} {
+			if err := os.WriteFile(p, []byte("{}"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		entries = append(entries, ReviewEntry{ID: name, Path: path})
+	}
+	svc.reviewAdd(entries)
+	if err := svc.ReviewKeep("a.json"); err != nil {
+		t.Fatal(err)
+	}
+	svc.ReviewKeepAll()
+	if !slices.Equal(heard, []int{2, 1, 0}) {
+		t.Fatalf("heard %v, want [2 1 0]", heard)
+	}
+}
+
+// A review list that could not be written announces nothing: the count it
+// would report is not the one on disk.
+func TestAFailedReviewWriteReportsNothing(t *testing.T) {
+	svc, dirs := testService(t)
+	var heard []int
+	svc.SetReviewsChanged(func(count int) { heard = append(heard, count) })
+	blocker := filepath.Join(svc.reviewFile(), "keep")
+	if err := os.MkdirAll(blocker, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dirs.state, "a.json")
+	svc.reviewAdd([]ReviewEntry{{ID: "a.json", Path: path}})
+	if len(heard) != 0 {
+		t.Fatalf("heard %v for a write that failed", heard)
+	}
+}

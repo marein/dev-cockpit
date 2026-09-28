@@ -91,7 +91,13 @@ func DocsTopics() []DocsTopic {
 					Title:    "The list sheet",
 					Tag:      "Phone and tablet",
 					TagClass: "bg-blue-lt",
-					Desc:     `On a phone the tab bar's Projects, Terminals, Assistants and Settings slide the area's list up as a sheet; a row opens its page and the sheet goes. Projects, terminals and assistants filter, projects also sort <i class="ti ti-arrows-sort align-text-bottom" aria-hidden="true"></i>, and a filter stays until you clear it. A row's actions sit behind <i class="ti ti-dots align-text-bottom" aria-hidden="true"></i>, the grip <i class="ti ti-grip-vertical align-text-bottom" aria-hidden="true"></i> drags it into a new order, and a split view lists its members under it.`,
+					Desc:     `On a phone, Projects, Terminals and Assistants in the tab bar open the area's list as a sheet; a row opens its page and closes the sheet. Each list filters, projects also sort <i class="ti ti-arrows-sort align-text-bottom" aria-hidden="true"></i>, and a filter stays until you clear it. <i class="ti ti-dots align-text-bottom" aria-hidden="true"></i> holds a row's actions, the grip <i class="ti ti-grip-vertical align-text-bottom" aria-hidden="true"></i> drags it into a new order, and a split view lists its members under it.`,
+				},
+				{
+					Title:    "Cockpit",
+					Tag:      "Phone and tablet",
+					TagClass: "bg-blue-lt",
+					Desc:     `The last tab bar entry. Its gauge icon keeps the tab's color while CPU, RAM and disk stay below 80 percent, turns yellow from 80 and red from 95. A blue dot means an unread notification or a backup file to resolve. A tap opens a sheet as tall as the other lists: CPU, RAM and disk in one row (with a pointer, hover shows the numbers), the three newest notifications with Show all, tiles for theme (shows the mode in force), update (Up to date, or Update to the newer version) and logout, the settings sections with the count of backup files to resolve, and the docs.`,
 				},
 				{
 					Title: "The project row's menu",
@@ -559,7 +565,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "In the browser",
-					Desc:  `The bell <i class="ti ti-bell align-text-bottom" aria-hidden="true"></i>, the blue marks on terminals and projects, the browser title, a toast and the jingle all show the same unread notifications; the bell opens the list, where single entries or everything can be marked read. Sound needs one browser interaction first, and its volume is stored per device.`,
+					Desc:  `The bell <i class="ti ti-bell align-text-bottom" aria-hidden="true"></i>, the blue marks on terminals and projects, the browser title, a toast and the jingle all show the same unread notifications; the bell opens the list, where single entries or everything can be marked read. On a phone the Cockpit tab shows a dot and its sheet holds the list. Sound needs one browser interaction first, its volume is stored per device.`,
 				},
 				{
 					Title:    "A steered coder stays quiet",
@@ -611,13 +617,13 @@ func DocsTopics() []DocsTopic {
 					Title:    "Light and dark mode",
 					Tag:      "Rail",
 					TagClass: "bg-secondary-lt",
-					Desc:     `The theme switcher at the foot of the rail, on a phone in the menu at the end of the page head, steps through auto <i class="ti ti-contrast align-text-bottom" aria-hidden="true"></i>, light <i class="ti ti-sun align-text-bottom" aria-hidden="true"></i> and dark <i class="ti ti-moon align-text-bottom" aria-hidden="true"></i>. Auto follows the OS, the other two force one, and the choice is stored per device. Page, editor and terminal follow it together; coders may take up to two seconds.`,
+					Desc:     `The theme button at the foot of the rail, on a phone in the Cockpit sheet, steps through auto <i class="ti ti-contrast align-text-bottom" aria-hidden="true"></i>, light <i class="ti ti-sun align-text-bottom" aria-hidden="true"></i> and dark <i class="ti ti-moon align-text-bottom" aria-hidden="true"></i>. Auto follows the OS, the other two force one, stored per device. Page, editor and terminal follow together; coders may take up to two seconds.`,
 				},
 				{
 					Title:    "How the machine is doing",
 					Tag:      "Status line",
 					TagClass: "bg-secondary-lt",
-					Desc:     `The server button <i class="ti ti-server align-text-bottom" aria-hidden="true"></i> in the status line, on a phone in the page head, opens CPU, RAM and disk, each a percentage with the plain numbers below it; the icon turns yellow past 80 percent and red from 95, and the disk is the one the projects live on. On Linux the CPU value is the share of the cores at work since the last reading, on a Mac the load average against the core count, which can pass 100 percent. The Float button <i class="ti ti-app-window align-text-bottom" aria-hidden="true"></i> puts the three values into a card over the page, draggable and kept across pages and reloads.`,
+					Desc:     `Three bars in the status line show CPU, RAM and disk as percentages, green below 80, yellow from 80, red from 95. Hover shows a bar's name and value, a click opens the plain numbers. The disk is the one holding the projects. On Linux CPU is the share of cores at work since the last reading, on a Mac the load average against the core count, which can pass 100 percent. On a phone the Cockpit tab's gauge takes the worst of the three colors and its sheet shows the values.`,
 				},
 				{
 					Title:    "Restore terminals at startup",

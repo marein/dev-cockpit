@@ -237,6 +237,9 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		return nil, err
 	}
 	s.handler = handler
+	if backups != nil {
+		backups.SetReviewsChanged(s.publishBackupReviews)
+	}
 	// A job beginning or ending is ownership changing on a terminal, and the
 	// steered mark sits in server rendered fragments. The plain terminals
 	// event is what makes every surface pull them, the same way it follows a

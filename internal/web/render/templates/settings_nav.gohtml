@@ -48,7 +48,7 @@
       <span>Backup</span>
       <span class="text-warning dc-row-note">Experimental</span>
     </span>
-    {{if .Reviews}}<span class="badge bg-primary-lt" title="Backup files to resolve">{{.Reviews}}</span>{{end}}
+    {{template "backup_reviews_badge.gohtml" (dict "Count" .Reviews "Class" "badge bg-primary-lt")}}
   </a>
 </nav>
 {{end}}

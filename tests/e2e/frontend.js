@@ -56,14 +56,12 @@ async function selectionContrast(page, sel) {
 }
 
 // The theme button is the one control that belongs to no feature: it stands in
-// the rail's foot, in the phone's head menu and on the login page, and it walks
+// the rail's foot, in the phone's Cockpit sheet and on the login page, and it walks
 // one fixed ring, light, dark, follow the OS, whatever the OS itself says.
 const RING = ["light", "dark", "auto"];
 const RING_LABELS = { light: "Light", dark: "Dark", auto: "Follow the OS" };
 const RAIL_CYCLE = ".dc-rail-foot dc-theme-cycle";
-// The bell next to it is a dropdown too, so the menu is named by what only it
-// carries, not by its place among the head tools.
-const HEAD_MENU = ".dc-head-tools .dropdown:has([data-theme-cycle])";
+const COCKPIT_TILE = "dc-ctx-sheet [data-cockpit-section=actions] dc-theme-cycle";
 
 // What one theme button shows and what the page made of it. The mark is read off
 // the computed display, style.css is what turns the hidden attribute into one.
@@ -72,7 +70,6 @@ async function themeState(page, root) {
     const host = document.querySelector(sel);
     if (!host) return { missing: true, shown: [] };
     const button = host.querySelector("[data-theme-cycle]");
-    const label = host.querySelector("[data-theme-label]");
     let stored = null;
     try { stored = localStorage.getItem("dc-theme"); } catch (e) { /* blocked storage */ }
     return {
@@ -80,7 +77,7 @@ async function themeState(page, root) {
         .filter((m) => getComputedStyle(m).display !== "none")
         .map((m) => m.getAttribute("data-theme-mark")),
       stored,
-      label: label ? label.textContent.trim() : null,
+      scheme: document.documentElement.getAttribute("data-bs-theme"),
       title: button ? button.getAttribute("title") : "",
       aria: button ? button.getAttribute("aria-label") : "",
       dark: document.documentElement.getAttribute("data-bs-theme") === "dark",
@@ -90,11 +87,11 @@ async function themeState(page, root) {
 
 // One step of the ring, with the whole walk in the message: a mode that drops
 // out of the round is only readable from the sequence that led there.
-function assertMode(state, mode, walked, where) {
+function assertMode(state, mode, walked, where, tile = false) {
   const shown = state.shown.join("+") || "nothing";
   assert(state.shown.length === 1 && state.shown[0] === mode, `${where}: the button shows ${shown}, expected ${mode} (walked ${walked.join(" > ")})`);
   assert(state.stored === (mode === "auto" ? null : mode), `${where} ${mode}: dc-theme holds ${state.stored}`);
-  assert(state.title.startsWith(`Theme: ${RING_LABELS[mode]}.`), `${where} ${mode}: the title reads ${state.title}`);
+  assert(tile ? state.title === `Theme: ${RING_LABELS[mode]}` : state.title.startsWith(`Theme: ${RING_LABELS[mode]}.`), `${where} ${mode}: the title reads ${state.title}`);
   assert(state.title === state.aria, `${where} ${mode}: title and aria-label differ (${state.title} / ${state.aria})`);
 }
 
@@ -196,26 +193,26 @@ L.runFeature("FRONTEND", async ({ page, run, mobilePage, bag }) => {
       await sleep(200);
     });
 
-    await run("the phone's menu row walks the same ring and names the mode", async () => {
+    await run("the phone's Cockpit tile walks the same ring and names the mode", async () => {
       const mp = await mobilePage();
       await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await dismissUpdate(mp);
       await mp.emulateMedia({ colorScheme: "light" });
       await mp.evaluate(() => { try { localStorage.removeItem("dc-theme"); } catch (e) { /* blocked storage */ } });
       await mp.reload({ waitUntil: "domcontentloaded" });
-      await mp.click(`${HEAD_MENU} > [data-bs-toggle="dropdown"]`);
-      await mp.waitForSelector(`${HEAD_MENU} .dropdown-menu.show`, { timeout: 8000 });
-      // The menu carries data-bs-auto-close="outside", so the row stays under
-      // the finger for the whole round.
+      await mp.tap('.dc-tabbar button[data-ctx-area="cockpit"]');
+      await mp.waitForSelector(`${COCKPIT_TILE} [data-theme-cycle]`, { timeout: 8000 });
+      // The tile is a button, not a link, so the sheet stays open for the
+      // whole round.
       const walked = [];
       for (const mode of RING) {
-        await mp.click(`${HEAD_MENU} [data-theme-cycle]`);
+        await mp.tap(`${COCKPIT_TILE} [data-theme-cycle]`);
         await sleep(FLIP);
-        const state = await themeState(mp, `${HEAD_MENU} dc-theme-cycle`);
+        const state = await themeState(mp, COCKPIT_TILE);
         walked.push(state.shown.join("+") || "nothing");
-        assertMode(state, mode, walked, "phone menu");
-        assert(state.label === RING_LABELS[mode], `phone menu ${mode}: the row reads ${state.label}`);
+        assertMode(state, mode, walked, "phone tile", true);
       }
+      await mp.keyboard.press("Escape");
       await mp.evaluate(() => { try { localStorage.removeItem("dc-theme"); } catch (e) { /* blocked storage */ } });
       await mp.emulateMedia({ colorScheme: null });
     });

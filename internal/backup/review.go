@@ -3,6 +3,7 @@ package backup
 import (
 	"errors"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,9 +51,23 @@ func (s *Service) loadReview() []ReviewEntry {
 	return list
 }
 
+// saveReview writes the list and announces the new count, only once the
+// file landed: a count nobody wrote would move the dot to a state a reload
+// takes back.
 func (s *Service) saveReview(list []ReviewEntry) {
-	statefile.Save(s.reviewFile(), 0o644, list)
+	if err := statefile.Write(s.reviewFile(), 0o644, list); err != nil {
+		log.Printf("backup: %v", err)
+		return
+	}
+	if s.reviewsChanged != nil {
+		s.reviewsChanged(len(list))
+	}
 }
+
+// SetReviewsChanged registers the one listener for the open review count. It
+// is called after every successful write of the review list, with the service
+// lock held, so it must not call back into the service.
+func (s *Service) SetReviewsChanged(listen func(count int)) { s.reviewsChanged = listen }
 
 // ReviewList returns the open entries, dropping any whose pre-import copy is
 // gone, so an externally cleaned up file heals the list.

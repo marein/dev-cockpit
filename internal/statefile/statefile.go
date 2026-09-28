@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -42,25 +43,33 @@ func Load(path string, v any) {
 	}
 }
 
-// Save writes v to path atomically with the given file mode.
+// Save writes v to path atomically with the given file mode and logs a
+// failure, for a caller that has nothing to do about one.
 func Save(path string, mode os.FileMode, v any) {
+	if err := Write(path, mode, v); err != nil {
+		log.Printf("statefile: %v", err)
+	}
+}
+
+// Write is Save for a caller that has to know whether the file landed, one
+// that announces the write, say: a failure leaves the file as it was.
+func Write(path string, mode os.FileMode, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		log.Printf("statefile: create dir for %s: %v", path, err)
-		return
+		return fmt.Errorf("create dir for %s: %w", path, err)
 	}
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		log.Printf("statefile: marshal %s: %v", path, err)
-		return
+		return fmt.Errorf("marshal %s: %w", path, err)
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, mode); err != nil {
-		log.Printf("statefile: write %s: %v", path, err)
-		return
+		return fmt.Errorf("write %s: %w", path, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		log.Printf("statefile: replace %s: %v", path, err)
+		os.Remove(tmp)
+		return fmt.Errorf("replace %s: %w", path, err)
 	}
+	return nil
 }
 
 // NewID returns a short random identifier for state entries.

@@ -1,0 +1,65 @@
+{{/* The phone's Cockpit sheet, what /ctx/cockpit answers: the rail's foot for a
+     screen without a rail. Top to bottom the server, the latest news, the
+     three quick actions (theme, update, logout) and the way into the
+     settings, whose head counts the open backup reviews, and the docs. It is pulled fresh on every open, so the server
+     rows and the settings count start from the moment it opened. */}}
+{{define "cockpit_ctx.gohtml"}}
+{{template "ctx_start.gohtml" (dict "Title" "Cockpit")}}
+{{template "ctx_body.gohtml"}}
+<div class="dc-cockpit" data-cockpit>
+  {{template "host_status_sheet.gohtml" .Page}}
+  <section data-cockpit-section="news">
+    <div class="dc-section-head">News</div>
+    <dc-notifications inline compact limit="3"><div class="list-group list-group-flush dc-notify-list"></div></dc-notifications>
+    {{/* A button, not a link: the sheet closes on every link it holds, and
+         this one only swaps what the sheet shows. */}}
+    <div class="d-flex justify-content-end px-3 py-1"><button type="button" class="btn btn-link btn-sm p-0" data-ctx-area="news" data-cockpit-show-all>Show all</button></div>
+  </section>
+  <section class="px-3 py-2" data-cockpit-section="actions">
+    <div class="row g-2">
+      {{/* The theme is a square, its mark alone, so the update's label has
+           the width it needs. The label is never cut, a long one wraps and
+           the row grows with it; otherwise every tile shares one height. */}}
+      <div class="col-auto">{{template "theme_cycle.gohtml" (dict "Class" "btn btn-icon d-flex align-items-center justify-content-center p-0 dc-cockpit-tile dc-cockpit-tile-square" "Tile" true)}}</div>
+      <div class="col">
+        {{/* Only an update that exists makes this a control: update-check.js
+             turns the tile into one when the check found a newer version,
+             and a build that cannot update itself keeps it as it renders. */}}
+        <button type="button" class="btn w-100 h-100 d-flex align-items-center justify-content-center gap-2 px-2 py-2 dc-cockpit-tile" data-cockpit-update disabled>
+          <i class="ti ti-circle-check" data-cockpit-update-icon aria-hidden="true"></i><span class="text-wrap text-break text-center" data-cockpit-update-label>Up to date</span>
+        </button>
+      </div>
+      <div class="col-4">
+        <form method="post" action="/logout" class="h-100" data-no-pe>
+          <input type="hidden" name="csrf_token" value="{{.Page.CSRFToken}}">
+          <button type="submit" class="btn w-100 h-100 d-flex align-items-center justify-content-center gap-2 px-2 py-2 dc-cockpit-tile" data-cockpit-logout>
+            <i class="ti ti-logout" aria-hidden="true"></i><span class="text-truncate">Logout</span>
+          </button>
+        </form>
+      </div>
+    </div>
+  </section>
+  <section data-cockpit-section="settings">
+    <div class="dc-section-head"><span class="flex-fill">Settings</span>{{template "backup_reviews_badge.gohtml" (dict "Count" .Page.BackupReviewCount "Class" "badge bg-primary-lt")}}</div>
+    {{template "settings_nav" .SettingsNav}}
+    <nav class="list-group list-group-flush dc-rows" aria-label="Docs">
+      <a href="/docs" class="list-group-item list-group-item-action" data-dc-focus="work">
+        <i class="ti ti-book" aria-hidden="true"></i><span class="flex-fill dc-trunc">Docs</span>
+      </a>
+    </nav>
+  </section>
+</div>
+{{template "ctx_end.gohtml"}}
+{{end}}
+
+{{/* Every notification, what the News section's Show all opens in the same
+     sheet: the bell's own list for a screen without a bell. */}}
+{{define "news_ctx.gohtml"}}
+{{template "ctx_start.gohtml" (dict "Title" "Notifications")}}
+{{template "ctx_body.gohtml"}}
+<dc-notifications inline data-cockpit-news>
+  <div class="d-flex px-3 py-2 border-bottom"><button type="button" class="btn btn-link btn-sm ms-auto p-0 dc-notify-read-all">Mark all read</button></div>
+  <div class="list-group list-group-flush dc-notify-list"></div>
+</dc-notifications>
+{{template "ctx_end.gohtml"}}
+{{end}}

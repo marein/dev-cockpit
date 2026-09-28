@@ -82,7 +82,7 @@ function syncJingle(dom) {
 window.app.peInit();
 
 // The phone has no list column on the page: [data-ctx-area] (the tab bar's
-// Projects, Terminals and Settings, the list button in every work head) opens
+// Projects, Terminals, Assistants and Cockpit, the list button in every work head) opens
 // the area's column as a sheet instead. A row in the sheet navigates and the
 // sheet closes with it.
 document.addEventListener("click", (event) => {
@@ -93,7 +93,7 @@ document.addEventListener("click", (event) => {
   if (!sheet || typeof sheet.open !== "function") return;
   const area = trigger.getAttribute("data-ctx-area");
   if (!sheet.hidden && sheet.area === area) sheet.close();
-  else void sheet.open(area);
+  else void sheet.open(area, trigger);
 });
 
 // data-no-pe opts a link or form out of boosting into a native load.

@@ -4,8 +4,10 @@ const path = require("path");
 const L = require("./lib");
 const { assert, sleep, BASE } = L;
 
-// Notification center: custom element dc-notifications (one per header
-// breakpoint, shared SSE channel in the module). Routes: GET /notifications
+// Notification center: custom element dc-notifications (the rail's bell, and
+// inline lists in the phone's Cockpit sheet, one shared SSE channel in the
+// module; a phone has no bell, its Cockpit tab wears a dot while anything is
+// unread). Routes: GET /notifications
 // (JSON list), GET /events (SSE unread count + added events),
 // POST /notifications/read (id or all). Events are ingested server side from
 // coder signals; this test injects fake events into the copilot notification
@@ -44,15 +46,18 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       await page.keyboard.press("Escape");
     });
 
-    await run("mobile: bell present in the compact header", async () => {
+    await run("mobile: no bell in the head, the Cockpit tab carries the dot", async () => {
       const mp = await mobilePage();
       await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       assert((await L.waitUpgraded(mp, ["dc-notifications"], 8000)).length === 0, "dc-notifications not upgraded (mobile)");
-      await mp.locator(".dc-notify-bell:visible").first().click();
-      await mp.waitForSelector(".dc-notify-menu.show", { timeout: 6000 });
-      const box = await mp.locator(".dc-notify-menu.show").boundingBox();
-      assert(box && box.width <= 390, "menu wider than the viewport");
-      await mp.keyboard.press("Escape");
+      const bells = await mp.evaluate(() => ({
+        head: document.querySelectorAll(".dc-work-head .dc-notify-bell, .dc-work-head dc-notifications").length,
+        visible: [...document.querySelectorAll(".dc-notify-bell")].filter((el) => el.getClientRects().length > 0).length,
+        dot: document.querySelectorAll('.dc-tabbar button[data-ctx-area="cockpit"] [data-cockpit-dot]').length,
+      }));
+      assert(bells.head === 0, "the phone's work head still carries the bell");
+      assert(bells.visible === 0, `${bells.visible} bells visible on the phone`);
+      assert(bells.dot === 1, "the Cockpit tab carries no dot");
     });
 
     await run("settings: volume bar drives the scriptune master volume", async () => {
@@ -204,6 +209,20 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
         return badge && parseInt(badge.textContent, 10) >= 1;
       }, null, { timeout: 6000 });
       assert(/^\(\d+\+?\)\s/.test(await page.title()), "title counter missing");
+    });
+
+    await run("mobile: the Cockpit tab wears the dot while the bell counts, its sheet lists the entry", async () => {
+      const bell = await page.$eval(".dc-rail .dc-notify-badge", (el) => el.textContent.trim());
+      assert(Number(bell) >= 1, `the bell reads ${bell}`);
+      const mp = await mobilePage();
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await mp.waitForFunction(() => {
+        const dot = document.querySelector(".dc-tabbar [data-cockpit-dot]");
+        return dot && getComputedStyle(dot).display !== "none" && /^Cockpit(, server (busy|critical))?, news$/.test(dot.closest("button").getAttribute("aria-label") || "");
+      }, null, { timeout: 8000 });
+      await mp.tap('.dc-tabbar button[data-ctx-area="cockpit"]');
+      await mp.waitForSelector(`dc-ctx-sheet [data-cockpit-section=news] a[data-notify-target="${coderId}"].dc-notify-unread`, { timeout: 8000 });
+      await mp.keyboard.press("Escape");
     });
 
     await run("follow-up signal within the dedupe window is swallowed", async () => {

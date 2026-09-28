@@ -175,28 +175,8 @@ func TestHumanBytes(t *testing.T) {
 	}
 }
 
-func TestStatsLevelAndWorst(t *testing.T) {
-	s := Stats{HasCPU: true, CPUPercent: 12, HasMem: true, MemPercent: 84, HasDisk: true, DiskPercent: 40}
-	if s.Worst() != 84 {
-		t.Fatalf("worst %d", s.Worst())
-	}
+func TestBarClamps(t *testing.T) {
 	if Bar(140) != 100 || Bar(-1) != 0 || Bar(40) != 40 {
 		t.Fatal("bar did not clamp")
-	}
-	for _, tc := range []struct {
-		worst int
-		level string
-	}{{10, ""}, {79, ""}, {80, "warn"}, {94, "warn"}, {95, "crit"}, {140, "crit"}} {
-		s := Stats{HasCPU: true, CPUPercent: tc.worst}
-		got := ""
-		switch {
-		case s.Worst() >= Crit:
-			got = "crit"
-		case s.Worst() >= Warn:
-			got = "warn"
-		}
-		if got != tc.level {
-			t.Fatalf("worst %d gave %q, want %q", tc.worst, got, tc.level)
-		}
 	}
 }

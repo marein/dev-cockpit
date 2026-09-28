@@ -2,9 +2,9 @@
 // unbreakable user provided names never widen the layout. Creates a project,
 // shell, agent, skill, editor file and instructions all carrying a long unbreakable
 // name, then checks every page that renders one across phone/tablet/desktop widths.
-// The phone's head menu (theme, update, logout at the end of every work head)
-// is a layout of its own and gets its own pass: a dropdown that hangs over the
-// viewport's edge or squeezes its rows is a menu nobody can read fully.
+// The phone's Cockpit sheet (server, news, theme, update, logout, settings) is a
+// layout of its own and gets its own pass: a sheet whose rows hang over the
+// viewport's edge or squeeze to nothing is a sheet nobody can read fully.
 const { chromium } = require("playwright-core");
 const L = require("./lib");
 const { assert, sleep, submitBtn, confirmSwal } = L;
@@ -13,8 +13,8 @@ const VIEWPORTS = [[320, 568], [375, 667], [768, 1024], [1366, 768]];
 const LN = "zz" + "o".repeat(110); // 112 chars, no spaces, within the 120 maxlength
 const NEEDLE = "needlehaystack";
 const EDITOR_VIEWPORTS = [[390, 844], [1366, 768]];
-// The head tools stand below lg only, so the menu only exists on a phone and
-// only these widths can be measured with it.
+// The tab bar stands below lg only, so Cockpit only exists on a phone and only
+// these widths can be measured with it.
 const MENU_VIEWPORTS = [[320, 568], [375, 667], [390, 844]];
 
 // treeMenu opens the file tree's context menu, on a row when one is named and
@@ -105,22 +105,20 @@ const docOverflow = () => {
   return { sw: de.scrollWidth, cw: de.clientWidth, culprit, maxRight: Math.round(maxRight) };
 };
 
-// menuClipped reports what the open menu loses at the viewport's edges: the menu
-// itself hanging over one of them, a scrollbar of its own, or an entry painted
-// outside or squeezed to nothing. Overflow that is merely hidden fails here too,
-// which is the point: a menu nobody can read fully is not a fix.
-const menuClipped = () => {
-  const menu = document.querySelector(".dc-head-tools .dropdown-menu.show");
-  if (!menu) return ["the menu is not open"];
+// cockpitClipped reports what the open Cockpit sheet loses at the viewport's edges:
+// the panel scrolling sideways, or one of its rows, tiles or bars painted
+// outside the viewport or squeezed to nothing.
+const cockpitClipped = () => {
+  const panel = document.querySelector("dc-ctx-sheet:not([hidden]) .dc-sheet-panel");
+  if (!panel || !panel.querySelector("[data-cockpit]")) return ["the Cockpit sheet is not open"];
   const cw = document.documentElement.clientWidth;
   const bad = [];
-  const box = menu.getBoundingClientRect();
-  if (box.left < -0.5 || box.right > cw + 0.5) bad.push(`the menu spans ${Math.round(box.left)}..${Math.round(box.right)} in a ${cw} viewport`);
-  if (menu.scrollWidth > menu.clientWidth + 1) bad.push(`the menu scrolls sideways (${menu.scrollWidth}/${menu.clientWidth})`);
-  menu.querySelectorAll(".dropdown-item, .dropdown-item-text, [data-update-open]").forEach((el) => {
+  const body = panel.querySelector(".dc-ctx-body");
+  if (body.scrollWidth > body.clientWidth + 1) bad.push(`the sheet scrolls sideways (${body.scrollWidth}/${body.clientWidth})`);
+  panel.querySelectorAll("[data-host-meter], [data-cockpit-section=actions] .btn, .list-group-item, [data-cockpit-show-all]").forEach((el) => {
     const r = el.getBoundingClientRect();
-    if (!r.width && !r.height) return; // entries this page keeps hidden
-    const name = (typeof el.className === "string" ? el.className : "").trim().split(/\s+/).slice(0, 2).join(".") || el.tagName.toLowerCase();
+    if (!r.width && !r.height) return; // rows this host keeps hidden
+    const name = el.getAttribute("data-host-meter") || (el.textContent || "").trim().split(/\s+/)[0] || el.tagName.toLowerCase();
     if (r.left < -0.5 || r.right > cw + 0.5) bad.push(`${name} ${Math.round(r.left)}..${Math.round(r.right)} outside the ${cw} viewport`);
     if (r.width < 24) bad.push(`${name} squeezed to ${Math.round(r.width)}px`);
   });
@@ -141,31 +139,32 @@ async function overflowAt(page, url) {
   return bad;
 }
 
-// menuOverflow works one page through the head menu at every width the menu
+// cockpitOverflow works one page through the Cockpit sheet at every width it
 // exists at: open it, measure, close it, measure again. Neither state may scroll
-// the page sideways, and the open menu has to stay inside the viewport.
-async function menuOverflow(page, url) {
+// the page sideways, and the open sheet has to stay inside the viewport.
+async function cockpitOverflow(page, url) {
   const bad = [];
   for (const [w, h] of MENU_VIEWPORTS) {
     await page.setViewportSize({ width: w, height: h });
     await page.goto(url, { waitUntil: "domcontentloaded" });
     await sleep(600);
-    const toggler = page.locator('.dc-head-tools .dropdown:last-child [data-bs-toggle="dropdown"]').first();
-    if (!await toggler.isVisible().catch(() => false)) {
-      bad.push(`${w}px: no head menu, nothing opens here`);
+    const cockpit = page.locator('.dc-tabbar button[data-ctx-area="cockpit"]');
+    if (!await cockpit.isVisible().catch(() => false)) {
+      bad.push(`${w}px: no Cockpit tab, nothing opens here`);
       continue;
     }
     for (const open of [true, false]) {
-      await toggler.click();
+      if (open) await cockpit.click();
+      else await page.keyboard.press("Escape");
       await page.waitForFunction((want) => {
-        const menu = document.querySelector(".dc-head-tools .dropdown:last-child .dropdown-menu");
-        return menu && menu.classList.contains("show") === want;
+        const sheet = document.querySelector("dc-ctx-sheet");
+        return want ? Boolean(sheet && !sheet.hidden && sheet.querySelector("[data-cockpit]")) : Boolean(sheet && sheet.hidden);
       }, open, { timeout: 8000 });
       await sleep(300);
       const state = open ? "open" : "closed again";
       const m = await page.evaluate(docOverflow);
       if (m.sw > m.cw + 1) bad.push(`${w}px ${state}: doc ${m.sw}/${m.cw}, widest=${m.culprit} @${m.maxRight}`);
-      if (open) (await page.evaluate(menuClipped)).forEach((b) => bad.push(`${w}px open: ${b}`));
+      if (open) (await page.evaluate(cockpitClipped)).forEach((b) => bad.push(`${w}px open: ${b}`));
     }
   }
   return bad;
@@ -294,8 +293,8 @@ async function menuOverflow(page, url) {
     };
     for (const [name, url] of Object.entries(menuPages)) {
       await run(`overflow: opening and closing the navigation moves nothing sideways, ${name} (long name)`, async () => {
-        const bad = await menuOverflow(page, url);
-        assert(bad.length === 0, `menu: ${bad.join("; ")}`);
+        const bad = await cockpitOverflow(page, url);
+        assert(bad.length === 0, `Cockpit: ${bad.join("; ")}`);
       });
     }
 
@@ -368,7 +367,7 @@ async function menuOverflow(page, url) {
         await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
         // From lg up the rail and the list columns replace the sheet, so there
         // is nothing to open there; the width still gets measured.
-        const areas = (await page.locator(".dc-tabbar").isVisible()) ? ["projects", "terminals", "settings"] : [""];
+        const areas = (await page.locator(".dc-tabbar").isVisible()) ? ["projects", "terminals", "cockpit"] : [""];
         for (const area of areas) {
           if (area) {
             await page.click(`.dc-tabbar button[data-ctx-area="${area}"]`);

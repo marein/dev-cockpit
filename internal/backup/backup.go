@@ -113,6 +113,9 @@ type Service struct {
 	version  string
 	sections []Section
 	mu       sync.Mutex
+	// reviewsChanged hears the open review count after every write of the
+	// review list, so a surface showing it follows without a reload.
+	reviewsChanged func(count int)
 }
 
 // New builds the service for the given state and projects directories, so

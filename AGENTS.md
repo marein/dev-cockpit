@@ -29,6 +29,8 @@ test. Update this file when a convention changes.
   (read through on every call, atomic tmp+rename write, a corrupt file is
   quarantined as `<path>.broken` instead of being silently overwritten).
   Do not hand-roll load/save; entry ids come from `statefile.NewID`.
+  `statefile.Write` is `Save` answering the error, for a caller that
+  announces a write and must not announce one that failed.
 - **Forms:** POST action path must equal the GET path that renders it (pairs in
   `internal/web/router.go`, e.g. `/coders/new`). Backlinks, login redirect, and
   post then redirect depend on it. New form, add both routes on one path.
@@ -2403,7 +2405,7 @@ test. Update this file when a convention changes.
   two editor heads are the shell's heads: the tree head is a
   `dc-ctx-head` (project switcher as the title, commit and refresh in
   `dc-ctx-tools`), the strip row a `dc-work-head` (42px, 28px icon buttons,
-  the phone's `shell_head_tools` at the end), so the editor has no head row
+  on a phone nothing of the shell's at the end), so the editor has no head row
   of its own above them. The
   menu carries one git entry, `Git`, which opens the git sheet; the per-file
   switches stay entries of the file's context menu
@@ -3308,17 +3310,68 @@ test. Update this file when a convention changes.
   32px with 20px glyphs), an
   optional list column (`.dc-ctx`), the work surface (`.dc-work`) and one
   status line (`shell_status.gohtml`: running coders and shells, steered
-  coders, the server status as a dropup, the version with the update check).
-  Below lg the rail and the status line go, a tab bar with the same five areas
-  stands at the bottom (`shell_tabbar.gohtml`), the list column and the work
-  surface share the screen one at a time (`data-focus` on `.dc-app`, switched
-  by `[data-dc-focus]` from `app.js`), and the controls from the rail's foot
-  stand at the end of every work head (`shell_head_tools.gohtml`, placed by
-  `work_body.gohtml`). `app_start.gohtml` opens the grid and paints the rail,
-  the page renders its list column through `ctx_start`/`ctx_body`/`ctx_end`
-  (a dict with `Title` and `Count`) and its work surface through `work_start`
-  (opens the head with the phone's list button, the page fills the head with
-  a `dc-work-title` or a `dc-work-tabs` nav and its actions) and `work_body`
+  coders, the server status as three bars for CPU, RAM and disk that open a
+  dropup with the detail rows (no heading, the group labelled Server), the version with the update check). The bars
+  are green while quiet, yellow from `hostinfo.Warn` and red from
+  `hostinfo.Crit`; nothing of it floats over a page.
+  Below lg the rail and the status line go, a tab bar stands at the bottom
+  (`shell_tabbar.gohtml`) with the rail's four areas and **Cockpit** in the
+  place of Settings (area `cockpit`, `/ctx/cockpit`), the list column and the
+  work surface share the screen one at a time (`data-focus` on `.dc-app`,
+  switched by `[data-dc-focus]` from `app.js`), and the work head carries
+  nothing of the shell: no bell, no theme, no update, no logout, a page's own
+  head menu (the editor's) stays its own. **What the rail keeps at its foot the
+  phone keeps behind Cockpit.** Its icon is the app's gauge, `ti-dashboard`
+  like the rail's mark (`host_status_tab.gohtml`, a `dc-host-status` like the
+  status line's, painted by the same `host` event through `paintWorst`, first
+  painted by `HostTabClass`/`HostTabLabel`): the tab's own color, the active
+  one included, while the worst of CPU, RAM and disk stands below
+  `hostinfo.Warn`, yellow from it and red from `hostinfo.Crit`, the icon in the
+  tab's color when the host reports nothing, the reading in its tooltip. **The
+  tab's name carries both states at once**: `CockpitLabel` on the server and
+  `labelCockpitTab` in `@dc/cockpit` (called by host-status.js and
+  notifications.js after each paint, read off the page) set `aria-label` to
+  Cockpit plus "server busy" or "server critical" plus "news" as they apply
+  ("Cockpit, server critical, news"), and nothing while neither applies; the
+  gauge is `aria-hidden`. **It wears one plain dot and no number**
+  (`[data-cockpit-dot]`, blue because blue is news, "news" in the tab's name
+  while it shows): an unread notification or an open backup review, the two
+  things behind it that want somebody, `Page.CockpitNews`. The server renders
+  it on every page from `UnreadNews` and `BackupReviewCount`, so a boosted
+  navigation and a full load are right before the stream speaks, and the
+  notification channel keeps it live from the `notifications` event and from
+  `backupreviews`, which `backup.Service` publishes after every successful
+  write of its review list (`SetReviewsChanged`) and the stream sends in its
+  connect snapshot. Every count of the open reviews
+  (`backup_reviews_badge.gohtml`, `[data-backup-reviews]`: the rail's Settings,
+  the settings sections' Backup row, the Cockpit sheet's Settings head) follows
+  the same event. No update mark. It opens the list sheet on the area `cockpit`
+  (`cockpit_ctx.gohtml`, titled Cockpit), top to bottom: CPU, RAM and disk in
+  one row of three columns, name, percent and a thin bar each, the plain
+  numbers only in the tooltip, no heading and the group labelled Server, read
+  only (`host_status_sheet.gohtml`), the three newest notifications one line
+  each (`dc-notifications inline compact limit="3"`, `renderLine`: title,
+  source and age, cut, whole in the title) with Show all opening the area
+  `news` in the same sheet (every notification and Mark all read), the three
+  quick actions as one low row of tiles of one height, icon and label on one
+  line (`.dc-cockpit-tile`: the theme button a square with its mark alone,
+  named Theme: <mode>, the update tile taking the freed width, its label never
+  truncated, a long one wrapping and the row growing with it, the logout form),
+  then the settings sections under a head counting the open reviews, and the
+  docs. **The update tile is a status that becomes a control**: it renders
+  disabled as Up to date, and only a check that found a newer version makes it
+  Update to <version> with `data-update-open` (`paintTile` in
+  `update-check.js`), so a build that cannot update itself never offers a press
+  that ends in a failed check. The Cockpit tab stands active on the settings
+  pages and the docs, the two areas a phone reaches through its sheet alone,
+  and while its sheet (or the `news` one it opens) is open it is the only tab
+  that looks active. The sheet is a dialog labelled with the area's name, it
+  takes the focus when it opens and gives it back to the control that opened it
+  when it closes. `app_start.gohtml` opens the grid and paints the rail, the
+  page renders its list column through `ctx_start`/`ctx_body`/`ctx_end` (a dict
+  with `Title` and `Count`) and its work surface through `work_start` (opens
+  the head with the phone's list button, the page fills the head with a
+  `dc-work-title` or a `dc-work-tabs` nav and its actions) and `work_body`
   (padded, `dc-narrow` for forms) or `work_body_fill` (the terminal and the
   editor size themselves), and `app_end.gohtml` closes with the status line,
   the tab bar and the overlays. The projects page is the one exception, its
@@ -3327,51 +3380,51 @@ test. Update this file when a convention changes.
   (`:has`), so a page without one needs no class. The settings pages share
   `settings_ctx.gohtml` (the sidebar rows of `settings_nav`), the terminal
   pages `terminals_ctx.gohtml` (the strip's entries as rows, the group's
-  members nested), the docs and the projects page build their own. The two
-  work areas are reached through one fixed address each, `/editor` and
-  `/terminals`, and the server resolves it (`handleEditorEntry`,
-  `handleTerminalsEntry`): they answer a See Other with `Cache-Control:
-  no-store`, never a permanent redirect, or the browser would keep reopening
-  what the first click resolved to. No page therefore carries a link that
-  ages, and nothing follows a moving context client side. **Where somebody
-  was is server state**, two capped `internal/recent` stores beside the
-  unbounded `recent-projects.json` (`recentEntries`, five names each):
-  `recent-editor-projects.json` keyed by project name, written where the
-  editor page renders, and `recent-terminals.json` keyed by session id,
-  written in `terminalFocused`, so a pane made active inside a split counts
-  too. `recent-projects.json` stays unbounded, it sorts the whole projects
-  list and a dropped entry there is a project that loses its place. No cookie, no session, no browser storage: a phone picked up in the
-  evening opens what the desktop was on. The editor entry walks the
-  remembered projects newest first and takes the first that still exists,
-  else the project used last anywhere (`recent-projects.json`), else the
-  first of the list, else the projects page with the info notice that one has
-  to be created. The terminals entry walks the remembered ids the same way and
-  takes the first that is still running, a grouped one on its split page with
-  the pane focused, else the first entry of the strip, else the area's own
-  empty page (`terminals_empty.gohtml`, a 200 and the one answer of the two
-  entries that is not a redirect): the column, its plus menu and a New coder
-  and a New shell action, so the first terminal is started where it will run.
-  Neither rail entry is ever disabled, and the one thing neither area can
+  members nested), the docs and the projects page build their own. The two work
+  areas are reached through one fixed address each, `/editor` and `/terminals`,
+  and the server resolves it (`handleEditorEntry`, `handleTerminalsEntry`):
+  they answer a See Other with `Cache-Control: no-store`, never a permanent
+  redirect, or the browser would keep reopening what the first click resolved
+  to. No page therefore carries a link that ages, and nothing follows a moving
+  context client side. **Where somebody was is server state**, two capped
+  `internal/recent` stores beside the unbounded `recent-projects.json`
+  (`recentEntries`, five names each): `recent-editor-projects.json` keyed by
+  project name, written where the editor page renders, and
+  `recent-terminals.json` keyed by session id, written in `terminalFocused`, so
+  a pane made active inside a split counts too. `recent-projects.json` stays
+  unbounded, it sorts the whole projects list and a dropped entry there is a
+  project that loses its place. No cookie, no session, no browser storage: a
+  phone picked up in the evening opens what the desktop was on. The editor
+  entry walks the remembered projects newest first and takes the first that
+  still exists, else the project used last anywhere (`recent-projects.json`),
+  else the first of the list, else the projects page with the info notice that
+  one has to be created. The terminals entry walks the remembered ids the same
+  way and takes the first that is still running, a grouped one on its split
+  page with the pane focused, else the first entry of the strip, else the
+  area's own empty page (`terminals_empty.gohtml`, a 200 and the one answer of
+  the two entries that is not a redirect): the column, its plus menu and a New
+  coder and a New shell action, so the first terminal is started where it will
+  run. Neither rail entry is ever disabled, and the one thing neither area can
   answer for itself is a missing project: then both hand over to the projects
   list with an info notice saying one has to be created. A dead row explains
-  nothing, and a page that can do the thing beats a page that names it. The editor remembers the project
-  and nothing else, a file or a scroll position is the page's state, not the
-  area's. `ActiveTab` marks the area (`projects`, `terminals`,
-  `editor`, `settings`, `docs`). Below lg the list columns give way to the
-  sheet (below), a wide screen has the rail and the list columns for everything it
-  lists. On the terminal pages the list column is the tab strip itself
-  (`terminals_ctx.gohtml`: `terminal-tabs` with `data-tabs-vertical`, rows
-  instead of tabs, the plus menu in its head, the terminal settings behind
+  nothing, and a page that can do the thing beats a page that names it. The
+  editor remembers the project and nothing else, a file or a scroll position is
+  the page's state, not the area's. `ActiveTab` marks the area (`projects`,
+  `terminals`, `editor`, `settings`, `docs`). Below lg the list columns give
+  way to the sheet (below), a wide screen has the rail and the list columns for
+  everything it lists. On the terminal pages the list column is the tab strip
+  itself (`terminals_ctx.gohtml`: `terminal-tabs` with `data-tabs-vertical`,
+  rows instead of tabs, the plus menu in its head, the terminal settings behind
   the gear in the work head); no stop or delete stands in the work head, the
-  row's close control and menu on a wide screen and the sheet's row menu on
-  a phone are the way, for a split's members too. A close leaves the browser
-  on the right neighbour, and with no neighbour left on `/terminals`, not on
-  the projects list: closing the last terminal is the moment the area's empty
-  page is for, and the entry sorts out what to show, another client's session
-  included. The landing the server offers a form post (`projectLanding`)
-  stays the projects list, that one answers a stop from there. The work body is the column that scrolls, never the page:
-  `body.dc-body` has no overflow, `overflow.js` measures every page against
-  that.
+  row's close control and menu on a wide screen and the sheet's row menu on a
+  phone are the way, for a split's members too. A close leaves the browser on
+  the right neighbour, and with no neighbour left on `/terminals`, not on the
+  projects list: closing the last terminal is the moment the area's empty page
+  is for, and the entry sorts out what to show, another client's session
+  included. The landing the server offers a form post (`projectLanding`) stays
+  the projects list, that one answers a stop from there. The work body is the
+  column that scrolls, never the page: `body.dc-body` has no overflow,
+  `overflow.js` measures every page against that.
 - **The list column stays live:** `@dc/ctx` listens for the `projects` and
   `terminals` events (only inside the signed-in shell, the events module is
   imported lazily so the login page opens no stream), refetches the current
@@ -3421,15 +3474,16 @@ test. Update this file when a convention changes.
   top (`ctx-sheet.js`, after `decorate()` so the sort and the filter have
   run, in the same task as the insert so nothing paints at the top first).
 - **Below lg the list column is a sheet.** The page's own `.dc-ctx` is
-  hidden there; `[data-ctx-area="<area>"]` (the tab bar's Projects, Terminals
-  and Settings buttons, nothing else) opens
+  hidden there; `[data-ctx-area="<area>"]` (the tab bar's Projects, Terminals,
+  Assistants and Cockpit buttons, and Cockpit's Show all) opens
   `dc-ctx-sheet` (`ctx_sheet.gohtml` next to the swapped region,
   `components/ctx-sheet.js`), which pulls `GET /ctx/<area>?path=<current>`
   (`ctx.go`: the very partial the page renders, `projects_ctx`,
-  `terminals_ctx`, `settings_ctx`, `docs_ctx`, with the page's QuickNav so
+  `terminals_ctx`, `settings_ctx`, `docs_ctx`, plus the phone's own `cockpit_ctx`
+  and `news_ctx`, which stand for no page's column, with the page's QuickNav so
   the current terminal is marked and the create links carry its project) and
   shows the column from the bottom, a fixed 52vh so a filter never resizes
-  it, standing on the tab bar (`bottom: var(--dc-tabbar-h)`, the bar stays
+  it, the Cockpit sheet included, standing on the tab bar (`bottom: var(--dc-tabbar-h)`, the bar stays
   usable, another area's button swaps the content, the same button again
   closes), the column head as the sheet head with its back button turned
   into the close, the list ending where the sheet does. A row navigates and
@@ -3803,10 +3857,8 @@ free floating page scripts.
   modal, a `[data-terminal-footer]` button block the island's activation
   unhides, and `coder-file-upload` is re-inserted after the mount so its drop
   zone finds the terminal. The modals host moves to `document.body` like the terminal
-  panel's, and `dc-host-float` keeps ducking to 5 for as long as a popup
-  stands. Lifting that duck has been built and dropped twice, a float above
-  the surface can never be covered by a dropdown inside it. The tab context
-  menu mirrors the strip menu minus Open editor, plus Open terminal page.
+  panel's. The tab context menu mirrors the strip menu minus Open editor,
+  plus Open terminal page.
 - **The copy button shows the terminal's text in its place, read only.**
   A terminal draws to a canvas and holds no text anybody can select, so the
   copy button of every footer (`data-terminal-copy`, a shell's and a coder's
@@ -4220,7 +4272,7 @@ free floating page scripts.
   in a function that returns a teardown the element stores and calls on disconnect.
 - **Theming:** the color theme follows the OS by default, and the theme
   button at the foot of the rail (`dc-theme-cycle` from `theme_cycle.gohtml`,
-  on a phone a row of the menu at the end of the work head, on the login page
+  on a phone a tile of the Cockpit sheet, on the login page
   next to the version) shows the mode in force and moves to the next one per
   click along a fixed ring, light, dark, follow the OS, the same order whatever
   the OS says, so no mode drops out of the round. The choice is per device
@@ -4470,8 +4522,9 @@ focused member (`[data-pane-title]`) are mirrored out of the strip fragment
 the page already refreshes. A state dir belongs to one
 serve process, a second process on the same dir would miss live pushes. The
 `dc-notifications` element owns bell, badge, center, toasts, and the title
-counter; unread state is module scope because the element mounts once per
-header breakpoint, while `@dc/events` owns the one connection. Opening an
+counter; unread state is module scope because the element mounts more than
+once (the rail's bell, the Cockpit sheet's inline lists), while `@dc/events`
+owns the one connection. Opening an
 attach page marks that
 target read. Entries always start unread; the dc-notifications client
 reconciles on every SSE event (including the initial one after a reconnect)

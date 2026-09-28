@@ -9,9 +9,24 @@ const KEY = "dc-update";
 
 // Footer update indicator and apply flow. Polls /update/check on an interval
 // (shared across tabs via localStorage + the storage event), reflects the
-// result in the footer link and the header "Update available" flags, and drives
+// result in the footer link, the rail's update button and the Cockpit sheet's
+// update action, and drives
 // the download/restart from the confirm dialog. The syscall.Exec restart on the
 // server is unaffected; this only owns the UI.
+// paintTile words the Cockpit sheet's update tile after a check: Update to
+// <version> and a control while one exists, Up to date and nothing to press
+// otherwise. A build that cannot update itself never reaches here, its tile
+// keeps the Up to date it renders with.
+function paintTile(tile, status) {
+  const label = tile.querySelector("[data-cockpit-update-label]");
+  const icon = tile.querySelector("[data-cockpit-update-icon]");
+  tile.disabled = !status.available;
+  tile.toggleAttribute("data-update-open", Boolean(status.available));
+  tile.classList.toggle("text-primary", Boolean(status.available));
+  if (label) label.textContent = status.available ? `Update to ${status.latest}` : "Up to date";
+  if (icon) icon.className = `ti ${status.available ? "ti-arrow-up-circle" : "ti-circle-check"}`;
+}
+
 class UpdateCheck extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -25,6 +40,12 @@ class UpdateCheck extends HTMLElement {
       if (!trigger) return;
       event.preventDefault();
       this.openDialog();
+    }, { signal: this.ac.signal });
+
+    // A fragment put in later (the phone's Cockpit sheet) carries its update
+    // action in the default state, so it takes the known status on arrival.
+    document.addEventListener("dc:rendered", () => {
+      if (this.status && this.status.supported) this.renderFlags(this.status);
     }, { signal: this.ac.signal });
 
     window.addEventListener("storage", (event) => {
@@ -150,9 +171,7 @@ class UpdateCheck extends HTMLElement {
     document.querySelectorAll(".js-update-version").forEach((node) => {
       node.textContent = status.latest;
     });
-    document.querySelectorAll(".js-update-spacer").forEach((node) => {
-      node.classList.toggle("d-none", status.available);
-    });
+    document.querySelectorAll("[data-cockpit-update]").forEach((tile) => paintTile(tile, status));
   }
 
   openDialog() {

@@ -38,12 +38,10 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plu
 			}
 			return filepath.Base(filepath.Clean(p))
 		},
-		"hostBarClass":   HostBarClass,
-		"hostRingClass":  HostRingClass,
-		"hostLevelClass": HostLevelClass,
-		"hostBarStyle":   HostBarStyle,
-		"hostBarHeight":  HostBarHeight,
-		"hostBar":        hostinfo.Bar,
+		"hostBarClass": HostBarClass,
+		"hostBarStyle": HostBarStyle,
+		"hostTabClass": HostTabClass,
+		"hostTabLabel": HostTabLabel,
 		"dict": func(pairs ...any) map[string]any {
 			m := make(map[string]any, len(pairs)/2)
 			for i := 0; i+1 < len(pairs); i += 2 {
@@ -105,6 +103,10 @@ type Page struct {
 	// rendered as a badge on the Settings nav so the pending resolution is
 	// visible app wide. Fresh on every navigation (whole body boost).
 	BackupReviewCount int
+	// UnreadNews is the number of unread notifications at render time, what
+	// the bell counts. The phone's Cockpit tab carries no bell and reads it for
+	// its dot, see CockpitNews.
+	UnreadNews int
 	// Steered marks the coders an open job holds, keyed by terminal id: the
 	// assistant owns those and may write into them, and every surface shows
 	// it as the purple steered mark. SteerPrefill carries the stored
@@ -121,7 +123,7 @@ type Page struct {
 	// event, toggling the same class on the same icons.
 	Working map[string]bool
 	// Host is the machine's load, memory and disk at render time, so the status
-	// in the header is right before the first event arrives. It refreshes over
+	// line is right before the first event arrives. It refreshes over
 	// the event stream from there.
 	Host hostinfo.Stats
 }
@@ -266,4 +268,30 @@ func (t StripTab) MemberKinds() string {
 		kinds[i] = t.Members[i].Kind
 	}
 	return strings.Join(kinds, " ")
+}
+
+// CockpitNews says whether the phone's Cockpit tab wears its dot: something in the
+// sheet it opens wants attention, an unread notification or an open backup
+// review. A dot and no number, the two counts stand inside the sheet.
+func (p Page) CockpitNews() bool { return p.UnreadNews > 0 || p.BackupReviewCount > 0 }
+
+// CockpitLabel is the Cockpit tab's name while it says more than its word:
+// the server's state past a threshold and the news the dot stands for, empty
+// otherwise so the visible word names the tab. @dc/cockpit builds the same
+// from the page once a reading or the news moved.
+func (p Page) CockpitLabel() string {
+	parts := []string{"Cockpit"}
+	switch HostTabClass(p.Host) {
+	case "text-red":
+		parts = append(parts, "server critical")
+	case "text-yellow":
+		parts = append(parts, "server busy")
+	}
+	if p.CockpitNews() {
+		parts = append(parts, "news")
+	}
+	if len(parts) == 1 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
 }

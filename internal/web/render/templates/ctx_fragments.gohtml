@@ -5,13 +5,16 @@
 {{define "ctx_settings.gohtml"}}{{template "settings_ctx.gohtml" .}}{{end}}
 {{define "ctx_docs.gohtml"}}{{template "docs_ctx.gohtml" .}}{{end}}
 {{define "ctx_assistant.gohtml"}}{{template "assistant_ctx.gohtml" .}}{{end}}
+{{define "ctx_cockpit.gohtml"}}{{template "cockpit_ctx.gohtml" .}}{{end}}
+{{define "ctx_news.gohtml"}}{{template "news_ctx.gohtml" .}}{{end}}
 
 {{/* The phone's sheet: the tab bar and the head's list button open it, it
      pulls the area's column from /ctx/<area> and shows it from the bottom.
-     Next to the swapped region so it outlives a boosted navigation. */}}
+     Next to the swapped region so it outlives a boosted navigation. The
+     dialog's label is the area's name, ctx-sheet.js sets it on open. */}}
 {{define "ctx_sheet.gohtml"}}
 <dc-ctx-sheet class="dc-sheet d-print-none" data-ctx-sheet hidden>
-  <div class="dc-sheet-panel" role="dialog" aria-modal="true" aria-label="List" data-ctx-sheet-panel></div>
+  <div class="dc-sheet-panel" role="dialog" aria-modal="true" aria-label="List" tabindex="-1" data-ctx-sheet-panel></div>
 </dc-ctx-sheet>
 {{end}}
 
