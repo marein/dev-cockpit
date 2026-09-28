@@ -385,15 +385,20 @@ class ProjectList extends HTMLElement {
 
   // Collapses one row to the first few entries behind a "+N" chip. The expanded
   // flag lives on the persistent [data-sessions-body] container, one per row, so
-  // it survives the live swaps that replace everything inside it.
+  // it survives the live swaps that replace everything inside it. A running
+  // terminal is never folded: the server renders the running ones first, so the
+  // limit grows to their count and only inactive coders go behind the chip.
   foldRow(body, fold) {
     const kind = fold.dataset.chipFold || "terminals";
     const words = CHIP_WORDS[kind] || CHIP_WORDS.terminals;
     const flag = `${kind}Expanded`;
     const expanded = body.dataset[flag] === "1";
+    const chips = Array.from(fold.querySelectorAll(":scope > [data-chip]"));
+    const running = kind === "terminals" ? chips.filter((chip) => !chip.classList.contains("is-idle")).length : 0;
+    const limit = Math.max(CHIP_LIMIT, running);
     applyFold(fold, {
-      limit: CHIP_LIMIT,
-      items: Array.from(fold.querySelectorAll(":scope > [data-chip]")),
+      limit,
+      items: chips,
       expanded,
       toggleAttr: "data-chips-toggle",
       toggleClass: "project-chip project-chip-more",
@@ -407,7 +412,7 @@ class ProjectList extends HTMLElement {
     });
     const toggle = fold.querySelector("[data-chips-toggle]");
     if (toggle) {
-      const hidden = fold.querySelectorAll(":scope > [data-chip]").length - CHIP_LIMIT;
+      const hidden = chips.length - limit;
       const label = expanded ? words.fewer : words.more(hidden);
       toggle.setAttribute("aria-label", label);
       toggle.setAttribute("title", label);

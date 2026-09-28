@@ -98,6 +98,10 @@ func DocsTopics() []DocsTopic {
 					Desc:  `The three dots <i class="ti ti-dots align-text-bottom" aria-hidden="true"></i> on a project row, a right click, or a held finger: open the project or its editor, start a coder or a shell, git and compose actions, delete.`,
 				},
 				{
+					Title: "The terminal chips",
+					Desc:  `A project row lists its coders and shells as chips, running ones first. Every running one always shows; past eight chips the inactive coders fold behind a <em>+N</em> chip.`,
+				},
+				{
 					Title: "Git from the projects page",
 					Desc:  `A repository row carries a git button <i class="ti ti-brand-git align-text-bottom" aria-hidden="true"></i>. <em>New worktree</em> opens the create form with this project as the source, only on a main repository. <em>Fetch</em> reports in a toast how far the checked out branch stands from its upstream. <em>Commit changes</em> and <em>Compare revisions</em> open the editor on that view; switching the branch, push and pull stay in the editor's git sheet.`,
 				},

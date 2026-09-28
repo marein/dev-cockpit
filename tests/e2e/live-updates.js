@@ -131,7 +131,8 @@ L.runFeature("LIVE-UPDATES", async ({ engine, browser, page, run, bag }) => {
     });
 
     await run("the projects page adds/removes sessions live and keeps unfold in other projects", async () => {
-      // A second project with 9 shells so its chip list folds (>8).
+      // A second project with 9 shells plus two idle coder chips put into its
+      // row, so its chip list folds: running shells never do.
       const other = `zzlive2-${tag}`;
       await L.createProject(pageB, other);
       const otherShells = [];
@@ -142,11 +143,26 @@ L.runFeature("LIVE-UPDATES", async ({ engine, browser, page, run, bag }) => {
       assert((await L.waitUpgraded(page, ["dc-project-list"], 8000)).length === 0, "elements not upgraded");
       // Unfold the other project's chips.
       const otherBody = `#project-${other} [data-sessions-body]`;
+      await page.waitForSelector(`${otherBody} [data-chip][data-chip-kind="shell"] >> nth=8`, { timeout: 8000 });
+      await page.evaluate((sel) => {
+        const body = document.querySelector(sel);
+        const fold = body.querySelector('[data-chip-fold="terminals"]');
+        for (let i = 0; i < 2; i++) {
+          const chip = document.createElement("div");
+          chip.className = "project-chip is-idle";
+          chip.setAttribute("data-chip", "");
+          chip.setAttribute("data-chip-kind", "coder");
+          chip.innerHTML = `<span class="project-chip-main"><span class="project-chip-name">idle-${i}</span></span>`;
+          fold.appendChild(chip);
+        }
+        document.querySelector("dc-project-list").foldChips(body);
+      }, otherBody);
       const toggle = page.locator(`${otherBody} [data-chips-toggle]`);
       await toggle.waitFor({ state: "visible", timeout: 6000 });
       await toggle.click();
       const visibleChips = async (sel) => page.locator(`${sel} [data-chip]:not(.d-none)`).count();
-      assert((await visibleChips(otherBody)) === 9, "unfold did not reveal all 9 shells");
+      assert((await visibleChips(otherBody)) === 11, "unfold did not reveal all 11 chips");
+      const expanded = () => page.evaluate((sel) => document.querySelector(sel).dataset.terminalsExpanded, otherBody);
 
       // Start a shell in the FIRST project from client B: appears live here...
       const sX = await L.createShell(pageB, project);
@@ -155,13 +171,14 @@ L.runFeature("LIVE-UPDATES", async ({ engine, browser, page, run, bag }) => {
       await page.waitForSelector(`#project-${project} [data-notify-target="${idX}"]`, { timeout: 8000 });
       assert(page.url().endsWith("/projects"), `client A navigated away: ${page.url()}`);
       // ...and the other project's unfold survived the live update.
-      assert((await visibleChips(otherBody)) === 9, "unfolded other project refolded on a live change elsewhere");
+      assert((await visibleChips(otherBody)) === 11, "unfolded other project refolded on a live change elsewhere");
+      assert((await expanded()) === "1", "unfold flag lost on a live change elsewhere");
 
       // Delete it again from client B: chip disappears live, unfold still intact.
       await L.deleteShell(pageB, sX);
       shells.splice(shells.indexOf(sX), 1);
       await page.waitForSelector(`#project-${project} [data-notify-target="${idX}"]`, { state: "detached", timeout: 8000 });
-      assert((await visibleChips(otherBody)) === 9, "unfold lost after a live delete elsewhere");
+      assert((await expanded()) === "1", "unfold lost after a live delete elsewhere");
 
       for (const url of otherShells) await L.deleteShell(pageB, url).catch(() => {});
       await L.deleteProject(pageB, other).catch(() => {});

@@ -1,14 +1,32 @@
 const L = require("./lib");
 const { assert, sleep, submitBtn, confirmSwal, BASE } = L;
 
+// addIdleChips puts n idle coder chips at the end of a project's terminal row
+// and folds it again, the shape the server renders an inactive coder in.
+async function addIdleChips(page, row, n) {
+  await page.evaluate(({ row, n }) => {
+    const body = document.querySelector(`${row} [data-sessions-body]`);
+    const fold = body.querySelector('[data-chip-fold="terminals"]');
+    for (let i = 0; i < n; i++) {
+      const chip = document.createElement("div");
+      chip.className = "project-chip is-idle";
+      chip.setAttribute("data-chip", "");
+      chip.setAttribute("data-chip-kind", "coder");
+      chip.innerHTML = `<span class="project-chip-main"><span class="project-chip-name">idle-${i}</span></span>`;
+      fold.appendChild(chip);
+    }
+    document.querySelector("dc-project-list").foldChips(body);
+  }, { row, n });
+}
+
 // Projects: the dense board with filter, sort, chip fold, and the create +
 // delete flows. Custom elements dc-project-list, dc-project-new, dc-form-modal.
 // The create form stands on its own page and in the app wide create dialog,
 // which asks for the same GET with modal=1 and posts to the same path. Routes:
 // GET /projects, GET /projects/new, POST /projects, POST /projects/delete. Rows are
 // .list-group-item[data-project-name] with id project-<name>; sessions render
-// as [data-chip] entries inside [data-sessions-body], folded past 8 behind a
-// [data-chips-toggle] chip.
+// as [data-chip] entries inside [data-sessions-body]; running ones never fold,
+// inactive coders past 8 chips fold behind a [data-chips-toggle] chip.
 
 L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
   const tag = `proj-${Date.now().toString(36)}`;
@@ -156,31 +174,45 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await page.waitForSelector('[data-project-sort-option="alpha"]', { state: "hidden", timeout: 5000 });
     });
 
-    await run("more than 8 sessions folds the chips behind a +N toggle", async () => {
+    // Running terminals never fold, only inactive coders do. Nine running
+    // shells stand in full; idle coder chips put into the row (a real one
+    // needs a coder CLI and its record) fold behind the +N, never a shell.
+    await run("running sessions never fold, inactive coders past 8 do", async () => {
       for (let i = 0; i < 9; i++) shellUrls.push(await L.createShell(page, project));
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      assert((await L.waitUpgraded(page, ["dc-project-list"], 8000)).length === 0, "project list not upgraded");
       const row = `#project-${project}`;
-      const toggle = page.locator(`${row} [data-chips-toggle]`);
-      await toggle.waitFor({ state: "visible", timeout: 8000 });
       const visible = () => page.locator(`${row} [data-chip]:not(.d-none)`).count();
-      assert((await visible()) === 8, "collapsed chip count wrong");
+      await page.waitForSelector(`${row} [data-chip][data-chip-kind="shell"] >> nth=8`, { timeout: 8000 });
+      assert((await visible()) === 9, `running shells folded: ${await visible()} visible`);
+      assert((await page.locator(`${row} [data-chips-toggle]`).count()) === 0, "a toggle stands with only running sessions");
+      await addIdleChips(page, row, 2);
+      const toggle = page.locator(`${row} [data-chips-toggle]`);
+      await toggle.waitFor({ state: "visible", timeout: 5000 });
+      assert((await toggle.textContent()).trim() === "+2", `toggle reads "${await toggle.textContent()}"`);
+      assert((await visible()) === 9, `collapsed chip count wrong: ${await visible()}`);
+      assert((await page.locator(`${row} [data-chip].is-idle:not(.d-none)`).count()) === 0, "an idle chip stands in front of the fold");
       await toggle.click(); await sleep(400);
-      assert((await visible()) === 9, "expand did not reveal all chips");
+      assert((await visible()) === 11, "expand did not reveal all chips");
+      await page.evaluate((sel) => { delete document.querySelector(`${sel} [data-sessions-body]`).dataset.terminalsExpanded; }, row);
     });
 
     // Stop and Delete on a chip act in place: the request asks for JSON, the
     // toast says what the flash used to, and the terminals event redraws the
     // chips inside the row. The row is never replaced, so the unfold survives.
-    // Ten shells, so the nine that remain would fold again if the flag went.
+    // Two idle chips make the row fold; the flag has to outlive the swap.
     await run("deleting a shell from its chip toasts and keeps the list unfolded", async () => {
       shellUrls.push(await L.createShell(page, project));
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      assert((await L.waitUpgraded(page, ["dc-project-list"], 8000)).length === 0, "project list not upgraded");
       const row = `#project-${project}`;
+      await page.waitForSelector(`${row} [data-chip][data-chip-kind="shell"] >> nth=9`, { timeout: 8000 });
+      await addIdleChips(page, row, 2);
       const toggle = page.locator(`${row} [data-chips-toggle]`);
       await toggle.waitFor({ state: "visible", timeout: 8000 });
       await toggle.click(); await sleep(400);
       const visible = () => page.locator(`${row} [data-chip]:not(.d-none)`).count();
-      assert((await visible()) === 10, "expand did not reveal all chips");
+      assert((await visible()) === 12, "expand did not reveal all chips");
       await page.evaluate((sel) => { document.querySelector(sel).dataset.probe = "stands"; }, row);
       const chip = page.locator(`${row} [data-chip][data-chip-kind="shell"]:not(.d-none)`).last();
       const id = await chip.getAttribute("data-chip-id");
@@ -197,7 +229,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert(after.probe === "stands", "the row was replaced");
       assert(after.expanded === "1", "the unfold flag is gone");
       assert(after.url === "/projects", `the page moved to ${after.url}`);
-      assert((await visible()) === 9, `the list folded again: ${await visible()} chips visible`);
+      assert((await visible()) === 9, `running shells folded: ${await visible()} chips visible`);
       shellUrls.splice(shellUrls.findIndex((u) => u.endsWith(`/${id}`)), 1);
     });
 
