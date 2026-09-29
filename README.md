@@ -1,55 +1,144 @@
 # dev-cockpit
 
-**Disclaimer**
+__Table of contents__
 
-This is a personal, internal productivity tool, and it is **100% vibe coded**. The
-agent writes the code, tests every feature directly in the browser, and runs
-integration tests. From time to time I do an architecture and security review,
-but not on every change. **Run it only on machines and networks you trust.**
+* [Overview](#overview): A brief introduction to the cockpit.
+* [Features](#features): What the cockpit does, grouped by area.
+* [Deployment Guide](#deployment-guide): Requirements, installation, running and updating.
+* [Configuration](#configuration): Flags, settings and custom distributions.
 
-## What it is
+## Overview
 
-Manage your projects from the browser, including your phone: run CLI coding
-agents (GitHub Copilot CLI, Claude Code, or both), open shells, and edit files
-in a small built-in editor. Everything runs in tmux on the host, the browser
-attaches over a live stream, so sessions survive dropped connections and you
-can start on your phone and continue on your laptop. It is the persistence
-tmux already gives you over SSH, with a web UI in front of it.
+This is a web cockpit for a development machine, usable from a desktop browser and a phone.
+It runs coders (Claude Code, GitHub Copilot CLI, OpenCode) and shells in tmux on the host,
+and adds an editor with git, Docker Compose control, and assistants that hand work to coders and follow it through.
 
-- Create projects from the UI; git repos show their branch and remote.
-- Start coder sessions, attach in the browser, resume earlier ones.
-- Open shell sessions, rename them, run several at once.
-- Edit files (browse, create, rename, delete), upload and download.
-- Edit each coder's global config: instructions, custom agents, skills.
+> This is a personal productivity tool and it is **100% vibe coded**. Coding agents write the code, test every
+> feature in the browser, and run the integration tests. Architecture and security are reviewed from time to time,
+> but not on every change. **Run it only on machines and networks you trust.**
 
-One server instance serves every coder whose CLI is installed on the host.
+## Features
 
-## Requirements
+Each area of the cockpit is described below.
 
-- Linux or macOS.
-- `tmux` on the host.
-- At least one coder CLI installed and logged in: `copilot` or `claude`.
+<details>
+  <summary>Projects</summary>
 
-The server refuses to start without tmux or without any coder CLI; a coder
-whose CLI is missing is skipped. The UI edits each coder's config under your
-home directory:
+  ### Projects
 
-| Coder     | Instructions file                    | Agents dir          | Skills dir          |
-|-----------|--------------------------------------|---------------------|---------------------|
-| `copilot` | `~/.copilot/copilot-instructions.md` | `~/.copilot/agents` | `~/.copilot/skills` |
-| `claude`  | `~/.claude/CLAUDE.md`                | `~/.claude/agents`  | `~/.claude/skills`  |
+  * **Management**: Create, open and delete projects, including git worktrees of an existing repository.
+    Branch pickers search local and remote branches.
+  * **Overview**: Every project row shows its coders, shells and containers, with a menu for the editor,
+    new terminals, git and compose actions.
+  * **Upstream**: Fetch from the projects page and see how far the branch is from its upstream.
+</details>
 
-## Install
+<details>
+  <summary>Terminals</summary>
 
-### Quick install (curl)
+  ### Terminals
 
-This resolves the latest release, downloads the archive for your platform,
-extracts the `dev-cockpit` binary into `~/.local/bin`, and makes it executable.
-To pin a version, replace the first line with `VERSION=1.6.0`.
+  * **Coders and shells**: Start them in any project, attach from any device, and resume a stopped coder
+    with its conversation. One instance serves every supported and installed coder CLI.
+  * **Layout**: Reorder tabs, group terminals into split views with columns, and switch with keyboard shortcuts
+    or swipes on a phone.
+  * **Copy view**: Shows a coder's recorded conversation or a shell's scrollback as selectable text.
+  * **Files**: Drop or paste files into a coder terminal and reference them in a prompt.
+  * **Phone input**: On screen keys and direction pads.
+  * **Git passphrase**: `dev-cockpit git` runs git through the cockpit, so an ssh passphrase is asked in the
+    browser instead of blocking a terminal.
+  * **Restore**: Optionally restores all terminals after a host reboot.
+</details>
 
-`~/.local/bin` is user-writable, so the in-app self-update can replace the binary
-in place without `sudo`. A root-owned path like `/usr/local/bin` works for
-self-update only if dev-cockpit runs as root.
+<details>
+  <summary>Editor</summary>
+
+  ### Editor
+
+  * **Files**: File tree, tabs, quick open, find and replace in files, and previews for markdown, SVG, images,
+    video and audio. Upload, download, move, copy, rename and extract archives.
+  * **Saving**: Autosave. A save never overwrites what a coder or git wrote in the meantime, and open files
+    follow changes on disk.
+  * **Code navigation**: Go to definition and find usages for Go, PHP, TypeScript and JavaScript, including
+    dependency and standard library sources, through language servers in Docker.
+  * **Git**: Change marks, diff against HEAD or any revision, blame, file history, commit selected files with
+    amend and push, switch and create branches, push, pull, fetch, tags, revert, clone, and compare two revisions.
+  * **Line comments**: Comments stay on their line while the file changes. Assistants can manage them too.
+  * **Panels**: A terminal panel below the code and a Docker view per project.
+</details>
+
+<details>
+  <summary>Assistants</summary>
+
+  ### Assistants
+
+  * **Conversations**: Any number of assistants, each with its own thread, running on a supported and installed coder CLI.
+    They share one memory of what they were told.
+  * **Awareness**: They see running coders, shells, projects and notifications.
+  * **Jobs**: They start coders for a task and steer them as jobs, with a criterion that says when the task is
+    done. Checks look at the coder when it stops, and only done or blocked is reported.
+  * **Triggers**: An assistant reacts to a job ending, a coder signal or a cron schedule, and pushes the answer
+    into its thread.
+  * **Actions**: They run compose commands and delete projects, coders or assistants, with an approval step
+    where configured.
+  * **Media**: Attach pictures and files, speak by holding the microphone, and have answers read aloud.
+    Speech runs locally in Docker.
+  * **Models**: The model is set per assistant for chat, checks and triggers.
+</details>
+
+<details>
+  <summary>Docker</summary>
+
+  ### Docker
+
+  * **Containers**: Compose containers show as chips on their project, live from the daemon.
+    Open a shell or logs in a container, filter logs, start, stop and restart.
+  * **Compose commands**: Configurable per project (up, down, rebuild and others), run in the background with
+    their output on a page.
+  * **Links**: To published ports and to hosts routed by a reverse proxy.
+</details>
+
+<details>
+  <summary>Notifications</summary>
+
+  ### Notifications
+
+  * **Sources**: A coder finishes or asks, a long shell command ends, a compose run ends, git needs a passphrase,
+    or an assistant answers or needs an approval.
+  * **In the browser**: Bell, marks on terminals and projects, toasts and a jingle.
+  * **Off the page**: Web Push to phones and desktops, and webhooks (Slack compatible).
+</details>
+
+<details>
+  <summary>Settings</summary>
+
+  ### Settings
+
+  Most of the app is configured here. The documentation is built in at `/docs`.
+</details>
+
+## Deployment Guide
+
+### Requirements
+
+* Linux or macOS.
+* `tmux` on the host.
+* At least one coder CLI installed and logged in: `claude`, `copilot` or `opencode`.
+* Optional: `git` for the git features, Docker for compose stacks, code navigation and voice.
+
+The server refuses to start without tmux or without any coder CLI. A coder whose CLI is missing is skipped.
+The UI edits each coder's config under the home directory:
+
+| Coder      | Instructions file                    | Agents directory           | Skills directory            |
+|------------|--------------------------------------|----------------------------|-----------------------------|
+| `claude`   | `~/.claude/CLAUDE.md`                | `~/.claude/agents`         | `~/.claude/skills`          |
+| `copilot`  | `~/.copilot/copilot-instructions.md` | `~/.copilot/agents`        | `~/.copilot/skills`         |
+| `opencode` | `~/.config/opencode/AGENTS.md`       | `~/.config/opencode/agent` | `~/.config/opencode/skills` |
+
+### Install
+
+The following script resolves the latest release, downloads the archive for the platform and extracts the
+`dev-cockpit` binary into `~/.local/bin`. To pin a version, replace the first line with `VERSION=1.6.0`.
 
 ```bash
 VERSION=$(curl -fsSL https://api.github.com/repos/marein/dev-cockpit/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
@@ -62,98 +151,61 @@ curl -fsSL "https://github.com/marein/dev-cockpit/releases/download/${VERSION}/d
 chmod +x ~/.local/bin/dev-cockpit
 ```
 
-Make sure `~/.local/bin` is on your `PATH` so you can run it from anywhere; add
-this to your shell's rc file (`~/.bashrc`, `~/.zshrc`, …) if needed:
+Alternatively, download the archive from the [releases](https://github.com/marein/dev-cockpit/releases)
+and put the binary on the `PATH`.
+
+> Keep the binary in a user writable directory like `~/.local/bin`, so the update can replace it without `sudo`.
+> A root owned path like `/usr/local/bin` works for updates only when dev-cockpit runs as root.
+
+> The macOS binary is unsigned. If Gatekeeper blocks it, run
+> `xattr -d com.apple.quarantine ~/.local/bin/dev-cockpit` once.
+
+### Run
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+dev-cockpit serve --addr 0.0.0.0:3000 --projects-dir ~/projects
 ```
 
-On macOS, the binary is unsigned. If Gatekeeper blocks it, clear the quarantine
-flag once:
+Open the address in a browser and log in. The default `--addr` is `0.0.0.0:80`, which requires root.
+
+The default login is `admin` / `password`. Change it before exposing the server. Generate a bcrypt hash with
+`dev-cockpit hash-password` and pass it together with a random cookie key:
 
 ```bash
-xattr -d com.apple.quarantine ~/.local/bin/dev-cockpit
-```
-
-### Manual
-
-Download the archive for your platform from the
-[releases](https://github.com/marein/dev-cockpit/releases) and extract it:
-
-```bash
-tar -xzf dev-cockpit_*.tar.gz
-```
-
-Move the `dev-cockpit` binary into a directory on your `PATH` so you can run it
-from anywhere. Use a user-writable path like `~/.local/bin` if you want the
-in-app self-update to work; `/usr/local/bin` needs `sudo` to install, and
-self-update there only works when dev-cockpit runs as root.
-
-```bash
-mkdir -p ~/.local/bin && mv dev-cockpit ~/.local/bin/
-```
-
-## Run
-
-See all options with `./dev-cockpit serve --help`. The main ones:
-
-| Flag             | Default      | Meaning                         |
-|------------------|--------------|---------------------------------|
-| `--addr`         | `0.0.0.0:80` | listen address                  |
-| `--projects-dir` | `~/projects` | root directory of your projects |
-
-```bash
-./dev-cockpit serve --addr 0.0.0.0:3000 --projects-dir ~/projects
-```
-
-The default `--addr` uses port 80, which needs root; the examples use 3000.
-Then open the server address in your browser and log in.
-
-### Login
-
-The default login is `admin` / `password`. Change it before exposing the
-server. Generate a bcrypt hash with `./dev-cockpit hash-password`, then pass
-it along with a random cookie key:
-
-```bash
-./dev-cockpit serve --addr 0.0.0.0:3000 \
+dev-cockpit serve --addr 0.0.0.0:3000 \
   --auth-user admin \
   --auth-password-hash '<hash>' \
   --session-cookie-key '<random-secret>'
 ```
 
-### HTTPS
+For HTTPS, pass `--tls-cert-file` and `--tls-key-file`, or terminate TLS in a reverse proxy. In that case,
+bind locally, for example `--addr 127.0.0.1:3000`, and set `--trusted-proxies` to the proxy's address.
 
-Serve TLS directly, or terminate it in a reverse proxy: drop the TLS flags,
-bind locally (e.g. `--addr 127.0.0.1:3000`), and set `--trusted-proxies` to
-your proxy's address.
+> Web Push and the microphone require HTTPS.
 
-<details>
-<summary>Self-signed certificate and TLS flags</summary>
+### Update
 
-Adjust `CN`/`subjectAltName` for a real domain or IP:
+The status line shows when a newer release exists. The update downloads the release for the platform,
+verifies its checksum, replaces the binary and restarts in place. Running terminals keep running because they
+live in tmux. Run `dev-cockpit --version` to print the version of a binary.
 
-```bash
-mkdir -p ~/.config/dev-cockpit/tls
-openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
-  -keyout ~/.config/dev-cockpit/tls/dev-cockpit.key \
-  -out ~/.config/dev-cockpit/tls/dev-cockpit.crt \
-  -subj "/CN=localhost" \
-  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+## Configuration
 
-./dev-cockpit serve --addr 0.0.0.0:3000 \
-  --tls-cert-file ~/.config/dev-cockpit/tls/dev-cockpit.crt \
-  --tls-key-file ~/.config/dev-cockpit/tls/dev-cockpit.key
-```
+Run `dev-cockpit serve --help` to list every flag. The main ones are:
 
-</details>
+* **`--addr`**: Listen address, default `0.0.0.0:80`.
+* **`--projects-dir`**: Root directory of the projects, default `~/projects`.
+* **`--state-dir`**: Directory for the state, default `~/.local/state/dev-cockpit`.
+* **`--auth-user`, `--auth-password-hash`, `--session-cookie-key`**: The login.
+* **`--tls-cert-file`, `--tls-key-file`, `--trusted-proxies`**: HTTPS and proxies.
+* **`--max-request-body-size`**: Upload limit in bytes, default 100 MB.
 
-## Custom distributions
+Everything else is set in the UI under Settings and stored in the state directory.
 
-A distribution ships its own version, source link, and update feed. It is a
-module of your own (`go mod init`, `go get github.com/marein/dev-cockpit`)
-with a `main.go` (example below). An empty field keeps the default of a plain build.
+### Custom Distributions
+
+A distribution ships its own version, source link and update feed. It is a separate Go module
+(`go get github.com/marein/dev-cockpit`) with a `main.go`. An empty field keeps the default of a plain build.
 
 ```go
 package main
@@ -170,16 +222,9 @@ func main() {
 }
 ```
 
-`UpdateFeedFormat` is `github` or `gitlab`. The feed must follow this
-repository's release conventions: semver tags,
-`dev-cockpit_<version>_<os>_<arch>.tar.gz` containing `dev-cockpit`, plus
-`dev-cockpit_<version>_checksums.txt`. `dev-cockpit --version` prints what a
-binary was built with.
+`UpdateFeedFormat` is either `github` or `gitlab`. The feed must follow the release conventions of this
+repository: semver tags, `dev-cockpit_<version>_<os>_<arch>.tar.gz` containing `dev-cockpit`, and
+`dev-cockpit_<version>_checksums.txt`.
 
-### Plugins
-
-Plugins are highly experimental and not yet part of the stable contract,
-examples will follow. A distribution adds them through the `ServePlugins`
-field on `distro.Build`. See the
-[plugin package](https://github.com/marein/dev-cockpit/tree/master/plugin)
-for what a plugin can contribute.
+> Plugins are experimental and not part of the stable contract. A distribution adds them through the
+> `ServePlugins` field of `distro.Build`, see the [plugin package](https://github.com/marein/dev-cockpit/tree/master/plugin).
