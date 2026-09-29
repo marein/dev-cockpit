@@ -117,13 +117,23 @@
       {{end}}{{end}}
       </div>
       {{end}}
-      {{/* Data for the switcher's assistant and editor rows, one editor link
-           per project sorted client side like the resume groups. Never shown in
+      {{/* Data for the switcher's assistant and editor rows: one link per
+           living assistant carrying the name the list column shows, or the
+           overview while there is none, since the area then opens on the
+           empty state that makes the first one; and one editor link per
+           project sorted client side like the resume groups. Never shown in
            the menu, which offers only what creates a terminal. */}}
       <div class="d-none">
+        {{if not .QuickNav.Assistants}}
         <a data-tabs-assistant href="/assistants" title="Assistants">
-          <span class="terminal-tab-icon dc-term-icon assistant" aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml" (dict "Any" "assistant" "Hidden" (not .AssistantNews) "Label" "Something new in an assistant")}}</span><span>Assistants</span>
+          <span class="terminal-tab-icon dc-term-icon assistant" aria-hidden="true"><i class="ti ti-sparkles"></i></span><span>Assistants</span>
         </a>
+        {{end}}
+        {{range .QuickNav.Assistants}}
+        <a data-tabs-assistant-instance="{{.ID}}" data-assistant-name="{{template "assistant_title.gohtml" .Title}}" href="{{.URL}}" tabindex="-1">
+          <span class="terminal-tab-icon dc-term-icon assistant{{if .Running}} working{{end}}{{if .News}} news{{end}}" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml"}}</span>
+        </a>
+        {{end}}
       </div>
       <div class="d-none" data-tabs-editors>
         {{range $p := .QuickNav.AllProjects}}

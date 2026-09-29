@@ -233,15 +233,14 @@ func (s *Server) handleTerminalTabsFragment(c *gin.Context) {
 		path = "/"
 	}
 	id, name, cleanPath, focus := quicknavContextFromPath(path)
-	assistantNews := s.assistantNews()
+	qn := s.buildQuickNav(id, name, cleanPath, focus)
 	steered, prefill := s.watcher.Marks()
 	c.HTML(http.StatusOK, "terminal_tabs.gohtml", render.Page{
-		QuickNav:      s.buildQuickNav(id, name, cleanPath, focus),
-		CSRFToken:     s.csrfToken(c),
-		AssistantNews: assistantNews,
-		Steered:       steered,
-		SteerPrefill:  prefill,
-		Working:       s.activity.Working(),
+		QuickNav:     qn,
+		CSRFToken:    s.csrfToken(c),
+		Steered:      steered,
+		SteerPrefill: prefill,
+		Working:      s.activity.Working(),
 	})
 }
 

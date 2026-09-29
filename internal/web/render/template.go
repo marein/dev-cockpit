@@ -94,10 +94,8 @@ type Page struct {
 	// inline. Every other page gets a hidden switcher-only terminal-tabs
 	// instance from the layout, so the double Ctrl/Meta switcher works app wide.
 	HasTabStrip bool
-	// AssistantNews says whether any assistant holds an answer nobody has read.
-	// One mark for the whole area, like the terminals': news in one of them is
-	// news whichever the entry opens, and which one it is in is what the list
-	// column's rows say.
+	// AssistantNews is QuickNav.AssistantNews at render time, what the rail,
+	// the tab bar and the switcher's overview row carry as the area's one dot.
 	AssistantNews bool
 	// BackupReviewCount is the number of open backup overwrite reviews,
 	// rendered as a badge on the Settings nav so the pending resolution is
@@ -169,6 +167,22 @@ type QuickNav struct {
 	// project detail's docker menu carries them exactly like the projects
 	// page's compose button does.
 	DockerActions []DockerButton
+	// Assistants are every assistant that lives, in the list column's order.
+	// The switcher lists each as a destination of its own, found by its name
+	// the way a terminal is found by its name and project.
+	Assistants []AssistantCard
+}
+
+// AssistantNews reports whether any assistant holds an answer nobody has read.
+// One mark for the whole area, like the terminals': news in one of them is
+// news whichever the entry opens, and which one it is in is what the rows say.
+func (q QuickNav) AssistantNews() bool {
+	for _, a := range q.Assistants {
+		if a.News {
+			return true
+		}
+	}
+	return false
 }
 
 // HasInactiveCoders reports whether any project carries a resumable session.

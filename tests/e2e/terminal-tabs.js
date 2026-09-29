@@ -45,8 +45,18 @@ const { assert, sleep, BASE } = L;
 // inactive coders sit an Editors section (one row per project, sorted like the
 // resume groups through @dc/project-sort, URLs from ProjectNav.EditorURL, fed
 // by a hidden [data-tabs-editors] link list in the + menu) and a New section (New coder / New shell rows reusing the + menu
-// links, so the current project arrives preselected on the create form). All
-// of it filters through the search input; with no sessions at all the
+// links, so the current project arrives preselected on the create form). An
+// Assistants section stands right under the active rows: one row per living
+// assistant, named as the list column names it (title, else New assistant)
+// with an Assistant label, and only while there is none the overview row
+// (/assistants, the area entry, which then opens the empty state). The
+// fragment decides which, through hidden links in the + menu
+// ([data-tabs-assistant] or [data-tabs-assistant-instance]), so the strip
+// also pulls on the assistant event and a create, rename or delete reaches
+// an open switcher. All
+// of it filters through the search input, and every row matches on what it
+// shows (name plus project, project plus Editor, title plus Assistant, the
+// action label plus project); with no sessions at all the
 // switcher still opens on the editor and New rows.
 // Every tab carries a close control
 // (confirm dialog, then coder stop or shell delete; closing the current session
@@ -133,6 +143,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
   let coderUrl = null;
   let foreignProject = null;
   let foreignShellUrl = null;
+  const assistantIds = [];
   const ownId = (url) => new URL(url).pathname.split("/").pop();
   const tabSel = (id) => `terminal-tabs .terminal-tab[data-tab-id="${id}"]`;
   const tabOrder = () => page.$$eval("terminal-tabs .terminal-tab", (els) => els.map((e) => e.dataset.tabId));
@@ -611,7 +622,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(hrefs[1].startsWith("/shells/new?") && hrefs[1].includes(`project=${project}`), `shell link ${hrefs[1]}`);
       assert(hrefs[1].includes(`return=%2Fshells%2F${ids[2]}`), `shell link return target ${hrefs[1]}`);
       assert(!(await page.$("terminal-tabs .dropdown-menu.show > a[href='/assistants']")), "the assistant is a menu entry");
-      assert(await page.$("terminal-tabs [data-tabs-assistant]"), "the switcher lost its assistant data");
+      assert(await page.$("terminal-tabs [data-tabs-assistant], terminal-tabs [data-tabs-assistant-instance]"), "the switcher lost its assistant data");
       // The entry opens the app wide create dialog (see shells.js), which
       // fetches the same /shells/new and carries the menu's project into it.
       await page.click('terminal-tabs .dropdown-menu.show a[href^="/shells/new"]');
@@ -681,6 +692,88 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(page.url() === before, "Enter navigated despite no match");
       await page.keyboard.press("Escape");
       await sleep(200);
+    });
+
+    await run("without an assistant the switcher offers the overview row, which opens the area's empty state", async () => {
+      const before = page.url();
+      const instances = await page.evaluate(async () => (await (await fetch("/assistants/instances")).json()).assistants || []);
+      assert(instances.length === 0, `the instance already holds ${instances.length} assistant(s), the run needs a pristine one`);
+      await page.keyboard.press("Control");
+      await page.keyboard.press("Control");
+      await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+      await page.keyboard.type("assist", { delay: 30 });
+      await sleep(200);
+      const rows = await page.$$eval(".terminal-switcher-item", (els) => els
+        .filter((e) => e.getClientRects().length > 0)
+        .map((e) => ({ section: e.dataset.switcherSection, url: e.dataset.switcherUrl })));
+      assert(rows.length === 1 && rows[0].section === "assistant" && rows[0].url === "/assistants",
+        `filter 'assist' shows ${JSON.stringify(rows)} without an assistant`);
+      await page.keyboard.press("Enter");
+      await page.waitForURL(/\/assistants$/, { timeout: 8000 });
+      await page.waitForSelector("[data-assistant-none]", { timeout: 8000 });
+      await page.goto(before, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".terminal-tabs-new-btn", { state: "attached", timeout: 8000 });
+    });
+
+    await run("the switcher lists every assistant by its name and drops the overview row, a typed name narrows to that one, Enter opens it", async () => {
+      const before = page.url();
+      const post = (url, fields) => page.evaluate(async ({ url, fields }) => {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content,
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+          },
+          body: new URLSearchParams(fields).toString(),
+        });
+        return { ok: res.ok, status: res.status, json: await res.json().catch(() => ({})) };
+      }, { url, fields });
+      const make = async (title) => {
+        const created = await post("/assistants/new", { form: "new" });
+        assert(created.json.id, `the run could not create an assistant (${created.status}): ${JSON.stringify(created.json)}`);
+        assistantIds.push(created.json.id);
+        const renamed = await post(`/assistants/${created.json.id}`, { form: "rename", title });
+        assert(renamed.ok, `rename answered ${renamed.status}`);
+        return created.json.id;
+      };
+      const titles = [`Alpha plan ${tag}`, `Beta review ${tag}`];
+      const alpha = await make(titles[0]);
+      const beta = await make(titles[1]);
+      const rowSel = (id) => `.terminal-switcher-item[data-switcher-section="assistant"][data-switcher-url="/assistants/${id}"]`;
+      const shows = (sel) => page.$eval(sel, (e) => e.getClientRects().length > 0);
+      let opened = null;
+      for (let attempt = 0; attempt < 3 && !opened; attempt += 1) {
+        await page.keyboard.press("Control");
+        await sleep(120);
+        await page.keyboard.press("Control");
+        opened = await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 2500 }).catch(() => null);
+        if (!opened) await sleep(600);
+      }
+      assert(opened, "switcher did not open after retries");
+      // The strip pulls the fragment on the assistant event, so the rows arrive
+      // in the open switcher through its rebuild, no reopen needed.
+      await page.waitForSelector(rowSel(alpha), { state: "attached", timeout: 8000 });
+      await page.waitForSelector(rowSel(beta), { state: "attached", timeout: 8000 });
+      const shown = await page.$eval(`${rowSel(alpha)} .terminal-switcher-name`, (e) => e.textContent);
+      assert(shown === titles[0], `assistant row shows '${shown}'`);
+      const label = await page.$eval(`${rowSel(alpha)} .terminal-switcher-project`, (e) => e.textContent);
+      assert(label === "Assistant", `assistant row label '${label}'`);
+      const overview = '.terminal-switcher-item[data-switcher-section="assistant"][data-switcher-url="/assistants"]';
+      assert(!(await page.$(overview)), "the overview row stays although assistants exist");
+      assert(await shows(rowSel(beta)), "the second assistant is hidden before any filter");
+      await page.keyboard.type("alpha plan", { delay: 40 });
+      await sleep(200);
+      const visible = await page.$$eval(".terminal-switcher-item", (els) => els
+        .filter((e) => e.getClientRects().length > 0)
+        .map((e) => e.dataset.switcherUrl));
+      assert(visible.length === 1 && visible[0] === `/assistants/${alpha}`, `filter shows ${JSON.stringify(visible)}`);
+      assert(!(await shows(rowSel(beta))), "the other assistant stays visible under the filter");
+      await page.keyboard.press("Enter");
+      await page.waitForURL((u) => u.pathname === `/assistants/${alpha}`, { timeout: 8000 });
+      assert((await page.locator(".terminal-switcher").count()) === 0, "switcher still open after Enter");
+      await page.goto(before, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".terminal-tabs-new-btn", { state: "attached", timeout: 8000 });
     });
 
     await run("renaming the shell inline updates its tab immediately", async () => {
@@ -1197,14 +1290,17 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
       await page.keyboard.type("assist", { delay: 30 });
       await sleep(200);
-      const rows = await page.$$eval(".terminal-switcher-item:not([hidden])", (els) => els.map((e) => e.dataset.switcherSection));
-      assert(rows.length === 1 && rows[0] === "assistant", `filter 'assist' shows ${JSON.stringify(rows)}`);
-      // The assistant is a page: the row goes into the area, which leads to the
-      // assistant looked at last, and to the empty state on an instance that
-      // has none, because nothing makes one by itself.
-      await page.click('.terminal-switcher-item[data-switcher-section="assistant"]');
-      await page.waitForURL(/\/assistants(\/[^/]+)?$/, { timeout: 8000 });
-      await page.waitForSelector("dc-assistant[ready], [data-assistant-none]", { timeout: 8000 });
+      // Every row of the section says Assistant: one row per assistant the run
+      // made, no overview row beside them, and nothing of any other section.
+      const rows = await page.$$eval(".terminal-switcher-item", (els) => els
+        .filter((e) => e.getClientRects().length > 0)
+        .map((e) => ({ section: e.dataset.switcherSection, url: e.dataset.switcherUrl })));
+      assert(rows.length === assistantIds.length && rows.every((r) => r.section === "assistant"),
+        `filter 'assist' shows ${JSON.stringify(rows)} for ${assistantIds.length} assistant(s)`);
+      assert(rows.every((r) => r.url !== "/assistants"), `the overview row stands beside the assistants: ${JSON.stringify(rows)}`);
+      await page.click(`.terminal-switcher-item[data-switcher-section="assistant"][data-switcher-url="${rows[0].url}"]`);
+      await page.waitForURL((u) => u.pathname === rows[0].url, { timeout: 8000 });
+      await page.waitForSelector("dc-assistant[ready]", { timeout: 8000 });
     });
 
     await run("the strip stays hidden on coarse pointer (mobile) clients", async () => {
@@ -1272,6 +1368,19 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await mp.waitForSelector("dc-ctx-sheet[hidden]", { state: "attached", timeout: 4000 });
     });
   } finally {
+    for (const id of assistantIds) {
+      await page.evaluate(async (target) => {
+        await fetch(`/assistants/${target}`, {
+          method: "POST",
+          headers: {
+            "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content,
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+          },
+          body: new URLSearchParams({ form: "delete" }).toString(),
+        });
+      }, id).catch(() => {});
+    }
     if (coderUrl) await L.stopSession(page, coderUrl).catch(() => {});
     if (foreignShellUrl) await L.deleteShell(page, foreignShellUrl).catch(() => {});
     for (const u of shellUrls) await L.deleteShell(page, u).catch(() => {});

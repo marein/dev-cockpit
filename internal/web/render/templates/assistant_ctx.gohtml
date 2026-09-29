@@ -50,7 +50,7 @@
     {{/* The badges keep the right edge of the row, whatever the name is: what
          they say is read down the column, so a title long enough to truncate
          must not carry them out of line with the rows above and below. */}}
-    <span class="d-flex align-items-center gap-2 min-w-0"><span class="dc-trunc">{{if .Title}}{{.Title}}{{else}}New assistant{{end}}</span>{{if or .OpenJobs .Unfinished}}<span class="d-flex align-items-center gap-2 ms-auto flex-shrink-0">{{if .OpenJobs}}<span class="badge bg-purple-lt" title="Steers {{.OpenJobs}} coder{{if ne .OpenJobs 1}}s{{end}}"><i class="ti ti-steering-wheel me-1" aria-hidden="true"></i>{{.OpenJobs}}</span>{{end}}{{if .Unfinished}}<span class="badge bg-orange-lt">Unfinished</span>{{end}}</span>{{end}}</span>
+    <span class="d-flex align-items-center gap-2 min-w-0"><span class="dc-trunc">{{template "assistant_title.gohtml" .Title}}</span>{{if or .OpenJobs .Unfinished}}<span class="d-flex align-items-center gap-2 ms-auto flex-shrink-0">{{if .OpenJobs}}<span class="badge bg-purple-lt" title="Steers {{.OpenJobs}} coder{{if ne .OpenJobs 1}}s{{end}}"><i class="ti ti-steering-wheel me-1" aria-hidden="true"></i>{{.OpenJobs}}</span>{{end}}{{if .Unfinished}}<span class="badge bg-orange-lt">Unfinished</span>{{end}}</span>{{end}}</span>
     <span class="text-secondary small dc-trunc">{{.CoderLabel}} · {{.Messages}} message{{if ne .Messages 1}}s{{end}}{{if .Updated}} · <dc-time datetime="{{.Updated}}"></dc-time>{{end}}</span>
   </span>
   <span class="terminal-tab-menu" role="button" tabindex="-1" aria-label="Assistant actions" title="Actions" data-assistant-menu><i class="ti ti-dots" aria-hidden="true"></i></span>

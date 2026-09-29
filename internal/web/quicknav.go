@@ -33,6 +33,7 @@ func (s *Server) buildQuickNav(currentID, nameParam, currentPath, focus string) 
 	}
 	qn.AllProjects = s.projectBrowser(currentPath)
 	qn.DockerActions = render.DockerButtons(s.composeActions())
+	qn.Assistants = s.assistantCards()
 	for i := range qn.AllProjects {
 		if qn.AllProjects[i].Name == qn.CurrentProject {
 			qn.CurrentProjectPath = qn.AllProjects[i].Path

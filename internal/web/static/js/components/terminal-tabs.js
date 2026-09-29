@@ -87,6 +87,7 @@ class TerminalTabs extends HTMLElement {
     // A coder or shell started, stopped, was renamed or reordered somewhere (this
     // device or another one): pull the fresh strip.
     onServerEvent("terminals", () => this.refresh(), { signal });
+    onServerEvent("assistant", () => this.refresh(), { signal });
     // The + menu's create entries and the editor link carry the page's
     // project context, which on a split page is the focused member's. The
     // fragment pull already reports the active island as ?focus; what was
@@ -727,8 +728,9 @@ class TerminalTabs extends HTMLElement {
     return row;
   }
 
-  // The assistant is a destination like a terminal, not a "new" action: it sits
-  // right under the open tabs so the switcher reaches it in the same two keys.
+  // The assistants are destinations like a terminal, not "new" actions: they
+  // sit right under the open tabs so the switcher reaches them in the same two
+  // keys.
   assistantRow(link) {
     const icon = link.querySelector(".dc-term-icon");
     const row = el(
@@ -738,21 +740,36 @@ class TerminalTabs extends HTMLElement {
         class: "terminal-switcher-item",
         dataset: {
           switcherUrl: link.getAttribute("href") || "/assistants",
-          switcherName: "assistant",
+          switcherName: "Assistants",
           switcherSection: "assistant",
-          switcherAssistant: "1",
         },
       },
       icon ? icon.cloneNode(true) : el("span", { class: "terminal-tab-icon dc-term-icon assistant", "aria-hidden": "true" }, el("i", { class: "ti ti-sparkles" })),
       el("span", { class: "terminal-switcher-name text-truncate" }, "Assistants"),
     );
-    row.addEventListener("click", () => this.openAssistant(), { signal: this.ac.signal });
+    row.addEventListener("click", () => this.navigate(row.dataset.switcherUrl), { signal: this.ac.signal });
     return row;
   }
 
-  // The assistant is a page: the row navigates to the live conversation.
-  openAssistant() {
-    this.navigate(this.querySelector("[data-tabs-assistant]")?.getAttribute("href") || "/assistants");
+  assistantInstanceRow(link) {
+    const name = link.dataset.assistantName || "";
+    const row = el(
+      "div",
+      {
+        role: "option",
+        class: "terminal-switcher-item",
+        dataset: {
+          switcherUrl: link.getAttribute("href") || "",
+          switcherName: name + " assistant",
+          switcherSection: "assistant",
+        },
+      },
+      link.querySelector(".dc-term-icon")?.cloneNode(true),
+      el("span", { class: "terminal-switcher-name text-truncate" }, name),
+      el("span", { class: "terminal-switcher-project text-truncate" }, "Assistant"),
+    );
+    row.addEventListener("click", () => this.navigate(row.dataset.switcherUrl), { signal: this.ac.signal });
+    return row;
   }
 
   actionRow(link) {
@@ -876,7 +893,9 @@ class TerminalTabs extends HTMLElement {
     const actionRows = Array.from(this.querySelectorAll(".terminal-tabs-new-menu [data-tabs-new]"))
       .map((link) => this.actionRow(link));
     const assistantRows = Array.from(this.querySelectorAll("[data-tabs-assistant]"))
-      .map((link) => this.assistantRow(link));
+      .map((link) => this.assistantRow(link))
+      .concat(Array.from(this.querySelectorAll("[data-tabs-assistant-instance]"))
+        .map((link) => this.assistantInstanceRow(link)));
     const sections = [];
     const listNodes = [...rows];
     const addSection = (key, title, nodes) => {
@@ -1112,7 +1131,6 @@ class TerminalTabs extends HTMLElement {
     if (!selected) return;
     if (selected.dataset.switcherToggle) this.expandGroup(selected.dataset.switcherToggle);
     else if (selected.dataset.switcherResume) void this.resumeTarget(selected);
-    else if (selected.dataset.switcherAssistant) this.openAssistant();
     else this.navigate(selected.dataset.switcherUrl);
   }
 

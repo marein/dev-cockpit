@@ -205,7 +205,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 	}
 	user, _ := sess.Get(sessionUserKey).(string)
 	token := s.csrfToken(c)
-	assistantNews := s.assistantNews()
+	qn := s.quicknav(c)
 	steered, prefill := s.watcher.Marks()
 	return render.Page{
 		Title:             title,
@@ -215,9 +215,9 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		CSRFToken:         token,
 		User:              user,
 		MultiCoder:        s.multiCoder(),
-		QuickNav:          s.quicknav(c),
+		QuickNav:          qn,
 		Jingle:            s.selectedJingle(),
-		AssistantNews:     assistantNews,
+		AssistantNews:     qn.AssistantNews(),
 		BackupReviewCount: s.backups.PendingReviewCount(),
 		UnreadNews:        s.notifier.UnreadCount(),
 		Steered:           steered,

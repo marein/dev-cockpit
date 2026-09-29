@@ -44,7 +44,7 @@
 <dc-assistant class="dc-work" data-assistant-coder="{{.CoderID}}" assistant-id="{{.ID}}" coder-label="{{.CoderLabel}}" stream-url="{{.StreamURL}}" post-url="{{.PostURL}}" message-url="{{.MessageURL}}" upload-url="{{.UploadURL}}" stt-url="{{.SttURL}}"{{if .TTS}} tts{{end}} max-bytes="{{.MaxPromptBytes}}" max-file-bytes="{{.MaxUploadBytes}}" draft-url="{{.DraftURL}}" draft-files="{{.DraftFiles}}"{{if .Running}} running{{end}}{{if .Blocked}} blocked{{end}}>
   <div class="dc-work-head" data-assistant-head>
     <span class="dc-term-icon assistant d-lg-none{{if .Running}} working{{end}}" data-assistant-head-icon aria-hidden="true"><i class="ti ti-sparkles"></i></span>
-    <h1 class="dc-work-title flex-fill min-w-0 text-truncate" data-assistant-title>{{if .Name}}{{.Name}}{{else}}New assistant{{end}}</h1>
+    <h1 class="dc-work-title flex-fill min-w-0 text-truncate" data-assistant-title>{{template "assistant_title.gohtml" .Name}}</h1>
     {{if .TTS}}
     {{/* The speaker opens the voice menu instead of switching on its own: the
          icon alone says whether answers read themselves aloud, so the button

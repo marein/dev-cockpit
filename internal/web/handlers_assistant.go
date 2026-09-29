@@ -59,20 +59,6 @@ func (s *Server) assistantLastCoderID() string {
 	return ""
 }
 
-// assistantNews is whether any assistant has an answer nobody has read. The
-// mark the entry points carry is one for the whole area, like the terminals'
-// (`[data-notify-any]`): news in one assistant is news whichever one an entry
-// would open, and which one it is in is what the list column's rows say.
-func (s *Server) assistantNews() bool {
-	unread := s.notifier.UnreadTargets()
-	for _, entry := range s.assistants.List() {
-		if unread[entry.ID] {
-			return true
-		}
-	}
-	return false
-}
-
 // pullHeader marks a page pulling its own address again to catch up with the
 // server. The render is the same, what differs is what it means: nobody
 // navigated, so nothing that follows a person's steps is written.
