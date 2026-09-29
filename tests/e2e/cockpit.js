@@ -19,7 +19,7 @@ const { assert, sleep, BASE } = L;
 // (the area `news`, labelled Notifications, every entry and Mark all read),
 // the theme, update and logout tiles (one height, the theme tile a square),
 // then the settings sections, the Settings head counting the open backup
-// reviews, and the docs. While it is open only Cockpit looks active. A phone
+// reviews, and the docs. Opening it leaves the page's tab marked. A phone
 // carries no bell, theme, update or logout in its work head any more.
 //
 // Gotchas:
@@ -159,6 +159,88 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
     await mp.waitForFunction(() => document.querySelector('.dc-tabbar button[data-ctx-area="cockpit"]').classList.contains("active"), null, { timeout: 4000 });
     got = await actives();
     assert(got.join(",") === "cockpit", `on /docs through the sheet the active tabs are ${JSON.stringify(got)}`);
+  });
+
+  await run("phone: the Cockpit sheet marks and centers the entry of the page on screen, the tab stands active with it", async () => {
+    const state = () => mp.$eval(SHEET, (sheet) => {
+      const rows = [...sheet.querySelectorAll("[data-cockpit-section=settings] .list-group-item.active")];
+      const body = sheet.querySelector(".dc-ctx-body");
+      const b = body.getBoundingClientRect();
+      const r = rows[0]?.getBoundingClientRect();
+      return {
+        active: rows.map((row) => row.dataset.settingsCoder || row.getAttribute("href")),
+        top: body.scrollTop,
+        centered: !r || Math.abs((r.top + r.bottom) / 2 - (b.top + b.bottom) / 2) <= 3
+          || (body.scrollTop >= body.scrollHeight - body.clientHeight - 1 && r.top >= b.top - 1 && r.bottom <= b.bottom + 1),
+        room: body.scrollHeight - body.scrollTop - (sheet.querySelector("[data-cockpit]").getBoundingClientRect().bottom - b.top) + parseFloat(getComputedStyle(body).paddingBottom),
+        tab: document.querySelector('.dc-tabbar button[data-ctx-area="cockpit"]').classList.contains("active"),
+        rowTop: r ? Math.round(r.top) : null,
+      };
+    });
+    // Safari has no scroll anchoring, so news landing above the entry after
+    // the open would push it down there. Chromium is made to behave the same,
+    // the news is held back and the sheet opened a second time: the body
+    // appears with the news in place and nothing moves afterwards.
+    const late = async (route) => {
+      if (route.request().method() === "GET") await sleep(800);
+      return route.fallback();
+    };
+    await mp.route("**/notifications", late);
+    const openOn = async (path) => {
+      await mp.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+      await mp.waitForSelector(COCKPIT, { timeout: 8000 });
+      await mp.addStyleTag({ content: ".dc-ctx-body { overflow-anchor: none; }" });
+      await openCockpit(mp);
+      await closeSheet(mp);
+      await mp.evaluate(() => {
+        window.dcNewsAtAppear = null;
+        const sheet = document.querySelector("dc-ctx-sheet");
+        const seen = new MutationObserver(() => {
+          const root = sheet.querySelector("[data-cockpit]");
+          if (!root) return;
+          window.dcNewsAtAppear = root.querySelectorAll("[data-cockpit-section=news] a[data-notify-id]").length;
+          seen.disconnect();
+        });
+        seen.observe(sheet, { childList: true, subtree: true });
+      });
+      await openCockpit(mp);
+      const news = await mp.evaluate(() => window.dcNewsAtAppear);
+      await sleep(300);
+      const got = await state();
+      await sleep(1200);
+      const later = await state();
+      await closeSheet(mp);
+      return { ...got, news, moved: later.rowTop !== got.rowTop || later.top !== got.top };
+    };
+    const none = await openOn("/projects");
+    assert(none.news === 3 && !none.moved, `on /projects the news was not in place at the open or the sheet moved: ${JSON.stringify(none)}`);
+    assert(none.active.length === 0 && none.top === 0, `on /projects the sheet marks ${JSON.stringify(none.active)} at scroll ${none.top}`);
+    const docs = await openOn("/docs");
+    assert(docs.active.join(",") === "/docs" && docs.news === 3 && !docs.moved && docs.centered && docs.room <= 1 && docs.tab, `on /docs: ${JSON.stringify(docs)}`);
+    await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await openCockpit(mp);
+    const coder = await mp.$eval(`${SHEET} a[data-settings-coder]`, (a) => ({ id: a.dataset.settingsCoder, href: a.getAttribute("href") }));
+    await closeSheet(mp);
+    const onCoder = await openOn(coder.href);
+    assert(onCoder.active.join(",") === coder.id && onCoder.news === 3 && !onCoder.moved && onCoder.centered && onCoder.room <= 1 && onCoder.tab, `on ${coder.href}: ${JSON.stringify(onCoder)}`);
+    await mp.unroute("**/notifications", late);
+  });
+
+  await run("phone: news that fails to load shows the sheet's Try again, which recovers", async () => {
+    const fail = (route) => route.request().method() === "GET" ? route.fulfill({ status: 500, body: "" }) : route.fallback();
+    await mp.route("**/notifications", fail);
+    await mp.goto(`${BASE}/docs`, { waitUntil: "domcontentloaded" });
+    await mp.waitForSelector(COCKPIT, { timeout: 8000 });
+    await mp.tap(COCKPIT);
+    await mp.waitForSelector(`${SHEET} [data-ctx-sheet-retry]`, { timeout: 8000 });
+    const error = await mp.$eval(`${SHEET} [data-ctx-sheet-error]`, (el) => el.textContent.trim());
+    assert(error === "The list could not be loaded." && !(await mp.$(`${SHEET} [data-cockpit]`)), `a failed news load shows ${error}`);
+    await mp.unroute("**/notifications", fail);
+    await mp.tap(`${SHEET} [data-ctx-sheet-retry]`);
+    await mp.waitForSelector(`${SHEET} [data-cockpit-section=news] a[data-notify-id]`, { timeout: 8000 });
+    const active = await mp.$$eval(`${SHEET} [data-cockpit-section=settings] .list-group-item.active`, (els) => els.map((el) => el.getAttribute("href")));
+    assert(active.join(",") === "/docs", `after Try again the sheet marks ${JSON.stringify(active)}`);
+    await closeSheet(mp);
   });
 
   await run("the Cockpit icon is the gauge, the tab's color while quiet, yellow and red by the worst reading, labelled", async () => {
@@ -357,7 +439,7 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
       return els.filter((el) => getComputedStyle(el).color === primary).map((el) => el.dataset.ctxArea || el.getAttribute("href"));
     });
     const open = await tones();
-    assert(open.join(",") === "cockpit", `with the sheet open the tabs marked are ${open}`);
+    assert(open.join(",") === "projects", `with the sheet open the tabs marked are ${open}`);
     const focus = await mp.evaluate(() => {
       const panel = document.querySelector("dc-ctx-sheet [data-ctx-sheet-panel]");
       return { inside: panel.contains(document.activeElement), label: panel.getAttribute("aria-label"), role: panel.getAttribute("role") };
@@ -516,6 +598,19 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
       return els.filter((el) => getComputedStyle(el).color === primary).map((el) => el.dataset.ctxArea || el.getAttribute("href"));
     });
     assert(tones.join(",") === "projects", `after closing the tabs marked are ${tones}`);
+  });
+
+  await run("phone: a sheet closed by touch leaves no focus ring on its tab", async () => {
+    await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await mp.waitForSelector(COCKPIT, { timeout: 8000 });
+    // A tap does not focus a button in iOS Safari, so the focus handed back
+    // on close is a script's, which WebKit shows as keyboard focus.
+    await mp.$eval(COCKPIT, (el) => el.addEventListener("mousedown", (event) => event.preventDefault()));
+    await openCockpit(mp);
+    await mp.touchscreen.tap(195, 20);
+    await mp.waitForFunction(() => document.querySelector("dc-ctx-sheet").hidden, null, { timeout: 4000 });
+    const ring = await mp.$eval(COCKPIT, (el) => ({ focused: document.activeElement === el, outline: getComputedStyle(el).outlineStyle, shadow: getComputedStyle(el).boxShadow }));
+    assert(ring.focused && ring.outline === "none" && ring.shadow === "none", `after a touch close the tab shows ${JSON.stringify(ring)}`);
   });
 
   await run("Show all opens every notification in the same sheet, an entry navigates", async () => {

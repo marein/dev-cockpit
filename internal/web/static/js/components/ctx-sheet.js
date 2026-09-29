@@ -2,6 +2,7 @@ import { areaKey, keepCtxScroll } from "@dc/ctx";
 import { syncAnimations } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import { matchesTokens } from "@dc/filter";
+import { getJSON } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
 import { get, set } from "@dc/store";
 
@@ -37,6 +38,8 @@ class CtxSheet extends HTMLElement {
         window.setTimeout(() => this.close(), 0);
       }
     }, { signal });
+    document.addEventListener("pointerdown", () => { this.byKey = false; }, { signal, capture: true });
+    document.addEventListener("keydown", () => { this.byKey = true; }, { signal, capture: true });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !this.hidden) this.close();
     }, { signal });
@@ -88,7 +91,15 @@ class CtxSheet extends HTMLElement {
     document.body.classList.remove("dc-sheet-open");
     const opener = this.opener;
     this.opener = null;
-    if (inside && opener && opener.isConnected) opener.focus({ preventScroll: true });
+    if (inside && opener && opener.isConnected) {
+      // Focus a script gives back reads as keyboard focus in WebKit after a
+      // touch, so the ring waits for a key.
+      if (!this.byKey) {
+        opener.dataset.dcQuietFocus = "";
+        opener.addEventListener("blur", () => delete opener.dataset.dcQuietFocus, { once: true });
+      }
+      opener.focus({ preventScroll: true });
+    }
   }
 
   async load(area, fresh) {
@@ -101,6 +112,10 @@ class CtxSheet extends HTMLElement {
       const response = await fetch(`/ctx/${encodeURIComponent(area)}?path=${encodeURIComponent(path)}`, { credentials: "same-origin", headers: { Accept: "text/html" } });
       if (!response.ok) throw new Error(`The list answered ${response.status}`);
       doc = new DOMParser().parseFromString(await response.text(), "text/html");
+      // A list that fills in after the open would push the rows below it, so
+      // its data comes with the column and fails with it.
+      const wait = doc.querySelector(".dc-ctx [data-ctx-sheet-wait]");
+      if (wait) wait.seed = await getJSON(wait.getAttribute("list-url"));
     } catch (error) {
       void error;
       window.clearTimeout(spinner);
@@ -121,9 +136,10 @@ class CtxSheet extends HTMLElement {
       if (icon) icon.className = "ti ti-x";
     }
     const current = this.panel.querySelector(".dc-ctx:not([data-ctx-sheet-placeholder])");
+    let upgraded = Promise.resolve();
     if (fresh || !current) {
       this.panel.replaceChildren(document.adoptNode(column));
-      window.app?.loadElements?.(this.panel);
+      upgraded = window.app?.loadElements?.(this.panel) ?? upgraded;
     } else {
       const body = current.querySelector(".dc-ctx-body");
       const freshBody = column.querySelector(".dc-ctx-body");
@@ -138,6 +154,8 @@ class CtxSheet extends HTMLElement {
     if (fresh || !current) {
       this.panel.querySelector("terminal-tabs")?.revealActive?.(true);
       this.panel.querySelector("dc-assistant-list")?.revealActive?.(true);
+      const row = this.panel.querySelector("[data-cockpit-section=settings] .list-group-item.active");
+      if (row) void upgraded.then(() => row.scrollIntoView({ block: "center" }));
       const body = column.hasAttribute("data-ctx-keep-scroll") ? column.querySelector(".dc-ctx-body") : null;
       if (body) keepCtxScroll(body, area);
     }

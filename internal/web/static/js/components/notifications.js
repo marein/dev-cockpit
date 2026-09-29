@@ -442,7 +442,8 @@ class Notifications extends HTMLElement {
     if (channel.unread !== null) channel.render();
 
     this.addEventListener("show.bs.dropdown", () => this.refresh(), { signal });
-    if (this.inline) this.queueRefresh();
+    if (this.inline && this.seed) this.renderList(this.seed.notifications || []);
+    else if (this.inline) this.queueRefresh();
 
     this.querySelector(".dc-notify-read-all")?.addEventListener("click", () => {
       postForm(channel.readUrl, { all: "1" })

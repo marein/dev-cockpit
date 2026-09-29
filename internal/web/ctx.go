@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
@@ -55,7 +56,19 @@ func (s *Server) handleCtx(c *gin.Context) {
 	case "docs":
 		c.HTML(http.StatusOK, "ctx_docs.gohtml", render.DocsData{Page: page, Topics: render.DocsTopics()})
 	case "cockpit":
-		c.HTML(http.StatusOK, "ctx_cockpit.gohtml", render.SettingsGeneralData{Page: page, SettingsNav: s.settingsNav(settingsSectionOf(cleanPath))})
+		active := settingsSectionOf(cleanPath)
+		if cleanPath == "/docs" {
+			active = "docs"
+		}
+		var co *coder.Manager
+		section := ""
+		for _, candidate := range s.coders {
+			if rest, ok := strings.CutPrefix(cleanPath, s.coderBase(candidate)+"/"); ok {
+				co = candidate
+				section = strings.SplitN(rest, "/", 2)[0]
+			}
+		}
+		c.HTML(http.StatusOK, "ctx_cockpit.gohtml", render.SettingsGeneralData{Page: page, SettingsNav: s.coderSettingsNav(active, co, section)})
 	case "news":
 		c.HTML(http.StatusOK, "ctx_news.gohtml", page)
 	case "assistants":

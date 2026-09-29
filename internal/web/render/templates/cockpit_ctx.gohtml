@@ -10,7 +10,7 @@
   {{template "host_status_sheet.gohtml" .Page}}
   <section data-cockpit-section="news">
     <div class="dc-section-head">News</div>
-    <dc-notifications inline compact limit="3"><div class="list-group list-group-flush dc-notify-list"></div></dc-notifications>
+    <dc-notifications inline compact limit="3" list-url="/notifications" data-ctx-sheet-wait><div class="list-group list-group-flush dc-notify-list"></div></dc-notifications>
     {{/* A button, not a link: the sheet closes on every link it holds, and
          this one only swaps what the sheet shows. */}}
     <div class="d-flex justify-content-end px-3 py-1"><button type="button" class="btn btn-link btn-sm p-0" data-ctx-area="news" data-cockpit-show-all>Show all</button></div>
@@ -43,7 +43,7 @@
     <div class="dc-section-head"><span class="flex-fill">Settings</span>{{template "backup_reviews_badge.gohtml" (dict "Count" .Page.BackupReviewCount "Class" "badge bg-primary-lt")}}</div>
     {{template "settings_nav" .SettingsNav}}
     <nav class="list-group list-group-flush dc-rows" aria-label="Docs">
-      <a href="/docs" class="list-group-item list-group-item-action" data-dc-focus="work">
+      <a href="/docs" class="list-group-item list-group-item-action{{if eq .SettingsNav.Active "docs"}} active{{end}}" data-dc-focus="work">
         <i class="ti ti-book" aria-hidden="true"></i><span class="flex-fill dc-trunc">Docs</span>
       </a>
     </nav>

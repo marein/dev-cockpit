@@ -282,9 +282,8 @@ button.dc-status-item, a.dc-status-item { cursor: pointer; }
 .dc-tabbar-btn[aria-disabled=true] { opacity: 0.4; pointer-events: none; }
 dc-host-status.dc-cockpit-icon { display: flex; }
 .dc-cockpit-icon .ti { --tblr-icon-size: 22px; font-size: 22px; line-height: 1; }
-body:has(dc-ctx-sheet:is([data-area="cockpit"], [data-area="news"]):not([hidden])) .dc-tabbar-btn.active:not([data-ctx-area="cockpit"]) { color: var(--tblr-secondary); }
-body:has(dc-ctx-sheet:is([data-area="cockpit"], [data-area="news"]):not([hidden])) .dc-tabbar-btn[data-ctx-area="cockpit"] { color: var(--tblr-primary); }
 .dc-sheet-panel:focus { outline: 0; }
+[data-dc-quiet-focus]:focus { outline: 0; box-shadow: none; }
 .dc-cockpit-meter .dc-host-meter-track { display: flex; width: 100%; height: 4px; }
 .dc-cockpit-tile { min-width: 0; min-height: 2.5rem; white-space: nowrap; }
 .dc-cockpit-tile-square { width: 2.5rem; height: 2.5rem; }
