@@ -58,14 +58,20 @@ func parseWorktrees(out []byte) []Worktree {
 // working copy, the branch it stands on, and where that branch begins.
 //
 // Start empty means Branch exists already and is only checked out there;
-// with a Start the branch is created at that point, which is also how a
-// branch that so far only exists on a remote gets a local one that follows
-// it. Dir must be an absolute path that is empty or not there yet, git
+// with a Start the branch is created at that point. Track makes Start its
+// upstream, which is how a branch that so far only exists on a remote gets a
+// local one that follows it, whatever the user's branch.autoSetupMerge says.
+// Without it every new branch starts with no upstream, from a local start
+// point just as from a remote one: git would otherwise follow a local branch
+// or a remote branch of another name, a plain push then goes nowhere useful
+// or is refused, and the first push is the one that sets an upstream of its
+// own name. Dir must be an absolute path that is empty or not there yet, git
 // refuses anything else and says so.
 type NewWorktree struct {
 	Dir    string
 	Branch string
 	Start  string
+	Track  bool
 }
 
 // AddWorktree adds a linked worktree to this repository. The registration is
@@ -88,6 +94,11 @@ func (r *Repo) AddWorktree(ctx context.Context, w NewWorktree) error {
 	}
 	args := []string{"worktree", "add"}
 	if w.Start != "" {
+		if w.Track {
+			args = append(args, "--track")
+		} else {
+			args = append(args, "--no-track")
+		}
 		args = append(args, "-b", w.Branch)
 	}
 	// The separator guards the two operands behind it, the directory and the

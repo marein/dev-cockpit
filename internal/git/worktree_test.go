@@ -69,6 +69,67 @@ func TestAddWorktreeCreatesTheBranchAtItsStart(t *testing.T) {
 	}
 }
 
+// A new branch that starts at a remote ref of another name must not follow it:
+// a plain push to an upstream of another name is refused, so the branch starts
+// without one and the first push gives it its own.
+func TestAddWorktreeFromARemoteRefStartsWithoutUpstream(t *testing.T) {
+	main, remote := remotePair(t)
+	dir := filepath.Join(t.TempDir(), "linked")
+	start := "origin/" + currentBranch(t, main)
+	if err := New(main).AddWorktree(context.Background(), NewWorktree{Dir: dir, Branch: "fresh", Start: start}); err != nil {
+		t.Fatalf("add worktree: %v", err)
+	}
+	if got := gitConfig(t, main, "branch.fresh.merge"); got != "" {
+		t.Fatalf("the new branch follows %q", got)
+	}
+
+	writeAt(t, dir, "f.txt", "f\n")
+	if _, err := New(dir).Commit(context.Background(), "fresh", []string{"f.txt"}, false); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := New(dir).Push(context.Background(), false); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if got := gitOut(t, remote, "rev-parse", "refs/heads/fresh"); got != headOf(t, dir) {
+		t.Fatalf("the branch did not arrive: %s", got)
+	}
+	if got := gitConfig(t, main, "branch.fresh.merge"); got != "refs/heads/fresh" {
+		t.Fatalf("branch.fresh.merge is %q", got)
+	}
+}
+
+func TestAddWorktreeOfARemoteBranchFollowsIt(t *testing.T) {
+	main, _ := remotePair(t)
+	runGit(t, main, "push", "-q", "origin", "HEAD:refs/heads/feature")
+	runGit(t, main, "fetch", "-q", "origin")
+	dir := filepath.Join(t.TempDir(), "linked")
+	if err := New(main).AddWorktree(context.Background(), NewWorktree{Dir: dir, Branch: "feature", Start: "origin/feature", Track: true}); err != nil {
+		t.Fatalf("add worktree: %v", err)
+	}
+	if got := gitConfig(t, main, "branch.feature.merge"); got != "refs/heads/feature" {
+		t.Fatalf("branch.feature.merge is %q", got)
+	}
+}
+
+// Track does not lean on the user's branch.autoSetupMerge, a setting that
+// turns git's own tracking off still gives the branch its remote.
+func TestAddWorktreeOfARemoteBranchFollowsItWithoutAutoSetupMerge(t *testing.T) {
+	main, _ := remotePair(t)
+	runGit(t, main, "config", "branch.autoSetupMerge", "false")
+	runGit(t, main, "push", "-q", "origin", "HEAD:refs/heads/feature")
+	runGit(t, main, "fetch", "-q", "origin")
+	dir := filepath.Join(t.TempDir(), "linked")
+	if err := New(main).AddWorktree(context.Background(), NewWorktree{Dir: dir, Branch: "feature", Start: "origin/feature", Track: true}); err != nil {
+		t.Fatalf("add worktree: %v", err)
+	}
+	if got := gitConfig(t, main, "branch.feature.merge"); got != "refs/heads/feature" {
+		t.Fatalf("branch.feature.merge is %q", got)
+	}
+	if got := gitConfig(t, main, "branch.feature.remote"); got != "origin" {
+		t.Fatalf("branch.feature.remote is %q", got)
+	}
+}
+
 // The branch of a worktree is not free for a second one, and git says so.
 // Nothing is left behind, the directory it would have filled stays untouched.
 func TestAddWorktreeRefusesABranchThatIsAlreadyCheckedOut(t *testing.T) {

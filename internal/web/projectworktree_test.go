@@ -269,20 +269,31 @@ func TestWorktreePlanResolvesTheBranchChoice(t *testing.T) {
 	ctx := context.Background()
 
 	plan, err := worktreePlan(ctx, src, projectCreateForm{BranchMode: "existing", Branch: "master"})
-	if err != nil || plan.Branch != "master" || plan.Start != "" {
+	if err != nil || plan.Branch != "master" || plan.Start != "" || plan.Track {
 		t.Fatalf("an existing branch answered %+v, %v", plan, err)
 	}
 
 	// A remote branch is not checked out as itself, it becomes the local
 	// branch that follows it.
 	plan, err = worktreePlan(ctx, src, projectCreateForm{BranchMode: "existing", Branch: "origin/shared"})
-	if err != nil || plan.Branch != "shared" || plan.Start != "origin/shared" {
+	if err != nil || plan.Branch != "shared" || plan.Start != "origin/shared" || !plan.Track {
 		t.Fatalf("a remote branch answered %+v, %v", plan, err)
 	}
 
 	plan, err = worktreePlan(ctx, src, projectCreateForm{BranchMode: "new", NewBranch: "wip", Start: "master"})
-	if err != nil || plan.Branch != "wip" || plan.Start != "master" {
+	if err != nil || plan.Branch != "wip" || plan.Start != "master" || plan.Track {
 		t.Fatalf("a new branch answered %+v, %v", plan, err)
+	}
+
+	// A new branch of another name than the remote one it starts at follows
+	// nothing, one of the same name follows the remote it came from.
+	plan, err = worktreePlan(ctx, src, projectCreateForm{BranchMode: "new", NewBranch: "wip", Start: "origin/shared"})
+	if err != nil || plan.Branch != "wip" || plan.Start != "origin/shared" || plan.Track {
+		t.Fatalf("a new branch from a remote one answered %+v, %v", plan, err)
+	}
+	plan, err = worktreePlan(ctx, src, projectCreateForm{BranchMode: "new", NewBranch: "shared", Start: "origin/shared"})
+	if err != nil || plan.Branch != "shared" || plan.Start != "origin/shared" || !plan.Track {
+		t.Fatalf("a new branch named like its remote start answered %+v, %v", plan, err)
 	}
 
 	// What is typed for a new branch becomes a name git takes, a space is a

@@ -422,7 +422,10 @@ func catchUpWorktree(ctx context.Context, dir, branch string) (string, error) {
 //
 // A new branch's name goes through typedBranchName like the editor's New
 // branch, so a space or another character git refuses becomes a dash instead
-// of git's refusal, and the flash names the branch as it was made.
+// of git's refusal, and the flash names the branch as it was made. A new
+// branch named like the remote branch it starts at follows that one, a push
+// then goes to the remote branch it started from and not to a new branch on
+// whichever remote a push picks.
 func worktreePlan(ctx context.Context, src project.Project, form projectCreateForm) (git.NewWorktree, error) {
 	if form.BranchMode == "new" {
 		name, err := typedBranchName(form.NewBranch)
@@ -437,7 +440,8 @@ func worktreePlan(ctx context.Context, src project.Project, form projectCreateFo
 		if ref.Name == "" {
 			return git.NewWorktree{}, errors.New("Choose where the new branch starts.")
 		}
-		return git.NewWorktree{Branch: name, Start: ref.Name}, nil
+		track := ref.Kind == git.KindRemote && ref.Branch == name
+		return git.NewWorktree{Branch: name, Start: ref.Name, Track: track}, nil
 	}
 	pick := strings.TrimSpace(form.Branch)
 	ref, err := worktreeRef(ctx, src, pick)
@@ -448,7 +452,7 @@ func worktreePlan(ctx context.Context, src project.Project, form projectCreateFo
 	case git.KindBranch:
 		return git.NewWorktree{Branch: ref.Name}, nil
 	case git.KindRemote:
-		return git.NewWorktree{Branch: ref.Branch, Start: ref.Name}, nil
+		return git.NewWorktree{Branch: ref.Branch, Start: ref.Name, Track: true}, nil
 	}
 	return git.NewWorktree{}, errors.New("Choose the branch the worktree stands on.")
 }
