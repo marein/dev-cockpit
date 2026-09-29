@@ -30,6 +30,11 @@ class AssistantList extends HTMLElement {
     if (this.hasAttribute("history")) {
       wireRowMenus(this, "[data-assistant-instance]", (row, x, y) => this.openRowMenu(row, x, y), { signal: this.ac.signal });
       this.addEventListener("click", (event) => {
+        if (event.target.closest("[data-assistant-grip]")) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         const button = event.target.closest("[data-assistant-menu]");
         if (!button) return;
         event.preventDefault();
@@ -195,9 +200,8 @@ class AssistantList extends HTMLElement {
   // order is posted to the server, which is where it lives: it comes back on
   // the next reload, on this device and on every other one. The gesture is the
   // tab strip's own, @dc/rowdrag, and this is one list with no groups in it, so
-  // a row only ever changes seats. The one deviation is the capture: this row
-  // is a container with the link inside it, so a capture on the press would
-  // retarget every click that opens an assistant.
+  // a row only ever changes seats. The one deviation is the capture, taken when
+  // the drag begins, so the carried row sits under the pointer from the press.
   wireDrag(signal) {
     this.rowDrag = new RowDrag(this, {
       rowSelector: "[data-assistant-instance]",

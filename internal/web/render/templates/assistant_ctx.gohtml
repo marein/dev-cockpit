@@ -44,20 +44,20 @@
      what, and the news mark says which one of them rang. */}}
 {{define "assistant_ctx_row.gohtml"}}
 {{with .Card}}
-<div class="list-group-item list-group-item-action{{if $.Active}} active{{end}}" data-assistant-instance="{{.ID}}" data-assistant-url="{{.URL}}" data-assistant-name="{{.Title}}">
+<a class="list-group-item list-group-item-action{{if $.Active}} active{{end}}" href="{{.URL}}" draggable="false" data-assistant-instance="{{.ID}}" data-assistant-url="{{.URL}}" data-assistant-name="{{.Title}}">
   <span class="dc-term-icon assistant{{if .Running}} working{{end}}{{if .News}} news{{end}}" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml"}}</span>
-  <a class="d-flex flex-column min-w-0 flex-fill text-reset text-decoration-none" href="{{.URL}}" draggable="false">
+  <span class="d-flex flex-column min-w-0 flex-fill">
     {{/* The badges keep the right edge of the row, whatever the name is: what
          they say is read down the column, so a title long enough to truncate
          must not carry them out of line with the rows above and below. */}}
     <span class="d-flex align-items-center gap-2 min-w-0"><span class="dc-trunc">{{if .Title}}{{.Title}}{{else}}New assistant{{end}}</span>{{if or .OpenJobs .Unfinished}}<span class="d-flex align-items-center gap-2 ms-auto flex-shrink-0">{{if .OpenJobs}}<span class="badge bg-purple-lt" title="Steers {{.OpenJobs}} coder{{if ne .OpenJobs 1}}s{{end}}"><i class="ti ti-steering-wheel me-1" aria-hidden="true"></i>{{.OpenJobs}}</span>{{end}}{{if .Unfinished}}<span class="badge bg-orange-lt">Unfinished</span>{{end}}</span>{{end}}</span>
     <span class="text-secondary small dc-trunc">{{.CoderLabel}} · {{.Messages}} message{{if ne .Messages 1}}s{{end}}{{if .Updated}} · <dc-time datetime="{{.Updated}}"></dc-time>{{end}}</span>
-  </a>
-  <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary flex-shrink-0" aria-label="Assistant actions" title="Actions" data-assistant-menu><i class="ti ti-dots" aria-hidden="true"></i></button>
+  </span>
+  <span class="terminal-tab-menu" role="button" tabindex="-1" aria-label="Assistant actions" title="Actions" data-assistant-menu><i class="ti ti-dots" aria-hidden="true"></i></span>
   {{/* The grip is the phone's way into the drag and stands where the strip's
        stands, at the end of the row behind the three dots: a touch anywhere
        else scrolls the list, a mouse drags the whole row. */}}
   <span class="dc-row-grip d-lg-none" data-assistant-grip aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
-</div>
+</a>
 {{end}}
 {{end}}

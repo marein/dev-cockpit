@@ -2623,10 +2623,19 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     assert(new URL(page.url()).pathname === `/assistants/${chatID}`,
       `the rail entry landed on ${page.url()} instead of the one open last`);
     // And a row of that list opens its own, the column staying where it is.
+    // The whole row is the target: the press lands on its edge, away from the
+    // name, while the row's own menu button still only opens the menu.
     const other = await page.locator("[data-assistant-rows] [data-assistant-instance]:not(.active)").first()
       .getAttribute("data-assistant-instance");
     assert(other, "the column offers no second assistant");
-    await afterSwap(page, () => page.locator(`[data-assistant-rows] [data-assistant-instance="${other}"] a[href]`).click());
+    const row = page.locator(`.dc-app > .dc-ctx[data-assistant-rows] [data-assistant-instance="${other}"]`);
+    await row.locator("[data-assistant-menu]").click();
+    await page.waitForSelector(".dc-context-menu", { timeout: 8000 });
+    await sleep(300);
+    assert(new URL(page.url()).pathname === `/assistants/${chatID}`, `the row's menu button navigated to ${page.url()}`);
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 8000 });
+    await afterSwap(page, () => row.click({ position: { x: 4, y: 4 } }));
     await page.waitForSelector(READY, { timeout: 15000 });
     assert(new URL(page.url()).pathname === `/assistants/${other}`, `the row landed on ${page.url()}`);
     await openConversation(page, chatID);
@@ -2715,7 +2724,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
   await run("opening an assistant puts the cursor in the box on a desktop", async () => {
     await openAssistant(page, chatID);
     await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
-    const rows = page.locator("[data-assistant-rows] [data-assistant-instance]:not(.active) a[href]");
+    const rows = page.locator("[data-assistant-rows] [data-assistant-instance]:not(.active)");
     assert(await rows.count(), "no other assistant to switch to");
 
     // By the mouse. The wait is on the address and then on the surface of the
@@ -2739,10 +2748,10 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     });
     assert(atEnd, "taking the focus moved the transcript off its end");
 
-    // By the keyboard: the row's link is focused and opened with Enter, the
+    // By the keyboard: the row is focused and opened with Enter, the
     // way somebody walking the page reaches it.
     await openView(page, "history", "[data-assistant-rows] [data-assistant-instance]");
-    const next = page.locator("[data-assistant-rows] [data-assistant-instance]:not(.active) a[href]").first();
+    const next = page.locator("[data-assistant-rows] [data-assistant-instance]:not(.active)").first();
     const target = await next.getAttribute("href");
     await next.focus();
     await page.keyboard.press("Enter");
@@ -2775,7 +2784,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-assistant-rows] [data-assistant-instance]", { timeout: 8000 });
     assert(mp.url().endsWith("/projects"), "the sparkle button left the page");
     assert(await mp.locator("dc-ctx-sheet [data-assistant-new]").count() >= 1, "the sheet offers no new assistant");
-    await mp.tap(`dc-ctx-sheet [data-assistant-instance="${chatID}"] a[href]`);
+    await mp.tap(`dc-ctx-sheet [data-assistant-instance="${chatID}"]`);
     await mp.waitForURL(new RegExp(`/assistants/${chatID}$`), { timeout: 10000 });
     await mp.waitForSelector(READY, { timeout: 15000 });
     const fit = await mp.evaluate(() => ({
@@ -2831,7 +2840,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
       const sp = await short.newPage();
       await L.login(sp);
       await openConversation(sp, order[1]);
-      await afterSwap(sp, () => sp.locator(`${column} [data-assistant-instance="${middle}"] a[href]`).click());
+      await afterSwap(sp, () => sp.locator(`${column} [data-assistant-instance="${middle}"]`).click());
       await sleep(700);
       clicked = await place(sp, column);
       assert(clicked && clicked.max > 40, `the column does not scroll in a short window: ${JSON.stringify(clicked)}`);
@@ -2928,8 +2937,11 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
 
   // The same drag on a phone: a finger starts one only on a row's grip, the way
   // the tab strip splits scrolling from sorting, and it is the same gesture
-  // (@dc/rowdrag) the mouse uses on the desktop column.
-  await run("a finger sorts the list by a row's grip", async () => {
+  // (@dc/rowdrag) the mouse uses on the desktop column. The row is a link, so
+  // the grip must never open it: a click that lands on the grip after the drag
+  // (a phone may deliver it later than the drag's own swallow lasts) is played
+  // as a tap on the grip.
+  await run("a finger sorts the list by a row's grip and opens nothing", async () => {
     const mp = await mobilePage();
     await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(mp);
@@ -2965,10 +2977,19 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
       want,
       { timeout: 15000 },
     );
-    // Out through a navigation: a tap right after a touch stream that the CDP
-    // drove is not reliably the next gesture the browser sees.
+    const onList = async (what) => {
+      await sleep(800);
+      assert(new URL(mp.url()).pathname === "/projects", `${what} opened ${mp.url()}`);
+      assert(await mp.locator("dc-ctx-sheet:not([hidden]) [data-assistant-rows]").isVisible(), `${what} closed the sheet`);
+    };
+    await onList("the drag");
+    const moved = await mp.locator(`dc-ctx-sheet [data-assistant-instance="${before[0]}"] [data-assistant-grip]`).boundingBox();
+    const tap = { x: moved.x + moved.width / 2, y: moved.y + moved.height / 2, id: 1 };
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [tap] });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await onList("a tap on the grip");
     await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-    return `the top row dragged to ${want.slice(0, 2).map((id) => id.slice(0, 4)).join(" ")}`;
+    return `the top row dragged to ${want.slice(0, 2).map((id) => id.slice(0, 4)).join(" ")}, the list stayed`;
   });
 
   await run("a finished answer marks the entry points until it is read", async () => {
@@ -3435,7 +3456,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
       "the aside sheet stayed over the coder page");
     await mp.tap('.dc-tabbar button[data-ctx-area="assistants"]');
     await mp.waitForSelector("dc-ctx-sheet:not([hidden]) [data-assistant-rows] [data-assistant-instance]", { timeout: 8000 });
-    await mp.tap("dc-ctx-sheet [data-assistant-rows] [data-assistant-instance] a[href]");
+    await mp.tap("dc-ctx-sheet [data-assistant-rows] [data-assistant-instance]");
     await mp.waitForSelector(READY, { timeout: 15000 });
     await closePanel(mp);
     return "coder page usable, two taps back";
@@ -3616,7 +3637,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     const row = page.locator("[data-assistant-rows] [data-assistant-instance]:not(.active)").first();
     const victim = await row.getAttribute("data-assistant-instance").catch(() => null);
     assert(victim, "no other row to open");
-    await row.locator("a").click();
+    await row.click();
     await page.waitForURL(new RegExp(`/assistants/${victim}$`), { timeout: 15000 });
     await page.waitForSelector(READY, { timeout: 15000 });
     assert((await page.locator("dc-assistant").getAttribute("assistant-id")) === victim,
