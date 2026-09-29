@@ -12,6 +12,7 @@ import { escapeHtml } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, SwipeNav, pushSample, releaseVelocity } from "@dc/swipe";
 import { matchesTokens } from "@dc/filter";
+import { diffLines, lineTokens } from "@dc/linediff";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
 import { isDark } from "@dc/theme";
@@ -28,6 +29,7 @@ const MAX_SAVED_TREE_DIRS = 200;
 // file per pause and neither serialises its writes.
 const SEARCH_DRAFT_DEBOUNCE_MS = 200;
 const PREVIEW_DEBOUNCE_MS = 500;
+const CHANGES_SCAN_LIMIT = 500;
 // How long autosave waits after the last change, and the whole trigger: a save
 // on a lost focus or on a page going away would be a second path, unreachable
 // on a phone and untestable everywhere.
@@ -5672,12 +5674,13 @@ async function init(root) {
   let changesSeq = 0;
 
   async function applyChangeBars() {
+    if (!editor.canChanges) return;
     const tab = activeTab();
     const textTab = tab && !tab.kind && !tab.compare && !tab.external ? tab : null;
     const seq = ++changesSeq;
     const valid = () => seq === changesSeq && activeTab() === tab;
-    if (!textTab || !gitRepo || !editor.canChanges || textTab.diffRev) {
-      void editor.setChanges(null, valid);
+    if (!textTab || !gitRepo || textTab.diffRev) {
+      editor.setChanges(null);
       return;
     }
     if (textTab.changeHead === undefined) {
@@ -5695,10 +5698,10 @@ async function init(root) {
     }
     const head = textTab.changeHead;
     if (head == null || overChangeLimits(head, editor.valueOf(textTab, true))) {
-      void editor.setChanges(null, valid);
+      editor.setChanges(null);
       return;
     }
-    void editor.setChanges(head, valid);
+    editor.setChanges(head);
   }
 
   // The same limits the diff asks about, applied silently: bars that are always
@@ -11568,9 +11571,17 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   // The gutter bars mark what the buffer holds against HEAD: a blue bar on
   // changed lines, a green one on new lines, a grey tick where lines were
   // deleted. They are not a mode like the diff, but a fact about the file,
-  // always visible, so there is no switch anywhere. The chunks live in a
-  // state field and follow every keystroke incrementally; only the plain
-  // editor carries them, a comparison already shows its changes.
+  // always visible, so there is no switch anywhere. The chunks are a line
+  // diff against HEAD, kept in a state field. An
+  // edit tokenizes only the lines it touched and diffs the whole file again,
+  // which stays cheap: equal ends are skipped and lines only one side holds
+  // never reach the diff. The search is bounded the way the diff views bound
+  // theirs: CHANGES_SCAN_LIMIT is a depth limit of the same shape as
+  // @codemirror/merge's default scanLimit and has the same value, but it
+  // counts edited lines where merge counts characters. A region past the
+  // bound is marked as one block, and the same text always gives the same
+  // bars. Only the plain editor carries them, a comparison already shows its
+  // changes.
   const changesConf = new Compartment();
 
   const CHANGE_COLORS = {
@@ -11631,42 +11642,28 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     return marker;
   }
 
-  // changeMarkers turns the chunks into gutter marks. A chunk is a char level
-  // answer that rounds to full lines and can therefore carry untouched
-  // neighbour lines (a deleted trailing line rides in a chunk with the line
-  // above it), so each chunk's lines are compared once more line by line: what
-  // matches nothing is a changed or new line, and lines HEAD had that match
-  // nothing put a tick on the boundary they vanished from.
-  function changeMarkers(chunks, doc, headDoc) {
+  // changeMarkers turns the line chunks into gutter marks: buffer lines with
+  // HEAD lines beside them are modified, buffer lines alone are new, and HEAD
+  // lines alone put a tick on the boundary they vanished from. A modification
+  // that swallowed more HEAD lines than it shows carries the tick under its
+  // last line.
+  function changeMarkers(chunks, doc) {
     const ranges = [];
-    const clamp = (pos) => Math.max(0, Math.min(pos, doc.length));
-    const headClamp = (pos) => Math.max(0, Math.min(pos, headDoc.length));
-    const barRun = (kind, from, to, cap) => {
-      for (let n = from; n <= to; n++) {
-        ranges.push(changeMarker(kind, n === from, n === to, cap && n === to).range(doc.line(n).from));
-      }
-    };
     // Deletions above and below the same untouched line merge into one marker,
     // two would stack in the gutter cell and break its height.
     const ticks = new Map();
     const tick = (kind, lineNo) => ticks.set(lineNo, ticks.has(lineNo) && ticks.get(lineNo) !== kind ? "delBoth" : kind);
     for (const chunk of chunks) {
-      if (chunk.fromB >= chunk.toB) {
-        const line = doc.lineAt(clamp(chunk.fromB));
-        tick(clamp(chunk.fromB) === line.from ? "delTop" : "delBottom", line.number);
+      const lostA = chunk.toLineA - chunk.fromLineA;
+      const shownB = chunk.toLineB - chunk.fromLineB;
+      if (shownB === 0) {
+        tick(chunk.fromLineB < doc.lines ? "delTop" : "delBottom", Math.min(chunk.fromLineB + 1, doc.lines));
         continue;
       }
-      const fromLine = doc.lineAt(clamp(chunk.fromB)).number;
-      const toLine = doc.lineAt(Math.max(clamp(chunk.fromB), clamp(chunk.toB - 1))).number;
-      const bLines = [];
-      for (let n = fromLine; n <= toLine; n++) bLines.push(doc.line(n).text);
-      const aLines = [];
-      if (chunk.toA > chunk.fromA) {
-        const fromA = headDoc.lineAt(headClamp(chunk.fromA)).number;
-        const toA = headDoc.lineAt(Math.max(headClamp(chunk.fromA), headClamp(chunk.toA - 1))).number;
-        for (let n = fromA; n <= toA; n++) aLines.push(headDoc.line(n).text);
+      for (let n = chunk.fromLineB + 1; n <= chunk.toLineB; n++) {
+        const last = n === chunk.toLineB;
+        ranges.push(changeMarker(lostA ? "mod" : "add", n === chunk.fromLineB + 1, last, last && lostA > shownB).range(doc.line(n).from));
       }
-      emitLineDiff(aLines, bLines, fromLine, barRun, tick);
     }
     for (const [lineNo, kind] of ticks) {
       ranges.push(changeMarker(kind).range(doc.line(lineNo).from));
@@ -11674,73 +11671,43 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     return state.RangeSet.of(ranges, true);
   }
 
-  // emitLineDiff aligns a chunk's HEAD lines with its buffer lines (LCS over
-  // whole lines) and reads the runs between the matches: both sides present is
-  // a modification, buffer only is an addition, HEAD only is a tick on the
-  // boundary. A modification that swallowed more HEAD lines than it shows
-  // carries the tick under its last line. A chunk too large to align falls
-  // back to "all modified", which is what it visually is anyway.
-  function emitLineDiff(aLines, bLines, firstLine, barRun, tick) {
-    const n = aLines.length;
-    const m = bLines.length;
-    if (n === 0) {
-      barRun("add", firstLine, firstLine + m - 1, false);
-      return;
-    }
-    if (n * m > 20000) {
-      barRun("mod", firstLine, firstLine + m - 1, n > m);
-      return;
-    }
-    const w = m + 1;
-    const lcs = new Int32Array((n + 1) * w);
-    for (let i = n - 1; i >= 0; i--) {
-      for (let j = m - 1; j >= 0; j--) {
-        lcs[i * w + j] = aLines[i] === bLines[j]
-          ? lcs[(i + 1) * w + j + 1] + 1
-          : Math.max(lcs[(i + 1) * w + j], lcs[i * w + j + 1]);
-      }
-    }
-    let i = 0;
-    let j = 0;
-    while (i < n || j < m) {
-      if (i < n && j < m && aLines[i] === bLines[j]) {
-        i += 1;
-        j += 1;
-        continue;
-      }
-      const jStart = j;
-      let del = 0;
-      let ins = 0;
-      while (i < n || j < m) {
-        if (i < n && j < m && aLines[i] === bLines[j]) break;
-        if (i < n && (j >= m || lcs[(i + 1) * w + j] >= lcs[i * w + j + 1])) {
-          i += 1;
-          del += 1;
-        } else {
-          j += 1;
-          ins += 1;
-        }
-      }
-      if (ins > 0) barRun(del > 0 ? "mod" : "add", firstLine + jStart, firstLine + j - 1, del > ins);
-      else if (j < m) tick("delTop", firstLine + j);
-      else tick("delBottom", firstLine + m - 1);
-    }
-  }
-
   function changesExtension(text) {
-    if (text == null || !mergeMod) return [];
-    const headDoc = state.Text.of(text.split("\n"));
+    if (text == null) return [];
+    const head = lineTokens(text.split("\n"));
+    const docTokens = (doc) => {
+      const tokens = new Int32Array(doc.lines);
+      let i = 0;
+      for (const line of doc.iterLines()) tokens[i++] = head.tokenOf(line);
+      return tokens;
+    };
+    const diffed = (tokens) => ({ tokens, chunks: diffLines(head.tokens, tokens, CHANGES_SCAN_LIMIT) });
     const field = state.StateField.define({
-      create: (st) => mergeMod.Chunk.build(headDoc, st.doc),
-      update: (chunks, tr) => (tr.docChanged ? mergeMod.Chunk.updateB(chunks, headDoc, tr.newDoc, tr.changes) : chunks),
+      create: (st) => diffed(docTokens(st.doc)),
+      update(value, tr) {
+        if (!tr.docChanged) return value;
+        const before = tr.startState.doc;
+        const doc = tr.newDoc;
+        let from = before.lines;
+        let toOld = 0;
+        tr.changes.iterChangedRanges((fromA, toA) => {
+          from = Math.min(from, before.lineAt(fromA).number - 1);
+          toOld = Math.max(toOld, before.lineAt(toA).number);
+        });
+        const toNew = toOld + doc.lines - before.lines;
+        const tokens = new Int32Array(doc.lines);
+        tokens.set(value.tokens.subarray(0, from));
+        for (let j = from; j < toNew; j++) tokens[j] = head.tokenOf(doc.line(j + 1).text);
+        tokens.set(value.tokens.subarray(toOld), toNew);
+        return diffed(tokens);
+      },
     });
     let cache = { chunks: null, doc: null, set: state.RangeSet.empty };
     return [field, view.gutter({
       class: "cm-changes",
       markers(v) {
-        const chunks = v.state.field(field);
+        const { chunks } = v.state.field(field);
         if (cache.chunks !== chunks || cache.doc !== v.state.doc) {
-          cache = { chunks, doc: v.state.doc, set: changeMarkers(chunks, v.state.doc, headDoc) };
+          cache = { chunks, doc: v.state.doc, set: changeMarkers(chunks, v.state.doc) };
         }
         return cache.set;
       },
@@ -12243,11 +12210,8 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     // takes them off with null. It always reaches the plain editor, never a
     // merge view: a state restored by a tab switch carries whatever bars it had,
     // and the caller reapplies right after, so dispatching unconditionally is
-    // what keeps the two in step. valid is checked after the one await, the
-    // same guard every builder here uses.
-    async setChanges(text, valid) {
-      if (text != null) await loadMerge();
-      if (valid && !valid()) return;
+    // what keeps the two in step.
+    setChanges(text) {
       editorView.dispatch({ effects: changesConf.reconfigure(changesExtension(text)) });
     },
     comparing: () => compareOn && !!mergeView,
@@ -12607,7 +12571,6 @@ function createTextarea(host, hooks, settings) {
     canComments: false,
     setComments() {},
     canChanges: false,
-    async setChanges() {},
     comparing: () => false,
     compareValue: () => "",
     captureCompare() {},
