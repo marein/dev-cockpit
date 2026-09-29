@@ -1179,6 +1179,9 @@ func TestADeletedCoderDropsTheStandingTriggerAndKeepsTheSpentOne(t *testing.T) {
 	if got := DroppedNote(dropped); got != "1 trigger dropped" {
 		t.Fatalf("want one trigger in the sentence, got %q", got)
 	}
+	// The standing trigger fired for the deletion before it was dropped, so its
+	// reaction still pushes an answer, and the test ends after that write.
+	f.waitPushed(t, 1)
 	if _, ok := f.reactor.Get(standing.ID); ok {
 		t.Fatal("the standing trigger survived its only terminal")
 	}

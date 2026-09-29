@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1310,6 +1311,10 @@ func TestACoderThatIsGoneStillGetsOneCheck(t *testing.T) {
 
 	f.watcher.Handle("term-1")
 	f.waitJobState(t, "term-1", JobBlocked)
+	waitFor(t, "the report in the conversation", func() bool {
+		fresh, err := f.svc.Get(c.ID)
+		return err == nil && len(fresh.Messages) > 0
+	})
 
 	fresh, _ := f.svc.Get(c.ID)
 	if len(fresh.Messages) != 1 {
@@ -1599,9 +1604,11 @@ func TestAnOverdueFinishedCheckStillDeliversItsVerdict(t *testing.T) {
 	}
 	watcher.Recover(adopted)
 
-	waitFor(t, "the verdict to close the job", func() bool {
+	// The job closes before its note is written, so the wait is for both.
+	waitFor(t, "the verdict to close the job and reach the conversation", func() bool {
 		job, ok := jobs.Find("term-1")
-		return ok && job.State == JobDone
+		fresh, err := restarted.Get(c.ID)
+		return ok && job.State == JobDone && err == nil && slices.ContainsFunc(fresh.Messages, Message.IsNote)
 	})
 	fresh, err := restarted.Get(c.ID)
 	if err != nil {
@@ -1845,6 +1852,10 @@ func TestTwoSilentChecksInARowReachTheUser(t *testing.T) {
 	f.waitNote(t, "term-1")
 	f.watcher.Handle("term-1")
 	f.waitJobState(t, "term-1", JobBlocked)
+	waitFor(t, "the report in the conversation", func() bool {
+		fresh, err := f.svc.Get(c.ID)
+		return err == nil && len(fresh.Messages) > 0
+	})
 
 	fresh, _ := f.svc.Get(c.ID)
 	if len(fresh.Messages) != 1 {

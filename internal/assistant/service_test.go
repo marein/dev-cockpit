@@ -377,11 +377,17 @@ func quiesce(t *testing.T, svc *Service, w *Watcher) {
 			checking = len(w.running)
 			w.mu.Unlock()
 		}
-		if len(open) == 0 && checking == 0 {
+		reacting := 0
+		for _, trigger := range svc.events.triggers.All() {
+			if trigger.Reacting() {
+				reacting++
+			}
+		}
+		if len(open) == 0 && checking == 0 && reacting == 0 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Errorf("the test left %d turn(s) and %d check(s) running", len(open), checking)
+			t.Errorf("the test left %d turn(s), %d check(s) and %d reaction(s) running", len(open), checking, reacting)
 			return
 		}
 		// A turn a test left open never ends on its own: the fake waits for a
