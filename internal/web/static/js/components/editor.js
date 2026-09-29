@@ -10018,7 +10018,10 @@ async function init(root) {
     const ids = termIds();
     if (!termActiveId || !ids.includes(termActiveId)) termActiveId = ids[0] || null;
     if (termOpen && termActiveId) void activateTermPane(termActiveId, { focus });
-    else paintTermTabs();
+    else {
+      paintTermTabs();
+      if (termOpen && focus) termPanelEl.focus({ preventScroll: true });
+    }
   }
 
   async function loadTerminals({ focus = false } = {}) {
@@ -10067,6 +10070,7 @@ async function init(root) {
       return;
     }
     if (termActiveId) await activateTermPane(termActiveId, { focus });
+    else if (focus) termPanelEl.focus({ preventScroll: true });
   }
 
   function closeTermPanel() {

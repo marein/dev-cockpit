@@ -34,6 +34,8 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // restored on load, closing the active tab hands focus to the neighbor's
 // terminal, and the panel owns the terminal keys once it was clicked anywhere
 // (a focus-owner flag, because a click on the bare strip focuses nothing).
+// A panel opened without any terminal takes the focus itself, so Cmd+T
+// opens the + menu right after Ctrl+J or a click opened it.
 // A coder created through the + menu comes back to the editor: the create
 // form's action carries the return target plus the panel=1 marker, the server
 // redirects to .../editor?terminal=<id> and the panel activates that tab
@@ -92,6 +94,28 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
       });
       assert(emptyVisible, "no empty state for a project without terminals");
       assert((await tabCount()) === 0, "tabs rendered for a project without terminals");
+    });
+
+    await run("desktop: Cmd+T opens the + menu at once after Ctrl+J or a click opened a panel without terminals", async () => {
+      const menuOpen = () => page.evaluate(() => !!document.querySelector("[data-editor-term-panel] .dropdown-menu.show"));
+      const openers = [
+        ["Ctrl+J", () => page.keyboard.press("Control+j")],
+        ["a click on the statusbar button", () => page.click("[data-editor-term-status]")],
+      ];
+      for (const [label, open] of openers) {
+        await page.keyboard.press("Control+j");
+        await page.waitForFunction(() => document.querySelector("[data-editor-term-panel]").hidden, null, { timeout: 5000 });
+        await open();
+        await page.waitForFunction(() => !document.querySelector("[data-editor-term-panel]").hidden, null, { timeout: 5000 });
+        assert(await panelVisible(), `${label} did not open the panel`);
+        assert((await tabCount()) === 0, "the project already has terminals");
+        await page.keyboard.press("Meta+t");
+        await page.waitForSelector(`${panel} .dropdown-menu.show`, { timeout: 3000 }).catch(() => {});
+        assert(await menuOpen(), `Cmd+T right after ${label} did not open the + menu`);
+        await page.keyboard.press("Escape");
+        await page.waitForSelector(`${panel} .dropdown-menu.show`, { state: "detached", timeout: 5000 }).catch(() => {});
+        assert(!(await menuOpen()), `Escape did not close the + menu after ${label}`);
+      }
     });
 
     await run("desktop: the + dropdown offers New coder and creates a shell whose island mounts", async () => {
