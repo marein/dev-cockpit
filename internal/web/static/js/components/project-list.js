@@ -592,7 +592,7 @@ class ProjectList extends HTMLElement {
     options.forEach((opt) => {
       opt.addEventListener("click", () => {
         const mode = opt.dataset.projectSortOption;
-        store.set(projectSort.KEY, mode);
+        projectSort.setMode(mode);
         apply(mode);
       }, { signal: this.ac.signal });
     });

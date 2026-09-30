@@ -135,6 +135,7 @@ func (s *Server) dockerByProject(projects []project.Project) map[string]render.P
 			row := render.DockerStack{
 				Stack: stack,
 				Busy:  s.docker.ComposeBusy(stack.Dir),
+				Links: matcher.StackLinks(state, stack.Dir),
 			}
 			// The newest run of the stack, going or over: its output is what
 			// the menu leads to, which is the only way back to what a command

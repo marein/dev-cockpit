@@ -324,6 +324,9 @@ type DockerStack struct {
 	RunID     string
 	RunAction string
 	RunGoing  bool
+	// Links are the addresses the stack's containers answer on, the routed
+	// hosts first and the published ports ascending (StackLinks).
+	Links []docker.Link
 }
 
 // ProjectDelete is what a row says about its own deletion: one that brings

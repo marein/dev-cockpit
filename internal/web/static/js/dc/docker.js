@@ -152,17 +152,23 @@ function linkAddress(link) {
 // complete.
 const LABEL_TAIL = 24;
 
-// addressLabel splits an address so the ellipsis lands in the middle. What
+// splitAddress splits an address so the ellipsis lands in the middle. What
 // tells the sibling hosts of one container apart is their end, so the end is
 // the part that must survive: the tail starts at the last dot of the host and runs
 // to the end, path included, and the head takes whatever is left. An address
 // whose tail alone would be too long is cut a fixed distance from its end
-// instead, which keeps the same promise.
-function addressLabel(address) {
+// instead, which keeps the same promise. The menus and the status line's link
+// chips split through here alike.
+export function splitAddress(address) {
   const found = /\.[^./]+(\/.*)?$/.exec(address);
   let cut = found ? found.index : -1;
   if (cut < 0 || address.length - cut > LABEL_TAIL) cut = Math.max(0, address.length - LABEL_TAIL);
-  return { head: `Open ${address.slice(0, cut)}`, tail: address.slice(cut) };
+  return { head: address.slice(0, cut), tail: address.slice(cut) };
+}
+
+function addressLabel(address) {
+  const { head, tail } = splitAddress(address);
+  return { head: `Open ${head}`, tail };
 }
 
 // linkItems are the addresses one container answers on, as menu entries: the

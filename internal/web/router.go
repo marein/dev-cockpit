@@ -266,6 +266,9 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// actions are project scoped and live under the project below.
 	// The configured compose commands belong to the install, not to a
 	// container, so putting the list back sits next to them.
+	// The status line's links chip pulls its render from here on every
+	// docker event, the way the tab strip pulls /terminal-tabs.
+	auth.GET("/docker/links", s.handleStatusLinks)
 	auth.POST("/docker/actions/restore", s.handleDockerActionsRestore)
 	auth.POST("/docker/link-rules/restore", s.handleDockerLinkRulesRestore)
 	auth.POST("/docker/:id/start", s.handleDockerStart)

@@ -525,6 +525,12 @@ func DocsTopics() []DocsTopic {
 					Desc:  `A published port is opened on the address this page was reached on, at that port: <em>Open :18088</em>. A container behind a reverse proxy publishes nothing and is reached by host name out of one of its labels: <em>Open app.example.com</em>, the routed addresses first, without a port, over the scheme this page uses. Which label carries it is configuration, under Settings &rsaquo; Docker: the label, with <code>*</code> for any part of it, and a regular expression with a <code>host</code> capture. One rule covers the traefik router labels out of the box, and each row says what it finds in the containers running right now.`,
 				},
 				{
+					Title:    "Links of running stacks",
+					Tag:      "Status line",
+					TagClass: "bg-secondary-lt",
+					Desc:     `While a stack runs, a chip next to the server bars counts the addresses its containers answer on and the projects they belong to. Its menu lists them by project and stack, in the project order picked on the projects page, routed hosts first, then ports ascending, each opening in a new tab. The project of the page you are on starts unfolded, on a page without one the project you used last; the projects you unfold or fold stay that way in this browser. The chip follows the daemon live and is gone while nothing runs. Wide screens with a mouse only.`,
+				},
+				{
 					Title: "Compose actions",
 					Desc:  `A project with a compose file carries a compose button <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> next to its row actions, also while nothing runs yet. Its menu opens every address the project's containers answer on, follows the whole stack in one <em>Logs</em> terminal, and lists one entry per configured command. Each runs in the background, the chips following live and a notification telling when it finished or failed, and it keeps going when the cockpit restarts. The arrow on a run's output page leads back to the page it was opened from, from this menu and from a notification to the project's row. An assistant's run reports into its thread instead, see Assistants.`,
 				},

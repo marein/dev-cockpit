@@ -55,6 +55,7 @@
       "dc-notifications": "{{asset "/js/components/notifications.js"}}",
       "dc-update-check": "{{asset "/js/components/update-check.js"}}",
       "dc-host-status": "{{asset "/js/components/host-status.js"}}",
+      "dc-status-links": "{{asset "/js/components/status-links.js"}}",
       "dc-steered-mark": "{{asset "/js/components/steered-mark.js"}}",
       "dc-steer-badge": "{{asset "/js/components/steer-badge.js"}}",
       "dc-project-list": "{{asset "/js/components/project-list.js"}}",
@@ -291,10 +292,12 @@
      notifications.js can follow the backupreviews event into it. */}}
 {{define "backup_reviews_badge.gohtml"}}<span class="{{.Class}}{{if not .Count}} d-none{{end}}" data-backup-reviews title="Backup files to resolve" aria-label="{{.Count}} backup {{if eq .Count 1}}file{{else}}files{{end}} to resolve">{{.Count}}</span>{{end}}
 
-{{/* The status line under the shell: the server, the version. */}}
+{{/* The status line under the shell: the server and the links of the
+     running stacks at the left, the version at the right. */}}
 {{define "shell_status.gohtml"}}
 <footer class="dc-status d-print-none">
   {{template "host_status_bar.gohtml" .}}
+  {{template "status_links.gohtml" .}}
   <span class="dc-status-gap"></span>
   <span class="dc-status-item" title="Version">Version {{appVersion}} <dc-update-check id="dc-update" data-version="{{appVersion}}"></dc-update-check></span>
 </footer>

@@ -6,7 +6,7 @@
 //
 // Modes: "alpha" by name; "active" puts projects with a running session, shell
 // or container first (then alphabetical); "recent" by last opened, most recent first.
-import { get } from "@dc/store";
+import { get, set } from "@dc/store";
 
 export const KEY = "dc-project-sort";
 export const MODES = ["alpha", "active", "recent"];
@@ -16,6 +16,17 @@ export const INDEX = { selector: "[data-index-project]", name: "indexProject", a
 export function mode() {
   const stored = get(KEY, "");
   return MODES.indexOf(stored) >= 0 ? stored : "alpha";
+}
+
+// setMode stores the pick and tells the page, so a listing that is not the
+// one the pick was made in follows at once (onModeChange).
+export function setMode(m) {
+  set(KEY, m);
+  document.dispatchEvent(new CustomEvent("dc:project-sort", { detail: m }));
+}
+
+export function onModeChange(handler, options) {
+  document.addEventListener("dc:project-sort", (event) => handler(event.detail), options);
 }
 
 function keyOf(node, f = CARD) {

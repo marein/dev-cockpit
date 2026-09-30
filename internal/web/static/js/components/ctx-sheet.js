@@ -190,7 +190,7 @@ class CtxSheet extends HTMLElement {
         for (const opt of options) {
           opt.addEventListener("click", () => {
             const mode = opt.dataset.ctxSortOption;
-            set(projectSort.KEY, mode);
+            projectSort.setMode(mode);
             const list = this.panel.querySelector("[data-project-index]");
             if (list) projectSort.sort(list, mode, projectSort.INDEX);
             mark(mode);

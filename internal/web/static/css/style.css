@@ -263,6 +263,17 @@ button.dc-status-item, a.dc-status-item { cursor: pointer; }
 .dc-host-meters { gap: 10px; }
 .dc-host-meter { display: inline-flex; align-items: center; gap: 4px; }
 .dc-host-meter-track { width: 32px; height: 5px; background: var(--tblr-border-color); }
+.dc-status dc-status-links { display: flex; align-items: center; gap: 12px; }
+.dc-status-sep { width: 1px; height: 12px; background: var(--tblr-border-color); }
+.dc-status dc-status-links .dropdown-menu { min-width: 18rem; max-width: 24rem; max-height: 60vh; overflow-y: auto; }
+.dc-status-links-chip, .dc-status-link {
+  --tblr-status-height: 18px; --tblr-status-padding-y: 0; --tblr-status-padding-x: 8px; --tblr-status-gap: 5px;
+  font-size: 11px; cursor: pointer; text-decoration: none;
+}
+.dc-status-links-chip:hover, .dc-status-link:hover { color: var(--tblr-primary) !important; text-decoration: none; }
+.dc-status-link { --tblr-status-gap: 0; max-width: 100%; min-width: 0; }
+.dc-status-link .status-dot { flex: 0 0 auto; margin-right: 4px; }
+.dc-status-links-stacks { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 8px 32px; }
 .dc-tabbar {
   display: none; grid-area: tabs;
   z-index: 20;

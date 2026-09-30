@@ -224,6 +224,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		SteerPrefill:      prefill,
 		Working:           s.activity.Working(),
 		Host:              s.host.Stats(),
+		Links:             render.NewStatusLinks(qn.AllProjects, qn.CurrentProject),
 	}
 }
 

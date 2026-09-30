@@ -124,6 +124,10 @@ type Page struct {
 	// line is right before the first event arrives. It refreshes over
 	// the event stream from there.
 	Host hostinfo.Stats
+	// Links is the status line's links chip at render time, read off the
+	// same project browser the quick nav carries. It refreshes over the
+	// docker event from there.
+	Links StatusLinks
 }
 
 // QuickNav feeds the quick nav floating button: the live sessions and shells you

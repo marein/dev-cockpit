@@ -1,0 +1,41 @@
+{{/* The links chip of the status line, a wide fine pointer screen's alone,
+     next to the host meters behind a separator: how many addresses the
+     running stacks answer on and in how many projects, behind a green light.
+     It is the button of a dropup listing them by project and stack, in the
+     app's project order, the project of the page (else the one used last)
+     open and the others folded with their count until a person unfolds them.
+     The whole element hides while no stack runs. The server renders it on
+     every page, status-links.js pulls this same template on the docker event
+     and keeps the order and the folds. */}}
+{{define "status_links.gohtml"}}
+{{/* The status line scrolls sideways when it has to, which clips a menu
+     placed inside it, so this one is positioned fixed like the host meters. */}}
+<dc-status-links class="dropdown dropup dc-fine-only"{{if not .Links.Any}} hidden{{end}}>
+  <span class="dc-status-sep" aria-hidden="true"></span>
+  <button type="button" class="status status-green status-lite dc-status-links-chip" data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' data-links-toggle aria-label="Links of running stacks" title="Links of running stacks">
+    <span class="status-dot" aria-hidden="true"></span>
+    <span data-links-summary>{{.Links.Summary}}</span>
+  </button>
+  <div class="dropdown-menu" data-links-menu>{{template "status_links_menu.gohtml" .Links}}</div>
+</dc-status-links>
+{{end}}
+
+{{define "status_links_menu.gohtml"}}
+{{range .Projects}}
+<div data-links-project="{{.Name}}" data-links-active="{{if .Active}}true{{else}}false{{end}}" data-links-used="{{.LastUsedUnix}}" data-links-worktree-of="{{.WorktreeOf}}">
+  <button type="button" class="dropdown-item d-flex align-items-center gap-2" data-links-fold aria-expanded="{{if .Open}}true{{else}}false{{end}}" aria-label="{{.Name}}, {{.Links}} {{if eq .Links 1}}link{{else}}links{{end}}">
+    <i class="ti {{if .Open}}ti-chevron-down{{else}}ti-chevron-right{{end}} text-secondary" data-links-chevron aria-hidden="true"></i>
+    <span class="fw-medium dc-trunc">{{.Name}}</span>
+    <span class="ms-auto text-secondary" data-links-count>{{.Links}}</span>
+  </button>
+  <div class="dc-status-links-stacks" data-links-stacks{{if not .Open}} hidden{{end}}>
+    {{range .Stacks}}
+    {{with .Label}}<div class="text-secondary small">{{.}}</div>{{end}}
+    <div class="d-flex flex-wrap gap-1">
+      {{range .Links}}<a class="status status-green status-lite dc-status-link" href="{{.URL}}" target="_blank" rel="noopener" title="Open {{.Address}}"{{if .Host}} data-links-route="{{.Address}}"{{end}}><span class="status-dot" aria-hidden="true"></span>{{.Address}}</a>{{end}}
+    </div>
+    {{end}}
+  </div>
+</div>
+{{end}}
+{{end}}
