@@ -16,6 +16,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/coder/claude"
 	codercopilot "github.com/marein/dev-cockpit/internal/coder/copilot"
 	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/recent"
 	"github.com/marein/dev-cockpit/internal/tmux"
@@ -57,7 +58,7 @@ func copyFixtureConversation(t *testing.T) []coder.Message {
 	if err := os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(strings.Join(copyFixture, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	all, err := claude.New("", nil).SessionConversation("s1")
+	all, err := claude.New(t.TempDir(), "", nil, ollama.New(nil, "http://127.0.0.1:1/catalog", "")).SessionConversation("s1")
 	if err != nil {
 		t.Fatalf("read the fixture: %v", err)
 	}

@@ -28,6 +28,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/hostinfo"
 	"github.com/marein/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/pluginhost"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/push"
@@ -71,6 +72,7 @@ type Server struct {
 	activity     *activity.Tracker
 	bus          *eventbus.Bus
 	settings     *settings.Store
+	ollama       *ollama.Client
 	pusher       *push.Service
 	restorer     *restore.Service
 	version      string
@@ -172,7 +174,7 @@ var localCallKey localCallKeyType
 // NewServer constructs a Server serving the given coders. bus is the app
 // wide event stream; it is built by the caller because the plugins configure
 // before this server exists, against the same bus.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, tracker *activity.Tracker, settingsStore *settings.Store, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, voiceService *voice.Service, plugins []*pluginhost.Serve, bus *eventbus.Bus, version, updateFeedURL, updateFeedFormat string, devBuild bool) (*Server, error) {
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, tracker *activity.Tracker, settingsStore *settings.Store, launcher *ollama.Client, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, voiceService *voice.Service, plugins []*pluginhost.Serve, bus *eventbus.Bus, version, updateFeedURL, updateFeedFormat string, devBuild bool) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
@@ -206,6 +208,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		activity:        tracker,
 		bus:             bus,
 		settings:        settingsStore,
+		ollama:          launcher,
 		pusher:          pusher,
 		restorer:        restorer,
 		version:         version,

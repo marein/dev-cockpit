@@ -109,7 +109,7 @@ func (s *Server) assistantModels(c *gin.Context, id string) {
 		// models is the same reading the stream's models frame carries, picks
 		// and stamp, so the page applies its own save and a frame from
 		// elsewhere through one shape and can tell which of the two is older.
-		c.JSON(http.StatusOK, gin.H{"saved": true, "model": entry.Model, "checkModel": entry.CheckModel, "triggerModel": entry.TriggerModel, "models": entry.ModelPicks(), "message": message})
+		c.JSON(http.StatusOK, gin.H{"saved": true, "model": entry.Model, "checkModel": entry.CheckModel, "triggerModel": entry.TriggerModel, "models": s.modelsFrame(entry.CoderID, entry.ModelPicks()), "message": message})
 		return
 	}
 	s.redirectWithFlash(c, "/assistants/"+id, message, "")
@@ -190,12 +190,30 @@ func orCLIDefault(name string) string {
 // included, and on nothing else.
 func (s *Server) assistantModelsData(current assistant.Instance) *render.AssistantModels {
 	repo := s.coderModelRepository(current.CoderID)
+	frame := s.modelsFrame(current.CoderID, current.ModelPicks())
 	return &render.AssistantModels{
-		Chat:    modelPick("model", current.Model, coderDefaultLabel(assistant.DefaultModelFor(assistant.RunChat, current.Summary, s.modelDefaults(current.CoderID))), repo),
-		Check:   modelPick("check_model", current.CheckModel, modelSameChatLabel, repo),
-		Trigger: modelPick("trigger_model", current.TriggerModel, modelSameChatLabel, repo),
-		Note:    repo.Note(),
+		Chat:     modelPick("model", current.Model, coderDefaultLabel(assistant.DefaultModelFor(assistant.RunChat, current.Summary, s.modelDefaults(current.CoderID))), repo),
+		Check:    modelPick("check_model", current.CheckModel, modelSameChatLabel, repo),
+		Trigger:  modelPick("trigger_model", current.TriggerModel, modelSameChatLabel, repo),
+		Note:     repo.Note(),
+		Launcher: frame.Launcher,
+		Warning:  frame.Warning,
 	}
+}
+
+func (s *Server) modelsFrame(coderID string, picks assistant.ModelPicks) assistant.ModelPicks {
+	if m := s.coderByID(coderID); m != nil {
+		picks.Launcher = coder.LauncherFor(m.Coder()).Launcher(picks.Chat)
+		picks.Warning = s.modelWarning(m.Coder())
+	}
+	return picks
+}
+
+func (s *Server) modelWarning(c coder.Coder) string {
+	if _, ok := c.(coder.Launcher); !ok {
+		return ""
+	}
+	return s.ollama.Warning()
 }
 
 // coderModelRepository is the one reading of a coder's list on this server:
@@ -260,7 +278,7 @@ func (s *Server) handleAssistantModels(c *gin.Context) {
 		repo := coder.ModelRepositoryFor(s.coders[i].Coder())
 		models := make([]gin.H, 0)
 		for _, m := range repo.List() {
-			models = append(models, gin.H{"name": m.Name, "source": m.Source()})
+			models = append(models, gin.H{"name": m.Name, "source": m.Source})
 		}
 		defaults := s.modelDefaults(id)
 		out = append(out, gin.H{

@@ -19,6 +19,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/markdown"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
@@ -479,12 +480,19 @@ func (s *Server) assistantMessageViews(current assistant.Instance, blocked bool)
 	out := make([]render.AssistantMessageView, 0, len(current.Messages))
 	for i, m := range current.Messages {
 		last := i == len(current.Messages)-1 && !blocked
-		out = append(out, s.assistantMessageView(current.ID, m, last, !blocked, render.CoderLabel(current.CoderID)))
+		out = append(out, s.assistantMessageView(current.ID, m, last, !blocked, current.CoderID))
 	}
 	return out
 }
 
-func (s *Server) assistantMessageView(instanceID string, m assistant.Message, retryable, writable bool, coder string) render.AssistantMessageView {
+func (s *Server) streamFrame(ev assistant.StreamEvent) assistant.StreamEvent {
+	if ev.Kind == assistant.FrameStart {
+		ev.Model = modelDisplayName(ev.Model)
+	}
+	return ev
+}
+
+func (s *Server) assistantMessageView(instanceID string, m assistant.Message, retryable, writable bool, coderID string) render.AssistantMessageView {
 	view := render.AssistantMessageView{
 		ID:        m.ID,
 		RunID:     m.RunID,
@@ -492,7 +500,9 @@ func (s *Server) assistantMessageView(instanceID string, m assistant.Message, re
 		Note:      s.assistantNoteView(m.Note, m.Content),
 		Auto:      m.Auto,
 		Origin:    s.assistantNoteView(m.Origin, m.Content),
-		Author:    coder,
+		Author:    render.CoderLabel(coderID),
+		Model:     m.Model,
+		ModelName: modelDisplayName(m.Model),
 		Text:      m.Content,
 		State:     string(m.State),
 		Error:     m.Error,
@@ -619,7 +629,7 @@ func (s *Server) handleAssistantMessage(c *gin.Context) {
 		}
 		last := i == len(current.Messages)-1 && !blocked
 		c.HTML(http.StatusOK, "assistant_message.gohtml", render.AssistantMessageData{
-			Message: s.assistantMessageView(current.ID, m, last, !blocked, render.CoderLabel(current.CoderID)),
+			Message: s.assistantMessageView(current.ID, m, last, !blocked, current.CoderID),
 		})
 		return
 	}
@@ -1318,12 +1328,12 @@ func (s *Server) handleAssistantStream(c *gin.Context) {
 	if assistantStreamSnapshotHook != nil {
 		assistantStreamSnapshotHook(id)
 	}
-	picks := inst.ModelPicks()
+	picks := s.modelsFrame(inst.CoderID, inst.ModelPicks())
 	if err := writeConversationEvent(w, assistant.StreamEvent{Kind: assistant.FrameModels, Models: &picks}); err != nil {
 		return
 	}
 	if running {
-		if err := writeConversationEvent(w, snapshot); err != nil {
+		if err := writeConversationEvent(w, s.streamFrame(snapshot)); err != nil {
 			return
 		}
 	}
@@ -1341,7 +1351,11 @@ func (s *Server) handleAssistantStream(c *gin.Context) {
 			if !ok {
 				return
 			}
-			if err := writeConversationEvent(w, ev); err != nil {
+			if ev.Kind == assistant.FrameModels && ev.Models != nil {
+				frame := s.modelsFrame(inst.CoderID, *ev.Models)
+				ev.Models = &frame
+			}
+			if err := writeConversationEvent(w, s.streamFrame(ev)); err != nil {
 				return
 			}
 		case <-heartbeat.C:
@@ -1526,4 +1540,12 @@ func writeConversationEvent(w http.ResponseWriter, ev assistant.StreamEvent) err
 // conversation's own stream.
 func (s *Server) PublishConversations() {
 	s.bus.Publish(eventbus.Event{Type: "assistant", Data: map[string]string{}})
+}
+
+func modelDisplayName(model string) string {
+	name := strings.TrimSpace(model)
+	if bare, ok := strings.CutPrefix(name, ollama.Prefix); ok && bare != "" {
+		name = bare
+	}
+	return strings.TrimSuffix(name, ":cloud")
 }

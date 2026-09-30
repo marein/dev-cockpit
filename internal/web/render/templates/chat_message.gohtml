@@ -17,7 +17,11 @@
      moves; px-2 widens it a little, and the absolutely positioned overlay is
      the touch target, 8px past the box on every side without any layout
      impact. */}}
-{{define "assistant_speaker"}}{{if .}}<button type="button" class="btn btn-icon btn-sm btn-ghost-secondary px-2 position-relative ms-auto flex-shrink-0" aria-label="Read this answer aloud" title="Read aloud" data-assistant-speak="{{.}}"><span class="position-absolute" style="inset:-.5rem" aria-hidden="true"></span><i class="ti ti-volume"></i></button>{{end}}{{end}}
+{{define "assistant_speaker"}}{{if .}}<button type="button" class="btn btn-icon btn-sm btn-ghost-secondary px-2 position-relative flex-shrink-0" aria-label="Read this answer aloud" title="Read aloud" data-assistant-speak="{{.}}"><span class="position-absolute" style="inset:-.5rem" aria-hidden="true"></span><i class="ti ti-volume"></i></button>{{end}}{{end}}
+
+{{define "assistant_streaming"}}<span class="btn btn-icon btn-sm btn-ghost-secondary px-2 flex-shrink-0 pe-none" role="status" aria-label="Answering" data-assistant-streaming><i class="ti ti-volume dc-icon-spinner"></i></span>{{end}}
+
+{{define "chat_model"}}{{if .Model}}<span class="text-secondary small text-truncate{{with .Class}} {{.}}{{end}}" title="{{.Name}}" data-assistant-model="{{.Model}}">{{.Name}}</span>{{end}}{{end}}
 
 {{define "chat_message.gohtml"}}
 {{with .Message}}
@@ -54,6 +58,7 @@
     {{/* Relative, the full stamp in its title: a note is read by its
          headline, and on a phone the headline needs the room. */}}
     {{if $.Message.Time}}<dc-time datetime="{{$.Message.Time}}" relative class="text-secondary small flex-shrink-0"></dc-time>{{end}}
+    {{template "chat_model" (dict "Model" $.Message.Model "Name" $.Message.ModelName "Class" "d-none d-md-block")}}
     {{template "assistant_speaker" $.Message.AudioURL}}
   </div>
   {{if .Rest}}
@@ -65,16 +70,19 @@
   <button type="button" class="bg-transparent border-0 p-0 w-100 d-flex align-items-start gap-1 text-start text-secondary" data-bs-toggle="collapse" data-bs-target="#note-{{$.Message.ID}}" aria-expanded="false" aria-controls="note-{{$.Message.ID}}" data-assistant-note-fold><i class="ti ti-chevron-down flex-shrink-0" aria-hidden="true"></i><span class="flex-fill min-w-0 text-break" data-assistant-note-preview>{{.Preview}}</span></button>
   {{end}}
   <div{{if .Rest}} class="collapse" id="note-{{$.Message.ID}}" data-assistant-note-rest{{end}}>
+    {{template "chat_model" (dict "Model" $.Message.Model "Name" $.Message.ModelName "Class" "d-block d-md-none mt-1")}}
     <div class="text-break markdown mt-1" data-assistant-text>{{$.Message.HTML}}</div>
   </div>
   {{else}}
   <div class="d-flex align-items-baseline gap-2 mb-1">
     <span class="text-secondary small fw-medium text-truncate">{{.Author}}</span>
     {{if .Time}}<dc-time datetime="{{.Time}}" class="text-secondary small flex-shrink-0"></dc-time>{{end}}
-    {{if .Streaming}}<span class="spinner-border spinner-border-sm text-secondary ms-auto flex-shrink-0" role="status" aria-label="Answering"></span>{{end}}
-    {{if .Queued}}<span class="badge bg-secondary-lt ms-auto flex-shrink-0" data-assistant-queued>{{if .CanDiscard}}Waiting{{else}}Not sent{{end}}</span>{{end}}
-    {{template "assistant_speaker" .AudioURL}}
-    {{if .Copy}}<button type="button" class="btn btn-icon btn-sm btn-ghost-secondary ms-auto flex-shrink-0" aria-label="Copy this message" title="Copy this message" data-copy-message><i class="ti ti-copy"></i></button><template data-copy-source>{{.Copy}}</template>{{end}}
+    <span class="ms-auto d-flex align-items-center gap-2 min-w-0">
+      {{template "chat_model" (dict "Model" .Model "Name" .ModelName)}}
+      {{if .Queued}}<span class="badge bg-secondary-lt flex-shrink-0" data-assistant-queued>{{if .CanDiscard}}Waiting{{else}}Not sent{{end}}</span>{{end}}
+      {{if .Streaming}}{{template "assistant_streaming"}}{{else}}{{template "assistant_speaker" .AudioURL}}{{end}}
+      {{if .Copy}}<button type="button" class="btn btn-icon btn-sm btn-ghost-secondary flex-shrink-0" aria-label="Copy this message" title="Copy this message" data-copy-message><i class="ti ti-copy"></i></button><template data-copy-source>{{.Copy}}</template>{{end}}
+    </span>
   </div>
   {{if .Command}}
   <div><span class="badge bg-primary-lt font-monospace text-break" data-copy-command>{{.Text}}</span></div>

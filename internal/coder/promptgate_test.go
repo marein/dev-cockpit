@@ -90,3 +90,15 @@ func TestTheGateChecksTheCodersOwnCommand(t *testing.T) {
 		t.Fatalf("a foreign TUI must not open the gate, waited only %v", clock.total())
 	}
 }
+
+func TestTheGateOpensForALauncherInFrontOfTheCoder(t *testing.T) {
+	clock := &gateClock{at: time.Unix(1000, 0)}
+	polls := 0
+	awaitPromptReady(clock.at, "claude", func() (tmux.PaneForeground, bool) {
+		polls++
+		return tmux.PaneForeground{Command: "ollama", AltScreen: true}, true
+	}, clock.now, clock.sleep)
+	if polls != 1 || clock.total() != promptGateSettle {
+		t.Fatalf("want a claude session with ollama in the foreground ready at once, got %d polls and %v", polls, clock.slept)
+	}
+}

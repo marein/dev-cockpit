@@ -3,12 +3,15 @@ package claude
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"slices"
 	"strings"
 
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/ollama"
 )
 
 // assistantFlags are the flags this runner cannot work without. Their presence is
@@ -18,6 +21,24 @@ var assistantFlags = []string{"--print", "--output-format", "--include-partial-m
 
 type runner struct {
 	sessions coder.SessionRepository
+	launcher *ollama.Client
+	launched *ollamaSessions
+}
+
+const upgradeRequired = "Upgrade required"
+
+const upgradeFailed = "error running upgrade"
+
+var signinRequired = []string{"requires sign in", "signed in to Ollama", "ollama.com/connect"}
+
+var errLauncherSignin = errors.New("Ollama is not signed in on this machine. Run ollama signin in a terminal and send this again.")
+
+func launcherPlanRefusal(model string) error {
+	name := strings.TrimSpace(model)
+	if name == "" {
+		name = "This model"
+	}
+	return fmt.Errorf("%s needs a paid Ollama plan, pick another model at the ring.", name)
 }
 
 // AssistantRunner returns the conversation capability, or nil when the
@@ -35,7 +56,7 @@ func (p *Coder) probeAssistant() bool {
 		log.Printf("claude conversations disabled, the installed CLI has no %s", strings.Join(missing, ", "))
 		return false
 	}
-	p.runner = &runner{sessions: p.sessions}
+	p.runner = &runner{sessions: p.sessions, launcher: p.launcher, launched: p.launched}
 	return true
 }
 
@@ -115,11 +136,31 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 		"--include-partial-messages",
 		"--verbose",
 	)
-	if req.Model != "" {
+	ollamaName, viaOllama := ollamaPick(req.Model)
+	if req.Model != "" && !viaOllama {
 		args = append(args, "--model", req.Model)
 	}
 	args = append(args, endOfOptions, req.Prompt)
-	return assistant.Command{Name: "claude", Args: args}, nil
+	if !viaOllama {
+		r.launched.forget(req.SessionID)
+		return assistant.Command{Name: "claude", Args: args}, nil
+	}
+	if !ollama.Available() {
+		return assistant.Command{}, ollama.ErrMissing
+	}
+	r.launched.remember(req.SessionID, ollamaName)
+	var env []string
+	if host := r.launcher.Host(); host != "" {
+		env = []string{ollamaHostEnv + "=" + host}
+	}
+	return assistant.Command{Name: ollama.Executable, Args: append(ollamaLaunch(ollamaName), args...), Env: env}, nil
+}
+
+func (r *runner) pickedModel(sessionID string) string {
+	if name := r.launched.modelOf(sessionID); name != "" {
+		return ollama.Prefix + name
+	}
+	return ""
 }
 
 // allowedTools is one --allowedTools per spelling of the turn's own wrapper,
@@ -135,7 +176,16 @@ func allowedTools(workdir string) []string {
 // Parse reads claude's stream-json output. It is called again when a turn is
 // picked up after a restart, so it carries no state from the start of the turn.
 func (r *runner) Parse(sessionID string, events chan<- assistant.Event) assistant.Parser {
-	return &claudeParser{sessionID: sessionID, events: events}
+	window := func(model string) int {
+		if r.launcher == nil {
+			return 0
+		}
+		if name, ok := ollamaPick(model); ok {
+			model = name
+		}
+		return r.launcher.Window(model)
+	}
+	return &claudeParser{sessionID: sessionID, events: events, window: window, picked: r.pickedModel(sessionID)}
 }
 
 // claudeParser turns the documented stream-json records into conversation events. It
@@ -146,6 +196,8 @@ func (r *runner) Parse(sessionID string, events chan<- assistant.Event) assistan
 type claudeParser struct {
 	sessionID string
 	events    chan<- assistant.Event
+	window    func(model string) int
+	picked    string
 	sawResult bool
 	// sawDelta tracks whether the message being assembled streamed any text.
 	// The assembled record repeats what the deltas already carried, so it only
@@ -463,6 +515,12 @@ func (p *claudeParser) reportUsage(rec claudeResultRecord) {
 			break
 		}
 	}
+	if window == 0 && p.window != nil && p.picked != "" {
+		window = p.window(p.picked)
+	}
+	if window == 0 && p.window != nil {
+		window = p.window(p.model)
+	}
 	if window == 0 {
 		// The table is keyed by coder, because the same model does not have the
 		// same window under every CLI. claude has no context tiers.
@@ -491,6 +549,12 @@ func (p *claudeParser) Finish() error {
 // output or at the result text: both carry the answer on a turn that worked,
 // and a turn whose answer talks about logins is not a login failure.
 func (p *claudeParser) Diagnose(err error, stderr string) error {
+	if p.picked != "" && (strings.Contains(stderr, upgradeRequired) || strings.Contains(stderr, upgradeFailed)) {
+		return launcherPlanRefusal(p.picked)
+	}
+	if p.picked != "" && slices.ContainsFunc(signinRequired, func(line string) bool { return strings.Contains(stderr, line) }) {
+		return errLauncherSignin
+	}
 	if assistant.LooksLikeLogin(stderr) {
 		return assistant.ErrNotLoggedIn
 	}

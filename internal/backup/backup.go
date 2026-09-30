@@ -243,10 +243,11 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 				{Name: "commands", Path: hm(".claude/commands")},
 				{Name: "hooks", Path: hm(".claude/hooks")}}},
 		{ID: "claude-sessions", Group: "Coders", Label: "Claude sessions",
-			Description: "Session transcripts and prompt history. Can be large.",
+			Description: "Session transcripts and prompt history, and which sessions run through Ollama. Can be large.",
 			Sources: []Source{
 				{Name: "projects", Path: hm(".claude/projects")},
-				{Name: "history.jsonl", Path: hm(".claude/history.jsonl")}}},
+				{Name: "history.jsonl", Path: hm(".claude/history.jsonl")},
+				{Name: "claude-ollama-sessions.json", Path: st("claude-ollama-sessions.json")}}},
 		{ID: "copilot", Group: "Coders", Label: "Copilot config",
 			Description: "Instructions, agents, skills, settings and the login.",
 			Sources: []Source{
@@ -263,6 +264,9 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 				{Name: "session-store.db-wal", Path: hm(".copilot/session-store.db-wal")},
 				{Name: "session-store.db-shm", Path: hm(".copilot/session-store.db-shm")},
 				{Name: "command-history-state.json", Path: hm(".copilot/command-history-state.json")}}},
+		{ID: "ollama", Group: "Coders", Label: "Ollama",
+			Description: "The launcher's config.json, what ollama launch writes for the coders it wraps.",
+			Sources:     []Source{{Name: "config.json", Path: hm(".ollama/config.json")}}},
 
 		{ID: "projects", Group: "Host", Label: "Projects",
 			Description: "The complete projects directory, every working copy as it sits on disk. Imports into the current projects dir. Can be large. The recent projects order, the projects the editor was last opened on and the editor's line comments travel along.",

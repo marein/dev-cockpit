@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/project"
@@ -173,6 +174,7 @@ func (s *Server) projectsWithRunners() []project.Project {
 						ID:       active.Identifier,
 						Name:     active.Name,
 						Coder:    coderID,
+						Launcher: coder.LauncherForSession(s.coders[j].Coder(), active.Identifier),
 						At:       active.StartedAt,
 						TabPos:   active.TabPos,
 						Group:    active.TabGroup,
@@ -186,11 +188,12 @@ func (s *Server) projectsWithRunners() []project.Project {
 				if filesystem.IsUnder(inactive.CWD, projects[i].Path) {
 					projects[i].InactiveCoders++
 					projects[i].InactiveCoderRefs = append(projects[i].InactiveCoderRefs, project.CoderRef{
-						ID:      inactive.SessionID,
-						Name:    inactive.Name,
-						Coder:   coderID,
-						At:      inactive.UpdatedAt,
-						HasNews: news[inactive.SessionID],
+						ID:       inactive.SessionID,
+						Name:     inactive.Name,
+						Coder:    coderID,
+						Launcher: coder.LauncherForSession(s.coders[j].Coder(), inactive.SessionID),
+						At:       inactive.UpdatedAt,
+						HasNews:  news[inactive.SessionID],
 					})
 					projects[i].HasNews = projects[i].HasNews || news[inactive.SessionID]
 				}
@@ -255,7 +258,7 @@ func mergedActiveRefs(p *project.Project) []project.TerminalRef {
 	var all []mref
 	for _, r := range p.ActiveCoderRefs {
 		all = append(all, mref{
-			ref:      project.TerminalRef{ID: r.ID, Name: r.Name, Kind: "coder", Coder: r.Coder, HasNews: r.HasNews},
+			ref:      project.TerminalRef{ID: r.ID, Name: r.Name, Kind: "coder", Coder: r.Coder, Launcher: r.Launcher, HasNews: r.HasNews},
 			at:       r.At,
 			tabPos:   r.TabPos,
 			group:    r.Group,

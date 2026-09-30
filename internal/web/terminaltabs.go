@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/tmux"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
@@ -30,6 +31,7 @@ func (s *Server) terminalTabs() []render.TerminalTab {
 				URL:       "/coders/" + r.Identifier,
 				Project:   s.projects.ProjectNameFor(r.CWD),
 				Coder:     coderID,
+				Launcher:  coder.LauncherForSession(s.coders[i].Coder(), r.Identifier),
 				Kind:      "coder",
 				HasNews:   news[r.Identifier],
 				Working:   working[r.Identifier],

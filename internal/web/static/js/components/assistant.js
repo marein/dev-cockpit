@@ -787,6 +787,7 @@ class Assistant extends HTMLElement {
         // app's own rule for "at the end" pins them again.
         this.repinIfNear();
         this.setText(frame.messageId, frame.html, frame.text);
+        this.setModel(frame.messageId, frame.model);
         break;
       case "delta":
         this.appendText(frame.messageId, frame.text || "");
@@ -855,7 +856,10 @@ class Assistant extends HTMLElement {
       node.setAttribute("data-state", "streaming");
       node.innerHTML = `<div class="d-flex align-items-baseline gap-2 mb-1">
           <span class="text-secondary small fw-medium text-truncate" data-assistant-author></span>
-          <span class="spinner-border spinner-border-sm text-secondary ms-auto flex-shrink-0" role="status" aria-label="Answering"></span>
+          <span class="ms-auto d-flex align-items-center gap-2 min-w-0">
+            <span class="text-secondary small text-truncate" data-assistant-model hidden></span>
+            <span class="btn btn-icon btn-sm btn-ghost-secondary px-2 flex-shrink-0 pe-none" role="status" aria-label="Answering" data-assistant-streaming><i class="ti ti-volume dc-icon-spinner"></i></span>
+          </span>
         </div>
         <div class="text-break markdown" data-assistant-text></div>
         <div class="text-secondary small mt-2 d-none" data-assistant-tool><i class="ti ti-tool me-1"></i>Working<span data-assistant-tool-name class="ms-1 font-monospace"></span></div>`;
@@ -880,6 +884,15 @@ class Assistant extends HTMLElement {
       else body.append(tail);
     }
     return tail;
+  }
+
+  setModel(messageId, model) {
+    const name = this.ensureBubble(messageId).querySelector("[data-assistant-model]");
+    if (!name) return;
+    name.textContent = model || "";
+    name.title = model || "";
+    name.setAttribute("data-assistant-model", model || "");
+    name.hidden = !model;
   }
 
   setText(messageId, html, text) {
@@ -972,6 +985,14 @@ class Assistant extends HTMLElement {
     this.modelsAt = at;
     const values = { chat: models.chat || "", check: models.check || "", trigger: models.trigger || "" };
     this.savedModels = this.modelKey(values.chat, values.check, values.trigger);
+    const launched = models.launcher === "ollama";
+    for (const icon of this.querySelectorAll("[data-assistant-ring-icon]")) icon.toggleAttribute("hidden", launched);
+    for (const icon of this.querySelectorAll("[data-assistant-ring-launcher]")) icon.toggleAttribute("hidden", !launched);
+    const warning = this.querySelector("[data-assistant-models] .form-hint.text-warning");
+    if (warning) {
+      warning.textContent = models.warning || "";
+      warning.hidden = !models.warning;
+    }
     if (own) this.heldModels = {};
     for (const kind of Object.keys(values)) {
       if (!own && picks[kind].contains(document.activeElement)) this.heldModels[kind] = values[kind];
@@ -1088,7 +1109,7 @@ class Assistant extends HTMLElement {
         void this.syncFromServer();
         return;
       }
-      node?.querySelector(".spinner-border")?.remove();
+      node?.querySelector("[data-assistant-streaming]")?.remove();
       if (state) node?.setAttribute("data-state", state);
     }
   }

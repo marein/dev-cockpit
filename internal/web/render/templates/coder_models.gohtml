@@ -7,6 +7,7 @@
     <label class="form-label" for="model-start">Start</label>
     {{template "assistant_model_pick.gohtml" (dict "Pick" .Start "ID" "model-start")}}
     {{if .Note}}<div class="form-hint">{{.Note}}</div>{{end}}
+    {{if .Warning}}<div class="form-hint text-warning" data-ollama-warning>{{.Warning}}</div>{{end}}
   </div>
   <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
     <button type="submit" class="btn btn-primary">Save models</button>

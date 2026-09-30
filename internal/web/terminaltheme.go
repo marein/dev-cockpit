@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
@@ -106,7 +107,7 @@ func (s *Server) applyTerminalThemeLocked() {
 	}
 	for _, sh := range s.shells.List() {
 		t := tmux.PaneTheme{Name: sh.Identifier, Style: style}
-		if fg := foregrounds[sh.Identifier]; schemeReportCoder(fg.Command) && fg.AltScreen {
+		if shellSchemeReport(foregrounds[sh.Identifier]) {
 			t.Report = report
 		}
 		themes = append(themes, t)
@@ -125,6 +126,10 @@ func (s *Server) applyTerminalThemeLocked() {
 // (verified on opencode 1.18.23). copilot never enables the mode and themes
 // itself over the ANSI palette instead.
 func schemeReportCoder(id string) bool { return id == "claude" || id == "opencode" }
+
+func shellSchemeReport(fg tmux.PaneForeground) bool {
+	return fg.AltScreen && (schemeReportCoder(fg.Command) || fg.Command == ollama.Executable && schemeReportCoder(fg.Coder))
+}
 
 func paneStyle(bg, fg string) string { return "bg=" + bg + ",fg=" + fg }
 

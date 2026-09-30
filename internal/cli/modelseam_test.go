@@ -10,6 +10,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
 	coderclaude "github.com/marein/dev-cockpit/internal/coder/claude"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/settings"
 )
 
@@ -43,7 +44,7 @@ func TestAChatDefaultOnTheModelsTabReachesANewAssistantsArgv(t *testing.T) {
 	stateDir := t.TempDir()
 	store := settings.New(filepath.Join(stateDir, "settings.json"))
 	store.Set(assistant.ModelDefaultKey("claude", assistant.ModelPurposeStart), "fable")
-	coders := assistantCoders{coders: []coder.Coder{coderclaude.New("", store)}, store: store}
+	coders := assistantCoders{coders: []coder.Coder{coderclaude.New(stateDir, "", store, ollama.New(store, "http://127.0.0.1:1/catalog", ""))}, store: store}
 	svc, _, err := assistant.New(stateDir, coders, assistant.Cockpit{StateDir: stateDir})
 	if err != nil {
 		t.Fatalf("assistant: %v", err)

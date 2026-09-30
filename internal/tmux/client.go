@@ -164,23 +164,24 @@ func (c *Client) SetPaneStyle(name, style string) error {
 type PaneForeground struct {
 	Command   string
 	AltScreen bool
+	Coder     string
 }
 
 // PaneForegrounds returns every session's foreground process (first pane
 // only), from a single list-panes call.
 func (c *Client) PaneForegrounds() map[string]PaneForeground {
 	r := clirun.Run("tmux", "list-panes", "-a", "-F",
-		"#{session_name}\t#{window_index}\t#{pane_index}\t#{alternate_on}\t#{pane_current_command}")
+		"#{session_name}\t#{window_index}\t#{pane_index}\t#{alternate_on}\t#{pane_current_command}\t#{@dc_coder}")
 	if r.Err != nil {
 		return nil
 	}
 	foregrounds := map[string]PaneForeground{}
 	for _, line := range strings.Split(r.Stdout, "\n") {
 		parts := strings.Split(line, "\t")
-		if len(parts) != 5 || parts[1] != "0" || parts[2] != "0" {
+		if len(parts) != 6 || parts[1] != "0" || parts[2] != "0" {
 			continue
 		}
-		foregrounds[parts[0]] = PaneForeground{Command: parts[4], AltScreen: parts[3] == "1"}
+		foregrounds[parts[0]] = PaneForeground{Command: parts[4], AltScreen: parts[3] == "1", Coder: parts[5]}
 	}
 	return foregrounds
 }

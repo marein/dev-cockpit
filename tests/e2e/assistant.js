@@ -725,7 +725,7 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
         chatValue: menu.querySelector('[data-assistant-model-pick="chat"] select').value,
         checkValue: menu.querySelector('[data-assistant-model-pick="check"] select').value,
         triggerValue: menu.querySelector('[data-assistant-model-pick="trigger"] select').value,
-        hints: [...menu.querySelectorAll(".form-hint")].map((h) => h.textContent.trim()).join(" | "),
+        hints: [...menu.querySelectorAll(".form-hint")].filter((h) => !h.hidden).map((h) => h.textContent.trim()).join(" | "),
         saveHidden: menu.querySelector("[data-assistant-model-save]")?.hidden === true,
         typedHidden: [...menu.querySelectorAll("[data-model-other-input]")].every((i) => i.hidden && i.disabled),
         newWith: menu.querySelectorAll("[data-assistant-new]").length,
@@ -751,7 +751,8 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
       `the triggers select is off: ${JSON.stringify(shape)}`);
     assert(shape.labels.join("|") === "Chat|Checks|Triggers", `the three picks are not labelled in order: ${JSON.stringify(shape.labels)}`);
     assert(shape.chatValue === "" && shape.checkValue === "" && shape.triggerValue === "", `a fresh assistant starts on the coder's default: ${JSON.stringify(shape)}`);
-    assert(shape.hints === "Aliases, always the newest of each family.", `the one line under the picks is off: ${JSON.stringify(shape)}`);
+    assert(["Aliases, always the newest of each family.", "Aliases, always the newest of each family. ollama/ names run through Ollama, cloud models only."].includes(shape.hints),
+      `the one line under the picks is off: ${JSON.stringify(shape)}`);
     assert(shape.saveHidden && shape.typedHidden, `the no JS parts stand while the element runs: ${JSON.stringify(shape)}`);
     assert(shape.newWith === 0, `the ring menu still carries New with entries: ${JSON.stringify(shape)}`);
     assert(shape.inside, `the menu stands outside the desktop viewport: ${JSON.stringify(shape)}`);
@@ -1177,6 +1178,37 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     return `${seams.length} snapshots at the seam`;
   });
 
+  await run("the streaming mark stands in the speaker's slot and nothing moves when the answer ends", async () => {
+    await send(page, "STREAM_PARAGRAPH the mark and the speaker");
+    const during = await (await page.waitForFunction(() => {
+      const nodes = document.querySelectorAll('[data-role="assistant"]');
+      const bubble = nodes[nodes.length - 1];
+      const mark = bubble?.querySelector("[data-assistant-streaming]");
+      if (!mark || bubble.getAttribute("data-state") !== "streaming") return null;
+      const box = mark.getBoundingClientRect();
+      const block = mark.parentElement.getBoundingClientRect();
+      const frame = bubble.getBoundingClientRect();
+      if (!box.width || getComputedStyle(mark).visibility === "hidden") return null;
+      return { right: frame.right - box.right, top: box.top - frame.top, width: box.width, height: box.height, center: box.top + box.height / 2, blockCenter: block.top + block.height / 2 };
+    }, null, { timeout: 30000, polling: 30 })).jsonValue();
+    assert(Math.abs(during.center - during.blockCenter) <= 1, `the mark is not centered in the head: ${JSON.stringify(during)}`);
+    await waitSettled(page, 30000);
+    const after = await page.evaluate(() => {
+      const nodes = document.querySelectorAll('[data-role="assistant"]');
+      const bubble = nodes[nodes.length - 1];
+      const speaker = bubble.querySelector("[data-assistant-speak]");
+      const box = speaker?.getBoundingClientRect();
+      const frame = bubble.getBoundingClientRect();
+      return { mark: !!bubble.querySelector("[data-assistant-streaming]"), speaker: box ? { right: frame.right - box.right, top: box.top - frame.top, width: box.width, height: box.height } : null };
+    });
+    assert(!after.mark, "the streaming mark stays after the answer ended");
+    if (!after.speaker) return "no speaker while text to speech is off, the mark is gone";
+    for (const key of ["right", "top", "width", "height"]) {
+      assert(Math.abs(after.speaker[key] - during[key]) <= 1, `the speaker does not take the mark's place: ${JSON.stringify({ during, after })}`);
+    }
+    return `mark ${during.width}x${during.height} at the speaker's place`;
+  });
+
   // The cross on a chip read a data attribute that no longer exists, so the
   // filter kept every file and the wrong one went along with the message.
   await run("an attached file can be taken back before the message goes", async () => {
@@ -1302,7 +1334,6 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
   // path a woken phone takes, which reopens the stream and lands the snapshot.
   await run("a message that arrived while the stream was down appears on reconnect", async () => {
     await openAssistant(page, chatID);
-    const before = await page.locator("[data-assistant-message]").count();
     await ctx.setOffline(true);
     await page.evaluate(() => window.stop());
     const mp = await mobilePage();
@@ -1313,12 +1344,10 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     await ctx.setOffline(false);
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
     await page.waitForFunction(
-      (count) => document.querySelectorAll("[data-assistant-message]").length > count,
-      before,
+      () => [...document.querySelectorAll("[data-assistant-message]")].some((node) => node.innerText.includes("offline news")),
+      null,
       { timeout: 30000 },
-    );
-    const texts = await page.locator("[data-assistant-message]").allInnerTexts();
-    assert(texts.some((text) => text.includes("offline news")), "the missed message is not in the transcript");
+    ).catch(() => assert(false, "the missed message is not in the transcript"));
     return "no reload, no toggle, the transcript caught up";
   });
 

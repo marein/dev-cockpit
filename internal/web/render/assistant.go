@@ -30,10 +30,12 @@ type AssistantModelPick struct {
 // check model and the trigger model of this assistant, each over the list its
 // coder offers, and the line that says where that list comes from.
 type AssistantModels struct {
-	Chat    AssistantModelPick
-	Check   AssistantModelPick
-	Trigger AssistantModelPick
-	Note    string
+	Chat     AssistantModelPick
+	Check    AssistantModelPick
+	Trigger  AssistantModelPick
+	Note     string
+	Launcher string
+	Warning  string
 }
 
 // AssistantAttachmentView is one file a message carries, ready to embed.

@@ -170,6 +170,7 @@ type Message struct {
 	// RunID ties an assistant message to the generation that produced it, so a
 	// stale stream cannot write into a newer retry.
 	RunID string `json:"runId,omitempty"`
+	Model string `json:"model,omitempty"`
 	State State  `json:"state"`
 	// Error is a curated, user facing sentence. Provider stderr, argv and
 	// paths never reach it.

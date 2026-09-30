@@ -31,7 +31,12 @@
   {{$selected := .Selected}}
   {{range .Coders}}
   <a href="{{.URL}}" class="list-group-item list-group-item-action is-nested{{if eq .ID $selected}} active{{end}}" data-settings-coder="{{.ID}}" data-dc-focus="work">
-    {{template "coder_icon.gohtml" .ID}}<span class="flex-fill dc-trunc">{{coderLabel .ID}}</span>
+    {{template "coder_icon.gohtml" (dict "ID" .ID)}}<span class="flex-fill dc-trunc">{{coderLabel .ID}}</span>
+  </a>
+  {{end}}
+  {{if .Ollama}}
+  <a href="/settings/coders/ollama" class="list-group-item list-group-item-action is-nested{{if eq .Active "ollama"}} active{{end}}" data-dc-focus="work">
+    {{template "coder_icon.gohtml" (dict "ID" "ollama")}}<span class="d-flex flex-column dc-min0 flex-fill"><span>Ollama</span><span class="text-secondary dc-row-note">Launcher</span></span>
   </a>
   {{end}}
   {{else}}

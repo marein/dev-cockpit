@@ -14,6 +14,7 @@ type SettingsNav struct {
 	Selected string // coder id the page is scoped to, empty off the coder pages
 	Section  string // active coder section: "instructions" | "agents" | "skills" | "models"
 	Reviews  int    // open backup overwrite reviews, badge on the backup entry
+	Ollama   bool
 }
 
 // SettingsCoder is one coder row in the settings sidebar. URL keeps the
@@ -25,7 +26,7 @@ type SettingsCoder struct {
 
 // Multi reports whether the coder entry splits into one row per coder. Single
 // coder hosts keep the plain Coder row, like every other adaptive surface.
-func (n SettingsNav) Multi() bool { return len(n.Coders) > 1 }
+func (n SettingsNav) Multi() bool { return len(n.Coders) > 1 || n.Ollama }
 
 // JingleOption is one selectable notification jingle. The IDs must match the
 // tune keys in the client's @dc/jingle module.
@@ -59,6 +60,20 @@ type SettingsGeneralData struct {
 	SettingsNav    SettingsNav
 	RestoreEnabled bool
 	HistoryEnabled bool
+}
+
+type SettingsOllamaData struct {
+	Page
+	SettingsNav SettingsNav
+	Address     string
+	Models      []OllamaModel
+	MaxRunes    int
+}
+
+type OllamaModel struct {
+	Name   string
+	Source string
+	Added  bool
 }
 
 // SettingsDockerData feeds the docker settings page: which daemon the cockpit

@@ -207,6 +207,7 @@ type TerminalTab struct {
 	URL       string
 	Project   string // owning project name, shown under the tab name
 	Coder     string // owning coder id, empty for shells
+	Launcher  string
 	Kind      string // "coder" or "shell"
 	HasNews   bool
 	Working   bool // somebody is working in there right now, see Page.Working

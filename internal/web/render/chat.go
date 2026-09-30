@@ -42,6 +42,8 @@ type ChatMessageView struct {
 	Queued     bool
 	CanDiscard bool
 	Time       string
+	Model      string
+	ModelName  string
 	// AudioURL serves this message spoken, set only while text to speech is on
 	// and the message can be read aloud at all, a check's report as much as an
 	// answer; the speaker button hangs on it alone, in both headers.

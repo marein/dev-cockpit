@@ -6,6 +6,7 @@ type SplitMember struct {
 	Name          string
 	Kind          string // "coder" or "shell"
 	Coder         string // owning coder id, empty for shells
+	Launcher      string
 	Project       string
 	URL           string // the member's own attach page
 	StreamURL     string

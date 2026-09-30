@@ -3,7 +3,7 @@
 {{template "terminals_ctx.gohtml" .}}
 {{template "work_start.gohtml" .}}
 <dc-steered-mark class="d-inline-flex d-lg-none" src="/coders/{{.Running.Identifier}}/steered">
-  {{- template "steered_icon.gohtml" (dict "ID" .Running.Identifier "Coder" .Coder "Steered" (index $.Steered .Running.Identifier) "Working" (index $.Working .Running.Identifier)) -}}
+  {{- template "steered_icon.gohtml" (dict "ID" .Running.Identifier "Coder" .Coder "Launcher" .Launcher "Steered" (index $.Steered .Running.Identifier) "Working" (index $.Working .Running.Identifier)) -}}
 </dc-steered-mark>
 <dc-live-name class="d-flex min-w-0" name-url="/coders/{{.Running.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">
   <h1 class="dc-work-title dc-mono" data-name-label>{{.Running.Name}}</h1>

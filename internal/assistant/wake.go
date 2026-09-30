@@ -40,6 +40,7 @@ type wakeSpec struct {
 // stood still, and when the assistant last wrote to that terminal.
 type checkContext struct {
 	MessageID string `json:"messageId,omitempty"`
+	Model     string `json:"model,omitempty"`
 	// JobCreatedAt identifies the job this check belongs to, the way MessageID
 	// identifies its report. A terminal can be steered again while a check
 	// runs; the store keys jobs by terminal, so without this a late answer
@@ -224,7 +225,7 @@ func (s *Service) killChecks(terminal string) {
 // The id comes from the check's register entry, so concluding the same check
 // twice writes one message and not two. A report that belongs to no check (a job
 // that ran out) gets a fresh one.
-func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text string) string {
+func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text, model string) string {
 	s.mu.Lock()
 	c, ok := s.store.Load(job.Owner)
 	if !ok {
@@ -249,6 +250,7 @@ func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text st
 		Role:      RoleCockpit,
 		Content:   text,
 		CreatedAt: now,
+		Model:     model,
 		State:     StateComplete,
 		// A report is a note, the first source there was: the cockpit says
 		// what a check concluded. The job's name and project travel with it,

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/marein/dev-cockpit/internal/keys"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
@@ -171,7 +172,7 @@ var kittyShiftEnter = []byte("\x1b[13;2u")
 // connection, paid only for this key.
 func sendShiftEnter(t Target, name string) error {
 	if fr, ok := t.(ForegroundReporter); ok {
-		if fg, err := fr.PaneForeground(name); err == nil && fg.AltScreen && extendedKeysCommands[fg.Command] {
+		if fg, err := fr.PaneForeground(name); err == nil && fg.AltScreen && (extendedKeysCommands[fg.Command] || fg.Command == ollama.Executable && extendedKeysCommands[fg.Coder]) {
 			return t.SendRaw(name, kittyShiftEnter)
 		}
 	}

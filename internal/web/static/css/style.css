@@ -395,6 +395,9 @@ dc-host-status.dc-cockpit-icon { display: flex; }
    keep one distance from the tile: the trigger row's waiting events. */
 .dc-term-icon > .dc-steer-badge { top: -3px; right: -3px; }
 .coder-icon { width: 1em; height: 1em; vertical-align: -0.125em; }
+.dc-icon-badged { position: relative; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+.dc-icon-badged > :first-child { -webkit-mask: radial-gradient(circle at 0.925em 0.925em, transparent 0.46em, #000 0.5em); mask: radial-gradient(circle at 0.925em 0.925em, transparent 0.46em, #000 0.5em); }
+.dc-icon-badged > .dc-icon-badge { position: absolute; right: -0.3em; bottom: -0.3em; width: 0.75em; height: 0.75em; fill: currentColor; }
 /* The project board: one card per project, its worktrees folded under it. */
 .dc-board { display: flex; flex-direction: column; gap: 10px; max-width: 1100px; }
 .dc-board .list-group { display: flex; flex-direction: column; gap: 10px; }

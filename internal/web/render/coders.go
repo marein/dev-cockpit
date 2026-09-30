@@ -17,6 +17,7 @@ type CoderChoice struct {
 	DefaultAgent string
 	Model        AssistantModelPick
 	ModelNote    string
+	ModelWarning string
 }
 
 // CoderNewData is the model for the new-coder form. Project is chosen from a
@@ -56,6 +57,7 @@ type CoderAttachData struct {
 	Running         coder.Running
 	Identifier      string
 	Coder           string // owning coder id
+	Launcher        string
 	ProjectName     string // owning project, empty when CWD is outside the projects root
 	Files           []filesystem.File
 	MaxUploadSizeMB string

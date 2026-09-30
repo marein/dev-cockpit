@@ -154,7 +154,7 @@
 {{if or .Models (gt (len .Coders) 1)}}
 <div class="dropdown flex-shrink-0">
   <button type="button" class="{{.NewClass}} position-relative" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" data-assistant-new-label="{{$toggleBase}}" aria-label="{{$toggleLabel}}" title="{{$toggleLabel}}">
-    {{if .Models}}{{template "assistant_context_ring_icon.gohtml" .CoderID}}{{else}}<i class="ti ti-message-plus"></i>{{end}}
+    {{if .Models}}{{template "assistant_context_ring_icon.gohtml" (dict "ID" .CoderID "Hidden" (ne .Models.Launcher ""))}}<span class="dc-context-ring-icon" aria-hidden="true" data-assistant-ring-launcher data-launcher="ollama"{{if eq .Models.Launcher ""}} hidden{{end}}>{{template "coder_icon.gohtml" (dict "ID" .CoderID "Launcher" "ollama")}}</span>{{else}}<i class="ti ti-message-plus"></i>{{end}}
     {{if not .NoRing}}{{template "assistant_context_ring.gohtml" .ContextPercent}}{{end}}
   </button>
   <div class="dropdown-menu dropdown-menu-end{{if .Models}} dc-model-menu{{end}}">
@@ -167,12 +167,13 @@
       <label class="form-label mb-1 mt-2" for="{{.Prefix}}-model-trigger">Triggers</label>
       {{template "assistant_model_pick.gohtml" (dict "Pick" .Models.Trigger "ID" (printf "%s-model-trigger" .Prefix) "Form" (printf "%s-model" .Prefix) "Small" true "Kind" "trigger")}}
       {{if .Models.Note}}<div class="form-hint mt-2" data-assistant-model-note>{{.Models.Note}}</div>{{end}}
+      <div class="form-hint mt-2 text-warning" data-ollama-warning{{if not .Models.Warning}} hidden{{end}}>{{.Models.Warning}}</div>
       <button type="submit" form="{{.Prefix}}-model" class="btn btn-sm mt-2" data-assistant-model-save>Save models</button>
     </div>
     {{else}}
     {{range .Coders}}
     <button type="submit" form="{{$.Prefix}}-{{.ID}}" class="dropdown-item d-flex align-items-center gap-2" data-assistant-new="{{.ID}}">
-      <span class="dc-term-icon" aria-hidden="true">{{template "coder_icon.gohtml" .ID}}</span>
+      <span class="dc-term-icon" aria-hidden="true">{{template "coder_icon.gohtml" (dict "ID" .ID)}}</span>
       <span>New with {{.Label}}</span>
     </button>
     {{end}}
@@ -215,4 +216,4 @@
      a ring is drawn around it, while an svg's ink is centered in its viewBox
      by construction. So a font glyph is wrapped in a span carrying the same
      class and attribute, centering it the way the svg centers itself. */}}
-{{define "assistant_context_ring_icon.gohtml"}}{{if eq . "claude"}}<svg class="dc-context-ring-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" data-assistant-ring-icon>{{template "coder_icon_claude_paths.gohtml"}}</svg>{{else if eq . "opencode"}}<svg class="dc-context-ring-icon" viewBox="0 0 256 320" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" data-assistant-ring-icon>{{template "coder_icon_opencode_paths.gohtml"}}</svg>{{else if eq . "copilot"}}<span class="dc-context-ring-icon" aria-hidden="true" data-assistant-ring-icon><i class="ti ti-brand-github-copilot"></i></span>{{else}}<span class="dc-context-ring-icon" aria-hidden="true" data-assistant-ring-icon>{{coderLabel .}}</span>{{end}}{{end}}
+{{define "assistant_context_ring_icon.gohtml"}}{{if eq .ID "claude"}}<svg class="dc-context-ring-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" data-assistant-ring-icon{{if .Hidden}} hidden{{end}}>{{template "coder_icon_claude_paths.gohtml"}}</svg>{{else if eq .ID "opencode"}}<svg class="dc-context-ring-icon" viewBox="0 0 256 320" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" data-assistant-ring-icon{{if .Hidden}} hidden{{end}}>{{template "coder_icon_opencode_paths.gohtml"}}</svg>{{else if eq .ID "copilot"}}<span class="dc-context-ring-icon" aria-hidden="true" data-assistant-ring-icon{{if .Hidden}} hidden{{end}}><i class="ti ti-brand-github-copilot"></i></span>{{else}}<span class="dc-context-ring-icon" aria-hidden="true" data-assistant-ring-icon{{if .Hidden}} hidden{{end}}>{{coderLabel .ID}}</span>{{end}}{{end}}

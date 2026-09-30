@@ -1,0 +1,25 @@
+#!/bin/bash
+# Fake ollama for the ollama e2e runner: appends every argv it is called with
+# to the file FAKE_OLLAMA_LOG names, one line per call, and speaks one command,
+# `launch claude`, which it answers by running whatever claude the PATH
+# resolves (the claude fake beside it, or the real one) with everything behind
+# the first end of options separator. Anything else is refused, so a runner
+# sees at once when the cockpit starts speaking to ollama in a new way.
+set -u
+
+if [ -n "${FAKE_OLLAMA_LOG:-}" ]; then
+  printf '%s\n' "$*" >> "$FAKE_OLLAMA_LOG"
+fi
+
+if [ "${1:-}" = "launch" ] && [ "${2:-}" = "claude" ]; then
+  shift 2
+  while [ $# -gt 0 ]; do
+    arg="$1"
+    shift
+    [ "$arg" = "--" ] && break
+  done
+  exec claude "$@"
+fi
+
+echo "fake ollama: only launch claude is spoken here, got: $*" >&2
+exit 1

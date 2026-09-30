@@ -73,6 +73,7 @@ type StreamEvent struct {
 	HTML      string `json:"html,omitempty"`
 	State     string `json:"state,omitempty"`
 	Error     string `json:"error,omitempty"`
+	Model     string `json:"model,omitempty"`
 	// Context rides the end frame and is how full the coder's context window
 	// stands, in percent. It is left out when the turn reported nothing or the
 	// model's window is unknown, and the page then leaves its ring as it is.
@@ -97,6 +98,8 @@ type ModelPicks struct {
 	Check     string    `json:"check"`
 	Trigger   string    `json:"trigger"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	Launcher  string    `json:"launcher,omitempty"`
+	Warning   string    `json:"warning,omitempty"`
 }
 
 // ModelPicks answers the instance's picks the way the models frame carries
@@ -122,6 +125,7 @@ type live struct {
 	running   bool
 	runID     string
 	messageID string
+	model     string
 	text      string
 	// html is the last rendered prefix and renderedLen how much of text it
 	// covers, so a page connecting mid answer gets the formatted part plus the
@@ -164,6 +168,7 @@ func (h *hub) subscribe(instanceID string) (StreamEvent, bool, <-chan StreamEven
 			Kind:      FrameStart,
 			RunID:     l.runID,
 			MessageID: l.messageID,
+			Model:     l.model,
 			Text:      tail,
 			HTML:      l.html,
 			State:     string(StateStreaming),
@@ -208,6 +213,7 @@ func (h *hub) publish(instanceID string, ev StreamEvent) {
 		l.running = true
 		l.runID = ev.RunID
 		l.messageID = ev.MessageID
+		l.model = ev.Model
 		l.text = ev.Text
 		l.html = ev.HTML
 		l.renderedLen = 0

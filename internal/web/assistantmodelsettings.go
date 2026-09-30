@@ -47,6 +47,7 @@ func (s *Server) handleSettingsAssistantModels(c *gin.Context) {
 			ID:      id,
 			Label:   render.CoderLabel(id),
 			Note:    repo.Note(),
+			Warning: s.modelWarning(s.coders[i].Coder()),
 			Chat:    modelPick(modelDefaultField(id, assistant.ModelPurposeChat), defaults.Chat, coderDefaultLabel(defaults.Start), repo),
 			Check:   modelPick(modelDefaultField(id, assistant.ModelPurposeCheck), defaults.Check, modelSameChatLabel, repo),
 			Trigger: modelPick(modelDefaultField(id, assistant.ModelPurposeTrigger), defaults.Trigger, modelSameChatLabel, repo),
@@ -98,7 +99,7 @@ func (s *Server) handleCoderModels(co *coder.Manager) gin.HandlerFunc {
 		repo := s.coderModelRepository(co.ID())
 		var added []string
 		for _, m := range repo.List() {
-			if m.Added {
+			if m.Added() {
 				added = append(added, m.Name)
 			}
 		}
@@ -108,6 +109,7 @@ func (s *Server) handleCoderModels(co *coder.Manager) gin.HandlerFunc {
 			Base:        s.coderBase(co),
 			Start:       modelPick("start", s.modelDefaults(co.ID()).Start, modelDefaultLabel(""), repo),
 			Note:        repo.Note(),
+			Warning:     s.modelWarning(co.Coder()),
 			Added:       added,
 			MaxRunes:    assistant.MaxModelRunes,
 		})

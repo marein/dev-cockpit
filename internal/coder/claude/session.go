@@ -35,6 +35,7 @@ type transcriptEntry struct {
 
 type sessionRepository struct {
 	stateRoot string
+	ollama    *ollamaSessions
 	mu        sync.Mutex
 	cache     map[string]transcriptCache
 }
@@ -82,6 +83,7 @@ func (r *sessionRepository) DeleteSession(sessionID string) error {
 			return err
 		}
 	}
+	r.ollama.forget(sessionID)
 	return nil
 }
 

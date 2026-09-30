@@ -9,6 +9,7 @@ import (
 
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/terminal"
 	"github.com/marein/dev-cockpit/internal/tmux"
@@ -213,6 +214,9 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 	if model == "" && s.modelDefaults != nil {
 		model = s.modelDefaults().Start
 	}
+	if err := LauncherFor(s.coder).CheckModel(model); err != nil {
+		return StartResult{}, err
+	}
 	workdir, err := s.projects.ValidatePath(rawProject)
 	if err != nil {
 		return StartResult{}, err
@@ -234,7 +238,7 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 			return StartResult{}, fmt.Errorf(`Coder "%s" already exists.`, sessionKey)
 		}
 	}
-	shellCmd := s.coder.SessionRuntime().StartCommand(SessionStart{
+	start := SessionStart{
 		SessionID:         sessionKey,
 		Name:              name,
 		Workdir:           workdir,
@@ -242,10 +246,14 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 		AutomaticApproval: opts.AutomaticApproval,
 		Task:              strings.TrimSpace(opts.Task),
 		Model:             model,
-	})
+	}
+	shellCmd := s.coder.SessionRuntime().StartCommand(start)
 	s.trustWorkdir(workdir)
 	if err := s.tmux.NewSession(sessionKey, workdir, shellCmd, s.coder.SessionRuntime().Env()); err != nil {
 		return StartResult{}, err
+	}
+	if starter, ok := s.coder.SessionRuntime().(SessionStarter); ok {
+		starter.SessionStarted(start)
 	}
 	if err := s.configureTerminal(sessionKey); err != nil {
 		return StartResult{}, err
@@ -267,12 +275,26 @@ func (s *Manager) Resume(rawID string) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
-	return s.resume(stored)
+	return s.resume(stored, true)
 }
 
-func (s *Manager) resume(stored Session) (Session, error) {
+func (s *Manager) ResumeUnchecked(rawID string) (Session, error) {
+	stored, err := s.ResolveResumable(rawID)
+	if err != nil {
+		return Session{}, err
+	}
+	return s.resume(stored, false)
+}
+
+func (s *Manager) resume(stored Session, checked bool) (Session, error) {
 	if _, err := terminal.ValidateIdentifier(stored.SessionID); err != nil {
 		return Session{}, fmt.Errorf(`Coder "%s" cannot be resumed: its identifier is not usable as a tmux session name.`, stored.SessionID)
+	}
+	if checked {
+		launcher := LauncherFor(s.coder)
+		if err := launcher.CheckModel(launcher.SessionModel(stored.SessionID)); err != nil {
+			return Session{}, err
+		}
 	}
 	for _, p := range s.listPanesBestEffort() {
 		if p.Name == stored.SessionID {
@@ -439,13 +461,13 @@ func (s *Manager) gatePrompt(sink terminal.Target, target, rawID string) {
 // awaitPromptReady is the gate itself, its clock injected so a test does not
 // wait it out. Ready is the coder's TUI running on the alternate screen plus
 // the settle margin behind it.
-func awaitPromptReady(started time.Time, coderCmd string, foreground func() (tmux.PaneForeground, bool), now func() time.Time, sleep func(time.Duration)) {
+func awaitPromptReady(started time.Time, coderID string, foreground func() (tmux.PaneForeground, bool), now func() time.Time, sleep func(time.Duration)) {
 	if now().Sub(started) >= promptGateWindow {
 		return
 	}
 	deadline := now().Add(promptGateMax)
 	for {
-		if fg, ok := foreground(); ok && fg.AltScreen && fg.Command == coderCmd {
+		if fg, ok := foreground(); ok && fg.AltScreen && (fg.Command == coderID || fg.Command == ollama.Executable) {
 			sleep(promptGateSettle)
 			return
 		}

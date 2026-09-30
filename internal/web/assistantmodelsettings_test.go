@@ -18,6 +18,7 @@ import (
 	coderclaude "github.com/marein/dev-cockpit/internal/coder/claude"
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/pluginhost"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/recent"
@@ -59,7 +60,7 @@ func modelSettingsServer(t *testing.T) (*gin.Engine, *Server) {
 		plugins:         serves,
 		projects:        projects,
 		settings:        store,
-		coders:          []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), coderclaude.New("", store), projects)},
+		coders:          []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), coderclaude.New(t.TempDir(), "", store, ollama.New(store, "http://127.0.0.1:1/catalog", "")), projects)},
 	}
 	s.shells = shell.NewShells(config.Config{}, tmux.New(), projects, func() bool { return false })
 	s.notifier = notify.NewService(filepath.Join(stateDir, "notifications.json"), nil)

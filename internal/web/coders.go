@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
@@ -66,6 +67,7 @@ func (s *Server) coderSettingsNav(active string, co *coder.Manager, section stri
 		Active:  active,
 		Section: section,
 		Reviews: s.backups.PendingReviewCount(),
+		Ollama:  ollama.Available(),
 	}
 	if co != nil {
 		nav.Selected = co.ID()

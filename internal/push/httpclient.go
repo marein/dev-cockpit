@@ -1,12 +1,11 @@
 package push
 
 import (
-	"fmt"
 	"net"
 	"net/http"
-	"net/netip"
-	"syscall"
 	"time"
+
+	"github.com/marein/dev-cockpit/internal/netguard"
 )
 
 // pushHTTPClient is the outbound client for every push channel: bounded by
@@ -23,22 +22,7 @@ var pushHTTPClient = &http.Client{
 	Transport: &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout: 5 * time.Second,
-			Control: refuseLinkLocal,
+			Control: netguard.RefuseLinkLocal,
 		}).DialContext,
 	},
-}
-
-func refuseLinkLocal(network, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return err
-	}
-	addr, err := netip.ParseAddr(host)
-	if err != nil {
-		return err
-	}
-	if addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
-		return fmt.Errorf("link local address %s refused", addr)
-	}
-	return nil
 }

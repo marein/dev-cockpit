@@ -1142,6 +1142,7 @@ func (w *Watcher) wake(job Job) {
 		return
 	}
 	seen.MessageID = run.rec.MessageID
+	seen.Model = run.rec.Model
 	outcome, err := w.service.awaitWake(run)
 	w.conclude(job, seen, outcome, err)
 }
@@ -1173,8 +1174,10 @@ func (w *Watcher) adopt(check AdoptedCheck) {
 	w.running[check.Terminal] = true
 	w.mu.Unlock()
 
+	seen := check.Context
+	seen.Model = check.run.rec.Model
 	outcome, err := w.service.awaitWake(check.run)
-	w.conclude(job, check.Context, outcome, err)
+	w.conclude(job, seen, outcome, err)
 
 	w.mu.Lock()
 	again := w.pending[check.Terminal]
@@ -1365,7 +1368,7 @@ func (w *Watcher) report(job Job, seen checkContext, outcome wakeOutcome) {
 	if !ok {
 		return
 	}
-	w.service.recordWake(fresh, seen.MessageID, outcome.Verdict, outcome.Text)
+	w.service.recordWake(fresh, seen.MessageID, outcome.Verdict, outcome.Text, seen.Model)
 	w.service.changed()
 	w.announceChange(fresh.Project)
 }
@@ -1495,7 +1498,7 @@ func (w *Watcher) expire(job Job, reason string) {
 	// A check that is still running on the expired job is killed like on a
 	// release: nobody is steering any more, so nobody pays for its answer.
 	w.service.killChecks(fresh.Terminal)
-	w.service.recordWake(fresh, "", VerdictExpired, report)
+	w.service.recordWake(fresh, "", VerdictExpired, report, "")
 	w.service.changed()
 	w.announceChange(fresh.Project)
 }

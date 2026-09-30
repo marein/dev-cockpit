@@ -635,7 +635,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Restore terminals at startup",
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Off by default. When on, a host reboot brings the working set back: coders resume, shells reopen empty in their project, and the tab order is kept.`,
+					Desc:     `Off by default. When on, a host reboot brings the working set back: coders resume, shells reopen empty in their project, and the tab order is kept. Ollama coders first wait up to a minute for their server.`,
 				},
 				{
 					Title:    "Separate history per shell",
@@ -660,6 +660,18 @@ func DocsTopics() []DocsTopic {
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",
 					Desc:     `Settings &rarr; Coder &rarr; Models holds a coder's start default, what a new coder and an assistant's chat run on when nothing is picked. Settings &rarr; Assistants &rarr; Models holds the Chat, Checks and Triggers picks a new assistant is made with, empty meaning the coder's default and Same as chat.`,
+				},
+				{
+					Title:    "Claude through Ollama",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `A Claude coder or assistant picked as <code>ollama/&lt;name&gt;</code> runs through Ollama, shows an Ollama badge on its icon and needs <code>ollama signin</code> for cloud models. Outside the startup restore, such a coder starts or resumes only while the Ollama server answers, and model selects warn when it does not.`,
+				},
+				{
+					Title:    "Ollama settings",
+					Tag:      "Setting",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Settings &rarr; Coder &rarr; Ollama, shown once ollama is installed, sets the Ollama host and lists the server's cloud models, Ollama's catalog and names added by hand.`,
 				},
 				{
 					Title:    "Back up and move your setup",

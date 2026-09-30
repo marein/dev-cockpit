@@ -42,6 +42,11 @@ func TestShiftEnterSendsKittyKeyToExtendedKeysPrograms(t *testing.T) {
 			t.Fatalf("%s: raw %q, key %q, want kitty sequence", command, target.raw, target.key)
 		}
 	}
+	launched := &foregroundTarget{fg: tmux.PaneForeground{Command: "ollama", AltScreen: true, Coder: "claude"}}
+	sendShiftEnterControl(t, launched)
+	if string(launched.raw) != "\x1b[13;2u" {
+		t.Fatalf("ollama in a claude session: raw %q, key %q, want kitty sequence", launched.raw, launched.key)
+	}
 }
 
 func TestShiftEnterFallsBackToEnter(t *testing.T) {
@@ -49,6 +54,7 @@ func TestShiftEnterFallsBackToEnter(t *testing.T) {
 		"plain shell":       {fg: tmux.PaneForeground{Command: "bash"}},
 		"vim on alt screen": {fg: tmux.PaneForeground{Command: "vim", AltScreen: true}},
 		"claude -p run":     {fg: tmux.PaneForeground{Command: "claude"}},
+		"ollama launch":     {fg: tmux.PaneForeground{Command: "ollama", AltScreen: true}},
 		"foreground error":  {err: errTest},
 	}
 	for label, target := range cases {

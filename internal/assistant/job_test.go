@@ -619,7 +619,7 @@ func TestAReportIsDroppedWhenItsAssistantIsGone(t *testing.T) {
 	}
 
 	gone := Job{Owner: "44444444-4444-4444-8444-444444444444", Terminal: "term-1", Name: "readme-task"}
-	if id := f.svc.recordWake(gone, "", VerdictDone, "the job is finished"); id != "" {
+	if id := f.svc.recordWake(gone, "", VerdictDone, "the job is finished", ""); id != "" {
 		t.Fatalf("want no message written, got %q", id)
 	}
 	fresh, _ := f.svc.Get(other.ID)
@@ -1636,8 +1636,8 @@ func TestAReportIsWrittenOnce(t *testing.T) {
 	c, _ := f.steered(t)
 
 	job := Job{Owner: c.ID, Terminal: "term-1", Name: "readme-task", Project: "cockpit"}
-	first := f.svc.recordWake(job, "fixed-id", VerdictDone, "the job is finished")
-	second := f.svc.recordWake(job, "fixed-id", VerdictDone, "the job is finished")
+	first := f.svc.recordWake(job, "fixed-id", VerdictDone, "the job is finished", "")
+	second := f.svc.recordWake(job, "fixed-id", VerdictDone, "the job is finished", "")
 	if first != "fixed-id" || second != "fixed-id" {
 		t.Fatalf("want both to name the same message, got %q and %q", first, second)
 	}

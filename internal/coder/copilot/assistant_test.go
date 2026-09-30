@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/coder"
 )
 
 const sessionID = "11111111-2222-4333-8444-555555555555"
@@ -579,13 +580,13 @@ func TestRecentModelsReadTheConfigBehindItsComments(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := (&Coder{config: path}).cliModels(); strings.Join(got, ",") != "auto,gemini-3.8-flash,claude-sonnet-5" {
+	if got := modelNames((&Coder{config: path}).cliModels()); got != "auto,gemini-3.8-flash,claude-sonnet-5" {
 		t.Fatalf("want auto first and the recent models after it, got %v", got)
 	}
 	if !strings.Contains(copilotModelsNote, "what you add") {
 		t.Fatalf("want the note to say the added names are listed too, got %q", copilotModelsNote)
 	}
-	if got := (&Coder{config: filepath.Join(t.TempDir(), "none.json")}).cliModels(); strings.Join(got, ",") != "auto" {
+	if got := modelNames((&Coder{config: filepath.Join(t.TempDir(), "none.json")}).cliModels()); got != "auto" {
 		t.Fatalf("want a missing file to leave auto alone, got %v", got)
 	}
 }
@@ -615,4 +616,12 @@ func TestDiagnoseNamesAModelCopilotRefuses(t *testing.T) {
 	if !errors.As(err, &refusal) || refusal.Model != strings.Repeat("m1", assistant.MaxModelRunes/2) {
 		t.Fatalf("want the echoed name cut to %d runes, got %v", assistant.MaxModelRunes, err)
 	}
+}
+
+func modelNames(models []coder.Model) string {
+	names := make([]string, len(models))
+	for i, m := range models {
+		names[i] = m.Name
+	}
+	return strings.Join(names, ",")
 }

@@ -12,7 +12,7 @@ import (
 func modelNames(models []Model) string {
 	var parts []string
 	for _, m := range models {
-		parts = append(parts, m.Source()+":"+m.Name)
+		parts = append(parts, m.Source+":"+m.Name)
 	}
 	return strings.Join(parts, ",")
 }
@@ -26,7 +26,7 @@ func modelNames(models []Model) string {
 // emptied list takes its key out of the store.
 func TestTheModelRepositoryListsAddsAndDeletes(t *testing.T) {
 	store := settings.New(filepath.Join(t.TempDir(), "settings.json"))
-	cli := func() []string { return []string{"opus", "haiku"} }
+	cli := func() []Model { return []Model{{Name: "opus"}, {Name: "haiku"}} }
 	repo := NewModelRepository(store, "claude", "the note", cli)
 	if got := modelNames(repo.List()); got != "cli:opus,cli:haiku" {
 		t.Fatalf("want the CLI's names alone at first, got %s", got)

@@ -9,6 +9,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"io"
 )
 
@@ -693,10 +694,10 @@ func TestATurnCarriesTheModelBehindItsFlag(t *testing.T) {
 // family, every one the CLI's own. claude has no list command, so this is
 // what keeps the list current.
 func TestTheModelListIsTheAliases(t *testing.T) {
-	repo := New("", nil).ModelRepository()
+	repo := New(t.TempDir(), "", nil, ollama.New(nil, "http://127.0.0.1:1/catalog", "")).ModelRepository()
 	var names []string
 	for _, m := range repo.List() {
-		if m.Added {
+		if m.Added() {
 			t.Fatalf("want every alias marked as the CLI's own, got %+v", m)
 		}
 		names = append(names, m.Name)

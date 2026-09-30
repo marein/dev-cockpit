@@ -534,7 +534,7 @@ func (s *Service) Recover() []AdoptedCheck {
 			// The page gets the whole answer again: the file is read from its
 			// first byte, so a browser that reconnects sees what was there
 			// before the restart and everything after it, without a reload.
-			s.hub.publish(rec.Instance, StreamEvent{Kind: FrameStart, RunID: rec.ID, MessageID: rec.MessageID, State: string(StateStreaming)})
+			s.hub.publish(rec.Instance, StreamEvent{Kind: FrameStart, RunID: rec.ID, MessageID: rec.MessageID, Model: rec.Model, State: string(StateStreaming)})
 		}
 		if alive {
 			log.Printf("assistant: turn %s is still running as process %d, reading on", rec.ID, rec.PID)

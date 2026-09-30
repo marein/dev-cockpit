@@ -104,6 +104,7 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 			DefaultAgent: defaultAgent,
 			Model:        modelPick("model", "", modelDefaultLabel(s.modelDefaults(co.ID()).Start), repo),
 			ModelNote:    repo.Note(),
+			ModelWarning: s.modelWarning(co.Coder()),
 		})
 	}
 	// A coder needs its whole form, so a split scoped create opens it
@@ -159,6 +160,7 @@ func (s *Server) handleCoderAttach(c *gin.Context) {
 		Running:         running,
 		Identifier:      running.Identifier,
 		Coder:           co.ID(),
+		Launcher:        coder.LauncherForSession(co.Coder(), running.Identifier),
 		ProjectName:     projectName,
 		Files:           files,
 		MaxUploadSizeMB: maxRequestBodyMegabytes(s.cfg.MaxRequestBodySize),
@@ -621,10 +623,11 @@ func (s *Server) handleCoderActivity(c *gin.Context) {
 // empty: the page showing it is stale either way.
 func (s *Server) handleCoderSteeredMark(c *gin.Context) {
 	id := c.Param("id")
-	coderID := ""
+	coderID, launcher := "", ""
 	for _, m := range s.coders {
 		if _, err := m.ResolveRunning(id); err == nil {
 			coderID = m.ID()
+			launcher = coder.LauncherForSession(m.Coder(), id)
 			break
 		}
 	}
@@ -634,10 +637,11 @@ func (s *Server) handleCoderSteeredMark(c *gin.Context) {
 	}
 	steered, _ := s.watcher.Marks()
 	c.HTML(http.StatusOK, "steered_icon.gohtml", map[string]any{
-		"ID":      id,
-		"Coder":   coderID,
-		"Steered": steered[id],
-		"Working": s.activity.Working()[id],
+		"ID":       id,
+		"Coder":    coderID,
+		"Launcher": launcher,
+		"Steered":  steered[id],
+		"Working":  s.activity.Working()[id],
 	})
 }
 

@@ -47,10 +47,10 @@ func (s *Server) projectBrowser(currentPath string) []render.ProjectNav {
 			if r.Kind == "coder" {
 				url = "/coders/" + r.ID
 			}
-			nav.Terminals = append(nav.Terminals, render.ProjectNavItem{ID: r.ID, Name: r.Name, URL: url, Kind: r.Kind, Coder: r.Coder, HasNews: r.HasNews})
+			nav.Terminals = append(nav.Terminals, render.ProjectNavItem{ID: r.ID, Name: r.Name, URL: url, Kind: r.Kind, Coder: r.Coder, Launcher: r.Launcher, HasNews: r.HasNews})
 		}
 		for _, r := range p.InactiveCoderRefs {
-			nav.InactiveCoders = append(nav.InactiveCoders, render.ProjectNavItem{ID: r.ID, Name: r.Name, URL: "/coders/" + r.ID + "/resume", Coder: r.Coder, HasNews: r.HasNews})
+			nav.InactiveCoders = append(nav.InactiveCoders, render.ProjectNavItem{ID: r.ID, Name: r.Name, URL: "/coders/" + r.ID + "/resume", Coder: r.Coder, Launcher: r.Launcher, HasNews: r.HasNews})
 		}
 		out = append(out, nav)
 	}

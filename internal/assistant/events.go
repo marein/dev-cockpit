@@ -682,6 +682,7 @@ func (s *Service) pushReaction(rec RunRecord, text string, state State, errText 
 		Role:      RoleAssistant,
 		Content:   text,
 		CreatedAt: now,
+		Model:     rec.Model,
 		State:     state,
 		Error:     errText,
 		Auto:      true,

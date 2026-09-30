@@ -38,6 +38,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/markdown"
 	"github.com/marein/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/pluginhost"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/push"
@@ -59,6 +60,11 @@ import (
 // uploadGrace is how long an upload may wait for the message that carries it
 // before the reaper treats it as abandoned.
 const uploadGrace = time.Hour
+
+const (
+	ollamaCatalogURL    = "https://ollama.com/api/tags"
+	ollamaCatalogURLEnv = "DEV_COCKPIT_OLLAMA_CATALOG_URL"
+)
 
 // version is the release tag, handed in through Main. A build where it
 // stayed exactly "dev" is a dev build, the only kind that honors the
@@ -429,7 +435,15 @@ func runServe(opts serveOptions) error {
 	// repository keeps its added names in it, and the model defaults the
 	// managers and the assistant read on every start come out of it.
 	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
-	registry := coder.NewRegistry(codercopilot.New(settingsStore), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude"), settingsStore), coderopencode.New(notify.InboxDir(cfg.StateDir, "opencode"), settingsStore))
+	catalog := ollamaCatalogURL
+	if version == "dev" {
+		if override := os.Getenv(ollamaCatalogURLEnv); override != "" {
+			catalog = override
+		}
+	}
+	launcher := ollama.New(settingsStore, catalog, cfg.StateDir)
+	go launcher.Run()
+	registry := coder.NewRegistry(codercopilot.New(settingsStore), coderclaude.New(cfg.StateDir, notify.InboxDir(cfg.StateDir, "claude"), settingsStore, launcher), coderopencode.New(notify.InboxDir(cfg.StateDir, "opencode"), settingsStore))
 	selected, err := selectProviders(registry)
 	if err != nil {
 		return err
@@ -539,6 +553,9 @@ func runServe(opts serveOptions) error {
 			return names
 		},
 	)
+	restorer.SetLauncherReady(func(name string, timeout time.Duration) bool {
+		return name != ollama.Executable || launcher.WaitReachable(timeout)
+	})
 	restorer.RunStartup()
 	go restorer.RunPeriodic(30 * time.Second)
 
@@ -620,7 +637,7 @@ func runServe(opts serveOptions) error {
 	// version stays the raw build var here on purpose: only a build without an
 	// injected release version is a dev build, and only a dev build may have
 	// its release feed moved by the environment.
-	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, tracker, settingsStore, pushService, restorer, backups, dockerService, intel, voiceService, serves, bus, resolveVersion(), updateFeedURL, updateFeedFormat, version == "dev")
+	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, tracker, settingsStore, launcher, pushService, restorer, backups, dockerService, intel, voiceService, serves, bus, resolveVersion(), updateFeedURL, updateFeedFormat, version == "dev")
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}

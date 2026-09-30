@@ -20,12 +20,16 @@ func (p *Coder) ModelRepository() coder.ModelRepository { return p.models }
 // cliModels are the CLI's own names: auto, which lets copilot pick, then the
 // models the user ran recently, which is what copilot's own config remembers.
 // There is no list command, so every other name is typed.
-func (p *Coder) cliModels() []string {
+func (p *Coder) cliModels() []coder.Model {
 	names := []string{"auto"}
 	if data, err := os.ReadFile(p.config); err == nil {
 		names = append(names, recentModels(data)...)
 	}
-	return names
+	models := make([]coder.Model, len(names))
+	for i, name := range names {
+		models[i] = coder.Model{Name: name}
+	}
+	return models
 }
 
 // recentModels reads recentModelIds out of copilot's config.json. The file

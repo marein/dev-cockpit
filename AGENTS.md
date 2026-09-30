@@ -78,8 +78,8 @@ cannot show stays at that function, within the comment rule below.
   allowlisted root.
 - Secrets (webhook URLs, keys, passphrases) are stored 0600 outside the
   shared settings store, or never stored and never logged.
-- HTTP to a user supplied URL (webhooks, Web Push) never follows
-  redirects and refuses link local targets (`internal/push`).
+- HTTP to a user supplied URL (webhooks, Web Push, the Ollama host) never follows
+  redirects and refuses link local targets (`internal/netguard`).
 - Containers the cockpit runs are built locally from embedded build
   files and never pulled prebuilt. They run as the cockpit's own uid and
   carry a label with the owning instance. Sweeps only touch resources
@@ -110,7 +110,7 @@ The layers are listed top down, a layer imports only the layers below it.
    `editorintelligence`, `voice`, `backup`, `notify`, `push`, `restore`,
    `update`, `askpass`, `activity`, `hostinfo` and `terminalstate`.
 4. **Infrastructure**: `statefile`, `settings`, `recent`, `eventbus`,
-   `localapi`, `detach`, `tmux`, `proctree`, `clirun`, `filesystem`,
+   `localapi`, `detach`, `tmux`, `proctree`, `clirun`, `filesystem`, `netguard`,
    `gitfacts`, `markdown`, `keys` and `config`. It imports no service.
 
 ### Boundaries

@@ -15,17 +15,16 @@ import (
 // CLI's own names are what the coder knows to offer, the added ones are what
 // somebody typed under Other… on a select and the repository remembered.
 type Model struct {
-	Name  string
-	Added bool
+	Name   string
+	Source string
 }
 
-// Source is the word a listing marks the name with, cli or added.
-func (m Model) Source() string {
-	if m.Added {
-		return "added"
-	}
-	return "cli"
-}
+const (
+	ModelSourceCLI   = "cli"
+	ModelSourceAdded = "added"
+)
+
+func (m Model) Added() bool { return m.Source == ModelSourceAdded }
 
 // ModelRepository is a coder's list of models and the names it was told to
 // remember: one list every select and the assistant's `model-list` read, one
@@ -57,6 +56,30 @@ type ModelRepository interface {
 // repository, the way it keeps its skills or its agents.
 type ModelKeeper interface {
 	ModelRepository() ModelRepository
+}
+
+type Launcher interface {
+	Launcher(model string) string
+	SessionModel(sessionID string) string
+	CheckModel(model string) error
+}
+
+type noLauncher struct{}
+
+func (noLauncher) Launcher(string) string     { return "" }
+func (noLauncher) SessionModel(string) string { return "" }
+func (noLauncher) CheckModel(string) error    { return nil }
+
+func LauncherFor(c Coder) Launcher {
+	if l, ok := c.(Launcher); ok {
+		return l
+	}
+	return noLauncher{}
+}
+
+func LauncherForSession(c Coder, sessionID string) string {
+	l := LauncherFor(c)
+	return l.Launcher(l.SessionModel(sessionID))
 }
 
 // ModelRepositoryFor answers a coder's repository, and an empty one for a
@@ -95,7 +118,7 @@ func WarmModels(c Coder) {
 // added names live in the settings store under the coder's key, one JSON
 // array, so every serve process on the state directory sees the same list. A
 // nil store keeps them in memory, which is what a test coder gets.
-func NewModelRepository(store *settings.Store, coderID, note string, cli func() []string) ModelRepository {
+func NewModelRepository(store *settings.Store, coderID, note string, cli func() []Model) ModelRepository {
 	return &modelRepository{store: store, key: assistant.ModelAddedKey(coderID), note: note, cli: cli}
 }
 
@@ -103,7 +126,7 @@ type modelRepository struct {
 	store *settings.Store
 	key   string
 	note  string
-	cli   func() []string
+	cli   func() []Model
 
 	// mu holds a read, modify, write of the added names together, and guards
 	// memory, which stands in for the store where there is none.
@@ -111,11 +134,20 @@ type modelRepository struct {
 	memory []string
 }
 
-func (r *modelRepository) cliNames() []string {
+func (r *modelRepository) cliModels() []Model {
 	if r.cli == nil {
 		return nil
 	}
 	return r.cli()
+}
+
+func (r *modelRepository) cliNames() []string {
+	models := r.cliModels()
+	names := make([]string, len(models))
+	for i, m := range models {
+		names[i] = m.Name
+	}
+	return names
 }
 
 func (r *modelRepository) addedLocked() []string {
@@ -146,16 +178,19 @@ func (r *modelRepository) saveLocked(names []string) {
 }
 
 func (r *modelRepository) listLocked() []Model {
-	cli := r.cliNames()
+	cli := r.cliModels()
 	out := make([]Model, 0, len(cli))
-	for _, name := range cli {
-		out = append(out, Model{Name: name})
+	for _, m := range cli {
+		if m.Source == "" {
+			m.Source = ModelSourceCLI
+		}
+		out = append(out, m)
 	}
 	for _, name := range r.addedLocked() {
-		if slices.Contains(cli, name) {
+		if slices.ContainsFunc(cli, func(m Model) bool { return m.Name == name }) {
 			continue
 		}
-		out = append(out, Model{Name: name, Added: true})
+		out = append(out, Model{Name: name, Source: ModelSourceAdded})
 	}
 	return out
 }

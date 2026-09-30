@@ -48,12 +48,13 @@ type ProjectNav struct {
 // ProjectNavItem is one navigable resource. URL points at the attach page for
 // active sessions and shells, and at the resume action for inactive sessions.
 type ProjectNavItem struct {
-	ID      string
-	Name    string
-	URL     string
-	Kind    string // "coder" or "shell", empty on inactive entries
-	Coder   string // owning coder id, shown when several coders run
-	HasNews bool
+	ID       string
+	Name     string
+	URL      string
+	Kind     string // "coder" or "shell", empty on inactive entries
+	Coder    string // owning coder id, shown when several coders run
+	Launcher string
+	HasNews  bool
 }
 
 // ProjectOption is one project in the project select of a create form. The

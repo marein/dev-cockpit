@@ -3,7 +3,7 @@
 {{template "terminals_ctx.gohtml" .}}
 {{template "work_start.gohtml" .}}
 {{range .Members}}
-{{if .Coder}}<span class="dc-term-icon running d-lg-none{{if index $.Working .ID}} working{{end}}{{if index $.Steered .ID}} steered{{end}}" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" .Coder}}{{template "news_dot.gohtml"}}</span>{{else}}<span class="dc-term-icon running d-lg-none" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i>{{template "news_dot.gohtml"}}</span>{{end}}
+{{if .Coder}}<span class="dc-term-icon running d-lg-none{{if index $.Working .ID}} working{{end}}{{if index $.Steered .ID}} steered{{end}}" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>{{else}}<span class="dc-term-icon running d-lg-none" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i>{{template "news_dot.gohtml"}}</span>{{end}}
 {{end}}
 <div class="d-flex align-items-center gap-2 min-w-0 dc-fine-only">
   <h1 class="dc-work-title dc-mono" data-split-title data-title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">{{.GroupName}}</h1>
@@ -39,7 +39,7 @@
       <div class="attach-split-pane min-w-0" data-pane-id="{{.ID}}" data-pane-kind="{{.Kind}}" data-pane-name="{{.Name}}" data-pane-project="{{.Project}}" data-pane-col="{{.Col}}" style="order: {{.Order}}; grid-column: {{.Col}}; grid-row: {{.Row}} / span {{.RowSpan}};"{{if .Coder}}{{with index $.SteerPrefill .ID}} data-pane-steer-prefill="{{.}}"{{end}}{{end}}>
         <div class="attach-split-head" data-pane-head title="Drag to reorder, right click for actions">
           {{if .Coder}}<dc-steered-mark class="d-inline-flex" src="/coders/{{.ID}}/steered">
-            {{- template "steered_icon.gohtml" (dict "ID" .ID "Coder" .Coder "Steered" (index $.Steered .ID) "Working" (index $.Working .ID)) -}}
+            {{- template "steered_icon.gohtml" (dict "ID" .ID "Coder" .Coder "Launcher" .Launcher "Steered" (index $.Steered .ID) "Working" (index $.Working .ID)) -}}
           </dc-steered-mark>{{else}}<span class="dc-term-icon running" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-terminal-2"></i>{{template "news_dot.gohtml"}}</span>{{end}}
           <span class="attach-split-text">
             <span class="attach-split-name text-truncate" data-pane-label>{{.Name}}</span>

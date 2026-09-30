@@ -2,20 +2,28 @@ package claude
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/ollama"
 )
 
 type runtime struct {
 	notifyInbox string
+	launcher    *ollama.Client
+	sessions    *ollamaSessions
 }
 
 func (runtime) UsesProvidedSessionID() bool { return true }
 
-func (runtime) Env() map[string]string { return map[string]string{"CLAUDE_CODE_NO_FLICKER": "1"} }
+func (r runtime) Env() map[string]string {
+	env := map[string]string{"CLAUDE_CODE_NO_FLICKER": "1"}
+	if host := r.launcher.Host(); host != "" {
+		env[ollamaHostEnv] = host
+	}
+	return env
+}
 
 // StartCommand builds the interactive session. The name is optional, see the
 // flag below. A task is passed as claude's
@@ -26,27 +34,44 @@ func (runtime) Env() map[string]string { return map[string]string{"CLAUDE_CODE_N
 // model rides behind --model and only on a start: a resume carries none, so a
 // resumed session keeps the model it has, whatever /model set inside it.
 func (r runtime) StartCommand(start coder.SessionStart) string {
-	command := fmt.Sprintf("cd %s && exec claude%s --session-id %s",
-		clirun.ShellQuote(start.Workdir), r.flags(start.AgentID, start.AutomaticApproval),
-		clirun.ShellQuote(start.SessionID))
+	args := r.flags(start.AgentID, start.AutomaticApproval) + " --session-id " + clirun.ShellQuote(start.SessionID)
 	// A session without a name gets no flag at all; an empty --name would be a
 	// value claude has to refuse. What such a session is called is read out of
 	// its transcript afterwards, see promptTitle in session.go.
 	if name := strings.TrimSpace(start.Name); name != "" {
-		command += " --name " + clirun.ShellQuote(name)
+		args += " --name " + clirun.ShellQuote(name)
 	}
-	if model := strings.TrimSpace(start.Model); model != "" {
-		command += " --model " + clirun.ShellQuote(model)
+	model := strings.TrimSpace(start.Model)
+	ollamaName, viaOllama := ollamaPick(model)
+	if model != "" && !viaOllama {
+		args += " --model " + clirun.ShellQuote(model)
 	}
 	if task := strings.TrimSpace(start.Task); task != "" {
-		command += " " + endOfOptions + " " + clirun.ShellQuote(task)
+		args += " " + endOfOptions + " " + clirun.ShellQuote(task)
 	}
-	return command
+	return r.command(start.Workdir, ollamaName, args)
+}
+
+func (r runtime) SessionStarted(start coder.SessionStart) {
+	if ollamaName, viaOllama := ollamaPick(start.Model); viaOllama {
+		r.sessions.remember(start.SessionID, ollamaName)
+	}
 }
 
 func (r runtime) ResumeCommand(sessionID, workdir string, automaticApproval bool) string {
-	return fmt.Sprintf("cd %s && exec claude%s --resume %s",
-		clirun.ShellQuote(workdir), r.flags("", automaticApproval), clirun.ShellQuote(sessionID))
+	args := r.flags("", automaticApproval) + " --resume " + clirun.ShellQuote(sessionID)
+	return r.command(workdir, r.sessions.modelOf(sessionID), args)
+}
+
+func (r runtime) command(workdir, ollamaName, args string) string {
+	head := "claude"
+	if ollamaName != "" {
+		head = ollama.Executable
+		for _, arg := range ollamaLaunch(ollamaName) {
+			head += " " + clirun.ShellQuote(arg)
+		}
+	}
+	return "cd " + clirun.ShellQuote(workdir) + " && exec " + head + args
 }
 
 func (r runtime) flags(agentID string, automaticApproval bool) string {

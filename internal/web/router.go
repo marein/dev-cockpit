@@ -237,6 +237,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// Docker is a section of its own: the daemon and the compose commands.
 	auth.GET("/settings/docker", s.handleSettingsDocker)
 	auth.POST("/settings/docker", s.handleSettingsDockerSave)
+	auth.GET(settingsOllamaPath, s.handleSettingsOllama)
+	auth.POST(settingsOllamaPath, s.handleSettingsOllamaSave)
+	auth.POST("/settings/coders/ollama/models/add", s.handleSettingsOllamaModelAdd)
+	auth.POST("/settings/coders/ollama/models/delete", s.handleSettingsOllamaModelDelete)
 	auth.GET("/settings/backup", s.handleSettingsBackup)
 	auth.POST("/settings/backup", s.handleSettingsBackupSave)
 	auth.GET("/settings/backup/new", s.handleSettingsBackupNew)

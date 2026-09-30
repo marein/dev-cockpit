@@ -42,3 +42,7 @@ type SessionRuntime interface {
 type SessionNaming interface {
 	NamesSessions() bool
 }
+
+type SessionStarter interface {
+	SessionStarted(start SessionStart)
+}

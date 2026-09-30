@@ -89,11 +89,12 @@ type EditorTerminalsData struct {
 
 // EditorInactiveCoder is one resumable coder in the panel's + menu.
 type EditorInactiveCoder struct {
-	ID      string
-	Name    string
-	Coder   string
-	URL     string
-	HasNews bool
+	ID       string
+	Name     string
+	Coder    string
+	Launcher string
+	URL      string
+	HasNews  bool
 }
 
 // EditorTerminal is one session in the editor's terminal panel: the tab entry
@@ -103,6 +104,7 @@ type EditorTerminal struct {
 	Name      string
 	Kind      string // "coder" or "shell"
 	Coder     string
+	Launcher  string
 	URL       string
 	StreamURL string
 	ResizeURL string

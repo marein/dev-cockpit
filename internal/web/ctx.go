@@ -82,6 +82,9 @@ func (s *Server) handleCtx(c *gin.Context) {
 // column marks its active row: the first segment after /settings, coders
 // folded onto the coder row.
 func settingsSectionOf(path string) string {
+	if path == settingsOllamaPath || strings.HasPrefix(path, settingsOllamaPath+"/") {
+		return "ollama"
+	}
 	rest := strings.TrimPrefix(path, "/settings/")
 	if rest == path {
 		return ""

@@ -9,6 +9,7 @@ type CoderModelDefaults struct {
 	Check   AssistantModelPick
 	Trigger AssistantModelPick
 	Note    string
+	Warning string
 }
 
 // SettingsAssistantModelsData feeds the Models tab of the assistant settings.
@@ -28,6 +29,7 @@ type CoderModelsData struct {
 	Base        string
 	Start       AssistantModelPick
 	Note        string
+	Warning     string
 	Added       []string
 	MaxRunes    int
 }

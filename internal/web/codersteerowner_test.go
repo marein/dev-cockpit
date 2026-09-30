@@ -18,6 +18,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/localapi"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/recent"
 	"github.com/marein/dev-cockpit/internal/restore"
@@ -54,7 +55,7 @@ func steerCreateServer(t *testing.T) (*Server, *assistant.Jobs, string, string) 
 	}
 	jobs := assistant.NewJobs(assistant.NewStore(stateDir))
 	s := &Server{
-		coders:     []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), coderclaude.New("", nil), projects)},
+		coders:     []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), coderclaude.New(t.TempDir(), "", nil, ollama.New(nil, "http://127.0.0.1:1/catalog", "")), projects)},
 		projects:   projects,
 		shells:     shells,
 		assistants: conversations,

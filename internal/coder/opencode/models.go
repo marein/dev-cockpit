@@ -45,11 +45,16 @@ func (p *Coder) ModelRepository() coder.ModelRepository { return p.models }
 // cliModels are the CLI's own names: what `opencode models` printed the last
 // time it ran, one provider/model per line, out of the cache that refreshes
 // itself.
-func (p *Coder) cliModels() []string {
+func (p *Coder) cliModels() []coder.Model {
 	if p.modelCache == nil {
 		return nil
 	}
-	return p.modelCache.names(time.Now())
+	names := p.modelCache.names(time.Now())
+	models := make([]coder.Model, len(names))
+	for i, name := range names {
+		models[i] = coder.Model{Name: name}
+	}
+	return models
 }
 
 // modelWindow is the bound a model's prompt is measured against, out of the

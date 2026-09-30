@@ -16,6 +16,7 @@ import (
 	coderclaude "github.com/marein/dev-cockpit/internal/coder/claude"
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/localapi"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/settings"
 	"github.com/marein/dev-cockpit/internal/tmux"
@@ -56,7 +57,7 @@ func TestTheRingsEmptyEntriesNameTheCodersDefault(t *testing.T) {
 // dropped; once the repository remembers it, it is a plain entry and never
 // doubled.
 func TestAModelSelectShowsWhatIsStored(t *testing.T) {
-	repo := coder.NewModelRepository(nil, "claude", "", func() []string { return []string{"opus", "haiku"} })
+	repo := coder.NewModelRepository(nil, "claude", "", func() []coder.Model { return []coder.Model{{Name: "opus"}, {Name: "haiku"}} })
 	pick := modelPick("model", "haiku", modelDefaultLabel("fable"), repo)
 	var labels, selected []string
 	for _, option := range pick.Options {
@@ -146,7 +147,7 @@ func TestTheModelFormStoresTheThreeModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	claude := coderclaude.New("", nil)
+	claude := coderclaude.New(t.TempDir(), "", nil, ollama.New(nil, "http://127.0.0.1:1/catalog", ""))
 	s := &Server{
 		assistants: conversations, workspace: workspace,
 		coders: []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), claude, project.NewRepository(t.TempDir(), nil))},

@@ -49,7 +49,8 @@ func (p Project) Active() bool {
 type CoderRef struct {
 	ID       string
 	Name     string
-	Coder    string    // owning coder id, for the badge when several coders run
+	Coder    string // owning coder id, for the badge when several coders run
+	Launcher string
 	At       time.Time // started (active) or last updated (inactive); for date sorting
 	TabPos   int       // tab strip position from @dc_tab_pos, 0 when unset (active only)
 	Group    string    // split view group id from @dc_tab_group, empty when ungrouped
@@ -76,11 +77,12 @@ type WorktreeRef struct {
 // TerminalRef is one live coder or shell of a project, merged into the tab
 // strip order for the projects page chip row.
 type TerminalRef struct {
-	ID      string
-	Name    string
-	Kind    string // "coder" or "shell"
-	Coder   string // owning coder id when Kind is "coder"
-	HasNews bool
+	ID       string
+	Name     string
+	Kind     string // "coder" or "shell"
+	Coder    string // owning coder id when Kind is "coder"
+	Launcher string
+	HasNews  bool
 }
 
 // Repository wraps the on-disk projects root.

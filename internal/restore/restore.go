@@ -9,6 +9,7 @@ package restore
 import (
 	"log"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,8 @@ import (
 // (value "on"). Unset or anything else means off. The snapshot file is
 // written regardless of the setting, so enabling it acts on current data.
 const SettingKey = "terminal-restore"
+
+const launcherWait = 60 * time.Second
 
 // Entry is one recorded terminal in the snapshot file.
 type Entry struct {
@@ -62,9 +65,12 @@ type Service struct {
 	notifier *notify.Service
 	jobs     Jobs
 	projects func() []string
+	ready    func(launcher string, timeout time.Duration) bool
+	wait     time.Duration
 
-	mu   sync.Mutex
-	last []Entry // last written entries, skips no-change rewrites
+	mu      sync.Mutex
+	last    []Entry // last written entries, skips no-change rewrites
+	holding bool
 }
 
 // New wires up the service. path is the snapshot file, enabled reads the
@@ -72,7 +78,11 @@ type Service struct {
 // injected as a function so restore needs no import on project: the prune
 // keeps the per project notification targets of exactly these.
 func New(path string, enabled func() bool, coders []*coder.Manager, shells *shell.Shells, t *tmux.Client, notifier *notify.Service, jobs Jobs, projects func() []string) *Service {
-	return &Service{path: path, enabled: enabled, coders: coders, shells: shells, tmux: t, notifier: notifier, jobs: jobs, projects: projects}
+	return &Service{path: path, enabled: enabled, coders: coders, shells: shells, tmux: t, notifier: notifier, jobs: jobs, projects: projects, wait: launcherWait}
+}
+
+func (s *Service) SetLauncherReady(ready func(launcher string, timeout time.Duration) bool) {
+	s.ready = ready
 }
 
 // Write rewrites the snapshot from the live terminals. Called on every
@@ -83,7 +93,7 @@ func (s *Service) Write() {
 	entries := s.scan()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if slices.Equal(entries, s.last) {
+	if s.holding || slices.Equal(entries, s.last) {
 		return
 	}
 	statefile.Save(s.path, 0o644, snapshot{Terminals: entries})
@@ -112,18 +122,78 @@ func (s *Service) RunPeriodic(interval time.Duration) {
 // fresh scan; both run on every startup, also with the setting off, so dead
 // entries clean themselves up regardless of the restore.
 func (s *Service) RunStartup() {
+	var waiting []waitingCoder
 	if s.enabled() {
 		var snap snapshot
 		statefile.Load(s.path, &snap)
 		if len(snap.Terminals) > 0 {
-			s.replay(snap.Terminals)
+			waiting = s.replay(snap.Terminals)
 		}
 	}
 	s.pruneDeadTargets()
-	s.Write()
+	if len(waiting) == 0 {
+		s.Write()
+		return
+	}
+	s.setHolding(true)
+	go func() {
+		s.resumeWhenReady(waiting)
+		s.setHolding(false)
+		s.Write()
+	}()
 }
 
-func (s *Service) replay(recorded []Entry) {
+type waitingCoder struct {
+	manager  *coder.Manager
+	entry    Entry
+	launcher string
+}
+
+func (s *Service) setHolding(holding bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.holding = holding
+}
+
+func (s *Service) resumeWhenReady(waiting []waitingCoder) {
+	var launchers []string
+	for _, w := range waiting {
+		if !slices.Contains(launchers, w.launcher) {
+			launchers = append(launchers, w.launcher)
+		}
+	}
+	log.Printf("terminal restore: waiting for %s to answer before resuming %d coder(s)", strings.Join(launchers, ", "), len(waiting))
+	deadline := time.Now().Add(s.wait)
+	for _, launcher := range launchers {
+		if s.ready(launcher, time.Until(deadline)) {
+			log.Printf("terminal restore: %s answers", launcher)
+		} else {
+			log.Printf("terminal restore: %s did not answer within %s, resuming anyway", launcher, s.wait)
+		}
+		s.resumeLaunched(waiting, launcher)
+	}
+}
+
+func (s *Service) resumeLaunched(waiting []waitingCoder, launcher string) {
+	for _, w := range waiting {
+		if w.launcher == launcher {
+			s.resumeCoder(w.manager, w.entry)
+		}
+	}
+}
+
+func (s *Service) resumeCoder(m *coder.Manager, e Entry) {
+	if _, err := m.ResumeUnchecked(e.ID); err != nil {
+		log.Printf("terminal restore: resume %s coder %q: %v", e.Coder, e.Name, err)
+		return
+	}
+	s.applyTabPos(e.ID, e.Pos)
+	s.applyTabGroup(e)
+	log.Printf("terminal restore: resumed %s coder %q", e.Coder, e.Name)
+}
+
+func (s *Service) replay(recorded []Entry) []waitingCoder {
+	var waiting []waitingCoder
 	managers := map[string]*coder.Manager{}
 	runningCoders := map[string]bool{}
 	for _, m := range s.coders {
@@ -149,13 +219,11 @@ func (s *Service) replay(recorded []Entry) {
 			if _, err := m.ResolveResumable(e.ID); err != nil {
 				continue
 			}
-			if _, err := m.Resume(e.ID); err != nil {
-				log.Printf("terminal restore: resume %s coder %q: %v", e.Coder, e.Name, err)
+			if launcher := coder.LauncherForSession(m.Coder(), e.ID); launcher != "" && s.ready != nil {
+				waiting = append(waiting, waitingCoder{manager: m, entry: e, launcher: launcher})
 				continue
 			}
-			s.applyTabPos(e.ID, e.Pos)
-			s.applyTabGroup(e)
-			log.Printf("terminal restore: resumed %s coder %q", e.Coder, e.Name)
+			s.resumeCoder(m, e)
 		case "shell":
 			if e.ID == "" || runningShells[e.ID] {
 				continue
@@ -170,6 +238,7 @@ func (s *Service) replay(recorded []Entry) {
 			log.Printf("terminal restore: recreated shell %q in %s", e.Name, e.CWD)
 		}
 	}
+	return waiting
 }
 
 func (s *Service) applyTabPos(session string, pos int) {

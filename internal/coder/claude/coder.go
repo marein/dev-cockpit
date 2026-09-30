@@ -1,12 +1,14 @@
 package claude
 
 import (
+	"fmt"
 	"path/filepath"
-	"slices"
 	"time"
 
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/settings"
 	"github.com/marein/dev-cockpit/internal/terminal"
 )
@@ -32,6 +34,8 @@ type Coder struct {
 	runtime      coder.SessionRuntime
 	controls     terminal.ControlMapper
 	models       coder.ModelRepository
+	launcher     *ollama.Client
+	launched     *ollamaSessions
 	// runner is probed on first use, see assistant.go. A CLI without the flags
 	// a turn needs loses the conversations only, never its terminal.
 	assistantProbe *coder.CapabilityProbe
@@ -42,22 +46,25 @@ type Coder struct {
 // Stop/Notification hooks drop their event files into; empty disables the
 // hook injection. store is where the model repository keeps the names it
 // was told to remember; nil keeps them in memory.
-func New(notifyInbox string, store *settings.Store) *Coder {
+func New(stateDir, notifyInbox string, store *settings.Store, launcher *ollama.Client) *Coder {
 	home, err := filesystem.HomeDir()
 	if err != nil {
 		home = "/root"
 	}
 	stateRoot := filepath.Join(home, ".claude", "projects")
+	launched := newOllamaSessions(stateDir)
 	c := &Coder{
 		tools:        []string{"claude"},
 		agents:       coder.NewStandardAgentRepository(filepath.Join(home, ".claude", "agents"), ".md"),
-		sessions:     &sessionRepository{stateRoot: stateRoot},
+		sessions:     &sessionRepository{stateRoot: stateRoot, ollama: launched},
 		skills:       coder.NewStandardSkillRepository(filepath.Join(home, ".claude", "skills")),
 		instructions: coder.NewFileGlobalInstructions(filepath.Join(home, ".claude", "CLAUDE.md")),
-		runtime:      runtime{notifyInbox: notifyInbox},
 		controls:     controlMapper{base: terminal.DefaultControlMapper()},
-		models:       coder.NewModelRepository(store, "claude", claudeModelsNote, func() []string { return slices.Clone(claudeModels) }),
+		launcher:     launcher,
+		launched:     launched,
 	}
+	c.runtime = runtime{notifyInbox: notifyInbox, launcher: launcher, sessions: launched}
+	c.models = modelRepository{ModelRepository: coder.NewModelRepository(store, "claude", claudeModelsNote, c.cliModels), launcher: launcher}
 	c.assistantProbe = coder.NewCapabilityProbe(c.probeAssistant, 10*time.Second)
 	return c
 }
@@ -71,9 +78,84 @@ var claudeModels = []string{"fable", "opus", "sonnet", "haiku"}
 // claudeModelsNote is the line under every select over that list.
 const claudeModelsNote = "Aliases, always the newest of each family."
 
+const ollamaModelsNote = "ollama/ names run through Ollama, cloud models only."
+
 // ModelRepository implements coder.ModelKeeper, the one list the New coder
 // dialog and the assistant's selects both read.
 func (p *Coder) ModelRepository() coder.ModelRepository { return p.models }
+
+func (p *Coder) cliModels() []coder.Model {
+	models := make([]coder.Model, 0, len(claudeModels))
+	for _, name := range claudeModels {
+		models = append(models, coder.Model{Name: name})
+	}
+	for _, m := range p.launcher.Models() {
+		name, err := assistant.CleanModel(m.Name)
+		if err != nil || name == "" {
+			continue
+		}
+		models = append(models, coder.Model{Name: ollama.Prefix + name, Source: ollama.Executable})
+	}
+	return models
+}
+
+type modelRepository struct {
+	coder.ModelRepository
+	launcher *ollama.Client
+}
+
+func (r modelRepository) Note() string {
+	if ollama.Available() {
+		return claudeModelsNote + " " + ollamaModelsNote
+	}
+	return claudeModelsNote
+}
+
+func (r modelRepository) Add(raw string) error {
+	name, err := assistant.CleanModel(raw)
+	if err != nil {
+		return err
+	}
+	if bare, ok := ollamaPick(name); ok {
+		if bare, err = assistant.CleanModel(bare); err != nil {
+			return err
+		}
+		return r.launcher.Add(bare)
+	}
+	return r.ModelRepository.Add(name)
+}
+
+func (r modelRepository) Delete(raw string) error {
+	name, err := assistant.CleanModel(raw)
+	if err != nil {
+		return err
+	}
+	if _, ok := ollamaPick(name); ok {
+		return fmt.Errorf("%s is managed on the Ollama settings page.", name)
+	}
+	return r.ModelRepository.Delete(name)
+}
+
+func (p *Coder) Launcher(model string) string {
+	if _, ok := ollamaPick(model); ok {
+		return ollama.Executable
+	}
+	return ""
+}
+
+func (p *Coder) CheckModel(name string) error {
+	if p.Launcher(name) != "" {
+		return p.launcher.Check()
+	}
+	return nil
+}
+
+func (p *Coder) SessionModel(sessionID string) string {
+	if name := p.launched.modelOf(sessionID); name != "" {
+		return ollama.Prefix + name
+	}
+	return ""
+}
 
 func (p *Coder) ID() string                                   { return "claude" }
 func (p *Coder) RequiredTools() []string                      { return p.tools }

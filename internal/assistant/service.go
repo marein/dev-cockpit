@@ -582,11 +582,13 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 		return Run{}, err
 	}
 	runID := statefile.NewID()
+	model := ModelFor(RunChat, c.Summary, "", co.ModelDefaults())
 	msg := Message{
 		ID:        statefile.NewID(),
 		Role:      RoleAssistant,
 		CreatedAt: s.now().UTC(),
 		RunID:     runID,
+		Model:     model,
 		State:     StateStreaming,
 	}
 	c.Messages = append(c.Messages, msg)
@@ -600,7 +602,7 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 		Title:     c.Title,
 		Workdir:   workdir,
 		Prompt:    prompt,
-		Model:     ModelFor(RunChat, c.Summary, "", co.ModelDefaults()),
+		Model:     model,
 	}
 	rec := RunRecord{
 		ID:        runID,
@@ -614,7 +616,7 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 	for _, id := range announce {
 		s.hub.publish(c.ID, StreamEvent{Kind: FrameMessage, MessageID: id})
 	}
-	s.hub.publish(c.ID, StreamEvent{Kind: FrameStart, RunID: runID, MessageID: msg.ID, State: string(StateStreaming)})
+	s.hub.publish(c.ID, StreamEvent{Kind: FrameStart, RunID: runID, MessageID: msg.ID, Model: model, State: string(StateStreaming)})
 
 	a := &activeRun{rec: rec, done: make(chan struct{})}
 	s.running[runID] = a

@@ -885,6 +885,7 @@ func (s *Server) handleEditorTerminals(c *gin.Context) {
 			Name:          t.Name,
 			Kind:          t.Kind,
 			Coder:         t.Coder,
+			Launcher:      t.Launcher,
 			URL:           t.URL,
 			StreamURL:     t.URL + "/stream",
 			ResizeURL:     t.URL + "/resize",
@@ -918,11 +919,12 @@ func (s *Server) handleEditorTerminals(c *gin.Context) {
 		}
 		for _, r := range q.InactiveCoderRefs {
 			inactive = append(inactive, render.EditorInactiveCoder{
-				ID:      r.ID,
-				Name:    r.Name,
-				Coder:   r.Coder,
-				URL:     "/coders/" + r.ID + "/resume",
-				HasNews: r.HasNews,
+				ID:       r.ID,
+				Name:     r.Name,
+				Coder:    r.Coder,
+				Launcher: r.Launcher,
+				URL:      "/coders/" + r.ID + "/resume",
+				HasNews:  r.HasNews,
 			})
 		}
 		break

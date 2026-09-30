@@ -12,7 +12,10 @@ const { assert, sleep, submitBtn, BASE, createProject, deleteProject } = L;
 // badges. Both older shapes 308-redirect to the canonical URLs: the
 // pre-settings /coders/<coder>/... and the legacy top-level paths (/agents
 // etc., coder via ?coder=). MODE=single asserts the adaptive parts stay off;
-// it only applies on a host where a single coder CLI is installed.
+// it only applies on a host where a single coder CLI is installed. The
+// sidebar's coder entry is then the plain Coder row, or the coder's own row
+// nested under a Coder head beside the Ollama row when ollama is installed,
+// and the runner asserts whichever shape it sees.
 // Gotcha: never save /instructions here, the instance writes the real
 // per-coder files in $HOME. Only sessions created by this script are touched.
 
@@ -30,15 +33,25 @@ L.runFeature(`MULTI-CODER (${MODE})`, async ({ page, run }) => {
       assert(agents.length === 1, `expected one agent select, got ${agents.length}`);
       assert(!(await page.$eval('select[name="agent"]', (s) => s.disabled)), "agent select disabled");
     });
-    await run("one plain Coder entry on agents/skills/instructions", async () => {
+    await run("one Coder entry on agents/skills/instructions, plain or nested beside the Ollama row", async () => {
+      let shape = "";
       for (const path of ["/agents", "/skills", "/instructions"]) {
         await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
         assert(/\/settings\/coders\/\w+/.test(page.url()), `${path} did not land on a canonical coder URL: ${page.url()}`);
         const coders = await page.$$("[data-settings-coder]");
         assert(coders.length === 1, `expected one Coder entry, got ${coders.length} on ${path}`);
-        assert((await coders[0].innerText()).trim() === "Coder", `single coder entry is not the plain Coder row on ${path}`);
+        const ollama = !!(await page.$('[data-settings-nav] a[href="/settings/coders/ollama"]'));
+        const row = await coders[0].evaluate((a) => {
+          let head = a.previousElementSibling;
+          while (head && !head.classList.contains("dc-section-head")) head = head.previousElementSibling;
+          return { text: a.innerText.trim(), nested: a.classList.contains("is-nested"), head: head ? head.textContent.trim() : "" };
+        });
+        if (ollama) assert(row.nested && row.head === "Coder" && row.text !== "Coder", `with ollama installed the coder row is not nested under Coder on ${path}: ${JSON.stringify(row)}`);
+        else assert(!row.nested && row.text === "Coder", `without ollama the single coder entry is not the plain Coder row on ${path}: ${JSON.stringify(row)}`);
         assert(await page.$("[data-coder-sections]"), `no section tabs on ${path}`);
+        shape = ollama ? "nested under Coder beside the Ollama row" : "the plain Coder row";
       }
+      return shape;
     });
     return;
   }

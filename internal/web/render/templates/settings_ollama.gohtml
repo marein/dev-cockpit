@@ -1,0 +1,48 @@
+{{define "settings_ollama.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Ollama</h1>
+{{template "coder_head_badge.gohtml" (dict "ID" "ollama" "Label" "Ollama")}}
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
+  <form method="post" action="/settings/coders/ollama" id="settings-ollama">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <div class="text-secondary small mb-3" data-ollama-intro>Ollama wraps other coders' sessions in its launcher, cloud models only. Supported today: Claude.</div>
+    <div class="mb-3">
+      <label class="form-label" for="settings-ollama-address">Ollama host</label>
+      <div class="text-secondary small mb-2">Where the model list and <code>OLLAMA_HOST</code> point. Empty means Ollama's own default.</div>
+      <input type="text" class="form-control" id="settings-ollama-address" name="host" value="{{.Address}}" placeholder="http://127.0.0.1:11434" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <button type="submit" class="btn btn-primary">Save</button>
+  </form>
+  <div class="mt-4" data-ollama-models>
+    <label class="form-label">Models</label>
+    <div class="text-secondary small mb-2">The server's cloud models, the names added here and Ollama's public catalog, each picked as <code>ollama/&lt;name&gt;</code>.</div>
+    <div class="list-group mb-2">
+      {{range .Models}}
+      <div class="list-group-item d-flex align-items-center gap-2" data-ollama-model="{{.Name}}" data-ollama-source="{{.Source}}">
+        <i class="ti ti-cpu fs-2 text-secondary"></i>
+        <div class="flex-fill min-w-0 text-truncate font-monospace">{{.Name}}</div>
+        <span class="badge bg-secondary-lt">{{.Source}}</span>
+        {{if .Added}}
+        <form method="post" action="/settings/coders/ollama/models/delete">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="name" value="{{.Name}}">
+          <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Remove {{.Name}}" title="Remove"><i class="ti ti-trash"></i></button>
+        </form>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="list-group-item text-secondary" data-ollama-models-empty>No models yet.</div>
+      {{end}}
+    </div>
+    <form method="post" action="/settings/coders/ollama/models/add" class="d-flex gap-2">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="text" class="form-control" name="name" placeholder="Model name, like qwen3.5:cloud" maxlength="{{.MaxRunes}}" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+      <button type="submit" class="btn btn-icon btn-primary flex-shrink-0" aria-label="Add model name" title="Add"><i class="ti ti-plus"></i></button>
+    </form>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

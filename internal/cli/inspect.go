@@ -22,6 +22,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/recent"
 	"github.com/marein/dev-cockpit/internal/shell"
@@ -417,7 +418,8 @@ func newModelListCommand(opts *inspectOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "model-list [coder]",
 		Short: "List the models a coder offers, the CLI's own and the added ones",
-		Long: "List the models a coder offers, one per line marked cli or added, then the " +
+		Long: "List the models a coder offers, one per line marked cli or added, or with a " +
+			"coder's own word for a list of its own such as ollama, then the " +
 			"defaults set for it and the note saying where the CLI's names come from; without " +
 			"a coder, every installed one. A name `--model` takes is one of these or spelled " +
 			"like one. Reads only, changes nothing.",
@@ -1372,7 +1374,7 @@ func openTerminals(opts inspectOptions) (terminals, error) {
 	hidden := reservedSessions(cfg.StateDir)
 
 	out := terminals{cfg: cfg, projects: projectRepo}
-	registry := coder.NewRegistry(codercopilot.New(nil), coderclaude.New(notify.InboxDir(cfg.StateDir, "claude"), nil), coderopencode.New(notify.InboxDir(cfg.StateDir, "opencode"), nil))
+	registry := coder.NewRegistry(codercopilot.New(nil), coderclaude.New(cfg.StateDir, notify.InboxDir(cfg.StateDir, "claude"), nil, ollama.New(nil, ollamaCatalogURL, "")), coderopencode.New(notify.InboxDir(cfg.StateDir, "opencode"), nil))
 	for _, c := range registry.All() {
 		if len(clirun.MissingTools(c.RequiredTools())) > 0 {
 			continue

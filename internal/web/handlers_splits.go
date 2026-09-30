@@ -178,6 +178,7 @@ func (s *Server) handleSplitAttach(c *gin.Context) {
 			Name:          m.Name,
 			Kind:          m.Kind,
 			Coder:         m.Coder,
+			Launcher:      m.Launcher,
 			Project:       m.Project,
 			URL:           base,
 			StreamURL:     base + "/stream",
