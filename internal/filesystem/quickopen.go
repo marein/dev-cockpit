@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // QuickOpenLimit caps how many matches one quick open query returns. The
@@ -100,12 +102,12 @@ func (ix *quickOpenIndex) query(query, scope string, limit int) QuickOpenMatches
 		if prefix != "" && !strings.HasPrefix(ix.paths[i], prefix) {
 			continue
 		}
-		rank, ok := scoreQuickOpen(lower, tokens)
+		tier, pos, ok := scoreQuickOpen(ix.paths[i], lower, tokens)
 		if !ok {
 			continue
 		}
 		total++
-		keep.push(quickOpenMatch{path: ix.paths[i], rank: rank})
+		keep.push(quickOpenMatch{path: ix.paths[i], tier: tier, pos: pos})
 	}
 	return QuickOpenMatches{Paths: keep.sorted(), Total: total, Indexed: len(ix.paths)}
 }
@@ -211,35 +213,87 @@ func pathExtension(p string) string {
 // quickOpenMatch is one scored candidate.
 type quickOpenMatch struct {
 	path string
-	rank int
+	tier int
+	pos  int
 }
 
-// scoreQuickOpen grades an already lowercased path against the query tokens.
-// Every token has to appear somewhere in the path; the first token alone
-// decides the rank, with a file name prefix beating a file name substring
-// beating a hit anywhere else in the path.
-func scoreQuickOpen(lower string, tokens []string) (int, bool) {
+// Tiers of where the first query token hits the file name.
+const (
+	tierWordStart = iota
+	tierInsideWord
+	tierOutsideName
+)
+
+// scoreQuickOpen grades a path against the query tokens, given the path as
+// it is and lowercased by appendLowerASCII, which keeps the byte offsets of
+// both equal. Every token has to appear somewhere in the path. The first token
+// alone decides the rank, by where it hits the file name: a word start beats
+// the inside of a word, each earlier position first, and a hit only outside
+// the file name comes last. rankTokens in the browser applies the same rule.
+func scoreQuickOpen(path, lower string, tokens []string) (tier, pos int, ok bool) {
 	for _, t := range tokens {
 		if !strings.Contains(lower, t) {
-			return 0, false
+			return 0, 0, false
 		}
 	}
-	name := lower[strings.LastIndexByte(lower, '/')+1:]
-	switch {
-	case strings.HasPrefix(name, tokens[0]):
-		return 0, true
-	case strings.Contains(name, tokens[0]):
-		return 1, true
-	default:
-		return 2, true
-	}
+	start := strings.LastIndexByte(lower, '/') + 1
+	tier, pos = rankName(path[start:], lower[start:], tokens[0])
+	return tier, pos, true
 }
 
-// quickOpenLess is the order the palette shows matches in: better rank first,
-// then the shorter path, then alphabetically.
+// rankName finds token in the lowercased name and reads the original name to
+// tell where a word starts, since only it still carries the case.
+func rankName(name, lower, token string) (tier, pos int) {
+	inside := -1
+	for at := strings.Index(lower, token); at >= 0; {
+		if startsWord(name, at) {
+			return tierWordStart, at
+		}
+		if inside < 0 {
+			inside = at
+		}
+		next := strings.Index(lower[at+1:], token)
+		if next < 0 {
+			break
+		}
+		at += 1 + next
+	}
+	if inside >= 0 {
+		return tierInsideWord, inside
+	}
+	return tierOutsideName, 0
+}
+
+// startsWord reports whether a word of name starts at byte offset at: at the
+// start of the name, after a separator, at a camel case hump (Game|Controller)
+// or at the last capital of an acronym that a word follows (HTTP|Client).
+func startsWord(name string, at int) bool {
+	if at == 0 {
+		return true
+	}
+	before, _ := utf8.DecodeLastRuneInString(name[:at])
+	if unicode.IsSpace(before) || strings.ContainsRune("-_./:", before) {
+		return true
+	}
+	here, size := utf8.DecodeRuneInString(name[at:])
+	if !unicode.IsUpper(here) {
+		return false
+	}
+	if unicode.IsLower(before) || unicode.IsDigit(before) {
+		return true
+	}
+	after, _ := utf8.DecodeRuneInString(name[at+size:])
+	return unicode.IsUpper(before) && unicode.IsLower(after)
+}
+
+// quickOpenLess is the order the palette shows matches in: better tier first,
+// then the earlier position, then the shorter path, then alphabetically.
 func quickOpenLess(a, b quickOpenMatch) bool {
-	if a.rank != b.rank {
-		return a.rank < b.rank
+	if a.tier != b.tier {
+		return a.tier < b.tier
+	}
+	if a.pos != b.pos {
+		return a.pos < b.pos
 	}
 	if len(a.path) != len(b.path) {
 		return len(a.path) < len(b.path)

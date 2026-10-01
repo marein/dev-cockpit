@@ -11,7 +11,7 @@ import { applyFold } from "@dc/fold";
 import { escapeHtml } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, SwipeNav, pushSample, releaseVelocity } from "@dc/swipe";
-import { matchesTokens } from "@dc/filter";
+import { matchesTokens, rankTokens } from "@dc/filter";
 import { diffLines, lineTokens } from "@dc/linediff";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
@@ -8563,8 +8563,7 @@ async function init(root) {
   function folderRows() {
     if (!filterFacts) return null;
     const typed = quickOpenInput.value.trim().replace(/^\/+/, "").replace(/\/+$/, "");
-    const tokens = typed.toLowerCase().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) {
+    if (!typed) {
       const rows = [backRow(), wholeProjectRow()];
       const here = parentDir(activeTab()?.path || "");
       const current = here ? filterFacts.folders.find((folder) => folder.path === here) : null;
@@ -8576,7 +8575,7 @@ async function init(root) {
     }
     const scored = [];
     for (const folder of filterFacts.folders) {
-      const rank = rankFolder(folder.path, tokens);
+      const rank = rankTokens(folder.path.slice(folder.path.lastIndexOf("/") + 1), folder.path, typed);
       if (rank >= 0) scored.push({ folder, rank });
     }
     // The order quick open answers in: better rank, then the shorter path, then
@@ -8585,20 +8584,6 @@ async function init(root) {
       || a.folder.path.length - b.folder.path.length
       || (a.folder.path < b.folder.path ? -1 : 1));
     return [backRow(), ...scored.map((entry) => folderRow(entry.folder))];
-  }
-
-  // Every token has to occur somewhere in the path, and the first one decides:
-  // a name prefix beats a name substring beats a hit anywhere in the path. That
-  // is what makes "web" find "internal/web" without walking the levels.
-  function rankFolder(path, tokens) {
-    const lower = path.toLowerCase();
-    for (const token of tokens) {
-      if (!lower.includes(token)) return -1;
-    }
-    const name = lower.slice(lower.lastIndexOf("/") + 1);
-    if (name.startsWith(tokens[0])) return 0;
-    if (name.includes(tokens[0])) return 1;
-    return 2;
   }
 
   function folderRow(folder, icon = "ti-folder") {
@@ -9674,19 +9659,12 @@ async function init(root) {
   const sourceRows = () => (projectListEl ? Array.from(projectListEl.querySelectorAll("[data-project-name]")) : []);
   const paletteRows = () => (paletteListEl ? Array.from(paletteListEl.querySelectorAll("[data-project-name]")) : []);
 
-  // rankProject says where a query lands on a row: every token has to hit
-  // somewhere in the row's search line (the token search the whole app
-  // shares), and the first token decides the order among the hits, a name or
-  // repository it starts ahead of one it sits inside, and that ahead of a hit
-  // in the branch or the path alone.
+  // A project counts its repository as a second name, so a hit there ranks
+  // like one in the name and ahead of a hit in the branch or the path alone.
   function rankProject(row, query) {
-    if (!matchesTokens(row.dataset.projectSearch || row.dataset.projectName || "", query)) return -1;
-    const first = query.toLowerCase().split(/\s+/).filter(Boolean)[0] || "";
-    const name = (row.dataset.projectName || "").toLowerCase();
-    const repo = (row.querySelector(".editor-palette-repo")?.textContent || "").toLowerCase();
-    if (name.startsWith(first) || repo.startsWith(first)) return 0;
-    if (name.includes(first) || repo.includes(first)) return 1;
-    return 2;
+    const name = row.dataset.projectName || "";
+    const repo = row.querySelector(".editor-palette-repo")?.textContent || "";
+    return rankTokens([name, repo], row.dataset.projectSearch || name, query);
   }
 
   function paletteGroup(label, rows, members) {

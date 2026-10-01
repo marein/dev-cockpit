@@ -3,7 +3,7 @@ import { confirm, promptText } from "@dc/dialog";
 import { el } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { onServerEvent } from "@dc/events";
-import { matchesTokens } from "@dc/filter";
+import { rankTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
 import { ensureOk, getText, landingURL, postForm, postJSON } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
@@ -1081,19 +1081,21 @@ class TerminalTabs extends HTMLElement {
     if (!sw) return;
     const query = sw.input.value.trim();
     const selected = sw.visible[sw.index];
-    sw.visible = sw.rows.filter((row) => {
-      let show;
+    const ranks = new Map();
+    for (const row of sw.rows) {
+      let rank;
       if (row.dataset.switcherToggle) {
-        show = !query && !sw.expanded.has(row.dataset.switcherToggle);
+        rank = !query && !sw.expanded.has(row.dataset.switcherToggle) ? 0 : -1;
+      } else if (query) {
+        const name = row.querySelector(".terminal-switcher-name")?.textContent || "";
+        rank = rankTokens(name, row.dataset.switcherName, query);
       } else {
-        show = !query || matchesTokens(row.dataset.switcherName, query);
-        if (show && row.dataset.switcherFolded && !query && !sw.expanded.has(row.dataset.switcherFolded)) {
-          show = false;
-        }
+        rank = row.dataset.switcherFolded && !sw.expanded.has(row.dataset.switcherFolded) ? -1 : 0;
       }
-      row.hidden = !show;
-      return show;
-    });
+      row.hidden = rank < 0;
+      ranks.set(row, !query ? 0 : rank < 0 ? Infinity : rank);
+    }
+    sw.visible = this.rankSwitcherGroups(sw.rows, ranks).filter((row) => !row.hidden);
     sw.empty.hidden = sw.visible.length > 0;
     for (const section of sw.sections) {
       section.node.hidden = !sw.visible.some((row) => row.dataset.switcherSection === section.key);
@@ -1104,6 +1106,31 @@ class TerminalTabs extends HTMLElement {
     const kept = fromInput ? -1 : sw.visible.indexOf(selected);
     sw.index = kept === -1 ? 0 : kept;
     this.paintSelection();
+  }
+
+  // Each group (the open tabs, a section, a project's inactive coders) sorts
+  // its rows by rank on its own, so the sections keep their place. The groups
+  // stand contiguous in both the cycle order and the list, so a group is
+  // reordered where it stands. Equal ranks keep the built order.
+  rankSwitcherGroups(rows, ranks) {
+    const groups = new Map();
+    rows.forEach((row, index) => {
+      const key = (row.dataset.switcherSection || "") + "\n" + (row.dataset.switcherGroup || "");
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ row, index, rank: ranks.get(row) });
+    });
+    const ordered = [];
+    for (const members of groups.values()) {
+      members.sort((a, b) => a.rank - b.rank || a.index - b.index);
+      const inGroup = new Set(members.map((member) => member.row));
+      const last = members.find((member) => !inGroup.has(member.row.nextSibling))?.row;
+      const after = last?.nextSibling || null;
+      for (const member of members) {
+        last?.parentNode?.insertBefore(member.row, after);
+        ordered.push(member.row);
+      }
+    }
+    return ordered;
   }
 
   paintSelection() {

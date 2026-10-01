@@ -34,7 +34,9 @@ const { assert, sleep, BASE } = L;
 // inert while the switcher is open, they neither cycle nor move the focus out
 // of the filter field), Enter or click switches,
 // Esc closes, typing filters the list by name and project through the search
-// input, and it all works while the xterm terminal has focus. The switcher is
+// input and ranks each section, a word start in the name (camel case humps
+// included) before a hit inside a word, each earlier position first, and it all works while the xterm
+// terminal has focus. The switcher is
 // app wide: every page without an inline strip (projects, editor, settings)
 // mounts the same element hidden from the layout (terminal_tabs_switcher
 // partial, strip plus menu only), so double Ctrl/Meta opens the switcher
@@ -207,6 +209,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
         await L.login(sp);
         const own = [...ids, ...extra.map(ownId)];
         await sp.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+        await L.dismissUpdate(sp);
         await sp.waitForSelector(`${tabSel(ids[0])}.active`, { state: "attached", timeout: 8000 });
         const order = (await sp.$$eval("terminal-tabs .terminal-tab", (els) => els.map((e) => e.dataset.tabId))).filter((id) => own.includes(id));
         const place = (id) => sp.evaluate((sel) => {
@@ -692,6 +695,55 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(page.url() === before, "Enter navigated despite no match");
       await page.keyboard.press("Escape");
       await sleep(200);
+    });
+
+    await run("the switcher ranks a word start in the name first, then the earlier position", async () => {
+      // Each case names the shells in strip order and lists the ranked order
+      // the query has to show, equal ranks keeping the strip order.
+      const cases = [
+        { query: "play", names: ["Replay viewer", "Ranked play queue", "unrelated"], want: [1, 0] },
+        { query: "lay", names: ["Leaderboard display", "Replay viewer", "unrelated"], want: [1, 0] },
+        { query: "match", names: ["Player profile shows recent matches", "matchmaking rules v2", "unrelated"], want: [1, 0] },
+        { query: "lobby", names: ["Open the lobby chat", "game-lobby-2", "lobby-connect-four"], want: [2, 1, 0] },
+        { query: "controller", names: ["game_controller_test.php", "GameController.php", "unrelated"], want: [1, 0] },
+        { query: "client", names: ["netclient", "HttpClient", "HTTPClient"], want: [1, 2, 0] },
+        { query: "ontroller", names: ["GameController", "PadController", "unrelated"], want: [1, 0] },
+      ];
+      const visibleOf = (own) => page.$$eval(".terminal-switcher-item[data-switcher-id]", (els, own) => els
+        .filter((e) => e.getClientRects().length > 0)
+        .map((e) => e.dataset.switcherId)
+        .filter((id) => own.includes(id)), own);
+      const strip = (await tabOrder()).filter((id) => ids.includes(id));
+      for (const { query, names, want } of cases) {
+        for (const [index, name] of names.entries()) {
+          await page.evaluate(async ({ id, name }) => {
+            const response = await fetch(`/shells/${id}/rename`, {
+              method: "POST",
+              headers: { "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content },
+              body: new URLSearchParams({ name }),
+            });
+            if (!response.ok) throw new Error(`rename ${id}: ${response.status}`);
+          }, { id: strip[index], name });
+        }
+        await page.waitForFunction(({ strip, names }) => names.every((name, index) =>
+          document.querySelector(`terminal-tabs .terminal-tab[data-tab-id="${strip[index]}"]`)?.dataset.tabName === name), { strip, names }, { timeout: 8000 });
+        await page.keyboard.press("Control");
+        await page.keyboard.press("Control");
+        await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+        await page.keyboard.type(query, { delay: 30 });
+        await sleep(200);
+        const expected = want.map((index) => strip[index]);
+        const rows = await visibleOf(expected);
+        assert(JSON.stringify(rows) === JSON.stringify(expected), `${query}: ranked rows ${JSON.stringify(rows)}, expected ${JSON.stringify(expected)}`);
+        const selected = await page.$eval(".terminal-switcher-item.selected", (e) => e.dataset.switcherId);
+        assert(selected === expected[0], `${query}: selection ${selected} is not on the best hit`);
+        await page.fill(".terminal-switcher-filter", "");
+        await sleep(200);
+        const cleared = await visibleOf(strip);
+        assert(JSON.stringify(cleared) === JSON.stringify(strip), `${query}: an empty filter did not restore the strip order: ${cleared}`);
+        await page.keyboard.press("Escape");
+        await page.waitForSelector(".terminal-switcher", { state: "detached", timeout: 4000 });
+      }
     });
 
     await run("without an assistant the switcher offers the overview row, which opens the area's empty state", async () => {

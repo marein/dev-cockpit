@@ -13,7 +13,7 @@ import (
 )
 
 // quickOpenTree writes a small project that exercises the skip list, the three
-// ranks and the tie breakers. The layout follows php-gaming-website, a real
+// tiers and the tie breakers. The layout follows php-gaming-website, a real
 // project this feature has to hold up against.
 func quickOpenTree(t *testing.T) string {
 	t.Helper()
@@ -109,25 +109,69 @@ func TestScoreQuickOpenRanks(t *testing.T) {
 	cases := []struct {
 		path  string
 		query string
-		rank  int
+		tier  int
+		pos   int
 		ok    bool
 	}{
-		{"config/chat/config.yml", "config", 0, true},                 // file name prefix
-		{"src/Chat/Application/ChatGateway.php", "gateway", 1, true},  // file name substring
-		{"config/chat/config.yml", "chat", 2, true},                   // path only
-		{"src/Kernel.php", "chat", 0, false},                          // no match
-		{"src/ConnectFour/Domain/Game/Game.php", "game php", 0, true}, // all tokens
-		{"src/Chat/Application/ChatId.php", "chat gateway", 0, false}, // one token missing
+		{"config/chat/config.yml", "config", tierWordStart, 0, true},
+		{"config/chat/chat-config.yml", "config", tierWordStart, 5, true},
+		{"src/Chat/Application/ChatGateway.php", "gateway", tierWordStart, 4, true},
+		{"src/Chat/Application/ChatGateway.php", "ateway", tierInsideWord, 5, true},
+		{"src/Game/GameController.php", "controller", tierWordStart, 4, true},
+		{"src/Game/GameController.php", "ontroller", tierInsideWord, 5, true},
+		{"src/Lobby/HttpClient.php", "client", tierWordStart, 4, true},
+		{"src/Lobby/HTTPClient.php", "client", tierWordStart, 4, true},
+		{"src/Lobby/HTTPClient.php", "pclient", tierInsideWord, 3, true},
+		{"src/Lobby/Lobby2Player.php", "player", tierWordStart, 6, true},
+		{"src/replay_play.go", "play", tierWordStart, 7, true},
+		{"config/chat/config.yml", "chat", tierOutsideName, 0, true},
+		{"src/Kernel.php", "chat", 0, 0, false},
+		{"src/ConnectFour/Domain/Game/Game.php", "game php", tierWordStart, 0, true},
+		{"src/Chat/Application/ChatId.php", "chat gateway", 0, 0, false},
 	}
 	for _, c := range cases {
 		lower := string(appendLowerASCII(nil, c.path))
-		rank, ok := scoreQuickOpen(lower, strings.Fields(strings.ToLower(c.query)))
+		tier, pos, ok := scoreQuickOpen(c.path, lower, strings.Fields(strings.ToLower(c.query)))
 		if ok != c.ok {
 			t.Errorf("%s / %q: ok = %v, want %v", c.path, c.query, ok, c.ok)
 			continue
 		}
-		if ok && rank != c.rank {
-			t.Errorf("%s / %q: rank = %d, want %d", c.path, c.query, rank, c.rank)
+		if ok && (tier != c.tier || pos != c.pos) {
+			t.Errorf("%s / %q: tier %d pos %d, want tier %d pos %d", c.path, c.query, tier, pos, c.tier, c.pos)
+		}
+	}
+}
+
+// TestScoreQuickOpenOrder holds the ranking examples the browser's rankTokens
+// shares, each list in the order the palette has to show it.
+func TestScoreQuickOpenOrder(t *testing.T) {
+	cases := []struct {
+		query string
+		want  []string
+	}{
+		{"play", []string{"notes/Ranked play queue", "notes/Replay viewer"}},
+		{"lay", []string{"notes/Replay viewer", "notes/Leaderboard display"}},
+		{"match", []string{"notes/matchmaking rules v2", "notes/Player profile shows recent matches"}},
+		{"lobby", []string{"lobby/lobby-connect-four", "notes/game-lobby-2", "notes/Open the lobby chat", "lobby/notes.md"}},
+		{"controller", []string{"src/Game/GameController.php", "tests/game_controller_test.php"}},
+	}
+	for _, c := range cases {
+		tokens := strings.Fields(strings.ToLower(c.query))
+		var matches []quickOpenMatch
+		for _, path := range slices.Backward(c.want) {
+			tier, pos, ok := scoreQuickOpen(path, string(appendLowerASCII(nil, path)), tokens)
+			if !ok {
+				t.Fatalf("%q does not match %s", c.query, path)
+			}
+			matches = append(matches, quickOpenMatch{path: path, tier: tier, pos: pos})
+		}
+		sort.Slice(matches, func(i, j int) bool { return quickOpenLess(matches[i], matches[j]) })
+		got := make([]string, len(matches))
+		for i, m := range matches {
+			got[i] = m.path
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%q: got %q, want %q", c.query, got, c.want)
 		}
 	}
 }
@@ -136,8 +180,8 @@ func TestScoreQuickOpenRanks(t *testing.T) {
 // is what it has to be indistinguishable from.
 func TestMatchHeapKeepsTheBest(t *testing.T) {
 	candidates := []quickOpenMatch{
-		{"a/app.yml", 0}, {"b/app-longer-name.yml", 1}, {"app/x.yml", 2},
-		{"c/app.yml", 0}, {"d/my-app.yml", 1}, {"e/app.yaml", 0},
+		{path: "a/app.yml"}, {path: "b/app-longer-name.yml"}, {path: "app/x.yml", tier: tierOutsideName},
+		{path: "c/app.yml"}, {path: "d/my-app.yml", pos: 3}, {path: "e/app.yaml"}, {path: "f/myapp.yml", tier: tierInsideWord, pos: 2},
 	}
 	full := make([]quickOpenMatch, len(candidates))
 	copy(full, candidates)
@@ -166,8 +210,8 @@ func TestQuickOpenIndexQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Both candidates rank 0 here because both file names start with the
-	// query, so the tie falls to the shorter path.
+	// Both file names start with the query, so the tie falls to the shorter
+	// path.
 	//
 	// That is deliberately the same order the old client side filterFiles
 	// produced: score, then path length, then alphabetically. Preferring an
@@ -185,7 +229,7 @@ func TestQuickOpenIndexQuery(t *testing.T) {
 		t.Errorf("total = %d, want 2", res.Total)
 	}
 
-	// A file name prefix must come before a path-only match: the gateway is
+	// A hit in the file name must come before a path-only match: the gateway is
 	// named chat, the config only sits in a chat folder.
 	res = ix.query("chat", "", QuickOpenLimit)
 	if len(res.Paths) == 0 || res.Paths[0] != "src/Chat/Application/ChatGateway.php" {
