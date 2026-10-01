@@ -818,13 +818,7 @@ func runServe(opts serveOptions) error {
 		go m.RunSessionWatch(3*time.Second, tracker.Output, onBell)
 	}
 
-	server := &http.Server{Handler: srv.Handler()}
-	if cfg.TLSCertFile != "" {
-		log.Printf("listening on https://%s", cfg.HTTPAddr)
-		return server.ServeTLS(listener, cfg.TLSCertFile, cfg.TLSKeyFile)
-	}
-	log.Printf("listening on http://%s", cfg.HTTPAddr)
-	return server.Serve(listener)
+	return serveHTTP(&http.Server{Handler: srv.Handler()}, listener, cfg.TLSCertFile, cfg.TLSKeyFile)
 }
 
 // removeManagedSkills takes the cockpit's own skills off the disk on the way
