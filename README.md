@@ -135,6 +135,9 @@ The UI edits each coder's config under the home directory:
 | `copilot`  | `~/.copilot/copilot-instructions.md` | `~/.copilot/agents`        | `~/.copilot/skills`         |
 | `opencode` | `~/.config/opencode/AGENTS.md`       | `~/.config/opencode/agent` | `~/.config/opencode/skills` |
 
+Claude coders and assistants can run on models served by Ollama through `ollama launch`.
+Pick `ollama/<name>` as the model. Needs ollama installed, and `ollama signin` for cloud models.
+
 ### Install
 
 The following script resolves the latest release, downloads the archive for the platform and extracts the

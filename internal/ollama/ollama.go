@@ -270,6 +270,25 @@ func (c *Client) Window(name string) int {
 	return c.snap.Windows[bareName(strings.TrimSpace(name))]
 }
 
+// ServedWindow is the window Ollama serves a model with, or 0 when unknown. It
+// answers for cloud models only: /api/show reports the trained maximum, and a
+// local model is served with num_ctx or OLLAMA_CONTEXT_LENGTH, which no API
+// tells before the model is loaded. The windows are keyed by bare name, which
+// a local tag shares with its cloud twin, so the name itself has to be one of
+// the cloud.
+func (c *Client) ServedWindow(raw string) int {
+	if c == nil {
+		return 0
+	}
+	name := strings.TrimSpace(raw)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if bareName(name) == name && !slices.Contains(c.snap.Names, name) {
+		return 0
+	}
+	return c.snap.Windows[bareName(name)]
+}
+
 func (c *Client) Add(raw string) error {
 	name := strings.TrimSpace(raw)
 	if name == "" {

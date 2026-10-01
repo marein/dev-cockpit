@@ -3,7 +3,9 @@ package claude
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -499,5 +501,84 @@ func TestALauncherTurnWithoutOllamasSignInSaysSo(t *testing.T) {
 	err := plain.Diagnose(errors.New("exit status 1"), "Error: Not logged in. Please run /login.")
 	if err == nil || !strings.HasPrefix(err.Error(), "The coder is not logged in on this machine.") {
 		t.Fatalf("want a plain claude turn without its login to keep the coder's sentence, got %v", err)
+	}
+}
+
+func windowLauncher(t *testing.T, windows map[string]int) *ollama.Client {
+	t.Helper()
+	stateDir := t.TempDir()
+	ollamatest.Cache(stateDir, []string{"glm-5.3:cloud"}, nil, windows, true)
+	return ollama.New(nil, "", stateDir)
+}
+
+const windowHead = `cd '/work' && CLAUDE_CODE_MAX_CONTEXT_TOKENS="${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}" exec ollama 'launch' 'claude' '--model' 'glm-5.3:cloud' '--yes' '--' `
+
+func TestATerminalOnACloudModelGetsItsServedWindowOnStartAndResume(t *testing.T) {
+	r := runtime{sessions: newOllamaSessions(t.TempDir()), launcher: windowLauncher(t, map[string]int{"glm-5.3": 1048576})}
+	start := coder.SessionStart{SessionID: "sid", Workdir: "/work", Model: "ollama/glm-5.3:cloud"}
+	if got := r.StartCommand(start); !strings.HasPrefix(got, windowHead) {
+		t.Fatalf("want the served window in front of the launcher, got %s", got)
+	}
+	r.SessionStarted(start)
+	again := runtime{sessions: newOllamaSessions(filepath.Dir(r.sessions.path)), launcher: r.launcher}
+	if got := again.ResumeCommand("sid", "/work", true); !strings.HasPrefix(got, windowHead) || !strings.HasSuffix(got, " --resume 'sid'") {
+		t.Fatalf("want the remembered model resumed with its window, got %s", got)
+	}
+	if got := r.StartCommand(coder.SessionStart{SessionID: "plain", Workdir: "/work", Model: "haiku"}); strings.Contains(got, "CLAUDE_CODE_MAX_CONTEXT_TOKENS") {
+		t.Fatalf("a plain pick gets no window, got %s", got)
+	}
+}
+
+func TestATerminalOnAnUnknownWindowStartsAsBefore(t *testing.T) {
+	for label, r := range map[string]runtime{
+		"zero window": {sessions: newOllamaSessions(t.TempDir()), launcher: windowLauncher(t, map[string]int{"glm-5.3": 0})},
+		"local model": {sessions: newOllamaSessions(t.TempDir()), launcher: windowLauncher(t, map[string]int{"glm-5.3": 1048576})},
+	} {
+		model := "ollama/glm-5.3:cloud"
+		if label == "local model" {
+			model = "ollama/glm-5.3"
+		}
+		got := r.StartCommand(coder.SessionStart{SessionID: "sid", Workdir: "/work", Model: model})
+		if strings.Contains(got, "CLAUDE_CODE_MAX_CONTEXT_TOKENS") || !strings.HasPrefix(got, "cd '/work' && exec ollama ") {
+			t.Fatalf("%s: want the command of today, got %s", label, got)
+		}
+	}
+}
+
+func TestTheServedWindowGivesWayToTheUsersOwnInTheShell(t *testing.T) {
+	r := runtime{sessions: newOllamaSessions(t.TempDir()), launcher: windowLauncher(t, map[string]int{"glm-5.3": 1048576})}
+	command := r.StartCommand(coder.SessionStart{SessionID: "sid", Workdir: t.TempDir(), Model: "ollama/glm-5.3:cloud"})
+	command = strings.Replace(command, "exec ollama", "exec printenv CLAUDE_CODE_MAX_CONTEXT_TOKENS #", 1)
+	for user, want := range map[string]string{"": "1048576", "500000": "500000"} {
+		cmd := exec.Command("bash", "-c", command)
+		cmd.Env = append(os.Environ(), "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+user)
+		out, err := cmd.Output()
+		if err != nil || strings.TrimSpace(string(out)) != want {
+			t.Fatalf("user value %q: want %s, got %q %v", user, want, out, err)
+		}
+	}
+}
+
+func TestAnAssistantTurnOnACloudModelGetsItsServedWindow(t *testing.T) {
+	withOllamaOnPath(t)
+	turn := assistant.TurnRequest{SessionID: sessionID, Workdir: "/work", Prompt: "hi", Model: "ollama/glm-5.3:cloud"}
+	envOf := func(windows map[string]int) []string {
+		r := &runner{sessions: stubSessions{}, launched: newOllamaSessions(t.TempDir()), launcher: windowLauncher(t, windows)}
+		command, err := r.Command(turn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return command.Env
+	}
+	t.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "")
+	if got := envOf(map[string]int{"glm-5.3": 1048576}); !slices.Equal(got, []string{"CLAUDE_CODE_MAX_CONTEXT_TOKENS=1048576"}) {
+		t.Fatalf("want the served window in the turn's environment, got %v", got)
+	}
+	if got := envOf(map[string]int{"glm-5.3": 0}); len(got) != 0 {
+		t.Fatalf("want nothing for an unknown window, got %v", got)
+	}
+	t.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "500000")
+	if got := envOf(map[string]int{"glm-5.3": 1048576}); len(got) != 0 {
+		t.Fatalf("want the user's own value left to win, got %v", got)
 	}
 }

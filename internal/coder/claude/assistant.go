@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/marein/dev-cockpit/internal/assistant"
@@ -152,6 +154,9 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	var env []string
 	if host := r.launcher.Host(); host != "" {
 		env = []string{ollamaHostEnv + "=" + host}
+	}
+	if window := r.launcher.ServedWindow(ollamaName); window > 0 && os.Getenv(maxContextEnv) == "" {
+		env = append(env, maxContextEnv+"="+strconv.Itoa(window))
 	}
 	return assistant.Command{Name: ollama.Executable, Args: append(ollamaLaunch(ollamaName), args...), Env: env}, nil
 }

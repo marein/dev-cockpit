@@ -665,7 +665,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Claude through Ollama",
 					Tag:      "Coder",
 					TagClass: "bg-secondary-lt",
-					Desc:     `A Claude coder or assistant picked as <code>ollama/&lt;name&gt;</code> runs through Ollama, shows an Ollama badge on its icon and needs <code>ollama signin</code> for cloud models. Outside the startup restore, such a coder starts or resumes only while the Ollama server answers, and model selects warn when it does not.`,
+					Desc:     `A Claude coder or assistant picked as <code>ollama/&lt;name&gt;</code> runs through Ollama, shows an Ollama badge on its icon and needs <code>ollama signin</code> for cloud models. A cloud model gets the context window Ollama reports, unless <code>CLAUDE_CODE_MAX_CONTEXT_TOKENS</code> is already set. Outside the startup restore, such a coder starts or resumes only while the Ollama server answers, and model selects warn when it does not.`,
 				},
 				{
 					Title:    "Ollama settings",

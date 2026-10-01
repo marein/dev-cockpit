@@ -13,6 +13,7 @@ import (
 const (
 	ollamaSessionsFile = "claude-ollama-sessions.json"
 	ollamaHostEnv      = "OLLAMA_HOST"
+	maxContextEnv      = "CLAUDE_CODE_MAX_CONTEXT_TOKENS"
 )
 
 func ollamaPick(model string) (string, bool) {

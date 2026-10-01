@@ -2,6 +2,7 @@ package claude
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/marein/dev-cockpit/internal/clirun"
@@ -63,15 +64,22 @@ func (r runtime) ResumeCommand(sessionID, workdir string, automaticApproval bool
 	return r.command(workdir, r.sessions.modelOf(sessionID), args)
 }
 
+// command puts claude, or the launcher in front of it, behind the cd. claude
+// takes a model it does not know for a 200K window, and the launcher only sets
+// the auto compact window, which claude caps at that. The served window is
+// handed over as the hard limit, unless the session's shell already carries one.
 func (r runtime) command(workdir, ollamaName, args string) string {
-	head := "claude"
+	head := "exec claude"
 	if ollamaName != "" {
-		head = ollama.Executable
+		head = "exec " + ollama.Executable
 		for _, arg := range ollamaLaunch(ollamaName) {
 			head += " " + clirun.ShellQuote(arg)
 		}
+		if window := r.launcher.ServedWindow(ollamaName); window > 0 {
+			head = maxContextEnv + `="${` + maxContextEnv + ":-" + strconv.Itoa(window) + `}" ` + head
+		}
 	}
-	return "cd " + clirun.ShellQuote(workdir) + " && exec " + head + args
+	return "cd " + clirun.ShellQuote(workdir) + " && " + head + args
 }
 
 func (r runtime) flags(agentID string, automaticApproval bool) string {

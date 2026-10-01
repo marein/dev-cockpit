@@ -171,6 +171,34 @@ func TestTheWindowMatchesANameWithOrWithoutItsTag(t *testing.T) {
 	}
 }
 
+func TestTheServedWindowAnswersForCloudNamesOnly(t *testing.T) {
+	withExecutableOnPath(t)
+	f := newFake(t, []string{"nemotron-3-ultra:cloud", "gpt-oss:120b-cloud", "remote-alias"}, nil, map[string]string{
+		"nemotron-3-ultra:cloud": window(262144),
+		"gpt-oss:120b-cloud":     window(131072),
+		"remote-alias":           window(65536),
+	})
+	c, _ := client(t, f, "")
+	c.pass(time.Now())
+	want := map[string]int{
+		" nemotron-3-ultra:cloud ": 262144,
+		"gpt-oss:120b-cloud":       131072,
+		"remote-alias":             65536,
+		"nemotron-3-ultra":         0,
+		"gpt-oss:120b":             0,
+		"llama3:8b":                0,
+		"nobody:cloud":             0,
+	}
+	for name, window := range want {
+		if got := c.ServedWindow(name); got != window {
+			t.Errorf("ServedWindow(%q) = %d, want %d", name, got, window)
+		}
+	}
+	if (*Client)(nil).ServedWindow("nemotron-3-ultra:cloud") != 0 {
+		t.Fatal("want no window without a client")
+	}
+}
+
 func TestAFailingServerKeepsTheLastNamesAndWindowsAndIsReadAsDown(t *testing.T) {
 	withExecutableOnPath(t)
 	f := newFake(t, []string{"deepseek-v4:cloud"}, nil, map[string]string{"deepseek-v4:cloud": window(262144)})
