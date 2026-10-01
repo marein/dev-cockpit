@@ -1269,6 +1269,7 @@ func TestWakePromptWarnsAboutTheInputLineOnlyForAScreen(t *testing.T) {
 	for _, want := range []string{
 		"input line", "the coder's own draft", "nobody typed it",
 		"says nothing about whether anything is moving",
+		"never stops you from sending",
 	} {
 		if !strings.Contains(screen, want) {
 			t.Fatalf("the screen prompt misses %q:\n%s", want, screen)
