@@ -22,6 +22,8 @@ import (
 	"github.com/marein/dev-cockpit/internal/backup"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/cost"
+	"github.com/marein/dev-cockpit/internal/cost/price"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/eventbus"
@@ -78,6 +80,8 @@ type Server struct {
 	version      string
 	updater      *update.Updater
 	backups      *backup.Service
+	costs        *cost.Service
+	prices       *price.Book
 	assets       staticAssetManifest
 	loginLimiter rateLimiter
 	termTheme    terminalTheme

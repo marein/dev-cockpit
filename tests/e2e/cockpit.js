@@ -17,7 +17,8 @@ const { assert, sleep, BASE } = L;
 // the server's CPU, RAM and disk in one row (read only, the plain numbers in
 // the tooltip), the three newest notifications one line each with Show all
 // (the area `news`, labelled Notifications, every entry and Mark all read),
-// the theme, update and logout tiles (one height, the theme tile a square),
+// the theme, costs, update and logout tiles (one height, the theme and the
+// costs tile squares, the costs tile a link to /costs),
 // then the settings sections, the Settings head counting the open backup
 // reviews, and the docs. Opening it leaves the page's tab marked. A phone
 // carries no bell, theme, update or logout in its work head any more.
@@ -384,7 +385,7 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
     }, { soft: true });
   }
 
-  await run("the sheet: server, news, the three tiles, settings, in that order", async () => {
+  await run("the sheet: server, news, the four tiles, settings, in that order", async () => {
     await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await openCockpit(mp);
     await mp.waitForSelector(`${SHEET} [data-cockpit-section=news] a[data-notify-id]`, { timeout: 8000 });
@@ -419,6 +420,10 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
           return form ? { method: form.method, token: Boolean(form.querySelector('[name="csrf_token"]').value), noPe: form.hasAttribute("data-no-pe") } : null;
         })(),
         settings: [...root.querySelectorAll("[data-cockpit-section=settings] a[href]")].map((a) => a.getAttribute("href")),
+        costs: (() => {
+          const a = root.querySelector("[data-cockpit-section=actions] [data-cockpit-costs]");
+          return a ? { href: a.getAttribute("href"), label: a.getAttribute("aria-label") } : null;
+        })(),
       };
     }, SHEET);
     for (let i = 1; i < sheet.order.length; i++) assert(sheet.order[i - 1] < sheet.order[i], `sections out of order: ${sheet.order}`);
@@ -431,7 +436,8 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
     assert(!sheet.serverHead && sheet.serverGroup === "Server", `the server row carries a heading or lost its name: ${JSON.stringify([sheet.serverHead, sheet.serverGroup])}`);
     assert(sheet.news.join(",") === "cockpit-fake-1,cockpit-fake-2,cockpit-fake-3", `news ${sheet.news}`);
     assert(sheet.showAll, "no Show all");
-    assert(sheet.tiles.length === 3 && sheet.tiles[0] === "" && /^Theme: (Light|Dark|Follow the OS)$/.test(sheet.themeName) && /^(Up to date|Update to \S+)$/.test(sheet.tiles[1]) && sheet.tiles[2] === "Logout", `tiles ${JSON.stringify(sheet.tiles)}`);
+    assert(sheet.tiles.length === 4 && sheet.tiles[0] === "" && sheet.tiles[1] === "" && /^Theme: (Light|Dark|Follow the OS)$/.test(sheet.themeName) && /^(Up to date|Update to \S+)$/.test(sheet.tiles[2]) && sheet.tiles[3] === "Logout", `tiles ${JSON.stringify(sheet.tiles)}`);
+    assert(sheet.costs && sheet.costs.href === "/costs" && sheet.costs.label === "Costs", `costs tile ${JSON.stringify(sheet.costs)}`);
     assert(sheet.logout && sheet.logout.method === "post" && sheet.logout.token && sheet.logout.noPe, `logout form ${JSON.stringify(sheet.logout)}`);
     assert(sheet.settings.includes("/settings/general") && sheet.settings.includes("/settings/notifications") && sheet.settings.includes("/docs"), `settings links ${sheet.settings}`);
     const tones = () => mp.$$eval(".dc-tabbar .dc-tabbar-btn", (els) => {
@@ -502,7 +508,7 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
     assert(Math.abs(control - projects) <= 1, `the Cockpit sheet is ${control}px, the projects sheet ${projects}px`);
   });
 
-  await run("the tiles share one height, the theme a square, the update label whole, a longer one wrapped and never cut", async () => {
+  await run("the tiles share one height, the theme and the costs squares, the update label whole, a longer one wrapped and never cut", async () => {
     await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await openCockpit(mp);
     const measure = () => mp.$$eval(`${SHEET} [data-cockpit-section=actions] .btn`, (els) => els.map((b) => {
@@ -521,16 +527,17 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
     }));
     await mp.$eval(`${SHEET} [data-cockpit-update-label]`, (el) => { el.textContent = "Update to 1.70.0"; });
     const tiles = await measure();
-    assert(tiles.length === 3, `${tiles.length} tiles`);
+    assert(tiles.length === 4, `${tiles.length} tiles`);
     assert(tiles.every((t) => t.h === tiles[0].h), `the tiles differ in height: ${JSON.stringify(tiles)}`);
     assert(tiles[0].w === tiles[0].h && tiles[0].label === null, `the theme tile is not a square mark: ${JSON.stringify(tiles[0])}`);
+    assert(tiles[1].w === tiles[1].h && tiles[1].label === null, `the costs tile is not a square mark: ${JSON.stringify(tiles[1])}`);
     assert(tiles.every((t) => Math.abs(t.icon - t.mid) <= 1 && (t.label === null || Math.abs(t.label - t.mid) <= 1)), `the content is not centred: ${JSON.stringify(tiles)}`);
-    assert(!tiles[1].cut && tiles[1].w > tiles[2].w, `Update to 1.70.0 does not stand whole in the widest tile: ${JSON.stringify(tiles)}`);
+    assert(!tiles[2].cut && tiles[2].w > tiles[3].w, `Update to 1.70.0 does not stand whole in the widest tile: ${JSON.stringify(tiles)}`);
     await mp.$eval(`${SHEET} [data-cockpit-update-label]`, (el) => { el.textContent = "Update to 1.70.0-a-rather-long-name"; });
     const long = await measure();
-    assert(!long[1].cut && long[1].text === "Update to 1.70.0-a-rather-long-name", `the long update label is cut: ${JSON.stringify(long[1])}`);
+    assert(!long[2].cut && long[2].text === "Update to 1.70.0-a-rather-long-name", `the long update label is cut: ${JSON.stringify(long[2])}`);
     assert(long.every((t, i) => t.w === tiles[i].w && t.inside), `a long label moved a tile sideways or ran out of it: ${JSON.stringify(long)}`);
-    assert(long[0].w === long[0].h && long[1].h === long[2].h && long[1].h >= tiles[1].h, `the row did not grow as one around the wrapped label: ${JSON.stringify(long)}`);
+    assert(long[0].w === long[0].h && long[1].w === long[1].h && long[2].h === long[3].h && long[2].h >= tiles[2].h, `the row did not grow as one around the wrapped label: ${JSON.stringify(long)}`);
     await closeSheet(mp);
   });
 

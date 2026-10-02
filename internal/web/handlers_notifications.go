@@ -167,6 +167,11 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "backupreviews", Data: map[string]int{"count": s.backups.PendingReviewCount()}}); err != nil {
 		return
 	}
+	// A bare costs signal: the cost item and the cost page pull their numbers,
+	// a booking made while the socket was down included.
+	if err := writeEnvelope(w, eventbus.Event{Type: "costs"}); err != nil {
+		return
+	}
 	// The host reading rides the stream: it goes out on connect and then on its
 	// own beat in the loop below. That ticker lives in this handler, so without
 	// a connected browser nothing ticks and nothing is read, and several tabs

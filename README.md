@@ -110,6 +110,17 @@ Each area of the cockpit is described below.
 </details>
 
 <details>
+  <summary>Costs</summary>
+
+  ### Costs
+
+  * **Scope**: Experimental, counts claude with Claude models only.
+  * **Spend**: What coders and assistants spent, at API list price.
+  * **Charts**: Stacked bar charts per project, assistant, coder and model over any period.
+  * **Prices**: Price lists are refreshed daily from LiteLLM. Months to keep are set under Settings.
+</details>
+
+<details>
   <summary>Settings</summary>
 
   ### Settings

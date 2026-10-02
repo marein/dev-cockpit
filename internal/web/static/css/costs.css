@@ -1,0 +1,61 @@
+.dc-cost-c1 { --dc-series: var(--tblr-blue); }
+.dc-cost-c2 { --dc-series: var(--tblr-pink); }
+.dc-cost-c3 { --dc-series: var(--tblr-azure); }
+.dc-cost-c4 { --dc-series: color-mix(in oklab, var(--tblr-orange), var(--tblr-black) 12%); }
+.dc-cost-c5 { --dc-series: var(--tblr-indigo); }
+.dc-cost-c6 { --dc-series: color-mix(in oklab, var(--tblr-lime), var(--tblr-black) 10%); }
+.dc-cost-c7 { --dc-series: var(--tblr-cyan); }
+.dc-cost-assistants { --dc-series: color-mix(in oklab, var(--tblr-purple), var(--tblr-black) 15%); }
+.dc-cost-gen { --dc-series: oklch(64% .14 calc(var(--dc-h) * 1deg)); }
+.dc-cost-seg, .dc-cost-swatch, .dc-cost-linekey { background: var(--dc-series); }
+.dc-cost-swatch { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 2px; }
+.dc-cost-linekey { display: inline-block; flex: none; width: 12px; height: 2px; border-radius: 1px; align-self: center; }
+.dc-cost-tile-value { font-size: clamp(1.125rem, 5.5vw, 1.5rem); overflow-wrap: anywhere; }
+dc-costs { display: block; --dc-cost-bar: 3.5rem; }
+@media (max-width: 575.98px) { dc-costs { --dc-cost-bar: 4.25rem; } }
+[data-cost-toolbar] {
+  position: sticky; top: calc(-1 * var(--dc-work-pad)); z-index: 10;
+  display: flex; align-items: center; height: var(--dc-cost-bar); background: var(--tblr-body-bg);
+}
+[data-cost-chart] { scroll-margin-top: calc(var(--dc-cost-bar) + .5rem); }
+dc-costs.dc-cost-loading > :not([data-cost-toolbar]) { opacity: .55; transition: opacity .15s; }
+.dc-cost-periods { min-width: 17rem; }
+.dc-cost-periods .dropdown-item { display: flex; align-items: center; }
+.dc-cost-frame { position: relative; height: 220px; margin-left: 52px; }
+.dc-cost-plot { position: absolute; inset: 0; border-bottom: 1px solid var(--tblr-border-color); }
+.dc-cost-grid { position: absolute; left: 0; right: 0; bottom: calc(var(--b) * 1%); border-top: 1px solid var(--tblr-border-color); }
+.dc-cost-grid span {
+  position: absolute; right: calc(100% + 6px); top: 0; transform: translateY(-50%);
+  font-size: 11px; color: var(--tblr-secondary); white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.dc-cost-cols { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); }
+.dc-cost-col {
+  position: relative; min-width: 0; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: inherit; cursor: default; -webkit-tap-highlight-color: transparent;
+}
+.dc-cost-col[data-drill] { cursor: pointer; }
+.dc-cost-col.current { background: color-mix(in oklab, var(--tblr-primary) 6%, transparent); }
+.dc-cost-col.dc-cost-hot { background: color-mix(in oklab, var(--tblr-body-color) 8%, transparent); }
+.dc-cost-col:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: -2px; }
+.dc-cost-stack {
+  position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
+  display: flex; flex-direction: column-reverse; gap: 2px; overflow: hidden;
+  width: min(24px, calc(100% - 2px)); height: calc(var(--h) * 1%); border-radius: 4px 4px 0 0;
+}
+.dc-cost-seg { flex: 0 1 0; min-height: 0; }
+.dc-cost-col.dc-cost-hot .dc-cost-seg { filter: brightness(1.12); }
+.dc-cost-tip {
+  position: absolute; top: 0; left: 0; z-index: 5; width: max-content; max-width: min(18rem, 100%);
+  padding: .5rem .75rem; pointer-events: none; box-shadow: var(--tblr-shadow-dropdown);
+}
+.dc-cost-tip.pinned { pointer-events: auto; }
+.dc-cost-tiprow { display: flex; align-items: baseline; gap: .5rem; font-size: .8125rem; }
+.dc-cost-tiprow.off { opacity: .45; }
+.dc-cost-axis { position: relative; height: 1.25rem; margin-left: 52px; }
+.dc-cost-axis span { position: absolute; top: 2px; left: calc(var(--l) * 1%); transform: translateX(-50%); white-space: nowrap; }
+.dc-cost-axis span.start { transform: translateX(-12px); }
+.dc-cost-axis span.end { transform: translateX(calc(-100% + 12px)); }
+@media (max-width: 575.98px) { .dc-cost-axis span.minor { display: none; } }
+.dc-cost-key { display: inline-flex; align-items: center; gap: .375rem; text-align: start; white-space: normal; }
+.dc-cost-key[aria-pressed="false"] { opacity: .5; }
+.dc-cost-key[aria-pressed="false"] .dc-cost-swatch { background: transparent; box-shadow: inset 0 0 0 1.5px var(--dc-series); }

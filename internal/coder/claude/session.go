@@ -38,6 +38,7 @@ type sessionRepository struct {
 	ollama    *ollamaSessions
 	mu        sync.Mutex
 	cache     map[string]transcriptCache
+	onDelete  func(sessionID string)
 }
 
 // transcriptCache keeps the parse result of one transcript file, keyed on its
@@ -71,6 +72,9 @@ func (r *sessionRepository) List() []coder.Session {
 }
 
 func (r *sessionRepository) DeleteSession(sessionID string) error {
+	if r.onDelete != nil {
+		r.onDelete(sessionID)
+	}
 	stored, err := r.findStored(sessionID)
 	if err != nil {
 		return err

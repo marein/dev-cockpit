@@ -612,6 +612,45 @@ func DocsTopics() []DocsTopic {
 			},
 		},
 		{
+			Key:      "costs",
+			Title:    "Costs",
+			Icon:     "ti-currency-dollar",
+			Lead:     "What the coders spent, at API list prices.",
+			LinkURL:  "/costs",
+			LinkText: "Open costs",
+			Intro:    `Experimental. Counts claude and its models only, at API list prices.`,
+			Items: []DocsItem{
+				{
+					Title: "Where it shows",
+					Desc:  `The status line shows today, a click opens the page. On a phone the Cockpit sheet links it with <i class="ti ti-currency-dollar align-text-bottom" aria-hidden="true"></i>.`,
+				},
+				{
+					Title: "The page",
+					Desc:  `Tiles for today and this month. Below them the period, then four charts of spend by project, by assistant, by coder and by model. <em>No project</em> is spend outside every project and assistant. Days follow the assistant time zone. The address holds the period, not the hidden series.`,
+				},
+				{
+					Title: "Period",
+					Desc:  `Presets from today to the last 90 days, or picked days within the last 120 months. The arrows step one period back or forth. The bar stays pinned at the top while the charts scroll. The chart shows hours for one day, days up to 62 days, weeks up to 186 days, months beyond.`,
+				},
+				{
+					Title: "Charts",
+					Desc:  `Each chart stacks every series that spent in the period, the header holds its total. By project shows all assistants as one series. The legend holds each series' total. A click shows only that series and again all, Ctrl, Cmd or Shift click or a long press hides or shows one. Hover or tap a bar for its numbers, a click opens its hours or days. A chart without spend shows one line.`,
+				},
+				{
+					Title: "How it is booked",
+					Desc:  `Every 10 seconds the cockpit reads the calls claude logs in its transcripts, sub-agents included, and books each at the list price of that moment. What claude's own total holds above its logged calls is booked on top. Kind and project come from the listed coders and the assistant workspace, names are read on every poll. Deleting a coder, project or transcript keeps what was booked. A claude started outside the cockpit counts as a coder. Spend of no listed coder, outside every assistant workspace, counts as other.`,
+				},
+				{
+					Title: "How long it is kept",
+					Desc:  `One file per month. Settings &rarr; Costs keeps 2 to 120 months, default 3, this month included. Older months are deleted. Hours stay for 30 days, older bookings count per day.`,
+				},
+				{
+					Title: "Prices",
+					Desc:  `A price table is built in and refreshed daily from LiteLLM's public list, offline the last one stays. Settings &rarr; Costs shows the table, its fetches and the price per model. Models without a list price, like Ollama's, count tokens only.`,
+				},
+			},
+		},
+		{
 			Key:      "settings",
 			Title:    "Settings and data",
 			Icon:     "ti-settings",
@@ -642,6 +681,12 @@ func DocsTopics() []DocsTopic {
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",
 					Desc:     `Off by default. Gives every newly started shell its own command history instead of sharing the login shell's file; the history survives a restore.`,
+				},
+				{
+					Title:    "Daily price refresh",
+					Tag:      "Setting",
+					TagClass: "bg-secondary-lt",
+					Desc:     `On by default, in Settings &rarr; Costs. Off fetches no prices and keeps the last table.`,
 				},
 				{
 					Title:    "The editor's two intervals",

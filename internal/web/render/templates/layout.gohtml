@@ -52,10 +52,14 @@
       "@dc/ctx": "{{asset "/js/dc/ctx.js"}}",
       "@dc/volume-slider": "{{asset "/js/dc/volume-slider.js"}}",
       "@dc/swipe": "{{asset "/js/dc/swipe.js"}}",
+      "@dc/pull": "{{asset "/js/dc/pull.js"}}",
+      "@dc/cost-chart": "{{asset "/js/dc/cost-chart.js"}}",
       "dc-notifications": "{{asset "/js/components/notifications.js"}}",
       "dc-update-check": "{{asset "/js/components/update-check.js"}}",
       "dc-host-status": "{{asset "/js/components/host-status.js"}}",
       "dc-status-links": "{{asset "/js/components/status-links.js"}}",
+      "dc-cost-status": "{{asset "/js/components/cost-status.js"}}",
+      "dc-costs": "{{asset "/js/components/costs.js"}}",
       "dc-steered-mark": "{{asset "/js/components/steered-mark.js"}}",
       "dc-steer-badge": "{{asset "/js/components/steer-badge.js"}}",
       "dc-project-list": "{{asset "/js/components/project-list.js"}}",
@@ -292,12 +296,13 @@
      notifications.js can follow the backupreviews event into it. */}}
 {{define "backup_reviews_badge.gohtml"}}<span class="{{.Class}}{{if not .Count}} d-none{{end}}" data-backup-reviews title="Backup files to resolve" aria-label="{{.Count}} backup {{if eq .Count 1}}file{{else}}files{{end}} to resolve">{{.Count}}</span>{{end}}
 
-{{/* The status line under the shell: the server and the links of the
-     running stacks at the left, the version at the right. */}}
+{{/* The status line under the shell: the server, the links of the running
+     stacks and the coders' spend at the left, the version at the right. */}}
 {{define "shell_status.gohtml"}}
 <footer class="dc-status d-print-none">
   {{template "host_status_bar.gohtml" .}}
   {{template "status_links.gohtml" .}}
+  {{template "cost_status.gohtml" .}}
   <span class="dc-status-gap"></span>
   <span class="dc-status-item" title="Version">Version {{appVersion}} <dc-update-check id="dc-update" data-version="{{appVersion}}"></dc-update-check></span>
 </footer>
@@ -318,9 +323,9 @@
        open backup review. No number, the counts stand inside the sheet. Its
        name carries both (CockpitLabel, @dc/cockpit live). The server renders
        it all on every page, host-status.js and notifications.js keep it live.
-       It stands active on the settings and the docs pages, the two areas a
-       phone reaches through its sheet alone. */}}
-  <button type="button" class="dc-tabbar-btn{{if or (eq .ActiveTab "settings") (eq .ActiveTab "docs")}} active{{end}}" data-ctx-area="cockpit"{{with .CockpitLabel}} aria-label="{{.}}"{{end}}><span class="dc-news-anchor">{{template "host_status_tab.gohtml" .}}<span class="status-dot status-dot-animated status-blue dc-news-dot{{if not .CockpitNews}} d-none{{end}}" data-cockpit-dot data-unread="{{.UnreadNews}}" data-reviews="{{.BackupReviewCount}}" aria-hidden="true"></span></span><span>Cockpit</span></button>
+       It stands active on the settings, the docs and the costs pages, the
+       areas a phone reaches through its sheet alone. */}}
+  <button type="button" class="dc-tabbar-btn{{if or (eq .ActiveTab "settings") (eq .ActiveTab "docs") (eq .ActiveTab "costs")}} active{{end}}" data-ctx-area="cockpit"{{with .CockpitLabel}} aria-label="{{.}}"{{end}}><span class="dc-news-anchor">{{template "host_status_tab.gohtml" .}}<span class="status-dot status-dot-animated status-blue dc-news-dot{{if not .CockpitNews}} d-none{{end}}" data-cockpit-dot data-unread="{{.UnreadNews}}" data-reviews="{{.BackupReviewCount}}" aria-hidden="true"></span></span><span>Cockpit</span></button>
 </nav>
 {{end}}
 

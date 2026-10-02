@@ -37,7 +37,10 @@ These change nothing:
 {{.Cockpit}} assistant-list   # every assistant that lives right now, yours marked
 {{.Cockpit}} assistant-show <id> [--contains <word>]   # one assistant's messages, yours or another's, or only the ones carrying a word
 {{.Cockpit}} assistant-models-get   # which model your chat, your checks and your triggers run on, each with where it comes from
+{{.Cockpit}} cost-show   # what the coders spent today, this week and this month, and the top projects, at API list price
 ```
+
+`cost-show` answers in API list price; say so when you quote it, never assume how the user is billed.
 
 What runs and what is finished changes constantly, so read it in the same turn as the answer, never from memory. Your own models are read with `assistant-models-get` and never assumed: they are picks and settings that move without this file moving.
 

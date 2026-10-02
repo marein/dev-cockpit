@@ -31,6 +31,8 @@ import (
 	codercopilot "github.com/marein/dev-cockpit/internal/coder/copilot"
 	coderopencode "github.com/marein/dev-cockpit/internal/coder/opencode"
 	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/cost"
+	"github.com/marein/dev-cockpit/internal/cost/price"
 	"github.com/marein/dev-cockpit/internal/detach"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
@@ -285,6 +287,7 @@ func newAssistantCommand() *cobra.Command {
 		newNotificationsCommand(opts),
 		newTriggerNewCommand(opts), newTriggerListCommand(opts), newTriggerEditCommand(opts), newTriggerDeleteCommand(opts),
 		newTimezoneGetCommand(opts), newTimezoneSetCommand(opts),
+		newCostShowCommand(opts),
 		newModelListCommand(opts), newAssistantModelsGetCommand(opts), newAssistantModelsSetCommand(opts),
 		newProjectCommand(opts), newDeleteProjectCommand(opts),
 		newComposeListCommand(opts), newComposeStartCommand(opts), newComposeShowCommand(opts), newComposeStopCommand(opts),
@@ -503,6 +506,17 @@ func runServe(opts serveOptions) error {
 			log.Printf("coder %s: the cockpit git skill could not be written: %v", c.ID(), err)
 		}
 	}
+
+	// The cost books stand before anything can delete a session: the startup
+	// sweep below already removes check sessions, and each delete books what
+	// the session spent last.
+	prices := price.NewBook(cfg.StateDir, func() bool { return settingsStore.Get(price.RefreshSettingKey) != "off" })
+	keepMonths := func() int { return cost.Retention(settingsStore.Get(cost.RetentionSettingKey)) }
+	costs := cost.New(cfg.StateDir, costPlacer(assistantService, projectRepo),
+		costSources(prices, costPlaces(conversations, assistantService, projectRepo), keepMonths)...)
+	costs.SetZone(func() *time.Location { return web.CostZone(settingsStore) })
+	costs.SetRetention(keepMonths)
+	watchSessionDeletes(selected, costs)
 
 	shells := shell.NewShells(cfg, tmuxClient, projectRepo, func() bool {
 		return settingsStore.Get(shell.HistorySettingKey) == "on"
@@ -725,6 +739,8 @@ func runServe(opts serveOptions) error {
 		return fmt.Errorf("failed to write the askpass helper: %w", err)
 	}
 	srv.SetAskpass(askBroker, askScript)
+	costs.SetOnChange(func() { bus.Publish(eventbus.Event{Type: "costs"}) })
+	srv.SetCosts(costs, prices)
 
 	listener, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
@@ -773,6 +789,8 @@ func runServe(opts serveOptions) error {
 	// After the server is up, so the change callback is wired before the
 	// first list can move the state. A machine without a daemon just idles.
 	go dockerService.Run(context.Background())
+	go costs.Run(costPollInterval, costOwners(coders, conversations))
+	go prices.Run(context.Background())
 	// The project deletions the last process was in the middle of. Their rows
 	// already say they are working, that was read when the server was built;
 	// this is the work behind them starting again, and it waits for the docker

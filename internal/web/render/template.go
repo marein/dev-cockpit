@@ -128,6 +128,9 @@ type Page struct {
 	// same project browser the quick nav carries. It refreshes over the
 	// docker event from there.
 	Links StatusLinks
+	// Cost is the status line's cost item at render time. It refreshes over
+	// the costs event from there.
+	Cost CostStatus
 }
 
 // QuickNav feeds the quick nav floating button: the live sessions and shells you

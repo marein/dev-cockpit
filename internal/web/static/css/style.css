@@ -197,7 +197,7 @@ dc-theme-cycle { display: contents; }
   overflow: hidden; background: var(--tblr-body-bg);
 }
 .dc-work-body { flex: 1; min-height: 0; overflow: auto; }
-.dc-work-pad { padding: 16px; }
+.dc-work-pad { --dc-work-pad: 16px; padding: var(--dc-work-pad); }
 .dc-work-fill { display: flex; flex-direction: column; }
 .dc-narrow { max-width: 56rem; }
 .dc-form-width { max-width: 40rem; }
@@ -310,7 +310,7 @@ dc-host-status.dc-cockpit-icon { display: flex; }
   .dc-app > .dc-ctx { display: none; }
   .dc-work-toggle { display: inline-flex; }
   .dc-ctx-resize { display: none; }
-  .dc-work-pad { padding: 12px; }
+  .dc-work-pad { --dc-work-pad: 12px; }
 }
 /* Rows in the list column: Tabler list groups, tightened. */
 .dc-rows .list-group-item { padding: 8px 12px; display: flex; align-items: center; gap: 8px; min-width: 0; border-left: 0; border-right: 0; color: var(--tblr-body-color); }

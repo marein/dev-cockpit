@@ -56,6 +56,9 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// it opened on.
 	auth.GET("/quicknav", retiredPath("/ctx/projects"))
 	auth.GET("/docs", s.handleDocs)
+	auth.GET("/costs", s.handleCosts)
+	auth.GET("/costs/board", s.handleCostsBoard)
+	auth.GET("/costs/status", s.handleCostStatus)
 	auth.GET("/terminal-tabs", s.handleTerminalTabsFragment)
 	auth.POST("/terminal-tabs/order", s.handleTerminalTabsOrder)
 	auth.POST("/terminal-tabs/group", s.handleTerminalTabsGroup)
@@ -234,6 +237,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/assistant/models", s.handleSettingsAssistantModelsSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
 	auth.POST("/settings/general", s.handleSettingsGeneralSave)
+	auth.GET("/settings/costs", s.handleSettingsCosts)
+	auth.POST("/settings/costs", s.handleSettingsCostsSave)
 	// Docker is a section of its own: the daemon and the compose commands.
 	auth.GET("/settings/docker", s.handleSettingsDocker)
 	auth.POST("/settings/docker", s.handleSettingsDockerSave)

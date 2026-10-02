@@ -1,0 +1,5 @@
+go test fuzz v1
+string("range=custom&from=0000-01-01&to=9999-12-31")
+byte('\x01')
+int32(0)
+[]byte("")

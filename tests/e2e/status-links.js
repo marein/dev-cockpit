@@ -4,8 +4,8 @@ const { assert, sleep, BASE, dismissUpdate } = L;
 
 // The links chip of the status line (dc-status-links, GET /docker/links): while
 // a stack runs, the line carries "N links · M projects" behind a green light
-// right next to the server meters, behind a separator and before the gap that
-// pushes the version to the right. The chip is the button of a dropup listing
+// right next to the server meters, behind a separator and before the cost item
+// and the gap that pushes the version to the right. The chip is the button of a dropup listing
 // every address the running stacks answer on, by project and stack, the routed
 // hosts first and the published ports ascending, each in a new tab. The groups
 // stand in the app's project order (@dc/project-sort, the pick on the projects
@@ -159,8 +159,8 @@ L.runFeature("STATUS-LINKS", async ({ browser, page, run }) => {
         order: [...el.children].map((c) => c.localName + (c.className ? "." + String(c.className).split(" ")[0] : "")).join(" "),
       }));
       assert(line.shown && line.height === 26, `the status line is ${line.height}px high`);
-      assert(/^dc-host-status\.dropdown dc-status-links\.dropdown span\.dc-status-gap span\.dc-status-item$/.test(line.order),
-        `the line does not read meters, links, gap, version: ${line.order}`);
+      assert(/^dc-host-status\.dropdown dc-status-links\.dropdown dc-cost-status\.d-flex span\.dc-status-gap span\.dc-status-item$/.test(line.order),
+        `the line does not read meters, links, costs, gap, version: ${line.order}`);
       return line.order;
     });
 

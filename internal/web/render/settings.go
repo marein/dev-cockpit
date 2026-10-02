@@ -2,8 +2,8 @@ package render
 
 // SettingsNav feeds the settings sidebar, the one navigation every settings
 // page shares (`settings_nav.gohtml`). Active names the entry to mark
-// ("general", "editor", "docker", "notifications", "assistant", "coder",
-// "backup", "docs" on the Cockpit sheet). The coder pages are settings of one
+// ("general", "editor", "docker", "notifications", "assistant", "costs",
+// "coder", "backup", "docs" on the Cockpit sheet). The coder pages are settings of one
 // coder, so the sidebar picks the coder first and the page then shows that
 // coder's sections: with several coders active the entry becomes one row per
 // coder (Selected marks it), a single coder host keeps one plain Coder row

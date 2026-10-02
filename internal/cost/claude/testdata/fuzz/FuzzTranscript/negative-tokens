@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("{\"type\":\"assistant\",\"timestamp\":\"2026-09-30T10:00:00Z\",\"message\":{\"id\":\"msg_m\",\"model\":\"claude-opus-5-5\",\"usage\":{\"input_tokens\":-1000000,\"output_tokens\":10}}}\n{\"type\":\"cost-state\",\"sessionId\":\"s1\",\"totalCostUSD\":1.738094,\"totalAPIDuration\":166533,\"totalDuration\":3732952,\"startTime\":1790867653551,\"modelUsage\":{\"claude-opus-5-5\":{\"inputTokens\":576,\"outputTokens\":13104,\"cacheReadInputTokens\":3026670,\"cacheCreationInputTokens\":108547,\"webSearchRequests\":0,\"costUSD\":1.738094}},\"hasUnknownModelCost\":false}\n")
+[]byte("")
+[]byte("")
+uint16(0)

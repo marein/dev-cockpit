@@ -1,0 +1,80 @@
+{{define "costs.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Costs</h1>
+{{template "work_body.gohtml" .}}
+<link rel="stylesheet" href="{{asset "/css/costs.css"}}">
+<div class="container-xl px-0">
+  <div class="alert alert-info" role="status" data-cost-note>Experimental. Counts claude and its models only, at API list prices.</div>
+  <dc-costs>{{template "costs_board.gohtml" .Board}}</dc-costs>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* Everything under the head, what /costs/board answers on the costs event
+     and what a move to another state of the page swaps in. */}}
+{{define "costs_board.gohtml"}}
+{{if not .Booked}}
+<div class="empty">
+  <div class="empty-icon"><i class="ti ti-currency-dollar" aria-hidden="true"></i></div>
+  <p class="empty-title">Nothing booked yet</p>
+  <p class="empty-subtitle text-secondary">Shows once claude reports spend.</p>
+</div>
+{{else}}
+<div class="row row-cards mb-3" data-cost-tiles>
+  {{range .Tiles}}
+  <div class="col-6">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="subheader">{{.Label}}</div>
+        <div class="h1 mb-1 dc-cost-tile-value" data-cost-tile="{{.Label}}">{{.Value}}</div>
+        <div class="text-secondary small">{{.Hint}}</div>
+      </div>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{template "cost_toolbar.gohtml" .Toolbar}}
+{{range .Charts}}{{template "cost_chart.gohtml" dict "Chart" . "Range" $.RangeLabel}}{{end}}
+<p class="text-secondary small mt-3 mb-0" data-cost-prices>{{.Prices}}{{if .TopUp}} {{.TopUp}} from claude's own totals beyond its logged calls.{{end}}{{if .Unpriced}} <span data-cost-unpriced>{{.Unpriced}} {{if eq .Unpriced 1}}session{{else}}sessions{{end}} ran a model without a list price, booked at $0.</span>{{end}}</p>
+{{end}}
+{{end}}
+
+{{/* The period: a step back and forth, the presets as rows and a custom
+     range under them. */}}
+{{define "cost_toolbar.gohtml"}}
+<div class="mb-2" data-cost-toolbar>
+  <div class="btn-group flex-fill flex-sm-grow-0" role="group" aria-label="Period">
+    {{if .Prev}}<a href="{{.Prev}}" class="btn btn-icon" aria-label="Previous period" title="Previous period" data-cost-prev><i class="ti ti-chevron-left" aria-hidden="true"></i></a>{{else}}<button type="button" class="btn btn-icon" disabled aria-label="Previous period"><i class="ti ti-chevron-left" aria-hidden="true"></i></button>{{end}}
+    <div class="btn-group dropdown flex-fill flex-sm-grow-0" role="group">
+      <button type="button" class="btn dropdown-toggle text-start flex-fill flex-sm-grow-0" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" data-cost-period>
+        <i class="ti ti-calendar me-2" aria-hidden="true"></i><span class="d-flex flex-column flex-sm-row align-items-sm-baseline column-gap-2 lh-sm"><span class="fw-medium" data-cost-period-label>{{.Label}}</span>{{if ne .Label .Dates}}<span class="text-secondary small" data-cost-period-dates>{{.Dates}}</span>{{end}}</span>
+      </button>
+      <div class="dropdown-menu dc-cost-periods" data-cost-ranges>
+        {{range .Presets}}<a href="{{.URL}}" class="dropdown-item{{if .Active}} active{{end}}"{{if .Active}} aria-current="true"{{end}} data-cost-range>{{.Label}}{{if .Active}}<i class="ti ti-check ms-auto" aria-hidden="true"></i>{{end}}</a>{{end}}
+        <div class="dropdown-divider"></div>
+        <form method="get" action="/costs" class="px-3 pt-1 pb-2" data-cost-custom>
+          <input type="hidden" name="range" value="custom">
+          <div class="row g-2">
+            <div class="col-6"><label class="form-label small mb-1" for="cost-from">From</label><input type="date" class="form-control form-control-sm" id="cost-from" name="from" value="{{.CustomFrom}}" max="{{.Today}}" required></div>
+            <div class="col-6"><label class="form-label small mb-1" for="cost-to">To</label><input type="date" class="form-control form-control-sm" id="cost-to" name="to" value="{{.CustomTo}}" max="{{.Today}}" required></div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm w-100 mt-2">Show these days</button>
+        </form>
+      </div>
+    </div>
+    {{if .Next}}<a href="{{.Next}}" class="btn btn-icon" aria-label="Next period" title="Next period" data-cost-next><i class="ti ti-chevron-right" aria-hidden="true"></i></a>{{else}}<button type="button" class="btn btn-icon" disabled aria-label="Next period"><i class="ti ti-chevron-right" aria-hidden="true"></i></button>{{end}}
+  </div>
+</div>
+{{end}}
+
+{{/* The status line's cost item: today, a link to the
+     page. cost-status.js pulls it again on the costs event. */}}
+{{define "cost_status.gohtml"}}
+<dc-cost-status class="d-flex align-items-center gap-2">
+  <span class="dc-status-sep" aria-hidden="true"></span>
+  <a href="/costs" class="dc-status-item text-decoration-none" title="Spend today, API list prices" data-cost-status>
+    <i class="ti ti-currency-dollar" aria-hidden="true"></i><span>Today <span data-cost-today>{{.Cost.Today}}</span></span>
+  </a>
+</dc-cost-status>
+{{end}}

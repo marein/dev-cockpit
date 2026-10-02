@@ -1,0 +1,39 @@
+{{/* The period's bars, one column per step as its hit area. A column's
+     tooltip is rendered once here as a template, the page shows a copy of
+     it. */}}
+{{define "cost_chart.gohtml"}}
+{{$range := .Range}}
+{{with .Chart}}
+<div class="card mb-3" id="cost-{{.Key}}" data-cost-chart="{{.Key}}">
+  <div class="card-header">
+    <div>
+      <h3 class="card-title">{{.Title}}</h3>
+      <div class="text-secondary small">{{$range}}, <span data-cost-chart-total>{{.Total}}</span></div>
+    </div>
+  </div>
+  <div class="card-body">
+    {{if .Empty}}<div class="text-secondary small" data-cost-nothing>Nothing in this period.</div>{{else}}
+    <div class="dc-cost-frame" style="--n: {{len .Columns}}" data-cost-frame data-top="{{.Top}}">
+      <div class="dc-cost-plot" aria-hidden="true">
+        {{range .Grid}}<div class="dc-cost-grid" style="--b: {{printf "%.2f" .Bottom}}"><span>{{.Label}}</span></div>{{end}}
+      </div>
+      <div class="dc-cost-cols" role="group" aria-label="{{.Title}}, {{$range}}">
+        {{range .Columns}}<button type="button" class="dc-cost-col{{if .Current}} current{{end}}" data-cost-col="{{.Key}}"{{with .Drill}} data-drill="{{.}}"{{end}} aria-label="{{.Label}}: {{.Value}}"><span class="dc-cost-stack" style="--h: {{printf "%.2f" .Height}}">{{range .Segments}}<span class="dc-cost-seg {{.Color}}" data-series="{{.Series}}" data-v="{{printf "%.6f" .V}}" style="flex-grow: {{printf "%.6f" .V}}{{with .Hue}}; --dc-h: {{.}}{{end}}"></span>{{end}}</span></button>{{end}}
+      </div>
+      <div class="card card-sm dc-cost-tip" role="tooltip" hidden data-cost-tip></div>
+    </div>
+    <div class="dc-cost-axis small text-secondary" aria-hidden="true">{{range .Labels}}<span class="{{.Anchor}}{{if .Minor}} minor{{end}}" style="--l: {{printf "%.2f" .Left}}">{{.Label}}</span>{{end}}</div>
+    {{if .Legend}}<div class="d-flex flex-wrap gap-2 mt-3" role="group" aria-label="Series, a click shows only one, Ctrl click or long press hides or shows one" data-cost-legend>
+      {{range .Legend}}<button type="button" class="btn btn-sm dc-cost-key" aria-pressed="true" data-series="{{.Key}}"><span class="dc-cost-swatch {{.Color}}"{{with .Hue}} style="--dc-h: {{.}}"{{end}} aria-hidden="true"></span><span class="text-break">{{.Label}}</span><span class="text-secondary">{{.Value}}</span></button>{{end}}
+    </div>{{end}}
+    {{range .Columns}}<template data-cost-tipbody="{{.Key}}">
+      <div class="text-secondary small">{{.Label}}</div>
+      <div class="fw-bold fs-3">{{.Value}}</div>
+      {{range .Tips}}<div class="dc-cost-tiprow" data-series="{{.Series}}"><span class="dc-cost-linekey {{.Color}}"{{with .Hue}} style="--dc-h: {{.}}"{{end}} aria-hidden="true"></span><span class="fw-medium text-nowrap">{{.Value}}</span><span class="text-secondary text-break">{{.Label}}</span></div>{{end}}
+      {{if .Drill}}<a href="{{.Drill}}" class="small d-inline-block mt-1" data-cost-tipdrill>{{.DrillLabel}}</a>{{end}}
+    </template>{{end}}
+    {{end}}
+  </div>
+</div>
+{{end}}
+{{end}}

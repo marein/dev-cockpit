@@ -225,6 +225,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		Working:           s.activity.Working(),
 		Host:              s.host.Stats(),
 		Links:             render.NewStatusLinks(qn.AllProjects, qn.CurrentProject),
+		Cost:              s.costStatus(),
 	}
 }
 
