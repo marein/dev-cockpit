@@ -1,0 +1,107 @@
+{{define "costs.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Costs</h1>
+{{template "work_body.gohtml" .}}
+<div class="container-xl px-0">
+  <p class="text-secondary small mb-3"><i class="ti ti-info-circle" aria-hidden="true"></i> {{costNote}} Only claude reports its spend so far.</p>
+  <dc-costs>{{template "costs_board.gohtml" .Board}}</dc-costs>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* Everything under the head, what /costs/board answers on the costs event
+     and what a move to another state of the page swaps in. */}}
+{{define "costs_board.gohtml"}}
+{{if not .Booked}}
+<div class="empty">
+  <div class="empty-icon"><i class="ti ti-currency-dollar" aria-hidden="true"></i></div>
+  <p class="empty-title">Nothing booked yet</p>
+  <p class="empty-subtitle text-secondary">Spend shows up here once a coder reports some.</p>
+</div>
+{{else}}
+{{template "cost_toolbar.gohtml" .Toolbar}}
+{{if .Chips}}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3" data-cost-chips>
+  {{range .Chips}}<a href="{{.Remove}}" class="btn btn-sm text-start text-wrap dc-cost-chip" data-cost-chip="{{.Label}}" aria-label="Remove the filter {{.Label}} {{.Value}}"><span class="text-secondary">{{.Label}}</span><span class="fw-medium text-break">{{.Value}}</span><i class="ti ti-x" aria-hidden="true"></i></a>{{end}}
+  <a href="{{.ClearURL}}" class="btn btn-sm btn-ghost-secondary" data-cost-clear>Clear filters</a>
+</div>
+{{end}}
+<div class="row row-cards mb-3" data-cost-tiles>
+  {{range .Tiles}}
+  <div class="col-6 col-lg-3">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="subheader">{{.Label}}</div>
+        <div class="h1 mb-1 dc-cost-tile-value" data-cost-tile="{{.Label}}">{{.Value}}</div>
+        <div class="d-flex align-items-end gap-2">
+          <div class="text-secondary small flex-fill">{{.Hint}}</div>
+          {{if .Spark}}<div class="dc-cost-spark" aria-hidden="true">{{range .Spark}}<span{{if .Current}} class="current"{{end}} style="--h: {{printf "%.1f" .Height}}"></span>{{end}}</div>{{end}}
+        </div>
+      </div>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{template "cost_chart.gohtml" .}}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <h2 class="h3 mb-0 me-auto">Breakdown, {{.RangeLabel}} <span class="text-secondary fw-normal" data-cost-range-total>{{.RangeTotal}}</span></h2>
+  <div class="btn-group" role="group" aria-label="Sort the breakdowns" data-cost-sort>
+    <button type="button" class="btn btn-sm" data-sort="usd" aria-pressed="false">Spend<i class="ti ms-1" aria-hidden="true"></i></button>
+    <button type="button" class="btn btn-sm" data-sort="tokens" aria-pressed="false">Tokens<i class="ti ms-1" aria-hidden="true"></i></button>
+    <button type="button" class="btn btn-sm" data-sort="name" aria-pressed="false">Name<i class="ti ms-1" aria-hidden="true"></i></button>
+    <button type="button" class="btn btn-sm" data-sort="share" aria-pressed="false">Share<i class="ti ms-1" aria-hidden="true"></i></button>
+  </div>
+</div>
+{{if .Unpriced}}<div class="alert alert-info py-2 small" role="status" data-cost-unpriced>{{.Unpriced}} {{if eq .Unpriced 1}}session ran a model{{else}}sessions ran models{{end}} without a list price, their tokens are counted, no spend.</div>{{end}}
+<div class="row row-cards">
+  {{range .Breakdowns}}<div class="col-12 col-lg-6">{{template "cost_shares.gohtml" .}}</div>{{end}}
+</div>
+<p class="text-secondary small mt-3 mb-0" data-cost-prices>{{.Prices}}{{if .TopUp}} {{.TopUp}} of this period is what claude's own totals hold above its logged calls.{{end}}</p>
+{{end}}
+{{end}}
+
+{{/* The period: a step back and forth, the presets as rows and a custom
+     range under them, and the text filter on the names. */}}
+{{define "cost_toolbar.gohtml"}}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3" data-cost-toolbar>
+  <div class="btn-group" role="group" aria-label="Period">
+    {{if .Prev}}<a href="{{.Prev}}" class="btn btn-icon" aria-label="Previous period" title="Previous period" data-cost-prev><i class="ti ti-chevron-left" aria-hidden="true"></i></a>{{else}}<button type="button" class="btn btn-icon" disabled aria-label="Previous period"><i class="ti ti-chevron-left" aria-hidden="true"></i></button>{{end}}
+    <div class="btn-group dropdown" role="group">
+      <button type="button" class="btn dropdown-toggle text-start" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" data-cost-period>
+        <i class="ti ti-calendar me-2" aria-hidden="true"></i><span class="d-flex flex-column flex-sm-row column-gap-2 lh-sm"><span class="fw-medium" data-cost-period-label>{{.Label}}</span>{{if ne .Label .Dates}}<span class="text-secondary small" data-cost-period-dates>{{.Dates}}</span>{{end}}</span>
+      </button>
+      <div class="dropdown-menu dc-cost-periods" data-cost-ranges>
+        {{range .Presets}}<a href="{{.URL}}" class="dropdown-item{{if .Active}} active{{end}}"{{if .Active}} aria-current="true"{{end}} data-cost-range>{{.Label}}{{if .Active}}<i class="ti ti-check ms-auto" aria-hidden="true"></i>{{end}}</a>{{end}}
+        <div class="dropdown-divider"></div>
+        <form method="get" action="/costs" class="px-3 pt-1 pb-2" data-cost-custom>
+          <input type="hidden" name="range" value="custom">
+          {{range .Carry}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+          <div class="row g-2">
+            <div class="col-6"><label class="form-label small mb-1" for="cost-from">From</label><input type="date" class="form-control form-control-sm" id="cost-from" name="from" value="{{.CustomFrom}}" max="{{.Today}}" required></div>
+            <div class="col-6"><label class="form-label small mb-1" for="cost-to">To</label><input type="date" class="form-control form-control-sm" id="cost-to" name="to" value="{{.CustomTo}}" max="{{.Today}}" required></div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm w-100 mt-2">Show these days</button>
+        </form>
+      </div>
+    </div>
+    {{if .Next}}<a href="{{.Next}}" class="btn btn-icon" aria-label="Next period" title="Next period" data-cost-next><i class="ti ti-chevron-right" aria-hidden="true"></i></a>{{else}}<button type="button" class="btn btn-icon" disabled aria-label="Next period"><i class="ti ti-chevron-right" aria-hidden="true"></i></button>{{end}}
+  </div>
+  <div class="input-icon flex-fill dc-cost-query">
+    <span class="input-icon-addon"><i class="ti ti-filter" aria-hidden="true"></i></span>
+    <input type="search" class="form-control" placeholder="Filter names" aria-label="Filter the breakdowns by name" value="{{.Query}}" autocomplete="off" data-cost-query>
+  </div>
+</div>
+{{end}}
+
+{{/* The status line's cost item: today and the last hour, a link to the
+     page. Hidden until anything is booked, cost-status.js pulls it again on
+     the costs event. */}}
+{{define "cost_status.gohtml"}}
+<dc-cost-status class="d-flex align-items-center gap-3"{{if not .Cost.Show}} hidden{{end}}>
+  <span class="dc-status-sep" aria-hidden="true"></span>
+  <a href="/costs" class="dc-status-item" title="Spend today and in the last hour. {{costNote}}" data-cost-status>
+    <i class="ti ti-currency-dollar" aria-hidden="true"></i><span>Today <span data-cost-today>{{.Cost.Today}}</span></span><span class="text-secondary">·</span><span><span data-cost-burn>{{.Cost.Burn}}</span>/h</span>
+  </a>
+</dc-cost-status>
+{{end}}

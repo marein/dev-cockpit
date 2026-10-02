@@ -258,3 +258,37 @@ func TestTheHoldProcessNamesItselfInTheLock(t *testing.T) {
 	}
 	waitFor(t, "the lock to be released", func() bool { return !Alive(0, lock) })
 }
+
+// A kill terminates first: a program that writes its state on the way out,
+// the way claude writes its running total, gets to.
+func TestKillLetsTheProgramWriteOnTheWayOut(t *testing.T) {
+	out, lock, result := files(t)
+	mark := filepath.Join(t.TempDir(), "bye")
+	script := "trap 'echo bye > " + mark + "; exit 0' TERM; echo ready; while :; do sleep 0.1; done"
+	p, err := Start(Options{Command: []string{"sh", "-c", script}, Out: out, Lock: lock, Result: result})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitFor(t, "the program to start", func() bool { raw, _ := os.ReadFile(out); return strings.Contains(string(raw), "ready") })
+	p.Kill()
+	waitFor(t, "the run to end", func() bool { return !p.Alive() })
+	if got := strings.TrimSpace(read(t, mark)); got != "bye" {
+		t.Fatalf("the program wrote %q on the way out", got)
+	}
+}
+
+// A program that does not end on the terminate is killed after the grace.
+func TestKillEndsAProgramThatIgnoresTheTerminate(t *testing.T) {
+	out, lock, result := files(t)
+	p, err := Start(Options{Command: []string{"sh", "-c", "trap '' TERM; echo ready; while :; do sleep 0.1; done"}, Out: out, Lock: lock, Result: result})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitFor(t, "the program to start", func() bool { raw, _ := os.ReadFile(out); return strings.Contains(string(raw), "ready") })
+	started := time.Now()
+	p.Kill()
+	waitFor(t, "the run to end", func() bool { return !lockHeld(lock) })
+	if waited := time.Since(started); waited < killGrace/2 {
+		t.Fatalf("the run ended after %s, before the grace", waited)
+	}
+}

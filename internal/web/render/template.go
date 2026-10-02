@@ -42,6 +42,7 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plu
 		"hostBarStyle": HostBarStyle,
 		"hostTabClass": HostTabClass,
 		"hostTabLabel": HostTabLabel,
+		"costNote":     func() string { return CostNote },
 		"dict": func(pairs ...any) map[string]any {
 			m := make(map[string]any, len(pairs)/2)
 			for i := 0; i+1 < len(pairs); i += 2 {
@@ -128,6 +129,9 @@ type Page struct {
 	// same project browser the quick nav carries. It refreshes over the
 	// docker event from there.
 	Links StatusLinks
+	// Cost is the status line's cost item at render time. It refreshes over
+	// the costs event from there.
+	Cost CostStatus
 }
 
 // QuickNav feeds the quick nav floating button: the live sessions and shells you

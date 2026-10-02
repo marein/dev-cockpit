@@ -157,6 +157,11 @@ func (p *Coder) SessionModel(sessionID string) string {
 	return ""
 }
 
+// BeforeSessionDelete implements coder.SessionDeleteWatcher. Coder deletes,
+// assistant deletes and the end of a check or a trigger all remove a
+// transcript through the one repository, so the hook sits there.
+func (p *Coder) BeforeSessionDelete(hook func(sessionID string)) { p.sessions.beforeDelete = hook }
+
 func (p *Coder) ID() string                                   { return "claude" }
 func (p *Coder) RequiredTools() []string                      { return p.tools }
 func (p *Coder) AgentRepository() coder.AgentRepository       { return p.agents }

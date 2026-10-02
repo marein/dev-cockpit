@@ -1,0 +1,69 @@
+{{define "settings_costs.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Costs</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
+  <div class="text-secondary small mb-3" data-costs-settings-note>The amounts are API list price equivalents, a subscription does not pay them. Ollama models are not priced yet, their tokens are counted, no spend.</div>
+  <form method="post" action="/settings/costs" id="settings-costs">
+    {{if and (eq $.FlashProject "settings-costs") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <div class="mb-3" id="settings-price-refresh">
+      <label class="form-label">List prices</label>
+      <div class="text-secondary small mb-2">Costs are priced with a table built into this version, refreshed once a day from LiteLLM's public price list. Off keeps the cockpit offline for it and prices with the last table it has.</div>
+      <label class="form-check">
+        <input class="form-check-input" type="checkbox" name="price_refresh" value="on"{{if .PriceRefresh}} checked{{end}}>
+        <span class="form-check-label">Refresh the list prices daily</span>
+      </label>
+    </div>
+    <div class="mb-3" id="settings-cost-retention">
+      <label class="form-label" for="cost-retention">Months kept</label>
+      <div class="text-secondary small mb-2" data-cost-retention-help>How many months of bookings stay, this month included. The default 3 keeps the current month and the two before it. At least {{.MinRetention}}, the 30 day chart reaches into the month before. Older months are deleted and never booked again.</div>
+      <input class="form-control" type="number" id="cost-retention" name="retention" min="{{.MinRetention}}" step="1" required value="{{.Retention}}">
+      <div class="form-hint" data-cost-retention-kept>Kept now: {{.KeptMonths}}.</div>
+    </div>
+    <button type="submit" class="btn btn-primary">Save</button>
+  </form>
+  <hr class="my-4">
+  <div class="mb-3" data-price-status>
+    <label class="form-label">Price status</label>
+    <dl class="row small mb-0">
+      <dt class="col-5 col-sm-4 fw-normal text-secondary">Table in use</dt>
+      <dd class="col-7 col-sm-8" data-price-table>{{if .FetchedAt}}Refreshed from LiteLLM{{else}}Built into this version{{end}}</dd>
+      <dt class="col-5 col-sm-4 fw-normal text-secondary">Last fetch</dt>
+      <dd class="col-7 col-sm-8" data-price-fetched>{{if .FetchedAt}}<dc-time datetime="{{.FetchedAt}}"></dc-time>{{else}}Never{{end}}</dd>
+      <dt class="col-5 col-sm-4 fw-normal text-secondary">Next fetch</dt>
+      <dd class="col-7 col-sm-8 mb-0" data-price-next>{{if not .PriceRefresh}}None, the daily refresh is off{{else if .NextAt}}<dc-time datetime="{{.NextAt}}"></dc-time>{{else}}Within a minute{{end}}</dd>
+    </dl>
+  </div>
+  <div class="mb-3" data-price-models>
+    <label class="form-label">Prices per model</label>
+    <div class="text-secondary small mb-2">The models the cost books have seen, at the price a call is booked with now. Tokens in USD per million, web search per thousand requests.</div>
+    <div class="list-group">
+      {{range .Models}}
+      <div class="list-group-item" data-price-model="{{.Model}}">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          {{template "coder_icon.gohtml" (dict "ID" .Coder)}}
+          <span class="flex-fill dc-min0 text-truncate font-monospace">{{.Model}}</span>
+          {{if not .Priced}}<span class="badge bg-secondary-lt" data-price-unpriced>No list price</span>{{end}}
+        </div>
+        {{if .Priced}}
+        <dl class="row row-cols-3 row-cols-md-6 g-1 small mb-0">
+          <div class="col"><dt class="fw-normal text-secondary">Input</dt><dd class="mb-0" data-price-input>{{.Input}}</dd></div>
+          <div class="col"><dt class="fw-normal text-secondary">Output</dt><dd class="mb-0" data-price-output>{{.Output}}</dd></div>
+          <div class="col"><dt class="fw-normal text-secondary">Cache read</dt><dd class="mb-0" data-price-cache-read>{{.CacheRead}}</dd></div>
+          <div class="col"><dt class="fw-normal text-secondary">Cache write 5m</dt><dd class="mb-0" data-price-cache-write-5m>{{.CacheWrite5m}}</dd></div>
+          <div class="col"><dt class="fw-normal text-secondary">Cache write 1h</dt><dd class="mb-0" data-price-cache-write-1h>{{.CacheWrite1h}}</dd></div>
+          <div class="col"><dt class="fw-normal text-secondary">Web search</dt><dd class="mb-0" data-price-web-search>{{or .WebSearch "None"}}</dd></div>
+        </dl>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="list-group-item text-secondary" data-price-models-empty>No model booked yet.</div>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

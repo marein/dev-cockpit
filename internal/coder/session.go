@@ -38,6 +38,14 @@ type SessionCandidates interface {
 	CandidateSessions() []Session
 }
 
+// SessionDeleteWatcher is the optional hook of a coder whose session records
+// carry something that has to be read before they go, the spend of a session
+// above all. The hook runs synchronously right before a session's records
+// are removed, on every delete path, and must not block for long.
+type SessionDeleteWatcher interface {
+	BeforeSessionDelete(hook func(sessionID string))
+}
+
 // LessSession orders sessions newest-first, with name and ID as tie-breakers.
 func LessSession(a, b Session) bool {
 	if !a.UpdatedAt.Equal(b.UpdatedAt) {

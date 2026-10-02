@@ -33,6 +33,18 @@ func (psStrategy) fill(t *Tree) bool {
 	return true
 }
 
+func (psStrategy) pids() []int {
+	_, cmdline, ok := psTable()
+	if !ok {
+		return nil
+	}
+	out := make([]int, 0, len(cmdline))
+	for pid := range cmdline {
+		out = append(out, pid)
+	}
+	return out
+}
+
 // psTable returns pid->children and pid->argv from a single `ps` invocation.
 func psTable() (children map[int][]int, cmdline map[int][]string, ok bool) {
 	out, err := exec.Command("ps", "-axww", "-o", "pid=,ppid=,command=").Output()

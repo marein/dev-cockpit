@@ -31,6 +31,8 @@ import (
 	codercopilot "github.com/marein/dev-cockpit/internal/coder/copilot"
 	coderopencode "github.com/marein/dev-cockpit/internal/coder/opencode"
 	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/cost"
+	"github.com/marein/dev-cockpit/internal/cost/price"
 	"github.com/marein/dev-cockpit/internal/detach"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
@@ -285,6 +287,7 @@ func newAssistantCommand() *cobra.Command {
 		newNotificationsCommand(opts),
 		newTriggerNewCommand(opts), newTriggerListCommand(opts), newTriggerEditCommand(opts), newTriggerDeleteCommand(opts),
 		newTimezoneGetCommand(opts), newTimezoneSetCommand(opts),
+		newCostShowCommand(opts),
 		newModelListCommand(opts), newAssistantModelsGetCommand(opts), newAssistantModelsSetCommand(opts),
 		newProjectCommand(opts), newDeleteProjectCommand(opts),
 		newComposeListCommand(opts), newComposeStartCommand(opts), newComposeShowCommand(opts), newComposeStopCommand(opts),
@@ -503,6 +506,18 @@ func runServe(opts serveOptions) error {
 			log.Printf("coder %s: the cockpit git skill could not be written: %v", c.ID(), err)
 		}
 	}
+
+	// The cost books stand before anything can delete a session: the startup
+	// sweep below already removes check sessions, and each delete books what
+	// the session spent last.
+	prices := price.NewBook(cfg.StateDir, func() bool { return settingsStore.Get(price.RefreshSettingKey) != "off" })
+	costs := cost.New(cfg.StateDir, costPlacer(assistantService, projectRepo),
+		costSources(prices, costPlaces(conversations, assistantService, projectRepo))...)
+	costs.SetZone(func() *time.Location { return web.CostZone(settingsStore) })
+	costs.SetRetention(func() int { return cost.Retention(settingsStore.Get(cost.RetentionSettingKey)) })
+	watchSessionDeletes(selected, costs)
+	conversations.SetNamed(costs.AssistantNamed)
+	seedCostOwners(conversations, costs)
 
 	shells := shell.NewShells(cfg, tmuxClient, projectRepo, func() bool {
 		return settingsStore.Get(shell.HistorySettingKey) == "on"
@@ -725,6 +740,8 @@ func runServe(opts serveOptions) error {
 		return fmt.Errorf("failed to write the askpass helper: %w", err)
 	}
 	srv.SetAskpass(askBroker, askScript)
+	costs.SetOnChange(func() { bus.Publish(eventbus.Event{Type: "costs"}) })
+	srv.SetCosts(costs, prices)
 
 	listener, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
@@ -773,6 +790,8 @@ func runServe(opts serveOptions) error {
 	// After the server is up, so the change callback is wired before the
 	// first list can move the state. A machine without a daemon just idles.
 	go dockerService.Run(context.Background())
+	go costs.Run(costPollInterval)
+	go prices.Run(context.Background())
 	// The project deletions the last process was in the middle of. Their rows
 	// already say they are working, that was read when the server was built;
 	// this is the work behind them starting again, and it waits for the docker
@@ -793,8 +812,12 @@ func runServe(opts serveOptions) error {
 	// asking anybody. The event names the project and nothing else, the way
 	// a start or a stop does, so the moved name itself travels no further
 	// than here: every surface pulls its own fragment and reads it there.
-	onRenamed := func(id, name, cwd string) { srv.PublishTerminals(projectRepo.ProjectNameFor(cwd)) }
 	for _, m := range coders {
+		coderID := m.ID()
+		onRenamed := func(id, name, cwd string) {
+			costs.CoderSession(coderID, id, name, cwd)
+			srv.PublishTerminals(projectRepo.ProjectNameFor(cwd))
+		}
 		var onBell func(targetID string)
 		if m.ID() == "copilot" {
 			if err := codercopilot.EnsureBeepSetting(); err != nil {
@@ -813,8 +836,16 @@ func runServe(opts serveOptions) error {
 			OpenTurnCap:        profile.OpenTurnCap,
 			MovementStartGrace: profile.MovementStartGrace,
 		}
-		onSeen := func(id string, startedAt time.Time) { tracker.Configure(id, policy, startedAt) }
-		go m.RunTurnWatch(time.Second, onSeen, tracker.SetTurn, tracker.Forget, onRenamed)
+		onSeen := func(id string, startedAt time.Time) {
+			tracker.Configure(id, policy, startedAt)
+			for _, r := range m.Snapshot().Running {
+				if r.Identifier == id {
+					costs.CoderSession(coderID, id, r.Name, r.CWD)
+				}
+			}
+		}
+		onStored := func(st coder.Session) { costs.CoderSession(coderID, st.SessionID, st.Name, st.CWD) }
+		go m.RunTurnWatch(time.Second, onSeen, tracker.SetTurn, tracker.Forget, onRenamed, onStored)
 		go m.RunSessionWatch(3*time.Second, tracker.Output, onBell)
 	}
 

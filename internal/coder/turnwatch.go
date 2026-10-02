@@ -25,6 +25,10 @@ const turnReadBudget = 200
 // record section on purpose: a coder without WatchRecord leaves there, and its
 // sessions get renamed like everybody else's.
 //
+// onStored reports a stored session the first time the watch sees it and
+// whenever its name moved, a session the cockpit lists whether or not it
+// started it. It reads the same snapshot, the stored list is in it.
+//
 // A stamp is taken per session per tick and the record is only read when the
 // stamp moved, so an idle session costs one stat per tick. A session whose
 // record cannot be stamped or read yet reports nothing at all: no account is
@@ -32,17 +36,22 @@ const turnReadBudget = 200
 // yet (Activity.Empty) is the same case with a file: a coder that notes its
 // boot into the record before anybody typed has no account to give, see
 // openTurn. Blocks; run it in a goroutine.
-func (s *Manager) RunTurnWatch(interval time.Duration, onSeen func(id string, startedAt time.Time), onTurn func(id string, open, inTool bool, at time.Time), onGone func(id string), onRenamed func(id, name, cwd string)) {
+func (s *Manager) RunTurnWatch(interval time.Duration, onSeen func(id string, startedAt time.Time), onTurn func(id string, open, inTool bool, at time.Time), onGone func(id string), onRenamed func(id, name, cwd string), onStored func(stored Session)) {
 	watchRecord := s.coder.ActivityProfile().WatchRecord
 	stamper, _ := s.coder.(ActivityStamper)
 	reporter, _ := s.coder.(ActivityReporter)
 	stamps := map[string]time.Time{}
 	names := map[string]string{}
+	storedNames := map[string]string{}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
+		snap := s.Snapshot()
+		for _, st := range storedMoves(storedNames, snap.Resumable) {
+			onStored(st)
+		}
 		running := map[string]Running{}
-		for _, r := range s.Snapshot().Running {
+		for _, r := range snap.Running {
 			running[r.Identifier] = r
 		}
 		for id := range stamps {
@@ -91,6 +100,28 @@ func (s *Manager) RunTurnWatch(interval time.Duration, onSeen func(id string, st
 			onTurn(id, open, activity.InToolCall, stamp)
 		}
 	}
+}
+
+// storedMoves answers the stored sessions that are new since the last tick
+// or carry another name, and keeps names up to date: a session that left the
+// list is forgotten, so one that comes back counts as new.
+func storedMoves(names map[string]string, stored []Session) []Session {
+	var out []Session
+	present := make(map[string]bool, len(stored))
+	for _, st := range stored {
+		present[st.SessionID] = true
+		if name, ok := names[st.SessionID]; ok && name == st.Name {
+			continue
+		}
+		names[st.SessionID] = st.Name
+		out = append(out, st)
+	}
+	for id := range names {
+		if !present[id] {
+			delete(names, id)
+		}
+	}
+	return out
 }
 
 // openTurn decides what the watcher reports as open, and whether it reports

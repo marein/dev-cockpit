@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/proctree"
 )
 
 type transcriptEntry struct {
@@ -34,10 +36,14 @@ type transcriptEntry struct {
 }
 
 type sessionRepository struct {
-	stateRoot string
-	ollama    *ollamaSessions
-	mu        sync.Mutex
-	cache     map[string]transcriptCache
+	stateRoot    string
+	ollama       *ollamaSessions
+	mu           sync.Mutex
+	cache        map[string]transcriptCache
+	beforeDelete func(sessionID string)
+	// running says whether a claude process of the session is alive, nil
+	// asks the process table.
+	running func(sessionID string) bool
 }
 
 // transcriptCache keeps the parse result of one transcript file, keyed on its
@@ -70,7 +76,27 @@ func (r *sessionRepository) List() []coder.Session {
 	return out
 }
 
+// DeleteSession removes a session's transcript once no claude process of it
+// is alive. claude writes its exit record on the way out, into a file that is
+// gone it writes a new one that holds nothing but that record; the wait is
+// what keeps the record in the transcript and booked before it goes. A
+// process still there after coder.StopWait is not ending, the delete is
+// refused and the transcript stays.
 func (r *sessionRepository) DeleteSession(sessionID string) error {
+	running := r.running
+	if running == nil {
+		running = sessionRunning
+	}
+	deadline := time.Now().Add(coder.StopWait)
+	for running(sessionID) {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("claude is still running session %s, it was not deleted.", sessionID)
+		}
+		time.Sleep(exitPoll)
+	}
+	if r.beforeDelete != nil {
+		r.beforeDelete(sessionID)
+	}
 	stored, err := r.findStored(sessionID)
 	if err != nil {
 		return err
@@ -85,6 +111,21 @@ func (r *sessionRepository) DeleteSession(sessionID string) error {
 	}
 	r.ollama.forget(sessionID)
 	return nil
+}
+
+// exitPoll is how often a delete looks whether the session's process ended.
+const exitPoll = 50 * time.Millisecond
+
+// sessionRunning says whether a process names the session in its argv, the
+// way claude is started on one: --session-id or --resume and the id.
+func sessionRunning(sessionID string) bool {
+	tree := proctree.Capture()
+	for _, pid := range tree.Processes() {
+		if slices.Contains(tree.Cmdline(pid), sessionID) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *sessionRepository) ListFiles(sessionID string) ([]filesystem.File, error) {

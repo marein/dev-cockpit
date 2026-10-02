@@ -108,7 +108,9 @@ The layers are listed top down, a layer imports only the layers below it.
    `coder` (one subpackage per coder CLI: `claude`, `copilot`,
    `opencode`), `shell`, `terminal`, `project`, `docker`, `git`,
    `editorintelligence`, `voice`, `backup`, `notify`, `push`, `restore`,
-   `update`, `askpass`, `activity`, `hostinfo` and `terminalstate`.
+   `update`, `askpass`, `activity`, `hostinfo`, `terminalstate` and `cost`
+   (one ledger for every coder CLI, one source per CLI under it, `claude`,
+   and the list prices by provider and model in `cost/price`).
 4. **Infrastructure**: `statefile`, `settings`, `recent`, `eventbus`,
    `localapi`, `detach`, `tmux`, `proctree`, `clirun`, `filesystem`, `netguard`,
    `gitfacts`, `markdown`, `keys` and `config`. It imports no service.

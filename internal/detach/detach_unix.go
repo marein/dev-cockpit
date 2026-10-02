@@ -7,6 +7,15 @@ import (
 	"os/exec"
 	"strconv"
 	"syscall"
+	"time"
+)
+
+const (
+	// killGrace is how long a terminated run may take to end. claude writes
+	// its running total within about half a second of the signal, the rest
+	// is room for a busy host.
+	killGrace = 3 * time.Second
+	killPoll  = 50 * time.Millisecond
 )
 
 // detach takes the hold process out of this server's session: its own session
@@ -78,15 +87,31 @@ func killOwnGroup() {
 	_ = syscall.Kill(-os.Getpid(), syscall.SIGKILL)
 }
 
-// Kill ends the whole process group of a run. The lock is checked first: a run
-// that already ended must not be signalled, its process number may belong to
-// somebody else by now.
+// Kill ends the whole process group of a run: a terminate first, so a program
+// that writes its state on the way out gets to, and a kill after killGrace for
+// whatever is still holding the lock. It returns at once, the kill follows in
+// the background. The lock is checked before every signal: a run that already
+// ended must not be signalled, its process number may belong to somebody else
+// by now.
 func Kill(pid int, lock string) {
 	if pid <= 0 || !lockHeld(lock) {
 		return
 	}
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
+	signalGroup(pid, syscall.SIGTERM)
+	go func() {
+		deadline := time.Now().Add(killGrace)
+		for lockHeld(lock) && time.Now().Before(deadline) {
+			time.Sleep(killPoll)
+		}
+		if lockHeld(lock) {
+			signalGroup(pid, syscall.SIGKILL)
+		}
+	}()
+}
+
+func signalGroup(pid int, sig syscall.Signal) {
+	if err := syscall.Kill(-pid, sig); err != nil {
+		_ = syscall.Kill(pid, sig)
 	}
 }
 

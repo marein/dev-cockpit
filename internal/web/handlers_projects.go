@@ -582,7 +582,7 @@ func (s *Server) purgeProjectRunners(path string) {
 		snap := sessions.Snapshot()
 		for _, r := range snap.Running {
 			if filesystem.IsUnder(r.CWD, path) {
-				_, _ = sessions.Stop(r.Identifier)
+				_, _ = sessions.StopAndWait(r.Identifier, coder.StopWait)
 				s.notifier.MarkTargetRead(r.Identifier)
 				// The terminal goes with the project, so it takes the same road
 				// a deleted coder takes: its open job is closed with that

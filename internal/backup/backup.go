@@ -181,6 +181,9 @@ func (s *Service) HomeDotfiles() []string {
 func buildSections(stateDir, projectsDir, home string) []Section {
 	st := func(name string) string { return filepath.Join(stateDir, name) }
 	hm := func(name string) string { return filepath.Join(home, name) }
+	// The cost books (cost/rows-*.json, sessions.json, cursors.json) stay
+	// out on purpose, the user decided so. The price cache (cost/prices.json) is rebuilt by the next
+	// refresh and falls back to the table built into the binary.
 	return []Section{
 		{ID: "settings", Group: "Cockpit", Label: "Settings",
 			Description: "General settings, the configured compose actions and the notification jingle.",

@@ -1,6 +1,7 @@
 package coder
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,5 +40,28 @@ func TestAnOpenTurnNeedsAWordFromThisLife(t *testing.T) {
 		if open != c.open || spoken != c.spoken {
 			t.Errorf("%s: openTurn = (%v, %v), want (%v, %v)", c.name, open, spoken, c.open, c.spoken)
 		}
+	}
+}
+
+func TestAStoredSessionIsReportedWhenNewOrRenamed(t *testing.T) {
+	names := map[string]string{}
+	ids := func(moved []Session) string {
+		var out []string
+		for _, s := range moved {
+			out = append(out, s.SessionID+"="+s.Name)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids(storedMoves(names, []Session{{SessionID: "a", Name: "fix"}, {SessionID: "b", Name: "pay"}})); got != "a=fix,b=pay" {
+		t.Fatalf("first tick %s", got)
+	}
+	if got := ids(storedMoves(names, []Session{{SessionID: "a", Name: "fix"}, {SessionID: "b", Name: "checkout"}})); got != "b=checkout" {
+		t.Fatalf("a rename %s", got)
+	}
+	if got := ids(storedMoves(names, []Session{{SessionID: "b", Name: "checkout"}})); got != "" {
+		t.Fatalf("a delete %s", got)
+	}
+	if got := ids(storedMoves(names, []Session{{SessionID: "a", Name: "fix"}, {SessionID: "b", Name: "checkout"}})); got != "a=fix" {
+		t.Fatalf("a session that came back %s", got)
 	}
 }

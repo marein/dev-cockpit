@@ -84,6 +84,7 @@ type Service struct {
 
 	onChange func()
 	onDone   func(instanceID string)
+	onNamed  func(instanceID, title string)
 	render   func(string) (string, error)
 
 	// events is the reactor: where an event a source publishes goes, and where
@@ -134,6 +135,19 @@ func newService(store *Store, runs *RunStore, coders Coders, workdirs Workdirs) 
 func (s *Service) SetHooks(onChange func(), onDone func(instanceID string)) {
 	s.onChange = onChange
 	s.onDone = onDone
+}
+
+// SetNamed registers who hears an assistant's name: on a create, when its
+// first message names it, and on every rename. It may run under the service
+// lock, so it must not block or call back into the service.
+func (s *Service) SetNamed(fn func(instanceID, title string)) {
+	s.onNamed = fn
+}
+
+func (s *Service) named(c Instance) {
+	if s.onNamed != nil {
+		s.onNamed(c.ID, c.Title)
+	}
 }
 
 // SetRenderer installs the Markdown renderer used while an answer streams. The
@@ -396,6 +410,7 @@ func (s *Service) create(coderID string) (Instance, error) {
 	s.store.Save(c)
 	s.mu.Unlock()
 
+	s.named(c)
 	s.changed()
 	return c, nil
 }
@@ -490,6 +505,7 @@ func (s *Service) Send(id, prompt string, attachments []Attachment) (Run, error)
 	c.Messages = append(c.Messages, user)
 	if c.Title == "" || c.Title == DefaultTitle {
 		c.Title = deriveTitle(text, attachments)
+		s.named(c)
 	}
 	r, err := s.startLocked(&c, co, withNotes(since, withAttachments(text, attachments)), user.ID)
 	s.mu.Unlock()
@@ -719,6 +735,7 @@ func (s *Service) flushReady(instanceID string) {
 	// one does: the turn it goes out in is the first anybody sees.
 	if c.Title == "" || c.Title == DefaultTitle {
 		c.Title = deriveTitle(queued[0].Content, queued[0].Attachments)
+		s.named(c)
 	}
 	// The waiting entries go out with the new turn; every open page pulls them
 	// fresh so their bubbles stop saying so. The one line about what the
@@ -764,6 +781,7 @@ func (s *Service) Rename(id, rawTitle string) error {
 	s.store.Save(c)
 	s.mu.Unlock()
 
+	s.named(c)
 	s.changed()
 	return nil
 }

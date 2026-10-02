@@ -1,0 +1,34 @@
+{{/* A breakdown card. The page sorts the rows, filters them by name and
+     folds a long list behind the button in the footer. */}}
+{{define "cost_shares.gohtml"}}
+<div class="card" data-cost-shares="{{.Key}}">
+  <div class="card-header"><h3 class="card-title">{{.Title}}</h3></div>
+  <div data-cost-list>
+    {{range .Rows}}{{template "cost_share_row.gohtml" .}}{{else}}<div class="dc-cost-item text-secondary small">Nothing in this period.</div>{{end}}
+  </div>
+  <div class="dc-cost-item text-secondary small" hidden data-cost-nomatch>No name here matches the filter.</div>
+  <div class="card-footer p-2" hidden data-cost-more><button type="button" class="btn btn-sm btn-ghost-secondary w-100" aria-expanded="false" data-cost-more-toggle><span data-cost-more-label></span></button></div>
+</div>
+{{end}}
+
+{{/* One row: the label on its own line and wrapped, badge, sub text and the
+     other unit under it, value and share right aligned. A row that narrows
+     the page links there. */}}
+{{define "cost_share_row.gohtml"}}
+<div class="dc-cost-row" data-cost-row data-name="{{.Label}}" data-usd="{{.USD}}" data-tokens="{{.Tokens}}" data-share="{{.Percent}}" data-text="{{.Label}} {{.Badge}} {{.Sub}}">
+  {{if .Drill}}<a href="{{.Drill}}" class="dc-cost-item dc-cost-drill" data-cost-drill>{{else}}<div class="dc-cost-item">{{end}}
+    <div class="d-flex align-items-start gap-3">
+      <div class="flex-fill min-w-0">
+        <div class="fw-medium text-break" data-cost-label>{{.Label}}</div>
+        {{if or .Badge .Sub .Alt}}<div class="d-flex flex-wrap align-items-center column-gap-2 small text-secondary">{{if .Badge}}<span class="badge {{.BadgeClass}}" data-cost-badge>{{.Badge}}</span>{{end}}{{if .Sub}}<span class="dc-trunc mw-100" title="{{.Sub}}" data-cost-sub>{{.Sub}}</span>{{end}}{{if .Alt}}<span class="text-nowrap" data-cost-alt>{{.Alt}}</span>{{end}}</div>{{end}}
+      </div>
+      <div class="text-end text-nowrap">
+        <div class="fw-medium" data-cost-value>{{.Value}}</div>
+        <div class="small text-secondary" data-cost-percent>{{printf "%.1f" .Percent}}%</div>
+      </div>
+    </div>
+    <div class="progress progress-sm mt-2"><div class="progress-bar" style="width: {{printf "%.1f" .Percent}}%" role="presentation"></div></div>
+  {{if .Drill}}</a>{{else}}</div>{{end}}
+  {{if .Children}}<div class="dc-cost-children" data-cost-children>{{range .Children}}{{template "cost_share_row.gohtml" .}}{{end}}</div>{{end}}
+</div>
+{{end}}

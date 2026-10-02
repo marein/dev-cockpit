@@ -1,6 +1,6 @@
 {{/* The phone's Cockpit sheet, what /ctx/cockpit answers: the rail's foot for a
      screen without a rail. Top to bottom the server, the latest news, the
-     three quick actions (theme, update, logout) and the way into the
+     quick actions (theme, costs, update, logout) and the way into the
      settings, whose head counts the open backup reviews, and the docs. It is pulled fresh on every open, so the server
      rows and the settings count start from the moment it opened. */}}
 {{define "cockpit_ctx.gohtml"}}
@@ -21,6 +21,7 @@
            the width it needs. The label is never cut, a long one wraps and
            the row grows with it; otherwise every tile shares one height. */}}
       <div class="col-auto">{{template "theme_cycle.gohtml" (dict "Class" "btn btn-icon d-flex align-items-center justify-content-center p-0 dc-cockpit-tile dc-cockpit-tile-square" "Tile" true)}}</div>
+      <div class="col-auto"><a href="/costs" class="btn btn-icon d-flex align-items-center justify-content-center p-0 dc-cockpit-tile dc-cockpit-tile-square" aria-label="Costs" title="Costs" data-cockpit-costs><i class="ti ti-currency-dollar" aria-hidden="true"></i></a></div>
       <div class="col">
         {{/* Only an update that exists makes this a control: update-check.js
              turns the tile into one when the check found a newer version,
@@ -29,7 +30,7 @@
           <i class="ti ti-circle-check" data-cockpit-update-icon aria-hidden="true"></i><span class="text-wrap text-break text-center" data-cockpit-update-label>Up to date</span>
         </button>
       </div>
-      <div class="col-4">
+      <div class="col-auto">
         <form method="post" action="/logout" class="h-100" data-no-pe>
           <input type="hidden" name="csrf_token" value="{{.Page.CSRFToken}}">
           <button type="submit" class="btn w-100 h-100 d-flex align-items-center justify-content-center gap-2 px-2 py-2 dc-cockpit-tile" data-cockpit-logout>

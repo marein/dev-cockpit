@@ -9,6 +9,7 @@ type strategy interface {
 	// per-PID readers below.
 	fill(t *Tree) bool
 
+	pids() []int
 	childrenOf(pid int) []int
 	cmdlineOf(pid int) []string
 	cwdOf(pid int) string
@@ -62,6 +63,18 @@ func (t *Tree) Descendants(rootPID int) []int {
 		pending = append(pending, t.childrenOf(pid)...)
 	}
 	return result
+}
+
+// Processes returns every PID of the table.
+func (t *Tree) Processes() []int {
+	if !t.bulk {
+		return t.s.pids()
+	}
+	out := make([]int, 0, len(t.cmdline))
+	for pid := range t.cmdline {
+		out = append(out, pid)
+	}
+	return out
 }
 
 // Cmdline returns the argv of the given process.

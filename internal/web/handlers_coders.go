@@ -807,7 +807,7 @@ type deletedCoder struct {
 func (s *Server) deleteCoder(id string) (deletedCoder, error) {
 	deleted := deletedCoder{}
 	if co, running, err := s.resolveRunning(id); err == nil {
-		name, err := co.Stop(id)
+		name, err := co.StopAndWait(id, coder.StopWait)
 		if err != nil {
 			return deletedCoder{}, err
 		}

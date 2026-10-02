@@ -90,6 +90,15 @@ record_name() {
 record_assistant() { record assistant "[{\"type\":\"text\",\"text\":$(json "$1")}]"; }
 
 if [ "$print_mode" = "0" ]; then
+  # On a hangup or a terminate claude writes its running total into the
+  # transcript about half a second later and exits; a delete that removes the
+  # transcript before that gets the file back. A kill writes nothing.
+  exit_record() {
+    sleep 0.5
+    printf '{"type":"cost-state","sessionId":"%s","totalCostUSD":0,"modelUsage":{},"hasUnknownModelCost":false}\n' "$session" >> "$transcript"
+    exit 0
+  }
+  trap exit_record HUP TERM
   echo "fake claude interactive"
   # A task arrives in the argv, never typed into the pane. Printing it is how a
   # test can see that it survived the start.
@@ -162,7 +171,8 @@ for line in open(sys.argv[1]):
       done
       ;;
   esac
-  while true; do sleep 3600; done
+  # The wait is a builtin, so the trap runs the moment the signal arrives.
+  while true; do sleep 3600 & wait $!; done
 fi
 
 if [ "$stream" = "0" ] || [ "$partial" = "0" ]; then

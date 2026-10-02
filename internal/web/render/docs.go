@@ -612,6 +612,53 @@ func DocsTopics() []DocsTopic {
 			},
 		},
 		{
+			Key:      "costs",
+			Title:    "Costs",
+			Icon:     "ti-currency-dollar",
+			Lead:     "What the coders spent, at API list price.",
+			LinkURL:  "/costs",
+			LinkText: "Open costs",
+			Intro:    `The amounts are the API list price equivalent of what the coders used, a subscription does not pay them. Only claude's spend is read so far.`,
+			Items: []DocsItem{
+				{
+					Title: "Where it shows",
+					Desc:  `The status line shows today and the last hour, a click opens the page. On a phone the Cockpit tab's sheet opens it with <i class="ti ti-currency-dollar align-text-bottom" aria-hidden="true"></i>.`,
+				},
+				{
+					Title: "The page",
+					Desc:  `Today, this week, this month and the last hour as tiles, a chart of the chosen period and breakdowns by project, kind, coder or assistant and model. The assistants count as one group next to the projects, split per assistant, its own turns, checks and triggers in one line; <em>No project</em> is spend outside every project and assistant. Days are cut in the assistant time zone. The address holds the whole view, so a link shows the same and Back steps through it.`,
+				},
+				{
+					Title: "Period",
+					Desc:  `Today, yesterday, this and last week, this and last month, the last 7, 30 and 90 days, or any days picked under them. The arrows beside it step one period back or forth. The chart shows hours for one day, days up to two months, weeks after that.`,
+				},
+				{
+					Title: "Filters",
+					Desc:  `A click on a breakdown row narrows the whole page to it: project, assistant, kind, model or one coder session. Each filter stands as a chip above the tiles, a click on the chip removes it. The field next to the period filters the breakdown rows by name.`,
+				},
+				{
+					Title: "Chart",
+					Desc:  `Stacks by project, kind or model, in USD or tokens, with the running total of the period under it. Hover a bar for its numbers, a click opens the hours of a day or the days of a week; on a touch screen a tap shows the numbers and the link. A click on a legend entry hides or shows that series.`,
+				},
+				{
+					Title: "Sorting",
+					Desc:  `Spend, tokens, name or share, a second click turns the order around. The choice stays on this screen until it is changed.`,
+				},
+				{
+					Title: "How it is booked",
+					Desc:  `Every 10 seconds the cockpit reads the calls claude appended to its transcripts, sub-agents included, and books each on its own time with its tokens, priced at the list price of that moment. When a claude process ends it writes its own total; what that total holds above the logged calls, calls claude logs nowhere, is booked on top, the page names that share. Each booking keeps its session. Who owns it, its kind (coder, assistant, other) and its project come from the cockpit's own events, so a renamed coder or assistant shows its new name on every booking, and one that is gone keeps its last name. Deleting a coder, a project or a transcript keeps what was booked: a delete waits until claude has ended and written its last record, and reads that record before the transcript goes. Spend the cockpit did not start counts as other.`,
+				},
+				{
+					Title: "How long it is kept",
+					Desc:  `The books keep one file per month. Settings &rarr; Costs sets how many months stay, this month included: the default 3 keeps the current month and the two before it, at least 2. Older months are deleted and never booked again. Bookings keep their hour for 30 days, older ones count per day, so the hours of a day longer ago are not shown.`,
+				},
+				{
+					Title: "Prices",
+					Desc:  `A price table is built into each version. Once a day the cockpit refreshes it from LiteLLM's public price list and keeps the last good one, offline it prices with what it has. Settings &rarr; Costs shows the table in use, its last and next fetch, and the price per model the books have seen. Models without a list price, Ollama models, count their tokens and no money.`,
+				},
+			},
+		},
+		{
 			Key:      "settings",
 			Title:    "Settings and data",
 			Icon:     "ti-settings",
@@ -642,6 +689,12 @@ func DocsTopics() []DocsTopic {
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",
 					Desc:     `Off by default. Gives every newly started shell its own command history instead of sharing the login shell's file; the history survives a restore.`,
+				},
+				{
+					Title:    "Daily price refresh",
+					Tag:      "Setting",
+					TagClass: "bg-secondary-lt",
+					Desc:     `On by default, in Settings &rarr; Costs. Fetches the list prices the costs are priced with once a day. Off keeps the cockpit from going online for it, spend is then priced with the last table it has.`,
 				},
 				{
 					Title:    "The editor's two intervals",

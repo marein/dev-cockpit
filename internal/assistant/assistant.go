@@ -173,19 +173,28 @@ func (s *Workspace) Workdir(instanceID string) (string, error) {
 // runs in the workspace of the assistant whose job it is, so a stray check
 // session is recognized by where it ran, whoever that assistant was.
 func (s *Workspace) IsWorkdir(dir string) bool {
+	_, ok := s.InstanceOf(dir)
+	return ok
+}
+
+// InstanceOf names the instance whose workspace dir is, gone or not.
+func (s *Workspace) InstanceOf(dir string) (string, bool) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
-		return false
+		return "", false
 	}
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs
 	}
 	rel, err := filepath.Rel(s.instances, filepath.Clean(dir))
 	if err != nil {
-		return false
+		return "", false
 	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
-	return len(parts) == 2 && ValidID(parts[0]) && parts[1] == workspaceDirName
+	if len(parts) != 2 || !ValidID(parts[0]) || parts[1] != workspaceDirName {
+		return "", false
+	}
+	return parts[0], true
 }
 
 // Prepare is what runs right before a turn starts in an instance's workspace:

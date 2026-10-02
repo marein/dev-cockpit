@@ -2465,3 +2465,22 @@ func TestAStopInTheLaunchWindowStopsTheTurn(t *testing.T) {
 		t.Fatalf("want the launched turn settled as a stop, got %q", msg.State)
 	}
 }
+
+func TestTheNameHookHearsACreateTheFirstMessageAndARename(t *testing.T) {
+	svc, _, _ := newTestService(t, &fakeRunner{})
+	var heard []string
+	svc.SetNamed(func(id, title string) { heard = append(heard, title) })
+	created, _ := svc.Create("claude")
+	if _, err := svc.Send(created.ID, "Fix the release notes", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if _, err := svc.Send(created.ID, "And the tag", nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if err := svc.Rename(created.ID, "Release"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if want := []string{DefaultTitle, "Fix the release notes", "Release"}; !slices.Equal(heard, want) {
+		t.Fatalf("heard %q, want %q", heard, want)
+	}
+}

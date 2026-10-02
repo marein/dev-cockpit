@@ -19,6 +19,20 @@ func newStrategy() strategy { return procStrategy{} }
 // them lazily and memoises per PID rather than slurping the whole table.
 func (procStrategy) fill(*Tree) bool { return false }
 
+func (procStrategy) pids() []int {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	var out []int
+	for _, e := range entries {
+		if pid, err := strconv.Atoi(e.Name()); err == nil {
+			out = append(out, pid)
+		}
+	}
+	return out
+}
+
 func (procStrategy) childrenOf(pid int) []int {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", pid, pid))
 	if err != nil {
