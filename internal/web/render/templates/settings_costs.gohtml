@@ -5,13 +5,13 @@
 <h1 class="dc-work-title">Costs</h1>
 {{template "work_body.gohtml" .}}
 <div class="dc-narrow">
-  <div class="text-secondary small mb-3" data-costs-settings-note>API list prices. Ollama models count tokens only.</div>
+  <div class="text-secondary small mb-3" data-costs-settings-note>API list prices. Local Ollama models count tokens only.</div>
   <form method="post" action="/settings/costs" id="settings-costs">
     {{if and (eq $.FlashProject "settings-costs") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <div class="mb-3" id="settings-price-refresh">
       <label class="form-label">List prices</label>
-      <div class="text-secondary small mb-2">Built into this version, refreshed daily from LiteLLM. Off keeps the last table.</div>
+      <div class="text-secondary small mb-2">Built into this version, refreshed daily from LiteLLM and ollama.com. Off keeps the last tables.</div>
       <label class="form-check">
         <input class="form-check-input" type="checkbox" name="price_refresh" value="on"{{if .PriceRefresh}} checked{{end}}>
         <span class="form-check-label">Refresh daily</span>
@@ -34,7 +34,15 @@
       <dt class="col-5 col-sm-4 fw-normal text-secondary">Last fetch</dt>
       <dd class="col-7 col-sm-8" data-price-fetched>{{if .FetchedAt}}<dc-time datetime="{{.FetchedAt}}"></dc-time>{{else}}Never{{end}}</dd>
       <dt class="col-5 col-sm-4 fw-normal text-secondary">Next fetch</dt>
-      <dd class="col-7 col-sm-8 mb-0" data-price-next>{{if not .PriceRefresh}}None, refresh is off{{else if .NextAt}}<dc-time datetime="{{.NextAt}}"></dc-time>{{else}}Within a minute{{end}}</dd>
+      <dd class="col-7 col-sm-8" data-price-next>{{if not .PriceRefresh}}None, refresh is off{{else if .NextAt}}<dc-time datetime="{{.NextAt}}"></dc-time>{{else}}Within a minute{{end}}</dd>
+      <dt class="col-5 col-sm-4 fw-normal text-secondary">Ollama table</dt>
+      <dd class="col-7 col-sm-8" data-ollama-table>{{if .OllamaFetchedAt}}Refreshed from ollama.com{{else}}Built into this version{{end}}</dd>
+      <dt class="col-5 col-sm-4 fw-normal text-secondary">Ollama last fetch</dt>
+      <dd class="col-7 col-sm-8" data-ollama-fetched>{{if .OllamaFetchedAt}}<dc-time datetime="{{.OllamaFetchedAt}}"></dc-time>{{else}}Never{{end}}</dd>
+      <dt class="col-5 col-sm-4 fw-normal text-secondary">Ollama next fetch</dt>
+      <dd class="col-7 col-sm-8" data-ollama-next>{{if not .PriceRefresh}}None, refresh is off{{else if .OllamaNextAt}}<dc-time datetime="{{.OllamaNextAt}}"></dc-time>{{else}}Within a minute{{end}}</dd>
+      <dt class="col-5 col-sm-4 fw-normal text-secondary">Ollama outcome</dt>
+      <dd class="col-7 col-sm-8 mb-0" data-ollama-outcome>{{or .OllamaOutcome "None yet"}}</dd>
     </dl>
   </div>
   <div class="mb-3" data-price-models>
@@ -62,6 +70,26 @@
       {{else}}
       <div class="list-group-item text-secondary" data-price-models-empty>No model booked yet.</div>
       {{end}}
+    </div>
+  </div>
+  <div class="mb-3" data-ollama-prices>
+    <label class="form-label">Ollama Cloud prices</label>
+    <div class="text-secondary small mb-2">USD per million tokens. Cache writes bill as input. Off-peak is outside 12:00 to 18:00 UTC on weekdays.</div>
+    <div class="table-responsive">
+      <table class="table table-sm small mb-0">
+        <thead><tr><th>Model</th><th class="text-end">Input</th><th class="text-end">Cached</th><th class="text-end">Output</th><th class="text-end">Off-peak</th></tr></thead>
+        <tbody>
+          {{range .OllamaPrices}}
+          <tr data-ollama-model="{{.Model}}">
+            <td class="font-monospace">{{.Model}}</td>
+            <td class="text-end" data-ollama-input>{{.Input}}</td>
+            <td class="text-end" data-ollama-cached>{{.Cached}}</td>
+            <td class="text-end" data-ollama-output>{{.Output}}</td>
+            <td class="text-end text-nowrap" data-ollama-off-peak>{{or .OffPeak "None"}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
     </div>
   </div>
 </div>

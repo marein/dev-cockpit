@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -47,12 +49,31 @@ type Status struct {
 	FetchedAt time.Time
 	// NextAt is when the next refresh is due.
 	NextAt time.Time
+	// Ollama is where the Ollama Cloud prices stand.
+	Ollama Scrape
+}
+
+// Scrape is the state of the Ollama pricing page refresh. Outcome says what
+// the last fetch brought, the reason where it kept the last good table.
+type Scrape struct {
+	FetchedAt time.Time `json:"fetched_at,omitzero"`
+	NextAt    time.Time `json:"next_at,omitzero"`
+	Outcome   string    `json:"outcome,omitempty"`
 }
 
 type cacheFile struct {
-	FetchedAt time.Time `json:"fetched_at,omitzero"`
-	NextAt    time.Time `json:"next_at,omitzero"`
-	Table     Table     `json:"table,omitempty"`
+	FetchedAt time.Time   `json:"fetched_at,omitzero"`
+	NextAt    time.Time   `json:"next_at,omitzero"`
+	Table     Table       `json:"table,omitempty"`
+	Ollama    ollamaCache `json:"ollama,omitzero"`
+}
+
+// ollamaCache is the last good scrape. Table holds every model a page ever
+// listed, Listed the models of the last one.
+type ollamaCache struct {
+	Scrape
+	Listed []string        `json:"listed,omitempty"`
+	Table  map[string]Rate `json:"table,omitempty"`
 }
 
 // Book owns the price table: the embedded snapshot overlaid with the last
@@ -60,11 +81,12 @@ type cacheFile struct {
 // stored together, so a restart continues the schedule instead of fetching
 // on every start.
 type Book struct {
-	path    string
-	url     string
-	client  *http.Client
-	enabled func() bool
-	now     func() time.Time
+	path      string
+	url       string
+	ollamaURL string
+	client    *http.Client
+	enabled   func() bool
+	now       func() time.Time
 
 	mu    sync.Mutex
 	cache cacheFile
@@ -74,19 +96,29 @@ type Book struct {
 // NewBook reads the stored table. enabled is asked before every refresh.
 func NewBook(stateDir string, enabled func() bool) *Book {
 	b := &Book{
-		path:    filepath.Join(stateDir, "cost", "prices.json"),
-		url:     feedURL,
-		client:  feedClient(),
-		enabled: enabled,
-		now:     time.Now,
+		path:      filepath.Join(stateDir, "cost", "prices.json"),
+		url:       feedURL,
+		ollamaURL: ollamaURL,
+		client:    feedClient(),
+		enabled:   enabled,
+		now:       time.Now,
 	}
 	statefile.Load(b.path, &b.cache)
 	if !b.cache.Table.plausible() {
 		log.Printf("cost: the stored price table holds an implausible price, pricing with the embedded one")
-		b.cache = cacheFile{}
+		b.cache.FetchedAt, b.cache.NextAt, b.cache.Table = time.Time{}, time.Time{}, nil
 	}
-	b.table = overlay(Snapshot(), b.cache.Table)
+	if !(Table{Ollama: b.cache.Ollama.Table}).plausible() {
+		log.Printf("cost: the stored Ollama price table holds an implausible price, pricing with the embedded one")
+		b.cache.Ollama = ollamaCache{}
+	}
+	b.build()
 	return b
+}
+
+// build lays the stored tables over the snapshot.
+func (b *Book) build() {
+	b.table = overlay(overlay(Snapshot(), b.cache.Table), Table{Ollama: b.cache.Ollama.Table})
 }
 
 // feedClient follows no redirect and refuses link local targets, the rules
@@ -145,7 +177,7 @@ func (b *Book) Table() Table {
 func (b *Book) Status() Status {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return Status{Enabled: b.enabled(), FetchedAt: b.cache.FetchedAt, NextAt: b.cache.NextAt}
+	return Status{Enabled: b.enabled(), FetchedAt: b.cache.FetchedAt, NextAt: b.cache.NextAt, Ollama: b.cache.Ollama.Scrape}
 }
 
 // Run refreshes whenever one is due, the first check right away.
@@ -162,62 +194,113 @@ func (b *Book) Run(ctx context.Context) {
 	}
 }
 
-// Tick fetches if the switch is on and the schedule says so. A refresh that
-// never ran is due at once.
+// Tick fetches what the switch and the schedule say is due, each source on
+// its own schedule. A refresh that never ran is due at once.
 func (b *Book) Tick(ctx context.Context) {
 	if !b.enabled() {
 		return
 	}
 	b.mu.Lock()
-	due := !b.now().Before(b.cache.NextAt)
+	now := b.now()
+	feedDue, ollamaDue := !now.Before(b.cache.NextAt), !now.Before(b.cache.Ollama.NextAt)
 	b.mu.Unlock()
-	if !due {
-		return
+	if feedDue {
+		table, err := b.fetch(ctx)
+		b.mu.Lock()
+		now := b.now()
+		if err != nil {
+			log.Printf("cost: price refresh: %v", err)
+			b.cache.NextAt = now.Add(retryAfter)
+		} else {
+			b.cache.FetchedAt = now
+			b.cache.NextAt = now.Add(refreshEvery)
+			b.cache.Table = table
+		}
+		b.mu.Unlock()
 	}
-	table, err := b.fetch(ctx)
+	if ollamaDue {
+		b.scrapeOllama(ctx)
+	}
+	if feedDue || ollamaDue {
+		b.mu.Lock()
+		b.build()
+		statefile.Save(b.path, 0o600, b.cache)
+		b.mu.Unlock()
+	}
+}
+
+// scrapeOllama reads Ollama's pricing page and takes its table only if
+// acceptOllama does. A reason is logged once, not on every retry.
+func (b *Book) scrapeOllama(ctx context.Context) {
+	page, err := b.get(ctx, b.ollamaURL, ollamaLimit)
+	var scraped map[string]Rate
+	if err == nil {
+		scraped, err = parseOllama(page)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	c := &b.cache.Ollama
 	now := b.now()
-	if err != nil {
-		log.Printf("cost: price refresh: %v", err)
-		b.cache.NextAt = now.Add(retryAfter)
-	} else {
-		b.cache.FetchedAt = now
-		b.cache.NextAt = now.Add(refreshEvery)
-		b.cache.Table = table
-		b.table = overlay(Snapshot(), table)
+	if err == nil {
+		listed := c.Listed
+		if c.FetchedAt.IsZero() {
+			listed = slices.Collect(maps.Keys(Snapshot()[Ollama]))
+		}
+		var table map[string]Rate
+		if table, err = acceptOllama(scraped, b.table[Ollama], c.Table, listed); err == nil {
+			c.FetchedAt, c.NextAt = now, now.Add(refreshEvery)
+			c.Outcome = fmt.Sprintf("Took %d models", len(scraped))
+			c.Listed = slices.Sorted(maps.Keys(scraped))
+			c.Table = table
+			return
+		}
 	}
-	statefile.Save(b.path, 0o600, b.cache)
+	c.NextAt = now.Add(retryAfter)
+	outcome := "Kept the last table, " + err.Error()
+	if outcome != c.Outcome {
+		log.Printf("cost: Ollama price refresh: %v", err)
+	}
+	c.Outcome = outcome
 }
 
 func (b *Book) fetch(ctx context.Context) (Table, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.url, nil)
+	body, err := b.get(ctx, b.url, feedLimit)
 	if err != nil {
 		return nil, err
 	}
+	table, err := parseFeed(body)
+	if err != nil {
+		return nil, err
+	}
+	if !table.covers(Table{Anthropic: Snapshot()[Anthropic]}) {
+		return nil, errors.New("price list lacks a model of the embedded table, kept the last good one")
+	}
+	return table, nil
+}
+
+// get fetches a body of at most limit bytes in one request.
+func (b *Book) get(ctx context.Context, url string, limit int) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "dev-cockpit")
 	resp, err := b.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("price list answered %s", resp.Status)
+		return nil, fmt.Errorf("%s answered %s", req.URL.Host, resp.Status)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, feedLimit+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(body) > feedLimit {
-		return nil, errors.New("price list is larger than expected")
+	if len(body) > limit {
+		return nil, fmt.Errorf("%s answered more than expected", req.URL.Host)
 	}
-	table, err := parseFeed(body)
-	if err != nil {
-		return nil, err
-	}
-	if !table.covers(Snapshot()) {
-		return nil, errors.New("price list lacks a model of the embedded table, kept the last good one")
-	}
-	return table, nil
+	return body, nil
 }
 
 type feedEntry struct {

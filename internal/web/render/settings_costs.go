@@ -1,6 +1,8 @@
 package render
 
 import (
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +21,11 @@ type SettingsCostsData struct {
 	FetchedAt    string
 	NextAt       string
 	Models       []CostModelRate
+	// Ollama is the scrape of Ollama's pricing page, OllamaPrices its table.
+	OllamaFetchedAt string
+	OllamaNextAt    string
+	OllamaOutcome   string
+	OllamaPrices    []OllamaPrice
 	// Retention is how many months of bookings stay, KeptMonths names them.
 	Retention    int
 	MinRetention int
@@ -40,6 +47,31 @@ type CostModelRate struct {
 	WebSearch    string
 }
 
+// OllamaPrice is one Ollama Cloud model as the page lists it: input, cached
+// input and output per million tokens, off-peak where it has a rate of its
+// own.
+type OllamaPrice struct {
+	Model   string
+	Input   string
+	Cached  string
+	Output  string
+	OffPeak string
+}
+
+// NewOllamaPrices lists the Ollama table by model name.
+func NewOllamaPrices(rates map[string]price.Rate) []OllamaPrice {
+	var out []OllamaPrice
+	for _, model := range slices.Sorted(maps.Keys(rates)) {
+		r := rates[model]
+		p := OllamaPrice{Model: model, Input: ratePrice(r.Input), Cached: ratePrice(r.CacheRead), Output: ratePrice(r.Output)}
+		if o := r.OffPeak; o != nil {
+			p.OffPeak = ratePrice(o.Input) + " / " + ratePrice(o.CacheRead) + " / " + ratePrice(o.Output)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // NewSettingsCosts words the price status. A refresh that is due already
 // happens within the minute, so the page names no moment in the past.
 func NewSettingsCosts(s price.Status, rates []cost.ModelRate, retention int, now time.Time) SettingsCostsData {
@@ -51,6 +83,13 @@ func NewSettingsCosts(s price.Status, rates []cost.ModelRate, retention int, now
 	if s.Enabled && s.NextAt.After(now) {
 		d.NextAt = s.NextAt.Format(time.RFC3339)
 	}
+	if !s.Ollama.FetchedAt.IsZero() {
+		d.OllamaFetchedAt = s.Ollama.FetchedAt.Format(time.RFC3339)
+	}
+	if s.Enabled && s.Ollama.NextAt.After(now) {
+		d.OllamaNextAt = s.Ollama.NextAt.Format(time.RFC3339)
+	}
+	d.OllamaOutcome = s.Ollama.Outcome
 	for _, r := range rates {
 		row := CostModelRate{Coder: r.Coder, Model: r.Model, Priced: r.Priced}
 		if r.Priced {

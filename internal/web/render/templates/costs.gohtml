@@ -5,7 +5,7 @@
 {{template "work_body.gohtml" .}}
 <link rel="stylesheet" href="{{asset "/css/costs.css"}}">
 <div class="container-xl px-0">
-  <div class="alert alert-info" role="status" data-cost-note>Experimental. Counts claude and its models only, at API list prices.</div>
+  <div class="alert alert-info" role="status" data-cost-note>Experimental. Counts claude with Claude and Ollama Cloud models, at API list prices.</div>
   <dc-costs>{{template "costs_board.gohtml" .Board}}</dc-costs>
 </div>
 {{template "app_end.gohtml" .}}

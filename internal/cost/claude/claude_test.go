@@ -146,9 +146,9 @@ func TestOneCallOverSeveralLinesIsBookedOnce(t *testing.T) {
 func TestAGrowingCallBooksItsGrowth(t *testing.T) {
 	h := newHarness(t)
 	p := h.path("-p-shop", "s1")
-	h.append(p, assistant("msg_1", "", "nemotron-3-ultra", t0, 100, 0, 0, 0, 0))
+	h.append(p, assistant("msg_1", "", "qwen3:8b", t0, 100, 0, 0, 0, 0))
 	h.collect()
-	h.append(p, assistant("msg_1", "", "nemotron-3-ultra", t0, 100, 40, 60, 0, 0))
+	h.append(p, assistant("msg_1", "", "qwen3:8b", t0, 100, 40, 60, 0, 0))
 	got := h.collect()
 	if len(got) != 1 || got[0].Tokens != (price.Tokens{Output: 40, CacheRead: 60}) || !got[0].Unpriced || got[0].USD != 0 {
 		t.Fatalf("growth = %+v", got)
@@ -225,21 +225,79 @@ func TestTheTotalTopsUpTheGapOnce(t *testing.T) {
 	near(t, "the gap that added up", sum(h.collect(), true), 0.012)
 }
 
-// Ollama models have no list price: their tokens count, no money, and
-// claude's own total, which prices them at a claude rate, is not spend.
-func TestUnknownModelsCountTokensAndNeverTopUp(t *testing.T) {
+// An Ollama Cloud model is priced at Ollama's list price, a local model
+// counts tokens only, and claude's own total, which prices both at a claude
+// rate, is never spend.
+func TestOllamaModelsArePricedByOllamaAndNeverTopUp(t *testing.T) {
 	h := newHarness(t)
 	p := h.path("-p-shop", "s1")
 	h.append(p, assistant("msg_1", "", "nemotron-3-ultra", t0, 1000, 10, 0, 0, 0))
-	h.append(p, assistant("msg_2", "req_2", "claude-sonnet-5-5", t0, 10, 10, 0, 0, 0))
-	h.append(p, stateLine(map[string]float64{"nemotron-3-ultra:cloud": 4.33, "claude-sonnet-5-5": 1}, true))
+	h.append(p, assistant("msg_2", "", "qwen3:8b", t0, 1000, 10, 0, 0, 0))
+	h.append(p, assistant("msg_3", "req_3", "claude-sonnet-5-5", t0, 10, 10, 0, 0, 0))
+	h.append(p, stateLine(map[string]float64{"nemotron-3-ultra:cloud": 4.33, "qwen3:8b": 1, "claude-sonnet-5-5": 1}, true))
 	got := h.collect()
-	if len(got) != 2 || !got[0].Unpriced || got[0].USD != 0 || got[0].Tokens.Input != 1000 || got[1].Unpriced {
+	if len(got) != 3 || got[0].Unpriced || !got[1].Unpriced || got[1].USD != 0 || got[1].Tokens.Input != 1000 || got[2].Unpriced {
 		t.Fatalf("entries = %+v", got)
 	}
+	near(t, "nemotron", got[0].USD, (1000*0.1+10*3)/1e6)
 	h.append(p, stateLine(map[string]float64{"claude-sonnet-5-5": 2}, false))
 	if got := h.collect(); len(got) != 0 {
-		t.Fatalf("a session with an unknown model was topped up: %+v", got)
+		t.Fatalf("a session with an Ollama model was topped up: %+v", got)
+	}
+}
+
+// Ollama bills a cache write as input and a cached read at its cached input
+// price, the input price where it lists none. Off-peak rates apply outside
+// 12:00 to 18:00 UTC on weekdays and all weekend, on the call's own time.
+func TestOllamaClassesAndOffPeak(t *testing.T) {
+	wednesday := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
+	peak := 1.32 + 0.044 + 2*1.32 + 3.96
+	offPeak := 0.66 + 0.022 + 2*0.66 + 1.98
+	for _, c := range []struct {
+		at    time.Time
+		model string
+		want  float64
+	}{
+		{wednesday.Add(12 * time.Hour), "deepseek-v4-pro", peak},
+		{wednesday.Add(17*time.Hour + 59*time.Minute), "deepseek-v4-pro", peak},
+		{wednesday.Add(18 * time.Hour), "deepseek-v4-pro", offPeak},
+		{wednesday.Add(11*time.Hour + 59*time.Minute), "deepseek-v4-pro", offPeak},
+		{wednesday.Add(3*24*time.Hour + 13*time.Hour), "deepseek-v4-pro", offPeak},
+		{wednesday.Add(4*24*time.Hour + 13*time.Hour), "deepseek-v4-pro", offPeak},
+		{wednesday.Add(13 * time.Hour).In(time.FixedZone("x", 10*3600)), "deepseek-v4-pro", peak},
+		{wednesday.Add(3 * time.Hour), "nemotron-3-ultra", 0.1 + 0.1 + 2*0.1 + 3},
+		{wednesday.Add(3 * time.Hour), "mistral-large-3", 0.5 + 0.5 + 2*0.5 + 1.5},
+	} {
+		h := newHarness(t)
+		h.now = c.at.Add(time.Hour)
+		h.append(h.path("-p-shop", "s1"), assistant("msg_1", "", c.model, c.at, 1e6, 1e6, 1e6, 1e6, 1e6))
+		got := h.collect()
+		if len(got) != 1 || got[0].Unpriced {
+			t.Fatalf("%s at %s = %+v", c.model, c.at, got)
+		}
+		near(t, c.model+" at "+c.at.String(), got[0].USD, c.want)
+		usd, ok := h.src.Reprice(c.model, c.at, got[0].Tokens)
+		if !ok {
+			t.Fatalf("%s cannot be repriced", c.model)
+		}
+		near(t, "repriced "+c.model, usd, c.want)
+	}
+}
+
+// A Claude model is never repriced, claude's own total tops it up; a model
+// without a price stays unpriced.
+func TestRepriceOnlyOllamaModels(t *testing.T) {
+	h := newHarness(t)
+	for _, model := range []string{"claude-opus-5-5", "qwen3:8b", ""} {
+		if usd, ok := h.src.Reprice(model, t0, price.Tokens{Input: 1000}); ok {
+			t.Fatalf("%q repriced at %v", model, usd)
+		}
+	}
+	if usd, ok := h.src.Reprice("gpt-oss:120b", t0, price.Tokens{Input: 1e6}); !ok || usd != 0.15 {
+		t.Fatalf("gpt-oss:120b = %v, %v", usd, ok)
+	}
+	if r, ok := h.src.Rate("deepseek-v4-pro"); !ok || r.Input != 1.32 {
+		t.Fatalf("the page rate of deepseek-v4-pro is not the peak one: %+v", r)
 	}
 }
 

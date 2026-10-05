@@ -129,6 +129,11 @@ func (s *Server) handleSettingsCosts(c *gin.Context) {
 		rates = s.costs.ModelRates()
 	}
 	data := render.NewSettingsCosts(status, rates, cost.Retention(s.settings.Get(cost.RetentionSettingKey)), time.Now().In(s.costZone()))
+	table := price.Snapshot()
+	if s.prices != nil {
+		table = s.prices.Table()
+	}
+	data.OllamaPrices = render.NewOllamaPrices(table[price.Ollama])
 	data.Page = s.page(c, "Settings", "settings")
 	data.SettingsNav = s.settingsNav("costs")
 	c.HTML(http.StatusOK, "settings_costs.gohtml", data)

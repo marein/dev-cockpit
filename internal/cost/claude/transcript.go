@@ -220,20 +220,20 @@ func (r *reader) call(t transcript, c *fileCursor, line []byte) {
 // session's copied sum, the session that booked it first holds the spend.
 func (r *reader) spend(t transcript, c *fileCursor, ss *sessionState, l assistantLine, tokens price.Tokens, copied bool) {
 	model := price.BaseModel(l.Message.Model)
-	rate, priced := r.table.Lookup(price.Anthropic, model)
+	at, err := time.Parse(time.RFC3339Nano, l.Timestamp)
+	if err != nil {
+		at = c.At
+	}
+	rate, priced := rateOf(r.table, model)
 	usd := 0.0
 	if priced {
-		usd = rate.Cost(tokens, l.Message.Usage.Speed == "fast")
+		usd = rate.At(at).Cost(tokens, l.Message.Usage.Speed == "fast")
 	}
 	if copied {
 		addUSD(&ss.Copied, model, usd)
 		return
 	}
 	addUSD(&ss.Booked, model, usd)
-	at, err := time.Parse(time.RFC3339Nano, l.Timestamp)
-	if err != nil {
-		at = c.At
-	}
 	cwd := l.CWD
 	if cwd == "" {
 		cwd = r.cwdOf(t, c)

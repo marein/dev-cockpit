@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -130,5 +131,56 @@ func FuzzStoredTable(f *testing.F) {
 			t.Fatal("a stored table took a known model away")
 		}
 		b.Status()
+	})
+}
+
+// FuzzOllamaPage reads any page, alone and through the book after the real
+// page was taken. Nothing panics, a table the book takes prices every call
+// finitely, and a page it refuses leaves the last good table in place.
+func FuzzOllamaPage(f *testing.F) {
+	log.SetOutput(io.Discard)
+	f.Cleanup(func() { log.SetOutput(os.Stderr) })
+	good := ollamaPage(f)
+	page := string(good)
+	f.Add(good)
+	f.Add([]byte(page[:len(page)/2]))
+	f.Add([]byte(strings.ReplaceAll(page, ">$0.14<", ">$1e308<")))
+	f.Add([]byte(strings.ReplaceAll(page, ">$0.14<", ">NaN<")))
+	f.Add([]byte(strings.ReplaceAll(page, ">$3.00<", ">-<")))
+	f.Add([]byte(strings.ReplaceAll(page, "</td>", "")))
+	f.Add([]byte(`<table><tr><th>Model</th><th>Input</th><th>Cached input</th><th>Output</th></tr><tr><td>a (Off-Peak)</td><td>1</td><td>-</td><td>2</td></tr></table>`))
+	f.Add([]byte("<table><tr><td>"))
+
+	var body atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(body.Load().([]byte))
+	}))
+	f.Cleanup(srv.Close)
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if rates, err := parseOllama(data); err == nil {
+			if _, err := acceptOllama(rates, Snapshot()[Ollama], nil, nil); err == nil {
+				checkTable(t, "the page", Table{Ollama: rates})
+			}
+		}
+		c := &clock{now: time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)}
+		b := NewBook(t.TempDir(), func() bool { return true })
+		b.url, b.ollamaURL, b.now = "http://127.0.0.1:0/", srv.URL, c.Now
+		b.cache.NextAt = c.now.Add(100 * 365 * 24 * time.Hour)
+		body.Store(good)
+		b.Tick(context.Background())
+		last := b.Table()
+		body.Store(data)
+		c.now = c.now.Add(refreshEvery)
+		fetched := b.Status().Ollama.FetchedAt
+		b.Tick(context.Background())
+		table := b.Table()
+		checkTable(t, "the book", table)
+		if b.Status().Ollama.FetchedAt.Equal(fetched) && !reflect.DeepEqual(table, last) {
+			t.Fatal("a refused page changed the table")
+		}
+		if _, ok := table.Lookup(Ollama, "nemotron-3-ultra"); !ok {
+			t.Fatal("a page took a known model away")
+		}
 	})
 }

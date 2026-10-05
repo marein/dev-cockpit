@@ -55,3 +55,28 @@ func TestTheMonthsKeptAreNamedOldestFirst(t *testing.T) {
 		t.Fatalf("settings %+v", d)
 	}
 }
+
+func TestSettingsCostsListTheOllamaTableAndItsScrape(t *testing.T) {
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	got := NewOllamaPrices(price.Snapshot()[price.Ollama])
+	if len(got) != 17 || got[0].Model != "deepseek-v4-pro" {
+		t.Fatalf("prices = %+v", got)
+	}
+	if got[0].OffPeak != "$0.66 / $0.022 / $1.98" || got[0].Cached != "$0.044" {
+		t.Fatalf("deepseek-v4-pro = %+v", got[0])
+	}
+	for _, p := range got {
+		if p.Model == "mistral-large-3" && (p.Cached != "$0.50" || p.OffPeak != "") {
+			t.Fatalf("mistral-large-3 = %+v", p)
+		}
+	}
+	s := price.Status{Enabled: true, Ollama: price.Scrape{FetchedAt: now.Add(-time.Hour), NextAt: now.Add(time.Hour), Outcome: "Took 17 models"}}
+	d := NewSettingsCosts(s, nil, 3, now)
+	if d.OllamaFetchedAt != "2026-10-05T11:00:00Z" || d.OllamaNextAt != "2026-10-05T13:00:00Z" || d.OllamaOutcome != "Took 17 models" || d.FetchedAt != "" {
+		t.Fatalf("ollama status = %+v", d)
+	}
+	s.Enabled = false
+	if d := NewSettingsCosts(s, nil, 3, now); d.OllamaNextAt != "" {
+		t.Fatalf("switched off names a next fetch: %+v", d)
+	}
+}

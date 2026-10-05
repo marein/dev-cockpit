@@ -326,7 +326,32 @@ func encodeDir(path string) string {
 	}, path)
 }
 
-// Rate is the list price a call of model is booked with now.
+// Rate is the list price of model now, the peak rate where it has two.
 func (s *Source) Rate(model string) (price.Rate, bool) {
-	return s.prices().Lookup(price.Anthropic, model)
+	return rateOf(s.prices(), model)
+}
+
+// rateOf finds a model claude ran: a Claude model at Anthropic's price, else
+// one served through Ollama at Ollama Cloud's.
+func rateOf(table price.Table, model string) (price.Rate, bool) {
+	if r, ok := table.Lookup(price.Anthropic, model); ok {
+		return r, true
+	}
+	return table.Lookup(price.Ollama, model)
+}
+
+// Reprice implements cost.Repricer for Ollama models only. A Claude model's
+// spend that was booked unpriced is topped up from claude's own total once
+// the model has a price, pricing its rows too would count it twice; claude
+// knows no Ollama price and its sessions are never topped up.
+func (s *Source) Reprice(model string, at time.Time, tokens price.Tokens) (float64, bool) {
+	table := s.prices()
+	if _, ok := table.Lookup(price.Anthropic, model); ok {
+		return 0, false
+	}
+	r, ok := table.Lookup(price.Ollama, model)
+	if !ok {
+		return 0, false
+	}
+	return r.At(at).Cost(tokens, false), true
 }

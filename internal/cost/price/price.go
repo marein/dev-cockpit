@@ -1,8 +1,9 @@
 // Package price answers what a model call costs at a provider's public list
 // price. Tables are keyed by provider and model. The embedded snapshot is
 // written by hand from the providers' own pricing pages and is what a fresh
-// or offline install prices with; Book refreshes it once a day from a public
-// price list and keeps the last good table in the state directory.
+// or offline install prices with; Book refreshes it once a day from LiteLLM's
+// public price list and Ollama's pricing page and keeps the last good tables
+// in the state directory.
 package price
 
 import (
@@ -48,6 +49,8 @@ type Rate struct {
 	CacheWrite1h float64 `json:"cache_write_1h"`
 	WebSearch    float64 `json:"web_search,omitempty"`
 	Fast         float64 `json:"fast,omitempty"`
+	// OffPeak is the rate outside the provider's peak hours, see At.
+	OffPeak *Rate `json:"off_peak,omitempty"`
 }
 
 // Cost prices one usage. The fast factor applies to every token class: the
@@ -78,13 +81,14 @@ func (r Rate) plausible() bool {
 			return false
 		}
 	}
-	return r.Fast >= 0 && r.WebSearch >= 0 && r.WebSearch < maxPerMillion
+	return r.Fast >= 0 && r.WebSearch >= 0 && r.WebSearch < maxPerMillion && (r.OffPeak == nil || r.OffPeak.plausible())
 }
 
 // valid says whether the rate can price a call: plausible and no token class
 // left at zero.
 func (r Rate) valid() bool {
-	return r.plausible() && r.Input > 0 && r.Output > 0 && r.CacheRead > 0 && r.CacheWrite5m > 0 && r.CacheWrite1h > 0
+	return r.plausible() && r.Input > 0 && r.Output > 0 && r.CacheRead > 0 && r.CacheWrite5m > 0 && r.CacheWrite1h > 0 &&
+		(r.OffPeak == nil || r.OffPeak.valid())
 }
 
 // plausible says whether every rate of the table is.
@@ -111,18 +115,23 @@ func Snapshot() Table {
 	if err := json.Unmarshal(snapshotJSON, &t); err != nil {
 		panic("price: embedded snapshot: " + err.Error())
 	}
+	billOllama(t[Ollama])
 	return t
 }
 
 var dateSuffix = regexp.MustCompile(`-\d{8}$`)
 
 // Lookup finds a model's rate. A context window suffix like [1m] names the
-// same model at the same price, a date suffix names a snapshot of it.
+// same model at the same price, a date suffix names a snapshot of it. Ollama
+// names its models its own way, see lookupOllama.
 func (t Table) Lookup(provider, model string) (Rate, bool) {
 	rates := t[provider]
 	model = BaseModel(strings.TrimSpace(model))
 	if r, ok := rates[model]; ok {
 		return r, true
+	}
+	if provider == Ollama {
+		return lookupOllama(rates, model)
 	}
 	r, ok := rates[dateSuffix.ReplaceAllString(model, "")]
 	return r, ok

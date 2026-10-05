@@ -34,6 +34,9 @@ const { assert, sleep, BASE } = L;
 // - the books in the cost folder outlive a run, so every run needs a fresh
 //   state directory.
 // - visibility is read from computed style and the box, never the attribute.
+// - without an update stub the dialog is clicked away with the mouse, which then
+//   rests over a column: its hover tip stays in the DOM, hidden, so a tip link
+//   is tapped through :visible.
 
 const CLAUDE_DIR = process.env.CLAUDE_DIR || "/claude";
 const HOST_STATE_DIR = process.env.HOST_STATE_DIR || "";
@@ -183,7 +186,7 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
   writeTranscript(D, `/opt/tccost-elsewhere-${tag}`, "cost elsewhere", call(D, `/opt/tccost-elsewhere-${tag}`, "claude-sonnet-5-5", 3.75, now - 20 * 60000));
   const oldWorkspace = `${HOST_STATE_DIR}/assistant/workspace`;
   writeTranscript(OLD, oldWorkspace, "cost old assistant", call(OLD, oldWorkspace, "claude-sonnet-5-5", 0.25, now - 20 * 60000));
-  writeTranscript(E, blogPath, E_TITLE, call(E, blogPath, "nemotron-3-ultra", 0, now - 20 * 60000));
+  writeTranscript(E, blogPath, E_TITLE, call(E, blogPath, "nemotron-3-ultra", 0, now - 20 * 60000) + call(E, blogPath, "qwen3:8b", 0, now - 20 * 60000));
   writeTranscript(F, blogPath, "cost old days", call(F, blogPath, "claude-haiku-4-5", 0.1, now - 33 * 86400000) + call(F, blogPath, "claude-haiku-4-5", 0.1, now - 40 * 86400000));
 
   try {
@@ -258,7 +261,7 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
       await Promise.all([page.waitForURL(/\/costs/), page.click(".dc-status [data-cost-status]")]);
       assert((await page.locator(".dc-work-title").innerText()) === "Costs", "no Costs head");
       assert(await visible(page, ".alert-info[data-cost-note]"), "the info box is missing");
-      assert(/^Experimental\./.test(await page.locator("[data-cost-note]").innerText()), "the info box text");
+      assert(/^Experimental\. Counts claude with Claude and Ollama Cloud models/.test(await page.locator("[data-cost-note]").innerText()), "the info box text");
     });
 
     await run("two tiles side by side, today and this month", async () => {
@@ -311,8 +314,9 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
       assert(await page.locator("[data-cost-gauge], [data-cost-bar]").count() === 0, "the gauges remain");
     });
 
-    await run("a model without a list price is booked at $0 and named once", async () => {
-      assert((await legendValue(page, "nemotron-3-ultra", "model")) === "$0.00", "the ollama model");
+    await run("an Ollama Cloud model is priced, a local one is booked at $0 and named once", async () => {
+      assert((await legendValue(page, "nemotron-3-ultra", "model")) === "<$0.01", "the ollama cloud model");
+      assert((await legendValue(page, "qwen3:8b", "model")) === "$0.00", "the local model");
       assert(await visible(page, "[data-cost-unpriced]"), "the unpriced line is not visible");
       const note = await page.locator("[data-cost-unpriced]").innerText();
       assert(note === "1 session ran a model without a list price, booked at $0.", `note ${note}`);
@@ -395,7 +399,7 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
         const col = p.locator('[data-cost-chart="assistant"] [data-cost-col]').nth(27);
         if (p === m) {
           await col.tap();
-          await Promise.all([p.waitForURL(/range=custom/), p.locator('[data-cost-chart="assistant"] [data-cost-tipdrill]').tap()]);
+          await Promise.all([p.waitForURL(/range=custom/), p.locator('[data-cost-chart="assistant"] [data-cost-tipdrill]:visible').tap()]);
         } else {
           await Promise.all([p.waitForURL(/range=custom/), col.click()]);
         }
@@ -539,7 +543,7 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
         const tip = await waitFor(() => tipShown(m), "the tooltip on a tap", 4000);
         assert(/Show the hours of/.test(tip), `the tapped tooltip ${tip}`);
         assert(new URL(m.url()).searchParams.get("range") === "30d", "the tap drilled instead of showing the numbers");
-        await Promise.all([m.waitForURL(/range=custom/), m.locator("[data-cost-tipdrill]").tap()]);
+        await Promise.all([m.waitForURL(/range=custom/), m.locator("[data-cost-tipdrill]:visible").tap()]);
         await waitFor(async () => (await chartTitle(m)) === "Spend per hour by project", "the tapped link opening the day");
       } finally {
         await ctx.close();
@@ -640,15 +644,25 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
       await page.waitForSelector("#settings-costs", { state: "visible", timeout: 8000 });
       assert(await page.locator('[data-settings-nav] a[href="/settings/costs"].active').count() === 1, "the costs entry is not marked");
       assert(await page.locator(box).isChecked(), "the refresh is not on by default");
-      assert(/^API list prices\. Ollama models count tokens only\.$/.test(await text("[data-costs-settings-note]")), "the note is missing");
+      assert(/^API list prices\. Local Ollama models count tokens only\.$/.test(await text("[data-costs-settings-note]")), "the note is missing");
       const table = await text("[data-price-table]");
       const fetched = await text("[data-price-fetched]");
       assert(table === "Built into this version" && fetched === "Never" || table === "Refreshed from LiteLLM" && fetched !== "Never" && fetched !== "",
         `table ${table}, last fetch ${fetched}`);
       const next = await text("[data-price-next]");
       assert(next === "Within a minute" || /\d/.test(next), `next fetch ${next}`);
+      const otable = await text("[data-ollama-table]");
+      const ofetched = await text("[data-ollama-fetched]");
+      const outcome = await text("[data-ollama-outcome]");
+      assert(otable === "Built into this version" && ofetched === "Never" || otable === "Refreshed from ollama.com" && /\d/.test(ofetched) && /^Took \d+ models$/.test(outcome),
+        `ollama table ${otable}, last fetch ${ofetched}, outcome ${outcome}`);
+      assert(outcome === "None yet" || /^(Took \d+ models|Kept the last table, .+)$/.test(outcome), `ollama outcome ${outcome}`);
+      const ultra = '[data-ollama-model="nemotron-3-ultra"]';
+      assert(await visible(page, ultra), "the Ollama table lacks nemotron-3-ultra");
+      assert(/^\$\d/.test(await text(`${ultra} [data-ollama-input]`)) && /^\$\d/.test(await text(`${ultra} [data-ollama-output]`)), "nemotron-3-ultra prices");
+      assert(/^\$[\d.]+ \/ \$[\d.]+ \/ \$[\d.]+$/.test(await text('[data-ollama-model="deepseek-v4-pro"] [data-ollama-off-peak]')), "deepseek-v4-pro has no off-peak rate");
       const models = await page.$$eval("[data-price-model]", (rows) => rows.map((r) => r.dataset.priceModel));
-      for (const m of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5", "nemotron-3-ultra"]) assert(models.includes(m), `model ${m} missing in ${models}`);
+      for (const m of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5", "nemotron-3-ultra", "qwen3:8b"]) assert(models.includes(m), `model ${m} missing in ${models}`);
       const opus = '[data-price-model="claude-opus-5-5"]';
       assert((await text(`${opus} [data-price-output]`)) === "$20.00", "opus output price");
       for (const f of ["input", "cache-read", "cache-write-5m", "cache-write-1h", "web-search"]) {
@@ -656,8 +670,11 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
       }
       assert((await text('[data-price-model="claude-haiku-4-5"] [data-price-output]')) === "$5.00", "haiku output price");
       const ollama = '[data-price-model="nemotron-3-ultra"]';
-      assert(await visible(page, `${ollama} [data-price-unpriced]`), "the ollama model is not marked unpriced");
-      assert(await page.locator(`${ollama} [data-price-input]`).count() === 0, "the ollama model shows a price");
+      assert(await page.locator(`${ollama} [data-price-unpriced]`).count() === 0, "the ollama cloud model is marked unpriced");
+      assert(/^\$\d/.test(await text(`${ollama} [data-price-input]`)), "the ollama cloud model shows no price");
+      const local = '[data-price-model="qwen3:8b"]';
+      assert(await visible(page, `${local} [data-price-unpriced]`), "the local model is not marked unpriced");
+      assert(await page.locator(`${local} [data-price-input]`).count() === 0, "the local model shows a price");
 
       await page.locator(box).uncheck();
       await Promise.all([page.waitForURL(/\/settings\/costs/), page.click('#settings-costs button[type="submit"]')]);

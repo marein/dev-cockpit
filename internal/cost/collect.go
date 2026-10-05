@@ -78,8 +78,9 @@ func (s *Service) BookSession(coder, session string) error {
 }
 
 // collect reads the sources, all sessions or one, and books what they
-// return. What booked something, and once an hour what did not, folds the
-// old rows, drops the months past the retention and writes, then notes the
+// return. What booked something, and once an hour what did not, prices the
+// rows whose model got a price since, folds the old rows, drops the months
+// past the retention and writes, then notes the
 // sessions that spent and drops the owners nobody needs any more. An entry
 // of a month past the retention is not booked, its cursor moves on all the
 // same. A file that cannot be read or a write that fails books nothing, the
@@ -106,6 +107,7 @@ func (s *Service) collect(sources []Source, session string) error {
 		return firstErr
 	}
 	keep := s.keepMonths()
+	s.reprice(l.Rows)
 	l.Rows = retain(compact(l.Rows, now, loc), local, keep)
 	changed, err := s.save(l, moved)
 	if changed {

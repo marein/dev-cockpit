@@ -137,7 +137,7 @@ func (c *clock) Now() time.Time { return c.now }
 func newBook(t *testing.T, dir string, url string, c *clock, enabled *bool) *Book {
 	t.Helper()
 	b := NewBook(dir, func() bool { return *enabled })
-	b.url, b.now = url, c.Now
+	b.url, b.ollamaURL, b.now = url, "http://127.0.0.1:0/", c.Now
 	return b
 }
 

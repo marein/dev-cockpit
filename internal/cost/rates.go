@@ -2,6 +2,7 @@ package cost
 
 import (
 	"sort"
+	"time"
 
 	"github.com/marein/dev-cockpit/internal/cost/price"
 )
@@ -10,6 +11,34 @@ import (
 // it books a call of that model with.
 type Pricer interface {
 	Rate(model string) (price.Rate, bool)
+}
+
+// Repricer is a source that can price a row booked without a list price
+// once its model has one, from the row's tokens and moment. ok is false
+// where the source keeps such a row as it is.
+type Repricer interface {
+	Reprice(model string, at time.Time, tokens Tokens) (usd float64, ok bool)
+}
+
+// reprice prices the rows booked without a list price that a source can
+// price now. A priced row is never touched again.
+func (s *Service) reprice(rows []Row) {
+	repricers := map[string]Repricer{}
+	for _, src := range s.sources {
+		if p, ok := src.(Repricer); ok {
+			repricers[src.Coder()] = p
+		}
+	}
+	for i := range rows {
+		r := &rows[i]
+		p := repricers[r.Coder]
+		if !r.Unpriced || p == nil {
+			continue
+		}
+		if usd, ok := p.Reprice(r.Model, r.At, r.Tokens); ok && Usable(usd) {
+			r.USD, r.Unpriced = usd, false
+		}
+	}
 }
 
 // ModelRate is a model the ledger booked and its list price now. Priced is

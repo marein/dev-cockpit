@@ -618,7 +618,7 @@ func DocsTopics() []DocsTopic {
 			Lead:     "What the coders spent, at API list prices.",
 			LinkURL:  "/costs",
 			LinkText: "Open costs",
-			Intro:    `Experimental. Counts claude and its models only, at API list prices.`,
+			Intro:    `Experimental. Counts claude with Claude and Ollama Cloud models, at API list prices.`,
 			Items: []DocsItem{
 				{
 					Title: "Where it shows",
@@ -646,7 +646,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Prices",
-					Desc:  `A price table is built in and refreshed daily from LiteLLM's public list, offline the last one stays. Settings &rarr; Costs shows the table, its fetches and the price per model. Models without a list price, like Ollama's, count tokens only.`,
+					Desc:  `Price tables are built in and refreshed daily from LiteLLM's public list and Ollama's pricing page, offline the last ones stay. Ollama Cloud models are priced per token, cache writes as input, off-peak rates outside 12:00 to 18:00 UTC on weekdays. Settings &rarr; Costs shows the tables, their fetches and the price per model. Local models count tokens only. A model that gets a price prices its earlier Ollama calls within the hour.`,
 				},
 			},
 		},

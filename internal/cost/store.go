@@ -25,9 +25,10 @@ import (
 // the cursors that moved past them in one rename, so a write that fails
 // commits neither and the next collect reads the same records again. A row
 // lives in the file of the month it was booked in, a late call of a closed
-// month too, so a closed month only changes by what moves no money: a fold,
-// the retention, the rows a lost cursor reads again replace. Those are
-// written first, the commit point last. The owners move no money and are
+// month too, so a closed month only changes by a fold, the retention, the
+// rows a lost cursor reads again replace and rows priced once their model got
+// a price, which clears their flag in the same write. Those are written
+// first, the commit point last. The owners move no money and are
 // written on their own.
 const (
 	rowsPrefix   = "rows-"

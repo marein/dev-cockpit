@@ -114,10 +114,10 @@ Each area of the cockpit is described below.
 
   ### Costs
 
-  * **Scope**: Experimental, counts claude with Claude models only.
+  * **Scope**: Experimental, counts claude with Claude and Ollama Cloud models.
   * **Spend**: What coders and assistants spent, at API list price.
   * **Charts**: Stacked bar charts per project, assistant, coder and model over any period.
-  * **Prices**: Price lists are refreshed daily from LiteLLM. Months to keep are set under Settings.
+  * **Prices**: Price lists are refreshed daily from LiteLLM and ollama.com. Months to keep are set under Settings.
 </details>
 
 <details>
