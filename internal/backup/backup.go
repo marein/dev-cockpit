@@ -185,8 +185,10 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 	// cost/prices.json is rebuilt by the next refresh.
 	return []Section{
 		{ID: "settings", Group: "Cockpit", Label: "Settings",
-			Description: "General settings, the configured compose actions and the notification jingle.",
-			Sources:     []Source{{Name: "settings.json", Path: st("settings.json")}}},
+			Description: "General settings, the configured compose actions, the notification jingle and the worktree post script.",
+			Sources: []Source{
+				{Name: "settings.json", Path: st("settings.json")},
+				{Name: "worktree-post-script", Path: st("worktree-post-script")}}},
 		{ID: "push", Group: "Cockpit", Label: "Push channels",
 			Description: "Web push devices, webhooks, the VAPID keys and the base URL. Devices keep ringing without a new registration as long as Dev Cockpit keeps its address, under a new address every device must register again. The keys let anyone holding this file push to the devices, and an old installation left running rings the same phones twice.",
 			Sources: []Source{

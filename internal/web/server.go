@@ -108,6 +108,8 @@ type Server struct {
 	// file line, so a pass over the code survives a reload and a device
 	// switch.
 	lineComments *lineComments
+	// postScriptFailed rings the news of a failed worktree post script.
+	postScriptFailed func(project string, run project.PostScriptRun)
 	// editorRecent is where the editor was last opened, the projects by name,
 	// and terminalRecent the terminals last looked at, by id. They are what
 	// the two area entries of the rail resolve to, so a phone picked up in

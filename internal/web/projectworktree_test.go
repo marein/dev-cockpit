@@ -2,12 +2,19 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/recent"
 	"github.com/marein/dev-cockpit/internal/web/render"
@@ -463,5 +470,71 @@ func TestOnlyMainRepositoriesAreOffered(t *testing.T) {
 	refusal := worktreeSourceRefusal(worktree).Error()
 	if !strings.Contains(refusal, `"app-feature" is itself a worktree of "app"`) {
 		t.Fatalf("the refusal does not say where the fork belongs: %s", refusal)
+	}
+}
+
+// A worktree made without a name is named after its source and branch, the
+// name the form suggests, and the post script runs inside it with its output
+// in the answer. A failing script leaves the worktree standing and rings once,
+// a passing one never.
+func TestWorktreeCreateNamesItselfAndRunsThePostScript(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	worktreeSourceRepo(t, root, "app")
+	s := &Server{cfg: config.Config{StateDir: t.TempDir()}, projects: worktreeProjects(t, root), gitWrites: newGitWrites(), bus: eventbus.New()}
+	var failed []string
+	s.SetPostScriptFailed(func(name string, run project.PostScriptRun) { failed = append(failed, name+": "+run.Err) })
+	script := func(content string) {
+		t.Helper()
+		if err := project.SavePostScript(s.postScriptPath(), content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := gin.New()
+	r.POST("/projects", s.handleProjectCreate)
+	create := func(form url.Values) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/projects", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		answer := map[string]any{}
+		if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("create answered %d: %s", rec.Code, rec.Body.String())
+		}
+		return answer
+	}
+
+	script("#!/bin/sh\npwd\ngit branch --show-current\necho \"$DC_PROJECT $DC_WORKTREE_PROJECT $DC_BRANCH\"\n")
+	made := create(url.Values{"create": {render.WorktreeChoice("app")}, "branch_mode": {"existing"}, "branch": {"feature"}})
+	path := filepath.Join(root, "app-feature")
+	if made["name"] != "app-feature" || made["post_script_error"] != "" {
+		t.Fatalf("unexpected answer %v", made)
+	}
+	real, _ := filepath.EvalSymlinks(path)
+	if made["post_script_output"] != real+"\nfeature\napp app-feature feature\n" {
+		t.Fatalf("the script did not run inside the worktree: %q", made["post_script_output"])
+	}
+	if len(failed) != 0 {
+		t.Fatalf("a passing script rang: %v", failed)
+	}
+
+	script("#!/bin/sh\necho broken\nexit 4\n")
+	made = create(url.Values{"create": {render.WorktreeChoice("app")}, "branch_mode": {"new"}, "new_branch": {"Fix It"}, "start": {"master"}, "project_name": {"own"}})
+	if made["name"] != "own" || made["branch"] != "Fix-It" || made["post_script_error"] != "exit status 4" || made["post_script_output"] != "broken\n" {
+		t.Fatalf("unexpected answer %v", made)
+	}
+	if _, err := os.Stat(filepath.Join(root, "own", "a.txt")); err != nil {
+		t.Fatalf("a failed script took the worktree with it: %v", err)
+	}
+	if len(failed) != 1 || failed[0] != "own: exit status 4" {
+		t.Fatalf("a failed script rang %v", failed)
+	}
+
+	script("")
+	worktreeGit(t, filepath.Join(root, "app"), "branch", "plain")
+	if made = create(url.Values{"create": {render.WorktreeChoice("app")}, "branch_mode": {"existing"}, "branch": {"plain"}}); made["post_script_output"] != nil {
+		t.Fatalf("no script reported a run: %v", made)
 	}
 }

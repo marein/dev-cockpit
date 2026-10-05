@@ -127,6 +127,10 @@ func ApprovalTargetID(targetID string) string {
 	return strings.TrimPrefix(targetID, ApprovalTargetPrefix)
 }
 
+// WorktreeTarget is the target id a worktree project's failed post script
+// reports under.
+func WorktreeTarget(project string) string { return "worktree:" + project }
+
 // TargetInfo carries display context resolved at ingest time.
 type TargetInfo struct {
 	Name    string
@@ -254,6 +258,12 @@ func (s *Service) Add(targetID string) {
 	if s.resolver != nil {
 		info = s.resolver(targetID)
 	}
+	s.AddResolved(targetID, info)
+}
+
+// AddResolved is Add for news whose words exist only in the moment it
+// happens, a failed run nothing keeps for a resolver to look up.
+func (s *Service) AddResolved(targetID string, info TargetInfo) {
 	name := info.Name
 	if name == "" {
 		name = shortID(targetID)

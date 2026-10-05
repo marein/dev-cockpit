@@ -3,15 +3,23 @@ package git
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
-// worktreeTimeout caps adding a worktree. It fills a whole directory with the
+// WorktreeTimeout caps adding a worktree. It fills a whole directory with the
 // tree the branch stands on, which is the same order of work as a branch move
 // and not a read, so it gets the same budget a checkout has.
-const worktreeTimeout = 2 * time.Minute
+const WorktreeTimeout = 2 * time.Minute
+
+// KillsWholeGroup makes the timeout of cmd kill its whole process group, the
+// way every git call here ends. A worktree's post script starts children of
+// its own and is ended the same way.
+func KillsWholeGroup(cmd *exec.Cmd) {
+	killsWholeGroup(cmd)
+}
 
 // Worktree is one working copy of a repository: the main one and every linked
 // worktree, in the order git lists them. Branch is the short name of what is
@@ -110,7 +118,7 @@ func (r *Repo) AddWorktree(ctx context.Context, w NewWorktree) error {
 		args = append(args, w.Branch)
 	}
 	c := *r
-	c.timeout = worktreeTimeout
+	c.timeout = WorktreeTimeout
 	_, err := c.run(ctx, args, nil)
 	return err
 }

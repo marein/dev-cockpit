@@ -456,3 +456,15 @@ func TestTheWrapperSpellingsAreTheOnesTheInstructionsTeach(t *testing.T) {
 		t.Fatalf("want the short call and this workspace's wrapper, got %q", got)
 	}
 }
+
+// The worktree commands are named where the assistant reads its commands,
+// with the output that tells a worktree project apart. Pinned because a
+// command the instructions do not name is one the assistant never runs.
+func TestTheInstructionsNameTheWorktreeCommands(t *testing.T) {
+	pinned(t,
+		"project-worktree-list <project>",
+		"project-worktree-new <project> <branch> [--from <branch>]",
+		"runs the post script in it and prints its output",
+		"`status` marks a worktree project",
+	)
+}

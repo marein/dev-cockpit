@@ -42,10 +42,6 @@ func (s *Server) formRefused(c *gin.Context, formPath, message string) {
 // so the page that follows renders it once.
 func (s *Server) createLanded(c *gin.Context, location, message, errMsg string) {
 	if !inFormModal(c) {
-		if message == "" && errMsg == "" {
-			c.Redirect(http.StatusSeeOther, location)
-			return
-		}
 		s.redirectWithFlash(c, location, message, errMsg)
 		return
 	}
@@ -69,20 +65,4 @@ func (s *Server) formStayed(c *gin.Context, message string) bool {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": message})
 	return true
-}
-
-// createLandedProject is createLanded for a create that lands on the projects
-// page, where the flash belongs to the new row and not to the top of the page
-// (see redirectWithProjectFlash).
-func (s *Server) createLandedProject(c *gin.Context, project, message string) {
-	if !inFormModal(c) {
-		s.redirectWithProjectFlash(c, project, message, "")
-		return
-	}
-	if project == "" {
-		s.createLanded(c, "/projects", message, "")
-		return
-	}
-	ginsessions.Default(c).Set(flashProjectKey, project)
-	s.createLanded(c, "/projects#project-"+project, message, "")
 }

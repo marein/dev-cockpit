@@ -18,6 +18,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/git"
+	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
@@ -96,6 +97,7 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		return
 	}
 	s.projects.Touch(p.Name)
+	s.notifier.MarkTargetRead(notify.WorktreeTarget(p.Name))
 	// Exactly the project name, nothing of what stands open in it: the entry
 	// has to answer "where was I", and a file or a scroll position is the
 	// page's own state, not the area's.

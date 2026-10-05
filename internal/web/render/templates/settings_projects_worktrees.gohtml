@@ -1,0 +1,19 @@
+{{define "settings_projects_worktrees.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<nav class="nav nav-bordered dc-work-tabs" aria-label="Sections">
+  <a class="nav-link active" href="/settings/projects/worktrees"><i class="ti ti-git-fork me-1 dc-hide-xs"></i>Worktrees</a>
+</nav>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
+<form method="post" action="/settings/projects/worktrees" id="settings-projects-worktrees">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <label class="form-label" for="post-script">Post script</label>
+  <div class="text-secondary small mb-2">Runs in every new worktree, for up to {{.Timeout}}. The first line names the interpreter, like <code>#!/usr/bin/env bash</code>. Environment: <code>DC_PROJECT</code>, <code>DC_SOURCE_DIR</code>, <code>DC_WORKTREE_PROJECT</code>, <code>DC_WORKTREE_DIR</code>, <code>DC_BRANCH</code>. Empty deletes it.</div>
+  <textarea class="form-control font-monospace mb-3" id="post-script" name="post_script" rows="14" placeholder="#!/usr/bin/env bash" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">{{.PostScript}}</textarea>
+  <button type="submit" class="btn btn-primary">Save</button>
+</form>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

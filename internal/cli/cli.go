@@ -289,7 +289,8 @@ func newAssistantCommand() *cobra.Command {
 		newTimezoneGetCommand(opts), newTimezoneSetCommand(opts),
 		newCostShowCommand(opts),
 		newModelListCommand(opts), newAssistantModelsGetCommand(opts), newAssistantModelsSetCommand(opts),
-		newProjectCommand(opts), newDeleteProjectCommand(opts),
+		newProjectCommand(opts), newDeleteProjectCommand(opts), newProjectWorktreeNewCommand(opts), newProjectWorktreeListCommand(opts),
+		newProjectWorktreeScriptShowCommand(opts), newProjectWorktreeScriptSetCommand(opts),
 		newComposeListCommand(opts), newComposeStartCommand(opts), newComposeShowCommand(opts), newComposeStopCommand(opts),
 		newLineCommentListCommand(opts), newLineCommentAddCommand(opts), newLineCommentRemoveCommand(opts),
 		newOutputCommand(opts),
@@ -659,6 +660,11 @@ func runServe(opts serveOptions) error {
 	// lists. Neither hook may run while the service holds its lock, both are
 	// called after it is released.
 	conversations.SetHooks(srv.PublishConversations, notifier.Add)
+	srv.SetPostScriptFailed(func(name string, run project.PostScriptRun) {
+		info := notify.TargetInfo{Name: name, Project: name, URL: "/projects#project-" + name}
+		info.Title, info.Detail = postScriptNews(name, run)
+		notifier.AddResolved(notify.WorktreeTarget(name), info)
+	})
 	conversations.SetRenderer(markdown.RenderGFM)
 	// The same raw signal closes the working mark's turn: a coder that
 	// reports has stopped to say so, whether it finished or waits on a
@@ -1113,6 +1119,18 @@ func composeNews(run docker.RunView) (title, detail string) {
 		name = "compose"
 	}
 	return title, newsDetail(name, "")
+}
+
+// postScriptNews is what a failed worktree post script says, the worktree
+// project below it with the reason and the last lines of the output, which is
+// where a failure says why.
+func postScriptNews(name string, run project.PostScriptRun) (title, detail string) {
+	lines := strings.Split(strings.TrimSpace(run.Output), "\n")
+	if len(lines) > 3 {
+		lines = lines[len(lines)-3:]
+	}
+	excerpt, _ := markdown.Excerpt(run.Err+": "+strings.Join(lines, " "), assistant.PreviewRunes)
+	return "Post script failed.", newsDetail(name, excerpt)
 }
 
 // assistantNewsName is the name a notification is rung under: what this

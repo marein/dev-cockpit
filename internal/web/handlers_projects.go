@@ -61,7 +61,9 @@ func NewProjectChanged(bus *eventbus.Bus) func(ctx context.Context) error {
 }
 
 type projectCreateForm struct {
-	Name AlphaNumDashString `form:"project_name" binding:"required"`
+	// Name is required for every create but a worktree's, which is named
+	// after its source and branch when it carries none, see worktreeName.
+	Name AlphaNumDashString `form:"project_name"`
 	// Create is the kind of project to make, the one select's value (see
 	// render.CreateRepository and render.CreateWorktree). Empty is the plain
 	// directory and nothing below is read then; for a worktree, BranchMode
@@ -357,6 +359,10 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 		s.createWorktree(c, form)
 		return
 	}
+	if form.Name == "" {
+		s.formRefused(c, back, "Please check the form and try again.")
+		return
+	}
 	if form.Create == render.CreateClone {
 		s.createClone(c, form)
 		return
@@ -371,7 +377,7 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"name": name, "path": path})
 		return
 	}
-	s.createLandedProject(c, name, "Project \""+name+"\" created.")
+	s.createLanded(c, "/projects#project-"+name, "", "")
 }
 
 // createWorktree answers the create form's worktree half: the project is made
@@ -383,19 +389,25 @@ func (s *Server) createWorktree(c *gin.Context, form projectCreateForm) {
 		s.formRefused(c, newProjectPath(form), err.Error())
 		return
 	}
+	s.runWorktreePostScript(c, &made)
 	name := filepath.Base(made.Plan.Dir)
 	if wantsJSON(c.Request) && !inFormModal(c) {
-		c.JSON(http.StatusOK, gin.H{
+		answer := gin.H{
 			"name":               name,
 			"path":               made.Plan.Dir,
 			"worktree_of":        made.Source.Name,
 			"branch":             made.Plan.Branch,
 			"fast_forwarded":     made.CaughtUp,
 			"fast_forward_error": made.CatchUpErr,
-		})
+		}
+		if run := made.PostScript; run != nil {
+			answer["post_script_output"] = run.Output
+			answer["post_script_error"] = run.Err
+		}
+		c.JSON(http.StatusOK, answer)
 		return
 	}
-	s.createLandedProject(c, name, worktreeCreatedMessage(name, made))
+	s.createLanded(c, "/projects#project-"+name, "", "")
 }
 
 // createClone answers the create form's second choice: a project filled from
@@ -413,7 +425,7 @@ func (s *Server) createClone(c *gin.Context, form projectCreateForm) {
 		c.JSON(http.StatusOK, gin.H{"name": name, "path": path, "cloned": strings.TrimSpace(form.CloneURL)})
 		return
 	}
-	s.createLandedProject(c, name, "Project \""+name+"\" cloned from "+strings.TrimSpace(form.CloneURL)+".")
+	s.createLanded(c, "/projects#project-"+name, "", "")
 }
 
 func (s *Server) handleProjectDelete(c *gin.Context) {

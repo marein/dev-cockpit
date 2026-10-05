@@ -26,7 +26,7 @@ function commandBlock(question) {
 function approvalBlock(question) {
   const rows = [{ label: "Asked by", value: question.assistant }, ...(question.details || [])];
   const list = rows
-    .map((row) => `<dt class="col-4 fw-normal text-secondary">${escapeHtml(row.label)}</dt><dd class="col-8 mb-1 text-break">${escapeHtml(row.value || "")}</dd>`)
+    .map((row) => `<dt class="col-4 fw-normal text-secondary">${escapeHtml(row.label)}</dt><dd class="col-8 mb-1 dc-prompt-text">${escapeHtml(row.value || "")}</dd>`)
     .join("");
   return `<div class="fw-bold mb-3 text-break" data-approval-what>${escapeHtml(question.action)}</div>`
     + `<dl class="row mb-0 text-start" data-approval-details>${list}</dl>`

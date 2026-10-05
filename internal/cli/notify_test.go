@@ -10,6 +10,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/docker"
+	"github.com/marein/dev-cockpit/internal/project"
 )
 
 // A coder's signal is not classified: whether it finished, asks something or
@@ -88,6 +89,9 @@ func TestEveryKindIsBuiltTheSameWayRound(t *testing.T) {
 		}},
 		{"long git question", "Git asks a question.", "fetch --all --prune --tags", func() (string, string) {
 			return gitPromptNews("fetch --all --prune --tags")
+		}},
+		{"post script", "Post script failed.", "app-feature: exit status 3: c d e", func() (string, string) {
+			return postScriptNews("app-feature", project.PostScriptRun{Output: "a\nb\nc\nd\ne\n", Err: "exit status 3"})
 		}},
 		{"long compose", "Compose failed.", "Compose up with a rebuild", run("Compose up with a rebuild", "exit 1")},
 	}

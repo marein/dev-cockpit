@@ -102,6 +102,14 @@ type SettingsDockerData struct {
 	LinkSchemes []string
 }
 
+// SettingsProjectsData feeds the projects settings pages, one per tab.
+type SettingsProjectsData struct {
+	Page
+	SettingsNav SettingsNav
+	PostScript  string
+	Timeout     string
+}
+
 // SettingsEditorData feeds the editor settings pages, one per tab. The values
 // are the effective ones, so a form always shows what applies, not what happens
 // to be stored. Section marks the open tab the way the coder pages mark theirs,

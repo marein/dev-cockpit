@@ -29,7 +29,7 @@ func TestStatusOutputCarriesWhatAnAnswerNeeds(t *testing.T) {
 		Inactive: []terminalLine{
 			{Kind: "coder", Coder: "copilot", ID: "ccc", Name: "Old work", Project: "other", When: at},
 		},
-		Projects: []projectLine{{Name: "cockpit", Branch: "master"}, {Name: "notes"}},
+		Projects: []projectLine{{Name: "cockpit", Branch: "master"}, {Name: "cockpit-feature", Branch: "feature", WorktreeOf: "cockpit"}, {Name: "notes"}},
 		Unread:   1,
 	}
 
@@ -41,7 +41,10 @@ func TestStatusOutputCarriesWhatAnAnswerNeeds(t *testing.T) {
 		"[steered]",
 		"shell", "build",
 		"Inactive coders (1)", "Old work", "last used",
-		"Projects (2)", "cockpit (master)", "notes",
+		"Projects (3)", "cockpit (master)\n", "notes",
+		// A worktree project says whose it is, so the list alone tells it
+		// from a main repository.
+		"cockpit-feature (feature) worktree of cockpit\n",
 		"Unread notifications: 1",
 	} {
 		if !strings.Contains(out, want) {

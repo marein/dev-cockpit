@@ -244,12 +244,13 @@ func (s *Server) deleteProjectWithCompose(p project.Project) error {
 		s.lineComments.Clear(p.Name)
 		s.quickOpen.Forget(p.Path)
 		s.approvals.DeclineProject(p.Name)
-		// The project's compose and askpass news read themselves with it, and
+		// The project's compose, askpass and post script news read themselves with it, and
 		// deliberately only on success: an aborted deletion keeps its compose
 		// failure notification unread, that is the one word about why nothing
 		// was removed.
 		s.notifier.MarkTargetRead(notify.DockerTarget(p.Name))
 		s.notifier.MarkTargetRead(notify.GitPromptTarget(p.Name))
+		s.notifier.MarkTargetRead(notify.WorktreeTarget(p.Name))
 	}
 	s.deletes.finish(p.Name, failure)
 	s.publishProjects()
@@ -327,6 +328,7 @@ func (s *Server) removeProjectNow(p project.Project) error {
 	s.lineComments.Clear(p.Name)
 	s.quickOpen.Forget(p.Path)
 	s.approvals.DeclineProject(p.Name)
+	s.notifier.MarkTargetRead(notify.WorktreeTarget(p.Name))
 	return nil
 }
 

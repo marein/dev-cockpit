@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/git"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/web/render"
@@ -313,6 +314,10 @@ type worktreeCreate struct {
 	// CatchUpErr is git's word on a catch up that was asked for and did not
 	// run.
 	CatchUpErr string
+	// PostScript is the post script as it ran in the new working copy, nil
+	// when there is none. A failed one is no failed
+	// create either, the worktree stands and the caller reads why.
+	PostScript *project.PostScriptRun
 }
 
 // createWorktreeProject makes a project that is a linked worktree of another
@@ -352,7 +357,7 @@ func (s *Server) createWorktreeProject(c *gin.Context, form projectCreateForm) (
 		return made, errors.New(gitInUse)
 	}
 	defer s.gitWrites.release(keys...)
-	path, err := s.projects.Create(form.Name.String())
+	path, err := s.projects.Create(worktreeName(src, form, made.Plan))
 	if err != nil {
 		return made, err
 	}
@@ -372,6 +377,47 @@ func (s *Server) createWorktreeProject(c *gin.Context, form projectCreateForm) (
 	}
 	s.publishProjects()
 	return made, nil
+}
+
+// runWorktreePostScript runs the post script inside the new working copy. It
+// runs after the repository's write lock is released, a script may take
+// minutes and nothing about it is a write of the source, and like a git write
+// it ends on its own timeout and not with the request.
+func (s *Server) runWorktreePostScript(c *gin.Context, made *worktreeCreate) {
+	made.PostScript = project.RunPostScript(gitWriteContext(c), s.postScriptPath(), made.Plan.Dir, []string{
+		"DC_PROJECT=" + made.Source.Name,
+		"DC_SOURCE_DIR=" + made.Source.Path,
+		"DC_WORKTREE_DIR=" + made.Plan.Dir,
+		"DC_WORKTREE_PROJECT=" + filepath.Base(made.Plan.Dir),
+		"DC_BRANCH=" + made.Plan.Branch,
+	})
+	if run := made.PostScript; run != nil && run.Err != "" {
+		log.Printf("worktree post script in %s: %s", made.Plan.Dir, run.Err)
+		if s.postScriptFailed != nil {
+			s.postScriptFailed(filepath.Base(made.Plan.Dir), *run)
+		}
+	}
+}
+
+// SetPostScriptFailed hands every failed worktree post script to notify, with
+// the worktree project it ran for.
+func (s *Server) SetPostScriptFailed(notify func(project string, run project.PostScriptRun)) {
+	s.postScriptFailed = notify
+}
+
+func (s *Server) postScriptPath() string {
+	return filepath.Join(s.cfg.StateDir, project.PostScriptFile)
+}
+
+// worktreeName is the project name a worktree gets: the one the form carries,
+// else its source's name and the branch it stands on, the name the create
+// form suggests too. The branch is the plan's, so a remote branch names the
+// project after the local branch the checkout creates.
+func worktreeName(src project.Project, form projectCreateForm, plan git.NewWorktree) string {
+	if name := form.Name.String(); name != "" {
+		return name
+	}
+	return filesystem.ToDirectoryName(src.Name + "-" + plan.Branch)
 }
 
 // catchUpWorktree brings the new working copy up to the branch it follows,
@@ -533,20 +579,4 @@ func worktreeSourceRefusal(src project.Project) error {
 		return fmt.Errorf("%q is itself a worktree. Make the new one of the project it belongs to.", src.Name)
 	}
 	return fmt.Errorf("%q is itself a worktree of %q. Make the new one of that project.", src.Name, main)
-}
-
-// worktreeCreatedMessage is the flash of a created worktree: which project it
-// forked, and the branch its working copy stands on, because that pair is the
-// whole reason the project exists. A catch up that ran, or was asked for and
-// did not, is the second sentence: the project is there either way, so this
-// reports and never refuses.
-func worktreeCreatedMessage(name string, made worktreeCreate) string {
-	message := fmt.Sprintf("Project %q created as a worktree of %q on branch %q.", name, made.Source.Name, made.Plan.Branch)
-	switch {
-	case made.CatchUpErr != "":
-		message += " It could not be fast-forwarded: " + made.CatchUpErr
-	case made.CaughtUp != "":
-		message += fmt.Sprintf(" Fast-forwarded to %q.", made.CaughtUp)
-	}
-	return message
 }

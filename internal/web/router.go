@@ -222,6 +222,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/editor/search", s.handleSettingsEditorSearchSave)
 	auth.GET("/settings/editor/lsp", s.handleSettingsEditorLSP)
 	auth.POST("/settings/editor/lsp", s.handleSettingsEditorLSPSave)
+	auth.GET("/settings/projects/worktrees", s.handleSettingsProjectsWorktrees)
+	auth.POST("/settings/projects/worktrees", s.handleSettingsProjectsWorktreesSave)
 	auth.GET("/settings/notifications", s.handleSettingsNotifications)
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
 	// The assistant's settings sit behind a tab like the editor's, so the page

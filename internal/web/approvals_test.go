@@ -56,10 +56,11 @@ func TestApprovalAsksReadsAndStores(t *testing.T) {
 // stored on its own key.
 func TestTheApprovalsAreKinds(t *testing.T) {
 	want := map[string]string{
-		approvalComposeActions:  "Compose actions approval",
-		approvalProjectDelete:   "Project delete approval",
-		approvalCoderDelete:     "Coder delete approval",
-		approvalAssistantDelete: "Assistant delete approval",
+		approvalComposeActions:     "Compose actions approval",
+		approvalProjectDelete:      "Project delete approval",
+		approvalCoderDelete:        "Coder delete approval",
+		approvalAssistantDelete:    "Assistant delete approval",
+		approvalWorktreePostScript: "Worktree post script approval",
 	}
 	for _, kind := range approvalKinds {
 		if want[kind.ID] != kind.Label {

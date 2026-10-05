@@ -962,7 +962,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
 
     await run("worktree group: one worktree reads as a bare 1 with its name in the singular", async () => {
       await page.waitForSelector(`#project-${source} [data-worktrees-toggle]`, { state: "visible", timeout: 8000 });
-      // The create's flash stands on the new row, which opens the group, so
+      // The create reveals the new row, which opens the group, so
       // the verb follows the state and the words stay in the singular.
       const g = await page.evaluate((p) => {
         const t = document.querySelector(`#project-${p} [data-worktrees-toggle]`);
@@ -1409,21 +1409,21 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       return state.error;
     });
 
-    await run("dialog: a create lands on the projects page with its row marked", async () => {
+    await run("dialog: a create lands on the projects page with its row highlighted and no flash", async () => {
       const name = `zzdlg-${tag.slice(-6)}`;
       await page.fill('[data-form-modal] input[name="project_name"]', name);
       await page.click('[data-form-modal] button[type="submit"]');
-      await page.waitForFunction((n) => Boolean(document.getElementById(`project-${n}`)), name, { timeout: 20000 });
+      await page.waitForFunction((n) => document.getElementById(`project-${n}`)?.classList.contains("project-row-flash"), name, { timeout: 20000, polling: "raf" });
       await page.waitForFunction(() => !document.querySelector("[data-form-modal] form"), null, { timeout: 8000 });
       const landed = await page.evaluate((n) => ({
         url: window.location.href,
-        flash: (document.querySelector(`#project-${n} .alert`)?.textContent || "").trim(),
+        alerts: [...document.querySelectorAll(".alert")].filter((a) => a.getClientRects().length > 0).length,
         backdrops: document.querySelectorAll(".modal-backdrop").length,
         locked: document.body.classList.contains("modal-open"),
       }), name);
       await L.deleteProject(page, name).catch(() => {});
       assert(landed.url.endsWith(`#project-${name}`), `the landing does not name the new row: ${landed.url}`);
-      assert(landed.flash.includes(name), `the row carries no notice: ${JSON.stringify(landed)}`);
+      assert(landed.alerts === 0, `a flash came with the create: ${JSON.stringify(landed)}`);
       assert(landed.backdrops === 0 && !landed.locked, `the dialog stayed behind: ${JSON.stringify(landed)}`);
       return JSON.stringify(landed);
     });

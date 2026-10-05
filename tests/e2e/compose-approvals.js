@@ -287,7 +287,7 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     await visit(page, `${BASE}/settings/assistant/approvals`);
     await dismissUpdate(page);
     const kinds = await page.locator("[data-assistant-approval]").evaluateAll((rows) => rows.map((row) => row.dataset.assistantApproval));
-    assert(JSON.stringify(kinds) === JSON.stringify(["compose-actions", "project-delete", "coder-delete", "assistant-delete"]), `the tab lists ${JSON.stringify(kinds)}`);
+    assert(JSON.stringify(kinds) === JSON.stringify(["compose-actions", "project-delete", "coder-delete", "assistant-delete", "worktree-post-script"]), `the tab lists ${JSON.stringify(kinds)}`);
     const label = (await page.textContent('[data-assistant-approval="compose-actions"]')).trim();
     assert(label.startsWith("Compose actions approval"), `the row reads "${label}"`);
     assert(await page.locator(`[data-assistant-approval="${assistantID}"]`).count() === 0, "the tab still carries a row per assistant");

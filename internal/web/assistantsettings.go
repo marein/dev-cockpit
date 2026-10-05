@@ -103,6 +103,10 @@ const approvalCoderDelete = "coder-delete"
 // for waits for the user's approval.
 const approvalAssistantDelete = "assistant-delete"
 
+// approvalWorktreePostScript is whether a write of the worktree post script
+// an assistant asks for waits for the user's approval.
+const approvalWorktreePostScript = "worktree-post-script"
+
 var approvalKinds = []approvalKind{{
 	ID:    approvalComposeActions,
 	Label: "Compose actions approval",
@@ -120,6 +124,10 @@ var approvalKinds = []approvalKind{{
 	ID:    approvalAssistantDelete,
 	Label: "Assistant delete approval",
 	Hint:  "An assistant one of them wants to delete, itself included, stays until you approve.",
+}, {
+	ID:    approvalWorktreePostScript,
+	Label: "Worktree post script approval",
+	Hint:  "A worktree post script an assistant wants to set or delete under Settings › Projects stays as it is until you approve.",
 }}
 
 // approvalKey is where one kind is stored.

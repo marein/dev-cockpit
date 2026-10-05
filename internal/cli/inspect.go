@@ -1339,6 +1339,9 @@ type statusReport struct {
 type projectLine struct {
 	Name   string
 	Branch string
+	// WorktreeOf names the main repository of a linked worktree, its project
+	// name or else its directory, empty for every other project.
+	WorktreeOf string
 }
 
 // maxInactiveShown bounds the resumable list by default. A host collects
@@ -1419,7 +1422,14 @@ func runStatus(out io.Writer, opts inspectOptions, inactiveLimit int) error {
 		if !p.GitRepo {
 			branch = ""
 		}
-		report.Projects = append(report.Projects, projectLine{Name: p.Name, Branch: branch})
+		line := projectLine{Name: p.Name, Branch: branch}
+		if p.GitWorktree {
+			line.WorktreeOf = p.GitWorktreeOf
+			if line.WorktreeOf == "" {
+				line.WorktreeOf = p.GitWorktreeMain
+			}
+		}
+		report.Projects = append(report.Projects, line)
 	}
 
 	if picture.available() {
@@ -1525,11 +1535,14 @@ func formatStatus(r statusReport, inactiveLimit int) string {
 		b.WriteString("  none\n")
 	}
 	for _, p := range r.Projects {
+		fmt.Fprintf(&b, "  %s", p.Name)
 		if p.Branch != "" {
-			fmt.Fprintf(&b, "  %s (%s)\n", p.Name, p.Branch)
-			continue
+			fmt.Fprintf(&b, " (%s)", p.Branch)
 		}
-		fmt.Fprintf(&b, "  %s\n", p.Name)
+		if p.WorktreeOf != "" {
+			fmt.Fprintf(&b, " worktree of %s", p.WorktreeOf)
+		}
+		b.WriteString("\n")
 	}
 
 	fmt.Fprintf(&b, "\nUnread notifications: %d\n", r.Unread)

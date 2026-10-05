@@ -8,9 +8,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/approval"
+	"github.com/marein/dev-cockpit/internal/askpass"
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/eventbus"
+	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/restore"
 	"github.com/marein/dev-cockpit/internal/settings"
 	"github.com/marein/dev-cockpit/internal/shell"
@@ -487,6 +491,84 @@ func (s *Server) handleSettingsEditorGitSave(c *gin.Context) {
 	s.storeInt(editorDiffMaxLinesKey, c.PostForm("diff_max_lines"), 0, 500000)
 	s.storeInt(editorDiffMaxKiBKey, c.PostForm("diff_max_kib"), 0, 16384)
 	s.redirectWithFlash(c, editorGitSettingsPath, "Settings saved.", "")
+}
+
+func (s *Server) handleSettingsProjectsWorktrees(c *gin.Context) {
+	script := project.ReadPostScript(s.postScriptPath())
+	if s.localCall(c) {
+		c.JSON(http.StatusOK, gin.H{"script": script})
+		return
+	}
+	s.renderSettingsProjectsWorktrees(c, script, s.page(c, "Settings", "settings"))
+}
+
+// handleSettingsProjectsWorktreesSave stores the worktree post script. It is a
+// program the cockpit runs, so an assistant's write waits for the user's
+// approval. A refused script renders again with what was typed, a redirect
+// would lose it.
+func (s *Server) handleSettingsProjectsWorktreesSave(c *gin.Context) {
+	script := c.PostForm("post_script")
+	if s.localCall(c) {
+		s.setPostScriptLocal(c, script)
+		return
+	}
+	if err := project.SavePostScript(s.postScriptPath(), script); err != nil {
+		page := s.page(c, "Settings", "settings")
+		page.Flash = render.Flash{Message: "The post script was not saved, " + err.Error() + ".", Level: "error"}
+		s.renderSettingsProjectsWorktrees(c, script, page)
+		return
+	}
+	s.redirectWithFlash(c, "/settings/projects/worktrees", "Settings saved.", "")
+}
+
+// setPostScriptLocal is an assistant's write of the post script. It is
+// checked before anybody is asked, the user approves the content they see,
+// and the run saves exactly that content.
+func (s *Server) setPostScriptLocal(c *gin.Context, script string) {
+	owner, err := s.assistantCaller(c)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	script, err = project.NormalizePostScript(script)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The post script was not saved, " + err.Error() + "."})
+		return
+	}
+	what, value := "Set the worktree post script", script
+	if script == "" {
+		what, value = "Delete the worktree post script", "(none)"
+	}
+	save := func() (string, error) {
+		if err := project.SavePostScript(s.postScriptPath(), script); err != nil {
+			return "", err
+		}
+		return assistant.PostScriptSaved(script == ""), nil
+	}
+	if s.askApproval(c, approval.Request{
+		Owner:   owner,
+		Kind:    approvalWorktreePostScript,
+		What:    what,
+		Details: []askpass.Detail{{Label: "Script", Value: value}},
+		Run:     save,
+	}) {
+		return
+	}
+	saved, err := save()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "saved": saved})
+}
+
+func (s *Server) renderSettingsProjectsWorktrees(c *gin.Context, script string, page render.Page) {
+	c.HTML(http.StatusOK, "settings_projects_worktrees.gohtml", render.SettingsProjectsData{
+		Page:        page,
+		SettingsNav: s.settingsNav("projects"),
+		PostScript:  script,
+		Timeout:     fmt.Sprintf("%d minutes", int(project.PostScriptTimeout.Minutes())),
+	})
 }
 
 func (s *Server) handleSettingsNotifications(c *gin.Context) {

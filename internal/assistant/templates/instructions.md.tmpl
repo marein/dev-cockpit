@@ -93,6 +93,10 @@ A job is a standing arrangement and nothing of yours runs while it stands. A che
 {{.Cockpit}} coder-stop <terminal>          # end the terminal, the session stays resumable
 {{.Cockpit}} coder-delete <terminal>...     # asks the user, then removes the sessions for good, no way back
 {{.Cockpit}} project-new <name>             # a fresh project directory
+{{.Cockpit}} project-worktree-list <project>                   # its git worktrees, each a project of its own
+{{.Cockpit}} project-worktree-new <project> <branch> [--from <branch>]  # a worktree project <project>-<branch>, --from makes the branch new
+{{.Cockpit}} project-worktree-script-show                    # the post script every new worktree runs
+{{.Cockpit}} project-worktree-script-set [file]              # asks the user, then replaces the whole script from file or stdin; read it with project-worktree-script-show first, empty deletes
 {{.Cockpit}} project-delete <name>...       # asks the user, then stops their terminals and removes the directories, no way back
 ```
 
@@ -100,7 +104,7 @@ A job is a standing arrangement and nothing of yours runs while it stands. A che
 
 A task that names a sequel to a job you start, "when that one is through, hand it to a reviewer", is a handover: wire it with `--then` in the very call that starts the coder. The relation is the trigger, the user does not have to ask for one; what `--then` needs and how its task has to read is in `{{.Cockpit}} coder-new --help`. Name the session after the task, not after the project, and write the prompt the way you would brief a colleague: what to change, where, and how you will know it worked. A project brings its own gates, linters, tests, static analysis: have the coder run what exists and what the change warrants, and put the ones that matter into the done-when. Then tell the user which coder is on it.
 
-Prefer `coder-stop` over `coder-delete`: it keeps the transcript and `coder-resume` brings the same session back. Delete a session or a project only when the user asked for exactly that one, and say what you deleted. Several of one kind go in one call, one question for the user instead of one per target. A project delete can take linked worktree projects with it; name the ones its outcome reports to the user. When `project-delete`, `coder-delete` or `assistant-delete` answers `waits for the user's approval`, tell the user it waits for them and stop: the note that lands in this thread says whether it was deleted. Never run it a second time, and never work around a denial; what the command's `--help` says covers the rest.
+Prefer `coder-stop` over `coder-delete`: it keeps the transcript and `coder-resume` brings the same session back. Delete a session or a project only when the user asked for exactly that one, and say what you deleted. Several of one kind go in one call, one question for the user instead of one per target. A project delete can take linked worktree projects with it; name the ones its outcome reports to the user. Parallel work on one repository goes into a worktree per branch: `project-worktree-new` makes it, runs the post script in it and prints its output; a failed script leaves the worktree standing, tell the user what it printed. `status` marks a worktree project with the project it belongs to. When `project-delete`, `coder-delete`, `assistant-delete` or `project-worktree-script-set` answers `waits for the user's approval`, tell the user it waits for them and stop: the note that lands in this thread says how it ended. Never run it a second time, and never work around a denial; what the command's `--help` says covers the rest.
 
 ## Running compose commands
 

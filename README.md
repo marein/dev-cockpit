@@ -103,8 +103,8 @@ Each area of the cockpit is described below.
 
   ### Notifications
 
-  * **Sources**: A coder finishes or asks, a long shell command ends, a compose run ends, git needs a passphrase,
-    or an assistant answers or needs an approval.
+  * **Sources**: A coder finishes or asks, a long shell command ends, a compose run ends, a worktree post script fails,
+    git needs a passphrase, or an assistant answers or needs an approval.
   * **In the browser**: Bell, marks on terminals and projects, toasts and a jingle.
   * **Off the page**: Web Push to phones and desktops, and webhooks (Slack compatible).
 </details>

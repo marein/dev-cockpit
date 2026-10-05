@@ -409,6 +409,7 @@ dc-host-status.dc-cockpit-icon { display: flex; }
 .dc-project-name > .icon { margin-right: 0.3rem; top: 0.6px; }
 .icon-xs { --tblr-icon-size: 0.875rem; }
 .dc-notice { --tblr-alert-padding-y: 0.5rem; }
+.dc-notice-text { white-space: pre-line; }
 .alert-dismissible .btn-close { top: calc(0.625rem - var(--tblr-alert-padding-y) / 4); }
 .dc-filter {
   position: relative; display: flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 0;

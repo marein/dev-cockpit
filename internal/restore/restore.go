@@ -264,8 +264,8 @@ func (s *Service) applyTabGroup(e Entry) {
 // entry, a project that was deleted): its notification entries, whose links
 // would resolve to nothing forever, and the job it was steered under, which
 // nothing can ever move again. Both files are read whole on every look at
-// them, so what is left in them is paid for again and again. The compose and
-// git prompt targets name a project and not a terminal, so the keep set
+// them, so what is left in them is paid for again and again. The compose, git
+// prompt and worktree targets name a project and not a terminal, so the keep set
 // carries them per existing project.
 func (s *Service) pruneDeadTargets() {
 	valid := map[string]bool{}
@@ -285,6 +285,7 @@ func (s *Service) pruneDeadTargets() {
 	for _, name := range s.projects() {
 		valid[notify.DockerTarget(name)] = true
 		valid[notify.GitPromptTarget(name)] = true
+		valid[notify.WorktreeTarget(name)] = true
 	}
 	if removed := s.notifier.PruneTargets(valid); removed > 0 {
 		log.Printf("terminal restore: pruned %d notification(s) without a live target", removed)

@@ -107,3 +107,11 @@ func AssistantDeleted(name string, released []Job) string {
 		Released []string
 	}{name, jobNames(released)}), "\n")
 }
+
+// PostScriptSaved is the outcome of an approved write of the worktree post
+// script: saved, or deleted where the content was empty.
+func PostScriptSaved(deleted bool) string {
+	return strings.TrimSuffix(render("approval_post_script_saved.md.tmpl", struct {
+		Deleted bool
+	}{deleted}), "\n")
+}

@@ -112,6 +112,10 @@ func DocsTopics() []DocsTopic {
 					Desc:  `A repository row carries a git button <i class="ti ti-brand-git align-text-bottom" aria-hidden="true"></i>. <em>New worktree</em> opens the create form with this project as the source, only on a main repository. <em>Fetch</em> reports in a toast how far the checked out branch stands from its upstream. <em>Commit changes</em> and <em>Compare revisions</em> open the editor on that view; switching the branch, push and pull stay in the editor's git sheet.`,
 				},
 				{
+					Title: "Worktree post script",
+					Desc:  `Settings &rarr; Projects &rarr; Worktrees holds one script that runs in every new worktree, its first line names the interpreter. A failure notifies, the worktree stays.`,
+				},
+				{
 					Title: "The list column keeps its width and place",
 					Desc:  `On a desktop the list next to the rail drags wider or narrower at its right edge, a double click puts the default back. Width and scroll position are kept per area on this device.`,
 				},
@@ -228,6 +232,12 @@ func DocsTopics() []DocsTopic {
 					Desc:     `A trigger hangs the assistant onto an event: a job closing done, blocked or expired, a coder ending its turn or asking, a cron schedule. Job closed covers all three job ends and Coder signals both coder signals. The reaction runs on its own, never in the conversation, and its answer is pushed into the thread marked <i class="ti ti-bolt align-text-bottom" aria-hidden="true"></i> and notified, unless its first line is NOTHING. New trigger <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> over the Triggers tab makes one, with an optional name the row and the notification then read by; Open coder, Change and Remove stand under every row, and Change moves everything but the event. A trigger may run on a model of its own, picked in its form; empty means the assistant's Triggers pick, else its chat model. A trigger stands until you remove it unless you give it an expiry, any number of minutes, hours or days, or make it a one shot, and one that names several terminals fires on any of them or waits for all of them. A schedule carries the time zone its wall clock times are read in, which stands beside its crontab fields on the row and is what the next tick is shown in; picking another one in the form is also what the next schedule then starts on. Around a daylight saving changeover a schedule follows the wall clock: a time the spring change skips falls out that day, an hour the autumn change repeats fires twice.`,
 				},
 				{
+					Title:    "Worktrees",
+					Tag:      "Git",
+					TagClass: "bg-blue-lt",
+					Desc:     `An assistant lists a project's worktrees and makes new ones, named <code>&lt;project&gt;-&lt;branch&gt;</code>. The worktree post script runs in it, the assistant reads its output. It reads the post script and replaces it once you approve.`,
+				},
+				{
 					Title:    "Compose commands",
 					Tag:      "Docker",
 					TagClass: "bg-blue-lt",
@@ -237,7 +247,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Approvals",
 					Tag:      "Approval",
 					TagClass: "bg-blue-lt",
-					Desc:     `A compose command marked to ask first and an assistant's delete of a project, a coder or an assistant wait for your <em>Approve</em> in a dialog on every page, which names the action, the assistant asking and what it acts on: the stack and the project with the command line and its directory, the project, the coder and its project, or the assistant, an assistant or a coder with its short id behind the name. An assistant deleting several of one kind asks once for all of them, and the note names what went and what failed and why. Nothing runs before it. <em>Approve</em> runs it as things stand then, and anything gone meanwhile fails it; <em>Deny</em>, half an hour without an answer or a restart decline it. Either way a grey note lands in the assistant's thread, and it rings you only when nobody decided or the approved action failed. <em>Approve and don't ask again</em>, or its switch under Settings &rsaquo; Assistants &rsaquo; Approvals, turns that question off for every assistant.`,
+					Desc:     `A compose command marked to ask first an assistant's delete of a project, a coder or an assistant and its write of the worktree post script wait for your <em>Approve</em> in a dialog on every page, which names the action, the assistant asking and what it acts on: the stack and the project with the command line and its directory, the project, the coder and its project, the assistant, or the new script, an assistant or a coder with its short id behind the name. An assistant deleting several of one kind asks once for all of them, and the note names what went and what failed and why. Nothing runs before it. <em>Approve</em> runs it as things stand then, and anything gone meanwhile fails it; <em>Deny</em>, half an hour without an answer or a restart decline it. Either way a grey note lands in the assistant's thread, and it rings you only when nobody decided or the approved action failed. <em>Approve and don't ask again</em>, or its switch under Settings &rsaquo; Assistants &rsaquo; Approvals, turns that question off for every assistant.`,
 				},
 				{
 					Title:    "Steer and release where the coder is",
@@ -582,6 +592,10 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "A git question",
 					Desc:  `A <code>dev-cockpit git</code> command waiting for a passphrase is news like any other, one entry per place, so it reaches you with no cockpit page open, phone included. Opening any page shows the dialog, and the entry marks itself read once the dialog stands in front of you. The editor's own git actions raise none of this, you started them on a page that already shows the dialog.`,
+				},
+				{
+					Title: "A failed worktree post script",
+					Desc:  `One entry per worktree project, with the reason and the last lines of output. A script that passes rings nothing. Opening or deleting the project reads it.`,
 				},
 				{
 					Title: "An approval",

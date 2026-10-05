@@ -172,7 +172,7 @@
 <div class="alert alert-{{$level}}{{if .Dismiss}} alert-dismissible{{end}} dc-notice {{if .Class}}{{.Class}}{{else}}mb-3{{end}}" role="alert">
   <div class="d-flex gap-2">
     <i class="ti {{if eq $level "success"}}ti-circle-check{{else if eq $level "danger"}}ti-alert-circle{{else if eq $level "warning"}}ti-alert-triangle{{else}}ti-info-circle{{end}} icon alert-icon" aria-hidden="true"></i>
-    <div class="text-break min-w-0">{{.Message}}</div>
+    <div class="text-break min-w-0 dc-notice-text">{{.Message}}</div>
   </div>
   {{if .Dismiss}}<a class="btn-close" data-bs-dismiss="alert" aria-label="close"></a>{{end}}
 </div>
