@@ -28,7 +28,6 @@ type CostsData struct {
 // CostBoard is everything under the page head, the part a live update and
 // a move to another state of the page swap.
 type CostBoard struct {
-	Booked     bool
 	Toolbar    CostToolbar
 	Tiles      []CostTile
 	Charts     []CostChart
@@ -82,7 +81,6 @@ func NewCostBoard(r cost.Report, splits CostSplits, s CostState, prices string) 
 	now := r.Now
 	from, to := s.Bounds(now)
 	b := CostBoard{
-		Booked:     r.Booked,
 		Unpriced:   r.Unpriced,
 		RangeLabel: s.rangeLabel(now),
 		Prices:     prices,

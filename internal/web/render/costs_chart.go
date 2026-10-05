@@ -36,8 +36,11 @@ type CostColumn struct {
 	Current    bool
 	Drill      string
 	DrillLabel string
-	Segments   []CostSegment
-	Tips       []CostTipRow
+	// DrillHint stands in the tooltip for the link where a click on the
+	// bar drills itself.
+	DrillHint string
+	Segments  []CostSegment
+	Tips      []CostTipRow
 }
 
 // CostSegment is one stacked part of a bar, V its spend.
@@ -203,9 +206,9 @@ func newCostChart(key, by string, buckets []cost.Bucket, s CostState, now time.T
 		}
 		if inner := costStep(b.Start, b.End, now); inner < step && !b.Start.After(now) {
 			col.Drill = s.custom(b.Start, b.End, now).URL() + "#cost-" + key
-			col.DrillLabel = "Show the days of " + col.Label
+			col.DrillLabel, col.DrillHint = "Show the days of "+col.Label, "Click the bar to show the days"
 			if inner == cost.StepHour {
-				col.DrillLabel = "Show the hours of " + col.Label
+				col.DrillLabel, col.DrillHint = "Show the hours of "+col.Label, "Click the bar to show the hours"
 			}
 		}
 		peak = math.Max(peak, b.USD)

@@ -12,7 +12,7 @@
     </div>
   </div>
   <div class="card-body">
-    {{if .Empty}}<div class="text-secondary small" data-cost-nothing>Nothing in this period.</div>{{else}}
+    {{if .Empty}}<div class="text-secondary small mb-2" data-cost-nothing>Nothing in this period.</div>{{end}}
     <div class="dc-cost-frame" style="--n: {{len .Columns}}" data-cost-frame data-top="{{.Top}}">
       <div class="dc-cost-plot" aria-hidden="true">
         {{range .Grid}}<div class="dc-cost-grid" style="--b: {{printf "%.2f" .Bottom}}"><span>{{.Label}}</span></div>{{end}}
@@ -23,16 +23,15 @@
       <div class="card card-sm dc-cost-tip" role="tooltip" hidden data-cost-tip></div>
     </div>
     <div class="dc-cost-axis small text-secondary" aria-hidden="true">{{range .Labels}}<span class="{{.Anchor}}{{if .Minor}} minor{{end}}" style="--l: {{printf "%.2f" .Left}}">{{.Label}}</span>{{end}}</div>
-    {{if .Legend}}<div class="d-flex flex-wrap gap-2 mt-3" role="group" aria-label="Series, a click shows only one, Ctrl click or long press hides or shows one" data-cost-legend>
+    {{if and .Legend (not .Empty)}}<div class="d-flex flex-wrap gap-2 mt-3" role="group" aria-label="Series, a click shows only one, Ctrl click or long press hides or shows one" data-cost-legend>
       {{range .Legend}}<button type="button" class="btn btn-sm dc-cost-key" aria-pressed="true" data-series="{{.Key}}"><span class="dc-cost-swatch {{.Color}}"{{with .Hue}} style="--dc-h: {{.}}"{{end}} aria-hidden="true"></span><span class="text-break">{{.Label}}</span><span class="text-secondary">{{.Value}}</span></button>{{end}}
     </div>{{end}}
     {{range .Columns}}<template data-cost-tipbody="{{.Key}}">
       <div class="text-secondary small">{{.Label}}</div>
       <div class="fw-bold fs-3">{{.Value}}</div>
       {{range .Tips}}<div class="dc-cost-tiprow" data-series="{{.Series}}"><span class="dc-cost-linekey {{.Color}}"{{with .Hue}} style="--dc-h: {{.}}"{{end}} aria-hidden="true"></span><span class="fw-medium text-nowrap">{{.Value}}</span><span class="text-secondary text-break">{{.Label}}</span></div>{{end}}
-      {{if .Drill}}<a href="{{.Drill}}" class="small d-inline-block mt-1" data-cost-tipdrill>{{.DrillLabel}}</a>{{end}}
+      {{if .Drill}}<a href="{{.Drill}}" class="small d-inline-block mt-1" data-cost-tipdrill>{{.DrillLabel}}</a><div class="small text-secondary mt-1" data-cost-tiphint>{{.DrillHint}}</div>{{end}}
     </template>{{end}}
-    {{end}}
   </div>
 </div>
 {{end}}

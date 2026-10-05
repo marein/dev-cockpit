@@ -23,7 +23,7 @@ func TestMoney(t *testing.T) {
 // the given parts in its last hour.
 func costDayReport(now time.Time, parts []cost.Share) cost.Report {
 	from := cost.DayStart(now)
-	r := cost.Report{Now: now, Booked: true}
+	r := cost.Report{Now: now}
 	for h := 0; h < 24; h++ {
 		start := from.Add(time.Duration(h) * time.Hour)
 		r.Buckets = append(r.Buckets, cost.Bucket{Start: start, End: start.Add(time.Hour)})
@@ -161,7 +161,7 @@ func TestCostChartDrillsIntoADayAndAWeek(t *testing.T) {
 	now := time.Date(2026, 10, 7, 15, 0, 0, 0, time.UTC)
 	s := costTestState("range=90d", now)
 	span := s.Span(now)
-	r := cost.Report{Now: now, Booked: true}
+	r := cost.Report{Now: now}
 	for start := span.From; start.Before(span.To); {
 		end := cost.AddDays(cost.WeekStart(start), 7)
 		if end.After(span.To) {
@@ -202,6 +202,22 @@ func TestCostBoardTemplateRenders(t *testing.T) {
 	for _, want := range []string{`data-cost-col="`, `data-cost-tipbody="`, `data-series="p:shop"`, `data-cost-chart="model"`, `data-cost-nothing>`, `data-cost-unpriced>1 session ran`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("the board misses %s", want)
+		}
+	}
+}
+
+func TestAnEmptyBoardRendersTheWholePage(t *testing.T) {
+	now := time.Date(2026, 10, 2, 15, 0, 0, 0, time.UTC)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	var out strings.Builder
+	if err := tmpl.ExecuteTemplate(&out, "costs_board.gohtml", NewCostBoard(cost.Report{Now: now}, CostSplits{}, costTestState("", now), "List prices.")); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	counts := map[string]int{`data-cost-tile="Today">$0.00<`: 1, `data-cost-tile="This month">$0.00<`: 1, `data-cost-toolbar`: 1, `data-cost-frame`: 4, `dc-cost-axis`: 4, `data-cost-nothing>`: 4, `data-cost-legend`: 0}
+	for want, n := range counts {
+		if got := strings.Count(html, want); got != n {
+			t.Errorf("%s %d times, want %d", want, got, n)
 		}
 	}
 }
@@ -256,7 +272,7 @@ func TestCostDaysPastTheFoldHaveNoHours(t *testing.T) {
 		}
 	}
 	s := costTestState("range=lastmonth", now)
-	r := cost.Report{Now: now, Booked: true}
+	r := cost.Report{Now: now}
 	from, to := s.Bounds(now)
 	for d := from; d.Before(to); d = cost.AddDays(d, 1) {
 		r.Buckets = append(r.Buckets, cost.Bucket{Start: d, End: cost.AddDays(d, 1)})

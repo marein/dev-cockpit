@@ -63,8 +63,6 @@ type Report struct {
 	// TopUp is the part of the range's spend that a CLI's own running total
 	// holds above its logged calls, calls it made without a record.
 	TopUp float64
-	// Booked says whether any row is booked at all.
-	Booked bool
 }
 
 // Ranges of the breakdowns: calendar periods, the one before them, and
@@ -227,7 +225,7 @@ func (s *Service) Query(loc *time.Location, span Span) Report {
 
 func build(rows []Row, now time.Time, span Span) Report {
 	today, week, month := DayStart(now), WeekStart(now), MonthStart(now)
-	r := Report{Now: now, Buckets: buckets(span), Booked: len(rows) > 0}
+	r := Report{Now: now, Buckets: buckets(span)}
 	parts := make([]map[Share]*Share, len(r.Buckets))
 	for i := range parts {
 		parts[i] = map[Share]*Share{}

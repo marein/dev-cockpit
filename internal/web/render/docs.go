@@ -626,7 +626,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "The page",
-					Desc:  `Tiles for today and this month. Below them the period, then four charts of spend by project, by assistant, by coder and by model. <em>No project</em> is spend outside every project and assistant. Days follow the assistant time zone. The address holds the period, not the hidden series.`,
+					Desc:  `Tiles for today and this month. Below them the period, then four charts of spend by project, by assistant, by coder and by model. <em>No project</em> is spend outside every project and assistant. Days follow the assistant time zone. The address holds the period, not the hidden series. Before anything is booked, it shows the same at $0.00.`,
 				},
 				{
 					Title: "Period",
@@ -634,7 +634,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Charts",
-					Desc:  `Each chart stacks every series that spent in the period, the header holds its total. By project shows all assistants as one series. The legend holds each series' total. A click shows only that series and again all, Ctrl, Cmd or Shift click or a long press hides or shows one. Hover or tap a bar for its numbers, a click opens its hours or days. A chart without spend shows one line.`,
+					Desc:  `Each chart stacks every series that spent in the period, the header holds its total. By project shows all assistants as one series. The legend holds each series' total. A click shows only that series and again all, Ctrl, Cmd or Shift click or a long press hides or shows one. Hover or tap a bar for its numbers. A click on the bar opens its hours or days, on touch the link in the tooltip. A chart without spend shows its axes and one line.`,
 				},
 				{
 					Title: "How it is booked",

@@ -14,13 +14,6 @@
 {{/* Everything under the head, what /costs/board answers on the costs event
      and what a move to another state of the page swaps in. */}}
 {{define "costs_board.gohtml"}}
-{{if not .Booked}}
-<div class="empty">
-  <div class="empty-icon"><i class="ti ti-currency-dollar" aria-hidden="true"></i></div>
-  <p class="empty-title">Nothing booked yet</p>
-  <p class="empty-subtitle text-secondary">Shows once claude reports spend.</p>
-</div>
-{{else}}
 <div class="row row-cards mb-3" data-cost-tiles>
   {{range .Tiles}}
   <div class="col-6">
@@ -37,7 +30,6 @@
 {{template "cost_toolbar.gohtml" .Toolbar}}
 {{range .Charts}}{{template "cost_chart.gohtml" dict "Chart" . "Range" $.RangeLabel}}{{end}}
 <p class="text-secondary small mt-3 mb-0" data-cost-prices>{{.Prices}}{{if .TopUp}} {{.TopUp}} from claude's own totals beyond its logged calls.{{end}}{{if .Unpriced}} <span data-cost-unpriced>{{.Unpriced}} {{if eq .Unpriced 1}}session{{else}}sessions{{end}} ran a model without a list price, booked at $0.</span>{{end}}</p>
-{{end}}
 {{end}}
 
 {{/* The period: a step back and forth, the presets as rows and a custom

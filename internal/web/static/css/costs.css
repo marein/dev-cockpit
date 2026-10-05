@@ -19,7 +19,10 @@ dc-costs { display: block; --dc-cost-bar: 3.5rem; }
 }
 [data-cost-chart] { scroll-margin-top: calc(var(--dc-cost-bar) + .5rem); }
 dc-costs.dc-cost-loading > :not([data-cost-toolbar]) { opacity: .55; transition: opacity .15s; }
-.dc-cost-periods { min-width: 17rem; }
+.dc-cost-periods {
+  min-width: 17rem; max-height: calc(var(--dc-cost-menu-room, 100dvh) - .5rem);
+  overflow-y: auto; overscroll-behavior: contain;
+}
 .dc-cost-periods .dropdown-item { display: flex; align-items: center; }
 .dc-cost-frame { position: relative; height: 220px; margin-left: 52px; }
 .dc-cost-plot { position: absolute; inset: 0; border-bottom: 1px solid var(--tblr-border-color); }

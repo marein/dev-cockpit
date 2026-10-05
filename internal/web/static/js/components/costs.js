@@ -27,6 +27,7 @@ class Costs extends HTMLElement {
       signal,
     );
     onServerEvent("costs", pull, { signal });
+    this.addEventListener("show.bs.dropdown", (event) => this.fitMenu(event.target), { signal });
     window.addEventListener("pe:navigate", (event) => this.claim(event, new URL(event.detail.url, location.origin)), { signal });
     window.addEventListener("pe:form", (event) => this.claim(event, new URL(event.detail.form.action, location.origin)), { signal });
   }
@@ -59,6 +60,17 @@ class Costs extends HTMLElement {
     this.replaceChildren(...fresh.childNodes);
     this.chart.restore(live ? tip : null);
     if (focus && !this.contains(document.activeElement)) this.querySelector(focus)?.focus({ preventScroll: true });
+  }
+
+  // fitMenu caps a menu at the larger room beside its toggle inside the work
+  // body, before Popper places it, so Popper flips it to the side it fits.
+  fitMenu(toggle) {
+    const menu = toggle.parentElement.querySelector(".dropdown-menu");
+    const body = this.closest(".dc-work-body");
+    if (!menu || !body) return;
+    const room = body.getBoundingClientRect();
+    const at = toggle.getBoundingClientRect();
+    menu.style.setProperty("--dc-cost-menu-room", `${Math.max(at.top - room.top, room.bottom - at.bottom)}px`);
   }
 
   locate(el) {

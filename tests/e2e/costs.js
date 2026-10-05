@@ -178,6 +178,26 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
   await L.createProject(page, BLOG);
   const shopPath = await L.projectPath(page, SHOP);
   const blogPath = await L.projectPath(page, BLOG);
+  await run("with nothing booked the page shows both tiles at $0.00, the period and four empty charts", async () => {
+    for (const [p, shot] of [[page, "cost-empty-new-desktop.png"], [await mobilePage(), "cost-empty-new-mobile.png"]]) {
+      await openCosts(p);
+      const empty = await p.evaluate(() => {
+        const shown = (el) => !!el && getComputedStyle(el).display !== "none" && el.getBoundingClientRect().height > 0;
+        const charts = [...document.querySelectorAll("[data-cost-chart]")];
+        return {
+          tiles: [...document.querySelectorAll("[data-cost-tile]")].filter(shown).map((el) => el.textContent.trim()),
+          bar: shown(document.querySelector("[data-cost-toolbar] [data-cost-period]")),
+          charts: charts.filter((c) => [".dc-cost-frame", ".dc-cost-axis", "[data-cost-nothing]"].every((sel) => shown(c.querySelector(sel)))).length,
+          legend: document.querySelectorAll("[data-cost-legend] [data-series]").length,
+          note: shown(document.querySelector("[data-cost-note]")),
+          old: document.querySelectorAll("dc-costs .empty").length,
+        };
+      });
+      assert(empty.tiles.join() === "$0.00,$0.00" && empty.bar && empty.charts === 4 && empty.legend === 0 && empty.note && empty.old === 0, `the empty page ${JSON.stringify(empty)}`);
+      if (process.env.SHOTS_DIR) await p.screenshot({ path: path.join(process.env.SHOTS_DIR, shot) });
+    }
+  });
+
   const now = Date.now();
   const twoDaysAgo = now - 2 * 86400000;
   const shopCall = call(A, shopPath, "claude-opus-5-5", 2.5, twoDaysAgo);
@@ -442,6 +462,8 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
       await col.hover();
       const tip = await waitFor(() => tipShown(page), "the tooltip on hover", 4000);
       assert(tip.includes("$2.75") && tip.includes("Assistants") && !/Running total/.test(tip), `tooltip ${tip}`);
+      assert(/Click the bar to show the hours/.test(tip) && !/Show the hours of/.test(tip) && await page.locator("[data-cost-tip] [data-cost-tipdrill]").count() === 0, `the hover tooltip offers a link, not the hint: ${tip}`);
+      if (process.env.SHOTS_DIR) await page.screenshot({ path: path.join(process.env.SHOTS_DIR, "cost-units-tooltip-desktop.png") });
       const height = () => col.locator(".dc-cost-stack").evaluate((el) => el.getBoundingClientRect().height);
       const before = await height();
       await page.click('[data-cost-legend] [data-series="assistants"]', { modifiers: ["Control"] });
@@ -541,7 +563,7 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
         assert((await offCount()) === 0, "a second long press does not bring it back");
         await m.locator(COL).nth(27).tap();
         const tip = await waitFor(() => tipShown(m), "the tooltip on a tap", 4000);
-        assert(/Show the hours of/.test(tip), `the tapped tooltip ${tip}`);
+        assert(/Show the hours of/.test(tip) && !/Click the bar/.test(tip), `the tapped tooltip ${tip}`);
         assert(new URL(m.url()).searchParams.get("range") === "30d", "the tap drilled instead of showing the numbers");
         await Promise.all([m.waitForURL(/range=custom/), m.locator("[data-cost-tipdrill]:visible").tap()]);
         await waitFor(async () => (await chartTitle(m)) === "Spend per hour by project", "the tapped link opening the day");
@@ -568,6 +590,47 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
         });
         assert(at.scrolled > 0 && Math.abs(at.offset) < 1, `the bar is not pinned to the top edge ${JSON.stringify(at)}`);
         assert(at.below >= 0 && at.inside && at.bg !== "rgba(0, 0, 0, 0)", `the chart lands under the bar or the bar shows through ${JSON.stringify(at)}`);
+      }
+      await ctx.close();
+    });
+
+    await run("the period menu fits a landscape phone and scrolls to its last entry", async () => {
+      const ctx = await browser.newContext({ ignoreHTTPSErrors: true, hasTouch: true, isMobile: true, viewport: { width: 740, height: 360 } });
+      const m = await ctx.newPage();
+      await L.login(m);
+      await openCosts(m);
+      for (const pinned of [false, true]) {
+        if (pinned) await m.evaluate(() => document.getElementById("cost-assistant").scrollIntoView());
+        await m.click("[data-cost-period]");
+        await m.waitForSelector("[data-cost-ranges].show");
+        await sleep(300);
+        const fit = await m.evaluate(() => {
+          const body = document.querySelector(".dc-work-body").getBoundingClientRect();
+          const menu = document.querySelector("[data-cost-ranges]");
+          const r = menu.getBoundingClientRect();
+          return { top: r.top, bottom: r.bottom, bodyTop: body.top, bodyBottom: body.bottom, vh: innerHeight, overflow: getComputedStyle(menu).overflowY, scrolls: menu.scrollHeight > menu.clientHeight };
+        });
+        assert(fit.top >= fit.bodyTop && fit.bottom <= Math.min(fit.bodyBottom, fit.vh), `the menu runs out of the work body ${JSON.stringify({ pinned, ...fit })}`);
+        assert(fit.overflow === "auto" && fit.scrolls, `the menu does not scroll inside ${JSON.stringify({ pinned, ...fit })}`);
+        const before = await m.evaluate(() => document.querySelector(".dc-work-body").scrollTop);
+        const box = await m.locator("[data-cost-ranges]").boundingBox();
+        await m.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await m.mouse.wheel(0, 2000);
+        const last = '[data-cost-custom] button[type="submit"]';
+        await waitFor(() => m.evaluate((sel) => {
+          const menu = document.querySelector("[data-cost-ranges]").getBoundingClientRect();
+          const b = document.querySelector(sel).getBoundingClientRect();
+          return b.top >= menu.top && b.bottom <= menu.bottom + 1;
+        }, last), "the last entry scrolled into the menu", 5000);
+        const after = await m.evaluate(() => document.querySelector(".dc-work-body").scrollTop);
+        assert(after === before, `scrolling the menu moved the page from ${before} to ${after}`);
+        if (pinned) {
+          if (process.env.SHOTS_DIR) await m.screenshot({ path: path.join(process.env.SHOTS_DIR, "cost-dropdown-landscape.png") });
+          await Promise.all([m.waitForURL(/range=custom/), m.locator(last).click()]);
+        } else {
+          await m.keyboard.press("Escape");
+          await m.waitForSelector("[data-cost-ranges].show", { state: "detached" });
+        }
       }
       await ctx.close();
     });

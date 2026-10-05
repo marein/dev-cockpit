@@ -14,6 +14,7 @@ export function createChart(root, signal) {
     const body = root.querySelector(`template[data-cost-tipbody="${CSS.escape(col.dataset.costCol)}"]`);
     if (!tip || !body) return;
     tip.replaceChildren(body.content.cloneNode(true));
+    tip.querySelector(pinned ? "[data-cost-tiphint]" : "[data-cost-tipdrill]")?.remove();
     for (const row of tip.querySelectorAll("[data-series]")) row.classList.toggle("off", hidden.has(row.dataset.series));
     tip.classList.toggle("pinned", pinned);
     tip.hidden = false;

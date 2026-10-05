@@ -89,7 +89,7 @@ func FuzzCostPage(f *testing.F) {
 		}
 
 		span := state.Span(now)
-		r := cost.Report{Now: now, Booked: true, Today: 1, Month: 2, TopUp: 0.5, Unpriced: 1}
+		r := cost.Report{Now: now, Today: 1, Month: 2, TopUp: 0.5, Unpriced: 1}
 		r.Buckets = costFuzzBuckets(t, books, loc, span, amounts)
 		split := func(by cost.Dimension) []cost.Bucket {
 			span.By = by
