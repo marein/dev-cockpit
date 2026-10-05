@@ -97,7 +97,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Cockpit",
 					Tag:      "Phone and tablet",
 					TagClass: "bg-blue-lt",
-					Desc:     `The last tab bar entry. Its gauge icon keeps the tab's color while CPU, RAM and disk stay below 80 percent, turns yellow from 80 and red from 95. A blue dot means an unread notification or a backup file to resolve. A tap opens a sheet as tall as the other lists: CPU, RAM and disk in one row (with a pointer, hover shows the numbers), the three newest notifications with Show all, tiles for theme (shows the mode in force), update (Up to date, or Update to the newer version) and logout, the settings sections with the count of backup files to resolve, and the docs.`,
+					Desc:     `The last tab bar entry. Its gauge icon keeps the tab's color while CPU, RAM and disk stay below 80 percent, turns yellow from 80 and red from 95. A blue dot means an unread notification or a backup file to resolve. A tap opens a sheet as tall as the other lists: CPU, RAM and disk in one row (with a pointer, hover shows the numbers), the three newest notifications with Show all, tiles for theme (shows the mode in force), update (Up to date, or Update to the newer version, a tap checks now) and logout, the settings sections with the count of backup files to resolve, and the docs.`,
 				},
 				{
 					Title: "The project row's menu",

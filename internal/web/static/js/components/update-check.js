@@ -13,15 +13,12 @@ const KEY = "dc-update";
 // update action, and drives
 // the download/restart from the confirm dialog. The syscall.Exec restart on the
 // server is unaffected; this only owns the UI.
-// paintTile words the Cockpit sheet's update tile after a check: Update to
-// <version> and a control while one exists, Up to date and nothing to press
-// otherwise. A build that cannot update itself never reaches here, its tile
-// keeps the Up to date it renders with.
+// paintTile words the Cockpit sheet's update tile after a check. A build that
+// cannot update itself never reaches here, its tile keeps the Up to date it
+// renders with.
 function paintTile(tile, status) {
   const label = tile.querySelector("[data-cockpit-update-label]");
   const icon = tile.querySelector("[data-cockpit-update-icon]");
-  tile.disabled = !status.available;
-  tile.toggleAttribute("data-update-open", Boolean(status.available));
   tile.classList.toggle("text-primary", Boolean(status.available));
   if (label) label.textContent = status.available ? `Update to ${status.latest}` : "Up to date";
   if (icon) icon.className = `ti ${status.available ? "ti-arrow-up-circle" : "ti-circle-check"}`;

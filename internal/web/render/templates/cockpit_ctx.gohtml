@@ -23,10 +23,9 @@
       <div class="col-auto">{{template "theme_cycle.gohtml" (dict "Class" "btn btn-icon d-flex align-items-center justify-content-center p-0 dc-cockpit-tile dc-cockpit-tile-square" "Tile" true)}}</div>
       <div class="col-auto"><a href="/costs" class="btn btn-icon d-flex align-items-center justify-content-center p-0 dc-cockpit-tile dc-cockpit-tile-square" aria-label="Costs" title="Costs" data-cockpit-costs><i class="ti ti-currency-dollar" aria-hidden="true"></i></a></div>
       <div class="col">
-        {{/* Only an update that exists makes this a control: update-check.js
-             turns the tile into one when the check found a newer version,
-             and a build that cannot update itself keeps it as it renders. */}}
-        <button type="button" class="btn w-100 h-100 d-flex align-items-center justify-content-center gap-2 px-2 py-2 dc-cockpit-tile" data-cockpit-update disabled>
+        {{/* Pressable in every state, like the footer's version link: it runs
+             the same forced check and dialog through update-check.js. */}}
+        <button type="button" class="btn w-100 h-100 d-flex align-items-center justify-content-center gap-2 px-2 py-2 dc-cockpit-tile" data-cockpit-update data-update-open>
           <i class="ti ti-circle-check" data-cockpit-update-icon aria-hidden="true"></i><span class="text-wrap text-break text-center" data-cockpit-update-label>Up to date</span>
         </button>
       </div>

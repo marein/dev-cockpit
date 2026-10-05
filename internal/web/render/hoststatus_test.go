@@ -153,9 +153,8 @@ func TestTheCockpitSheetOrder(t *testing.T) {
 	}
 }
 
-// The update tile renders as a status and not as a control: only a check that
-// found a newer version turns it into one, so a build that cannot update itself
-// never offers a press that ends in a failed check.
+// The update tile renders Up to date and pressable, like the footer's version
+// link, so a tap runs the same forced check in every state.
 func TestTheCockpitSheetUpdateTileStartsUpToDate(t *testing.T) {
 	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
 	var out strings.Builder
@@ -163,8 +162,8 @@ func TestTheCockpitSheetUpdateTileStartsUpToDate(t *testing.T) {
 		t.Fatalf("render Cockpit sheet: %v", err)
 	}
 	tile := cut(t, out.String(), "data-cockpit-update", "</button>")
-	if !strings.Contains(tile, "disabled") || !strings.Contains(tile, "Up to date") || strings.Contains(tile, "data-update-open") {
-		t.Fatalf("the update tile does not start as a disabled Up to date:\n%s", tile)
+	if strings.Contains(tile, "disabled") || !strings.Contains(tile, "Up to date") || !strings.Contains(tile, "data-update-open") {
+		t.Fatalf("the update tile does not start as a pressable Up to date:\n%s", tile)
 	}
 }
 

@@ -38,6 +38,8 @@ const { assert, sleep, BASE } = L;
 //   review-keep post, which is what publishes the event.
 // - the update tile checks answer /update/check themselves (page.route), with
 //   the prompt for that version marked as shown, so no dialog pops on load.
+//   SHOTS_DIR also saves the Up to date dialog after the tap, 360 wide, as
+//   mobile-update-dialog.png.
 // - logout ends the phone's session, so it runs last.
 // - SHOTS_DIR saves the tab bar and the open sheet side by side as
 //   control-center.png.
@@ -541,20 +543,27 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
     await closeSheet(mp);
   });
 
-  await run("the update tile: Up to date and inert, Update to <version> and acting only while one exists", async () => {
+  await run("the update tile: always pressable like the footer, Up to date runs a forced check and its dialog, Update to <version> confirms", async () => {
     const running = await mp.$eval("dc-update-check", (el) => el.dataset.version);
     const answer = { body: null };
-    await mp.route("**/update/check*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(answer.body) }));
+    const forced = [];
+    await mp.route("**/update/check*", (route) => {
+      if (/[?&]force=1/.test(route.request().url())) forced.push(route.request().url());
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(answer.body) });
+    });
     const seed = (promptedVersion) => mp.evaluate((v) => {
       try { localStorage.setItem("dc-update", JSON.stringify(v ? { prompted: Date.now(), promptedVersion: v } : {})); } catch (e) { /* blocked storage */ }
     }, promptedVersion);
     const tile = () => mp.$eval(`${SHEET} [data-cockpit-update]`, (el) => ({
       text: el.textContent.replace(/\s+/g, " ").trim(), disabled: el.disabled, acts: el.hasAttribute("data-update-open"),
     }));
-    const dialogFor = async (ms) => mp.waitForSelector(".swal2-popup", { timeout: ms }).then(() => true, () => false);
+    const swalTitle = () => mp.evaluate(() => {
+      const t = document.querySelector(".swal2-container .swal2-title");
+      return t && t.getClientRects().length > 0 ? t.textContent.trim() : "";
+    });
     const cases = [
-      { name: "a build that cannot update itself", body: { supported: false } },
-      { name: "no newer version", body: { supported: true, available: false, current: running, latest: running, writable: true } },
+      { name: "a build that cannot update itself", body: { supported: false }, title: "Could not check for updates" },
+      { name: "no newer version", body: { supported: true, available: false, current: running, latest: running, writable: true }, title: "Up to date" },
     ];
     for (const c of cases) {
       answer.body = c.body;
@@ -563,10 +572,26 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
       await sleep(800);
       await openCockpit(mp);
       const t = await tile();
-      assert(t.text === "Up to date" && t.disabled && !t.acts, `${c.name}: the tile reads ${JSON.stringify(t)}`);
-      await mp.tap(`${SHEET} [data-cockpit-update]`, { force: true });
-      assert(!(await dialogFor(1500)), `${c.name}: a tap on the tile opened a dialog`);
-      await closeSheet(mp);
+      assert(t.text === "Up to date" && !t.disabled && t.acts, `${c.name}: the tile reads ${JSON.stringify(t)}`);
+      forced.length = 0;
+      await mp.tap(`${SHEET} [data-cockpit-update]`);
+      await mp.waitForFunction((want) => {
+        const el = document.querySelector(".swal2-container .swal2-title");
+        return el && el.getClientRects().length > 0 && el.textContent.trim() === want;
+      }, c.title, { timeout: 8000 }).catch(() => {});
+      const title = await swalTitle();
+      assert(title === c.title, `${c.name}: a tap showed ${JSON.stringify(title)}, not ${JSON.stringify(c.title)}`);
+      assert(forced.length >= 1, `${c.name}: the tap ran no forced check`);
+      if (process.env.SHOTS_DIR && c.title === "Up to date") {
+        const size = mp.viewportSize();
+        await mp.setViewportSize({ width: 360, height: size.height });
+        await sleep(1000);
+        await mp.screenshot({ path: `${process.env.SHOTS_DIR}/mobile-update-dialog.png` });
+        await mp.setViewportSize(size);
+      }
+      await mp.locator(".swal2-confirm").click();
+      await mp.waitForSelector(".swal2-container", { state: "detached", timeout: 5000 });
+      if (await mp.$(SHEET)) await closeSheet(mp);
     }
     answer.body = { supported: true, available: true, current: running, latest: "9.9.9", writable: true, releases: [] };
     await seed("9.9.9");
