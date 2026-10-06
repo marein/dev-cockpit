@@ -103,6 +103,18 @@
     </div>
     <div data-sessions-body>
       <div class="project-chips mt-2">
+      {{if not $delete.Running}}
+      <a href="/coders/new?project={{urlquery .Name}}&amp;return={{urlquery (printf "/projects#project-%s" .Name)}}" class="project-chip project-chip-new" title="Start coder in project {{.Name}}" aria-label="Start coder in project {{.Name}}">
+        <i class="ti ti-robot" aria-hidden="true"></i><i class="ti ti-plus" aria-hidden="true"></i>
+      </a>
+      <form method="post" action="/shells/new" class="project-chip-form">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="project" value="{{.Path}}">
+        <button type="submit" class="project-chip project-chip-new" title="Start shell in project {{.Name}}" aria-label="Start shell in project {{.Name}}">
+          <i class="ti ti-terminal-2" aria-hidden="true"></i><i class="ti ti-plus" aria-hidden="true"></i>
+        </button>
+      </form>
+      {{end}}
       <span class="project-chip-fold" data-chip-fold="terminals">
         {{range .ActiveRefs}}
         {{if eq .Kind "coder"}}
@@ -146,18 +158,6 @@
         </div>
         {{end}}
       </span>
-      {{if not $delete.Running}}
-      <a href="/coders/new?project={{urlquery .Name}}&amp;return={{urlquery (printf "/projects#project-%s" .Name)}}" class="project-chip project-chip-new" title="Start coder in project {{.Name}}" aria-label="Start coder in project {{.Name}}">
-        <i class="ti ti-robot" aria-hidden="true"></i><i class="ti ti-plus" aria-hidden="true"></i>
-      </a>
-      <form method="post" action="/shells/new" class="project-chip-form">
-        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-        <input type="hidden" name="project" value="{{.Path}}">
-        <button type="submit" class="project-chip project-chip-new" title="Start shell in project {{.Name}}" aria-label="Start shell in project {{.Name}}">
-          <i class="ti ti-terminal-2" aria-hidden="true"></i><i class="ti ti-plus" aria-hidden="true"></i>
-        </button>
-      </form>
-      {{end}}
       </div>
       {{with index $.Docker .Name}}{{if .Containers}}
       <div class="project-chips mt-2">
