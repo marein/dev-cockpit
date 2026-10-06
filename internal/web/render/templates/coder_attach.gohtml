@@ -5,8 +5,8 @@
 <dc-steered-mark class="d-inline-flex d-lg-none" src="/coders/{{.Running.Identifier}}/steered">
   {{- template "steered_icon.gohtml" (dict "ID" .Running.Identifier "Coder" .Coder "Launcher" .Launcher "Steered" (index $.Steered .Running.Identifier) "Working" (index $.Working .Running.Identifier)) -}}
 </dc-steered-mark>
-<dc-live-name class="d-flex min-w-0" name-url="/coders/{{.Running.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">
-  <h1 class="dc-work-title dc-mono" data-name-label>{{.Running.Name}}</h1>
+<dc-live-name class="d-flex min-w-0" name-url="/coders/{{.Running.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit"{{with coderRename .Coder}} rename-id="{{$.Running.Identifier}}" rename-mode="{{.}}" coder-label="{{coderLabel $.Coder}}"{{end}}>
+  <h1 class="dc-work-title dc-mono" data-name-label{{if coderRename .Coder}} role="button" tabindex="0" title="Click to rename"{{end}}>{{.Running.Name}}</h1>
 </dc-live-name>
 {{if .ProjectName}}<a class="text-secondary small dc-trunc dc-hide-xs text-decoration-none flex-shrink-0" href="/projects#project-{{.ProjectName}}" title="Back to {{.ProjectName}}">{{.ProjectName}}</a>{{end}}
 <span class="flex-fill"></span>

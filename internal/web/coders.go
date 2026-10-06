@@ -30,6 +30,14 @@ func (s *Server) coderByID(id string) *coder.Manager {
 	return nil
 }
 
+func (s *Server) coderRename(id string) string {
+	co := s.coderByID(id)
+	if co == nil {
+		return ""
+	}
+	return coder.RenameMode(co.Coder())
+}
+
 // coderFromRequest picks the coder addressed by the request's "coder" form or
 // query value. Empty selects the first active coder, so single-coder setups
 // never need the parameter.

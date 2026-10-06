@@ -1169,7 +1169,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert((await page.locator(".terminal-switcher").count()) === 0, "switcher still open after resume");
     });
 
-    await run("a coder tab's context menu offers stop and delete but no rename", async () => {
+    await run("a running coder tab's context menu offers rename, stop and delete", async () => {
       assert(coderUrl, "no live coder to inspect");
       const resumedId = ownId(coderUrl);
       await openTabMenu(tabSel(resumedId));
@@ -1177,7 +1177,7 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       assert(labels.includes("Stop"), `coder menu misses Stop: ${labels.join(", ")}`);
       assert(labels.includes("Delete"), `coder menu misses Delete: ${labels.join(", ")}`);
       assert(labels.indexOf("Stop") < labels.indexOf("Delete"), `stop must come before delete: ${labels.join(", ")}`);
-      assert(!labels.includes("Rename"), "coder menu offers Rename");
+      assert(labels.includes("Rename"), `coder menu misses Rename: ${labels.join(", ")}`);
       assert(!labels.some((l) => /coder|shell/i.test(l)), `menu labels carry the kind: ${labels.join(", ")}`);
       await closeTabMenu();
     });

@@ -14,6 +14,7 @@ import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, S
 import { matchesTokens, rankTokens } from "@dc/filter";
 import { diffLines, lineTokens } from "@dc/linediff";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
+import { renameCoder, renameShell } from "@dc/rename";
 import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
 import { isDark } from "@dc/theme";
 import * as dockerApi from "@dc/docker";
@@ -10153,18 +10154,6 @@ async function init(root) {
     if (wasActive && !termActiveId) editor.focus();
   }
 
-  async function renameTermShell(id, current) {
-    const newName = await promptText({
-      title: `Rename shell "${current}"`,
-      value: current,
-      confirmText: "Rename",
-      validatorMessage: "Please enter a name.",
-    });
-    if (!newName || newName === current) return;
-    const res = await postForm(`/shells/${id}/rename`, { name: newName });
-    if (!res.ok) notifyError("The shell could not be renamed.");
-  }
-
   function termMenuItems(tab) {
     const id = tab.getAttribute("data-term-tab");
     const kind = tab.getAttribute("data-term-kind");
@@ -10174,8 +10163,8 @@ async function init(root) {
     const items = [
       { label: "Open terminal page", icon: "ti-external-link", href: url },
     ];
-    if (!coder) {
-      items.push({ label: "Rename", icon: "ti-pencil", action: () => void renameTermShell(id, sessionName) });
+    if (!coder || tab.hasAttribute("data-term-renames")) {
+      items.push({ label: "Rename", icon: "ti-pencil", action: () => void (coder ? renameCoder(id, sessionName, { mode: tab.getAttribute("data-term-renames"), label: tab.getAttribute("data-term-coder-label") }) : renameShell(id, sessionName)) });
     }
     if (tab.querySelector(".dc-term-icon.news")) {
       items.push({

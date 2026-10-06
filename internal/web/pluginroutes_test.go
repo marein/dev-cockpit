@@ -53,7 +53,7 @@ func pluginRouter(t *testing.T) (*gin.Engine, staticAssetManifest) {
 		plugins: serves,
 	}
 	r := gin.New()
-	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", serves))
+	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", serves, nil))
 	r.Use(ginsessions.Sessions("session", cookie.NewStore([]byte("test-key"))))
 	r.GET("/test/sign-in", func(c *gin.Context) {
 		sess := ginsessions.Default(c)

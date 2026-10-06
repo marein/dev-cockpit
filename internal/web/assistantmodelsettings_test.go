@@ -69,7 +69,7 @@ func modelSettingsServer(t *testing.T) (*gin.Engine, *Server) {
 	s.activity = activity.NewTracker()
 	r := gin.New()
 	r.Use(ginsessions.Sessions("session", cookie.NewStore([]byte("test-key"))))
-	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", serves))
+	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", serves, nil))
 	r.GET("/settings/assistant/models", s.handleSettingsAssistantModels)
 	r.POST("/settings/assistant/models", s.handleSettingsAssistantModelsSave)
 	co := s.coders[0]

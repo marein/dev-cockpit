@@ -1,13 +1,14 @@
 import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import * as projectActions from "@dc/project-actions";
-import { confirm, promptText } from "@dc/dialog";
+import { confirm } from "@dc/dialog";
 import { syncAnimations } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import { matchesTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
 import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
 import { ensureOk, postForm } from "@dc/http";
+import { inactiveCoderRenameItem, renameCoder, renameShell } from "@dc/rename";
 import { notifyError, notifySuccess } from "@dc/toast";
 import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
 
@@ -239,7 +240,7 @@ class ProjectList extends HTMLElement {
   }
 
   // The chip actions, offered on right click and on touch long press through
-  // the shared wireRowMenus gesture, plus shell rename.
+  // the shared wireRowMenus gesture, plus rename.
   openChipMenu(chip, x, y) {
     if (chip.dataset.chipKind === "docker") {
       this.openDockerMenu(chip, x, y);
@@ -252,7 +253,19 @@ class ProjectList extends HTMLElement {
     if (main) items.push({ label: "Attach", icon: "ti-plug-connected", href: main.getAttribute("href") });
     if (mainForm) items.push({ label: "Resume", icon: "ti-player-play", action: () => mainForm.requestSubmit() });
     if (chip.dataset.chipKind === "shell" && chip.dataset.chipId) {
-      items.push({ label: "Rename", icon: "ti-pencil", action: () => void this.renameShell(chip) });
+      items.push({ label: "Rename", icon: "ti-pencil", action: () => void this.renameShellChip(chip) });
+    }
+    if (chip.dataset.chipKind === "coder" && chip.dataset.chipRenames) {
+      items.push(main
+        ? {
+          label: "Rename",
+          icon: "ti-pencil",
+          action: () => void renameCoder(chip.dataset.chipId, chip.dataset.chipName || "", {
+            mode: chip.dataset.chipRenames,
+            label: chip.dataset.chipCoderLabel,
+          }),
+        }
+        : inactiveCoderRenameItem);
     }
     if (chip.dataset.chipKind === "coder" && chip.dataset.chipId && main) {
       items.push(chip.dataset.chipSteered
@@ -356,24 +369,12 @@ class ProjectList extends HTMLElement {
     }
   }
 
-  async renameShell(chip) {
-    const current = chip.dataset.chipName || "";
-    try {
-      const name = await promptText({
-        title: `Rename shell "${current}"`,
-        value: current,
-        confirmText: "Rename",
-        validatorMessage: "Please enter a name.",
-      });
-      if (!name || name === current) return;
-      const response = await postForm(`/shells/${chip.dataset.chipId}/rename`, { name });
-      await ensureOk(response, "Could not rename the shell.");
-      chip.dataset.chipName = name;
-      const label = chip.querySelector(".project-chip-name");
-      if (label) label.textContent = name;
-    } catch (error) {
-      notifyError(error.message);
-    }
+  async renameShellChip(chip) {
+    const name = await renameShell(chip.dataset.chipId, chip.dataset.chipName || "");
+    if (!name) return;
+    chip.dataset.chipName = name;
+    const label = chip.querySelector(".project-chip-name");
+    if (label) label.textContent = name;
   }
 
   // A project's chips stand in two rows, terminals and containers, and each one

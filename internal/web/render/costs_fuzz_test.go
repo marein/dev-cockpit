@@ -70,7 +70,7 @@ func FuzzCostPage(f *testing.F) {
 	f.Add("range=custom&from=2026-03-29&to=2026-03-29", uint8(4), int32(0), amounts(1, 2, 3))
 
 	books := cost.New(f.TempDir(), nil)
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	base := time.Date(2026, 10, 2, 15, 30, 0, 0, time.UTC)
 	f.Fuzz(func(t *testing.T, raw string, zone uint8, minutes int32, amounts []byte) {
 		loc, err := time.LoadLocation(costFuzzZones[int(zone)%len(costFuzzZones)])

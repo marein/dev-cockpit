@@ -14,7 +14,7 @@ import (
 // renderProjects executes the real projects list with one row.
 func renderProjects(t *testing.T, data ProjectsListData) string {
 	t.Helper()
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	if err := tmpl.ExecuteTemplate(&out, "projects_list.gohtml", data); err != nil {
 		t.Fatalf("render projects list: %v", err)
@@ -161,7 +161,7 @@ func TestOriginIconNamesTheForge(t *testing.T) {
 // renderProjectNew executes the real create form.
 func renderProjectNew(t *testing.T, data ProjectNewData) string {
 	t.Helper()
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	if err := tmpl.ExecuteTemplate(&out, "projects_new.gohtml", data); err != nil {
 		t.Fatalf("render create form: %v", err)
@@ -659,7 +659,7 @@ func TestProjectsActionsSlotStandsLeftOfTheCreateButton(t *testing.T) {
 	if err != nil {
 		t.Fatalf("configure serve: %v", err)
 	}
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", serves)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", serves, nil)
 	var b strings.Builder
 	if err := tmpl.ExecuteTemplate(&b, "projects_list.gohtml", projectsData(nil)); err != nil {
 		t.Fatalf("render projects list: %v", err)

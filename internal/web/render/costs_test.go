@@ -193,7 +193,7 @@ func TestCostBoardTemplateRenders(t *testing.T) {
 	now := time.Date(2026, 10, 2, 15, 0, 0, 0, time.UTC)
 	r := costDayReport(now, []cost.Share{{Project: "shop", USD: 3}, {Assistants: true, USD: 1}})
 	r.Unpriced = 1
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	if err := tmpl.ExecuteTemplate(&out, "costs_board.gohtml", NewCostBoard(r, CostSplits{}, costTestState("range=today", now), "List prices.")); err != nil {
 		t.Fatal(err)
@@ -208,7 +208,7 @@ func TestCostBoardTemplateRenders(t *testing.T) {
 
 func TestAnEmptyBoardRendersTheWholePage(t *testing.T) {
 	now := time.Date(2026, 10, 2, 15, 0, 0, 0, time.UTC)
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	if err := tmpl.ExecuteTemplate(&out, "costs_board.gohtml", NewCostBoard(cost.Report{Now: now}, CostSplits{}, costTestState("", now), "List prices.")); err != nil {
 		t.Fatal(err)

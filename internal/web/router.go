@@ -127,6 +127,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/coders/:id/activity", s.handleCoderActivity)
 	auth.GET("/coders/:id/steered", s.handleCoderSteeredMark)
 	auth.POST("/coders/:id/stop", s.handleCoderStop)
+	auth.POST("/coders/:id/rename", s.handleCoderRename)
 	auth.GET("/coders/:id/files", s.handleCoderFiles)
 	auth.POST("/coders/:id/files", s.handleCoderFileUpload)
 	auth.GET("/coders/:id/files/download", s.handleCoderFileDownload)

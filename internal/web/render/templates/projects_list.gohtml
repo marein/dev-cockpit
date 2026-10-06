@@ -119,7 +119,7 @@
         {{range .ActiveRefs}}
         {{if eq .Kind "coder"}}
         <div class="project-chip" data-chip data-chip-kind="coder" data-chip-id="{{.ID}}" data-chip-name="{{.Name}}"
-             {{- if index $.Steered .ID}} data-chip-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-chip-steer-prefill="{{.}}"{{end}}>
+             {{- if index $.Steered .ID}} data-chip-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-chip-steer-prefill="{{.}}"{{end}}{{with coderRename .Coder}} data-chip-renames="{{.}}"{{end}} data-chip-coder-label="{{coderLabel .Coder}}">
           <a href="/coders/{{.ID}}" class="project-chip-main" title="Attach to coder {{.Name}}" data-chip-main>
             <span class="dc-term-icon running{{if index $.Working .ID}} working{{end}}{{if .HasNews}} news{{end}}{{if index $.Steered .ID}} steered{{end}}" data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>
             <span class="project-chip-name">{{.Name}}</span>
@@ -143,7 +143,7 @@
         {{end}}
         {{end}}
         {{range .InactiveCoderRefs}}
-        <div class="project-chip is-idle" data-chip data-chip-kind="coder">
+        <div class="project-chip is-idle" data-chip data-chip-kind="coder"{{with coderRename .Coder}} data-chip-renames="{{.}}"{{end}} data-chip-coder-label="{{coderLabel .Coder}}">
           <form method="post" action="/coders/{{.ID}}/resume" data-chip-main-form>
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="project-chip-main" title="Resume coder {{.Name}}">

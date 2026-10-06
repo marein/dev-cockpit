@@ -1,5 +1,6 @@
 import { onServerEvent } from "@dc/events";
 import { getText } from "@dc/http";
+import { renameCoder } from "@dc/rename";
 
 // A heading that keeps its terminal's name current. The name of a coder lives
 // with the program, not with the page: the CLI writes it into its own session
@@ -8,6 +9,9 @@ import { getText } from "@dc/http";
 // the moved name on its next watch tick and sends the plain `terminals` event
 // every other terminal change sends; this pulls the one name from name-url and
 // re-applies it to the label and, with a title-suffix, to the browser title.
+// With rename-id, a click on the label opens that coder's rename (rename-mode
+// says how, see @dc/rename), and a new name arrives the same way once the CLI
+// ran the command.
 class LiveName extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -15,7 +19,19 @@ class LiveName extends HTMLElement {
     this.url = this.getAttribute("name-url");
     this.titleSuffix = this.getAttribute("title-suffix") ?? "";
     this.label = this.querySelector("[data-name-label]");
-    if (!this.url || !this.label) return;
+    if (!this.label) return;
+    const renameID = this.getAttribute("rename-id");
+    if (renameID) {
+      const options = { mode: this.getAttribute("rename-mode"), label: this.getAttribute("coder-label") };
+      const rename = () => void renameCoder(renameID, this.label.textContent.trim(), options);
+      this.label.addEventListener("click", rename, { signal: this.ac.signal });
+      this.label.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        rename();
+      }, { signal: this.ac.signal });
+    }
+    if (!this.url) return;
     this.pulling = false;
     this.dirty = false;
     onServerEvent("terminals", () => void this.sync(), { signal: this.ac.signal });

@@ -29,7 +29,7 @@ func TestHostBarClassIsGreenBelowWarn(t *testing.T) {
 // the machine cannot answer is left out, and a load past the cores keeps its
 // number while the bar stops at full.
 func TestHostStatusBarRendersThreeNamedBars(t *testing.T) {
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	err := tmpl.ExecuteTemplate(&out, "host_status_bar.gohtml", map[string]any{
 		"Host": hostinfo.Stats{
@@ -64,7 +64,7 @@ func TestHostStatusBarRendersThreeNamedBars(t *testing.T) {
 // the gauge, colored by the worst reading, and the dot instead of the
 // Settings entry.
 func TestThePhoneMovesItsToolsIntoCockpit(t *testing.T) {
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	for _, gone := range []string{"host_status_float.gohtml", "shell_head_tools.gohtml"} {
 		if tmpl.Lookup(gone) != nil {
 			t.Fatalf("the template %s still exists", gone)
@@ -121,7 +121,7 @@ func TestHostTabNamesTheWorstReading(t *testing.T) {
 // The Cockpit sheet stands in one order, server, news, the three quick actions,
 // the settings, and the server rows are its read only ones.
 func TestTheCockpitSheetOrder(t *testing.T) {
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	err := tmpl.ExecuteTemplate(&out, "ctx_cockpit.gohtml", SettingsGeneralData{Page: Page{
 		User:      "admin",
@@ -156,7 +156,7 @@ func TestTheCockpitSheetOrder(t *testing.T) {
 // The update tile renders Up to date and pressable, like the footer's version
 // link, so a tap runs the same forced check in every state.
 func TestTheCockpitSheetUpdateTileStartsUpToDate(t *testing.T) {
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	if err := tmpl.ExecuteTemplate(&out, "ctx_cockpit.gohtml", SettingsGeneralData{Page: Page{User: "admin"}}); err != nil {
 		t.Fatalf("render Cockpit sheet: %v", err)
@@ -171,7 +171,7 @@ func TestTheCockpitSheetUpdateTileStartsUpToDate(t *testing.T) {
 // an open backup review, and its label says so; with neither it stands bare.
 // The sheet's Settings head counts the reviews the way the old tab did.
 func TestTheCockpitDotFollowsNewsAndReviews(t *testing.T) {
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	for _, tc := range []struct {
 		name            string
 		unread, reviews int

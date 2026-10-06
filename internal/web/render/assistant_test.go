@@ -8,7 +8,7 @@ import (
 // renderAssistantCtx executes the real assistant list column.
 func renderAssistantCtx(t *testing.T, data AssistantCtxData) string {
 	t.Helper()
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	if err := tmpl.ExecuteTemplate(&out, "assistant_ctx.gohtml", data); err != nil {
 		t.Fatalf("render assistant column: %v", err)
@@ -88,7 +88,7 @@ func TestTheColumnListsEveryAssistantWithWhatItHolds(t *testing.T) {
 // renderAssistantMessage executes the real message fragment.
 func renderAssistantMessage(t *testing.T, view AssistantMessageView) string {
 	t.Helper()
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	if err := tmpl.ExecuteTemplate(&out, "assistant_message.gohtml", AssistantMessageData{Message: view}); err != nil {
 		t.Fatalf("render message: %v", err)

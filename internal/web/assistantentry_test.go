@@ -132,7 +132,7 @@ func assistantPageServer(t *testing.T, ids ...string) (*gin.Engine, *recent.Stor
 	s.watcher = assistant.NewWatcher(s.assistants, assistant.NewJobs(assistant.NewStore(stateDir)), nil, nil)
 	s.backups = backup.New(stateDir, projectsDir, "test")
 	s.activity = activity.NewTracker()
-	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", serves))
+	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", serves, nil))
 	r.GET("/assistants/:id", s.handleAssistantPage)
 	return r, opened
 }

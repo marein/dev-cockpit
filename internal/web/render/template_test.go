@@ -27,7 +27,7 @@ func TestCoderLabelUsesTheBrandCasing(t *testing.T) {
 // prints the message as text, so the quotes survive and markup in a name
 // cannot become markup.
 func TestNoticeKeepsQuotedNamesAndEscapes(t *testing.T) {
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	err := tmpl.ExecuteTemplate(&out, "notice.gohtml", map[string]any{
 		"Level":   "success",

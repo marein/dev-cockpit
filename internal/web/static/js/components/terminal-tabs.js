@@ -8,6 +8,7 @@ import { applyFold } from "@dc/fold";
 import { ensureOk, getText, landingURL, postForm, postJSON } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
 import { splitCreateItems } from "@dc/split";
+import { renameCoder, renameShell } from "@dc/rename";
 import { RowDrag } from "@dc/rowdrag";
 import { get } from "@dc/store";
 import { notifyError, notifySuccess } from "@dc/toast";
@@ -254,8 +255,8 @@ class TerminalTabs extends HTMLElement {
     const dataset = { ...tab.dataset };
     const split = dataset.tabKind === "split";
     const items = [];
-    if (dataset.tabKind === "shell") {
-      items.push({ label: "Rename", icon: "ti-pencil", action: () => void this.renameShell(dataset) });
+    if (dataset.tabKind === "shell" || dataset.tabRenames) {
+      items.push({ label: "Rename", icon: "ti-pencil", action: () => void this.renameTab(dataset) });
     }
     if (split) {
       items.push({ label: "Rename split view", icon: "ti-pencil", action: () => void this.renameSplit(dataset) });
@@ -453,25 +454,12 @@ class TerminalTabs extends HTMLElement {
     }
   }
 
-  async renameShell({ tabId, tabName }) {
+  async renameTab({ tabId, tabKind, tabName, tabRenames, tabCoderLabel }) {
     if (this.confirming) return;
     this.confirming = true;
-    try {
-      const name = await promptText({
-        title: `Rename shell "${tabName}"`,
-        value: tabName,
-        confirmText: "Rename",
-        validatorMessage: "Please enter a name.",
-      });
-      if (!name || name === tabName) return;
-      const response = await postForm(`/shells/${tabId}/rename`, { name });
-      await ensureOk(response, "Could not rename the shell.");
-    } catch (error) {
-      notifyError(error.message);
-    } finally {
-      this.confirming = false;
-      this.tryRefresh();
-    }
+    await (tabKind === "shell" ? renameShell(tabId, tabName) : renameCoder(tabId, tabName, { mode: tabRenames, label: tabCoderLabel }));
+    this.confirming = false;
+    this.tryRefresh();
   }
 
   async markRead(id) {

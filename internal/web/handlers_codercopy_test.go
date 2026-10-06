@@ -67,7 +67,7 @@ func copyFixtureConversation(t *testing.T) []coder.Message {
 
 func renderCopyPage(t *testing.T, data render.CoderCopyData) string {
 	t.Helper()
-	tmpl := render.HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := render.HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	if err := tmpl.ExecuteTemplate(&out, "coder_copy_page.gohtml", data); err != nil {
 		t.Fatalf("render page: %v", err)
@@ -143,7 +143,7 @@ func serveConversation(t *testing.T, record conversationCoder, query string) str
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, engine := gin.CreateTestContext(rec)
-	engine.SetHTMLTemplate(render.HTMLTemplate(func(p string) string { return p }, "test", "test", nil))
+	engine.SetHTMLTemplate(render.HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil))
 	c.Request = httptest.NewRequest(http.MethodGet, "/coders/"+conversationSession+"/conversation"+query, nil)
 	renderCoderConversation(c, coder.NewManager(config.Config{}, nil, record, nil), conversationSession)
 	if rec.Code != http.StatusOK {

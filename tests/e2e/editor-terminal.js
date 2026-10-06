@@ -14,7 +14,7 @@ const { assert, sleep, confirmSwal, BASE } = L;
 // connect. The panel refreshes over the app wide `terminals` event and marks a
 // pane's news read when it is activated. The + button POSTs /shells/new with
 // the project path and activates the new shell's tab. Tab context menu: open
-// terminal page, rename (shells), stop/delete. Editor keyboard shortcuts stay
+// terminal page, rename, stop/delete. Editor keyboard shortcuts stay
 // away while focus is inside the panel; Ctrl+J toggles from both sides.
 // The + button is a dropdown (New coder link with project preselect, New shell
 // direct create), Cmd+T opens it while focus is inside the panel and the

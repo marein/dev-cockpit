@@ -11,7 +11,7 @@ import (
 // gets the copy button in its head block: a shell on its text, a coder on its
 // conversation as well.
 func TestEditorTerminalPanesCarryTheCopyView(t *testing.T) {
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	data := EditorTerminalsData{Sessions: []EditorTerminal{
 		{ID: "sh-1", Name: "shell", Kind: "shell", URL: "/shells/sh-1", TextURL: "/shells/sh-1/copy", ScrollHistory: true},
 		{ID: "co-1", Name: "coder", Kind: "coder", Coder: "claude", URL: "/coders/co-1", TextURL: "/coders/co-1/copy", ConversationURL: "/coders/co-1/conversation"},

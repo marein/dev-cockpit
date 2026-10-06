@@ -3,7 +3,7 @@
   {{range .Sessions}}
   <button type="button" class="editor-term-tab" role="tab" aria-selected="false"
           data-term-tab="{{.ID}}" data-term-kind="{{.Kind}}" data-term-name="{{.Name}}" data-term-url="{{.URL}}"
-          {{- if .Steered}} data-term-steered="1"{{end}}{{with .SteerPrefill}} data-term-steer-prefill="{{.}}"{{end}}
+          {{- if .Steered}} data-term-steered="1"{{end}}{{with .SteerPrefill}} data-term-steer-prefill="{{.}}"{{end}}{{if .Coder}}{{with coderRename .Coder}} data-term-renames="{{.}}"{{end}} data-term-coder-label="{{coderLabel .Coder}}"{{end}}
           title="{{.Name}}">
     <span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if .Steered}} steered{{end}}" data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
     <span class="editor-term-tab-name text-truncate">{{.Name}}</span>

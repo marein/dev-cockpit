@@ -1,6 +1,7 @@
 import { openMenu } from "@dc/contextmenu";
-import { confirm, promptText } from "@dc/dialog";
+import { confirm } from "@dc/dialog";
 import { ensureOk, postForm, postJSON } from "@dc/http";
+import { renameCoder, renameShell } from "@dc/rename";
 import { splitCreateItems } from "@dc/split";
 import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
 import { notifyError, notifySuccess } from "@dc/toast";
@@ -154,9 +155,8 @@ class TerminalSplit extends HTMLElement {
         pane.dataset.paneName = name;
       }
       // On a coarse pointer the page header carries the focused member's own
-      // name instead of the group's, and a coder cannot be renamed here, so it
-      // has no rename element pulling for itself. It rides the same mirror: the
-      // strip already knows the new name.
+      // name instead of the group's. A coder's heading has no element pulling
+      // its name, it rides the same mirror: the strip already knows the new name.
       const own = document.querySelector(`[data-pane-title="${CSS.escape(id)}"]`);
       if (own && name && own.textContent !== name) own.textContent = name;
     }
@@ -282,7 +282,7 @@ class TerminalSplit extends HTMLElement {
     const pane = head.closest(".attach-split-pane");
     const dataset = { ...pane.dataset };
     const items = [];
-    if (dataset.paneKind === "shell") {
+    if (dataset.paneKind === "shell" || dataset.paneRenames) {
       items.push({ label: "Rename", icon: "ti-pencil", action: () => void this.renamePane(pane) });
     }
     if (head.querySelector("[data-notify-target].news")) {
@@ -348,28 +348,19 @@ class TerminalSplit extends HTMLElement {
     openMenu({ x: event.clientX, y: event.clientY, items, signal: this.ac.signal });
   }
 
+  // A coder's label follows once the CLI ran the command, through the strip.
   async renamePane(pane) {
     if (this.confirming) return;
     this.confirming = true;
-    try {
-      const current = pane.dataset.paneName || "";
-      const name = await promptText({
-        title: `Rename shell "${current}"`,
-        value: current,
-        confirmText: "Rename",
-        validatorMessage: "Please enter a name.",
-      });
-      if (!name || name === current) return;
-      const response = await postForm(`/shells/${pane.dataset.paneId}/rename`, { name });
-      await ensureOk(response, "Could not rename the shell.");
-      pane.dataset.paneName = name;
-      const label = pane.querySelector("[data-pane-label]");
-      if (label) label.textContent = name;
-    } catch (error) {
-      notifyError(error.message);
-    } finally {
-      this.confirming = false;
-    }
+    const { paneId, paneKind, paneName, paneRenames, paneCoderLabel } = pane.dataset;
+    const name = paneKind === "shell"
+      ? await renameShell(paneId, paneName || "")
+      : await renameCoder(paneId, paneName || "", { mode: paneRenames, label: paneCoderLabel });
+    this.confirming = false;
+    if (!name || paneKind !== "shell") return;
+    pane.dataset.paneName = name;
+    const label = pane.querySelector("[data-pane-label]");
+    if (label) label.textContent = name;
   }
 
   async removePane(id) {

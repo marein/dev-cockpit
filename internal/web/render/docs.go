@@ -320,6 +320,12 @@ func DocsTopics() []DocsTopic {
 					Desc:     `Stopping keeps the conversation: resume it from the + menu in the tab strip, the terminal switcher, or its project page. Delete sits next to stop in every menu and behind the swipe on a phone; it stops a running coder first, and the conversation is then gone and cannot be resumed.`,
 				},
 				{
+					Title:    "Rename a coder",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Rename sits where a shell's does, and a click on the coder's heading opens it too. The cockpit sends <code>/rename &lt;new name&gt;</code> into the running coder as is, regardless of its input line or an open dialog; if that does not fit, cancel and type the command yourself. An inactive coder cannot be renamed. OpenCode's own <code>/rename</code> takes no name, so for it the entry only says to run <code>/rename</code> in the coder and sends nothing.`,
+				},
+				{
 					Title:    "On-screen controls",
 					Tag:      "Touch",
 					TagClass: "bg-blue-lt",

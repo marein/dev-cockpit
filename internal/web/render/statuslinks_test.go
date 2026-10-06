@@ -79,7 +79,7 @@ func TestStatusLinksSummaryIsSingularForOne(t *testing.T) {
 // as //:port for the browser to complete, opens each in a new tab, and the
 // whole element hides without links.
 func TestStatusLinksTemplateWritesTheAddresses(t *testing.T) {
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	var out strings.Builder
 	if err := tmpl.ExecuteTemplate(&out, "status_links.gohtml", Page{Links: NewStatusLinks(statusLinksNavs(), "beta")}); err != nil {
 		t.Fatalf("render: %v", err)
