@@ -573,11 +573,11 @@ func decodeControlData(s string) []byte {
 
 func isOctal(b byte) bool { return b >= '0' && b <= '7' }
 
-// buildSnapshot strips OSC/title noise and positions the cursor where tmux
-// reports it. The client renders the visible cursor itself (renderer-independent
-// overlay), so this only restores the cursor's cell position from the capture.
+// buildSnapshot positions the cursor where tmux reports it. The client renders
+// the visible cursor itself (renderer-independent overlay), so this only
+// restores the cursor's cell position from the capture.
 func buildSnapshot(rawGrid []byte, cursor []string) []byte {
-	out := stripSnapshotCursor(stripOSC(rawGrid))
+	out := stripSnapshotCursor(rawGrid)
 	if len(cursor) < 2 {
 		return out
 	}

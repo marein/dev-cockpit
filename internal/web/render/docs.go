@@ -269,7 +269,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Copy and paste",
-					Desc:  `The copy button, <i class="ti ti-copy align-text-bottom" aria-hidden="true"></i> on a shell and <i class="ti ti-messages align-text-bottom" aria-hidden="true"></i> on a coder, shows the terminal's text in its place, to select and copy. On a shell that is its scrollback, how many lines is a choice in the head. On a coder it is the recorded conversation, the newest messages first and older ones on request, with a copy button per message, and <em>Screen</em> for what stands on the screen. <em>Copy all</em> takes everything shown, the text follows the terminal font size, and the cross or <kbd>Esc</kbd> brings the terminal back. Pasting <i class="ti ti-clipboard align-text-bottom" aria-hidden="true"></i> sends the clipboard as input.`,
+					Desc:  `The copy button, <i class="ti ti-copy align-text-bottom" aria-hidden="true"></i> on a shell and <i class="ti ti-messages align-text-bottom" aria-hidden="true"></i> on a coder, shows the terminal's text in its place, to select and copy. On a shell that is its scrollback, how many lines is a choice in the head. On a coder it is the recorded conversation, the newest messages first and older ones on request, with a copy button per message, and <em>Screen</em> for what stands on the screen. <em>Copy all</em> takes everything shown, the text follows the terminal font size, and the cross or <kbd>Esc</kbd> brings the terminal back. Pasting <i class="ti ti-clipboard align-text-bottom" aria-hidden="true"></i> sends the clipboard as input. A copy a program makes, a coder's <code>/copy</code> for one, lands in the clipboard; where the browser refuses that, a toast offers <em>Copy</em>.`,
 				},
 				{
 					Title: "Links",

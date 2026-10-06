@@ -96,6 +96,7 @@ export async function copyText(text) {
       void 0;
     }
   }
+  const focused = document.activeElement;
   const area = document.createElement("textarea");
   area.value = text;
   area.setAttribute("readonly", "");
@@ -110,5 +111,6 @@ export async function copyText(text) {
     ok = false;
   }
   area.remove();
+  focused?.focus?.({ preventScroll: true });
   return ok;
 }

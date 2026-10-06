@@ -5,147 +5,94 @@ package tmux
 // is dropped, not truncated, so callers never match on a partial payload.
 const maxOSCPayload = 128
 
-// OSCFilter strips OSC escape sequences (e.g. terminal title updates) from a
-// byte stream. Unlike a stateless strip it carries its state across chunks,
-// so sequences split at arbitrary read boundaries cannot leak through.
-type OSCFilter struct {
-	inOSC     bool
-	pending   byte
-	payload   []byte
-	overflow  bool
-	head      []byte
-	hyperlink bool
-}
+const (
+	oscGround = iota
+	oscEscape
+	oscString
+)
 
-// hyperlinkPrefix starts an OSC 8 hyperlink. Filter keeps these for the
-// browser terminal and ends them with ST, so a BEL terminator never reaches
-// a consumer as a bell.
-const hyperlinkPrefix = "8;"
+// OSCFilter splits a pane stream for the watchers into the bytes outside OSC
+// sequences and the payloads of the OSC sequences, carrying its state across
+// chunks. It ends an OSC where xterm.js does, on BEL, any ESC, CAN, SUB or the
+// C1 ST, so the BEL that ends one is never taken for a bell and a sequence
+// that is never terminated hides nothing past the next escape.
+type OSCFilter struct {
+	state    int
+	c2       bool
+	payload  []byte
+	overflow bool
+}
 
 // Reset clears carried state; call it whenever the stream restarts.
 func (f *OSCFilter) Reset() {
-	f.inOSC = false
-	f.pending = 0
-	f.payload = nil
-	f.overflow = false
-	f.head = nil
-	f.hyperlink = false
+	*f = OSCFilter{}
 }
 
-// Filter returns chunk with OSC sequences other than hyperlinks removed, holding back an
-// unterminated sequence (or a trailing ESC or 0xc2) until the next chunk.
-// An OSC may also start with the C1 code U+009D, which xterm.js honors too.
-func (f *OSCFilter) Filter(chunk []byte) []byte {
-	out, _ := f.filter(chunk, false)
-	return out
-}
-
-// FilterMarks behaves like Filter and additionally returns the payloads of
-// every OSC sequence completed within this chunk (state carries across
-// chunks, so split sequences still yield one complete payload).
+// FilterMarks returns chunk without its OSC sequences and the payloads of
+// every OSC sequence completed within it.
 func (f *OSCFilter) FilterMarks(chunk []byte) ([]byte, []string) {
-	return f.filter(chunk, true)
-}
-
-func (f *OSCFilter) filter(chunk []byte, collect bool) ([]byte, []string) {
-	if len(chunk) == 0 {
-		return nil, nil
-	}
-	src := chunk
-	if f.pending != 0 {
-		src = append([]byte{f.pending}, chunk...)
-		f.pending = 0
-	}
-	dst := make([]byte, 0, len(src))
+	var out []byte
 	var marks []string
-	finish := func() {
-		if f.hyperlink {
-			dst = append(dst, 0x1b, '\\')
-		}
-		f.inOSC = false
-		f.head = nil
-		f.hyperlink = false
-		if collect && !f.overflow {
-			marks = append(marks, string(f.payload))
-		}
-		f.payload = nil
-		f.overflow = false
-	}
-	remember := func(b byte) {
-		if !collect || f.overflow {
-			return
-		}
-		if len(f.payload) >= maxOSCPayload {
-			f.overflow = true
-			f.payload = nil
-			return
-		}
-		f.payload = append(f.payload, b)
-	}
-	i := 0
-	for i < len(src) {
-		if f.inOSC {
+	for _, b := range chunk {
+		switch f.state {
+		case oscString:
+			c2 := f.c2
+			f.c2 = b == 0xc2
 			switch {
-			case src[i] == 0x07:
-				finish()
-				i++
-			case src[i] == 0x1b && i+1 == len(src):
-				// Possibly the first half of an ESC \ terminator.
-				f.pending = 0x1b
-				i++
-			case src[i] == 0x1b && src[i+1] == '\\':
-				finish()
-				i += 2
-			case f.hyperlink && (src[i] < 0x20 || src[i] > 0x7e):
-				// A link holds printable ASCII only. Any other byte could end
-				// it early in xterm.js and start a sequence of its own, so the
-				// link is aborted with CAN and the rest is stripped as on any
-				// other OSC.
-				dst = append(dst, 0x18)
-				f.hyperlink = false
-				i++
-			default:
-				remember(src[i])
-				switch {
-				case f.hyperlink:
-					dst = append(dst, src[i])
-				case !collect && len(f.head) < len(hyperlinkPrefix):
-					f.head = append(f.head, src[i])
-					if string(f.head) == hyperlinkPrefix {
-						f.hyperlink = true
-						dst = append(dst, 0x1b, ']')
-						dst = append(dst, f.head...)
-					}
+			case b == 0x07 || b == 0x1b || c2 && b == 0x9c:
+				if c2 && b == 0x9c && !f.overflow {
+					f.payload = f.payload[:len(f.payload)-1]
 				}
-				i++
+				if !f.overflow {
+					marks = append(marks, string(f.payload))
+				}
+				f.state = oscGround
+				if b == 0x1b {
+					f.state = oscEscape
+				}
+			case b == 0x18 || b == 0x1a:
+				f.state = oscGround
+			case f.overflow:
+			case len(f.payload) >= maxOSCPayload:
+				f.overflow = true
+				f.payload = nil
+			default:
+				f.payload = append(f.payload, b)
 			}
-			continue
+		case oscEscape:
+			switch b {
+			case ']':
+				f.state = oscString
+				f.payload = nil
+				f.overflow = false
+			case 0x1b:
+				out = append(out, b)
+			case '\\':
+				f.state = oscGround
+			default:
+				f.state = oscGround
+				out = append(out, 0x1b, b)
+			}
+		default:
+			if f.c2 {
+				f.c2 = false
+				if b == 0x9d {
+					f.state = oscString
+					f.payload = nil
+					f.overflow = false
+					continue
+				}
+				out = append(out, 0xc2)
+			}
+			switch b {
+			case 0x1b:
+				f.state = oscEscape
+			case 0xc2:
+				f.c2 = true
+			default:
+				out = append(out, b)
+			}
 		}
-		if src[i] != 0x1b && src[i] != 0xc2 {
-			dst = append(dst, src[i])
-			i++
-			continue
-		}
-		if i+1 == len(src) {
-			f.pending = src[i]
-			i++
-			continue
-		}
-		if src[i] == 0x1b && src[i+1] == ']' || src[i] == 0xc2 && src[i+1] == 0x9d {
-			f.inOSC = true
-			f.payload = nil
-			f.overflow = false
-			i += 2
-			continue
-		}
-		dst = append(dst, src[i])
-		i++
 	}
-	return dst, marks
-}
-
-// stripOSC removes OSC sequences from a complete buffer (e.g. a pane capture).
-func stripOSC(src []byte) []byte {
-	var f OSCFilter
-	return f.Filter(src)
+	return out, marks
 }

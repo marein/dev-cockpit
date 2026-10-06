@@ -77,10 +77,6 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 	heartbeat := time.NewTicker(s.cfg.StreamHeartbeatInterval)
 	defer heartbeat.Stop()
 
-	// One filter per connection: it carries escape-sequence state across
-	// delta reads and is reset whenever the stream restarts from a snapshot.
-	var oscFilter tmux.OSCFilter
-
 	lastActivity := time.Now()
 	var lastFrame time.Time
 	// The modes travel with the size event, and they are read once at attach.
@@ -111,7 +107,6 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 		if refreshed, ok := src.RefreshStream(attached.Session, generation); ok {
 			offset = refreshed.Offset
 			generation = refreshed.Generation
-			oscFilter.Reset()
 			if err := writeSSEvent(w, "terminal-size", sizePayload(refreshed)); err != nil {
 				return
 			}
@@ -128,7 +123,6 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 			if snap, ok := src.Resnapshot(attached.Session); ok {
 				offset = snap.Offset
 				generation = snap.Generation
-				oscFilter.Reset()
 				if err := writeSSEvent(w, "terminal-size", sizePayload(snap)); err != nil {
 					return
 				}
@@ -152,21 +146,17 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 					}
 				}
 			}
-			if out := oscFilter.Filter(delta); len(out) > 0 {
-				if err := writeSSEvent(w, "delta", encodeBase64(out)); err != nil {
-					return
-				}
-				lastFrame = time.Now()
+			if err := writeSSEvent(w, "delta", encodeBase64(delta)); err != nil {
+				return
 			}
+			lastFrame = time.Now()
 		}
 
 		// The session ended: flush any final bytes, then close the stream.
 		if src.StreamExited(attached.Session) {
 			if d, n, _ := src.StreamDelta(attached.Session, offset); len(d) > 0 {
 				offset = n
-				if out := oscFilter.Filter(d); len(out) > 0 {
-					_ = writeSSEvent(w, "delta", encodeBase64(out))
-				}
+				_ = writeSSEvent(w, "delta", encodeBase64(d))
 			}
 			_ = writeSSEvent(w, "terminal-ended", "Terminal has ended.")
 			s.publishTerminals("") // ended out of band (exit/crash): drop it from every live surface

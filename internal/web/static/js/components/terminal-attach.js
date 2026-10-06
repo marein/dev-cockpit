@@ -1,7 +1,10 @@
-import { notifyError, notifySuccess, notifyInfo } from "@dc/toast";
+import { notifyError, notifySuccess, notifyInfo, showToast } from "@dc/toast";
+import { copyText } from "@dc/dom";
 import { getJSON, postForm, postJSON } from "@dc/http";
 import { get, set } from "@dc/store";
 import { isDark } from "@dc/theme";
+
+const OSC52_MAX_BASE64 = 4 * Math.ceil(1048576 / 3);
 
 const TERMINAL_THEMES = {
   dark: {
@@ -731,38 +734,88 @@ function initTerminalAttach(host) {
   // sequences so xterm never activates mouse reporting, keeping the mirror
   // selectable. But we record the program's intent: a program that asked for
   // mouse reporting (e.g. claude) scrolls via wheel events, so the wheel handler
-  // below synthesizes those itself instead of sending cursor keys.
-  const MOUSE_MODES = new Set([1000, 1001, 1002, 1003, 1004, 1005, 1006, 1015, 1016]);
+  // below synthesizes those itself instead of sending cursor keys. One sequence
+  // may mix these with modes that must apply (?25;1004h). The public parser
+  // hook only sees a copy of the parameters, so the core hook blanks the input
+  // modes in xterm's own list and leaves the rest to xterm.
+  const MOUSE_MODES = new Set([9, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1015, 1016]);
   const mouse = { tracking: false, sgr: false };
   const handleMouseMode = (on) => (params) => {
-    if (!(params.length > 0
-      && params.every((param) => MOUSE_MODES.has(Array.isArray(param) ? param[0] : param)))) {
-      return false; // not purely a mouse-mode sequence; let xterm handle it
-    }
-    for (const param of params) {
-      const code = Array.isArray(param) ? param[0] : param;
+    for (let i = 0; i < params.length; i++) {
+      const code = params.params[i];
+      if (!MOUSE_MODES.has(code)) {
+        continue;
+      }
       if (code === 1000 || code === 1002 || code === 1003) {
         mouse.tracking = on;
       } else if (code === 1006) {
         mouse.sgr = on;
       }
+      params.params[i] = 0;
     }
-    return true; // swallow so xterm stays passive (selection preserved)
+    return false;
   };
-  term.parser.registerCsiHandler({ prefix: "?", final: "h" }, handleMouseMode(true));
-  term.parser.registerCsiHandler({ prefix: "?", final: "l" }, handleMouseMode(false));
+  term._core.registerCsiHandler({ prefix: "?", final: "h" }, handleMouseMode(true));
+  term._core.registerCsiHandler({ prefix: "?", final: "l" }, handleMouseMode(false));
 
   // This terminal is a display mirror; tmux is the pane's terminal and answers
-  // every device query (CPR, DA, DSR) itself. Swallow the report-triggering
-  // queries so xterm never sends its own duplicate reply back through onData,
-  // which, arriving a round trip late after the querying program already read
-  // tmux's answer, would land as ;<n>R garbage on the shell prompt.
+  // every query (CPR, DA, DSR, DECRQM, DECRQSS, window and color reports)
+  // itself. Swallow everything xterm would answer, so it never sends its own
+  // duplicate reply back through onData, which, arriving a round trip late
+  // after the querying program already read tmux's answer, would land as
+  // ;<n>R garbage on the shell prompt. Color changes are swallowed with their
+  // queries, the page keeps its own theme.
   const swallowReport = () => true;
   term.parser.registerCsiHandler({ final: "n" }, swallowReport);
   term.parser.registerCsiHandler({ prefix: "?", final: "n" }, swallowReport);
   term.parser.registerCsiHandler({ final: "c" }, swallowReport);
   term.parser.registerCsiHandler({ prefix: ">", final: "c" }, swallowReport);
   term.parser.registerCsiHandler({ prefix: "=", final: "c" }, swallowReport);
+  term.parser.registerCsiHandler({ intermediates: "$", final: "p" }, swallowReport);
+  term.parser.registerCsiHandler({ prefix: "?", intermediates: "$", final: "p" }, swallowReport);
+  term.parser.registerCsiHandler({ final: "t" }, swallowReport);
+  term.parser.registerDcsHandler({ intermediates: "$", final: "q" }, swallowReport);
+  for (const ident of [4, 10, 11, 12, 104, 110, 111, 112]) {
+    term.parser.registerOscHandler(ident, swallowReport);
+  }
+
+  // A program's copy reaches the page as OSC 52, tmux keeps it from its own
+  // clipboard. Coders in tmux send it bare and wrapped in tmux passthrough,
+  // which xterm's parser opens on its own since the DCS ends at the first
+  // ESC, so the second of an identical pair is dropped.
+  let lastCopy = { text: "", at: 0 };
+  term.parser.registerOscHandler(52, (data) => {
+    const split = data.indexOf(";");
+    const payload = data.slice(split + 1);
+    if (split < 0 || !/^[cs]*$/.test(data.slice(0, split)) || payload.length > OSC52_MAX_BASE64
+      || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(payload)) {
+      return true;
+    }
+    let text;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0)));
+    } catch {
+      return true;
+    }
+    const now = Date.now();
+    if (!text || (text === lastCopy.text && now - lastCopy.at < 1000)) {
+      return true;
+    }
+    lastCopy = { text, at: now };
+    copyText(text).then((copied) => {
+      if (copied) return;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn btn-sm btn-primary mt-2";
+      button.textContent = "Copy";
+      const toast = showToast({ icon: "info", title: "The terminal copied text", detail: button, timer: 10000 });
+      button.addEventListener("click", () => {
+        toast.close();
+        copyText(text).then((ok) => { if (!ok) notifyError("Clipboard is not available."); });
+      });
+    });
+    return true;
+  });
 
   // ---- Scrolling (desktop wheel + mobile swipe) ------------------------------
   // We own scrolling and reproduce, per step, exactly what the program would
