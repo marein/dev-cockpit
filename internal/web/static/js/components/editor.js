@@ -10755,7 +10755,8 @@ async function init(root) {
   await Promise.all([loadTree(), restoreTabs(), loadGitStatus()]);
   tabsRestored = true;
   restoreTreeScroll();
-  if (tabs.length === 0 && mobileMedia.matches) openDrawer();
+  if (root.dataset.editorFile) void openPath(root.dataset.editorFile);
+  else if (tabs.length === 0 && mobileMedia.matches) openDrawer();
   if (pageTerminal && termOpen && termApplies()) void activateTermPane(pageTerminal, { focus: true });
   const reveal = !!root.dataset.editorView;
   const pageView = root.dataset.editorView || store.get(viewKey, "");

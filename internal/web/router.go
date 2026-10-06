@@ -67,6 +67,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/splits/:id", s.handleSplitAttach)
 	auth.POST("/splits/:id/focus", s.handleSplitFocus)
 	auth.POST("/terminal-theme", s.handleTerminalTheme)
+	auth.GET("/terminal-link", s.handleTerminalLink)
 
 	auth.GET("/coders/new", s.handleCoderNew)
 	auth.POST("/coders/new", s.handleCoderCreate)

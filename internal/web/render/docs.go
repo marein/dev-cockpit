@@ -272,6 +272,10 @@ func DocsTopics() []DocsTopic {
 					Desc:  `The copy button, <i class="ti ti-copy align-text-bottom" aria-hidden="true"></i> on a shell and <i class="ti ti-messages align-text-bottom" aria-hidden="true"></i> on a coder, shows the terminal's text in its place, to select and copy. On a shell that is its scrollback, how many lines is a choice in the head. On a coder it is the recorded conversation, the newest messages first and older ones on request, with a copy button per message, and <em>Screen</em> for what stands on the screen. <em>Copy all</em> takes everything shown, the text follows the terminal font size, and the cross or <kbd>Esc</kbd> brings the terminal back. Pasting <i class="ti ti-clipboard align-text-bottom" aria-hidden="true"></i> sends the clipboard as input.`,
 				},
 				{
+					Title: "Links",
+					Desc:  `A click or a tap on a link a program prints, such as the file names in a coder's tool lines, opens it. A file inside a project opens in that project's editor, a web address in a new tab, anything else stays closed.`,
+				},
+				{
 					Title:    "Send files to a coder",
 					Tag:      "Coder",
 					TagClass: "bg-secondary-lt",

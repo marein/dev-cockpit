@@ -1,9 +1,7 @@
 import { notifyError, notifySuccess, notifyInfo } from "@dc/toast";
-import { postForm, postJSON } from "@dc/http";
+import { getJSON, postForm, postJSON } from "@dc/http";
 import { get, set } from "@dc/store";
 import { isDark } from "@dc/theme";
-import { fire as fireDialog, isVisible as dialogVisible } from "@dc/dialog";
-import { copyText } from "@dc/dom";
 
 const TERMINAL_THEMES = {
   dark: {
@@ -696,6 +694,34 @@ function initTerminalAttach(host) {
   if (window.WebLinksAddon && window.WebLinksAddon.WebLinksAddon) {
     term.loadAddon(new window.WebLinksAddon.WebLinksAddon(openWebLink));
   }
+  const activateLink = (event, uri) => {
+    const scheme = uri.slice(0, uri.indexOf(":") + 1).toLowerCase();
+    if (scheme === "http:" || scheme === "https:") {
+      openWebLink(event, uri);
+    } else if (scheme === "file:") {
+      event.preventDefault();
+      getJSON("/terminal-link?url=" + encodeURIComponent(uri))
+        .then(({ href }) => window.app.navigate(href))
+        .catch(() => {});
+    }
+  };
+  let hoveredLink = "";
+  term.options.linkHandler = {
+    allowNonHttpProtocols: true,
+    activate: (event, uri) => { if (!term.hasSelection()) activateLink(event, uri); },
+    hover: (event, uri) => { hoveredLink = uri; },
+    leave: () => { hoveredLink = ""; },
+  };
+  // The scroll zone cancels a touch at touchstart, so xterm never sees the
+  // mouse events of a tap, only the click the zone replays. Moving xterm's
+  // pointer there makes it report the link under the finger.
+  listen(host, "click", (event) => {
+    if (event.isTrusted) return;
+    terminalElement.querySelector(".xterm-screen")?.dispatchEvent(new MouseEvent("mousemove", {
+      bubbles: true, clientX: event.clientX, clientY: event.clientY,
+    }));
+    if (hoveredLink) activateLink(event, hoveredLink);
+  });
 
   // ---- Mouse reporting -------------------------------------------------------
   // When a full-screen CLI enables mouse tracking (DECSET ?1000/1002/1003 and
@@ -1000,10 +1026,9 @@ function initTerminalAttach(host) {
   // text anything can read. The visible buffer is mirrored into a transparent
   // text layer that follows the cell grid (line height per row, letter-spacing
   // so each glyph occupies one cell), and that layer is what the page reads the
-  // screen from: it is how the login URL of a coder waiting to be logged in is
-  // found. Copying does not go through it, that is the copy view's job, on
-  // real text; the layer stays inert, it is never selectable and never takes a
-  // pointer.
+  // screen from. Copying does not go through it, that is the copy view's job,
+  // on real text; the layer stays inert, it is never selectable and never takes
+  // a pointer.
   const selectionLayer = document.createElement("div");
   selectionLayer.className = "attach-selection";
   selectionLayer.setAttribute("aria-hidden", "true");
@@ -1055,69 +1080,8 @@ function initTerminalAttach(host) {
     if (selectionLayer.textContent !== text) {
       selectionLayer.textContent = text;
     }
-    if (text.includes("https://claude.")) {
-      const url = findLoginLink(lines);
-      if (url && !loginLinkPrompted(url) && !dialogVisible()) {
-        promptedLoginLinks.add(url);
-        promptLoginLink(url);
-      }
-    }
   };
   term.onRender(syncSelection);
-
-  const promptedLoginLinks = new Set();
-  const LOGIN_LINK_START = /^https:\/\/claude\.(com|ai)\/\S*oauth/;
-  const LOGIN_LINK_CHARS = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/;
-  const findLoginLink = (lines) => {
-    for (let i = lines.length - 1; i >= 0; i -= 1) {
-      if (!LOGIN_LINK_START.test(lines[i])) continue;
-      let url = lines[i];
-      const wrapWidth = url.length;
-      for (let j = i + 1; j < lines.length; j += 1) {
-        const frag = lines[j];
-        if (!frag || frag.length > wrapWidth || !LOGIN_LINK_CHARS.test(frag)) break;
-        url += frag;
-        if (frag.length !== wrapWidth) break;
-      }
-      return url;
-    }
-    return "";
-  };
-  const loginLinkState = (url) => {
-    const params = new URLSearchParams(url.slice(url.indexOf("?") + 1));
-    return params.get("state") || params.get("code_challenge") || "";
-  };
-  const loginLinkPrompted = (url) => {
-    const state = loginLinkState(url);
-    for (const prompted of promptedLoginLinks) {
-      if (prompted.startsWith(url) || url.startsWith(prompted)) return true;
-      if (state && state === loginLinkState(prompted)) return true;
-    }
-    return false;
-  };
-  const promptLoginLink = (url) => {
-    fireDialog({
-      icon: "question",
-      title: "Claude login",
-      text: "The login link on the screen cannot be clicked or copied cleanly in the terminal. Follow it from here?",
-      showCancelButton: true,
-      showDenyButton: true,
-      confirmButtonText: "Open",
-      denyButtonText: "Copy link",
-      cancelButtonText: "Cancel",
-      reverseButtons: true,
-    }).then(async (result) => {
-      if (result.isConfirmed) {
-        window.open(url, "_blank", "noopener,noreferrer");
-      } else if (result.isDenied) {
-        if (await copyText(url)) {
-          notifySuccess("Login link copied.");
-        } else {
-          notifyError("Copy failed.");
-        }
-      }
-    });
-  };
 
   // ---- Copy ------------------------------------------------------------------
   const terminalSelection = () => {

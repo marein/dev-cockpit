@@ -121,6 +121,7 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		LSPExts:      s.lspSpec(),
 		Terminal:     strings.TrimSpace(c.Query("terminal")),
 		View:         editorView(c.Query("view")),
+		File:         strings.TrimSpace(c.Query("file")),
 	})
 }
 
