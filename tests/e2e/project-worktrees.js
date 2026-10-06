@@ -13,7 +13,8 @@ const { assert, BASE, sleep } = L;
 // variables. The page lands on the highlighted row without a flash, the CLI
 // prints the output. A failure exits the CLI 1 and adds one notification,
 // which opening and deleting the project read. An assistant reads the script
-// with `project-worktree-script-show` and replaces it with
+// with `project-worktree-script-show`, which ends with one line naming the
+// directory, time bound and DC_* variables, and replaces it with
 // `project-worktree-script-set`, which waits for the user's approval (the
 // dialog shows the new content) unless the Worktree post script approval is
 // off.
@@ -30,10 +31,12 @@ const MAIN = `wtm${Date.now().toString(36).slice(-5)}`;
 const REPO = path.join(PROJECTS, MAIN);
 const SCRIPT_FILE = path.join(STATE, "worktree-post-script");
 
+const SUMMARY = "Runs in the new worktree, max 15s, env: DC_SOURCE_PROJECT DC_SOURCE_DIR DC_WORKTREE_DIR DC_WORKTREE_PROJECT DC_BRANCH.\n";
 const BASH = `#!/usr/bin/env bash
 echo "setup in $(basename "$PWD") on $(git branch --show-current)"
-echo "vars $DC_PROJECT|$DC_SOURCE_DIR|$DC_WORKTREE_PROJECT|$DC_WORKTREE_DIR|$DC_BRANCH" > .setup-ran
+echo "vars $DC_SOURCE_PROJECT|$DC_PROJECT|$DC_SOURCE_DIR|$DC_WORKTREE_PROJECT|$DC_WORKTREE_DIR|$DC_BRANCH" > .setup-ran
 `;
+const SLOW = "#!/bin/sh\necho slow start\nsleep 20\necho slow end\n";
 const FAIL = "#!/bin/sh\necho \"setup in $(basename \"$PWD\")\"\necho \"setup broke\" >&2\nexit 3\n";
 const APPROVED = "#!/bin/sh\necho approved\n";
 const DIALOG = ".swal2-popup:not(.swal2-toast)";
@@ -130,6 +133,7 @@ L.runFeature("PROJECT WORKTREES", async ({ page, run }) => {
     assert(await page.isVisible("#post-script"), "the script field is not visible");
     assert((await page.inputValue("#post-script")) === "", "a fresh instance already carries a script");
     assert(storedScript() === null, "a fresh instance already has the file");
+    assert((await page.innerText("#settings-projects-worktrees")).includes("for up to 15s."), "the page does not name the 15s bound");
   });
 
   await run("settings: a bash script saves as 0700 with LF endings and survives a reload", async () => {
@@ -156,7 +160,7 @@ L.runFeature("PROJECT WORKTREES", async ({ page, run }) => {
     assistantID = (await created.json().catch(() => ({}))).id || "";
     assert(assistantID, `no assistant for the checks: ${created.status()}`);
     const shown = await cockpit(["--as", assistantID, "project-worktree-script-show"]);
-    assert(shown.code === 0 && shown.stdout === BASH, `show printed ${shown.code} ${JSON.stringify(shown.stdout)}`);
+    assert(shown.code === 0 && shown.stdout === BASH + SUMMARY, `show printed ${shown.code} ${JSON.stringify(shown.stdout)}`);
     const file = path.join(AUX, "approved.sh");
     fs.writeFileSync(file, APPROVED.replace(/\n/g, "\r\n"));
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
@@ -198,7 +202,7 @@ L.runFeature("PROJECT WORKTREES", async ({ page, run }) => {
     const deleted = await cockpit(["--as", assistantID, "project-worktree-script-set"], "");
     assert(deleted.code === 0 && deleted.stdout.includes("deleted") && storedScript() === null, `the empty set printed ${deleted.stdout}${deleted.stderr}, left ${JSON.stringify(storedScript())}`);
     const none = await cockpit(["--as", assistantID, "project-worktree-script-show"]);
-    assert(none.stdout === "there is no worktree post script\n", `show printed ${none.stdout}`);
+    assert(none.stdout === "there is no worktree post script\n" + SUMMARY, `show printed ${none.stdout}`);
     const saved = await cockpit(["--as", assistantID, "project-worktree-script-set"], BASH);
     assert(saved.code === 0 && saved.stdout.includes("saved") && storedScript() === BASH, `the set printed ${saved.stdout}${saved.stderr}`);
     await toggle(true);
@@ -208,7 +212,7 @@ L.runFeature("PROJECT WORKTREES", async ({ page, run }) => {
     await createInForm("feature");
     const wt = path.join(PROJECTS, `${MAIN}-feature`);
     const ran = setupRan("feature");
-    assert(ran === `vars ${MAIN}|${REPO}|${MAIN}-feature|${wt}|feature\n`, `the script did not run inside the worktree with its variables: ${JSON.stringify(ran)}`);
+    assert(ran === `vars ${MAIN}|${MAIN}|${REPO}|${MAIN}-feature|${wt}|feature\n`, `the script did not run inside the worktree with its variables: ${JSON.stringify(ran)}`);
     assert(!fs.existsSync(path.join(REPO, ".setup-ran")), "the script ran in the main repository");
     assert(worktreeNews(`${MAIN}-feature`).length === 0, "a passing script notified");
   });
@@ -269,6 +273,20 @@ L.runFeature("PROJECT WORKTREES", async ({ page, run }) => {
     await page.waitForSelector(`#project-${MAIN}-clifail`, { state: "attached", timeout: 10000 });
   });
 
+  await run("cli: a script sleeping 20s is stopped at about 15s, leaves the worktree and notifies once", async () => {
+    await saveScript(SLOW);
+    const started = Date.now();
+    const slow = await cockpit(["project-worktree-new", MAIN, "clislow", "--from", "master"]);
+    const took = (Date.now() - started) / 1000;
+    assert(took >= 15 && took < 19, `the create took ${took}s`);
+    assert(slow.code === 1, `a stopped script exited ${slow.code}: ${slow.stdout}${slow.stderr}`);
+    assert(slow.stdout.includes("post script failed: stopped after 15s\n") && slow.stdout.includes("slow start\n") && !slow.stdout.includes("slow end"), `stdout: ${slow.stdout}`);
+    assert(fs.existsSync(path.join(PROJECTS, `${MAIN}-clislow`, ".git")), "the stopped script took the worktree with it");
+    const news = worktreeNews(`${MAIN}-clislow`);
+    assert(news.length === 1 && news[0].detail.startsWith(`${MAIN}-clislow: stopped after 15s`), `want one notification, got ${JSON.stringify(news)}`);
+    return `${took.toFixed(1)}s`;
+  });
+
   await run("cli: a python script runs through its own interpreter", async () => {
     await saveScript(PYTHON);
     const made = await cockpit(["project-worktree-new", MAIN, "cli", "--from", "master"]);
@@ -295,12 +313,12 @@ L.runFeature("PROJECT WORKTREES", async ({ page, run }) => {
   await run("cli: project-worktree-list and status name the worktree projects", async () => {
     const list = await cockpit(["project-worktree-list", MAIN]);
     assert(list.code === 0, `exit ${list.code}: ${list.stderr}`);
-    assert(list.stdout.startsWith(`Worktrees of ${MAIN} (5)\n`), `list: ${list.stdout}`);
-    for (const name of ["feature", "uifail", "clifail", "cli", "plain"]) {
+    assert(list.stdout.startsWith(`Worktrees of ${MAIN} (6)\n`), `list: ${list.stdout}`);
+    for (const name of ["feature", "uifail", "clifail", "clislow", "cli", "plain"]) {
       assert(list.stdout.includes(`  ${MAIN}-${name} (${name}) ${PROJECTS}/${MAIN}-${name}\n`), `list misses ${name}: ${list.stdout}`);
     }
     const fromWorktree = await cockpit(["project-worktree-list", `${MAIN}-cli`]);
-    assert(fromWorktree.stdout.startsWith(`${MAIN}-cli is a worktree of ${MAIN}\nWorktrees of ${MAIN} (5)\n`), `list from a worktree: ${fromWorktree.stdout}`);
+    assert(fromWorktree.stdout.startsWith(`${MAIN}-cli is a worktree of ${MAIN}\nWorktrees of ${MAIN} (6)\n`), `list from a worktree: ${fromWorktree.stdout}`);
     const status = await cockpit(["status"]);
     assert(status.code === 0, `status exit ${status.code}: ${status.stderr}`);
     assert(status.stdout.includes(`  ${MAIN} (master)\n`), `status lists the main as a worktree: ${status.stdout}`);
@@ -311,7 +329,7 @@ L.runFeature("PROJECT WORKTREES", async ({ page, run }) => {
     await L.deleteProject(page, MAIN);
     for (let i = 0; i < 40 && fs.existsSync(REPO); i += 1) await sleep(250);
     assert(!fs.existsSync(REPO), "the main repository is still there");
-    for (const name of ["feature", "uifail", "clifail", "cli", "plain"]) {
+    for (const name of ["feature", "uifail", "clifail", "clislow", "cli", "plain"]) {
       assert(!fs.existsSync(path.join(PROJECTS, `${MAIN}-${name}`)), `${MAIN}-${name} survived the cascade`);
     }
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });

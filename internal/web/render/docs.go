@@ -113,7 +113,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Worktree post script",
-					Desc:  `Settings &rarr; Projects &rarr; Worktrees holds one script that runs in every new worktree, its first line names the interpreter. A failure notifies, the worktree stays.`,
+					Desc:  `Settings &rarr; Projects &rarr; Worktrees holds one script that runs in every new worktree, its first line names the interpreter. It is stopped after 15 seconds. A failure notifies, the worktree stays.`,
 				},
 				{
 					Title: "The list column keeps its width and place",

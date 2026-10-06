@@ -384,12 +384,12 @@ func (s *Server) createWorktreeProject(c *gin.Context, form projectCreateForm) (
 // minutes and nothing about it is a write of the source, and like a git write
 // it ends on its own timeout and not with the request.
 func (s *Server) runWorktreePostScript(c *gin.Context, made *worktreeCreate) {
-	made.PostScript = project.RunPostScript(gitWriteContext(c), s.postScriptPath(), made.Plan.Dir, []string{
-		"DC_PROJECT=" + made.Source.Name,
-		"DC_SOURCE_DIR=" + made.Source.Path,
-		"DC_WORKTREE_DIR=" + made.Plan.Dir,
-		"DC_WORKTREE_PROJECT=" + filepath.Base(made.Plan.Dir),
-		"DC_BRANCH=" + made.Plan.Branch,
+	made.PostScript = project.RunPostScript(gitWriteContext(c), s.postScriptPath(), made.Plan.Dir, project.PostScriptVars{
+		Project:         made.Source.Name,
+		SourceDir:       made.Source.Path,
+		WorktreeDir:     made.Plan.Dir,
+		WorktreeProject: filepath.Base(made.Plan.Dir),
+		Branch:          made.Plan.Branch,
 	})
 	if run := made.PostScript; run != nil && run.Err != "" {
 		log.Printf("worktree post script in %s: %s", made.Plan.Dir, run.Err)

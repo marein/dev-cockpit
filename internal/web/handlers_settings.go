@@ -567,7 +567,8 @@ func (s *Server) renderSettingsProjectsWorktrees(c *gin.Context, script string, 
 		Page:        page,
 		SettingsNav: s.settingsNav("projects"),
 		PostScript:  script,
-		Timeout:     fmt.Sprintf("%d minutes", int(project.PostScriptTimeout.Minutes())),
+		Timeout:     project.PostScriptTimeout.String(),
+		Env:         project.PostScriptEnv,
 	})
 }
 

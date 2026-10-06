@@ -506,7 +506,7 @@ func TestWorktreeCreateNamesItselfAndRunsThePostScript(t *testing.T) {
 		return answer
 	}
 
-	script("#!/bin/sh\npwd\ngit branch --show-current\necho \"$DC_PROJECT $DC_WORKTREE_PROJECT $DC_BRANCH\"\n")
+	script("#!/bin/sh\npwd\ngit branch --show-current\necho \"$DC_SOURCE_PROJECT $DC_WORKTREE_PROJECT $DC_BRANCH\"\n")
 	made := create(url.Values{"create": {render.WorktreeChoice("app")}, "branch_mode": {"existing"}, "branch": {"feature"}})
 	path := filepath.Join(root, "app-feature")
 	if made["name"] != "app-feature" || made["post_script_error"] != "" {

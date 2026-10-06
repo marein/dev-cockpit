@@ -108,6 +108,7 @@ type SettingsProjectsData struct {
 	SettingsNav SettingsNav
 	PostScript  string
 	Timeout     string
+	Env         []string
 }
 
 // SettingsEditorData feeds the editor settings pages, one per tab. The values
