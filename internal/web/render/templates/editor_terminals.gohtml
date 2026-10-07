@@ -16,7 +16,7 @@
 <div class="editor-term-panes" data-editor-term-panes>
   {{range .Sessions}}
   <div class="editor-term-pane attach-stage" data-term-pane="{{.ID}}" data-term-kind="{{.Kind}}"
-       data-stream-url="{{.StreamURL}}" data-resize-url="{{.ResizeURL}}" data-input-url="{{.InputURL}}"{{if .ScrollHistory}} data-scroll-history{{end}}>
+       data-stream-url="{{.StreamURL}}" data-resize-url="{{.ResizeURL}}" data-input-url="{{.InputURL}}" data-links-url="{{.LinksURL}}"{{if .ScrollHistory}} data-scroll-history{{end}}>
     {{template "terminal_copy_surface.gohtml" (dict "ID" .ID "TextURL" .TextURL "ConversationURL" .ConversationURL)}}
   </div>
   {{end}}

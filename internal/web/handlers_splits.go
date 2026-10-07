@@ -19,6 +19,7 @@ const maxGroupNameLength = 120
 type sessionRef struct {
 	TmuxSession string
 	Kind        string // "coder" or "shell"
+	CWD         string
 	Group       string
 	GroupPos    int
 	GroupName   string
@@ -33,6 +34,7 @@ func (s *Server) terminalSessions() map[string]sessionRef {
 			refs[r.Identifier] = sessionRef{
 				TmuxSession: r.TmuxSession,
 				Kind:        "coder",
+				CWD:         r.CWD,
 				Group:       r.TabGroup,
 				GroupPos:    r.TabGroupPos,
 				GroupName:   r.TabGroupName,
@@ -44,6 +46,7 @@ func (s *Server) terminalSessions() map[string]sessionRef {
 		refs[sh.Identifier] = sessionRef{
 			TmuxSession: sh.TmuxSession,
 			Kind:        "shell",
+			CWD:         sh.CWD,
 			Group:       sh.TabGroup,
 			GroupPos:    sh.TabGroupPos,
 			GroupName:   sh.TabGroupName,
@@ -185,6 +188,7 @@ func (s *Server) handleSplitAttach(c *gin.Context) {
 			ResizeURL:     base + "/resize",
 			InputURL:      base + "/input",
 			TextURL:       base + "/copy",
+			LinksURL:      base + "/file-links",
 			ScrollHistory: m.Kind == "shell",
 			Col:           cells[i].Col,
 			Row:           cells[i].Row,

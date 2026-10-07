@@ -13,7 +13,8 @@ type SplitMember struct {
 	ResizeURL     string
 	InputURL      string
 	TextURL       string
-	ScrollHistory bool // shells scroll the tmux history
+	LinksURL      string // answers which mentions in a text are files
+	ScrollHistory bool   // shells scroll the tmux history
 	// ConversationURL serves the copy view's pages, coders only.
 	ConversationURL string
 	// Col is the rendered column, 1 based and left to right, and Row/RowSpan

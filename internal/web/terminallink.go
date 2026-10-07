@@ -26,20 +26,13 @@ func (s *Server) terminalLinkTarget(raw string) string {
 	if err != nil || u.Scheme != "file" || (u.Host != "" && !strings.EqualFold(u.Host, "localhost")) || !filepath.IsAbs(u.Path) {
 		return ""
 	}
-	name := s.projects.ProjectNameFor(u.Path)
-	if name == "" {
+	p, ok := s.projectAt(u.Path)
+	if !ok {
 		return ""
 	}
-	p, err := s.projects.FindByName(name)
-	if err != nil {
+	rel, _, ok := filesystem.RelUnder(p.Path, u.Path)
+	if !ok {
 		return ""
 	}
-	rel, err := filepath.Rel(p.Path, filepath.Clean(u.Path))
-	if err != nil || rel == "." {
-		return ""
-	}
-	if _, err := filesystem.ResolveUnder(p.Path, filepath.ToSlash(rel)); err != nil {
-		return ""
-	}
-	return "/projects/" + url.PathEscape(p.Name) + "/editor?file=" + url.QueryEscape(filepath.ToSlash(rel))
+	return editorFileURL(p.Name, filesystem.FileRef{Path: rel})
 }

@@ -3,6 +3,7 @@ import { copyText } from "@dc/dom";
 import { getJSON, postForm, postJSON } from "@dc/http";
 import { get, set } from "@dc/store";
 import { isDark } from "@dc/theme";
+import { cellAt, fileLinkAt, linkAt, openFileLink, screenCell } from "@dc/termlinks";
 
 const OSC52_MAX_BASE64 = 4 * Math.ceil(1048576 / 3);
 
@@ -697,34 +698,47 @@ function initTerminalAttach(host) {
   if (window.WebLinksAddon && window.WebLinksAddon.WebLinksAddon) {
     term.loadAddon(new window.WebLinksAddon.WebLinksAddon(openWebLink));
   }
-  const activateLink = (event, uri) => {
-    const scheme = uri.slice(0, uri.indexOf(":") + 1).toLowerCase();
-    if (scheme === "http:" || scheme === "https:") {
-      openWebLink(event, uri);
-    } else if (scheme === "file:") {
-      event.preventDefault();
-      getJSON("/terminal-link?url=" + encodeURIComponent(uri))
-        .then(({ href }) => window.app.navigate(href))
-        .catch(() => {});
-    }
-  };
-  let hoveredLink = "";
+  const isWebAddress = (uri) => /^https?:/i.test(uri);
   term.options.linkHandler = {
     allowNonHttpProtocols: true,
-    activate: (event, uri) => { if (!term.hasSelection()) activateLink(event, uri); },
-    hover: (event, uri) => { hoveredLink = uri; },
-    leave: () => { hoveredLink = ""; },
+    activate: (event, uri) => { if (!term.hasSelection() && isWebAddress(uri)) openWebLink(event, uri); },
   };
-  // The scroll zone cancels a touch at touchstart, so xterm never sees the
-  // mouse events of a tap, only the click the zone replays. Moving xterm's
-  // pointer there makes it report the link under the finger.
-  listen(host, "click", (event) => {
-    if (event.isTrusted) return;
-    terminalElement.querySelector(".xterm-screen")?.dispatchEvent(new MouseEvent("mousemove", {
-      bubbles: true, clientX: event.clientX, clientY: event.clientY,
-    }));
-    if (hoveredLink) activateLink(event, hoveredLink);
-  });
+  // A path of a file of the terminal's project links too, resolved when a
+  // click or a tap asks and opened once the server answered, as is a
+  // program's file link. xterm opens a web address on a click itself, a tap
+  // reaches only the click the scroll zone replays, which opens it within the
+  // touch, where a new tab is still allowed. A program's link or a web
+  // address cancels the click, so the tap leaves the keyboard alone. A later
+  // press drops the answer of an earlier one.
+  const linksUrl = host.getAttribute("links-url") || "";
+  const screen = terminalElement.querySelector(".xterm-screen");
+  let presses = 0;
+  const pressLink = (cell, event, touch) => {
+    const press = ++presses;
+    const link = cell && linkAt(term, cell);
+    if (!link) return;
+    const uri = link.osc || link.web || "";
+    const open = (href) => { if (href && press === presses && !signal.aborted) openFileLink(href, event); };
+    if (/^file:/i.test(uri)) {
+      event.preventDefault();
+      getJSON("/terminal-link?url=" + encodeURIComponent(uri)).then(({ href }) => open(href)).catch(() => {});
+    } else if (touch && isWebAddress(uri)) {
+      openWebLink(event, uri);
+    } else if (link.text && linksUrl) {
+      fileLinkAt(term, linksUrl, link).then(open).catch(() => {});
+    }
+  };
+  let pressedCell = null;
+  listen(screen, "mousedown", (event) => {
+    pressedCell = event.button === 0 ? cellAt(term, screen, event) : null;
+  }, { capture: true });
+  listen(screen, "click", (event) => {
+    const cell = cellAt(term, screen, event);
+    const still = cell && cell.x === pressedCell?.x && cell.y === pressedCell?.y && !term.hasSelection();
+    pressedCell = null;
+    pressLink(still ? cell : null, event, false);
+  }, { capture: true });
+  listen(host, "click", (event) => { if (!event.isTrusted) pressLink(cellAt(term, screen, event), event, true); });
 
   // ---- Mouse reporting -------------------------------------------------------
   // When a full-screen CLI enables mouse tracking (DECSET ?1000/1002/1003 and
@@ -840,14 +854,11 @@ function initTerminalAttach(host) {
       host.dispatchEvent(new CustomEvent("terminal-control", { bubbles: true, detail: { control } }));
 
     const scrollCell = (clientX, clientY) => {
-      const screen = terminalElement.querySelector(".xterm-screen");
-      if (!screen || term.cols < 1 || term.rows < 1 || typeof clientX !== "number" || typeof clientY !== "number") {
+      if (term.cols < 1 || term.rows < 1 || typeof clientX !== "number" || typeof clientY !== "number") {
         return { col: 1, row: 1 };
       }
-      const rect = screen.getBoundingClientRect();
-      const col = Math.min(term.cols, Math.max(1, Math.floor((clientX - rect.left) / (rect.width / term.cols)) + 1));
-      const row = Math.min(term.rows, Math.max(1, Math.floor((clientY - rect.top) / (rect.height / term.rows)) + 1));
-      return { col, row };
+      const { x, y } = screenCell(term, screen, { clientX, clientY });
+      return { col: Math.min(term.cols, Math.max(1, x + 1)), row: Math.min(term.rows, Math.max(1, y + 1)) };
     };
 
     const scrollStep = (down, clientX, clientY) => {

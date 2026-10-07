@@ -55,7 +55,7 @@
         </div>
         <div class="attach-stage min-w-0 w-100">
           <terminal-attach class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.ID}}" split-group="{{$.GroupID}}"{{if eq .ID $.Focus}} active{{if $.FocusExplicit}} split-focused{{end}}{{end}}
-                          stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}"{{if .ScrollHistory}} scroll-history{{end}}>
+                          stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" links-url="{{.LinksURL}}"{{if .ScrollHistory}} scroll-history{{end}}>
             <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
           </terminal-attach>
           {{template "terminal_copy_surface.gohtml" (dict "ID" .ID "TextURL" .TextURL "ConversationURL" .ConversationURL)}}

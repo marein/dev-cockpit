@@ -227,6 +227,35 @@ async function stopSession(page, sessionUrl) {
   await closeTerminal(page, sessionUrl, 'form[action$="/stop"] button[type="submit"], form[action$="/stop"] button', new URL(sessionUrl).pathname + "/stop");
 }
 
+// swipeAt rests one finger on a viewport point and drags it dy pixels down in
+// ten steps. Chromium gets it over CDP, as a phone sends it. Playwright's
+// WebKit has no CDP and taps only, so there the page gets touch events of the
+// runner's making, without the pointer events a finger adds: the terminal
+// tells a tap and a swipe apart by the touch events alone, a swipe scrolls
+// nothing there.
+const isChromium = (page) => page.context().browser().browserType().name() === "chromium";
+function synthTouch(page, type, at) {
+  return page.evaluate(({ type, x, y }) => {
+    const event = new Event(type, { bubbles: true, cancelable: true, composed: true });
+    Object.defineProperty(event, "changedTouches", { value: [{ identifier: 1, clientX: x, clientY: y }] });
+    document.elementFromPoint(x, y).dispatchEvent(event);
+  }, { type, x: at.x, y: at.y });
+}
+async function swipeAt(page, at, dy) {
+  if (!isChromium(page)) {
+    await synthTouch(page, "touchstart", at);
+    for (let i = 1; i <= 10; i++) { await synthTouch(page, "touchmove", { x: at.x, y: at.y + (i * dy) / 10 }); await sleep(16); }
+    await synthTouch(page, "touchend", { x: at.x, y: at.y + dy });
+    return;
+  }
+  const cdp = await page.context().newCDPSession(page);
+  const touch = (type, y) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x: at.x, y, id: 1 }] });
+  await touch("touchStart", at.y);
+  for (let i = 1; i <= 10; i++) { await touch("touchMove", at.y + (i * dy) / 10); await sleep(16); }
+  await touch("touchEnd", at.y + dy);
+  await cdp.detach();
+}
+
 function makeRunner() {
   const results = [];
   async function run(name, fn, { soft = false } = {}) {
@@ -330,6 +359,7 @@ async function runFeature(title, body) {
 module.exports = {
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
   login, createProject, projectPath, deleteProject, dismissUpdate, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
+  swipeAt,
   makeRunner, report, assert,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

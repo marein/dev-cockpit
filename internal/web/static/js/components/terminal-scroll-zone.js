@@ -241,8 +241,8 @@ import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, p
       if (moved) {
         return;
       }
-      if (onZone) {
-        this.replayTap(touch);
+      if (onZone && !this.replayTap(touch)) {
+        return;
       }
       if (this.isActive()) {
         this.focusTerminalInput();
@@ -267,15 +267,17 @@ import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, p
     // gesture at all, so the click is handed back on the terminal, where it
     // bubbles like the tap beside the zone always did. Whatever a tap outside
     // closes app wide, an open menu among it, therefore closes over the whole
-    // terminal too, and the zone never has to know what any of those are.
+    // terminal too, and the zone never has to know what any of those are. A
+    // terminal that opened a link with the click cancels it, then the tap
+    // leaves the keyboard alone.
     replayTap(touch) {
-      this.terminal?.dispatchEvent(new MouseEvent("click", {
+      return this.terminal?.dispatchEvent(new MouseEvent("click", {
         bubbles: true,
         composed: true,
         cancelable: true,
         clientX: touch.clientX,
         clientY: touch.clientY,
-      }));
+      })) !== false;
     }
 
     clearSelection() {

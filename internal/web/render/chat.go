@@ -64,6 +64,8 @@ type ChatMessageData struct {
 // ChatPartView is one piece of a coder message: a rendered text, or a tool
 // call as one compact line.
 type ChatPartView struct {
+	// HTML is the piece as markup: the text rendered, or a tool call's line
+	// with its file links.
 	HTML template.HTML
 	Tool string
 	// Line says what the call was about.

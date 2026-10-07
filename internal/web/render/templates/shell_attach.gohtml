@@ -22,7 +22,7 @@
   <div class="attach-frame min-w-0 w-100">
     <div class="attach-stage min-w-0 w-100">
       <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.Shell.Identifier}}"
-                      stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
+                      stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" links-url="{{.LinksURL}}" scroll-history>
         <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
       </terminal-attach>
       {{template "terminal_copy_surface.gohtml" (dict "ID" .Shell.Identifier "TextURL" .TextURL)}}

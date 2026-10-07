@@ -273,7 +273,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Links",
-					Desc:  `A click or a tap on a link a program prints, such as the file names in a coder's tool lines, opens it. A file inside a project opens in that project's editor, a web address in a new tab, anything else stays closed.`,
+					Desc:  `A click on a link a program prints, such as the file names in a coder's tool lines, opens it, on touch a tap that leaves the keyboard alone: a file inside a project in that project's editor, a web address in a new tab, nothing else. A path of an existing file of the terminal's project, relative to its root or absolute, links as well, in the terminal, the copy view and the conversation, and <code>:line</code> or <code>:line:column</code> after it places the cursor. Inside the editor's terminal panel a file opens in place. <kbd>Ctrl</kbd> opens a new tab.`,
 				},
 				{
 					Title:    "Send files to a coder",

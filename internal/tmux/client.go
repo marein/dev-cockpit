@@ -378,10 +378,30 @@ func (c *Client) SetTabGroupName(names []string, groupName string) error {
 // the pane keeps the size the client that owns it gave it. Going through the
 // terminal hub instead would resize the pane to the reader's window.
 func (c *Client) CapturePane(name string, lines int) (string, error) {
+	return capturePane(name, lines)
+}
+
+// CapturePaneWidth is CapturePane with the pane's width in columns, read in
+// the same tmux run, which says which lines fill the last column.
+func (c *Client) CapturePaneWidth(name string, lines int) (string, int, error) {
+	out, err := capturePane(name, lines, "display-message", "-p", "-t", Target(name), "#{pane_width}", ";")
+	if err != nil {
+		return "", 0, err
+	}
+	head, text, _ := strings.Cut(out, "\n")
+	cols, err := strconv.Atoi(head)
+	return text, cols, err
+}
+
+// captureMaxOutput bounds what a capture may print: 50,000 lines of 300
+// columns in four byte characters stay below it.
+const captureMaxOutput = 64 << 20
+
+func capturePane(name string, lines int, before ...string) (string, error) {
 	if lines < 1 {
 		lines = 1
 	}
-	result := clirun.Run("tmux", "capture-pane", "-p", "-t", Target(name), "-S", "-"+strconv.Itoa(lines))
+	result := clirun.RunBounded(controlCmdTimeout, captureMaxOutput, "tmux", append(before, "capture-pane", "-p", "-t", Target(name), "-S", "-"+strconv.Itoa(lines))...)
 	if result.Err != nil {
 		stderr := strings.TrimSpace(result.Stderr)
 		if stderr == "" {

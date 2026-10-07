@@ -67,6 +67,7 @@ type CoderAttachData struct {
 	ResizeURL       string
 	InputURL        string
 	TextURL         string
+	LinksURL        string // answers which mentions in a text are files
 	// ConversationURL serves the pages of the copy view.
 	ConversationURL string
 }

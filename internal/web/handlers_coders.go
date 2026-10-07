@@ -168,6 +168,7 @@ func (s *Server) handleCoderAttach(c *gin.Context) {
 		ResizeURL:       "/coders/" + running.Identifier + "/resize",
 		InputURL:        "/coders/" + running.Identifier + "/input",
 		TextURL:         "/coders/" + running.Identifier + "/copy",
+		LinksURL:        "/coders/" + running.Identifier + "/file-links",
 		ConversationURL: "/coders/" + running.Identifier + "/conversation",
 	})
 }

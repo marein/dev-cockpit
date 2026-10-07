@@ -1,5 +1,6 @@
 import { copyText } from "@dc/dom";
 import { get, set } from "@dc/store";
+import { openFileLink, webLinks } from "@dc/termlinks";
 import { notifyError } from "@dc/toast";
 
 // The copy view of a terminal. A terminal draws to a canvas, so there is no
@@ -165,7 +166,7 @@ class TerminalCopy extends HTMLElement {
       this.log.replaceChildren(done);
     } else {
       this.log.replaceChildren();
-      this.render(done.text);
+      this.render(done.text, done.links);
     }
     window.requestAnimationFrame(() => {
       this.scroller.scrollTop = fromBottom === null ? this.scroller.scrollHeight : Math.max(0, this.scroller.scrollHeight - fromBottom);
@@ -201,7 +202,7 @@ class TerminalCopy extends HTMLElement {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "The terminal could not be read.");
       if (ticket !== this.loading) return undefined;
-      return { text: data.text || "" };
+      return { text: data.text || "", links: data.links || [] };
     } catch (error) {
       if (ticket !== this.loading) return undefined;
       notifyError(error.message);
@@ -210,30 +211,42 @@ class TerminalCopy extends HTMLElement {
   }
 
   // A web address in the text is a link, because somebody who finds one here
-  // wants to open it. The nodes are built rather than markup parsed, output is
-  // never markup. Trailing punctuation stays outside the link and inside the
-  // text, so a copy yields the same text either way.
-  render(text) {
-    const parts = [];
+  // wants to open it, and so is a file of the project the server found. The
+  // nodes are built rather than markup parsed, output is never markup, and
+  // into a fragment, since tens of thousands of them overflow the arguments
+  // of one call.
+  render(text, fileLinks) {
+    const parts = document.createDocumentFragment();
     let at = 0;
-    for (const match of text.matchAll(/https?:\/\/[^\s"'<>`]+/g)) {
-      const href = match[0].replace(/[).,;:!?\]]+$/, "");
-      if (!href) continue;
-      if (match.index > at) parts.push(document.createTextNode(text.slice(at, match.index)));
-      const link = document.createElement("a");
-      link.href = href;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = href;
-      parts.push(link);
-      at = match.index + href.length;
+    const links = [...fileLinks, ...webLinks(text).map((link) => ({ ...link, web: true }))];
+    for (const link of links.sort((a, b) => a.start - b.start)) {
+      if (link.start < at) continue;
+      if (link.start > at) parts.append(text.slice(at, link.start));
+      const a = document.createElement("a");
+      a.href = link.href;
+      if (link.web) {
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+      } else {
+        a.setAttribute("data-file-link", "");
+      }
+      a.textContent = text.slice(link.start, link.end);
+      parts.append(a);
+      at = link.end;
     }
-    if (at < text.length) parts.push(document.createTextNode(text.slice(at)));
-    this.text.replaceChildren(...parts);
+    if (at < text.length) parts.append(text.slice(at));
+    this.text.replaceChildren(parts);
   }
 
   async onClick(event) {
     const target = event.target;
+    const fileLink = target.closest("a[data-file-link]");
+    if (fileLink) {
+      event.preventDefault();
+      event.stopPropagation();
+      openFileLink(fileLink.href, event);
+      return;
+    }
     if (target.closest("[data-copy-close]")) {
       this.close();
       return;

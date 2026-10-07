@@ -26,7 +26,7 @@
          front of it. */}}
     <div class="attach-stage min-w-0 w-100">
       <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.Identifier}}"
-                      stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}">
+                      stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" links-url="{{.LinksURL}}">
         <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
       </terminal-attach>
       {{template "terminal_copy_surface.gohtml" (dict "ID" .Identifier "TextURL" .TextURL "ConversationURL" .ConversationURL)}}

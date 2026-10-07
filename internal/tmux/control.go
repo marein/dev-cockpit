@@ -17,7 +17,8 @@ import (
 // falls further behind than this triggers a fresh snapshot instead of a delta.
 const controlRingMax = 1 << 22 // 4 MiB
 
-// controlCmdTimeout bounds how long we wait for a control-mode command reply.
+// controlCmdTimeout bounds how long we wait for a tmux command's reply, over
+// control mode or from a capture.
 const controlCmdTimeout = 10 * time.Second
 
 // Control is a tmux control-mode client (`tmux -C attach-session`) for one

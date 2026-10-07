@@ -122,6 +122,8 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		Terminal:     strings.TrimSpace(c.Query("terminal")),
 		View:         editorView(c.Query("view")),
 		File:         strings.TrimSpace(c.Query("file")),
+		Line:         positiveQuery(c, "line"),
+		Col:          positiveQuery(c, "col"),
 	})
 }
 
@@ -136,6 +138,16 @@ func editorView(raw string) string {
 		return view
 	}
 	return ""
+}
+
+// positiveQuery reads a line or column of a deep link, where anything that is
+// not a number above zero means none.
+func positiveQuery(c *gin.Context, key string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(c.Query(key)))
+	if err != nil || n < 1 {
+		return 0
+	}
+	return n
 }
 
 // editorSwitcher is the project list behind the tree header's switcher, one
@@ -894,6 +906,7 @@ func (s *Server) handleEditorTerminals(c *gin.Context) {
 			ResizeURL:     t.URL + "/resize",
 			InputURL:      t.URL + "/input",
 			TextURL:       t.URL + "/copy",
+			LinksURL:      t.URL + "/file-links",
 			ScrollHistory: t.Kind == "shell",
 			HasNews:       t.HasNews,
 			Working:       t.Working,

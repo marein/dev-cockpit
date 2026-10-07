@@ -134,6 +134,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/coders/:id/files/delete", s.handleCoderFileDelete)
 	auth.POST("/coders/:id/input", s.handleCoderInput)
 	auth.GET("/coders/:id/copy", s.handleTerminalCopy)
+	auth.POST("/coders/:id/file-links", s.handleFileLinks)
 	auth.GET("/coders/:id/conversation", s.handleCoderConversation)
 	auth.POST("/coders/:id/resize", s.handleCoderResize)
 	auth.GET("/coders/:id/stream", s.handleCoderStream)
@@ -209,6 +210,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/shells/:id/rename", s.handleShellRename)
 	auth.POST("/shells/:id/input", s.handleShellInput)
 	auth.GET("/shells/:id/copy", s.handleTerminalCopy)
+	auth.POST("/shells/:id/file-links", s.handleFileLinks)
 	auth.POST("/shells/:id/resize", s.handleShellResize)
 	auth.GET("/shells/:id/stream", s.handleShellStream)
 

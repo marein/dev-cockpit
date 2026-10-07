@@ -95,6 +95,7 @@ func (s *Server) handleShellAttach(c *gin.Context) {
 		ResizeURL:   "/shells/" + sh.Identifier + "/resize",
 		InputURL:    "/shells/" + sh.Identifier + "/input",
 		TextURL:     "/shells/" + sh.Identifier + "/copy",
+		LinksURL:    "/shells/" + sh.Identifier + "/file-links",
 		RenameURL:   "/shells/" + sh.Identifier + "/rename",
 	})
 }

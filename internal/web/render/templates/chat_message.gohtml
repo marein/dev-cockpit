@@ -89,7 +89,7 @@
   {{else if .Parts}}
   {{range .Parts}}
   {{if .Tool}}
-  <div class="text-secondary small my-1 text-truncate" data-copy-tool="{{.Tool}}" title="{{.Tool}}{{if .Line}} {{.Line}}{{end}}"><i class="ti ti-tool me-1"></i><span class="fw-medium">{{.Tool}}</span>{{if .Line}} <span class="font-monospace">{{.Line}}</span>{{end}}</div>
+  <div class="text-secondary small my-1 text-truncate" data-copy-tool="{{.Tool}}" title="{{.Tool}}{{if .Line}} {{.Line}}{{end}}"><i class="ti ti-tool me-1"></i><span class="fw-medium">{{.Tool}}</span>{{if .Line}} <span class="font-monospace">{{.HTML}}</span>{{end}}</div>
   {{else}}
   <div class="text-break markdown" data-assistant-text>{{.HTML}}</div>
   {{end}}

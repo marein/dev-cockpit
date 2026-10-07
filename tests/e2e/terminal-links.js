@@ -7,24 +7,29 @@ const { assert, sleep } = L;
 // GET /terminal-link, which answers the project's editor URL
 // (/projects/:name/editor?file=<relative>) or 404 outside every project; the
 // editor opens the file from data-editor-file. http(s) opens a new tab, any
-// other scheme nothing. The throwaway shell stands in for claude: it prints
+// other scheme nothing, a relative or protocol relative address neither, also
+// not with Ctrl or Shift. Ctrl opens a project file in a new tab. The
+// throwaway shell stands in for claude: it prints
 // the bytes claude writes for a tool header, an id parameter and BEL
 // terminated. Desktop: a click opens, a drag selects, a click beside a link
-// focuses like before. Touch: the scroll zone eats the tap's mouse events and
-// replays a click, which the terminal resolves to the link under the finger;
-// a swipe opens nothing. SHOTS_DIR and VIDEO_DIR, when set, collect a desktop
-// screenshot and a 360px touch video.
+// focuses like before. Touch: the scroll zone eats the touch's mouse events, a
+// tap opens the link the buffer holds under the finger and leaves the keyboard
+// alone, also on a row printed again after a tap; a tap beside a link toggles
+// the keyboard, a swipe opens nothing. SHOTS_DIR and VIDEO_DIR, when set,
+// collect a desktop screenshot and a 360px touch video.
 const SHOTS_DIR = process.env.SHOTS_DIR || "";
 const VIDEO_DIR = process.env.VIDEO_DIR || "";
 const SHOT_PREFIX = process.env.SHOT_PREFIX || "terminal-links";
 
-const ROWS = ["Update(links.go)", "Read(/etc/hostname)", "Security guide", "PLAIN-NO-LINK-TEXT"];
+const ROWS = ["Update(links.go)", "Read(/etc/hostname)", "Security guide", "Relative settings", "Protocol relative", "PLAIN-NO-LINK-TEXT"];
 
 const printCommand = () => [
   "clear; printf '",
   "\\033[1mUpdate\\033[22m(\\033]8;id=1j518kd;file://%s/links.go\\007links.go\\033]8;;\\007)\\n",
   "\\033[1mRead\\033[22m(\\033]8;id=th1gw7;file:///etc/hostname\\007/etc/hostname\\033]8;;\\007)\\n",
   "\\033]8;id=zaxmda;https://example.invalid/security\\007Security guide\\033]8;;\\007\\n",
+  "\\033]8;;/settings\\007Relative settings\\033]8;;\\007\\n",
+  "\\033]8;;//example.com/x\\007Protocol relative\\033]8;;\\007\\n",
   "PLAIN-NO-LINK-TEXT\\n",
   "' \"$PWD\"",
 ].join("");
@@ -47,6 +52,14 @@ async function cellPoint(page, rowText, col) {
     const rect = screen.getBoundingClientRect();
     return { x: rect.left + (col + 0.5) * cellWidth, y: rect.top + (row + 0.5) * parseFloat(style.lineHeight) };
   }, { rowText, col });
+}
+
+async function waitLine(page, rowText) {
+  for (let i = 0; i < 40; i++) {
+    if (await cellPoint(page, rowText, 0)) return;
+    await sleep(300);
+  }
+  throw new Error(`no row starts with ${JSON.stringify(rowText)}`);
 }
 
 async function waitRows(page) {
@@ -165,6 +178,37 @@ L.runFeature("TERMINAL LINKS", async ({ engine, browser, page, run }) => {
       assert(page.url() === shellUrl, "the web link moved the terminal page");
     });
 
+    await run("desktop: a relative or protocol relative link opens nothing, with Ctrl or Shift neither", async () => {
+      const popups = [];
+      const onPage = (p) => popups.push(p.url());
+      page.context().on("page", onPage);
+      for (const row of ["Relative settings", "Protocol relative"]) {
+        const link = await cellPoint(page, row, 3);
+        await page.mouse.move(link.x, link.y);
+        await page.waitForFunction(() => document.querySelector("#terminal .xterm-screen").classList.contains("xterm-cursor-pointer"), null, { timeout: 4000 });
+        for (const modifier of [null, "Control", "Shift"]) {
+          if (modifier) await page.keyboard.down(modifier);
+          await page.mouse.click(link.x, link.y);
+          if (modifier) await page.keyboard.up(modifier);
+          await stays(page, shellUrl, 800);
+        }
+      }
+      page.context().off("page", onPage);
+      assert(popups.length === 0, `a tab opened: ${popups.join(", ")}`);
+    });
+
+    await run("desktop: Ctrl+click on a project file link opens it in a new tab", async () => {
+      const popup = page.context().waitForEvent("page", { timeout: 10000 });
+      const link = await cellPoint(page, "Update(", 9);
+      await page.keyboard.down("Control");
+      await page.mouse.click(link.x, link.y);
+      await page.keyboard.up("Control");
+      const tab = await popup;
+      await tab.waitForURL(new RegExp(`/projects/${project}/editor\\?file=links\\.go$`), { timeout: 10000 });
+      await tab.close();
+      await stays(page, shellUrl, 300);
+    });
+
     await run("desktop: a click on a project file link opens it in the editor", async () => {
       const link = await cellPoint(page, "Update(", 9);
       await page.mouse.click(link.x, link.y);
@@ -208,7 +252,7 @@ L.runFeature("TERMINAL LINKS", async ({ engine, browser, page, run }) => {
     await waitRows(mp);
     await sleep(800);
 
-    await run("touch: a tap on plain text opens nothing", async () => {
+    await run("touch: a tap on plain text opens the keyboard and nothing else", async () => {
       const watch = watchLinkRequests(mp);
       await waitRows(mp);
       const plain = await cellPoint(mp, "PLAIN-NO-LINK-TEXT", 4);
@@ -216,13 +260,30 @@ L.runFeature("TERMINAL LINKS", async ({ engine, browser, page, run }) => {
       await stays(mp, shellUrl, 1000);
       watch.stop();
       assert(watch.seen.length === 0, "a plain tap asked for a link");
+      assert(await mp.evaluate(() => document.activeElement?.id === "terminal-cursor-input"), "the tap left the keyboard closed");
     });
 
-    await run("touch: a tap on a project file link opens it in the editor", async () => {
-      await mp.keyboard.press("Escape").catch(() => {});
+    await run("touch: a tap on a relative or protocol relative link opens nothing", async () => {
+      await mp.evaluate(() => { window.open = (url) => { window.__terminalLinksOpened = url; return null; }; });
+      for (const row of ["Relative settings", "Protocol relative"]) {
+        const link = await cellPoint(mp, row, 3);
+        await mp.touchscreen.tap(link.x, link.y);
+        await stays(mp, shellUrl, 800);
+      }
+      const opened = await mp.evaluate(() => window.__terminalLinksOpened);
+      assert(opened === undefined, `the tap opened ${JSON.stringify(opened)}`);
+    });
+
+    await run("touch: a tap on a project file link opens it in the editor, the keyboard stays closed", async () => {
+      await mp.evaluate(() => {
+        document.activeElement?.blur();
+        sessionStorage.removeItem("e2e-keyboard");
+        document.getElementById("terminal-cursor-input").addEventListener("focus", () => sessionStorage.setItem("e2e-keyboard", "1"));
+      });
       const link = await cellPoint(mp, "Update(", 9);
       await mp.touchscreen.tap(link.x, link.y);
       await editorOpened(mp, project);
+      assert(await mp.evaluate(() => sessionStorage.getItem("e2e-keyboard") !== "1"), "the tap opened the keyboard");
       await sleep(1500);
     });
 
@@ -243,6 +304,29 @@ L.runFeature("TERMINAL LINKS", async ({ engine, browser, page, run }) => {
       await stays(mp, shellUrl);
       watch.stop();
       assert(watch.seen.length === 0, "the swipe asked for a link");
+    });
+
+    await run("touch: a tap on a row opens its link, the row printed again with another link, a tap opens the new one", async () => {
+      await mp.goto(shellUrl, { waitUntil: "domcontentloaded" });
+      await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
+      await sleep(800);
+      await mp.evaluate(() => document.getElementById("terminal-cursor-input").focus());
+      await mp.keyboard.type("clear; seq 12; printf 'Row \\033]8;;https://example.invalid/old\\007Swap link\\033]8;;\\007\\n'; read -rs; printf '\\033[1A\\r\\033[2KRow \\033]8;;https://example.invalid/new\\007Swap link\\033]8;;\\007 now\\n'", { delay: 30 });
+      await mp.keyboard.press("Enter");
+      await mp.evaluate(() => document.activeElement?.blur());
+      await waitLine(mp, "Row Swap link");
+      await mp.evaluate(() => { window.__terminalLinksOpened = []; window.open = (url) => { window.__terminalLinksOpened.push(url); return null; }; });
+      const row = await cellPoint(mp, "Row Swap link", 6);
+      await mp.touchscreen.tap(row.x, row.y);
+      await sleep(600);
+      await mp.evaluate(() => document.getElementById("terminal-cursor-input").focus());
+      await mp.keyboard.press("Enter");
+      await waitLine(mp, "Row Swap link now");
+      const now = await cellPoint(mp, "Row Swap link now", 6);
+      await mp.touchscreen.tap(now.x, now.y);
+      await sleep(800);
+      const opened = await mp.evaluate(() => window.__terminalLinksOpened);
+      assert(JSON.stringify(opened) === JSON.stringify(["https://example.invalid/old", "https://example.invalid/new"]), `the taps opened ${JSON.stringify(opened)}`);
     });
   } finally {
     if (mobileCtx) await mobileCtx.close().catch(() => {});
