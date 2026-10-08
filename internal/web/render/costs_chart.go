@@ -43,11 +43,14 @@ type CostColumn struct {
 	Tips      []CostTipRow
 }
 
-// CostSegment is one stacked part of a bar, V its spend.
+// CostSegment is one stacked part of a bar, V its spend and Grow its share
+// of the bar. The shares of a bar add up to 1, a flex grow below that
+// leaves the rest of the bar empty.
 type CostSegment struct {
 	Series string
 	CostColor
-	V float64
+	V    float64
+	Grow float64
 }
 
 // CostTipRow is one series of a step in its tooltip.
@@ -107,17 +110,16 @@ func costColor(i int) CostColor {
 }
 
 // costSeries is one series of a chart. A series with a color of its own
-// keeps it and stacks by rank above the others.
+// keeps it.
 type costSeries struct {
 	key   string
 	label string
 	color CostColor
-	rank  int
 }
 
 func costProject(p cost.Share) costSeries {
 	if p.Assistants {
-		return costSeries{key: "assistants", label: "Assistants", color: CostColor{Color: "dc-cost-assistants"}, rank: 1}
+		return costSeries{key: "assistants", label: "Assistants", color: CostColor{Color: "dc-cost-assistants"}}
 	}
 	return costSeries{key: "p:" + p.Project, label: projectLabel(p.Project)}
 }
@@ -133,8 +135,8 @@ func costSession(prefix string) func(cost.Share) costSeries {
 }
 
 // costSeriesSet names every series booked in the buckets, a model without a
-// list price at $0 included, and colors them by name, not by rank: two that
-// swap places keep their colors.
+// list price at $0 included, and colors them by name, not by spend: two
+// that swap places keep their colors.
 func costSeriesSet(all []cost.Bucket, of func(cost.Share) costSeries) map[string]costSeries {
 	set := map[string]costSeries{}
 	for _, b := range all {
@@ -144,7 +146,7 @@ func costSeriesSet(all []cost.Bucket, of func(cost.Share) costSeries) map[string
 		}
 	}
 	i := 0
-	for _, sr := range costStacked(set, nil) {
+	for _, sr := range costByName(set) {
 		if sr.color.Color == "" {
 			sr.color = costColor(i)
 			set[sr.key] = sr
@@ -154,24 +156,26 @@ func costSeriesSet(all []cost.Bucket, of func(cost.Share) costSeries) map[string
 	return set
 }
 
-// costStacked orders the series of set bottom up by rank and name, only
-// those in keys where keys is not nil.
-func costStacked(set map[string]costSeries, keys map[string]float64) []costSeries {
+func costByName(set map[string]costSeries) []costSeries {
 	out := make([]costSeries, 0, len(set))
-	for key, sr := range set {
-		if _, ok := keys[key]; ok || keys == nil {
-			out = append(out, sr)
-		}
+	for _, sr := range set {
+		out = append(out, sr)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].rank != out[j].rank {
-			return out[i].rank < out[j].rank
-		}
 		if out[i].label != out[j].label {
 			return out[i].label < out[j].label
 		}
 		return out[i].key < out[j].key
 	})
+	return out
+}
+
+// costBySpend orders the series biggest first over the whole period, the
+// order of the legend and of every bar from the bottom up, so the biggest
+// stands on the baseline in each bar alike.
+func costBySpend(set map[string]costSeries, totals map[string]float64) []costSeries {
+	out := costByName(set)
+	sort.SliceStable(out, func(i, j int) bool { return totals[out[i].key] > totals[out[j].key] })
 	return out
 }
 
@@ -181,6 +185,14 @@ func newCostChart(key, by string, buckets []cost.Bucket, s CostState, now time.T
 	c := CostChart{Key: key, Title: costChartTitle(step) + " " + by}
 	set := costSeriesSet(buckets, of)
 	totals := map[string]float64{}
+	for _, b := range buckets {
+		for _, p := range b.Parts {
+			if p.USD > 0 {
+				totals[of(p).key] += p.USD
+			}
+		}
+	}
+	order := costBySpend(set, totals)
 	peak, total := 0.0, 0.0
 	n := len(buckets)
 	for _, b := range buckets {
@@ -196,10 +208,15 @@ func newCostChart(key, by string, buckets []cost.Bucket, s CostState, now time.T
 			}
 		}
 		col.Value = Money(b.USD)
-		stacked := costStacked(set, parts)
-		for _, sr := range stacked {
-			col.Segments = append(col.Segments, CostSegment{Series: sr.key, CostColor: sr.color, V: parts[sr.key]})
-			totals[sr.key] += parts[sr.key]
+		var stacked []costSeries
+		for _, sr := range order {
+			if _, ok := parts[sr.key]; ok {
+				stacked = append(stacked, sr)
+				col.Segments = append(col.Segments, CostSegment{Series: sr.key, CostColor: sr.color, V: parts[sr.key]})
+			}
+		}
+		for i := range col.Segments {
+			col.Segments[i].Grow = fraction(col.Segments[i].V, col.sum())
 		}
 		for _, sr := range costByValue(stacked, parts) {
 			col.Tips = append(col.Tips, CostTipRow{Series: sr.key, CostColor: sr.color, Label: sr.label, Value: Money(parts[sr.key])})
@@ -239,10 +256,7 @@ func newCostChart(key, by string, buckets []cost.Bucket, s CostState, now time.T
 		}
 		c.Labels = append(c.Labels, label)
 	}
-	// The legend leads with the biggest series.
-	legend := costStacked(set, nil)
-	sort.SliceStable(legend, func(i, j int) bool { return totals[legend[i].key] > totals[legend[j].key] })
-	for _, sr := range legend {
+	for _, sr := range order {
 		c.Legend = append(c.Legend, CostLegend{Key: sr.key, Label: sr.label, CostColor: sr.color, Value: Money(totals[sr.key])})
 	}
 	return c

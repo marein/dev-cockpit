@@ -1,5 +1,39 @@
 import { wireRowMenus } from "@dc/contextmenu";
 
+const GRID_LINES = 3;
+
+// costScale and money mirror costScale and Money in
+// internal/web/render, so a scaled axis reads like the server's.
+function costScale(peak) {
+  if (!(peak > 0)) peak = 1;
+  peak = Math.min(peak, Number.MAX_VALUE / 2);
+  const step = niceStep(peak / GRID_LINES);
+  if (!(step > 0)) return costScale(0);
+  const top = Math.ceil(peak / step) * step;
+  const grid = [];
+  for (let i = 1; i <= GRID_LINES; i++) {
+    const v = i * step;
+    if (v > top + step / 2) break;
+    grid.push(v);
+  }
+  return { top, grid };
+}
+
+function niceStep(raw) {
+  const exp = 10 ** Math.floor(Math.log10(raw));
+  for (const m of [1, 2, 2.5, 5, 10]) {
+    if (raw <= m * exp) return m * exp;
+  }
+  return 10 * exp;
+}
+
+function money(v) {
+  if (v <= 0) return "$0.00";
+  if (v < 0.005) return "<$0.01";
+  if (v < 1000) return `$${v.toFixed(2)}`;
+  return `$${Math.round(v).toLocaleString("en-US")}`;
+}
+
 export function createChart(root, signal) {
   const hidden = new Set();
   let hot = null;
@@ -62,16 +96,70 @@ export function createChart(root, signal) {
     for (const key of scope.querySelectorAll("[data-cost-legend] [data-series]")) {
       key.setAttribute("aria-pressed", String(!hidden.has(key.dataset.series)));
     }
-    for (const stack of scope.querySelectorAll(".dc-cost-stack")) {
-      const top = parseFloat(stack.closest("[data-cost-frame]").dataset.top) || 1;
-      let sum = 0;
-      for (const seg of stack.children) {
-        seg.hidden = hidden.has(seg.dataset.series);
-        if (!seg.hidden) sum += parseFloat(seg.dataset.v) || 0;
-      }
-      stack.style.setProperty("--h", String(sum / top * 100));
-    }
+    for (const chart of scope.querySelectorAll("[data-cost-chart]")) paintChart(chart);
     for (const row of scope.querySelectorAll("[data-cost-tip] [data-series]")) row.classList.toggle("off", hidden.has(row.dataset.series));
+  }
+
+  // paintChart stacks the shown series in the legend's order and scales the
+  // plot to them. A bar folds what is too thin to show its color into one
+  // Other, so it needs the plot laid out: unmeasured, nothing folds. With
+  // every series shown the scale is the server's, a sum here may land a
+  // hair above a nice step and double the axis.
+  function paintChart(chart) {
+    const frame = chart.querySelector("[data-cost-frame]");
+    if (!frame) return;
+    const keys = [...chart.querySelectorAll("[data-cost-legend] [data-series]")].map((key) => key.dataset.series);
+    const shown = keys.filter((series) => !hidden.has(series));
+    const value = (seg) => parseFloat(seg.dataset.v) || 0;
+    const stacks = [...chart.querySelectorAll(".dc-cost-stack")].map((stack) => {
+      const segs = [...stack.querySelectorAll(".dc-cost-seg[data-series]")];
+      const visible = segs.filter((seg) => !hidden.has(seg.dataset.series));
+      return { stack, segs, visible, sum: visible.reduce((sum, seg) => sum + value(seg), 0) };
+    });
+    const peak = Math.max(0, ...stacks.map((s) => s.sum));
+    const plot = frame.querySelector(".dc-cost-plot");
+    const lines = [...plot.querySelectorAll(".dc-cost-grid:not([data-cost-scaled])")];
+    const scaled = [...plot.querySelectorAll(".dc-cost-grid[data-cost-scaled]")];
+    let top = parseFloat(frame.dataset.top) || 1;
+    if (shown.length === keys.length || !lines.length) {
+      for (const line of scaled) line.remove();
+      for (const line of lines) line.hidden = false;
+    } else {
+      const scale = costScale(peak);
+      top = scale.top;
+      for (const line of lines) line.hidden = true;
+      scale.grid.forEach((v, i) => {
+        let line = scaled[i];
+        if (!line) {
+          line = plot.appendChild(lines[0].cloneNode(true));
+          line.dataset.costScaled = "";
+        }
+        line.hidden = false;
+        line.style.setProperty("--b", (v / top * 100).toFixed(2));
+        line.querySelector("span").textContent = money(v);
+      });
+      for (const line of scaled.slice(scale.grid.length)) line.remove();
+    }
+    const any = chart.querySelector("[data-cost-other]");
+    const least = any ? parseFloat(getComputedStyle(any).minHeight) || 0 : 0;
+    const px = frame.clientHeight / top;
+    for (const { stack, segs, visible, sum } of stacks) {
+      const thin = visible.filter((seg) => value(seg) * px < least);
+      const folded = new Set(thin.length > 1 ? thin : []);
+      let rest = 0;
+      for (const seg of segs) seg.hidden = hidden.has(seg.dataset.series) || folded.has(seg);
+      for (const seg of visible) {
+        if (folded.has(seg)) rest += value(seg);
+        else seg.style.flexGrow = String(value(seg) / sum);
+      }
+      const other = stack.querySelector("[data-cost-other]");
+      if (other) {
+        other.dataset.v = String(rest);
+        other.style.flexGrow = String(rest / sum);
+        other.hidden = !(rest > 0);
+      }
+      stack.style.setProperty("--h", String(Math.min(sum / top, 1) * 100));
+    }
   }
 
   root.addEventListener("pointerdown", (event) => { pointer = event.pointerType; }, { signal });
@@ -123,9 +211,11 @@ export function createChart(root, signal) {
     if (hot?.pinned && !root.contains(event.target)) hide();
   }, { signal });
 
+  paint(root);
+
   return {
-    prepare: (fresh) => paint(fresh),
     restore(state) {
+      paint(root);
       hot = null;
       if (!state) return;
       const col = root.querySelector(`[data-cost-col="${CSS.escape(state.key)}"]`);

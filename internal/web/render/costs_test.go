@@ -64,10 +64,41 @@ func TestCostChartGivesEveryProjectItsOwnColor(t *testing.T) {
 		t.Fatalf("the bar of now = %+v", col)
 	}
 	if col.Segments[0].Series != "p:a" || col.Segments[0].Color != "dc-cost-c1" || col.Tips[0].Label != "a" || col.Tips[0].Value != "$10.00" {
-		t.Fatalf("the stack starts with the first name and the tooltip with the biggest part: %+v %+v", col.Segments[0], col.Tips[0])
+		t.Fatalf("the stack starts with the biggest series and the tooltip with the biggest part: %+v %+v", col.Segments[0], col.Tips[0])
+	}
+	grow := 0.0
+	for _, s := range col.Segments {
+		grow += s.Grow
+	}
+	if math.Abs(grow-1) > 1e-9 || col.Segments[0].Grow != col.Segments[0].V/54 {
+		t.Fatalf("the shares of the bar add up to %v, the first is %v", grow, col.Segments[0].Grow)
 	}
 	if c.Top != 60 || col.Height != 90 || col.Drill != "" || c.Empty {
 		t.Fatalf("top %v height %v drill %q", c.Top, col.Height, col.Drill)
+	}
+}
+
+func TestCostChartStacksEveryBarBySpendOverThePeriod(t *testing.T) {
+	now := time.Date(2026, 10, 2, 15, 0, 0, 0, time.UTC)
+	r := costDayReport(now, []cost.Share{{Project: "a", USD: 1}, {Project: "z", USD: 2}, {Assistants: true, USD: 4}})
+	r.Buckets[14].USD = 8
+	r.Buckets[14].Parts = []cost.Share{{Project: "z", USD: 8}}
+	c := NewCostBoard(r, CostSplits{}, costTestState("range=today", now), "").Charts[0]
+	var legend, stack, tips []string
+	for _, l := range c.Legend {
+		legend = append(legend, l.Key+" "+l.Color)
+	}
+	for _, s := range c.Columns[15].Segments {
+		stack = append(stack, s.Series)
+	}
+	for _, t := range c.Columns[15].Tips {
+		tips = append(tips, t.Series)
+	}
+	if strings.Join(legend, ",") != "p:z dc-cost-c2,assistants dc-cost-assistants,p:a dc-cost-c1" {
+		t.Fatalf("the legend leads with the biggest and colors by name: %v", legend)
+	}
+	if strings.Join(stack, ",") != "p:z,assistants,p:a" || strings.Join(tips, ",") != "assistants,p:z,p:a" {
+		t.Fatalf("the bar stacks %v by the period and tips %v by its own values", stack, tips)
 	}
 }
 

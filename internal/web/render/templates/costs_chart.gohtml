@@ -18,7 +18,7 @@
         {{range .Grid}}<div class="dc-cost-grid" style="--b: {{printf "%.2f" .Bottom}}"><span>{{.Label}}</span></div>{{end}}
       </div>
       <div class="dc-cost-cols" role="group" aria-label="{{.Title}}, {{$range}}">
-        {{range .Columns}}<button type="button" class="dc-cost-col{{if .Current}} current{{end}}" data-cost-col="{{.Key}}"{{with .Drill}} data-drill="{{.}}"{{end}} aria-label="{{.Label}}: {{.Value}}"><span class="dc-cost-stack" style="--h: {{printf "%.2f" .Height}}">{{range .Segments}}<span class="dc-cost-seg {{.Color}}" data-series="{{.Series}}" data-v="{{printf "%.6f" .V}}" style="flex-grow: {{printf "%.6f" .V}}{{with .Hue}}; --dc-h: {{.}}{{end}}"></span>{{end}}</span></button>{{end}}
+        {{range .Columns}}<button type="button" class="dc-cost-col{{if .Current}} current{{end}}" data-cost-col="{{.Key}}"{{with .Drill}} data-drill="{{.}}"{{end}} aria-label="{{.Label}}: {{.Value}}"><span class="dc-cost-stack" style="--h: {{printf "%.2f" .Height}}">{{range .Segments}}<span class="dc-cost-seg {{.Color}}" data-series="{{.Series}}" data-v="{{printf "%.6f" .V}}" style="flex-grow: {{printf "%.6f" .Grow}}{{with .Hue}}; --dc-h: {{.}}{{end}}"></span>{{end}}<span class="dc-cost-seg dc-cost-other" data-cost-other hidden></span></span></button>{{end}}
       </div>
       <div class="card card-sm dc-cost-tip" role="tooltip" hidden data-cost-tip></div>
     </div>

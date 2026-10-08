@@ -662,7 +662,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Charts",
-					Desc:  `Each chart stacks every series that spent in the period, the header holds its total. By project shows all assistants as one series. The legend holds each series' total. A click shows only that series and again all, Ctrl, Cmd or Shift click or a long press hides or shows one. Hover or tap a bar for its numbers. A click on the bar opens its hours or days, on touch the link in the tooltip. A chart without spend shows its axes and one line.`,
+					Desc:  `Each chart stacks every series that spent in the period, the biggest of the period at the bottom of every bar, the header holds its total. Series too thin to show their color in a bar stack as one grey Other on top of it, the legend and the tooltip still list each. Hiding series rescales the axis to what is shown. By project shows all assistants as one series. The legend holds each series' total. A click shows only that series and again all, Ctrl, Cmd or Shift click or a long press hides or shows one. Hover or tap a bar for its numbers. A click on the bar opens its hours or days, on touch the link in the tooltip. A chart without spend shows its axes and one line.`,
 				},
 				{
 					Title: "How it is booked",

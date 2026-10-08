@@ -56,7 +56,6 @@ class Costs extends HTMLElement {
     const bar = this.querySelector(":scope > [data-cost-toolbar]");
     const freshBar = fresh.querySelector(":scope > [data-cost-toolbar]");
     if (live && bar && freshBar) freshBar.replaceWith(bar);
-    this.chart.prepare(fresh);
     this.replaceChildren(...fresh.childNodes);
     this.chart.restore(live ? tip : null);
     if (focus && !this.contains(document.activeElement)) this.querySelector(focus)?.focus({ preventScroll: true });

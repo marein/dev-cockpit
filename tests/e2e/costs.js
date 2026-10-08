@@ -823,6 +823,125 @@ L.runFeature("costs", async ({ browser, page, run, mobilePage }) => {
       const active = await m.evaluate(() => document.querySelector('.dc-tabbar [data-ctx-area="cockpit"]').classList.contains("active"));
       assert(active, "the Cockpit tab is not active on the cost page");
     });
+
+    const many = (i) => `tccost-many-${tag}-${String(i).padStart(2, "0")}`;
+    const bars = () => page.$$eval(COL, (cols) => {
+      const card = getComputedStyle(cols[0].closest(".card")).backgroundColor;
+      const swatch = Object.fromEntries([...document.querySelectorAll('[data-cost-chart="project"] [data-cost-legend] [data-series]')]
+        .map((k) => [k.dataset.series, getComputedStyle(k.querySelector(".dc-cost-swatch")).backgroundColor]));
+      const plot = cols[0].closest("[data-cost-frame]").querySelector(".dc-cost-plot").getBoundingClientRect().height;
+      const grid = [...document.querySelectorAll('[data-cost-chart="project"] .dc-cost-grid')].filter((g) => getComputedStyle(g).display !== "none")
+        .map((g) => [parseFloat(g.style.getPropertyValue("--b")), g.textContent.trim()]).sort((x, y) => x[0] - y[0]).map((g) => g[1]);
+      return { card, plot, grid, order: Object.keys(swatch), keys: Object.keys(swatch).length, cols: cols.map((c) => {
+        const stack = c.querySelector(".dc-cost-stack");
+        const folded = [...stack.querySelectorAll(".dc-cost-seg[data-series]")].filter((s) => getComputedStyle(s).display === "none").map((s) => parseFloat(s.dataset.v));
+        const segs = [...stack.children].filter((s) => getComputedStyle(s).display !== "none").map((s) => ({
+          series: s.dataset.series || "other",
+          v: parseFloat(s.dataset.v),
+          h: s.getBoundingClientRect().height,
+          bg: getComputedStyle(s).backgroundColor,
+          swatch: swatch[s.dataset.series] || "",
+          shadow: getComputedStyle(s).boxShadow,
+        }));
+        return { segs, folded, stack: stack.getBoundingClientRect().height, share: parseFloat(stack.style.getPropertyValue("--h")) / 100 * plot };
+      }) };
+    });
+    const dollars = (label) => parseFloat(label.replace(/[^0-9.]/g, ""));
+    let before;
+
+    await run("a bar folds only the series too thin to show into Other on top, the biggest of the period at the bottom, without a gap, a line or a background block", async () => {
+      const dir = (name) => path.join(path.dirname(shopPath), name);
+      const book = (name, usd, at) => {
+        const id = crypto.randomUUID();
+        writeTranscript(id, dir(name), `cost ${name}`, call(id, dir(name), "claude-sonnet-5-5", usd, at));
+      };
+      book(`tccost-big-${tag}`, 600, now - 6 * 86400000);
+      for (let i = 0; i < 60; i++) book(many(i), 1, now - 5 * 86400000);
+      for (let i = 0; i < 30; i++) book(many(i), 0.25, now - 4 * 86400000);
+      book(`tccost-mid-${tag}`, 60, now - 4 * 86400000);
+      book(`tccost-top-${tag}`, 100, now - 4 * 86400000);
+      for (let i = 0; i < 12; i++) book(`tccost-wide-${tag}-${String(i).padStart(2, "0")}`, 30, now - 3 * 86400000);
+      await waitFor(async () => {
+        await openCosts(page);
+        return (await legendValue(page, many(59))) === "$1.00" && (await legendValue(page, many(0))) === "$1.25" && (await legendValue(page, `tccost-top-${tag}`)) === "$100.00" &&
+          (await legendValue(page, `tccost-wide-${tag}-11`)) === "$30.00";
+      }, "booking the 74 projects", 30000);
+      const cards = [];
+      for (const scheme of ["light", "dark"]) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await openCosts(page);
+        const b = await bars();
+        cards.push(b.card);
+        assert(b.keys >= 20, `${b.keys} series in the legend`);
+        for (const [i, c] of b.cols.entries()) {
+          if (!c.segs.length) continue;
+          const own = c.segs.filter((s) => s.series !== "other");
+          const px = c.share / c.segs.reduce((sum, s) => sum + s.v, 0);
+          const thin = own.filter((s) => s.v * px < 3);
+          assert(c.folded.every((v) => v * px < 3) && (c.folded.length ? c.folded.length > 1 && !thin.length : thin.length <= 1) && !!c.folded.length === (c.segs.at(-1).series === "other"),
+            `${scheme} bar ${i} keeps ${JSON.stringify(own.map((s) => s.v * px))}px on its own, folds ${JSON.stringify(c.folded.map((v) => v * px))}px`);
+          const ranks = c.segs.map((s) => s.series === "other" ? b.order.length : b.order.indexOf(s.series));
+          assert(ranks.every((r, j) => r >= 0 && (j === 0 || ranks[j - 1] < r)), `${scheme} bar ${i} does not stack in the legend's order ${JSON.stringify(c.segs.map((s) => s.series))}`);
+          const drawn = c.segs.reduce((sum, s) => sum + s.h, 0);
+          assert(Math.abs(c.stack - c.share) < 1 && Math.abs(drawn - c.stack) < 1, `${scheme} bar ${i}: segments ${drawn}px, stack ${c.stack}px, share ${c.share}px`);
+          for (const s of c.segs) {
+            assert(s.bg !== b.card && s.bg !== "rgba(0, 0, 0, 0)" && (s.series === "other" || s.bg === s.swatch) && s.shadow === "none", `${scheme} bar ${i}: ${s.series} paints ${s.bg} with ${s.shadow} on a card of ${b.card}`);
+          }
+        }
+        const x = b.cols[24].segs;
+        assert(x.length === 1 && x[0].series === "other" && x[0].h >= 3, `${scheme} the bar of 60 thin projects ${JSON.stringify(x)}`);
+        const y = b.cols[25].segs;
+        assert(y.length === 3 && y[0].series === `p:tccost-top-${tag}` && y[1].series === `p:tccost-mid-${tag}` && y[2].series === "other" && y[2].h >= 3,
+          `${scheme} the bar of two big and 30 tiny ${JSON.stringify(y)}`);
+        const z = b.cols[26].segs;
+        assert(z.length === 12 && z.every((s) => s.series !== "other" && s.h >= 3), `${scheme} the bar of 12 wide projects folds ${JSON.stringify(z)}`);
+        if (process.env.SHOTS_DIR) await page.locator('[data-cost-chart="project"]').screenshot({ path: path.join(process.env.SHOTS_DIR, `cost-many-series-${scheme}.png`) });
+      }
+      await page.emulateMedia({ colorScheme: null });
+      assert(cards[0] !== cards[1], `the card is ${cards[0]} in both schemes`);
+      before = (await bars()).grid;
+    });
+
+    await run("isolating a series from Other draws it in its own color on a rescaled axis, showing all brings the scale back", async () => {
+      await openCosts(page);
+      assert(JSON.stringify((await bars()).grid) === JSON.stringify(before), "the axis is not the server's on a fresh page");
+      const key = `[data-cost-chart="project"] [data-cost-legend] [data-series="p:${many(20)}"]`;
+      await page.click(key);
+      const b = await bars();
+      const x = b.cols[24].segs;
+      assert(x.length === 1 && x[0].series === `p:${many(20)}` && x[0].bg === x[0].swatch && x[0].bg !== b.card, `the isolated series ${JSON.stringify(x)}`);
+      assert(dollars(b.grid.at(-1)) < dollars(before.at(-1)), `top label ${b.grid.at(-1)}, before ${before.at(-1)}`);
+      assert(x[0].h > b.plot / 2 && Math.abs(b.cols[24].stack - b.cols[24].share) < 1, `the bar is ${x[0].h}px of ${b.plot}px`);
+      await page.click(key);
+      const all = await bars();
+      assert(JSON.stringify(all.grid) === JSON.stringify(before), `the axis ${all.grid}, the server's ${before}`);
+      assert(all.cols[24].segs.at(-1).series === "other", "Other did not come back");
+    });
+
+    await run("a Ctrl click takes one series off and rescales, a second brings it and the server's axis back", async () => {
+      await openCosts(page);
+      const key = `[data-cost-chart="project"] [data-cost-legend] [data-series="p:tccost-big-${tag}"]`;
+      await page.click(key, { modifiers: ["Control"] });
+      const off = await bars();
+      assert((await page.getAttribute(key, "aria-pressed")) === "false" && off.cols[23].segs.length === 0, `the big series still draws ${JSON.stringify(off.cols[23])}`);
+      assert(dollars(off.grid.at(-1)) < dollars(before.at(-1)) && off.cols[25].segs.some((s) => s.series === `p:tccost-top-${tag}`), `top label ${off.grid.at(-1)}, before ${before.at(-1)}`);
+      const pressed = await page.$$eval('[data-cost-chart="project"] [data-cost-legend] [aria-pressed="false"]', (keys) => keys.length);
+      assert(pressed === 1, `${pressed} keys are off after one Ctrl click`);
+      await page.click(key, { modifiers: ["Control"] });
+      const on = await bars();
+      assert(JSON.stringify(on.grid) === JSON.stringify(before) && on.cols[23].segs.length === 1, `the axis ${on.grid}, the server's ${before}`);
+    });
+
+    await run("the tooltip lists every series of a bar by value, none at zero", async () => {
+      await openCosts(page);
+      await page.mouse.move(2, 2);
+      await page.locator(COL).nth(25).hover();
+      await waitFor(() => tipShown(page), "the tooltip on hover", 4000);
+      const rows = await page.$$eval("[data-cost-tip] .dc-cost-tiprow", (els) => els.map((el) => el.querySelector(".fw-medium").textContent.trim()));
+      const values = rows.map(dollars);
+      assert(rows.length === 32 && values.every((v, i) => v > 0 && (i === 0 || values[i - 1] >= v)), `tooltip rows ${rows}`);
+      await page.mouse.move(2, 2);
+    });
   } finally {
     await L.deleteProject(page, SHOP).catch(() => {});
     await L.deleteProject(page, BLOG).catch(() => {});
