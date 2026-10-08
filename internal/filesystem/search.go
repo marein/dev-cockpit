@@ -479,7 +479,7 @@ func searchSnippet(line []byte, start, end int) (string, int, int) {
 	prefix := strings.ToValidUTF8(cut[:start], "�")
 	marked := strings.ToValidUTF8(cut[start:end], "�")
 	suffix := strings.ToValidUTF8(cut[end:], "�")
-	return prefix + marked + suffix, utf16Len(prefix), utf16Len(marked)
+	return prefix + marked + suffix, UTF16Len(prefix), UTF16Len(marked)
 }
 
 // SnippetAround trims a line for transport, keeping a window around the byte
@@ -523,9 +523,9 @@ func snippetCut(text string, idx int) (string, int) {
 	return windowTrimmed, dropped + start + strings.Index(window, windowTrimmed)
 }
 
-// utf16Len counts UTF-16 units, the coordinate system the browser addresses
+// UTF16Len counts UTF-16 units, the coordinate system the browser addresses
 // string positions in.
-func utf16Len(s string) int {
+func UTF16Len(s string) int {
 	n := 0
 	for _, r := range s {
 		n++

@@ -38,8 +38,11 @@ type EditorData struct {
 	// links into a view, and the client reads it off the page, never the URL.
 	// Empty is the plain editor.
 	View string
-	// File is the project relative path a terminal link asks the page to open.
+	// File is the project relative path a terminal link asks the page to open,
+	// at Line and Col when they are above 0.
 	File string
+	Line int
+	Col  int
 }
 
 // EditorProjectsData feeds the switcher fragment, the very rows the editor

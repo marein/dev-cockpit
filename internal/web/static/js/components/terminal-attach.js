@@ -1,7 +1,8 @@
 import { notifyError, notifySuccess, notifyInfo, showToast } from "@dc/toast";
 import { copyText } from "@dc/dom";
-import { getJSON, postForm, postJSON } from "@dc/http";
+import { ensureOk, getJSON, postForm, postJSON } from "@dc/http";
 import { get, set } from "@dc/store";
+import { linkHolds, markFileLinks, openFileLink } from "@dc/termlinks";
 import { isDark } from "@dc/theme";
 
 const OSC52_MAX_BASE64 = 4 * Math.ceil(1048576 / 3);
@@ -697,22 +698,23 @@ function initTerminalAttach(host) {
   if (window.WebLinksAddon && window.WebLinksAddon.WebLinksAddon) {
     term.loadAddon(new window.WebLinksAddon.WebLinksAddon(openWebLink));
   }
-  const activateLink = (event, uri) => {
+  const activateLink = (event, uri, range) => {
     const scheme = uri.slice(0, uri.indexOf(":") + 1).toLowerCase();
     if (scheme === "http:" || scheme === "https:") {
       openWebLink(event, uri);
-    } else if (scheme === "file:") {
+    } else if (scheme === "file:" && linkHolds(term, range)) {
       event.preventDefault();
       getJSON("/terminal-link?url=" + encodeURIComponent(uri))
-        .then(({ href }) => window.app.navigate(href))
+        .then(({ href }) => openFileLink(href, event))
         .catch(() => {});
     }
   };
   let hoveredLink = "";
+  let hoveredRange = null;
   term.options.linkHandler = {
     allowNonHttpProtocols: true,
-    activate: (event, uri) => { if (!term.hasSelection()) activateLink(event, uri); },
-    hover: (event, uri) => { hoveredLink = uri; },
+    activate: (event, uri, range) => { if (!term.hasSelection()) activateLink(event, uri, range); },
+    hover: (event, uri, range) => { hoveredLink = uri; hoveredRange = range; },
     leave: () => { hoveredLink = ""; },
   };
   // The scroll zone cancels a touch at touchstart, so xterm never sees the
@@ -723,7 +725,7 @@ function initTerminalAttach(host) {
     terminalElement.querySelector(".xterm-screen")?.dispatchEvent(new MouseEvent("mousemove", {
       bubbles: true, clientX: event.clientX, clientY: event.clientY,
     }));
-    if (hoveredLink) activateLink(event, hoveredLink);
+    if (hoveredLink) activateLink(event, hoveredLink, hoveredRange);
   });
 
   // ---- Mouse reporting -------------------------------------------------------
@@ -1319,6 +1321,10 @@ function initTerminalAttach(host) {
   };
 
   const sessionPath = streamUrl.replace(/\/stream$/, "");
+  markFileLinks(term, {
+    ask: (words) => postJSON(sessionPath + "/file-links", { words }).then((res) => ensureOk(res)).then((res) => res.json()),
+    signal,
+  });
   let userEndedAt = 0;
   listen(window, "pe:form", (event) => {
     const path = new URL(event.detail.form.action, window.location.origin).pathname;

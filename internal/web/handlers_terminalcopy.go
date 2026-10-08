@@ -28,7 +28,8 @@ const (
 )
 
 type terminalCopy struct {
-	Text string `json:"text"`
+	Text  string     `json:"text"`
+	Links []fileLink `json:"links"`
 	// Kind and Screen are read by a tab still on the page from before the
 	// conversation face, which chose its wording by them. Screen is always
 	// true, the answer is always the terminal picture.
@@ -52,10 +53,10 @@ func (s *Server) handleTerminalCopy(c *gin.Context) {
 	if lines > copyMaxLines {
 		lines = copyMaxLines
 	}
-	text, err := tmux.New().CapturePane(ref.TmuxSession, lines)
+	text, cols, err := tmux.New().CapturePaneWidth(ref.TmuxSession, lines)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": userFacingError(c, err)})
 		return
 	}
-	c.JSON(http.StatusOK, terminalCopy{Text: text, Kind: ref.Kind, Screen: true})
+	c.JSON(http.StatusOK, terminalCopy{Text: text, Links: s.fileLinker(ref.CWD).newestFileLinks(text, cols), Kind: ref.Kind, Screen: true})
 }

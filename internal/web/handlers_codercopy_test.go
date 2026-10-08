@@ -145,7 +145,7 @@ func serveConversation(t *testing.T, record conversationCoder, query string) str
 	c, engine := gin.CreateTestContext(rec)
 	engine.SetHTMLTemplate(render.HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil))
 	c.Request = httptest.NewRequest(http.MethodGet, "/coders/"+conversationSession+"/conversation"+query, nil)
-	renderCoderConversation(c, coder.NewManager(config.Config{}, nil, record, nil), conversationSession)
+	renderCoderConversation(c, coder.NewManager(config.Config{}, nil, record, nil), conversationSession, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}

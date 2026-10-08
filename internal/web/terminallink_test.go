@@ -32,6 +32,11 @@ func TestTerminalLinkTarget(t *testing.T) {
 
 	for _, tc := range []struct{ url, want string }{
 		{"file://" + demo + "/src/main.go", "/projects/demo/editor?file=src%2Fmain.go"},
+		{"file://" + demo + "/src/main.go#12", "/projects/demo/editor?file=src%2Fmain.go&line=12"},
+		{"file://" + demo + "/src/main.go#12:3", "/projects/demo/editor?col=3&file=src%2Fmain.go&line=12"},
+		{"file://" + demo + "/src/main.go#L12", "/projects/demo/editor?file=src%2Fmain.go"},
+		{"file://" + demo + "/src/main.go#0:3", "/projects/demo/editor?file=src%2Fmain.go"},
+		{"file://" + demo + `/src\main.go`, ""},
 		{"file://" + demo + "/my%20file%231.go", "/projects/demo/editor?file=my+file%231.go"},
 		{"FILE://" + demo + "/a.go", "/projects/demo/editor?file=a.go"},
 		{"file://localhost" + demo + "/a.go", "/projects/demo/editor?file=a.go"},

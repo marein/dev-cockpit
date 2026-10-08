@@ -7,7 +7,9 @@ const { assert, sleep } = L;
 // GET /terminal-link, which answers the project's editor URL
 // (/projects/:name/editor?file=<relative>) or 404 outside every project; the
 // editor opens the file from data-editor-file. http(s) opens a new tab, any
-// other scheme nothing. The throwaway shell stands in for claude: it prints
+// other scheme nothing, a relative or protocol relative address neither, also
+// not with Ctrl or Shift. Ctrl opens a project file in a new tab. The
+// throwaway shell stands in for claude: it prints
 // the bytes claude writes for a tool header, an id parameter and BEL
 // terminated. Desktop: a click opens, a drag selects, a click beside a link
 // focuses like before. Touch: the scroll zone eats the tap's mouse events and
@@ -18,13 +20,15 @@ const SHOTS_DIR = process.env.SHOTS_DIR || "";
 const VIDEO_DIR = process.env.VIDEO_DIR || "";
 const SHOT_PREFIX = process.env.SHOT_PREFIX || "terminal-links";
 
-const ROWS = ["Update(links.go)", "Read(/etc/hostname)", "Security guide", "PLAIN-NO-LINK-TEXT"];
+const ROWS = ["Update(links.go)", "Read(/etc/hostname)", "Security guide", "Relative settings", "Protocol relative", "PLAIN-NO-LINK-TEXT"];
 
 const printCommand = () => [
   "clear; printf '",
   "\\033[1mUpdate\\033[22m(\\033]8;id=1j518kd;file://%s/links.go\\007links.go\\033]8;;\\007)\\n",
   "\\033[1mRead\\033[22m(\\033]8;id=th1gw7;file:///etc/hostname\\007/etc/hostname\\033]8;;\\007)\\n",
   "\\033]8;id=zaxmda;https://example.invalid/security\\007Security guide\\033]8;;\\007\\n",
+  "\\033]8;;/settings\\007Relative settings\\033]8;;\\007\\n",
+  "\\033]8;;//example.com/x\\007Protocol relative\\033]8;;\\007\\n",
   "PLAIN-NO-LINK-TEXT\\n",
   "' \"$PWD\"",
 ].join("");
@@ -163,6 +167,37 @@ L.runFeature("TERMINAL LINKS", async ({ engine, browser, page, run }) => {
       const tab = await popup;
       await tab.close();
       assert(page.url() === shellUrl, "the web link moved the terminal page");
+    });
+
+    await run("desktop: a relative or protocol relative link opens nothing, with Ctrl or Shift neither", async () => {
+      const popups = [];
+      const onPage = (p) => popups.push(p.url());
+      page.context().on("page", onPage);
+      for (const row of ["Relative settings", "Protocol relative"]) {
+        const link = await cellPoint(page, row, 3);
+        await page.mouse.move(link.x, link.y);
+        await page.waitForFunction(() => document.querySelector("#terminal .xterm-screen").classList.contains("xterm-cursor-pointer"), null, { timeout: 4000 });
+        for (const modifier of [null, "Control", "Shift"]) {
+          if (modifier) await page.keyboard.down(modifier);
+          await page.mouse.click(link.x, link.y);
+          if (modifier) await page.keyboard.up(modifier);
+          await stays(page, shellUrl, 800);
+        }
+      }
+      page.context().off("page", onPage);
+      assert(popups.length === 0, `a tab opened: ${popups.join(", ")}`);
+    });
+
+    await run("desktop: Ctrl+click on a project file link opens it in a new tab", async () => {
+      const popup = page.context().waitForEvent("page", { timeout: 10000 });
+      const link = await cellPoint(page, "Update(", 9);
+      await page.keyboard.down("Control");
+      await page.mouse.click(link.x, link.y);
+      await page.keyboard.up("Control");
+      const tab = await popup;
+      await tab.waitForURL(new RegExp(`/projects/${project}/editor\\?file=links\\.go$`), { timeout: 10000 });
+      await tab.close();
+      await stays(page, shellUrl, 300);
     });
 
     await run("desktop: a click on a project file link opens it in the editor", async () => {

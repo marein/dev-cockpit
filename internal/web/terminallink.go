@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -11,8 +13,9 @@ import (
 )
 
 // handleTerminalLink maps a file:// hyperlink a program printed in a terminal
-// to the editor of the project holding the file. A link outside every project
-// answers 404 and the terminal opens nothing.
+// to the editor of the project holding the file, at the line and column a
+// fragment like #12 or #12:3 names. A link outside every project answers 404
+// and the terminal opens nothing.
 func (s *Server) handleTerminalLink(c *gin.Context) {
 	if href := s.terminalLinkTarget(c.Query("url")); href != "" {
 		c.JSON(http.StatusOK, gin.H{"href": href})
@@ -26,20 +29,20 @@ func (s *Server) terminalLinkTarget(raw string) string {
 	if err != nil || u.Scheme != "file" || (u.Host != "" && !strings.EqualFold(u.Host, "localhost")) || !filepath.IsAbs(u.Path) {
 		return ""
 	}
-	name := s.projects.ProjectNameFor(u.Path)
-	if name == "" {
+	p, ok := s.projectAt(u.Path)
+	if !ok {
 		return ""
 	}
-	p, err := s.projects.FindByName(name)
-	if err != nil {
+	rel, _, ok := filesystem.RelUnder(p.Path, u.Path)
+	if !ok {
 		return ""
 	}
-	rel, err := filepath.Rel(p.Path, filepath.Clean(u.Path))
-	if err != nil || rel == "." {
-		return ""
+	ref := filesystem.FileRef{Path: rel}
+	if m := linkLocation.FindStringSubmatch(u.Fragment); m != nil {
+		ref.Line, _ = strconv.Atoi(m[1])
+		ref.Col, _ = strconv.Atoi(m[2])
 	}
-	if _, err := filesystem.ResolveUnder(p.Path, filepath.ToSlash(rel)); err != nil {
-		return ""
-	}
-	return "/projects/" + url.PathEscape(p.Name) + "/editor?file=" + url.QueryEscape(filepath.ToSlash(rel))
+	return editorFileURL(p.Name, ref)
 }
+
+var linkLocation = regexp.MustCompile(`^([1-9]\d{0,8})(?::([1-9]\d{0,8}))?$`)

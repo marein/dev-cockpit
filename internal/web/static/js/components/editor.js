@@ -11081,8 +11081,12 @@ async function init(root) {
       event.stopPropagation();
     }
   };
+  // A file link names the project the way the server escapes it, which is
+  // not encodeURIComponent's way, so both sides compare unescaped.
+  const opensHere = (href) => decodeURIComponent(new URL(href, location.href).pathname) === `/projects/${name}/editor`;
   document.addEventListener("click", (e) => {
     const a = e.target.closest("a[href]");
+    if (a?.hasAttribute("data-file-link") && opensHere(a.href)) return;
     if (a && a.host === location.host && !a.hasAttribute("target")) guard(e, a);
   }, { capture: true, signal });
   document.addEventListener("submit", (e) => guard(e, e.target), { capture: true, signal });
@@ -11097,12 +11101,23 @@ async function init(root) {
   await Promise.all([loadTree(), restoreTabs(), loadGitStatus()]);
   tabsRestored = true;
   restoreTreeScroll();
-  if (root.dataset.editorFile) void openPath(root.dataset.editorFile);
+  const openFileAt = (file, line, col) => {
+    void openPath(file, { jump: line > 0 ? { line, character: Math.max(0, col - 1) } : null });
+  };
+  if (root.dataset.editorFile) openFileAt(root.dataset.editorFile, Number(root.dataset.editorLine), Number(root.dataset.editorCol));
   else if (tabs.length === 0 && mobileMedia.matches) openDrawer();
   if (pageTerminal && termOpen && onDesktop()) void activateTermPane(pageTerminal, { focus: true });
   const reveal = !!root.dataset.editorView;
   const pageView = root.dataset.editorView || store.get(viewKey, "");
   if (pageView) void openPageView(pageView, reveal);
+  // A file link from this editor's own terminal panel opens in place, a page
+  // load would restart the panel's terminals.
+  document.addEventListener("dc:open-file", (event) => {
+    if (!opensHere(event.detail.href)) return;
+    event.preventDefault();
+    const params = new URL(event.detail.href, location.href).searchParams;
+    openFileAt(params.get("file") || "", Number(params.get("line")), Number(params.get("col")));
+  }, { signal });
 
   return () => {
     if (viewSaveTimer) {

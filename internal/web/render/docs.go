@@ -273,7 +273,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Links",
-					Desc:  `A click or a tap on a link a program prints, such as the file names in a coder's tool lines, opens it. A file inside a project opens in that project's editor, a web address in a new tab, anything else stays closed.`,
+					Desc:  `A click or a tap on a link a program prints, such as the file names in a coder's tool lines, opens it. A file inside a project opens in that project's editor, a web address in a new tab, anything else stays closed. A path of an existing file of the terminal's project links too, relative to its root or absolute, in the terminal, the copy view and the conversation, and <code>:line</code> or <code>:line:column</code> after it places the cursor. In the terminal and the copy view it links also when the terminal wraps it onto the next row, or a program at its margin, unless a row names a file on its own, and in the terminal a new word on the row the cursor stands on links once the cursor leaves it, one on a row whose text a program keeps replacing in place, a clock or a counter, once the row stood still for 1.5 seconds. A word without a letter, such as a time, a version or a size, never links. Inside the editor's terminal panel a file of its project opens in place. <kbd>Ctrl</kbd>, <kbd>Cmd</kbd> or <kbd>Shift</kbd> opens a file in a new tab.`,
 				},
 				{
 					Title:    "Send files to a coder",

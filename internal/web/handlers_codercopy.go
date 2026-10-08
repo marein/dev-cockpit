@@ -21,18 +21,19 @@ import (
 // stands above that message.
 func (s *Server) handleCoderConversation(c *gin.Context) {
 	id := c.Param("id")
-	co, _, err := s.resolveRunning(id)
+	co, running, err := s.resolveRunning(id)
 	if err != nil {
 		c.String(http.StatusNotFound, userFacingError(c, err))
 		return
 	}
-	renderCoderConversation(c, co, id)
+	renderCoderConversation(c, co, id, s.fileLinker(running.CWD))
 }
 
 // renderCoderConversation answers the page for a running session. A record
 // that is not written yet is an empty conversation, every other failure says
 // what went wrong, so a broken record never reads as one nobody spoke in.
-func renderCoderConversation(c *gin.Context, co *coder.Manager, id string) {
+// The bubbles carry their file links in their markup.
+func renderCoderConversation(c *gin.Context, co *coder.Manager, id string, links *fileLinker) {
 	data := render.CoderCopyData{}
 	conversation, err := co.Conversation(id, coder.TranscriptPage, strings.TrimSpace(c.Query("before")))
 	switch {
@@ -47,6 +48,7 @@ func renderCoderConversation(c *gin.Context, co *coder.Manager, id string) {
 		data.Note = "Nothing was said yet."
 	}
 	data.Messages = copyViews(render.CoderLabel(co.ID()), conversation.Messages)
+	links.linkCopyViews(data.Messages)
 	data.Dropped = conversation.Dropped
 	if data.Dropped > 0 {
 		data.Before = conversation.Messages[0].ID
@@ -71,7 +73,7 @@ func copyViews(author string, messages []coder.Message) []render.ChatMessageView
 			view.Coder = true
 			view.Author = author
 			for _, p := range m.Parts {
-				part := render.ChatPartView{Tool: p.Tool, Line: p.Text}
+				part := render.ChatPartView{Tool: p.Tool, Line: p.Text, HTML: template.HTML(template.HTMLEscapeString(p.Text))}
 				if p.Kind == coder.PartText {
 					part = render.ChatPartView{HTML: copyMarkdown(p.Text)}
 				}
