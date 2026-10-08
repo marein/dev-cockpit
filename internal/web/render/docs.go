@@ -446,6 +446,10 @@ func DocsTopics() []DocsTopic {
 					Desc:  `<em>Open files</em> in the menu brings them up from the bottom, one row each with its folder under the name, the git letter in front and a dot when it is unsaved. A row goes to that file, the cross closes it, and the grip <i class="ti ti-grip-vertical align-text-bottom" aria-hidden="true"></i> drags it elsewhere; with a mouse the tabs themselves drag. It is one order either way and it stays on this device.`,
 				},
 				{
+					Title: "Tab groups",
+					Desc:  `Drag a tab onto the edge of a group to open a new group on that side, onto another group's tabs or its middle to move it there. The tab menu does the same with <em>Split right</em>, <em>left</em>, <em>down</em>, <em>up</em> and <em>Move to group</em>. Save and close act on the group you clicked last, <kbd>Ctrl</kbd>+<kbd>Tab</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> step through the tabs of every group, the top row first and each row from the left. Drag the line between two groups to resize them, a double click makes them equal. A file stands in one group at a time, and a group closes with its last tab. The layout stays per project on this device. <em>Open files</em> lists every group, on a desktop a drag between them moves the file. Splitting needs a desktop. A narrow window shows the focused group with the tabs of every group in its strip, a tap brings that tab's group to the front, and the layout stays as it was.`,
+				},
+				{
 					Title:    "Swipe to the next file",
 					Tag:      "Touch",
 					TagClass: "bg-blue-lt",

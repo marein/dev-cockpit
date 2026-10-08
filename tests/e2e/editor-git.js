@@ -5359,7 +5359,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         const stripRect = strip.getBoundingClientRect();
         const nameRect = name.getBoundingClientRect();
         const inside = Math.max(0, Math.min(nameRect.right, stripRect.right) - Math.max(nameRect.left, stripRect.left));
-        const controls = [...document.querySelectorAll(".editor-pane-col > .editor-pane-header .editor-actions > *")]
+        const controls = [...document.querySelectorAll(".editor-pane-col .editor-pane-header .editor-actions > *")]
           .filter((el) => el.getBoundingClientRect().width > 0)
           .map((el) => el.getAttributeNames().find((n) => n.startsWith("data-editor")) || el.className.split(" ")[0]);
         return {

@@ -216,7 +216,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
   // are two pane headers, one over the tree and one over the editor: this is the
   // one the strip sits in, hence the .editor-pane-col scope.
   const headerControls = (p) => p.$$eval(
-    ".editor-pane-col > .editor-pane-header > button, .editor-pane-col > .editor-pane-header > .editor-tabs, .editor-pane-col > .editor-pane-header .editor-actions > button, .editor-pane-col > .editor-pane-header .editor-actions > a, .editor-pane-col > .editor-pane-header .editor-actions > .dropdown > button",
+    ".editor-pane-col .editor-pane-header > button, .editor-pane-col .editor-pane-header > .editor-tabs, .editor-pane-col .editor-pane-header .editor-actions > button, .editor-pane-col .editor-pane-header .editor-actions > a, .editor-pane-col .editor-pane-header .editor-actions > .dropdown > button",
     (els) => els
       .filter((el) => {
         const r = el.getBoundingClientRect();

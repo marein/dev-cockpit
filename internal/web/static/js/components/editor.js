@@ -19,6 +19,12 @@ import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
 import { isDark } from "@dc/theme";
 import * as dockerApi from "@dc/docker";
 import * as editorLSP from "@dc/editor-lsp";
+import { GroupLayout, cornerLeaf, dropZone, encodeLayout, leaf, leafIds, mapLeaves, readGroups, removeAt, screenOrder, splitAt } from "@dc/editor-groups";
+import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, langUrl, modeUrl } from "@dc/editor-filetypes";
+import { byteLength, commitDate, countLines, formatSize, isoDate, shortName } from "@dc/editor-format";
+import { savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
+import { indentPref, loadEditorSettings, saveEditorSettings, setupIndentControl, setupSettingsUI } from "@dc/editor-settings";
+import { createTextarea } from "@dc/editor-textarea";
 import * as projectSort from "@dc/project-sort";
 import * as store from "@dc/store";
 
@@ -101,20 +107,11 @@ async function init(root) {
   applyTreeWidth(parseInt(readLayout(TREE_WIDTH_KEY), 10) || 0);
   root.classList.toggle("editor-tree-folded", readLayout(TREE_FOLD_KEY) === "1");
   const treeEl = root.querySelector("[data-editor-tree]");
-  const compareBarEl = root.querySelector("[data-editor-compare]");
-  const compareNameEls = {
-    left: root.querySelector('[data-editor-compare-name="left"]'),
-    right: root.querySelector('[data-editor-compare-name="right"]'),
-  };
-  const compareSaveBtns = {
-    left: root.querySelector('[data-editor-compare-save="left"]'),
-    right: root.querySelector('[data-editor-compare-save="right"]'),
-  };
+  const groupsEl = root.querySelector("[data-editor-groups]");
+  const groupTemplateEl = root.querySelector("[data-editor-group-template]");
+  const dropZoneEl = root.querySelector("[data-editor-drop-zone]");
+  const actionsEl = root.querySelector("[data-editor-actions]");
   const dropHintEl = root.querySelector("[data-editor-drop-hint]");
-  const surfaceEl = root.querySelector("[data-editor-surface]");
-  const placeholderEl = root.querySelector("[data-editor-placeholder]");
-  const previewPaneEl = root.querySelector("[data-editor-preview-pane]");
-  const tabsEl = root.querySelector("[data-editor-tabs]");
   const statusEl = root.querySelector("[data-editor-status]");
   const posEl = root.querySelector("[data-editor-pos]");
   const saveBtn = root.querySelector("[data-editor-save]");
@@ -139,10 +136,7 @@ async function init(root) {
   const readOnlyEl = root.querySelector("[data-editor-readonly]");
   const readOnlyPathEl = root.querySelector("[data-editor-readonly-path]");
   const saveAllItem = root.querySelector("[data-editor-save-all]");
-  const mergeEl = root.querySelector("[data-editor-merge]");
-  const viewerEl = root.querySelector("[data-editor-viewer]");
   const drawerToggleBtn = root.querySelector("[data-editor-drawer-toggle]");
-  const browseBtn = root.querySelector("[data-editor-browse]");
   const backdropEl = root.querySelector("[data-editor-backdrop]");
   const splitterEl = root.querySelector("[data-editor-splitter]");
   const quickOpenEl = root.querySelector("[data-editor-quickopen]");
@@ -250,32 +244,40 @@ async function init(root) {
   const pointerMedia = window.matchMedia("(hover: hover) and (pointer: fine)");
   const termPointerMedia = window.matchMedia("(any-pointer: fine), not all and (any-pointer: coarse)");
   const wideMedia = window.matchMedia("(min-width: 992px)");
+  // The terminal panel and the tab groups need the room and the mouse of a
+  // desktop, elsewhere they stay out of the way.
+  const onDesktop = () => termPointerMedia.matches && !mobileMedia.matches;
 
-  // onCursor runs from inside createEditor's first update, before the const
-  // below is bound, so anything of ours that reads the editor waits for this.
-  let editorReady = false;
-  const editor = await createEditor(surfaceEl, { onChange, onCursor, onFocusChange: syncSwipeZone, lspUsable, onLSPClick: goToDefinition, onFindUsages: findUsages, onGoToDefinition: goToDefinitionAtCursor, onDocChanged, onViewMoved: scheduleViewSave }, editorSettings, signal, mergeEl);
-  editorReady = true;
-  setupSettingsUI(root, editor, editorSettings, (key) => {
-    if (key === "diff_view" || key === "diff_collapse") void reapplyComparison(key);
+  // editor is the focused group's, everything that acts on the file in front
+  // of you reads it under that name.
+  const groupsById = new Map();
+  let group = null;
+  let editor = null;
+  let groupSeq = 0;
+  const groupLayout = new GroupLayout(groupsEl, { onResize: afterGroupResize, signal });
+  const editors = {
+    applySetting: (key, value) => eachGroup((g) => g.editor.applySetting(key, value)),
+    getIndent: () => editor.getIndent(),
+  };
+  bindGroup(await createGroup(groupsEl.querySelector("[data-editor-group]")));
+  let layout = leaf(group.id);
+  setupSettingsUI(root, editors, editorSettings, (key) => {
+    if (key === "diff_view" || key === "diff_collapse") eachGroup((g) => void reapplyComparison(key, g));
   });
   wideMedia.addEventListener("change", () => {
     if (editorSettings.diff_view !== "side" && editorSettings.diff_view !== "inline") {
-      void reapplyComparison("diff_view");
+      eachGroup((g) => void reapplyComparison("diff_view", g));
     }
   }, { signal });
-  const syncIndentControl = setupIndentControl(root, editor, editorSettings);
+  const syncIndentControl = setupIndentControl(root, editors, editorSettings);
 
   const tabs = [];
-  let activePath = null;
   let selected = null; // { path, isDir } — the tree row used as the "create in" target
   // dir paths kept open so a rebuild doesn't collapse the tree; restored per
   // project so the folder layout survives a reload like the tabs do
   const expanded = new Set(store.getJSON(treeKey, []).filter((p) => typeof p === "string" && p));
   const opening = new Set();
   let statusTimer = 0;
-  let previewTimer = 0;
-  let svgPreviewUrl = null;
   // The git status arrives as one flat list of changed paths; what a folder
   // shows is derived from it here, so a folded folder still says that something
   // under it moved.
@@ -356,10 +358,21 @@ async function init(root) {
   let commitGrouped = store.get(COMMIT_GROUP_KEY, "") !== "0";
   const commitMsgKey = `dc-editor-commit-msg:${name}`;
   let comments = [];
-  let cursorLine = 1;
 
-  const activeTab = () => tabs.find((t) => t.path === activePath) || null;
   const tabByPath = (path) => tabs.find((t) => t.path === path) || null;
+  const activeTabOf = (g) => {
+    const tab = g.activePath ? tabByPath(g.activePath) : null;
+    return tab && tab.group === g ? tab : null;
+  };
+  const activeTab = () => activeTabOf(group);
+  const groupTabs = (g) => tabs.filter((t) => t.group === g);
+  const inFront = (tab) => tab.group.activePath === tab.path;
+  // Where only the focused group shows, its strip carries the tabs of every
+  // group, so none of them is out of reach; the width is the view, the groups
+  // stay what they are.
+  const stripTabs = (g) => (mobileMedia.matches ? (g === group ? tabOrder() : []) : groupTabs(g));
+  const stripActive = (tab) => (mobileMedia.matches ? tab === activeTab() : inFront(tab));
+  const liveText = (tab) => tab.group.editor.valueOf(tab, inFront(tab));
   const anyDirty = () => tabs.some((t) => t.dirty);
   const baseName = (path) => path.split("/").pop();
   const parentDir = (path) => {
@@ -397,8 +410,9 @@ async function init(root) {
     }
   }
 
-  function onCursor(line, col) {
-    cursorLine = line;
+  function onCursor(g, line, col) {
+    g.cursor = { line, col };
+    if (g !== group) return;
     posEl.textContent = `${line}:${col}`;
     syncSwipeZone();
   }
@@ -547,7 +561,7 @@ async function init(root) {
   }
 
   async function goToLocation(loc) {
-    if (activePath !== loc.path) {
+    if (group.activePath !== loc.path) {
       if (loc.external) await openExternal(loc.path);
       else await openPath(loc.path);
     }
@@ -573,7 +587,7 @@ async function init(root) {
     try {
       const data = await lsp.source(path, signal);
       if (signal.aborted || tabByPath(path)) return;
-      tabs.push(await externalTabFor(path, data));
+      addTab(await externalTabFor(path, data));
       placeTab(path, jump);
       status("");
     } catch (err) {
@@ -583,16 +597,306 @@ async function init(root) {
     }
   }
 
+  // ---- groups ----------------------------------------------------------------
+
+  // A tab lives in exactly one group. Two groups on one file would be two
+  // documents to keep in step through every save, reload, diff and comment.
+
+  function eachGroup(fn) {
+    for (const g of [...groupsById.values()]) fn(g);
+  }
+
+  function orderedGroups() {
+    return leafIds(layout).map((id) => groupsById.get(id));
+  }
+
+  function screenGroups() {
+    return screenOrder(layout).map((id) => groupsById.get(id));
+  }
+
+  function bindGroup(g) {
+    group = g;
+    editor = g.editor;
+  }
+
+  function newGroupElement() {
+    return groupTemplateEl.content.firstElementChild.cloneNode(true);
+  }
+
+  async function createGroup(el) {
+    const side = (attr, name) => el.querySelector(`[${attr}="${name}"]`);
+    const g = {
+      id: ++groupSeq,
+      el,
+      headEl: el.querySelector(".editor-group-head"),
+      tabsEl: el.querySelector("[data-editor-tabs]"),
+      compareBarEl: el.querySelector("[data-editor-compare]"),
+      compareNameEls: { left: side("data-editor-compare-name", "left"), right: side("data-editor-compare-name", "right") },
+      compareSaveBtns: { left: side("data-editor-compare-save", "left"), right: side("data-editor-compare-save", "right") },
+      surfaceEl: el.querySelector("[data-editor-surface]"),
+      placeholderEl: el.querySelector("[data-editor-placeholder]"),
+      previewPaneEl: el.querySelector("[data-editor-preview-pane]"),
+      viewerEl: el.querySelector("[data-editor-viewer]"),
+      activePath: null,
+      cursor: { line: 1, col: 1 },
+      previewTimer: 0,
+      svgPreviewUrl: null,
+      diffSeq: 0,
+      changesSeq: 0,
+      blameSeq: 0,
+      blameFor: "",
+      ac: new AbortController(),
+    };
+    g.close = () => g.ac.abort();
+    signal.addEventListener("abort", g.close);
+    g.editor = await createEditor(g.surfaceEl, {
+      onChange: () => onChange(g),
+      onCursor: (line, col) => onCursor(g, line, col),
+      onFocusChange: syncSwipeZone,
+      lspUsable,
+      onLSPClick: goToDefinition,
+      onFindUsages: findUsages,
+      onGoToDefinition: goToDefinitionAtCursor,
+      onDocChanged: (update) => onDocChanged(g, update),
+      onViewMoved: scheduleViewSave,
+    }, editorSettings, g.ac.signal, el.querySelector("[data-editor-merge]"));
+    g.editor.setVisible(false);
+    wireGroup(g);
+    groupsById.set(g.id, g);
+    return g;
+  }
+
+  // The toolbar stands in one group's head but acts on the focused group, so
+  // reaching for it must not move the focus there.
+  const chromeTarget = (e) => e.target instanceof Element && !!e.target.closest("[data-editor-actions], [data-editor-drawer-toggle]");
+
+  function wireGroup(g) {
+    const opts = { signal: g.ac.signal };
+    g.el.addEventListener("pointerdown", (e) => {
+      if (!chromeTarget(e)) focusGroup(g);
+    }, { ...opts, capture: true });
+    g.el.addEventListener("focusin", (e) => {
+      if (!chromeTarget(e)) focusGroup(g);
+    }, opts);
+    g.tabsEl.addEventListener("wheel", (e) => {
+      if (!e.deltaX && e.deltaY) {
+        g.tabsEl.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+    }, { passive: false, signal: g.ac.signal });
+    for (const side of ["left", "right"]) {
+      g.compareSaveBtns[side].addEventListener("click", () => void saveCompareSide(side, g), opts);
+    }
+    g.el.querySelector("[data-editor-browse]").addEventListener("click", openDrawer, opts);
+    wireTabDrag(g);
+    wireSurfaceSwipe(g);
+  }
+
+  function focusGroup(g) {
+    if (!g || g === group || !groupsById.has(g.id)) return;
+    bindGroup(g);
+    paintGroups();
+    afterFocusChanged();
+  }
+
+  function afterFocusChanged() {
+    const tab = activeTab();
+    posEl.textContent = `${group.cursor.line}:${group.cursor.col}`;
+    posEl.hidden = !tab || !!tab.kind;
+    updateActionStates();
+    syncSwipeZone();
+    syncIndentControl();
+    syncReadOnly();
+    if (tab && !tab.compare && !tab.external) markTreeSelection(tab.path);
+    if (mobileMedia.matches) renderTabs();
+    if (tabsRestored) writeTabs();
+  }
+
+  function paintGroups() {
+    groupsEl.classList.toggle("editor-groups-multi", groupsById.size > 1);
+    eachGroup((g) => g.el.classList.toggle("editor-group-focused", g === group));
+    placeChrome();
+  }
+
+  // Where only the focused group shows, the toolbar goes with it; next to each
+  // other the tree's button stands top left and the menu top right.
+  function placeChrome() {
+    const narrow = mobileMedia.matches;
+    const start = narrow ? group : groupsById.get(cornerLeaf(layout, "start"));
+    const end = narrow ? group : groupsById.get(cornerLeaf(layout, "end"));
+    if (drawerToggleBtn.parentElement !== start.headEl) start.headEl.insertBefore(drawerToggleBtn, start.tabsEl);
+    if (actionsEl.parentElement !== end.headEl) end.headEl.appendChild(actionsEl);
+  }
+
+  function renderLayout() {
+    groupLayout.paint(layout, (id) => groupsById.get(id).el);
+    paintGroups();
+    measureAll();
+  }
+
+  function measureAll() {
+    eachGroup((g) => g.editor.measure());
+  }
+
+  function afterGroupResize() {
+    measureAll();
+    writeTabs();
+  }
+
+  async function openGroupBeside(target, side) {
+    const g = await createGroup(newGroupElement());
+    layout = splitAt(layout, (groupsById.has(target.id) ? target : group).id, side, g.id);
+    renderLayout();
+    return g;
+  }
+
+  function forgetGroup(g) {
+    const { root: next, heir } = removeAt(layout, g.id);
+    if (heir == null) return null;
+    layout = next;
+    groupsById.delete(g.id);
+    signal.removeEventListener("abort", g.close);
+    clearTimeout(g.previewTimer);
+    if (g.svgPreviewUrl) URL.revokeObjectURL(g.svgPreviewUrl);
+    g.editor.destroy();
+    g.ac.abort();
+    g.el.remove();
+    return groupsById.get(heir);
+  }
+
+  function removeGroup(g) {
+    const wasFocused = g === group;
+    const heir = forgetGroup(g);
+    if (!heir) return;
+    if (wasFocused) bindGroup(heir);
+    renderLayout();
+    renderTabs();
+    if (wasFocused) {
+      afterFocusChanged();
+      if (pointerMedia.matches) editor.focus();
+    }
+    persistTabs();
+  }
+
+  function placeInOrder(tab, before) {
+    tabs.splice(tabs.indexOf(tab), 1);
+    if (before && tabs.includes(before)) {
+      tabs.splice(tabs.indexOf(before), 0, tab);
+      return;
+    }
+    const own = groupTabs(tab.group);
+    const last = own[own.length - 1];
+    tabs.splice(last ? tabs.indexOf(last) + 1 : tabs.length, 0, tab);
+  }
+
+  function moveTab(tab, target, { before = null, show = true } = {}) {
+    const from = tab.group;
+    if (from === target) {
+      placeInOrder(tab, before);
+      renderTabs();
+      writeTabs();
+      return;
+    }
+    const siblings = groupTabs(from);
+    const wasShown = inFront(tab);
+    if (wasShown && tab.compare) from.editor.captureCompare(tab);
+    else if (wasShown && !tab.kind) from.editor.captureDoc(tab);
+    if (tab.handle) target.editor.adoptDoc(tab.handle, from.editor);
+    tab.group = target;
+    placeInOrder(tab, before);
+    if (wasShown) {
+      from.activePath = null;
+      const i = siblings.indexOf(tab);
+      const next = siblings[i + 1] || siblings[i - 1];
+      if (next) showTab(next);
+      else removeGroup(from);
+    }
+    if (show) {
+      activateTab(tab.path);
+      return;
+    }
+    renderTabs();
+    writeTabs();
+  }
+
+  async function splitTab(tab, target, side) {
+    const g = await openGroupBeside(target, side);
+    if (!tabs.includes(tab)) {
+      removeGroup(g);
+      return;
+    }
+    moveTab(tab, g);
+  }
+
+  // addTab files a tab built while its group went away under the focused one.
+  function addTab(tab) {
+    if (!groupsById.has(tab.group.id)) {
+      if (tab.handle) group.editor.adoptDoc(tab.handle, tab.group.editor);
+      tab.group = group;
+    }
+    tabs.push(tab);
+  }
+
+  function groupMenuItems(tab) {
+    if (!onDesktop()) return [];
+    const g = tab.group;
+    const alone = groupTabs(g).length < 2;
+    const items = [
+      { divider: true },
+      { label: "Split right", icon: "ti-layout-sidebar-right", disabled: alone, action: () => void splitTab(tab, g, "right") },
+      { label: "Split left", icon: "ti-layout-sidebar", disabled: alone, action: () => void splitTab(tab, g, "left") },
+      { label: "Split down", icon: "ti-layout-bottombar", disabled: alone, action: () => void splitTab(tab, g, "down") },
+      { label: "Split up", icon: "ti-layout-navbar", disabled: alone, action: () => void splitTab(tab, g, "up") },
+    ];
+    screenGroups().forEach((other, i) => {
+      if (other === g) return;
+      const front = activeTabOf(other);
+      items.push({ label: `Move to group ${i + 1}`, icon: "ti-transfer", hint: front ? front.name : "", action: () => moveTab(tab, other) });
+    });
+    return items;
+  }
+
+  function paintDropZone(rect) {
+    dropZoneEl.hidden = !rect;
+    if (!rect) return;
+    Object.assign(dropZoneEl.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+  }
+
+  function tabAtX(g, x) {
+    for (const el of g.tabsEl.querySelectorAll(".editor-tab")) {
+      const rect = el.getBoundingClientRect();
+      if (x < rect.left + rect.width / 2) return tabByPath(el.dataset.path);
+    }
+    return null;
+  }
+
+  // dropInOrder files a tab dragged within a list that may span groups: it
+  // joins the group of the tab it lands after, at the top the one before.
+  // Off the desktop groups are not made, so there a drag only sorts.
+  function dropInOrder(order, fromIndex, toIndex) {
+    const moved = order[fromIndex];
+    const rest = order.filter((t) => t !== moved);
+    const after = rest[toIndex - 1] || null;
+    const target = !onDesktop() ? moved.group : after ? after.group : rest[toIndex].group;
+    moveTab(moved, target, { before: rest.slice(toIndex).find((t) => t.group === target) || null, show: false });
+  }
+
+  function dropTab({ target, zone, tab }, x) {
+    if (zone === "tabs") moveTab(tab, target, { before: tabAtX(target, x) });
+    else if (zone === "center") moveTab(tab, target);
+    else void splitTab(tab, target, zone);
+  }
+
   // ---- tabs ------------------------------------------------------------------
 
   function tabElement(tab) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "editor-tab";
-    btn.classList.toggle("active", tab.path === activePath);
+    btn.classList.toggle("active", stripActive(tab));
     btn.classList.toggle("dirty", tab.dirty);
     btn.setAttribute("role", "tab");
-    btn.setAttribute("aria-selected", tab.path === activePath ? "true" : "false");
+    btn.setAttribute("aria-selected", stripActive(tab) ? "true" : "false");
     btn.dataset.path = tab.path;
     // A comparison's path is synthetic and encoded, so it names the two files
     // instead: what stands in the tab is what the tooltip should spell out.
@@ -649,7 +953,7 @@ async function init(root) {
     });
     btn.appendChild(stateEl);
     btn.addEventListener("click", () => {
-      if (tab.path === activePath && !pointerMedia.matches && !menuJustClosed()) {
+      if (stripActive(tab) && !pointerMedia.matches && !menuJustClosed()) {
         const rect = btn.getBoundingClientRect();
         openTabMenu(tab.path, rect.left, rect.bottom + 4);
         return;
@@ -726,8 +1030,10 @@ async function init(root) {
   }
 
   function renderTabs() {
-    tabsEl.replaceChildren(...tabs.map(tabElement));
-    tabsEl.querySelector(".editor-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    eachGroup((g) => {
+      g.tabsEl.replaceChildren(...stripTabs(g).map(tabElement));
+      g.tabsEl.querySelector(".editor-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
     syncFilesItem();
     if (sheetKind === "files") renderFilesSheet();
   }
@@ -986,7 +1292,7 @@ async function init(root) {
   function sheetRow(tab) {
     const row = document.createElement("div");
     row.className = "editor-sheet-row";
-    row.classList.toggle("active", tab.path === activePath);
+    row.classList.toggle("active", inFront(tab));
     row.dataset.path = tab.path;
     const open = document.createElement("button");
     open.type = "button";
@@ -1046,13 +1352,32 @@ async function init(root) {
     repaintSheet(sheetBodyEl, paintFilesSheet);
   }
 
+  function sheetHead(text) {
+    const head = document.createElement("div");
+    head.className = "dropdown-header";
+    head.style.padding = "0.5rem 0.75rem 0.25rem";
+    head.dataset.editorSheetHead = "";
+    head.textContent = text;
+    return head;
+  }
+
+  // Every tab, group after group as they stand on the screen: the open files
+  // sheet lists them so, a drag between two groups there is a move, and
+  // Ctrl+Tab walks them so.
+  const tabOrder = () => screenGroups().flatMap(groupTabs);
+
   function paintFilesSheet() {
     if (sheetDragging()) return;
     if (tabs.length === 0) {
       closeSheet();
       return;
     }
-    sheetBodyEl.replaceChildren(...tabs.map(sheetRow));
+    const order = screenGroups();
+    sheetBodyEl.replaceChildren(...order.flatMap((g, i) => {
+      const rows = groupTabs(g).map(sheetRow);
+      if (order.length < 2) return rows;
+      return [...(i ? [gitDivider()] : []), sheetHead(`Group ${i + 1}`), ...rows];
+    }));
   }
 
   function openFilesSheet() {
@@ -1286,7 +1611,7 @@ async function init(root) {
   }
 
   async function openShellFromEditor(data) {
-    if (termApplies()) {
+    if (onDesktop()) {
       closeSheet();
       termActiveId = data.id;
       if (!termOpen) await openTermPanel({ focus: true });
@@ -1324,75 +1649,86 @@ async function init(root) {
     saveAllItem.disabled = !tabs.some((t) => t.dirty);
   }
 
-  function afterActiveChanged() {
-    const tab = activeTab();
-    syncCompareBar();
-    void applyBlame();
-    void applyChangeBars();
-    placeholderEl.hidden = !!tab;
-    // A comparison stands for two files, so the line below names both.
-    posEl.hidden = !tab || !!tab.kind;
+  function afterActiveChanged(g = group) {
+    const tab = activeTabOf(g);
+    syncCompareBar(g);
+    void applyBlame(false, g);
+    void applyChangeBars(g);
+    g.placeholderEl.hidden = !!tab;
     renderTabs();
-    updateActionStates();
-    syncSwipeZone();
-    syncIndentControl();
-    syncPreview();
-    syncReadOnly();
+    syncPreview(g);
     paintComments();
-    // A file from outside the project stands in no tree of ours, and its
-    // path must not become the folder a new file is created in.
-    if (tab && !tab.compare && !tab.external) markTreeSelection(tab.path);
+    if (g === group) {
+      // A comparison stands for two files, so the line below names both.
+      posEl.hidden = !tab || !!tab.kind;
+      updateActionStates();
+      syncSwipeZone();
+      syncIndentControl();
+      syncReadOnly();
+      // A file from outside the project stands in no tree of ours, and its
+      // path must not become the folder a new file is created in.
+      if (tab && !tab.compare && !tab.external) markTreeSelection(tab.path);
+    }
     persistTabs();
   }
 
-  function activateTab(path) {
-    const tab = tabByPath(path);
-    if (!tab || activePath === path) return;
-    const prev = activeTab();
-    if (prev && prev.compare) editor.captureCompare(prev);
-    else if (prev && !prev.kind) editor.captureDoc(prev);
-    activePath = path;
+  function showTab(tab) {
+    const g = tab.group;
+    if (g.activePath === tab.path) return;
+    const prev = activeTabOf(g);
+    if (prev && prev.compare) g.editor.captureCompare(prev);
+    else if (prev && !prev.kind) g.editor.captureDoc(prev);
+    g.activePath = tab.path;
     if (tab.kind) {
-      editor.setVisible(false);
-      editor.exitDiff();
+      g.editor.setVisible(false);
+      g.editor.exitDiff();
       renderViewer(tab);
     } else if (tab.compare) {
-      viewerEl.hidden = true;
+      g.viewerEl.hidden = true;
       // Nothing else here: the two sided view carries both documents itself,
       // showDoc would put the plain editor over it and drop it again.
     } else {
-      viewerEl.hidden = true;
-      editor.showDoc(tab);
-      editor.setVisible(true);
-      if (pointerMedia.matches) editor.focus();
+      g.viewerEl.hidden = true;
+      g.editor.showDoc(tab);
+      g.editor.setVisible(true);
+      if (pointerMedia.matches && g === group) g.editor.focus();
     }
-    afterActiveChanged();
+    afterActiveChanged(g);
     applyPendingJump(tab);
     if (tab.compare) void (tab.compare.readOnly ? showRevdiff(tab) : showCompare(tab));
     // The tab carries its own diff mode, so switching back into one restores it.
     else if (!tab.kind && !tab.external) void applyTabDiff(tab);
   }
 
-  function stepTab(direction) {
-    if (tabs.length < 2) return;
-    const i = tabs.findIndex((t) => t.path === activePath);
-    const next = i < 0
-      ? (direction > 0 ? 0 : tabs.length - 1)
-      : (i + direction + tabs.length) % tabs.length;
-    activateTab(tabs[next].path);
+  function activateTab(path) {
+    const tab = tabByPath(path);
+    if (!tab) return;
+    focusGroup(tab.group);
+    showTab(tab);
   }
 
-  function showEmpty() {
-    activePath = null;
-    editor.exitDiff();
-    editor.setVisible(false);
-    viewerEl.hidden = true;
-    afterActiveChanged();
+  function stepTab(direction) {
+    const order = tabOrder();
+    if (order.length < 2) return;
+    const i = order.indexOf(activeTab());
+    const next = i < 0
+      ? (direction > 0 ? 0 : order.length - 1)
+      : (i + direction + order.length) % order.length;
+    activateTab(order[next].path);
+  }
+
+  function showEmpty(g) {
+    g.activePath = null;
+    g.editor.exitDiff();
+    g.editor.setVisible(false);
+    g.viewerEl.hidden = true;
+    afterActiveChanged(g);
   }
 
   // renderViewer fills the surface for non text tabs: images render inline via
   // the raw endpoint, everything else gets a file card, both with a download.
   function renderViewer(tab) {
+    const viewerEl = tab.group.viewerEl;
     viewerEl.replaceChildren();
     if (tab.kind === "image") {
       const img = document.createElement("img");
@@ -1441,9 +1777,8 @@ async function init(root) {
   }
 
   async function closeTab(path, force = false) {
-    const i = tabs.findIndex((t) => t.path === path);
-    if (i < 0) return;
-    const tab = tabs[i];
+    const tab = tabByPath(path);
+    if (!tab) return;
     // A close that was asked for from the commit view's filter hands the focus
     // back to it, the way opening a diff from there does: reading a changeset
     // with the keyboard is arrow, Enter, close, arrow, and it would end at the
@@ -1455,14 +1790,19 @@ async function init(root) {
     if (!force && tab.dirty && !(await confirmDialog({ title: `Discard changes in "${tab.name}"?`, confirmText: "Discard" }))) {
       return;
     }
-    tabs.splice(i, 1);
+    if (!tabs.includes(tab)) return;
+    const g = tab.group;
+    const siblings = groupTabs(g);
+    const i = siblings.indexOf(tab);
+    tabs.splice(tabs.indexOf(tab), 1);
     if (lsp && !tab.kind && !tab.compare) lsp.closeDocument(tab.path);
     if (tab.dirty && !tab.kind && !tab.compare && !tab.external && commentsFor(path).length) void loadComments();
-    if (activePath === path) {
-      activePath = null;
-      const next = tabs[i] || tabs[i - 1];
-      if (next) activateTab(next.path);
-      else showEmpty();
+    if (g.activePath === path) {
+      g.activePath = null;
+      const next = siblings[i + 1] || siblings[i - 1];
+      if (next) showTab(next);
+      else if (groupsById.size > 1) removeGroup(g);
+      else showEmpty(g);
     } else {
       renderTabs();
       updateActionStates();
@@ -1488,12 +1828,14 @@ async function init(root) {
   // The tab menu carries the same file actions as the tree row, minus the ones
   // that need a folder: a tab is always one file.
   function tabMenuItems(tab) {
-    const index = tabs.indexOf(tab);
+    const own = mobileMedia.matches ? tabOrder() : groupTabs(tab.group);
+    const index = own.indexOf(tab);
     const closing = [
       { label: "Close", icon: "ti-x", action: () => closeTab(tab.path) },
-      { label: "Close others", icon: "ti-square-x", disabled: tabs.length < 2, action: () => closeMany(tabs.filter((t) => t !== tab)) },
-      { label: "Close to the right", icon: "ti-arrow-bar-to-right", disabled: index === tabs.length - 1, action: () => closeMany(tabs.slice(index + 1)) },
-      { label: "Close all", icon: "ti-circle-x", action: () => closeMany(tabs) },
+      { label: "Close others", icon: "ti-square-x", disabled: own.length < 2, action: () => closeMany(own.filter((t) => t !== tab)) },
+      { label: "Close to the right", icon: "ti-arrow-bar-to-right", disabled: index === own.length - 1, action: () => closeMany(own.slice(index + 1)) },
+      { label: "Close all", icon: "ti-circle-x", action: () => closeMany(own) },
+      ...groupMenuItems(tab),
     ];
     // A comparison stands for two files, so it keeps only what a tab as such
     // can do. A file from outside the project keeps its path on top of
@@ -1570,108 +1912,94 @@ async function init(root) {
     updateActionStates();
     // The blame gutter follows the buffer while it is ahead of the disk, and
     // git is asked again once the save has caught up.
-    if (!on && tab.path === activePath) void applyBlame(true);
+    if (!on && inFront(tab)) void applyBlame(true, tab.group);
   }
 
   // Dirty means "differs from the saved content", not "was touched": undoing
   // or retyping back to the saved state clears the flag again.
-  function onChange() {
-    const tab = activeTab();
+  function onChange(g) {
+    const tab = activeTabOf(g);
     if (!tab) return;
     // A comparison has two buffers, and its bar owns both dirty markers.
     if (tab.compare) {
-      syncCompareBar();
+      syncCompareBar(g);
       return;
     }
-    markDirty(tab, !editor.isClean(tab, true));
+    markDirty(tab, !g.editor.isClean(tab, true));
     queueAutosave();
-    schedulePreview(PREVIEW_DEBOUNCE_MS);
-  }
-
-  // The open tabs, their order, the active one, the revision each one is
-  // compared against and whether the blame gutter is on. Every entry carries a
-  // type; a bare string is an older saved state and reads as type "file", so
-  // nothing has to be migrated. A comparison is its two paths: the content
-  // comes from the disk on restore, unsaved changes fall away like they do for
-  // every other tab.
-  function savedLines(lines) {
-    if (!Array.isArray(lines)) return [];
-    return [...new Set(lines.filter((n) => Number.isInteger(n) && n > 0))].slice(0, 500);
-  }
-
-  function savedView(v) {
-    const place = (p) => !!p && typeof p.line === "number" && typeof p.column === "number";
-    if (!v || !place(v.anchor) || !place(v.head)) return null;
-    const out = {
-      anchor: { line: v.anchor.line, column: v.anchor.column },
-      head: { line: v.head.line, column: v.head.column },
-      scrollTop: Math.max(0, Math.round(Number(v.scrollTop) || 0)),
-      scrollLeft: Math.max(0, Math.round(Number(v.scrollLeft) || 0)),
-    };
-    const expanded = savedLines(v.expanded);
-    if (expanded.length) out.expanded = expanded;
-    return out;
-  }
-
-  function savedScroll(s) {
-    if (!s || typeof s !== "object") return null;
-    return {
-      top: Math.max(0, Math.round(Number(s.top) || 0)),
-      left: Math.max(0, Math.round(Number(s.left) || 0)),
-    };
+    schedulePreview(PREVIEW_DEBOUNCE_MS, g);
   }
 
   function tabView(t) {
     if (t.kind || t.compare || !t.handle) return null;
-    return savedView(editor.captureView(t, t.path === activePath));
+    return savedView(t.group.editor.captureView(t, inFront(t)));
   }
 
   function tabScroll(t) {
     if (!t.compare) return null;
-    return savedScroll(t.path === activePath ? editor.scrollOf() || t.compare.scroll : t.compare.scroll);
+    return savedScroll(inFront(t) ? t.group.editor.scrollOf() || t.compare.scroll : t.compare.scroll);
   }
 
   function tabExpanded(t) {
     if (!t.compare) return [];
-    return savedLines(t.path === activePath ? editor.expandedOf() : t.compare.expanded);
+    return savedLines(inFront(t) ? t.group.editor.expandedOf() : t.compare.expanded);
   }
 
+  // The groups list their tabs as positions in open, which holds every tab
+  // group after group, so a build that knows nothing of groups still reads
+  // the whole set.
   function writeTabs() {
-    const open = tabs.map((t) => {
-      const scroll = tabScroll(t);
-      const expanded = tabExpanded(t);
-      if (t.compare && t.compare.readOnly) {
-        const entry = {
-          type: "revdiff",
-          left: t.compare.left,
-          right: t.compare.right,
-          leftRev: t.compare.leftRev,
-          rightRev: t.compare.rightRev,
-          leftLabel: t.compare.leftLabel,
-          rightLabel: t.compare.rightLabel,
-        };
-        if (scroll) entry.scroll = scroll;
-        if (expanded.length) entry.expanded = expanded;
-        return entry;
-      }
-      if (t.compare) {
-        const entry = { type: "compare", left: t.compare.left, right: t.compare.right };
-        if (scroll) entry.scroll = scroll;
-        if (expanded.length) entry.expanded = expanded;
-        return entry;
-      }
-      const view = tabView(t);
-      if (t.external) return view ? { type: "external", path: t.path, view } : { type: "external", path: t.path };
-      if (!t.diffRev && !t.blameOn && !t.previewOn && !view) return t.path;
-      const entry = { type: "file", path: t.path };
-      if (t.diffRev) entry.diff = t.diffRev;
-      if (t.diffRev && t.diffFrom) entry.diffFrom = t.diffFrom;
-      if (t.blameOn) entry.blame = true;
-      if (t.previewOn) entry.preview = true;
-      if (view) entry.view = view;
-      return entry;
+    const order = orderedGroups();
+    const open = [];
+    const stored = order.map((g) => {
+      const own = groupTabs(g);
+      const first = open.length;
+      open.push(...own.map(tabEntry));
+      const at = own.findIndex(inFront);
+      return { tabs: own.map((_, i) => first + i), active: at < 0 ? null : first + at };
     });
-    store.setJSON(tabsKey, { open, active: activePath });
+    store.setJSON(tabsKey, {
+      open,
+      active: group.activePath,
+      groups: stored,
+      layout: encodeLayout(layout, (id) => order.findIndex((g) => g.id === id)),
+      focus: order.indexOf(group),
+    });
+  }
+
+  function tabEntry(t) {
+    const scroll = tabScroll(t);
+    const expanded = tabExpanded(t);
+    if (t.compare && t.compare.readOnly) {
+      const entry = {
+        type: "revdiff",
+        left: t.compare.left,
+        right: t.compare.right,
+        leftRev: t.compare.leftRev,
+        rightRev: t.compare.rightRev,
+        leftLabel: t.compare.leftLabel,
+        rightLabel: t.compare.rightLabel,
+      };
+      if (scroll) entry.scroll = scroll;
+      if (expanded.length) entry.expanded = expanded;
+      return entry;
+    }
+    if (t.compare) {
+      const entry = { type: "compare", left: t.compare.left, right: t.compare.right };
+      if (scroll) entry.scroll = scroll;
+      if (expanded.length) entry.expanded = expanded;
+      return entry;
+    }
+    const view = tabView(t);
+    if (t.external) return view ? { type: "external", path: t.path, view } : { type: "external", path: t.path };
+    if (!t.diffRev && !t.blameOn && !t.previewOn && !view) return t.path;
+    const entry = { type: "file", path: t.path };
+    if (t.diffRev) entry.diff = t.diffRev;
+    if (t.diffRev && t.diffFrom) entry.diffFrom = t.diffFrom;
+    if (t.blameOn) entry.blame = true;
+    if (t.previewOn) entry.preview = true;
+    if (view) entry.view = view;
+    return entry;
   }
 
   function persistTabs() {
@@ -1696,94 +2024,90 @@ async function init(root) {
     scheduleFileWatch();
   }
 
-  // savedEntries reads a stored set, whatever age it is: bare strings are file
-  // paths, and the legacy diff map marks which of them had a comparison open.
-  function savedEntries(saved) {
-    const legacy = saved.diff && typeof saved.diff === "object" ? saved.diff : {};
-    const entries = [];
-    for (const e of saved.open) {
-      if (typeof e === "string" && e) {
-        const old = legacy[e];
-        entries.push({ type: "file", path: e, diff: old && old.mode && old.mode !== "off" ? DIFF_REV : "", blame: false, preview: false });
-      } else if (e && typeof e === "object" && e.type === "compare" && typeof e.left === "string" && typeof e.right === "string") {
-        entries.push(e);
-      } else if (e && typeof e === "object" && e.type === "revdiff" && typeof e.left === "string" && typeof e.right === "string"
-        && typeof e.leftRev === "string" && typeof e.rightRev === "string") {
-        entries.push(e);
-      } else if (e && typeof e === "object" && e.type === "external" && typeof e.path === "string" && e.path) {
-        entries.push({ type: "external", path: e.path, view: savedView(e.view) });
-      } else if (e && typeof e === "object" && typeof e.path === "string" && e.path) {
-        entries.push({
-          type: "file",
-          path: e.path,
-          diff: typeof e.diff === "string" ? e.diff : "",
-          blame: e.blame === true,
-          preview: e.preview === true,
-          view: savedView(e.view),
-        });
-      }
+  function restoredTab(entry, g) {
+    if (entry.type === "compare") return compareTabFor(entry.left, entry.right, g);
+    if (entry.type === "revdiff") {
+      return revdiffTabFor({
+        leftRev: entry.leftRev,
+        rightRev: entry.rightRev,
+        leftPath: entry.left,
+        rightPath: entry.right,
+        leftLabel: typeof entry.leftLabel === "string" ? entry.leftLabel : entry.leftRev.slice(0, 7),
+        rightLabel: typeof entry.rightLabel === "string" ? entry.rightLabel : entry.rightRev.slice(0, 7),
+      }, g);
     }
-    return entries;
+    // A file outside the project comes back through its own route: the
+    // one the tree serves would take its absolute path for a relative
+    // one and answer about a file inside the project.
+    if (entry.type === "external") return lsp ? lsp.source(entry.path, signal).then((data) => externalTabFor(entry.path, data, g)) : Promise.reject(new Error("no language server"));
+    return getJSON(`${base}/file?path=${encodeURIComponent(entry.path)}`, { signal }).then((data) => tabFor(entry.path, data, g));
   }
 
   async function restoreTabs() {
     const saved = store.getJSON(tabsKey, null);
     if (!saved || !Array.isArray(saved.open) || saved.open.length === 0) return;
-    const entries = savedEntries(saved);
-    const results = await Promise.allSettled(entries.map((entry) => {
-      if (entry.type === "compare") return compareTabFor(entry.left, entry.right);
-      if (entry.type === "revdiff") {
-        return revdiffTabFor({
-          leftRev: entry.leftRev,
-          rightRev: entry.rightRev,
-          leftPath: entry.left,
-          rightPath: entry.right,
-          leftLabel: typeof entry.leftLabel === "string" ? entry.leftLabel : entry.leftRev.slice(0, 7),
-          rightLabel: typeof entry.rightLabel === "string" ? entry.rightLabel : entry.rightRev.slice(0, 7),
-        });
+    const entries = savedEntries(saved, DIFF_REV);
+    const plan = readGroups(saved, entries.length);
+    const members = [group];
+    for (let k = 1; k < plan.specs.length; k++) members.push(await createGroup(newGroupElement()));
+    layout = plan.tree ? mapLeaves(plan.tree, (k) => members[k].id) : leaf(group.id);
+    const owner = [];
+    plan.specs.forEach((spec, k) => {
+      for (const i of spec.members) owner[i] = members[k];
+    });
+    const results = await Promise.allSettled(entries.map((entry, i) => (entry ? restoredTab(entry, owner[i]) : Promise.resolve(null))));
+    const restored = [];
+    for (const spec of plan.specs) {
+      for (const i of spec.members) {
+        if (results[i].status !== "fulfilled" || !results[i].value || tabByPath(results[i].value.path)) continue;
+        const tab = results[i].value;
+        restored[i] = tab;
+        if (entries[i].type === "file" && entries[i].diff) {
+          tab.diffRev = entries[i].diff;
+          tab.diffFrom = typeof entries[i].diffFrom === "string" ? entries[i].diffFrom : "";
+        }
+        if (entries[i].type === "file" && entries[i].blame && !tab.kind) tab.blameOn = true;
+        // The two share the surface, so a stored state that somehow carries both
+        // keeps the diff and drops the preview.
+        if (entries[i].type === "file" && entries[i].preview && !tab.kind && !tab.diffRev) tab.previewOn = true;
+        if (entries[i].view && tab.handle && !tab.kind) tab.group.editor.restoreView(tab, entries[i].view);
+        const scroll = savedScroll(entries[i].scroll);
+        if (scroll && tab.compare) tab.compare.scroll = scroll;
+        if (tab.compare) tab.compare.expanded = savedLines(entries[i].expanded);
+        addTab(tab);
       }
-      // A file outside the project comes back through its own route: the
-      // one the tree serves would take its absolute path for a relative
-      // one and answer about a file inside the project.
-      if (entry.type === "external") return lsp ? lsp.source(entry.path, signal).then((data) => externalTabFor(entry.path, data)) : Promise.reject(new Error("no language server"));
-      return getJSON(`${base}/file?path=${encodeURIComponent(entry.path)}`, { signal }).then((data) => tabFor(entry.path, data));
-    }));
-    for (let i = 0; i < results.length; i++) {
-      if (results[i].status !== "fulfilled" || !results[i].value || tabByPath(results[i].value.path)) continue;
-      const tab = results[i].value;
-      if (entries[i].type === "file" && entries[i].diff) {
-        tab.diffRev = entries[i].diff;
-        tab.diffFrom = typeof entries[i].diffFrom === "string" ? entries[i].diffFrom : "";
-      }
-      if (entries[i].type === "file" && entries[i].blame && !tab.kind) tab.blameOn = true;
-      // The two share the surface, so a stored state that somehow carries both
-      // keeps the diff and drops the preview.
-      if (entries[i].type === "file" && entries[i].preview && !tab.kind && !tab.diffRev) tab.previewOn = true;
-      if (entries[i].view && tab.handle && !tab.kind) editor.restoreView(tab, entries[i].view);
-      const scroll = savedScroll(entries[i].scroll);
-      if (scroll && tab.compare) tab.compare.scroll = scroll;
-      if (tab.compare) tab.compare.expanded = savedLines(entries[i].expanded);
-      tabs.push(tab);
     }
+    for (const g of members) {
+      if (groupsById.size > 1 && !groupTabs(g).length) forgetGroup(g);
+    }
+    const focus = members[plan.focus];
+    bindGroup(groupsById.has(focus.id) ? focus : orderedGroups()[0]);
+    renderLayout();
     if (tabs.length === 0) {
       persistTabs();
       return;
     }
-    activateTab(tabByPath(saved.active) ? saved.active : tabs[0].path);
+    plan.specs.forEach((spec, k) => {
+      const g = members[k];
+      if (!groupsById.has(g.id)) return;
+      const named = spec.active == null ? tabByPath(saved.active) : restored[spec.active];
+      showTab(named && named.group === g ? named : groupTabs(g)[0]);
+    });
   }
 
   // tabFor builds a tab from the /file response: a CodeMirror doc for text, a
   // viewer tab (image or plain binary) for everything the editor cannot edit.
-  async function tabFor(path, data) {
+  async function tabFor(path, data, g = group) {
     const name = baseName(path);
     if (data.binary) {
       const kind = isImage(name) ? "image" : isVideo(name) ? "video" : isAudio(name) ? "audio" : "binary";
-      return { path, name, kind, size: data.size || 0, dirty: false };
+      return { path, name, kind, size: data.size || 0, dirty: false, group: g };
     }
     return {
       path,
       name,
-      handle: await editor.createDoc(data.content, name),
+      group: g,
+      handle: await g.editor.createDoc(data.content, name),
       editorConfig: data.editorConfig || {},
       // The version of the bytes this buffer was built from. It rides the save
       // so the write can refuse to land on a file somebody else has written
@@ -1797,13 +2121,14 @@ async function init(root) {
   // It carries no version, and its document refuses every change, so no
   // save path can ever address it: the buffer is what the disk answered
   // and stays that way.
-  async function externalTabFor(path, data) {
+  async function externalTabFor(path, data, g = group) {
     const name = baseName(path);
     return {
       path,
       name,
+      group: g,
       external: true,
-      handle: await editor.createDoc(data.content || "", name, { readOnly: true }),
+      handle: await g.editor.createDoc(data.content || "", name, { readOnly: true }),
       editorConfig: {},
       dirty: false,
     };
@@ -1823,7 +2148,7 @@ async function init(root) {
     try {
       const data = await getJSON(`${base}/file?path=${encodeURIComponent(path)}`, { signal });
       if (signal.aborted || tabByPath(path)) return;
-      tabs.push(await tabFor(path, data));
+      addTab(await tabFor(path, data));
       placeTab(path, jump);
       status("");
     } catch (err) {
@@ -1848,7 +2173,7 @@ async function init(root) {
     const jump = tab.pendingJump;
     if (!jump || tab.kind || tab.compare) return;
     tab.pendingJump = null;
-    editor.jumpTo(jump.line, jump.character || 0);
+    tab.group.editor.jumpTo(jump.line, jump.character || 0);
   }
 
   // ---- tree ------------------------------------------------------------------
@@ -2230,7 +2555,7 @@ async function init(root) {
     row.classList.add("editor-file");
     row.dataset.title = entry.sizeText ? `${entry.path} · ${entry.sizeText}` : entry.path;
     markGitRow(row);
-    if (entry.path === activePath) row.classList.add("selected");
+    if (entry.path === group.activePath) row.classList.add("selected");
     row.addEventListener("click", () => {
       setSelected(entry.path, false, row);
       openPath(entry.path);
@@ -2258,7 +2583,7 @@ async function init(root) {
       const fresh = await listDirFresh("");
       if (fresh === null) return;
       renderEntries(treeEl, fresh, 0);
-      if (activePath) markTreeSelection(activePath);
+      if (group.activePath) markTreeSelection(group.activePath);
       await drainDirLoads();
       treeEl.scrollTop = top;
       treeLoadedAt = Date.now();
@@ -2323,7 +2648,7 @@ async function init(root) {
     for (const row of treeEl.querySelectorAll(".editor-item[data-path]")) markGitRow(row);
     // The open tabs say the same thing, so a change from outside has to reach
     // them too, not only the tree.
-    for (const btn of tabsEl.querySelectorAll(".editor-tab[data-path]")) {
+    for (const btn of groupsEl.querySelectorAll(".editor-tab[data-path]")) {
       markGitTab(btn);
       markDiskTab(btn);
     }
@@ -2423,13 +2748,15 @@ async function init(root) {
       // every open editor that has no repository at all.
       if (gitRepo) startGitWatch();
       // A tab restored into a diff waits for this answer, see applyTabDiff.
-      if (gitRepo) void resumeTabDiff();
       // The first answer that says there is a repository puts the gutter up.
       // After that a save asks git itself (markDirty) and a moved HEAD clears
       // blameFor (dropChangeHeads), so a status round that only follows a
       // save costs no second blame.
-      void applyBlame();
-      void applyChangeBars();
+      eachGroup((g) => {
+        if (gitRepo) void resumeTabDiff(g);
+        void applyBlame(false, g);
+        void applyChangeBars(g);
+      });
     } catch (err) {
       if (signal.aborted) return;
       console.warn("git status unavailable", err);
@@ -2492,7 +2819,7 @@ async function init(root) {
   function catchUpGit() {
     dropChangeHeads();
     void loadGitStatus();
-    void refreshDiffHead();
+    refreshDiffHeads();
     void pullCommitDraft();
     if (revdiffOn) void loadRevdiff();
     renewGitWatchNow();
@@ -2646,7 +2973,7 @@ async function init(root) {
         continue;
       }
     }
-    if (activePath) markTreeSelection(activePath);
+    if (group.activePath) markTreeSelection(group.activePath);
   }
 
   // reloadDirRows redraws one folder's rows. The project root is the tree box
@@ -3860,7 +4187,7 @@ async function init(root) {
       // an event that may race the answer.
       dropChangeHeads();
       void loadGitStatus();
-      void refreshDiffHead();
+      refreshDiffHeads();
       void loadCommitInfo();
     } catch (err) {
       if (signal.aborted) return;
@@ -4194,7 +4521,7 @@ async function init(root) {
   const revdiffPath = (leftRev, rightRev, path) =>
     `//revdiff/${encodeURIComponent(leftRev)}/${encodeURIComponent(rightRev)}/${encodeURIComponent(path)}`;
 
-  async function revdiffTabFor(spec) {
+  async function revdiffTabFor(spec, g = group) {
     const [a, b] = await Promise.all([
       fetchRev(spec.leftPath, spec.leftRev),
       fetchRev(spec.rightPath, spec.rightRev),
@@ -4205,7 +4532,8 @@ async function init(root) {
     return {
       path: revdiffPath(spec.leftRev, spec.rightRev, spec.rightPath),
       name: baseName(spec.rightPath),
-      handle: await editor.createDoc(rightText, baseName(spec.rightPath), { readOnly: true }),
+      group: g,
+      handle: await g.editor.createDoc(rightText, baseName(spec.rightPath), { readOnly: true }),
       editorConfig: {},
       compare: {
         left: spec.leftPath,
@@ -4252,13 +4580,12 @@ async function init(root) {
     if (existing) {
       existing.compare.leftLabel = leftLabel;
       existing.compare.rightLabel = rightLabel;
-      if (activePath === path) {
-        syncCompareBar();
+      if (inFront(existing)) {
+        syncCompareBar(existing.group);
         renderTabs();
         persistTabs();
-      } else {
-        activateTab(path);
       }
+      activateTab(path);
       return;
     }
     status("Loading…");
@@ -4274,7 +4601,7 @@ async function init(root) {
         return;
       }
       if (signal.aborted || tabByPath(path)) return;
-      tabs.push(tab);
+      addTab(tab);
       activateTab(path);
       status("");
     } catch (err) {
@@ -4702,12 +5029,7 @@ async function init(root) {
     if (skip === 0) {
       if (!path) {
         host.appendChild(gitDivider());
-        const head = document.createElement("div");
-        head.className = "dropdown-header";
-        head.style.padding = "0.5rem 0.75rem 0.25rem";
-        head.dataset.editorSheetHead = "";
-        head.textContent = "History";
-        host.appendChild(head);
+        host.appendChild(sheetHead("History"));
       }
       if (page.commits.length === 0) {
         const empty = document.createElement("div");
@@ -4779,7 +5101,8 @@ async function init(root) {
     // The comparison is what this click is about, so the drawer goes on every
     // way out, not only when openPath opened the file fresh.
     closeDrawer();
-    if (tab.path === activePath) {
+    if (inFront(tab)) {
+      focusGroup(tab.group);
       await applyDiff(rev, { from });
       return;
     }
@@ -5215,7 +5538,7 @@ async function init(root) {
     dropChangeHeads();
     await reloadCleanTabs();
     void loadGitStatus();
-    void refreshDiffHead();
+    refreshDiffHeads();
     void loadCommitInfo();
   }
 
@@ -5231,10 +5554,15 @@ async function init(root) {
   // before the swap and put onto the fresh document after it, clamped, so a
   // file that got shorter still lands somewhere that exists.
   async function applyDiskContent(tab, data) {
-    const isActive = tab.path === activePath;
-    const view = editor.captureView(tab, isActive);
-    tab.handle = await editor.createDoc(data.content || "", tab.name);
-    editor.restoreView(tab, view);
+    const from = tab.group;
+    const view = from.editor.captureView(tab, inFront(tab));
+    const handle = await from.editor.createDoc(data.content || "", tab.name);
+    if (!tabs.includes(tab)) return;
+    if (tab.group !== from) tab.group.editor.adoptDoc(handle, from.editor);
+    tab.handle = handle;
+    const g = tab.group;
+    const isActive = inFront(tab);
+    g.editor.restoreView(tab, view);
     markTabDisk(tab, "");
     tab.editorConfig = data.editorConfig || {};
     tab.version = data.version || "";
@@ -5243,10 +5571,10 @@ async function init(root) {
     if (commentsFor(tab.path).length) void loadComments();
     markDirty(tab, false);
     if (isActive) {
-      editor.showDoc(tab);
+      g.editor.showDoc(tab);
       void applyTabDiff(tab);
-      void applyBlame(true);
-      void applyChangeBars();
+      void applyBlame(true, g);
+      void applyChangeBars(g);
       paintComments();
     }
   }
@@ -5274,7 +5602,7 @@ async function init(root) {
       // free to trust: the token is over the content, so identical text is the
       // identical token whatever the branch move did to the timestamps.
       tab.version = data.version || "";
-      if ((data.content || "") === editor.valueOf(tab, tab.path === activePath)) continue;
+      if ((data.content || "") === liveText(tab)) continue;
       await applyDiskContent(tab, data);
     }
   }
@@ -5400,8 +5728,6 @@ async function init(root) {
   // inline comes from the editor settings, automatic picks by the room.
   // Building a diff waits for a request; a newer build (or a tab switch) makes
   // the one in flight void, so a late answer never paints over what is open.
-  let diffSeq = 0;
-
   // resolveDiffView turns the setting into one of the two views. Automatic is
   // side by side where there is room for two columns, inline below that.
   function resolveDiffView() {
@@ -5416,29 +5742,29 @@ async function init(root) {
   // comparison of two files is always side by side; the folding applies to
   // both. The price is the same one every view switch pays, the undo history,
   // see the comment on setDiff.
-  async function reapplyComparison(key) {
-    const tab = activeTab();
+  async function reapplyComparison(key, g) {
+    const tab = activeTabOf(g);
     if (!tab) return;
     if (tab.compare && tab.compare.readOnly) {
-      editor.captureCompare(tab);
+      g.editor.captureCompare(tab);
       await showRevdiff(tab);
       return;
     }
     if (tab.compare) {
-      if (key === "diff_view" || !editor.comparing()) return;
-      editor.captureCompare(tab);
+      if (key === "diff_view" || !g.editor.comparing()) return;
+      g.editor.captureCompare(tab);
       await showCompare(tab);
       return;
     }
     if (tab.kind || !tab.diffRev || tab.diffOriginal == null) return;
-    await editor.setDiff({
+    await g.editor.setDiff({
       mode: resolveDiffView(),
       original: tab.diffOriginal,
       name: tab.name,
       collapse: editorSettings.diff_collapse,
-      valid: () => activeTab() === tab,
-      scroll: editor.scrollOf(),
-      expanded: editor.expandedOf(),
+      valid: () => activeTabOf(g) === tab,
+      scroll: g.editor.scrollOf(),
+      expanded: g.editor.expandedOf(),
     });
   }
 
@@ -5487,9 +5813,9 @@ async function init(root) {
 
   async function toggleTabDiff(tab) {
     const next = tab.diffRev ? "" : DIFF_REV;
-    if (tab.path === activePath) {
+    if (inFront(tab)) {
       if (next) closeDrawer();
-      await applyDiff(next);
+      await applyDiff(next, { g: tab.group });
       return;
     }
     // Hiding only clears the wish the background tab carries; showing brings
@@ -5522,19 +5848,19 @@ async function init(root) {
   // applyDiff compares the active tab against rev; an empty rev takes the
   // comparison off again. ask is false only where the person already answered
   // the size question.
-  async function applyDiff(rev, { ask = true, scroll = null, expanded = null, from = "" } = {}) {
-    const tab = activeTab();
-    if (!tab || tab.kind || tab.compare || tab.external || !editor.canDiff) return;
-    const seq = ++diffSeq;
-    const current = () => seq === diffSeq && activeTab() === tab;
+  async function applyDiff(rev, { ask = true, scroll = null, expanded = null, from = "", g = group } = {}) {
+    const tab = activeTabOf(g);
+    if (!tab || tab.kind || tab.compare || tab.external || !g.editor.canDiff) return;
+    const seq = ++g.diffSeq;
+    const current = () => seq === g.diffSeq && activeTabOf(g) === tab;
     tab.diffRev = "";
     tab.diffFrom = "";
     tab.diffOriginal = null;
     if (!rev) {
-      await editor.setDiff({ mode: "off", name: tab.name, valid: current });
+      await g.editor.setDiff({ mode: "off", name: tab.name, valid: current });
       status("");
       persistTabs();
-      void applyChangeBars();
+      void applyChangeBars(g);
       return;
     }
     let data;
@@ -5547,7 +5873,7 @@ async function init(root) {
       // too: leaving it on means a reload comes back into a comparison the tab
       // is not in, and any later save of the set would drop it after all.
       persistTabs();
-      void applyChangeBars();
+      void applyChangeBars(g);
       return;
     }
     if (!current()) return;
@@ -5556,17 +5882,17 @@ async function init(root) {
         ? "That revision is too large to diff."
         : "That revision holds binary content, there is nothing to diff.", "error");
       persistTabs();
-      void applyChangeBars();
+      void applyChangeBars(g);
       return;
     }
     const original = data.content || "";
-    const working = editor.valueOf(tab, true);
+    const working = g.editor.valueOf(tab, true);
     if (ask && !(await withinDiffLimits(working, original))) {
       // Declined: the tab is not in a comparison, and a reload must not put it
       // in one and ask again.
       if (current()) {
         persistTabs();
-        void applyChangeBars();
+        void applyChangeBars(g);
       }
       return;
     }
@@ -5575,13 +5901,13 @@ async function init(root) {
     // wins.
     if (tab.previewOn) {
       tab.previewOn = false;
-      syncPreview();
+      syncPreview(g);
     }
     tab.diffRev = rev;
     tab.diffFrom = from;
     tab.diffOriginal = original;
     try {
-      await editor.setDiff({
+      await g.editor.setDiff({
         mode: resolveDiffView(),
         original,
         name: tab.name,
@@ -5594,20 +5920,20 @@ async function init(root) {
       // A diff that cannot be built must never leave an empty surface: the file
       // comes back the way it was, and the line below the editor says why.
       console.error("diff failed", err);
-      editor.exitDiff();
+      g.editor.exitDiff();
       tab.diffRev = "";
       tab.diffFrom = "";
       tab.diffOriginal = null;
       status("The diff could not be built, the file is open as usual.");
       notifyError(err.message || "The diff could not be built.");
       persistTabs();
-      void applyChangeBars();
+      void applyChangeBars(g);
       return;
     }
     const label = rev === DIFF_REV ? "HEAD" : rev;
     status(data.exists === false ? `Not in ${label} yet` : rev === DIFF_REV ? "" : `Diff against ${label}`);
     persistTabs();
-    void applyChangeBars();
+    void applyChangeBars(g);
   }
 
   // applyTabDiff restores the switch a tab carries, after a tab switch or a
@@ -5619,22 +5945,24 @@ async function init(root) {
   // gone exactly then. The switch stays on the tab and resumeTabDiff takes it
   // up as soon as git says there is a repository after all.
   async function applyTabDiff(tab) {
-    if (!tab || tab.kind || !tab.diffRev || !editor.canDiff || !gitRepo) {
-      diffSeq += 1; // a build still in flight belongs to the tab we just left
+    const g = tab.group;
+    if (tab.kind || !tab.diffRev || !g.editor.canDiff || !gitRepo) {
+      g.diffSeq += 1; // a build still in flight belongs to the tab we just left
       return;
     }
     await applyDiff(tab.diffRev, {
       from: tab.diffFrom || "",
       scroll: { top: tab.handle.scrollTop || 0, left: tab.handle.scrollLeft || 0 },
       expanded: tab.handle.expanded || [],
+      g,
     });
   }
 
   // resumeTabDiff builds the diff a tab was restored with once the status has
   // arrived. Only an unbuilt one qualifies: a finished one carries its
   // revision text.
-  async function resumeTabDiff() {
-    const tab = activeTab();
+  async function resumeTabDiff(g) {
+    const tab = activeTabOf(g);
     if (!tab || tab.kind || !tab.diffRev || tab.diffOriginal != null) return;
     await applyTabDiff(tab);
   }
@@ -5644,21 +5972,25 @@ async function init(root) {
   // HEAD does, a tag or a hash answers the same text and the replace is a
   // no-op. Only that side moves, the buffer belongs to the person in front of
   // it, and the dirty marker and the undo history stay untouched.
-  async function refreshDiffHead() {
-    const tab = activeTab();
+  function refreshDiffHeads() {
+    eachGroup((g) => void refreshDiffHead(g));
+  }
+
+  async function refreshDiffHead(g) {
+    const tab = activeTabOf(g);
     if (!tab || tab.kind || tab.compare || tab.external || !tab.diffRev || tab.diffOriginal == null) return;
-    const seq = diffSeq;
+    const seq = g.diffSeq;
     try {
       const data = await fetchRev(tab.diffFrom || tab.path, tab.diffRev);
-      if (data.binary || activeTab() !== tab || seq !== diffSeq) return;
+      if (data.binary || activeTabOf(g) !== tab || seq !== g.diffSeq) return;
       if (!tab.diffRev || tab.diffOriginal == null) return;
       const fresh = data.content || "";
       if (fresh === tab.diffOriginal) return;
       tab.diffOriginal = fresh;
-      await editor.setOriginal({
+      await g.editor.setOriginal({
         original: fresh,
         collapse: editorSettings.diff_collapse,
-        valid: () => activeTab() === tab && seq === diffSeq,
+        valid: () => activeTabOf(g) === tab && seq === g.diffSeq,
       });
     } catch (err) {
       void err; // the next event asks again
@@ -5672,16 +6004,14 @@ async function init(root) {
   // the bars themselves follow the buffer live, so typing needs no request and
   // no call here. While a comparison or a diff is up the bars rest, those views
   // show the changes themselves.
-  let changesSeq = 0;
-
-  async function applyChangeBars() {
-    if (!editor.canChanges) return;
-    const tab = activeTab();
+  async function applyChangeBars(g = group) {
+    if (!g.editor.canChanges) return;
+    const tab = activeTabOf(g);
     const textTab = tab && !tab.kind && !tab.compare && !tab.external ? tab : null;
-    const seq = ++changesSeq;
-    const valid = () => seq === changesSeq && activeTab() === tab;
+    const seq = ++g.changesSeq;
+    const valid = () => seq === g.changesSeq && activeTabOf(g) === tab;
     if (!textTab || !gitRepo || textTab.diffRev) {
-      editor.setChanges(null);
+      g.editor.setChanges(null);
       return;
     }
     if (textTab.changeHead === undefined) {
@@ -5698,11 +6028,11 @@ async function init(root) {
       textTab.changeHead = data.exists === false || data.binary ? null : data.content || "";
     }
     const head = textTab.changeHead;
-    if (head == null || overChangeLimits(head, editor.valueOf(textTab, true))) {
-      editor.setChanges(null);
+    if (head == null || overChangeLimits(head, g.editor.valueOf(textTab, true))) {
+      g.editor.setChanges(null);
       return;
     }
-    editor.setChanges(head);
+    g.editor.setChanges(head);
   }
 
   // The same limits the diff asks about, applied silently: bars that are always
@@ -5719,7 +6049,9 @@ async function init(root) {
   // moves that without a byte of the file changing.
   function dropChangeHeads() {
     for (const t of tabs) t.changeHead = undefined;
-    blameFor = "";
+    eachGroup((g) => {
+      g.blameFor = "";
+    });
   }
 
   // ---- blame -----------------------------------------------------------------
@@ -5728,9 +6060,6 @@ async function init(root) {
   // the file, not to the editor: it rides on the tab (`tab.blameOn`), persists
   // with the tab state, and is toggled from the file's own context menu, on its
   // tab or on its tree row.
-  let blameFor = ""; // the path the blame in the editor belongs to
-  let blameSeq = 0;
-
   function blameMenuItem(tab) {
     if (!gitRepo || !editor.canBlame || !tab || tab.kind || tab.compare || tab.external) return null;
     return {
@@ -5745,7 +6074,7 @@ async function init(root) {
     tab.blameOn = !tab.blameOn;
     persistTabs();
     if (tab.blameOn && tab.dirty) status("Blame is what git has, it shows after the save.");
-    if (tab.path === activePath) void applyBlame(true);
+    if (inFront(tab)) void applyBlame(true, tab.group);
   }
 
   // blameFromTree reaches the same switch from a tree row: an open file toggles
@@ -5763,12 +6092,12 @@ async function init(root) {
   // applyBlame puts the gutter on the open file, or takes it off. It asks the
   // server again whenever the file changes under it, because a line that moved
   // belongs to a different commit than it did before.
-  async function applyBlame(force = false) {
-    const tab = activeTab();
+  async function applyBlame(force = false, g = group) {
+    const tab = activeTabOf(g);
     const textTab = tab && !tab.kind && !tab.compare && !tab.external ? tab : null;
-    if (!textTab || !textTab.blameOn || !gitRepo || !editor.canBlame) {
-      blameFor = "";
-      editor.setBlame(null);
+    if (!textTab || !textTab.blameOn || !gitRepo || !g.editor.canBlame) {
+      g.blameFor = "";
+      g.editor.setBlame(null);
       return;
     }
     // The gutter says what git has, and git has what is on disk. While the
@@ -5776,17 +6105,17 @@ async function init(root) {
     // changed line reading as uncommitted, and git is asked again with the
     // save, so nothing is taken away and put back in between.
     if (textTab.dirty) return;
-    if (!force && blameFor === textTab.path) return;
-    const seq = ++blameSeq;
+    if (!force && g.blameFor === textTab.path) return;
+    const seq = ++g.blameSeq;
     try {
       const data = await getJSON(`${base}/git/blame?path=${encodeURIComponent(textTab.path)}`, { signal });
       // A buffer that moved on while the answer was on its way is ahead of
       // it again: the gutter keeps following the edits and the next clean
       // buffer asks anew, so a stale answer never lands on fresh lines.
-      if (seq !== blameSeq || activeTab() !== textTab || !textTab.blameOn || textTab.dirty) return;
-      blameFor = textTab.path;
+      if (seq !== g.blameSeq || activeTabOf(g) !== textTab || !textTab.blameOn || textTab.dirty) return;
+      g.blameFor = textTab.path;
       const has = !!data.repo && (data.lines || []).length > 0;
-      editor.setBlame(has ? data : null);
+      g.editor.setBlame(has ? data : null);
       if (!has) {
         status(data.large
           ? "This file is too large to blame."
@@ -5797,10 +6126,10 @@ async function init(root) {
       // a toast: the gutter simply stays away. The same check as above first,
       // though: a failure for the file you just left must not clear the gutter
       // of the one you are in now, nor claim that one's place in blameFor.
-      if (seq !== blameSeq || activeTab() !== textTab) return;
+      if (seq !== g.blameSeq || activeTabOf(g) !== textTab) return;
       if (!signal.aborted) console.warn("blame unavailable", err);
-      blameFor = textTab.path;
-      editor.setBlame(null);
+      g.blameFor = textTab.path;
+      g.editor.setBlame(null);
     }
   }
 
@@ -5815,10 +6144,11 @@ async function init(root) {
   function paintComments() {
     commentsCountEl.textContent = comments.length ? String(comments.length) : "";
     commentsCountEl.hidden = comments.length === 0;
-    if (editor.canComments) {
-      const tab = commentableTab(activeTab());
-      editor.setComments(tab ? commentsFor(tab.path).map((c) => ({ line: c.line, outdated: !!c.outdated })) : null);
-    }
+    eachGroup((g) => {
+      if (!g.editor.canComments) return;
+      const tab = commentableTab(activeTabOf(g));
+      g.editor.setComments(tab ? commentsFor(tab.path).map((c) => ({ line: c.line, outdated: !!c.outdated })) : null);
+    });
     if (sheetKind === "comments") renderCommentsSheet();
   }
 
@@ -5842,7 +6172,7 @@ async function init(root) {
         continue;
       }
       if (!tab.commentChanges || c.outdated) continue;
-      const mapped = editor.mapSavedLine(tab, tab.path === activePath, c.line, tab.commentChanges);
+      const mapped = tab.group.editor.mapSavedLine(tab, inFront(tab), c.line, tab.commentChanges);
       if (!mapped) continue;
       if (mapped.removed) {
         c.outdated = true;
@@ -5867,8 +6197,8 @@ async function init(root) {
     return at;
   }
 
-  function onDocChanged(update) {
-    const tab = commentableTab(activeTab());
+  function onDocChanged(g, update) {
+    const tab = commentableTab(activeTabOf(g));
     if (!tab) return;
     tab.commentChanges = tab.commentChanges ? tab.commentChanges.composeDesc(update.changes.desc) : update.changes.desc;
     const list = commentsFor(tab.path);
@@ -5950,7 +6280,7 @@ async function init(root) {
   function currentLineText(path, line, existing) {
     const tab = commentableTab(tabByPath(path));
     if (tab) {
-      const lines = editor.valueOf(tab, tab.path === activePath).split("\n");
+      const lines = liveText(tab).split("\n");
       if (line >= 1 && line <= lines.length) return lines[line - 1];
     }
     return existing && existing.lineText ? existing.lineText : "";
@@ -6308,7 +6638,7 @@ async function init(root) {
   // compareTabFor reads both sides from the disk and builds the tab. It answers
   // null when one of them is not text; restoring a saved comparison uses it
   // too, which is why the size question is not asked in here.
-  async function compareTabFor(left, right) {
+  async function compareTabFor(left, right, g = group) {
     const [a, b] = await Promise.all([
       getJSON(`${base}/file?path=${encodeURIComponent(left)}`, { signal }),
       getJSON(`${base}/file?path=${encodeURIComponent(right)}`, { signal }),
@@ -6319,6 +6649,7 @@ async function init(root) {
     return {
       path: comparePath(left, right),
       name: `${baseName(left)} ⇄ ${baseName(right)}`,
+      group: g,
       compare: {
         left,
         right,
@@ -6357,7 +6688,7 @@ async function init(root) {
         return;
       }
       if (signal.aborted || tabByPath(path)) return;
-      tabs.push(tab);
+      addTab(tab);
       activateTab(path);
       status("");
     } catch (err) {
@@ -6369,14 +6700,15 @@ async function init(root) {
   // side diff it is a MergeView, and like there a tab switch costs the undo
   // history of both sides, never their content.
   async function showCompare(tab) {
-    editor.setVisible(true);
+    const g = tab.group;
+    g.editor.setVisible(true);
     try {
-      await editor.setCompare({
+      await g.editor.setCompare({
         left: { name: baseName(tab.compare.left), doc: tab.compare.leftDoc },
         right: { name: baseName(tab.compare.right), doc: tab.compare.rightDoc },
         readOnly: !!tab.compare.readOnly,
         collapse: editorSettings.diff_collapse,
-        valid: () => activeTab() === tab,
+        valid: () => activeTabOf(g) === tab,
         scroll: tab.compare.scroll || null,
         expanded: tab.compare.expanded || [],
       });
@@ -6387,8 +6719,8 @@ async function init(root) {
     }
     // The build may have stepped aside for a tab switch, and then the bar
     // belongs to whatever is open now, not to this comparison.
-    if (activeTab() !== tab) return;
-    syncCompareBar();
+    if (activeTabOf(g) !== tab) return;
+    syncCompareBar(g);
   }
 
   async function showRevdiff(tab) {
@@ -6396,16 +6728,17 @@ async function init(root) {
       await showCompare(tab);
       return;
     }
-    viewerEl.hidden = true;
-    editor.showDoc(tab);
-    editor.setVisible(true);
+    const g = tab.group;
+    g.viewerEl.hidden = true;
+    g.editor.showDoc(tab);
+    g.editor.setVisible(true);
     try {
-      await editor.setDiff({
+      await g.editor.setDiff({
         mode: "inline",
         original: tab.compare.leftDoc,
         name: tab.name,
         collapse: editorSettings.diff_collapse,
-        valid: () => activeTab() === tab,
+        valid: () => activeTabOf(g) === tab,
         scroll: tab.compare.scroll || null,
         expanded: tab.compare.expanded || [],
       });
@@ -6414,29 +6747,29 @@ async function init(root) {
       notifyError(err.message || "The comparison could not be built.");
       return;
     }
-    if (activeTab() !== tab) return;
-    syncCompareBar();
+    if (activeTabOf(g) !== tab) return;
+    syncCompareBar(g);
   }
 
-  function syncCompareBar() {
-    const tab = activeTab();
+  function syncCompareBar(g = group) {
+    const tab = activeTabOf(g);
     const on = !!(tab && tab.compare);
-    compareBarEl.hidden = !on;
+    g.compareBarEl.hidden = !on;
     if (!on) return;
     const state = tab.compare;
     for (const side of ["left", "right"]) {
       const label = state.readOnly ? `${state[`${side}Label`]} · ${state[side]}` : state[side];
-      compareNameEls[side].textContent = label;
-      compareNameEls[side].title = label;
-      compareSaveBtns[side].hidden = !!state.readOnly;
+      g.compareNameEls[side].textContent = label;
+      g.compareNameEls[side].title = label;
+      g.compareSaveBtns[side].hidden = !!state.readOnly;
     }
     // While the view is still being built there is nothing to read a buffer
     // from, and reading an empty one would call both sides changed.
-    if (!editor.comparing()) return;
-    state.leftDirty = editor.compareValue("left") !== state.leftSaved;
-    state.rightDirty = editor.compareValue("right") !== state.rightSaved;
-    compareSaveBtns.left.disabled = !state.leftDirty;
-    compareSaveBtns.right.disabled = !state.rightDirty;
+    if (!g.editor.comparing()) return;
+    state.leftDirty = g.editor.compareValue("left") !== state.leftSaved;
+    state.rightDirty = g.editor.compareValue("right") !== state.rightSaved;
+    g.compareSaveBtns.left.disabled = !state.leftDirty;
+    g.compareSaveBtns.right.disabled = !state.rightDirty;
     markDirty(tab, state.leftDirty || state.rightDirty);
   }
 
@@ -6473,8 +6806,8 @@ async function init(root) {
     const state = tab.compare;
     const data = await getJSON(`${base}/file?path=${encodeURIComponent(state[side])}`, { signal });
     if (signal.aborted || data.binary) return false;
-    const live = tab.path === activePath && editor.comparing();
-    if (live) editor.captureCompare(tab);
+    const live = inFront(tab) && tab.group.editor.comparing();
+    if (live) tab.group.editor.captureCompare(tab);
     const text = data.content || "";
     state[`${side}Doc`] = text;
     state[`${side}Saved`] = text;
@@ -6483,15 +6816,15 @@ async function init(root) {
     return true;
   }
 
-  async function saveCompareSide(side) {
-    const tab = activeTab();
-    if (!tab || !tab.compare || !editor.comparing()) return;
+  async function saveCompareSide(side, g) {
+    const tab = activeTabOf(g);
+    if (!tab || !tab.compare || !g.editor.comparing()) return;
     const path = tab.compare[side];
-    const content = editor.compareValue(side);
+    const content = g.editor.compareValue(side);
     status("Saving…");
     try {
       const result = await writeCompareSide(tab, side, content);
-      syncCompareBar();
+      syncCompareBar(tab.group);
       status(saveOutcome(result, path), result === "kept" ? "error" : "ok");
     } catch (err) {
       status(err.message, "error");
@@ -6504,7 +6837,7 @@ async function init(root) {
   // outcome is the worse of the two sides, so a comparison whose one half was
   // refused never reads as saved.
   async function saveCompareTab(tab) {
-    if (tab.path === activePath && editor.comparing()) editor.captureCompare(tab);
+    if (inFront(tab) && tab.group.editor.comparing()) tab.group.editor.captureCompare(tab);
     const state = tab.compare;
     let outcome = "saved";
     for (const side of ["left", "right"]) {
@@ -6513,8 +6846,8 @@ async function init(root) {
       const result = await writeCompareSide(tab, side, content);
       if (result === "kept" || (result === "reloaded" && outcome === "saved")) outcome = result;
     }
-    if (tab.path === activePath && editor.comparing()) {
-      syncCompareBar();
+    if (inFront(tab) && tab.group.editor.comparing()) {
+      syncCompareBar(tab.group);
     } else {
       state.leftDirty = state.leftDoc !== state.leftSaved;
       state.rightDirty = state.rightDoc !== state.rightSaved;
@@ -6604,7 +6937,7 @@ async function init(root) {
     // The buffer as it was written, not as it stands when the answer comes
     // back: typing on while the write is in flight would otherwise mark that
     // newer text as saved and lose it.
-    const written = editor.snapshot(tab, tab.path === activePath);
+    const written = tab.group.editor.snapshot(tab, inFront(tab));
     let version;
     try {
       version = await writeFile(tab.path, written.toString(), tab.version);
@@ -6633,10 +6966,10 @@ async function init(root) {
     // The buffer and the file agree again, whichever of the two ways out of the
     // dialog got here, so whatever the disk did before is over.
     markTabDisk(tab, "");
-    editor.markSaved(tab, written);
+    tab.group.editor.markSaved(tab, written);
     // Asked again rather than answered with false: what was typed while the
     // write was on its way is unsaved, and the active tab may have changed.
-    markDirty(tab, !editor.isClean(tab, tab.path === activePath));
+    markDirty(tab, !tab.group.editor.isClean(tab, inFront(tab)));
     tab.commentChanges = null;
     if (commentsFor(tab.path).length) void syncCommentMoves(tab.path);
     return "saved";
@@ -6775,10 +7108,10 @@ async function init(root) {
   // the open tabs, the active file and the unfolded dirs over to the new one.
   async function applyNewPath(oldPath, newPath) {
     const moved = (p) => (p === oldPath ? newPath : p.startsWith(oldPath + "/") ? newPath + p.slice(oldPath.length) : p);
-    const wasActive = activePath;
     // The pick for a comparison is a path like any other and moves with it.
     if (compareSelection) compareSelection = moved(compareSelection);
     for (const tab of tabs) {
+      const wasShown = inFront(tab);
       // A comparison names two real files, and its own path is built from
       // both. Leaving them on the old name would keep its Save writing there,
       // and the write route creates what is not there any more: the file you
@@ -6790,10 +7123,9 @@ async function init(root) {
         if (left === tab.compare.left && right === tab.compare.right) continue;
         tab.compare.left = left;
         tab.compare.right = right;
-        const path = comparePath(left, right);
-        if (wasActive === tab.path) activePath = path;
-        tab.path = path;
+        tab.path = comparePath(left, right);
         tab.name = `${baseName(left)} ⇄ ${baseName(right)}`;
+        if (wasShown) tab.group.activePath = tab.path;
         continue;
       }
       const movedPath = moved(tab.path);
@@ -6802,9 +7134,8 @@ async function init(root) {
       if (movedPath !== tab.path) tab.changeHead = undefined;
       tab.path = movedPath;
       tab.name = baseName(tab.path);
+      if (wasShown) tab.group.activePath = tab.path;
     }
-    // A comparison that was active has already claimed its new path above.
-    if (activePath && activePath === wasActive) activePath = moved(activePath);
     for (const p of [...expanded]) {
       const next = moved(p);
       if (next !== p) {
@@ -6822,16 +7153,18 @@ async function init(root) {
       }
     }
     if (movedComments) paintComments();
-    const tab = activeTab();
-    if (tab && !tab.compare && tab.path.startsWith(newPath)) {
-      if (tab.kind) renderViewer(tab);
-      else editor.refreshLanguage(tab.name);
-    }
+    eachGroup((g) => {
+      const tab = activeTabOf(g);
+      if (tab && !tab.compare && tab.path.startsWith(newPath)) {
+        if (tab.kind) renderViewer(tab);
+        else g.editor.refreshLanguage(tab.name);
+      }
+      syncCompareBar(g);
+      syncPreview(g);
+      void applyChangeBars(g);
+    });
     renderTabs();
     updateActionStates();
-    syncCompareBar();
-    syncPreview();
-    void applyChangeBars();
     persistTabs();
     await loadTree();
   }
@@ -6981,7 +7314,7 @@ async function init(root) {
     }
     let text;
     if (tab && tab.dirty) {
-      text = editor.valueOf(tab, tab.path === activePath);
+      text = liveText(tab);
     } else {
       status("Loading…");
       try {
@@ -7475,8 +7808,8 @@ async function init(root) {
   // The preview is a per file switch like the diff and the blame gutter: it
   // says how you want to read this one file, so it rides on its tab and is
   // reached from the file's own context menu.
-  function previewVisible() {
-    const tab = activeTab();
+  function previewVisible(g) {
+    const tab = activeTabOf(g);
     return !!(tab && !tab.kind && !tab.compare && !tab.external && tab.previewOn && hasPreview(tab.name));
   }
 
@@ -7494,14 +7827,14 @@ async function init(root) {
     tab.previewOn = !tab.previewOn;
     // The surface belongs to one of them: a preview takes it back from a diff.
     if (tab.previewOn && tab.diffRev) {
-      if (tab.path === activePath) void applyDiff("");
+      if (inFront(tab)) void applyDiff("", { g: tab.group });
       else {
         tab.diffRev = "";
         tab.diffFrom = "";
       }
     }
     persistTabs();
-    if (tab.path === activePath) syncPreview();
+    if (inFront(tab)) syncPreview(tab.group);
   }
 
   async function previewFromTree(path) {
@@ -7514,34 +7847,34 @@ async function init(root) {
     togglePreviewFor(tab);
   }
 
-  function syncPreview() {
-    const show = previewVisible();
-    previewPaneEl.hidden = !show;
-    surfaceEl.classList.toggle("editor-preview-split", show);
-    editor.measure();
-    if (show) schedulePreview(0);
-    else clearTimeout(previewTimer);
+  function syncPreview(g) {
+    const show = previewVisible(g);
+    g.previewPaneEl.hidden = !show;
+    g.surfaceEl.classList.toggle("editor-preview-split", show);
+    g.editor.measure();
+    if (show) schedulePreview(0, g);
+    else clearTimeout(g.previewTimer);
   }
 
-  function schedulePreview(delay) {
-    if (!previewVisible()) return;
-    clearTimeout(previewTimer);
-    previewTimer = setTimeout(renderPreview, delay);
+  function schedulePreview(delay, g) {
+    if (!previewVisible(g)) return;
+    clearTimeout(g.previewTimer);
+    g.previewTimer = setTimeout(() => void renderPreview(g), delay);
   }
 
-  async function renderPreview() {
-    const tab = activeTab();
-    if (!previewVisible() || !tab) return;
+  async function renderPreview(g) {
+    const tab = activeTabOf(g);
+    if (!previewVisible(g) || !tab) return;
     if (isSvg(tab.name)) {
-      renderSvgPreview(tab);
+      renderSvgPreview(tab, g);
       return;
     }
-    previewPaneEl.classList.remove("editor-preview-image");
+    g.previewPaneEl.classList.remove("editor-preview-image");
     try {
-      const res = await postForm(`${base}/preview`, { content: editor.valueOf(tab, true) });
+      const res = await postForm(`${base}/preview`, { content: g.editor.valueOf(tab, true) });
       await ensureOk(res, "Failed to render the preview.");
       const data = await res.json();
-      if (previewVisible()) previewPaneEl.innerHTML = data.html || "";
+      if (previewVisible(g)) g.previewPaneEl.innerHTML = data.html || "";
     } catch (err) {
       status(err.message, "error");
     }
@@ -7549,14 +7882,14 @@ async function init(root) {
 
   // The SVG preview renders the current buffer through an <img> with a blob
   // URL: it tracks unsaved edits and scripts inside the SVG never run.
-  function renderSvgPreview(tab) {
+  function renderSvgPreview(tab, g) {
     const img = document.createElement("img");
-    if (svgPreviewUrl) URL.revokeObjectURL(svgPreviewUrl);
-    svgPreviewUrl = URL.createObjectURL(new Blob([editor.valueOf(tab, true)], { type: "image/svg+xml" }));
-    img.src = svgPreviewUrl;
+    if (g.svgPreviewUrl) URL.revokeObjectURL(g.svgPreviewUrl);
+    g.svgPreviewUrl = URL.createObjectURL(new Blob([g.editor.valueOf(tab, true)], { type: "image/svg+xml" }));
+    img.src = g.svgPreviewUrl;
     img.alt = tab.name;
-    previewPaneEl.classList.add("editor-preview-image");
-    previewPaneEl.replaceChildren(img);
+    g.previewPaneEl.classList.add("editor-preview-image");
+    g.previewPaneEl.replaceChildren(img);
   }
 
   // ---- drawer ------------------------------------------------------------------
@@ -7582,7 +7915,7 @@ async function init(root) {
     const drawer = mobileMedia.matches;
     drawerToggleBtn.setAttribute("aria-pressed", !drawer && !treeFolded ? "true" : "false");
     drawerToggleBtn.title = drawer ? "Files" : treeFolded ? "Show the file tree" : "Hide the file tree";
-    editor.measure();
+    measureAll();
   }
 
   function toggleDrawer() {
@@ -7617,7 +7950,7 @@ async function init(root) {
       splitterEl.classList.remove("active");
       if (timer) window.clearTimeout(timer);
       saveWidth();
-      editor.measure();
+      measureAll();
     };
     splitterEl.addEventListener("mousedown", (e) => e.preventDefault(), { signal });
     splitterEl.addEventListener("pointerdown", (e) => {
@@ -7643,7 +7976,7 @@ async function init(root) {
     splitterEl.addEventListener("dblclick", () => {
       applyTreeWidth(0);
       writeLayout(TREE_WIDTH_KEY, "0");
-      editor.measure();
+      measureAll();
     }, { signal });
   }
 
@@ -9027,7 +9360,7 @@ async function init(root) {
     dropChangeHeads();
     void loadTree();
     void loadGitStatus();
-    void refreshDiffHead();
+    refreshDiffHeads();
   }, { signal });
   // The poller signals movement, never the state itself: this page pulls the
   // status like every other surface pulls its own fragment. An open diff
@@ -9048,7 +9381,7 @@ async function init(root) {
     // so they all go; loadGitStatus rebuilds the bars for the open file.
     if (event.detail.base) dropChangeHeads();
     void loadGitStatus();
-    if (event.detail.base) void refreshDiffHead();
+    if (event.detail.base) refreshDiffHeads();
     if (event.detail.base && revdiffOn) void loadRevdiff();
   }, { signal });
   // What the disk did to what this page has on the screen. The paths say where
@@ -9094,9 +9427,6 @@ async function init(root) {
       void pullLSPIndex();
     }
   }, { signal });
-  for (const el of root.querySelectorAll("[data-editor-compare-save]")) {
-    el.addEventListener("click", () => void saveCompareSide(el.dataset.editorCompareSave), { signal });
-  }
   // The folder picker hands over every file with its path inside the folder.
   uploadDirInput?.addEventListener("change", () => {
     const items = Array.from(uploadDirInput.files || []).map((file) => ({
@@ -9118,27 +9448,27 @@ async function init(root) {
     if (!editor.gotoLine()) status("Go to line requires the CodeMirror editor.", "error");
   }, { signal });
   window.addEventListener("keyup", (e) => {
-    if (e.key === "Control" || e.key === "Meta") editor.clearLSPHint?.();
+    if (e.key === "Control" || e.key === "Meta") eachGroup((g) => g.editor.clearLSPHint?.());
   }, { signal });
-  window.addEventListener("blur", () => editor.clearLSPHint?.(), { signal });
+  window.addEventListener("blur", () => eachGroup((g) => g.editor.clearLSPHint?.()), { signal });
   drawerToggleBtn.addEventListener("click", toggleDrawer, { signal });
-  browseBtn.addEventListener("click", openDrawer, { signal });
   backdropEl.addEventListener("click", closeDrawer, { signal });
-  tabsEl.addEventListener("wheel", (e) => {
-    if (!e.deltaX && e.deltaY) {
-      tabsEl.scrollLeft += e.deltaY;
-      e.preventDefault();
-    }
-  }, { passive: false, signal });
 
   // Mouse drag reorders the tab strip like the terminal tabs: threshold, live
   // transform preview, edge auto scroll, then the tabs array is respliced and
-  // persisted. Touch stays out, there the long press menu and the native
-  // horizontal scroll own the gestures; the order is per device state anyway.
-  function wireTabDrag() {
+  // persisted. Out of the strip the same drag places the tab in another group
+  // or opens a new one at a group's edge. Touch stays out, there the long
+  // press menu and the native horizontal scroll own the gestures; the order is
+  // per device state anyway.
+  function wireTabDrag(g) {
+    const strip = g.tabsEl;
+    const opts = { signal: g.ac.signal };
     let drag = null;
     let suppressed = false;
-    const contentX = (clientX) => clientX - tabsEl.getBoundingClientRect().left + tabsEl.scrollLeft;
+    const contentX = (clientX) => clientX - strip.getBoundingClientRect().left + strip.scrollLeft;
+    const unshift = () => {
+      for (const el of drag.els) el.style.transform = "";
+    };
     const updateDrag = () => {
       if (!drag || !drag.active) return;
       const dx = contentX(drag.lastClientX) - drag.startContentX;
@@ -9159,15 +9489,15 @@ async function init(root) {
     };
     const tickEdgeScroll = () => {
       if (!drag || !drag.active) return;
-      const rect = tabsEl.getBoundingClientRect();
+      const rect = strip.getBoundingClientRect();
       let delta = 0;
-      if (drag.lastClientX < rect.left + 32) delta = -12;
-      else if (drag.lastClientX > rect.right - 32) delta = 12;
+      if (!drag.outside && drag.lastClientX < rect.left + 32) delta = -12;
+      else if (!drag.outside && drag.lastClientX > rect.right - 32) delta = 12;
       if (delta) {
-        const max = tabsEl.scrollWidth - tabsEl.clientWidth;
-        const next = Math.max(0, Math.min(tabsEl.scrollLeft + delta, max));
-        if (next !== tabsEl.scrollLeft) {
-          tabsEl.scrollLeft = next;
+        const max = strip.scrollWidth - strip.clientWidth;
+        const next = Math.max(0, Math.min(strip.scrollLeft + delta, max));
+        if (next !== strip.scrollLeft) {
+          strip.scrollLeft = next;
           updateDrag();
         }
       }
@@ -9177,13 +9507,29 @@ async function init(root) {
       if (!drag) return;
       if (drag.active) {
         window.cancelAnimationFrame(drag.raf);
-        tabsEl.classList.remove("editor-tabs-dragging");
+        strip.classList.remove("editor-tabs-dragging");
         drag.el.classList.remove("editor-tab-dragging");
-        for (const el of drag.els) el.style.transform = "";
+        unshift();
+        paintDropZone(null);
       }
       drag = null;
     };
-    tabsEl.addEventListener("pointerdown", (e) => {
+    const inStrip = (x, y) => {
+      const rect = strip.getBoundingClientRect();
+      return x >= rect.left && x <= rect.right && y >= rect.top - 12 && y <= rect.bottom + 12;
+    };
+    const placeAt = (x, y) => {
+      if (!onDesktop()) return null;
+      const hit = document.elementFromPoint(x, y);
+      const groupEl = hit && hit.closest("[data-editor-group]");
+      const target = groupEl && [...groupsById.values()].find((other) => other.el === groupEl);
+      const tab = tabByPath(drag.el.dataset.path);
+      if (!target || !tab) return null;
+      const { zone, rect } = dropZone(target.el, target.headEl, x, y);
+      if (target === g && (zone === "tabs" || zone === "center" || groupTabs(g).length < 2)) return null;
+      return { target, zone, rect, tab };
+    };
+    strip.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 || e.pointerType === "touch" || drag) return;
       if (e.target.closest(".editor-tab-state")) return;
       const el = e.target.closest(".editor-tab");
@@ -9196,6 +9542,8 @@ async function init(root) {
         startClientY: e.clientY,
         lastClientX: e.clientX,
         active: false,
+        outside: false,
+        place: null,
         raf: 0,
       };
       try {
@@ -9203,8 +9551,8 @@ async function init(root) {
       } catch (error) {
         void error;
       }
-    }, { signal });
-    tabsEl.addEventListener("pointermove", (e) => {
+    }, opts);
+    strip.addEventListener("pointermove", (e) => {
       if (!drag || e.pointerId !== drag.pointerId) return;
       if (!drag.active) {
         if (!(e.buttons & 1)) {
@@ -9213,45 +9561,53 @@ async function init(root) {
         }
         if (Math.hypot(e.clientX - drag.startClientX, e.clientY - drag.startClientY) < 6) return;
         drag.active = true;
-        drag.els = Array.from(tabsEl.querySelectorAll(".editor-tab"));
+        drag.els = Array.from(strip.querySelectorAll(".editor-tab"));
         drag.fromIndex = drag.els.indexOf(drag.el);
         drag.toIndex = drag.fromIndex;
         drag.width = drag.el.getBoundingClientRect().width;
-        const left = tabsEl.getBoundingClientRect().left;
+        const left = strip.getBoundingClientRect().left;
         drag.centers = drag.els.map((tab) => {
           const rect = tab.getBoundingClientRect();
-          return rect.left + rect.width / 2 - left + tabsEl.scrollLeft;
+          return rect.left + rect.width / 2 - left + strip.scrollLeft;
         });
         drag.startContentX = contentX(e.clientX);
-        tabsEl.classList.add("editor-tabs-dragging");
+        strip.classList.add("editor-tabs-dragging");
         drag.el.classList.add("editor-tab-dragging");
         drag.raf = window.requestAnimationFrame(tickEdgeScroll);
       }
       e.preventDefault();
       drag.lastClientX = e.clientX;
-      updateDrag();
-    }, { signal });
-    tabsEl.addEventListener("pointerup", (e) => {
+      drag.outside = !inStrip(e.clientX, e.clientY);
+      if (!drag.outside) {
+        drag.place = null;
+        paintDropZone(null);
+        updateDrag();
+        return;
+      }
+      unshift();
+      drag.toIndex = drag.fromIndex;
+      drag.place = placeAt(e.clientX, e.clientY);
+      paintDropZone(drag.place && drag.place.rect);
+    }, opts);
+    strip.addEventListener("pointerup", (e) => {
       if (!drag || e.pointerId !== drag.pointerId) return;
       const done = drag;
       clearDrag();
       if (!done.active) return;
       suppressed = true;
-      if (done.toIndex !== done.fromIndex) {
-        const [moved] = tabs.splice(done.fromIndex, 1);
-        tabs.splice(done.toIndex, 0, moved);
-        const others = done.els.filter((el) => el !== done.el);
-        tabsEl.insertBefore(done.el, others[done.toIndex] || null);
-        persistTabs();
+      if (done.outside) {
+        if (done.place) dropTab(done.place, e.clientX);
+        return;
       }
-    }, { signal });
-    tabsEl.addEventListener("pointercancel", clearDrag, { signal });
-    tabsEl.addEventListener("click", (e) => {
+      if (done.toIndex !== done.fromIndex) dropInOrder(stripTabs(g), done.fromIndex, done.toIndex);
+    }, opts);
+    strip.addEventListener("pointercancel", clearDrag, opts);
+    strip.addEventListener("click", (e) => {
       if (!suppressed) return;
       suppressed = false;
       e.preventDefault();
       e.stopPropagation();
-    }, { signal, capture: true });
+    }, { ...opts, capture: true });
   }
 
   // A horizontal swipe on the editor surface goes to the next or the previous
@@ -9288,14 +9644,16 @@ async function init(root) {
   // gesture the browser gives them, and so does a focused editor: while someone
   // works in the text, a sideways drag is the cursor's, not the file strip's.
   function syncSwipeZone() {
-    if (!editorReady) return;
+    if (!group) return;
     const tab = activeTab();
     const on = !!editorSettings.line_wrap && !!tab && !tab.compare
       && !editor.hasSelection() && !editor.hasFocus();
-    surfaceEl.classList.toggle("editor-swipe-zone", on);
+    eachGroup((g) => g.surfaceEl.classList.toggle("editor-swipe-zone", on && g === group));
   }
 
-  function wireSurfaceSwipe() {
+  function wireSurfaceSwipe(g) {
+    const surfaceEl = g.surfaceEl;
+    const opts = { signal: g.ac.signal };
     let gesture = null;
     let flingFrame = 0;
     // The pill names the file the swipe would go to. No pending state here, a
@@ -9304,18 +9662,19 @@ async function init(root) {
       frame: surfaceEl,
       host: paneColEl,
       pillData: { editorSwipePill: "" },
-      stops: () => (tabs.some((t) => t.path === activePath)
-        ? tabs.map((t) => ({ id: t.path, name: t.name, active: t.path === activePath }))
-        : []),
+      stops: () => {
+        const listed = stripTabs(g);
+        return listed.some(stripActive) ? listed.map((t) => ({ id: t.path, name: t.name, active: stripActive(t) })) : [];
+      },
       go: (stop) => activateTab(stop.id),
     });
-    signal.addEventListener("abort", () => nav.destroy());
+    g.ac.signal.addEventListener("abort", () => nav.destroy());
     const stopFling = () => {
       if (flingFrame) cancelAnimationFrame(flingFrame);
       flingFrame = 0;
     };
     // A fling outliving its editor would scroll whatever page came after it.
-    signal.addEventListener("abort", stopFling);
+    g.ac.signal.addEventListener("abort", stopFling);
     // The element the finger would have scrolled if the browser still could:
     // the first scrollable box between what was touched and the surface.
     const scrollerFor = (node) => {
@@ -9381,7 +9740,7 @@ async function init(root) {
         scroller: scrollerFor(e.target),
         samples: [{ t: e.timeStamp, x: e.clientX, y: e.clientY }],
       };
-    }, { signal });
+    }, opts);
     surfaceEl.addEventListener("pointermove", (e) => {
       if (!gesture || e.pointerId !== gesture.pointerId) return;
       pushSample(gesture.samples, { t: e.timeStamp, x: e.clientX, y: e.clientY });
@@ -9405,7 +9764,7 @@ async function init(root) {
       }
       nav.onSwipe({ phase: "move", dx, begin: gesture.dx === null });
       gesture.dx = dx;
-    }, { passive: false, signal });
+    }, { ...opts, passive: false });
     surfaceEl.addEventListener("pointerup", (e) => {
       if (!gesture || e.pointerId !== gesture.pointerId) return;
       const { dx, axis, scroller, samples } = gesture;
@@ -9415,13 +9774,13 @@ async function init(root) {
         return;
       }
       if (axis === "h") nav.onSwipe({ phase: "end", dx: dx ?? 0, vx: releaseVelocity(samples, e.timeStamp, "x") });
-    }, { signal });
+    }, opts);
     surfaceEl.addEventListener("pointercancel", (e) => {
       if (!gesture || e.pointerId !== gesture.pointerId) return;
       const horizontal = gesture.axis === "h";
       endGesture(e.pointerId);
       if (horizontal) nav.onSwipe({ phase: "cancel" });
-    }, { signal });
+    }, opts);
   }
 
   // Reordering the open files on a phone, the way the quick nav reorders the
@@ -9527,12 +9886,7 @@ async function init(root) {
       clearDrag();
       if (!done.active) return;
       suppressed = true;
-      if (done.toIndex !== done.fromIndex) {
-        const [moved] = tabs.splice(done.fromIndex, 1);
-        tabs.splice(done.toIndex, 0, moved);
-        persistTabs();
-        renderTabs();
-      }
+      if (done.toIndex !== done.fromIndex) dropInOrder(tabOrder(), done.fromIndex, done.toIndex);
       renderFilesSheet();
     }, { signal });
     sheetBodyEl.addEventListener("pointercancel", clearDrag, { signal });
@@ -9544,7 +9898,7 @@ async function init(root) {
     }, { signal, capture: true });
   }
 
-  wireRowMenus(tabsEl, ".editor-tab", (row, x, y) => {
+  wireRowMenus(groupsEl, ".editor-tab", (row, x, y) => {
     if (!row) return false;
     openTabMenu(row.dataset.path, x, y);
     return true;
@@ -9566,12 +9920,13 @@ async function init(root) {
   wireSplitter();
   wireTreeScroll();
   wireQuickOpen();
-  wireTabDrag();
   wireSheetDrag();
-  wireSurfaceSwipe();
   syncSwipeZone();
   paintTreeFold();
+  paintGroups();
   mobileMedia.addEventListener("change", paintTreeFold, { signal });
+  mobileMedia.addEventListener("change", paintGroups, { signal });
+  mobileMedia.addEventListener("change", renderTabs, { signal });
   root.querySelector('[data-editor-setting="line_wrap"]')
     ?.addEventListener("change", syncSwipeZone, { signal });
 
@@ -9874,7 +10229,6 @@ async function init(root) {
   let termResumeExpanded = false;
   let termMenuOpen = false;
   let termMenuIndex = -1;
-  const termApplies = () => termPointerMedia.matches && !mobileMedia.matches;
   const termPanesEl = () => termBodyEl.querySelector("[data-editor-term-panes]");
   const termPaneFor = (id) => (id ? termBodyEl.querySelector(`[data-term-pane="${CSS.escape(id)}"]`) : null);
   const termTabFor = (id) => (id ? termTabsHostEl.querySelector(`[data-term-tab="${CSS.escape(id)}"]`) : null);
@@ -10028,18 +10382,18 @@ async function init(root) {
   }
 
   function paintTermPanel() {
-    const applies = termApplies();
+    const applies = onDesktop();
     const shown = termOpen && applies;
     termItem.hidden = !applies;
     termItem.setAttribute("aria-pressed", shown ? "true" : "false");
     termStatusBtn.hidden = !applies;
     termStatusBtn.setAttribute("aria-pressed", shown ? "true" : "false");
     termPanelEl.hidden = !shown;
-    editor.measure();
+    measureAll();
   }
 
   async function openTermPanel({ focus = true } = {}) {
-    if (!termApplies()) return;
+    if (!onDesktop()) return;
     termOpen = true;
     store.set(termOpenKey, "1");
     paintTermPanel();
@@ -10085,7 +10439,7 @@ async function init(root) {
       termSplitterEl.classList.remove("active");
       if (timer) window.clearTimeout(timer);
       saveHeight();
-      editor.measure();
+      measureAll();
     };
     termSplitterEl.addEventListener("mousedown", (e) => e.preventDefault(), { signal });
     termSplitterEl.addEventListener("pointerdown", (e) => {
@@ -10509,7 +10863,7 @@ async function init(root) {
   }, { signal });
   document.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "j") {
-      if (!termApplies()) return;
+      if (!onDesktop()) return;
       e.preventDefault();
       e.stopPropagation();
       toggleTermPanel();
@@ -10572,7 +10926,7 @@ async function init(root) {
   document.body.appendChild(termModalsHostEl);
   document.body.appendChild(commentModalHostEl);
   const pageTerminal = root.dataset.editorTerminal || "";
-  if (pageTerminal && termApplies()) {
+  if (pageTerminal && onDesktop()) {
     termActiveId = pageTerminal;
     void openTermPanel({ focus: true });
   } else if (termOpen) {
@@ -10657,7 +11011,7 @@ async function init(root) {
       && e.code === "KeyC" && quickOpenEl.hidden) {
       if (commentableTab(activeTab())) {
         e.preventDefault();
-        openLineCommentAt(cursorLine);
+        openLineCommentAt(group.cursor.line);
       }
     } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
       && e.code === "KeyR" && quickOpenEl.hidden) {
@@ -10733,7 +11087,6 @@ async function init(root) {
   }, { capture: true, signal });
   document.addEventListener("submit", (e) => guard(e, e.target), { capture: true, signal });
 
-  editor.setVisible(false);
   // Before the first load, not after it: every scope change renews the watch,
   // and a renewal before the watch runs at all is a renewal nobody sends. A tab
   // restored or opened in the next moment would then wait out a whole renewal
@@ -10746,7 +11099,7 @@ async function init(root) {
   restoreTreeScroll();
   if (root.dataset.editorFile) void openPath(root.dataset.editorFile);
   else if (tabs.length === 0 && mobileMedia.matches) openDrawer();
-  if (pageTerminal && termOpen && termApplies()) void activateTermPane(pageTerminal, { focus: true });
+  if (pageTerminal && termOpen && onDesktop()) void activateTermPane(pageTerminal, { focus: true });
   const reveal = !!root.dataset.editorView;
   const pageView = root.dataset.editorView || store.get(viewKey, "");
   if (pageView) void openPageView(pageView, reveal);
@@ -10766,13 +11119,11 @@ async function init(root) {
     termStripResize.disconnect();
     clearTimeout(statusTimer);
     clearTimeout(autosaveTimer);
-    clearTimeout(previewTimer);
     clearTimeout(searchTimer);
     clearTimeout(gitWatchTimer);
     clearTimeout(fileWatchTimer);
     clearTimeout(fileScopeTimer);
     clearTimeout(dirReloadTimer);
-    if (svgPreviewUrl) URL.revokeObjectURL(svgPreviewUrl);
     if (lsp) {
       for (const tab of tabs) {
         if (!tab.kind && !tab.compare) lsp.closeDocument(tab.path);
@@ -10781,18 +11132,15 @@ async function init(root) {
     termModalsHostEl.remove();
     window.bootstrap?.Modal?.getInstance(commentModalEl)?.dispose();
     commentModalHostEl.remove();
-    editor.destroy();
+    eachGroup((g) => {
+      clearTimeout(g.previewTimer);
+      if (g.svgPreviewUrl) URL.revokeObjectURL(g.svgPreviewUrl);
+      g.editor.destroy();
+    });
   };
 }
 
 // ---- editor (CodeMirror 6 with textarea fallback) --------------------------
-
-// indentPref maps a stored "indent" setting to a style/size descriptor.
-function indentPref(value) {
-  if (value === "2spaces") return { style: "space", size: 2 };
-  if (value === "4spaces") return { style: "space", size: 4 };
-  return { style: "tab" };
-}
 
 async function createEditor(host, hooks, settings, signal, mergeHost) {
   try {
@@ -10802,49 +11150,6 @@ async function createEditor(host, hooks, settings, signal, mergeHost) {
     return createTextarea(host, hooks, settings);
   }
 }
-
-// Languages are dynamic-imported by full URL. The jsDelivr dist files keep their
-// @codemirror/@lezer imports bare, so they resolve through the page import map to
-// the single shared instances (otherwise instanceof checks break).
-const langUrl = (pkg) => `https://cdn.jsdelivr.net/npm/@codemirror/${pkg}/dist/index.js`;
-
-// Tabler carries a glyph for the common formats, everything else keeps the
-// plain file icon. Names win over extensions (Dockerfile, LICENSE, dotfiles).
-const FILE_ICONS = {
-  js: "ti-file-type-js", mjs: "ti-file-type-js", cjs: "ti-file-type-js",
-  jsx: "ti-file-type-jsx", ts: "ti-file-type-ts", tsx: "ti-file-type-tsx",
-  mts: "ti-file-type-ts", cts: "ti-file-type-ts",
-  css: "ti-file-type-css", scss: "ti-file-type-css", less: "ti-file-type-css",
-  html: "ti-file-type-html", htm: "ti-file-type-html", vue: "ti-file-type-vue",
-  php: "ti-file-type-php", xml: "ti-file-type-xml", svg: "ti-file-type-svg",
-  sql: "ti-file-type-sql", rs: "ti-file-type-rs", csv: "ti-file-type-csv",
-  txt: "ti-file-type-txt", log: "ti-file-type-txt", pdf: "ti-file-type-pdf",
-  doc: "ti-file-type-doc", docx: "ti-file-type-doc",
-  zip: "ti-file-zip", tar: "ti-file-zip", gz: "ti-file-zip", tgz: "ti-file-zip",
-  png: "ti-file-type-png", jpg: "ti-file-type-jpg", jpeg: "ti-file-type-jpg",
-  bmp: "ti-file-type-bmp", gif: "ti-photo", webp: "ti-photo", ico: "ti-photo",
-  json: "ti-json", md: "ti-markdown", markdown: "ti-markdown",
-  go: "ti-brand-golang", py: "ti-brand-python",
-  yml: "ti-file-settings", yaml: "ti-file-settings", toml: "ti-file-settings",
-  ini: "ti-file-settings", conf: "ti-file-settings", cfg: "ti-file-settings",
-  env: "ti-key", lock: "ti-lock", db: "ti-database", sqlite: "ti-database",
-  sh: "ti-terminal-2", bash: "ti-terminal-2", zsh: "ti-terminal-2",
-  fish: "ti-terminal-2", bashrc: "ti-terminal-2", profile: "ti-terminal-2",
-  c: "ti-file-code", h: "ti-file-code", cpp: "ti-file-code", cc: "ti-file-code",
-  hpp: "ti-file-code", java: "ti-file-code", rb: "ti-file-code",
-};
-
-const NAME_ICONS = {
-  dockerfile: "ti-brand-docker",
-  "docker-compose.yml": "ti-brand-docker",
-  "docker-compose.yaml": "ti-brand-docker",
-  makefile: "ti-file-code",
-  license: "ti-license",
-  ".gitignore": "ti-brand-git",
-  ".gitattributes": "ti-brand-git",
-  ".gitmodules": "ti-brand-git",
-  ".env": "ti-key",
-};
 
 // singleFlight makes the last word the one that stands: while a write is on the
 // wire the next is only remembered, and it goes out when the first is through
@@ -10871,85 +11176,6 @@ function singleFlight(run) {
   };
   return start;
 }
-
-function fileIcon(name) {
-  const lower = (name || "").toLowerCase();
-  if (NAME_ICONS[lower]) return NAME_ICONS[lower];
-  if (lower.startsWith(".env.")) return "ti-key";
-  const ext = lower.includes(".") ? lower.split(".").pop() : "";
-  return FILE_ICONS[ext] || "ti-file";
-}
-
-// Shell, Dockerfile and TOML have no lezer grammar; the legacy stream modes are
-// the official route and ship as standalone ESM files.
-const modeUrl = (mode) => `https://cdn.jsdelivr.net/npm/@codemirror/legacy-modes@6.5.1/mode/${mode}.js`;
-
-const STREAM_LANGS = {
-  sh: ["shell", "shell"],
-  bash: ["shell", "shell"],
-  zsh: ["shell", "shell"],
-  ksh: ["shell", "shell"],
-  fish: ["shell", "shell"],
-  bashrc: ["shell", "shell"],
-  profile: ["shell", "shell"],
-  toml: ["toml", "toml"],
-  dockerfile: ["dockerfile", "dockerFile"], // the module exports it camel cased
-};
-
-// Files the shell modes own by name, they carry no extension.
-const STREAM_NAMES = {
-  ".bashrc": "sh",
-  ".bash_profile": "sh",
-  ".bash_aliases": "sh",
-  ".profile": "sh",
-  ".zshrc": "sh",
-  ".zprofile": "sh",
-  ".envrc": "sh",
-  dockerfile: "dockerfile",
-};
-
-const LANGS = {
-  js: ["lang-javascript@6.2.2", "javascript", { jsx: true }],
-  jsx: ["lang-javascript@6.2.2", "javascript", { jsx: true }],
-  mjs: ["lang-javascript@6.2.2", "javascript", {}],
-  cjs: ["lang-javascript@6.2.2", "javascript", {}],
-  ts: ["lang-javascript@6.2.2", "javascript", { typescript: true }],
-  mts: ["lang-javascript@6.2.2", "javascript", { typescript: true }],
-  cts: ["lang-javascript@6.2.2", "javascript", { typescript: true }],
-  tsx: ["lang-javascript@6.2.2", "javascript", { typescript: true, jsx: true }],
-  go: ["lang-go@6.0.0", "go", null],
-  html: ["lang-html@6.4.9", "html", null],
-  htm: ["lang-html@6.4.9", "html", null],
-  vue: ["lang-html@6.4.9", "html", null],
-  gohtml: ["lang-html@6.4.9", "html", null],
-  tmpl: ["lang-html@6.4.9", "html", null],
-  gotmpl: ["lang-html@6.4.9", "html", null],
-  twig: ["lang-jinja@6.0.1", "jinja", null],
-  css: ["lang-css@6.2.1", "css", null],
-  scss: ["lang-css@6.2.1", "css", null],
-  less: ["lang-css@6.2.1", "css", null],
-  json: ["lang-json@6.0.1", "json", null],
-  md: ["lang-markdown@6.2.5", "markdown", null],
-  markdown: ["lang-markdown@6.2.5", "markdown", null],
-  py: ["lang-python@6.1.6", "python", null],
-  php: ["lang-php@6.0.1", "php", null],
-  yaml: ["lang-yaml@6.1.1", "yaml", null],
-  yml: ["lang-yaml@6.1.1", "yaml", null],
-  xml: ["lang-xml@6.1.0", "xml", null],
-  svg: ["lang-xml@6.1.0", "xml", null],
-  sql: ["lang-sql@6.7.0", "sql", null],
-  rs: ["lang-rust@6.0.1", "rust", null],
-  c: ["lang-cpp@6.0.2", "cpp", null],
-  h: ["lang-cpp@6.0.2", "cpp", null],
-  cpp: ["lang-cpp@6.0.2", "cpp", null],
-  cc: ["lang-cpp@6.0.2", "cpp", null],
-  hpp: ["lang-cpp@6.0.2", "cpp", null],
-  java: ["lang-java@6.0.1", "java", null],
-};
-
-const COLOR_FUNCTIONS = new Set([
-  "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color", "color-mix",
-]);
 
 async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   const [cm, state, view, commands, language, search, theme] = await Promise.all([
@@ -12217,6 +12443,16 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       const state = EditorState.create({ doc: content, extensions });
       return { state, saved: state.doc };
     },
+    languageOf: (st) => langConf.get(st) || [],
+    // A state is bound to the editor that built it, so a tab moving to
+    // another group is rebuilt here, its undo history carried as JSON.
+    adoptDoc(handle, source) {
+      const st = handle.state;
+      const own = baseExtensions(source.languageOf(st));
+      handle.state = EditorState.fromJSON(st.toJSON({ history: commands.historyField }), {
+        extensions: st.readOnly ? [own, EditorState.readOnly.of(true)] : own,
+      }, { history: commands.historyField });
+    },
     showDoc(tab) {
       dropMergeView();
       editorView.setState(tab.handle.state);
@@ -12411,297 +12647,6 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       editorView.destroy();
     },
   };
-}
-
-function createTextarea(host, hooks, settings) {
-  const ta = document.createElement("textarea");
-  ta.className = "editor-textarea form-control font-monospace";
-  ta.spellcheck = false;
-  ta.addEventListener("input", () => hooks.onChange());
-  host.appendChild(ta);
-  // The textarea cannot insert spaces on Tab, so indent here only drives the
-  // visual tab width and the dropdown readout. Priority matches CodeMirror:
-  // .editorconfig over the stored preference over the default.
-  let userIndent = indentPref(settings.indent);
-  let userTabSize = settings.tab_size;
-  let fileConfig = {};
-  const effectiveIndent = () => {
-    if (fileConfig.indentStyle === "space") {
-      return { style: "space", size: fileConfig.indentSize || fileConfig.tabWidth || userIndent.size || userTabSize, fromConfig: true };
-    }
-    if (fileConfig.indentStyle === "tab") return { style: "tab", fromConfig: true };
-    return { ...userIndent, fromConfig: false };
-  };
-  const applyTabWidth = () => {
-    ta.style.tabSize = String(fileConfig.tabWidth || userTabSize);
-  };
-  const applySetting = (key, value) => {
-    if (key === "tab_size") {
-      userTabSize = value;
-      applyTabWidth();
-    } else if (key === "font_size") ta.style.fontSize = `${value}px`;
-    else if (key === "line_wrap") ta.style.whiteSpace = value ? "pre-wrap" : "pre";
-    else if (key === "indent") userIndent = indentPref(value);
-  };
-  applySetting("tab_size", settings.tab_size);
-  applySetting("font_size", settings.font_size);
-  applySetting("line_wrap", settings.line_wrap);
-  const reportCursor = () => {
-    const before = ta.value.slice(0, ta.selectionStart);
-    const lastBreak = before.lastIndexOf("\n");
-    hooks.onCursor((before.match(/\n/g) || []).length + 1, before.length - lastBreak);
-  };
-  for (const type of ["input", "click", "keyup"]) {
-    ta.addEventListener(type, reportCursor);
-  }
-  for (const type of ["focus", "blur"]) {
-    ta.addEventListener(type, () => hooks.onFocusChange?.());
-  }
-  return {
-    async createDoc(content, filename, { readOnly = false } = {}) {
-      return { value: content, saved: content, readOnly };
-    },
-    showDoc(tab) {
-      fileConfig = tab.editorConfig || {};
-      ta.value = tab.handle.value;
-      ta.readOnly = !!tab.handle.readOnly;
-      applyTabWidth();
-      ta.scrollTop = tab.handle.scrollTop || 0;
-      ta.scrollLeft = tab.handle.scrollLeft || 0;
-      if (tab.handle.selectionStart != null) {
-        ta.selectionStart = tab.handle.selectionStart;
-        ta.selectionEnd = tab.handle.selectionEnd ?? tab.handle.selectionStart;
-      }
-      reportCursor();
-    },
-    // The fallback keeps plain offsets: it exists for the minutes the CDN is
-    // down, and a textarea has no line index to map through anyway.
-    captureView(tab, isActive) {
-      if (!isActive) return { anchor: 0, head: 0, scrollTop: tab.handle.scrollTop || 0, scrollLeft: tab.handle.scrollLeft || 0 };
-      return { anchor: ta.selectionStart, head: ta.selectionEnd, scrollTop: ta.scrollTop, scrollLeft: ta.scrollLeft };
-    },
-    restoreView(tab, view) {
-      const length = (tab.handle.value || "").length;
-      const at = (n) => Math.max(0, Math.min(n || 0, length));
-      tab.handle.selectionStart = at(view.anchor);
-      tab.handle.selectionEnd = at(view.head);
-      tab.handle.scrollTop = view.scrollTop;
-      tab.handle.scrollLeft = view.scrollLeft || 0;
-    },
-    captureDoc(tab) {
-      tab.handle.value = ta.value;
-      tab.handle.scrollTop = ta.scrollTop;
-      tab.handle.scrollLeft = ta.scrollLeft;
-    },
-    scrollOf: () => null,
-    expandedOf: () => [],
-    valueOf(tab, isActive) {
-      return isActive ? ta.value : tab.handle.value;
-    },
-    snapshot(tab, isActive) {
-      return isActive ? ta.value : tab.handle.value;
-    },
-    isClean(tab, isActive) {
-      return (isActive ? ta.value : tab.handle.value) === tab.handle.saved;
-    },
-    markSaved(tab, written) {
-      tab.handle.saved = written;
-    },
-    search() {
-      return false;
-    },
-    gotoLine() {
-      return false;
-    },
-    jumpTo() {
-      return false;
-    },
-    hasSelection() {
-      return ta.selectionStart !== ta.selectionEnd;
-    },
-    hasFocus() {
-      return document.activeElement === ta;
-    },
-    lineAtGutter() {
-      return 0;
-    },
-    mapSavedLine() {
-      return null;
-    },
-    refreshLanguage() {},
-    // Without CodeMirror there is no diff and no comparison either: the
-    // fallback exists so a failed CDN still lets you read and write files.
-    canDiff: false,
-    async setDiff() {},
-    async setOriginal() {},
-    exitDiff() {},
-    async setCompare() {
-      throw new Error("Comparing two files needs the CodeMirror editor.");
-    },
-    canBlame: false,
-    setBlame() {},
-    canComments: false,
-    setComments() {},
-    canChanges: false,
-    comparing: () => false,
-    compareValue: () => "",
-    captureCompare() {},
-    applyEditorConfig(ec) {
-      fileConfig = ec || {};
-      applyTabWidth();
-    },
-    getIndent: effectiveIndent,
-    getTabWidth: () => fileConfig.tabWidth || userTabSize,
-    applySetting,
-    setVisible(on) {
-      ta.style.visibility = on ? "" : "hidden";
-    },
-    focus() {
-      ta.focus();
-    },
-    measure() {},
-    destroy() {},
-  };
-}
-
-// Editor settings are stored per-device in localStorage (font size, wrap,
-// indentation and which diff view to use depend on the device/screen, so they
-// should not follow the user across machines). The stored indentation is the
-// fallback used when the open file's .editorconfig does not dictate one.
-const EDITOR_SETTINGS_KEY = "dc-editor-settings";
-
-function loadEditorSettings() {
-  const def = { tab_size: 4, indent: "tab", line_wrap: false, font_size: 14, diff_view: "auto", diff_collapse: true, search_regex: false, search_case: false };
-  let stored = {};
-  try {
-    stored = store.getJSON(EDITOR_SETTINGS_KEY, {}) || {};
-  } catch {
-    stored = {};
-  }
-  const s = { ...def, ...stored };
-  if (![2, 4, 8].includes(s.tab_size)) s.tab_size = def.tab_size;
-  if (!["tab", "2spaces", "4spaces"].includes(s.indent)) s.indent = def.indent;
-  if (typeof s.line_wrap !== "boolean") s.line_wrap = def.line_wrap;
-  if (!(s.font_size >= 10 && s.font_size <= 24)) s.font_size = def.font_size;
-  if (!["auto", "side", "inline"].includes(s.diff_view)) s.diff_view = def.diff_view;
-  if (typeof s.diff_collapse !== "boolean") s.diff_collapse = def.diff_collapse;
-  if (typeof s.search_regex !== "boolean") s.search_regex = def.search_regex;
-  if (typeof s.search_case !== "boolean") s.search_case = def.search_case;
-  return s;
-}
-
-function saveEditorSettings(settings) {
-  try {
-    store.setJSON(EDITOR_SETTINGS_KEY, settings);
-  } catch (err) {
-    console.warn("failed to save editor settings", err);
-  }
-}
-
-// setupSettingsUI initializes the editor-settings dropdown controls from the
-// stored values, then on change applies the value live and persists it. onChange
-// carries the key on to settings the editor itself does not own, how a
-// comparison looks for one, which belongs to the tab and not to the buffer.
-function setupSettingsUI(root, editor, settings, onChange) {
-  const numeric = (key) => key === "tab_size" || key === "font_size";
-  root.querySelectorAll("[data-editor-setting]").forEach((el) => {
-    const key = el.dataset.editorSetting;
-    if (el.type === "checkbox") el.checked = !!settings[key];
-    else el.value = String(settings[key]);
-    el.addEventListener("change", () => {
-      const value = el.type === "checkbox" ? el.checked : numeric(key) ? parseInt(el.value, 10) : el.value;
-      settings[key] = value;
-      editor.applySetting(key, value);
-      saveEditorSettings(settings);
-      onChange?.(key, value);
-    });
-  });
-}
-
-// setupIndentControl wires the Indentation dropdown. It shows the effective
-// indentation (.editorconfig over the stored preference over the default). When
-// .editorconfig dictates the value the control is read-only with a hint;
-// otherwise editing it updates the stored preference. Returns a sync function
-// the caller invokes after each file open.
-function setupIndentControl(root, editor, settings) {
-  const select = root.querySelector("[data-editor-indent]");
-  if (!select) return () => {};
-  const display = root.querySelector("[data-editor-indent-display]");
-  const hint = root.querySelector("[data-editor-indent-hint]");
-  const valueOf = (ind) => (ind.style === "space" ? `${ind.size}spaces` : "tab");
-  const labelOf = (ind) => (ind.style === "space" ? `${ind.size} spaces` : "Tab");
-  function sync() {
-    const ind = editor.getIndent();
-    const val = valueOf(ind);
-    if (ind.style === "space" && !select.querySelector(`option[value="${val}"]`)) {
-      const opt = document.createElement("option");
-      opt.value = val;
-      opt.textContent = `${ind.size} spaces`;
-      select.appendChild(opt);
-    }
-    select.value = val;
-    // From .editorconfig: show a disabled text input with the value; otherwise
-    // the editable dropdown.
-    const fromConfig = !!ind.fromConfig;
-    select.hidden = fromConfig;
-    if (display) {
-      display.hidden = !fromConfig;
-      display.value = labelOf(ind);
-    }
-    if (hint) hint.hidden = !fromConfig;
-  }
-  select.addEventListener("change", () => {
-    settings.indent = select.value;
-    editor.applySetting("indent", select.value);
-    saveEditorSettings(settings);
-    sync();
-  });
-  sync();
-  return sync;
-}
-
-// commitDate is how a commit's time reads next to it: the device's own format,
-// because that is the one its owner reads without translating.
-function commitDate(seconds) {
-  if (!seconds) return "";
-  return new Date(seconds * 1000).toLocaleString();
-}
-
-// isoDate is the compact form for a gutter, the local day as 2026-09-25. The
-// whole date stands in the tooltip through commitDate.
-function isoDate(seconds) {
-  if (!seconds) return "";
-  const d = new Date(seconds * 1000);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-// shortName keeps a gutter narrow. The full name is in the tooltip.
-function shortName(name) {
-  const first = String(name || "").split(/\s+/)[0] || "";
-  return first.length > 12 ? `${first.slice(0, 11)}…` : first;
-}
-
-function formatSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KiB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
-}
-
-// The two measures the diff limits are read against.
-function countLines(text) {
-  if (!text) return 0;
-  let lines = 1;
-  for (let i = 0; i < text.length; i += 1) {
-    if (text.charCodeAt(i) === 10) lines += 1;
-  }
-  return lines;
-}
-
-const utf8 = new TextEncoder();
-
-function byteLength(text) {
-  return text ? utf8.encode(text).length : 0;
 }
 
 // promptName asks for just a name; the location (selected folder, or project
