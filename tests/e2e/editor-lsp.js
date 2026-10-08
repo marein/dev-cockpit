@@ -321,7 +321,7 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
     const labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((el) => el.textContent.trim()));
     await page.keyboard.press("Escape");
-    assert(labels.join(",") === "Close,Close others,Close to the right,Close all,Copy path", `menu entries, got ${labels.join(",")}`);
+    assert(labels.join(",") === "Close,Close others,Close to the right,Close all,Split right,Split left,Split down,Split up,Copy path", `menu entries, got ${labels.join(",")}`);
   });
 
   await run("the read only tab survives a reload", async () => {
