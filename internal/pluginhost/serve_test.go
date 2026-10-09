@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -117,10 +119,11 @@ func TestServeAnswersTheInstance(t *testing.T) {
 		announced++
 		return nil
 	}
+	stateDir := t.TempDir()
 	checked := false
 	check := serveFunc(func(s plugin.Serve) error {
 		checked = true
-		if s.ProjectsDir() != "/srv/projects" || s.StateDir() != "/srv/state" {
+		if s.ProjectsDir() != "/srv/projects" || s.StateDir() != stateDir {
 			t.Fatalf("Serve answers %q %q during ConfigureServe", s.ProjectsDir(), s.StateDir())
 		}
 		proj, err := s.Projects().Create(context.Background(), "fresh")
@@ -139,7 +142,7 @@ func TestServeAnswersTheInstance(t *testing.T) {
 		return nil
 	})
 	pairs := []plugin.Named[plugin.ServePlugin]{{ID: "aware", Plugin: check}}
-	if _, err := ConfigureServe(pairs, "/srv/projects", "/srv/state", create, changed); err != nil {
+	if _, err := ConfigureServe(pairs, "/srv/projects", stateDir, create, changed); err != nil {
 		t.Fatal(err)
 	}
 	if !checked || len(created) != 1 || created[0] != "fresh" {
@@ -147,6 +150,68 @@ func TestServeAnswersTheInstance(t *testing.T) {
 	}
 	if announced != 1 {
 		t.Fatalf("Changed() reached the announcement path %d times, want 1", announced)
+	}
+}
+
+// Every plugin finds its own directory in place when ConfigureServe runs,
+// owner only, and a sealed Serve keeps answering it, because a handler
+// writes there at runtime. What an earlier start left there stays.
+func TestPluginStateDirIsThePluginsOwn(t *testing.T) {
+	stateDir := t.TempDir()
+	kept := filepath.Join(stateDir, "plugins", "first", "kept.json")
+	if err := os.MkdirAll(filepath.Dir(kept), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kept, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]plugin.Serve{}
+	keep := func(id string) serveFunc {
+		return func(s plugin.Serve) error {
+			info, err := os.Stat(s.PluginStateDir())
+			if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+				t.Fatalf("plugin %s found %q as %v, %v during ConfigureServe", id, s.PluginStateDir(), info, err)
+			}
+			got[id] = s
+			return nil
+		}
+	}
+	if _, err := ConfigureServe([]plugin.Named[plugin.ServePlugin]{
+		{ID: "first", Plugin: keep("first")},
+		{ID: "second", Plugin: keep("second")},
+	}, "", stateDir, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("%d plugins configured, want 2", len(got))
+	}
+	for id, s := range got {
+		if want := filepath.Join(stateDir, "plugins", id); s.PluginStateDir() != want {
+			t.Fatalf("sealed plugin %s answers %q, want %q", id, s.PluginStateDir(), want)
+		}
+	}
+	if data, err := os.ReadFile(kept); err != nil || string(data) != "{}" {
+		t.Fatalf("what an earlier start left is gone: %q, %v", data, err)
+	}
+}
+
+// A directory the plugin cannot have is a broken instance, the start aborts
+// before the plugin configures against a path that does not exist.
+func TestConfigureServeRefusesAStateDirItCannotCreate(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stateDir, "plugins"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	_, err := ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "homeless", Plugin: serveFunc(func(s plugin.Serve) error {
+		ran = true
+		return nil
+	})}}, "", stateDir, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "homeless") {
+		t.Fatalf("ConfigureServe() = %v, want an error naming plugin homeless", err)
+	}
+	if ran {
+		t.Fatal("the plugin configured without its state directory")
 	}
 }
 
@@ -177,7 +242,7 @@ func TestConfigureServeErrorCarriesTheID(t *testing.T) {
 	_, err := ConfigureServe([]plugin.Named[plugin.ServePlugin]{
 		{ID: "fine", Plugin: &recordingPlugin{}},
 		{ID: "broken", Plugin: &recordingPlugin{err: boom}},
-	}, "", "", nil, nil)
+	}, "", t.TempDir(), nil, nil)
 	if err == nil {
 		t.Fatal("ConfigureServe() = nil, want the broken plugin's error")
 	}
@@ -207,7 +272,7 @@ func TestAddSlotHTMLRefusesUnknownSlots(t *testing.T) {
 	}()
 	_, _ = ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "typo", Plugin: &recordingPlugin{
 		slots: map[string]string{"misplaced-slot": "<x></x>"},
-	}}}, "", "", nil, nil)
+	}}}, "", t.TempDir(), nil, nil)
 	t.Fatal("an unknown slot was accepted")
 }
 
@@ -220,7 +285,7 @@ func TestAddCustomElementRefusesDuplicateNames(t *testing.T) {
 	}()
 	_, _ = ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "doubled", Plugin: &recordingPlugin{
 		elements: [][2]string{{"widget", "widget.js"}, {"widget", "other.js"}},
-	}}}, "", "", nil, nil)
+	}}}, "", t.TempDir(), nil, nil)
 	t.Fatal("a duplicate element name was accepted")
 }
 

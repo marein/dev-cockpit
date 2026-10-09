@@ -51,9 +51,23 @@ const shortCockpit = "./" + wrapperFileName
 // no memory name can ever leave the memory directory.
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
+// IsMemoryFile reports whether the memory reads a file of this name, a
+// <slug>.md.
+func IsMemoryFile(name string) bool {
+	slug, ok := strings.CutSuffix(name, ".md")
+	return ok && slugPattern.MatchString(slug)
+}
+
 // MaxMemoryBytes bounds one memory entry. The memory is read on every turn, so
 // a runaway file would be paid for again and again.
 const MaxMemoryBytes = 16 << 10
+
+// IsMemoryTooLong reports whether the memory sheet refuses the body of this
+// memory file content as too long.
+func IsMemoryTooLong(content []byte) bool {
+	_, body := markdown.SplitFrontMatter(content)
+	return len(bytes.TrimSpace(body)) > MaxMemoryBytes
+}
 
 // Entry is one thing the assistant knows about the user.
 type Entry struct {
@@ -75,7 +89,7 @@ func (s *Workspace) Memory() []Entry {
 	}
 	out := make([]Entry, 0, len(files))
 	for _, f := range files {
-		if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+		if f.IsDir() || !IsMemoryFile(f.Name()) {
 			continue
 		}
 		entry, ok := s.readEntry(strings.TrimSuffix(f.Name(), ".md"))

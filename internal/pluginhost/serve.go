@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -31,15 +32,18 @@ type Registration struct {
 // is documented on the plugin package's interfaces, the contract; this is
 // the construction, the sealing and the collection behind it.
 type Serve struct {
-	id          string
-	sealed      bool
-	projectsDir string
-	stateDir    string
-	projects    *projects
-	routes      http.Handler
-	assets      fs.FS
-	elements    []Registration
-	slots       map[string][]string
+	id             string
+	sealed         bool
+	projectsDir    string
+	stateDir       string
+	pluginStateDir string
+	projects       *projects
+	routes         http.Handler
+	assets         fs.FS
+	elements       []Registration
+	slots          map[string][]string
+	memory         []assistantMemory
+	settings       []settingValues
 }
 
 var _ plugin.Serve = (*Serve)(nil)
@@ -47,6 +51,8 @@ var _ plugin.Serve = (*Serve)(nil)
 func (s *Serve) ProjectsDir() string { return s.projectsDir }
 
 func (s *Serve) StateDir() string { return s.stateDir }
+
+func (s *Serve) PluginStateDir() string { return s.pluginStateDir }
 
 func (s *Serve) Projects() plugin.Projects { return s.projects }
 
@@ -85,6 +91,26 @@ func (s *Serve) AddSlotHTML(slot, html string) {
 		s.slots = map[string][]string{}
 	}
 	s.slots[slot] = append(s.slots[slot], html)
+}
+
+func (s *Serve) AddAssistantMemory(files fs.FS, overwrite bool) {
+	s.add()
+	if files == nil {
+		panic(fmt.Sprintf("plugin %s: AddAssistantMemory needs files", s.id))
+	}
+	s.memory = append(s.memory, assistantMemory{files: files, overwrite: overwrite})
+}
+
+func (s *Serve) AddSettings(values map[string]string, overwrite bool) {
+	s.add()
+	copied := make(map[string]string, len(values))
+	for key, value := range values {
+		if strings.TrimSpace(key) == "" {
+			panic(fmt.Sprintf("plugin %s: AddSettings needs a key for every value", s.id))
+		}
+		copied[key] = value
+	}
+	s.settings = append(s.settings, settingValues{values: copied, overwrite: overwrite})
 }
 
 // add is the seal guard every Add runs first.
@@ -158,7 +184,8 @@ func (p project) Changed(ctx context.Context) error { return p.changed(ctx) }
 
 // ConfigureServe runs every pair's ConfigureServe, each with a fresh Serve
 // bound to the pair's id and to the serving instance, and answers the sealed
-// Serves in pair order. It is the cockpit's call at serve start, after the
+// Serves in pair order. Before a pair's ConfigureServe runs, the plugin's own
+// state directory exists. It is the cockpit's call at serve start, after the
 // configuration is loaded and before the server listens; the ids are
 // validated before, see distro.Main. createProject is the web UI's own
 // project creation path and projectChanged its announcement path, which is
@@ -168,7 +195,11 @@ func ConfigureServe(plugins []plugin.Named[plugin.ServePlugin], projectsDir, sta
 	shared := &projects{create: createProject, changed: projectChanged}
 	serves := make([]*Serve, 0, len(plugins))
 	for _, p := range plugins {
-		s := &Serve{id: p.ID, projectsDir: projectsDir, stateDir: stateDir, projects: shared}
+		pluginStateDir := filepath.Join(stateDir, "plugins", p.ID)
+		if err := os.MkdirAll(pluginStateDir, 0o700); err != nil {
+			return nil, fmt.Errorf("plugin %s has no state directory: %w", p.ID, err)
+		}
+		s := &Serve{id: p.ID, projectsDir: projectsDir, stateDir: stateDir, pluginStateDir: pluginStateDir, projects: shared}
 		if err := p.Plugin.ConfigureServe(s); err != nil {
 			return nil, fmt.Errorf("plugin %s failed to configure: %w", p.ID, err)
 		}

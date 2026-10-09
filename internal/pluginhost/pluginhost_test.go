@@ -41,7 +41,7 @@ func (p *testPlugin) ConfigureServe(s plugin.Serve) error {
 // configured builds the sealed Serves the cockpit would hand around.
 func configured(t *testing.T, plugins ...plugin.Named[plugin.ServePlugin]) []*Serve {
 	t.Helper()
-	serves, err := ConfigureServe(plugins, "", "", nil, nil)
+	serves, err := ConfigureServe(plugins, "", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

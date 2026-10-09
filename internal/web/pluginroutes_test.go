@@ -39,7 +39,7 @@ func (subtreePlugin) ConfigureServe(s plugin.Serve) error {
 func pluginRouter(t *testing.T) (*gin.Engine, staticAssetManifest) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	serves, err := pluginhost.ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "fake", Plugin: subtreePlugin{}}}, "", "", nil, nil)
+	serves, err := pluginhost.ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "fake", Plugin: subtreePlugin{}}}, "", t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("ConfigureServe() = %v", err)
 	}

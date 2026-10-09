@@ -103,10 +103,25 @@ type Serve interface {
 	// defined set panics, markup for a place no template renders would
 	// otherwise vanish silently.
 	AddSlotHTML(slot, html string)
+	// AddAssistantMemory adds top level <slug>.md files to the assistant's
+	// shared memory, a slug being lower case letters, digits and dashes,
+	// other files are skipped. Applied at serve start in plugin order,
+	// without overwrite an existing file is kept.
+	AddAssistantMemory(files fs.FS, overwrite bool)
+	// AddSettings adds values to the settings store, key to value. Applied at
+	// serve start before anything reads the store, in plugin order, without
+	// overwrite an existing key is kept.
+	AddSettings(values map[string]string, overwrite bool)
 	// StateDir answers the serving instance's state directory, which is what
 	// addresses the running cockpit itself, for example as --state-dir of a
 	// `dev-cockpit git` call.
 	StateDir() string
+	// PluginStateDir answers the plugin's own directory, plugins/<wiring id>
+	// inside the state directory, created owner only before ConfigureServe
+	// runs. What the plugin keeps there is its own business, and the
+	// directory is not part of the cockpit backup. Unlike an Add it keeps
+	// answering after the Serve is sealed, so a handler uses it at runtime.
+	PluginStateDir() string
 	// ProjectsDir answers the serving instance's projects root directory,
 	// where a project on the projects page lives.
 	ProjectsDir() string

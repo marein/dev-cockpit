@@ -137,6 +137,11 @@ The layers are listed top down, a layer imports only the layers below it.
 - `internal/docker` holds the one daemon connection and an event driven
   cache that every docker surface reads. `editorintelligence` and
   `voice` build and run their own containers through the docker CLI.
+- A plugin declares, the cockpit applies. What a plugin contributes to the
+  state directory or the settings goes through an Add on its `plugin.Serve`
+  and is written by `internal/pluginhost` at the moment the target is ready,
+  never by the plugin into a path it would have to know. Only its own
+  `PluginStateDir` belongs to the plugin, it writes there itself.
 - Work that must outlive the server runs through `internal/detach`.
 - Texts written for a model are `text/template` files in
   `internal/assistant/templates`, fed with typed data.
