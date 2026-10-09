@@ -439,6 +439,7 @@ func runServe(opts serveOptions) error {
 	// repository keeps its added names in it, and the model defaults the
 	// managers and the assistant read on every start come out of it.
 	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
+	pluginhost.ApplySettings(serves, settingsStore)
 	catalog := ollamaCatalogURL
 	if version == "dev" {
 		if override := os.Getenv(ollamaCatalogURLEnv); override != "" {
@@ -476,13 +477,13 @@ func runServe(opts serveOptions) error {
 	// goes into every manager before the first snapshot, otherwise a
 	// conversation's provider session would also be listed as a resumable coder.
 	executable := runningExecutable()
-	conversations, assistantService, err := assistant.New(cfg.StateDir, assistantCoders{coders: selected, store: settingsStore}, assistant.Cockpit{
+	conversations, assistantService, err := newAssistant(cfg.StateDir, assistantCoders{coders: selected, store: settingsStore}, assistant.Cockpit{
 		Executable:  executable,
 		StateDir:    cfg.StateDir,
 		ProjectsDir: cfg.ProjectsRoot,
 		Version:     resolveVersion(),
 		RepoURL:     repoURL,
-	})
+	}, serves)
 	if err != nil {
 		return fmt.Errorf("failed to initialize the assistant: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -467,4 +468,60 @@ func TestTheInstructionsNameTheWorktreeCommands(t *testing.T) {
 		"runs the post script in it and prints its output",
 		"`status` marks a worktree project",
 	)
+}
+
+func TestIsMemoryFileIsTheRuleTheMemoryReadsBy(t *testing.T) {
+	_, workspace, err := New(t.TempDir(), fakeCoders{runner: &fakeRunner{dir: t.TempDir()}}, Cockpit{})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	names := map[string]bool{
+		"notes.md":      true,
+		"my-notes-2.md": true,
+		"Notes.md":      false,
+		"my_notes.md":   false,
+		"-notes.md":     false,
+		"notes.txt":     false,
+		"notes":         false,
+		"nested/one.md": false,
+	}
+	var want []string
+	for name, reads := range names {
+		if got := IsMemoryFile(name); got != reads {
+			t.Errorf("IsMemoryFile(%q) = %v, want %v", name, got, reads)
+		}
+		path := filepath.Join(workspace.memoryDir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("---\ntitle: "+name+"\n---\nbody"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if reads {
+			want = append(want, strings.TrimSuffix(name, ".md"))
+		}
+	}
+	var got []string
+	for _, entry := range workspace.Memory() {
+		got = append(got, entry.Slug)
+	}
+	slices.Sort(want)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Fatalf("the memory lists %v, want %v", got, want)
+	}
+}
+
+func TestIsMemoryTooLongRefusesWhatSaveMemoryRefuses(t *testing.T) {
+	_, workspace, err := New(t.TempDir(), fakeCoders{runner: &fakeRunner{dir: t.TempDir()}}, Cockpit{})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	for _, size := range []int{MaxMemoryBytes, MaxMemoryBytes + 1} {
+		body := strings.Repeat("x", size)
+		_, saveErr := workspace.SaveMemory("", fmt.Sprintf("Size %d", size), body)
+		if tooLong := IsMemoryTooLong([]byte("---\ntitle: Sized\n---\n" + body)); tooLong != (saveErr != nil) {
+			t.Fatalf("size %d: IsMemoryTooLong = %v, SaveMemory error = %v", size, tooLong, saveErr)
+		}
+	}
 }

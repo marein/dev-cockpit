@@ -40,6 +40,8 @@ type Serve struct {
 	assets      fs.FS
 	elements    []Registration
 	slots       map[string][]string
+	memory      []assistantMemory
+	settings    []settingValues
 }
 
 var _ plugin.Serve = (*Serve)(nil)
@@ -85,6 +87,26 @@ func (s *Serve) AddSlotHTML(slot, html string) {
 		s.slots = map[string][]string{}
 	}
 	s.slots[slot] = append(s.slots[slot], html)
+}
+
+func (s *Serve) AddAssistantMemory(files fs.FS, overwrite bool) {
+	s.add()
+	if files == nil {
+		panic(fmt.Sprintf("plugin %s: AddAssistantMemory needs files", s.id))
+	}
+	s.memory = append(s.memory, assistantMemory{files: files, overwrite: overwrite})
+}
+
+func (s *Serve) AddSettings(values map[string]string, overwrite bool) {
+	s.add()
+	copied := make(map[string]string, len(values))
+	for key, value := range values {
+		if strings.TrimSpace(key) == "" {
+			panic(fmt.Sprintf("plugin %s: AddSettings needs a key for every value", s.id))
+		}
+		copied[key] = value
+	}
+	s.settings = append(s.settings, settingValues{values: copied, overwrite: overwrite})
 }
 
 // add is the seal guard every Add runs first.
