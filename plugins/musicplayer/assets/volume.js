@@ -3,7 +3,7 @@ import { VolumeSlider } from "@dc/volume-slider";
 
 const music = getPlayer("music");
 
-class SongVolume extends VolumeSlider {
+export default class Volume extends VolumeSlider {
   read() {
     return music.getVolume();
   }
@@ -16,5 +16,3 @@ class SongVolume extends VolumeSlider {
     return "Volume";
   }
 }
-
-customElements.define("dc-song-volume", SongVolume);

@@ -1,5 +1,5 @@
 import { matchesTokens } from "@dc/filter";
-import { catalog, onChange, play, playing, stop, title } from "@dc/music";
+import { catalog, onChange, play, playing, stop, title } from "./music.js";
 import { notifyError } from "@dc/toast";
 
 const FILTER_KEY = "dc-song-filter";
@@ -25,7 +25,7 @@ function save(key, value) {
   }
 }
 
-class SongPlayer extends HTMLElement {
+export default class Player extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
     this.ac = new AbortController();
@@ -162,5 +162,3 @@ class SongPlayer extends HTMLElement {
     }
   }
 }
-
-customElements.define("dc-song-player", SongPlayer);

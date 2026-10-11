@@ -1,7 +1,5 @@
-import { getPlayer, setMasterVolume } from "@marein/js-scriptune";
+import { getPlayer } from "@marein/js-scriptune";
 
-// Each player has its own volume, the master is only their common output.
-setMasterVolume(1);
 const music = getPlayer("music");
 
 export const catalog = [
@@ -35,7 +33,7 @@ let current = null;
 function loadSheets() {
   if (!sheets) {
     attempts++;
-    const url = attempts === 1 ? "@dc/songs" : `${import.meta.resolve("@dc/songs")}?retry=${attempts}`;
+    const url = attempts === 1 ? "./songs.js" : `${import.meta.resolve("./songs.js")}?retry=${attempts}`;
     sheets = import(url).then((module) => module.songs, (error) => {
       sheets = null;
       throw error;

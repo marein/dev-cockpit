@@ -100,20 +100,29 @@ func TestStarterWithoutElements(t *testing.T) {
 	}
 }
 
-func TestElements(t *testing.T) {
+// Every element name is bound to its plugin's starter, and every asset's raw
+// URL, what a relative import between a plugin's modules resolves to, to its
+// hashed URL, so the plugin loads the cached copy without knowing its id.
+func TestImports(t *testing.T) {
 	serves := configured(t,
 		plugin.Named[plugin.ServePlugin]{ID: "bare", Plugin: &testPlugin{}},
-		plugin.Named[plugin.ServePlugin]{ID: "demo", Plugin: &testPlugin{elements: [][2]string{{"widget", "widget.js"}, {"list", "list.js"}}}},
+		plugin.Named[plugin.ServePlugin]{ID: "demo", Plugin: &testPlugin{
+			elements: [][2]string{{"widget", "widget.js"}, {"list", "list.js"}},
+			assets:   fstest.MapFS{"widget.js": {}, "list.js": {}, "data/songs.js": {}},
+		}},
 		plugin.Named[plugin.ServePlugin]{ID: "other", Plugin: &testPlugin{elements: [][2]string{{"badge", "badge.js"}}}},
 	)
-	got := Elements(serves, resolve)
-	want := []Element{
-		{Name: "demo-widget", URL: "/plugins/demo/elements.js?hashed"},
-		{Name: "demo-list", URL: "/plugins/demo/elements.js?hashed"},
-		{Name: "other-badge", URL: "/plugins/other/elements.js?hashed"},
+	got := Imports(serves, resolve)
+	want := []Import{
+		{Specifier: "demo-widget", URL: "/plugins/demo/elements.js?hashed"},
+		{Specifier: "demo-list", URL: "/plugins/demo/elements.js?hashed"},
+		{Specifier: "/plugins/demo/assets/data/songs.js", URL: "/plugins/demo/assets/data/songs.js?hashed"},
+		{Specifier: "/plugins/demo/assets/list.js", URL: "/plugins/demo/assets/list.js?hashed"},
+		{Specifier: "/plugins/demo/assets/widget.js", URL: "/plugins/demo/assets/widget.js?hashed"},
+		{Specifier: "other-badge", URL: "/plugins/other/elements.js?hashed"},
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("Elements() = %v, want %v", got, want)
+		t.Fatalf("Imports() = %v, want %v", got, want)
 	}
 }
 

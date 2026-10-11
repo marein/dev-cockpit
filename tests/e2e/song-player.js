@@ -2,18 +2,21 @@
 const L = require("./lib");
 const { assert, sleep, BASE, dismissUpdate } = L;
 
-// The song player of the status line (dc-song-player, desktop only): the line
-// carries a single muted music note, the button of a dropup panel holding
-// play or stop and next, the volume row (dc-song-volume, the music player's
-// own volume), a filter row in the editor sheets' look and the 20 songs by
-// title, grouped by style. Play shuffles, a title plays that song and leaves
-// the shuffle round, next skips, stop ends it, and a song plays on across a
-// page change because the playback lives in @dc/music, not in the element the
-// swap replaces. The menu carries data-own-selection, so app.js does not let
-// the focus follow the pointer and typing in the filter keeps working while
-// the mouse rests on the list; the arrows walk the hits from the filter on and
-// Enter plays the focused one. The songs file (@dc/songs) loads on the first
-// play; a load that fails says so in a toast and the next play tries again.
+// The song player of the status line (music-player, desktop only), the
+// first party musicplayer plugin under the id the official build wires it with:
+// the line carries a single muted music note, the button of a dropup panel
+// holding play or stop and next, the volume row (music-volume, the music
+// player's own volume), a filter row in the editor sheets' look and the 20
+// songs by title, grouped by style. Play shuffles, a title plays that song and
+// leaves the shuffle round, next skips, stop ends it, and a song plays on
+// across a page change because the playback lives in the plugin's music.js,
+// not in the element the swap replaces. The menu carries data-own-selection,
+// so app.js does not let the focus follow the pointer and typing in the
+// filter keeps working while the mouse rests on the list; the arrows walk the
+// hits from the filter on and Enter plays the focused one. The songs file (the
+// plugin's songs.js, imported relative to music.js and bound to its hashed
+// URL by the import map) loads on the first play; a load that fails says so
+// in a toast and the next play tries again.
 // The filter text and the list's scroll position are the browser's
 // (localStorage dc-song-filter, dc-song-scroll) and come back when the panel
 // opens, also after a reload. The list area has a fixed height, so filtering
@@ -33,19 +36,23 @@ const { assert, sleep, BASE, dismissUpdate } = L;
 //   the login lands on.
 // - the panel's controls stand in the DOM while it is closed, so state is read
 //   from classes and attributes, what is visible is read with it open.
+// - the cache check reads the Cache-Control header through page.request, the
+//   API client: a fetch() of a module inside the page makes the browser load it
+//   from the network again on the next full load, in Chromium and WebKit.
 // - the shuffle check pins Math.random, so two fresh loads shuffle the same
 //   round: the first finds the song next would play, the second picks it by
 //   hand. The check ends on a reload, so the pin goes with the page.
 
-const NOTE = "dc-song-player [data-song-open]";
-const MENU = "dc-song-player .dropdown-menu";
-const TOGGLE = "dc-song-player [data-song-toggle]";
-const NEXT = "dc-song-player [data-song-next]";
-const FILTER = "dc-song-player [data-song-filter]";
+const NOTE = "music-player [data-song-open]";
+const MENU = "music-player .dropdown-menu";
+const TOGGLE = "music-player [data-song-toggle]";
+const NEXT = "music-player [data-song-next]";
+const FILTER = "music-player [data-song-filter]";
+const SONGS = /\/plugins\/music\/assets\/songs\.[0-9a-f]{12}\.js/;
 
 async function settle(page) {
   await dismissUpdate(page);
-  assert((await L.waitUpgraded(page, ["dc-song-player", "dc-song-volume"], 8000)).length === 0, "dc-song-player not upgraded");
+  assert((await L.waitUpgraded(page, ["music-player", "music-volume"], 8000)).length === 0, "music-player not upgraded");
 }
 
 async function ready(page, path = "/projects") {
@@ -69,7 +76,7 @@ async function closePanel(page) {
 
 async function state(page) {
   return page.evaluate(() => {
-    const root = document.querySelector("dc-song-player");
+    const root = document.querySelector("music-player");
     const active = root.querySelector("[data-song].active");
     return {
       icon: root.querySelector("[data-song-toggle] .ti").className,
@@ -84,7 +91,7 @@ async function state(page) {
 
 async function waitPlaying(page, playing) {
   await page.waitForFunction((on) => {
-    const icon = document.querySelector("dc-song-player [data-song-toggle] .ti").className;
+    const icon = document.querySelector("music-player [data-song-toggle] .ti").className;
     return on ? icon.includes("ti-player-stop") : icon.includes("ti-player-play");
   }, playing, { timeout: 15000 });
 }
@@ -99,7 +106,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
     await run("the line shows only the music note and the panel starts closed", async () => {
       await ready(page);
       const line = await page.evaluate(() => {
-        const root = document.querySelector("dc-song-player");
+        const root = document.querySelector("music-player");
         const shown = [...root.querySelectorAll("button")].filter((b) => {
           const box = b.getBoundingClientRect();
           return box.width > 0 && box.height > 0 && getComputedStyle(b).visibility !== "hidden";
@@ -114,12 +121,12 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
     await run("a click on the note opens the panel with the cursor in the filter", async () => {
       await openPanel(page);
       const panel = await page.evaluate(() => ({
-        focused: document.activeElement === document.querySelector("dc-song-player [data-song-filter]"),
-        box: document.querySelector("dc-song-player .dropdown-menu").getBoundingClientRect().toJSON(),
-        note: document.querySelector("dc-song-player [data-song-open]").getBoundingClientRect().top,
+        focused: document.activeElement === document.querySelector("music-player [data-song-filter]"),
+        box: document.querySelector("music-player .dropdown-menu").getBoundingClientRect().toJSON(),
+        note: document.querySelector("music-player [data-song-open]").getBoundingClientRect().top,
         height: window.innerHeight,
-        songs: document.querySelectorAll("dc-song-player [data-song]").length,
-        groups: [...document.querySelectorAll("dc-song-player [data-song-shelf] .dropdown-header")].map((h) => h.textContent),
+        songs: document.querySelectorAll("music-player [data-song]").length,
+        groups: [...document.querySelectorAll("music-player [data-song-shelf] .dropdown-header")].map((h) => h.textContent),
       }));
       assert(panel.focused, "the filter does not hold the focus");
       assert(panel.box.top >= 0 && panel.box.bottom <= panel.height, `the panel leaves the viewport: ${JSON.stringify(panel)}`);
@@ -131,7 +138,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
     await run("a removed and re-inserted player lists every song once", async () => {
       await ready(page);
       const counts = await page.evaluate(() => {
-        const player = document.querySelector("dc-song-player");
+        const player = document.querySelector("music-player");
         const parent = player.parentNode;
         const next = player.nextSibling;
         player.remove();
@@ -139,13 +146,13 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
         return {
           songs: player.querySelectorAll("[data-song]").length,
           groups: player.querySelectorAll("[data-song-shelf]").length,
-          players: document.querySelectorAll("dc-song-player").length,
+          players: document.querySelectorAll("music-player").length,
         };
       });
       assert(counts.songs === 20 && counts.groups === 2 && counts.players === 1, `after re-inserting: ${JSON.stringify(counts)}`);
       await openPanel(page);
       await typeFilter(page, "canyon");
-      const shown = await page.$$eval("dc-song-player [data-song]", (items) => items.filter((i) => !i.hidden).map((i) => i.textContent));
+      const shown = await page.$$eval("music-player [data-song]", (items) => items.filter((i) => !i.hidden).map((i) => i.textContent));
       assert(shown.join(",") === "Quiet Canyon", `the filter after re-inserting shows ${JSON.stringify(shown)}`);
       await typeFilter(page, "");
       await closePanel(page);
@@ -154,7 +161,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
     await run("the panel's volume row moves the music player alone", async () => {
       await openPanel(page);
       const read = () => page.evaluate(() => ({
-        badge: document.querySelector("dc-song-player dc-song-volume [data-volume-output]").textContent,
+        badge: document.querySelector("music-player music-volume [data-volume-output]").textContent,
         music: localStorage.getItem("scriptune-player-music-volume"),
         notification: localStorage.getItem("scriptune-player-notification-volume"),
         master: localStorage.getItem("scriptune-master-volume"),
@@ -162,7 +169,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       const start = await read();
       assert(start.badge === "100%" && start.music === "1", `the music volume does not start at 100%: ${JSON.stringify(start)}`);
       await page.evaluate(() => {
-        const range = document.querySelector("dc-song-player dc-song-volume input");
+        const range = document.querySelector("music-player music-volume input");
         range.value = "0.2";
         range.dispatchEvent(new Event("input", { bubbles: true }));
       });
@@ -170,7 +177,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       assert(moved.badge === "20%" && moved.music === "0.2", `the row did not move the music volume: ${JSON.stringify(moved)}`);
       assert(moved.notification === start.notification && moved.master === "1", `the row moved more than the music: ${JSON.stringify({ start, moved })}`);
       await page.evaluate(() => {
-        const range = document.querySelector("dc-song-player dc-song-volume input");
+        const range = document.querySelector("music-player music-volume input");
         range.value = "1";
         range.dispatchEvent(new Event("input", { bubbles: true }));
       });
@@ -184,13 +191,33 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       const on = await state(page);
       assert(on.now && on.now === on.active, `now "${on.now}", marked "${on.active}"`);
       assert(on.title === `Stop ${on.now}` && on.nextShown, `playing controls ${JSON.stringify(on)}`);
-      const loaded = await page.evaluate(() => performance.getEntriesByType("resource").some((e) => /\/js\/dc\/songs\.[^/]*js/.test(e.name)));
+      const loaded = await page.evaluate((source) => performance.getEntriesByType("resource").some((e) => new RegExp(source).test(e.name)), SONGS.source);
       assert(loaded, "the songs file was not loaded by the first play");
       await page.click(TOGGLE);
       await waitPlaying(page, false);
       const off = await state(page);
       assert(off.now === "" && off.active === null && !off.nextShown && off.title === "Play a song", `stopped controls ${JSON.stringify(off)}`);
       return on.now;
+    });
+
+    await run("the music and songs modules load under hashed URLs and come from the cache on the next full load", async () => {
+      const modules = () => page.evaluate(() => performance.getEntriesByType("resource")
+        .map((e) => ({ path: new URL(e.name).pathname, transfer: e.transferSize }))
+        .filter((e) => /^\/plugins\/music\/assets\/(music|songs)[./]/.test(e.path)));
+      const first = await modules();
+      const paths = first.map((e) => e.path).sort();
+      assert(paths.length === 2 && /\/music\.[0-9a-f]{12}\.js$/.test(paths[0]) && /\/songs\.[0-9a-f]{12}\.js$/.test(paths[1]), `the modules loaded from ${JSON.stringify(paths)}`);
+      const caching = await Promise.all(paths.map(async (path) => (await page.request.get(`${BASE}${path}`)).headers()["cache-control"]));
+      assert(caching.every((value) => /max-age=31536000/.test(value) && /immutable/.test(value)), `the modules answer ${JSON.stringify(caching)}`);
+      await ready(page);
+      await openPanel(page);
+      await page.click(TOGGLE);
+      await waitPlaying(page, true);
+      await page.click(TOGGLE);
+      await waitPlaying(page, false);
+      await closePanel(page);
+      const again = await modules();
+      assert(again.length === 2 && again.every((e) => paths.includes(e.path) && e.transfer === 0), `the next full load fetched ${JSON.stringify(again)}`);
     });
 
     await run("a title in the list plays that song and leaves the shuffle round", async () => {
@@ -206,7 +233,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       const skip = async (from) => {
         await page.click(NEXT);
         const moved = await page.waitForFunction((was) => {
-          const now = document.querySelector("dc-song-player [data-song-now]").textContent;
+          const now = document.querySelector("music-player [data-song-now]").textContent;
           return now && now !== was;
         }, from, { timeout: 15000 }).then(() => true, () => false);
         assert(moved, `next after "${from}" played it again`);
@@ -218,8 +245,8 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       const queued = await skip(first.now);
       const again = await shuffle();
       assert(again.now === first.now, `the pinned shuffle started with "${again.now}", before "${first.now}"`);
-      await page.click(`dc-song-player [data-song="${queued.key}"]`);
-      await page.waitForFunction((title) => document.querySelector("dc-song-player [data-song-now]").textContent === title, queued.now, { timeout: 15000 });
+      await page.click(`music-player [data-song="${queued.key}"]`);
+      await page.waitForFunction((title) => document.querySelector("music-player [data-song-now]").textContent === title, queued.now, { timeout: 15000 });
       const picked = await state(page);
       assert(picked.active === queued.now && picked.title === `Stop ${queued.now}`, `picked ${JSON.stringify(picked)}`);
       const round = [first.now, queued.now];
@@ -237,24 +264,24 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       const before = await height();
       await typeFilter(page, "canyon");
       const canyon = await page.evaluate(() => ({
-        shown: [...document.querySelectorAll("dc-song-player [data-song]")].filter((i) => !i.hidden).map((i) => i.textContent),
-        groups: [...document.querySelectorAll("dc-song-player [data-song-shelf]")].filter((g) => !g.hidden).length,
-        count: document.querySelector("dc-song-player [data-song-filter-count]").textContent,
-        clear: getComputedStyle(document.querySelector("dc-song-player [data-song-filter-clear]")).visibility,
+        shown: [...document.querySelectorAll("music-player [data-song]")].filter((i) => !i.hidden).map((i) => i.textContent),
+        groups: [...document.querySelectorAll("music-player [data-song-shelf]")].filter((g) => !g.hidden).length,
+        count: document.querySelector("music-player [data-song-filter-count]").textContent,
+        clear: getComputedStyle(document.querySelector("music-player [data-song-filter-clear]")).visibility,
       }));
       assert(canyon.shown.join(",") === "Quiet Canyon" && canyon.groups === 1, `canyon shows ${JSON.stringify(canyon)}`);
       assert(canyon.count === "1 of 20" && canyon.clear === "visible", `count and clear ${JSON.stringify(canyon)}`);
       assert(Math.abs((await height()) - before) < 1, "the panel changed its height while filtering");
       await typeFilter(page, "zzz");
       const none = await page.evaluate(() => {
-        const empty = document.querySelector("dc-song-player [data-song-empty]");
-        return { text: empty.textContent, shown: getComputedStyle(empty).display !== "none", count: document.querySelector("dc-song-player [data-song-filter-count]").textContent };
+        const empty = document.querySelector("music-player [data-song-empty]");
+        return { text: empty.textContent, shown: getComputedStyle(empty).display !== "none", count: document.querySelector("music-player [data-song-filter-count]").textContent };
       });
       assert(none.shown && none.text === 'Nothing matches "zzz".' && none.count === "0 of 20", `no hits ${JSON.stringify(none)}`);
       assert(Math.abs((await height()) - before) < 1, "the panel changed its height without hits");
       await typeFilter(page, "tidal");
       await page.press(FILTER, "Enter");
-      await page.waitForFunction(() => document.querySelector("dc-song-player [data-song-now]").textContent === "Tidal Echoes", null, { timeout: 15000 });
+      await page.waitForFunction(() => document.querySelector("music-player [data-song-now]").textContent === "Tidal Echoes", null, { timeout: 15000 });
       await page.click(TOGGLE);
       await waitPlaying(page, false);
     });
@@ -262,15 +289,15 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
     await run("hovering the list while typing keeps the cursor in the filter, the arrows walk the hits and Enter plays one", async () => {
       await openPanel(page);
       await typeFilter(page, "");
-      await page.hover('dc-song-player [data-song="goldenhour"]');
-      await page.hover('dc-song-player [data-song="lowsun"]');
+      await page.hover('music-player [data-song="goldenhour"]');
+      await page.hover('music-player [data-song="lowsun"]');
       await page.keyboard.type("ow");
       const typed = await page.evaluate(() => {
-        const filter = document.querySelector("dc-song-player [data-song-filter]");
+        const filter = document.querySelector("music-player [data-song-filter]");
         return {
           focused: document.activeElement === filter,
           value: filter.value,
-          hits: [...document.querySelectorAll("dc-song-player [data-song]")].filter((i) => !i.hidden).map((i) => i.textContent),
+          hits: [...document.querySelectorAll("music-player [data-song]")].filter((i) => !i.hidden).map((i) => i.textContent),
         };
       });
       assert(typed.focused && typed.value === "ow", `hovering the list took the typing: ${JSON.stringify(typed)}`);
@@ -285,7 +312,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       const back = await page.evaluate(() => document.activeElement.textContent);
       assert(back === typed.hits.at(-2), `ArrowUp from "${walked.at(-1)}" went to "${back}"`);
       await page.keyboard.press("Enter");
-      await page.waitForFunction((title) => document.querySelector("dc-song-player [data-song-now]").textContent === title, back, { timeout: 15000 });
+      await page.waitForFunction((title) => document.querySelector("music-player [data-song-now]").textContent === title, back, { timeout: 15000 });
       await page.click(TOGGLE);
       await waitPlaying(page, false);
       await typeFilter(page, "");
@@ -299,7 +326,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       const value = await page.inputValue(FILTER);
       assert(value === "", `the filter still reads "${value}"`);
       assert(await menuShown(page), "Escape on a filled filter closed the panel");
-      const all = await page.$$eval("dc-song-player [data-song]", (items) => items.filter((i) => !i.hidden).length);
+      const all = await page.$$eval("music-player [data-song]", (items) => items.filter((i) => !i.hidden).length);
       assert(all === 20, `the cleared filter shows ${all} songs`);
       await page.press(FILTER, "Escape");
       await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("show"), MENU, { timeout: 5000 });
@@ -315,7 +342,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       assert(filter === "o", `after the reload the filter reads "${filter}"`);
       await typeFilter(page, "");
       const scrolled = await page.evaluate(async () => {
-        const scroller = document.querySelector("dc-song-player [data-song-scroll]");
+        const scroller = document.querySelector("music-player [data-song-scroll]");
         const room = scroller.scrollHeight - scroller.clientHeight;
         scroller.scrollTop = Math.min(80, room);
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -325,8 +352,8 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       await ready(page);
       await openPanel(page);
       const back = await page.evaluate(() => ({
-        filter: document.querySelector("dc-song-player [data-song-filter]").value,
-        top: document.querySelector("dc-song-player [data-song-scroll]").scrollTop,
+        filter: document.querySelector("music-player [data-song-filter]").value,
+        top: document.querySelector("music-player [data-song-scroll]").scrollTop,
       }));
       assert(back.filter === "" && Math.abs(back.top - scrolled.top) <= 1, `after the reload ${JSON.stringify(back)}, stored ${scrolled.top}`);
       await closePanel(page);
@@ -341,7 +368,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       await page.evaluate(() => { window.__songPlayerPage = true; });
       await page.click('.dc-rail a[href="/docs"]');
       await page.waitForURL(/\/docs$/, { timeout: 10000 });
-      await page.waitForFunction(() => document.querySelector("dc-song-player [data-song-now]")?.textContent, null, { timeout: 10000 });
+      await page.waitForFunction(() => document.querySelector("music-player [data-song-now]")?.textContent, null, { timeout: 10000 });
       assert(await page.evaluate(() => window.__songPlayerPage === true), "the page change was a full reload");
       const after = await state(page);
       assert(after.now === before && /ti-player-stop/.test(after.icon), `after the page change ${JSON.stringify(after)}, before "${before}"`);
@@ -358,13 +385,13 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
         await L.login(fresh);
         await settle(fresh);
         let blocked = 0;
-        await fresh.route(/\/js\/dc\/songs\.[^/]*js/, (route) => { blocked++; return route.abort(); });
+        await fresh.route(SONGS, (route) => { blocked++; return route.abort(); });
         await openPanel(fresh);
         await fresh.click(TOGGLE);
         await fresh.waitForFunction(() => [...document.querySelectorAll(".dc-toast")].some((t) => t.textContent.includes("Could not load the songs.")), null, { timeout: 10000 });
         assert(blocked > 0, "the songs file was never requested");
         assert(/ti-player-play/.test((await state(fresh)).icon), "the player claims to play without songs");
-        await fresh.unroute(/\/js\/dc\/songs\.[^/]*js/);
+        await fresh.unroute(SONGS);
         await openPanel(fresh);
         await fresh.click(TOGGLE);
         await waitPlaying(fresh, true);
@@ -379,13 +406,13 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       const phone = await mobilePage();
       await phone.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await dismissUpdate(phone);
-      const shown = await phone.$eval("dc-song-player", (el) => el.getBoundingClientRect().height > 0 && getComputedStyle(el.closest(".dc-status")).display !== "none");
+      const shown = await phone.$eval("music-player", (el) => el.getBoundingClientRect().height > 0 && getComputedStyle(el.closest(".dc-status")).display !== "none");
       assert(!shown, "the player shows on a phone");
     });
   } finally {
     await page.evaluate(() => {
-      const icon = document.querySelector("dc-song-player [data-song-toggle] .ti");
-      if (icon && icon.className.includes("ti-player-stop")) document.querySelector("dc-song-player [data-song-toggle]").click();
+      const icon = document.querySelector("music-player [data-song-toggle] .ti");
+      if (icon && icon.className.includes("ti-player-stop")) document.querySelector("music-player [data-song-toggle]").click();
     }).catch(() => {});
   }
 });

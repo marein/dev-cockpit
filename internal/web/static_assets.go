@@ -89,35 +89,21 @@ func newStaticAssetManifest(plugins []*pluginhost.Serve) (staticAssetManifest, e
 // every file gets a hashed URL under the plugin's mount path, references to
 // assets that already have a hashed URL are rewritten (files are added in
 // name order, so a reference to an alphabetically earlier sibling is
-// rewritten, everything else keeps its raw no-cache URL), and the generated
-// starter module that defines the plugin's custom elements joins last, with
-// the hashed module URLs already in it. The rewrite is a plain substring
-// replace over the whole file, so a raw house asset path inside a plugin
-// file turns into its hashed URL as well. These URLs are not registered as
-// their own routes: the plugin's subtree handler serves them out of the
-// manifest, behind the same session as the rest of the subtree.
+// rewritten, everything else keeps its raw URL, which the import map binds
+// to the hashed one for a module import, see pluginhost.Imports), and the
+// generated starter module that defines the plugin's custom elements joins
+// last, with the hashed module URLs already in it. The rewrite is a plain
+// substring replace over the whole file, so a raw house asset path inside a
+// plugin file turns into its hashed URL as well. These URLs are not
+// registered as their own routes: the plugin's subtree handler serves them
+// out of the manifest, behind the same session as the rest of the subtree.
 func (m *staticAssetManifest) addPluginAssets(p *pluginhost.Serve) error {
-	if files := p.Assets(); files != nil {
-		var names []string
-		if err := fs.WalkDir(files, ".", func(name string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if !entry.IsDir() {
-				names = append(names, name)
-			}
-			return nil
-		}); err != nil {
+	for _, name := range p.AssetNames() {
+		content, err := fs.ReadFile(p.Assets(), name)
+		if err != nil {
 			return fmt.Errorf("read the assets of plugin %s: %w", p.ID(), err)
 		}
-		sort.Strings(names)
-		for _, name := range names {
-			content, err := fs.ReadFile(files, name)
-			if err != nil {
-				return fmt.Errorf("read the assets of plugin %s: %w", p.ID(), err)
-			}
-			m.add(pluginhost.AssetPrefix(p)+name, rewriteAssetRefs(content, m.assetURL))
-		}
+		m.add(pluginhost.AssetPrefix(p)+name, rewriteAssetRefs(content, m.assetURL))
 	}
 	if starter, ok := pluginhost.Starter(p, m.assetPath); ok {
 		m.add(strings.TrimPrefix(pluginhost.StarterPath(p), "/"), []byte(starter))

@@ -55,30 +55,36 @@ func Starter(s *Serve, resolve func(string) string) (string, bool) {
 	return b.String(), true
 }
 
-// Element is one final element name with the URL of the starter module that
-// defines it, ready for the import map: the lazy loader imports unknown
-// element names, so binding the name to the starter is what loads a plugin's
-// code the first time one of its elements is on a page.
-type Element struct {
-	Name string
-	URL  string
+// Import is one import map entry a plugin brings: what a module asks for and
+// the URL it loads.
+type Import struct {
+	Specifier string
+	URL       string
 }
 
-// Elements answers every added element across the Serves, in wiring order,
-// each bound to its plugin's starter through resolve, which answers the
-// hashed URL of a raw asset path.
-func Elements(serves []*Serve, resolve func(string) string) []Element {
-	var elements []Element
+// Imports answers the import map entries of every Serve, in wiring order,
+// URLs through resolve, which answers the hashed URL of a raw asset path.
+// Each added element name is bound to its plugin's starter: the lazy loader
+// imports unknown element names, so this loads a plugin's code the first time
+// one of its elements is on a page. Each added asset's raw URL is bound to
+// its hashed URL: a module's relative import of a sibling resolves to the raw
+// URL, so this loads the long cached file, while the plugin never knows the
+// subtree its wiring id picks.
+func Imports(serves []*Serve, resolve func(string) string) []Import {
+	var imports []Import
 	for _, s := range serves {
-		if len(s.CustomElements()) == 0 {
-			continue
+		if len(s.CustomElements()) > 0 {
+			starter := resolve(StarterPath(s))
+			for _, element := range s.CustomElements() {
+				imports = append(imports, Import{Specifier: element.Name, URL: starter})
+			}
 		}
-		starter := resolve(StarterPath(s))
-		for _, element := range s.CustomElements() {
-			elements = append(elements, Element{Name: element.Name, URL: starter})
+		for _, name := range s.AssetNames() {
+			raw := "/" + AssetPrefix(s) + name
+			imports = append(imports, Import{Specifier: raw, URL: resolve(raw)})
 		}
 	}
-	return elements
+	return imports
 }
 
 // SlotHTML concatenates what every plugin added for the named slot. The

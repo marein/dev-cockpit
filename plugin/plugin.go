@@ -52,6 +52,11 @@ const (
 	// SlotProjectsEmptyActions sits in the empty state of the projects page,
 	// next to the create project action a fresh install shows.
 	SlotProjectsEmptyActions = "projects-empty-actions"
+	// SlotStatusEnd sits at the right of the status line under every app
+	// page, between the gap and the version, on a desktop only: a phone
+	// shows no status line. The line scrolls sideways, so a menu opened
+	// from it is a dropup positioned fixed, or the line clips it.
+	SlotStatusEnd = "status-end"
 )
 
 // ErrProjectExists is what Projects.Create answers when a project of that
@@ -80,8 +85,11 @@ type Serve interface {
 	// AddAssets adds the plugin's static files. They travel through the
 	// cockpit's content hashed asset pipeline under the plugin's URL
 	// subtree, so they carry the same long lived cache headers as the
-	// cockpit's own assets, and references between them are rewritten to the
-	// hashed URLs. A second call replaces the first.
+	// cockpit's own assets. The cockpit's import map binds the plain URL of
+	// every added file to its hashed URL, so a module imports another added
+	// file by a relative path, "./songs.js", static or dynamic, and loads the
+	// hashed URL without knowing the subtree its wiring id picks. A second
+	// call replaces the first.
 	AddAssets(files fs.FS)
 	// AddCustomElement adds one custom element: module names a module inside
 	// the added assets whose default export is the element class, and the

@@ -3,6 +3,7 @@ package pluginhost
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -248,6 +249,30 @@ func TestConfigureServeErrorCarriesTheID(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "broken") || !errors.Is(err, boom) {
 		t.Fatalf("ConfigureServe() = %q, want it to name plugin broken and wrap the cause", err)
+	}
+}
+
+// brokenFS fails every open.
+type brokenFS struct{ err error }
+
+func (f brokenFS) Open(string) (fs.File, error) { return nil, f.err }
+
+// The asset files are listed once at the seal, so assets that cannot be read
+// stop the start with the plugin's id, and readable ones answer sorted.
+func TestConfigureServeListsTheAssets(t *testing.T) {
+	serves := configured(t, plugin.Named[plugin.ServePlugin]{ID: "files", Plugin: &recordingPlugin{
+		assets: fstest.MapFS{"widget.js": {}, "data/songs.js": {}, "list.js": {}},
+	}})
+	if got := strings.Join(serves[0].AssetNames(), ","); got != "data/songs.js,list.js,widget.js" {
+		t.Fatalf("AssetNames() = %s", got)
+	}
+	boom := errors.New("disk gone")
+	_, err := ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "broken", Plugin: serveFunc(func(s plugin.Serve) error {
+		s.AddAssets(brokenFS{err: boom})
+		return nil
+	})}}, "", t.TempDir(), nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "broken") || !errors.Is(err, boom) {
+		t.Fatalf("ConfigureServe() = %v, want it to name plugin broken and wrap the cause", err)
 	}
 }
 

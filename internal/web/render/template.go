@@ -17,19 +17,19 @@ import (
 var templatesFS embed.FS
 
 // HTMLTemplate returns the parsed template set used by Gin's HTML renderer.
-// plugins feeds the two plugin funcs: pluginElements binds every final
-// element name to its plugin's starter module in the import map, which is
-// how the lazy element loader finds plugin code; pluginSlot is the markup
-// the plugins added for a named slot. rename answers how a coder's sessions
-// are renamed (coder.RenameMode), nil for no way at all.
+// plugins feeds the two plugin funcs: pluginImports is what the plugins
+// bring to the import map, their element names and their assets' raw URLs,
+// see pluginhost.Imports; pluginSlot is the markup the plugins added for a
+// named slot. rename answers how a coder's sessions are renamed
+// (coder.RenameMode), nil for no way at all.
 func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plugins []*pluginhost.Serve, rename func(coder string) string) *template.Template {
 	funcMap := template.FuncMap{
-		"asset":          assetPath,
-		"assetBuild":     func() string { return assetBuild },
-		"appVersion":     func() string { return version },
-		"pluginElements": func() []pluginhost.Element { return pluginhost.Elements(plugins, assetPath) },
-		"pluginSlot":     func(slot string) template.HTML { return pluginhost.SlotHTML(plugins, slot) },
-		"coderLabel":     CoderLabel,
+		"asset":         assetPath,
+		"assetBuild":    func() string { return assetBuild },
+		"appVersion":    func() string { return version },
+		"pluginImports": func() []pluginhost.Import { return pluginhost.Imports(plugins, assetPath) },
+		"pluginSlot":    func(slot string) template.HTML { return pluginhost.SlotHTML(plugins, slot) },
+		"coderLabel":    CoderLabel,
 		"coderRename": func(coder string) string {
 			if rename == nil {
 				return ""

@@ -45,10 +45,12 @@ cannot show stays at that function, within the comment rule below.
   over the local API.
 - **User visible behavior is documented.** A changed route, control, key,
   setting or workflow updates `/docs` (`render/docs.go`) in one change.
+  `/docs` describes the core only, a first party plugin documents itself
+  in its package doc.
 - **No source file grows beyond 800 lines.** Split it by responsibility
   before new code goes in. Some files are already above, they do not grow
   further and get split when touched. The song file
-  `internal/web/static/js/dc/songs.js` holds the song data with its
+  `plugins/musicplayer/assets/songs.js` holds the song data with its
   composition helpers and is exempt.
 - **No comments by default.** A comment is only allowed when it is
   important and explains why, never what the code does.
@@ -93,6 +95,13 @@ The cockpit is a single Go binary. `cmd/dev-cockpit` is a thin main,
 `distro` is the importable facade (a custom distribution calls
 `distro.Main`), `plugin` is the experimental plugin surface and
 `internal/pluginhost` is its host side, used by `cli` and `web`.
+`plugins/` holds the first party plugins, one package each
+(`musicplayer`, the song player). `cmd/dev-cockpit` wires them through
+`distro.Build` the way a custom distribution does. Their Go code imports
+`plugin`, never `internal/`, their tests may drive them through
+`internal/pluginhost`. They evolve with the core, so their modules import
+`@dc/*` like a component does, and a sibling by a relative path, which
+the import map binds to its hashed URL.
 Everything else is in `internal/`.
 The layers are listed top down, a layer imports only the layers below it.
 

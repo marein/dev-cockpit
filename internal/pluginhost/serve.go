@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/marein/dev-cockpit/plugin"
@@ -18,6 +19,7 @@ import (
 var definedSlots = map[string]bool{
 	plugin.SlotProjectsActions:      true,
 	plugin.SlotProjectsEmptyActions: true,
+	plugin.SlotStatusEnd:            true,
 }
 
 // Registration is one added custom element as the cockpit reads it: the
@@ -40,6 +42,7 @@ type Serve struct {
 	projects       *projects
 	routes         http.Handler
 	assets         fs.FS
+	assetNames     []string
 	elements       []Registration
 	slots          map[string][]string
 	memory         []assistantMemory
@@ -131,6 +134,10 @@ func (s *Serve) Handler() http.Handler { return s.routes }
 // Assets answers the added asset files, nil for none.
 func (s *Serve) Assets() fs.FS { return s.assets }
 
+// AssetNames answers the paths of the added asset files, sorted, nil for
+// none. They are read once when the Serve is sealed.
+func (s *Serve) AssetNames() []string { return s.assetNames }
+
 // CustomElements answers the added elements, in call order.
 func (s *Serve) CustomElements() []Registration { return s.elements }
 
@@ -185,7 +192,7 @@ func (p project) Changed(ctx context.Context) error { return p.changed(ctx) }
 // ConfigureServe runs every pair's ConfigureServe, each with a fresh Serve
 // bound to the pair's id and to the serving instance, and answers the sealed
 // Serves in pair order. Before a pair's ConfigureServe runs, the plugin's own
-// state directory exists. It is the cockpit's call at serve start, after the
+// state directory exists, after it the added asset files are listed. It is the cockpit's call at serve start, after the
 // configuration is loaded and before the server listens; the ids are
 // validated before, see distro.Main. createProject is the web UI's own
 // project creation path and projectChanged its announcement path, which is
@@ -204,7 +211,31 @@ func ConfigureServe(plugins []plugin.Named[plugin.ServePlugin], projectsDir, sta
 			return nil, fmt.Errorf("plugin %s failed to configure: %w", p.ID, err)
 		}
 		s.sealed = true
+		names, err := assetNames(s.assets)
+		if err != nil {
+			return nil, fmt.Errorf("plugin %s has unreadable assets: %w", p.ID, err)
+		}
+		s.assetNames = names
 		serves = append(serves, s)
 	}
 	return serves, nil
+}
+
+// assetNames lists the file paths of an asset tree, sorted, nil for no tree.
+func assetNames(files fs.FS) ([]string, error) {
+	if files == nil {
+		return nil, nil
+	}
+	var names []string
+	err := fs.WalkDir(files, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			names = append(names, name)
+		}
+		return nil
+	})
+	sort.Strings(names)
+	return names, err
 }

@@ -1,0 +1,23 @@
+<{{.Player}} class="dc-status-item dropup">
+  <button type="button" class="dc-status-item" data-song-open data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="Songs" aria-label="Songs"><i class="ti ti-music" aria-hidden="true"></i></button>
+  <div class="dropdown-menu dropdown-menu-end dropdown-menu-card" data-own-selection>
+    <div class="d-flex align-items-center gap-1 px-3 pt-2">
+      <button type="button" class="btn btn-icon btn-ghost-secondary" data-song-toggle title="Play a song" aria-label="Play a song"><i class="ti ti-player-play" aria-hidden="true"></i></button>
+      <button type="button" class="btn btn-icon btn-ghost-secondary" data-song-next title="Next song" aria-label="Next song" hidden><i class="ti ti-player-skip-forward" aria-hidden="true"></i></button>
+      <span class="text-secondary small text-truncate ms-1" data-song-now></span>
+    </div>
+    <div class="px-3 py-2"><{{.Volume}}></{{.Volume}}></div>
+    <div class="editor-sheet-filter border-top">
+      <i class="ti ti-search" aria-hidden="true"></i>
+      <input type="text" class="editor-sheet-filter-input" data-song-filter placeholder="Filter" aria-label="Filter the songs" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
+      <span class="editor-sheet-filter-side">
+        <span class="editor-sheet-filter-count" data-song-filter-count></span>
+        <button type="button" class="editor-sheet-filter-clear" data-song-filter-clear aria-label="Clear the filter" title="Clear the filter"><i class="ti ti-x" aria-hidden="true"></i></button>
+      </span>
+    </div>
+    <div class="overflow-auto" style="height: 60vh;" data-song-scroll>
+      <div data-song-list></div>
+      <div class="text-secondary small px-3 py-2" data-song-empty hidden></div>
+    </div>
+  </div>
+</{{.Player}}>

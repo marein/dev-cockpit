@@ -159,7 +159,7 @@ L.runFeature("STATUS-LINKS", async ({ browser, page, run }) => {
         order: [...el.children].map((c) => c.localName + (c.className ? "." + String(c.className).split(" ")[0] : "")).join(" "),
       }));
       assert(line.shown && line.height === 26, `the status line is ${line.height}px high`);
-      assert(/^dc-host-status\.dropdown dc-status-links\.dropdown dc-cost-status\.d-flex span\.dc-status-gap dc-song-player\.dc-status-item span\.dc-status-item$/.test(line.order),
+      assert(/^dc-host-status\.dropdown dc-status-links\.dropdown dc-cost-status\.d-flex span\.dc-status-gap music-player\.dc-status-item span\.dc-status-item$/.test(line.order),
         `the line does not read meters, links, costs, gap, songs, version: ${line.order}`);
       return line.order;
     });
