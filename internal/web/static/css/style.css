@@ -1534,9 +1534,20 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.editor-palette-branch {
+.editor-palette-name {
+  flex: 1 1 auto;
+}
+.editor-palette-rest {
+  display: flex;
   flex: 1 1 0;
+  align-items: center;
   min-width: 0;
+  overflow: hidden;
+}
+.editor-palette-branch {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: 0.5rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3035,3 +3046,11 @@ dc-docker-actions.dc-actions-dragging [data-action-row].dc-action-drag {
 
 .terminal-tab-member { padding-left: 2.25rem; }
 .terminal-tab-member .terminal-tab-name { font-size: 0.8125rem; }
+
+.dc-form-modal-fixed .modal-content { height: min(32rem, 100%); }
+@media (max-height: 32rem) {
+  .dc-form-modal-fixed { --tblr-modal-margin: 0.5rem; }
+}
+@media (max-width: 575.98px) {
+  .dc-form-modal-fixed .modal-content { height: 100%; }
+}

@@ -19,6 +19,24 @@ const WATCHDOG_MS = 15000;
 let source = null;
 let lastFrameAt = 0;
 const latest = new Map();
+// An element can subscribe after the stream brought its signal, the connect
+// snapshot on a load or a move during a swap, and its markup cannot show it.
+// shown is how many frames the markup on the page reflects: none on a load,
+// whose stream opens after the render, those before the fetch on a swap.
+let frames = 0;
+let shown = 0;
+const arrived = new Map();
+
+for (const kind of ["pe:navigate", "pe:form"]) {
+  window.addEventListener(kind, (event) => {
+    const asked = frames;
+    const render = event.detail.render;
+    event.detail.render = (...args) => {
+      shown = asked;
+      return render(...args);
+    };
+  });
+}
 
 function open() {
   if (source) return;
@@ -37,6 +55,8 @@ function open() {
     // "ping" only exists to prove the stream is alive (see lastFrameAt above); it
     // carries no state, so it dispatches no DOM event.
     if (message && message.type && message.type !== "ping") {
+      frames += 1;
+      arrived.set(message.type, frames);
       latest.set(message.type, message.data ?? null);
       document.dispatchEvent(new CustomEvent("dc:" + message.type, { detail: message.data ?? null }));
     }
@@ -88,4 +108,8 @@ export function onServerEvent(type, handler, options) {
 
 export function latestServerEvent(type) {
   return latest.get(type);
+}
+
+export function missedServerEvent(type) {
+  return (arrived.get(type) ?? 0) > shown;
 }

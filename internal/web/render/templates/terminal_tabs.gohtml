@@ -137,7 +137,7 @@
       </div>
       <div class="d-none" data-tabs-editors>
         {{range $p := .QuickNav.AllProjects}}
-        <a data-editor-project="{{$p.Name}}" data-project-name="{{$p.Name}}" data-project-active="{{if $p.Active}}true{{else}}false{{end}}" data-project-used="{{$p.LastUsedUnix}}" href="{{$p.EditorURL}}" tabindex="-1"></a>
+        <a data-editor-project="{{$p.Name}}"{{with $p.SearchTags}} data-editor-tags="{{join . " "}}"{{end}} data-project-name="{{$p.Name}}" data-project-active="{{if $p.Active}}true{{else}}false{{end}}" data-project-used="{{$p.LastUsedUnix}}" href="{{$p.EditorURL}}" tabindex="-1"><span class="terminal-tab-icon dc-term-icon" aria-hidden="true"><i class="ti ti-code"></i></span> {{if $p.Tags}}<span class="terminal-switcher-name dc-tagged"><span class="text-truncate">{{$p.Name}}</span>{{template "tag_pie.gohtml" $p.Tags}}</span>{{else}}<span class="terminal-switcher-name text-truncate">{{$p.Name}}</span>{{end}} <span class="terminal-switcher-project text-truncate">Editor</span></a>
         {{end}}
       </div>
     </div>

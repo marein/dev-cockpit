@@ -19,6 +19,12 @@ const { assert, BASE, sleep } = L;
 // dialog shows the new content) unless the Worktree post script approval is
 // off.
 //
+// Tags belong to a main project, the tags feature has its own runner
+// (projects-tags.js). Here only what a worktree adds: it shows no tags on the
+// board, in the list column or in either switcher, offers no tag editing and
+// a save for it is refused, and deleting it leaves its main's tags. A tag
+// outlives its projects, so the run removes the one it made at the end.
+//
 // The runner starts the real CLI as a child process, like git-proxy.js, so the
 // instance needs a scratch directory mounted at its own host path (AUX_DIR)
 // holding bin/dev-cockpit (a copy), the instance's --state-dir (state/) and
@@ -30,6 +36,8 @@ const PROJECTS = path.join(AUX, "projects");
 const MAIN = `wtm${Date.now().toString(36).slice(-5)}`;
 const REPO = path.join(PROJECTS, MAIN);
 const SCRIPT_FILE = path.join(STATE, "worktree-post-script");
+const TAGS_FILE = path.join(STATE, "project-tags.json");
+const TAG = `tag-${MAIN}`;
 
 const SUMMARY = "Runs in the new worktree, max 15s, env: DC_SOURCE_PROJECT DC_SOURCE_DIR DC_WORKTREE_DIR DC_WORKTREE_PROJECT DC_BRANCH.\n";
 const BASH = `#!/usr/bin/env bash
@@ -76,6 +84,30 @@ function storedScript() {
   try { return fs.readFileSync(SCRIPT_FILE, "utf8"); } catch { return null; }
 }
 
+function storedTags() {
+  let file = {};
+  try { file = JSON.parse(fs.readFileSync(TAGS_FILE, "utf8")); } catch {}
+  return { tags: file.tags || {}, projects: file.projects || {} };
+}
+
+// namesOf lists the names of the tags a project carries in the file.
+function namesOf(stored, name) {
+  return (stored.projects[name] || []).map((id) => stored.tags[id] ? stored.tags[id].name : `?${id}`);
+}
+
+// tagNamed answers a stored tag by its name, with its id.
+function tagNamed(stored, name) {
+  const id = Object.keys(stored.tags).find((each) => stored.tags[each].name === name);
+  return id ? { id, ...stored.tags[id] } : null;
+}
+
+function shown(page, selector) {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    return !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
+  }, selector);
+}
+
 // worktreeNews lists the notifications of one worktree project.
 function worktreeNews(name) {
   let list = [];
@@ -83,9 +115,65 @@ function worktreeNews(name) {
   return list.filter((n) => n.targetId === `worktree:${name}`);
 }
 
-L.runFeature("PROJECT WORKTREES", async ({ page, run }) => {
+let assistantID = "";
+
+async function csrfOf(page) {
+  await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+  return page.evaluate(() => document.querySelector('meta[name="csrf-token"]').content);
+}
+
+// removeWhatTheRunMade deletes everything the run made through the cockpit,
+// whatever a failed check left standing: its assistant, its project, its
+// tag, the post script and the approval switch it turned, and its scratch
+// file. Each step runs on its own, one that fails keeps none of the others.
+async function removeWhatTheRunMade(page) {
+  const steps = [
+    async () => {
+      if (!assistantID || !fs.existsSync(path.join(STATE, "assistant", "instances", assistantID))) return;
+      const gone = await page.request.post(`${BASE}/assistants/${assistantID}`, { form: { csrf_token: await csrfOf(page), form: "delete" }, headers: { Accept: "application/json" } });
+      assert(gone.ok(), `the assistant could not be deleted: ${gone.status()}`);
+    },
+    async () => {
+      if (fs.existsSync(REPO)) await L.deleteProject(page, MAIN);
+    },
+    () => L.removeTags(page, (name) => name === TAG),
+    async () => {
+      if (storedScript() === null) return;
+      await page.request.post(`${BASE}/settings/projects/worktrees`, { form: { csrf_token: await csrfOf(page), post_script: "" } });
+    },
+    async () => {
+      await page.goto(`${BASE}/settings/assistant/approvals`, { waitUntil: "domcontentloaded" });
+      if (await page.locator(SCRIPT_SWITCH).isChecked()) return;
+      await page.locator(SCRIPT_SWITCH).setChecked(true);
+      await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), page.click('#settings-assistant-approvals button[type="submit"]')]);
+    },
+    async () => fs.rmSync(path.join(AUX, "approved.sh"), { force: true }),
+  ];
+  for (const step of steps) await step().catch((e) => console.log(`left behind: ${e.message}`));
+}
+
+L.runFeature("PROJECT WORKTREES", async ({ page, run, mobilePage }) => {
+  try {
+    await worktreeChecks({ page, run, mobilePage });
+  } finally {
+    await removeWhatTheRunMade(page);
+    await run("the run leaves nothing it made: no assistant, project, tag, post script, switched approval or scratch file", async () => {
+      const left = [
+        assistantID && fs.existsSync(path.join(STATE, "assistant", "instances", assistantID)) && `assistant ${assistantID}`,
+        ...fs.readdirSync(PROJECTS).filter((name) => name === MAIN || name.startsWith(`${MAIN}-`)),
+        tagNamed(storedTags(), TAG) && `tag ${TAG}`,
+        storedScript() !== null && "post script",
+        fs.existsSync(path.join(AUX, "approved.sh")) && "approved.sh",
+      ].filter(Boolean);
+      await page.goto(`${BASE}/settings/assistant/approvals`, { waitUntil: "domcontentloaded" });
+      if (!(await page.locator(SCRIPT_SWITCH).isChecked())) left.push("the post script approval switched off");
+      assert(left.length === 0, `left behind: ${left.join(", ")}`);
+    });
+  }
+});
+
+async function worktreeChecks({ page, run, mobilePage }) {
   buildFixture();
-  let assistantID = "";
   const approvalNote = async (id, verdict, count) => {
     await page.goto(`${BASE}/assistants/${id}`, { waitUntil: "domcontentloaded" });
     const notes = page.locator(`[data-assistant-note="approval"][data-assistant-approval-note="${verdict}"]`);
@@ -325,6 +413,66 @@ L.runFeature("PROJECT WORKTREES", async ({ page, run }) => {
     assert(status.stdout.includes(`  ${MAIN}-cli (cli) worktree of ${MAIN}\n`), `status: ${status.stdout}`);
   });
 
+  await run("tags: a worktree shows no tags on the board, in the list column and in both switchers, offers no tag editing, and a save for it is refused", async () => {
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await L.dismissUpdate(page);
+    const made = await page.request.post(`${BASE}/projects/${MAIN}/tags?modal=1`, {
+      form: { csrf_token: await page.evaluate(() => document.querySelector('meta[name="csrf-token"]').content), new: TAG },
+      headers: { Accept: "application/json" },
+    });
+    assert(made.ok(), `the main's tags answered ${made.status()}`);
+    const tag = tagNamed(storedTags(), TAG);
+    assert(tag, `the file holds ${JSON.stringify(storedTags())}`);
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(`#project-${MAIN} [data-tag-line] [data-tag-toggle="${tag.id}"]`, { state: "visible", timeout: 8000 });
+    await page.fill("[data-project-filter]", `${MAIN}-feature`);
+    await sleep(300);
+    const row = `#project-${MAIN}-feature`;
+    assert(await shown(page, row), "the worktree row is not shown");
+    assert((await page.locator(`${row} [data-tag]`).count()) === 0, "the worktree row shows tags");
+    assert((await page.locator(`${row} [data-project-tags-edit]`).count()) === 0, "the worktree row offers to edit tags");
+    await page.fill("[data-project-filter]", "");
+    const column = (name, sel) => page.locator(`[data-index-project="${name}"] ${sel}`).count();
+    assert((await column(MAIN, `[data-tag="${tag.id}"]`)) === 1 && (await column(`${MAIN}-feature`, "[data-tag]")) === 0, "the list column shows the worktree's tags or misses the main's");
+
+    await page.goto(`${BASE}/projects/${MAIN}/editor`, { waitUntil: "domcontentloaded" });
+    await L.editorReady(page);
+    await page.click("[data-editor-project-switch]");
+    await page.waitForSelector("[data-editor-palette]", { state: "visible", timeout: 4000 });
+    await page.fill("[data-editor-project-filter]", MAIN);
+    await sleep(300);
+    const palette = (name, sel) => page.locator(`[data-editor-palette-list] [data-project-name="${name}"] ${sel}`).count();
+    assert((await palette(MAIN, `[data-tag="${tag.id}"]`)) === 1 && (await palette(`${MAIN}-feature`, "[data-tag]")) === 0, "the palette shows the worktree's tags or misses the main's");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("[data-editor-palette]", { state: "hidden", timeout: 4000 });
+    await page.keyboard.press("Control");
+    await page.keyboard.press("Control");
+    await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+    await page.keyboard.type(MAIN, { delay: 30 });
+    await sleep(300);
+    const switcher = (name, sel) => page.locator(`.terminal-switcher-item[data-switcher-url^="/projects/${name}/editor"] ${sel}`).count();
+    assert((await switcher(MAIN, `[data-tag="${tag.id}"]`)) === 1 && (await switcher(`${MAIN}-feature`, "[data-tag]")) === 0, "the switcher shows the worktree's tags or misses the main's");
+    await page.keyboard.press("Escape");
+
+    const refused = await page.request.post(`${BASE}/projects/${MAIN}-feature/tags?modal=1`, {
+      form: { csrf_token: await page.evaluate(() => document.querySelector('meta[name="csrf-token"]').content), new: "own" },
+      headers: { Accept: "application/json" },
+    });
+    const reason = (await refused.json().catch(() => ({}))).error || "";
+    assert(refused.status() === 400 && reason.includes(`"${MAIN}"`), `the worktree's save answered ${refused.status()} ${reason}`);
+    await page.goto(`${BASE}/projects/${MAIN}-feature/tags`, { waitUntil: "domcontentloaded" });
+    await page.waitForURL(new RegExp(`/projects#project-${MAIN}-feature$`), { timeout: 8000 });
+    const alert = await page.locator(`${row} .alert`).textContent({ timeout: 8000 });
+    assert(alert.includes("carries no tags"), `the worktree's form answered ${alert}`);
+    assert(!(`${MAIN}-feature` in storedTags().projects), "the worktree got tags of its own");
+  });
+
+  await run("tags: deleting a worktree leaves its main's tags", async () => {
+    await L.deleteProject(page, `${MAIN}-plain`);
+    for (let i = 0; i < 40 && fs.existsSync(path.join(PROJECTS, `${MAIN}-plain`)); i += 1) await sleep(250);
+    assert(!fs.existsSync(path.join(PROJECTS, `${MAIN}-plain`)), "the worktree could not be deleted");
+    assert(JSON.stringify(namesOf(storedTags(), MAIN)) === JSON.stringify([TAG]), `the worktree's delete left ${JSON.stringify(storedTags())}`);
+  });
   await run("delete: the main takes its worktrees with it", async () => {
     await L.deleteProject(page, MAIN);
     for (let i = 0; i < 40 && fs.existsSync(REPO); i += 1) await sleep(250);
@@ -335,4 +483,5 @@ L.runFeature("PROJECT WORKTREES", async ({ page, run }) => {
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     assert((await page.locator(`[data-project-name^="${MAIN}"]`).count()) === 0, "a row of the deleted projects is still listed");
   });
-});
+
+}

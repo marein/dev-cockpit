@@ -696,7 +696,6 @@ class TerminalTabs extends HTMLElement {
   }
 
   editorRow(link) {
-    const project = link.dataset.editorProject || "";
     const row = el(
       "div",
       {
@@ -704,13 +703,11 @@ class TerminalTabs extends HTMLElement {
         class: "terminal-switcher-item",
         dataset: {
           switcherUrl: link.getAttribute("href") || "",
-          switcherName: project + " editor",
+          switcherName: `${link.dataset.editorProject || ""} ${link.dataset.editorTags || ""} editor`,
           switcherSection: "editors",
         },
       },
-      el("span", { class: "terminal-tab-icon dc-term-icon", "aria-hidden": "true" }, el("i", { class: "ti ti-code" })),
-      el("span", { class: "terminal-switcher-name text-truncate" }, project),
-      el("span", { class: "terminal-switcher-project text-truncate" }, "Editor"),
+      Array.from(link.children, (node) => node.cloneNode(true)),
     );
     row.addEventListener("click", () => this.navigate(row.dataset.switcherUrl), { signal: this.ac.signal });
     return row;

@@ -4,11 +4,13 @@
 <dc-project-list class="dc-work" role="main">
   <div class="dc-work-head">
 {{if .Projects}}
-    <div class="dc-filter">
+    <div class="dc-filter dc-filter-flow">
       <i class="ti ti-search" aria-hidden="true"></i>
+      {{template "tag_filter_picked.gohtml"}}
       <input type="text" class="dc-filter-input" data-project-filter placeholder="Filter projects…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" aria-label="Filter projects">
       <span class="dc-filter-side">
-        <button type="button" class="dc-filter-clear d-none" data-project-filter-clear aria-label="Clear filter" title="Clear filter"><i class="ti ti-x" aria-hidden="true"></i></button>
+        <span class="small text-secondary text-nowrap" data-filter-count hidden></span>
+        <button type="button" class="dc-filter-clear d-none" data-project-filter-clear aria-label="Clear the filters" title="Clear the filters"><i class="ti ti-x" aria-hidden="true"></i></button>
       </span>
     </div>
     <div class="dropdown flex-shrink-0">
@@ -33,13 +35,16 @@
     <h1 class="dc-work-title flex-fill">Projects</h1>
 {{end}}
   </div>
+{{if .Projects}}
+  {{template "tag_bar.gohtml" (dict "Tags" .TagsInUse "Class" "dc-work-tags flex-shrink-0 border-bottom bg-surface")}}
+{{end}}
   <div class="dc-work-body dc-work-pad">
     {{template "flash.gohtml" .}}
 {{if .Projects}}
 <div class="dc-board projects-card">
   <div class="list-group">
   {{range .Rows}}
-  <div class="card list-group-item project-row{{if .Grouped}} project-row-worktree{{end}}" id="project-{{.Name}}" data-project-name="{{.Name}}"{{if .GitWorktreeOf}} data-project-worktree-of="{{.GitWorktreeOf}}"{{end}}{{if .Grouped}} data-project-grouped hidden{{end}}{{if .Worktrees}} data-project-worktrees="{{len .Worktrees}}"{{end}} data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
+  <div class="card list-group-item project-row{{if .Grouped}} project-row-worktree{{end}}" id="project-{{.Name}}" data-project-name="{{.Name}}"{{if .GitWorktreeOf}} data-project-worktree-of="{{.GitWorktreeOf}}"{{end}}{{if .Grouped}} data-project-grouped hidden{{end}}{{if .Worktrees}} data-project-worktrees="{{len .Worktrees}}"{{end}}{{with .SearchTags}} data-project-tags="{{join . " "}}"{{end}} data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">
     {{$delete := index $.Deleting .Name}}
     {{if $delete.Failed}}
     {{template "notice.gohtml" (dict "Level" "error" "Message" $delete.Failed "Dismiss" false)}}
@@ -101,6 +106,7 @@
         {{end}}
       </div>
     </div>
+    {{if not .GitWorktree}}{{template "tag_line.gohtml" (dict "Project" .Name "Tags" .Tags)}}{{end}}
     <div data-sessions-body>
       <div class="project-chips mt-2">
       {{if not $delete.Running}}
@@ -185,6 +191,7 @@
 <div class="dc-empty d-none" data-project-filter-empty>
   <i class="ti ti-search" aria-hidden="true"></i>
   <div class="dc-empty-title">No projects match.</div>
+  <button type="button" class="btn" data-project-filter-reset><i class="ti ti-filter-off me-1" aria-hidden="true"></i>Clear the filters</button>
 </div>
 {{else}}
 <div class="dc-empty">

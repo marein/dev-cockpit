@@ -2,7 +2,10 @@ package web
 
 import (
 	"net/url"
+	"path/filepath"
+	"strings"
 
+	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
@@ -39,6 +42,8 @@ func (s *Server) projectBrowser(currentPath string) []render.ProjectNav {
 			WorktreeOf:   p.GitWorktreeOf,
 			WorktreeMain: p.GitWorktreeMain,
 			Search:       switcherSearch(p),
+			Tags:         p.Tags,
+			SearchTags:   p.SearchTags,
 			GitRepo:      p.GitRepo,
 			Docker:       containers[p.Name],
 		}
@@ -55,4 +60,39 @@ func (s *Server) projectBrowser(currentPath string) []render.ProjectNav {
 		out = append(out, nav)
 	}
 	return out
+}
+
+// switcherRepo names the repository a palette row belongs to. A worktree is
+// named after its main project, or after the main repository's directory when
+// that repository is no project of the cockpit; a repository is named after
+// itself; a plain directory has no repository to be named after.
+func switcherRepo(q project.Project) string {
+	switch {
+	case q.GitWorktree && q.GitWorktreeOf != "":
+		return q.GitWorktreeOf
+	case q.GitWorktree && q.GitWorktreeMain != "":
+		return filepath.Base(q.GitWorktreeMain)
+	case q.GitRepo:
+		return q.Name
+	}
+	return ""
+}
+
+// switcherSearch is the one line the palette's token search runs over for a
+// row: the project's name, the repository it belongs to and its branch, for a
+// worktree without a main project in the cockpit the main repository's path,
+// so that path is findable by the pieces somebody remembers of it, and the
+// names of the tags that find it, a worktree's main project's.
+func switcherSearch(q project.Project) string {
+	parts := []string{q.Name}
+	if repo := switcherRepo(q); repo != "" && repo != q.Name {
+		parts = append(parts, repo)
+	}
+	if q.GitBranch != "" {
+		parts = append(parts, q.GitBranch)
+	}
+	if q.GitWorktree && q.GitWorktreeOf == "" && q.GitWorktreeMain != "" {
+		parts = append(parts, q.GitWorktreeMain)
+	}
+	return strings.Join(append(parts, q.SearchTags...), " ")
 }

@@ -549,3 +549,8 @@ type ProjectsListData struct {
 	// deletion failed, keyed by project name. Nil while none is.
 	Deleting map[string]ProjectDelete
 }
+
+// TagsInUse is every tag the projects carry, what the tag filter offers.
+func (d ProjectsListData) TagsInUse() []project.TagUse {
+	return project.TagsInUse(d.Projects)
+}

@@ -423,7 +423,7 @@ func runServe(opts serveOptions) error {
 		return fmt.Errorf("invalid --auth-password-hash: %w", err)
 	}
 	tmuxClient := tmux.New()
-	projectRepo := project.NewRepository(cfg.ProjectsRoot, recent.New(filepath.Join(cfg.StateDir, "recent-projects.json")))
+	projectRepo := project.NewRepository(cfg.ProjectsRoot, recent.New(filepath.Join(cfg.StateDir, "recent-projects.json"))).UseTags(project.NewTags(cfg.StateDir))
 	// The plugins configure here, with the configuration loaded and before
 	// anything listens: everything their Serve answers is real, and what they
 	// add becomes part of the server built below. The bus exists this early

@@ -1,5 +1,7 @@
 package render
 
+import "github.com/marein/dev-cockpit/internal/project"
+
 // ProjectNav is the per-project quick-access model shared by the subpages
 // (editor, session, shell). It lists the project's editor plus its live
 // terminals and inactive sessions, so a subpage can offer one-click
@@ -37,6 +39,11 @@ type ProjectNav struct {
 	// repository and branch together, so "dev htmx" lands on the one worktree
 	// of dev-cockpit that stands on the htmx branch.
 	Search string
+	// Tags are the project's tags, a worktree carries none, and SearchTags
+	// the tag names a search finds it by, a worktree its main project's. The
+	// switcher's editor row shows the one and matches the other.
+	Tags       []project.Tag
+	SearchTags []string
 	// GitRepo says whether the detail offers the git menu, and Docker carries
 	// the compose stacks and the containers it lists below its terminals, both
 	// the shapes the projects page already renders from. Docker is empty

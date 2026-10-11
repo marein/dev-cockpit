@@ -38,7 +38,9 @@ cannot show stays at that function, within the comment rule below.
   on every call, writes atomically via a tmp file plus rename, and
   quarantines a corrupt file as `<path>.broken`. Never hand roll load and
   save. Ids come from `statefile.NewID`. Anything that deletes based on a
-  read must treat an empty read as "unknown", never as "nothing there".
+  read must treat an empty read as "unknown", never as "nothing there". A
+  read, modify and write that must not drop other entries reads with
+  `statefile.Read`, which reports a file it could not read.
 - **One writer per state directory.** All state lives under one
   `--state-dir`, which belongs to one serve process. Other processes,
   including the assistant, never write state files, they call the server
@@ -61,6 +63,13 @@ cannot show stays at that function, within the comment rule below.
 - The cockpit is single user, the session is the whole authorization. Every
   POST carries a CSRF token. `@dc/http` sends the `X-CSRF-Token` header
   from `<meta name="csrf-token">`, server forms carry a hidden `csrf_token`.
+- The server validates every input itself: length, characters, count,
+  shape and every id against what it names. Checks in the browser
+  (`maxlength`, `required`, a script) are only a convenience, a hand built
+  request meets the same rules. A refusal is a clean 4xx or the normal
+  refusal flow (the form again, or a redirect with a flash) with a bounded
+  message, never a 500. A message quoting what a request sent cuts it, a
+  flash rides the session cookie and has to fit it.
 - The local unix socket (`internal/localapi`) is the credential for local
   processes. It lives in a directory only the owner can enter, there are
   no tokens. `--as <id>` names the calling assistant, it identifies but
@@ -174,7 +183,9 @@ templates plus ES modules.
   values go stale in an open tab. `data-no-pe` opts out.
 - **Forms**: The POST path equals the GET path that renders the form
   (pairs in `router.go`). Create forms open in `dc-form-modal` from the
-  same GET with `modal=1` and stay reachable as pages.
+  same GET with `modal=1` and stay reachable as pages. A dialog view that
+  changes while it stands, or leads to the next view, carries
+  `data-form-fixed`: the dialog keeps one height and its body scrolls.
 - **Custom Elements**: One per file in `static/js/components/`. Shared
   code lives in `static/js/dc/` and is imported as `@dc/<name>` (toast,
   dialog, contextmenu, http, dom, events, ctx, store, filter, rowdrag,
@@ -186,8 +197,13 @@ templates plus ES modules.
 - **Shared Modules**: There is one `escapeHtml` (`@dc/dom`), one context
   menu with row menus and long press (`@dc/contextmenu`), one row drag
   (`@dc/rowdrag`), one swipe (`@dc/swipe`), one token match (`@dc/filter`),
-  one popup door (`@dc/dialog`, SweetAlert for dialogs only) and toasts via
-  `@dc/toast` (Bootstrap toasts). New surfaces reuse these, never copy them.
+  one tag filter over a project list (`@dc/tags`), one popup door
+  (`@dc/dialog`, SweetAlert for dialogs only) and toasts via `@dc/toast`
+  (Bootstrap toasts). New surfaces reuse these, never copy them. A tag is
+  shown through `tags.gohtml`, wears its color as `dc-tag-<color>` and is
+  pointed at by its id everywhere (filters, links, `data-tag`, form fields).
+  The tag disc after a name stands in a `.dc-tagged` box, so the name
+  always wins.
 - **Lifecycle**: Set up in `connectedCallback` behind a re-init guard,
   tear down everything in `disconnectedCallback`. Use one `AbortController`
   per element for all listeners, close streams, disconnect observers,
@@ -211,9 +227,11 @@ templates plus ES modules.
   content. Each client pulls its own fragment or JSON and swaps it. It
   coalesces bursts behind one request in flight and keeps scroll, focus
   and unfolded state. On every connect, the server sends a snapshot of
-  all signals so a reconnect catches up. A ping arrives every 15s, the
-  client reconnects after 45s of silence. A pull that answers after the
-  page moved on is dropped.
+  all signals so a reconnect catches up. An element loads after its
+  markup, so the stream can bring its signal before it listens: once it
+  stands it asks `missedServerEvent(type)` and pulls once. A ping arrives
+  every 15s, the client reconnects after 45s of silence. A pull that
+  answers after the page moved on is dropped.
 - **Pointer and Touch**: Decide by input capability (`pointer: fine`,
   `any-pointer`), not by width. Autofocus only on a fine pointer. Keyboard
   opened menus mark their first row, pointer opened menus mark nothing.

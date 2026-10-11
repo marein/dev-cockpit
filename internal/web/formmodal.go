@@ -1,6 +1,8 @@
 package web
 
 import (
+	"errors"
+	"mime"
 	"net/http"
 
 	ginsessions "github.com/gin-contrib/sessions"
@@ -22,6 +24,27 @@ import (
 // inFormModal reports whether this request came from the create dialog.
 func inFormModal(c *gin.Context) bool {
 	return c.Query("modal") == "1"
+}
+
+// errNoForm refuses a post whose body is no form. Read as one it would be a
+// form without fields, which a save takes for a list emptied on purpose.
+var errNoForm = errors.New("The form could not be read, nothing was changed.")
+
+// readForm parses a posted form as a browser sends one, url encoded or
+// multipart, and refuses any other body.
+func readForm(c *gin.Context) error {
+	kind, _, _ := mime.ParseMediaType(c.GetHeader("Content-Type"))
+	switch kind {
+	case "application/x-www-form-urlencoded":
+		if c.Request.ParseForm() == nil {
+			return nil
+		}
+	case "multipart/form-data":
+		if c.Request.ParseMultipartForm(32<<20) == nil {
+			return nil
+		}
+	}
+	return errNoForm
 }
 
 // formRefused answers a form the server turned down. The dialog shows the

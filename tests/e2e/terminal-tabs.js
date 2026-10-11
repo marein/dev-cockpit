@@ -120,7 +120,9 @@ const { assert, sleep, BASE } = L;
 // the scroll position: app.js restores it in the pe:navigate/pe:form succeed
 // hook, which runs before the browser paints, so pe.js' scroll-to-top after the
 // swap never becomes visible and only the terminal's own cursor scrolling moves
-// the view. The switcher shortcut hint sits next to the refresh button in the
+// the view. The switcher's editor rows show a project's tags as one disc
+// with a slice per tag, and a tag's name finds them.
+// The switcher shortcut hint sits next to the refresh button in the
 // desktop attach footer (always Ctrl+Ctrl to open the switcher; standalone/PWA
 // also shows Ctrl+Tab to step between tabs, via a display-mode media query,
 // since browsers reserve Ctrl+Tab): always visible, no strip space. The + menu
@@ -1332,6 +1334,36 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await sleep(600);
       await page.keyboard.press("Escape");
       await page.waitForFunction(() => !document.querySelector("[data-form-modal].show"), null, { timeout: 6000 });
+    });
+
+    await run("switcher editor rows show a project's tags as one disc with a slice per tag, and a tag's name finds the row", async () => {
+      const names = Array.from({ length: 6 }, (_, i) => `sw${i}-${tag}`);
+      const setTags = async (list) => {
+        const token = await page.evaluate(() => document.querySelector('meta[name="csrf-token"]').content);
+        const res = await page.request.post(`${BASE}/projects/${project}/tags?modal=1`, {
+          data: new URLSearchParams([["csrf_token", token], ...list.map((name) => ["new", name])]).toString(),
+          headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+        });
+        assert(res.ok(), `the tags answered ${res.status()}`);
+      };
+      await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+      await setTags(names);
+      try {
+        await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+        assert((await L.waitUpgraded(page, ["terminal-tabs"], 8000)).length === 0, "terminal-tabs not upgraded");
+        await page.keyboard.press("Control");
+        await page.keyboard.press("Control");
+        await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+        await page.keyboard.type(names[4], { delay: 20 });
+        const row = `.terminal-switcher-item[data-switcher-section="editors"][data-switcher-url^="/projects/${project}/editor"]`;
+        await page.waitForSelector(row, { state: "visible", timeout: 4000 });
+        const pie = await page.$eval(row, (el) => ({ discs: el.querySelectorAll(".dc-tag-disc").length, slices: el.querySelectorAll(".dc-tag-disc > .dc-tag-slice").length, named: el.querySelector(".dc-tag-pie")?.getAttribute("aria-label") }));
+        assert(pie.discs === 1 && pie.slices === 6 && pie.named === `Tags: ${names.join(", ")}`, `the editor row shows ${JSON.stringify(pie)}`);
+        await page.keyboard.press("Escape");
+      } finally {
+        await setTags([]);
+        await L.removeTags(page, (name) => names.includes(name));
+      }
     });
 
     await run("the switcher reaches the assistant", async () => {

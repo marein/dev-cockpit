@@ -101,7 +101,19 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "The project row's menu",
-					Desc:  `The three dots <i class="ti ti-dots align-text-bottom" aria-hidden="true"></i> on a project row, a right click, or a held finger: open the project or its editor, start a coder or a shell, git and compose actions, delete.`,
+					Desc:  `The three dots <i class="ti ti-dots align-text-bottom" aria-hidden="true"></i> on a project row, a right click, or a held finger: open the project or its editor, start a coder or a shell, edit its tags, git and compose actions, delete.`,
+				},
+				{
+					Title: "Project tags",
+					Desc:  `The dashed chip after a row's tags, or <em>Edit tags</em> in its menu: the project's tags come first, the cross takes one off, then type to find or create a tag or tap another one. A tag's name holds A to Z, a to z, 0 to 9, - and _, at most 40, and is the same in any case. A new tag takes the color the fewest tags wear. A board row names its tags above its terminals, past eight they fold behind <em>+N</em>. The list column and the switchers show one small disc, a slice per tag in its color, its tooltip names them. A worktree carries no tags. A backup carries them in the Projects section.`,
+				},
+				{
+					Title: "Manage tags",
+					Desc:  `Settings &rarr; Projects &rarr; Tags, or <i class="ti ti-pencil align-text-bottom" aria-hidden="true"></i> at the end of the tag bar: every tag with its color, its name and its projects, a tap on the number shows them on the board. <em>Add tag</em> makes a new one, one save at most 20. A tag lives on its own, without any project, until <em>Remove</em> takes it away. Nothing changes before <em>Save</em>, the footer counts the changes. Another tag's name merges the two, the row says into which, the result keeps that tag's color. <em>Remove</em> takes a tag off every project, <em>Undo</em> keeps it, a save that removes asks first. Selected tags merge, take a color or go at once. A save over tags changed elsewhere meanwhile changes nothing.`,
+				},
+				{
+					Title: "Filter by tag",
+					Desc:  `A tap on a tag in the bar under the board's filter, or on a row's tag, shows only the main projects carrying it and leaves their worktrees folded, more tags narrow further. Each tag counts the projects left that carry it, one that would leave none is dimmed. Picked tags stand in the filter field with a cross each, the field counts what is left and its one <i class="ti ti-x align-text-bottom" aria-hidden="true"></i> clears text and tags. On a desktop the bar keeps one line, <em>+N more</em> lists every tag. The phone's list sheet keeps a filter of its own. The text filters and both switchers match a tag's name too, a worktree through its main project.`,
 				},
 				{
 					Title: "The terminal chips",

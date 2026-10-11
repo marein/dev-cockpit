@@ -1,6 +1,6 @@
 import { postForm, ensureOk, getText, getJSON, csrfHeaders } from "@dc/http";
 import { notifyError, showToast } from "@dc/toast";
-import { onServerEvent } from "@dc/events";
+import { missedServerEvent, onServerEvent } from "@dc/events";
 import { growTextarea, jumpTextEdge } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { resolveHostlessLinks } from "@dc/docker";
@@ -319,7 +319,11 @@ class Assistant extends HTMLElement {
     // A tick later: under a boosted navigation the element connects before
     // pe.js pushes the new address and scrolls its hash target, and the
     // landing has to read that address and come after that scroll.
-    window.setTimeout(() => { if (this.isConnected) this.landOnHash(); }, 0);
+    window.setTimeout(() => {
+      if (!this.isConnected) return;
+      this.landOnHash();
+      if (missedServerEvent("assistant")) void this.syncFromServer();
+    }, 0);
   }
 
   readingPlace() {

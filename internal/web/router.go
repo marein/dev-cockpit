@@ -228,6 +228,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/editor/lsp", s.handleSettingsEditorLSPSave)
 	auth.GET("/settings/projects/worktrees", s.handleSettingsProjectsWorktrees)
 	auth.POST("/settings/projects/worktrees", s.handleSettingsProjectsWorktreesSave)
+	auth.GET(settingsTagsPath, s.handleSettingsProjectsTags)
+	auth.POST(settingsTagsPath, s.handleSettingsProjectsTagsSave)
 	auth.GET("/settings/notifications", s.handleSettingsNotifications)
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
 	// The assistant's settings sit behind a tab like the editor's, so the page
@@ -353,6 +355,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// and its reads must not count as somebody working in that project.
 	auth.GET("/projects/:name/branches", s.handleProjectBranches)
 	auth.POST("/projects/:name/fetch", s.handleProjectFetch)
+	auth.GET("/projects/:name/tags", s.handleProjectTags)
+	auth.POST("/projects/:name/tags", s.handleProjectTagsSave)
 	auth.GET("/projects/:name/docker", s.handleProjectDocker)
 	auth.POST("/projects/:name/docker/compose", s.handleDockerCompose)
 	auth.POST("/projects/:name/docker/logs", s.handleDockerComposeLogs)

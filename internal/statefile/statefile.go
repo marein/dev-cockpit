@@ -23,24 +23,34 @@ import (
 // Load unmarshals path into v. A missing or empty file leaves v untouched,
 // a corrupt file is quarantined and logged.
 func Load(path string, v any) {
+	if err := Read(path, v); err != nil {
+		log.Printf("statefile: %v", err)
+	}
+}
+
+// Read is Load for a caller that writes back what it read. It reports a file
+// that is there but could not be read, so a read, modify and write never
+// replaces state it did not see. A missing or empty file is no error, and a
+// corrupt one is quarantined like Load does and reads as absent.
+func Read(path string, v any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			log.Printf("statefile: read %s: %v", path, err)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
 		}
-		return
+		return fmt.Errorf("read %s: %w", path, err)
 	}
 	if len(data) == 0 {
-		return
+		return nil
 	}
 	if err := json.Unmarshal(data, v); err != nil {
 		broken := path + ".broken"
 		if renameErr := os.Rename(path, broken); renameErr != nil {
-			log.Printf("statefile: %s is corrupt (%v) and could not be quarantined: %v", path, err, renameErr)
-			return
+			return fmt.Errorf("%s is corrupt (%v) and could not be quarantined: %w", path, err, renameErr)
 		}
 		log.Printf("statefile: %s is corrupt (%v), quarantined as %s", path, err, broken)
 	}
+	return nil
 }
 
 // Save writes v to path atomically with the given file mode and logs a

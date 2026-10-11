@@ -2,19 +2,21 @@ import { postForm } from "@dc/http";
 import { closeMenu } from "@dc/contextmenu";
 import { errorText, notifySuccess } from "@dc/toast";
 
-// One dialog for the forms that make something, so starting a coder or adding
-// a trigger never leaves the page you are on. It fetches the very page a link
-// points at, with modal=1, and the server answers the same form alone; the marker rides the form's
-// action back out through the POST, so the path a form posts to is still the
-// path that rendered it. The pages stay pages: a deep link, a login with a
-// return and a browser without JS all still get them, and so does this dialog
-// whenever anything about the fetch is not what it expects.
+// One dialog for the forms that make something and for the tags, so starting
+// a coder or adding a trigger never leaves the page you are on. It
+// fetches the very page a link points at, with modal=1, and the server answers
+// the same form alone; the marker rides the form's action back out through the
+// POST, so the path a form posts to is still the path that rendered it. The
+// pages stay pages: a deep link, a login with a return and a browser without
+// JS all still get them, and so does this dialog whenever anything about the
+// fetch is not what it expects.
 //
 // A Bootstrap modal, deliberately not SweetAlert, like the editor's line
 // comment dialog: this is server rendered markup with selects, custom elements
 // and a POST target of its own, and the app's pe.js glue already closes open
 // modals and drops their backdrop on every boosted navigation.
 const PATHS = ["/coders/new", "/shells/new", "/projects/new", "/assistants/triggers"];
+const PATTERNS = [/^\/projects\/[^/]+\/tags$/];
 
 // A touch keyboard must not jump up over the dialog the moment it opens, so
 // only a fine pointer gets the field focused, the same rule the editor's
@@ -31,7 +33,8 @@ export function opensAsModal(url) {
   } catch {
     return false;
   }
-  return target.origin === window.location.origin && PATHS.includes(target.pathname);
+  return target.origin === window.location.origin
+    && (PATHS.includes(target.pathname) || PATTERNS.some((pattern) => pattern.test(target.pathname)));
 }
 
 // openFormModal opens the create dialog for a URL and reports whether it took
@@ -103,7 +106,8 @@ class FormModal extends HTMLElement {
   // openForm fetches a create form and shows it. Called again while the dialog
   // stands (the project form's choice select reshapes the form and asks the
   // server for the new shape) it swaps the form in place and the dialog keeps
-  // the trigger it was opened from.
+  // the trigger it was opened from. A form that changes its own content while
+  // it stands keeps one height (data-form-fixed), so the dialog never jumps.
   async openForm(url, trigger = null) {
     if (!window.bootstrap || this.loading) return;
     this.loading = true;
@@ -136,8 +140,9 @@ class FormModal extends HTMLElement {
       return;
     }
     if (this.titleEl) this.titleEl.textContent = form.dataset.formTitle || "";
-    this.modal.querySelector(".modal-dialog")
-      ?.classList.toggle("modal-dialog-scrollable", "formScrollable" in form.dataset);
+    const dialog = this.modal.querySelector(".modal-dialog");
+    dialog?.classList.toggle("modal-dialog-scrollable", "formScrollable" in form.dataset);
+    dialog?.classList.toggle("dc-form-modal-fixed", "formFixed" in form.dataset);
     await window.app?.loadElements?.(this.content);
     if (standing) {
       this.focusFirst(form);

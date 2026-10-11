@@ -36,16 +36,16 @@
   <a href="/projects/new" class="btn btn-icon btn-ghost-secondary" aria-label="Create project" title="Create project"><i class="ti ti-plus" aria-hidden="true"></i></a>
 </div>
   </div>
-{{template "ctx_filter.gohtml" "Filter projects…"}}
+{{template "ctx_filter.gohtml" (dict "Placeholder" "Filter projects…" "Tags" .TagsInUse "TagBar" true)}}
   <div class="dc-ctx-body">
 <dc-project-index class="list-group list-group-flush dc-rows" role="navigation" aria-label="Project index" data-project-index data-ctx-list="projects">
   {{range .Rows}}
   {{$name := .Name}}{{$editorURL := print "/projects/" .Name "/editor"}}
-  <a class="list-group-item list-group-item-action{{if .Grouped}} is-nested{{end}}" href="/projects#project-{{.Name}}" data-dc-focus="work" data-index-project="{{.Name}}" data-index-path="{{.Path}}" data-index-active="{{if .Active}}true{{else}}false{{end}}" data-index-used="{{.LastUsedUnix}}"{{if .Grouped}} data-index-worktree-of="{{.GitWorktreeOf}}"{{end}}
+  <a class="list-group-item list-group-item-action{{if .Grouped}} is-nested{{end}}" href="/projects#project-{{.Name}}" data-dc-focus="work" data-index-project="{{.Name}}" data-index-path="{{.Path}}" data-index-active="{{if .Active}}true{{else}}false{{end}}" data-index-used="{{.LastUsedUnix}}"{{if .Grouped}} data-index-worktree-of="{{.GitWorktreeOf}}"{{end}}{{with .SearchTags}} data-index-tags="{{join . " "}}"{{end}}{{if not .GitWorktree}} data-index-tags-url="/projects/{{.Name}}/tags"{{end}}
      {{- if .GitRepo}} data-git-project="{{.Name}}"{{if not .GitWorktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{$editorURL}}?view=commit" data-git-compare="{{$editorURL}}?view=compare"{{end}}
      {{- with index $.Docker .Name}}{{if .Stacks}} data-docker-project="{{$name}}"{{end}}{{end}}
      {{- with .DeleteNote}} data-index-delete-note="{{.}}"{{end}}>
-    {{if .Grouped}}<i class="ti ti-git-fork" aria-hidden="true"></i>{{end}}<span class="dc-mono dc-trunc flex-fill">{{.Name}}</span>
+    {{if .Grouped}}<i class="ti ti-git-fork" aria-hidden="true"></i>{{end}}{{if .Tags}}<span class="dc-tagged flex-fill"><span class="dc-mono dc-trunc">{{.Name}}</span>{{template "tag_pie.gohtml" .Tags}}</span>{{else}}<span class="dc-mono dc-trunc flex-fill">{{.Name}}</span>{{end}}
     {{if .ActiveRefs}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}" data-notify-targets="{{.TerminalIDs}}" title="{{.CountTitle}}">{{len .ActiveRefs}}{{template "news_dot.gohtml"}}</span>{{end}}
     {{if .DockerShown}}<span class="dc-term-icon{{with .DockerTone}} {{.}}{{end}}{{if .DockerWorking}} dc-docker-working{{end}}" title="{{.DockerTitle}}"><i class="ti ti-brand-docker" aria-hidden="true"></i></span>{{end}}
     {{if not .ActiveRefs}}{{template "news_dot.gohtml" (dict "Hidden" (not .HasNews) "Scope" true "Projects" (print "project-" .Name) "Label" "Something new in this project")}}{{end}}

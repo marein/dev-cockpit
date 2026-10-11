@@ -12,7 +12,7 @@
       {{template "terminal_tabs_new.gohtml" .}}
     </div>
   </div>
-  {{template "ctx_filter.gohtml" "Filter terminals…"}}
+  {{template "ctx_filter.gohtml" (dict "Placeholder" "Filter terminals…")}}
   <div class="dc-ctx-body">
     {{template "terminal_tabs_strip.gohtml" .}}
   </div>

@@ -1,0 +1,292 @@
+.dc-tag, .dc-tag-dot, .dc-tag-slice { --dc-tag: var(--tblr-secondary); }
+.dc-tag-blue { --dc-tag: var(--tblr-blue); }
+.dc-tag-azure { --dc-tag: var(--tblr-azure); }
+.dc-tag-indigo { --dc-tag: var(--tblr-indigo); }
+.dc-tag-purple { --dc-tag: var(--tblr-purple); }
+.dc-tag-pink { --dc-tag: var(--tblr-pink); }
+.dc-tag-red { --dc-tag: var(--tblr-red); }
+.dc-tag-orange { --dc-tag: var(--tblr-orange); }
+.dc-tag-yellow { --dc-tag: var(--tblr-yellow); }
+.dc-tag-lime { --dc-tag: var(--tblr-lime); }
+.dc-tag-green { --dc-tag: var(--tblr-green); }
+.dc-tag-teal { --dc-tag: var(--tblr-teal); }
+.dc-tag-cyan { --dc-tag: var(--tblr-cyan); }
+
+/* The hue alone carries the tag. The text mixes it into the theme's body
+   color, so it reads on the tint in light and dark alike, where a bright hue
+   such as yellow could not stand as text on its own. */
+.dc-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 1.125rem;
+  padding: 0 0.375rem;
+  border: 1px solid color-mix(in oklab, var(--dc-tag) 34%, transparent);
+  border-radius: var(--tblr-border-radius-pill);
+  background: color-mix(in oklab, var(--dc-tag) 14%, transparent);
+  box-shadow: inset 0 0 0 1px transparent;
+  color: color-mix(in oklab, var(--dc-tag) 42%, var(--tblr-body-color));
+  font: inherit;
+  font-family: var(--tblr-font-sans-serif);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-decoration: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.dc-tag::before {
+  content: "";
+  flex: none;
+  width: 0.625rem;
+  height: 0.5625rem;
+  margin-inline: -0.125rem;
+  background: var(--dc-tag);
+  -webkit-mask: radial-gradient(circle, black 0.1875rem, transparent calc(0.1875rem + 0.5px)) center / 100% 100% no-repeat;
+  mask: radial-gradient(circle, black 0.1875rem, transparent calc(0.1875rem + 0.5px)) center / 100% 100% no-repeat;
+}
+/* A line box centers the font's ascent and descent, which in effect centers
+   the capitals and leaves lowercase letters low in the chip, while centering
+   the x-height leaves a name with ascenders high. The name stands halfway:
+   trimmed to the x-height and the baseline, which the chip centers, then
+   lowered by half the way to centering the capitals through its margins, not
+   a transform, which a browser draws a pixel apart as its layers change
+   while a page loads or a tag is picked. Its padding gives the
+   ascenders and descenders room inside its own box, the negative margins
+   keep it out of the layout, so a browser that paints the name as a layer
+   of its own clipped to that box still shows the letters whole. */
+.dc-tag-name {
+  overflow-x: clip;
+  overflow-y: visible;
+  text-overflow: ellipsis;
+}
+@supports (text-box: trim-both ex alphabetic) {
+  .dc-tag-name {
+    padding-block: 0.35em;
+    margin-block: calc(-0.35em + (1cap - 1ex) / 2) -0.35em;
+    text-box: trim-both ex alphabetic;
+  }
+}
+button.dc-tag, a.dc-tag { cursor: pointer; }
+a.dc-tag:hover, .dc-tag-bar > .btn-icon:hover { text-decoration: none; }
+button.dc-tag:focus-visible, a.dc-tag:focus-visible, .dc-tag-x:focus-visible, .dc-tag-swatch:focus-visible {
+  outline: 2px solid var(--tblr-primary);
+  outline-offset: 2px;
+}
+.dc-tag[aria-pressed="true"] {
+  border-color: var(--dc-tag);
+  background: color-mix(in oklab, var(--dc-tag) 32%, transparent);
+  color: var(--tblr-body-color);
+  box-shadow: inset 0 0 0 1px var(--dc-tag);
+}
+.dc-tag[aria-pressed="true"]::before {
+  background: var(--tblr-body-color);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 9'%3E%3Cpath d='M1.5 4.8 4 7.3 8.6 1.6' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 9'%3E%3Cpath d='M1.5 4.8 4 7.3 8.6 1.6' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+}
+.dc-tag-count {
+  min-width: calc(var(--dc-tag-digits, 1) * 1ch + 0.5rem);
+  padding: 0 0.25rem;
+  border-radius: var(--tblr-border-radius-pill);
+  background: color-mix(in oklab, var(--dc-tag) 20%, transparent);
+  color: var(--tblr-body-color);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.dc-tag[data-tag-none], [data-tag-menu-row][data-tag-none] { opacity: 0.45; }
+button.dc-tag:disabled { cursor: default; }
+
+.dc-tag-add {
+  --dc-tag: var(--tblr-secondary);
+  border-style: dashed;
+  background: transparent;
+  color: var(--tblr-secondary);
+}
+.dc-tag-add::before { content: none; }
+.dc-tag-add .ti, .dc-tag .ti { font-size: 0.75rem; }
+.project-tags { gap: 0.25rem; }
+
+.dc-tagged { display: flex; align-items: center; min-width: 0; }
+.dc-tagged > :first-child { flex: 0 1 auto; min-width: 0; }
+/* The disc stands at the end of the room the name leaves, after a first
+   item of no width, so a room too narrow for it wraps it away whole. */
+.dc-tag-pie {
+  display: flex;
+  flex: 1 1 0;
+  width: 0;
+  flex-direction: row-reverse;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  height: 0.875rem;
+  overflow: hidden;
+}
+.dc-tag-pie::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0.875rem;
+}
+.dc-tag-disc {
+  position: relative;
+  flex: none;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-left: 0.375rem;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.dc-tag-slice {
+  position: absolute;
+  inset: 0;
+  background: conic-gradient(from calc(var(--dc-tag-i) * 1turn / var(--dc-tag-n)), var(--dc-tag) 0turn calc(1turn / var(--dc-tag-n)), transparent 0turn);
+}
+.dc-tag-dot {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+  background: var(--dc-tag);
+}
+
+.dc-tag-bar-tags { gap: 0.25rem; padding-block: 0.125rem; scrollbar-width: none; }
+.dc-tag-bar > .btn-icon { --tblr-btn-icon-size: 1rem; width: 1.5rem; height: 1.5rem; min-height: 1.5rem; padding: 0; }
+.dc-tag-bar-tags::-webkit-scrollbar { display: none; }
+.dc-tag-bar > *, .dc-tag-bar-tags > * { flex: none; }
+.dc-work-tags { padding: 2px 12px; }
+.dc-tag-more { gap: 0.125rem; }
+.dc-tag-menu { width: 18rem; padding: 0; overflow: hidden; }
+.dc-tag-menu-list { max-height: min(60vh, 24rem); overflow-y: auto; padding-block: 0.25rem; }
+
+/* The picked tags inside a filter field, before its text. The field's side
+   flows after the text then, so a count of any width has its room. */
+.dc-filter-flow .dc-filter-side { position: static; flex: none; }
+.dc-filter-flow .dc-filter-input { padding-right: 0; }
+.dc-filter-tags {
+  display: flex;
+  flex: 0 1 auto;
+  gap: 0.25rem;
+  min-width: 0;
+  max-width: 60%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.dc-filter-tags::-webkit-scrollbar { display: none; }
+.dc-filter-tags > .dc-tag { flex: none; }
+
+.dc-tag-edit { padding-right: 0; }
+.dc-tag-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+.dc-tag-offer { border-style: dashed; background: transparent; }
+.dc-tag-offer[data-tag-next] { border-style: solid; box-shadow: inset 0 0 0 1px var(--dc-tag); }
+.dc-tag-swatch {
+  display: inline-block;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--dc-tag);
+  cursor: pointer;
+}
+.dc-tag-swatch[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--tblr-bg-surface), 0 0 0 4px var(--dc-tag);
+}
+
+/* Settings › Projects › Tags: one row per tag, the name field next to its
+   color, the projects carrying it and its removal, a merge line under it.
+   On a phone the count moves under the name. */
+.dc-tags-filter { padding: 0.375rem 0.75rem; border: var(--tblr-border-width) solid var(--tblr-border-color); background: var(--tblr-bg-forms); }
+.dc-tags-head {
+  position: sticky;
+  top: calc(-1 * var(--dc-work-pad, 16px));
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.375rem 1.25rem;
+  border-bottom: var(--tblr-border-width) solid var(--tblr-border-color);
+  border-radius: var(--tblr-card-border-radius) var(--tblr-card-border-radius) 0 0;
+  background: var(--tblr-bg-surface);
+}
+.dc-tags-head.is-selecting { background: var(--tblr-bg-surface-secondary); border-radius: 0; }
+.dc-tags-bulk { display: flex; gap: 0.25rem; margin-left: auto; }
+.dc-tag-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 22rem) 1fr auto auto;
+  grid-template-areas: "check color name . count act" ". . hint hint hint hint";
+  align-items: center;
+  column-gap: 0.75rem;
+}
+.dc-tag-row-check { grid-area: check; }
+.dc-tag-row-color { grid-area: color; --tblr-btn-padding-x: 0.625rem; }
+.dc-tag-row-name { grid-area: name; }
+.dc-tag-row-count, .dc-tag-row-gone { grid-area: count; }
+.dc-tag-row-act { grid-area: act; }
+.dc-tag-row-word { margin-left: 0.25rem; }
+.dc-tag-row-hint { grid-area: hint; margin-top: 0.375rem; color: var(--tblr-warning); }
+.dc-tag-row-hint .dc-tag { vertical-align: middle; }
+.dc-tag-row-gone, .dc-tag-row-undo, .dc-tag-row.is-removed .dc-tag-row-remove { display: none; }
+.dc-tag-row.is-removed .dc-tag-row-undo { display: inline-flex; }
+.dc-tag-row.is-removed .dc-tag-row-name { text-decoration: line-through; color: var(--tblr-secondary); background: var(--tblr-bg-surface-secondary); }
+.dc-tag-row.is-removed .dc-tag-row-color { opacity: 0.45; }
+.dc-tag-row.is-merging { background: color-mix(in oklab, var(--tblr-primary) 6%, var(--tblr-bg-surface)); }
+@media (max-width: 575.98px) {
+  .dc-tag-row {
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-areas: "check color name act" ". . count ." ". . hint hint";
+    row-gap: 0.25rem;
+  }
+  .dc-tag-row-word { display: none; }
+  .dc-tag-row.is-removed .dc-tag-row-count { display: none; }
+  .dc-tag-row.is-removed .dc-tag-row-gone { display: inline; }
+  .dc-tags-head { gap: 0.25rem; }
+  .dc-tags-bulk { gap: 0; }
+  .dc-tags-bulk .btn { --tblr-btn-padding-x: 0.375rem; }
+}
+.dc-tag-palette { position: fixed; z-index: 1070; padding: 0.5rem; }
+.dc-tag-palette.show { display: grid; grid-template-columns: repeat(6, auto); gap: 0.5rem; }
+.dc-tags-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem var(--dc-work-pad, 16px);
+  border-top: var(--tblr-border-width) solid var(--tblr-border-color);
+  background: var(--tblr-bg-surface);
+}
+.dc-tags-merge-option { cursor: pointer; }
+
+@media (hover: hover) {
+  button.dc-tag:not([aria-pressed="true"]):not(:disabled):hover, a.dc-tag:hover, .dc-tag-x:hover { background: color-mix(in oklab, var(--dc-tag) 24%, transparent); }
+}
+@media (pointer: coarse) {
+  .dc-tag { min-height: 1.5rem; padding-inline: 0.5rem; }
+  .dc-tag-edit { padding-right: 0; }
+  button.dc-tag, a.dc-tag, .dc-tag-x { position: relative; }
+  button.dc-tag::after, a.dc-tag::after { content: ""; position: absolute; inset: calc(-0.25rem - 1px) -1px; }
+  .dc-tag-x { width: 1.5rem; height: 1.5rem; }
+  .dc-tag-x::after { content: ""; position: absolute; inset: -0.25rem; }
+  .dc-tag-bar-tags, .dc-filter-tags { padding-block: 0.25rem; }
+  .dc-filter-tags { margin-block: -0.25rem; }
+  .dc-tag-bar > .btn-icon { width: 2rem; height: 2rem; }
+  .dc-work-tags { padding-block: 0; }
+  .project-tags { row-gap: 0.5rem; }
+  .dc-tag-swatch { width: 2.25rem; height: 2.25rem; }
+}

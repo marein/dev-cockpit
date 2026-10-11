@@ -227,6 +227,69 @@ async function stopSession(page, sessionUrl) {
   await closeTerminal(page, sessionUrl, 'form[action$="/stop"] button[type="submit"], form[action$="/stop"] button', new URL(sessionUrl).pathname + "/stop");
 }
 
+// saveTagSettings saves Settings › Projects › Tags the way another page
+// would: it loads the page's fields, lets change edit them as [name, value]
+// pairs, and posts them. A save the page refuses answers 200 and fails here.
+async function saveTagSettings(page, change) {
+  const html = await (await page.request.get(`${BASE}/settings/projects/tags`)).text();
+  const token = html.match(/name="csrf-token" content="([^"]+)"/)[1];
+  const text = (raw) => raw.replace(/&#34;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  const fields = [["csrf_token", token]];
+  for (const m of html.replace(/<template[\s\S]*?<\/template>/g, "").matchAll(/<input type="(?:hidden|text)"(?: class="[^"]*")? name="([^"]*)" value="([^"]*)"/g)) {
+    if (m[1] !== "csrf_token") fields.push([text(m[1]), text(m[2])]);
+  }
+  change(fields);
+  const res = await page.request.post(`${BASE}/settings/projects/tags`, {
+    data: new URLSearchParams(fields).toString(),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    maxRedirects: 0,
+  });
+  assert(res.status() === 303, `the tags settings answered ${res.status()}`);
+}
+
+// setField sets the value of a form field among [name, value] pairs.
+function setField(fields, name, value) {
+  const field = fields.find((f) => f[0] === name);
+  assert(field, `no field ${name}`);
+  field[1] = value;
+}
+
+// reach reports whether a thumb at each [dx, dy] off the middle of an
+// element still lands on it. It brings the element to the middle of its
+// scroller first: a point outside the viewport hits nothing, and other
+// projects on the board push a runner's row below the fold.
+function reach(page, selector, offsets) {
+  return page.$eval(selector, async (el, offs) => {
+    el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    const box = el.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    return offs.every(([dx, dy]) => {
+      const hit = document.elementFromPoint(x + dx, y + dy);
+      return hit === el || el.contains(hit);
+    });
+  }, offsets);
+}
+
+// editorReady waits until the editor has wired its controls, which it does
+// when its init resolves and leaves its teardown on the element.
+function editorReady(page) {
+  return page.waitForFunction(() => typeof document.querySelector("dc-editor")?.teardown === "function", null, { timeout: 15000 });
+}
+
+// removeTags removes, through Settings › Projects › Tags, every tag that
+// match(name, id) picks by the name and id the page loaded it with. Tags
+// outlive their projects, so deleting its projects leaves a runner's tags.
+async function removeTags(page, match) {
+  await saveTagSettings(page, (fields) => {
+    for (const [name, value] of fields.filter(([n]) => n.startsWith("was:"))) {
+      const id = name.slice("was:".length);
+      if (match(value, id)) setField(fields, `remove:${id}`, "1");
+    }
+  });
+}
+
 function makeRunner() {
   const results = [];
   async function run(name, fn, { soft = false } = {}) {
@@ -330,6 +393,7 @@ async function runFeature(title, body) {
 module.exports = {
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
   login, createProject, projectPath, deleteProject, dismissUpdate, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
+  saveTagSettings, setField, removeTags, reach, editorReady,
   makeRunner, report, assert,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

@@ -78,9 +78,12 @@ type EditorProject struct {
 	WorktreeOf   string
 	WorktreeMain string
 	// Search is what the palette's query is matched against: the project's
-	// name, its repository and its branch in one line, so "dev htmx" lands on
-	// the one worktree of dev-cockpit that stands on the htmx branch.
+	// name, its repository, its branch and its tags in one line, so "dev
+	// htmx" lands on the one worktree of dev-cockpit that stands on the htmx
+	// branch.
 	Search string
+	// Tags are the project's tags, a worktree carries none.
+	Tags []project.Tag
 }
 
 // EditorTerminalsData feeds the editor's terminal panel fragment: the live

@@ -1,6 +1,7 @@
 import * as projectActions from "@dc/project-actions";
 import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
 import { confirm } from "@dc/dialog";
+import { escapeHtml } from "@dc/dom";
 import { ensureOk, landingURL, postForm } from "@dc/http";
 import { notifyError } from "@dc/toast";
 
@@ -58,8 +59,11 @@ class ProjectIndex extends HTMLElement {
       { label: "Open editor", icon: "ti-code", href: `/projects/${project}/editor` },
       { label: "New coder", icon: "ti-robot", href: `/coders/new?project=${project}&return=${back}` },
       { label: "New shell", icon: "ti-terminal-2", action: () => void this.startShell(row) },
-      { divider: true },
     ];
+    if (row.dataset.indexTagsUrl) {
+      items.push({ label: "Edit tags", icon: "ti-tags", href: row.dataset.indexTagsUrl });
+    }
+    items.push({ divider: true });
     if (row.dataset.gitProject) {
       items.push(...projectActions.gitMenuItems(row, { icon: row.querySelector("[data-index-menu] .ti") }));
     }
@@ -94,7 +98,7 @@ class ProjectIndex extends HTMLElement {
   async deleteProject(row) {
     const name = row.dataset.indexProject || "";
     const ok = await confirm({
-      title: `Delete project "${name}"?`,
+      title: `Delete project "${escapeHtml(name)}"?`,
       text: row.dataset.indexDeleteNote,
       confirmText: "Delete",
     });

@@ -1,0 +1,57 @@
+{{/* A tag wears its color as dc-tag-<color>, one of project.TagColors and
+     never anything a request sent. data-tag carries the tag's id on every
+     place a row shows it, which is what the tag filter (@dc/tags) asks a row
+     for. */}}
+
+{{/* A board row's tags as named chips in a line of their own, each a toggle
+     of the tag filter. Past a few the line folds behind +N like the session
+     chips (project-list.js). It ends with the way into the project's tags
+     dialog. A worktree carries no tags and shows no line. */}}
+{{define "tag_line.gohtml"}}
+<div class="project-chips project-tags mt-2" data-tag-line>
+  <span class="project-chip-fold" data-chip-fold="tags">{{range .Tags}}<button type="button" class="dc-tag dc-tag-{{.Color}}" data-tag="{{.ID}}" data-tag-toggle="{{.ID}}" aria-pressed="false" title="Show only the projects tagged {{.Name}}"><span class="dc-tag-name">{{.Name}}</span></button>{{end}}</span>
+  <a href="/projects/{{.Project}}/tags" class="dc-tag dc-tag-add" data-project-tags-edit aria-label="Tags of project {{.Project}}" title="Tags of {{.Project}}">{{if .Tags}}<i class="ti ti-pencil" aria-hidden="true"></i>{{else}}<i class="ti ti-plus" aria-hidden="true"></i><span class="dc-tag-name">Tag</span>{{end}}</a>
+</div>
+{{end}}
+
+{{/* The tag filter over a project list: every tag in use with the number of
+     projects carrying it among the ones the filter leaves, a tag that would
+     leave none dimmed. The chips never move or change their size when one
+     is picked, a count keeps the width of the total it starts from, and the
+     picked ones stand in the filter field as well
+     (tag_filter_picked.gohtml). On a phone the line scrolls. On a desktop it
+     keeps one line, the tags that do not fit stand behind +N more, which
+     lists every tag with a filter of its own. */}}
+{{define "tag_bar.gohtml"}}
+<div class="dc-tag-bar d-flex align-items-center gap-1{{with .Class}} {{.}}{{end}}" data-tag-bar role="group" aria-label="Filter by tag"{{if not .Tags}} hidden{{end}}>
+  <div class="dc-tag-bar-tags d-flex flex-nowrap align-items-center overflow-x-auto flex-fill min-w-0" data-tag-bar-tags>
+    {{range .Tags}}<button type="button" class="dc-tag dc-tag-{{.Color}}" data-tag-toggle="{{.ID}}" data-tag-total="{{.Projects}}" aria-pressed="false" title="Show only the projects tagged {{.Name}}"><span class="dc-tag-name">{{.Name}}</span><span class="dc-tag-count" style="--dc-tag-digits: {{len (print .Projects)}}" aria-label="{{.Projects}} {{if eq .Projects 1}}project{{else}}projects{{end}}" data-tag-count>{{.Projects}}</span></button>{{end}}
+  </div>
+  <div class="dropdown flex-none" data-tag-more hidden>
+    <button type="button" class="dc-tag dc-tag-add dc-tag-more" data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" data-tag-more-toggle><span data-tag-more-label></span><i class="ti ti-chevron-down" aria-hidden="true"></i></button>
+    <div class="dropdown-menu dropdown-menu-end dc-tag-menu">
+      <div class="editor-sheet-filter">
+        <i class="ti ti-search" aria-hidden="true"></i>
+        <input type="text" class="editor-sheet-filter-input" data-tag-menu-filter placeholder="Filter tags…" aria-label="Filter the tags" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
+      </div>
+      <div class="dc-tag-menu-list" data-tag-menu-list>
+        {{range .Tags}}<label class="dropdown-item d-flex align-items-center gap-2" data-tag-menu-row="{{.ID}}" data-tag-menu-name="{{.Name}}"><input type="checkbox" class="form-check-input m-0" data-tag-check="{{.ID}}"><span class="dc-tag dc-tag-{{.Color}}"><span class="dc-tag-name">{{.Name}}</span><span class="dc-tag-count" aria-label="{{.Projects}} {{if eq .Projects 1}}project{{else}}projects{{end}}" data-tag-count>{{.Projects}}</span></span></label>{{end}}
+        <div class="dropdown-item-text text-secondary small" data-tag-menu-none hidden>No tag matches.</div>
+      </div>
+    </div>
+  </div>
+  <a href="/settings/projects/tags" class="btn btn-sm btn-icon btn-ghost-secondary" data-tags-manage aria-label="Manage tags" title="Manage tags"><i class="ti ti-pencil" aria-hidden="true"></i></a>
+</div>
+{{end}}
+
+{{/* The picked tags inside a filter field, before its text, each with its
+     own cross. The script fills them from the template, the field's single
+     clear takes them along with the text. */}}
+{{define "tag_filter_picked.gohtml"}}<span class="dc-filter-tags" data-tag-picked hidden></span><template data-tag-picked-template><button type="button" class="dc-tag" data-tag-unpick aria-pressed="true"><span class="dc-tag-name"></span><i class="ti ti-x" aria-hidden="true"></i></button></template>{{end}}
+
+{{/* A row's tags as one disc after a name, a slice per tag in its color,
+     named for a tooltip and a screen reader, as wide for ten tags as for one.
+     It stands in a .dc-tagged box whose first child is the name: the name
+     takes the width it needs first, the disc only what is left, and gives
+     way whole, so a name never truncates more than it would without tags. */}}
+{{define "tag_pie.gohtml"}}{{if .}}<span class="dc-tag-pie" role="img" aria-label="Tags: {{range $i, $t := .}}{{if $i}}, {{end}}{{$t.Name}}{{end}}" title="{{range $i, $t := .}}{{if $i}}, {{end}}{{$t.Name}}{{end}}"><span class="dc-tag-disc" style="--dc-tag-n: {{len .}}">{{range $i, $t := .}}<span class="dc-tag-slice dc-tag-{{$t.Color}}" data-tag="{{$t.ID}}" style="--dc-tag-i: {{$i}}"></span>{{end}}</span></span>{{end}}{{end}}

@@ -2,9 +2,7 @@
 {{template "app_start.gohtml" .}}
 {{template "settings_ctx.gohtml" .}}
 {{template "work_start.gohtml" .}}
-<nav class="nav nav-bordered dc-work-tabs" aria-label="Sections">
-  <a class="nav-link active" href="/settings/projects/worktrees"><i class="ti ti-git-fork me-1 dc-hide-xs"></i>Worktrees</a>
-</nav>
+{{template "settings_projects_tabs.gohtml" "worktrees"}}
 {{template "work_body.gohtml" .}}
 <div class="dc-narrow">
 <form method="post" action="/settings/projects/worktrees" id="settings-projects-worktrees">
@@ -16,4 +14,11 @@
 </form>
 </div>
 {{template "app_end.gohtml" .}}
+{{end}}
+
+{{define "settings_projects_tabs.gohtml"}}
+<nav class="nav nav-bordered dc-work-tabs" aria-label="Sections">
+  <a class="nav-link{{if eq . "worktrees"}} active{{end}}" href="/settings/projects/worktrees"><i class="ti ti-git-fork me-1 dc-hide-xs"></i>Worktrees</a>
+  <a class="nav-link{{if eq . "tags"}} active{{end}}" href="/settings/projects/tags"><i class="ti ti-tag me-1 dc-hide-xs"></i>Tags</a>
+</nav>
 {{end}}

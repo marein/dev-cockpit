@@ -2,8 +2,8 @@ import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import * as projectActions from "@dc/project-actions";
 import { confirm } from "@dc/dialog";
-import { syncAnimations } from "@dc/dom";
-import { onServerEvent } from "@dc/events";
+import { escapeHtml, syncAnimations } from "@dc/dom";
+import { missedServerEvent, onServerEvent } from "@dc/events";
 import { matchesTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
 import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
@@ -11,39 +11,56 @@ import { ensureOk, postForm } from "@dc/http";
 import { inactiveCoderRenameItem, renameCoder, renameShell } from "@dc/rename";
 import { notifyError, notifySuccess } from "@dc/toast";
 import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
+import { narrow, swapBar, tagFilter } from "@dc/tags";
 
 const FILTER_KEY = "dc-project-filter";
+const TAGS_KEY = "dc-project-tag-filter";
 const GROUPS_KEY = "dc-project-worktrees-open";
 const CHIP_LIMIT = 8;
 const FLASH_MS = 1600;
+// tagLineShape is what a row's tag line shows, apart from what the page did to
+// it since, the fold and the pressed tags.
+function tagLineShape(line) {
+  const chips = Array.from(line.querySelectorAll("[data-tag-toggle]"), (chip) => `${chip.dataset.tagToggle}:${chip.className.replace(/\s*d-none/, "")}:${chip.textContent}`);
+  return `${chips.join("|")}|${line.querySelector("[data-project-tags-edit]")?.outerHTML}`;
+}
 function filterHaystack(card) {
-  const main = card.dataset.projectWorktreeOf || "";
-  return main ? `${card.dataset.projectName} ${main}` : card.dataset.projectName;
+  return [card.dataset.projectName, card.dataset.projectWorktreeOf, card.dataset.projectTags].filter(Boolean).join(" ");
 }
 
 // What each chip row calls the things it hides, for the fold toggle's label.
 const CHIP_WORDS = {
   terminals: { more: (count) => `Show ${count} more sessions`, fewer: "Show fewer sessions" },
   docker: { more: (count) => `Show ${count} more containers`, fewer: "Show fewer containers" },
+  tags: { more: (count) => `Show ${count} more tags`, fewer: "Show fewer tags" },
 };
+const FOLD_CLASS = { tags: "dc-tag dc-tag-add" };
 
-// Owns the projects page interactivity: a frontend-only name filter, the sort
-// switcher, the chip fold, the chip context menu, and the in place Stop/Delete
-// on the session chips. Filter and sort persist to localStorage so they survive
-// reloads, tabs and restarts. Filtering only hides rows; sorting reorders them;
-// the two are orthogonal. The sort order is shared with the quick nav through
-// @dc/project-sort (same key and comparator).
+// Owns the projects page interactivity: a frontend-only filter over names and
+// tag names plus the tag filter (@dc/tags), which a link to /projects?tag=<id>
+// sets to that one tag, the sort switcher, the chip fold,
+// the chip context menu, and the in place Stop/Delete on the session chips.
+// Filter and sort persist to localStorage so they survive reloads, tabs and
+// restarts. Filtering only hides rows; sorting reorders them; the two are
+// orthogonal. The sort order is shared with the quick nav through
+// @dc/project-sort (same key and comparator). The text filter unfolds the
+// worktrees it matches, a worktree matching its main's tag names too. The tag
+// filter picks main projects and leaves their worktrees folded as they are:
+// a worktree carries no tags and stays with its main.
 class ProjectList extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
     this.ac = new AbortController();
     this.inFlight = false;
     this.dirty = false;
+    this.chipsShown = new WeakMap();
     this.refreshWhole = false;
+    this.tags = tagFilter(this, TAGS_KEY, () => this.applyFilter?.(), this.ac.signal);
     this.setupSort();
     this.setupFilter();
     this.revealAlerts();
-    this.querySelectorAll("[data-sessions-body]").forEach((body) => this.foldChips(body));
+    this.querySelectorAll("[data-sessions-body]").forEach((body) => this.showChips(body));
+    this.rows().forEach((row) => this.foldTags(row));
     this.setupReveal();
     this.addEventListener("submit", (event) => this.onAjaxSubmit(event), { signal: this.ac.signal });
     this.addEventListener("click", (event) => {
@@ -109,6 +126,10 @@ class ProjectList extends HTMLElement {
       if (index) projectSort.sort(index, projectSort.mode(), projectSort.INDEX);
     }, { signal: this.ac.signal });
     onServerEvent("docker", () => this.refreshProjects(null), { signal: this.ac.signal });
+    // This module often loads after the connect snapshot and after a project
+    // made meanwhile, signals no listener heard.
+    if (missedServerEvent("projects")) this.refreshProjectList();
+    else if (missedServerEvent("terminals") || missedServerEvent("docker")) this.refreshProjects(null);
   }
 
   disconnectedCallback() {
@@ -122,13 +143,29 @@ class ProjectList extends HTMLElement {
     reveal();
     window.addEventListener("dc:navigated", reveal, { signal: this.ac.signal });
     window.addEventListener("hashchange", reveal, { signal: this.ac.signal });
+    this.followTagLink();
+    window.addEventListener("dc:navigated", () => this.followTagLink(), { signal: this.ac.signal });
+  }
+
+  // A link to /projects?tag=<id> shows the projects carrying that tag: the
+  // pick replaces the filters, and the address loses the query, so a reload
+  // keeps whatever the filter is by then.
+  followTagLink() {
+    const url = new URL(window.location.href);
+    const tags = url.searchParams.getAll("tag").filter(Boolean);
+    if (tags.length === 0 || !this.clearFilters) return;
+    this.clearFilters();
+    store.setJSON(TAGS_KEY, tags);
+    this.applyFilter();
+    url.searchParams.delete("tag");
+    history.replaceState(history.state, "", url.pathname + url.search + url.hash);
   }
 
   revealHashTarget() {
     if (!location.hash.startsWith("#project-")) return;
     const row = document.getElementById(location.hash.slice(1));
     if (!row || !this.contains(row)) return;
-    if (row.classList.contains("d-none")) this.setFilter?.("");
+    if (row.classList.contains("d-none")) this.clearFilters?.();
     const main = this.mainRowOf(row);
     if (main && row.hidden) this.setGroupOpen(main.dataset.projectName, true);
     this.reveal(row);
@@ -213,8 +250,10 @@ class ProjectList extends HTMLElement {
     event.preventDefault();
     event.stopPropagation();
     if (form.dataset.confirm) {
+      // The question names a project, a shell or a coder and becomes the
+      // dialog's title, which SweetAlert reads as HTML.
       const ok = await confirm({
-        title: form.dataset.confirm,
+        title: escapeHtml(form.dataset.confirm),
         text: form.dataset.confirmText,
         confirmText: form.dataset.confirmButton || "Confirm",
       });
@@ -337,7 +376,7 @@ class ProjectList extends HTMLElement {
   // goes away in one request.
   async deleteCoder(chip) {
     const ok = await confirm({
-      title: `Delete coder "${chip.dataset.chipName || ""}"?`,
+      title: `Delete coder "${escapeHtml(chip.dataset.chipName || "")}"?`,
       text: "It is stopped first, its conversation cannot be resumed afterwards.",
       confirmText: "Delete",
     });
@@ -377,24 +416,31 @@ class ProjectList extends HTMLElement {
     if (label) label.textContent = name;
   }
 
-  // A project's chips stand in two rows, terminals and containers, and each one
-  // folds on its own: a project with a dozen containers must not push its
-  // coders behind a "+N", and the other way round.
+  // A project's chips stand in three rows, tags, terminals and containers, and
+  // each one folds on its own: a project with a dozen containers must not push
+  // its coders behind a "+N", and the other way round.
   foldChips(body) {
     body.querySelectorAll("[data-chip-fold]").forEach((fold) => this.foldRow(body, fold));
   }
 
+  // The tag line stands outside the sessions body, its unfold flag on the row,
+  // which no refresh replaces.
+  foldTags(row) {
+    const fold = row.querySelector(":scope > [data-tag-line] [data-chip-fold]");
+    if (fold) this.foldRow(row, fold);
+  }
+
   // Collapses one row to the first few entries behind a "+N" chip. The expanded
-  // flag lives on the persistent [data-sessions-body] container, one per row, so
-  // it survives the live swaps that replace everything inside it. A running
+  // flag lives on the holder, the persistent [data-sessions-body] container or
+  // the row, so it survives the live swaps that replace what is inside it. A running
   // terminal is never folded: the server renders the running ones first, so the
   // limit grows to their count and only inactive coders go behind the chip.
-  foldRow(body, fold) {
+  foldRow(holder, fold) {
     const kind = fold.dataset.chipFold || "terminals";
     const words = CHIP_WORDS[kind] || CHIP_WORDS.terminals;
     const flag = `${kind}Expanded`;
-    const expanded = body.dataset[flag] === "1";
-    const chips = Array.from(fold.querySelectorAll(":scope > [data-chip]"));
+    const expanded = holder.dataset[flag] === "1";
+    const chips = Array.from(fold.querySelectorAll(":scope > [data-chip], :scope > [data-tag-toggle]"));
     const running = kind === "terminals" ? chips.filter((chip) => !chip.classList.contains("is-idle")).length : 0;
     const limit = Math.max(CHIP_LIMIT, running);
     applyFold(fold, {
@@ -402,13 +448,13 @@ class ProjectList extends HTMLElement {
       items: chips,
       expanded,
       toggleAttr: "data-chips-toggle",
-      toggleClass: "project-chip project-chip-more",
+      toggleClass: FOLD_CLASS[kind] || "project-chip project-chip-more",
       label: (count) => `+${count}`,
       collapsedLabel: "Show less",
       signal: this.ac?.signal,
       onToggle: (event, next) => {
-        body.dataset[flag] = next ? "1" : "";
-        this.foldRow(body, fold);
+        holder.dataset[flag] = next ? "1" : "";
+        this.foldRow(holder, fold);
       },
     });
     const toggle = fold.querySelector("[data-chips-toggle]");
@@ -496,8 +542,18 @@ class ProjectList extends HTMLElement {
         meta.replaceWith(freshMeta);
         syncAnimations(freshMeta);
       }
+      // The tag line only when its tags changed, so a tag stays put under a
+      // finger through the frequent chip refreshes.
+      const freshLine = fresh.querySelector(":scope > [data-tag-line]");
+      const line = section.querySelector(":scope > [data-tag-line]");
+      if (freshLine && line && tagLineShape(freshLine) !== tagLineShape(line)) {
+        line.replaceWith(freshLine);
+        this.foldTags(section);
+      }
     });
-    this.applyGroups();
+    if (swapBar(this.querySelector("[data-tag-bar]"), doc.querySelector("dc-project-list [data-tag-bar]"))) this.tags.observe();
+    if (this.applyFilter) this.applyFilter();
+    else this.applyGroups();
   }
 
   // sameRows reports whether a fresh render carries exactly the rows this list
@@ -542,7 +598,9 @@ class ProjectList extends HTMLElement {
         if (next) next.scrollTop = top;
         window.app.loadElements(this);
         syncAnimations(this);
-        this.querySelectorAll("[data-sessions-body]").forEach((body) => this.foldChips(body));
+        this.querySelectorAll("[data-sessions-body]").forEach((body) => this.showChips(body));
+        this.rows().forEach((row) => this.foldTags(row));
+        this.tags.observe();
         this.setupSort();
         this.setupFilter();
         this.revealAlerts();
@@ -563,7 +621,20 @@ class ProjectList extends HTMLElement {
       });
   }
 
+  // showChips takes a row's chips as the server rendered them, so the next
+  // refresh knows whether they changed, and folds them.
+  showChips(body) {
+    this.chipsShown.set(body, body.innerHTML);
+    this.foldChips(body);
+  }
+
+  // swapChips puts a fresh render's chips in place, only when the server's
+  // markup for them changed since the last swap: a terminals event comes for
+  // every session on the host, and replacing a row's chips, its +N among them,
+  // under a finger for nothing is churn.
   swapChips(body, html) {
+    if (this.chipsShown.get(body) === html) return;
+    this.chipsShown.set(body, html);
     const template = document.createElement("template");
     template.innerHTML = html;
     body.replaceChildren(...template.content.childNodes);
@@ -607,31 +678,38 @@ class ProjectList extends HTMLElement {
     const empty = this.querySelector("[data-project-filter-empty]");
     const xBtn = this.querySelector(".dc-filter [data-project-filter-clear]");
 
-    const apply = (query) => {
-      const needle = query.trim();
-      const cards = this.querySelectorAll(".projects-card [data-project-name]");
-      let visible = 0;
-      cards.forEach((card) => {
-        const hit = needle === "" || matchesTokens(filterHaystack(card), needle);
-        card.classList.toggle("d-none", !hit);
-        if (hit) visible += 1;
+    const apply = () => {
+      const needle = input.value.trim();
+      const keys = this.tags.picked();
+      const cards = this.rows();
+      const { hits, counts, left, total } = narrow(cards, {
+        mainOf: (card) => this.mainRowOf(card),
+        matches: (card) => needle === "" || matchesTokens(filterHaystack(card), needle),
+        keys,
       });
-      const active = needle !== "";
-      this.filterActive = active;
+      cards.forEach((card) => card.classList.toggle("d-none", !hits.has(card)));
+      const filtering = needle !== "" || keys.length > 0;
+      this.filterActive = needle !== "";
+      // Groups before the bar: its measuring styles every row, a later open turns the arrow.
       this.applyGroups();
-      if (empty) empty.classList.toggle("d-none", visible !== 0);
-      if (xBtn) xBtn.classList.toggle("d-none", !active);
+      this.tags.show({ keys, counts, left, total, filtering });
+      if (empty) empty.classList.toggle("d-none", hits.size !== 0);
+      if (xBtn) xBtn.classList.toggle("d-none", !filtering);
     };
+    this.applyFilter = apply;
 
     const set = (value) => {
       input.value = value;
       store.set(FILTER_KEY, value);
-      apply(value);
+      apply();
     };
-    this.setFilter = set;
+    this.clearFilters = () => {
+      this.tags.clear();
+      set("");
+    };
 
     input.value = store.get(FILTER_KEY, "");
-    apply(input.value);
+    apply();
 
     const signal = this.ac.signal;
     input.addEventListener("input", () => set(input.value), { signal });
@@ -641,10 +719,11 @@ class ProjectList extends HTMLElement {
     this.querySelectorAll("[data-project-filter-clear]").forEach((node) => {
       node.addEventListener("click", (event) => {
         event.preventDefault();
-        set("");
+        this.clearFilters();
         input.focus();
       }, { signal });
     });
+    this.querySelector("[data-project-filter-reset]")?.addEventListener("click", () => this.clearFilters(), { signal });
   }
 }
 

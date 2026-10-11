@@ -1,0 +1,145 @@
+{{/* Every tag in one list, edited in place like the compose actions. Each
+     row posts its tag's id, the version, name and color it loaded, and the
+     name, color and removal it shows now, so the save knows what this page
+     changed and refuses it over a tag that changed elsewhere since. A new tag
+     is a row of its own posting new-name and new-color. Nothing is written
+     before Save: new tags, renames, colors, merges and removals stand as the
+     rows show them until then, the footer counts them. The footer stands
+     under the scrolling body, its buttons belong to the form by its id. */}}
+{{define "settings_projects_tags.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+<dc-tags-settings class="dc-work" role="main" data-next-colors="{{join .NextColors " "}}">
+  <div class="dc-work-head">
+    {{template "settings_projects_tabs.gohtml" "tags"}}
+  </div>
+  <div class="dc-work-body dc-work-pad">
+    {{template "flash.gohtml" .}}
+    <div class="dc-narrow">
+      <div class="form-label">Tags</div>
+      <div class="text-secondary small mb-2">A tag has one name and one color on every project, and lives without any until it is removed here. Rename a tag to another tag's name and the two merge. A removed tag comes off every project. Nothing changes before Save.</div>
+      {{if not .Unread}}
+      <div class="dc-filter dc-filter-flow dc-tags-filter mb-3">
+        <i class="ti ti-search" aria-hidden="true"></i>
+        <input type="text" class="dc-filter-input" data-tags-filter placeholder="Filter tags…" aria-label="Filter tags" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+        <span class="dc-filter-side">
+          <span class="small text-secondary text-nowrap" data-tags-filter-count>{{len .Rows}} {{if eq (len .Rows) 1}}tag{{else}}tags{{end}}</span>
+          <button type="button" class="dc-filter-clear d-none" data-tags-filter-clear aria-label="Clear the filter" title="Clear the filter"><i class="ti ti-x" aria-hidden="true"></i></button>
+        </span>
+      </div>
+      <form method="post" action="/settings/projects/tags" id="settings-projects-tags" autocomplete="off" data-tags-form>
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <div class="card">
+          <div class="dc-tags-head" data-tags-head>
+            <label class="d-flex align-items-center gap-2 m-0">
+              <input class="form-check-input m-0" type="checkbox" data-tags-all aria-label="Select every tag shown">
+              <span class="text-secondary text-nowrap" data-tags-selected>Select all</span>
+            </label>
+            <div class="dc-tags-bulk" data-tags-bulk hidden>
+              <button type="button" class="btn btn-sm btn-ghost-secondary" data-tags-merge><i class="ti ti-arrow-merge me-1" aria-hidden="true"></i>Merge…</button>
+              <button type="button" class="btn btn-sm btn-ghost-secondary" data-tags-recolor><i class="ti ti-palette me-1" aria-hidden="true"></i>Color</button>
+              <button type="button" class="btn btn-sm btn-ghost-danger" data-tags-remove-selected><i class="ti ti-trash me-1" aria-hidden="true"></i>Remove</button>
+            </div>
+          </div>
+          <div class="list-group list-group-flush" data-tags-rows>
+            {{range .Rows}}{{template "settings_tag_row.gohtml" .}}{{end}}
+          </div>
+          <div class="list-group-item text-secondary" data-tags-none hidden>No tag matches the filter.</div>
+          {{if not .Rows}}<div class="list-group-item text-secondary" data-tags-empty>No tags yet. Add one here, or give a project some through the dashed chip under its name.</div>{{end}}
+          <div class="list-group list-group-flush" data-tags-new>
+            {{range .New}}{{template "settings_tag_new.gohtml" .}}{{end}}
+          </div>
+        </div>
+        <button type="button" class="btn btn-sm btn-ghost-secondary mt-2" data-tags-add><i class="ti ti-plus me-1" aria-hidden="true"></i>Add tag</button>
+      </form>
+      <div class="dropdown-menu dc-tag-palette" role="dialog" aria-label="Pick a color" data-tag-palette>
+        {{range .Colors}}<button type="button" class="dc-tag-swatch dc-tag-{{.}}" data-tag-swatch="{{.}}" aria-pressed="false" aria-label="{{.}}" title="{{.}}"></button>{{end}}
+      </div>
+      {{template "settings_tags_merge.gohtml" .}}
+      <template data-tag-chip-template><span class="dc-tag"><span class="dc-tag-name"></span></span></template>
+      <template data-tag-new-template>{{template "settings_tag_new.gohtml" (dict "Name" "" "Color" "")}}</template>
+      {{end}}
+    </div>
+  </div>
+  {{if not .Unread}}
+  <div class="dc-tags-foot" data-tags-foot>
+    <span class="flex-fill text-secondary text-truncate" data-tags-pending aria-live="polite">No changes</span>
+    <button type="button" class="btn btn-link link-secondary" data-tags-discard hidden>Discard</button>
+    <button type="submit" class="btn btn-primary" form="settings-projects-tags" data-tags-save>Save</button>
+  </div>
+  {{end}}
+</dc-tags-settings>
+{{template "app_close.gohtml" .}}
+{{end}}
+
+{{define "settings_tag_row.gohtml"}}
+<div class="list-group-item py-2 dc-tag-row" data-tag-row="{{.ID}}" data-loaded-name="{{.Name}}" data-loaded-color="{{.Color}}" data-carriers="{{.Carriers}}">
+  <input type="hidden" name="tag" value="{{.ID}}">
+  <input type="hidden" name="version:{{.ID}}" value="{{.Version}}">
+  <input type="hidden" name="was:{{.ID}}" value="{{.Name}}">
+  <input type="hidden" name="was-color:{{.ID}}" value="{{.Color}}">
+  <input type="hidden" name="color:{{.ID}}" value="{{.Pick}}" data-tag-color-value>
+  <input type="hidden" name="remove:{{.ID}}" value="{{if .Remove}}1{{end}}" data-tag-remove-value>
+  <input class="form-check-input m-0 dc-tag-row-check" type="checkbox" data-tag-select aria-label="Select {{.Name}}">
+  <button type="button" class="btn btn-sm dc-tag-row-color" data-tag-color aria-haspopup="dialog" aria-label="Color of {{.Name}}" title="Color"><span class="dc-tag-dot dc-tag-{{.Pick}}" data-tag-color-dot></span></button>
+  <input type="text" class="form-control form-control-sm dc-tag-row-name" name="name:{{.ID}}" value="{{.Field}}" maxlength="40" required aria-label="Name of {{.Name}}" data-tag-name autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" enterkeyhint="done">
+  {{$n := len .Projects}}
+  {{if $n}}<a class="dc-tag-row-count link-secondary small text-nowrap" href="/projects?tag={{.ID}}" title="Show the projects tagged {{.Name}}">{{$n}} {{if eq $n 1}}project{{else}}projects{{end}}</a>{{else}}<span class="dc-tag-row-count text-secondary small text-nowrap">0 projects</span>{{end}}
+  <span class="dc-tag-row-gone text-secondary small">Comes off on save</span>
+  <button type="button" class="btn btn-sm btn-ghost-danger dc-tag-row-act dc-tag-row-remove" data-tag-remove aria-label="Remove {{.Name}}" title="Remove"><i class="ti ti-trash" aria-hidden="true"></i><span class="dc-tag-row-word">Remove</span></button>
+  <button type="button" class="btn btn-sm btn-ghost-secondary dc-tag-row-act dc-tag-row-undo" data-tag-undo aria-label="Keep {{.Name}}" title="Undo"><i class="ti ti-arrow-back-up" aria-hidden="true"></i><span class="dc-tag-row-word">Undo</span></button>
+  <div class="dc-tag-row-hint small" data-tag-hint hidden></div>
+</div>
+{{end}}
+
+{{/* A tag to make on Save, by the name and the color its row shows. A name
+     a tag has already makes nothing. Drop takes the row away. It has nothing
+     to select, an invisible checkbox keeps its place so the row lines up
+     with the others. */}}
+{{define "settings_tag_new.gohtml"}}
+<div class="list-group-item py-2 dc-tag-row" data-tag-new>
+  <input type="hidden" name="new-color" value="{{.Color}}" data-tag-color-value>
+  <input class="form-check-input m-0 dc-tag-row-check invisible" type="checkbox" tabindex="-1" aria-hidden="true" disabled>
+  <button type="button" class="btn btn-sm dc-tag-row-color" data-tag-color aria-haspopup="dialog" aria-label="Color of the new tag" title="Color"><span class="dc-tag-dot{{with .Color}} dc-tag-{{.}}{{end}}" data-tag-color-dot></span></button>
+  <input type="text" class="form-control form-control-sm dc-tag-row-name" name="new-name" value="{{.Name}}" maxlength="40" pattern="[A-Za-z0-9_\-]+" title="A to Z, a to z, 0 to 9, - and _" placeholder="New tag" aria-label="Name of the new tag" data-tag-name autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" enterkeyhint="done">
+  <span class="dc-tag-row-count text-secondary small text-nowrap">New</span>
+  <button type="button" class="btn btn-sm btn-ghost-secondary dc-tag-row-act" data-tag-drop aria-label="Drop the new tag" title="Drop"><i class="ti ti-x" aria-hidden="true"></i><span class="dc-tag-row-word">Drop</span></button>
+  <div class="dc-tag-row-hint small" data-tag-hint hidden></div>
+</div>
+{{end}}
+
+{{/* The merge of the selected tags: which name and which color live on, and
+     what the projects carry afterwards. It only stages the merge, like every
+     other change on the page. */}}
+{{define "settings_tags_merge.gohtml"}}
+<div class="modal modal-blur fade" tabindex="-1" aria-labelledby="tags-merge-title" aria-hidden="true" data-tags-merge-dialog>
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title" id="tags-merge-title" data-tags-merge-title>Merge tags</h3>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-label" id="tags-merge-names">Keep the name</div>
+        <div class="list-group mb-3" role="radiogroup" aria-labelledby="tags-merge-names" data-tags-merge-names></div>
+        <div class="form-label" id="tags-merge-colors">Color</div>
+        <div class="d-flex flex-wrap gap-2 mb-3" role="group" aria-labelledby="tags-merge-colors">
+          {{range .Colors}}<button type="button" class="dc-tag-swatch dc-tag-{{.}}" data-tags-merge-color="{{.}}" aria-pressed="false" aria-label="{{.}}" title="{{.}}"></button>{{end}}
+        </div>
+        <div class="small text-secondary" data-tags-merge-result></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" data-tags-merge-apply>Merge</button>
+      </div>
+    </div>
+  </div>
+</div>
+<template data-tags-merge-option>
+  <label class="list-group-item d-flex align-items-center gap-2 dc-tags-merge-option">
+    <input class="form-check-input m-0" type="radio" name="tags-merge-keep">
+    <span class="dc-tag"><span class="dc-tag-name"></span></span>
+    <span class="ms-auto small text-secondary text-nowrap" data-tags-merge-count></span>
+  </label>
+</template>
+{{end}}

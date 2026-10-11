@@ -4,6 +4,7 @@ package project
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -38,6 +39,8 @@ type Project struct {
 	LastUsedUnix      int64         // last time the project was opened; 0 = never
 	HasNews           bool          // any coder or shell below has an unread notification
 	ContainersRunning bool          // a docker container of the project is up
+	Tags              []Tag         // the user's tags, a worktree carries none
+	SearchTags        []string      // the tag names a text search finds it by, a worktree its main project's
 }
 
 // Active reports whether anything of the project is at work: a live coder or
@@ -89,12 +92,20 @@ type TerminalRef struct {
 type Repository struct {
 	Root   string
 	recent *recent.Store
+	tags   *Tags
 }
 
 // NewRepository creates a Repository for the given root directory. The store
 // records and supplies per-project last-used timestamps.
 func NewRepository(root string, store *recent.Store) *Repository {
 	return &Repository{Root: root, recent: store}
+}
+
+// UseTags hands the repository the store of the projects' tags. Without one
+// every project lists none and none can be set.
+func (r *Repository) UseTags(tags *Tags) *Repository {
+	r.tags = tags
+	return r
 }
 
 // Touch records that the named project was just opened.
@@ -172,6 +183,7 @@ func (r *Repository) List() []Project {
 		}
 	}
 	r.enrichProjects(out)
+	r.fillTags(out)
 	if r.recent != nil {
 		used := r.recent.Times()
 		for i := range out {
@@ -216,8 +228,13 @@ func (r *Repository) ValidatePath(raw string) (string, error) {
 		return "", err
 	}
 	info, err := os.Lstat(workdir)
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("Selected project does not exist: %s", workdir)
+	}
+	if err != nil {
+		// A path the host could not even look up is longer than it takes or
+		// no path at all, quoting it would grow with whatever a request sent.
+		return "", errors.New("Selected project does not exist.")
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		return "", fmt.Errorf("Selected project must not be a symlink: %s", workdir)
@@ -244,7 +261,7 @@ func (r *Repository) Find(raw string) (Project, error) {
 	}
 	root, _ := r.EnsureRoot()
 	meta := gitfacts.Read(p)
-	return Project{
+	found := []Project{{
 		Name:            filepath.Base(p),
 		Root:            root,
 		Path:            p,
@@ -257,7 +274,9 @@ func (r *Repository) Find(raw string) (Project, error) {
 		GitWorktreeOf:   r.rootProjectName(meta.WorktreeMain),
 		GitWorktreeMain: meta.WorktreeMain,
 		GitWorktrees:    r.worktreeRefs(meta.WorktreePaths),
-	}, nil
+	}}
+	r.fillTags(found)
+	return found[0], nil
 }
 
 // ProjectNameFor returns the name of the top-level project that cwd lives under,
@@ -352,13 +371,53 @@ func (r *Repository) Create(rawName string) (string, error) {
 // session conflicts first. A project that is a linked worktree takes its
 // registration in the main repository with it, what a later `git worktree
 // prune` would do; without that the main keeps the worktree's branch checked
-// out and refuses it.
+// out and refuses it. The project's entry in the tags goes with the
+// directory, its tags stay, and a worktree carries none.
 func (r *Repository) Remove(p Project) error {
 	if !filesystem.IsUnder(p.Path, p.Root) {
 		return fmt.Errorf("Refusing to delete a project outside %s.", p.Root)
 	}
 	gitfacts.PruneWorktreeRegistration(p.Path)
-	return os.RemoveAll(p.Path)
+	if err := os.RemoveAll(p.Path); err != nil {
+		return err
+	}
+	if r.tags != nil {
+		r.tags.forget(p.Name)
+	}
+	return nil
+}
+
+// SetTags replaces a main project's tags with what its form picked, see
+// TagPick. A worktree is refused, see TagsRefused.
+func (r *Repository) SetTags(p Project, pick TagPick) error {
+	if err := TagsRefused(p); err != nil {
+		return err
+	}
+	if r.tags == nil {
+		return errTagsUnsaved
+	}
+	parsed, err := parsePick(pick)
+	if err != nil {
+		return err
+	}
+	return r.tags.set(p.Name, parsed)
+}
+
+// fillTags puts the stored tags on the main projects and the names a search
+// finds each project by on all of them, read once for all of them.
+func (r *Repository) fillTags(projects []Project) {
+	if r.tags == nil {
+		return
+	}
+	all := r.tags.all()
+	for i := range projects {
+		if !projects[i].GitWorktree {
+			projects[i].Tags = all[projects[i].Name]
+		}
+		for _, tag := range all[tagOwner(projects[i])] {
+			projects[i].SearchTags = append(projects[i].SearchTags, tag.Name)
+		}
+	}
 }
 
 func sanitizeDirName(raw string) (string, error) {

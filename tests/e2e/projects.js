@@ -233,8 +233,13 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       shellUrls.splice(shellUrls.findIndex((u) => u.endsWith(`/${id}`)), 1);
     });
 
+    // The rename paints the new name into the chip at once, the chip the
+    // server renders with it lands later on the terminals event and replaces
+    // that one. Only the server's chip shows the rename was kept, and a check
+    // that holds a chip after this one must not hold the one about to go.
     await run("chip context menu renames a shell (right click)", async () => {
       const chip = page.locator(`#project-${project} [data-chip][data-chip-kind="shell"]:not(.d-none)`).first();
+      await chip.evaluate((el) => { el.dataset.beforeRename = "1"; });
       await chip.click({ button: "right" });
       await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 5000 });
       await page.click('.dc-context-menu .dropdown-item:has-text("Rename")');
@@ -243,8 +248,8 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await page.fill(".swal2-input", newName);
       await confirmSwal(page);
       await page.waitForFunction(
-        (n) => [...document.querySelectorAll(".project-chip-name")].some((e) => e.textContent.trim() === n),
-        newName,
+        ([row, n]) => [...document.querySelectorAll(`${row} [data-chip]:not([data-before-rename])`)].some((e) => e.querySelector(".project-chip-name")?.textContent.trim() === n),
+        [`#project-${project}`, newName],
         { timeout: 8000 },
       );
     });
@@ -324,15 +329,18 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
     });
 
+    // A finger lands on the chip the page shows at that moment. WebKit finds a
+    // locator's element and evaluates on it in two steps, a chip refresh in
+    // between leaves a detached chip, so the chip is found where it is pressed.
     await run("chip context menu opens on touch long-press (timer path)", async () => {
-      const chip = page.locator(`#project-${project} [data-chip]:not(.d-none)`).first();
-      await chip.evaluate((el) => {
+      await page.evaluate((selector) => {
+        const el = document.querySelector(selector);
         const r = el.getBoundingClientRect();
         el.dispatchEvent(new PointerEvent("pointerdown", {
           bubbles: true, cancelable: true, pointerId: 9, pointerType: "touch",
           clientX: r.x + 8, clientY: r.y + 8,
         }));
-      });
+      }, `#project-${project} [data-chip]:not(.d-none)`);
       await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
       await page.keyboard.press("Escape");
       await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
@@ -1723,7 +1731,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await indexMenu(source);
       const main = await menuLabels();
       assert(
-        JSON.stringify(main) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "New worktree", "Fetch", "Commit changes", "Compare revisions", "Delete project"]),
+        JSON.stringify(main) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "New worktree", "Fetch", "Commit changes", "Compare revisions", "Delete project"]),
         `the main repository's row menu reads ${JSON.stringify(main)}`,
       );
       const hrefs = await page.$$eval(".dc-context-menu a.dropdown-item", (els) => els.map((e) => e.getAttribute("href")));
@@ -1733,7 +1741,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       // A shell needs nothing asked, so its entry acts instead of leading to
       // the form.
       assert((await page.locator('.dc-context-menu button.dropdown-item:has-text("New shell")').count()) === 1, "New shell is a link, not an action");
-      assert(hrefs.includes(`/projects/new?create=worktree%3A${source}`), `New worktree leads elsewhere: ${hrefs.join(", ")}`);
+      assert(hrefs.includes(`/projects/new?create=worktree%3A${source}`) && hrefs.includes(`/projects/${source}/tags`), `New worktree or Edit tags leads elsewhere: ${hrefs.join(", ")}`);
       assert((await page.locator('.dc-context-menu .dropdown-item.text-danger:has-text("Delete project")').count()) === 1, "Delete project is not the danger entry");
       await closeMenu();
       await indexMenu(`${source}-wt1`);
@@ -1745,11 +1753,10 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await closeMenu();
       await indexMenu(project);
       const plain = await menuLabels();
-      assert(
-        JSON.stringify(plain) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Delete project"]),
-        `a plain directory's row menu reads ${JSON.stringify(plain)}`,
-      );
-      await closeMenu();
+      assert(JSON.stringify(plain) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "Delete project"]), `a plain directory's row menu reads ${JSON.stringify(plain)}`);
+      await page.click('.dc-context-menu .dropdown-item:has-text("Edit tags")');
+      await page.waitForSelector(`[data-form-modal].show form[action="/projects/${project}/tags?modal=1"] dc-tag-editor [data-tag-input]`, { state: "visible", timeout: 8000 });
+      await page.keyboard.press("Escape");
     });
 
     await run("index row menu: New shell starts a shell in the project at once and lands on it", async () => {
@@ -1783,7 +1790,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert(mp.url().endsWith("/projects"), `the dots followed the row's link: ${mp.url()}`);
       const labels = (await mp.locator(".dc-context-menu .dropdown-item").allTextContents()).map((t) => t.trim());
       assert(
-        JSON.stringify(labels) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Delete project"]),
+        JSON.stringify(labels) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "Delete project"]),
         `the sheet's row menu reads ${JSON.stringify(labels)}`,
       );
       const fit = await mp.evaluate(() => {
@@ -1826,10 +1833,10 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert((await page.locator(".dc-context-menu").count()) === 1, "the re-render closed the open menu");
       await closeMenu();
       await sheetMenu(mp, project);
-      assert((await mp.locator(".dc-context-menu .dropdown-item").count()) === 5, "the fresh sheet row opens a different menu");
+      assert((await mp.locator(".dc-context-menu .dropdown-item").count()) === 6, "the fresh sheet row opens a different menu");
       await sheetMenuClose(mp);
       await indexMenu(project);
-      assert((await menuLabels()).length === 5, "the fresh column row opens a different menu");
+      assert((await menuLabels()).length === 6, "the fresh column row opens a different menu");
       await closeMenu();
     });
 
@@ -1905,6 +1912,8 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       }
     });
 
+    await require("./projects-tags").tagChecks({ page, run, mobilePage, project, source, tag });
+
     await run("delete project shows a toast and removes the card without a redirect", async () => {
       for (const u of shellUrls.splice(0)) await L.deleteShell(page, u).catch(() => {});
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
@@ -1926,5 +1935,6 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
     await L.deleteProject(page, solo).catch(() => {});
     await L.deleteProject(page, asker).catch(() => {});
     await L.deleteProject(page, `zzidx-${tag}`).catch(() => {});
+    await require("./projects-tags").removeRunTags(page, tag).catch((e) => console.log(`tags left behind: ${e.message}`));
   }
 });

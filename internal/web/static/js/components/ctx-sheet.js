@@ -5,6 +5,7 @@ import { matchesTokens } from "@dc/filter";
 import { getJSON } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
 import { get, set } from "@dc/store";
+import { narrow, swapBar, tagFilter } from "@dc/tags";
 
 const TITLES = { projects: "Projects", terminals: "Terminals", settings: "Settings", docs: "Docs", assistants: "Assistants", cockpit: "Cockpit", news: "Notifications" };
 const SORT_LABELS = { alpha: "Name", active: "Active first", recent: "Recently used" };
@@ -54,6 +55,7 @@ class CtxSheet extends HTMLElement {
   disconnectedCallback() {
     this.ac?.abort();
     this.ac = null;
+    this.filterAc?.abort();
   }
 
   refreshIf(area) {
@@ -149,6 +151,7 @@ class CtxSheet extends HTMLElement {
         body.scrollTop = top;
         window.app?.loadElements?.(body);
       }
+      if (swapBar(current.querySelector("[data-tag-bar]"), column.querySelector("[data-tag-bar]"))) this.tags?.observe();
     }
     this.decorate();
     if (fresh || !current) {
@@ -204,28 +207,42 @@ class CtxSheet extends HTMLElement {
     if (!input) this.applyFilter = null;
     if (input && !column.dataset.ctxFilterWired) {
       column.dataset.ctxFilterWired = "1";
+      this.filterAc?.abort();
+      this.filterAc = new AbortController();
       const shared = Boolean(index);
       const key = areaKey("filter", this.area);
       input.value = get(key, "");
       const clear = column.querySelector("[data-ctx-filter-clear]");
+      const tags = shared ? tagFilter(column, areaKey("tags", this.area), () => apply(), this.filterAc.signal) : null;
+      this.tags = tags;
+      // A worktree carries no tags and stands with its main project, so a
+      // picked tag hides it and the count takes it as part of its main.
+      const mainOf = (row) => {
+        const of = row.dataset.indexWorktreeOf;
+        return of ? this.panel.querySelector(`[data-project-index] [data-index-project="${CSS.escape(of)}"]`) : null;
+      };
       const apply = () => {
         const query = input.value.trim();
+        const keys = tags ? tags.picked() : [];
         set(key, input.value);
-        if (clear) clear.classList.toggle("d-none", query === "");
-        const rows = this.panel.querySelectorAll("[data-project-index] .list-group-item, .terminal-tabs-strip .terminal-tab, .terminal-tabs-strip .terminal-tab-member, [data-assistant-body] [data-assistant-instance]");
-        for (const row of rows) {
-          const haystack = shared
-            ? `${row.dataset.indexProject || ""} ${row.dataset.indexWorktreeOf || ""}`
-            : (row.textContent || "");
-          const keep = query === "" || matchesTokens(haystack, query);
-          row.classList.toggle("d-none", !keep);
-        }
+        if (clear) clear.classList.toggle("d-none", query === "" && keys.length === 0);
+        const rows = Array.from(this.panel.querySelectorAll("[data-project-index] .list-group-item, .terminal-tabs-strip .terminal-tab, .terminal-tabs-strip .terminal-tab-member, [data-assistant-body] [data-assistant-instance]"));
+        const text = (row) => query === "" || matchesTokens(shared
+          ? `${row.dataset.indexProject || ""} ${row.dataset.indexWorktreeOf || ""} ${row.dataset.indexTags || ""}`
+          : (row.textContent || ""), query);
+        const { hits, counts, left, total } = narrow(rows, {
+          mainOf: shared ? mainOf : () => null,
+          matches: (row) => text(row) && (keys.length === 0 || !row.dataset.indexWorktreeOf),
+          keys,
+        });
+        for (const row of rows) row.classList.toggle("d-none", !hits.has(row));
+        tags?.show({ keys, counts, left, total, filtering: query !== "" || keys.length > 0 });
       };
       input.addEventListener("input", apply);
-      clear?.addEventListener("click", () => { input.value = ""; apply(); input.focus(); });
+      clear?.addEventListener("click", () => { input.value = ""; tags?.clear(); apply(); input.focus(); });
       input.addEventListener("keydown", (event) => { if (event.key === "Escape" && input.value) { event.stopPropagation(); input.value = ""; apply(); } });
       const body = column.querySelector(".dc-ctx-body");
-      if (body) new MutationObserver(() => { if (input.value) apply(); }).observe(body, { childList: true, subtree: true });
+      if (body) new MutationObserver(() => { if (input.value || tags) apply(); }).observe(body, { childList: true, subtree: true });
       this.applyFilter = apply;
     }
     if (this.applyFilter) this.applyFilter();

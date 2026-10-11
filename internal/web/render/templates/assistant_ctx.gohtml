@@ -17,7 +17,7 @@
       {{if .Available}}{{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .NewCoderID "ContextPercent" 0 "NoRing" true "NewClass" "btn btn-icon btn-ghost-secondary" "Prefix" .IDPrefix)}}{{end}}
     </div>
   </div>
-  {{template "ctx_filter.gohtml" "Filter assistants…"}}
+  {{template "ctx_filter.gohtml" (dict "Placeholder" "Filter assistants…")}}
   <div class="dc-ctx-body">
     {{if .Available}}{{template "assistant_new_forms.gohtml" (dict "Coders" .Coders "CoderID" .NewCoderID "PostURL" .PostURL "CSRFToken" .CSRFToken "Prefix" .IDPrefix)}}{{end}}
     <div data-assistant-body>
