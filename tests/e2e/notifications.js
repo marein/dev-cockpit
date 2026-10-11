@@ -60,7 +60,7 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
       assert(bells.dot === 1, "the Cockpit tab carries no dot");
     });
 
-    await run("settings: volume bar drives the scriptune master volume", async () => {
+    await run("settings: volume bar drives the notification player's volume, the master stays at 1", async () => {
       await page.goto(`${BASE}/settings/notifications`, { waitUntil: "domcontentloaded" });
       assert((await L.waitUpgraded(page, ["dc-notify-volume"], 8000)).length === 0, "dc-notify-volume not upgraded");
       const initial = await page.evaluate(() => ({
@@ -74,10 +74,11 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
         range.dispatchEvent(new Event("input", { bubbles: true }));
       });
       const after = await page.evaluate(() => ({
-        stored: localStorage.getItem("scriptune-master-volume"),
+        stored: localStorage.getItem("scriptune-player-notification-volume"),
+        master: localStorage.getItem("scriptune-master-volume"),
         badge: document.querySelector("[data-volume-output]").textContent,
       }));
-      assert(after.stored === "0.3" && after.badge === "30%", `after: ${JSON.stringify(after)}`);
+      assert(after.stored === "0.3" && after.badge === "30%" && after.master === "1", `after: ${JSON.stringify(after)}`);
       await page.evaluate(() => {
         const range = document.querySelector("dc-notify-volume input");
         range.value = "1";

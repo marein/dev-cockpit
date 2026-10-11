@@ -44,6 +44,8 @@
       "@dc/http": "{{asset "/js/dc/http.js"}}",
       "@dc/gitprompt": "{{asset "/js/dc/gitprompt.js"}}",
       "@dc/jingle": "{{asset "/js/dc/jingle.js"}}",
+      "@dc/music": "{{asset "/js/dc/music.js"}}",
+      "@dc/songs": "{{asset "/js/dc/songs.js"}}",
       "@dc/steer": "{{asset "/js/dc/steer.js"}}",
       "@dc/rename": "{{asset "/js/dc/rename.js"}}",
       "@dc/docker": "{{asset "/js/dc/docker.js"}}",
@@ -67,6 +69,8 @@
       "dc-update-check": "{{asset "/js/components/update-check.js"}}",
       "dc-host-status": "{{asset "/js/components/host-status.js"}}",
       "dc-status-links": "{{asset "/js/components/status-links.js"}}",
+      "dc-song-player": "{{asset "/js/components/song-player.js"}}",
+      "dc-song-volume": "{{asset "/js/components/song-volume.js"}}",
       "dc-cost-status": "{{asset "/js/components/cost-status.js"}}",
       "dc-costs": "{{asset "/js/components/costs.js"}}",
       "dc-steered-mark": "{{asset "/js/components/steered-mark.js"}}",
@@ -108,7 +112,7 @@
       "terminal-swipe-nav": "{{asset "/js/components/terminal-swipe-nav.js"}}",
       "terminal-split": "{{asset "/js/components/terminal-split.js"}}",
       "terminal-direction-pad": "{{asset "/js/components/terminal-direction-pad.js"}}",
-      "@marein/js-scriptune": "https://cdn.jsdelivr.net/npm/@marein/js-scriptune@0.0.1/src/scriptune.min.js",
+      "@marein/js-scriptune": "https://cdn.jsdelivr.net/npm/@marein/js-scriptune@0.0.2/src/scriptune.min.js",
       "@codemirror/autocomplete": "https://cdn.jsdelivr.net/npm/@codemirror/autocomplete@6.17.0/dist/index.js",
       "@codemirror/commands": "https://cdn.jsdelivr.net/npm/@codemirror/commands@6.6.0/dist/index.js",
       "@codemirror/lang-cpp": "https://cdn.jsdelivr.net/npm/@codemirror/lang-cpp@6.0.2/dist/index.js",
@@ -306,13 +310,39 @@
 {{define "backup_reviews_badge.gohtml"}}<span class="{{.Class}}{{if not .Count}} d-none{{end}}" data-backup-reviews title="Backup files to resolve" aria-label="{{.Count}} backup {{if eq .Count 1}}file{{else}}files{{end}} to resolve">{{.Count}}</span>{{end}}
 
 {{/* The status line under the shell: the server, the links of the running
-     stacks and the coders' spend at the left, the version at the right. */}}
+     stacks and the coders' spend at the left, the song player and the version
+     at the right. */}}
 {{define "shell_status.gohtml"}}
 <footer class="dc-status d-print-none">
   {{template "host_status_bar.gohtml" .}}
   {{template "status_links.gohtml" .}}
   {{template "cost_status.gohtml" .}}
   <span class="dc-status-gap"></span>
+  {{/* Like the server status, the list is a dropup positioned fixed, so the
+       sideways scrolling status line does not clip it. */}}
+  <dc-song-player class="dc-status-item dropup">
+    <button type="button" class="dc-status-item" data-song-open data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="Songs" aria-label="Songs"><i class="ti ti-music" aria-hidden="true"></i></button>
+    <div class="dropdown-menu dropdown-menu-end dropdown-menu-card" data-own-selection>
+      <div class="d-flex align-items-center gap-1 px-3 pt-2">
+        <button type="button" class="btn btn-icon btn-ghost-secondary" data-song-toggle title="Play a song" aria-label="Play a song"><i class="ti ti-player-play" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-icon btn-ghost-secondary" data-song-next title="Next song" aria-label="Next song" hidden><i class="ti ti-player-skip-forward" aria-hidden="true"></i></button>
+        <span class="text-secondary small text-truncate ms-1" data-song-now></span>
+      </div>
+      <div class="px-3 py-2"><dc-song-volume></dc-song-volume></div>
+      <div class="editor-sheet-filter border-top">
+        <i class="ti ti-search" aria-hidden="true"></i>
+        <input type="text" class="editor-sheet-filter-input" data-song-filter placeholder="Filter" aria-label="Filter the songs" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
+        <span class="editor-sheet-filter-side">
+          <span class="editor-sheet-filter-count" data-song-filter-count></span>
+          <button type="button" class="editor-sheet-filter-clear" data-song-filter-clear aria-label="Clear the filter" title="Clear the filter"><i class="ti ti-x" aria-hidden="true"></i></button>
+        </span>
+      </div>
+      <div class="overflow-auto" style="height: 60vh;" data-song-scroll>
+        <div data-song-list></div>
+        <div class="text-secondary small px-3 py-2" data-song-empty hidden></div>
+      </div>
+    </div>
+  </dc-song-player>
   <span class="dc-status-item" title="Version">Version {{appVersion}} <dc-update-check id="dc-update" data-version="{{appVersion}}"></dc-update-check></span>
 </footer>
 {{end}}

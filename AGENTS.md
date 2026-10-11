@@ -47,7 +47,9 @@ cannot show stays at that function, within the comment rule below.
   setting or workflow updates `/docs` (`render/docs.go`) in one change.
 - **No source file grows beyond 800 lines.** Split it by responsibility
   before new code goes in. Some files are already above, they do not grow
-  further and get split when touched.
+  further and get split when touched. The song file
+  `internal/web/static/js/dc/songs.js` holds the song data with its
+  composition helpers and is exempt.
 - **No comments by default.** A comment is only allowed when it is
   important and explains why, never what the code does.
 - **No dead code.** After a change, check what it left unused (functions,

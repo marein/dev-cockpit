@@ -699,6 +699,12 @@ func DocsTopics() []DocsTopic {
 					Desc:     `Three bars in the status line show CPU, RAM and disk as percentages, green below 80, yellow from 80, red from 95. Hover shows a bar's name and value, a click opens the plain numbers. The disk is the one holding the projects. On Linux CPU is the share of cores at work since the last reading, on a Mac the load average against the core count, which can pass 100 percent. On a phone the Cockpit tab's gauge takes the worst of the three colors and its sheet shows the values.`,
 				},
 				{
+					Title:    "Songs",
+					Tag:      "Status line",
+					TagClass: "bg-secondary-lt",
+					Desc:     `On a desktop, the music note <i class="ti ti-music align-text-bottom" aria-hidden="true"></i> at the right of the status line opens the songs. Play <i class="ti ti-player-play align-text-bottom" aria-hidden="true"></i> starts the cockpit's chill electronic and melodic house songs in random order, also across pages, stop <i class="ti ti-player-stop align-text-bottom" aria-hidden="true"></i> ends them, next <i class="ti ti-player-skip-forward align-text-bottom" aria-hidden="true"></i> skips, and a title in the list, narrowed by the filter above it, plays that song. The filter and the list position stay where you left them, per device. The volume there is the music's own, stored per device and apart from the notification sound.`,
+				},
+				{
 					Title:    "Restore terminals at startup",
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",
