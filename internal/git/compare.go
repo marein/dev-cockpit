@@ -1,9 +1,12 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -41,9 +44,10 @@ type Revision struct {
 }
 
 // RevisionChange is one path that differs between two revisions. Status is
-// git's own letter (A, M, D, R, T, C), From the path a rename came from, and
-// the two numbers say how many lines came and went; Binary says git counted
-// none because there are none to count.
+// git's own letter (A, M, D, R, T, C), or "?" for a file of the working copy
+// that git does not track, From the path a rename came from, and the two
+// numbers say how many lines came and went; Binary says git counted none
+// because there are none to count.
 type RevisionChange struct {
 	Path    string `json:"path"`
 	Status  string `json:"status"`
@@ -56,11 +60,15 @@ type RevisionChange struct {
 // CompareRequest is what a comparison is asked with. Empty names take the
 // repository's own suggestion (see DefaultCompare). Since picks the question:
 // true is what To changed since it split from From, git's three dots, false
-// is everything that differs between the two, git's two dots.
+// is everything that differs between the two, git's two dots. Worktree puts
+// the working copy on the right instead of To, which is not read then: the
+// files as they stand on the disk, untracked ones included, and the split is
+// the one From has with HEAD, the commit the working copy stands on.
 type CompareRequest struct {
-	From  string
-	To    string
-	Since bool
+	From     string
+	To       string
+	Since    bool
+	Worktree bool
 }
 
 // Comparison is what one round answers: both sides resolved, the commit the
@@ -68,11 +76,13 @@ type CompareRequest struct {
 // when the question is what happened since the split), and the files. A
 // repository without commits, or a directory without a repository, answers
 // Repo false and nothing else. Truncated says git's output cap cut the list,
-// so the files are the head of a longer one.
+// so the files are the head of a longer one. Worktree says the right side is
+// the working copy, which has no name and no commit, so To stays empty.
 type Comparison struct {
 	Repo      bool             `json:"repo"`
 	From      Revision         `json:"from"`
 	To        Revision         `json:"to"`
+	Worktree  bool             `json:"worktree,omitempty"`
 	Base      string           `json:"base"`
 	Since     bool             `json:"since"`
 	Files     []RevisionChange `json:"files"`
@@ -119,6 +129,9 @@ func (r *Repo) Compare(ctx context.Context, req CompareRequest) (Comparison, err
 	}
 	out.Repo = true
 	from, to := strings.TrimSpace(req.From), strings.TrimSpace(req.To)
+	if req.Worktree {
+		to = "HEAD"
+	}
 	if from == "" || to == "" {
 		suggested := r.DefaultCompare(ctx)
 		if from == "" {
@@ -137,38 +150,78 @@ func (r *Repo) Compare(ctx context.Context, req CompareRequest) (Comparison, err
 		return out, &RevisionError{Side: "to", Rev: to}
 	}
 	out.From = Revision{Name: from, SHA: fromSHA}
-	out.To = Revision{Name: to, SHA: toSHA}
 	out.Base = fromSHA
 	if req.Since && fromSHA != toSHA {
-		base, err := r.run(ctx, []string{"merge-base", fromSHA, toSHA}, nil)
-		if err != nil {
-			if errors.Is(err, ErrNoAnswer) {
-				return out, err
-			}
-			return out, ErrNoSplit
+		if out.Base, err = r.mergeBase(ctx, fromSHA, toSHA); err != nil {
+			return out, err
 		}
-		out.Base = strings.TrimSpace(string(base))
-		if out.Base == "" {
-			return out, ErrNoSplit
-		}
-	}
-	if out.Base == toSHA {
-		return out, nil
 	}
 	w := *r
 	w.timeout = compareTimeout
-	names, err := w.run(ctx, []string{"diff", "--name-status", "-z", "-M", "--relative", out.Base, toSHA}, nil)
+	if req.Worktree {
+		out.Worktree = true
+		return w.worktreeChanges(ctx, out)
+	}
+	out.To = Revision{Name: to, SHA: toSHA}
+	if out.Base == toSHA {
+		return out, nil
+	}
+	out.Files, out.Truncated, err = w.diffFiles(ctx, out.Base, toSHA)
+	return out, err
+}
+
+// mergeBase answers the commit two commits split at, or ErrNoSplit when they
+// share no history.
+func (r *Repo) mergeBase(ctx context.Context, a, b string) (string, error) {
+	out, err := r.run(ctx, []string{"merge-base", a, b}, nil)
 	if err != nil {
-		return out, err
+		if errors.Is(err, ErrNoAnswer) {
+			return "", err
+		}
+		return "", ErrNoSplit
+	}
+	base := strings.TrimSpace(string(out))
+	if base == "" {
+		return "", ErrNoSplit
+	}
+	return base, nil
+}
+
+// SplitPoint answers where HEAD split off from rev, the merge base of the
+// two, which is where a merge request measures a branch from, and the commit
+// rev itself stands for. For an ancestor of HEAD the two are the same commit.
+// The name is gated like every revision; a repository whose HEAD has no
+// commit yet has nothing that split off, so rev is its own answer there.
+func (r *Repo) SplitPoint(ctx context.Context, rev string) (base, at string, err error) {
+	at, err = r.Resolve(ctx, rev)
+	if err != nil {
+		return "", "", err
+	}
+	head, err := r.Resolve(ctx, "HEAD")
+	if err != nil || head == at {
+		return at, at, nil
+	}
+	base, err = r.mergeBase(ctx, at, head)
+	return base, at, err
+}
+
+// diffFiles lists what differs from base to the other side, the working copy
+// when no second revision is named: two diff calls over the same pair, the
+// statuses and the numbers, keyed by the same relative paths. The second value
+// says git's output cap cut the list.
+func (r *Repo) diffFiles(ctx context.Context, revs ...string) ([]RevisionChange, bool, error) {
+	names, err := r.run(ctx, append([]string{"diff", "--name-status", "-z", "-M", "--relative"}, revs...), nil)
+	if err != nil {
+		return nil, false, err
 	}
 	files, cut := parseNameStatus(names)
-	out.Truncated = cut || len(names) >= MaxOutput
-	numbers, err := w.run(ctx, []string{"diff", "--numstat", "-z", "-M", "--relative", out.Base, toSHA}, nil)
+	truncated := cut || len(names) >= MaxOutput
+	numbers, err := r.run(ctx, append([]string{"diff", "--numstat", "-z", "-M", "--relative"}, revs...), nil)
 	if err != nil {
-		return out, err
+		return nil, false, err
 	}
 	if len(numbers) >= MaxOutput {
-		out.Truncated = true
+		truncated = true
 	}
 	counts := parseNumstat(numbers)
 	for i := range files {
@@ -176,8 +229,98 @@ func (r *Repo) Compare(ctx context.Context, req CompareRequest) (Comparison, err
 			files[i].Added, files[i].Removed, files[i].Binary = n.added, n.removed, n.binary
 		}
 	}
-	out.Files = files
+	return files, truncated, nil
+}
+
+// worktreeChanges fills the comparison of the base with the working copy. A
+// diff against one revision reads the working tree, but only for the paths
+// the index knows, so the untracked files come from their own listing, which
+// is relative to the project like the diff, and keeps git's ignore rules. No
+// diff counts their lines, so that is done here.
+func (r *Repo) worktreeChanges(ctx context.Context, out Comparison) (Comparison, error) {
+	files, truncated, err := r.diffFiles(ctx, out.Base)
+	if err != nil {
+		return out, err
+	}
+	others, err := r.run(ctx, []string{"ls-files", "-z", "--others", "--exclude-standard"}, nil)
+	if err != nil {
+		return out, err
+	}
+	paths := strings.Split(string(others), "\x00")
+	// The listing ends with a NUL, so the last element is empty, unless the
+	// cap cut it inside a name, which is then dropped rather than shown.
+	if last := len(paths) - 1; paths[last] != "" {
+		truncated = true
+	}
+	paths = paths[:len(paths)-1]
+	if len(others) >= MaxOutput {
+		truncated = true
+	}
+	listed := make(map[string]bool, len(files))
+	for _, f := range files {
+		listed[f.Path] = true
+	}
+	counting, cancel := context.WithTimeout(ctx, compareTimeout)
+	defer cancel()
+	for _, path := range paths {
+		if path == "" || listed[path] {
+			continue
+		}
+		n, err := r.countLines(counting, path)
+		if err != nil {
+			return out, err
+		}
+		files = append(files, RevisionChange{Path: path, Status: "?", Added: n.added, Binary: n.binary})
+	}
+	out.Files, out.Truncated = files, truncated
 	return out, nil
+}
+
+// binaryProbe is how far into a file git looks for a NUL before it calls the
+// file binary, which is the same question asked here.
+const binaryProbe = 8000
+
+// countLines answers what numstat says about a file git has never seen: all
+// of its lines are added, the last one counts without its newline too. Only a
+// regular file is read, so a symlink is never followed out of the working
+// copy and a fifo never blocks the answer; anything else counts nothing.
+func (r *Repo) countLines(ctx context.Context, rel string) (counted, error) {
+	full := filepath.Join(r.dir, filepath.FromSlash(rel))
+	info, err := os.Lstat(full)
+	if err != nil || !info.Mode().IsRegular() {
+		return counted{}, nil
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		return counted{}, nil
+	}
+	defer f.Close()
+	buf := make([]byte, 64<<10)
+	n := counted{}
+	read := 0
+	var last byte
+	for {
+		if err := ctx.Err(); err != nil {
+			return counted{}, err
+		}
+		got, err := f.Read(buf)
+		if got > 0 {
+			chunk := buf[:got]
+			if read < binaryProbe && bytes.IndexByte(chunk[:min(got, binaryProbe-read)], 0) >= 0 {
+				return counted{binary: true}, nil
+			}
+			n.added += bytes.Count(chunk, []byte{'\n'})
+			last = chunk[got-1]
+			read += got
+		}
+		if err != nil {
+			break
+		}
+	}
+	if read > 0 && last != '\n' {
+		n.added++
+	}
+	return n, nil
 }
 
 // parseNameStatus reads `diff --name-status -z`: a status record, then the

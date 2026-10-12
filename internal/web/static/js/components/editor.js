@@ -12,7 +12,6 @@ import { escapeHtml } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, SwipeNav, pushSample, releaseVelocity } from "@dc/swipe";
 import { matchesTokens, rankTokens } from "@dc/filter";
-import { diffLines, lineTokens } from "@dc/linediff";
 import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { renameCoder, renameShell } from "@dc/rename";
 import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
@@ -21,8 +20,11 @@ import * as dockerApi from "@dc/docker";
 import * as editorLSP from "@dc/editor-lsp";
 import { GroupLayout, cornerLeaf, dropZone, encodeLayout, leaf, leafIds, mapLeaves, readGroups, removeAt, screenOrder, splitAt } from "@dc/editor-groups";
 import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, langUrl, modeUrl } from "@dc/editor-filetypes";
-import { byteLength, commitDate, countLines, formatSize, isoDate, shortName } from "@dc/editor-format";
-import { savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
+import { baseName, byteLength, commitDate, countLines, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
+import { LAYOUT_SAVE_MS, savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
+import { changeBars } from "@dc/editor-change-bars";
+import { changeList } from "@dc/editor-changes";
+import { GIT_MARKS, GIT_MARK_CLASSES, gitKind, revdiffKind } from "@dc/editor-marks";
 import { indentPref, loadEditorSettings, saveEditorSettings, setupIndentControl, setupSettingsUI } from "@dc/editor-settings";
 import { createTextarea } from "@dc/editor-textarea";
 import * as projectSort from "@dc/project-sort";
@@ -36,7 +38,6 @@ const MAX_SAVED_TREE_DIRS = 200;
 // file per pause and neither serialises its writes.
 const SEARCH_DRAFT_DEBOUNCE_MS = 200;
 const PREVIEW_DEBOUNCE_MS = 500;
-const CHANGES_SCAN_LIMIT = 500;
 // How long autosave waits after the last change, and the whole trigger: a save
 // on a lost focus or on a page going away would be a second path, unreachable
 // on a phone and untestable everywhere.
@@ -52,32 +53,9 @@ const TERM_ACTIVE_KEY = "dc-editor-term-active";
 // the column's width and the terminal panel's height; the bare key is what this
 // device set last and what a project opened here for the first time starts with.
 const TREE_FOLD_KEY = "dc-editor-tree-folded";
-const LAYOUT_SAVE_MS = 300;
 // Whether the commit view groups its list by folder. Per device for the same
 // reason, and for every project alike.
 const COMMIT_GROUP_KEY = "dc-editor-commit-grouped";
-// How many changes the commit view builds rows for in one go; the folder rows
-// over them ride along uncounted. A working copy with a few hundred changes is
-// one screen of scrolling and arrives whole; beyond that a button asks for the
-// next batch, because a list of thousands of rows costs more to build and lay
-// out than anybody spends reading it. The cap is about the rows alone: the
-// counts, the all box and the commit itself always speak for every change.
-const COMMIT_ROWS_STEP = 500;
-
-// How a changed path is marked in the tree: the letter at the end of the row and
-// the color both the name and that letter take. The colors are Tabler variables
-// through its text utilities, so they follow the light and dark theme. rank
-// decides what a folder shows when several kinds sit under it: the most
-// pressing one wins.
-const GIT_MARKS = {
-  conflict: { rank: 5, cls: "text-red", mark: "!", label: "Conflicted" },
-  deleted: { rank: 4, cls: "text-red", mark: "D", label: "Deleted" },
-  modified: { rank: 3, cls: "text-yellow", mark: "M", label: "Modified" },
-  renamed: { rank: 2, cls: "text-azure", mark: "R", label: "Renamed" },
-  added: { rank: 1, cls: "text-green", mark: "A", label: "Added" },
-  untracked: { rank: 0, cls: "text-cyan", mark: "U", label: "Untracked" },
-};
-const GIT_MARK_CLASSES = Object.values(GIT_MARKS).map((m) => m.cls);
 
 async function init(root) {
   const name = root.dataset.editorName;
@@ -202,6 +180,7 @@ async function init(root) {
   const commitMoreBtn = root.querySelector("[data-editor-commit-more]");
   const commitPushItem = root.querySelector("[data-editor-commit-push]");
   const revdiffEl = root.querySelector("[data-editor-revdiff]");
+  const revdiffToggleBtn = root.querySelector("[data-editor-revdiff-toggle]");
   const revdiffCloseBtn = root.querySelector("[data-editor-revdiff-close]");
   const revdiffGroupBtn = root.querySelector("[data-editor-revdiff-group]");
   const revdiffModeEl = root.querySelector("[data-editor-revdiff-mode]");
@@ -374,11 +353,6 @@ async function init(root) {
   const stripActive = (tab) => (mobileMedia.matches ? tab === activeTab() : inFront(tab));
   const liveText = (tab) => tab.group.editor.valueOf(tab, inFront(tab));
   const anyDirty = () => tabs.some((t) => t.dirty);
-  const baseName = (path) => path.split("/").pop();
-  const parentDir = (path) => {
-    const i = path.lastIndexOf("/");
-    return i >= 0 ? path.slice(0, i) : "";
-  };
   const isMarkdown = (fileName) => /\.(md|markdown)$/i.test(fileName);
   const isSvg = (fileName) => /\.svg$/i.test(fileName);
   const isImage = (fileName) => /\.(png|jpe?g|gif|webp|avif|bmp|ico)$/i.test(fileName);
@@ -463,7 +437,7 @@ async function init(root) {
   // the next dependency, or nowhere.
   function lspUsable() {
     const tab = activeTab();
-    return !!(lsp && tab && !tab.kind && !tab.compare && lsp.usable(tab.path));
+    return !!(lsp && tab && !tab.kind && !tab.compare && !tab.revision && lsp.usable(tab.path));
   }
 
   function lspNote(msg) {
@@ -917,7 +891,7 @@ async function init(root) {
       lockEl.className = "ti ti-lock small flex-shrink-0";
       lockEl.setAttribute("aria-hidden", "true");
       btn.appendChild(lockEl);
-      btn.title = `${tab.path} · read only`;
+      btn.title = `${readOnlySource(tab)} · read only`;
     }
     const nameEl = document.createElement("span");
     nameEl.className = "editor-tab-name";
@@ -930,7 +904,7 @@ async function init(root) {
     if (tabs.some((t) => t !== tab && t.name === tab.name)) {
       const hintEl = document.createElement("span");
       hintEl.className = "editor-tab-hint";
-      hintEl.textContent = tab.external ? externalHint(tab.path) : parentDir(tab.path) || "/";
+      hintEl.textContent = tab.external ? readOnlyHint(tab) : parentDir(tab.path) || "/";
       btn.appendChild(hintEl);
     }
     // What the disk did to this file behind the editor's back, in the one case
@@ -1315,7 +1289,7 @@ async function init(root) {
     dirEl.className = "editor-sheet-dir text-truncate";
     dirEl.textContent = tab.compare && tab.compare.readOnly
       ? `${tab.compare.leftLabel} ⇄ ${tab.compare.rightLabel}`
-      : tab.compare ? tab.compare.left : tab.external ? externalHint(tab.path) : parentDir(tab.path) || "/";
+      : tab.compare ? tab.compare.left : tab.external ? readOnlyHint(tab) : parentDir(tab.path) || "/";
     col.append(nameEl, dirEl);
     open.appendChild(col);
     if (tab.dirty) {
@@ -1795,7 +1769,7 @@ async function init(root) {
     const siblings = groupTabs(g);
     const i = siblings.indexOf(tab);
     tabs.splice(tabs.indexOf(tab), 1);
-    if (lsp && !tab.kind && !tab.compare) lsp.closeDocument(tab.path);
+    if (lsp && !tab.kind && !tab.compare && !tab.revision) lsp.closeDocument(tab.path);
     if (tab.dirty && !tab.kind && !tab.compare && !tab.external && commentsFor(path).length) void loadComments();
     if (g.activePath === path) {
       g.activePath = null;
@@ -1843,7 +1817,7 @@ async function init(root) {
     // other entry here acts on a file this project owns.
     if (tab.compare) return closing;
     if (tab.external) {
-      return [...closing, { divider: true }, { label: "Copy path", icon: "ti-copy", action: () => copyPath(tab.path) }];
+      return [...closing, { divider: true }, { label: "Copy path", icon: "ti-copy", action: () => copyPath(tab.revision ? tab.revision.path : tab.path) }];
     }
     return [
       ...closing,
@@ -1890,6 +1864,14 @@ async function init(root) {
     return parts.length > 2 ? `…/${tail}` : `/${tail}`;
   }
 
+  function readOnlyHint(tab) {
+    return tab.revision ? tab.revision.label : externalHint(tab.path);
+  }
+
+  function readOnlySource(tab) {
+    return tab.revision ? `${tab.revision.path} at ${tab.revision.label}` : tab.path;
+  }
+
   // syncReadOnly says on the statusbar that the file in front of you is
   // not yours to change, and where it comes from: the tab shows a name
   // that means nothing on its own, print.go exists a hundred times over,
@@ -1900,9 +1882,10 @@ async function init(root) {
   // and the tab already say.
   function syncReadOnly() {
     const tab = activeTab();
-    readOnlyEl.hidden = !(tab && tab.external);
-    readOnlyEl.title = tab && tab.external ? tab.path : "";
-    readOnlyPathEl.textContent = tab && tab.external ? `${externalHint(tab.path)}/${tab.name}` : "";
+    const external = !!(tab && tab.external);
+    readOnlyEl.hidden = !external;
+    readOnlyEl.title = external ? readOnlySource(tab) : "";
+    readOnlyPathEl.textContent = !external ? "" : tab.revision ? readOnlySource(tab) : `${externalHint(tab.path)}/${tab.name}`;
   }
 
   function markDirty(tab, on) {
@@ -1991,11 +1974,17 @@ async function init(root) {
       return entry;
     }
     const view = tabView(t);
+    if (t.revision) {
+      const entry = { type: "revision", path: t.revision.path, rev: t.revision.rev, label: t.revision.label };
+      if (view) entry.view = view;
+      return entry;
+    }
     if (t.external) return view ? { type: "external", path: t.path, view } : { type: "external", path: t.path };
     if (!t.diffRev && !t.blameOn && !t.previewOn && !view) return t.path;
     const entry = { type: "file", path: t.path };
     if (t.diffRev) entry.diff = t.diffRev;
     if (t.diffRev && t.diffFrom) entry.diffFrom = t.diffFrom;
+    if (t.diffRev && t.diffSplit) entry.diffSplit = true;
     if (t.blameOn) entry.blame = true;
     if (t.previewOn) entry.preview = true;
     if (view) entry.view = view;
@@ -2036,6 +2025,7 @@ async function init(root) {
         rightLabel: typeof entry.rightLabel === "string" ? entry.rightLabel : entry.rightRev.slice(0, 7),
       }, g);
     }
+    if (entry.type === "revision") return revisionTabFor(entry, g);
     // A file outside the project comes back through its own route: the
     // one the tree serves would take its absolute path for a relative
     // one and answer about a file inside the project.
@@ -2065,6 +2055,7 @@ async function init(root) {
         if (entries[i].type === "file" && entries[i].diff) {
           tab.diffRev = entries[i].diff;
           tab.diffFrom = typeof entries[i].diffFrom === "string" ? entries[i].diffFrom : "";
+          tab.diffSplit = entries[i].diffSplit === true;
         }
         if (entries[i].type === "file" && entries[i].blame && !tab.kind) tab.blameOn = true;
         // The two share the surface, so a stored state that somehow carries both
@@ -2594,23 +2585,6 @@ async function init(root) {
 
   // ---- git -------------------------------------------------------------------
 
-  // gitKind reduces the two porcelain codes of one entry to what the tree shows.
-  // The worktree code wins over the index one: what is on disk is what the
-  // person is looking at.
-  function gitKind(entry) {
-    const index = entry.index || ".";
-    const worktree = entry.worktree || ".";
-    if (index === "U" || worktree === "U" || (index === "A" && worktree === "A") || (index === "D" && worktree === "D")) {
-      return "conflict";
-    }
-    if (worktree === "?") return "untracked";
-    const code = worktree !== "." ? worktree : index;
-    if (code === "D") return "deleted";
-    if (code === "A") return "added";
-    if (code === "R" || code === "C") return "renamed";
-    return "modified";
-  }
-
   // applyGitState is the one place the marks come from: what the working copy
   // carries, path by path, with the line counts for the tooltips.
   function applyGitState(changes) {
@@ -3021,787 +2995,6 @@ async function init(root) {
     treeLoadedAt = Date.now();
   }
 
-  // ---- the change list -------------------------------------------------------
-
-  // What every folder row needs is counted once per list into the index and
-  // moved by the clicks from there on: how many changes sit under it, how many
-  // of those can be picked and how many are. Answering that by filtering the
-  // change list instead costs one pass per folder row and another per click,
-  // which is what made a working copy with ten thousand changes a panel nobody
-  // could open. The rendered rows are held by key for the same reason. Only
-  // the first `shown` changes have rows, their folder rows ride along; the
-  // rest waits behind a button whose numbers count changes, and the picks,
-  // the summary and the commit always speak for the whole list.
-  function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf, canOpen, open, active, onPick, onFilter, empty, stateKey }) {
-    let changes = [];
-    let changesSig = null;
-    let sorted = [];
-    let query = "";
-    let index = emptyIndex();
-    let pendingScroll = null;
-    let lastScroll = 0;
-    let restored = false;
-    let stateTimer = 0;
-    // How many of the shown changes may carry rows right now; it grows with
-    // the button and the walk and survives a re-render, so a refresh never
-    // folds a list somebody grew back to its first batch.
-    let shown = COMMIT_ROWS_STEP;
-    // Which row the keyboard stands on, by key so it survives a rebuild, and
-    // the rendered order the arrows walk, every row of it and not only the
-    // built ones: walking into the batch behind the button builds it. The
-    // walk covers every row, folders and files alike, so the key is typed:
-    // "f:" plus the path for a file row, "g:" plus the directory for a
-    // folder row.
-    let activeKey = "";
-    let order = [];
-    const orderIndex = new Map();
-    let activeRowEl = null;
-    let scrollRaf = 0;
-    let specList = [];
-    let built = 0;
-    let builtFiles = 0;
-    let moreEl = null;
-    const rowEls = new Map();
-    const inputs = new Map();
-    const picked = new Set();
-    listEl.tabIndex = 0;
-
-    function emptyNode(dir, parent) {
-      return { dir, parent, dirs: new Map(), files: [], count: 0, selectable: 0, picked: 0 };
-    }
-
-    function emptyIndex() {
-      const root = emptyNode("", null);
-      return { shown: [], byPath: new Map(), nodes: new Map([["", root]]), root, total: 0, pickedAll: 0 };
-    }
-
-    // matches is the filter, the shared token match every list in this app
-    // narrows with, over the path a row stands for.
-    function matches(entry) {
-      return query === "" || matchesTokens(entry.path, query) || (!!entry.from && matchesTokens(entry.from, query));
-    }
-
-    // dirOf is the folder a row is grouped under: the parent, with the
-    // trailing slash of a directory entry out of the way first.
-    function dirOf(entry) {
-      return parentDir(entry.path.endsWith("/") ? entry.path.slice(0, -1) : entry.path);
-    }
-
-    const selectable = (entry) => picks && kindOf(entry) !== "conflict";
-
-    // setChanges takes a fresh list. The sort is the expensive half and
-    // belongs to the list, not to a keystroke, so it is done here and the
-    // filter only rebuilds the tree over it.
-    function setChanges(list) {
-      const sig = list.map((entry) => JSON.stringify(entry)).join("\n");
-      if (sig === changesSig) return false;
-      changesSig = sig;
-      changes = list;
-      sorted = [...list].sort((a, b) => a.path.localeCompare(b.path));
-      buildIndex();
-      return true;
-    }
-
-    // buildIndex counts what the rows need. byPath and the two totals are
-    // about every change there is, because a pick outside the filter is still
-    // a pick and must not be pruned or forgotten; the folder tree holds only
-    // what the filter shows, which is what makes every folder row, every count
-    // and every checkbox under it speak about the same set without a second
-    // path through the code.
-    function buildIndex() {
-      const root = emptyNode("", null);
-      const nodes = new Map([["", root]]);
-      const byPath = new Map();
-      const hits = [];
-      let pickedAll = 0;
-      for (const entry of sorted) {
-        byPath.set(entry.path, entry);
-        const canPick = selectable(entry);
-        const isPicked = canPick && picked.has(entry.path);
-        if (isPicked) pickedAll += 1;
-        if (!matches(entry)) continue;
-        hits.push(entry);
-        let node = root;
-        const dir = dirOf(entry);
-        if (dir) {
-          let prefix = "";
-          for (const segment of dir.split("/")) {
-            prefix = prefix ? `${prefix}/${segment}` : segment;
-            let child = node.dirs.get(segment);
-            if (!child) {
-              child = emptyNode(prefix, node);
-              node.dirs.set(segment, child);
-              nodes.set(prefix, child);
-            }
-            node = child;
-          }
-        }
-        node.files.push(entry);
-        for (let n = node; n; n = n.parent) {
-          n.count += 1;
-          if (canPick) n.selectable += 1;
-          if (isPicked) n.picked += 1;
-        }
-      }
-      index = { shown: hits, byPath, nodes, root, total: sorted.length, pickedAll };
-    }
-
-    // recountPicks reads the picks back into the folder counts. The clicks
-    // move them one by one; this is for the moments a whole set arrives at
-    // once, the all box, a draft from another device and a spent commit.
-    function recountPicks() {
-      for (const node of index.nodes.values()) node.picked = 0;
-      for (const entry of index.shown) {
-        if (!selectable(entry) || !picked.has(entry.path)) continue;
-        for (let n = index.nodes.get(dirOf(entry)); n; n = n.parent) n.picked += 1;
-      }
-      let all = 0;
-      for (const entry of sorted) {
-        if (selectable(entry) && picked.has(entry.path)) all += 1;
-      }
-      index.pickedAll = all;
-    }
-
-    function selectedPaths() {
-      const paths = [];
-      for (const entry of changes) {
-        if (selectable(entry) && picked.has(entry.path)) paths.push(entry.path);
-      }
-      return paths;
-    }
-
-    // prunePicks drops picks the list no longer holds.
-    function prunePicks() {
-      for (const path of picked) {
-        if (!index.byPath.has(path)) picked.delete(path);
-      }
-    }
-
-    // setPick is the one place a single row's pick moves, and it moves every
-    // number that counts it: the folders above the row, which is what their
-    // checkboxes read, and the whole list's, which is what the commit button
-    // and the summary's "picked in all" read. A pick that changed one of the
-    // two and not the other is a commit button that stands disabled over
-    // work somebody picked.
-    function setPick(entry, on) {
-      if (on === picked.has(entry.path)) return;
-      if (on) picked.add(entry.path);
-      else picked.delete(entry.path);
-      const delta = on ? 1 : -1;
-      index.pickedAll += delta;
-      for (let n = index.nodes.get(dirOf(entry)); n; n = n.parent) n.picked += delta;
-    }
-
-    function numbersOf(entry) {
-      if (entry.binary) return "binary";
-      if (entry.added || entry.removed) return `+${entry.added || 0} −${entry.removed || 0}`;
-      return "";
-    }
-
-    function fileRow(entry, nested, depth) {
-      const kind = kindOf(entry);
-      const info = GIT_MARKS[kind];
-      const key = `f:${entry.path}`;
-      const row = document.createElement("div");
-      row.className = "editor-commit-row";
-      row.tabIndex = -1;
-      if (nested) {
-        row.classList.add("editor-commit-nested");
-        row.style.paddingLeft = `${0.5 + (depth || 1) * 1.1}rem`;
-      }
-      row.dataset.path = entry.path;
-      if (picks) {
-        const check = document.createElement("input");
-        check.type = "checkbox";
-        check.tabIndex = -1;
-        check.className = "form-check-input m-0 flex-shrink-0";
-        check.setAttribute("aria-label", `Include ${entry.path}`);
-        if (kind === "conflict") {
-          check.disabled = true;
-          check.title = "Resolve the conflict first.";
-        } else {
-          check.checked = picked.has(entry.path);
-          check.addEventListener("change", () => {
-            activeKey = key;
-            mark();
-            setPick(entry, check.checked);
-            // Every folder above carries this file in its subtree, so each of
-            // their rows may have to move to or from the mixed state.
-            for (let n = index.nodes.get(dirOf(entry)); n; n = n.parent) paintGroupRow(n);
-            onPick();
-          });
-        }
-        inputs.set(key, check);
-        row.appendChild(check);
-      }
-      const openBtn = document.createElement("button");
-      openBtn.type = "button";
-      openBtn.tabIndex = -1;
-      openBtn.className = "editor-commit-open";
-      const isDirEntry = entry.path.endsWith("/");
-      const shownPath = isDirEntry ? entry.path.slice(0, -1) : entry.path;
-      const line = document.createElement("div");
-      line.className = "editor-commit-line";
-      const markEl = document.createElement("span");
-      markEl.className = `small fw-bold flex-shrink-0 ${info.cls}`;
-      markEl.textContent = info.mark;
-      const nameEl = document.createElement("span");
-      nameEl.className = `text-truncate ${info.cls}`;
-      nameEl.textContent = baseName(shownPath) + (isDirEntry ? "/" : "");
-      line.append(markEl, nameEl);
-      const numbers = numbersOf(entry);
-      if (numbers) {
-        const counts = document.createElement("span");
-        counts.className = "small ms-auto ps-2 flex-shrink-0";
-        if (entry.binary) {
-          counts.classList.add("text-secondary");
-          counts.textContent = numbers;
-        } else {
-          const plus = document.createElement("span");
-          plus.className = "text-green";
-          plus.textContent = `+${entry.added || 0}`;
-          const minus = document.createElement("span");
-          minus.className = "text-red ms-1";
-          minus.textContent = `−${entry.removed || 0}`;
-          counts.append(plus, minus);
-        }
-        line.append(counts);
-      }
-      openBtn.append(line);
-      // The full path on a line of its own, wrapping instead of being cut: a
-      // name alone does not tell two same named files apart. A file at the
-      // root would only repeat its name, and under a group row the folder
-      // already stands above the file.
-      const renamed = !!entry.from && entry.from !== entry.path;
-      if (renamed || (!nested && parentDir(shownPath))) {
-        const pathEl = document.createElement("div");
-        pathEl.className = "editor-commit-path";
-        pathEl.textContent = renamed ? `${entry.from} → ${entry.path}` : entry.path;
-        openBtn.append(pathEl);
-      }
-      openBtn.title = [renamed ? `${entry.from} → ${entry.path}` : entry.path, info.label, numbers].filter(Boolean).join(" · ");
-      if (!canOpen(entry)) {
-        openBtn.disabled = true;
-      } else {
-        openBtn.addEventListener("click", () => {
-          activeKey = key;
-          mark();
-          void open(entry);
-        });
-      }
-      row.append(openBtn);
-      rowEls.set(key, row);
-      return row;
-    }
-
-    // A group row is one folder's line over its whole subtree: the checkbox
-    // picks and drops everything below it, a mixed pick reads as
-    // indeterminate. The folder is only a grouping, what is committed are
-    // always the files.
-    function groupRow(node, label, depth) {
-      const key = `g:${node.dir}`;
-      const row = document.createElement("div");
-      row.className = "editor-commit-row editor-commit-grouprow";
-      row.tabIndex = -1;
-      row.dataset.dir = node.dir;
-      if (depth) row.style.paddingLeft = `${0.5 + depth * 1.1}rem`;
-      if (picks) {
-        const check = document.createElement("input");
-        check.type = "checkbox";
-        check.tabIndex = -1;
-        check.className = "form-check-input m-0 flex-shrink-0";
-        check.setAttribute("aria-label", `Include everything in ${node.dir}`);
-        check.addEventListener("change", () => {
-          activeKey = key;
-          mark();
-          const on = check.checked;
-          const before = node.picked;
-          const stack = [node];
-          while (stack.length > 0) {
-            const n = stack.pop();
-            for (const entry of n.files) {
-              if (!selectable(entry)) continue;
-              if (on) picked.add(entry.path);
-              else picked.delete(entry.path);
-              const input = inputs.get(`f:${entry.path}`);
-              if (input && !input.disabled) input.checked = on;
-            }
-            n.picked = on ? n.selectable : 0;
-            paintGroupRow(n);
-            for (const child of n.dirs.values()) stack.push(child);
-          }
-          // The whole list's number moves with the subtree, see setPick.
-          index.pickedAll += node.picked - before;
-          // A subtree toggle moves rows in both directions, the groups inside
-          // it and the ones this folder sits in.
-          for (let n = node.parent; n; n = n.parent) {
-            n.picked += node.picked - before;
-            paintGroupRow(n);
-          }
-          onPick();
-        });
-        inputs.set(key, check);
-        row.appendChild(check);
-      }
-      const line = document.createElement("div");
-      line.className = "editor-commit-line";
-      const icon = document.createElement("i");
-      icon.className = "ti ti-folder flex-shrink-0 text-secondary";
-      icon.setAttribute("aria-hidden", "true");
-      const nameEl = document.createElement("span");
-      nameEl.className = "text-truncate small fw-medium";
-      nameEl.textContent = label;
-      const count = document.createElement("span");
-      count.className = "small text-secondary ms-auto ps-2 flex-shrink-0";
-      count.textContent = String(node.count);
-      line.append(icon, nameEl, count);
-      row.title = node.dir;
-      row.append(line);
-      rowEls.set(key, row);
-      paintGroupRow(node);
-      return row;
-    }
-
-    // paintGroupRow reads a folder's counted pick state back onto its row, so
-    // a single file's checkbox never costs a rebuild of the list. A folder
-    // that has no row right now, because it is merged into a chain or waits
-    // behind the button, is counted all the same and simply has nothing to
-    // paint.
-    function paintGroupRow(node) {
-      if (!node) return;
-      const input = inputs.get(`g:${node.dir}`);
-      if (!input) return;
-      input.disabled = node.selectable === 0;
-      input.checked = node.selectable > 0 && node.picked === node.selectable;
-      input.indeterminate = node.picked > 0 && node.picked < node.selectable;
-    }
-
-    // moreRow is the end of a list that is longer than the panel builds at
-    // once. Its number is counted in what the list is showing, changes
-    // plainly and matches under a filter, never in tree rows: the folder
-    // rows are grouping and adding them in made three thousand hits read as
-    // five thousand missing. Built rows plus this rest is the count over the
-    // list, and the waiting ones are picked and committed with the rest
-    // regardless, because a row nobody can see must not read as a change
-    // nobody can commit.
-    function moreRow(rest) {
-      const row = document.createElement("div");
-      row.className = "px-2 py-2 border-top";
-      row.dataset.editorCommitRest = String(rest);
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.tabIndex = -1;
-      btn.className = "btn btn-sm btn-ghost-secondary w-100";
-      btn.dataset.editorCommitShowMore = "";
-      btn.textContent = `Show ${Math.min(rest, COMMIT_ROWS_STEP)} more`;
-      btn.addEventListener("click", () => extend(), { signal });
-      const kind = query === "" ? ["change", "changes"] : ["match", "matches"];
-      const note = document.createElement("div");
-      note.className = "small text-secondary mt-1";
-      const tail = picks ? (rest === 1 ? " The box above picks it with the rest." : " The box above picks them with the rest.") : "";
-      note.textContent = (rest === 1
-        ? `One more ${kind[0]} is not listed here.`
-        : `${rest} more ${kind[1]} are not listed here.`) + tail;
-      row.append(btn, note);
-      return row;
-    }
-
-    // specs is the list the panel would render in full: one entry per row,
-    // folders first and files after them on every level in the grouped view,
-    // the sorted changes in the flat one. Building it is cheap, building its
-    // rows is not, which is what the cap is about.
-    function specs() {
-      const list = [];
-      if (!commitGrouped) {
-        for (const entry of index.shown) list.push({ entry, nested: false, depth: 0 });
-        return list;
-      }
-      // Grouped by folder, the way an IDE's directory tree reads: folders
-      // first and files after them, on every level. A folder becomes a row of
-      // its own as soon as it holds more than one thing; a chain of folders
-      // that only hands down to a single subfolder and has no files of its
-      // own merges into one row with the joined path as its label. A group's
-      // checkbox covers its whole subtree, see groupRow.
-      const emit = (node, depth) => {
-        for (const segment of [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
-          let label = segment;
-          let child = node.dirs.get(segment);
-          while (child.files.length === 0 && child.dirs.size === 1) {
-            const [next] = child.dirs.keys();
-            label = `${label}/${next}`;
-            child = child.dirs.get(next);
-          }
-          list.push({ node: child, label, depth });
-          emit(child, depth + 1);
-        }
-        for (const entry of node.files) list.push({ entry, nested: depth > 0, depth });
-      };
-      emit(index.root, 0);
-      return list;
-    }
-
-    function render() {
-      const scrollTop = listEl.scrollTop;
-      rowEls.clear();
-      inputs.clear();
-      if (index.shown.length === 0) {
-        order = [];
-        orderIndex.clear();
-        specList = [];
-        built = 0;
-        builtFiles = 0;
-        moreEl = null;
-        listEl.replaceChildren(empty(query));
-        return;
-      }
-      const list = specs();
-      specList = list;
-      order = [];
-      orderIndex.clear();
-      for (let i = 0; i < list.length; i += 1) {
-        const key = list[i].entry ? `f:${list[i].entry.path}` : `g:${list[i].node.dir}`;
-        orderIndex.set(key, i);
-        order.push(key);
-      }
-      const quota = Math.max(shown, COMMIT_ROWS_STEP);
-      const rows = [];
-      built = 0;
-      builtFiles = 0;
-      while (built < list.length && builtFiles < quota) {
-        const spec = list[built];
-        if (spec.entry) builtFiles += 1;
-        rows.push(spec.entry
-          ? fileRow(spec.entry, spec.nested, spec.depth)
-          : groupRow(spec.node, spec.label, spec.depth));
-        built += 1;
-      }
-      moreEl = built < list.length ? moreRow(index.shown.length - builtFiles) : null;
-      if (moreEl) rows.push(moreEl);
-      const listHadFocus = listEl.contains(document.activeElement);
-      listEl.replaceChildren(...rows);
-      if (pendingScroll != null && listEl.clientHeight > 0) {
-        listEl.scrollTop = pendingScroll;
-        pendingScroll = null;
-      } else {
-        listEl.scrollTop = scrollTop;
-      }
-      mark();
-      if (listHadFocus && !focusRow()) filterEl.focus();
-    }
-
-    // extend builds the next batch behind the rows that already stand,
-    // appended and never rebuilt: a full rebuild grows with everything built
-    // so far, so a walk that crossed its tenth batch edge would pay for ten
-    // thousand rows to gain one, and that once per edge. A batch is
-    // COMMIT_ROWS_STEP more changes, the folder rows over them ride along
-    // uncounted, and minSpec forces the walk to cover a row the arrows are
-    // about to stand on.
-    function extend(minSpec = -1) {
-      const list = specList;
-      if (built >= list.length) return;
-      if (moreEl) {
-        moreEl.remove();
-        moreEl = null;
-      }
-      const goal = builtFiles + COMMIT_ROWS_STEP;
-      const batch = document.createDocumentFragment();
-      while (built < list.length && (builtFiles < goal || built <= minSpec)) {
-        const spec = list[built];
-        if (spec.entry) builtFiles += 1;
-        batch.append(spec.entry
-          ? fileRow(spec.entry, spec.nested, spec.depth)
-          : groupRow(spec.node, spec.label, spec.depth));
-        built += 1;
-      }
-      shown = Math.max(shown, builtFiles);
-      if (built < list.length) {
-        moreEl = moreRow(index.shown.length - builtFiles);
-        batch.append(moreEl);
-      }
-      listEl.append(batch);
-    }
-
-    // ---- the filter and the keyboard walk over its hits ----------------------
-
-    // The filter stands over every list, short or long, and the keyboard owns
-    // the rows from there with the real focus: the arrows reach every row,
-    // folder rows and file rows alike, in the order they stand on the screen.
-    // Nothing here changes what a commit takes: the filter narrows what is
-    // shown and what the boxes over it act on, the picks themselves stand.
-
-    function activeIndex() {
-      if (!activeKey) return -1;
-      const at = orderIndex.get(activeKey);
-      return at === undefined ? -1 : at;
-    }
-
-    function activeRow() {
-      return activeKey ? rowEls.get(activeKey) || null : null;
-    }
-
-    function activeInput() {
-      return activeKey ? inputs.get(activeKey) || null : null;
-    }
-
-    // The mark has to survive a held arrow key, thirty presses a second over
-    // a list of thousands of rows, so nothing here may cost what the list is
-    // long: the old row is remembered instead of swept for, the index is a
-    // map lookup, and the scroll runs once per frame in a rAF rather than
-    // once per press, because reading geometry after every press is a forced
-    // layout of the whole list and was the freeze itself. The mark moves at
-    // once; only following it with the scroller waits for the next frame.
-    function mark() {
-      if (activeRowEl) activeRowEl.classList.remove("active");
-      activeRowEl = null;
-      const row = activeRow();
-      if (!row) return;
-      row.classList.add("active");
-      activeRowEl = row;
-      if (scrollRaf) return;
-      scrollRaf = requestAnimationFrame(() => {
-        scrollRaf = 0;
-        const marked = activeRowEl;
-        if (!marked || !marked.isConnected) return;
-        const box = listEl.getBoundingClientRect();
-        const rect = marked.getBoundingClientRect();
-        if (rect.top < box.top) listEl.scrollTop -= box.top - rect.top;
-        else if (rect.bottom > box.bottom) listEl.scrollTop += rect.bottom - box.bottom;
-      });
-    }
-
-    // focusRow puts the real focus on the marked row, which is what makes the
-    // keys what they look like: the focused element is the one they act on.
-    // It reports whether there was a row to focus.
-    function focusRow() {
-      const row = activeRow();
-      if (!row) return false;
-      row.focus({ preventScroll: true });
-      return true;
-    }
-
-    // enter is the field's arrow down: into the list at the mark, or at the
-    // first row when nothing is marked yet.
-    function enter() {
-      if (activeKey && focusRow()) return;
-      activeKey = "";
-      move(1);
-    }
-
-    function move(step) {
-      if (order.length === 0) return;
-      const at = activeIndex();
-      // The walk stands still at the bottom instead of wrapping: on a list of
-      // thirty thousand changes the wrap from the first row to the last would
-      // have to build every row in between in one keystroke, and a held key
-      // froze the page for two seconds exactly that way. Up past the first
-      // row steps back out into the field, the way it walked in.
-      const next = at < 0 ? 0 : at + step;
-      if (next < 0) {
-        filterEl.focus();
-        return;
-      }
-      if (next >= order.length) return;
-      activeKey = order[next];
-      // Walking into the batch that was not built appends it, so the arrows
-      // never run into a wall the button would have to be clicked for, and
-      // the rows that already stand are not built a second time. The order
-      // carries one key per spec, so the walk's index is the spec's.
-      if (next >= built) extend(next);
-      mark();
-      focusRow();
-    }
-
-    // Enter opens the marked file, which only a file has: on a folder row it
-    // does nothing at all, no error, no state, the focus stands.
-    async function openActive() {
-      const fromList = listEl.contains(document.activeElement);
-      // Enter in the field with nothing marked yet takes the first hit: type,
-      // Enter, and the top match stands.
-      if (!activeKey) {
-        const at = specList.findIndex((spec) => spec.entry);
-        if (at < 0) return;
-        activeKey = order[at];
-        mark();
-      }
-      if (!activeKey.startsWith("f:")) return;
-      const entry = index.byPath.get(activeKey.slice(2));
-      if (!entry) return;
-      if (!canOpen(entry)) {
-        status(`"${entry.path}" has nothing to compare.`);
-        return;
-      }
-      await open(entry);
-      if (!active()) return;
-      if (fromList) focusRow();
-      else filterEl.focus();
-    }
-
-    // Space is a click on the marked row's checkbox, nothing else: a file row
-    // toggles its pick, a folder row its whole subtree, exactly what the
-    // mouse gets there, the half checked state included, and like every
-    // checkbox it stays where it is: stepping on is the arrows' business.
-    function pickActive() {
-      const input = activeInput();
-      if (input && !input.disabled) input.click();
-    }
-
-    function setQuery(next) {
-      if (next === query) return;
-      query = next;
-      buildIndex();
-      // A changed filter is a changed list, so the walk starts at its top
-      // again instead of keeping a mark somewhere in a list nobody is looking
-      // at.
-      activeKey = "";
-      shown = COMMIT_ROWS_STEP;
-      render();
-      onFilter();
-      scheduleState();
-    }
-
-    function persistState() {
-      if (!stateKey) return;
-      store.setJSON(stateKey, { filter: query, scroll: lastScroll });
-    }
-
-    function scheduleState() {
-      if (!stateKey) return;
-      clearTimeout(stateTimer);
-      stateTimer = setTimeout(() => {
-        stateTimer = 0;
-        persistState();
-      }, LAYOUT_SAVE_MS);
-    }
-
-    function restoreState() {
-      if (!stateKey) return;
-      if (!restored) {
-        restored = true;
-        const saved = store.getJSON(stateKey, null);
-        const filter = saved && typeof saved.filter === "string" ? saved.filter.trim() : "";
-        if (filter) {
-          filterEl.value = filter;
-          query = filter;
-          buildIndex();
-        }
-        lastScroll = Math.max(0, Math.round(Number(saved && saved.scroll) || 0));
-        if (lastScroll > 0) pendingScroll = lastScroll;
-      }
-      persistState();
-    }
-
-    function forgetState() {
-      if (!stateKey) return;
-      if (filterEl.value !== "" || query !== "") clear();
-      clearTimeout(stateTimer);
-      stateTimer = 0;
-      lastScroll = 0;
-      pendingScroll = null;
-      store.remove(stateKey);
-    }
-
-    listEl.addEventListener("scroll", () => {
-      if (listEl.clientHeight === 0) return;
-      lastScroll = Math.round(listEl.scrollTop);
-      scheduleState();
-    }, { signal, passive: true });
-    signal.addEventListener("abort", () => {
-      if (!stateTimer) return;
-      clearTimeout(stateTimer);
-      stateTimer = 0;
-      persistState();
-    });
-
-    function clear() {
-      filterEl.value = "";
-      setQuery("");
-    }
-
-    function syncFilter() {
-      // The count and the clear button keep their place and only appear,
-      // because they float over the field's padding: what they must never do
-      // is change the width of the box somebody is typing in.
-      const asked = query !== "";
-      clearBtn.style.visibility = asked ? "" : "hidden";
-      countEl.textContent = asked ? `${index.shown.length} of ${index.total}` : "";
-    }
-
-    filterEl.addEventListener("input", () => setQuery(filterEl.value.trim()), { signal });
-    filterEl.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        enter();
-      } else if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault();
-        void openActive();
-      } else if (e.key === "Escape") {
-        // A filter that stands is what Escape means here; the panel's own
-        // Escape takes over once the field is empty, so one key leads out
-        // step by step.
-        if (filterEl.value === "") return;
-        e.preventDefault();
-        e.stopPropagation();
-        clear();
-      }
-    }, { signal });
-    // In the list the keys are the row's: the arrows move the focus itself,
-    // so Space is the checkbox convention every browser taught and Enter is
-    // the row's diff, and Escape steps back out into the field. The walk
-    // moves the real focus so every key acts on the element that visibly
-    // holds it.
-    listEl.addEventListener("keydown", (e) => {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
-        move(e.key === "ArrowDown" ? 1 : -1);
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        void openActive();
-      } else if (e.key === " " && !(e.target instanceof HTMLInputElement)) {
-        e.preventDefault();
-        pickActive();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        filterEl.focus();
-      }
-    }, { signal });
-    clearBtn.addEventListener("click", () => {
-      clear();
-      filterEl.focus();
-    }, { signal });
-
-    return {
-      setChanges,
-      get changes() { return changes; },
-      get index() { return index; },
-      get query() { return query; },
-      picked,
-      recountPicks,
-      selectedPaths,
-      prunePicks,
-      setPick,
-      render,
-      extend,
-      reset() {
-        shown = COMMIT_ROWS_STEP;
-      },
-      restoreState,
-      forgetState,
-      focusRow,
-      focusFilter() {
-        filterEl.focus();
-      },
-      syncFilter,
-      holdsFocus() {
-        return document.activeElement === filterEl || listEl.contains(document.activeElement);
-      },
-      inList() {
-        return listEl.contains(document.activeElement);
-      },
-    };
-  }
-
   // ---- commit ----------------------------------------------------------------
 
   // The commit view borrows the tree's place in the column: it answers the same
@@ -3812,6 +3005,9 @@ async function init(root) {
 
   const commitList = changeList({
     listEl: commitListEl,
+    grouped: () => commitGrouped,
+    status,
+    signal,
     filterEl: commitFilterEl,
     countEl: commitFilterCountEl,
     clearBtn: commitFilterClearBtn,
@@ -3868,6 +3064,7 @@ async function init(root) {
 
   function syncCommitUI(changed = true) {
     commitToggleBtn.hidden = !gitRepo;
+    revdiffToggleBtn.hidden = !gitRepo;
     gitItem.hidden = !gitSurface();
     gitItemCount.textContent = commitChanges.length ? String(commitChanges.length) : "";
     gitItemCount.hidden = commitChanges.length === 0;
@@ -4271,14 +3468,20 @@ async function init(root) {
   let revdiffAnswer = null;
   let revdiffLoading = false;
   let revdiffTotals = { added: 0, removed: 0 };
+  // The working copy is a pick of its own and never a name: whatever is
+  // typed into the picker is a revision, so no typing can turn into it.
+  const WORKTREE_PICK = Symbol("working copy");
   const revdiffPair = readRevdiffPair();
 
+  // A device that never picked a pair starts on the working copy, a stored
+  // pair stays what it was.
   function readRevdiffPair() {
     const saved = store.getJSON(revdiffKey, null);
     return {
       from: saved && typeof saved.from === "string" ? saved.from : "",
       to: saved && typeof saved.to === "string" ? saved.to : "",
       mode: saved && saved.mode === "direct" ? "direct" : "since",
+      worktree: !saved || saved.worktree === true,
     };
   }
 
@@ -4286,28 +3489,17 @@ async function init(root) {
     store.setJSON(revdiffKey, revdiffPair);
   }
 
-  function revdiffKind(entry) {
-    switch (entry.status) {
-      case "A":
-      case "C":
-        return "added";
-      case "D":
-        return "deleted";
-      case "R":
-        return "renamed";
-      default:
-        return "modified";
-    }
-  }
-
   const revdiffList = changeList({
     listEl: revdiffListEl,
+    grouped: () => commitGrouped,
+    status,
+    signal,
     filterEl: revdiffFilterEl,
     countEl: revdiffFilterCountEl,
     clearBtn: revdiffFilterClearBtn,
     picks: false,
     kindOf: revdiffKind,
-    canOpen: (entry) => !entry.path.endsWith("/"),
+    canOpen: (entry) => !entry.path.endsWith("/") && !(revdiffAnswer && revdiffAnswer.worktree && revdiffKind(entry) === "deleted"),
     open: (entry) => openRevisionDiff(entry),
     active: () => revdiffOn,
     onPick: () => syncRevdiffControls(),
@@ -4318,16 +3510,17 @@ async function init(root) {
       el.className = "text-secondary small p-3";
       if (revdiffLoading || !revdiffAnswer || revdiffErrorEl.hidden === false) return el;
       const from = revdiffPair.from;
-      const to = revdiffPair.to;
+      const worktree = revdiffAnswer.worktree;
+      const to = worktree ? "the working copy" : revdiffPair.to;
       const line = document.createElement("div");
       if (query !== "") {
         line.textContent = `No change matches "${query}".`;
-      } else if (revdiffAnswer.from.sha === revdiffAnswer.to.sha) {
+      } else if (!worktree && revdiffAnswer.from.sha === revdiffAnswer.to.sha) {
         line.textContent = from === to
           ? `${from} compared with itself, nothing differs.`
           : `${from} and ${to} are the same commit, nothing differs.`;
       } else if (revdiffAnswer.since) {
-        line.textContent = `${to} changed nothing since it split from ${from}.`;
+        line.textContent = `${worktree ? "The working copy" : to} changed nothing since it split from ${from}.`;
         const hint = document.createElement("div");
         hint.className = "mt-1";
         hint.textContent = `Everything that differs between the two shows what ${from} has and ${to} does not.`;
@@ -4348,6 +3541,7 @@ async function init(root) {
   }
 
   function revdiffLabel(side) {
+    if (side === "to" && revdiffPair.worktree) return "Working copy";
     if (revdiffPair[side]) return revdiffPair[side];
     const rev = revdiffAnswer && revdiffAnswer[side];
     return rev && rev.name ? rev.name : "…";
@@ -4355,19 +3549,21 @@ async function init(root) {
 
   function paintRevdiffHead() {
     const hex = /^[0-9a-f]{7,40}$/i;
+    const worktree = revdiffPair.worktree;
     for (const side of ["from", "to"]) {
       const label = revdiffLabel(side);
+      const onDisk = side === "to" && worktree;
       revdiffNameEls[side].textContent = shortRev(label);
-      revdiffIconEls[side].className = `ti ${hex.test(label) ? "ti-git-commit" : "ti-git-branch"} flex-shrink-0`;
+      revdiffIconEls[side].className = `ti ${onDisk ? "ti-file-pencil" : hex.test(label) ? "ti-git-commit" : "ti-git-branch"} flex-shrink-0`;
       const rev = revdiffAnswer && revdiffAnswer[side];
-      revdiffPickBtns[side].title = rev && rev.sha && rev.name === label
-        ? `${side === "from" ? "Compare from" : "Compare to"} ${label} (${rev.sha.slice(0, 7)})`
-        : `${side === "from" ? "Compare from" : "Compare to"} ${label}`;
+      revdiffPickBtns[side].title = onDisk
+        ? "Compare to the working copy"
+        : rev && rev.sha && rev.name === label
+          ? `${side === "from" ? "Compare from" : "Compare to"} ${label} (${rev.sha.slice(0, 7)})`
+          : `${side === "from" ? "Compare from" : "Compare to"} ${label}`;
     }
-    const from = revdiffLabel("from");
-    const to = revdiffLabel("to");
-    const a = shortRev(from);
-    const b = shortRev(to);
+    const a = shortRev(revdiffLabel("from"));
+    const b = worktree ? "working copy" : shortRev(revdiffLabel("to"));
     revdiffModeEl.options[0].textContent = `${a}...${b}`;
     revdiffModeEl.options[1].textContent = `${a}..${b}`;
     revdiffModeEl.value = revdiffPair.mode;
@@ -4409,7 +3605,8 @@ async function init(root) {
     syncRevdiffControls();
     const params = new URLSearchParams({ mode: revdiffPair.mode });
     if (revdiffPair.from) params.set("from", revdiffPair.from);
-    if (revdiffPair.to) params.set("to", revdiffPair.to);
+    if (revdiffPair.worktree) params.set("worktree", "1");
+    else if (revdiffPair.to) params.set("to", revdiffPair.to);
     let data;
     try {
       data = await getJSON(`${base}/git/compare?${params.toString()}`, { signal });
@@ -4432,11 +3629,12 @@ async function init(root) {
       closeRevdiff();
       return;
     }
-    const same = !!revdiffAnswer && revdiffAnswer.base === data.base
-      && revdiffAnswer.to.sha === data.to.sha && revdiffAnswer.since === data.since;
+    const same = !!revdiffAnswer && revdiffAnswer.base === data.base && revdiffAnswer.to.sha === data.to.sha
+      && revdiffAnswer.since === data.since && !!revdiffAnswer.worktree === !!data.worktree;
     revdiffAnswer = data;
     revdiffPair.from = data.from.name;
-    revdiffPair.to = data.to.name;
+    revdiffPair.to = data.worktree ? "" : data.to.name;
+    revdiffPair.worktree = !!data.worktree;
     revdiffPair.mode = data.since ? "since" : "direct";
     storeRevdiffPair();
     let added = 0;
@@ -4461,6 +3659,8 @@ async function init(root) {
       store.set(viewKey, "compare");
       treeEl.hidden = true;
       revdiffEl.hidden = false;
+      revdiffToggleBtn.classList.add("active");
+      revdiffToggleBtn.setAttribute("aria-pressed", "true");
       paintRevdiffHead();
       revdiffList.reset();
       revdiffList.restoreState();
@@ -4480,6 +3680,7 @@ async function init(root) {
   function openRevdiffAt(from, to) {
     revdiffPair.from = from || "";
     revdiffPair.to = to || "";
+    revdiffPair.worktree = false;
     storeRevdiffPair();
     if (revdiffOn) {
       paintRevdiffHead();
@@ -4495,10 +3696,18 @@ async function init(root) {
     revdiffList.forgetState();
     revdiffEl.hidden = true;
     treeEl.hidden = false;
+    revdiffToggleBtn.classList.remove("active");
+    revdiffToggleBtn.setAttribute("aria-pressed", "false");
+  }
+
+  function toggleRevdiff() {
+    if (revdiffOn) closeRevdiff();
+    else openRevdiff();
   }
 
   function setRevdiffSide(side, rev) {
-    revdiffPair[side] = rev;
+    if (side === "to") revdiffPair.worktree = rev === WORKTREE_PICK;
+    revdiffPair[side] = rev === WORKTREE_PICK ? "" : rev;
     storeRevdiffPair();
     paintRevdiffHead();
     void loadRevdiff();
@@ -4510,6 +3719,7 @@ async function init(root) {
       kinds: ["branch", "remote", "tag", "commit"],
       raw: true,
       placeholder: "Branch, tag or commit…",
+      pinned: side === "to" ? [{ value: WORKTREE_PICK, name: "Working copy", sub: "the files on disk, uncommitted changes included", icon: "ti-file-pencil", disabled: false }] : [],
       onPick: (rev) => {
         closeSheet();
         setRevdiffSide(side, rev);
@@ -4556,18 +3766,29 @@ async function init(root) {
     };
   }
 
+  const revdiffLeftLabel = (answer) => (answer.base === answer.from.sha
+    ? answer.from.name
+    : `${answer.from.name} at the split (${answer.base.slice(0, 7)})`);
+
+  // With the working copy on the right a row opens the file itself, editable,
+  // in the diff against the left side, so it can be worked on in place.
   async function openRevisionDiff(entry) {
     const answer = revdiffAnswer;
-    if (!answer || !answer.to || !answer.to.sha) return;
-    const leftRev = answer.base;
-    const rightRev = answer.to.sha;
-    const leftPath = entry.from || entry.path;
-    const rightPath = entry.path;
-    const leftLabel = answer.base === answer.from.sha
-      ? answer.from.name
-      : `${answer.from.name} at the split (${answer.base.slice(0, 7)})`;
-    const rightLabel = answer.to.name;
-    await openRevisionCompare({ leftRev, rightRev, leftPath, rightPath, leftLabel, rightLabel });
+    if (!answer) return;
+    const renamed = !!entry.from && entry.from !== entry.path;
+    if (answer.worktree) {
+      await diffAgainst(entry.path, answer.base, renamed ? entry.from : "");
+      return;
+    }
+    if (!answer.to.sha) return;
+    await openRevisionCompare({
+      leftRev: answer.base,
+      rightRev: answer.to.sha,
+      leftPath: entry.from || entry.path,
+      rightPath: entry.path,
+      leftLabel: revdiffLeftLabel(answer),
+      rightLabel: answer.to.name,
+    });
   }
 
   // openRevisionCompare opens a file at two revisions as a read only compare
@@ -4609,6 +3830,72 @@ async function init(root) {
     }
   }
 
+  // A file at one revision is read only like a file from outside the
+  // project, so it carries the external tab's rules (no save, no diff, no git
+  // mark, no disk to follow) and says in revision what it is a snapshot of.
+  const revisionPath = (rev, path) => `//rev/${encodeURIComponent(rev)}/${encodeURIComponent(path)}`;
+
+  async function revisionTabFor(spec, g = group) {
+    const data = await fetchRev(spec.path, spec.rev);
+    if (data.exists === false) throw new Error(`"${spec.path}" is not in ${spec.label}.`);
+    if (data.binary) {
+      throw new Error(data.reason === "large" ? "That revision is too large to open." : "That revision holds binary content.");
+    }
+    const name = baseName(spec.path);
+    return {
+      path: revisionPath(spec.rev, spec.path),
+      name,
+      group: g,
+      external: true,
+      revision: { rev: spec.rev, path: spec.path, label: spec.label },
+      handle: await g.editor.createDoc(data.content || "", name, { readOnly: true }),
+      editorConfig: {},
+      dirty: false,
+    };
+  }
+
+  async function openRevisionFile(spec) {
+    const path = revisionPath(spec.rev, spec.path);
+    closeDrawer();
+    const existing = tabByPath(path);
+    if (existing) {
+      existing.revision.label = spec.label;
+      if (inFront(existing)) {
+        renderTabs();
+        syncReadOnly();
+        persistTabs();
+      }
+      activateTab(path);
+      return;
+    }
+    status("Loading…");
+    try {
+      const tab = await revisionTabFor(spec);
+      if (signal.aborted || tabByPath(path)) return;
+      addTab(tab);
+      activateTab(path);
+      status("");
+    } catch (err) {
+      if (!signal.aborted) status(err.message, "error");
+    }
+  }
+
+  // "Open file" in a change list opens the file as the right side has it:
+  // the working copy (right null) as its own editable tab, out of a diff it
+  // stands in, a revision read only, and a file the right side deleted as the
+  // left side had it.
+  function openFileMenuItem(entry, kind, left, right) {
+    if (entry.path.endsWith("/")) return null;
+    const open = async () => {
+      if (kind === "deleted") return openRevisionFile({ ...left, path: entry.from || entry.path });
+      if (right) return openRevisionFile({ ...right, path: entry.path });
+      const tab = tabByPath(entry.path);
+      if (tab && tab.diffRev) await toggleTabDiff(tab);
+      return openPath(entry.path);
+    };
+    return { label: "Open file", icon: "ti-file", action: () => void open() };
+  }
+
   for (const side of ["from", "to"]) {
     revdiffPickBtns[side].addEventListener("click", () => pickRevdiffSide(side), { signal });
   }
@@ -4618,6 +3905,7 @@ async function init(root) {
     paintRevdiffHead();
     void loadRevdiff();
   }, { signal });
+  revdiffToggleBtn.addEventListener("click", toggleRevdiff, { signal });
   revdiffCloseBtn.addEventListener("click", closeRevdiff, { signal });
   function paintRevdiffGroup() {
     revdiffGroupBtn.classList.toggle("active", commitGrouped);
@@ -4778,9 +4066,9 @@ async function init(root) {
       }),
       sheetActionRow({
         icon: "ti-git-compare",
-        label: "Compare revisions",
+        label: "Compare",
         disabled: gitBusy,
-        sub: "two branches, tags or commits against each other",
+        sub: "what your branch changed, or any two revisions",
         onClick: () => {
           closeSheet();
           openRevdiff();
@@ -5090,8 +4378,9 @@ async function init(root) {
   // in place, a closed file opens into it. The history and the revision
   // picker both land here, filling the same field the HEAD switch fills. from
   // is the path the file had in that revision where a rename lies between,
-  // it rides on the tab as diffFrom beside the revision and goes with it.
-  async function diffAgainst(path, rev, from = "") {
+  // it rides on the tab as diffFrom beside the revision and goes with it, and
+  // split reads the revision where HEAD split off from it, see fetchRev.
+  async function diffAgainst(path, rev, from = "", split = false) {
     let tab = tabByPath(path);
     if (!tab) {
       await openPath(path);
@@ -5103,11 +4392,12 @@ async function init(root) {
     closeDrawer();
     if (inFront(tab)) {
       focusGroup(tab.group);
-      await applyDiff(rev, { from });
+      await applyDiff(rev, { from, split });
       return;
     }
     tab.diffRev = rev;
     tab.diffFrom = from;
+    tab.diffSplit = split;
     tab.diffOriginal = null;
     persistTabs();
     activateTab(path);
@@ -5133,7 +4423,9 @@ async function init(root) {
   // uses for the status. Typing voids the rounds in flight at once and not
   // only when the next one goes out: an answer to what stood there two letters
   // ago is not this list's answer any more.
-  async function openRefPicker({ title, kinds, fetchFirst, raw, placeholder, onPick, onBack }) {
+  // pinned rows stand on top of the list the sheet opens with and leave as
+  // soon as something is typed, so Enter on a typed name never picks one.
+  async function openRefPicker({ title, kinds, fetchFirst, raw, placeholder, hint, pinned = [], onPick, onBack }) {
     openSheet("picker", title);
     // A picker that was drilled into from the git sheet carries the way back,
     // like the docker menus do: one Back row on top, above the filter.
@@ -5159,6 +4451,13 @@ async function init(root) {
     input.spellcheck = false;
     input.setAttribute("aria-label", title);
     wrap.appendChild(input);
+    if (hint) {
+      const hintEl = document.createElement("div");
+      hintEl.className = "small text-secondary mt-1";
+      hintEl.dataset.pickerHint = "";
+      hintEl.textContent = hint;
+      wrap.appendChild(hintEl);
+    }
     const listEl = document.createElement("div");
     // The round in flight is visible, and it is one element for both cases:
     // the list this sheet opens with is a round like any other.
@@ -5298,7 +4597,7 @@ async function init(root) {
       } catch (err) {
         if (seq !== searchSeq || signal.aborted || !listEl.isConnected) return;
         setSearching(false);
-        entries = [];
+        entries = text ? [] : [...pinned];
         note.textContent = err.message || "The refs could not be read.";
         note.hidden = false;
         renderList();
@@ -5306,7 +4605,7 @@ async function init(root) {
       }
       if (seq !== searchSeq || !listEl.isConnected) return;
       setSearching(false);
-      entries = [...(data.refs || []).map(refEntry), ...(data.commits || []).map(commitEntry)];
+      entries = [...(text ? [] : pinned), ...(data.refs || []).map(refEntry), ...(data.commits || []).map(commitEntry)];
       active = 0;
       note.textContent = fetchError ? `The remotes could not be fetched: ${fetchError}` : "";
       note.hidden = !fetchError;
@@ -5370,15 +4669,29 @@ async function init(root) {
     });
   }
 
+  // A pick diffs from where HEAD split off, the way a merge request reads,
+  // so a file renamed since then is read under the name it had there; the
+  // comparison of the split with the working copy is what knows that name.
   function openRevPicker(path) {
     void openRefPicker({
       title: `Diff ${baseName(path)} against`,
       kinds: ["branch", "remote", "tag", "commit"],
       raw: true,
       placeholder: "Branch, tag or commit…",
+      hint: "A branch compares from where yours split off.",
       onPick: (rev) => {
         closeSheet();
-        void diffAgainst(path, rev);
+        void (async () => {
+          let from = "";
+          try {
+            const params = new URLSearchParams({ from: rev, worktree: "1", mode: "since" });
+            const entry = ((await getJSON(`${base}/git/compare?${params}`, { signal })).files || []).find((f) => f.path === path);
+            if (entry && entry.from && entry.from !== path) from = entry.from;
+          } catch (err) {
+            void err; // the diff itself says what is wrong with the name
+          }
+          await diffAgainst(path, rev, from, true);
+        })();
       },
     });
   }
@@ -5770,9 +5083,10 @@ async function init(root) {
 
   // fetchRev reads the file at a revision, the other side of a diff. HEAD is
   // the everyday one; the history and the revision picker put other names in
-  // the same field.
-  async function fetchRev(path, rev) {
-    return getJSON(`${base}/git/file?path=${encodeURIComponent(path)}&rev=${encodeURIComponent(rev || DIFF_REV)}`, { signal });
+  // the same field. split asks for the file where HEAD split off from rev,
+  // resolved by the server on every read, so a rebase moves it along.
+  async function fetchRev(path, rev, split = false) {
+    return getJSON(`${base}/git/file?path=${encodeURIComponent(path)}&rev=${encodeURIComponent(rev || DIFF_REV)}${split ? "&split=1" : ""}`, { signal });
   }
 
   async function fetchHead(path) {
@@ -5822,6 +5136,7 @@ async function init(root) {
     // the tab to the front, where activateTab builds the diff.
     tab.diffRev = next;
     tab.diffFrom = "";
+    tab.diffSplit = false;
     if (!next) {
       tab.diffOriginal = null;
       persistTabs();
@@ -5848,13 +5163,14 @@ async function init(root) {
   // applyDiff compares the active tab against rev; an empty rev takes the
   // comparison off again. ask is false only where the person already answered
   // the size question.
-  async function applyDiff(rev, { ask = true, scroll = null, expanded = null, from = "", g = group } = {}) {
+  async function applyDiff(rev, { ask = true, scroll = null, expanded = null, from = "", split = false, g = group } = {}) {
     const tab = activeTabOf(g);
     if (!tab || tab.kind || tab.compare || tab.external || !g.editor.canDiff) return;
     const seq = ++g.diffSeq;
     const current = () => seq === g.diffSeq && activeTabOf(g) === tab;
     tab.diffRev = "";
     tab.diffFrom = "";
+    tab.diffSplit = false;
     tab.diffOriginal = null;
     if (!rev) {
       await g.editor.setDiff({ mode: "off", name: tab.name, valid: current });
@@ -5865,7 +5181,7 @@ async function init(root) {
     }
     let data;
     try {
-      data = await fetchRev(from || tab.path, rev);
+      data = await fetchRev(from || tab.path, rev, split);
     } catch (err) {
       if (!current()) return;
       if (!signal.aborted) status(err.message, "error");
@@ -5905,6 +5221,7 @@ async function init(root) {
     }
     tab.diffRev = rev;
     tab.diffFrom = from;
+    tab.diffSplit = split;
     tab.diffOriginal = original;
     try {
       await g.editor.setDiff({
@@ -5923,6 +5240,7 @@ async function init(root) {
       g.editor.exitDiff();
       tab.diffRev = "";
       tab.diffFrom = "";
+      tab.diffSplit = false;
       tab.diffOriginal = null;
       status("The diff could not be built, the file is open as usual.");
       notifyError(err.message || "The diff could not be built.");
@@ -5930,7 +5248,7 @@ async function init(root) {
       void applyChangeBars(g);
       return;
     }
-    const label = rev === DIFF_REV ? "HEAD" : rev;
+    const label = rev === DIFF_REV ? "HEAD" : data.split ? `${rev} at the split (${data.split.slice(0, 7)})` : rev;
     status(data.exists === false ? `Not in ${label} yet` : rev === DIFF_REV ? "" : `Diff against ${label}`);
     persistTabs();
     void applyChangeBars(g);
@@ -5952,6 +5270,7 @@ async function init(root) {
     }
     await applyDiff(tab.diffRev, {
       from: tab.diffFrom || "",
+      split: !!tab.diffSplit,
       scroll: { top: tab.handle.scrollTop || 0, left: tab.handle.scrollLeft || 0 },
       expanded: tab.handle.expanded || [],
       g,
@@ -5981,7 +5300,7 @@ async function init(root) {
     if (!tab || tab.kind || tab.compare || tab.external || !tab.diffRev || tab.diffOriginal == null) return;
     const seq = g.diffSeq;
     try {
-      const data = await fetchRev(tab.diffFrom || tab.path, tab.diffRev);
+      const data = await fetchRev(tab.diffFrom || tab.path, tab.diffRev, !!tab.diffSplit);
       if (data.binary || activeTabOf(g) !== tab || seq !== g.diffSeq) return;
       if (!tab.diffRev || tab.diffOriginal == null) return;
       const fresh = data.content || "";
@@ -6418,7 +5737,7 @@ async function init(root) {
           rightLabel: commit.short,
         }),
       },
-      { label: "Compare revisions", icon: "ti-git-compare", disabled: !commit.parent, action: () => openRevdiffAt(commit.parent, commit.sha) },
+      { label: "Compare", icon: "ti-git-compare", disabled: !commit.parent, action: () => openRevdiffAt(commit.parent, commit.sha) },
       { label: "File history", icon: "ti-history", action: () => openFileHistory(tab.path) },
       hashItem(commit),
     ];
@@ -7831,6 +7150,7 @@ async function init(root) {
       else {
         tab.diffRev = "";
         tab.diffFrom = "";
+        tab.diffSplit = false;
       }
     }
     persistTabs();
@@ -9382,7 +8702,9 @@ async function init(root) {
     if (event.detail.base) dropChangeHeads();
     void loadGitStatus();
     if (event.detail.base) refreshDiffHeads();
-    if (event.detail.base && revdiffOn) void loadRevdiff();
+    // The working copy on the right moves with every change the commit view
+    // sees, two revisions only when a name may have moved.
+    if (revdiffOn && (event.detail.base || revdiffPair.worktree)) void loadRevdiff();
   }, { signal });
   // What the disk did to what this page has on the screen. The paths say where
   // to look and carry no content: an open tab reads the file itself and decides
@@ -9910,7 +9232,21 @@ async function init(root) {
     const raw = row && (row.dataset.dir || row.dataset.path);
     if (!raw) return false;
     const isDir = !!row.dataset.dir || raw.endsWith("/");
-    const item = revertMenuItem(raw.endsWith("/") ? raw.slice(0, -1) : raw, isDir);
+    const entry = !row.dataset.dir && commitList.index.byPath.get(raw);
+    const items = [
+      entry ? openFileMenuItem(entry, gitKind(entry), { rev: DIFF_REV, label: DIFF_REV }, null) : null,
+      revertMenuItem(raw.endsWith("/") ? raw.slice(0, -1) : raw, isDir),
+    ].filter(Boolean);
+    if (!items.length) return false;
+    openMenu({ x, y, items, signal });
+    return true;
+  }, { signal });
+  wireRowMenus(revdiffListEl, ".editor-commit-row", (row, x, y) => {
+    const entry = row && row.dataset.path && revdiffList.index.byPath.get(row.dataset.path);
+    const answer = revdiffAnswer;
+    if (!entry || !answer) return false;
+    const right = answer.worktree ? null : { rev: answer.to.sha, label: answer.to.name };
+    const item = openFileMenuItem(entry, revdiffKind(entry), { rev: answer.base, label: revdiffLeftLabel(answer) }, right);
     if (!item) return false;
     openMenu({ x, y, items: [item], signal });
     return true;
@@ -11141,7 +10477,7 @@ async function init(root) {
     clearTimeout(dirReloadTimer);
     if (lsp) {
       for (const tab of tabs) {
-        if (!tab.kind && !tab.compare) lsp.closeDocument(tab.path);
+        if (!tab.kind && !tab.compare && !tab.revision) lsp.closeDocument(tab.path);
       }
     }
     termModalsHostEl.remove();
@@ -11781,152 +11117,8 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
 
   // ---- change bars -----------------------------------------------------------
 
-  // The gutter bars mark what the buffer holds against HEAD: a blue bar on
-  // changed lines, a green one on new lines, a grey tick where lines were
-  // deleted. They are not a mode like the diff, but a fact about the file,
-  // always visible, so there is no switch anywhere. The chunks are a line
-  // diff against HEAD, kept in a state field. An
-  // edit tokenizes only the lines it touched and diffs the whole file again,
-  // which stays cheap: equal ends are skipped and lines only one side holds
-  // never reach the diff. The search is bounded the way the diff views bound
-  // theirs: CHANGES_SCAN_LIMIT is a depth limit of the same shape as
-  // @codemirror/merge's default scanLimit and has the same value, but it
-  // counts edited lines where merge counts characters. A region past the
-  // bound is marked as one block, and the same text always gives the same
-  // bars. Only the plain editor carries them, a comparison already shows its
-  // changes.
   const changesConf = new Compartment();
-
-  const CHANGE_COLORS = {
-    mod: "var(--tblr-azure, #4299e1)",
-    add: "var(--tblr-green, #2fb344)",
-    del: "var(--tblr-secondary, #6b7280)",
-  };
-
-  class ChangeMarker extends view.GutterMarker {
-    constructor(key) {
-      super();
-      this.key = key;
-    }
-
-    eq(other) {
-      return other.key === this.key;
-    }
-
-    toDOM() {
-      const [kind, first, last, cap] = this.key.split("|");
-      const el = document.createElement("div");
-      if (kind === "spacer") {
-        el.style.cssText = "width:3px;height:100%;margin:0 2px";
-        return el;
-      }
-      if (kind === "delTop" || kind === "delBottom" || kind === "delBoth") {
-        el.style.cssText = "position:relative;width:3px;height:100%;margin:0 2px";
-        if (kind !== "delBottom") el.appendChild(delTick("top:-3px"));
-        if (kind !== "delTop") el.appendChild(delTick("bottom:-3px"));
-        return el;
-      }
-      const r = (on) => (on === "1" ? "2px" : "0");
-      el.style.cssText = `width:3px;height:100%;margin:0 2px;background:${CHANGE_COLORS[kind]};`
-        + `border-radius:${r(first)} ${r(first)} ${r(last)} ${r(last)}`;
-      if (cap === "1") {
-        el.style.position = "relative";
-        el.appendChild(delTick("bottom:-3px"));
-      }
-      return el;
-    }
-  }
-
-  function delTick(edge) {
-    const tick = document.createElement("div");
-    tick.style.cssText = `position:absolute;left:-1px;width:6px;height:5px;border-radius:2px;background:${CHANGE_COLORS.del};${edge}`;
-    return tick;
-  }
-
-  const changeMarkerCache = new Map();
-
-  function changeMarker(kind, first = false, last = false, cap = false) {
-    const key = `${kind}|${first ? "1" : "0"}|${last ? "1" : "0"}|${cap ? "1" : "0"}`;
-    let marker = changeMarkerCache.get(key);
-    if (!marker) {
-      marker = new ChangeMarker(key);
-      changeMarkerCache.set(key, marker);
-    }
-    return marker;
-  }
-
-  // changeMarkers turns the line chunks into gutter marks: buffer lines with
-  // HEAD lines beside them are modified, buffer lines alone are new, and HEAD
-  // lines alone put a tick on the boundary they vanished from. A modification
-  // that swallowed more HEAD lines than it shows carries the tick under its
-  // last line.
-  function changeMarkers(chunks, doc) {
-    const ranges = [];
-    // Deletions above and below the same untouched line merge into one marker,
-    // two would stack in the gutter cell and break its height.
-    const ticks = new Map();
-    const tick = (kind, lineNo) => ticks.set(lineNo, ticks.has(lineNo) && ticks.get(lineNo) !== kind ? "delBoth" : kind);
-    for (const chunk of chunks) {
-      const lostA = chunk.toLineA - chunk.fromLineA;
-      const shownB = chunk.toLineB - chunk.fromLineB;
-      if (shownB === 0) {
-        tick(chunk.fromLineB < doc.lines ? "delTop" : "delBottom", Math.min(chunk.fromLineB + 1, doc.lines));
-        continue;
-      }
-      for (let n = chunk.fromLineB + 1; n <= chunk.toLineB; n++) {
-        const last = n === chunk.toLineB;
-        ranges.push(changeMarker(lostA ? "mod" : "add", n === chunk.fromLineB + 1, last, last && lostA > shownB).range(doc.line(n).from));
-      }
-    }
-    for (const [lineNo, kind] of ticks) {
-      ranges.push(changeMarker(kind).range(doc.line(lineNo).from));
-    }
-    return state.RangeSet.of(ranges, true);
-  }
-
-  function changesExtension(text) {
-    if (text == null) return [];
-    const head = lineTokens(text.split("\n"));
-    const docTokens = (doc) => {
-      const tokens = new Int32Array(doc.lines);
-      let i = 0;
-      for (const line of doc.iterLines()) tokens[i++] = head.tokenOf(line);
-      return tokens;
-    };
-    const diffed = (tokens) => ({ tokens, chunks: diffLines(head.tokens, tokens, CHANGES_SCAN_LIMIT) });
-    const field = state.StateField.define({
-      create: (st) => diffed(docTokens(st.doc)),
-      update(value, tr) {
-        if (!tr.docChanged) return value;
-        const before = tr.startState.doc;
-        const doc = tr.newDoc;
-        let from = before.lines;
-        let toOld = 0;
-        tr.changes.iterChangedRanges((fromA, toA) => {
-          from = Math.min(from, before.lineAt(fromA).number - 1);
-          toOld = Math.max(toOld, before.lineAt(toA).number);
-        });
-        const toNew = toOld + doc.lines - before.lines;
-        const tokens = new Int32Array(doc.lines);
-        tokens.set(value.tokens.subarray(0, from));
-        for (let j = from; j < toNew; j++) tokens[j] = head.tokenOf(doc.line(j + 1).text);
-        tokens.set(value.tokens.subarray(toOld), toNew);
-        return diffed(tokens);
-      },
-    });
-    let cache = { chunks: null, doc: null, set: state.RangeSet.empty };
-    return [field, view.gutter({
-      class: "cm-changes",
-      markers(v) {
-        const { chunks } = v.state.field(field);
-        if (cache.chunks !== chunks || cache.doc !== v.state.doc) {
-          cache = { chunks, doc: v.state.doc, set: changeMarkers(chunks, v.state.doc) };
-        }
-        return cache.set;
-      },
-      initialSpacer: () => changeMarker("spacer"),
-    })];
-  }
+  const changesExtension = changeBars(state, view);
 
   const goToDefinitionKey = () => {
     if (hooks.lspUsable?.()) void hooks.onGoToDefinition?.();

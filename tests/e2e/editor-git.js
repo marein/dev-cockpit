@@ -3602,89 +3602,9 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     //   - `since` measures from the merge base, so with a from branch that
     //     moved on after the split the left label names the split, not the
     //     branch's tip.
-    const cmpClone = `/tmp/zzgit-revcmp-${tag}`;
-    const revdiffKey = `dc-editor-revdiff:${project}`;
-    const compareJSON = (from, to, mode) => page.evaluate(([b, f, t, m]) =>
-      fetch(`${b}/git/compare?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&mode=${m}`, { headers: { Accept: "application/json" } })
-        .then((r) => r.json().then((data) => ({ status: r.status, data }))), [editorBase, from, to, mode]);
-    const waitCompare = async (from, to, mode, want) => {
-      const deadline = Date.now() + 180000;
-      let last = null;
-      while (Date.now() < deadline) {
-        last = await compareJSON(from, to, mode).catch(() => null);
-        if (last && last.status === 200 && (last.data.files || []).length === want) return last.data;
-        await sleep(1000);
-      }
-      throw new Error(`the comparison ${from}..${to} never answered ${want} files: ${JSON.stringify(last && { status: last.status, files: (last.data.files || []).length, error: last.data.error })}`);
-    };
-    const openRevdiff = async (target) => {
-      await openGitSheet(target);
-      await sheetAction(target, /^Compare revisions/).first().click();
-      await target.waitForSelector("[data-editor-revdiff]:not([hidden])", { timeout: 10000 });
-    };
-    const revdiffSettled = (target) => target.waitForFunction(() => {
-      const el = document.querySelector("[data-editor-revdiff-summary]");
-      const error = document.querySelector("[data-editor-revdiff-error]");
-      const text = el ? el.textContent.trim() : "";
-      return (text !== "" && !/^Comparing/.test(text)) || (error && !error.hidden);
-    }, null, { timeout: 90000 });
-    const revdiffSummary = (target) => target.evaluate(() => document.querySelector("[data-editor-revdiff-summary]").textContent.trim());
-    const revdiffNames = (target) => target.evaluate(() => ({
-      from: document.querySelector('[data-editor-revdiff-name="from"]').textContent.trim(),
-      to: document.querySelector('[data-editor-revdiff-name="to"]').textContent.trim(),
-    }));
-    const revdiffOption = (target) => target.evaluate(() => {
-      const el = document.querySelector("[data-editor-revdiff-mode]");
-      return { value: el.value, text: el.options[el.selectedIndex].textContent };
-    });
-    const revdiffRows = (target) => target.evaluate(() => [...document.querySelectorAll("[data-editor-revdiff-list] .editor-commit-row[data-path]")]
-      .map((row) => ({
-        path: row.dataset.path,
-        mark: row.querySelector(".editor-commit-line > span").textContent.trim(),
-        sub: (row.querySelector(".editor-commit-path") || { textContent: "" }).textContent.trim(),
-      })));
-    const openSidePicker = async (target, side) => {
-      await target.click(`[data-editor-revdiff-pick="${side}"]`);
-      await target.waitForSelector("[data-editor-sheet-body] input", { timeout: 8000 });
-    };
-    const pickSide = async (target, side, name) => {
-      await openSidePicker(target, side);
-      await target.fill("[data-editor-sheet-body] input", name);
-      await target.waitForSelector("[data-picker-loading]", { state: "hidden", timeout: 20000 });
-      await target.click(`[data-editor-sheet] .editor-sheet-row:has(.editor-sheet-name:text-is("${name}")) .editor-sheet-open`);
-      await target.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
-      await revdiffSettled(target);
-    };
-    const typeSide = async (target, side, name) => {
-      await openSidePicker(target, side);
-      await target.fill("[data-editor-sheet-body] input", name);
-      await target.keyboard.press("Enter");
-      await target.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
-      await revdiffSettled(target);
-    };
-    const mergeSides = (target) => target.evaluate(() => [...document.querySelectorAll(".cm-mergeView .cm-content")].map((content) => ({
-      editable: content.getAttribute("contenteditable"),
-      text: [...content.querySelectorAll(".cm-line")].map((line) => line.textContent).join("\n").trim(),
-      changed: [...content.querySelectorAll(".cm-changedLine")].map((line) => line.textContent),
-    })));
-    const compareBar = (target) => target.evaluate(() => {
-      const box = (el) => {
-        const rect = el.getBoundingClientRect();
-        return { display: getComputedStyle(el).display, width: rect.width };
-      };
-      return {
-        left: document.querySelector('[data-editor-compare-name="left"]').textContent.trim(),
-        right: document.querySelector('[data-editor-compare-name="right"]').textContent.trim(),
-        saveLeft: box(document.querySelector('[data-editor-compare-save="left"]')),
-        saveRight: box(document.querySelector('[data-editor-compare-save="right"]')),
-      };
-    });
-    const closeRevdiffTabs = async (target) => {
-      while (await target.locator(".editor-tab[data-path^='//revdiff/']").count() > 0) {
-        await target.locator(".editor-tab[data-path^='//revdiff/'] .editor-tab-state").first().click();
-        await sleep(200);
-      }
-    };
+    const compareChecks = require("./editor-git-compare");
+    const compareKit = compareChecks.compareHelpers({ page, editorBase, project, tag, openGitSheet, sheetAction });
+    const { cmpClone, revdiffKey, compareJSON, waitCompare, openRevdiff, revdiffSettled, revdiffSummary, revdiffNames, revdiffOption, revdiffRows, pickSide, typeSide, mergeSides, compareBar, closeRevdiffTabs } = compareKit;
 
     await run("compare: the git sheet opens the panel with the repository's suggestion, and every status is one row, a rename included", async () => {
       const build = [
@@ -3726,8 +3646,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await openRevdiff(page);
       await revdiffSettled(page);
       const preset = await revdiffNames(page);
-      assert(preset.from === "master~1" && preset.to === "master",
-        `without a tag or another branch the suggestion is the commit before master to master, not ${JSON.stringify(preset)}`);
+      assert(preset.from === "master~1" && preset.to === "Working copy",
+        `without a tag or another branch the suggestion is the commit before master to the working copy, not ${JSON.stringify(preset)}`);
       assert(await page.evaluate(() => document.activeElement === document.querySelector("[data-editor-revdiff-filter]")),
         "the panel did not open on its filter");
       assert(await page.locator("[data-editor-commit]").isHidden() && await page.locator("[data-editor-tree]").isHidden(),
@@ -4223,6 +4143,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       return "forty rows: the mark stays in view down, around and back up, the list never jumps while the row is in view";
     });
 
+    await compareChecks.worktreeChecks({ page, run, tag, author, editorBase, project, runInShell, shellText, openEditor, diffReady, openCommitView, setEditorSwitch, toggleDiff, diffPressed, h: compareKit });
+
     await run("compare: the phone reaches the panel, both pickers and the diff inside the drawer at 390", async () => {
       const mp = await mobile();
       await openEditor(mp);
@@ -4231,7 +4153,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await mp.waitForSelector("[data-editor-backdrop]", { state: "hidden", timeout: 5000 });
       await mp.click("[data-editor-git-status]");
       await mp.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 6000 });
-      await mp.locator("[data-editor-sheet-body] .dropdown-item", { hasText: /^Compare revisions/ }).first().click();
+      await mp.locator("[data-editor-sheet-body] .dropdown-item", { hasText: /^Compare/ }).first().click();
       await mp.waitForSelector(".editor-drawer-open [data-editor-revdiff]:not([hidden])", { timeout: 10000 });
       await revdiffSettled(mp);
       await pickSide(mp, "from", "revcmp-a");
@@ -4945,7 +4867,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         `${al.short} · Al · ${day}`,
         `Diff ${blamed} against ${al.short}`,
         `Show what ${al.short} changed in ${blamed}`,
-        "Compare revisions",
+        "Compare",
         "File history",
         "Copy the hash",
       ];
@@ -4992,8 +4914,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       labels = await openLineMenu(2);
       const dead = labels.find((l) => l.text === `Show what ${init.short} changed in root.txt`);
       assert(dead && dead.disabled, `the root commit's entry is not dead: ${JSON.stringify(labels.map((l) => [l.text, l.disabled]))}`);
-      const compare = labels.find((l) => l.text === "Compare revisions");
-      assert(compare && compare.disabled, "Compare revisions is live for a root commit, the panel would fill the empty side with a default");
+      const compare = labels.find((l) => l.text === "Compare");
+      assert(compare && compare.disabled, "Compare is live for a root commit, the panel would fill the empty side with a default");
       assert(labels.some((l) => l.text === `Diff root.txt against ${init.short}` && !l.disabled), "the diff against the root commit is not offered");
       await page.keyboard.press("Escape");
       await sleep(200);
@@ -5028,7 +4950,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await page.click(`.editor-tab[data-path="${blamed}"]`);
       await page.waitForSelector(".cm-blame", { timeout: 20000 });
       await openLineMenu(1);
-      await menuItem("^Compare revisions$").first().click();
+      await menuItem("^Compare$").first().click();
       await page.waitForSelector("[data-editor-revdiff]:not([hidden])", { timeout: 10000 });
       const pair = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) || "{}"), `dc-editor-revdiff:${project}`);
       assert(pair.from === al.parent && pair.to === al.sha, `the comparison opened on ${JSON.stringify(pair)}`);

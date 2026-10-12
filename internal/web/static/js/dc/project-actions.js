@@ -123,7 +123,7 @@ export function gitMenuItems(holder, { icon } = {}) {
   }
   items.push({ label: "Fetch", icon: "ti-refresh", action: () => void fetchProject(holder, icon) });
   items.push({ label: "Commit changes", icon: "ti-git-commit", href: holder.dataset.gitCommit });
-  items.push({ label: "Compare revisions", icon: "ti-git-compare", href: holder.dataset.gitCompare });
+  items.push({ label: "Compare", icon: "ti-git-compare", href: holder.dataset.gitCompare });
   return items;
 }
 

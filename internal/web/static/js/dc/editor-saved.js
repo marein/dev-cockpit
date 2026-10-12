@@ -47,11 +47,17 @@ export function savedEntries(saved, headRev) {
     if (e && typeof e === "object" && e.type === "external" && typeof e.path === "string" && e.path) {
       return { type: "external", path: e.path, view: savedView(e.view) };
     }
+    if (e && typeof e === "object" && e.type === "revision" && typeof e.path === "string" && e.path
+      && typeof e.rev === "string" && e.rev && typeof e.label === "string") {
+      return { type: "revision", path: e.path, rev: e.rev, label: e.label, view: savedView(e.view) };
+    }
     if (e && typeof e === "object" && typeof e.path === "string" && e.path) {
       return {
         type: "file",
         path: e.path,
         diff: typeof e.diff === "string" ? e.diff : "",
+        diffFrom: typeof e.diffFrom === "string" ? e.diffFrom : "",
+        diffSplit: e.diffSplit === true,
         blame: e.blame === true,
         preview: e.preview === true,
         view: savedView(e.view),
@@ -60,3 +66,5 @@ export function savedEntries(saved, headRev) {
     return null;
   });
 }
+
+export const LAYOUT_SAVE_MS = 300;

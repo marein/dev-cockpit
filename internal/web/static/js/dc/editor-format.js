@@ -41,3 +41,10 @@ const utf8 = new TextEncoder();
 export function byteLength(text) {
   return text ? utf8.encode(text).length : 0;
 }
+
+export const baseName = (path) => path.split("/").pop();
+
+export function parentDir(path) {
+  const i = path.lastIndexOf("/");
+  return i >= 0 ? path.slice(0, i) : "";
+}

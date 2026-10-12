@@ -1545,14 +1545,14 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await gitMenu(source);
       const labels = await menuLabels();
       assert(
-        JSON.stringify(labels) === JSON.stringify(["New worktree", "Fetch", "Commit changes", "Compare revisions"]),
+        JSON.stringify(labels) === JSON.stringify(["New worktree", "Fetch", "Commit changes", "Compare"]),
         `the main repository's menu reads ${JSON.stringify(labels)}`,
       );
       await closeMenu();
       await gitMenu(`${source}-wt1`);
       const worktree = await menuLabels();
       assert(
-        JSON.stringify(worktree) === JSON.stringify(["Fetch", "Commit changes", "Compare revisions"]),
+        JSON.stringify(worktree) === JSON.stringify(["Fetch", "Commit changes", "Compare"]),
         `the worktree's menu reads ${JSON.stringify(worktree)}`,
       );
       await closeMenu();
@@ -1646,7 +1646,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       }, sel);
       for (const [label, view, panel] of [
         ["Commit changes", "commit", "[data-editor-commit]"],
-        ["Compare revisions", "compare", "[data-editor-revdiff]"],
+        ["Compare", "compare", "[data-editor-revdiff]"],
       ]) {
         await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector(`#project-${source} [data-git-project-menu]`, { state: "visible", timeout: 8000 });
@@ -1731,7 +1731,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await indexMenu(source);
       const main = await menuLabels();
       assert(
-        JSON.stringify(main) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "New worktree", "Fetch", "Commit changes", "Compare revisions", "Delete project"]),
+        JSON.stringify(main) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "New worktree", "Fetch", "Commit changes", "Compare", "Delete project"]),
         `the main repository's row menu reads ${JSON.stringify(main)}`,
       );
       const hrefs = await page.$$eval(".dc-context-menu a.dropdown-item", (els) => els.map((e) => e.getAttribute("href")));
@@ -1747,7 +1747,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await indexMenu(`${source}-wt1`);
       const worktree = await menuLabels();
       assert(
-        JSON.stringify(worktree) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Fetch", "Commit changes", "Compare revisions", "Delete project"]),
+        JSON.stringify(worktree) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Fetch", "Commit changes", "Compare", "Delete project"]),
         `the worktree's row menu reads ${JSON.stringify(worktree)}`,
       );
       await closeMenu();

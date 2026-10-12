@@ -935,63 +935,6 @@ func (s *Server) handleEditorGitChanges(c *gin.Context) {
 	c.JSON(http.StatusOK, changes)
 }
 
-// handleEditorGitFile returns a file's text at a revision, HEAD without a
-// ?rev=, which is the other side of the diff; the browser computes the diff
-// itself, no route ever answers one. A path that is not in the revision is a
-// normal answer, that is what a new file looks like; a revision the
-// repository cannot resolve is the caller's mistake and answers a 400 in the
-// package's words. Binary and too large carry the same markers the plain
-// read route uses, so the client shows the same "cannot edit this" as there.
-func (s *Server) handleEditorGitFile(c *gin.Context) {
-	p, ok := s.editorProject(c)
-	if !ok {
-		return
-	}
-	rel := c.Query("path")
-	// The project root resolves fine and is not a file, so an empty path has to
-	// be refused here: further down it is git that says no, and a missing
-	// parameter would read as a repository that could not be asked.
-	if rel == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "A file path is required."})
-		return
-	}
-	if _, err := filesystem.ResolveUnder(p.Path, rel); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
-		return
-	}
-	content, exists, err := git.New(p.Path).FileAt(c.Request.Context(), c.Query("rev"), rel)
-	if errors.Is(err, git.ErrRevision) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err != nil {
-		log.Printf("editor git file %s: %v", p.Path, err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "The file could not be read at that revision."})
-		return
-	}
-	if !exists {
-		c.JSON(http.StatusOK, gin.H{"path": rel, "exists": false, "content": ""})
-		return
-	}
-	// Binary and too large both mean "not something to diff", but they are not
-	// the same sentence to read, so the reason travels with the answer. A blob
-	// that fills git's own output cap counts as too large as well: git
-	// truncates silently, and the head of a file diffed against the whole of it
-	// claims everything past the cut was deleted. The cap sits below the edit
-	// limit, so this is the answer for a revision between the two; a file that
-	// happens to be exactly the cap is called too large with it, which is the
-	// safe way to be wrong here.
-	if err := filesystem.CheckEditableText(content); err != nil || len(content) >= git.MaxOutput {
-		reason := "large"
-		if errors.Is(err, filesystem.ErrBinary) {
-			reason = "binary"
-		}
-		c.JSON(http.StatusOK, gin.H{"path": rel, "exists": true, "binary": true, "reason": reason, "size": len(content)})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"path": rel, "exists": true, "content": string(content)})
-}
-
 // handleEditorGitBlame returns who last touched each line of the file on disk,
 // so lines that are not committed yet answer as pending, which is what
 // somebody who is still typing should see.
@@ -1296,41 +1239,6 @@ func (s *Server) handleEditorGitRefs(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, found)
-}
-
-// handleEditorGitCompare answers what differs between two revisions, the
-// comparison the editor's revision diff panel lists: `?from=` and `?to=` are
-// whatever git resolves (a branch, a tag, a hash, HEAD~3), both empty takes
-// the repository's own suggestion, and `?mode=` picks the question, `since`
-// (the default) for what the right side changed since it split from the left,
-// git's three dots, `direct` for everything that differs between the two,
-// git's two dots. A name git cannot resolve is the caller's mistake and
-// answers a 400 naming the side; two revisions without shared history refuse
-// the split question with a 409 in the package's words. It only reads.
-func (s *Server) handleEditorGitCompare(c *gin.Context) {
-	p, ok := s.editorProject(c)
-	if !ok {
-		return
-	}
-	got, err := git.New(p.Path).Compare(c.Request.Context(), git.CompareRequest{
-		From:  c.Query("from"),
-		To:    c.Query("to"),
-		Since: c.Query("mode") != "direct",
-	})
-	var refused *git.RevisionError
-	switch {
-	case errors.As(err, &refused):
-		c.JSON(http.StatusBadRequest, gin.H{"error": refused.Error(), "side": refused.Side, "from": got.From, "to": got.To})
-		return
-	case errors.Is(err, git.ErrNoSplit):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "from": got.From, "to": got.To})
-		return
-	case err != nil:
-		log.Printf("editor git compare %s: %v", p.Path, err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "The revisions could not be compared."})
-		return
-	}
-	c.JSON(http.StatusOK, got)
 }
 
 // gitWriteContext is what a git write runs on: everything the request

@@ -3,6 +3,8 @@ package git
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -268,6 +270,159 @@ func TestDefaultCompareWithoutATagFallsBackToTheCommitBefore(t *testing.T) {
 	runGit(t, dir, "switch", "-q", "--detach")
 	if got := repo.DefaultCompare(context.Background()); got.From != "HEAD~1" || got.To != "HEAD" {
 		t.Fatalf("detached is HEAD: %+v", got)
+	}
+}
+
+// worktreeOnFeature stands on the branch of compareRepo with work on top that
+// no commit holds: a modification, a staged addition, a file gone from the
+// disk, and untracked files of every kind the listing has to cope with, an
+// ignored one among them.
+func worktreeOnFeature(t *testing.T, dir string) {
+	t.Helper()
+	compareRepo(t, dir)
+	runGit(t, dir, "switch", "-q", "feature")
+	writeAt(t, dir, "keep/modify.txt", "one\ntwo changed\nthree\nfour\n")
+	writeAt(t, dir, "staged.txt", "staged\n")
+	runGit(t, dir, "add", "staged.txt")
+	if err := os.Remove(filepath.Join(dir, "keep/main-only.txt")); err != nil {
+		t.Fatal(err)
+	}
+	writeAt(t, dir, "loose/new.txt", "a\nb\nc")
+	writeAt(t, dir, "loose/blob.bin", "bin\x00ary\n")
+	writeAt(t, dir, "keep/extra.txt", "x\ny\n")
+	writeAt(t, dir, "loose/noise.log", "ignored\n")
+	writeAt(t, dir, ".git/info/exclude", "*.log\n")
+	if err := os.Symlink(filepath.Join(dir, "keep/modify.txt"), filepath.Join(dir, "loose/link")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCompareWithTheWorkingCopyListsWhatNoCommitHolds(t *testing.T) {
+	dir := t.TempDir()
+	worktreeOnFeature(t, dir)
+
+	got, err := New(dir).Compare(context.Background(), CompareRequest{From: "main", Since: true, Worktree: true})
+	if err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	if !got.Worktree || got.To.Name != "" || got.To.SHA != "" || got.From.Name != "main" {
+		t.Fatalf("the working copy has no name and no commit: %+v", got)
+	}
+	if base := gitOut(t, dir, "merge-base", "main", "HEAD"); got.Base != base {
+		t.Fatalf("since the split measures from the merge base with HEAD %s, got %s", base, got.Base)
+	}
+	byPath := changesByPath(got.Files)
+	if f := byPath["keep/modify.txt"]; f.Status != "M" || f.Added != 2 || f.Removed != 1 {
+		t.Fatalf("the modification counts against the base, not the branch tip: %+v", f)
+	}
+	if f := byPath["staged.txt"]; f.Status != "A" || f.Added != 1 {
+		t.Fatalf("a staged addition is a change of the working copy: %+v", f)
+	}
+	if f := byPath["keep/main-only.txt"]; f.Status != "D" || f.Removed != 1 {
+		t.Fatalf("a file gone from the disk is deleted: %+v", f)
+	}
+	if f := byPath["moved/edited.txt"]; f.Status != "R" || f.From != "keep/edited.txt" {
+		t.Fatalf("the branch's committed rename stays one entry: %+v", f)
+	}
+	if f := byPath["loose/new.txt"]; f.Status != "?" || f.Added != 3 || f.Removed != 0 || f.Binary {
+		t.Fatalf("an untracked file counts every line, the last one without its newline too: %+v", f)
+	}
+	if f := byPath["loose/blob.bin"]; f.Status != "?" || !f.Binary || f.Added != 0 {
+		t.Fatalf("an untracked binary file counts nothing and says why: %+v", f)
+	}
+	if f, ok := byPath["loose/link"]; !ok || f.Added != 0 || f.Binary {
+		t.Fatalf("an untracked symlink is listed and never followed: %+v", f)
+	}
+	if _, ok := byPath["loose/noise.log"]; ok {
+		t.Fatalf("an ignored file is not a change")
+	}
+	tracked := strings.Fields(gitOut(t, dir, "diff", "--name-only", "-M", got.Base))
+	untracked := strings.Fields(gitOut(t, dir, "ls-files", "--others", "--exclude-standard"))
+	if len(got.Files) != len(tracked)+len(untracked) {
+		t.Fatalf("git names %d tracked and %d untracked paths, the comparison %d: %+v", len(tracked), len(untracked), len(got.Files), got.Files)
+	}
+}
+
+func TestCompareWithTheWorkingCopyDirectlyMeasuresFromTheLeftSide(t *testing.T) {
+	dir := t.TempDir()
+	worktreeOnFeature(t, dir)
+
+	got, err := New(dir).Compare(context.Background(), CompareRequest{From: "main", Worktree: true})
+	if err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	if got.Base != got.From.SHA || got.Base != gitOut(t, dir, "rev-parse", "main") {
+		t.Fatalf("a direct comparison measures from main itself: %+v", got)
+	}
+	byPath := changesByPath(got.Files)
+	if f := byPath["keep/main-new.txt"]; f.Status != "D" {
+		t.Fatalf("what only main has reads as gone from the working copy: %+v", f)
+	}
+	if f := byPath["loose/new.txt"]; f.Status != "?" || f.Added != 3 {
+		t.Fatalf("the untracked file: %+v", f)
+	}
+
+	_, err = New(dir).Compare(context.Background(), CompareRequest{From: "nowhere", Worktree: true})
+	var refused *RevisionError
+	if !errors.As(err, &refused) || refused.Side != "from" {
+		t.Fatalf("an unknown from is refused by name with the working copy too: %v", err)
+	}
+	got, err = New(dir).Compare(context.Background(), CompareRequest{To: "--output=/tmp/x", Worktree: true, Since: true})
+	if err != nil || !got.Worktree || got.To.Name != "" {
+		t.Fatalf("the working copy never reads To: %v %+v", err, got)
+	}
+}
+
+func TestCompareWithTheWorkingCopyStaysInsideASubdirectoryProject(t *testing.T) {
+	dir := t.TempDir()
+	worktreeOnFeature(t, dir)
+
+	got, err := New(filepath.Join(dir, "keep")).Compare(context.Background(), CompareRequest{From: "main", Since: true, Worktree: true})
+	if err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	byPath := changesByPath(got.Files)
+	if f := byPath["extra.txt"]; f.Status != "?" || f.Added != 2 {
+		t.Fatalf("the project's own untracked file, by its own path and counted: %+v", f)
+	}
+	if f := byPath["modify.txt"]; f.Status != "M" {
+		t.Fatalf("the project's own modification: %+v", f)
+	}
+	for path := range byPath {
+		if strings.HasPrefix(path, "loose/") || strings.HasPrefix(path, "keep/") || path == "staged.txt" {
+			t.Fatalf("a path outside the project or not relative to it: %s", path)
+		}
+	}
+}
+
+func TestSplitPointIsWhereHEADLeftTheRevision(t *testing.T) {
+	dir := t.TempDir()
+	compareRepo(t, dir)
+	runGit(t, dir, "switch", "-q", "feature")
+	repo := New(dir)
+
+	base, at, err := repo.SplitPoint(context.Background(), "main")
+	if err != nil {
+		t.Fatalf("split from main: %v", err)
+	}
+	if at != gitOut(t, dir, "rev-parse", "main") || base != gitOut(t, dir, "merge-base", "main", "HEAD") || base == at {
+		t.Fatalf("main moved on after the split, so the split is the merge base and not main's tip: base %s at %s", base, at)
+	}
+	base, at, err = repo.SplitPoint(context.Background(), "v1")
+	if err != nil || base != at || at != gitOut(t, dir, "rev-parse", "v1^{commit}") {
+		t.Fatalf("an ancestor of HEAD is its own split: %v %s %s", err, base, at)
+	}
+	for _, rev := range []string{"nowhere", "--output=/tmp/x", ""} {
+		if _, _, err := repo.SplitPoint(context.Background(), rev); !errors.Is(err, ErrRevision) {
+			t.Fatalf("%q must be refused as a revision: %v", rev, err)
+		}
+	}
+	runGit(t, dir, "switch", "-q", "--orphan", "island")
+	writeAt(t, dir, "island.txt", "alone\n")
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-qm", "island")
+	if _, _, err := repo.SplitPoint(context.Background(), "main"); !errors.Is(err, ErrNoSplit) {
+		t.Fatalf("no shared history has no split: %v", err)
 	}
 }
 

@@ -121,7 +121,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Git from the projects page",
-					Desc:  `A repository row carries a git button <i class="ti ti-brand-git align-text-bottom" aria-hidden="true"></i>. <em>New worktree</em> opens the create form with this project as the source, only on a main repository. <em>Fetch</em> reports in a toast how far the checked out branch stands from its upstream. <em>Commit changes</em> and <em>Compare revisions</em> open the editor on that view; switching the branch, push and pull stay in the editor's git sheet.`,
+					Desc:  `A repository row carries a git button <i class="ti ti-brand-git align-text-bottom" aria-hidden="true"></i>. <em>New worktree</em> opens the create form with this project as the source, only on a main repository. <em>Fetch</em> reports in a toast how far the checked out branch stands from its upstream. <em>Commit changes</em> and <em>Compare</em> open the editor on that view; switching the branch, push and pull stay in the editor's git sheet.`,
 				},
 				{
 					Title: "Worktree post script",
@@ -419,12 +419,16 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Diff and blame a file",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Alt", "D"}}, {Caps: []string{"Ctrl", "Alt", "B"}}},
-					Desc:  `Right-click a file, on its tab or its tree row: <em>Show git diff</em> puts it next to the last commit and <em>Show git blame</em> writes the day and the author of the last change next to every line, the newest commit bold and undimmed, and follows your typing with <em>uncommitted</em> on the lines you change; the line's menu then offers that commit: the file diffed against it, what it changed in the file, the revision comparison started on it, the file history and the hash. <em>Diff against revision</em> compares it with any branch, tag or commit instead, and <em>File history</em> lists the commits that touched the file, each one opening the diff against that state. All of it is per file and comes back after a reload. To put two files on disk side by side, pick <em>Select for compare</em> on one and <em>Compare with</em> on the other.`,
+					Desc:  `Right-click a file, on its tab or its tree row: <em>Show git diff</em> puts it next to the last commit and <em>Show git blame</em> writes the day and the author of the last change next to every line, the newest commit bold and undimmed, and follows your typing with <em>uncommitted</em> on the lines you change; the line's menu then offers that commit: the file diffed against it, what it changed in the file, the revision comparison started on it, the file history and the hash. <em>Diff against revision</em> compares it with any branch, tag or commit instead, from where your branch split off from it, the way a merge request reads, and <em>File history</em> lists the commits that touched the file, each one opening the diff against that state. All of it is per file and comes back after a reload. To put two files on disk side by side, pick <em>Select for compare</em> on one and <em>Compare with</em> on the other.`,
 				},
 				{
 					Title: "Commit from the editor",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "K"}}},
-					Desc:  `The commit button <i class="ti ti-git-commit align-text-bottom" aria-hidden="true"></i> above the file tree, or <em>Commit</em> in the git sheet, turns the tree into the list of changes, each with a checkbox and nothing picked. Only the checked files go in, exactly as they stand in the working copy; whatever a coder has staged for other files stays staged. A row click shows its diff and <kbd>Ctrl</kbd>+<kbd>Enter</kbd> commits, <em>Amend</em> rewording or extending the last one. The message and the picks are saved with the project as you type, so another device opens the panel where you left it. The list groups by folder, a folder's checkbox picking everything below it, and <i class="ti ti-folders align-text-bottom" aria-hidden="true"></i> switches to a flat list. <em>Commit and push</em> behind the arrow pushes right after.`,
+					Desc:  `The commit button <i class="ti ti-git-commit align-text-bottom" aria-hidden="true"></i> above the file tree, or <em>Commit</em> in the git sheet, turns the tree into the list of changes, each with a checkbox and nothing picked. Only the checked files go in, exactly as they stand in the working copy; whatever a coder has staged for other files stays staged. A row click shows its diff and <kbd>Ctrl</kbd>+<kbd>Enter</kbd> commits, <em>Amend</em> rewording or extending the last one. The message and the picks are saved with the project as you type, so another device opens the panel where you left it. The list groups by folder, a folder's checkbox picking everything below it, and <i class="ti ti-folders align-text-bottom" aria-hidden="true"></i> switches to a flat list. <em>Commit and push</em> behind the arrow pushes right after. <em>Open file</em> in a row's menu opens the file itself without a diff, a deleted one read only as the last commit has it.`,
+				},
+				{
+					Title: "Compare from the editor",
+					Desc:  `The compare button <i class="ti ti-git-compare align-text-bottom" aria-hidden="true"></i> above the file tree, or <em>Compare</em> in the git sheet, turns the tree into the list of files that differ between two revisions. <em>from</em> and <em>to</em> open the revision picker, a typed name such as <code>HEAD~3</code> works too, and the select switches between <code>a...b</code> (changes since the split, default) and <code>a..b</code> (all differences). The list behaves like the commit view. <em>to</em> starts on <em>Working copy</em>, the files on disk, untracked ones included, and the list follows them. <kbd>Enter</kbd> opens the read only diff of a file between the two revisions, or with the working copy the file itself, editable and diffed against the left side. <em>Open file</em> in a row's menu opens the file as the right side has it, the working copy without a diff, a revision read only, a deleted file as the left side had it.`,
 				},
 				{
 					Title: "Revert a file or a folder",
@@ -434,10 +438,6 @@ func DocsTopics() []DocsTopic {
 					Title: "Branch, push and pull",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "G"}}},
 					Desc:  `In a git repository the branch stands in the statusbar with how far it is ahead <span class="text-secondary">&uarr;</span> and behind <span class="text-secondary">&darr;</span> its upstream. Tapping it, or <em>Git</em> in the editor menu, opens the git sheet: switch branch (remote ones included, checking one out creates the local branch that tracks it), new branch, commit, push, pull, fetch, and the recent commits, each offering its diff, its hash and a tag. <em>Pull</em> only fast forwards and <em>Force push</em> runs as force-with-lease after asking; there is no stash and no merge here, and what git refuses comes back in git's own words. A switch or a pull never touches unsaved work. A remote that wants a passphrase asks in a dialog on every open page, and one device's answer closes it everywhere. A project that is no repository yet offers cloning into its folder instead.`,
-				},
-				{
-					Title: "Compare two revisions",
-					Desc:  `<em>Compare revisions</em> in the git sheet lists the files that differ between two revisions. <em>from</em> and <em>to</em> open the revision picker, a typed name such as <code>HEAD~3</code> works too, and the select switches between <code>a...b</code> (changes since the split, default) and <code>a..b</code> (all differences). The list behaves like the commit view. <kbd>Enter</kbd> opens the read only diff of a file between the two.`,
 				},
 				{
 					Title:    "File and tab menus",
