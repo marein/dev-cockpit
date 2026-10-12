@@ -18,12 +18,16 @@ const kit = {
   ".": "-:h",
 };
 
+// A panned song gives every hit its own pan, the hats, rim and open hat a
+// little to the right, the shaker as far to the left, the rest in the center.
+const hitPans = { H: 0.2, R: 0.2, O: 0.2, Z: -0.2 };
+
 const pitchNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const letterSteps = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const accidentalSteps = { "#": 1, b: -1 };
 
-function beat(pattern) {
-  return [...pattern.replace(/\s/g, "")].map((step) => kit[step]).join("\n");
+function beat(pattern, pans) {
+  return [...pattern.replace(/\s/g, "")].map((step) => (pans && step !== "." ? `#PAN ${pans[step] ?? 0}\n${kit[step]}` : kit[step])).join("\n");
 }
 
 function normalize(sheet) {
@@ -56,10 +60,13 @@ function hold(notes, bars, bpm) {
 // starts. The notes split volume, so the chord is never louder than one note of
 // it. The chord starts at bar at of a part bars long, each note rings for a bar
 // and its voice rests to the part's end, so it ends with every other track.
+// The notes sit low to high from left to right.
 function unfold(notes, volume, at, bars) {
   const voice = (i) => `roll${i + 1}`;
+  const sides = [-0.4, -0.2, 0.2, 0.4];
   return {
     voices: Object.fromEntries(notes.map((_, i) => [voice(i), `#TYPE sine\n#VOLUME ${volume / notes.length}`])),
+    pans: Object.fromEntries(notes.map((_, i) => [voice(i), sides[i]])),
     parts: Object.fromEntries(notes.map((note, i) => [voice(i), `${"-:w ".repeat(at)}${"-:e ".repeat(i)}${note}:w ${"-:e ".repeat((bars - at - 1) * 8 - i)}`])),
   };
 }
@@ -67,8 +74,10 @@ function unfold(notes, volume, at, bars) {
 // song renders parts in the order of form into one track per voice plus the
 // drums, "name*n" as a loop. Every part segment restarts from the voice's
 // setup, so a directive inside a part never leaks into the next one, and a
-// voice a part leaves out rests for the part's bars.
-function song({ bpm, voices, parts, form }) {
+// voice a part leaves out rests for the part's bars. pans sets where a voice
+// sits at the start of every segment, a song that gives them also pans its
+// hits by hitPans. lowEnd rebuilds its bass and its kick, see boost.
+function song({ bpm, voices, pans, lowEnd, parts, form }) {
   const order = form.trim().split(/\s+/).map((entry) => {
     const [name, times = "1"] = entry.split("*");
     return { part: parts[name], times: Number(times) };
@@ -76,16 +85,482 @@ function song({ bpm, voices, parts, form }) {
   const repeat = (times, notes) => (times > 1 ? `#LOOP ${times}\n${notes}\n#ENDLOOP` : notes);
   const tracks = Object.entries(voices).map(([voice, setup]) => [
     `#TRACK ${voice}`,
-    ...order.map(({ part, times }) => repeat(times, `#BPM ${bpm}\n#PAN 0\n${setup}\n${part[voice] ?? "-:q ".repeat(part.bars * 4)}`)),
+    ...order.map(({ part, times }) => repeat(times, `#BPM ${bpm}\n#PAN ${pans?.[voice] ?? 0}\n${setup}\n${part[voice] ?? "-:q ".repeat(part.bars * 4)}`)),
   ].join("\n"));
   const drums = [
     "#TRACK drums",
     `#BPM ${bpm * 8}`,
     "#PAN 0",
-    ...order.map(({ part, times }) => repeat(times, beat(part.drums ?? ".".repeat(part.bars * 16)))),
+    ...order.map(({ part, times }) => repeat(times, beat(part.drums ?? ".".repeat(part.bars * 16), pans && hitPans))),
   ].join("\n");
-  return normalize([...tracks, drums].join("\n"));
+  const sheet = normalize([...tracks, drums].join("\n"));
+  return lowEnd ? boost(sheet, bpm, lowEnd) : sheet;
 }
+
+// A note has no envelope, so a fade, a riser or a crash is a run of strokes
+// stepping evenly in volume.
+function ramp(cells, from, to) {
+  return cells.map((cell, i) => `#VOLUME ${(from + ((to - from) * i) / (cells.length - 1)).toFixed(3)}\n${cell}`).join("\n");
+}
+
+// Rounded to two decimals as in scriptune's table, so swell counts the cycles
+// scriptune really plays.
+function hertz(note) {
+  const [, letter, accidental, octave] = note.match(/^([A-G])([#b]?)(\d)$/);
+  const pitch = Number(octave) * 12 + letterSteps[letter] + (accidentalSteps[accidental] ?? 0);
+  return Math.round(440 * 2 ** ((pitch - 57) / 12) * 100) / 100;
+}
+
+function ease(levels, at) {
+  const x = at * (levels.length - 1);
+  const i = Math.min(Math.floor(x), levels.length - 2);
+  return levels[i] + ((levels[i + 1] - levels[i]) * (1 - Math.cos(Math.PI * (x - i)))) / 2;
+}
+
+// swell sounds a note for beats while its volume eases through levels and,
+// if given, its pan through pans. A note has no envelope, so the swell is a
+// run of steps of about step seconds. Every step lasts whole cycles of the
+// pitch, it stops at zero right where the next one starts at zero, so the
+// volume moves without a click. scriptune reads a BPM as a whole number, so a
+// step ends as near as it gets to where all steps so far should end, errors
+// never add up. A rest fills the part of a cycle left at the end, the run
+// keeps to the beat.
+function swell(note, beats, bpm, levels, pans, step = 0.08) {
+  const hz = hertz(note);
+  const seconds = (beats * 60) / bpm;
+  const cycles = Math.floor(hz * seconds + 1e-6);
+  const count = Math.max(1, Math.round(cycles / Math.max(1, Math.round(hz * step))));
+  const cells = [];
+  let time = 0;
+  let rate;
+  for (let i = 0; i < count; i++) {
+    const at = count > 1 ? i / (count - 1) : 0;
+    const end = Math.min(Math.floor((cycles * (i + 1)) / count) / hz, seconds);
+    const next = (i < count - 1 ? Math.round : Math.ceil)(240 / (end - time));
+    if (next !== rate) cells.push(`#BPM ${(rate = next)}`);
+    if (pans) cells.push(`#PAN ${ease(pans, at).toFixed(2)}`);
+    cells.push(`#VOLUME ${ease(levels, at).toFixed(3)}\n${note}:w`);
+    time += 240 / rate;
+  }
+  if (seconds - time > 1e-6) cells.push(`#BPM ${Math.round(240 / (seconds - time))}\n-:w`);
+  return `${cells.join("\n")}\n#BPM ${bpm}`;
+}
+
+// A rest starts an oscillator just like a note, so rests take as few cells
+// as they can.
+const values = [[24, "dw"], [16, "w"], [12, "dh"], [8, "h"], [6, "dq"], [4, "q"], [3, "de"], [2, "e"], [1, "s"]];
+
+function rests(n) {
+  const cells = [];
+  for (const [steps, value] of values) for (; n >= steps; n -= steps) cells.push(`-:${value}`);
+  return cells.join(" ");
+}
+
+// The drops a kick falls through, each step a note, the whole cycles it lasts
+// and its level. The hard kick of Dark Techno drops over two octaves to its
+// tail, the soft kick starts lower and rings longer, like the low drum it
+// replaces, the tom of a fill drops an octave.
+const drops = {
+  hard: [["D4", 2, 0.8], ["G3", 2, 1], ["D3", 2, 1], ["A2", 2, 0.95], ["E2", 2, 0.9], ["B1", 2, 0.8], ["G1", 3, 0.6], ["G1", 3, 0.3]],
+  soft: [["G3", 2, 0.6], ["D3", 2, 0.9], ["A2", 2, 1], ["E2", 2, 0.95], ["B1", 3, 0.85], ["G1", 3, 0.7], ["G1", 4, 0.45], ["G1", 4, 0.2]],
+  tom: [["D4", 4, 0.8], ["A3", 4, 0.9], ["F3", 5, 0.8], ["D3", 6, 0.6], ["D3", 6, 0.3]],
+};
+
+// land moves a kick's drop from G1 to tail, at level.
+function land(drop, tail, level) {
+  const shift = Math.round(12 * Math.log2(hertz(tail) / hertz("G1")));
+  return drop.map(([note, cycles, volume]) => [transpose(note, shift), cycles, volume * level]);
+}
+
+// thump strikes the drop shape gives a letter of grid, one letter a
+// sixteenth, after a burst of noise at punch. Every step of a drop ends where
+// its wave is zero, so neither the drop nor the tail clicks. The rest after a
+// hit ends where the next sixteenth should start, so errors never add up, and
+// a hit stops short where the next one starts.
+function thump(bpm, grid, shape, punch) {
+  const sixteenth = 15 / bpm;
+  const hits = [...grid].flatMap((letter, i) => (shape[letter] ? [i] : []));
+  const cells = [rests(hits[0] ?? grid.length)];
+  let time = (hits[0] ?? 0) * sixteenth;
+  const until = (end, cell) => {
+    if (end - time < 1e-6) return;
+    const rate = Math.round(240 / (end - time));
+    cells.push(`#BPM ${rate}\n${cell}:w`);
+    time += 240 / rate;
+  };
+  hits.forEach((at, i) => {
+    const next = hits[i + 1] ?? grid.length;
+    cells.push(`#TYPE noise\n#VOLUME ${punch.toFixed(3)}`);
+    until(time + 0.004, "A6");
+    cells.push("#TYPE triangle");
+    for (const [note, cycles, level] of shape[grid[at]]) {
+      if (time + cycles / hertz(note) > next * sixteenth) break;
+      cells.push(`#VOLUME ${level.toFixed(3)}`);
+      until(time + cycles / hertz(note), note);
+    }
+    const filled = Math.min(next, Math.ceil(time / sixteenth - 1e-6));
+    until(filled * sixteenth, "-");
+    cells.push(`#BPM ${bpm}\n${rests(next - filled)}`);
+    time += (next - filled) * sixteenth;
+  });
+  return cells;
+}
+
+function forge(bpm, tail = "G1") {
+  const sixteenth = 15 / bpm;
+  const kick = (grid, level = 0.6) => thump(bpm, grid.replace(/\s/g, ""), { x: land(drops.hard, tail, level) }, 0.25 * level).join("\n");
+  const volume = (level, i) => (typeof level === "function" ? level(i) : level);
+  const fade = (from, to, length) => (i) => from + ((to - from) * i) / length;
+  const strokes = (grid, strike) => {
+    const steps = [...grid.replace(/\s/g, "")];
+    const cells = [];
+    for (let i = 0; i < steps.length; ) {
+      const rest = steps[i] === ".";
+      let n = 1;
+      while (steps[i + n] === (rest ? "." : "~")) n++;
+      cells.push(rest ? rests(n) : strike(steps[i], n, i));
+      i += n;
+    }
+    return cells.join("\n");
+  };
+  const play = (grid, notes, level, decay, pans) => strokes(grid, (key, n, i) =>
+    swell(notes[key], n / 4, bpm, decay.map((d) => d * volume(level, i)), pans, (n * sixteenth) / decay.length));
+  const fall = (grid, notes, level, steps) => strokes(grid, (key, n, i) => steps.map(([shift, step]) => {
+    const loud = step * volume(level, i);
+    return swell(transpose(notes[key], shift), n / 4 / steps.length, bpm, [loud, loud], null, 1);
+  }).join("\n"));
+  const only = (grid, slot) => grid.replace(/./g, (step, i) => (i % 4 === slot ? step : "."));
+  // Wrapped around, so the echo of a loop's last strokes opens the next round.
+  const later = (grid, n) => (grid.slice(-n) + grid.slice(0, -n)).replace(/^~+/, (holds) => ".".repeat(holds.length));
+  const drone = (notes, level) => notes.split(" ").reduce((runs, note) => {
+    if (runs.at(-1)?.note === note) runs.at(-1).bars++;
+    else runs.push({ note, bars: 1 });
+    return runs;
+  }, []).map(({ note, bars }) => swell(note, bars * 4, bpm, [0.2, 1, 0.45].map((l) => l * level), [-0.3, 0.3], 0.12)).join("\n");
+  const whine = (notes, levels) => notes.split(" ").map((note, i, all) => swell(note, 8, bpm, [ease(levels, i / all.length), ease(levels, (i + 1) / all.length)], [0.4, -0.4], 0.05)).join("\n");
+  const riser = (bars, from = "C3") => `${ramp(Array.from({ length: bars * 8 - 1 }, (_, i) => `${transpose(from, i)}:e`), 0.003, 0.06)}\n-:e`;
+  const impact = (bars) => `${ramp(Array(16).fill("D8:q"), 0.06, 0.003)}\n${rests((bars - 4) * 16)}`;
+  const four = (bars) => "x...".repeat(bars * 4);
+  return { kick, volume, fade, play, fall, only, later, drone, whine, riser, impact, four };
+}
+
+// Kept apart from rests, which also takes dotted values, so the Deep Dubstep
+// sheets stay byte for byte as they were composed.
+function rest(sixteenths) {
+  const cells = [];
+  for (const [value, length] of [["w", 16], ["h", 8], ["q", 4], ["e", 2], ["s", 1]]) {
+    for (; sixteenths >= length; sixteenths -= length) cells.push(`-:${value}`);
+  }
+  return cells.join(" ");
+}
+
+function depth(bpm, { roots, lows, tones }) {
+  const bars = (p) => p.split(" ");
+  const runs = (p) => bars(p).reduce((all, root) => {
+    if (all.at(-1)?.root === root) all.at(-1).bars++;
+    else all.push({ root, bars: 1 });
+    return all;
+  }, []);
+  const waves = (n, low, high) => Array.from({ length: n + 1 }, (_, i) => (i % 2 ? high : low));
+  // The sub is a sine too deep for a phone speaker, the growl an octave up
+  // carries it there. A root held for half a wave hands the next one the
+  // wave where it left it.
+  const sub =(p, low, high, { notes = roots, per = 1, step = 0.08 / per } = {}) => {
+    let halves = 0;
+    return runs(p).map(({ root, bars }) => {
+      const levels = halves % 2 ? waves(bars * per, high, low) : waves(bars * per, low, high);
+      halves += bars * per;
+      return swell(notes[root], bars * 4, bpm, levels, null, step);
+    }).join("\n");
+  };
+  const growl = (p, high, per, step) => sub(p, 0, high, { notes: lows, per, step });
+  const pass = (notes, high, levels, { pans, beats = 8 } = {}) => bars(notes)
+    .map((note) => (note === "-" ? rest(beats * 4) : swell(note, beats, bpm, levels.map((level) => level * high), pans))).join("\n");
+  const near = (p, high, { pans = [-0.5, 0.5], beats = 8 } = {}) => pass(
+    bars(p).filter((_, i) => i % (beats / 4) === 0).map((root) => tones[root]).join(" "), high, [0, 1, 0], { pans, beats },
+  );
+  const far = (notes, high, { pans = [0.5, -0.5], beats = 8 } = {}) => `${rest(beats * 2)}\n${pass(notes, high, [0, 1, 0], { pans, beats })}\n${rest(beats * 2)}`;
+  const pulse = (p, levels, { rhythm = "x.x.x.x.x.x.x.x.", notes = lows } = {}) => {
+    const grid = bars(p).flatMap((root) => [...rhythm].map((step) => (step === "x" ? notes[root] : null)));
+    const plucks = grid.filter(Boolean).length;
+    let plucked = 0;
+    const cells = [];
+    for (const note of grid) {
+      if (!note) {
+        if (typeof cells.at(-1) === "number") cells[cells.length - 1]++;
+        else cells.push(1);
+        continue;
+      }
+      const level = ease(levels, plucks > 1 ? plucked++ / (plucks - 1) : 0);
+      cells.push(swell(note, 0.25, bpm, [level, level / 4], null, 0.025));
+    }
+    return cells.map((cell) => (typeof cell === "number" ? rest(cell) : cell)).join("\n");
+  };
+  // The echo comes a dotted eighth late and cuts the two bars of rest the
+  // notes end on by as much, so it ends with them.
+  const ring = [1, 0.35, 0.1, 0];
+  const ping = (notes, high) => pass(notes, high, ring);
+  const echo = (notes, high) => `-:de\n${pass(notes.replace(/ -$/, ""), high, ring)}\n-:w -:h -:q -:s`;
+  return { sub, growl, pass, near, far, pulse, ping, echo };
+}
+
+// unroll reads a track the way parseSheet of scriptune does, loops unrolled,
+// and gives its notes, each with the lowest pitch of its cell or null for a
+// rest, where it starts and how long it lasts, in sixteenths of the tempo the
+// track starts with.
+function unroll(text) {
+  const sixteenths = Object.fromEntries(values.map(([n, value]) => [value, n]));
+  let bpm, tempo;
+  const loops = [{ count: 1, cells: [] }];
+  for (const row of text.split("\n").map((l) => l.replace(/;.*/, "").trim()).filter(Boolean)) {
+    const [command, ...args] = row.split(/\s+/);
+    if (command === "#BPM") {
+      bpm = parseInt(args[0]);
+      tempo ??= bpm;
+    } else if (command === "#LOOP") loops.push({ count: parseInt(args[0]), cells: [] });
+    else if (command === "#ENDLOOP") {
+      const { count, cells } = loops.pop();
+      loops.at(-1).cells.push(...Array(count).fill(cells).flat());
+    } else if (!command.startsWith("#")) {
+      for (const cell of [command, ...args]) {
+        const [pitch, value] = cell.split(":");
+        const length = (sixteenths[value] * tempo) / bpm;
+        if (!Number.isInteger(length)) throw new Error(`${cell} is off the grid of sixteenths`);
+        loops.at(-1).cells.push({ pitch: pitch === "-" ? null : pitch.split("+").sort((a, b) => hertz(a) - hertz(b))[0], length });
+      }
+    }
+  }
+  let start = 0;
+  return loops[0].cells.map(({ pitch, length }) => ({ pitch, start: (start += length) - length, length }));
+}
+
+// The hits of the kit as a panned song writes them, in lines with the
+// volumes left open, since normalize scaled them.
+const blank = (row) => row.replace(/^#VOLUME .*/, "#VOLUME");
+const kitRows = Object.keys(kit).map((letter) => [letter, beat(letter, hitPans).split("\n").map(blank)]);
+
+// strip reads a drum track back into the letters of its hits, loops unrolled,
+// one letter a sixteenth, and writes it again with the hits of letters left
+// out, a rest in their place.
+function strip(text, letters) {
+  const rows = text.split("\n");
+  const kept = rows.slice(0, 3);
+  const loops = [{ count: 1, letters: [] }];
+  for (let i = 3; i < rows.length; ) {
+    const row = rows[i];
+    if (row.startsWith("#LOOP ")) {
+      loops.push({ count: parseInt(row.slice(6)), letters: [] });
+      kept.push(row);
+      i++;
+    } else if (row === "#ENDLOOP") {
+      const { count, letters } = loops.pop();
+      loops.at(-1).letters.push(...Array(count).fill(letters).flat());
+      kept.push(row);
+      i++;
+    } else {
+      const found = kitRows.filter(([, lines]) => lines.every((l, k) => blank(rows[i + k] ?? "") === l));
+      if (found.length !== 1) throw new Error(`no single hit of the kit fits "${row}"`);
+      const [letter, lines] = found[0];
+      kept.push(...(letters.includes(letter) ? ["-:h"] : rows.slice(i, i + lines.length)));
+      loops.at(-1).letters.push(letter);
+      i += lines.length;
+    }
+  }
+  return { text: kept.join("\n"), grid: loops[0].letters.join("") };
+}
+
+// boost gives a song the low end of Deep Dubstep and Dark Techno. Every voice
+// but the bass and the drums stays note for note and at its volume, so the
+// melody keeps its level, and nothing boost writes goes through normalize,
+// every new volume stays at or below 1 instead. The bass becomes three
+// voices, the way Deep Dubstep layers its sub, growl and near: the sub, a sine
+// in the lowest octave you feel more than hear, the bass line itself on whole
+// cycles, and the grit, a short saw stroke on its notes that carries the bass
+// on a phone speaker. Kick and low drum leave the drums for a kick of their
+// own, built like the kick of Dark Techno. A song gives the settings, see the
+// presets below.
+function boost(sheet, bpm, { tail, kick, sub, bass, grit }) {
+  const all = sheet.split(/\n(?=#TRACK )/).map((text) => ({ name: text.slice("#TRACK ".length, text.indexOf("\n")), text }));
+  const find = (name) => all.find((track) => track.name === name).text;
+  const sixteenth = 15 / bpm;
+  const notes = unroll(find("bass"));
+  const drums = strip(find("drums"), "KBT");
+  const length = drums.grid.length;
+  if (notes.at(-1).start + notes.at(-1).length !== length) throw new Error("bass and drums differ in length");
+  const kicks = [...drums.grid].map((letter) => "KB".includes(letter));
+  const octave = (note, n) => note.replace(/\d$/, n);
+
+  // tone sounds a note for n sixteenths in steps of about step seconds, each
+  // at the level that level gives for the seconds since the note started. A
+  // step lasts whole cycles like a step of swell, so the wave stops at zero
+  // where the next one starts. scriptune reads a BPM as a whole number and
+  // misses the end of a cycle by a little, so of the cycle ends within two of
+  // where a step should end it takes the one a whole BPM gets closest to, as
+  // a whole note or a dotted whole, whose BPM lands finer. The last step ends
+  // on the last cycle, or on the one before if that saves more than 2
+  // microseconds a cycle it leaves out, since a rest fills what is left at
+  // the end and the note keeps to the beat.
+  const tone = (note, n, level, step) => {
+    const hz = hertz(note);
+    const seconds = n * sixteenth;
+    const cycles = Math.floor(hz * seconds + 1e-6);
+    const count = Math.max(1, Math.round(cycles / Math.max(1, Math.round(hz * step))));
+    const cells = [];
+    let time = 0;
+    let done = 0;
+    let rate;
+    for (let i = 0; i < count && done < cycles; i++) {
+      const target = Math.round((cycles * (i + 1)) / count);
+      const from = Math.max(done + 1, i < count - 1 ? target - 2 : cycles - 1);
+      const to = Math.max(from, i < count - 1 ? Math.min(cycles - 1, target + 2) : cycles);
+      let best;
+      for (let end = from; end <= to; end++) {
+        for (const [value, beats] of [["w", 4], ["dw", 6]]) {
+          const next = Math.round((60 * beats) / (end / hz - time));
+          const miss = Math.abs(time + (60 * beats) / next - end / hz) + (i < count - 1 ? 0 : (cycles - end) * 2e-6);
+          if (!best || miss < best.miss) best = { end, value, length: (60 * beats) / next, next, miss };
+        }
+      }
+      if (best.next !== rate) cells.push(`#BPM ${(rate = best.next)}`);
+      cells.push(`#VOLUME ${Math.min(1, level(time)).toFixed(3)}\n${note}:${best.value}`);
+      time += best.length;
+      done = best.end;
+    }
+    if (seconds - time > 1e-6) cells.push(`#BPM ${Math.round(240 / (seconds - time))}\n-:w`);
+    return `${cells.join("\n")}\n#BPM ${bpm}`;
+  };
+  // run collects the cells of a voice and joins the rests in between, so a
+  // run of them starts as few oscillators as it can.
+  const run = () => {
+    const cells = [];
+    let gap = 0;
+    return {
+      rest: (n) => (gap += n),
+      add: (cell) => {
+        if (gap) cells.push(rests(gap));
+        gap = 0;
+        cells.push(cell);
+      },
+      done: () => [...cells, gap ? rests(gap) : ""].filter(Boolean).join("\n"),
+    };
+  };
+
+  // The sub takes the pitch the bass sounds at the start of every beat, or
+  // its first one in the beat, into the lowest octave. It sounds wherever the
+  // bass sounds or rests for at most bridge sixteenths between two notes, a
+  // pitch held over beats as one note. Every kick ducks it, then it swells
+  // back through duck, a level a sixteenth, as if the kick pushed it away.
+  const sounding = Array(length).fill(null);
+  for (const { pitch, start, length: n } of notes) if (pitch) sounding.fill(pitch, start, start + n);
+  const gate = sounding.map(Boolean);
+  for (let i = 0; i < length; ) {
+    let j = i;
+    while (j < length && !sounding[j]) j++;
+    if (i > 0 && j > i && j < length && j - i <= sub.bridge) gate.fill(true, i, j);
+    i = Math.max(j, i + 1);
+  }
+  const roots = Array.from({ length: Math.ceil(length / 4) }, (_, b) => sounding[4 * b] ?? sounding.slice(4 * b, 4 * b + 4).find(Boolean));
+  const last = [];
+  kicks.forEach((on, i) => (last[i] = on ? i : (last[i - 1] ?? -Infinity)));
+  const pump = (at) => {
+    const since = at - last[Math.min(length - 1, Math.floor(at))];
+    if (!(since < sub.duck.length - 1)) return sub.duck.at(-1);
+    const i = Math.floor(since);
+    return sub.duck[i] + (sub.duck[i + 1] - sub.duck[i]) * (since - i);
+  };
+  const deep = run();
+  for (let i = 0, held = null; i < length; ) {
+    if (!gate[i]) {
+      deep.rest(1);
+      i++;
+      continue;
+    }
+    const pitch = (held = roots[Math.floor(i / 4)] ?? held);
+    let j = i + 1;
+    while (j < length && gate[j] && octave(roots[Math.floor(j / 4)] ?? pitch, 1) === octave(pitch, 1)) j++;
+    const from = i;
+    const step = kicks.slice(from, j).some(Boolean) ? sub.step : sub.calm;
+    deep.add(tone(octave(pitch, 1), j - from, (t) => sub.level * pump(from + t / sixteenth), step));
+    i = j;
+  }
+
+  // The bass plays its line on whole cycles, every note from its full level
+  // down towards sustain. accent sets a level by sixteenth of the beat, ring
+  // cuts a note short and rests for the rest of it. A note above 150 Hz, the
+  // top of a line that leaps an octave, gets softer the higher it is, a loud
+  // high triangle clicks from the rounding to whole samples alone.
+  const body = run();
+  for (const { pitch, start, length: n } of notes) {
+    if (!pitch) {
+      body.rest(n);
+      continue;
+    }
+    const ring = Math.min(n, bass.ring ?? n);
+    const level = bass.level * (bass.accent?.[start % 4] ?? 1) * Math.min(1, 150 / hertz(pitch));
+    body.add(tone(pitch, ring, (t) => level * (bass.sustain + (1 - bass.sustain) * Math.exp(-t / bass.decay)), bass.step));
+    body.rest(n - ring);
+  }
+
+  // The grit strikes the notes of the bass that start where its mask has an
+  // x, a saw in the octave above the sub that fades out within ring
+  // sixteenths.
+  const saw = run();
+  for (const { pitch, start, length: n } of notes) {
+    if (!pitch || grit.mask[start % grit.mask.length] !== "x") {
+      saw.rest(n);
+      continue;
+    }
+    const ring = Math.min(n, grit.ring);
+    saw.add(tone(octave(pitch, 2), ring, (t) => grit.level * Math.exp(-t / grit.decay), grit.step));
+    saw.rest(n - ring);
+  }
+
+  // The kick plays where the drums had a kick or a low drum, the tom where
+  // they had a tom.
+  const shape = {
+    K: land(drops[kick.drop], tail, kick.level),
+    T: drops.tom.map(([note, cycles, level]) => [note, cycles, level * kick.level * 0.8]),
+  };
+  shape.B = shape.K;
+  const hits = thump(bpm, drums.grid, shape, kick.punch * kick.level).filter(Boolean).join("\n");
+
+  // parseSheet carries the type and the volume a track ends on into the next
+  // one until that sets its own, so the new voices end on what the bass left
+  // and every voice after them plays as it did.
+  const left = ["#TYPE", "#VOLUME"].map((command) => find("bass").split("\n").filter((row) => row.startsWith(command)).at(-1)).filter(Boolean);
+  const voice = (name, type, notes) => `#TRACK ${name}\n#BPM ${bpm}\n#PAN 0\n#TYPE ${type}\n${notes}`;
+  return all.map(({ name, text }) => {
+    if (name === "bass") return [voice("sub", "sine", deep.done()), voice("bass", bass.type, body.done()), voice("grit", "sawtooth", saw.done()), ...left].join("\n");
+    if (name === "drums") return `${drums.text}\n${voice("kick", "triangle", hits)}`;
+    return text;
+  }).join("\n");
+}
+
+// Chill Electronic stays laid back. Its soft kick lands where the low drum
+// was, the sub follows the bass beat by beat and dips a little under the
+// kick, the bass sustains on a triangle and the grit touches every note.
+const chill = {
+  kick: { drop: "soft", level: 0.85, punch: 0.1 },
+  sub: { level: 0.85, bridge: 1, duck: [0.55, 0.8, 0.95, 1], step: 0.1, calm: 0.12 },
+  bass: { type: "triangle", level: 1, sustain: 0.7, decay: 0.3, step: 0.1 },
+  grit: { level: 0.1, decay: 0.07, ring: 1, mask: "x", step: 0.05 },
+};
+
+// Melodic House pumps. A hard kick on every beat, the sub bridges the rests
+// between offbeat and rolling notes and ducks deep under every kick, the
+// bass plucks short and loudest on the offbeat, the grit strikes the and of
+// every beat.
+const house = {
+  kick: { drop: "hard", level: 1, punch: 0.25 },
+  sub: { level: 0.9, bridge: 3, duck: [0.15, 0.45, 0.75, 0.92, 1], step: 0.07, calm: 0.12 },
+  bass: { type: "triangle", level: 1, sustain: 0.35, decay: 0.12, ring: 4, accent: [0.7, 0.85, 1, 0.9], step: 0.09 },
+  grit: { level: 0.12, decay: 0.05, ring: 1, mask: "..x.", step: 0.04 },
+};
+
+// tuned gives a preset with some of its settings changed. A song tunes its
+// preset and adds the tail its kick drops to, the root or the fifth of its
+// key.
+const tuned = (preset, changes) => Object.fromEntries(Object.entries(preset).map(([key, value]) => [key, typeof value === "object" ? { ...value, ...changes[key] } : value]));
 
 export const songs = {
   ambermile: (() => {
@@ -104,6 +579,8 @@ export const songs = {
     return song({
       bpm: 100,
       voices: { keys: "#TYPE sine\n#VOLUME 0.5", pluck: "#TYPE triangle\n#VOLUME 0.3", pad: "#TYPE sawtooth\n#VOLUME 0.07", bass: "#TYPE sine\n#VOLUME 0.5" },
+      pans: { pluck: -0.3, pad: 0.3 },
+      lowEnd: { ...chill, tail: "F#1" },
       parts: {
         intro: { bars: 8, pluck: `#VOLUME 0.2\n${pl(prog)}`, pad: "-:w ".repeat(4) + pd("Bm G D A") },
         build: {
@@ -154,6 +631,8 @@ export const songs = {
     return song({
       bpm: 112,
       voices: { keys: "#TYPE sine\n#VOLUME 0.45", pluck: "#TYPE triangle\n#VOLUME 0.3", pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE triangle\n#VOLUME 0.55" },
+      pans: { pluck: -0.3, pad: 0.3 },
+      lowEnd: tuned({ ...chill, tail: "A1" }, { bass: { sustain: 0.5, decay: 0.2 }, grit: { level: 0.13 } }),
       parts: {
         intro: { bars: 8, pluck: `#VOLUME 0.2\n${pl(prog)}`, pad: "-:w ".repeat(4) + pd("D Bm G A") },
         build: {
@@ -206,6 +685,8 @@ export const songs = {
     return song({
       bpm: 96,
       voices: { piano: "#TYPE sine\n#VOLUME 0.5", pluck: "#TYPE triangle\n#VOLUME 0.28", pad: "#TYPE sawtooth\n#VOLUME 0.07", bass: "#TYPE sine\n#VOLUME 0.45" },
+      pans: { pluck: -0.3, pad: 0.3 },
+      lowEnd: tuned({ ...chill, tail: "F#1" }, { sub: { level: 0.9 }, grit: { level: 0.07 } }),
       parts: {
         intro: { bars: 8, pad: pd(prog), pluck: `${"-:w ".repeat(4)}\n#VOLUME 0.2\n${pl("F#m D A E")}` },
         build1: { bars: 8, pad: pd(prog), pluck: `#VOLUME 0.24\n${pl(prog)}`, bass: bl(prog) },
@@ -250,6 +731,8 @@ export const songs = {
     return song({
       bpm: 118,
       voices: { keys: "#TYPE sine\n#VOLUME 0.5", pluck: "#TYPE triangle\n#VOLUME 0.3", pad: "#TYPE square\n#VOLUME 0.05", bass: "#TYPE triangle\n#VOLUME 0.55" },
+      pans: { pluck: -0.3, pad: 0.3 },
+      lowEnd: tuned({ ...chill, tail: "E1" }, { sub: { bridge: 2 }, bass: { sustain: 0.45, decay: 0.15 }, grit: { level: 0.13 } }),
       parts: {
         intro: { bars: 8, pluck: `#VOLUME 0.2\n${pl(prog)}`, drums: ".".repeat(64) + "Z.ZZZ.ZZZ.ZZZ.ZZ".repeat(4) },
         build: {
@@ -299,6 +782,8 @@ export const songs = {
     return song({
       bpm: 104,
       voices: { box: "#TYPE sine\n#VOLUME 0.45", pluck: "#TYPE triangle\n#VOLUME 0.25", pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE sine\n#VOLUME 0.5" },
+      pans: { pluck: -0.3, pad: 0.3 },
+      lowEnd: tuned({ ...chill, tail: "A1" }, { grit: { level: 0.08 } }),
       parts: {
         intro: { bars: 8, box: `#VOLUME 0.3\n${hook}`, pad: "-:w ".repeat(4) + pd("A E Dm A") },
         build: {
@@ -345,6 +830,8 @@ export const songs = {
     return song({
       bpm: 116,
       voices: { lead: "#TYPE sine\n#VOLUME 0.5", pluck: "#TYPE triangle\n#VOLUME 0.32", pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE triangle\n#VOLUME 0.5" },
+      pans: { pluck: -0.3, pad: 0.3 },
+      lowEnd: tuned({ ...chill, tail: "G1" }, { kick: { level: 0.9, punch: 0.15 }, bass: { sustain: 0.55, decay: 0.2 }, grit: { level: 0.12 } }),
       parts: {
         intro: { bars: 8, pluck: band.pluck },
         build: { bars: 8, pluck: band.pluck, pad: band.pad, bass: "-:w ".repeat(4) + each(low, "G D Em C"), drums: "Z.Z.Z.Z.Z.Z.Z.Z.".repeat(6) + "Z.Z.Z.Z.B.Z.Z.Z.B.Z.Z.Z.B.Z.ZBX." },
@@ -389,6 +876,8 @@ export const songs = {
     return song({
       bpm: 98,
       voices: { lead: "#TYPE sine\n#VOLUME 0.5", keys: "#TYPE triangle\n#VOLUME 0.3", pad: "#TYPE sawtooth\n#VOLUME 0.05", bass: "#TYPE sine\n#VOLUME 0.45" },
+      pans: { keys: -0.3, pad: 0.3 },
+      lowEnd: tuned({ ...chill, tail: "G#1" }, { sub: { level: 0.9 }, grit: { level: 0.07 } }),
       parts: {
         intro: { bars: 8, keys: band.keys },
         verse: { bars: 8, keys: band.keys, lead: low, pad: "-:w ".repeat(4) + each(chord, "Fm Cm A G") },
@@ -429,6 +918,8 @@ export const songs = {
     return song({
       bpm: 108,
       voices: { lead: "#TYPE sine\n#VOLUME 0.45", pluck: "#TYPE triangle\n#VOLUME 0.3", pad: "#TYPE square\n#VOLUME 0.05", bass: "#TYPE triangle\n#VOLUME 0.6" },
+      pans: { pluck: -0.3, pad: 0.3 },
+      lowEnd: tuned({ ...chill, tail: "F1" }, { kick: { level: 0.9, punch: 0.15 }, bass: { sustain: 0.45, decay: 0.15 }, grit: { level: 0.15 } }),
       parts: {
         intro: { bars: 8, pluck: band.pluck, drums: ".".repeat(64) + "Z.Z.Z.Z.Z.Z.Z.Z.".repeat(4) },
         groove: { bars: 8, pluck: band.pluck, bass: band.bass, drums: groove.repeat(7) + fill },
@@ -472,6 +963,8 @@ export const songs = {
         lead: "#TYPE sine\n#VOLUME 0.45", call: "#TYPE triangle\n#VOLUME 0.35\n#PAN -0.3", echo: "#TYPE triangle\n#VOLUME 0.22\n#PAN 0.3",
         pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE sine\n#VOLUME 0.5",
       },
+      pans: { pad: 0.25 },
+      lowEnd: tuned({ ...chill, tail: "A1" }, { kick: { level: 0.75 }, sub: { level: 0.9 }, grit: { level: 0.06 } }),
       parts: {
         intro: { bars: 8, pad: open.pad },
         call: { bars: 8, pad: open.pad, call, echo: answer },
@@ -527,6 +1020,8 @@ export const songs = {
     return song({
       bpm: 120,
       voices: { lead: "#TYPE sine\n#VOLUME 0.45", pluck: "#TYPE triangle\n#VOLUME 0.3", pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE triangle\n#VOLUME 0.5" },
+      pans: { pluck: -0.3, pad: 0.3 },
+      lowEnd: tuned({ ...chill, tail: "Ab1" }, { kick: { level: 0.9, punch: 0.15 }, sub: { bridge: 2 }, bass: { sustain: 0.5, decay: 0.15 }, grit: { level: 0.12, mask: "x..." } }),
       parts: {
         intro: { bars: 8, pad: band.pad, pluck: "-:w ".repeat(4) + each(arp, "Ab Eb Fm Db") },
         verse: {
@@ -551,8 +1046,8 @@ export const songs = {
   })(),
   midnightbloom: (() => {
     const bpm = 122;
-    const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars));
-    const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16));
+    const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars), hitPans);
+    const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16), hitPans);
     const prog = ["Am", "F", "C", "G"];
     const pads = { Am: "A3+C4+E4:w ", F: "F3+A3+C4:w ", C: "E3+G3+C4:w ", G: "D3+G3+B3:w " };
     const lo = { Am: "A2", F: "F2", C: "C3", G: "G2" };
@@ -570,6 +1065,8 @@ export const songs = {
     return song({
       bpm,
       voices: { piano: "#TYPE sine\n#VOLUME 0.45", pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE triangle\n#VOLUME 0.5", clap: "#TYPE sawtooth\n#VOLUME 0.1", ...ending.voices },
+      pans: { pad: 0.3, ...ending.pans },
+      lowEnd: { ...house, tail: "A1" },
       parts: {
         intro: { bars: 8, pad: pad(2), bass: "-:w ".repeat(4) + off(1), drums: "K...K...K...K...".repeat(4) + groove.repeat(3) + fill },
         groove: { bars: 16, piano: hook.repeat(4), pad: pad(4), bass: off(4), clap: claps(16), drums: (groove.repeat(7) + fill).repeat(2) },
@@ -592,8 +1089,8 @@ export const songs = {
   })(),
   afterglow: (() => {
     const bpm = 120;
-    const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars));
-    const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16));
+    const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars), hitPans);
+    const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16), hitPans);
     const prog = ["F", "C", "Dm", "Bb"];
     const low = { F: "F4+A4+C5", C: "E4+G4+C5", Dm: "F4+A4+D5", Bb: "F4+Bb4+D5" };
     const high = { F: "A4+C5+F5", C: "G4+C5+E5", Dm: "A4+D5+F5", Bb: "Bb4+D5+F5" };
@@ -614,6 +1111,8 @@ export const songs = {
     return song({
       bpm,
       voices: { piano: "#TYPE sine\n#VOLUME 0.32", lead: "#TYPE triangle\n#VOLUME 0.3", pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE triangle\n#VOLUME 0.5", clap: "#TYPE sawtooth\n#VOLUME 0.1", ...ending.voices },
+      pans: { lead: 0.25, pad: -0.3, ...ending.pans },
+      lowEnd: { ...house, tail: "F1" },
       parts: {
         intro: { bars: 8, pad: pad(2), bass: "-:w ".repeat(4) + off(1), drums: "K...K...K...K...".repeat(4) + groove.repeat(3) + fill },
         groove: { bars: 16, piano: hook.repeat(4), pad: pad(4), bass: pulse(4), clap: claps(16), drums: (groove.repeat(7) + fill).repeat(2) },
@@ -635,8 +1134,8 @@ export const songs = {
   })(),
   oceanfloor: (() => {
     const bpm = 123;
-    const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars));
-    const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16));
+    const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars), hitPans);
+    const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16), hitPans);
     const prog = ["Dm", "Bb", "Gm", "A"];
     const pads = { Dm: "D3+F3+A3:w ", Bb: "D3+F3+Bb3:w ", Gm: "D3+G3+Bb3:w ", A: "C#3+E3+A3:w " };
     const cells = { Dm: "D2:s D3:s A2:s D3:s ", Bb: "Bb1:s Bb2:s F2:s Bb2:s ", Gm: "G1:s G2:s D2:s G2:s ", A: "A1:s A2:s E2:s A2:s " };
@@ -653,6 +1152,8 @@ export const songs = {
     return song({
       bpm,
       voices: { piano: "#TYPE sine\n#VOLUME 0.45", pad: "#TYPE sawtooth\n#VOLUME 0.07", bass: "#TYPE triangle\n#VOLUME 0.5", clap: "#TYPE sawtooth\n#VOLUME 0.1", ...ending.voices },
+      pans: { pad: 0.3, ...ending.pans },
+      lowEnd: tuned({ ...house, tail: "D1" }, { sub: { level: 0.85 } }),
       parts: {
         intro: { bars: 8, pad: pad(2), bass: "-:w ".repeat(4) + rolling(1), drums: "K...K...K...K...".repeat(4) + groove.repeat(3) + fill },
         groove: { bars: 16, piano: call.repeat(4), pad: pad(4), bass: rolling(4), clap: claps(16), drums: (groove.repeat(7) + fill).repeat(2) },
@@ -675,8 +1176,8 @@ export const songs = {
   })(),
   citypulse: (() => {
     const bpm = 124;
-    const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars));
-    const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16));
+    const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars), hitPans);
+    const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16), hitPans);
     const prog = ["Em", "Em", "C", "D"];
     const pads = { Em: "E3+G3+B3:w ", C: "E3+G3+C4:w ", D: "D3+F#3+A3:w " };
     const lo = { Em: "E2", C: "C2", D: "D2" };
@@ -694,6 +1195,8 @@ export const songs = {
     return song({
       bpm,
       voices: { piano: "#TYPE sine\n#VOLUME 0.45", pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE triangle\n#VOLUME 0.5", clap: "#TYPE sawtooth\n#VOLUME 0.1", ...ending.voices },
+      pans: { pad: 0.3, ...ending.pans },
+      lowEnd: { ...house, tail: "G1" },
       parts: {
         intro: { bars: 8, bass: pulse(2), drums: "K...K...K...K...".repeat(4) + groove.repeat(3) + fill },
         groove: { bars: 16, piano: cell.repeat(4), pad: pad(4), bass: pulse(4), clap: claps(16), drums: (groove.repeat(7) + fill).repeat(2) },
@@ -716,8 +1219,8 @@ export const songs = {
   })(),
   velvethours: (() => {
     const bpm = 121;
-    const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars));
-    const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16));
+    const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars), hitPans);
+    const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16), hitPans);
     const turn = ["Bb", "Bb", "FA", "FA", "Gm", "Gm", "Eb", "Eb"];
     const pads = { Bb: "D3+F3+Bb3:w ", FA: "C3+F3+A3:w ", Gm: "D3+G3+Bb3:w ", Eb: "Eb3+G3+Bb3:w " };
     const arp = { Bb: "Bb3:e D4:e F4:e D4:e ", FA: "A3:e C4:e F4:e C4:e ", Gm: "G3:e Bb3:e D4:e Bb3:e ", Eb: "G3:e Bb3:e Eb4:e G4:e " };
@@ -739,6 +1242,8 @@ export const songs = {
     return song({
       bpm,
       voices: { piano: "#TYPE sine\n#VOLUME 0.45", keys: "#TYPE triangle\n#VOLUME 0.25", pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE triangle\n#VOLUME 0.5", clap: "#TYPE sawtooth\n#VOLUME 0.1", ...ending.voices },
+      pans: { keys: -0.3, pad: 0.3, ...ending.pans },
+      lowEnd: tuned({ ...house, tail: "F1" }, { bass: { sustain: 0.45, decay: 0.18 } }),
       parts: {
         intro: { bars: 8, pad: pad(1), keys: keys(1), drums: "K...K...K...K...".repeat(4) + groove.repeat(3) + fill },
         groove: { bars: 16, piano: line.repeat(2), keys: keys(2), pad: pad(2), bass: off(2), clap: claps(16), drums: (groove.repeat(7) + fill).repeat(2) },
@@ -775,7 +1280,7 @@ export const songs = {
     const pad = (t) => chords.map((c) => `${c}:w `).join("").repeat(t);
     const bass = (t) => roots.map(([l, h]) => `${l}:e ${h}:e `.repeat(4)).join("").repeat(t);
     const stab = (t) => chords.map((c) => `-:e ${c}:e `.repeat(4)).join("").repeat(t);
-    const clap = (p) => `#BPM ${bpm * 8}\n${beat(p)}`;
+    const clap = (p) => `#BPM ${bpm * 8}\n${beat(p, hitPans)}`;
     const claps = "....P.......P...";
     const four = "K.O.K.O.K.O.K.O.";
     const hats = "..H...H...H...H.";
@@ -786,6 +1291,8 @@ export const songs = {
         arp: "#TYPE triangle\n#VOLUME 0.32", lead: "#TYPE sine\n#VOLUME 0.26", keys: "#TYPE sine\n#VOLUME 0.14",
         pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE triangle\n#VOLUME 0.5", clap: "#TYPE sawtooth",
       },
+      pans: { arp: -0.3, keys: 0.35, pad: 0.2 },
+      lowEnd: { ...house, tail: "G#1" },
       parts: {
         intro: { bars: 8, arp: arp(2), pad: pad(2), drums: hats.repeat(8) },
         groove: { bars: 8, arp: arp(2), pad: pad(2), bass: bass(2), clap: clap(claps.repeat(8)), drums: four.repeat(7) + fill },
@@ -817,7 +1324,7 @@ export const songs = {
     const pad = (t) => chords.map((c) => `${c}:w `).join("").repeat(t);
     const pulse = (t) => roots.map((r) => `${r}:s -:s `.repeat(8)).join("").repeat(t);
     const stab = (t) => chords.map((c) => `-:e ${c}:e `.repeat(4)).join("").repeat(t);
-    const clap = (p) => `#BPM ${bpm * 8}\n${beat(p)}`;
+    const clap = (p) => `#BPM ${bpm * 8}\n${beat(p, hitPans)}`;
     const claps = "....P.......P...";
     const four = "K.O.K.O.K.O.K.O.";
     const hats = "..H...H...H...H.";
@@ -828,6 +1335,8 @@ export const songs = {
         piano: "#TYPE sine\n#VOLUME 0.34", echo: "#TYPE triangle\n#VOLUME 0.16", keys: "#TYPE sine\n#VOLUME 0.12",
         pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE triangle\n#VOLUME 0.5", clap: "#TYPE sawtooth",
       },
+      pans: { echo: 0.35, keys: -0.3, pad: -0.2 },
+      lowEnd: { ...house, tail: "G1" },
       parts: {
         intro: { bars: 8, piano: motif.repeat(2), pad: pad(2), drums: hats.repeat(8) },
         groove: { bars: 8, piano: motif.repeat(2), echo: echo(2), pad: pad(2), bass: pulse(2), clap: clap(claps.repeat(8)), drums: four.repeat(7) + fill },
@@ -861,7 +1370,7 @@ export const songs = {
     const arp = (t) => tones.map(([a, b, c, d]) => `${a}:e ${b}:e ${c}:e ${d}:e `.repeat(2)).join("").repeat(t);
     const pad = (t) => chords.map((c) => `${c}:w `).join("").repeat(t);
     const bass = (t) => roots.map(([r, f]) => `${r}:e ${f}:e `.repeat(4)).join("").repeat(t);
-    const clap = (p) => `#BPM ${bpm * 8}\n${beat(p)}`;
+    const clap = (p) => `#BPM ${bpm * 8}\n${beat(p, hitPans)}`;
     const claps = "....P.......P...";
     const four = "K.O.K.O.K.O.K.O.";
     const fill = "K.O.K.O.K.O.KRRR";
@@ -871,6 +1380,8 @@ export const songs = {
         piano: "#TYPE sine\n#VOLUME 0.34", arp: "#TYPE triangle\n#VOLUME 0.18", pad: "#TYPE sawtooth\n#VOLUME 0.05",
         bass: "#TYPE sine\n#VOLUME 0.5", clap: "#TYPE sawtooth",
       },
+      pans: { arp: -0.3, pad: 0.3 },
+      lowEnd: tuned({ ...house, tail: "Bb1" }, { kick: { level: 0.9 }, sub: { duck: [0.3, 0.6, 0.85, 1] } }),
       parts: {
         intro: { bars: 8, arp: arp(2), pad: pad(2), drums: ".......H.......H".repeat(8) },
         groove: { bars: 8, arp: arp(2), pad: pad(2), bass: bass(2), clap: clap(claps.repeat(8)), drums: four.repeat(7) + fill },
@@ -900,7 +1411,7 @@ export const songs = {
     const rolls = [["B1", "B2", "F#2"], ["G1", "G2", "D2"], ["D2", "D3", "A2"], ["A1", "A2", "E2"]];
     const pad = (t) => chords.map((c) => `${c}:w `).join("").repeat(t);
     const bass = (t) => rolls.map(([r, o, f]) => `${r}:s ${o}:s ${f}:s ${o}:s `.repeat(4)).join("").repeat(t);
-    const clap = (p) => `#BPM ${bpm * 8}\n${beat(p)}`;
+    const clap = (p) => `#BPM ${bpm * 8}\n${beat(p, hitPans)}`;
     const claps = "....P.......P...";
     const drive = "K.OHK.OHK.OHK.OH";
     const fill = "K.OHK.OHK.OHKRRR";
@@ -910,6 +1421,8 @@ export const songs = {
         upper: "#TYPE sine\n#VOLUME 0.3", lower: "#TYPE triangle\n#VOLUME 0.3", pad: "#TYPE sawtooth\n#VOLUME 0.06",
         bass: "#TYPE triangle\n#VOLUME 0.45", clap: "#TYPE sawtooth",
       },
+      pans: { lower: -0.3, pad: 0.3 },
+      lowEnd: { ...house, tail: "F#1" },
       parts: {
         intro: { bars: 8, lower: lower.repeat(2), pad: pad(2), drums: "..H...H...H...H.".repeat(8) },
         groove: { bars: 8, lower: lower.repeat(2), pad: pad(2), bass: bass(2), clap: clap(claps.repeat(8)), drums: drive.repeat(7) + fill },
@@ -947,7 +1460,7 @@ export const songs = {
     const pulse = (t) => chords.map((c) => `${c}:s -:s `.repeat(8)).join("").repeat(t);
     const pad = (t) => pads.map((c) => `${c}:w `).join("").repeat(t);
     const bass = (t) => roots.map((r) => `-:e ${r}:e `.repeat(4)).join("").repeat(t);
-    const clap = (p) => `#BPM ${bpm * 8}\n${beat(p)}`;
+    const clap = (p) => `#BPM ${bpm * 8}\n${beat(p, hitPans)}`;
     const claps = "....P.......P...";
     const four = "K.O.K.O.K.O.K.O.";
     const fill = "K.O.K.O.K.O.KRRR";
@@ -957,6 +1470,8 @@ export const songs = {
         piano: "#TYPE sine\n#VOLUME 0.34", keys: "#TYPE sine\n#VOLUME 0.13", lead: "#TYPE triangle\n#VOLUME 0.25",
         pad: "#TYPE sawtooth\n#VOLUME 0.06", bass: "#TYPE triangle\n#VOLUME 0.5", clap: "#TYPE sawtooth",
       },
+      pans: { keys: -0.3, pad: 0.3 },
+      lowEnd: { ...house, tail: "G1" },
       parts: {
         intro: { bars: 8, keys: keys(2), pad: pad(2), drums: "..H...H...H...H.".repeat(8) },
         groove: { bars: 8, keys: keys(2), pad: pad(2), bass: bass(2), clap: clap(claps.repeat(8)), drums: four.repeat(7) + fill },
@@ -979,6 +1494,1252 @@ export const songs = {
         end: { bars: 3, piano: `F5:q A5:q C6:q\n${echoTail("E6", 0.34)}\n-:dh`, pad: `${pads[3]}:dh ${pads[0]}:dw -:dh` },
       },
       form: "intro groove build drop*2 groove2 brk build drop2*2 outro end",
+    });
+  })(),
+  basalt: (() => {
+    const bpm = 126;
+    const { kick, volume, fade, play, only, later, drone, whine, riser, impact, four } = forge(bpm);
+    const low = { g: "G2", f: "F2", a: "Ab2", b: "Bb2", d: "D3", G: "G3" };
+    const duck = [0, 0.55, 0.8, 1];
+    const bass = (grid, level) => play(grid, low, (i) => volume(level, i) * duck[i % 4], [1, 0.35]);
+    const high = Object.fromEntries(Object.entries(low).map(([key, note]) => [key, transpose(note, 12)]));
+    const grit = (grid, level) => play(only(grid, 3), high, level, [1, 0.35]);
+    const plain = ".ggg".repeat(16);
+    const turn = ".ggg.ggg.ggg.ggg" + ".ggg.ggg.ggg.ggG" + ".ggg.ggg.ggg.ggb" + ".ggg.ggg.gfg.agf";
+    const tones = { f: "F4", g: "G4", a: "Ab4", b: "Bb4", d: "D5", e: "Eb5", G: "G5" };
+    const seed = "...g............" + "................";
+    const hooks = [
+      "...g..g........." + "...g..a.........",
+      "...g..g...d~...." + "...g..a..g......",
+      "...g..g...d~...." + "...g..a..g....f.",
+      "...g..g...e~...." + "G..g..a..g....f.",
+      "...g..g...e~..d." + "G..g..a..g..b.G.",
+    ];
+    const pluck = [1, 0.45, 0.2];
+    const ring = [1, 0.7, 0.5, 0.35, 0.22, 0.12];
+    const last = [1, 0.6, 0.4, 0.25, 0.15, 0.08, 0.04, 0.02];
+    const hook = (grid, level, decay = pluck) => play(grid, tones, level, decay);
+    const up = { ...Object.fromEntries(Object.entries(tones).map(([key, note]) => [key, transpose(note, 12)])), G: "G5" };
+    const echo = (grid, level, decay = pluck, notes = tones) => play(later(grid, 3), notes, level, decay);
+    const tick = "..H...H...H...H.";
+    const clap = "..H.P.H...H.P.H.";
+    const shake = "..H.P.HZ..H.P.HZ";
+    const open = "Z.O.P.OZ..O.P.OZ";
+    return song({
+      bpm,
+      voices: {
+        kick: "#TYPE triangle", bass: "#TYPE triangle", grit: "#TYPE sawtooth", hook: "#TYPE sawtooth\n#PAN -0.15",
+        echo: "#TYPE triangle\n#PAN 0.45", drone: "#TYPE sawtooth", whine: "#TYPE sine", rise: "#TYPE noise",
+      },
+      parts: {
+        intro: {
+          bars: 8, kick: kick(four(8)), hook: `${rests(64)}\n${hook(seed.repeat(2), fade(0.04, 0.11, 64))}`,
+          drums: ".".repeat(32) + "..Z...Z...Z...Z.".repeat(2) + tick.repeat(3) + "..H...H...H.RRRR",
+        },
+        groove: {
+          bars: 16, kick: kick(four(16)), bass: bass(plain.repeat(3) + turn, 0.5), hook: hook(hooks[0].repeat(8), 0.15),
+          drums: (clap.repeat(7) + "..H.P.H...H.P.RR").repeat(2),
+        },
+        layer: {
+          bars: 16, kick: kick(four(15) + "x...x...x......."), bass: bass(turn.repeat(4), 0.5),
+          hook: hook(hooks[1].repeat(4) + hooks[2].repeat(4), 0.17), echo: echo(hooks[1].repeat(4) + hooks[2].repeat(4), 0.09),
+          drone: drone("D3 D3 D3 D3 D3 D3 D3 D3 D3 D3 D3 D3 D3 D3 D3 D3", 0.03),
+          drums: shake.repeat(15) + "..H.P.HZ..H.PRRR",
+        },
+        peak: {
+          bars: 16, kick: kick(four(15) + "x...x...x...x.x."), bass: bass(turn.repeat(4), 0.52), grit: grit(turn.repeat(4), 0.08),
+          hook: hook(hooks[3].repeat(8), 0.19), echo: echo(hooks[3].repeat(8), 0.1),
+          drone: drone("D3 D3 D3 D3 Eb3 Eb3 D3 D3 D3 D3 D3 D3 Eb3 Eb3 D3 D3", 0.035),
+          drums: open.repeat(15) + "Z.O.P.OZXXXXXXXX",
+        },
+        breakdown: {
+          bars: 8, bass: swell("G1", 32, bpm, [0.4, 0.15, 0.35, 0.12, 0.3, 0.1, 0.25]),
+          hook: hook(hooks[2].repeat(4), 0.17, ring), echo: echo(hooks[2].repeat(4), 0.11, ring),
+          drone: drone("D3 D3 D3 D3 Eb3 Eb3 Eb3 Eb3", 0.04), whine: whine("Ab5 Ab5 Ab5 Ab5", [0, 0.04]),
+          drums: ".".repeat(64) + "..Z...Z...Z...Z.".repeat(3) + "..Z...Z...Z.Z.ZZ",
+        },
+        build: {
+          bars: 8, kick: kick(four(6) + ".".repeat(32)), bass: bass("..g.".repeat(24) + ".".repeat(32), fade(0.25, 0.6, 96)),
+          hook: hook(hooks[3].repeat(4), 0.17), whine: whine("Ab5 A5 Bb5 B5", [0.025, 0.05]), rise: riser(8),
+          drums: clap.repeat(4) + "P.H.P.H.P.H.P.H.".repeat(2) + "P.P.P.P.P.P.P.P." + "XXXXXXXXXXXX....",
+        },
+        return: {
+          bars: 24, kick: kick(four(24)), bass: bass(turn.repeat(6), 0.52), grit: grit(turn.repeat(6), 0.09),
+          hook: hook(hooks[4].repeat(8) + hooks[3].repeat(4), 0.19), echo: echo(hooks[4].repeat(8) + hooks[3].repeat(4), 0.08, pluck, up),
+          drone: drone("D3 D3 D3 D3 Eb3 Eb3 D3 D3 ".repeat(3).trim(), 0.035), rise: impact(24),
+          drums: (open.repeat(7) + "Z.O.P.OZ..O.PRRR").repeat(3),
+        },
+        outro: {
+          bars: 16, kick: kick(four(14) + "x" + ".".repeat(31)), bass: bass(turn.repeat(2) + ".".repeat(128), 0.5),
+          hook: `${hook(hooks[1].repeat(4) + hooks[0].repeat(2) + seed, fade(0.17, 0.06, 224))}\n${hook("...g" + "~".repeat(25) + "...", 0.08, last)}`,
+          echo: echo(hooks[1].repeat(4) + ".".repeat(128), fade(0.09, 0.03, 128)), drone: `${drone("D3 D3 D3 D3 D3 D3 D3 D3", 0.03)}\n${rests(128)}`,
+          drums: clap.repeat(8) + tick.repeat(4) + "..Z...Z...Z...Z.".repeat(2) + ".".repeat(32),
+        },
+      },
+      form: "intro groove layer peak breakdown build return outro",
+    });
+  })(),
+  obsidian: (() => {
+    const bpm = 128;
+    const { kick, volume, fade, play, later, drone, whine, riser, impact, four } = forge(bpm, "A1");
+    const low = { a: "A2", c: "C3", g: "G2", A: "A3" };
+    const high = Object.fromEntries(Object.entries(low).map(([key, note]) => [key, transpose(note, 12)]));
+    const bass = (grid, level) => play(grid, low, level, [1, 0.75, 0.5, 0.25]);
+    const grit = (grid, level) => play(grid, high, level, [1, 0.4]);
+    const pump = "..a~".repeat(16);
+    const shove = "..a~".repeat(7) + "..A~" + "..a~".repeat(6) + "..c~..g~";
+    const tones = { a: "A4", c: "C5", e: "E5", f: "F5" };
+    const thirds = (bars, cycle, held = 0) => Array.from({ length: bars * 16 }, (_, i) => {
+      const stroke = cycle[Math.floor(i / 3) % cycle.length];
+      return i % 3 === 0 ? stroke : i % 3 <= held && stroke !== "." ? "~" : ".";
+    }).join("");
+    const pluck = [1, 0.4, 0.15];
+    const ring = [1, 0.6, 0.35, 0.2, 0.1];
+    const hook = (grid, level, decay = pluck) => play(grid, tones, (i) => volume(level, i) * (i % 4 === 2 ? 1 : 0.6), decay);
+    const up = Object.fromEntries(Object.entries(tones).map(([key, note]) => [key, transpose(note, 12)]));
+    const ghost = (grid, level, decay = pluck) => play(later(grid, 2), up, level, decay);
+    const swing = "E3 E3 E3 E3 F3 F3 E3 E3";
+    const hats = "..H...H...H...H.";
+    const rim = "..H..XH...H..XH.";
+    const full = "..H.PXH...H.PXHO";
+    const fill = "..H..XH.X.X.XXXX";
+    const roll = "X.X.X.X.XXXXXXXX";
+    return song({
+      bpm,
+      voices: {
+        kick: "#TYPE triangle", bass: "#TYPE triangle", grit: "#TYPE sawtooth", hook: "#TYPE triangle\n#PAN -0.2",
+        ghost: "#TYPE sine\n#PAN 0.5", drone: "#TYPE sawtooth", whine: "#TYPE sine", rise: "#TYPE noise",
+      },
+      parts: {
+        intro: { bars: 16, kick: kick(four(16)), drums: ".".repeat(64) + hats.repeat(8) + rim.repeat(3) + fill },
+        bass: {
+          bars: 8, kick: kick(four(8)), bass: bass(pump.repeat(2), fade(0.3, 0.5, 128)), hook: hook(thirds(8, "a..."), fade(0.1, 0.2, 128)),
+          drums: rim.repeat(7) + fill,
+        },
+        groove: {
+          bars: 16, kick: kick(four(15) + "x...x...x......."), bass: bass(shove.repeat(4), 0.5),
+          hook: hook(thirds(8, "a.a.") + thirds(8, "a.ae"), 0.22), drums: rim.repeat(15) + "..H..XH.X.X.XXXX",
+        },
+        cut: {
+          bars: 4, hook: hook(thirds(4, "a.ae", 1), 0.22, ring), ghost: ghost(thirds(4, "a.ae", 1), 0.06, ring),
+          drone: drone("E3 E3 E3 E3", 0.04), whine: whine("E5 F5", [0, 0.04]), drums: ".".repeat(32) + "X...X...X...X..." + roll,
+        },
+        peak: {
+          bars: 16, kick: kick(four(15) + "x...x...x...x.x."), bass: bass(shove.repeat(4), 0.52), grit: grit(shove.repeat(4), 0.07),
+          hook: hook(thirds(16, "acae"), 0.24), ghost: ghost(thirds(16, "acae"), 0.06), drone: drone(`${swing} ${swing}`, 0.03),
+          drums: full.repeat(15) + "..H.PXH.X.X.XXXX",
+        },
+        breakdown: {
+          bars: 12, bass: swell("A2", 48, bpm, [0.35, 0.1, 0.3, 0.08, 0.25, 0.06, 0.2]),
+          hook: hook(thirds(12, "acaf", 2), 0.2, ring), ghost: ghost(thirds(12, "acaf", 2), 0.06, ring),
+          drone: drone("E3 E3 E3 E3 F3 F3 F3 F3 E3 E3 E3 E3", 0.04), whine: whine("C6 C6 C6 B5 B5 B5", [0, 0.045, 0.02]),
+          drums: ".".repeat(128) + hats.repeat(3) + "..H...H...H.XXXX",
+        },
+        build: {
+          bars: 4, kick: kick(four(2) + ".".repeat(32)), bass: bass("..a.".repeat(8) + ".".repeat(32), fade(0.3, 0.55, 32)),
+          hook: hook(thirds(4, "acaf"), fade(0.15, 0.26, 64)), rise: riser(4, "E3"),
+          drums: "P...P...P...P..." + "P.P.P.P.P.P.P.P." + roll + "XXXXXXXXXXXX....",
+        },
+        return: {
+          bars: 16, kick: kick(four(16)), bass: bass(shove.repeat(4), 0.52), grit: grit(shove.repeat(4), 0.08),
+          hook: hook(thirds(16, "ecaf"), 0.24), ghost: ghost(thirds(16, "ecaf"), 0.07), drone: drone(`${swing} ${swing}`, 0.035),
+          rise: impact(16), drums: full.repeat(15) + "..H.PXH.X.X.XXXX",
+        },
+        outro: {
+          bars: 16, kick: kick(four(15) + "x..............."), bass: bass(shove.repeat(2) + ".".repeat(128), 0.5),
+          hook: hook(thirds(8, "a.ae") + thirds(4, "a.a.") + thirds(4, "a..."), fade(0.22, 0.05, 256)),
+          drums: rim.repeat(8) + hats.repeat(4) + ".".repeat(64),
+        },
+      },
+      form: "intro bass groove cut peak breakdown build return outro",
+    });
+  })(),
+  cinder: (() => {
+    const bpm = 130;
+    const { kick, volume, fade, play, fall, only, drone, riser, impact, four } = forge(bpm, "F1");
+    const low = { f: "F2", a: "Ab2", b: "Bb2", c: "C3", e: "Eb3", F: "F3" };
+    const high = Object.fromEntries(Object.entries(low).map(([key, note]) => [key, transpose(note, 12)]));
+    const accents = "..x...x...x....x";
+    const accent = (i) => accents[i % 16] === "x";
+    const acid = (grid, level) => play(grid, low, (i) => volume(level, i) * (accent(i) ? 1 : 0.5), [1, 0.3]);
+    const body = (grid, level) => play(only(grid, 1), low, level, [1, 0.4]);
+    const scream = (grid, level) => play(grid.replace(/./g, (step, i) => (accent(i) ? step : ".")), high, level, [1, 0.3]);
+    const bars = {
+      T: "..F...e~..F....e", U: ".fF..fe~.fF..cfe", A: ".fFf.fe~.fFf.cfe",
+      B: ".fFf.fe~.fFF.bFe", C: ".fFf.fa~.fFf.cbF", D: ".fFf.fe~.F.F.FcF",
+    };
+    const line = (letters) => [...letters].map((bar) => bars[bar]).join("");
+    const shot = [[0, 1], [-5, 0.75], [-12, 0.55], [-19, 0.4]];
+    const zap = (grid, top, level) => fall(grid, { z: top }, level, shot);
+    const zaps = [
+      "......z~........" + "................",
+      "......z~........" + "......z~....z~..",
+      "...z~.z~........" + "......z~....z~..",
+    ];
+    const glow = "C3 C3 C3 C3 Db3 Db3 C3 C3";
+    const hats = "..H...H...H...H.";
+    const run = ".HZH.HZH.HZH.HZH";
+    const clap = ".HZHPHZH.HZHPHZH";
+    return song({
+      bpm,
+      voices: {
+        kick: "#TYPE triangle", acid: "#TYPE sawtooth\n#PAN 0.1", body: "#TYPE triangle", scream: "#TYPE sawtooth\n#PAN -0.3",
+        zap: "#TYPE sawtooth\n#PAN -0.35", drone: "#TYPE sawtooth", rise: "#TYPE noise",
+      },
+      parts: {
+        intro: {
+          bars: 8, kick: kick(four(8)), acid: `${rests(64)}\n${acid(line("TTTT"), fade(0.14, 0.24, 64))}`,
+          drums: ".".repeat(32) + hats.repeat(5) + "..H...H.X.X.XXXX",
+        },
+        acid: {
+          bars: 16, kick: kick(four(16)), acid: acid(line("UUUUAAABAAABAAAB"), 0.26), body: body(line("UUUUAAABAAABAAAB"), 0.45),
+          drums: run.repeat(15) + ".HZH.HZH.X.XXXXX",
+        },
+        drive: {
+          bars: 16, kick: kick(four(15) + "x...x...x......."), acid: acid(line("AAAB".repeat(4)), 0.28), body: body(line("AAAB".repeat(4)), 0.45),
+          zap: zap(zaps[0].repeat(4) + zaps[1].repeat(4), "C6", 0.07), drone: drone("C3 ".repeat(16).trim(), 0.03),
+          drums: clap.repeat(15) + ".HZHPHZHXXXXXXXX",
+        },
+        gap: { bars: 2, acid: acid(line("AD"), 0.3), zap: zap(zaps[1], "C6", 0.07), drums: "X...X...X.X.X.X." + "XXXXXXXXXXXXXXXX" },
+        peak: {
+          bars: 16, kick: kick(four(16)), acid: acid(line("ACAD".repeat(4)), 0.3), body: body(line("ACAD".repeat(4)), 0.47),
+          zap: zap(zaps[2].repeat(8), "Eb6", 0.075), drone: drone(`${glow} ${glow}`, 0.03), drums: clap.repeat(15) + ".HZHPHZH.X.XXXXX",
+        },
+        tool: {
+          bars: 8, kick: kick(four(7) + "x...x...x......."), body: body(line("AAAAAAAA"), 0.5), acid: acid(line("TTTTTTTT"), 0.22),
+          drums: run.repeat(7) + ".HZH.HZHXXXXXXXX",
+        },
+        gap2: { bars: 2, zap: zap(zaps[2], "F6", 0.075), rise: riser(2, "F4"), drums: "X.X.X.X.X.X.X.X." + "XXXXXXXXXXXXXXXX" },
+        blaze: {
+          bars: 24, kick: kick(four(24)), acid: acid(line("ACAD".repeat(6)), 0.3), scream: scream(line("ACAD".repeat(6)), 0.07),
+          body: body(line("ACAD".repeat(6)), 0.47), zap: zap(zaps[2].repeat(12), "F6", 0.075), drone: drone(`${glow} ${glow} ${glow}`, 0.035),
+          rise: impact(24), drums: (clap.repeat(7) + ".HZHPHZH.X.XXXXX").repeat(3),
+        },
+        outro: {
+          bars: 16, kick: kick(four(15) + "x..............."), acid: acid(line("AAAAUUUUTTTT") + ".".repeat(64), fade(0.28, 0.12, 192)),
+          body: body(line("AAAAUUUU") + ".".repeat(128), 0.45), drums: run.repeat(8) + hats.repeat(4) + ".".repeat(64),
+        },
+      },
+      form: "intro acid drive gap peak tool gap2 blaze outro",
+    });
+  })(),
+  graphite: (() => {
+    const bpm = 125;
+    const { kick, fade, play, fall, later, drone, whine, riser, impact, four } = forge(bpm, "A1");
+    const low = { d: "D2", f: "F2", g: "G2" };
+    const high = Object.fromEntries(Object.entries(low).map(([key, note]) => [key, transpose(note, 12)]));
+    const suck = [0.15, 0.4, 0.7, 0.9, 1, 0.8];
+    const bass = (grid, level) => play(grid, low, level, suck);
+    const grit = (grid, level) => play(grid, high, level, [0.2, 0.6, 1, 0.6]);
+    const pump = ".d~~".repeat(16);
+    const walk = ".d~~".repeat(12) + ".d~~.d~~.f~~.g~~";
+    const tones = { a: "A4", c: "C5", d: "D5", e: "E5", f: "F5" };
+    const over = Object.fromEntries(Object.entries(tones).map(([key, note]) => [key, transpose(note, 19)]));
+    const under = Object.fromEntries(Object.entries(tones).map(([key, note]) => [key, transpose(note, -12)]));
+    const toll = [1, 0.7, 0.5, 0.35, 0.25, 0.17, 0.11, 0.07];
+    const bells = [
+      "......a~~~~~...." + ".".repeat(48),
+      "......a~~~~~...." + ".".repeat(16) + "......a~~~~~...." + "..........d~~~~~",
+      "......a~~~~~...." + "...c~~~~~......." + "......a~~~~~...." + "..........d~~~~~",
+      "......a~~~~~...." + "...c~~~~~......." + "......a~~~~~..f~" + "~~~~......e~~~~~",
+    ];
+    const bell = (grid, level) => play(grid, tones, level, toll);
+    const glint = Array.from({ length: 16 }, (_, i) => 0.75 ** i);
+    const shine = (grid, level) => play(grid, over, level, glint);
+    const answer = (grid, level) => play(later(grid, 32), under, level, toll);
+    const sway = "D3 D3 D3 D3 C3 C3 D3 D3";
+    const slap = [[0, 1], [-3, 0.55], [-7, 0.25]];
+    const skins = { d: "D4", a: "A3" };
+    const hands = (pattern, level = 0.35) => ({
+      drums: pattern.replace(/B/g, "."),
+      conga: fall(pattern.replace(/./g, (step, i) => (step !== "B" ? "." : i % 2 ? "d" : "a")), skins, level, slap),
+    });
+    const tick = "..Z...Z...Z...Z.";
+    const conga = "..Z..BZ...Z.B.Z.";
+    const deep = "..Z.XBZ...Z.XBZB";
+    return song({
+      bpm,
+      voices: {
+        kick: "#TYPE triangle", bass: "#TYPE triangle", grit: "#TYPE sawtooth", bell: "#TYPE triangle\n#PAN -0.25",
+        shine: "#TYPE sine\n#PAN -0.4", answer: "#TYPE triangle\n#PAN 0.45", conga: "#TYPE triangle\n#PAN 0.3", drone: "#TYPE sawtooth", whine: "#TYPE sine", rise: "#TYPE noise",
+      },
+      parts: {
+        haze: {
+          bars: 8, drone: drone("D3 D3 D3 D3 D3 D3 D3 D3", 0.045), bell: bell(bells[0] + bells[1], fade(0.08, 0.2, 128)),
+          shine: shine(bells[0] + bells[1], fade(0.02, 0.05, 128)),
+        },
+        floor: {
+          bars: 8, kick: kick(four(8)), bell: bell(bells[1].repeat(2), 0.2), shine: shine(bells[1].repeat(2), 0.05),
+          drone: drone("D3 D3 D3 D3 C3 C3 C3 C3", 0.035), ...hands(".".repeat(64) + tick.repeat(3) + "..Z...Z...Z.B.BB"),
+        },
+        pump: {
+          bars: 16, kick: kick(four(16)), bass: `${bass(pump, fade(0.25, 0.5, 64))}\n${bass(pump.repeat(2) + walk, 0.5)}`,
+          grit: `${grit(pump, fade(0, 0.045, 64))}\n${grit(pump.repeat(2) + walk, 0.045)}`,
+          bell: bell(bells[1].repeat(4), 0.2), shine: shine(bells[1].repeat(4), 0.05), ...hands(conga.repeat(15) + "..Z..BZ...Z.B.BB"),
+        },
+        deep: {
+          bars: 24, kick: kick(four(24)), bass: bass(walk.repeat(6), 0.5), grit: grit(walk.repeat(6), 0.06),
+          bell: bell(bells[2].repeat(6), 0.21), shine: shine(bells[2].repeat(6), 0.05), answer: answer(bells[2].repeat(6), 0.08),
+          drone: drone(`${sway} ${sway} ${sway}`, 0.03), ...hands((deep.repeat(7) + "..Z.XBZ.B.B.BBBB").repeat(3)),
+        },
+        breakdown: {
+          bars: 16, bass: swell("D2", 64, bpm, [0.4, 0.15, 0.35, 0.12, 0.3, 0.1, 0.25, 0.08, 0.2]),
+          bell: bell(bells[3].repeat(4), 0.21), shine: shine(bells[3].repeat(4), 0.06), answer: answer(bells[3].repeat(4), 0.1),
+          drone: drone("D3 D3 D3 D3 C3 C3 C3 C3 Bb2 Bb2 Bb2 Bb2 C3 C3 C3 C3", 0.04), whine: whine("A5 A5 A5 A5 Bb5 Bb5 A5 A5", [0, 0.035, 0.02]),
+          drums: ".".repeat(192) + tick.repeat(3) + "..Z...Z...Z.ZZZZ",
+        },
+        build: {
+          bars: 4, kick: kick(four(2) + ".".repeat(32)), bass: bass(".d~~".repeat(8) + ".".repeat(32), fade(0.25, 0.5, 32)),
+          bell: bell(bells[3], 0.2), rise: riser(4, "D3"),
+          ...hands("..Z.B.Z...Z.B.Z." + "B.B.B.B.B.B.B.B." + "BBBBBBBBBBBBBBBB" + "XXXXXXXX........"),
+        },
+        return: {
+          bars: 16, kick: kick(four(16)), bass: bass(walk.repeat(4), 0.52), grit: grit(walk.repeat(4), 0.07),
+          bell: bell(bells[3].repeat(4), 0.22), shine: shine(bells[3].repeat(4), 0.06), answer: answer(bells[3].repeat(4), 0.09),
+          drone: drone(`${sway} ${sway}`, 0.035), rise: impact(16), ...hands((deep.repeat(7) + "..Z.XBZ.B.B.BBBB").repeat(2)),
+        },
+        settle: {
+          bars: 8, kick: kick(four(8)), bass: bass(pump + ".".repeat(64), 0.45), grit: grit(pump + ".".repeat(64), 0.04),
+          bell: bell(bells[1].repeat(2), 0.18),
+          drone: drone("D3 D3 D3 D3 D3 D3 D3 D3", 0.035), ...hands(conga.repeat(4) + tick.repeat(4)),
+        },
+        dusk: {
+          bars: 8, drone: swell("D3", 32, bpm, [0.03, 0.045, 0.03, 0], [-0.3, 0.3], 0.12),
+          bell: bell(bells[1] + bells[0], fade(0.18, 0.06, 128)), shine: shine(bells[1] + bells[0], fade(0.05, 0.015, 128)),
+        },
+      },
+      form: "haze floor pump deep breakdown build return settle dusk",
+    });
+  })(),
+  magnetite: (() => {
+    const bpm = 129;
+    const { kick, volume, fade, play, only, drone, whine, riser, impact, four } = forge(bpm, "B1");
+    const low = { e: "E2", f: "F2", d: "D2", E: "E3", F: "F3", D: "D3" };
+    const high = Object.fromEntries(Object.entries(low).map(([key, note]) => [key, transpose(note, 12)]));
+    const bass = (grid, level) => play(grid, low, (i) => volume(level, i) * (i % 4 === 3 ? 0.75 : 1), [1, 0.35]);
+    const grit = (grid, level) => play(only(grid, 3), high, level, [1, 0.35]);
+    const bounce = "..eE".repeat(15) + "..fF";
+    const lurch = "..eE".repeat(7) + "..fF" + "..eE".repeat(6) + "..dD..fF";
+    const root = { e: "E4", f: "F4", d: "D4" };
+    const fifth = { e: "B4", f: "C5", d: "A4" };
+    const stabs = [
+      "......e........." + "................",
+      "......e........." + "......e....e....",
+      "......e..e......" + "......e....f....",
+      "...e..e..e......" + "......e....f..f.",
+      "...e..e..e....e." + "..e...e....f..f.",
+    ];
+    const held = "......e~~~~~...." + "......e~~~~f~~~~";
+    const chop = [1, 0.45, 0.15];
+    const ring = [1, 0.7, 0.5, 0.35, 0.25, 0.15, 0.08];
+    const stab = (grid, level, decay = chop) => play(grid, root, level, decay);
+    const five = (grid, level, decay = chop) => play(grid, fifth, level, decay);
+    const tilt = "B2 B2 B2 B2 C3 C3 B2 B2";
+    const hats = "..H...H...H...H.";
+    const crack = "..H.X.H...H.X.H.";
+    const open = "..O.X.O...O.X.O.";
+    const drive = "..O.X.OH..O.X.OH";
+    const roll = "X.X.X.X.XXXXXXXX";
+    return song({
+      bpm,
+      voices: {
+        kick: "#TYPE triangle", bass: "#TYPE triangle", grit: "#TYPE sawtooth", stab: "#TYPE sawtooth\n#PAN -0.2",
+        five: "#TYPE triangle\n#PAN 0.3", drone: "#TYPE sawtooth", whine: "#TYPE sine", rise: "#TYPE noise",
+      },
+      parts: {
+        intro: {
+          bars: 8, kick: kick(four(8)), stab: `${rests(64)}\n${stab(stabs[0].repeat(2), fade(0.08, 0.15, 64))}`,
+          five: `${rests(64)}\n${five(stabs[0].repeat(2), fade(0.06, 0.12, 64))}`, drums: ".".repeat(32) + hats.repeat(5) + "..H...H.X.X.XXXX",
+        },
+        groove: {
+          bars: 16, kick: kick(four(16)), bass: bass(bounce.repeat(2) + lurch.repeat(2), 0.5),
+          stab: stab(stabs[1].repeat(8), 0.15), five: five(stabs[1].repeat(8), 0.12), drums: crack.repeat(15) + "..H.X.H.X.X.XXXX",
+        },
+        break1: {
+          bars: 8, bass: swell("E2", 32, bpm, [0.35, 0.12, 0.3, 0.1, 0.25]), stab: stab(held.repeat(4), 0.15, ring),
+          five: five(held.repeat(4), 0.12, ring), drone: drone("B2 B2 B2 B2 C3 C3 C3 C3", 0.04), drums: ".".repeat(96) + hats.repeat(2),
+        },
+        build1: {
+          bars: 4, kick: kick(four(2) + ".".repeat(32)), bass: bass("..e.".repeat(8) + ".".repeat(32), fade(0.3, 0.55, 32)),
+          stab: stab(stabs[2].repeat(2), 0.15), five: five(stabs[2].repeat(2), 0.12), rise: riser(4, "B3"),
+          drums: "X...X...X...X..." + "X.X.X.X.X.X.X.X." + roll + "XXXXXXXXXXXX....",
+        },
+        drive: {
+          bars: 16, kick: kick(four(16)), bass: bass(lurch.repeat(4), 0.52),
+          stab: stab(stabs[2].repeat(4) + stabs[3].repeat(4), 0.16), five: five(stabs[2].repeat(4) + stabs[3].repeat(4), 0.12),
+          drums: open.repeat(15) + "..O.X.O.X.X.XXXX",
+        },
+        peak: {
+          bars: 16, kick: kick(four(15) + "x...x...x...x.x."), bass: bass(lurch.repeat(4), 0.52), grit: grit(lurch.repeat(4), 0.08),
+          stab: stab(stabs[3].repeat(8), 0.17), five: five(stabs[3].repeat(8), 0.13), drone: drone(`${tilt} ${tilt}`, 0.035),
+          drums: drive.repeat(15) + "..O.X.OHXXXXXXXX",
+        },
+        break2: {
+          bars: 16, bass: swell("E2", 64, bpm, [0.4, 0.12, 0.35, 0.1, 0.3, 0.08, 0.25, 0.06, 0.2]),
+          stab: stab(held.repeat(8), 0.15, ring), five: five(held.repeat(8), 0.12, ring),
+          drone: drone("B2 B2 B2 B2 C3 C3 C3 C3 B2 B2 B2 B2 C3 C3 C3 C3", 0.04), whine: whine("B5 B5 C6 C6 B5 B5 C6 C6", [0, 0.04, 0.025]),
+          drums: ".".repeat(192) + hats.repeat(3) + "..H...H...H.HHHH",
+        },
+        build2: {
+          bars: 8, kick: kick(four(6) + ".".repeat(32)), bass: bass("..e.".repeat(24) + ".".repeat(32), fade(0.25, 0.6, 96)),
+          stab: stab(stabs[4].repeat(4), fade(0.1, 0.18, 128)), five: five(stabs[4].repeat(4), fade(0.08, 0.14, 128)),
+          whine: whine("C6 C#6 D6 D#6", [0.025, 0.05]), rise: riser(8, "E3"),
+          drums: crack.repeat(4) + "X.H.X.H.X.H.X.H.".repeat(2) + roll + "XXXXXXXXXXXX....",
+        },
+        final: {
+          bars: 16, kick: kick(four(16)), bass: bass(lurch.repeat(4), 0.52), grit: grit(lurch.repeat(4), 0.09),
+          stab: stab(stabs[4].repeat(8), 0.17), five: five(stabs[4].repeat(8), 0.13), drone: drone(`${tilt} ${tilt}`, 0.035),
+          rise: impact(16), drums: drive.repeat(15) + "..O.X.OHX.X.XXXX",
+        },
+        outro: {
+          bars: 8, kick: kick(four(7) + "x..............."), bass: bass(bounce + ".".repeat(64), 0.5),
+          stab: stab(stabs[1].repeat(2) + stabs[0].repeat(2), fade(0.15, 0.05, 128)),
+          five: five(stabs[1].repeat(2) + stabs[0].repeat(2), fade(0.12, 0.04, 128)), drums: crack.repeat(4) + hats.repeat(2) + ".".repeat(32),
+        },
+      },
+      form: "intro groove break1 build1 drive peak break2 build2 final outro",
+    });
+  })(),
+  slate: (() => {
+    const bpm = 127;
+    const { kick, fade, play, only, drone, whine, riser, impact, four } = forge(bpm, "G1");
+    const low = { c: "C3", b: "Bb2", g: "G2", e: "Eb3" };
+    const high = Object.fromEntries(Object.entries(low).map(([key, note]) => [key, transpose(note, 12)]));
+    const bass = (grid, level, decay = [1, 0.45]) => play(grid, low, level, decay);
+    const grit = (grid, level) => play(only(grid, 1), high, level, [1, 0.4]);
+    const off = "..c..c.c..c..c.c";
+    const slip = off.repeat(3) + "..c..c.c..e..b.g";
+    const long = [1, 0.8, 0.6, 0.45, 0.3, 0.2];
+    const left = { g: "G4", f: "F4" };
+    const right = { c: "C5", d: "D5", e: "Eb5" };
+    const calls = [
+      ["...g~...........".repeat(2), ".".repeat(32)],
+      ["...g~...........".repeat(2), "........c~......".repeat(2)],
+      ["...g~.....g~...." + "...g~...........", "........c~......" + "........c~...c~."],
+      ["...g~.....g~...." + "...g~.....f~....", "........e~......" + "........d~...c~."],
+      ["...g~.....g~..g~" + "...g~.....f~....", "........e~....c~" + "........d~...c~."],
+    ];
+    const ping = [1, 0.6, 0.35, 0.2, 0.1];
+    const ring = [1, 0.75, 0.55, 0.4, 0.28, 0.18, 0.1];
+    const linger = (grid) => grid.replace(/~(\.{1,5})/g, (_, dots) => "~".repeat(dots.length + 1));
+    const call = (n, times, side, level, decay = ping, shape = (grid) => grid) =>
+      play(shape(calls[n][side]).repeat(times), side ? right : left, level, decay);
+    const shade = "G3 G3 G3 G3 Ab3 Ab3 G3 G3";
+    const hats = "..H...H...H...H.";
+    const broken = "..H...P...H..P.H";
+    const layer = "Z.H..XP.Z.H..P.H";
+    const fill = "..H...P.X.X.XXXX";
+    const roll = "X.X.X.X.XXXXXXXX";
+    return song({
+      bpm,
+      voices: {
+        kick: "#TYPE triangle", bass: "#TYPE triangle", grit: "#TYPE sawtooth", left: "#TYPE triangle\n#PAN -0.6",
+        right: "#TYPE triangle\n#PAN 0.6", drone: "#TYPE sawtooth", whine: "#TYPE sine", rise: "#TYPE noise",
+      },
+      parts: {
+        alone: {
+          bars: 8, left: `${call(0, 2, 0, fade(0.08, 0.18, 64))}\n${call(1, 2, 0, 0.18)}`, right: `${rests(64)}\n${call(1, 2, 1, 0.16)}`,
+          drone: drone("G3 G3 G3 G3 G3 G3 G3 G3", 0.03),
+        },
+        floor: { bars: 8, kick: kick(four(8)), left: call(1, 4, 0, 0.18), right: call(1, 4, 1, 0.16), drums: hats.repeat(7) + fill },
+        groove: {
+          bars: 16, kick: kick(four(16)), bass: bass(slip.repeat(4), 0.5), left: call(2, 8, 0, 0.18), right: call(2, 8, 1, 0.16),
+          drums: broken.repeat(15) + fill,
+        },
+        layer: {
+          bars: 16, kick: kick(four(15) + "x...x...x......."), bass: bass(slip.repeat(4), 0.5), grit: grit(slip.repeat(4), 0.08),
+          left: call(3, 8, 0, 0.19), right: call(3, 8, 1, 0.17), drone: drone(`${shade} ${shade}`, 0.03),
+          drums: layer.repeat(15) + "Z.H..XP.XXXXXXXX",
+        },
+        half: {
+          bars: 8, kick: kick("x.........x.....".repeat(8)), bass: bass("..c~~~~~~~..b~~~..c~~~~~~~..g~~~".repeat(4), 0.42, long),
+          left: call(3, 4, 0, 0.18, ring, linger), right: call(3, 4, 1, 0.16, ring, linger), drone: drone(shade, 0.035),
+          whine: whine("G5 G5 Ab5 Ab5", [0, 0.04]), drums: "....Z...X...Z.Z.".repeat(7) + "....Z...X.X.XXXX",
+        },
+        build: {
+          bars: 4, kick: kick(four(2) + ".".repeat(32)), bass: bass(off.repeat(2) + ".".repeat(32), fade(0.3, 0.55, 32)),
+          left: call(3, 2, 0, 0.18), right: call(3, 2, 1, 0.16), rise: riser(4, "G3"),
+          drums: "P...P...P...P..." + "P.P.P.P.P.P.P.P." + roll + "XXXXXXXXXXXX....",
+        },
+        return: {
+          bars: 16, kick: kick(four(16)), bass: bass(slip.repeat(4), 0.52), grit: grit(slip.repeat(4), 0.08),
+          left: call(3, 8, 0, 0.2), right: call(3, 8, 1, 0.18), drone: drone(`${shade} ${shade}`, 0.035),
+          drums: layer.repeat(15) + "Z.H..XP.X.X.XXXX",
+        },
+        cut: {
+          bars: 2, left: call(4, 1, 0, 0.2, ring, linger), right: call(4, 1, 1, 0.18, ring, linger),
+          drums: ".".repeat(16) + "X...X...X.X.XXXX",
+        },
+        again: {
+          bars: 16, kick: kick(four(16)), bass: bass(slip.repeat(4), 0.52), grit: grit(slip.repeat(4), 0.09),
+          left: call(4, 8, 0, 0.2), right: call(4, 8, 1, 0.18), drone: drone(`${shade} ${shade}`, 0.035), rise: impact(16),
+          drums: layer.repeat(15) + fill,
+        },
+        outro: {
+          bars: 8, kick: kick(four(7) + "x..............."), bass: bass(slip + ".".repeat(64), 0.5),
+          left: `${call(2, 2, 0, fade(0.18, 0.1, 64))}\n${call(0, 2, 0, fade(0.1, 0.03, 64))}`, right: `${call(2, 2, 1, fade(0.16, 0.08, 64))}\n${rests(64)}`,
+          drums: hats.repeat(6) + ".".repeat(32),
+        },
+      },
+      form: "alone floor groove layer half build return cut again outro",
+    });
+  })(),
+  caldera: (() => {
+    const bpm = 130;
+    const { kick, fade, play, drone, whine, riser, impact, four } = forge(bpm, "B1");
+    const low = { b: "B2", f: "F#2", d: "D3", a: "A2" };
+    const high = Object.fromEntries(Object.entries(low).map(([key, note]) => [key, transpose(note, 12)]));
+    const threes = (bars, cycle) => Array.from({ length: bars * 16 }, (_, i) => {
+      const at = i - (i % 3);
+      if (at % 4 === 0) return ".";
+      return i % 3 === 0 ? cycle[(at / 3) % cycle.length] : i % 3 === 1 ? "~" : ".";
+    }).join("");
+    const bass = (grid, level) => play(grid, low, level, [1, 0.6, 0.3]);
+    const grit = (grid, level) => play(grid, high, level, [1, 0.3]);
+    const tones = { b: "B3", d: "D4", f: "F#4", B: "B4", a: "A3", g: "G3", e: "E4" };
+    const arp = "bBfdbBfdbBfdbBfa";
+    const lift = "gBfdgBfdbBfdbBfe";
+    const masks = [
+      "x...............", "x.......x.......", "x...x...x...x...", "x.x.x.x.x.x.x.x.",
+      "x.xxx.xxx.xxx.xx", "xxxxxxxxxxxxxxxx", "x~x~x~x~x~x~x~x~",
+    ];
+    const seq = (bars, mask, notes = arp) => Array.from({ length: bars * 16 }, (_, i) => (mask[i % 16] === "x" ? notes[i % 16] : mask[i % 16] === "~" ? "~" : ".")).join("");
+    const sequence = (grid, level, decay = [1, 0.3]) => play(grid, tones, level, decay);
+    const heat = "F#3 F#3 F#3 F#3 G3 G3 F#3 F#3";
+    const h1 = "..H...H...H...H.";
+    const h2 = "..H...HZ..H...HZ";
+    const h3 = ".ZH.P.HZ.ZH.P.HZ";
+    const h4 = ".ZH.PZHZ.ZHHPZHZ";
+    const fill = "..H...H.X.X.XXXX";
+    return song({
+      bpm,
+      voices: {
+        kick: "#TYPE triangle", bass: "#TYPE triangle", grit: "#TYPE sawtooth", seq: "#TYPE sawtooth\n#PAN 0.2",
+        drone: "#TYPE sawtooth", whine: "#TYPE sine", rise: "#TYPE noise",
+      },
+      parts: {
+        vent: { bars: 8, kick: kick(four(8)), seq: sequence(seq(8, masks[0]), fade(0.06, 0.12, 128)), drums: ".".repeat(112) + fill },
+        smoke: {
+          bars: 8, kick: kick(four(8)), bass: bass(threes(8, "b"), fade(0.3, 0.5, 128)), seq: sequence(seq(8, masks[1]), 0.12),
+          drums: h1.repeat(7) + fill,
+        },
+        ash: {
+          bars: 8, kick: kick(four(8)), bass: bass(threes(8, "bbbf"), 0.5), seq: sequence(seq(8, masks[2]), 0.12),
+          drums: h1.repeat(7) + fill,
+        },
+        heat: {
+          bars: 8, kick: kick(four(8)), bass: bass(threes(8, "bbbf"), 0.5), seq: sequence(seq(8, masks[3]), 0.12),
+          drone: drone(heat, 0.03), drums: h2.repeat(7) + fill,
+        },
+        glow: {
+          bars: 8, kick: kick(four(8)), bass: bass(threes(8, "bbdbbf"), 0.5), seq: sequence(seq(8, masks[4]), 0.12),
+          drone: drone(heat, 0.03), drums: h3.repeat(7) + fill,
+        },
+        flow: {
+          bars: 8, kick: kick(four(8)), bass: bass(threes(8, "bbdbbf"), 0.5), grit: grit(threes(8, "bbdbbf"), 0.06),
+          seq: sequence(seq(8, masks[5]), 0.12), drone: drone(heat, 0.035), drums: h3.repeat(7) + fill,
+        },
+        surge: {
+          bars: 8, kick: kick(four(7) + "x...x...x.x.x.x."), bass: bass(threes(8, "bbdbbf"), 0.52), grit: grit(threes(8, "bbdbbf"), 0.07),
+          seq: sequence(seq(8, masks[5]), 0.13), drone: drone(heat, 0.035), rise: riser(8, "B2"), drums: h4.repeat(7) + "X".repeat(16),
+        },
+        erupt: {
+          bars: 16, kick: kick(four(16)), bass: bass(threes(16, "bbdbbf"), 0.52), grit: grit(threes(16, "bbdbbf"), 0.08),
+          seq: sequence(seq(16, masks[5]), 0.13), drone: drone(`${heat} ${heat}`, 0.035), rise: impact(16), drums: h4.repeat(15) + fill,
+        },
+        crater: {
+          bars: 8, bass: swell("B2", 32, bpm, [0.35, 0.1, 0.3, 0.08, 0.25]), seq: sequence(seq(8, masks[6]), 0.11, [1, 0.6, 0.35, 0.2]),
+          drone: drone("F#3 F#3 F#3 F#3 G3 G3 G3 G3", 0.04), whine: whine("D6 D6 C#6 C#6", [0, 0.04]),
+          drums: ".".repeat(64) + h1.repeat(3) + "..H...H...H.HHHH",
+        },
+        reload: {
+          bars: 4, kick: kick(four(2) + ".".repeat(32)), bass: bass(threes(2, "b") + ".".repeat(32), fade(0.3, 0.55, 32)),
+          seq: sequence(seq(4, masks[5]), fade(0.06, 0.13, 64)), rise: riser(4, "F#3"),
+          drums: "P...P...P...P..." + "P.P.P.P.P.P.P.P." + "X.X.X.X.XXXXXXXX" + "XXXXXXXXXXXX....",
+        },
+        blast: {
+          bars: 16, kick: kick(four(16)), bass: bass(threes(16, "bbabbf"), 0.52), grit: grit(threes(16, "bbabbf"), 0.08),
+          seq: sequence(seq(8, masks[5], lift) + seq(8, masks[5]), 0.13), drone: drone(`${heat} ${heat}`, 0.035), rise: impact(16),
+          drums: h4.repeat(15) + "..H.PZH.XXXXXXXX",
+        },
+        stop: { bars: 1, kick: kick("x..............."), drums: "X..............." },
+      },
+      form: "vent smoke ash heat glow flow surge erupt crater reload blast stop",
+    });
+  })(),
+  faultline: (() => {
+    const bpm = 128;
+    const { kick, fade, play, drone, whine, riser, impact, four } = forge(bpm, "F#1");
+    const low = { f: "F#2", e: "E2", d: "D2", c: "C#2" };
+    const high = Object.fromEntries(Object.entries(low).map(([key, note]) => [key, transpose(note, 12)]));
+    const breath = [0.8, 1, 0.3, 0.75, 0.95, 1, 0.3, 0.75, 0.95, 1, 0.3, 0.65];
+    const hold = (notes) => [...notes].map((note) => `..${note}${"~".repeat(11)}..`).join("");
+    const bass = (grid, level) => play(grid, low, level, breath);
+    const grit = (grid, level) => play(grid, high, level, breath);
+    const fault = hold("ffed");
+    const shear = hold("fedc");
+    const tones = { s: "C#5", S: "F#5" };
+    const masks = ["..s...s.........", "..s..ss...s.....", "..s..ss..ss..s..", "s.s..ss..ss..sSs", "..s~~~....s~~~.."];
+    const turn = (mask, n) => mask.slice(16 - n) + mask.slice(0, 16 - n);
+    const stutter = (mask, shifts, level, decay = [1, 0.25]) => play(shifts.map((n) => turn(mask, n)).join(""), tones, level, decay);
+    const steps = (pattern) => [...pattern].map(Number);
+    const ring = [1, 0.6, 0.35, 0.2, 0.1];
+    const deep = "C#3 C#3 C#3 C#3 D3 D3 C#3 C#3";
+    const hats = "..H...H...H...H.";
+    const claps = "..H.P..H..H.P..H";
+    const drive = "..O.P..H..O.P.RH";
+    const roll = "X.X.X.X.XXXXXXXX";
+    return song({
+      bpm,
+      voices: {
+        kick: "#TYPE triangle", bass: "#TYPE triangle", grit: "#TYPE sawtooth", stutter: "#TYPE sawtooth\n#PAN 0.25",
+        drone: "#TYPE sawtooth", whine: "#TYPE sine", rise: "#TYPE noise",
+      },
+      parts: {
+        intro: {
+          bars: 8, kick: kick(four(8)), stutter: `${rests(64)}\n${stutter(masks[0], steps("0000"), fade(0.06, 0.12, 64))}`,
+          drums: ".".repeat(32) + hats.repeat(5) + "..H...H.R.R.RRRR",
+        },
+        groove: {
+          bars: 16, kick: kick(four(16)), bass: bass(fault.repeat(4), 0.5), grit: grit(fault.repeat(4), 0.04), stutter: stutter(masks[1], steps("0000000011111111"), 0.13),
+          drums: claps.repeat(15) + "..H.P..HR.R.RRRR",
+        },
+        stumble: {
+          bars: 8, kick: kick(("x...x...x...x..." + "x...x...x..x..x.").repeat(4)), bass: bass(fault.repeat(2), 0.5),
+          stutter: stutter(masks[2], steps("00112233"), 0.13), drums: (claps + "..H.P..H..HR..RH").repeat(4),
+        },
+        drive: {
+          bars: 16, kick: kick(four(15) + "x...x...x......."), bass: bass(shear.repeat(4), 0.52), grit: grit(shear.repeat(4), 0.06),
+          stutter: stutter(masks[2], steps("0000111122221111"), 0.14), drone: drone(`${deep} ${deep}`, 0.03),
+          drums: drive.repeat(15) + "..O.P..HX.X.XXXX",
+        },
+        breakdown: {
+          bars: 8, bass: swell("F#2", 32, bpm, [0.35, 0.1, 0.3, 0.08, 0.25]), stutter: stutter(masks[4], steps("00000000"), 0.13, ring),
+          drone: drone("C#3 C#3 C#3 C#3 D3 D3 D3 D3", 0.04), whine: whine("A5 A5 A#5 A#5", [0, 0.04]),
+        },
+        build: {
+          bars: 4, kick: kick(four(2) + ".".repeat(32)), bass: bass("..f.".repeat(8) + ".".repeat(32), fade(0.3, 0.55, 32)),
+          stutter: `${stutter(masks[3], steps("000"), fade(0.1, 0.16, 48))}\n${rests(16)}`, rise: `${riser(3, "C#3")}\n${rests(16)}`,
+          drums: "X...X...X...X..." + roll + "X".repeat(16) + ".".repeat(16),
+        },
+        fall: {
+          bars: 8, bass: swell("F#2", 32, bpm, [0.2, 0.35, 0.1, 0.3, 0.08, 0.25]), stutter: stutter(masks[4], steps("11112222"), 0.13, ring),
+          drone: drone("D3 D3 D3 D3 C#3 C#3 C#3 C#3", 0.04), whine: whine("A#5 A#5 B5 B5", [0.04, 0.02, 0.045]),
+          drums: ".".repeat(96) + hats.repeat(2),
+        },
+        build2: {
+          bars: 4, kick: kick(four(2) + ".".repeat(32)), bass: bass("..f.".repeat(8) + ".".repeat(32), fade(0.3, 0.55, 32)),
+          stutter: stutter(masks[3], steps("0000"), fade(0.1, 0.16, 64)), rise: riser(4, "F#3"),
+          drums: "P...P...P...P..." + "P.P.P.P.P.P.P.P." + roll + "XXXXXXXXXXXX....",
+        },
+        return: {
+          bars: 24, kick: kick(four(24)), bass: bass(shear.repeat(6), 0.52), grit: grit(shear.repeat(6), 0.07),
+          stutter: stutter(masks[3], steps("000011112222333322221111"), 0.15), drone: drone(`${deep} ${deep} ${deep}`, 0.035),
+          rise: impact(24), drums: (drive.repeat(7) + "..O.P..HX.X.XXXX").repeat(3),
+        },
+        outro: {
+          bars: 12, kick: kick(four(11) + "x..............."), bass: bass(fault.repeat(2) + ".".repeat(64), 0.5),
+          stutter: stutter(masks[1], steps("111100000000"), fade(0.13, 0.03, 192)), drums: claps.repeat(8) + ".".repeat(64),
+        },
+      },
+      form: "intro groove stumble drive breakdown build fall build2 return outro",
+    });
+  })(),
+  anthracite: (() => {
+    const bpm = 125;
+    const { kick, volume, fade, play, only, later, drone, whine, riser, impact, four } = forge(bpm, "F1");
+    const low = { b: "Bb2", a: "Ab2", g: "Gb2", f: "F2" };
+    const high = Object.fromEntries(Object.entries(low).map(([key, note]) => [key, transpose(note, 12)]));
+    const press = [0.25, 0.7, 0.85, 1];
+    const bass = (grid, level) => play(grid, low, (i) => volume(level, i) * press[i % 4], [1, 0.5]);
+    const grit = (grid, level) => play(only(grid, 2), high, level, [1, 0.35]);
+    const roll = "bbbb".repeat(16);
+    const sink = "bbbb".repeat(15) + "bagf";
+    const tones = { b: "Bb3", a: "A3", d: "Db4", g: "Gb3" };
+    const up = Object.fromEntries(Object.entries(tones).map(([key, note]) => [key, transpose(note, 12)]));
+    const bloom = [0.2, 0.5, 0.8, 1, 0.9, 0.65];
+    const horns = [
+      "........b~~~~~~~" + ".".repeat(48),
+      "........b~~~~~~~" + "a~~~~~~~........" + ".".repeat(32),
+      "........b~~~~~~~" + "a~~~~~~~........" + "........b~~~~~~~" + "...d~~~~~~~.....",
+      "........b~~~~~~~" + "a~~~~~~~........" + "........b~~~~~~~" + "g~~~~~~~...d~~~~",
+    ];
+    const horn = (grid, level) => play(grid, tones, level, bloom);
+    const shadow = (grid, level) => play(later(grid, 4), up, level, bloom);
+    const smoulder = "F3 F3 F3 F3 Gb3 Gb3 F3 F3";
+    const shaker = "..Z...Z...Z...Z.";
+    const heavy = "..Z.P.Z...Z.P.PZ";
+    const smoke = "Z.Z.P.Z.Z.Z.P.PZ";
+    return song({
+      bpm,
+      voices: {
+        kick: "#TYPE triangle", bass: "#TYPE triangle", grit: "#TYPE sawtooth", horn: "#TYPE sawtooth\n#PAN -0.15",
+        shadow: "#TYPE triangle\n#PAN 0.45", drone: "#TYPE sawtooth", whine: "#TYPE sine", rise: "#TYPE noise",
+      },
+      parts: {
+        alone: { bars: 8, bass: bass(roll.repeat(2), fade(0.1, 0.45, 128)) },
+        floor: {
+          bars: 16, kick: kick(four(16)), bass: bass(roll.repeat(3) + sink, 0.45),
+          drums: ".".repeat(128) + shaker.repeat(7) + "..Z...Z...Z.P.PP",
+        },
+        smoulder: {
+          bars: 16, kick: kick(four(16)), bass: bass(sink.repeat(4), 0.45), horn: horn(horns[0].repeat(2) + horns[1].repeat(2), 0.12),
+          drums: heavy.repeat(15) + "..Z.P.Z.P.P.PPPP",
+        },
+        burn: {
+          bars: 16, kick: kick(four(15) + "x...x...x......."), bass: bass(sink.repeat(4), 0.47), horn: horn(horns[1].repeat(4), 0.13),
+          drone: drone(`${smoulder} ${smoulder}`, 0.03), drums: heavy.repeat(15) + "..Z.P.Z.XXXXXXXX",
+        },
+        deeper: {
+          bars: 16, kick: kick(four(16)), bass: bass(sink.repeat(4), 0.48), grit: grit(sink.repeat(4), 0.06),
+          horn: horn(horns[2].repeat(4), 0.13), drone: drone(`${smoulder} ${smoulder}`, 0.03), drums: smoke.repeat(15) + "Z.Z.P.Z.P.P.PPPP",
+        },
+        breakdown: {
+          bars: 16, bass: bass(roll.repeat(4), fade(0.3, 0.12, 256)), horn: horn(horns[2].repeat(4), 0.13),
+          shadow: shadow(horns[2].repeat(4), 0.05), drone: drone("F3 F3 F3 F3 Gb3 Gb3 Gb3 Gb3 F3 F3 F3 F3 E3 E3 E3 E3", 0.04),
+          whine: whine("Db6 Db6 C6 C6 Db6 Db6 D6 D6", [0, 0.04, 0.02]), drums: ".".repeat(192) + shaker.repeat(4),
+        },
+        build: {
+          bars: 8, kick: kick(four(6) + ".".repeat(32)), bass: bass(roll.repeat(2), fade(0.12, 0.5, 128)), horn: horn(horns[3].repeat(2), 0.13),
+          rise: riser(8, "F2"), drums: heavy.repeat(4) + "P.Z.P.Z.P.Z.P.Z.".repeat(2) + "X.X.X.X.XXXXXXXX" + "XXXXXXXXXXXX....",
+        },
+        blaze: {
+          bars: 24, kick: kick(four(24)), bass: bass(sink.repeat(6), 0.5), grit: grit(sink.repeat(6), 0.07), horn: horn(horns[3].repeat(6), 0.14),
+          shadow: shadow(horns[3].repeat(6), 0.05), drone: drone(`${smoulder} ${smoulder} ${smoulder}`, 0.035), rise: impact(24),
+          drums: (smoke.repeat(7) + "Z.Z.P.Z.X.X.XXXX").repeat(3),
+        },
+        embers: {
+          bars: 16, kick: kick(four(8) + ".".repeat(128)), bass: bass(sink.repeat(2) + roll.repeat(2), fade(0.45, 0.05, 256)),
+          horn: `${horn(horns[1].repeat(2), 0.12)}\n${rests(128)}`, drums: heavy.repeat(8) + ".".repeat(128),
+        },
+      },
+      form: "alone floor smoulder burn deeper breakdown build blaze embers",
+    });
+  })(),
+  tephra: (() => {
+    const bpm = 127;
+    const { kick, volume, fade, play, fall, only, drone, whine, riser, impact, four } = forge(bpm, "G#1");
+    const low = { c: "C#3", g: "G#2", b: "B2", e: "E3" };
+    const high = Object.fromEntries(Object.entries(low).map(([key, note]) => [key, transpose(note, 12)]));
+    const bass = (grid, level) => play(grid, low, (i) => volume(level, i) * (i % 4 === 3 ? 1 : 0.8), [1, 0.4]);
+    const grit = (grid, level) => play(only(grid, 3), high, level, [1, 0.35]);
+    const skip = ".c.c".repeat(16);
+    const hop = ".c.c".repeat(12) + ".c.c.c.c.e.c.b.g";
+    const thud = [[0, 1], [-5, 0.6], [-12, 0.3]];
+    const pitch = { c: "C#4", g: "G#3", e: "E4", b: "B3" };
+    const tom = (grid, level) => fall(grid, pitch, level, thud);
+    const figures = [
+      "......g.......g." + "......g...g...g.",
+      "..c...g..c....g." + "..c...g...g..cg.",
+      "..c..eg..c..b.g." + "..c..eg...g.ecg.",
+    ];
+    const tones = { g: "G#5", c: "C#6", b: "B5", e: "E6" };
+    const blow = Array.from({ length: 20 }, (_, i) => ease([0.5, 1, 0.85, 0.6, 0.35], i / 19));
+    const calls = [
+      "........g~~~~~.." + ".".repeat(48),
+      "........g~~~~~.." + "c~~~~~~~~~......" + ".".repeat(32),
+      "........g~~~~~.." + "c~~~~~~~~~......" + "........g~~~~~.." + "b~~~~~e~~~~~~~..",
+    ];
+    const whistle = (grid, level) => play(grid, tones, level, blow);
+    const glow = "G#3 G#3 G#3 G#3 A3 A3 G#3 G#3";
+    const shake = "..Z...Z...Z...Z.";
+    const tribe = "..Z.X.ZZ..Z.X.ZZ";
+    const stomp = "..O.X.ZZ..O.PXZZ";
+    return song({
+      bpm,
+      voices: {
+        kick: "#TYPE triangle", bass: "#TYPE triangle", grit: "#TYPE sawtooth", tom: "#TYPE triangle\n#PAN 0.2",
+        whistle: "#TYPE sine\n#PAN -0.35", drone: "#TYPE sawtooth", whine: "#TYPE sine", rise: "#TYPE noise",
+      },
+      parts: {
+        skins: { bars: 8, tom: tom(figures[0].repeat(2) + figures[1].repeat(2), fade(0.25, 0.4, 128)), drums: shake.repeat(8) },
+        floor: { bars: 8, kick: kick(four(8)), tom: tom(figures[1].repeat(4), 0.4), drums: shake.repeat(7) + "..Z...Z.X.X.XXXX" },
+        groove: {
+          bars: 16, kick: kick(four(16)), bass: bass(skip.repeat(3) + hop, 0.48), tom: tom(figures[1].repeat(8), 0.4),
+          whistle: whistle(calls[0].repeat(4), 0.06), drums: tribe.repeat(15) + "..Z.X.ZZX.X.XXXX",
+        },
+        layer: {
+          bars: 16, kick: kick(four(15) + "x...x...x......."), bass: bass(hop.repeat(4), 0.5), grit: grit(hop.repeat(4), 0.07),
+          tom: tom(figures[2].repeat(8), 0.42), whistle: whistle(calls[1].repeat(4), 0.065), drone: drone(`${glow} ${glow}`, 0.03),
+          drums: tribe.repeat(15) + "..Z.X.ZZX.X.XXXX",
+        },
+        rite: { bars: 8, kick: kick(four(8)), tom: tom(figures[2].repeat(4), 0.45), drums: stomp.repeat(7) + "..O.X.ZZX.X.XXXX" },
+        breakdown: {
+          bars: 8, bass: swell("C#3", 32, bpm, [0.3, 0.1, 0.25, 0.08, 0.2]), whistle: whistle(calls[2].repeat(2), 0.065),
+          tom: tom(figures[0].repeat(2) + ".".repeat(64), fade(0.3, 0.1, 64)), drone: drone("G#3 G#3 G#3 G#3 A3 A3 A3 A3", 0.04),
+          whine: whine("E5 E5 D#5 D#5", [0, 0.035]),
+        },
+        build: {
+          bars: 4, kick: kick(four(2) + ".".repeat(32)), bass: bass(".c.c".repeat(8) + ".".repeat(32), fade(0.3, 0.55, 32)),
+          tom: tom("..c...g..c....g." + "..c.c.g.c.c.g.g." + "c.c.c.c.g.g.g.g." + "ccccggggccccgggg", fade(0.3, 0.5, 64)), rise: riser(4, "G#3"),
+          drums: shake.repeat(2) + "X.X.X.X.XXXXXXXX" + "XXXXXXXXXXXX....",
+        },
+        peak: {
+          bars: 24, kick: kick(four(24)), bass: bass(hop.repeat(6), 0.52), grit: grit(hop.repeat(6), 0.08), tom: tom(figures[2].repeat(12), 0.45),
+          whistle: whistle(calls[2].repeat(6), 0.07), drone: drone(`${glow} ${glow} ${glow}`, 0.035), rise: impact(24),
+          drums: (stomp.repeat(7) + "..O.X.ZZX.X.XXXX").repeat(3),
+        },
+        outro: {
+          bars: 8, kick: kick(four(7) + "x..............."), tom: tom(figures[1].repeat(2) + figures[0].repeat(2), fade(0.4, 0.15, 128)),
+          drums: tribe.repeat(4) + shake.repeat(2) + ".".repeat(32),
+        },
+      },
+      form: "skins floor groove layer rite breakdown build peak outro",
+    });
+  })(),
+  undertow: (() => {
+    const bpm = 96;
+    const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
+      roots: { E: "E1", F: "F1", G: "G1" }, lows: { E: "E2", F: "F2", G: "G2" }, tones: { E: "B3", F: "A3", G: "D4" },
+    });
+    const dark = "E E E E F F E E";
+    const turn = "E E G G F F E E";
+    const melody = "- - - - B4 - - - - - C5 -";
+    const half = "K.......S.......";
+    const shuffle = "K..Z..Z.S..Z..Z.";
+    const ticks = "K.HZ..ZHS.HZ..ZH";
+    return song({
+      bpm,
+      voices: {
+        sub: "#TYPE sine", growl: "#TYPE sawtooth", near: "#TYPE triangle", far: "#TYPE sine",
+        pulse: "#TYPE sawtooth", ping: "#TYPE sine", echo: "#TYPE triangle\n#PAN 0.4",
+      },
+      parts: {
+        intro: {
+          bars: 8, sub: swell("E1", 32, bpm, [0, 0.2, 0.08, 0.3, 0.12, 0.4, 0.15, 0.5, 0.25]),
+          near: `${"-:w ".repeat(4)}\n${near("E E E E", 0.16)}`, far: far("- - E4", 0.08),
+        },
+        rise: {
+          bars: 8, sub: sub("E E E E E E E E", 0.25, 0.55), growl: growl("E E E E E E E E", 0.15),
+          near: near("E E E E E E E E", 0.26), far: far("B4 - E4", 0.1), pulse: pulse("E E E E E E E E", [0, 0.15]),
+          drums: ".".repeat(64) + half.repeat(3) + "K.......S...K.K.",
+        },
+        groove: {
+          bars: 16, sub: sub(`${dark} ${dark}`, 0.3, 0.6), growl: growl(`${dark} ${dark}`, 0.2), near: near(`${dark} ${dark}`, 0.28),
+          far: far("B4 - C5 B4 - C5 B4", 0.13), pulse: pulse(`${dark} ${dark}`, [0.14, 0.18, 0.14]),
+          drums: half.repeat(7) + "K.......S...S.SS" + shuffle.repeat(7) + "K..Z..Z.S..Z.KZK",
+        },
+        breakdown: {
+          bars: 8, sub: swell("E1", 32, bpm, [0.6, 0.2, 0.55, 0.15, 0.5, 0.15, 0.45, 0.2, 0.3]),
+          far: far("E4 - B4", 0.08), ping: ping("B4 C5 B4 -", 0.25), echo: echo("B4 C5 B4 -", 0.1),
+          drums: ".".repeat(96) + "K.......K.......K.......K...K.K.",
+        },
+        groove2: {
+          bars: 24, sub: sub(`${turn} ${turn} ${turn}`, 0.3, 0.6),
+          growl: `${growl(turn, 0.25)}\n${growl(turn, 0.25, 2)}\n${growl(turn, 0.25, 4)}`,
+          near: near(`${turn} ${turn} ${turn}`, 0.3), far: far("B4 D5 C5 B4 B4 D5 C5 B4 B4 D5 C5", 0.14),
+          pulse: pulse(`${turn} ${turn} ${turn}`, [0.14, 0.2, 0.16]), ping: ping(melody, 0.2), echo: echo(melody, 0.08),
+          drums: shuffle.repeat(7) + "K..Z..Z.S..Z.KZK" + ticks.repeat(15) + "K.HZ..ZHS.S.SSSS",
+        },
+        outro: {
+          bars: 8, sub: swell("E1", 32, bpm, [0.3, 0.55, 0.25, 0.45, 0.15, 0.3, 0.05, 0.15, 0]),
+          growl: swell("E2", 32, bpm, [0, 0.2, 0, 0.12, 0, 0.06, 0, 0, 0]), near: `${near("E E E E E E", 0.16)}\n-:w -:w`,
+          pulse: pulse("E E E E E E E E", [0.14, 0]), ping: ping("- - - B4", 0.16),
+          drums: half.repeat(4) + "K...............".repeat(2) + ".".repeat(32),
+        },
+      },
+      form: "intro rise groove breakdown groove2 outro",
+    });
+  })(),
+  fathom: (() => {
+    const bpm = 88;
+    const { sub, growl, near, far, pulse, ping } = depth(bpm, {
+      roots: { D: "D1", F: "F1", C: "C1" }, lows: { D: "D2", F: "F2", C: "C2" }, tones: { D: "A3", F: "C4", C: "G3" },
+    });
+    const slow = { per: 0.5 };
+    const wide = { pans: [-0.7, 0.7], beats: 16 };
+    const back = { pans: [0.7, -0.7], beats: 16 };
+    const down = "D D D D F F F F";
+    const cycle = `${down} D D D D C C C C`;
+    const heart = { rhythm: "x..x............" };
+    const twice = { rhythm: "x..x....x..x...." };
+    const plain = "K.......S.......";
+    const sink = "K.......S.....B.";
+    const brush = "K..Z....S..Z....";
+    return song({
+      bpm,
+      voices: {
+        sub: "#TYPE sine", growl: "#TYPE sawtooth", near: "#TYPE triangle", far: "#TYPE sine", pulse: "#TYPE sawtooth", ping: "#TYPE sine",
+      },
+      parts: {
+        surface: {
+          bars: 8, sub: swell("D1", 32, bpm, [0, 0.25, 0.1, 0.4, 0.2], null, 0.16), near: `${rest(64)}\n${near("D D D D", 0.14, wide)}`,
+        },
+        descent: {
+          bars: 8, sub: sub(down, 0.2, 0.45, slow), near: near(down, 0.2, wide), far: far("F4", 0.08, back),
+          pulse: pulse(down, [0, 0.12], heart), drums: ".".repeat(64) + "K...............".repeat(3) + "K...........K.K.",
+        },
+        deep: {
+          bars: 16, sub: sub(cycle, 0.3, 0.6, slow), near: near(cycle, 0.26, wide), far: far("D5 C5 -", 0.1, back),
+          pulse: pulse(cycle, [0.12, 0.16, 0.12], heart), drums: (plain.repeat(3) + sink).repeat(4),
+        },
+        floor: {
+          bars: 16, sub: sub(cycle, 0.3, 0.6, slow), growl: growl(cycle, 0.2), near: near(cycle, 0.28, wide),
+          far: far("A4 - C5", 0.12, back), pulse: pulse(cycle, [0.16, 0.2, 0.16], twice), drums: (brush.repeat(3) + sink).repeat(4),
+        },
+        ascent: {
+          bars: 8, sub: sub(down, 0.3, 0.5, slow), growl: `${growl("D D D D", 0.12)}\n${rest(64)}`, near: near(down, 0.2, wide),
+          pulse: pulse(down, [0.14, 0], heart), drums: plain.repeat(4) + "K...............".repeat(4),
+        },
+        end: {
+          bars: 8, sub: swell("D1", 32, bpm, [0.3, 0.45, 0.15, 0.3, 0.05, 0], null, 0.16),
+          near: `${near("D D D D", 0.12, wide)}\n${rest(64)}`, ping: ping("- - A4 -", 0.12),
+        },
+      },
+      form: "surface descent deep floor ascent end",
+    });
+  })(),
+  pressure: (() => {
+    const bpm = 104;
+    const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
+      roots: { "F#": "F#1", C: "C1" }, lows: { "F#": "F#2", C: "C2" }, tones: { "F#": "C#4", C: "G3" },
+    });
+    const push = "F# F# F# F# F# F# C C";
+    const twice = `${push} ${push}`;
+    const fast = (p, high) => growl(p, high, 8, 0.025);
+    const plain = "K.......S.......";
+    const drive = "K..H..K.S..H..H.";
+    const lift = "K..H..K.S.HX..HX";
+    return song({
+      bpm,
+      voices: {
+        sub: "#TYPE sine", growl: "#TYPE sawtooth", near: "#TYPE triangle", far: "#TYPE sine",
+        pulse: "#TYPE sawtooth", ping: "#TYPE sine", echo: "#TYPE triangle\n#PAN -0.4",
+      },
+      parts: {
+        intro: {
+          bars: 8, sub: `${swell("F#1", 24, bpm, [0, 0.2, 0.1, 0.35, 0.2, 0.45, 0.3])}\n${swell("C1", 8, bpm, [0.3, 0.5, 0.3])}`,
+          far: far("C#5 - C#5", 0.08), drums: ".".repeat(64) + plain.repeat(3) + "K.......S...S.SS",
+        },
+        build: {
+          bars: 8, sub: sub(push, 0.3, 0.5), near: near(push, 0.18),
+          growl: `${growl("F# F# F# F#", 0.1, 2)}\n${growl("F# F# C C", 0.18, 4)}`,
+          pulse: `${pulse("F# F# F# F#", [0.02, 0.1])}\n${pulse("F# F# C", [0.1, 0.2], { rhythm: "x".repeat(16) })}\n${rest(16)}`,
+          drums: plain.repeat(6) + "K...S...K...S..." + "SSSSSSSSSSSS....",
+        },
+        drop: {
+          bars: 16, sub: sub(twice, 0.35, 0.6), near: near(twice, 0.22), growl: `${growl(push, 0.24, 4)}\n${fast(push, 0.26)}`,
+          far: far("- - - C#5 - - G4", 0.1), drums: drive.repeat(7) + "K..H..K.S.S.S.SS" + drive.repeat(7) + "K..H..K.S..SSSSS",
+        },
+        break: {
+          bars: 8, sub: sub(push, 0.15, 0.5), ping: ping("C#5 D5 C#5 -", 0.22), echo: echo("C#5 D5 C#5 -", 0.09),
+          drums: ".".repeat(64) + "K.......K.......".repeat(3) + "K...K...K.K.K.K.",
+        },
+        drop2: {
+          bars: 16, sub: sub(twice, 0.35, 0.6), near: near(twice, 0.24), growl: fast(twice, 0.28), far: far("C#5 - - - C#5 - D5", 0.11),
+          drums: lift.repeat(7) + "K..H..K.S.S.S.SS" + lift.repeat(6) + drive + plain,
+        },
+        outro: {
+          bars: 8, sub: swell("F#1", 32, bpm, [0.35, 0.5, 0.25, 0.4, 0.15, 0.25, 0.05, 0.1, 0]),
+          growl: `${growl("F# F# F# F#", 0.14, 2)}\n${rest(64)}`, near: `${near("F# F# F# F#", 0.14)}\n${rest(64)}`,
+          drums: plain.repeat(4) + "K...............".repeat(2) + ".".repeat(32),
+        },
+      },
+      form: "intro build drop break drop2 outro",
+    });
+  })(),
+  silt: (() => {
+    const bpm = 76;
+    const { sub, growl, near, pass, ping, echo } = depth(bpm, {
+      roots: { A: "A1", F: "F1", D: "D1", E: "E1" }, lows: { A: "A2", F: "F2", D: "D2", E: "E2" },
+      tones: { A: "C4", F: "C4", D: "A3", E: "B3" },
+    });
+    const sink = "A A F F D D E E";
+    const twice = `${sink} ${sink}`;
+    const cross = (notes, high) => pass(notes, high, [0, 1, 0], { pans: [0.6, -0.6] });
+    const over = "E4 A4 F4 G4";
+    const rim = "K.......X.......";
+    const sand = "K.....Z.X.....Z.";
+    return song({
+      bpm,
+      voices: {
+        sub: "#TYPE sine", hum: "#TYPE triangle", near: "#TYPE triangle", cross: "#TYPE sine",
+        ping: "#TYPE sine", echo: "#TYPE triangle\n#PAN -0.4",
+      },
+      parts: {
+        intro: { bars: 8, sub: sub(sink, 0.15, 0.4), near: `${rest(64)}\n${near("D D E E", 0.14)}` },
+        settle: {
+          bars: 16, sub: sub(twice, 0.25, 0.5), hum: growl(twice, 0.14), near: near(twice, 0.24), cross: cross(`${over} ${over}`, 0.1),
+          ping: ping("- - E5 - - - C5 -", 0.14), echo: echo("- - E5 - - - C5 -", 0.06),
+          drums: rim.repeat(7) + "K.......X...X.X." + rim.repeat(7) + "K.......X...XXX.",
+        },
+        still: { bars: 8, sub: sub(sink, 0.2, 0.45), cross: cross(over, 0.12), ping: ping("E5 - C5 -", 0.16), echo: echo("E5 - C5 -", 0.07) },
+        settle2: {
+          bars: 16, sub: sub(twice, 0.3, 0.55), hum: growl(twice, 0.18), near: near(twice, 0.26), cross: cross(`${over} ${over}`, 0.11),
+          ping: ping("- - - - E5 - - -", 0.12), echo: echo("- - - - E5 - - -", 0.05),
+          drums: sand.repeat(7) + "K.....Z.X...X.X." + sand.repeat(7) + "K.....Z.X.......",
+        },
+        outro: {
+          bars: 8, sub: `${sub("A A F F", 0.15, 0.4)}\n${swell("A1", 16, bpm, [0.15, 0.3, 0.1, 0.15, 0])}`,
+          near: `${near("A A F F", 0.16)}\n${rest(64)}`, cross: cross("- E4 - -", 0.08), drums: rim.repeat(2) + ".".repeat(96),
+        },
+      },
+      form: "intro settle still settle2 outro",
+    });
+  })(),
+  ballast: (() => {
+    const bpm = 100;
+    const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
+      roots: { C: "C1", Eb: "Eb1", F: "F1" }, lows: { C: "C2", Eb: "Eb2", F: "F2" }, tones: { C: "G3", Eb: "G3", F: "C4" },
+    });
+    const load = "C C C C Eb Eb F F";
+    const twice = `${load} ${load}`;
+    const tilt = { rhythm: "x..x..x.x..x..x." };
+    const keel = "K..K....S......Z";
+    const heave = "K..K..H.S..H..HZ";
+    return song({
+      bpm,
+      voices: {
+        sub: "#TYPE sine", growl: "#TYPE sawtooth", near: "#TYPE triangle", far: "#TYPE sine",
+        pulse: "#TYPE sawtooth", ping: "#TYPE sine", echo: "#TYPE triangle\n#PAN 0.4",
+      },
+      parts: {
+        intro: { bars: 8, pulse: pulse(load, [0, 0.12, 0.08, 0.16], tilt) },
+        weight: {
+          bars: 8, pulse: pulse(load, [0.16, 0.08, 0.18, 0.1], tilt), sub: sub(load, 0.2, 0.45),
+          drums: "K..K............".repeat(7) + "K..K....K..K.KK.",
+        },
+        hull: {
+          bars: 16, pulse: pulse(twice, [0.1, 0.2, 0.1, 0.2, 0.1], tilt), sub: sub(twice, 0.3, 0.55), near: near(twice, 0.22),
+          drums: (keel.repeat(3) + "K..K....S..S.SSZ").repeat(4),
+        },
+        cargo: {
+          bars: 16, pulse: pulse(twice, [0.1, 0.2, 0.1, 0.2, 0.1], tilt), sub: sub(twice, 0.3, 0.55), near: near(twice, 0.24),
+          growl: growl(twice, 0.2, 2), far: far("Eb4 - G4 - Eb4 - F4", 0.1), drums: (heave.repeat(3) + "K..K..H.S..S.SSZ").repeat(4),
+        },
+        cut: {
+          bars: 4, sub: swell("C1", 16, bpm, [0.3, 0.6, 0.2, 0.45, 0.25]), ping: ping("G4 -", 0.22), echo: echo("G4 -", 0.09),
+          drums: ".".repeat(48) + "K..K....K..K.KK.",
+        },
+        cargo2: {
+          bars: 16, pulse: pulse(twice, [0.14, 0.22, 0.12, 0.22, 0.14], tilt), sub: sub(twice, 0.3, 0.6), near: near(twice, 0.26),
+          growl: growl(twice, 0.24, 2), far: far("G4 - Eb4 - G4 - C5", 0.11), drums: (heave.repeat(3) + "K..K..H.S..S.SSZ").repeat(4),
+        },
+        dock: {
+          bars: 8, pulse: pulse("C C C C C C C C", [0.16, 0.1, 0.12, 0], tilt),
+          sub: swell("C1", 32, bpm, [0.3, 0.4, 0.15, 0.3, 0.1, 0.15, 0.05, 0, 0]),
+          drums: keel.repeat(4) + "K..K............".repeat(2) + ".".repeat(32),
+        },
+      },
+      form: "intro weight hull cargo cut cargo2 dock",
+    });
+  })(),
+  nightferry: (() => {
+    const bpm = 92;
+    const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
+      roots: { G: "G1", D: "D1", C: "C1" }, lows: { G: "G2", D: "D2", C: "C2" }, tones: { G: "Bb3", D: "A3", C: "G3" },
+    });
+    const route = "G G D D C C D D";
+    const twice = `${route} ${route}`;
+    const thrice = `${twice} ${route}`;
+    const roll = (p, low, high) => sub(p, low, high, { per: 2 });
+    const chug = { rhythm: "xx..xx..xx..xx.." };
+    const horn = (high) => swell("D3", 16, bpm, [0, 1, 0.85, 1, 0.6, 0].map((level) => level * high), [0.9, 0.5, 0.1, -0.3, -0.6, -0.8]);
+    const deck = "K.......S...H...";
+    const wake = "K.Z...Z.S.Z...Z.";
+    return song({
+      bpm,
+      voices: {
+        sub: "#TYPE sine", growl: "#TYPE sawtooth", near: "#TYPE triangle", far: "#TYPE sine",
+        pulse: "#TYPE sawtooth", horn: "#TYPE sawtooth", ping: "#TYPE sine", echo: "#TYPE triangle\n#PAN -0.4",
+      },
+      parts: {
+        departure: { bars: 8, pulse: pulse(route, [0, 0.1], chug), horn: `${horn(0.07)}\n${rest(64)}`, sub: roll(route, 0.05, 0.2) },
+        cruise: {
+          bars: 16, sub: roll(twice, 0.25, 0.5), near: near(twice, 0.24), pulse: pulse(twice, [0.1, 0.14, 0.1], chug),
+          horn: `${rest(128)}\n${horn(0.06)}\n${rest(64)}`, drums: (deck.repeat(7) + "K.......S...H.HH").repeat(2),
+        },
+        open: {
+          bars: 8, sub: swell("G1", 32, bpm, [0.25, 0.5, 0.2, 0.45, 0.15, 0.4, 0.2, 0.35, 0.3]), horn: `${horn(0.08)}\n${rest(64)}`,
+          far: far("Bb4 - A4", 0.1), ping: ping("- - D5 -", 0.18), echo: echo("- - D5 -", 0.07),
+          drums: ".".repeat(96) + "K.......S.......K.......S...S.SS",
+        },
+        cruise2: {
+          bars: 24, sub: roll(thrice, 0.3, 0.6), growl: growl(thrice, 0.18), near: near(thrice, 0.26),
+          far: far("- D5 - C5 - Bb4 - A4 - D5 -", 0.11), pulse: pulse(thrice, [0.12, 0.18, 0.14], chug),
+          horn: `${rest(128)}\n${horn(0.06)}\n${rest(128)}\n${horn(0.05)}`, drums: (wake.repeat(7) + "K.Z...Z.S.Z.S.SS").repeat(3),
+        },
+        harbor: {
+          bars: 8, pulse: pulse(route, [0.14, 0], chug), horn: `${rest(64)}\n${horn(0.06)}`,
+          sub: `${roll("G G D D", 0.15, 0.4)}\n${swell("G1", 16, bpm, [0.15, 0.3, 0.1, 0.2, 0.05, 0.1, 0, 0.03, 0], null, 0.04)}`,
+          near: `${near("G G D D", 0.16)}\n${rest(64)}`, drums: deck.repeat(4) + ".".repeat(64),
+        },
+      },
+      form: "departure cruise open cruise2 harbor",
+    });
+  })(),
+  landslide: (() => {
+    const bpm = 108;
+    const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
+      roots: { B: "B1", A: "A1" }, lows: { B: "B2", A: "A2" }, tones: { B: "D4", A: "C4" },
+    });
+    const slab = "B B B B A A A A";
+    const twice = `${slab} ${slab}`;
+    const stone = "K.......S.......";
+    const stride = "K..K....S.......";
+    const rumble = "K..K....S..T..T.";
+    const quarry = "K.HK..H.S.HK..H.";
+    const avalanche = "K.HK.TH.S.HK.TBB";
+    return song({
+      bpm,
+      voices: {
+        sub: "#TYPE sine", growl: "#TYPE sawtooth", near: "#TYPE triangle", far: "#TYPE sine",
+        pulse: "#TYPE sawtooth", ping: "#TYPE sine", echo: "#TYPE triangle\n#PAN 0.4",
+      },
+      parts: {
+        intro: {
+          bars: 8, sub: sub(slab, 0.15, 0.45), far: far("F#4 - E4", 0.08),
+          drums: ".".repeat(64) + "K...............".repeat(3) + "K.......K...K.K.",
+        },
+        one: { bars: 8, sub: sub(slab, 0.3, 0.55), growl: growl(slab, 0.16), near: near(slab, 0.2), drums: stone.repeat(7) + "K.......S...S.SS" },
+        two: { bars: 8, sub: sub(slab, 0.3, 0.55), growl: growl(slab, 0.2, 2), near: near(slab, 0.22), drums: stride.repeat(7) + "K..K....S...S.SS" },
+        three: {
+          bars: 8, sub: sub(slab, 0.3, 0.55), growl: growl(slab, 0.22, 3), near: near(slab, 0.24), far: far("F#4 - D5", 0.1),
+          drums: rumble.repeat(7) + "K..K....S.TTTBBB",
+        },
+        four: {
+          bars: 16, sub: sub(twice, 0.35, 0.6), growl: growl(twice, 0.24, 4, 0.025), near: near(twice, 0.26),
+          far: far("D5 - C5 - D5 - E5", 0.1), pulse: pulse(twice, [0.12, 0.18]), drums: quarry.repeat(15) + "K.HK..H.S.SSTTBB",
+        },
+        six: {
+          bars: 16, sub: sub(twice, 0.35, 0.6), growl: growl(twice, 0.28, 6, 0.025), near: near(twice, 0.28),
+          far: far("F#4 - E4 - F#4 - D5", 0.11), pulse: pulse(twice, [0.18, 0.2]), drums: avalanche.repeat(15) + "K.HK.TH.S.SSTTBB",
+        },
+        stop: {
+          bars: 8, sub: swell("B1", 32, bpm, [0.35, 0.6, 0.3, 0.5, 0.2, 0.3, 0.1, 0.05, 0]), ping: ping("B4 - - -", 0.2),
+          echo: echo("B4 - - -", 0.08), drums: "K" + ".".repeat(127),
+        },
+      },
+      form: "intro one two three four six stop",
+    });
+  })(),
+  sonar: (() => {
+    const bpm = 84;
+    const { sub, growl, near, far, ping, echo } = depth(bpm, {
+      roots: { Eb: "Eb1", Gb: "Gb1", Db: "Db1" }, lows: { Eb: "Eb2", Gb: "Gb2", Db: "Db2" }, tones: { Eb: "Bb3", Gb: "Bb3", Db: "Ab3" },
+    });
+    const dive = "Eb Eb Gb Gb Eb Eb Db Db";
+    const twice = `${dive} ${dive}`;
+    const sound = "Eb5 Eb5 Eb5 -";
+    const plain = "K.......S.......";
+    const deeper = "K...Z...S...Z...";
+    return song({
+      bpm,
+      voices: {
+        sub: "#TYPE sine", growl: "#TYPE sawtooth", near: "#TYPE triangle", far: "#TYPE sine", ping: "#TYPE sine", echo: "#TYPE sine\n#PAN 0.5",
+      },
+      parts: {
+        surface: { bars: 8, ping: ping(sound, 0.24), echo: echo(sound, 0.1), far: far("Bb4 - Bb4", 0.08), sub: sub(dive, 0.05, 0.2) },
+        descent: {
+          bars: 8, ping: ping(sound, 0.18), echo: echo(sound, 0.07), sub: sub(dive, 0.2, 0.45), near: near(dive, 0.2),
+          drums: "K...............".repeat(7) + "K.......K...K.K.",
+        },
+        deep: {
+          bars: 16, ping: ping(`${sound} ${sound}`, 0.13), echo: echo(`${sound} ${sound}`, 0.05), sub: sub(twice, 0.3, 0.55),
+          growl: growl(twice, 0.2, 0.5), near: near(twice, 0.24), drums: plain.repeat(7) + "K.......S...Z.Z." + plain.repeat(7) + "K.......S...S.SS",
+        },
+        abyss: {
+          bars: 16, ping: ping("Eb5 - - - Eb5 - - -", 0.08), echo: echo("Eb5 - - - Eb5 - - -", 0.04), sub: sub(twice, 0.35, 0.6),
+          growl: growl(twice, 0.28, 0.5), near: near(twice, 0.26), far: far("- Gb4 - - - Gb4 -", 0.1),
+          drums: (deeper.repeat(7) + "K...Z...S...ZZZZ").repeat(2),
+        },
+        floor: {
+          bars: 8, sub: swell("Eb1", 32, bpm, [0.35, 0.6, 0.3, 0.45, 0.15, 0.25, 0.05, 0, 0]),
+          growl: swell("Eb2", 32, bpm, [0, 0.22, 0, 0.12, 0, 0.04, 0, 0, 0], null, 0.16), ping: ping("- - - Eb5", 0.06),
+          drums: plain.repeat(2) + "K...............".repeat(2) + ".".repeat(64),
+        },
+      },
+      form: "surface descent deep abyss floor",
+    });
+  })(),
+  tremor: (() => {
+    const bpm = 112;
+    const tones = { "G#": "D#4", "F#": "C#4", E: "B3", "D#": "A#3" };
+    const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
+      roots: { "G#": "G#1", "F#": "F#1", E: "E1", "D#": "D#1" }, lows: { "G#": "G#2", "F#": "F#2", E: "E2", "D#": "D#2" }, tones,
+    });
+    const walk = "G# G# F# F# E E D# D#";
+    const twice = `${walk} ${walk}`;
+    const thrice = `${twice} ${walk}`;
+    const shudder = (p, high) => growl(p, high, 12, 0.03);
+    const skank = { rhythm: "..x...x...x...x.", notes: tones };
+    const plain = "K.......S.......";
+    const rumble = "K..H..K.S..H....";
+    const quake = "K.HH..K.S.HZ..H.";
+    return song({
+      bpm,
+      voices: {
+        sub: "#TYPE sine", growl: "#TYPE sawtooth", near: "#TYPE triangle", far: "#TYPE sine",
+        pulse: "#TYPE triangle\n#PAN 0.2", ping: "#TYPE sine", echo: "#TYPE triangle\n#PAN 0.4",
+      },
+      parts: {
+        intro: {
+          bars: 8, sub: sub(walk, 0.15, 0.45), near: `${rest(64)}\n${near("E E D# D#", 0.16)}`,
+          drums: ".".repeat(64) + plain.repeat(3) + "K.......S...TTBB",
+        },
+        quake: {
+          bars: 16, sub: sub(twice, 0.3, 0.55), growl: shudder(twice, 0.2), near: near(twice, 0.24),
+          pulse: pulse(twice, [0.1, 0.14, 0.1], skank), drums: (rumble.repeat(3) + "K..H..K.S..TTBB.").repeat(4),
+        },
+        lull: {
+          bars: 8, sub: sub(walk, 0.2, 0.5), far: far("D#5 - B4", 0.1), ping: ping("D#5 - B4 -", 0.18), echo: echo("D#5 - B4 -", 0.07),
+          drums: plain.repeat(4) + "K...............".repeat(3) + "K.......K.K.K.K.",
+        },
+        build: {
+          bars: 8, sub: sub(walk, 0.3, 0.55), growl: `${growl("G# G# F# F#", 0.12, 6, 0.03)}\n${growl("E E D# D#", 0.2, 6, 0.03)}`,
+          near: near(walk, 0.24), pulse: pulse(walk, [0, 0.16], skank), drums: rumble.repeat(6) + "K..H..K.S.S.S.SS" + "S.S.S.SSSSSSSS..",
+        },
+        quake2: {
+          bars: 24, sub: sub(thrice, 0.35, 0.6), growl: shudder(thrice, 0.26), near: near(thrice, 0.28),
+          far: far("- D#5 - C#5 - B4 - A#4 - D#5 -", 0.11), pulse: pulse(thrice, [0.14, 0.2, 0.14], skank),
+          drums: (quake.repeat(7) + "K.HH..K.S..TTBB.").repeat(3),
+        },
+        after: {
+          bars: 8, sub: swell("G#1", 32, bpm, [0.35, 0.5, 0.2, 0.4, 0.1, 0.2, 0.05, 0, 0]),
+          growl: `${shudder("G# G#", 0.12)}\n${rest(96)}`, near: `${near("G# G# F# F#", 0.14)}\n${rest(64)}`,
+          drums: rumble.repeat(2) + plain.repeat(2) + ".".repeat(64),
+        },
+      },
+      form: "intro quake lull build quake2 after",
+    });
+  })(),
+  blackice: (() => {
+    const bpm = 80;
+    const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
+      roots: { F: "F1", Bb: "Bb1", Gb: "Gb1" }, lows: { F: "F2", Bb: "Bb2", Gb: "Gb2" }, tones: { F: "C4", Bb: "Db4", Gb: "Db4" },
+    });
+    const cold = "F F Bb Bb F F Gb Gb";
+    const twice = `${cold} ${cold}`;
+    const sleet = "K.HZ.HZ.S.HZ.HZ.";
+    const shuffle = "K..Z..Z.S..Z..Z.";
+    const plain = "K.......S.......";
+    return song({
+      bpm,
+      voices: {
+        sub: "#TYPE sine", growl: "#TYPE sawtooth", near: "#TYPE triangle", far: "#TYPE sine",
+        pulse: "#TYPE sawtooth", ping: "#TYPE triangle", echo: "#TYPE sine\n#PAN -0.5",
+      },
+      parts: {
+        open: {
+          bars: 16, sub: sub(twice, 0.3, 0.6), growl: growl(twice, 0.24, 4, 0.025), near: near(twice, 0.28),
+          far: far("C5 - Db5 - C5 - Db5", 0.1), pulse: pulse(twice, [0.16, 0.18, 0.16]),
+          drums: (sleet.repeat(7) + "K.HZ.HZ.S.S.S.SS").repeat(2),
+        },
+        thaw: {
+          bars: 16, sub: sub(twice, 0.3, 0.55), growl: growl(twice, 0.2, 2), near: near(twice, 0.26), far: far("- Db5 - - - C5 -", 0.09),
+          pulse: pulse(twice, [0.14, 0.08], { rhythm: "x...x...x...x..." }), drums: (shuffle.repeat(7) + "K..Z..Z.S..Z.ZZ.").repeat(2),
+        },
+        thin: {
+          bars: 16, sub: sub(twice, 0.25, 0.5), growl: growl(twice, 0.14), near: near(twice, 0.22),
+          ping: ping("C5 - Db5 - C5 - - -", 0.18), echo: echo("C5 - Db5 - C5 - - -", 0.07), drums: plain.repeat(15) + "K.......S...S...",
+        },
+        frost: {
+          bars: 8, sub: sub(cold, 0.2, 0.4), ping: ping("Db5 - C5 -", 0.16), echo: echo("Db5 - C5 -", 0.06),
+          drums: "K...............".repeat(4) + ".".repeat(64),
+        },
+        gone: { bars: 4, sub: swell("F1", 16, bpm, [0.2, 0.35, 0.1, 0.15, 0]), near: `${near("F F", 0.1)}\n${rest(32)}`, ping: ping("- C5", 0.08) },
+      },
+      form: "open thaw thin frost gone",
     });
   })(),
 };

@@ -714,7 +714,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Songs",
 					Tag:      "Status line",
 					TagClass: "bg-secondary-lt",
-					Desc:     `On a desktop, the music note <i class="ti ti-music align-text-bottom" aria-hidden="true"></i> at the right of the status line opens the songs. Play <i class="ti ti-player-play align-text-bottom" aria-hidden="true"></i> starts the cockpit's chill electronic and melodic house songs in random order, also across pages, stop <i class="ti ti-player-stop align-text-bottom" aria-hidden="true"></i> ends them, next <i class="ti ti-player-skip-forward align-text-bottom" aria-hidden="true"></i> skips, and a title in the list, narrowed by the filter above it, plays that song. The filter and the list position stay where you left them, per device. The volume there is the music's own, stored per device and apart from the notification sound.`,
+					Desc:     `On a desktop, the note <i class="ti ti-music align-text-bottom" aria-hidden="true"></i> in the status line opens the player. Play shuffles all genres, a genre's play only that genre, a title plays that song and then its genre. Next stays in that mode, and the music plays on across pages. Folds, filter, list position and volume stay per device, the volume apart from the notification sound.`,
 				},
 				{
 					Title:    "Restore terminals at startup",

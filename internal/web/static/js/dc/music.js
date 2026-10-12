@@ -6,27 +6,48 @@ const music = getPlayer("music");
 
 export const catalog = [
   {
-    style: "Chill Electronic",
+    style: "Dark Techno",
+    icon: "ti-bolt", color: "indigo",
     songs: {
-      ambermile: "Amber Mile", goldenhour: "Golden Hour", saltflats: "Salt Flats", lowsun: "Low Sun",
-      paperlanterns: "Paper Lanterns", coastaldrive: "Coastal Drive", willowcreek: "Willow Creek", driftwood: "Driftwood",
-      quietcanyon: "Quiet Canyon", rearview: "Rearview",
+      basalt: "Basalt", obsidian: "Obsidian", cinder: "Cinder", graphite: "Graphite", magnetite: "Magnetite",
+      slate: "Slate", caldera: "Caldera", faultline: "Fault Line", anthracite: "Anthracite", tephra: "Tephra",
+    },
+  },
+  {
+    style: "Deep Dubstep",
+    icon: "ti-wave-sine", color: "cyan",
+    songs: {
+      undertow: "Undertow", fathom: "Fathom", pressure: "Pressure", silt: "Silt", ballast: "Ballast",
+      nightferry: "Night Ferry", landslide: "Landslide", sonar: "Sonar", tremor: "Tremor", blackice: "Black Ice",
     },
   },
   {
     style: "Melodic House",
+    icon: "ti-moon-stars", color: "pink",
     songs: {
       midnightbloom: "Midnight Bloom", afterglow: "Afterglow", oceanfloor: "Ocean Floor", citypulse: "City Pulse",
       velvethours: "Velvet Hours", distantshores: "Distant Shores", tidalechoes: "Tidal Echoes", weightless: "Weightless",
       parallellines: "Parallel Lines", daybreak: "Daybreak",
     },
   },
+  {
+    style: "Chill Electronic",
+    icon: "ti-sunset-2", color: "orange",
+    songs: {
+      ambermile: "Amber Mile", goldenhour: "Golden Hour", saltflats: "Salt Flats", lowsun: "Low Sun",
+      paperlanterns: "Paper Lanterns", coastaldrive: "Coastal Drive", willowcreek: "Willow Creek", driftwood: "Driftwood",
+      quietcanyon: "Quiet Canyon", rearview: "Rearview",
+    },
+  },
 ];
 
 const titles = Object.assign({}, ...catalog.map((shelf) => shelf.songs));
+const shelves = Object.fromEntries(catalog.flatMap((shelf) => Object.keys(shelf.songs).map((key) => [key, shelf])));
+const lengths = new Map();
 const listeners = new Set();
 let sheets = null;
 let attempts = 0;
+let scope = null;
 let queue = [];
 let current = null;
 
@@ -44,9 +65,41 @@ function loadSheets() {
   return sheets;
 }
 
-function shuffled(all) {
+const beats = { w: 4, h: 2, q: 1, e: 0.5, s: 0.25, dw: 6, dh: 3, dq: 1.5, de: 0.75, ds: 0.375 };
+
+// scriptune tells nobody how long a sheet plays, so this reads it the way
+// scriptune times it: one BPM for every track, read as a whole number, a loop
+// handing its notes to the track that stands at its end, and the song over
+// when its longest track is.
+function seconds(sheet) {
+  const tracks = new Map();
+  const loops = [];
+  let track = "default";
+  let bpm = 120;
+  const add = (time) => {
+    if (loops.length) loops.at(-1).time += time;
+    else tracks.set(track, (tracks.get(track) ?? 0) + time);
+  };
+  for (const raw of sheet.split("\n")) {
+    const line = raw.replace(/;.*/, "").trim();
+    if (line === "") continue;
+    const [command, ...args] = line.startsWith("#") ? line.split(/\s+/) : ["#NOTES", ...line.split(/\s+/)];
+    if (command === "#BPM") bpm = parseInt(args[0]);
+    else if (command === "#TRACK") track = args[0];
+    else if (command === "#LOOP") loops.push({ count: parseInt(args[0]), time: 0 });
+    else if (command === "#ENDLOOP") {
+      const loop = loops.pop();
+      add(loop.count * loop.time);
+    } else if (command === "#NOTES") {
+      for (const cell of args) add((beats[cell.split(":")[1]] * 60) / bpm);
+    }
+  }
+  return Math.max(0, ...tracks.values());
+}
+
+function shuffled() {
   if (!queue.length) {
-    queue = Object.keys(all).filter((key) => key !== current?.key);
+    queue = Object.keys(scope?.songs ?? titles).filter((key) => key !== current?.key);
     for (let i = queue.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [queue[i], queue[j]] = [queue[j], queue[i]];
@@ -59,6 +112,24 @@ function changed() {
   for (const listener of listeners) listener();
 }
 
+async function start(shelf, key) {
+  const all = await loadSheets();
+  if (shelf !== scope) {
+    scope = shelf;
+    queue = [];
+  }
+  const next = key ?? shuffled();
+  queue = queue.filter((other) => other !== next);
+  if (!lengths.has(next)) lengths.set(next, seconds(all[next]));
+  current?.abort.abort();
+  const abort = new AbortController();
+  current = { key: next, abort, started: performance.now() };
+  changed();
+  music.play(all[next], { signal: abort.signal })
+    .then(() => current?.abort === abort && start(scope))
+    .catch(() => current?.abort === abort && stop());
+}
+
 export function onChange(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -68,21 +139,34 @@ export function title(key) {
   return titles[key] ?? key;
 }
 
+export function genreOf(key) {
+  return shelves[key]?.style ?? null;
+}
+
 export function playing() {
   return current?.key ?? null;
 }
 
-export async function play(key) {
-  const all = await loadSheets();
-  const next = key ?? shuffled(all);
-  queue = queue.filter((other) => other !== next);
-  current?.abort.abort();
-  const abort = new AbortController();
-  current = { key: next, abort };
-  changed();
-  music.play(all[next], { signal: abort.signal })
-    .then(() => current?.abort === abort && play())
-    .catch(() => current?.abort === abort && stop());
+// The genre the shuffle keeps to, null while it runs through every genre.
+export function mode() {
+  return current ? scope?.style ?? null : null;
+}
+
+export function position() {
+  if (!current) return null;
+  return { elapsed: (performance.now() - current.started) / 1000, length: lengths.get(current.key) };
+}
+
+export function play(key) {
+  return start(shelves[key], key);
+}
+
+export function shuffle(style) {
+  return start(catalog.find((shelf) => shelf.style === style) ?? null);
+}
+
+export function next() {
+  return start(scope);
 }
 
 export function stop() {
