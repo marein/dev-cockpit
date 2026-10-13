@@ -3,6 +3,7 @@ import { notifyError, showToast } from "@dc/toast";
 import { missedServerEvent, onServerEvent } from "@dc/events";
 import { growTextarea, jumpTextEdge } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
+import { watchFileDrop } from "@dc/filedrop";
 import { resolveHostlessLinks } from "@dc/docker";
 import { SwipeNav, isCurrentPage, swipeBlockedAt, watchSwipe } from "@dc/swipe";
 
@@ -212,9 +213,6 @@ class Assistant extends HTMLElement {
     this.scroller?.addEventListener("scroll", () => this.trackPin(), { signal, passive: true });
 
     if (this.uploadUrl) {
-      // A drop belongs to the overlay, the page under it may have drop
-      // targets of its own (the editor tree does).
-      const dropTarget = this;
       this.attachButton?.addEventListener("click", () => this.fileInput?.click(), { signal });
       this.fileInput?.addEventListener("change", () => {
         void this.upload(Array.from(this.fileInput.files || []));
@@ -226,22 +224,7 @@ class Assistant extends HTMLElement {
         event.preventDefault();
         void this.upload(files);
       }, { signal });
-      dropTarget.addEventListener("dragover", (event) => {
-        if (!event.dataTransfer?.types?.includes("Files")) return;
-        event.preventDefault();
-        this.toggleAttribute("dropping", true);
-      }, { signal });
-      dropTarget.addEventListener("dragleave", (event) => {
-        if (event.relatedTarget) return;
-        this.removeAttribute("dropping");
-      }, { signal });
-      dropTarget.addEventListener("drop", (event) => {
-        const files = Array.from(event.dataTransfer?.files || []);
-        this.removeAttribute("dropping");
-        if (!files.length) return;
-        event.preventDefault();
-        void this.upload(files);
-      }, { signal });
+      watchFileDrop(this, (files) => void this.upload(files), { signal });
       this.attachTray?.addEventListener("click", (event) => {
         const remove = event.target.closest("[data-assistant-attachment-remove]");
         if (!remove) return;

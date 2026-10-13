@@ -480,13 +480,13 @@ dc-host-status.dc-cockpit-icon { display: flex; }
 [data-bs-theme="dark"] .attach-terminal {
   background: #111827;
 }
-.attach-terminal.attach-terminal-dragover::after {
+.dc-dropping::after {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 20;
   border: 1px dashed var(--tblr-primary);
-  background: rgba(59, 130, 246, 0.12);
+  background: rgba(var(--tblr-primary-rgb), 0.12);
   pointer-events: none;
 }
 .attach-terminal .xterm, .attach-terminal .xterm * { box-sizing: content-box; }
@@ -1112,10 +1112,6 @@ body .swal2-styled.swal2-deny {
 .dc-assistant-audio {
   width: 100%;
   max-width: 24rem;
-}
-dc-assistant[dropping] .assistant-composer {
-  outline: 2px dashed var(--tblr-primary);
-  outline-offset: 0.25rem;
 }
 .dc-context-ring {
   position: absolute;

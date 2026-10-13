@@ -1,5 +1,6 @@
 import { confirm } from "@dc/dialog";
 import { notifyError } from "@dc/toast";
+import { watchFileDrop } from "@dc/filedrop";
 
 class CoderFileUpload extends HTMLElement {
   connectedCallback() {
@@ -66,59 +67,9 @@ class CoderFileUpload extends HTMLElement {
     if (!this.terminal) {
       return;
     }
-    this.dragDepth = 0;
     const signal = this.ac.signal;
-    this.terminal.addEventListener("dragenter", (event) => this.onDragEnter(event), { signal });
-    this.terminal.addEventListener("dragover", (event) => this.onDragOver(event), { signal });
-    this.terminal.addEventListener("dragleave", (event) => this.onDragLeave(event), { signal });
-    this.terminal.addEventListener("drop", (event) => this.onDrop(event), { signal });
+    watchFileDrop(this.terminal, (files) => this.uploadFiles(files), { signal });
     this.terminal.addEventListener("paste", (event) => this.onPaste(event), { signal, capture: true });
-  }
-
-  isFileDrag(event) {
-    const types = event.dataTransfer ? event.dataTransfer.types : null;
-    return Boolean(types && Array.from(types).includes("Files"));
-  }
-
-  onDragEnter(event) {
-    if (!this.isFileDrag(event)) {
-      return;
-    }
-    event.preventDefault();
-    this.dragDepth += 1;
-    this.terminal.classList.add("attach-terminal-dragover");
-  }
-
-  onDragOver(event) {
-    if (!this.isFileDrag(event)) {
-      return;
-    }
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-  }
-
-  onDragLeave(event) {
-    if (!this.isFileDrag(event)) {
-      return;
-    }
-    this.dragDepth = Math.max(0, this.dragDepth - 1);
-    if (this.dragDepth === 0) {
-      this.terminal.classList.remove("attach-terminal-dragover");
-    }
-  }
-
-  onDrop(event) {
-    if (!this.isFileDrag(event)) {
-      return;
-    }
-    event.preventDefault();
-    this.dragDepth = 0;
-    this.terminal.classList.remove("attach-terminal-dragover");
-    const files = Array.from(event.dataTransfer.files || []);
-    if (files.length === 0) {
-      return;
-    }
-    this.uploadFiles(files);
   }
 
   onPaste(event) {

@@ -425,7 +425,7 @@ async function postJobs(page, fields) {
   }, fields);
 }
 
-L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
+L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage }) => {
   let jobCoder = "";
   let chatID = "";
   let freshID = "";
@@ -1221,6 +1221,48 @@ L.runFeature("assistant", async ({ browser, ctx, page, run, mobilePage }) => {
     await waitSettled(page);
     const bubble = page.locator('[data-role="user"]').last();
     assert(await bubble.locator("img, audio, video").count() === 0, "the file that was taken back went along anyway");
+  });
+
+  await run("a dragged file marks the assistant once, leaving clears it, a drop attaches", async () => {
+    if (engine !== "chromium") return "chromium only, the drag goes through CDP";
+    const name = `dragged-${Date.now().toString(36)}.txt`;
+    const file = path.join(fs.mkdtempSync(path.join(require("os").tmpdir(), "drag-")), name);
+    fs.writeFileSync(file, "dragged in\n");
+    const cdp = await page.context().newCDPSession(page);
+    const data = { items: [], files: [file], dragOperationsMask: 1 };
+    const drag = async (type, selector) => {
+      const box = await page.locator(selector).first().boundingBox();
+      await cdp.send("Input.dispatchDragEvent", { type, x: box.x + box.width / 2, y: box.y + box.height / 2, data });
+    };
+    const surface = page.locator("dc-assistant");
+    const marked = () => surface.evaluate((el) => el.classList.contains("dc-dropping"));
+    await surface.evaluate((el) => {
+      el.dropMarks = 0;
+      el.dropWatch = new MutationObserver((records) => {
+        el.dropMarks += records.filter((r) => !/(^|\s)dc-dropping(\s|$)/.test(r.oldValue || "")).length;
+      });
+      el.dropWatch.observe(el, { attributeFilter: ["class"], attributeOldValue: true });
+    });
+    try {
+      await drag("dragEnter", ".dc-app > .dc-ctx");
+      for (const selector of ["[data-assistant-title]", "[data-assistant-scroll]", "[data-assistant-input]", "[data-assistant-attach]"]) {
+        await drag("dragOver", selector);
+        assert(await marked(), `the assistant is not marked over ${selector}`);
+      }
+      assert((await surface.evaluate((el) => el.dropMarks)) === 1, "the mark went off and on again while the file crossed the children");
+      await drag("dragOver", ".dc-app > .dc-ctx");
+      assert(!(await marked()), "the mark stayed after the file left into the list column");
+      await drag("dragOver", "[data-assistant-input]");
+      assert(await marked(), "the assistant is not marked on the way back");
+      await drag("drop", "[data-assistant-input]");
+      assert(!(await marked()), "the mark stayed after the drop");
+      await page.waitForSelector(`[data-assistant-attachment="${name}"]`, { timeout: 20000 });
+      await page.click(`[data-assistant-attachment-remove="${name}"]`);
+    } finally {
+      await surface.evaluate((el) => el.dropWatch.disconnect());
+      await cdp.detach();
+    }
+    return "one mark across the children, cleared on leaving and on the drop, attached";
   });
 
   // The draft belongs to the conversation, not to the browser that typed it:
