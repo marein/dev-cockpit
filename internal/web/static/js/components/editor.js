@@ -627,6 +627,7 @@ async function init(root) {
       onChange: () => onChange(g),
       onCursor: (line, col) => onCursor(g, line, col),
       onFocusChange: syncSwipeZone,
+      mayFocus: () => !overlayOpen(),
       lspUsable,
       onLSPClick: goToDefinition,
       onFindUsages: findUsages,
@@ -745,10 +746,8 @@ async function init(root) {
     if (wasFocused) bindGroup(heir);
     renderLayout();
     renderTabs();
-    if (wasFocused) {
-      afterFocusChanged();
-      if (pointerMedia.matches) editor.focus();
-    }
+    if (wasFocused) afterFocusChanged();
+    settleFocus();
     persistTabs();
   }
 
@@ -1242,7 +1241,8 @@ async function init(root) {
   }
 
   function openSheet(kind, title) {
-    if (sheetKind) closeSheet();
+    if (sheetKind) dropSheet();
+    else holdFocus();
     sheetKind = kind;
     sheetFocus = { host: null, index: -1 };
     sheetTitleEl.textContent = title;
@@ -1254,6 +1254,11 @@ async function init(root) {
 
   function closeSheet() {
     if (!sheetKind) return;
+    dropSheet();
+    returnFocus();
+  }
+
+  function dropSheet() {
     for (const item of sheetAdopted.reverse()) item.parent.insertBefore(item.node, item.next);
     sheetAdopted = [];
     sheetBack = null;
@@ -1300,8 +1305,8 @@ async function init(root) {
       open.appendChild(dot);
     }
     open.addEventListener("click", () => {
-      activateTab(tab.path);
       closeSheet();
+      activateTab(tab.path);
     });
     const grip = document.createElement("span");
     grip.className = "editor-sheet-grip";
@@ -1665,7 +1670,6 @@ async function init(root) {
       g.viewerEl.hidden = true;
       g.editor.showDoc(tab);
       g.editor.setVisible(true);
-      if (pointerMedia.matches && g === group) g.editor.focus();
     }
     afterActiveChanged(g);
     applyPendingJump(tab);
@@ -1674,11 +1678,49 @@ async function init(root) {
     else if (!tab.kind && !tab.external) void applyTabDiff(tab);
   }
 
-  function activateTab(path) {
+  function activateTab(path, focus = true) {
     const tab = tabByPath(path);
     if (!tab) return;
     focusGroup(tab.group);
     showTab(tab);
+    if (focus) focusFront(tab.group);
+  }
+
+  function focusFront(g) {
+    if (!pointerMedia.matches || g !== group) return;
+    const tab = activeTabOf(g);
+    if (tab && !tab.kind && !tab.compare) g.editor.focus();
+    else if (document.activeElement?.closest(".cm-editor")) document.activeElement.blur();
+  }
+
+  const focusLost = () => {
+    const el = document.activeElement;
+    return !el || el === document.body || !el.isConnected || !!el.closest("[hidden]");
+  };
+
+  function settleFocus() {
+    if (focusLost()) focusFront(group);
+  }
+
+  let focusBack = null;
+  let typedIn = null;
+  document.addEventListener("focusin", (e) => {
+    if (!overlayOpen() && typingTarget(e.target)) typedIn = e.target;
+  }, { signal });
+
+  function holdFocus() {
+    if (overlayOpen()) return;
+    const el = document.activeElement;
+    focusBack = typingTarget(el) ? el : pointerMedia.matches ? typedIn : null;
+  }
+
+  function returnFocus() {
+    if (overlayOpen()) return;
+    const back = focusBack;
+    focusBack = null;
+    if (document.activeElement?.closest("[hidden]")) document.activeElement.blur();
+    if (back?.isConnected) back.focus({ preventScroll: true });
+    settleFocus();
   }
 
   function stepTab(direction) {
@@ -1688,7 +1730,7 @@ async function init(root) {
     const next = i < 0
       ? (direction > 0 ? 0 : order.length - 1)
       : (i + direction + order.length) % order.length;
-    activateTab(order[next].path);
+    activateTab(order[next].path, focusLost() || !!document.activeElement.closest(".cm-editor"));
   }
 
   function showEmpty(g) {
@@ -1782,6 +1824,7 @@ async function init(root) {
       updateActionStates();
       persistTabs();
     }
+    settleFocus();
     if (commitOn && fromCommitList) {
       if (!commitList.focusRow()) commitFilterEl.focus();
     } else if (commitOn && fromCommitFilter) {
@@ -2084,6 +2127,7 @@ async function init(root) {
       const named = spec.active == null ? tabByPath(saved.active) : restored[spec.active];
       showTab(named && named.group === g ? named : groupTabs(g)[0]);
     });
+    settleFocus();
   }
 
   // tabFor builds a tab from the /file response: a CodeMirror doc for text, a
@@ -7534,6 +7578,7 @@ async function init(root) {
     closeDrawer();
     closeSheet();
     closePalette();
+    holdFocus();
     quickOpenMode = mode;
     quickOpenView = "results";
     quickOpenEl.hidden = false;
@@ -7592,7 +7637,7 @@ async function init(root) {
     // the query again the next time the palette opens.
     quickOpenView = "results";
     quickOpenEl.hidden = true;
-    editor.focus();
+    returnFocus();
   }
 
   function showQuickOpenNote(text, danger = false) {
@@ -8585,7 +8630,7 @@ async function init(root) {
     moveQuickOpenActive(1);
     if (fromRow && entry.external) await openExternal(path, { jump });
     else await openPath(path, { jump });
-    // Showing a file takes the focus, and here it belongs to the palette.
+    // A click on a row takes the focus off the field, and it belongs to the palette.
     if (!quickOpenEl.hidden) quickOpenInput.focus();
   }
 
@@ -8663,7 +8708,7 @@ async function init(root) {
     }, { signal });
     quickOpenInput.addEventListener("keydown", quickOpenKeydown, { signal });
     quickOpenEl.addEventListener("keydown", (e) => {
-      if (e.key !== "Tab") return;
+      if (e.key !== "Tab" || e.ctrlKey || e.metaKey || e.altKey) return;
       e.preventDefault();
       stepQuickOpenFocus(e.shiftKey);
     }, { signal });
@@ -8922,6 +8967,7 @@ async function init(root) {
         return;
       }
       if (done.toIndex !== done.fromIndex) dropInOrder(stripTabs(g), done.fromIndex, done.toIndex);
+      settleFocus();
     }, opts);
     strip.addEventListener("pointercancel", clearDrag, opts);
     strip.addEventListener("click", (e) => {
@@ -9348,6 +9394,7 @@ async function init(root) {
   if (projectListEl) projectSort.sort(projectListEl);
 
   const paletteOpen = () => Boolean(paletteEl) && !paletteEl.hidden;
+  const overlayOpen = () => !quickOpenEl.hidden || paletteOpen() || !sheetEl.hidden;
   const sourceRows = () => (projectListEl ? Array.from(projectListEl.querySelectorAll("[data-project-name]")) : []);
   const paletteRows = () => (paletteListEl ? Array.from(paletteListEl.querySelectorAll("[data-project-name]")) : []);
 
@@ -9460,6 +9507,7 @@ async function init(root) {
     closeSheet();
     if (!quickOpenEl.hidden) closeQuickOpen();
     if (projectFilterEl) projectFilterEl.value = "";
+    holdFocus();
     paletteEl.hidden = false;
     projectSwitchEl?.setAttribute("aria-expanded", "true");
     renderPalette();
@@ -9468,18 +9516,13 @@ async function init(root) {
     else projectSwitchEl?.blur();
   }
 
-  // The field lets go of the focus before the palette hides, so it never sits
-  // in a hidden element; the editor takes it where it can, an empty editor
-  // cannot and the page keeps it.
   function closePalette() {
     if (!paletteOpen()) return;
-    const hadFocus = paletteEl.contains(document.activeElement);
-    if (hadFocus) document.activeElement.blur();
     paletteEl.hidden = true;
     projectSwitchEl?.setAttribute("aria-expanded", "false");
     paletteIndex = -1;
     if (projectFilterEl) projectFilterEl.value = "";
-    if (hadFocus) editor.focus();
+    returnFocus();
   }
 
   projectSwitchEl?.addEventListener("click", () => {
@@ -10864,7 +10907,16 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
 
   // Everything both sides share. The compartments live in both, so a font or
   // theme change reaches the read only side of a diff as well.
+  const pageKeys = keymap.of([
+    { key: "Ctrl-o", run: () => true },
+    { key: "Shift-Mod-g", run: () => true, scope: "editor search-panel" },
+    { mac: "Ctrl-k", run: () => true },
+    { mac: "Shift-Ctrl-f", run: () => true },
+    { mac: "Shift-Ctrl-p", run: () => true },
+  ]);
+
   const sharedExtensions = (langExt) => [
+    pageKeys,
     basicSetup,
     focusReporter,
     expandedField,
@@ -11127,7 +11179,6 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
 
   const editableExtensions = (langExt, blame = []) => [
     keymap.of([
-      { key: "Ctrl-o", run: () => true },
       { key: "Ctrl-f", run: search.openSearchPanel },
       {
         key: "Shift-F12",
@@ -11456,6 +11507,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       // belongs to the buffer, and a snapshot from before would drop it.
       const doc = workView().state.doc;
       const blame = carryBlame(workView().state);
+      const hadFocus = liveViews().some((v) => v.hasFocus);
       dropMergeView();
       // Built first, without a parent, and only then put on screen: a
       // constructor that throws must leave the plain editor where it was
@@ -11473,6 +11525,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       mergeView = view;
       syncMergeScroll(view);
       syncSurface();
+      if (hadFocus && hooks.mayFocus()) view.b.focus();
       view.b.requestMeasure();
       reportCursor(view.b.state);
       expandBlocks(spec.expanded);
@@ -11488,8 +11541,10 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       // plain editor continues with.
       const text = mergeView.b.state.doc;
       const blame = carryBlame(mergeView.b.state);
+      const hadFocus = liveViews().some((v) => v.hasFocus);
       dropMergeView();
       editorView.setState(EditorState.create({ doc: text, extensions: baseExtensions(langExt, blame) }));
+      if (hadFocus && hooks.mayFocus()) editorView.focus();
     }
     if (merge) buildUnified(merge, spec);
     else dropUnified();
@@ -11774,7 +11829,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
         selection: { anchor: pos },
         effects: EditorView.scrollIntoView(pos, { y: "center" }),
       });
-      view.focus();
+      if (hooks.mayFocus()) view.focus();
       // A file that was only just opened has not been laid out yet, and a view
       // without a measured height computes that scroll against a geometry it
       // does not have: the cursor lands on the right line while the viewport
@@ -11844,7 +11899,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       syncSurface();
     },
     focus() {
-      workView().focus();
+      if (hooks.mayFocus()) workView().focus();
     },
     measure() {
       for (const view of liveViews()) view.requestMeasure();

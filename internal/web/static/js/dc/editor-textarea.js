@@ -146,7 +146,7 @@ export function createTextarea(host, hooks, settings) {
       ta.style.visibility = on ? "" : "hidden";
     },
     focus() {
-      ta.focus();
+      if (hooks.mayFocus()) ta.focus();
     },
     measure() {},
     destroy() {},
