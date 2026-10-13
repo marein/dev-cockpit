@@ -91,6 +91,33 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await sleep(600);
     });
 
+    // tmux refuses a command above its 16 KiB message limit ("command too
+    // long"), so a long paste reaches the buffer in chunks. bash counts the
+    // bytes that arrived, multibyte runes and semicolons included.
+    await run("desktop: a paste above tmux's command limit reaches the pane whole", async () => {
+      const marker = `DCLEN${tag.slice(-4)}`;
+      const body = "a;€-b 😀;".repeat(2400);
+      const bytes = new TextEncoder().encode(body).length;
+      await page.click("#terminal .xterm-screen");
+      const reqP = page.waitForRequest((r) => /\/input$/.test(r.url()) && r.method() === "POST", { timeout: 8000 });
+      await page.evaluate((text) => {
+        const area = document.querySelector(".xterm-helper-textarea");
+        const data = new DataTransfer();
+        data.setData("text/plain", text);
+        area.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+      }, `echo ${marker}=$(printf %s '${body}' | wc -c)`);
+      const res = await (await reqP).response();
+      assert(res && res.ok(), `paste answered ${res && res.status()}`);
+      await page.keyboard.press("Enter");
+      const want = `${marker}=${bytes}`;
+      let text = "";
+      for (let i = 0; i < 20; i++) { text = await page.evaluate(() => { const m = document.querySelector(".attach-selection"); return m ? m.textContent || "" : ""; }); if (text.includes(want)) break; await sleep(500); }
+      assert(text.includes(want), `long paste did not arrive whole, want ${want} (len ${text.length})`);
+      await page.keyboard.type("clear");
+      await page.keyboard.press("Enter");
+      await sleep(600);
+    });
+
     await run("desktop: Shift+Enter posts the shift-enter control, shells run the command like Enter", async () => {
       const marker = `TSE${tag.slice(-4)}`;
       await page.click("#terminal .xterm-screen");

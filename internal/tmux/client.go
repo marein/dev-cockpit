@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/marein/dev-cockpit/internal/clirun"
 )
@@ -95,8 +96,14 @@ func sendLiteralArgs(name, text string) []string {
 	return []string{"send-keys", "-t", Target(name), "-l", endOfOptions, text}
 }
 
-// setBufferArgs builds the argv that fills a named tmux buffer with text.
+// setBufferArgs builds the argv that fills a named tmux buffer with text. tmux
+// reads a ";" at the end of any argument as a command separator and drops it,
+// while a "\" right before that ";" turns into the ";". So text ending in ";"
+// gets a "\" in front of its last byte and arrives unchanged.
 func setBufferArgs(buffer, text string) []string {
+	if strings.HasSuffix(text, ";") {
+		text = text[:len(text)-1] + `\;`
+	}
 	return []string{"set-buffer", "-b", buffer, endOfOptions, text}
 }
 
@@ -465,16 +472,44 @@ func (c *Client) SendRaw(name string, data []byte) error {
 	return nil
 }
 
-// PasteLiteral pastes literal text through a temporary tmux buffer.
+// pasteChunkSize bounds the text bytes of one set-buffer call. tmux refuses a
+// client command above its 16 KiB message limit with "command too long", and
+// that limit counts the whole argv in bytes. Half of it leaves room for the
+// rest of the argv and the escaped ";" of setBufferArgs.
+const pasteChunkSize = 8192
+
+// PasteLiteral pastes literal text through a temporary tmux buffer, one
+// set-buffer and paste-buffer round per chunk, in order.
 func (c *Client) PasteLiteral(name, text string) error {
-	if text == "" {
-		return nil
-	}
 	buffer := fmt.Sprintf("dev-cockpit-%d", time.Now().UnixNano())
-	if err := clirun.Check("tmux", setBufferArgs(buffer, text)...); err != nil {
-		return err
+	for _, chunk := range pasteChunks(text, pasteChunkSize) {
+		if err := clirun.Check("tmux", setBufferArgs(buffer, chunk)...); err != nil {
+			return err
+		}
+		if err := clirun.Check("tmux", "paste-buffer", "-t", Target(name), "-b", buffer, "-d", "-p", "-r"); err != nil {
+			return err
+		}
 	}
-	return clirun.Check("tmux", "paste-buffer", "-t", Target(name), "-b", buffer, "-d", "-p", "-r")
+	return nil
+}
+
+// pasteChunks splits text into pieces of at most size bytes. A cut never lands
+// inside a rune, it moves back at most utf8.UTFMax-1 bytes to the rune's first
+// byte.
+func pasteChunks(text string, size int) []string {
+	var chunks []string
+	for len(text) > size {
+		cut := size
+		for cut > size-utf8.UTFMax+1 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		chunks = append(chunks, text[:cut])
+		text = text[cut:]
+	}
+	if text != "" {
+		chunks = append(chunks, text)
+	}
+	return chunks
 }
 
 // ListPanes returns the unique first-pane entries for every session.
