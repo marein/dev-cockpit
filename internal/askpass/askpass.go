@@ -13,6 +13,12 @@
 // question, and it rides the same standing list, the same dialog and the same
 // notification path, see BeginApproval.
 //
+// A third kind belongs to the cockpit's ssh agent: a key that has to be opened
+// with its passphrase, or a caller that may only sign after a yes. It is a
+// typed answer like a git question and stands under a key of its own, see
+// BeginSSHKey. The ssh-agent and ssh-add processes the agent starts reach the
+// cockpit through the same helper, under a token Serve answers.
+//
 // The rules the whole package is built around:
 //
 //   - only an action somebody started gets a bridge: nothing here is wired
@@ -89,11 +95,7 @@ func SocketPath(stateDir string) string {
 // Listen opens the broker's socket the way the local API opens its own.
 func Listen(stateDir string) (net.Listener, error) {
 	path := SocketPath(stateDir)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := filesystem.PrivateDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -115,7 +117,7 @@ func WriteScript(stateDir string) (string, error) {
 		return "", err
 	}
 	dir := filepath.Dir(SocketPath(stateDir))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := filesystem.PrivateDir(dir); err != nil {
 		return "", err
 	}
 	path := filepath.Join(dir, "helper")
@@ -187,6 +189,21 @@ type Question struct {
 	Dir       string   `json:"dir,omitempty"`
 	Assistant string   `json:"assistant,omitempty"`
 	Details   []Detail `json:"details,omitempty"`
+	// Unlock and Retry are the ssh agent's: the answer is a key's passphrase,
+	// and the one before did not open it. Without Unlock the question only
+	// asks for a yes. Callers are the processes connected to the socket the
+	// question came through, every one of them, the agent cannot tell which
+	// of them signs.
+	Unlock  bool     `json:"unlock,omitempty"`
+	Retry   bool     `json:"retry,omitempty"`
+	Callers []Caller `json:"callers,omitempty"`
+}
+
+// Caller is one process a question of the ssh agent names: its command line
+// and the directory it runs in.
+type Caller struct {
+	Command string `json:"command"`
+	Dir     string `json:"dir,omitempty"`
 }
 
 // Detail is one row an approval dialog shows: a label and its value.
@@ -197,6 +214,21 @@ type Detail struct {
 
 // KindApproval marks a question whose answer is a decision, see BeginApproval.
 const KindApproval = "approval"
+
+// KindSSHKey marks a question of the ssh agent.
+const KindSSHKey = "ssh-key"
+
+// sshKeyPrefix is what a question of the ssh agent stands under, shaped like
+// the approval's for the same reason.
+const sshKeyPrefix = "ssh-key/"
+
+// SSHKeyKey is the broker key of one question of the ssh agent.
+func SSHKeyKey(id string) string { return sshKeyPrefix + id }
+
+// SSHKeyID answers the id a key names, and whether it names one at all.
+func SSHKeyID(key string) (string, bool) {
+	return strings.CutPrefix(key, sshKeyPrefix)
+}
 
 // approvalKeyPrefix is what an approval stands under in the broker. It
 // carries a slash and starts with a letter, so it is never a project's name,
@@ -283,6 +315,7 @@ type Broker struct {
 	mu      sync.Mutex
 	byToken map[string]*Action
 	byKey   map[string]*Action
+	served  map[string]func(prompt string) ([]byte, bool)
 }
 
 // New builds a broker for the state directory's socket path. Serve is the
@@ -292,6 +325,7 @@ func New(stateDir string) *Broker {
 		socketPath: SocketPath(stateDir),
 		byToken:    map[string]*Action{},
 		byKey:      map[string]*Action{},
+		served:     map[string]func(string) ([]byte, bool){},
 	}
 }
 
@@ -342,6 +376,13 @@ func (b *Broker) BeginApproval(key string, q Question) *Action {
 	q.External = true
 	a.approval = &q
 	return a
+}
+
+// BeginSSHKey opens an action for one question of the ssh agent. external
+// says nobody in the app started what asks, so the question becomes news.
+// Ask parks the question.
+func (b *Broker) BeginSSHKey(id, action string, external bool) *Action {
+	return b.begin(SSHKeyKey(id), action, external, "", "")
 }
 
 func (b *Broker) begin(key, action string, external bool, command, dir string) *Action {
@@ -416,10 +457,29 @@ func (a *Action) Name() string { return a.action }
 func (a *Action) Approval() bool { return a.approval != nil }
 
 // Env is what the spawned git call carries so its helpers can call home.
-func (a *Action) Env() []string {
+func (a *Action) Env() []string { return a.broker.env(a.token) }
+
+func (b *Broker) env(token string) []string {
 	return []string{
-		"DC_ASKPASS_SOCKET=" + a.broker.socketPath,
-		"DC_ASKPASS_TOKEN=" + a.token,
+		"DC_ASKPASS_SOCKET=" + b.socketPath,
+		"DC_ASKPASS_TOKEN=" + token,
+	}
+}
+
+// Serve answers what a process of the cockpit's own asks through the helper,
+// an ssh-agent's confirmation or ssh-add's passphrase, with answer, until end
+// is called. The helper finds it through env. answer returns the line to
+// print and whether there is one, its bytes are cleared once written. No
+// question stands for it here, answer is the one asking the person.
+func (b *Broker) Serve(answer func(prompt string) ([]byte, bool)) (env []string, end func()) {
+	token := randomToken()
+	b.mu.Lock()
+	b.served[token] = answer
+	b.mu.Unlock()
+	return b.env(token), func() {
+		b.mu.Lock()
+		delete(b.served, token)
+		b.mu.Unlock()
 	}
 }
 
@@ -538,14 +598,20 @@ func (a *Action) End() {
 // ask is the helper's side: park the question and wait for its answer or the
 // action's end. One question at a time per action, the way ssh asks.
 func (a *Action) ask(prompt string) (string, bool) {
-	got, ok := a.park(Question{
-		Project:  a.key,
-		Action:   a.action,
-		Prompt:   prompt,
-		External: a.external,
-		Command:  a.command,
-		Dir:      a.dir,
-	})
+	return a.Ask(Question{Action: a.action, Prompt: prompt, Command: a.command, Dir: a.dir})
+}
+
+// Ask parks a question of this process's own on the action, the ssh agent's,
+// and waits for its typed answer, a cancel or the action's end. The question
+// stands under the action's key and kind of caller, so it is answered,
+// notified and ended like the action's own.
+func (a *Action) Ask(q Question) (string, bool) {
+	if a.approval != nil {
+		return "", false
+	}
+	q.Project = a.key
+	q.External = a.external
+	got, ok := a.park(q)
 	if !ok || got.deny {
 		return "", false
 	}
@@ -629,12 +695,19 @@ func (b *Broker) Handler() http.Handler {
 		}
 		b.mu.Lock()
 		a := b.byToken[req.Token]
+		served := b.served[req.Token]
 		b.mu.Unlock()
-		if a == nil {
-			w.WriteHeader(http.StatusForbidden)
-			return
+		var text string
+		ok := false
+		switch {
+		case a != nil:
+			text, ok = a.ask(clampPrompt(req.Prompt))
+		case served != nil:
+			var line []byte
+			line, ok = served(clampPrompt(req.Prompt))
+			text = string(line)
+			clear(line)
 		}
-		text, ok := a.ask(clampPrompt(req.Prompt))
 		if !ok {
 			w.WriteHeader(http.StatusForbidden)
 			return

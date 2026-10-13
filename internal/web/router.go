@@ -267,6 +267,9 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/general", s.handleSettingsGeneralSave)
 	auth.GET("/settings/costs", s.handleSettingsCosts)
 	auth.POST("/settings/costs", s.handleSettingsCostsSave)
+	auth.GET(sshAgentPath, s.handleSettingsSSHAgent)
+	auth.POST(sshAgentPath, s.handleSettingsSSHAgentSave)
+	auth.GET(sshAgentPath+"/keys", s.handleSettingsSSHAgentKeys)
 	// Docker is a section of its own: the daemon and the compose commands.
 	auth.GET("/settings/docker", s.handleSettingsDocker)
 	auth.POST("/settings/docker", s.handleSettingsDockerSave)

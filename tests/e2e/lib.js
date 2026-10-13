@@ -316,9 +316,9 @@ async function waitEditorCursor(page, want) {
   throw new Error(`the editor stands at ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 }
 
-async function skewedClocks(context, bag) {
+async function skewedClocks(context, bag, minutes = 10) {
   const clocks = [];
-  for (const [name, skew] of [["behind", -10 * 60 * 1000], ["ahead", 10 * 60 * 1000]]) {
+  for (const [name, skew] of [["behind", -minutes * 60 * 1000], ["ahead", minutes * 60 * 1000]]) {
     const page = await context.newPage();
     wirePage(page, bag);
     await page.addInitScript((ms) => {

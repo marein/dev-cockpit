@@ -14,23 +14,61 @@ function markSeen() {
   void postForm("/notifications/read", { target: shownTarget }).catch(() => {});
 }
 
-function commandBlock(question) {
-  if (!question.command) return "";
+function commandBlock({ command, dir }) {
+  if (!command) return "";
   const lines = [];
-  if (question.dir) lines.push(`cwd: ${escapeHtml(question.dir)}`);
-  lines.push(`$ ${escapeHtml(question.command)}`);
+  if (dir) lines.push(`cwd: ${escapeHtml(dir)}`);
+  lines.push(`$ ${escapeHtml(command)}`);
   return `<pre class="mb-0 mt-2 p-2 small overflow-auto text-start dc-prompt-text dc-prompt-command"`
     + ` data-gitprompt-command>${lines.join("\n")}</pre>`;
 }
 
-function approvalBlock(question) {
-  const rows = [{ label: "Asked by", value: question.assistant }, ...(question.details || [])];
-  const list = rows
+function detailList(rows) {
+  return rows
     .map((row) => `<dt class="col-4 fw-normal text-secondary">${escapeHtml(row.label)}</dt><dd class="col-8 mb-1 dc-prompt-text">${escapeHtml(row.value || "")}</dd>`)
     .join("");
+}
+
+function approvalBlock(question) {
+  const rows = [{ label: "Asked by", value: question.assistant }, ...(question.details || [])];
   return `<div class="fw-bold mb-3 text-break" data-approval-what>${escapeHtml(question.action)}</div>`
-    + `<dl class="row mb-0 text-start" data-approval-details>${list}</dl>`
+    + `<dl class="row mb-0 text-start" data-approval-details>${detailList(rows)}</dl>`
     + commandBlock(question);
+}
+
+async function showSSHKey(question) {
+  const unlock = !!question.unlock;
+  const retry = question.retry
+    ? `<div class="text-danger mb-2" data-ssh-key-retry>The passphrase did not open the key.</div>`
+    : "";
+  const input = unlock
+    ? {
+      input: "password",
+      inputPlaceholder: "Passphrase",
+      inputAttributes: { autocomplete: "off", autocorrect: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "Passphrase" },
+    }
+    : {};
+  const result = await fire({
+    title: unlock ? "Open an SSH key" : "Sign with an SSH key",
+    html: retry
+      + `<dl class="row mb-0 text-start" data-ssh-key-details>${detailList(question.details || [])}</dl>`
+      + (question.callers || []).map(commandBlock).join(""),
+    footer: unlock
+      ? "The key goes into the ssh-agent of every caller, for the time set under Settings, SSH agent."
+      : "Denying fails this one signature.",
+    ...input,
+    showDenyButton: true,
+    confirmButtonText: unlock ? "Open and sign" : "Allow",
+    denyButtonText: "Deny",
+    reverseButtons: true,
+    allowOutsideClick: false,
+  });
+  const reason = window.Swal.DismissReason || {};
+  const denied = result.isDenied || result.dismiss === reason.cancel || result.dismiss === reason.esc;
+  await settle(question, result.isConfirmed || denied, {
+    answer: unlock && result.isConfirmed ? result.value || "" : "",
+    cancel: !result.isConfirmed,
+  });
 }
 
 async function showApproval(question) {
@@ -77,6 +115,10 @@ async function show(question) {
   markSeen();
   if (question.kind === "approval") {
     await showApproval(question);
+    return;
+  }
+  if (question.kind === "ssh-key") {
+    await showSSHKey(question);
     return;
   }
   const line = question.prompt || "An answer is needed to continue.";

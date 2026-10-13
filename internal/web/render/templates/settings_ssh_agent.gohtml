@@ -1,0 +1,83 @@
+{{define "settings_ssh_agent.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">SSH agent</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow" id="settings-ssh-agent">
+  {{if and (eq $.FlashProject "settings-ssh-agent") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+  <div class="text-secondary small mb-3">OpenSSH's ssh-agent holds your SSH keys that have a passphrase, one agent each for the cockpit's own git actions, the shells, the coders and the assistants. A key opens on its first use with the passphrase you type in this browser, goes into the agent of every caller and stays there for the time below. The cockpit never holds the key, and nothing keeps the passphrase. Keys without a passphrase are left to ssh.</div>
+  <dc-ssh-keys class="d-block">{{template "ssh_agent_keys" .Agent}}</dc-ssh-keys>
+  <hr class="my-4">
+  <form method="post" action="/settings/ssh-agent" id="settings-ssh-agent-policy">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="hidden" name="form" value="policy">
+    <h4 class="mb-1">Who may sign</h4>
+    <div class="text-secondary small mb-3">Each kind of caller has a socket and a policy of its own, a policy guards against an accident, not against intent. Ask shows a dialog on every use that names the kind and the commands connected. With Off the agent offers no key, ssh asks for the passphrase itself. Switching a caller from Allow to Ask or Off locks the keys for it.</div>
+    {{range .Policies}}
+    <div class="mb-3 row">
+      <div class="col-12 col-sm-7 col-lg-5">
+        <label class="form-label" for="ssh-agent-policy-{{.Kind}}">{{.Label}}</label>
+        <select class="form-select" id="ssh-agent-policy-{{.Kind}}" name="policy_{{.Kind}}">
+          <option value="allow"{{if eq .Value "allow"}} selected{{end}}>Allow</option>
+          <option value="ask"{{if eq .Value "ask"}} selected{{end}}>Ask in the browser</option>
+          <option value="deny"{{if eq .Value "deny"}} selected{{end}}>Off</option>
+        </select>
+      </div>
+    </div>
+    {{end}}
+    <div class="mb-3 row">
+      <div class="col-12 col-sm-7 col-lg-5">
+        <label class="form-label" for="ssh-agent-ttl">Keep a key open for</label>
+        <div class="input-group">
+          <input class="form-control" type="number" id="ssh-agent-ttl" name="ttl_minutes" min="1" max="{{.MaxTTL}}" step="1" value="{{.TTLMinutes}}" required>
+          <span class="input-group-text">minutes</span>
+        </div>
+        <div class="form-text">Counted from the moment it opened. A shorter time applies to open keys at once, a longer one to the keys opened from then on.</div>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary">Save</button>
+  </form>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{define "settings_ssh_agent_keys.gohtml"}}{{template "ssh_agent_keys" .}}{{end}}
+
+{{define "ssh_agent_keys"}}
+<div data-ssh-keys-body>
+  {{if .External}}
+  <div class="alert alert-info mb-0" data-ssh-agent-external>SSH_AUTH_SOCK was set when the cockpit started, so the host's agent answers and the cockpit runs none of its own: <code class="text-break">{{.External}}</code></div>
+  {{else if .Active}}
+  {{if .Keys}}
+  <div class="list-group list-group-flush">
+    {{range .Keys}}
+    <div class="list-group-item px-0 d-flex align-items-center gap-2 flex-wrap" data-ssh-key="{{.Fingerprint}}">
+      <div class="flex-fill dc-min0">
+        <code class="text-break">{{.Path}}</code>
+        <div class="text-secondary small text-break">{{.Type}} {{.Fingerprint}}{{if .Comment}} &middot; {{.Comment}}{{end}}</div>
+      </div>
+      {{if not .Protected}}
+      <span class="badge bg-secondary-lt" data-ssh-key-state="plain">No passphrase</span>
+      {{else if .Open}}
+      <span class="badge bg-green-lt" data-ssh-key-state="open">Open, <span data-ssh-key-left data-left="{{.LeftMS}}"></span></span>
+      <form method="post" action="/settings/ssh-agent">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="form" value="forget">
+        <input type="hidden" name="fingerprint" value="{{.Fingerprint}}">
+        <button type="submit" class="btn btn-sm" data-ssh-key-forget>Forget</button>
+      </form>
+      {{else}}
+      <span class="badge bg-secondary-lt" data-ssh-key-state="locked">Locked</span>
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="text-secondary">No key found, the agent looks for <code>id_rsa</code>, <code>id_ecdsa</code> and <code>id_ed25519</code> in <code>~/.ssh</code>.</div>
+  {{end}}
+  {{else}}
+  <div class="alert alert-info mb-0" data-ssh-agent-missing>OpenSSH's <code>ssh-agent</code>, <code>ssh-add</code> and <code>ssh-keygen</code> were not all found when the cockpit started, so it runs no agent and ssh reads its keys itself.</div>
+  {{end}}
+</div>
+{{end}}

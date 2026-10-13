@@ -248,7 +248,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Push and pull from a terminal",
 					Tag:      "Coder",
 					TagClass: "bg-secondary-lt",
-					Desc:     `An ssh key with a passphrase has nobody to ask in a terminal, so <code>dev-cockpit git</code> runs any git command through the cockpit: same directory, git's own output and exit code, and the question reaches you as a dialog in the browser. Every installed coder gets a skill for it, listed under Settings &rarr; Coder &rarr; Skills as <span class="badge bg-secondary-lt">Managed</span> and not editable there.`,
+					Desc:     `Without the cockpit's SSH agent, an ssh key with a passphrase has nobody to ask in a terminal, so <code>dev-cockpit git</code> runs any git command through the cockpit: same directory, git's own output and exit code, and the question reaches you as a dialog in the browser. With the agent it signs under the policy of the terminal or the assistant it runs in. Every installed coder gets a skill for it, listed under Settings &rarr; Coder &rarr; Skills as <span class="badge bg-secondary-lt">Managed</span> and not editable there.`,
 				},
 			},
 		},
@@ -644,6 +644,12 @@ func DocsTopics() []DocsTopic {
 					Tag:      "Coder",
 					TagClass: "bg-secondary-lt",
 					Desc:     `Settings &rarr; Coder &rarr; Status line builds the line under claude's prompt from a list of values, separators and line breaks. A preset fills the list, Save keeps it. A number is colored by bounds, the highest one reached wins. A value without an answer leaves the line with the separator before it. A command runs in the coder's folder without a shell, gets claude's status JSON on stdin and is dropped after five seconds. Only <em>Weekly, one model</em> calls the usage API. The mode is read when a coder starts or resumes, the list at its next redraw, at most ten seconds later. <em>If ~/.claude/settings.json sets none</em>, the default, checks only that file. Claude's own settings files are never written.`,
+				},
+				{
+					Title:    "SSH agent",
+					Tag:      "Setting",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Started without <code>SSH_AUTH_SOCK</code> and with OpenSSH's <code>ssh-agent</code> and <code>ssh-add</code> installed, the cockpit runs an <code>ssh-agent</code> for the keys with a passphrase among <code>~/.ssh/id_rsa</code>, <code>id_ecdsa</code> and <code>id_ed25519</code>, one each for its git actions, for shells and coders started since and for the turns of the assistants, checks and reactions included. The cockpit never holds a key itself. Each of the four kinds has a socket and a policy of its own, <code>dev-cockpit git</code> signs under the kind its terminal or turn belongs to. The policy guards against an accident, not against intent: every process of yours may reach every socket. The first signature asks for the passphrase in a dialog naming the kind of caller, the key and the commands connected to the socket, then <code>ssh-add</code> puts the key into the agent of every kind, one hour by default. Allow adds it as it is, ask and off with confirmation, so the agent asks in the browser on every use under ask, and the cockpit confirms it under allow and refuses it under off. A kind switched from allow to ask or off has its keys locked. A question nobody answers ends after two minutes and the signature fails, so a check or a reaction nobody watches waits no longer. A restart of the cockpit locks every key, the sockets of running terminals keep working. The fetch that runs on its own when the git sheet or the branch picker opens gets no key, with a passphrase it fails without a word, <em>Fetch</em> in the sheet signs. Settings &rarr; SSH agent shows each key with its time left, <em>Forget</em> takes it out of every agent, and sets allow, ask or off per caller: git actions of the UI allow, shells, coders and assistants ask. With off the agent offers no key, ssh asks for the passphrase itself.`,
 				},
 				{
 					Title:    "Back up and move your setup",

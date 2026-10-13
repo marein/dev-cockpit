@@ -236,6 +236,14 @@ emit '{"type":"system","subtype":"status","status":"working"}'
 
 answer="Fake claude answer."
 case "$prompt" in
+  RUN_SCRIPT=*)
+    # The way claude's Bash tool runs a command: a child of this turn, in its
+    # workspace and with its environment. The runner wrote the script.
+    script=${prompt#RUN_SCRIPT=}
+    script=${script%%[[:space:]]*}
+    answer=$(sh "$script" 2>&1 | tail -c 2000)
+    [ -n "$answer" ] || answer="ran $script"
+    ;;
   ECHO_ANSWER*)
     # The answer is the prompt after its first line, a line at a time with a
     # pause between, so a runner writes the answer it checks and reads it

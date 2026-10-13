@@ -13,13 +13,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/git"
+	"github.com/marein/dev-cockpit/internal/sshagent"
 )
 
 // gitProxyRequest is one proxied git command line: the arguments exactly as
 // they were typed behind `dev-cockpit git`, plus the caller's own working
 // directory, which is where git will run.
 //
-// The caller sends the raw directory and nothing else. It carries no project
+// Where it runs is the raw directory and nothing else. It carries no project
 // and no projects root: naming a project would be a second way to say where
 // the call runs, and a projects root would be a second copy of a value only
 // the server is authoritative for, which is exactly where the two disagreed
@@ -27,6 +28,9 @@ import (
 type gitProxyRequest struct {
 	CWD  string   `json:"cwd"`
 	Args []string `json:"args"`
+	// SSHAuthSock is the caller's own, which names the kind of its socket of
+	// the ssh agent, empty from a caller that has none.
+	SSHAuthSock string `json:"sshAuthSock,omitempty"`
 }
 
 // gitProxyNoDir is what a caller reads that sent no usable directory. It is
@@ -79,7 +83,7 @@ func (s *Server) handleGitProxy(c *gin.Context) {
 	// answers a passphrase here is answering for a caller they cannot see,
 	// typed in a terminal or by a coding agent, so the dialog shows what is
 	// about to run and in which checkout.
-	action, prompt, open := s.promptActionCommand(scope, git.Subcommand(req.Args), commandLine(req.Args), dir)
+	action, prompt, open := s.promptActionCommand(scope, git.Subcommand(req.Args), commandLine(req.Args), dir, s.proxyKind(c, req.SSHAuthSock))
 	if !open {
 		c.JSON(http.StatusConflict, gin.H{"error": gitInUse})
 		return
@@ -110,6 +114,18 @@ func (s *Server) handleGitProxy(c *gin.Context) {
 		"stdout":   base64.StdEncoding.EncodeToString(result.Stdout),
 		"stderr":   base64.StdEncoding.EncodeToString(cancelNote(action, result)),
 	})
+}
+
+// proxyKind is the kind of the ssh agent a proxied call signs under: the one
+// whose socket the caller's environment names, for a call over the local
+// socket alone, so a browser never borrows a terminal's policy. A path that
+// names none leaves the call without the agent.
+func (s *Server) proxyKind(c *gin.Context, sock string) sshagent.Kind {
+	if s.sshAgent == nil || !s.localCall(c) {
+		return ""
+	}
+	kind, _ := s.sshAgent.KindOf(sock)
+	return kind
 }
 
 // gitProxyScope answers the directory git will run in and the name everything
@@ -183,9 +199,13 @@ const maxCommandLine = 300
 // text to read, and the cut at maxCommandLine never hides the subcommand: it
 // is the first word behind "git", the route saw to that.
 func commandLine(args []string) string {
-	parts := make([]string, 0, len(args)+1)
-	parts = append(parts, "git")
-	for _, arg := range args {
+	return argvLine(append([]string{"git"}, args...))
+}
+
+// argvLine spells any argument list for the dialog, cut at maxCommandLine.
+func argvLine(argv []string) string {
+	parts := make([]string, 0, len(argv))
+	for _, arg := range argv {
 		parts = append(parts, readableArg(arg))
 	}
 	line := strings.Join(parts, " ")

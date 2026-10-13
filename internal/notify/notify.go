@@ -127,6 +127,24 @@ func ApprovalTargetID(targetID string) string {
 	return strings.TrimPrefix(targetID, ApprovalTargetPrefix)
 }
 
+// SSHKeyTargetPrefix names the targets of the standing questions a terminal
+// or an assistant's turn asks the cockpit's ssh agent (`ssh-key:<id>`), one
+// per question, under the rules of the approval targets.
+const SSHKeyTargetPrefix = "ssh-key:"
+
+// SSHKeyTarget is the target id one such question reports under.
+func SSHKeyTarget(id string) string { return SSHKeyTargetPrefix + id }
+
+// IsSSHKeyTarget reports whether an id is one of them.
+func IsSSHKeyTarget(targetID string) bool {
+	return strings.HasPrefix(targetID, SSHKeyTargetPrefix)
+}
+
+// SSHKeyTargetID answers the question such an id names.
+func SSHKeyTargetID(targetID string) string {
+	return strings.TrimPrefix(targetID, SSHKeyTargetPrefix)
+}
+
 // WorktreeTarget is the target id a worktree project's failed post script
 // reports under.
 func WorktreeTarget(project string) string { return "worktree:" + project }

@@ -1,6 +1,6 @@
 package coder
 
-// TODO(v2.0.0): delete this file together with internal/proctree. It only
+// TODO(v2.0.0): delete this file, internal/proctree stays for the ssh agent. It only
 // attributes coder panes created before panes carried the @dc_coder tmux
 // options; those sessions are identified by the DEV_COCKPIT_PROVIDER variable
 // in their process environment. Once no pre-option sessions can be running

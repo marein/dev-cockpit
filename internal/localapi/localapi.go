@@ -93,13 +93,8 @@ func resolve(stateDir string) string {
 // connections.
 func Listen(stateDir string) (net.Listener, error) {
 	path := SocketPath(stateDir)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	// MkdirAll applies the umask and leaves an existing directory alone, so the
-	// mode is set explicitly. This is the access rule of the whole local API.
-	if err := os.Chmod(dir, 0o700); err != nil {
+	// The directory's permission is the access rule of the whole local API.
+	if err := filesystem.PrivateDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

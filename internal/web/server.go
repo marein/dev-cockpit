@@ -39,6 +39,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/settings"
 	"github.com/marein/dev-cockpit/internal/share"
 	"github.com/marein/dev-cockpit/internal/shell"
+	"github.com/marein/dev-cockpit/internal/sshagent"
 	"github.com/marein/dev-cockpit/internal/update"
 	"github.com/marein/dev-cockpit/internal/voice"
 	"github.com/marein/dev-cockpit/internal/web/render"
@@ -133,6 +134,9 @@ type Server struct {
 	// fast, which is also what the tests run with.
 	askpassBroker *askpass.Broker
 	askpassScript string
+	// sshAgent is the cockpit's ssh agent, nil in the tests. A git action
+	// gets the socket of its caller's kind from it, see beginPrompt.
+	sshAgent *sshagent.Service
 	// gitPromptNoticed is which notification targets of standing askpass
 	// questions (questionTarget: a proxied git question's project, an
 	// approval's run) have an unread entry right now, guarded by its own
@@ -415,7 +419,7 @@ func requestIsSecure(c *gin.Context) bool {
 // entry a killed process left unread would claim a question forever.
 func (s *Server) SetAskpass(broker *askpass.Broker, script string) {
 	for target := range s.notifier.UnreadTargets() {
-		if notify.IsGitPromptTarget(target) || notify.IsApprovalTarget(target) {
+		if notify.IsGitPromptTarget(target) || notify.IsApprovalTarget(target) || notify.IsSSHKeyTarget(target) {
 			s.notifier.MarkTargetRead(target)
 		}
 	}

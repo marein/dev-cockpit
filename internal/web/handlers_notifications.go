@@ -172,6 +172,11 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "backupreviews", Data: map[string]int{"count": s.backups.PendingReviewCount()}}); err != nil {
 		return
 	}
+	// A bare sshagent signal: a key that opened or closed while the socket was
+	// down shows on the SSH agent page.
+	if err := writeEnvelope(w, eventbus.Event{Type: "sshagent"}); err != nil {
+		return
+	}
 	// A bare costs signal: the cost item and the cost page pull their numbers,
 	// a booking made while the socket was down included.
 	if err := writeEnvelope(w, eventbus.Event{Type: "costs"}); err != nil {

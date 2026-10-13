@@ -100,11 +100,15 @@ func (s *Server) assistantLabel(id string) string {
 
 // questionTarget is the notification entry a standing question holds while it
 // stands, empty for one that holds none: a proxied git question under its
-// project, an approval under its id. It is decided here and handed to the
-// dialog with the question, never worked out again in the browser.
+// project, an approval under its id, a question of the ssh agent nobody in
+// the app started under its own. It is decided here and handed to the dialog
+// with the question, never worked out again in the browser.
 func questionTarget(q askpass.Question) string {
 	if id, ok := askpass.ApprovalID(q.Key); ok && q.Kind == askpass.KindApproval {
 		return notify.ApprovalTarget(id)
+	}
+	if id, ok := askpass.SSHKeyID(q.Key); ok && q.Kind == askpass.KindSSHKey && q.External {
+		return notify.SSHKeyTarget(id)
 	}
 	if q.External {
 		return notify.GitPromptTarget(q.Project)

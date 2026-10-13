@@ -77,6 +77,8 @@ func TestEveryKindIsBuiltTheSameWayRound(t *testing.T) {
 		{"approval nobody names", "Assistant asks approval.", "Assistant: an action", func() (string, string) {
 			return approvalNews("", "")
 		}},
+		{"ssh key", "SSH key wanted.", "Shell", func() (string, string) { return sshKeyNews("Shell") }},
+		{"ssh key nobody names", "SSH key wanted.", "A terminal", func() (string, string) { return sshKeyNews("") }},
 		{"compose failed", "Compose failed.", "Compose up", run("Compose up", "exit 1")},
 		{"long coder", "Coder has news.", "notification-titel-reihenfolge", func() (string, string) {
 			return coderNews("notification-titel-reihenfolge")

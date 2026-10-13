@@ -87,6 +87,7 @@ type Service struct {
 	onChange func()
 	onDone   func(instanceID string)
 	render   func(string) (string, error)
+	agent    []string
 
 	// events is the reactor: where an event a source publishes goes, and where
 	// the triggers live. Built with the service, see newReactor.
@@ -136,6 +137,13 @@ func newService(store *Store, runs *RunStore, coders Coders, workdirs Workdirs) 
 func (s *Service) SetHooks(onChange func(), onDone func(instanceID string)) {
 	s.onChange = onChange
 	s.onDone = onDone
+}
+
+// SetAgent hands every turn started from now on, a chat turn, a check or a
+// reaction, the environment of the assistants' socket of the cockpit's ssh
+// agent. It is set at wiring time, before the first turn starts.
+func (s *Service) SetAgent(env []string) {
+	s.agent = env
 }
 
 // SetRenderer installs the Markdown renderer used while an answer streams. The
