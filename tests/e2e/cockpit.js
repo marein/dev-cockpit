@@ -15,8 +15,9 @@ const { assert, sleep, BASE } = L;
 // area `cockpit` (GET /ctx/cockpit), a dialog labelled Cockpit, as tall as
 // every other list sheet, that takes the focus and gives it back to the tab:
 // the server's CPU, RAM and disk in one row (read only, the plain numbers in
-// the tooltip), the three newest notifications one line each with Show all
-// (the area `news`, labelled Notifications, every entry and Mark all read),
+// the tooltip), the three newest notifications one line each with Mark all
+// read left of Show all (the area `news`, labelled Notifications, every entry
+// and Mark all read),
 // the theme, costs, update and logout tiles (one height, the theme and the
 // costs tile squares, the costs tile a link to /costs),
 // then the settings sections, the Settings head counting the open backup
@@ -381,11 +382,109 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
       rendered = await serverDot("/projects");
       assert(rendered && !rendered.shown, `a resolved review still renders ${JSON.stringify(rendered)}`);
     });
+
+    await run("the sheet's Mark all read reads a real notification: its row, the dot, the bell, the title and the server follow", async () => {
+      const real = (route) => route.request().method() === "GET" ? route.continue() : route.fallback();
+      const counters = () => mp.evaluate((sel) => {
+        const badge = document.querySelector(".dc-rail .dc-notify-badge");
+        return {
+          dot: getComputedStyle(document.querySelector(`${sel} [data-cockpit-dot]`)).display !== "none",
+          bell: badge.classList.contains("d-none") ? "" : badge.textContent,
+          title: /^\(\d+\+?\) /.test(document.title),
+        };
+      }, COCKPIT);
+      await mp.route("**/notifications", real);
+      try {
+        assert(await readAll() < 400, "marking everything read failed");
+        await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+        await sleep(800);
+        const target = `cockpit-read-${Date.now().toString(36)}`;
+        const dir = `${STATE_DIR}/notification-inbox/copilot`;
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(`${dir}/${target}.tmp`, JSON.stringify({ session_id: target, hook_event_name: "Stop" }));
+        fs.renameSync(`${dir}/${target}.tmp`, `${dir}/${target}.json`);
+        await mp.waitForFunction((sel) => getComputedStyle(document.querySelector(`${sel} [data-cockpit-dot]`)).display !== "none", COCKPIT, { timeout: 10000 });
+        const before = await counters();
+        assert(before.dot && before.bell === "1" && before.title, `with one notification unread ${JSON.stringify(before)}`);
+        await openCockpit(mp);
+        const row = `${SHEET} [data-cockpit-section=news] a[data-notify-target="${target}"]`;
+        await mp.waitForSelector(`${row}.dc-notify-unread .status-dot`, { state: "visible", timeout: 8000 });
+        await mp.tap(`${SHEET} [data-cockpit-section=news] .dc-notify-read-all`);
+        await mp.waitForFunction((sel) => {
+          const a = document.querySelector(sel);
+          return a && !a.classList.contains("dc-notify-unread") && ![...a.querySelectorAll(".status-dot")].some((d) => d.getClientRects().length > 0);
+        }, row, { timeout: 8000 });
+        await mp.waitForFunction((sel) => getComputedStyle(document.querySelector(`${sel} [data-cockpit-dot]`)).display === "none", COCKPIT, { timeout: 6000 });
+        const after = await counters();
+        assert(!after.dot && after.bell === "" && !after.title, `after Mark all read ${JSON.stringify(after)}`);
+        const server = await mp.evaluate((id) => fetch("/notifications").then((r) => r.json()).then((d) => ({
+          unread: d.unread, read: (d.notifications || []).filter((n) => n.targetId === id).every((n) => n.read),
+        })), target);
+        assert(server.unread === 0 && server.read, `the server still holds news: ${JSON.stringify(server)}`);
+        assert(!(await mp.$("dc-ctx-sheet[hidden]")), "Mark all read closed the sheet");
+        await closeSheet(mp);
+      } finally {
+        await mp.unroute("**/notifications", real);
+      }
+    });
   } else {
     await run("the Cockpit dot against the server (needs STATE_DIR mount)", async () => {
       throw new Error("STATE_DIR not set, skipping the rendered dot checks");
     }, { soft: true });
   }
+
+  await run("Mark all read stands left of Show all, reads every news entry in place and keeps the sheet", async () => {
+    let posted = null;
+    const record = (route) => {
+      const req = route.request();
+      if (req.method() === "POST") posted = { body: req.postData(), token: Boolean(req.headers()["x-csrf-token"]) };
+      return route.continue();
+    };
+    const afterRead = (route) => route.request().method() === "GET" && posted
+      ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ notifications: FAKE.map((n) => ({ ...n, read: true })), unread: 0 }) })
+      : route.fallback();
+    await mp.route("**/notifications/read", record);
+    await mp.route("**/notifications", afterRead);
+    const news = () => mp.$$eval(`${SHEET} [data-cockpit-section=news] a[data-notify-id]`, (rows) => rows.map((a) => ({
+      id: a.dataset.notifyId,
+      unread: a.classList.contains("dc-notify-unread") || [...a.querySelectorAll(".status-dot")].some((d) => d.getClientRects().length > 0) || /unread/.test(a.textContent),
+    })));
+    try {
+      await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      await openCockpit(mp);
+      await mp.waitForSelector(`${SHEET} [data-cockpit-section=news] a[data-notify-id]`, { timeout: 8000 });
+      const row = await mp.evaluate((sel) => {
+        const box = (el) => {
+          const r = el && el.getBoundingClientRect();
+          return r && el.getClientRects().length > 0 ? { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top) } : null;
+        };
+        const section = document.querySelector(`${sel} [data-cockpit-section=news]`);
+        const read = section.querySelector(".dc-notify-read-all");
+        return { text: read && read.textContent.trim(), read: box(read), all: box(section.querySelector("[data-cockpit-show-all]")) };
+      }, SHEET);
+      assert(row.text === "Mark all read" && row.read && row.all, `the News row ${JSON.stringify(row)}`);
+      assert(Math.abs(row.read.top - row.all.top) <= 2 && row.read.right < row.all.left, `Mark all read is not left of Show all on its row: ${JSON.stringify(row)}`);
+      const before = await news();
+      assert(before.filter((n) => n.unread).map((n) => n.id).join(",") === "cockpit-fake-1,cockpit-fake-2", `before the tap the unread entries are ${JSON.stringify(before)}`);
+      await mp.tap(`${SHEET} [data-cockpit-section=news] .dc-notify-read-all`);
+      await mp.waitForFunction((sel) => {
+        const rows = [...document.querySelectorAll(`${sel} [data-cockpit-section=news] a[data-notify-id]`)];
+        return rows.length === 3 && rows.every((a) => !a.classList.contains("dc-notify-unread") && ![...a.querySelectorAll(".status-dot")].some((d) => d.getClientRects().length > 0));
+      }, SHEET, { timeout: 8000 });
+      const after = await news();
+      assert(after.map((n) => n.id).join(",") === "cockpit-fake-1,cockpit-fake-2,cockpit-fake-3" && after.every((n) => !n.unread), `after the tap the entries are ${JSON.stringify(after)}`);
+      assert(posted && new URLSearchParams(posted.body).get("all") === "1" && posted.token, `the tap posted ${JSON.stringify(posted)}`);
+      const sheet = await mp.evaluate(() => {
+        const panel = document.querySelector("dc-ctx-sheet [data-ctx-sheet-panel]");
+        return { open: !document.querySelector("dc-ctx-sheet").hidden, label: panel.getAttribute("aria-label"), inside: panel.contains(document.activeElement) };
+      });
+      assert(sheet.open && sheet.label === "Cockpit" && sheet.inside, `after the tap the sheet ${JSON.stringify(sheet)}`);
+      await closeSheet(mp);
+    } finally {
+      await mp.unroute("**/notifications", afterRead);
+      await mp.unroute("**/notifications/read", record);
+    }
+  });
 
   await run("the sheet: server, news, the four tiles, settings, in that order", async () => {
     await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
