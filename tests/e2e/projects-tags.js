@@ -12,6 +12,7 @@ const { assert, sleep, BASE } = L;
 // written before Save: a rename onto another tag's name shows the merge with
 // the result's color, Remove is staged with Undo, the footer counts the changes, Discard
 // drops them, and a save that removes asks through the cockpit's confirm.
+// With no tags the page says so alone, without the filter and Select all.
 // Selected rows merge (the dialog asks which name and color live on and names
 // the projects), take a color or go at once. A page loaded before a change
 // elsewhere saves nothing and keeps what it sent. On the board a row names its
@@ -103,7 +104,7 @@ async function openSettings(page, filter) {
   await page.goto(`${BASE}/settings/projects/tags`, { waitUntil: "domcontentloaded" });
   await L.dismissUpdate(page);
   await page.waitForFunction(() => customElements.get("dc-tags-settings") && document.querySelector("dc-tags-settings [data-tags-pending]"), null, { timeout: 12000 });
-  if (filter) await page.fill(`${SETTINGS} [data-tags-filter]`, filter);
+  if (filter && await page.isVisible(`${SETTINGS} [data-tags-filter]`)) await page.fill(`${SETTINGS} [data-tags-filter]`, filter);
 }
 
 const row = (id) => `${SETTINGS} [data-tag-row="${id}"]`;
@@ -128,6 +129,56 @@ module.exports.tagChecks = async function tagChecks({ page, run, mobilePage, pro
   const third = `tc-${tag}`;
   const ten = Array.from({ length: 10 }, (_, i) => `t${i}-${tag}`);
   let firstID = "";
+
+  await run("tags: at 390px the settings with no tags say so in a row's inset without stacked lines, no filter and no Select all, while a first tag comes and goes too, and No tag matches only over tags the filter hides", async () => {
+    const mp = await mobilePage();
+    const lone = `te-${tag}`;
+    const expect = async (want, when) => {
+      const got = {};
+      for (const [key, sel] of Object.entries({ empty: "[data-tags-empty]", none: "[data-tags-none]", head: "[data-tags-head]", filter: ".dc-tags-filter" })) got[key] = await shown(mp, `${SETTINGS} ${sel}`);
+      assert(JSON.stringify(got) === JSON.stringify(want), `${when} shows ${JSON.stringify(got)}`);
+    };
+    const inset = (sel, text) => mp.$eval(`${SETTINGS} ${sel}`, (el, byText) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const box = byText ? range.getBoundingClientRect() : el.getBoundingClientRect();
+      return Math.round(box.left - el.closest(".card").getBoundingClientRect().left);
+    }, text);
+    const lines = (sel) => mp.$eval(`${SETTINGS} .dc-tags-list`, (card, inner) => {
+      const cs = getComputedStyle(card);
+      return card.getBoundingClientRect().height - parseFloat(cs.borderTopWidth) - parseFloat(cs.borderBottomWidth) - card.querySelector(inner).getBoundingClientRect().height;
+    }, sel);
+    await openSettings(mp);
+    assert((await mp.locator(`${SETTINGS} [data-tag-row]`).count()) === 0, "the instance holds tags already, the empty state needs one without");
+    const nothing = { empty: true, none: false, head: false, filter: false };
+    await expect(nothing, "a page with no tags");
+    const text = await inset("[data-tags-empty]", true);
+    const around = await lines("[data-tags-empty]");
+    assert(Math.abs(around) < 0.5, `the card stacks ${around}px of lines around its line`);
+
+    await mp.click("[data-tags-add]");
+    await expect({ ...nothing, empty: false }, "a first new tag");
+    const row = await inset("[data-tag-new] .dc-tag-row-check", false);
+    const aroundNew = await lines("[data-tag-new]");
+    assert(Math.abs(aroundNew) < 0.5, `the card stacks ${aroundNew}px of lines around the new row`);
+    assert(text >= 12 && Math.abs(text - row) <= 1, `the line starts ${text}px into the card, a row's content ${row}px`);
+    await mp.click(`${SETTINGS} [data-tag-new] [data-tag-drop]`);
+    await expect(nothing, "the first new tag dropped");
+
+    await mp.click("[data-tags-add]");
+    await mp.fill(`${SETTINGS} [data-tag-new] [data-tag-name]`, lone);
+    await saveSettings(mp, false);
+    const tags = { empty: false, none: false, head: true, filter: true };
+    await expect(tags, "a page with one tag");
+    await mp.fill(`${SETTINGS} [data-tags-filter]`, `zz-${tag}`);
+    await expect({ ...tags, none: true }, "a filter over every tag");
+    await mp.fill(`${SETTINGS} [data-tags-filter]`, "");
+    await mp.click(`${SETTINGS} [data-tag-row][data-loaded-name="${lone}"] [data-tag-remove]`);
+    await expect(tags, "the last tag staged for removal");
+    await saveSettings(mp, true);
+    await mp.waitForSelector(`${SETTINGS} [data-tag-row]`, { state: "detached", timeout: 8000 });
+    await expect(nothing, "the last tag removed");
+  });
 
   await run("tags: the bar's pencil leads to Settings › Projects › Tags, a row per tag with its color, name and projects, the filter counts, a count shows the board filtered by its tag", async () => {
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });

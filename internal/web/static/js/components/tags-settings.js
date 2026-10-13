@@ -254,7 +254,7 @@ class TagsSettings extends HTMLElement {
     }
     this.querySelector("[data-tags-filter-count]").textContent = query === "" ? counted(rows.length, "tag", "tags") : `${shown} of ${rows.length}`;
     this.querySelector("[data-tags-filter-clear]").classList.toggle("d-none", query === "");
-    this.querySelector("[data-tags-none]").hidden = shown > 0;
+    this.querySelector("[data-tags-none]").hidden = shown > 0 || rows.length === 0;
     this.update();
   }
 

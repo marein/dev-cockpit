@@ -227,6 +227,8 @@ button.dc-tag:disabled { cursor: default; }
 }
 .dc-tags-head.is-selecting { background: var(--tblr-bg-surface-secondary); border-radius: 0; }
 .dc-tags-bulk { display: flex; gap: 0.25rem; margin-left: auto; }
+.dc-tags-list > .list-group { border-block: 0; }
+.dc-tags-list > .list-group:has(> :not([hidden])) ~ .list-group:has(> :not([hidden])) { border-top: var(--tblr-border-width) solid var(--tblr-border-color); }
 .dc-tag-row {
   display: grid;
   grid-template-columns: auto auto minmax(0, 22rem) 1fr auto auto;

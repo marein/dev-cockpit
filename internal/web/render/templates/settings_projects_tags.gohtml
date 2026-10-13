@@ -17,9 +17,9 @@
     {{template "flash.gohtml" .}}
     <div class="dc-narrow">
       <div class="form-label">Tags</div>
-      <div class="text-secondary small mb-2">A tag has one name and one color on every project, and lives without any until it is removed here. Rename a tag to another tag's name and the two merge. A removed tag comes off every project. Nothing changes before Save.</div>
+      <div class="text-secondary small mb-2">A tag has one name and one color on every project. It stays even without projects until it is removed here. Rename a tag to another tag's name and the two merge. A removed tag comes off every project. Nothing changes before Save.</div>
       {{if not .Unread}}
-      <div class="dc-filter dc-filter-flow dc-tags-filter mb-3">
+      <div class="dc-filter dc-filter-flow dc-tags-filter mb-3"{{if not .Rows}} hidden{{end}}>
         <i class="ti ti-search" aria-hidden="true"></i>
         <input type="text" class="dc-filter-input" data-tags-filter placeholder="Filter tags…" aria-label="Filter tags" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true">
         <span class="dc-filter-side">
@@ -29,8 +29,8 @@
       </div>
       <form method="post" action="/settings/projects/tags" id="settings-projects-tags" autocomplete="off" data-tags-form>
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <div class="card">
-          <div class="dc-tags-head" data-tags-head>
+        <div class="card dc-tags-list">
+          <div class="dc-tags-head" data-tags-head{{if not .Rows}} hidden{{end}}>
             <label class="d-flex align-items-center gap-2 m-0">
               <input class="form-check-input m-0" type="checkbox" data-tags-all aria-label="Select every tag shown">
               <span class="text-secondary text-nowrap" data-tags-selected>Select all</span>
@@ -44,8 +44,10 @@
           <div class="list-group list-group-flush" data-tags-rows>
             {{range .Rows}}{{template "settings_tag_row.gohtml" .}}{{end}}
           </div>
-          <div class="list-group-item text-secondary" data-tags-none hidden>No tag matches the filter.</div>
-          {{if not .Rows}}<div class="list-group-item text-secondary" data-tags-empty>No tags yet. Add one here, or give a project some through the dashed chip under its name.</div>{{end}}
+          <div class="list-group list-group-flush">
+            <div class="list-group-item text-secondary" data-tags-none hidden>No tag matches the filter.</div>
+            {{if not .Rows}}<div class="list-group-item text-secondary" data-tags-empty{{if .New}} hidden{{end}}>No tags yet. Add one here, or give a project some through the dashed chip under its name.</div>{{end}}
+          </div>
           <div class="list-group list-group-flush" data-tags-new>
             {{range .New}}{{template "settings_tag_new.gohtml" .}}{{end}}
           </div>
