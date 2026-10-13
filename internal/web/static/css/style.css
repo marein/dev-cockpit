@@ -1934,10 +1934,17 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
    It has to sit on the scroller, not on the surface around it: the touch hits a
    .cm-line, and the value that decides a pan is read from the hit element up to
    the element that will do the scrolling, which is .cm-scroller. A value above
-   that scroller is never consulted. */
-.editor-surface.editor-swipe-zone, .editor-surface.editor-swipe-zone .cm-scroller, .editor-surface.editor-swipe-zone > .editor-textarea {
+   that scroller is never consulted.
+   In a side by side diff .cm-mergeView is the scroller, the editors inside it
+   grow to their full height and never overflow, so contain on their own boxes
+   would end every wheel there. Contain moves to .cm-mergeView, touch-action
+   stays on the inner boxes the touch lands in. */
+.editor-surface.editor-swipe-zone, .editor-surface.editor-swipe-zone .cm-scroller, .editor-surface.editor-swipe-zone .cm-mergeView, .editor-surface.editor-swipe-zone > .editor-textarea {
   touch-action: pinch-zoom;
   overscroll-behavior: contain;
+}
+.editor-surface.editor-swipe-zone .cm-mergeView .cm-scroller {
+  overscroll-behavior: auto;
 }
 /* Fill the mount via absolute insets, not height:100%. A percentage height does
    not resolve on iOS Safari when the column height comes from flex stretch (the
