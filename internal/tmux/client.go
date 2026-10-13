@@ -30,6 +30,7 @@ type Pane struct {
 	TabGPos   string // @dc_tab_gpos option; the session's position inside its group, raw
 	TabGName  string // @dc_tab_gname option; the group's display name, duplicated on every member
 	TabGCol   string // @dc_tab_gcol option; the column the member's pane renders in, raw
+	SSHAgent  string // @dc_ssh_agent option; the tag of the session's ssh agent socket
 }
 
 // TabPosition parses the pane's tab strip position; 0 when unset or invalid,
@@ -480,7 +481,7 @@ func (c *Client) PasteLiteral(name, text string) error {
 // ListPanes returns the unique first-pane entries for every session.
 func (c *Client) ListPanes() ([]Pane, error) {
 	r := clirun.Run("tmux", "list-panes", "-a", "-F",
-		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}\t#{@dc_shell_dir}\t#{@dc_coder}\t#{@dc_coder_name}\t#{@dc_coder_dir}\t#{@dc_tab_pos}\t#{@dc_tab_group}\t#{@dc_tab_gpos}\t#{@dc_tab_gname}\t#{@dc_tab_gcol}")
+		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}\t#{@dc_shell_dir}\t#{@dc_coder}\t#{@dc_coder_name}\t#{@dc_coder_dir}\t#{@dc_tab_pos}\t#{@dc_tab_group}\t#{@dc_tab_gpos}\t#{@dc_tab_gname}\t#{@dc_tab_gcol}\t#{@dc_ssh_agent}")
 	if r.Err != nil && r.ExitCode != 0 {
 		if isNoServerError(r.Stderr) {
 			return nil, nil
@@ -510,12 +511,12 @@ func parsePanes(out string) []Pane {
 	var panes []Pane
 	for _, raw := range strings.Split(out, "\n") {
 		parts := strings.Split(strings.TrimRight(raw, "\n"), "\t")
-		if len(parts) != 15 {
+		if len(parts) != 16 {
 			continue
 		}
 		name, pid, created, win, pane, shellName, workdir := parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
 		coder, coderName, coderDir, tabPos := parts[7], parts[8], parts[9], parts[10]
-		tabGroup, tabGPos, tabGName, tabGCol := parts[11], parts[12], parts[13], parts[14]
+		tabGroup, tabGPos, tabGName, tabGCol, sshAgent := parts[11], parts[12], parts[13], parts[14], parts[15]
 		if win != "0" || pane != "0" || seen[name] {
 			continue
 		}
@@ -528,6 +529,7 @@ func parsePanes(out string) []Pane {
 			ShellName: shellName, Workdir: workdir,
 			Coder: coder, CoderName: coderName, CoderDir: coderDir,
 			TabPos: tabPos, TabGroup: tabGroup, TabGPos: tabGPos, TabGName: tabGName, TabGCol: tabGCol,
+			SSHAgent: sshAgent,
 		})
 	}
 	sort.Slice(panes, func(i, j int) bool {

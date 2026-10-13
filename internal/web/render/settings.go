@@ -2,7 +2,7 @@ package render
 
 // SettingsNav feeds the settings sidebar, the one navigation every settings
 // page shares (`settings_nav.gohtml`). Active names the entry to mark
-// ("general", "editor", "docker", "notifications", "assistant", "costs",
+// ("general", "editor", "ssh-agent", "docker", "notifications", "assistant", "costs",
 // "coder", "backup", "docs" on the Cockpit sheet). The coder pages are settings of one
 // coder, so the sidebar picks the coder first and the page then shows that
 // coder's sections: with several coders active the entry becomes one row per
@@ -363,4 +363,55 @@ type SettingsNotificationsData struct {
 	StaleDevices   bool
 	Webhooks       []PushWebhook
 	BaseURL        string
+}
+
+// SettingsSSHAgentData feeds the SSH agent settings page: the keys with their
+// state, who may sign, and how long an opened key stays open.
+type SettingsSSHAgentData struct {
+	Page
+	SettingsNav SettingsNav
+	Agent       SSHAgentView
+	Policies    []SSHAgentPolicy
+	TTLMinutes  int
+	MaxTTL      int
+}
+
+// SSHAgentView is the agent's state, the part of the page dc-ssh-keys pulls
+// again when a key opened or closed.
+type SSHAgentView struct {
+	Active    bool
+	External  string
+	Keys      []SSHAgentKey
+	CSRFToken string
+}
+
+// SSHAgentKey is one default key file. Expires is RFC 3339 while it is open,
+// the browser counts down from it.
+type SSHAgentKey struct {
+	Path        string
+	Type        string
+	Fingerprint string
+	Comment     string
+	Protected   bool
+	Open        bool
+	Expires     string
+}
+
+// SSHAgentPolicy is one kind of caller and what the agent does for it.
+type SSHAgentPolicy struct {
+	Kind  string
+	Value string
+}
+
+// Label names the kind of caller on the page.
+func (p SSHAgentPolicy) Label() string {
+	switch p.Kind {
+	case "ui":
+		return "Git actions of the UI"
+	case "shell":
+		return "Shells"
+	case "coder":
+		return "Coders"
+	}
+	return p.Kind
 }

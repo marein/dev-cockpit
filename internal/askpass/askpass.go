@@ -13,6 +13,11 @@
 // question, and it rides the same standing list, the same dialog and the same
 // notification path, see BeginApproval.
 //
+// A third kind belongs to the cockpit's ssh agent: a key that has to be opened
+// with its passphrase, or a caller that may only sign after a yes. It is a
+// typed answer like a git question and stands either on the git action that
+// runs ssh, or, for a terminal, under a key of its own, see BeginSSHKey.
+//
 // The rules the whole package is built around:
 //
 //   - only an action somebody started gets a bridge: nothing here is wired
@@ -187,6 +192,11 @@ type Question struct {
 	Dir       string   `json:"dir,omitempty"`
 	Assistant string   `json:"assistant,omitempty"`
 	Details   []Detail `json:"details,omitempty"`
+	// Unlock and Retry are the ssh agent's: the answer is a key's passphrase,
+	// and the one before did not open it. Without Unlock the question only
+	// asks for a yes.
+	Unlock bool `json:"unlock,omitempty"`
+	Retry  bool `json:"retry,omitempty"`
 }
 
 // Detail is one row an approval dialog shows: a label and its value.
@@ -197,6 +207,21 @@ type Detail struct {
 
 // KindApproval marks a question whose answer is a decision, see BeginApproval.
 const KindApproval = "approval"
+
+// KindSSHKey marks a question of the ssh agent.
+const KindSSHKey = "ssh-key"
+
+// sshKeyPrefix is what a terminal's question of the ssh agent stands under,
+// shaped like the approval's for the same reason.
+const sshKeyPrefix = "ssh-key/"
+
+// SSHKeyKey is the broker key of one question of the ssh agent.
+func SSHKeyKey(id string) string { return sshKeyPrefix + id }
+
+// SSHKeyID answers the id a key names, and whether it names one at all.
+func SSHKeyID(key string) (string, bool) {
+	return strings.CutPrefix(key, sshKeyPrefix)
+}
 
 // approvalKeyPrefix is what an approval stands under in the broker. It
 // carries a slash and starts with a letter, so it is never a project's name,
@@ -342,6 +367,13 @@ func (b *Broker) BeginApproval(key string, q Question) *Action {
 	q.External = true
 	a.approval = &q
 	return a
+}
+
+// BeginSSHKey opens an action for one question of the ssh agent that no git
+// action carries, a terminal's. Nobody in the app started it, so it is
+// external and becomes news. Ask parks the question.
+func (b *Broker) BeginSSHKey(id, action string) *Action {
+	return b.begin(SSHKeyKey(id), action, true, "", "")
 }
 
 func (b *Broker) begin(key, action string, external bool, command, dir string) *Action {
@@ -499,6 +531,9 @@ func (a *Action) AskApproval() (decision Decision, decided bool) {
 	return got.decision, ok && !got.ended
 }
 
+// Done is closed when the action ended.
+func (a *Action) Done() <-chan struct{} { return a.done }
+
 // Cancelled reports whether somebody pressed cancel on a question of this
 // action, which is what turns the refusal message into its honest sentence.
 func (a *Action) Cancelled() bool {
@@ -538,14 +573,20 @@ func (a *Action) End() {
 // ask is the helper's side: park the question and wait for its answer or the
 // action's end. One question at a time per action, the way ssh asks.
 func (a *Action) ask(prompt string) (string, bool) {
-	got, ok := a.park(Question{
-		Project:  a.key,
-		Action:   a.action,
-		Prompt:   prompt,
-		External: a.external,
-		Command:  a.command,
-		Dir:      a.dir,
-	})
+	return a.Ask(Question{Action: a.action, Prompt: prompt, Command: a.command, Dir: a.dir})
+}
+
+// Ask parks a question of this process's own on the action, the ssh agent's,
+// and waits for its typed answer, a cancel or the action's end. The question
+// stands under the action's key and kind of caller, so it is answered,
+// notified and ended like the action's own.
+func (a *Action) Ask(q Question) (string, bool) {
+	if a.approval != nil {
+		return "", false
+	}
+	q.Project = a.key
+	q.External = a.external
+	got, ok := a.park(q)
 	if !ok || got.deny {
 		return "", false
 	}

@@ -76,7 +76,7 @@ new-session)
 	done ;;
 list-panes)
 	if [ -f "` + state + `/sessions" ]; then
-		while read -r name; do printf '%s\t1\t1700000000\t0\t0\t\t\tfake\t%s\t/tmp\t\t\t\t\t\n' "$name" "$name"; done < "` + state + `/sessions"
+		while read -r name; do printf '%s\t1\t1700000000\t0\t0\t\t\tfake\t%s\t/tmp\t\t\t\t\t\t\n' "$name" "$name"; done < "` + state + `/sessions"
 	fi ;;
 esac
 exit 0

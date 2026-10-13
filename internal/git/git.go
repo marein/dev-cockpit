@@ -109,6 +109,10 @@ type Repo struct {
 	// through the askpass bridge; nil is the default and every question
 	// fails fast. Only the user-triggered actions ever set it.
 	prompt *Prompt
+	// env is added to every call of this reader. A call nobody started gets
+	// the ssh agent's quiet socket through it, which never asks, so the fail
+	// fast rule holds.
+	env []string
 }
 
 // Prompt is one action's line to the person in front of the browser: the
@@ -125,6 +129,13 @@ type Prompt struct {
 func (r *Repo) WithPrompt(p *Prompt) *Repo {
 	w := *r
 	w.prompt = p
+	return &w
+}
+
+// WithEnv answers a copy of the reader whose calls carry env as well.
+func (r *Repo) WithEnv(env []string) *Repo {
+	w := *r
+	w.env = env
 	return &w
 }
 
@@ -339,6 +350,7 @@ func (r *Repo) exec(ctx context.Context, name string, argv []string, stderrCap i
 		"SSH_ASKPASS_REQUIRE=force",
 		"GIT_ALLOW_PROTOCOL=http:https:ssh:git:file",
 	)
+	cmd.Env = append(cmd.Env, r.env...)
 	// A call that may ask points its helpers at the bridge instead; the
 	// last value wins, so the fail-fast defaults above stay for everything
 	// else.

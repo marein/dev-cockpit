@@ -142,7 +142,7 @@ func fakeTmux(t *testing.T, id, dir string) {
 	script := "#!/bin/sh\n" +
 		"case \"$1\" in\n" +
 		"list-panes)\n" +
-		"  [ -f '" + marker + "' ] && printf '" + id + "\\t123\\t1700000000\\t0\\t0\\twork\\t" + dir + "\\t\\t\\t\\t\\t\\t\\t\\t\\n'\n" +
+		"  [ -f '" + marker + "' ] && printf '" + id + "\\t123\\t1700000000\\t0\\t0\\twork\\t" + dir + "\\t\\t\\t\\t\\t\\t\\t\\t\\t\\n'\n" +
 		"  ;;\n" +
 		"kill-session)\n" +
 		"  rm -f '" + marker + "'\n" +

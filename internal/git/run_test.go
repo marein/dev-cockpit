@@ -128,6 +128,23 @@ func TestRunForcesEveryPromptToFailFast(t *testing.T) {
 	}
 }
 
+// A reader with its own environment hands it to the call, the agent's quiet
+// socket for a call nobody started, and the fail fast guards stay on it.
+func TestRunCarriesTheReadersEnvironment(t *testing.T) {
+	fakeGit(t, `printf '%s %s' "$SSH_AUTH_SOCK" "$SSH_ASKPASS"`+"\n")
+	t.Setenv("SSH_AUTH_SOCK", "")
+	repo := New(t.TempDir()).WithEnv([]string{"SSH_AUTH_SOCK=/state/ssh-agent/q"})
+
+	out, err := repo.run(context.Background(), []string{"status"}, nil)
+
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := string(out); got != "/state/ssh-agent/q /bin/false" {
+		t.Fatalf("the call carries %q", got)
+	}
+}
+
 // An exit code is git deciding something, everything else is git saying
 // nothing at all. Only the second kind carries ErrNoAnswer, and it is what
 // lets a caller tell "this is no repository" from "git could not be asked".

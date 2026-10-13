@@ -56,7 +56,7 @@ func TestGitPromptNewsFollowsTheStandingQuestions(t *testing.T) {
 
 	// A proxied call, in through the route's own helper: nobody is looking at
 	// a page, so this is the kind that has to leave the app.
-	action, _, open := s.promptActionCommand("demo", "push", "git push", "/srv/projects/demo")
+	action, _, open := s.promptActionCommand("demo", "push", "git push", "/srv/projects/demo", nil)
 	if !open || action == nil {
 		t.Fatal("the bridge must open")
 	}
@@ -113,7 +113,7 @@ func TestGitPromptViewsCarryTheTargetOfTheQuestionsThatHaveOne(t *testing.T) {
 	s, broker, socket := promptNewsServer(t)
 	s.SetAskpass(broker, "/nowhere/helper")
 
-	proxied, _, open := s.promptActionCommand("demo", "push", "git push", "/srv/projects/demo")
+	proxied, _, open := s.promptActionCommand("demo", "push", "git push", "/srv/projects/demo", nil)
 	if !open || proxied == nil {
 		t.Fatal("the bridge must open")
 	}

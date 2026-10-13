@@ -24,9 +24,14 @@ import (
 // the call runs, and a projects root would be a second copy of a value only
 // the server is authoritative for, which is exactly where the two disagreed
 // the moment one of them spelled it `~/projects`.
+//
+// Agent is the caller's SSH_AUTH_SOCK. Where it names a session's socket of
+// the cockpit's ssh agent, the call signs as that session would, under its
+// policy and its name; anything else leaves the call without the agent.
 type gitProxyRequest struct {
-	CWD  string   `json:"cwd"`
-	Args []string `json:"args"`
+	CWD   string   `json:"cwd"`
+	Args  []string `json:"args"`
+	Agent string   `json:"agent"`
 }
 
 // gitProxyNoDir is what a caller reads that sent no usable directory. It is
@@ -79,7 +84,7 @@ func (s *Server) handleGitProxy(c *gin.Context) {
 	// answers a passphrase here is answering for a caller they cannot see,
 	// typed in a terminal or by a coding agent, so the dialog shows what is
 	// about to run and in which checkout.
-	action, prompt, open := s.promptActionCommand(scope, git.Subcommand(req.Args), commandLine(req.Args), dir)
+	action, prompt, open := s.promptActionCommand(scope, git.Subcommand(req.Args), commandLine(req.Args), dir, s.proxyCaller(req.Agent))
 	if !open {
 		c.JSON(http.StatusConflict, gin.H{"error": gitInUse})
 		return
@@ -183,9 +188,13 @@ const maxCommandLine = 300
 // text to read, and the cut at maxCommandLine never hides the subcommand: it
 // is the first word behind "git", the route saw to that.
 func commandLine(args []string) string {
-	parts := make([]string, 0, len(args)+1)
-	parts = append(parts, "git")
-	for _, arg := range args {
+	return argvLine(append([]string{"git"}, args...))
+}
+
+// argvLine spells any argument list for the dialog, cut at maxCommandLine.
+func argvLine(argv []string) string {
+	parts := make([]string, 0, len(argv))
+	for _, arg := range argv {
 		parts = append(parts, readableArg(arg))
 	}
 	line := strings.Join(parts, " ")

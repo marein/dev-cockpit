@@ -89,6 +89,10 @@ cannot show stays at that function, within the comment rule below.
   allowlisted root.
 - Secrets (webhook URLs, keys, passphrases) are stored 0600 outside the
   shared settings store, or never stored and never logged.
+- An opened ssh key lives in `internal/sshagent` and in memory only. A
+  process reaches it through a socket that names its caller: its session's,
+  its git action's, or the quiet one that never asks. A new place that runs
+  ssh picks one of these, nothing sets `SSH_AUTH_SOCK` for the whole process.
 - HTTP to a user supplied URL (webhooks, Web Push, the Ollama host) never follows
   redirects and refuses link local targets (`internal/netguard`).
 - Containers the cockpit runs are built locally from embedded build
@@ -119,7 +123,7 @@ The layers are listed top down, a layer imports only the layers below it.
    `coder` (one subpackage per coder CLI: `claude`, `copilot`,
    `opencode`), `shell`, `terminal`, `project`, `docker`, `git`,
    `editorintelligence`, `voice`, `backup`, `notify`, `push`, `restore`,
-   `update`, `askpass`, `activity`, `hostinfo`, `terminalstate` and `cost`
+   `update`, `askpass`, `sshagent`, `activity`, `hostinfo`, `terminalstate` and `cost`
    (one ledger for every coder CLI, one source per CLI under it, `claude`,
    and the list prices by provider and model in `cost/price`).
 4. **Infrastructure**: `statefile`, `settings`, `recent`, `eventbus`,

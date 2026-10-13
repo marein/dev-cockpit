@@ -378,7 +378,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Push and pull from a terminal",
 					Tag:      "Coder",
 					TagClass: "bg-secondary-lt",
-					Desc:     `An ssh key with a passphrase has nobody to ask in a terminal, so <code>dev-cockpit git</code> runs any git command through the cockpit: same directory, git's own output and exit code, and the question reaches you as a dialog in the browser. Every installed coder gets a skill for it, listed under Settings &rarr; Coder &rarr; Skills as <span class="badge bg-secondary-lt">Managed</span> and not editable there.`,
+					Desc:     `Without the cockpit's SSH agent, an ssh key with a passphrase has nobody to ask in a terminal, so <code>dev-cockpit git</code> runs any git command through the cockpit: same directory, git's own output and exit code, and the question reaches you as a dialog in the browser. With the agent it signs as the terminal it was typed in. Every installed coder gets a skill for it, listed under Settings &rarr; Coder &rarr; Skills as <span class="badge bg-secondary-lt">Managed</span> and not editable there.`,
 				},
 			},
 		},
@@ -763,6 +763,12 @@ func DocsTopics() []DocsTopic {
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",
 					Desc:     `Settings &rarr; Coder &rarr; Ollama, shown once ollama is installed, sets the Ollama host and lists the server's cloud models, Ollama's catalog and names added by hand.`,
+				},
+				{
+					Title:    "SSH agent",
+					Tag:      "Setting",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Started without <code>SSH_AUTH_SOCK</code>, the cockpit is the agent for the keys with a passphrase among <code>~/.ssh/id_rsa</code>, <code>id_ecdsa</code> and <code>id_ed25519</code>, for its git actions and for shells and coders started since. The first signature asks for the passphrase in a dialog naming the caller, the key and the command, then the key stays open in memory, one hour by default. Settings &rarr; SSH agent shows each key with its time left, <em>Forget</em> closes it, and sets allow, ask or deny per caller: git actions of the UI allow, shells and coders ask.`,
 				},
 				{
 					Title:    "Back up and move your setup",
