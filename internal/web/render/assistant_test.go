@@ -30,14 +30,18 @@ func assistantCtxData(cards ...AssistantCard) AssistantCtxData {
 }
 
 // Working is not a fault: while the turn runs the row shows the ring around
-// the assistant's own round icon and says nothing about an unfinished turn.
+// the assistant's own round icon, pinned to the moment the turn started, and
+// says nothing about an unfinished turn.
 func TestAnsweringAssistantRunsTheRingWithoutTheBadge(t *testing.T) {
 	out := renderAssistantCtx(t, assistantCtxData(
-		AssistantCard{ID: "c1", Title: "Live one", URL: "/assistants/c1", Running: true},
+		AssistantCard{ID: "c1", Title: "Live one", URL: "/assistants/c1", Running: 1760443200123},
 		AssistantCard{ID: "c2", Title: "Other one", URL: "/assistants/c2"},
 	))
-	if !strings.Contains(out, "dc-term-icon assistant working") {
-		t.Fatal("the answering row does not run the ring")
+	if !strings.Contains(out, `dc-term-icon assistant working" data-working-since="1760443200123"`) {
+		t.Fatal("the answering row does not run the ring from the start of its turn")
+	}
+	if strings.Count(out, "data-working-since") != 1 {
+		t.Fatal("the idle row carries a start")
 	}
 	if strings.Contains(out, "Unfinished") {
 		t.Fatal("a running turn is shown as unfinished")
@@ -275,4 +279,76 @@ func TestTheSpeakerStandsOnEveryMessageThatCanBeSpoken(t *testing.T) {
 	if strings.Contains(silent, "data-assistant-speak") {
 		t.Fatalf("a message with no audio still offers a speaker: %q", silent)
 	}
+}
+
+// The assistant's other working marks wear the start of their own run the same
+// way: the switcher's rows, a steered coder while a check runs on it and a
+// trigger while its reaction runs. An idle one wears neither the class nor a
+// start.
+func TestEveryAssistantMarkCarriesTheStartOfItsRun(t *testing.T) {
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
+	render := func(name string, data any) string {
+		t.Helper()
+		var out strings.Builder
+		if err := tmpl.ExecuteTemplate(&out, name, data); err != nil {
+			t.Fatalf("render %s: %v", name, err)
+		}
+		return out.String()
+	}
+	const since = 1760443200123
+	for _, c := range []struct {
+		name, html, busy, calm string
+	}{
+		{
+			name: "the switcher's assistant rows",
+			html: render("terminal_tabs.gohtml", Page{QuickNav: QuickNav{Assistants: []AssistantCard{
+				{ID: "busy", Title: "busy", URL: "/assistants/busy", Running: since},
+				{ID: "calm", Title: "calm", URL: "/assistants/calm"},
+			}}}),
+			busy: `data-tabs-assistant-instance="busy"`,
+			calm: `data-tabs-assistant-instance="calm"`,
+		},
+		{
+			name: "the steered coders",
+			html: render("assistant_jobs_list.gohtml", AssistantData{Jobs: []AssistantJobView{
+				{Terminal: "busy", State: "open", Open: true, Checking: since},
+				{Terminal: "calm", State: "open", Open: true},
+			}}),
+			busy: `data-assistant-job="busy"`,
+			calm: `data-assistant-job="calm"`,
+		},
+		{
+			name: "the triggers",
+			html: render("assistant_triggers_list.gohtml", AssistantTriggersData{Triggers: []AssistantTriggerView{
+				{ID: "busy", State: "open", Open: true, Reacting: since},
+				{ID: "calm", State: "open", Open: true},
+			}}),
+			busy: `data-assistant-trigger="busy"`,
+			calm: `data-assistant-trigger="calm"`,
+		},
+	} {
+		busy := iconAfter(t, c.html, c.busy)
+		if !strings.Contains(busy, " working") || !strings.Contains(busy, `data-working-since="1760443200123"`) {
+			t.Errorf("%s: a working mark without the start of its run: %s", c.name, busy)
+		}
+		if calm := iconAfter(t, c.html, c.calm); strings.Contains(calm, "working") {
+			t.Errorf("%s: an idle mark carries the working class or a start: %s", c.name, calm)
+		}
+	}
+}
+
+// iconAfter answers the opening tag of the first status icon behind anchor.
+func iconAfter(t *testing.T, html, anchor string) string {
+	t.Helper()
+	at := strings.Index(html, anchor)
+	if at < 0 {
+		t.Fatalf("%s is not rendered", anchor)
+	}
+	rest := html[at:]
+	icon := strings.Index(rest, "dc-term-icon")
+	if icon < 0 {
+		t.Fatalf("no icon behind %s", anchor)
+	}
+	start := strings.LastIndex(rest[:icon], "<span")
+	return rest[start : icon+strings.Index(rest[icon:], ">")+1]
 }

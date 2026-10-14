@@ -1,4 +1,4 @@
-import { el } from "@dc/dom";
+import { el, syncAnimations } from "@dc/dom";
 
 export const AXIS_LOCK_PX = 12; // travel that commits a gesture to an axis
 export const COMMIT_PX = 72; // finger travel that commits a switch on release
@@ -190,6 +190,7 @@ export class SwipeNav {
         el("span", { class: "dc-swipe-pill-name text-truncate" }, stop.name),
         dir > 0 ? el("i", { class: "ti ti-chevron-right", "aria-hidden": "true" }) : null,
       ].filter(Boolean));
+      syncAnimations(this.pill);
     }
     this.pill.style.opacity = String(0.35 + 0.65 * progress);
     this.pill.classList.toggle("dc-swipe-pill-pending", Boolean(pending));

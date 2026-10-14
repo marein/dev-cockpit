@@ -100,6 +100,7 @@ type session struct {
 	lastOutput    time.Time // last qualifying output
 	runStart      time.Time // start of the current run of output
 	moving        bool
+	since         time.Time // when the working mark went up, zero while it is down, see Working
 }
 
 // working answers the one question, falling through the shelves: the
@@ -132,7 +133,7 @@ type Tracker struct {
 	mu        sync.Mutex
 	sessions  map[string]*session
 	published []string
-	onChange  func(working []string)
+	onChange  func(working map[string]int64)
 	now       func() time.Time
 }
 
@@ -146,9 +147,9 @@ func NewTracker() *Tracker {
 }
 
 // SetOnChange installs the listener that hears every change of the working
-// set, called with the full sorted set so a consumer can publish it as a
-// snapshot. Called outside the tracker's lock.
-func (t *Tracker) SetOnChange(listen func(working []string)) {
+// set, called with the full working set, the map Working answers, so a
+// consumer can publish it as a snapshot. Called outside the tracker's lock.
+func (t *Tracker) SetOnChange(listen func(working map[string]int64)) {
 	t.mu.Lock()
 	t.onChange = listen
 	t.mu.Unlock()
@@ -281,25 +282,36 @@ func (t *Tracker) Forget(id string) {
 	t.reconcile()
 }
 
-// Working answers the current working set as a copy.
-func (t *Tracker) Working() map[string]bool {
+// Working answers the working set as a copy: every working session's id
+// with the unix millisecond its mark went up. The page pins the mark's
+// animation to that moment, so a mark drawn again stands where it stood
+// and two marks run apart the way their turns started apart. A session
+// that is not working is absent and reads as zero.
+func (t *Tracker) Working() map[string]int64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	out := map[string]bool{}
-	for id, s := range t.sessions {
-		if s.working() {
-			out[id] = true
-		}
-	}
-	return out
+	return t.workingLocked()
 }
 
-// WorkingIDs answers the current working set sorted, the shape the event
-// snapshot carries.
-func (t *Tracker) WorkingIDs() []string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.workingIDsLocked()
+// Mark answers a moment in the shape Working answers it, the unix
+// millisecond a mark went up, with the zero time as zero, no mark. The
+// assistants' marks go through here too, their turns never reach this
+// tracker but their icons are pinned the same way.
+func Mark(at time.Time) int64 {
+	if at.IsZero() {
+		return 0
+	}
+	return at.UnixMilli()
+}
+
+// Earliest answers the older of two marks, zero standing for no mark: a
+// row that carries several sessions wears the mark of whichever went up
+// first.
+func Earliest(a, b int64) int64 {
+	if a == 0 || (b != 0 && b < a) {
+		return b
+	}
+	return a
 }
 
 // Run expires movement marks whose screens went quiet and drops sessions
@@ -352,6 +364,15 @@ func (t *Tracker) session(id string) *session {
 // every mutation ends here, so no feeder has to know whether it changed
 // anything visible. The caller holds the lock, which is released here.
 func (t *Tracker) reconcile() {
+	now := t.now()
+	for _, s := range t.sessions {
+		switch {
+		case !s.working():
+			s.since = time.Time{}
+		case s.since.IsZero():
+			s.since = now
+		}
+	}
 	ids := t.workingIDsLocked()
 	if equal(ids, t.published) {
 		t.mu.Unlock()
@@ -359,10 +380,21 @@ func (t *Tracker) reconcile() {
 	}
 	t.published = ids
 	listen := t.onChange
+	working := t.workingLocked()
 	t.mu.Unlock()
 	if listen != nil {
-		listen(ids)
+		listen(working)
 	}
+}
+
+func (t *Tracker) workingLocked() map[string]int64 {
+	out := map[string]int64{}
+	for id, s := range t.sessions {
+		if s.working() {
+			out[id] = Mark(s.since)
+		}
+	}
+	return out
 }
 
 func (t *Tracker) workingIDsLocked() []string {

@@ -124,6 +124,7 @@ class ProjectList extends HTMLElement {
     document.addEventListener("dc:rendered", (event) => {
       const index = event.detail?.root?.querySelector?.("[data-project-index]");
       if (index) projectSort.sort(index, projectSort.mode(), projectSort.INDEX);
+      if (index) syncAnimations(index);
     }, { signal: this.ac.signal });
     onServerEvent("docker", () => this.refreshProjects(null), { signal: this.ac.signal });
     // This module often loads after the connect snapshot and after a project
@@ -457,6 +458,7 @@ class ProjectList extends HTMLElement {
         this.foldRow(holder, fold);
       },
     });
+    syncAnimations(fold);
     const toggle = fold.querySelector("[data-chips-toggle]");
     if (toggle) {
       const hidden = chips.length - limit;
@@ -655,6 +657,8 @@ class ProjectList extends HTMLElement {
       projectSort.sort(list, mode);
       const index = document.querySelector("[data-project-index]");
       if (index) projectSort.sort(index, mode, projectSort.INDEX);
+      syncAnimations(list);
+      if (index) syncAnimations(index);
       options.forEach((opt) => opt.classList.toggle("active", opt.dataset.projectSortOption === mode));
       const active = options.find((opt) => opt.dataset.projectSortOption === mode);
       if (current && active) current.textContent = active.textContent.trim();

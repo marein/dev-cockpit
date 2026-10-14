@@ -1,3 +1,5 @@
+import { serverNow } from "@dc/clock";
+
 export function qs(selector, root = document) {
   return root.querySelector(selector);
 }
@@ -35,10 +37,20 @@ export function el(tag, props = {}, ...children) {
 
 export function syncAnimations(root) {
   if (!root || typeof root.getAnimations !== "function") return;
+  const now = document.timeline.currentTime ?? 0;
+  const server = serverNow();
   for (const animation of root.getAnimations({ subtree: true })) {
     if (animation.effect?.getTiming().iterations !== Infinity) continue;
-    animation.startTime = 0;
+    const since = Number(animation.effect.target?.dataset?.workingSince) || 0;
+    animation.startTime = since ? now - Math.max(0, server - since) : 0;
   }
+}
+
+export function markWorking(icon, since) {
+  if (since > 0) icon.dataset.workingSince = since;
+  else delete icon.dataset.workingSince;
+  icon.classList.toggle("working", since > 0);
+  syncAnimations(icon);
 }
 
 export function jumpTextEdge(event, input) {

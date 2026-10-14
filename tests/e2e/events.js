@@ -1733,6 +1733,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
         dotAnim: dot.animationName,
         steer: flat(root.getPropertyValue("--dc-steer-rgb")),
         ok: flat(root.getPropertyValue("--dc-ok-rgb")),
+        age: Date.now() - (Number(icon.dataset.workingSince) || 0),
       };
     });
     assert(mark && mark.label === "Reacting" && !mark.word && !mark.spinner,
@@ -1743,6 +1744,8 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
       `a reacting trigger is not in the steering colour: ${JSON.stringify(mark)}`);
     assert(mark.dotAnim === "dc-run" && mark.ring !== "none",
       `the reacting icon does not run the dot: ${JSON.stringify(mark)}`);
+    assert(mark.age >= 0 && mark.age < 5 * 60 * 1000,
+      `the reacting icon does not carry the start of its reaction: ${JSON.stringify(mark)}`);
     await page.click("[data-assistant-coders-tab]");
 
     const answer = await waitMessage(page, (m) => m.role === "assistant" && !m.auto && m.state === "complete" && /and after it/.test(m.text), 60000);

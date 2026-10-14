@@ -2,6 +2,8 @@ import { confirm, isVisible as dialogVisible } from "@dc/dialog";
 import { notifyError } from "@dc/toast";
 import "@dc/theme";
 import { watchCtx, initCtxLayout } from "@dc/ctx";
+import { syncAnimations } from "@dc/dom";
+import { measureServerClock } from "@dc/clock";
 import { rowsOf, focusRow, focusFollowsPointer, openedByKeyboard } from "@dc/contextmenu";
 
 // The glue around pe.js: a lazy custom element loader, the loading bar and the
@@ -125,8 +127,11 @@ const keepScroll = (detail) => {
 if (document.querySelector(".dc-app")) {
   void watchCtx();
   initCtxLayout();
+  void measureServerClock().then(() => syncAnimations(document));
 }
 window.addEventListener("dc:navigated", initCtxLayout);
+window.addEventListener("dc:navigated", () => syncAnimations(document));
+syncAnimations(document);
 
 window.addEventListener("pe:navigate", (e) => {
   if (isAttachPath(window.location.pathname) && isAttachPath(new URL(e.detail.url, window.location.origin).pathname)) {

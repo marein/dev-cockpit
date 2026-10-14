@@ -123,7 +123,7 @@ type EditorTerminal struct {
 	ConversationURL string
 	ScrollHistory   bool
 	HasNews         bool
-	Working         bool
+	Working         int64
 	Steered         bool
 	SteerPrefill    string
 	// FilesData feeds a coder's files modal, the same one the attach pages

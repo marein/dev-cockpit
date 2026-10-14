@@ -14,11 +14,13 @@ function isCdnNoise(t) {
 }
 
 // WebKit reports a same-origin request that a navigation aborted mid-flight (the
-// /events stream connect, the /update/check poll, the editor's terminals
-// fragment pull) as a page error ending in "due to access control checks". That
-// is a browser artifact of racing navigations on the throwaway instance, not an
-// app defect, so it joins the non-gating noise bucket. The filter stays narrow
-// so a real access control failure on an app route still gates.
+// /events stream connect, the /update/check poll, the page's one /time
+// measurement, the editor's terminals fragment pull, an assistant's pull of
+// its own answer) as a page error ending in "due to access control checks".
+// That is a browser artifact of racing navigations on the throwaway
+// instance, not an app defect, so it joins the non-gating noise bucket. The
+// filter stays narrow so a real access control failure on an app route still
+// gates.
 //
 // The bare `/projects` pull is the same artifact and gets its own pattern
 // rather than a path in the list above, because it has to be matched to the
@@ -29,8 +31,9 @@ function isCdnNoise(t) {
 // it, `/projects/<name>/editor/…` included, which is exactly where a real
 // access control failure would have to gate.
 function isWebkitAbortNoise(t) {
-  return /\/(events|update\/check|git\/prompt|editor\/(terminals|docker|lsp\/(status|source)|list|file|git\/changes))\b.*due to access control checks/.test(t)
-    || /\/projects(\?\S*)? due to access control checks/.test(t);
+  return /\/(events|update\/check|git\/prompt|time|editor\/(terminals|docker|lsp\/(status|source)|list|file|git\/changes))\b.*due to access control checks/.test(t)
+    || /\/projects(\?\S*)? due to access control checks/.test(t)
+    || /\/assistants\/[^/\s]+\/messages\/[^/\s]+ due to access control checks/.test(t);
 }
 function wirePage(page, bag) {
   bag.cdnNoise = bag.cdnNoise || [];
@@ -278,6 +281,73 @@ function editorReady(page) {
   return page.waitForFunction(() => typeof document.querySelector("dc-editor")?.teardown === "function", null, { timeout: 15000 });
 }
 
+async function skewedClocks(context, bag) {
+  const clocks = [];
+  for (const [name, skew] of [["behind", -10 * 60 * 1000], ["ahead", 10 * 60 * 1000]]) {
+    const page = await context.newPage();
+    wirePage(page, bag);
+    await page.addInitScript((ms) => {
+      const RealDate = Date;
+      const realNow = () => RealDate.now();
+      function SkewedDate(...args) {
+        if (!new.target) return new RealDate(realNow() + ms).toString();
+        return args.length ? new RealDate(...args) : new RealDate(realNow() + ms);
+      }
+      SkewedDate.prototype = RealDate.prototype;
+      SkewedDate.now = () => realNow() + ms;
+      SkewedDate.parse = RealDate.parse;
+      SkewedDate.UTC = RealDate.UTC;
+      Object.defineProperty(window, "__dcRealNow", { value: realNow });
+      window.Date = SkewedDate;
+    }, skew);
+    clocks.push([name, page]);
+  }
+  return clocks;
+}
+
+function markPhases(page, ...selectors) {
+  return page.evaluate(async (sels) => {
+    const realNow = window.__dcRealNow || (() => Date.now());
+    const icons = sels.map((sel) => document.querySelector(sel));
+    const spot = (icon) => getComputedStyle(icon, "::before").offsetDistance;
+    const now = realNow();
+    const marks = icons.map((icon) => {
+      if (!icon) return null;
+      const run = icon.getAnimations({ subtree: true }).find((a) => a.effect?.getTiming().iterations === Infinity);
+      const since = Number(icon.dataset.workingSince) || 0;
+      const phase = run ? run.currentTime : null;
+      return { since, phase, drift: since && run ? Math.round(phase - (now - since)) : null, spot: spot(icon), working: icon.classList.contains("working") };
+    });
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    return marks.map((mark, i) => mark && { ...mark, moved: spot(icons[i]) !== mark.spot });
+  }, selectors);
+}
+
+function markOff(mark) {
+  return !mark || !mark.working || !(mark.since > 0) ? "carries no running mark with its start"
+    : !mark.moved ? "stands still"
+    : !(Math.abs(mark.drift) < 250) ? `stands ${mark.drift}ms off the start of its turn`
+    : "";
+}
+
+async function clockMarks(clocks, when, selectors, problems) {
+  const seen = {};
+  for (const [name, page] of clocks) {
+    const read = await markPhases(page, ...selectors);
+    read.forEach((mark, i) => {
+      const off = markOff(mark);
+      if (off) problems.push(`${when}, clock ${name}: mark ${i + 1} ${off}`);
+    });
+    const [a, b] = read;
+    if (read.length === 2 && a?.phase != null && b?.phase != null) {
+      const gap = Math.round((a.phase - b.phase) - (b.since - a.since));
+      if (!(Math.abs(gap) < 250)) problems.push(`${when}, clock ${name}: two marks started ${b.since - a.since}ms apart run ${Math.round(a.phase - b.phase)}ms apart`);
+    }
+    seen[name] = read;
+  }
+  return seen;
+}
+
 // removeTags removes, through Settings › Projects › Tags, every tag that
 // match(name, id) picks by the name and id the page loaded it with. Tags
 // outlive their projects, so deleting its projects leaves a runner's tags.
@@ -393,7 +463,7 @@ async function runFeature(title, body) {
 module.exports = {
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
   login, createProject, projectPath, deleteProject, dismissUpdate, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
-  saveTagSettings, setField, removeTags, reach, editorReady,
+  saveTagSettings, setField, removeTags, reach, editorReady, skewedClocks, markPhases, markOff, clockMarks,
   makeRunner, report, assert,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

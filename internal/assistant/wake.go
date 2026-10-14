@@ -155,7 +155,8 @@ func (s *Service) startOwnSession(owner, prompt string, name func(string) string
 	rec.CoderID = c.CoderID
 	rec.SessionID = sessionID
 	rec.Model = ModelFor(rec.Kind, c.Summary, want, co.ModelDefaults())
-	rec.Deadline = s.now().UTC().Add(wakeTimeout)
+	rec.StartedAt = s.now().UTC()
+	rec.Deadline = rec.StartedAt.Add(wakeTimeout)
 	a := &activeRun{rec: rec, done: make(chan struct{})}
 	p, err := s.launch(&a.rec, co.Runner, TurnRequest{
 		Instance:  c.ID,

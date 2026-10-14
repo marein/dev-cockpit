@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/tmux"
 	"github.com/marein/dev-cockpit/internal/web/render"
@@ -147,7 +148,7 @@ func foldStripTabs(tabs []render.TerminalTab) []render.StripTab {
 		entry := &out[idx]
 		entry.Members = append(entry.Members, t)
 		entry.HasNews = entry.HasNews || t.HasNews
-		entry.Working = entry.Working || t.Working
+		entry.Working = activity.Earliest(entry.Working, t.Working)
 	}
 	for _, idx := range grouped {
 		entry := &out[idx]

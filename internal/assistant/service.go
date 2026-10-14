@@ -42,6 +42,9 @@ type Run struct {
 	// Queued says no generation started: the message waits in the transcript
 	// until the running turn ends.
 	Queued bool
+	// StartedAt is when the turn started, the moment the page pins its
+	// working mark to; zero while Queued.
+	StartedAt time.Time
 }
 
 // Service owns instance state, provider processes and the per instance streams.
@@ -297,11 +300,17 @@ func (s *Service) LastAnswer(id string) (Message, bool) {
 // UploadDir is the directory holding the uploads of one instance.
 func (s *Service) UploadDir(id string) (string, error) { return s.store.UploadDir(id) }
 
-// Running reports whether a generation is in flight for this instance.
-func (s *Service) Running(id string) bool {
+// RunningSince answers when the generation in flight for this instance
+// started, zero while none is. Every surface that marks the assistant as
+// working pins the mark to this moment, so it stands where it stood when it
+// is drawn again and two assistants run apart the way their turns started.
+func (s *Service) RunningSince(id string) time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.chatRunLocked(id) != nil
+	if a := s.chatRunLocked(id); a != nil {
+		return a.rec.StartedAt
+	}
+	return time.Time{}
 }
 
 // chatRunLocked is the user's own turn of one instance, if it is running. A
@@ -612,16 +621,17 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 		CoderID:   co.ID,
 		SessionID: c.NativeSessionID,
 		Model:     req.Model,
+		StartedAt: s.now().UTC(),
 	}
 	for _, id := range announce {
 		s.hub.publish(c.ID, StreamEvent{Kind: FrameMessage, MessageID: id})
 	}
-	s.hub.publish(c.ID, StreamEvent{Kind: FrameStart, RunID: runID, MessageID: msg.ID, Model: model, State: string(StateStreaming)})
+	s.hub.publish(c.ID, StreamEvent{Kind: FrameStart, RunID: runID, MessageID: msg.ID, Model: model, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli()})
 
 	a := &activeRun{rec: rec, done: make(chan struct{})}
 	s.running[runID] = a
 	go s.launchAndFollow(a, co.Runner, req)
-	return Run{RunID: runID, MessageID: msg.ID, Title: c.Title}, nil
+	return Run{RunID: runID, MessageID: msg.ID, Title: c.Title, StartedAt: rec.StartedAt}, nil
 }
 
 // Cancel stops the running generation, keeping the partial answer. The stop is

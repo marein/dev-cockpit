@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
@@ -715,7 +716,7 @@ func (s *Server) assistantTriggerView(trigger assistant.Trigger, owners bool) re
 		Until:    machineTime(trigger.ExpiresAt),
 		Note:     trigger.Note,
 		Pending:  len(trigger.Pending),
-		Reacting: trigger.Reacting(),
+		Reacting: activity.Mark(trigger.ReactingSince),
 		Broke:    trigger.Broke,
 	}
 	if len(view.Short) > 8 {

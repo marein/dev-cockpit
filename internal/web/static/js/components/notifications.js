@@ -1,6 +1,6 @@
 import { labelCockpitTab } from "@dc/cockpit";
 import { latestServerEvent, onServerEvent } from "@dc/events";
-import { windowSeen } from "@dc/dom";
+import { markWorking, windowSeen } from "@dc/dom";
 import { getJSON, postForm } from "@dc/http";
 import { playNotification } from "@dc/jingle";
 import { showToast } from "@dc/toast";
@@ -112,7 +112,7 @@ const channel = {
 // every reconnect, so a woken background tab reconciles from here too.
 onServerEvent("notifications", (event) => channel.receive(event.detail));
 
-onServerEvent("activity", (event) => decorateWorking((event.detail && event.detail.targets) || []));
+onServerEvent("activity", (event) => decorateWorking((event.detail && event.detail.since) || {}));
 
 // On becoming visible or focused again, re-check whether the target whose
 // page is open should mark itself read. Focus is the desktop comeback signal,
@@ -235,14 +235,13 @@ function projectScopes(dot) {
   return scope ? [scope] : [];
 }
 
-function decorateWorking(targetIds) {
-  const ids = new Set(targetIds || []);
-  document.querySelectorAll("[data-notify-target]").forEach((icon) => {
-    icon.classList.toggle("working", ids.has(icon.getAttribute("data-notify-target")));
+function decorateWorking(since) {
+  document.querySelectorAll("[data-notify-target]:not(.assistant)").forEach((icon) => {
+    markWorking(icon, since[icon.getAttribute("data-notify-target")] || 0);
   });
   document.querySelectorAll("[data-notify-targets]").forEach((icon) => {
-    const targets = (icon.getAttribute("data-notify-targets") || "").split(" ");
-    icon.classList.toggle("working", targets.some((id) => ids.has(id)));
+    const marks = (icon.getAttribute("data-notify-targets") || "").split(" ").map((id) => since[id]).filter(Boolean);
+    markWorking(icon, marks.length ? Math.min(...marks) : 0);
   });
 }
 
@@ -629,4 +628,4 @@ if (missedReviews) {
   paintCockpit();
 }
 const missedActivity = latestServerEvent("activity");
-if (missedActivity) decorateWorking(missedActivity.targets || []);
+if (missedActivity) decorateWorking(missedActivity.since || {});

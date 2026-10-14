@@ -512,7 +512,7 @@ L.runFeature("wake", async ({ page, run }) => {
       checking = await page.evaluate(async (id) => {
         const res = await fetch("/assistants/jobs", { headers: { Accept: "text/html" } });
         const html = await res.text();
-        return new RegExp(`data-assistant-job="${id}"[\\s\\S]*?data-assistant-working="check"`).test(html);
+        return new RegExp(`data-assistant-job="${id}"[\\s\\S]*?data-assistant-working="check" data-working-since="\\d{13}"`).test(html);
       }, slowCoder);
     }
     assert(checking, "the slow check never started");

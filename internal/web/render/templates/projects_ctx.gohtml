@@ -46,7 +46,7 @@
      {{- with index $.Docker .Name}}{{if .Stacks}} data-docker-project="{{$name}}"{{end}}{{end}}
      {{- with .DeleteNote}} data-index-delete-note="{{.}}"{{end}}>
     {{if .Grouped}}<i class="ti ti-git-fork" aria-hidden="true"></i>{{end}}{{if .Tags}}<span class="dc-tagged flex-fill"><span class="dc-mono dc-trunc">{{.Name}}</span>{{template "tag_pie.gohtml" .Tags}}</span>{{else}}<span class="dc-mono dc-trunc flex-fill">{{.Name}}</span>{{end}}
-    {{if .ActiveRefs}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}" data-notify-targets="{{.TerminalIDs}}" title="{{.CountTitle}}">{{len .ActiveRefs}}{{template "news_dot.gohtml"}}</span>{{end}}
+    {{if .ActiveRefs}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}} data-notify-targets="{{.TerminalIDs}}" title="{{.CountTitle}}">{{len .ActiveRefs}}{{template "news_dot.gohtml"}}</span>{{end}}
     {{if .DockerShown}}<span class="dc-term-icon{{with .DockerTone}} {{.}}{{end}}{{if .DockerWorking}} dc-docker-working{{end}}" title="{{.DockerTitle}}"><i class="ti ti-brand-docker" aria-hidden="true"></i></span>{{end}}
     {{if not .ActiveRefs}}{{template "news_dot.gohtml" (dict "Hidden" (not .HasNews) "Scope" true "Projects" (print "project-" .Name) "Label" "Something new in this project")}}{{end}}
     {{with index $.Docker .Name}}{{if .Stacks}}

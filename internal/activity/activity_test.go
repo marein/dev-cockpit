@@ -1,7 +1,9 @@
 package activity
 
 import (
+	"maps"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -18,16 +20,16 @@ func newTestTracker() (*Tracker, *time.Time) {
 func TestAnOpenTurnNeedsNoMovement(t *testing.T) {
 	tracker, at := newTestTracker()
 	tracker.SetTurn("a", true, false, *at)
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("an open turn is working")
 	}
 	*at = at.Add(10 * time.Minute)
 	tracker.sweep()
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("an open turn survives a quiet screen")
 	}
 	tracker.SetTurn("a", false, false, *at)
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("a turn the account calls over is not working")
 	}
 }
@@ -42,11 +44,11 @@ func TestAClosedTurnSilencesMovement(t *testing.T) {
 		*at = at.Add(500 * time.Millisecond)
 		tracker.Output("a")
 	}
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("movement must not overrule the account")
 	}
 	tracker.SetTurn("a", true, false, *at)
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("the account speaking again wins immediately")
 	}
 }
@@ -57,22 +59,22 @@ func TestMovementCarriesAnUnknownSession(t *testing.T) {
 	tracker, at := newTestTracker()
 	tracker.Configure("a", Policy{}, at.Add(-time.Hour))
 	tracker.Output("a")
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("one chunk must not count as working")
 	}
 	*at = at.Add(200 * time.Millisecond)
 	tracker.Output("a")
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("a burst below minSpan must not count as working")
 	}
 	*at = at.Add(500 * time.Millisecond)
 	tracker.Output("a")
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("a run past minSpan is working")
 	}
 	*at = at.Add(idleAfter + time.Second)
 	tracker.sweep()
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("the movement mark decays with a quiet screen")
 	}
 }
@@ -86,7 +88,7 @@ func TestLoneRepaintsStayQuiet(t *testing.T) {
 	// The next paint comes past runGap, so it starts a run of its own.
 	*at = at.Add(3 * time.Second)
 	tracker.Output("a")
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("two lone repaints must not count as working")
 	}
 }
@@ -99,7 +101,7 @@ func TestEchoOfInputStaysQuiet(t *testing.T) {
 		*at = at.Add(100 * time.Millisecond)
 		tracker.Output("a")
 	}
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("output echoing input must not count as working")
 	}
 	// Past the echo window the coder's own repaints qualify again.
@@ -107,7 +109,7 @@ func TestEchoOfInputStaysQuiet(t *testing.T) {
 	tracker.Output("a")
 	*at = at.Add(700 * time.Millisecond)
 	tracker.Output("a")
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("output past the echo window is working")
 	}
 }
@@ -126,7 +128,7 @@ func TestForgetDropsTheSession(t *testing.T) {
 func TestOnlyChangesArePublished(t *testing.T) {
 	tracker, at := newTestTracker()
 	var published [][]string
-	tracker.SetOnChange(func(ids []string) { published = append(published, ids) })
+	tracker.SetOnChange(func(working map[string]int64) { published = append(published, slices.Sorted(maps.Keys(working))) })
 	tracker.SetTurn("b", true, false, *at)
 	tracker.SetTurn("a", true, false, *at)
 	tracker.SetTurn("a", true, false, *at) // no change, no publish
@@ -160,12 +162,12 @@ func TestASilentInterruptClosesTheTurn(t *testing.T) {
 	tracker.SetTurn("a", true, false, *at)
 	tracker.Interrupt("a")
 	tracker.sweep()
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("inside the grace the turn still stands")
 	}
 	*at = at.Add(interruptGrace + time.Second)
 	tracker.sweep()
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("an account silent past the grace closes the turn")
 	}
 }
@@ -180,7 +182,7 @@ func TestTheAccountAnswersAnInterrupt(t *testing.T) {
 	tracker.SetTurn("a", true, false, *at) // the record moved: still working
 	*at = at.Add(interruptGrace + time.Second)
 	tracker.sweep()
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("a withdrawn interrupt must not close the turn")
 	}
 }
@@ -192,12 +194,12 @@ func TestAnInterruptNeedsAnOpenTurn(t *testing.T) {
 	tracker.Interrupt("a")
 	*at = at.Add(interruptGrace + time.Second)
 	tracker.sweep()
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("nothing to close")
 	}
 	// And it never resurrects one.
 	tracker.SetTurn("a", true, false, *at)
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("the account reopening still wins")
 	}
 }
@@ -212,15 +214,15 @@ func TestTheBackstopEndsASilentOpenTurn(t *testing.T) {
 	tracker.SetTurn("b", true, false, *at) // no policy: no cap
 	*at = at.Add(29 * time.Minute)
 	tracker.sweep()
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("a long quiet tool call stays open below the cap")
 	}
 	*at = at.Add(2 * time.Minute)
 	tracker.sweep()
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("past the cap the turn falls back to quiet")
 	}
-	if !tracker.Working()["b"] {
+	if tracker.Working()["b"] == 0 {
 		t.Fatal("without a cap the account is waited for")
 	}
 }
@@ -234,7 +236,7 @@ func TestAnInterruptInsideAToolCallIsIgnored(t *testing.T) {
 	tracker.Interrupt("a")
 	*at = at.Add(interruptGrace + time.Second)
 	tracker.sweep()
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("a turn inside a tool call ignores the hint")
 	}
 }
@@ -256,7 +258,7 @@ func TestTheScreenAnswersAnInterrupt(t *testing.T) {
 	tracker.Output("a")
 	*at = at.Add(interruptGrace + time.Second)
 	tracker.sweep()
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("a screen alive past the echo withdraws the hint")
 	}
 }
@@ -274,17 +276,17 @@ func TestBootPaintsSitOutTheStartGrace(t *testing.T) {
 		tracker.Output("fresh")
 		tracker.Output("old")
 	}
-	if tracker.Working()["fresh"] {
+	if tracker.Working()["fresh"] != 0 {
 		t.Fatal("boot paints inside the grace must not count")
 	}
-	if !tracker.Working()["old"] {
+	if tracker.Working()["old"] == 0 {
 		t.Fatal("an old session's movement counts from the first paint")
 	}
 	*at = at.Add(20 * time.Second)
 	tracker.Output("fresh")
 	*at = at.Add(700 * time.Millisecond)
 	tracker.Output("fresh")
-	if !tracker.Working()["fresh"] {
+	if tracker.Working()["fresh"] == 0 {
 		t.Fatal("past the grace the movement shelf speaks again")
 	}
 }
@@ -300,13 +302,13 @@ func TestMovementWaitsForThePolicy(t *testing.T) {
 		*at = at.Add(500 * time.Millisecond)
 		tracker.Output("a")
 	}
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("movement must not count before the policy is known")
 	}
 	tracker.Configure("a", Policy{MovementStartGrace: 20 * time.Second}, at.Add(-time.Hour))
 	*at = at.Add(500 * time.Millisecond)
 	tracker.Output("a")
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("an old session's running paint marks right after the policy")
 	}
 }
@@ -322,7 +324,7 @@ func TestABootPaintingPastTheGraceStaysQuiet(t *testing.T) {
 		*at = at.Add(500 * time.Millisecond)
 		tracker.Output("a")
 	}
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("a boot painting past the grace must not count")
 	}
 	// The screen comes to rest, then something really moves.
@@ -330,7 +332,7 @@ func TestABootPaintingPastTheGraceStaysQuiet(t *testing.T) {
 	tracker.Output("a")
 	*at = at.Add(700 * time.Millisecond)
 	tracker.Output("a")
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("movement after the first rest counts again")
 	}
 }
@@ -347,12 +349,54 @@ func TestAnOlderWordNeverOverrulesANewerOne(t *testing.T) {
 	signal := at.Add(500 * time.Millisecond)
 	tracker.SetTurn("a", false, false, signal)
 	tracker.SetTurn("a", true, true, entry) // the record entry, delivered late
-	if tracker.Working()["a"] {
+	if tracker.Working()["a"] != 0 {
 		t.Fatal("the older record entry must not overrule the newer signal")
 	}
 	// The record moving on afterwards is a newer word and speaks again.
 	tracker.SetTurn("a", true, false, at.Add(2*time.Second))
-	if !tracker.Working()["a"] {
+	if tracker.Working()["a"] == 0 {
 		t.Fatal("a newer word reopens the turn")
+	}
+}
+
+// The moment the mark went up stays with it: the account speaking again
+// moves nothing, and a mark that went down and up again is a new one.
+func TestTheMarkKeepsTheMomentItWentUp(t *testing.T) {
+	tracker, at := newTestTracker()
+	tracker.SetTurn("a", true, false, *at)
+	up := tracker.Working()["a"]
+	if up != at.UnixMilli() {
+		t.Fatalf("the mark went up at %d, want %d", up, at.UnixMilli())
+	}
+	*at = at.Add(time.Minute)
+	tracker.SetTurn("a", true, true, *at)
+	if tracker.Working()["a"] != up {
+		t.Fatal("a tool call moved the moment the mark went up")
+	}
+	tracker.SetTurn("a", false, false, *at)
+	*at = at.Add(time.Minute)
+	tracker.SetTurn("a", true, false, *at)
+	if tracker.Working()["a"] != at.UnixMilli() {
+		t.Fatal("a mark that went up again carries its new moment")
+	}
+}
+
+func TestEarliestIgnoresAMissingMark(t *testing.T) {
+	for _, c := range []struct{ a, b, want int64 }{{0, 0, 0}, {0, 5, 5}, {5, 0, 5}, {5, 3, 3}, {3, 5, 3}} {
+		if got := Earliest(c.a, c.b); got != c.want {
+			t.Fatalf("Earliest(%d, %d) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// The zero time is no mark, not a moment two thousand years ago a page would
+// pin an animation to.
+func TestTheZeroTimeIsNoMark(t *testing.T) {
+	if Mark(time.Time{}) != 0 {
+		t.Fatal("the zero time marks something")
+	}
+	at := time.Date(2026, 10, 14, 12, 0, 0, 123e6, time.UTC)
+	if Mark(at) != at.UnixMilli() {
+		t.Fatalf("a moment marks %d, want %d", Mark(at), at.UnixMilli())
 	}
 }

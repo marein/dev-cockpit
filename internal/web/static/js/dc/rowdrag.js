@@ -1,3 +1,5 @@
+import { syncAnimations } from "@dc/dom";
+
 // The one drag that sorts a list of rows by hand: the terminal strip, across
 // or down, and the assistants' column. A press that travels further than
 // DRAG_THRESHOLD lifts its row out, the rows it passes slide out of the way by
@@ -313,7 +315,10 @@ export class RowDrag {
     if (moved) {
       const others = drag.rows.filter((row) => row !== drag.row);
       const anchor = others[drag.toIndex] || this.o.endAnchor?.(drag.row, others) || null;
-      for (const row of drag.units[drag.fromIndex]) drag.list.insertBefore(row, anchor);
+      for (const row of drag.units[drag.fromIndex]) {
+        drag.list.insertBefore(row, anchor);
+        syncAnimations(row);
+      }
     }
     if (groupRow || moved) {
       this.o.onDrop?.({

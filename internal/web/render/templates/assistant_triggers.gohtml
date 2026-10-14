@@ -27,7 +27,7 @@
       {{- if .Reacting}}{{$tone = "steered"}}{{$word = "Reacting"}}{{end}}
       {{- if .Pending}}{{$word = printf "%s, %d waiting" $word .Pending}}{{end}}
       <div class="d-flex align-items-center gap-2">
-        <span class="dc-term-icon{{if $tone}} {{$tone}}{{end}}{{if .Reacting}} working{{end}}" role="img" title="{{$word}}" aria-label="{{$word}}" data-assistant-trigger-state="{{if and .Open .Once}}once{{else}}{{.State}}{{end}}"{{if .Reacting}} data-assistant-working="react"{{end}}><i class="ti {{if eq .Source "cron"}}ti-clock-hour-4{{else}}ti-bolt{{end}}" aria-hidden="true"></i>{{if .Pending}}<span class="dc-steer-badge" data-assistant-trigger-pending aria-hidden="true">{{.Pending}}</span>{{end}}</span>
+        <span class="dc-term-icon{{if $tone}} {{$tone}}{{end}}{{if .Reacting}} working{{end}}" role="img" title="{{$word}}" aria-label="{{$word}}" data-assistant-trigger-state="{{if and .Open .Once}}once{{else}}{{.State}}{{end}}"{{with .Reacting}} data-assistant-working="react" data-working-since="{{.}}"{{end}}><i class="ti {{if eq .Source "cron"}}ti-clock-hour-4{{else}}ti-bolt{{end}}" aria-hidden="true"></i>{{if .Pending}}<span class="dc-steer-badge" data-assistant-trigger-pending aria-hidden="true">{{.Pending}}</span>{{end}}</span>
         {{/* A name is the heading and the event, the target or the schedule
              drops to the line under it, where a steered coder's row carries
              its project; without a name the event is the heading, which is

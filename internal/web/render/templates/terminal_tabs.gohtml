@@ -28,8 +28,8 @@
        aria-selected="{{if .IsActive $.QuickNav.CurrentID}}true{{else}}false{{end}}"
        data-tab-id="{{.ID}}" data-tab-kind="split" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}" data-tab-members="{{.MemberIDs}}" data-tab-member-kinds="{{.MemberKinds}}" data-tab-member-cols="{{.MemberCols}}"
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
-      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}" data-tab-icon data-notify-targets="{{.MemberIDs}}" aria-hidden="true"><i class="ti ti-layout"></i>{{template "news_dot.gohtml"}}</span>
-      {{$t := .}}<span class="d-none" aria-hidden="true">{{range $t.Members}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}" data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} data-member-name="{{.Name}}" data-member-url="/splits/{{$t.ID}}?focus={{.ID}}">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>{{end}}</span>
+      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}} data-tab-icon data-notify-targets="{{.MemberIDs}}" aria-hidden="true"><i class="ti ti-layout"></i>{{template "news_dot.gohtml"}}</span>
+      {{$t := .}}<span class="d-none" aria-hidden="true">{{range $t.Members}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}} data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} data-member-name="{{.Name}}" data-member-url="/splits/{{$t.ID}}?focus={{.ID}}">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>{{end}}</span>
       <span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
         <span class="terminal-tab-project">{{if .Project}}{{.Project}} · {{end}}{{len .Members}} terminals</span>
@@ -46,7 +46,7 @@
        data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}" data-tab-group="{{$t.ID}}"
        {{- if .Coder}}{{if index $.Steered .ID}} data-tab-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-tab-steer-prefill="{{.}}"{{end}}{{with coderRename .Coder}} data-tab-renames="{{.}}"{{end}} data-tab-coder-label="{{coderLabel .Coder}}"{{end}}
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
-      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}" data-tab-icon data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
+      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}} data-tab-icon data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
       <span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
         {{if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}
@@ -62,7 +62,7 @@
        data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"
        {{- if .Coder}}{{if index $.Steered .ID}} data-tab-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-tab-steer-prefill="{{.}}"{{end}}{{with coderRename .Coder}} data-tab-renames="{{.}}"{{end}} data-tab-coder-label="{{coderLabel .Coder}}"{{end}}
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
-      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}" data-tab-icon data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
+      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}} data-tab-icon data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
       <span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
         {{if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}
@@ -131,7 +131,7 @@
         {{end}}
         {{range .QuickNav.Assistants}}
         <a data-tabs-assistant-instance="{{.ID}}" data-assistant-name="{{template "assistant_title.gohtml" .Title}}" href="{{.URL}}" tabindex="-1">
-          <span class="terminal-tab-icon dc-term-icon assistant{{if .Running}} working{{end}}{{if .News}} news{{end}}" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml"}}</span>
+          <span class="terminal-tab-icon dc-term-icon assistant{{if .Running}} working{{end}}{{if .News}} news{{end}}"{{with .Running}} data-working-since="{{.}}"{{end}} data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml"}}</span>
         </a>
         {{end}}
       </div>

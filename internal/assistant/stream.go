@@ -81,6 +81,9 @@ type StreamEvent struct {
 	// Models rides the models frame: the picks as stored and the moment they
 	// were written.
 	Models *ModelPicks `json:"models,omitempty"`
+	// Since rides the start frame and is the unix millisecond the turn
+	// started, the moment the page pins the assistant's working mark to.
+	Since int64 `json:"since,omitempty"`
 }
 
 // ModelPicks is what the models frame carries and what a save of the ring's
@@ -126,6 +129,7 @@ type live struct {
 	runID     string
 	messageID string
 	model     string
+	since     int64
 	text      string
 	// html is the last rendered prefix and renderedLen how much of text it
 	// covers, so a page connecting mid answer gets the formatted part plus the
@@ -172,6 +176,7 @@ func (h *hub) subscribe(instanceID string) (StreamEvent, bool, <-chan StreamEven
 			Text:      tail,
 			HTML:      l.html,
 			State:     string(StateStreaming),
+			Since:     l.since,
 		}
 	}
 	return snapshot, l.running, sub.ch, func() { h.unsubscribe(instanceID, sub) }
@@ -214,6 +219,7 @@ func (h *hub) publish(instanceID string, ev StreamEvent) {
 		l.runID = ev.RunID
 		l.messageID = ev.MessageID
 		l.model = ev.Model
+		l.since = ev.Since
 		l.text = ev.Text
 		l.html = ev.HTML
 		l.renderedLen = 0
@@ -226,6 +232,7 @@ func (h *hub) publish(instanceID string, ev StreamEvent) {
 		l.running = false
 		l.runID = ""
 		l.messageID = ""
+		l.since = 0
 		l.text = ""
 		l.html = ""
 		l.renderedLen = 0

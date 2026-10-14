@@ -70,9 +70,10 @@ type AssistantJobView struct {
 	DoneWhen string
 	State    string
 	Open     bool
-	// Checking says a check is running on this job right now, so the page can
-	// show it instead of leaving the user to read a counter.
-	Checking bool
+	// Checking says since when a check is running on this job, in the shape
+	// of Page.Working, zero while none is, so the page can show it instead of
+	// leaving the user to read a counter.
+	Checking int64
 	Note     string
 	Wakes    int
 	MaxWakes int
@@ -107,7 +108,9 @@ type AssistantData struct {
 	// control then asks which one answers.
 	Coders   []AssistantCoderOption
 	Messages []AssistantMessageView
-	Running  bool
+	// Running says since when a turn is being written, in the shape of
+	// Page.Working, zero while none is.
+	Running int64
 	// Blocked carries the reason the composer is off. Empty means the
 	// assistant accepts messages.
 	Blocked string
@@ -191,10 +194,11 @@ type AssistantCard struct {
 	CoderLabel string
 	URL        string
 	Messages   int
-	// Running says a turn is being written right now, and Unfinished that the
-	// last one stopped before it was done. They come apart at the source, so a
-	// row shows the run as work and never as a fault.
-	Running    bool
+	// Running says since when a turn is being written, in the shape of
+	// Page.Working, zero while none is, and Unfinished that the last one
+	// stopped before it was done. They come apart at the source, so a row
+	// shows the run as work and never as a fault.
+	Running    int64
 	Unfinished bool
 	// OpenJobs is how many coders this assistant steers right now. It is on the
 	// row because with several assistants that is the one thing a glance has to
@@ -304,10 +308,11 @@ type AssistantTriggerView struct {
 	// keeps the button off it.
 	EditURL string
 	// Pending says events wait in the open batch window right now, Reacting
-	// that the reaction it bought runs right now, in a session of its own, and
-	// Broke that the last one ended without arriving.
+	// since when the reaction it bought runs, in a session of its own, in the
+	// shape of Page.Working and zero while none does, and Broke that the last
+	// one ended without arriving.
 	Pending  int
-	Reacting bool
+	Reacting int64
 	Broke    bool
 }
 

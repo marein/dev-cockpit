@@ -60,7 +60,6 @@ func (s *Service) launch(rec *RunRecord, runner Runner, req TurnRequest) (detach
 		return detach.Process{}, errors.New("The coder could not be started.")
 	}
 	rec.Output, rec.Errors, rec.Lock = out, errs, lock
-	rec.StartedAt = s.now().UTC()
 	p, err := start(cmd, req.Workdir, out, errs, lock)
 	if err != nil {
 		remove(out)
@@ -534,7 +533,7 @@ func (s *Service) Recover() []AdoptedCheck {
 			// The page gets the whole answer again: the file is read from its
 			// first byte, so a browser that reconnects sees what was there
 			// before the restart and everything after it, without a reload.
-			s.hub.publish(rec.Instance, StreamEvent{Kind: FrameStart, RunID: rec.ID, MessageID: rec.MessageID, Model: rec.Model, State: string(StateStreaming)})
+			s.hub.publish(rec.Instance, StreamEvent{Kind: FrameStart, RunID: rec.ID, MessageID: rec.MessageID, Model: rec.Model, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli()})
 		}
 		if alive {
 			log.Printf("assistant: turn %s is still running as process %d, reading on", rec.ID, rec.PID)

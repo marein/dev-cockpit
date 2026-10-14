@@ -1,3 +1,4 @@
+import { syncAnimations } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import { getText, postForm, postJSON, ensureOk } from "@dc/http";
 import { confirm, fire } from "@dc/dialog";
@@ -308,6 +309,7 @@ class AssistantList extends HTMLElement {
       if (fresh && current) {
         this.keepUnfolded(current, fresh);
         current.replaceWith(fresh);
+        syncAnimations(fresh);
         this.revealActive();
         document.dispatchEvent(new CustomEvent("dc:assistant-counts"));
       }

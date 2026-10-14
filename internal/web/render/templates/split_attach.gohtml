@@ -3,7 +3,7 @@
 {{template "terminals_ctx.gohtml" .}}
 {{template "work_start.gohtml" .}}
 {{range .Members}}
-{{if .Coder}}<span class="dc-term-icon running d-lg-none{{if index $.Working .ID}} working{{end}}{{if index $.Steered .ID}} steered{{end}}" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>{{else}}<span class="dc-term-icon running d-lg-none" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i>{{template "news_dot.gohtml"}}</span>{{end}}
+{{if .Coder}}<span class="dc-term-icon running d-lg-none{{if index $.Working .ID}} working{{end}}{{if index $.Steered .ID}} steered{{end}}"{{with index $.Working .ID}} data-working-since="{{.}}"{{end}} data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>{{else}}<span class="dc-term-icon running d-lg-none" data-terminal-badge="{{.ID}}" data-notify-target="{{.ID}}"{{if ne .ID $.Focus}} hidden{{end}} title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i>{{template "news_dot.gohtml"}}</span>{{end}}
 {{end}}
 <div class="d-flex align-items-center gap-2 min-w-0 dc-fine-only">
   <h1 class="dc-work-title dc-mono" data-split-title data-title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">{{.GroupName}}</h1>

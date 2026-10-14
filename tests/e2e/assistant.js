@@ -425,7 +425,7 @@ async function postJobs(page, fields) {
   }, fields);
 }
 
-L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage }) => {
+L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, bag }) => {
   let jobCoder = "";
   let chatID = "";
   let freshID = "";
@@ -2651,6 +2651,98 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage }
       { timeout: 30000 },
     );
     return "the other one answered while the first still held a message";
+  });
+
+  await run("assistant marks hold the start of their turn under a client clock ten minutes behind and ahead, through a live update, a reload and a boosted navigation, and run apart", async () => {
+    await openConversation(page, chatID);
+    const other = await page.evaluate(async (mine) => {
+      const res = await fetch("/assistants/instances", { headers: { Accept: "application/json" } });
+      const data = await res.json();
+      return (data.assistants || []).map((a) => a.id).find((id) => id !== mine) || "";
+    }, chatID);
+    assert(other, "there is no second assistant to run beside the first");
+    const row = (id) => `.dc-app > .dc-ctx [data-assistant-instance="${id}"] .dc-term-icon.assistant`;
+    const head = "dc-assistant [data-assistant-head-icon]";
+    const problems = [];
+    const clocks = await L.skewedClocks(ctx, bag);
+    const [[, behind]] = clocks;
+    const raised = (id) => Promise.all(clocks.map(([, p]) => p.waitForSelector(`${row(id)}.working[data-working-since]`, { timeout: 15000 })));
+    let summary = "";
+    try {
+      for (const [, p] of clocks) await openConversation(p, chatID);
+      await send(behind, "SLOW the first mark");
+      await raised(chatID);
+      const live = await L.clockMarks(clocks, "a live update", [row(chatID)], problems);
+      assert(await behind.locator(head).getAttribute("data-working-since") === String(live.behind[0].since),
+        "the head icon does not carry the start of the turn");
+
+      await sleep(1200);
+      await behind.evaluate((url) => window.app.navigate(url), `/assistants/${other}`);
+      await behind.waitForFunction((id) => document.querySelector("dc-assistant[ready]")?.getAttribute("assistant-id") === id, other, { timeout: 15000 });
+      await send(behind, "SLOW the second mark");
+      await raised(other);
+      const [first, second] = (await L.clockMarks(clocks, "two turns", [row(chatID), row(other)], problems)).behind;
+      assert(second.since - first.since >= 1000, `two turns that started apart share a start: ${first.since} and ${second.since}`);
+
+      for (const [, p] of clocks) {
+        await p.reload({ waitUntil: "domcontentloaded" });
+        await p.waitForSelector(READY, { timeout: 15000 });
+      }
+      await sleep(1500);
+      const reloaded = await L.clockMarks(clocks, "after a reload", [row(chatID), row(other)], problems);
+      assert(await behind.locator(head).getAttribute("data-working-since") === String(second.since),
+        "the head icon lost the start of the turn over a reload");
+
+      for (const [, p] of clocks) {
+        const id = await p.locator("dc-assistant").getAttribute("assistant-id");
+        await p.evaluate(() => { window.__markProbe = true; });
+        await p.evaluate(() => window.app.navigate("/projects"));
+        await p.waitForURL(/\/projects/, { timeout: 15000 });
+        await p.evaluate((url) => window.app.navigate(url), `/assistants/${id}`);
+        await p.waitForFunction((want) => document.querySelector("dc-assistant[ready]")?.getAttribute("assistant-id") === want, id, { timeout: 15000 });
+        assert(await p.evaluate(() => window.__markProbe === true), "the navigation was a full reload");
+      }
+      const boosted = await L.clockMarks(clocks, "after a boosted navigation", [row(chatID), row(other)], problems);
+      for (const [name] of clocks) {
+        for (const [when, read] of [["a reload", reloaded], ["a boosted navigation", boosted]]) {
+          assert(read[name][0]?.since === first.since && read[name][1]?.since === second.since,
+            `clock ${name}: ${when} moved the start: ${JSON.stringify({ first, second, read: read[name] })}`);
+        }
+      }
+
+      await behind.bringToFront();
+      await behind.keyboard.press("Control");
+      await behind.keyboard.press("Control");
+      await behind.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });
+      const [switcher] = await L.markPhases(behind, `.terminal-switcher-item[data-switcher-url="/assistants/${other}"] .dc-term-icon`);
+      await behind.keyboard.press("Escape");
+      if (switcher?.since !== second.since || L.markOff(switcher)) problems.push(`the switcher's row, clock behind: ${JSON.stringify(switcher)}`);
+
+      const mp = await mobilePage();
+      await openConversation(mp, other);
+      const [phone] = await L.markPhases(mp, head);
+      if (phone?.since !== second.since || L.markOff(phone)) problems.push(`the phone's head icon: ${JSON.stringify(phone)}`);
+      await closePanel(mp);
+      const pinned = [...Object.values(reloaded), ...Object.values(boosted)].flat();
+      summary = `apart by ${second.since - first.since}ms, pinned within ${Math.max(...pinned.map((m) => Math.abs(m.drift)))}ms on both clocks`;
+    } finally {
+      for (const [, p] of clocks) await p.close().catch(() => {});
+      await page.bringToFront();
+      for (const id of [chatID, other]) {
+        await openConversation(page, id).catch(() => {});
+        if (await page.locator("[data-assistant-cancel]:not(.d-none)").count()) {
+          await page.click("[data-assistant-cancel]").catch(() => {});
+          await waitSettled(page).catch(() => {});
+        }
+        await idle(page).catch(() => {});
+      }
+    }
+    assert(!problems.length, problems.join("; "));
+    await page.waitForFunction((sels) => sels.every((sel) => {
+      const icon = document.querySelector(sel);
+      return icon && !icon.classList.contains("working") && !icon.hasAttribute("data-working-since");
+    }), [row(chatID), row(other)], { timeout: 15000 });
+    return summary;
   });
 
   await run("a failed turn offers a retry that recovers", async () => {

@@ -8,7 +8,7 @@ import { onServerEvent } from "@dc/events";
 import { focusRow, followPointer, labelNodes, menuJustClosed, openMenu, openedByKeyboard, revealRow, rowsOf, stepRowFocus, wireRowMenus } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { applyFold } from "@dc/fold";
-import { escapeHtml } from "@dc/dom";
+import { escapeHtml, syncAnimations } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, SwipeNav, pushSample, releaseVelocity } from "@dc/swipe";
 import { matchesTokens, rankTokens } from "@dc/filter";
@@ -9727,6 +9727,7 @@ async function init(root) {
       foldTermResume();
     }
     termTabsHostEl.replaceChildren(freshTabs);
+    syncAnimations(termTabsHostEl);
     const ids = termIds();
     if (!termActiveId || !ids.includes(termActiveId)) termActiveId = ids[0] || null;
     if (termOpen && termActiveId) void activateTermPane(termActiveId, { focus });

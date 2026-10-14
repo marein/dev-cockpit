@@ -31,7 +31,7 @@
       {{- else if eq .State "expired"}}{{$tone = "text-danger"}}{{$word = "Expired"}}{{end}}
       {{- if .Checking}}{{$word = "Checking"}}{{end}}
       <div class="d-flex align-items-center gap-2">
-        <span class="dc-term-icon{{if $tone}} {{$tone}}{{end}}{{if .Checking}} working{{end}}" role="img" title="{{$word}}" aria-label="{{$word}}" data-assistant-job-state="{{.State}}"{{if .Checking}} data-assistant-working="check"{{end}}><i class="ti ti-steering-wheel" aria-hidden="true"></i></span>
+        <span class="dc-term-icon{{if $tone}} {{$tone}}{{end}}{{if .Checking}} working{{end}}" role="img" title="{{$word}}" aria-label="{{$word}}" data-assistant-job-state="{{.State}}"{{with .Checking}} data-assistant-working="check" data-working-since="{{.}}"{{end}}><i class="ti ti-steering-wheel" aria-hidden="true"></i></span>
         {{/* The two names are the two things behind the row, so they are the
              way there: the coder's name opens the coder, the project's name
              opens the project. */}}

@@ -1,6 +1,6 @@
 import { followPointer, openMenu, openedByKeyboard, wireRowMenus } from "@dc/contextmenu";
 import { confirm, promptText } from "@dc/dialog";
-import { el } from "@dc/dom";
+import { el, syncAnimations } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { onServerEvent } from "@dc/events";
 import { rankTokens } from "@dc/filter";
@@ -1030,6 +1030,7 @@ class TerminalTabs extends HTMLElement {
         if (freshStrip) {
           this.rowDrag?.cancel();
           this.strip.innerHTML = freshStrip.innerHTML;
+          syncAnimations(this.strip);
           this.revealActive();
         }
         const menu = this.querySelector(".terminal-tabs-new-menu");
@@ -1091,6 +1092,7 @@ class TerminalTabs extends HTMLElement {
     const kept = fromInput ? -1 : sw.visible.indexOf(selected);
     sw.index = kept === -1 ? 0 : kept;
     this.paintSelection();
+    syncAnimations(sw.overlay);
   }
 
   // Each group (the open tabs, a section, a project's inactive coders) sorts

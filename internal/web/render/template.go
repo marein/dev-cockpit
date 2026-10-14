@@ -127,7 +127,10 @@ type Page struct {
 	// terminal id, read the same way (`{{index $.Working .ID}}`). It is the
 	// state at render time; the client keeps it live from the activity
 	// event, toggling the same class on the same icons.
-	Working map[string]bool
+	// The value is the unix millisecond the mark went up, rendered as
+	// `data-working-since`, which pins the mark's animation to that moment;
+	// see activity.Tracker.Working.
+	Working map[string]int64
 	// Host is the machine's load, memory and disk at render time, so the status
 	// line is right before the first event arrives. It refreshes over
 	// the event stream from there.
@@ -221,7 +224,7 @@ type TerminalTab struct {
 	Launcher  string
 	Kind      string // "coder" or "shell"
 	HasNews   bool
-	Working   bool // somebody is working in there right now, see Page.Working
+	Working   int64 // since when somebody is working in there, zero for nobody, see Page.Working
 	StartedAt time.Time
 	TabPos    int    // strip position from @dc_tab_pos, 0 when unset
 	Group     string // split view group id from @dc_tab_group, empty when ungrouped

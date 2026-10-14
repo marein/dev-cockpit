@@ -400,7 +400,7 @@ func TestAReactionNeverTakesTheChatSlot(t *testing.T) {
 	waitFor(t, "the chat turn to start", func() bool { return len(runner.turns()) == 1 })
 	f.reactor.Publish(f.jobDone("readme"))
 	answer := f.waitPushed(t, 1)
-	if !f.svc.Running(f.owner.ID) {
+	if f.svc.RunningSince(f.owner.ID).IsZero() {
 		t.Fatal("the chat turn must still be running")
 	}
 	c, _ := f.svc.Get(f.owner.ID)

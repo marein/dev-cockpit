@@ -296,6 +296,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 
 	// /events is the app-wide server to client stream.
 	auth.GET("/events", s.handleEventStream)
+	auth.GET("/time", s.handleServerTime)
 
 	// The questions ssh and git ask during a running action are app level like
 	// the stream that announces them: any signed-in page shows and answers

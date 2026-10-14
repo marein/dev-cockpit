@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/project"
@@ -365,7 +366,7 @@ type ProjectRow struct {
 	// project's containers and compose runs out of ProjectDocker, the same
 	// answers the card's compose button and container chips color on.
 	TerminalIDs   string
-	Working       bool
+	Working       int64
 	DockerRunning bool
 	DockerUnwell  bool
 	DockerWorking bool
@@ -394,7 +395,7 @@ func (r ProjectRow) DeleteNote() string {
 // and that one of the project's terminals has news.
 func (r ProjectRow) CountTitle() string {
 	notes := []string{"Running coders and shells"}
-	if r.Working {
+	if r.Working != 0 {
 		notes = append(notes, "something is at work")
 	}
 	if r.HasNews {
@@ -515,7 +516,7 @@ func (d ProjectsListData) withRunState(r ProjectRow) ProjectRow {
 	ids := make([]string, 0, len(r.ActiveRefs)+len(r.InactiveCoderRefs))
 	for _, ref := range r.ActiveRefs {
 		ids = append(ids, ref.ID)
-		r.Working = r.Working || d.Page.Working[ref.ID]
+		r.Working = activity.Earliest(r.Working, d.Page.Working[ref.ID])
 	}
 	// A resumable coder holds news of its own, and the count is the row's one
 	// place for a terminal's news, so it names those too. None of them can be

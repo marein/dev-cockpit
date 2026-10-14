@@ -45,7 +45,7 @@
 {{define "assistant_ctx_row.gohtml"}}
 {{with .Card}}
 <a class="list-group-item list-group-item-action{{if $.Active}} active{{end}}" href="{{.URL}}" draggable="false" data-assistant-instance="{{.ID}}" data-assistant-url="{{.URL}}" data-assistant-name="{{.Title}}">
-  <span class="dc-term-icon assistant{{if .Running}} working{{end}}{{if .News}} news{{end}}" data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml"}}</span>
+  <span class="dc-term-icon assistant{{if .Running}} working{{end}}{{if .News}} news{{end}}"{{with .Running}} data-working-since="{{.}}"{{end}} data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml"}}</span>
   <span class="d-flex flex-column min-w-0 flex-fill">
     {{/* The badges keep the right edge of the row, whatever the name is: what
          they say is read down the column, so a title long enough to truncate

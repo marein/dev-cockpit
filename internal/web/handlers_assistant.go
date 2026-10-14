@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/filesystem"
@@ -201,7 +202,7 @@ func (s *Server) assistantCards() []render.AssistantCard {
 			CoderLabel: render.CoderLabel(entry.CoderID),
 			URL:        "/assistants/" + entry.ID,
 			Messages:   entry.MessageCount,
-			Running:    entry.Running,
+			Running:    activity.Mark(s.assistants.RunningSince(entry.ID)),
 			Unfinished: entry.Unfinished,
 			OpenJobs:   open[entry.ID],
 			News:       unread[entry.ID],
@@ -236,7 +237,7 @@ func (s *Server) assistantData(current assistant.Instance, all bool) render.Assi
 		Messages:        messages,
 		EarlierCount:    earlier,
 		AllURL:          allURL,
-		Running:         s.assistants.Running(current.ID),
+		Running:         activity.Mark(s.assistants.RunningSince(current.ID)),
 		Blocked:         blocked,
 		NewCoderID:      s.assistantNewCoderID(current),
 		Jobs:            jobs,
@@ -449,7 +450,7 @@ func (s *Server) assistantJobViews(owner string) ([]render.AssistantJobView, int
 			DoneWhen: w.DoneWhen,
 			State:    string(w.State),
 			Open:     w.State.Open(),
-			Checking: w.Checking(),
+			Checking: activity.Mark(w.CheckingSince),
 			Note:     w.Note,
 			Wakes:    w.Wakes,
 			MaxWakes: w.MaxWakes,
@@ -802,7 +803,7 @@ func (s *Server) assistantRetry(c *gin.Context, id string) {
 
 func (s *Server) assistantRunResponse(c *gin.Context, id string, run assistant.Run) {
 	if wantsJSON(c.Request) {
-		c.JSON(http.StatusOK, gin.H{"runId": run.RunID, "messageId": run.MessageID, "userMessageId": run.UserMessageID, "replacedId": run.ReplacedID, "title": run.Title, "queued": run.Queued})
+		c.JSON(http.StatusOK, gin.H{"runId": run.RunID, "messageId": run.MessageID, "userMessageId": run.UserMessageID, "replacedId": run.ReplacedID, "title": run.Title, "queued": run.Queued, "since": activity.Mark(run.StartedAt)})
 		return
 	}
 	c.Redirect(http.StatusSeeOther, "/assistants/"+id)

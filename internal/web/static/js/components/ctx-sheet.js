@@ -237,6 +237,7 @@ class CtxSheet extends HTMLElement {
         });
         for (const row of rows) row.classList.toggle("d-none", !hits.has(row));
         tags?.show({ keys, counts, left, total, filtering: query !== "" || keys.length > 0 });
+        syncAnimations(this.panel);
       };
       input.addEventListener("input", apply);
       clear?.addEventListener("click", () => { input.value = ""; tags?.clear(); apply(); input.focus(); });

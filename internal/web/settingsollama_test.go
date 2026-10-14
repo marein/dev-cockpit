@@ -402,7 +402,7 @@ func TestTheTabStripTemplateRendersRunningInactiveAndResumableSessions(t *testin
 		t.Fatal(err)
 	}
 	tpl := render.HTMLTemplate(assets.assetPath, "test", "test", serves, nil)
-	launched := render.TerminalTab{ID: "aaa", Name: "through ollama", URL: "/coders/aaa", Project: "smoke", Coder: "claude", Launcher: "ollama", Kind: "coder", Working: true}
+	launched := render.TerminalTab{ID: "aaa", Name: "through ollama", URL: "/coders/aaa", Project: "smoke", Coder: "claude", Launcher: "ollama", Kind: "coder", Working: 1}
 	plain := render.TerminalTab{ID: "bbb", Name: "plain", URL: "/coders/bbb", Project: "smoke", Coder: "claude", Kind: "coder", HasNews: true}
 	shell := render.TerminalTab{ID: "ccc", Name: "a shell", URL: "/shells/ccc", Project: "smoke", Kind: "shell"}
 	group := render.StripTab{TerminalTab: render.TerminalTab{ID: "grp", Name: "pair", URL: "/splits/grp", Project: "smoke", Kind: "split", Group: "grp"}, Members: []render.TerminalTab{launched, shell}}
@@ -410,7 +410,7 @@ func TestTheTabStripTemplateRendersRunningInactiveAndResumableSessions(t *testin
 		CSRFToken:    "token",
 		Steered:      map[string]bool{"bbb": true},
 		SteerPrefill: map[string]string{"bbb": "carry on"},
-		Working:      map[string]bool{"aaa": true},
+		Working:      map[string]int64{"aaa": 1},
 		QuickNav: render.QuickNav{
 			Active:         []render.TerminalTab{launched, plain, shell},
 			Strip:          []render.StripTab{{TerminalTab: launched}, {TerminalTab: plain}, {TerminalTab: shell}, group},

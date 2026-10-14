@@ -789,7 +789,7 @@ func TestChatTurnAndCheckRunAtTheSameTime(t *testing.T) {
 	if _, err := f.svc.Send(c.ID, "what is going on?", nil); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	waitFor(t, "the chat turn to be running", func() bool { return f.svc.Running(c.ID) })
+	waitFor(t, "the chat turn to be running", func() bool { return !f.svc.RunningSince(c.ID).IsZero() })
 
 	// The check runs while the chat turn is still open, and finishes.
 	f.watcher.Handle("term-1")

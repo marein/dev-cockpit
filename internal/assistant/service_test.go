@@ -439,7 +439,7 @@ func lastMessage(t *testing.T, svc *Service, id string) Message {
 func waitIdle(t *testing.T, svc *Service, id string) Message {
 	t.Helper()
 	waitFor(t, "the turn to settle", func() bool {
-		return !svc.Running(id) && lastMessage(t, svc, id).State.Settled()
+		return svc.RunningSince(id).IsZero() && lastMessage(t, svc, id).State.Settled()
 	})
 	return lastMessage(t, svc, id)
 }
@@ -939,7 +939,7 @@ func TestEveryAssistantAnswersAtTheSameTime(t *testing.T) {
 		}
 	}
 	for _, id := range ids {
-		if !svc.Running(id) {
+		if svc.RunningSince(id).IsZero() {
 			t.Fatalf("want %s answering, nothing may wait for another assistant", id)
 		}
 	}
@@ -1158,6 +1158,7 @@ func orphanTurn(t *testing.T, svc *Service, conversationID string, runner *fakeR
 		MessageID: statefile.NewID(),
 		CoderID:   "claude",
 		SessionID: c.NativeSessionID,
+		StartedAt: time.Now().UTC(),
 	}
 	c.Messages = append(c.Messages, Message{
 		ID:        rec.MessageID,
@@ -1242,7 +1243,7 @@ func TestATurnSurvivesARestartAndIsWrittenToItsEnd(t *testing.T) {
 		t.Fatalf("want no adopted check for a chat turn, got %d", len(adopted))
 	}
 	waitFor(t, "the restarted server to pick the turn up", func() bool {
-		return restarted.Running(created.ID)
+		return !restarted.RunningSince(created.ID).IsZero()
 	})
 
 	close(runner.block)
@@ -1359,7 +1360,7 @@ func TestARecoveredTurnStillHoldsItsAssistant(t *testing.T) {
 	restarted, _, _, _ := newTestServiceIn(t, dir, runner)
 	restarted.Recover()
 	waitFor(t, "the restarted server to pick the turn up", func() bool {
-		return restarted.Running(created.ID)
+		return !restarted.RunningSince(created.ID).IsZero()
 	})
 
 	queued, err := restarted.Send(created.ID, "one more", nil)
@@ -1627,7 +1628,7 @@ func TestDeleteStopsARunningGeneration(t *testing.T) {
 	if err := svc.Delete(created.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if svc.Running(created.ID) {
+	if !svc.RunningSince(created.ID).IsZero() {
 		t.Fatal("want the generation stopped before the delete returns")
 	}
 	close(runner.block)
@@ -1667,7 +1668,7 @@ func TestDeleteStopsTheTurnTheQueueFlushStarts(t *testing.T) {
 	if err := svc.Delete(created.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if svc.Running(created.ID) {
+	if !svc.RunningSince(created.ID).IsZero() {
 		t.Fatal("want no turn of the deleted assistant running once the delete returned")
 	}
 	if _, ok := store.Load(created.ID); ok {
@@ -1677,7 +1678,7 @@ func TestDeleteStopsTheTurnTheQueueFlushStarts(t *testing.T) {
 	// and the delete stopped it: it ends without a transcript to write into and
 	// brings nothing back.
 	waitFor(t, "the flushed turn to have been started", func() bool { return len(runner.turns()) == 2 })
-	waitFor(t, "the flushed turn to be over", func() bool { return !svc.Running(created.ID) })
+	waitFor(t, "the flushed turn to be over", func() bool { return svc.RunningSince(created.ID).IsZero() })
 	if _, ok := store.Load(created.ID); ok {
 		t.Fatal("want the deleted assistant to stay deleted after its last turn ended")
 	}
@@ -1961,7 +1962,7 @@ func TestACancelledTurnIsNotNews(t *testing.T) {
 	if _, err := svc.Send(created.ID, "hello", nil); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	waitFor(t, "the turn to start", func() bool { return svc.Running(created.ID) })
+	waitFor(t, "the turn to start", func() bool { return !svc.RunningSince(created.ID).IsZero() })
 	if err := svc.Cancel(created.ID); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}

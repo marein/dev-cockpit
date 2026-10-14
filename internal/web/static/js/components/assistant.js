@@ -1,7 +1,7 @@
 import { postForm, ensureOk, getText, getJSON, csrfHeaders } from "@dc/http";
 import { notifyError, showToast } from "@dc/toast";
 import { missedServerEvent, onServerEvent } from "@dc/events";
-import { growTextarea, jumpTextEdge } from "@dc/dom";
+import { growTextarea, jumpTextEdge, markWorking } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { watchFileDrop } from "@dc/filedrop";
 import { resolveHostlessLinks } from "@dc/docker";
@@ -703,11 +703,11 @@ class Assistant extends HTMLElement {
     if (this.sendButton) this.sendButton.disabled = over;
   }
 
-  setRunning(running) {
+  setRunning(running, since) {
     this.running = running;
     this.toggleAttribute("running", running);
     this.cancelButton?.classList.toggle("d-none", !running);
-    this.headIcon?.classList.toggle("working", running);
+    if (this.headIcon) markWorking(this.headIcon, running ? Number(since || this.headIcon.dataset.workingSince) || 0 : 0);
     this.onInput();
   }
 
@@ -768,7 +768,7 @@ class Assistant extends HTMLElement {
     switch (frame.kind) {
       case "start":
         this.pending = { runId: frame.runId, messageId: frame.messageId };
-        this.setRunning(true);
+        this.setRunning(true, frame.since);
         // A new answer is followed when the reader stands at the end, or a
         // note's height above it: notes that landed unpinned them, and the
         // app's own rule for "at the end" pins them again.
@@ -2128,7 +2128,7 @@ class Assistant extends HTMLElement {
         return;
       }
       this.adoptSent(bubble, payload.userMessageId, "complete");
-      this.setRunning(true);
+      this.setRunning(true, payload.since);
       this.beginPending(payload.messageId);
     } catch (error) {
       bubble?.remove();
@@ -2164,6 +2164,7 @@ class Assistant extends HTMLElement {
       const response = await postForm(this.postUrl, { form: "retry" });
       await ensureOk(response, "The message could not be sent again.");
       const payload = await response.json().catch(() => ({}));
+      if (this.running) this.setRunning(true, payload.since);
       this.bubble(payload.replacedId)?.remove();
       this.beginPending(payload.messageId);
     } catch (error) {

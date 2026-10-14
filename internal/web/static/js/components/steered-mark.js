@@ -1,3 +1,4 @@
+import { syncAnimations } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import { getText } from "@dc/http";
 
@@ -28,6 +29,7 @@ class SteeredMark extends HTMLElement {
     getText(src, { signal: this.ac.signal })
       .then((html) => {
         this.innerHTML = html;
+        syncAnimations(this);
       })
       .catch(() => {})
       .finally(() => {

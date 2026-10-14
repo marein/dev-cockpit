@@ -608,9 +608,7 @@ func runServe(opts serveOptions) error {
 	// reads. Every change goes out as one activity snapshot on the event bus,
 	// the shape the icons decorate from.
 	tracker := activity.NewTracker()
-	tracker.SetOnChange(func(ids []string) {
-		bus.Publish(eventbus.Event{Type: "activity", Data: map[string]any{"targets": ids}})
-	})
+	tracker.SetOnChange(func(working map[string]int64) { bus.Publish(web.ActivityEvent(working)) })
 	go tracker.Run(time.Second)
 	// Editor intelligence owns the language server child processes. On a
 	// stop signal they are shut down along the protocol before exit; the

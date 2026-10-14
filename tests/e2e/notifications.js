@@ -20,19 +20,25 @@ const { assert, sleep, BASE } = L;
 
 const NOTIFY_DIR = process.env.NOTIFY_DIR || "";
 
-function injectCopilotDone(targetId) {
+function injectCopilot(targetId, hook) {
   const dir = path.join(NOTIFY_DIR, "copilot");
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  fs.writeFileSync(`${file}.tmp`, JSON.stringify({ session_id: targetId, hook_event_name: "Stop" }));
+  fs.writeFileSync(`${file}.tmp`, JSON.stringify({ session_id: targetId, hook_event_name: hook }));
   fs.renameSync(`${file}.tmp`, `${file}.json`);
 }
 
-L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
+function injectCopilotDone(targetId) {
+  injectCopilot(targetId, "Stop");
+}
+
+L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage, bag }) => {
   const tag = `ntf-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   const coderName = `tcntf-${tag.slice(-4)}`;
+  const pairName = `tcclk-${tag.slice(-4)}`;
   let coderUrl = null;
+  let pairUrl = null;
   const hookHits = [];
   let hookStub = null;
   let hookUrl = null;
@@ -197,6 +203,64 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
     await L.createProject(page, project);
     coderUrl = await L.createSession(page, project, coderName);
     const coderId = new URL(coderUrl).pathname.split("/").pop();
+
+    await run("working marks hold the start of their turn under a client clock ten minutes behind and ahead, through a live update, a reload and a boosted navigation, and run apart", async () => {
+      pairUrl = await L.createSession(page, project, pairName);
+      const pairId = new URL(pairUrl).pathname.split("/").pop();
+      const icon = (id) => `#project-${project} [data-notify-target="${id}"]`;
+      const both = [icon(coderId), icon(pairId)];
+      const problems = [];
+      const clocks = await L.skewedClocks(page.context(), bag);
+      const raised = (id) => Promise.all(clocks.map(([, p]) => p.waitForSelector(`${icon(id)}.working[data-working-since]`, { timeout: 12000 })));
+      let summary = "";
+      try {
+        for (const [, p] of clocks) {
+          await p.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+          await p.waitForSelector(icon(pairId), { timeout: 8000 });
+        }
+        await sleep(1500);
+        injectCopilot(coderId, "TurnStart");
+        await raised(coderId);
+        await L.clockMarks(clocks, "a live update", [icon(coderId)], problems);
+
+        await sleep(1200);
+        injectCopilot(pairId, "TurnStart");
+        await raised(pairId);
+        const [first, second] = (await L.clockMarks(clocks, "two turns", both, problems)).behind;
+        assert(second.since - first.since >= 1000, `two turns that started apart share a start: ${first.since} and ${second.since}`);
+
+        for (const [, p] of clocks) {
+          await p.reload({ waitUntil: "domcontentloaded" });
+          await p.waitForSelector(`${icon(pairId)}.working`, { timeout: 8000 });
+        }
+        await sleep(1500);
+        const reloaded = await L.clockMarks(clocks, "after a reload", both, problems);
+
+        for (const [, p] of clocks) {
+          await p.evaluate(() => { window.__markProbe = true; });
+          await p.evaluate(() => window.app.navigate("/docs"));
+          await p.waitForURL(/\/docs/, { timeout: 15000 });
+          await p.evaluate(() => window.app.navigate("/projects"));
+          await p.waitForSelector(`${icon(pairId)}.working`, { timeout: 8000 });
+          assert(await p.evaluate(() => window.__markProbe === true), "the navigation was a full reload");
+        }
+        await sleep(500);
+        const boosted = await L.clockMarks(clocks, "after a boosted navigation", both, problems);
+        for (const [name] of clocks) {
+          for (const [when, read] of [["a reload", reloaded], ["a boosted navigation", boosted]]) {
+            assert(read[name][0]?.since === first.since && read[name][1]?.since === second.since,
+              `clock ${name}: ${when} moved the start: ${JSON.stringify({ first, second, read: read[name] })}`);
+          }
+        }
+        const pinned = [...Object.values(reloaded), ...Object.values(boosted)].flat();
+        summary = `apart by ${second.since - first.since}ms, pinned within ${Math.max(...pinned.map((m) => Math.abs(m.drift)))}ms on both clocks`;
+      } finally {
+        for (const [, p] of clocks) await p.close().catch(() => {});
+        await L.stopSession(page, pairUrl).catch(() => {});
+      }
+      assert(!problems.length, problems.join("; "));
+      return summary;
+    });
 
     await run("injected done event -> toast, badge, title counter", async () => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
@@ -549,6 +613,7 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage }) => {
     }
     if (hookStub) hookStub.close();
     if (coderUrl) await L.stopSession(page, coderUrl).catch(() => {});
+    if (pairUrl) await L.stopSession(page, pairUrl).catch(() => {});
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" }).catch(() => {});
     const card = `#project-${project}`;
     for (let i = 0; i < 3; i++) {
