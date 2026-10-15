@@ -459,6 +459,31 @@ function splitLabel(row) {
   });
 }
 
+// recordCopies is an init script that logs every copy the page makes, through
+// the clipboard API or the execCommand fallback, in window.__copies. A page
+// without a secure origin cannot read the clipboard back, and execCommand
+// only copies inside a user gesture, so an ok entry of the fallback is the
+// proof the copy ran in the click.
+function recordCopies() {
+  window.__copies = [];
+  const clip = navigator.clipboard;
+  if (clip && clip.writeText) {
+    const write = clip.writeText.bind(clip);
+    clip.writeText = (text) => write(text).then(
+      () => { window.__copies.push({ via: "clipboard", text, ok: true }); },
+      (err) => { window.__copies.push({ via: "clipboard", text, ok: false }); throw err; },
+    );
+  }
+  const exec = document.execCommand.bind(document);
+  document.execCommand = (command, ...rest) => {
+    const field = document.activeElement;
+    const text = field && typeof field.value === "string" ? field.value.slice(field.selectionStart, field.selectionEnd) : String(getSelection());
+    const ok = exec(command, ...rest);
+    if (command === "copy") window.__copies.push({ via: "execCommand", text, ok });
+    return ok;
+  };
+}
+
 function assert(c, m) { if (!c) throw new Error(m); }
 
 // CHECK narrows a runner to the checks whose name contains one of a comma
@@ -535,6 +560,6 @@ module.exports = {
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
   login, createProject, projectPath, deleteProject, dismissUpdate, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
   saveTagSettings, setField, removeTags, reach, editorReady, waitEditorCursor, wordPoint, splitLabel, skewedClocks, markPhases, markOff, clockMarks,
-  makeRunner, report, assert,
+  makeRunner, report, assert, recordCopies,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

@@ -523,11 +523,24 @@ async function init(root) {
   }
 
   function openTypeMenu(name, x, y) {
-    openMenu({ x: Math.round(x), y: Math.round(y), items: [editorLSP.classNameItem(name, copyClassName)], signal });
+    openMenu({ x: Math.round(x), y: Math.round(y), items: [editorLSP.classNameItem(name, copyWithStatus)], signal });
   }
 
-  function copyClassName(name) {
-    void copyText(name).then((ok) => (ok ? status(`Copied ${name}`, "ok") : status("Clipboard is not available.", "error")));
+  function copyWithStatus(text) {
+    void copyText(text).then((ok) => (ok ? status(`Copied ${text}`, "ok") : status("Clipboard is not available.", "error")));
+  }
+
+  // copyPathItem copies the path the editor knows a file by, its chip the
+  // same file from the root of this host. A path that is already absolute,
+  // a file from outside the project, needs no second target.
+  function copyPathItem(label, path) {
+    const absolute = path.startsWith("/") ? "" : `${root.dataset.editorProjectPath}/${path}`;
+    return {
+      label,
+      icon: "ti-copy",
+      action: () => copyWithStatus(path),
+      chip: absolute ? { label: "absolute", icon: "ti-slash", title: `Copy ${absolute}`, action: () => copyWithStatus(absolute) } : null,
+    };
   }
 
   async function goToDefinitionAtCursor() {
@@ -656,7 +669,7 @@ async function init(root) {
       lspNamesUsable: () => lspNamesUsable(g),
       lookupClassName: (pos) => lookupClassName(g, pos),
       onTypeMenu: openTypeMenu,
-      copyClassName,
+      copyClassName: copyWithStatus,
       onLSPClick: goToDefinition,
       onFindUsages: findUsages,
       onGoToDefinition: goToDefinitionAtCursor,
@@ -1888,14 +1901,14 @@ async function init(root) {
     // other entry here acts on a file this project owns.
     if (tab.compare) return closing;
     if (tab.external) {
-      return [...closing, { divider: true }, { label: "Copy path", icon: "ti-copy", action: () => copyPath(tab.revision ? tab.revision.path : tab.path) }];
+      return [...closing, { divider: true }, copyPathItem("Copy path", tab.revision ? tab.revision.path : tab.path)];
     }
     return [
       ...closing,
       { divider: true },
       { label: "Copy file", icon: "ti-files", action: () => copyToClipboard(tab.path, false) },
       clipboard ? { label: `Paste "${baseName(clipboard.path)}"`, icon: "ti-clipboard", action: () => void pasteInto(parentDir(tab.path)) } : null,
-      { label: "Copy path", icon: "ti-copy", action: () => copyPath(tab.path) },
+      copyPathItem("Copy path", tab.path),
       { label: "Copy contents", icon: "ti-file-text", action: () => copyContents(tab.path) },
       { label: "Download", icon: "ti-download", action: () => startDownload(tab.path) },
       isArchive(tab.name) ? { label: "Extract here", icon: "ti-file-zip", action: () => void extractArchive(tab.path) } : null,
@@ -2443,7 +2456,7 @@ async function init(root) {
       icon: "ti-files",
       action: () => copyToClipboard(entry.path, entry.isDir),
     });
-    items.push({ label: "Copy path", icon: "ti-copy", action: () => copyPath(entry.path) });
+    items.push(copyPathItem("Copy path", entry.path));
     if (!entry.isDir) {
       items.push({ label: "Copy contents", icon: "ti-file-text", action: () => copyContents(entry.path) });
     }
@@ -5765,15 +5778,6 @@ async function init(root) {
     void editLineComment(tab.path, line);
   }
 
-  async function copyPathLine(path, line) {
-    try {
-      await navigator.clipboard.writeText(`${path}:${line}`);
-      status(`Copied ${path}:${line}`, "ok");
-    } catch {
-      status("Clipboard is not available.", "error");
-    }
-  }
-
   // commitGroup is what the line's commit can do, read off the blame gutter:
   // headed by the commit, the file against it, what the commit changed in the
   // file (the file at the commit's first parent against the commit), the
@@ -5826,7 +5830,7 @@ async function init(root) {
           ? { label: "Edit comment", icon: "ti-message-circle", hint: "Ctrl+Alt+C", action: () => void editLineComment(tab.path, line) }
           : { label: "Add line comment", icon: "ti-message-plus", hint: "Ctrl+Alt+C", action: () => void editLineComment(tab.path, line) },
         existing ? { label: "Delete comment", icon: "ti-trash", danger: true, action: () => void deleteCommentDialog(existing) } : null,
-        { label: "Copy path:line", icon: "ti-copy", action: () => void copyPathLine(tab.path, line) },
+        copyPathItem("Copy path:line", `${tab.path}:${line}`),
         blameMenuItem(tab),
         ...commitGroup(tab, line),
       ],
@@ -6683,15 +6687,6 @@ async function init(root) {
       status(`Created ${created}`, "ok");
     } catch (err) {
       status(err.message, "error");
-    }
-  }
-
-  async function copyPath(path) {
-    try {
-      await navigator.clipboard.writeText(path);
-      status(`Copied ${path}`, "ok");
-    } catch {
-      status("Clipboard is not available.", "error");
     }
   }
 

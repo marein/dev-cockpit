@@ -50,6 +50,8 @@ export function labelNodes(label) {
 // What the arrow keys walk in a menu. The editor's sheets pass a selector of
 // their own, the movement below is the same one.
 const MENU_ROW = ".dropdown-item";
+const MENU_CHIP = ".dc-menu-chip";
+const MENU_SPLIT = ".dc-menu-split";
 
 // rowsOf answers a container's rows in document order, the disabled ones and
 // the hidden ones left out, and stepRowFocus is one step down or up over them: both ends wrap.
@@ -158,7 +160,8 @@ export function openMenu({ x, y, items, signal }) {
       closeMenu();
       item.action?.();
     });
-    node.appendChild(row);
+    const chip = item.chip && !item.disabled ? menuChip(item.chip) : null;
+    node.appendChild(chip ? el("div", { class: "dc-menu-split d-flex align-items-center", role: "none" }, row, chip) : row);
   }
   if (node.lastElementChild?.classList.contains("dropdown-divider")) node.lastElementChild.remove();
   if (!node.childElementCount) return null;
@@ -194,7 +197,7 @@ export function openMenu({ x, y, items, signal }) {
     if (!node.contains(event.target)) closeMenu();
   }, capture);
   window.addEventListener("keydown", (event) => onKeydown(event, node), capture);
-  focusFollowsPointer(node, node, { signal: ac.signal });
+  focusFollowsPointer(node, node, { selector: `${MENU_ROW}, ${MENU_CHIP}`, signal: ac.signal });
   document.addEventListener("wheel", (event) => {
     if (!node.contains(event.target)) closeMenu();
   }, { signal: ac.signal, capture: true, passive: true });
@@ -370,11 +373,43 @@ function onKeydown(event, node) {
     document.activeElement.click();
     return;
   }
+  const split = node.contains(document.activeElement) ? document.activeElement.closest(MENU_SPLIT) : null;
+  if (split && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
+    event.preventDefault();
+    event.stopPropagation();
+    split.querySelector(event.key === "ArrowRight" ? MENU_CHIP : MENU_ROW).focus({ preventScroll: true });
+    return;
+  }
   const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
   if (!step) return;
   event.preventDefault();
   event.stopPropagation();
+  if (split) split.querySelector(MENU_ROW).focus({ preventScroll: true });
   stepRowFocus(node, step);
+}
+
+// menuChip is a second target on a row, where a hint would stand. The arrow
+// keys up and down walk the rows only, so a chip never costs a step there.
+function menuChip(chip) {
+  const button = el(
+    "button",
+    {
+      type: "button",
+      class: "btn btn-sm btn-outline-secondary rounded-pill dc-menu-chip flex-shrink-0 me-2",
+      role: "menuitem",
+      title: chip.title || null,
+      "aria-label": chip.title || null,
+    },
+    chip.icon ? el("i", { class: `ti ${chip.icon} me-1`, "aria-hidden": "true" }) : null,
+    chip.label,
+  );
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenu();
+    chip.action();
+  });
+  return button;
 }
 
 function place(node, x, y) {

@@ -31,25 +31,13 @@ const { assert, sleep, BASE } = L;
 
 const PLAIN = (process.env.PLAIN_URL || "").replace(/\/$/, "");
 
-function recordCopies() {
-  window.__copies = [];
+function watchMenus() {
   document.addEventListener("contextmenu", (e) => { window.__menuClaimed = e.defaultPrevented; });
-  const clip = navigator.clipboard;
-  if (clip && clip.writeText) {
-    const write = clip.writeText.bind(clip);
-    clip.writeText = (text) => write(text).then(
-      () => { window.__copies.push({ via: "clipboard", text, ok: true }); },
-      (err) => { window.__copies.push({ via: "clipboard", text, ok: false }); throw err; },
-    );
-  }
-  const exec = document.execCommand.bind(document);
-  document.execCommand = (command, ...rest) => {
-    const field = document.activeElement;
-    const text = field && typeof field.value === "string" ? field.value.slice(field.selectionStart, field.selectionEnd) : String(getSelection());
-    const ok = exec(command, ...rest);
-    if (command === "copy") window.__copies.push({ via: "execCommand", text, ok });
-    return ok;
-  };
+}
+
+async function recordCopies(context) {
+  await context.addInitScript(L.recordCopies);
+  await context.addInitScript(watchMenus);
 }
 
 // The class name requests a page has out, and when the last one moved.
@@ -110,7 +98,7 @@ L.runFeature("EDITOR-LSP-CLASS-NAME", async ({ engine, browser, ctx, page, run, 
   const broken = `zzfqcnx-${tag}`;
   const editorOf = (root, name) => `${root}/projects/${name}/editor`;
   const base = editorOf(BASE, project);
-  await ctx.addInitScript(recordCopies);
+  await recordCopies(ctx);
   trackLookups(page);
 
   const post = (name, path, body) => page.evaluate(async ({ url, body }) => {
@@ -377,7 +365,7 @@ L.runFeature("EDITOR-LSP-CLASS-NAME", async ({ engine, browser, ctx, page, run, 
   const mobile = async () => {
     const mp = await mobilePage();
     if (!lookups.has(mp)) {
-      await mp.context().addInitScript(recordCopies);
+      await recordCopies(mp.context());
       trackLookups(mp);
     }
     return mp;
@@ -424,7 +412,7 @@ L.runFeature("EDITOR-LSP-CLASS-NAME", async ({ engine, browser, ctx, page, run, 
     assert(PLAIN.startsWith("http://"), "PLAIN_URL names the instance over plain http, see the header");
     const plainCtx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
     try {
-      await plainCtx.addInitScript(recordCopies);
+      await recordCopies(plainCtx);
       const p = trackLookups(await plainCtx.newPage());
       await plainEditor(p);
       const origin = await insecure(p);
@@ -443,7 +431,7 @@ L.runFeature("EDITOR-LSP-CLASS-NAME", async ({ engine, browser, ctx, page, run, 
     assert(PLAIN.startsWith("http://"), "PLAIN_URL names the instance over plain http, see the header");
     const plainCtx = await L.newMobile(browser);
     try {
-      await plainCtx.addInitScript(recordCopies);
+      await recordCopies(plainCtx);
       const mp = trackLookups(await plainCtx.newPage());
       await plainEditor(mp);
       await mOpenDrawer(mp);

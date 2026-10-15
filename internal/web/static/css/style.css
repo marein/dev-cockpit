@@ -1339,6 +1339,19 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
   flex: 0 0 auto;
   white-space: pre;
 }
+/* A row with a chip is highlighted as a whole, chip included, and the
+   translucent tint is laid once, not again under the row. */
+.dc-menu-split:is(:hover, :focus-within) {
+  background-color: var(--tblr-dropdown-link-hover-bg);
+}
+.dc-context-menu .dc-menu-split > .dropdown-item {
+  flex: 1 1 auto;
+  width: auto;
+  background-color: transparent;
+}
+@media (pointer: coarse) {
+  .dc-menu-chip { min-height: 2rem; padding-inline: 0.75rem; }
+}
 /* ---- project editor --------------------------------------------------- */
 /* The editor fills the work surface and scrolls internally. The explicit
    heights down the chain keep the flex and percent heights (and CodeMirror)

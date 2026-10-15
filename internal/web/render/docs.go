@@ -424,7 +424,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Line comments",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Alt", "C"}}, {Caps: []string{"Ctrl", "Shift", "C"}}},
-					Desc:  `Click a line number, or the gutter beside it, for the line's menu: add or edit the comment, delete it, copy the path with the line, toggle the git blame, and with the blame on, the line's commit. A right click and a long-press open the same menu. Comments stick to their line while you edit, follow a rename, and are saved with the project, so they reach your other devices. The quoted line is the anchor: moved and standing in the file exactly once the comment follows it, otherwise it reads outdated with the number orange and struck through. <em>Line comments</em> in the editor menu lists every one of the project, with <em>Go to line</em>, <em>Edit</em>, <em>Delete</em>, <em>Copy as Markdown</em> and <em>Delete all comments</em>.`,
+					Desc:  `Click a line number, or the gutter beside it, for the line's menu: add or edit the comment, delete it, copy the path with the line, relative or through <em>absolute</em> in full, toggle the git blame, and with the blame on, the line's commit. A right click and a long-press open the same menu. Comments stick to their line while you edit, follow a rename, and are saved with the project, so they reach your other devices. The quoted line is the anchor: moved and standing in the file exactly once the comment follows it, otherwise it reads outdated with the number orange and struck through. <em>Line comments</em> in the editor menu lists every one of the project, with <em>Go to line</em>, <em>Edit</em>, <em>Delete</em>, <em>Copy as Markdown</em> and <em>Delete all comments</em>.`,
 				},
 				{
 					Title: "Diff and blame a file",
@@ -487,7 +487,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Copy a path or a file's text",
-					Desc:  `The tab menu and the tree menu of a file copy its path inside the project, and next to it its contents as text, what is unsaved in the editor included. A file the editor does not open as text, an image or an archive, says so instead of copying anything.`,
+					Desc:  `The tab menu and the tree menu of a file copy its path inside the project, the chip <em>absolute</em> on that row its full path on this host (<kbd>&rarr;</kbd> reaches it), and next to it its contents as text, what is unsaved in the editor included. A file the editor does not open as text, an image or an archive, says so instead of copying anything.`,
 				},
 				{
 					Title: "Upload files",
