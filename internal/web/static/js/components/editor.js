@@ -8,7 +8,7 @@ import { onServerEvent } from "@dc/events";
 import { focusRow, followPointer, labelNodes, menuJustClosed, openMenu, openedByKeyboard, revealRow, rowsOf, stepRowFocus, wireRowMenus } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { applyFold } from "@dc/fold";
-import { escapeHtml, syncAnimations } from "@dc/dom";
+import { copyText, escapeHtml, syncAnimations } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, SwipeNav, pushSample, releaseVelocity } from "@dc/swipe";
 import { matchesTokens, rankTokens } from "@dc/filter";
@@ -18,6 +18,7 @@ import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
 import { isDark } from "@dc/theme";
 import * as dockerApi from "@dc/docker";
 import * as editorLSP from "@dc/editor-lsp";
+import { lspView as editorLSPView } from "@dc/editor-lsp-view";
 import { GroupLayout, cornerLeaf, dropZone, encodeLayout, leaf, leafIds, mapLeaves, readGroups, removeAt, screenOrder, splitAt } from "@dc/editor-groups";
 import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, langUrl, modeUrl } from "@dc/editor-filetypes";
 import { baseName, byteLength, commitDate, countLines, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
@@ -79,7 +80,7 @@ async function init(root) {
   let viewSaveTimer = 0;
   let treeScrollTimer = 0;
   let treeScrollTop = 0;
-  const lsp = editorLSP.createClient(base, root.dataset.editorLsp);
+  const lsp = editorLSP.createClient(base, root.dataset.editorLsp, root.dataset.editorLspNames);
 
   const bodyEl = root.querySelector(".editor-body");
   applyTreeWidth(parseInt(readLayout(TREE_WIDTH_KEY), 10) || 0);
@@ -435,8 +436,8 @@ async function init(root) {
   // works in it exactly as it does in a file of the project: the path
   // travels absolute and the answer may lead back into the project, into
   // the next dependency, or nowhere.
-  function lspUsable() {
-    const tab = activeTab();
+  function lspUsable(g = group) {
+    const tab = activeTabOf(g);
     return !!(lsp && tab && !tab.kind && !tab.compare && !tab.revision && lsp.usable(tab.path));
   }
 
@@ -504,6 +505,28 @@ async function init(root) {
       return;
     }
     openUsages(pos.word || "definition", locs, res);
+  }
+
+  function lspNamesUsable(g) {
+    return lspUsable(g) && lsp.names(activeTabOf(g).path);
+  }
+
+  // A failed answer counts as asked, or a pointer resting on a word would
+  // ask a failing server again with every move; an edit asks anew.
+  async function lookupClassName(g, pos) {
+    const tab = activeTabOf(g);
+    const res = await lsp.className({ path: tab.path, content: liveText(tab), position: { line: pos.line, character: pos.character } });
+    if (res.available) return res;
+    lsp.note(tab.path, res.status);
+    return res.status === "canceled" ? null : { name: "" };
+  }
+
+  function openTypeMenu(name, x, y) {
+    openMenu({ x: Math.round(x), y: Math.round(y), items: [editorLSP.classNameItem(name, copyClassName)], signal });
+  }
+
+  function copyClassName(name) {
+    void copyText(name).then((ok) => (ok ? status(`Copied ${name}`, "ok") : status("Clipboard is not available.", "error")));
   }
 
   async function goToDefinitionAtCursor() {
@@ -629,6 +652,10 @@ async function init(root) {
       onFocusChange: syncSwipeZone,
       mayFocus: () => !overlayOpen(),
       lspUsable,
+      lspNamesUsable: () => lspNamesUsable(g),
+      lookupClassName: (pos) => lookupClassName(g, pos),
+      onTypeMenu: openTypeMenu,
+      copyClassName,
       onLSPClick: goToDefinition,
       onFindUsages: findUsages,
       onGoToDefinition: goToDefinitionAtCursor,
@@ -10584,7 +10611,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   ]);
   const { EditorView, basicSetup } = cm;
   const { ChangeSet, EditorState, Compartment, StateEffect, StateField } = state;
-  const { keymap, Decoration, showTooltip } = view;
+  const { keymap, Decoration } = view;
   const { indentWithTab } = commands;
   const { indentUnit } = language;
   const langConf = new Compartment();
@@ -10660,150 +10687,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
 
   // ---- code navigation --------------------------------------------------------
 
-  // The word under the mouse while Ctrl or Cmd is held.
-  const setLSPHint = StateEffect.define();
-  const lspHintField = StateField.define({
-    create: () => null,
-    update(value, tr) {
-      for (const e of tr.effects) {
-        if (e.is(setLSPHint)) value = e.value;
-      }
-      if (tr.docChanged) value = null;
-      return value;
-    },
-    provide: (f) => EditorView.decorations.from(f, (r) => (
-      r ? Decoration.set([Decoration.mark({ class: "cm-dc-lsp-target" }).range(r.from, r.to)]) : Decoration.none
-    )),
-  });
-  const lspTheme = EditorView.theme({
-    ".cm-dc-lsp-target": { textDecoration: "underline", cursor: "pointer" },
-    ".cm-tooltip.dc-lsp-pill": { padding: "2px", borderRadius: "8px", display: "flex", gap: "2px" },
-  });
-
-  function lspHintRange(v, r) {
-    const cur = v.state.field(lspHintField, false);
-    if (cur === undefined) return;
-    if (!r && !cur) return;
-    if (r && cur && cur.from === r.from && cur.to === r.to) return;
-    v.dispatch({ effects: setLSPHint.of(r ? { from: r.from, to: r.to } : null) });
-  }
-
-  // Off a word the modifier click stays CodeMirror's own add-cursor gesture.
-  function lspWordAt(v, e) {
-    const pos = v.posAtCoords({ x: e.clientX, y: e.clientY });
-    if (pos == null) return null;
-    const word = v.state.wordAt(pos);
-    return word ? { from: word.from, to: word.to, pos } : null;
-  }
-
-  const lspMouse = EditorView.domEventHandlers({
-    mousedown(e, v) {
-      if (e.button !== 0 || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return false;
-      if (!hooks.lspUsable?.()) return false;
-      const target = lspWordAt(v, e);
-      if (!target) return false;
-      e.preventDefault();
-      lspHintRange(v, null);
-      const line = v.state.doc.lineAt(target.pos);
-      hooks.onLSPClick?.({
-        line: line.number - 1,
-        character: target.pos - line.from,
-        word: v.state.doc.sliceString(target.from, target.to),
-      });
-      return true;
-    },
-    mousemove(e, v) {
-      if (!(e.ctrlKey || e.metaKey) || !hooks.lspUsable?.()) {
-        lspHintRange(v, null);
-        return false;
-      }
-      lspHintRange(v, lspWordAt(v, e));
-      return false;
-    },
-  });
-  // The cursor pill, the touch way to the lookups: static, no server
-  // request rides on a cursor move; empty selection only, so it never
-  // sits on selection handles.
-  const setLSPPill = StateEffect.define();
-  const lspPillField = StateField.define({
-    create: () => null,
-    update(value, tr) {
-      let set = false;
-      for (const e of tr.effects) {
-        if (e.is(setLSPPill)) {
-          value = e.value;
-          set = true;
-        }
-      }
-      if (!set && (tr.docChanged || tr.selection)) value = null;
-      return value;
-    },
-    provide: (f) => showTooltip.from(f),
-  });
-  // Touch only: the window opens with a touch and closes with an edit.
-  let lastSurfaceTouch = 0;
-  const lspPillTouch = EditorView.domEventHandlers({
-    touchstart() {
-      lastSurfaceTouch = Date.now();
-      return false;
-    },
-    // A re-tap on the same spot fires no update, so the lift looks itself.
-    touchend(_, v) {
-      setTimeout(() => syncLSPPill(v), 250);
-      return false;
-    },
-  });
-  const pillButton = (label, act) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn btn-sm";
-    btn.textContent = label;
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      act();
-    });
-    return btn;
-  };
-  // The server decides definition or usages on invocation, so the label
-  // must not pretend to know the case.
-  const lspPillTooltip = (pos) => ({
-    pos,
-    above: true,
-    create: (v) => {
-      const dom = document.createElement("div");
-      dom.className = "dc-lsp-pill";
-      dom.setAttribute("data-editor-lsp-pill", "");
-      const offset = { x: 0, y: 6 };
-      const act = pillButton("Look up", () => {
-        lastSurfaceTouch = 0;
-        v.dispatch({ effects: setLSPPill.of(null) });
-        void hooks.onGoToDefinition?.();
-      });
-      act.setAttribute("data-pill-action", "");
-      dom.append(act);
-      return { dom, offset };
-    },
-  });
-  // A dispatch cannot run inside an update.
-  let pillScheduled = false;
-  function syncLSPPill(v) {
-    if (pillScheduled) return;
-    pillScheduled = true;
-    requestAnimationFrame(() => {
-      pillScheduled = false;
-      const field = v.state.field(lspPillField, false);
-      if (field === undefined) return;
-      const sel = v.state.selection.main;
-      const word = sel.empty ? v.state.wordAt(sel.head) : null;
-      const want = !!word && Date.now() - lastSurfaceTouch < 800 && !!hooks.lspUsable?.();
-      if (want && (!field || field.pos !== sel.head)) {
-        v.dispatch({ effects: setLSPPill.of(lspPillTooltip(sel.head)) });
-      } else if (!want && field) {
-        v.dispatch({ effects: setLSPPill.of(null) });
-      }
-    });
-  }
-  const lspExtension = [lspHintField, lspTheme, lspMouse, lspPillField, lspPillTouch];
+  const lspNav = editorLSPView(state, view, hooks);
 
   // The swipe zone asks whether the text has the focus, so every view says when
   // that changes. It rides in the shared extensions because a side by side view
@@ -11199,7 +11083,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     ]),
     sharedExtensions(langExt),
     keymap.of([indentWithTab]),
-    lspExtension,
+    lspNav.extension,
     mergeConf.of([]),
     blameConf.of(blame),
     commentsConf.of(commentsExtension(commentData)),
@@ -11209,8 +11093,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       if (u.docChanged || u.selectionSet) reportCursor(u.state);
       if (u.docChanged || u.selectionSet) hooks.onViewMoved?.();
       if (mergeMod && u.transactions.some((tr) => tr.effects.some((e) => e.is(mergeMod.uncollapseUnchanged)))) hooks.onViewMoved?.();
-      if (u.docChanged) lastSurfaceTouch = 0;
-      if (u.docChanged || u.selectionSet) syncLSPPill(u.view);
+      lspNav.update(u);
     }),
   ];
 
@@ -11875,17 +11758,10 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     },
     lspPosition() {
       const st = workView().state;
-      const head = st.selection.main.head;
-      const line = st.doc.lineAt(head);
-      const word = st.wordAt(head);
-      return {
-        line: line.number - 1,
-        character: head - line.from,
-        word: word ? st.doc.sliceString(word.from, word.to) : "",
-      };
+      return lspNav.positionAt(st, st.selection.main.head);
     },
     clearLSPHint() {
-      for (const v of liveViews()) lspHintRange(v, null);
+      for (const v of liveViews()) lspNav.clearHint(v);
     },
     refreshLanguage,
     applyEditorConfig(ec) {

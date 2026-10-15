@@ -15,7 +15,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/askpass"
-	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/git"
 	"github.com/marein/dev-cockpit/internal/notify"
@@ -109,6 +108,7 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 	s.intel.Touch(p.Name)
 	go s.warmLSPServers(p)
 	set := s.editorSettings()
+	lspExts, lspNames := s.lspSpecs()
 	c.HTML(http.StatusOK, "project_editor.gohtml", render.EditorData{
 		Page:         s.page(c, "Editor - "+p.Name, "editor"),
 		Project:      p,
@@ -118,7 +118,8 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 		DiffMaxLines: set.DiffMaxLines,
 		DiffMaxKiB:   set.DiffMaxKiB,
 		Autosave:     set.Autosave,
-		LSPExts:      s.lspSpec(),
+		LSPExts:      lspExts,
+		LSPNames:     lspNames,
 		Terminal:     strings.TrimSpace(c.Query("terminal")),
 		View:         editorView(c.Query("view")),
 		File:         strings.TrimSpace(c.Query("file")),
@@ -186,23 +187,6 @@ func (s *Server) handleEditorProjects(c *gin.Context) {
 	c.HTML(http.StatusOK, "editor_projects.gohtml", render.EditorProjectsData{
 		Projects: s.editorSwitcher(c.Param("name")),
 	})
-}
-
-// lspSpec is the code navigation surface handed to the editor page:
-// `ext:Label` pairs of the enabled profiles, comma joined, so the browser
-// never mirrors the registry and a language switched off leaves no surface
-// at all. A settings change reaches an open editor with its next load.
-func (s *Server) lspSpec() string {
-	pairs := make([]string, 0)
-	for _, p := range editorintelligence.Profiles() {
-		if s.lspProfileOff(p) {
-			continue
-		}
-		for _, ext := range p.Extensions() {
-			pairs = append(pairs, ext+":"+p.Label)
-		}
-	}
-	return strings.Join(pairs, ",")
 }
 
 // handleEditorList returns the directory listing at ?path= as JSON.

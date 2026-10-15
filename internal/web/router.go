@@ -345,6 +345,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// server lifetime, which the status poll must not.
 	auth.POST("/projects/:name/editor/lsp/definition", s.handleEditorLSPDefinition)
 	auth.POST("/projects/:name/editor/lsp/references", s.handleEditorLSPReferences)
+	auth.POST("/projects/:name/editor/lsp/class-name", s.handleEditorLSPClassName)
 	auth.POST("/projects/:name/editor/lsp/close", s.handleEditorLSPClose)
 	auth.GET("/projects/:name/editor/lsp/status", s.handleEditorLSPStatus)
 	// The file behind a target outside the project, read out of the source

@@ -41,6 +41,10 @@ type Profile struct {
 	// silence until then has to be waited out, which is the zero value
 	// here: a profile that says nothing keeps the careful behaviour.
 	SilentStart bool
+	// ClassName reads the fully qualified name of the class a hover answer
+	// describes, empty for any other symbol. Nil for a language without
+	// such names, whose editor surface then offers none.
+	ClassName func(hover string) string
 	// languageIDs maps the owned file extensions (lowercase, without dot)
 	// to the LSP language identifier sent in didOpen.
 	languageIDs map[string]string
@@ -89,6 +93,7 @@ var profiles = []*Profile{
 		Command:     []string{"intelephense", "--stdio"},
 		Server:      "intelephense",
 		Marker:      "composer.json",
+		ClassName:   phpClassName,
 		languageIDs: map[string]string{"php": "php"},
 		container: container{
 			Image:      "dev-cockpit-intelephense",

@@ -408,6 +408,10 @@ func DocsTopics() []DocsTopic {
 					Desc:  `For PHP, Go, TypeScript and JavaScript. Hold <kbd>Ctrl</kbd> and click a symbol to jump to its definition, or to its usages when the cursor already sits on the declaration, and on touch a tap raises a small <em>Look up</em> action. A target outside the project opens too, a dependency's sources or a standard library, as a read only tab. PHP and Go index the project first, the statusbar showing how far, and a lookup waits for that index; <em>Reindex</em> in the editor's menu starts them over. A JavaScript or TypeScript project without a <code>jsconfig.json</code> or <code>tsconfig.json</code> gets a default one. Settings &rarr; Editor &rarr; LSP picks how each server runs. A project's servers stop after 300 seconds without editor use, minimum 60. At most 3 projects run servers at the same time, minimum 1, all languages of a project count as one. Another project stops the least recently used one, unless all are busy.`,
 				},
 				{
+					Title: "Copy a class name",
+					Desc:  `In PHP a right click on the name of a class, interface, trait or enum offers to copy its fully qualified name, the one an import or an alias stands for; anywhere else the browser's own menu stays. The language server is asked while the pointer rests on a name, so the entry is there once it answered, and not while it indexes. On touch the pill carries <em>Copy FQCN</em> on such a name.`,
+				},
+				{
 					Title: "Git marks",
 					Desc:  `In a git repository a changed file carries a letter on its tree row and its tab: <span class="text-green">A</span> added, <span class="text-cyan">U</span> untracked, <span class="text-yellow">M</span> modified, <span class="text-red">D</span> deleted, <span class="text-azure">R</span> renamed, <span class="text-red">!</span> conflicted, a folder a dot for the most pressing change under it. The open file marks its own changes against the last commit in the gutter, <span class="text-green">green</span> for a new line, <span class="text-azure">blue</span> for a changed one, a grey tick where lines went, following your typing without a save.`,
 				},

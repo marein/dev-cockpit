@@ -298,6 +298,8 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     // An address is a link: an anchor to the address itself, opening a new tab.
     const portLink = await menuItem(page, "Open :18088").evaluate((e) => ({ tag: e.tagName, href: e.getAttribute("href"), target: e.getAttribute("target") }));
     assert(portLink.tag === "A" && /:18088$/.test(portLink.href) && portLink.target === "_blank", `the port row is not a link: ${JSON.stringify(portLink)}`);
+    const portLabel = await L.splitLabel(menuItem(page, "Open :18088"));
+    assert(portLabel && portLabel.space >= 2 && Math.abs(portLabel.gap) <= 1, `the port label lost its space on screen: ${JSON.stringify(portLabel)}`);
     // The address the container's own label declares, before the port: where a
     // route exists it is the address a person wants. It carries no port, the
     // proxy answers on the default one.
@@ -669,6 +671,8 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     assert(await page.locator("[data-editor-docker-list] .dropdown-item", { hasText: /^Open :18088$/ }).count() === 1, "the drilled sheet misses the port");
     const sheetLink = await page.locator("[data-editor-docker-list] .dropdown-item", { hasText: /^Open :18088$/ }).evaluate((e) => ({ tag: e.tagName, href: e.getAttribute("href"), target: e.getAttribute("target") }));
     assert(sheetLink.tag === "A" && /:18088$/.test(sheetLink.href) && sheetLink.target === "_blank", `the sheet's port row is not a link: ${JSON.stringify(sheetLink)}`);
+    const sheetLabel = await L.splitLabel(page.locator("[data-editor-docker-list] .dropdown-item", { hasText: /^Open :18088$/ }));
+    assert(sheetLabel && sheetLabel.space >= 2 && Math.abs(sheetLabel.gap) <= 1, `the sheet's port label lost its space on screen: ${JSON.stringify(sheetLabel)}`);
     assert(await page.locator("[data-editor-docker-list] .dropdown-item", { hasText: new RegExp(`^Open ${LINK_HOST}$`) }).count() === 1, "the drilled sheet misses the routed host");
     await page.locator("[data-editor-docker-list] .dropdown-item", { hasText: /^Back$/ }).click();
     assert(await page.locator("[data-editor-docker-list] .dropdown-item", { hasText: /^web \(2 addresses\)$/ }).count() === 1, "Back did not lead to the project's own list");

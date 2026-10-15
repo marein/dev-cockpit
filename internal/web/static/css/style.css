@@ -1326,16 +1326,18 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
 }
 /* A label that must keep its end: the head takes the space that is left and
    ellipsizes, the tail always stands, so the ellipsis lands in the middle.
-   Both halves are one line, the item never wraps. */
+   Both halves are one line, the item never wraps. Each half ends a line of
+   its own, where nowrap would drop a trailing space ("Open " before ":8083"),
+   so they keep their spaces. */
 .dc-menu-label-head {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre;
   min-width: 0;
 }
 .dc-menu-label-tail {
   flex: 0 0 auto;
-  white-space: nowrap;
+  white-space: pre;
 }
 /* ---- project editor --------------------------------------------------- */
 /* The editor fills the work surface and scrolls internally. The explicit

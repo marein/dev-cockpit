@@ -34,6 +34,17 @@
 # `.fake-lsp-restart` appearing in the root makes the fake exit with the
 # watcher contract's code 64 after removing the file, standing in for the
 # container watcher seeing a workspace change.
+#
+# Hover answers the way intelephense does, its markdown and the name's range
+# copied from the real server, for the PHP names of the class name runner:
+# `Bar` and its alias `Baz` are the class Foo\Bar, `Suit` the enum Foo\Suit,
+# `GlobalThing` a class without a namespace, `helper` a namespaced function,
+# `make`, `name`, `X` and `Hearts` a method, a property, a constant and an
+# enum case, any `$variable` a variable. A name inside quotes or behind `//`
+# has no hover, and neither has any other word. Hovering `Crash` ends the
+# server, standing in for one that fails. A file `.fake-lsp-hold` in the root
+# keeps the announced indexing running until the file is gone, which is how
+# the runner holds a lookup in front of an index that is not ready yet.
 import json
 import os
 import sys
@@ -107,6 +118,56 @@ def loc(uri, line, character, length):
     }
 
 
+CLASS_BAR = "__Foo\\\\Bar__\n\nA docblock.\n\n```php\n<?php\nclass Bar { }\n```"
+HOVERS = {
+    "Bar": CLASS_BAR,
+    "Baz": CLASS_BAR,
+    "Suit": "__Foo\\\\Suit__\n\n```php\n<?php\nenum Suit: string\n{\n    case Hearts;\n}\n```",
+    "GlobalThing": "__GlobalThing__\n\n```php\n<?php\nclass GlobalThing { }\n```",
+    "helper": "__App\\\\helper__\n\n```php\n<?php\nfunction helper(): void { }\n```\n\n_@return_ `void`",
+    "make": "__Foo\\\\Bar::make__\n\n```php\n<?php\npublic static function make(): static { }\n```\n\n_@return_ `static`",
+    "name": "__Foo\\\\Bar::$name__\n\n```php\n<?php\npublic string $name = '';\n```",
+    "X": "__Foo\\\\Bar::X__\n\n```php\n<?php\npublic const X = 1;\n```\n\n_@var_ `1`",
+    "Hearts": "__Foo\\\\Suit::Hearts__\n\n```php\n<?php\ncase Hearts = 'h';\n```",
+}
+NAME_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_\\$")
+
+
+def hover_at(text, line, character):
+    lines = text.split("\n")
+    if line >= len(lines):
+        return None
+    row = lines[line]
+    start = end = character
+    while start > 0 and row[start - 1] in NAME_CHARS:
+        start -= 1
+    while end < len(row) and row[end] in NAME_CHARS:
+        end += 1
+    if "//" in row[:start] or row[:start].count("'") % 2:
+        return None
+    name = row[start:end].rsplit("\\", 1)[-1]
+    if name == "Crash":
+        os._exit(3)
+    if name.startswith("$"):
+        value = "_@var_ `\\\\Foo\\\\Bar %s`" % name
+    else:
+        value = HOVERS.get(name)
+    if value is None:
+        return None
+    return {
+        "contents": {"kind": "markdown", "value": value},
+        "range": {"start": {"line": line, "character": start}, "end": {"line": line, "character": end}},
+    }
+
+
+def held_index(marker):
+    progress("begin", None)
+    while os.path.exists(marker):
+        time.sleep(0.2)
+    indexed.set()
+    progress("end", None)
+
+
 def slow_index(with_pct):
     progress("begin", 0 if with_pct else None)
     for step in (20, 45, 70, 90):
@@ -121,6 +182,7 @@ def main():
     stdin = sys.stdin.buffer
     root = ""
     dependency = ""
+    docs = {}
     while True:
         msg = read_frame(stdin)
         if msg is None:
@@ -143,7 +205,10 @@ def main():
                         os._exit(64)
             threading.Thread(target=restart_watch, args=(root_dir,), daemon=True).start()
             marker = os.path.join(root_dir, ".fake-lsp-slow")
-            if os.path.isfile(marker):
+            hold = os.path.join(root_dir, ".fake-lsp-hold")
+            if os.path.isfile(hold):
+                threading.Thread(target=held_index, args=(hold,), daemon=True).start()
+            elif os.path.isfile(marker):
                 with open(os.path.join(root_dir, ".fake-lsp-starts"), "a") as ledger:
                     ledger.write("start\n")
                 with_pct = not open(marker).read().startswith("nopct")
@@ -154,6 +219,18 @@ def main():
                 indexed.set()
                 progress("begin", None)
                 progress("end", None)
+        elif method == "textDocument/didOpen":
+            doc = msg["params"]["textDocument"]
+            docs[doc["uri"]] = doc.get("text", "")
+        elif method == "textDocument/didChange":
+            changes = msg["params"].get("contentChanges") or []
+            if changes:
+                docs[msg["params"]["textDocument"]["uri"]] = changes[-1].get("text", "")
+        elif method == "textDocument/hover":
+            uri = msg["params"]["textDocument"]["uri"]
+            pos = msg["params"]["position"]
+            result = hover_at(docs.get(uri, ""), pos["line"], pos["character"]) if indexed.is_set() else None
+            send({"jsonrpc": "2.0", "id": msg["id"], "result": result})
         elif method == "textDocument/definition":
             line = msg["params"]["position"]["line"]
             asked = (msg["params"].get("textDocument") or {}).get("uri") or ""

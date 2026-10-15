@@ -303,6 +303,44 @@ func (s *Server) lspWarmModes(ids map[string]bool) []editorintelligence.WarmMode
 // finish the walk warms whatever the first stretch found.
 const lspWarmScanCap = 50000
 
+// lspSpecs is the code navigation surface handed to the editor page:
+// `ext:Label` pairs of the enabled profiles, comma joined, so the browser
+// never mirrors the registry and a language switched off leaves no surface
+// at all, and the extensions of those whose server names classes, the cue
+// to offer copying one. A settings change reaches an open editor with its
+// next load.
+func (s *Server) lspSpecs() (string, string) {
+	pairs, names := make([]string, 0), make([]string, 0)
+	for _, p := range editorintelligence.Profiles() {
+		if s.lspProfileOff(p) {
+			continue
+		}
+		for _, ext := range p.Extensions() {
+			pairs = append(pairs, ext+":"+p.Label)
+			if p.ClassName != nil {
+				names = append(names, ext)
+			}
+		}
+	}
+	return strings.Join(pairs, ","), strings.Join(names, ",")
+}
+
+// handleEditorLSPClassName answers the fully qualified name of the class
+// the symbol at the position names, empty for any other symbol. An
+// unavailable server answers with a status inside a 200 like a navigation.
+func (s *Server) handleEditorLSPClassName(c *gin.Context) {
+	_, req, ok := s.editorLSPRequest(c)
+	if !ok {
+		return
+	}
+	res, err := s.intel.ClassName(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
 // handleEditorLSPDefinition answers where the symbol at the position is
 // defined. An unavailable server answers with a status inside a 200, a
 // malformed request is the only error case.

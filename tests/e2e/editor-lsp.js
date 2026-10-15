@@ -4,7 +4,8 @@ const { assert, sleep, BASE } = L;
 // Editor code navigation over LSP: Ctrl/Cmd+click and Ctrl+B jump to the
 // definition, on the declaration the usages open instead, Shift+F12 lists
 // them (bottom sheet on a phone), touch gets the cursor pill
-// ([data-editor-lsp-pill]) with one Look up action; no context menu claim.
+// ([data-editor-lsp-pill]) with one Look up action; no context menu claim
+// for Go (PHP's class name entry is editor-lsp-class-name.js).
 // Routes: POST /projects/:name/editor/lsp/{definition,references,close}
 // (internal/editorintelligence).
 // Instance: fake language server first on PATH as "gopls"
@@ -39,25 +40,7 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
   const statusText = () => page.evaluate(() => document.querySelector("[data-editor-status]")?.textContent || "");
   const panelShowing = (p = page) => p.evaluate(() => !document.querySelector("[data-editor-quickopen]").hidden);
 
-  // The center of a word, measured through a Range over its text node; see
-  // the header.
-  const wordPointOn = (p, lineNeedle, word) => p.evaluate(({ lineNeedle, word }) => {
-    const el = [...document.querySelectorAll(".cm-line")].find((l) => l.textContent.includes(lineNeedle));
-    if (!el) return null;
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    let node;
-    while ((node = walker.nextNode())) {
-      const i = node.textContent.indexOf(word);
-      if (i >= 0) {
-        const r = document.createRange();
-        r.setStart(node, i);
-        r.setEnd(node, i + word.length);
-        const rect = r.getBoundingClientRect();
-        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-      }
-    }
-    return null;
-  }, { lineNeedle, word });
+  const wordPointOn = L.wordPoint;
   const wordPoint = (lineNeedle, word) => wordPointOn(page, lineNeedle, word);
 
   const tapAt = (p, pt) => p.touchscreen.tap(pt.x, pt.y);

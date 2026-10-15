@@ -414,6 +414,51 @@ function report(title, results, bag) {
   return anyFail;
 }
 
+// wordPoint is the center of a word on the editor surface, measured through
+// a Range over its text node: a .cm-line is full width, so a click on the
+// element lands right of the text, and highlighting splits identifiers into
+// spans of their own.
+function wordPoint(page, lineNeedle, word) {
+  return page.evaluate(({ lineNeedle, word }) => {
+    const el = [...document.querySelectorAll(".cm-line")].find((l) => l.textContent.includes(lineNeedle));
+    if (!el) return null;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const i = node.textContent.indexOf(word);
+      if (i >= 0) {
+        const r = document.createRange();
+        r.setStart(node, i);
+        r.setEnd(node, i + word.length);
+        const rect = r.getBoundingClientRect();
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      }
+    }
+    return null;
+  }, { lineNeedle, word });
+}
+
+// splitLabel reads a split menu label off the screen rather than out of its
+// text: the width the head's trailing space takes there, 0 when it has none
+// or the browser dropped it, and the room between the head's box and the
+// tail's.
+function splitLabel(row) {
+  return row.evaluate((el) => {
+    const head = el.querySelector(".dc-menu-label-head");
+    const tail = el.querySelector(".dc-menu-label-tail");
+    if (!head || !tail) return null;
+    const text = head.firstChild;
+    let space = 0;
+    if (text && text.textContent.endsWith(" ")) {
+      const r = document.createRange();
+      r.setStart(text, text.length - 1);
+      r.setEnd(text, text.length);
+      space = r.getBoundingClientRect().width;
+    }
+    return { head: head.textContent, tail: tail.textContent, space, gap: tail.getBoundingClientRect().left - head.getBoundingClientRect().right };
+  });
+}
+
 function assert(c, m) { if (!c) throw new Error(m); }
 
 // CHECK narrows a runner to the checks whose name contains one of a comma
@@ -489,7 +534,7 @@ async function runFeature(title, body) {
 module.exports = {
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
   login, createProject, projectPath, deleteProject, dismissUpdate, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
-  saveTagSettings, setField, removeTags, reach, editorReady, waitEditorCursor, skewedClocks, markPhases, markOff, clockMarks,
+  saveTagSettings, setField, removeTags, reach, editorReady, waitEditorCursor, wordPoint, splitLabel, skewedClocks, markPhases, markOff, clockMarks,
   makeRunner, report, assert,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

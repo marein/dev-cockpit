@@ -1,12 +1,26 @@
 import { csrfHeaders, getJSON, postJSON } from "@dc/http";
 
-export function createClient(base, spec) {
+// The menu entry copying a class name the server already answered: the
+// copy has to run inside the click, a page without a secure origin has no
+// clipboard after an await.
+export function classNameItem(name, copy) {
+  const cut = name.lastIndexOf("\\") + 1;
+  return {
+    label: { head: `Copy ${name.slice(0, cut)}`, tail: name.slice(cut) },
+    icon: "ti-copy",
+    title: name,
+    action: () => copy(name),
+  };
+}
+
+export function createClient(base, spec, namesSpec) {
   const langs = new Map();
   for (const pair of (spec || "").split(",")) {
     const [ext, label] = pair.split(":");
     if (ext && label) langs.set(ext, label);
   }
   if (langs.size === 0) return null;
+  const nameExts = new Set((namesSpec || "").split(",").filter(Boolean));
   const id = crypto.randomUUID ? crypto.randomUUID() : `c${Date.now()}${Math.random().toString(36).slice(2)}`;
   const state = new Map();
   const permanent = new Set(["not-installed", "disabled"]);
@@ -45,8 +59,12 @@ export function createClient(base, spec) {
     note(path, status) {
       state.set(extOf(path), status);
     },
+    names(path) {
+      return nameExts.has(extOf(path));
+    },
     definition: (payload, signal) => post("definition", payload, signal),
     references: (payload, signal) => post("references", payload, signal),
+    className: (payload, signal) => post("class-name", payload, signal),
     // The file behind a target outside the project, out of the source
     // directories the servers themselves work from. It answers text and
     // no version: nothing read here can be written back.

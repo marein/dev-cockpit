@@ -27,6 +27,9 @@ type EditorData struct {
 	// pairs of the enabled language server profiles, so the client never
 	// mirrors the registry and a disabled profile leaves no surface.
 	LSPExts string
+	// LSPNames lists the extensions, comma joined, whose language server
+	// names classes, so the editor offers copying a class name there alone.
+	LSPNames string
 	// Terminal is the session id a panel-marked coder create handed back via
 	// ?terminal=, rendered into the page because the client must not read it
 	// from the URL: a boosted navigation swaps the body before it pushes the

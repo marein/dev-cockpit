@@ -201,6 +201,7 @@ func (c *lspConn) initialize(ctx context.Context) error {
 				},
 				"definition": map[string]any{},
 				"references": map[string]any{},
+				"hover":      map[string]any{"contentFormat": []string{"markdown", "plaintext"}},
 			},
 			"workspace": map[string]any{
 				"configuration":    true,
@@ -607,12 +608,13 @@ func (c *lspConn) docURI(p string) string {
 	return fileURI(documentPath(c.rootPath, p))
 }
 
-// startLocations sends one navigation request. method is
-// "textDocument/definition" or "textDocument/references"; the references
-// call includes the declaration, so the panel shows where the symbol lives
-// along with where it is used. The caller holds docMu, so the snapshot the
-// request describes and the request itself stay adjacent on the wire.
-func (c *lspConn) startLocations(method, rel string, line, char int) (int64, chan rpcMessage, error) {
+// startAt sends one request about a position in a document: a navigation
+// or a hover. The references call includes the declaration, so the panel
+// shows where the symbol lives along with where it is used. The caller
+// holds docMu, so the snapshot the request describes and the request itself
+// stay adjacent on the wire; the answer is waited out with awaitCall,
+// outside any lock.
+func (c *lspConn) startAt(method, rel string, line, char int) (int64, chan rpcMessage, error) {
 	params := map[string]any{
 		"textDocument": map[string]any{"uri": c.docURI(rel)},
 		"position":     map[string]any{"line": line, "character": char},
@@ -621,13 +623,4 @@ func (c *lspConn) startLocations(method, rel string, line, char int) (int64, cha
 		params["context"] = map[string]any{"includeDeclaration": true}
 	}
 	return c.startCall(method, params)
-}
-
-// awaitLocations waits a navigation answer out, outside any lock.
-func (c *lspConn) awaitLocations(ctx context.Context, id int64, ch chan rpcMessage) ([]lspLocation, error) {
-	var raw json.RawMessage
-	if err := c.awaitCall(ctx, id, ch, &raw); err != nil {
-		return nil, err
-	}
-	return decodeLocations(raw)
 }
