@@ -10,14 +10,14 @@ const { assert, sleep, BASE, dismissUpdate } = L;
 // title, genre, the position against the length scriptune plays the sheet
 // for, play or stop and next, the mode the shuffle runs in), the volume row
 // (dc-song-volume, the music player's own volume), a filter row in the editor
-// sheets' look and the 40 songs in four genres, top to bottom Dark Techno,
-// Deep Dubstep, Melodic House and Chill Electronic. The genres stand folded
-// until a click unfolds one, each row carrying its own play control. The list
-// keeps one height, room for every genre with the largest one open, so
-// opening or closing genres never changes the panel's box, at 1360 px and at
-// 992 px, the narrowest width that has a status line. A lower window takes
-// height from the list first, down to its four genre rows, and only then
-// lets the whole panel scroll, so no part ever leaves the window.
+// sheets' look and the 50 songs in five genres, top to bottom Dark Techno,
+// Deep Dubstep, Melodic House, Chill Electronic and Space Ambient. The genres
+// stand folded until a click unfolds one, each row carrying its own play
+// control. The list keeps one height, room for every genre with the largest
+// one open, so opening or closing genres never changes the panel's box, at
+// 1360 px and at 992 px, the narrowest width that has a status line. A lower
+// window takes height from the list first, down to its five genre rows, and
+// only then lets the whole panel scroll, so no part ever leaves the window.
 //
 // Two modes: the big play shuffles all genres, a genre's play control
 // shuffles that genre without opening it, a title plays that song and then
@@ -69,7 +69,8 @@ const MENU = "dc-song-player .dropdown-menu";
 const TOGGLE = "dc-song-player [data-song-toggle]";
 const NEXT = "dc-song-player [data-song-next]";
 const FILTER = "dc-song-player [data-song-filter]";
-const GENRES = ["Dark Techno", "Deep Dubstep", "Melodic House", "Chill Electronic"];
+const GENRES = ["Dark Techno", "Deep Dubstep", "Melodic House", "Chill Electronic", "Space Ambient"];
+const SPACE = ["Apogee", "Perigee", "Aphelion", "Zenith", "Parallax", "Albedo", "Umbra", "Lagrange", "Redshift", "Nadir"];
 const fold = (genre) => `dc-song-player [data-song-shelf="${genre}"] [data-song-genre]`;
 const genrePlay = (genre) => `dc-song-player [data-song-shelf="${genre}"] [data-song-genre-play]`;
 
@@ -211,7 +212,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       assert(!(await menuShown(page)), "the panel is open before a click");
     });
 
-    await run("a click on the note opens the panel with the cursor in the filter, the four genres in order and folded", async () => {
+    await run("a click on the note opens the panel with the cursor in the filter, the five genres in order and folded", async () => {
       await openPanel(page);
       const panel = await page.evaluate(() => ({
         focused: document.activeElement === document.querySelector("dc-song-player [data-song-filter]"),
@@ -223,14 +224,16 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       assert(panel.focused, "the filter does not hold the focus");
       assert(panel.box.top >= 0 && panel.box.bottom <= panel.height, `the panel leaves the viewport: ${JSON.stringify(panel)}`);
       assert(panel.box.bottom <= panel.note + 1, `the panel covers the note: ${JSON.stringify(panel)}`);
-      assert(panel.songs === 40, `the list holds ${panel.songs} songs`);
+      assert(panel.songs === 50, `the list holds ${panel.songs} songs`);
       const folded = await view(page);
       assert(folded.genres.map((g) => g.name).join(",") === GENRES.join(","), `genres ${JSON.stringify(folded.genres.map((g) => g.name))}`);
       assert(folded.genres.every((g) => g.expanded === "false" && g.chevron === "right" && g.count === "10" && !g.disabled), `the genres do not stand folded: ${JSON.stringify(folded.genres)}`);
       assert(folded.songs.length === 0, `a folded panel shows ${JSON.stringify(folded.songs)}`);
+      const space = await songsOf(page, "Space Ambient");
+      assert(space.join(",") === SPACE.join(","), `Space Ambient holds ${JSON.stringify(space)}`);
       assert(folded.stored === null, `a fresh browser stored folds ${folded.stored}`);
       const idle = await state(page);
-      assert(idle.now === "Nothing playing" && idle.from === "40 songs in 4 genres" && idle.mode === null, `the idle stage reads ${JSON.stringify(idle)}`);
+      assert(idle.now === "Nothing playing" && idle.from === "50 songs in 5 genres" && idle.mode === null, `the idle stage reads ${JSON.stringify(idle)}`);
       assert(idle.title === "Shuffle all genres" && /ti-player-play/.test(idle.icon) && !idle.nextEnabled, `the idle controls ${JSON.stringify(idle)}`);
       const clock = await page.evaluate(() => [...document.querySelectorAll("dc-song-player [data-song-elapsed], dc-song-player [data-song-length]")].map((e) => e.textContent));
       assert(clock.join(" ") === "0:00 0:00", `the idle clock reads ${JSON.stringify(clock)}`);
@@ -258,7 +261,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       assert(sameBox(again, folded), `closing a genre changed the box: ${JSON.stringify({ folded: box(folded), again: box(again) })}`);
     });
 
-    await run("opening and closing genres keeps the panel's box, and the panel shrinks with the window down to its four genre rows", async () => {
+    await run("opening and closing genres keeps the panel's box, and the panel shrinks with the window down to its five genre rows", async () => {
       const heights = {};
       try {
         for (const [width, height] of [[1360, 900], [992, 900], [1360, 620], [992, 450], [1360, 340]]) {
@@ -321,7 +324,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
           players: document.querySelectorAll("dc-song-player").length,
         };
       });
-      assert(counts.songs === 40 && counts.groups === 4 && counts.players === 1, `after re-inserting: ${JSON.stringify(counts)}`);
+      assert(counts.songs === 50 && counts.groups === 5 && counts.players === 1, `after re-inserting: ${JSON.stringify(counts)}`);
       await openPanel(page);
       await typeFilter(page, "canyon");
       const shown = (await view(page)).songs;
@@ -524,6 +527,8 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       await waitPlaying(page, false);
     });
 
+    await require("./song-player-space").spaceChecks({ page, run, ready, openPanel, setFolds, state, waitPlaying, toggle: TOGGLE });
+
     await run("the status line note turns into an equalizer naming the song while music plays, a click on it opens the player and never stops the music", async () => {
       await ready(page);
       const note = () => page.evaluate(() => {
@@ -582,7 +587,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
         }));
         assert(canyon.songs.join(",") === "Quiet Canyon", `canyon shows ${JSON.stringify(canyon.songs)}`);
         assert(canyon.genres.length === 1 && canyon.genres[0].name === "Chill Electronic" && canyon.genres[0].disabled && canyon.genres[0].count === "1", `canyon heads ${JSON.stringify(canyon.genres)}`);
-        assert(side.count === "1 of 40" && side.clear === "visible", `count and clear ${JSON.stringify(side)}`);
+        assert(side.count === "1 of 50" && side.clear === "visible", `count and clear ${JSON.stringify(side)}`);
         await typeFilter(page, "o");
         const many = await view(page);
         assert(new Set(many.genres.map((g) => g.name)).size > 1, `"o" found songs in ${JSON.stringify(many.genres)}`);
@@ -591,7 +596,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
           const empty = document.querySelector("dc-song-player [data-song-empty]");
           return { text: empty.textContent, shown: getComputedStyle(empty).display !== "none", count: document.querySelector("dc-song-player [data-song-filter-count]").textContent };
         });
-        assert(none.shown && none.text === 'Nothing matches "zzz".' && none.count === "0 of 40", `no hits ${JSON.stringify(none)}`);
+        assert(none.shown && none.text === 'Nothing matches "zzz".' && none.count === "0 of 50", `no hits ${JSON.stringify(none)}`);
         const zzz = await view(page);
         for (const [name, during] of [["canyon", canyon], ["o", many], ["zzz", zzz]]) {
           assert(Math.abs(during.filter - before.filter) < 1 && Math.abs(during.menu.top - before.menu.top) < 1, `"${name}" moved the panel with ${JSON.stringify(open)} open: ${JSON.stringify({ before: before.menu, during: during.menu })}`);
@@ -652,7 +657,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       assert(value === "", `the filter still reads "${value}"`);
       assert(await menuShown(page), "Escape on a filled filter closed the panel");
       const cleared = await view(page);
-      assert(cleared.songs.length === 0 && cleared.genres.length === 4 && cleared.genres.every((g) => !g.disabled && g.expanded === "false"), `the cleared filter shows ${JSON.stringify(cleared)}`);
+      assert(cleared.songs.length === 0 && cleared.genres.length === 5 && cleared.genres.every((g) => !g.disabled && g.expanded === "false"), `the cleared filter shows ${JSON.stringify(cleared)}`);
       await page.press(FILTER, "Escape");
       await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("show"), MENU, { timeout: 5000 });
     });

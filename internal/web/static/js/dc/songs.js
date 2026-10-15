@@ -146,6 +146,45 @@ function swell(note, beats, bpm, levels, pans, step = 0.08) {
   return `${cells.join("\n")}\n#BPM ${bpm}`;
 }
 
+// tone sounds a note for seconds in steps of about step seconds, each at the
+// level that level gives for the seconds since the note started. A step
+// lasts whole cycles like a step of swell, so the wave stops at zero where
+// the next one starts. scriptune reads a BPM as a whole number and misses
+// the end of a cycle by a little, so of the cycle ends within two of where a
+// step should end it takes the one a whole BPM gets closest to, as a whole
+// note or a dotted whole, whose BPM lands finer. The last step ends on the
+// last cycle, or on the one before if that saves more than 2 microseconds a
+// cycle it leaves out, since a rest fills what is left at the end and the
+// note keeps to the beat.
+function tone(note, seconds, bpm, level, step) {
+  const hz = hertz(note);
+  const cycles = Math.floor(hz * seconds + 1e-6);
+  const count = Math.max(1, Math.round(cycles / Math.max(1, Math.round(hz * step))));
+  const cells = [];
+  let time = 0;
+  let done = 0;
+  let rate;
+  for (let i = 0; i < count && done < cycles; i++) {
+    const target = Math.round((cycles * (i + 1)) / count);
+    const from = Math.max(done + 1, i < count - 1 ? target - 2 : cycles - 1);
+    const to = Math.max(from, i < count - 1 ? Math.min(cycles - 1, target + 2) : cycles);
+    let best;
+    for (let end = from; end <= to; end++) {
+      for (const [value, beats] of [["w", 4], ["dw", 6]]) {
+        const next = Math.round((60 * beats) / (end / hz - time));
+        const miss = Math.abs(time + (60 * beats) / next - end / hz) + (i < count - 1 ? 0 : (cycles - end) * 2e-6);
+        if (!best || miss < best.miss) best = { end, value, length: (60 * beats) / next, next, miss };
+      }
+    }
+    if (best.next !== rate) cells.push(`#BPM ${(rate = best.next)}`);
+    cells.push(`#VOLUME ${Math.min(1, level(time)).toFixed(3)}\n${note}:${best.value}`);
+    time += best.length;
+    done = best.end;
+  }
+  if (seconds - time > 1e-6) cells.push(`#BPM ${Math.round(240 / (seconds - time))}\n-:w`);
+  return `${cells.join("\n")}\n#BPM ${bpm}`;
+}
+
 // A rest starts an oscillator just like a note, so rests take as few cells
 // as they can.
 const values = [[24, "dw"], [16, "w"], [12, "dh"], [8, "h"], [6, "dq"], [4, "q"], [3, "de"], [2, "e"], [1, "s"]];
@@ -304,6 +343,191 @@ function depth(bpm, { roots, lows, tones }) {
   return { sub, growl, pass, near, far, pulse, ping, echo };
 }
 
+// pluck strikes a note for beats like a string played gently, with nothing
+// but volume steps, as swell builds its swells. Every step lasts whole cycles
+// of the pitch, so it stops at zero right where the next one starts at zero.
+// A whole BPM misses the cycles of a long step on a high note, so each step
+// takes, from about five percent more or fewer cycles, the count, note value
+// and BPM that come closest to whole cycles, and its end aims at where all
+// steps so far should end. Every step is an oscillator, so a quiet voice gets
+// by with longer steps and a higher floor.
+function pluck(note, beats, bpm, level, attack, decay, step = 0.2, floor = 36) {
+  const hz = hertz(note);
+  const seconds = (beats * 60) / bpm;
+  const lengths = { w: 4, dw: 6, h: 2, dh: 3, q: 1, dq: 1.5, e: 0.5, de: 0.75, s: 0.25 };
+  const at = (t) => (t < attack ? (level * t) / attack : decay ? level * 1e-3 ** ((t - attack) / decay) : level);
+  const rises = attack > 0 ? Math.min(4, Math.max(1, Math.round(attack / 0.015))) : 0;
+  const fall = decay ? Math.max(0.025, (step * decay) / Math.log(1e3)) : 0.25;
+  const ends = Array.from({ length: rises }, (_, i) => Math.min((attack * (i + 1)) / rises, seconds));
+  for (let end = attack; end < seconds && at(end) > level * 10 ** (-floor / 20); ) ends.push((end = Math.min(end + fall, seconds)));
+  const fit = (length, cycles) => {
+    let best;
+    const spread = Math.round(2 + cycles / 20);
+    for (const n of cycles ? Array.from({ length: 2 * spread + 1 }, (_, i) => cycles - spread + i).filter((n) => n > 0) : [0]) {
+      for (const [value, units] of Object.entries(lengths)) {
+        const rate = Math.round(60 * units * (n ? hz / n : 1 / length));
+        const time = (60 * units) / rate;
+        const miss = n ? Math.abs(time * hz - n) : Math.abs(time - length);
+        if (rate > 0 && (!n || time < seconds - elapsed + 1e-9) && !(best?.miss <= miss)) best = { rate, value, time, miss };
+      }
+    }
+    return best;
+  };
+  const cells = [];
+  let elapsed = 0;
+  let rate;
+  for (const [i, end] of ends.entries()) {
+    const cell = end - elapsed >= 1 / hz && fit(end - elapsed, Math.max(1, Math.round((end - elapsed) * hz)));
+    if (!cell) break;
+    if (cell.rate !== rate) cells.push(`#BPM ${(rate = cell.rate)}`);
+    cells.push(`#VOLUME ${(i === rises - 1 ? level : at(elapsed + cell.time / 2)).toFixed(4)}\n${note}:${cell.value}`);
+    elapsed += cell.time;
+  }
+  if (seconds - elapsed > 1e-6) {
+    const rest = fit(seconds - elapsed);
+    cells.push(`#BPM ${rest.rate}\n-:${rest.value}`);
+  }
+  return `${cells.join("\n")}\n#BPM ${bpm}`;
+}
+
+const quarters = { w: 4, h: 2, q: 1, e: 0.5, s: 0.25, dw: 6, dh: 3, dq: 1.5, de: 0.75 };
+
+// A rest of a length no note value has takes one cell at a whole BPM, since
+// every rest starts an oscillator like a note.
+function span(note, beats, bpm) {
+  const exact = Object.keys(quarters).find((value) => quarters[value] === beats);
+  if (exact) return `${note}:${exact}`;
+  const value = Object.keys(quarters).find((key) => Number.isInteger((bpm * quarters[key]) / beats)) ?? "w";
+  return `#BPM ${Math.round((bpm * quarters[value]) / beats)}\n${note}:${value}\n#BPM ${bpm}`;
+}
+
+const picking = {
+  strum: ["0:w", "1:w"], swell: ["0:w", "1:w"], roll: ["0:dq 0:dq 0:q", "-:e 1:dq 1:dq 1:e"],
+  rock: ["0:h 0:h", "-:q 1:h 1:q"], toll: ["0:w", "-:h 1:h"], pedal: ["0:w", "-:q 1:q 1:q 1:q"],
+  cross: ["0:dq 0:dq 0:q", "-:q 1:q 1:q 1:q"],
+};
+const touches = {
+  strum: { attack: 0.03, decay: 4.5 }, swell: { attack: 0.9, decay: 8 }, roll: { attack: 0.025, decay: 3.5 },
+  rock: { attack: 0.025, decay: 4 }, toll: { attack: 0.035, decay: 6 }, pedal: { attack: 0.025, decay: 3 },
+  cross: { attack: 0.02, decay: 3 },
+};
+
+// scriptune has no reverb, so Space Ambient builds the room from the
+// material: echo taps, a bloom, slow washes and a shimmer.
+function space(bpm, chords) {
+  const dyads = { ...chords, "-": ["-", "-"] };
+  const strike = (note, beats, level, attack, decay, step, floor) => (note === "-" ? span("-", beats, bpm)
+    : pluck(note, beats, bpm, level, attack, decay, step, floor));
+  const breathe = (line, contour) => {
+    const notes = line.split(/[\s|]+/).filter(Boolean).map((cell) => ({ note: cell.split(":")[0], beats: quarters[cell.split(":")[1]] }));
+    const total = notes.reduce((sum, { beats }) => sum + beats, 0);
+    let at = 0;
+    return notes.map(({ note, beats }, i) => {
+      const accent = at % 1 ? 0.82 : at % 2 ? 0.92 : 1;
+      const level = ease(contour, (at + beats / 2) / total) * accent * (1 + 0.05 * Math.sin(i * 2.7 + at));
+      at += beats;
+      return { note, beats, level };
+    });
+  };
+  const play = (notes, { level, attack, decay, pick = 1, step, floor }) => notes
+    .map((n) => strike(n.note, n.beats, level * n.level ** pick, attack * (1.6 - 0.6 * Math.min(n.level, 1)), decay, step, floor))
+    .join("\n");
+  const melody = (line, contour, { edge = 0.12, ...touch } = {}) => {
+    const notes = breathe(line, contour);
+    const long = notes.map((n) => (n.beats < 1 ? { ...n, note: "-" } : n));
+    const lead = { level: 0.27, attack: 0.04, decay: 6, ...touch };
+    const tap = { attack: touch.attack ?? 0.03, decay: lead.decay };
+    return {
+      lead: play(notes, lead),
+      ...(edge && { edge: play(notes, { level: edge, attack: 0.008, decay: 1.5, pick: 1.5, step: 0.6, floor: 18 }) }),
+      bloom: play(long, { level: 0.13, attack: 0.3, decay: 9, step: 0.5, floor: 30 }),
+      tap1: play(notes, { level: 0.17, ...tap, step: 0.4, floor: 30 }),
+      tap2: play(notes, { level: 0.08, ...tap, step: 0.6, floor: 24 }),
+      tap3: play(notes, { level: 0.035, ...tap, step: 0.8, floor: 18 }),
+    };
+  };
+  const guitar = (progression, pattern, contour) => {
+    const bars = progression.split(" ");
+    const touch = touches[pattern];
+    const [low, high] = [0, 1].map((string) => breathe(bars.map((chord) => (chord === "-" ? "-:w"
+      : picking[pattern][string].replace(/\d/g, (i) => dyads[chord][i]))).join(" "), contour));
+    const wash = (lane, string) => {
+      const notes = bars.filter((_, i) => i % 2 === lane).map((chord) => ({ note: dyads[chord][string], beats: 8, level: ease(contour, 0.5) }));
+      return play(notes, { level: 0.085, attack: 0.5, decay: 10, step: 0.5, floor: 30 });
+    };
+    const top = (chord) => (chord === "-" ? "-:w" : `${transpose(dyads[chord][1], 12)}:w`);
+    return {
+      low: play(low, { level: 0.2, step: 0.3, ...touch }), high: play(high, { level: 0.2, step: 0.3, ...touch }),
+      ...(pattern !== "swell" && {
+        pickLow: play(low, { level: 0.09, attack: 0.006, decay: 1.6, pick: 1.5, step: 0.6, floor: 18 }),
+        pickHigh: play(high, { level: 0.09, attack: 0.006, decay: 1.6, pick: 1.5, step: 0.6, floor: 18 }),
+      }),
+      echoLow: play(low, { ...touch, level: 0.085, step: 0.6, floor: 24 }), echoHigh: play(high, { ...touch, level: 0.085, step: 0.6, floor: 24 }),
+      washLowA: wash(0, 0), washHighA: wash(0, 1), washLowB: wash(1, 0), washHighB: wash(1, 1),
+      shimmer: play(breathe(bars.map(top).join(" "), contour), { level: 0.035, attack: 0.9, decay: 8, step: 0.6, floor: 24 }),
+    };
+  };
+  const bell = (line, contour, level = 0.05) => ({ bell: play(breathe(line, contour), { level, attack: 0.004, decay: 2.5, step: 0.6, floor: 24 }) });
+  const coda = (chord, note, pattern = "strum", touch = {}) => ({
+    bars: 4, hum: [0.6, 0.3, 0], ...guitar(`${chord} - - -`, pattern, [0.5, 0.45]), ...melody(`${note}:w -:w -:w -:e`, [0.45, 0.4], touch),
+    washLowB: "-:w -:w -:w", washHighB: "-:w -:w -:w",
+  });
+  const record = ({ root, parts, form, echo = 0.75, drone = 0.1, buzz = 0.02, voices = {} }) => {
+    const order = form.split(" ").map((name) => ({ ...parts[name] }));
+    // A swell rests through the part of a cycle left at its end, a gap a loud
+    // drone ticks at, so each part's note lasts the whole cycles up to where
+    // the song's clock is nearest one.
+    const undertone = (place, sound) => {
+      let clock = 0;
+      let droned = 0;
+      return order.map((part) => {
+        const note = place(part.root ?? root);
+        clock += (part.bars * 240) / bpm;
+        const beats = (Math.round(hertz(note) * (clock - droned)) / hertz(note)) * (bpm / 60);
+        droned += (beats * 60) / bpm;
+        return sound(note, beats, part);
+      });
+    };
+    const same = (note) => note;
+    const drones = undertone(same, (note, beats, part) => swell(note, beats, bpm, part.hum.map((level) => level * drone), null, 0.2));
+    const buzzes = undertone(same, (note, beats, part) => swell(note, beats, bpm, part.hum.map((level) => level * buzz), null, 0.6));
+    order.forEach((part, i) => Object.assign(part, { drone: drones[i], buzz: buzzes[i] }));
+    const all = {
+      lead: "#TYPE sine\n#PAN 0.1", edge: "#TYPE sawtooth\n#PAN 0.1", bloom: "#TYPE sine\n#PAN -0.35",
+      tap1: "#TYPE sine\n#PAN 0.6", tap2: "#TYPE sine\n#PAN -0.6", tap3: "#TYPE sine\n#PAN 0.4",
+      low: "#TYPE sine\n#PAN -0.2", high: "#TYPE sine\n#PAN 0.15", pickLow: "#TYPE sawtooth\n#PAN -0.2", pickHigh: "#TYPE sawtooth\n#PAN 0.15",
+      echoLow: "#TYPE sine\n#PAN 0.5", echoHigh: "#TYPE sine\n#PAN -0.5",
+      washLowA: "#TYPE sine\n#PAN -0.6", washHighA: "#TYPE sine\n#PAN -0.45", washLowB: "#TYPE sine\n#PAN 0.6", washHighB: "#TYPE sine\n#PAN 0.45",
+      shimmer: "#TYPE sine\n#PAN 0.25", bell: "#TYPE sine\n#PAN -0.3", drone: "#TYPE sine", buzz: "#TYPE sawtooth", ...voices,
+    };
+    const used = Object.fromEntries(Object.entries(all).filter(([voice]) => order.some((part) => part[voice] !== undefined)));
+    const strum = `#BPM ${Math.round(60 / 0.035)}\n-:q\n#BPM ${bpm}`;
+    const delays = {
+      high: strum, pickHigh: strum, echoLow: rests(echo * 4), echoHigh: `${rests(echo * 4)}\n${strum}`, washLowB: "-:w", washHighB: "-:w",
+      bloom: "-:s", tap1: rests(echo * 4), tap2: rests(echo * 8), tap3: rests(echo * 12),
+    };
+    const [first] = order;
+    for (const [voice, rest] of Object.entries(delays)) if (used[voice]) first[voice] = `${rest}\n${first[voice] ?? rests(first.bars * 16)}`;
+    const sheet = song({ bpm, voices: used, parts: { ...order }, form: order.map((_, i) => i).join(" ") });
+    // The deep undertone replaces the drone and the buzz after normalize, so
+    // every other voice keeps its level. A phone speaker cannot play the sub,
+    // the growl an octave up carries it there.
+    const octave = (n) => (note) => note.replace(/\d$/, n);
+    const layer = (n, level, step) => undertone(octave(n), (note, beats, part) => {
+      const seconds = (beats * 60) / bpm;
+      return tone(note, seconds, bpm, (t) => Math.min(1, ease(part.hum, Math.min(1, t / seconds))) * level, step);
+    });
+    const write = (voice, type, notes) => [`#TRACK ${voice}`, ...notes.map((cells) => `#BPM ${bpm}\n#PAN 0\n#TYPE ${type}\n${cells}`)].join("\n");
+    // parseSheet carries the volume a track ends on into the next one, so the
+    // growl ends on what the buzz left and every voice after it plays as it did.
+    const tracks = sheet.split(/\n(?=#TRACK )/);
+    const left = tracks.find((text) => text.startsWith("#TRACK buzz\n")).match(/#VOLUME [\d.e-]+/g).at(-1);
+    return tracks.flatMap((text) => (text.startsWith("#TRACK drone\n") ? [write("sub", "sine", layer(1, 0.33, 0.25)), write("body", "sine", layer(2, 0.24, 0.35))]
+      : text.startsWith("#TRACK buzz\n") ? [`${write("growl", "sawtooth", layer(2, 0.07, 0.25))}\n${left}`] : [text])).join("\n");
+  };
+  return { breathe, play, melody, guitar, bell, coda, record };
+}
+
 // unroll reads a track the way parseSheet of scriptune does, loops unrolled,
 // and gives its notes, each with the lowest pitch of its cell or null for a
 // rest, where it starts and how long it lasts, in sixteenths of the tempo the
@@ -390,45 +614,6 @@ function boost(sheet, bpm, { tail, kick, sub, bass, grit }) {
   const kicks = [...drums.grid].map((letter) => "KB".includes(letter));
   const octave = (note, n) => note.replace(/\d$/, n);
 
-  // tone sounds a note for n sixteenths in steps of about step seconds, each
-  // at the level that level gives for the seconds since the note started. A
-  // step lasts whole cycles like a step of swell, so the wave stops at zero
-  // where the next one starts. scriptune reads a BPM as a whole number and
-  // misses the end of a cycle by a little, so of the cycle ends within two of
-  // where a step should end it takes the one a whole BPM gets closest to, as
-  // a whole note or a dotted whole, whose BPM lands finer. The last step ends
-  // on the last cycle, or on the one before if that saves more than 2
-  // microseconds a cycle it leaves out, since a rest fills what is left at
-  // the end and the note keeps to the beat.
-  const tone = (note, n, level, step) => {
-    const hz = hertz(note);
-    const seconds = n * sixteenth;
-    const cycles = Math.floor(hz * seconds + 1e-6);
-    const count = Math.max(1, Math.round(cycles / Math.max(1, Math.round(hz * step))));
-    const cells = [];
-    let time = 0;
-    let done = 0;
-    let rate;
-    for (let i = 0; i < count && done < cycles; i++) {
-      const target = Math.round((cycles * (i + 1)) / count);
-      const from = Math.max(done + 1, i < count - 1 ? target - 2 : cycles - 1);
-      const to = Math.max(from, i < count - 1 ? Math.min(cycles - 1, target + 2) : cycles);
-      let best;
-      for (let end = from; end <= to; end++) {
-        for (const [value, beats] of [["w", 4], ["dw", 6]]) {
-          const next = Math.round((60 * beats) / (end / hz - time));
-          const miss = Math.abs(time + (60 * beats) / next - end / hz) + (i < count - 1 ? 0 : (cycles - end) * 2e-6);
-          if (!best || miss < best.miss) best = { end, value, length: (60 * beats) / next, next, miss };
-        }
-      }
-      if (best.next !== rate) cells.push(`#BPM ${(rate = best.next)}`);
-      cells.push(`#VOLUME ${Math.min(1, level(time)).toFixed(3)}\n${note}:${best.value}`);
-      time += best.length;
-      done = best.end;
-    }
-    if (seconds - time > 1e-6) cells.push(`#BPM ${Math.round(240 / (seconds - time))}\n-:w`);
-    return `${cells.join("\n")}\n#BPM ${bpm}`;
-  };
   // run collects the cells of a voice and joins the rests in between, so a
   // run of them starts as few oscillators as it can.
   const run = () => {
@@ -480,7 +665,7 @@ function boost(sheet, bpm, { tail, kick, sub, bass, grit }) {
     while (j < length && gate[j] && octave(roots[Math.floor(j / 4)] ?? pitch, 1) === octave(pitch, 1)) j++;
     const from = i;
     const step = kicks.slice(from, j).some(Boolean) ? sub.step : sub.calm;
-    deep.add(tone(octave(pitch, 1), j - from, (t) => sub.level * pump(from + t / sixteenth), step));
+    deep.add(tone(octave(pitch, 1), (j - from) * sixteenth, bpm, (t) => sub.level * pump(from + t / sixteenth), step));
     i = j;
   }
 
@@ -497,7 +682,7 @@ function boost(sheet, bpm, { tail, kick, sub, bass, grit }) {
     }
     const ring = Math.min(n, bass.ring ?? n);
     const level = bass.level * (bass.accent?.[start % 4] ?? 1) * Math.min(1, 150 / hertz(pitch));
-    body.add(tone(pitch, ring, (t) => level * (bass.sustain + (1 - bass.sustain) * Math.exp(-t / bass.decay)), bass.step));
+    body.add(tone(pitch, ring * sixteenth, bpm, (t) => level * (bass.sustain + (1 - bass.sustain) * Math.exp(-t / bass.decay)), bass.step));
     body.rest(n - ring);
   }
 
@@ -511,7 +696,7 @@ function boost(sheet, bpm, { tail, kick, sub, bass, grit }) {
       continue;
     }
     const ring = Math.min(n, grit.ring);
-    saw.add(tone(octave(pitch, 2), ring, (t) => grit.level * Math.exp(-t / grit.decay), grit.step));
+    saw.add(tone(octave(pitch, 2), ring * sixteenth, bpm, (t) => grit.level * Math.exp(-t / grit.decay), grit.step));
     saw.rest(n - ring);
   }
 
@@ -2741,5 +2926,396 @@ export const songs = {
       },
       form: "open thaw thin frost gone",
     });
+  })(),
+  apogee: (() => {
+    const bpm = 100;
+    const { melody, guitar, coda, record } = space(bpm, { EG: ["E4", "G4"], DF: ["D4", "F#4"], BD: ["B3", "D4"], CE: ["C4", "E4"], FA: ["F#4", "A4"] });
+    const verse = "EG DF BD CE EG FA BD CE";
+    const pickup = "-:dh E4:e F#4:e";
+    const theme = "G4:dh E4:e F#4:e A4:dh F#4:e G4:e B4:w A4:q G4:q -:q E4:e F#4:e G4:q B4:q D5:h E5:dh D5:q B4:h A4:h G4:h -:q E4:e F#4:e";
+    const orbit = "-:h B4:q D5:q F#5:dh E5:q D5:w -:q D5:q E5:q F#5:q G5:dh F#5:e E5:e F#5:h E5:h D5:dh B4:q B4:h -:q E4:e F#4:e";
+    const hats = "O.......O.......";
+    const ghost = "O.......O.....Z.";
+    const ride = "O...Z...O...Z...";
+    const parts = {
+      void: {
+        bars: 8, hum: [0, 0.5, 0.8, 0.9], ...guitar(verse, "strum", [0.45, 0.7, 0.8]),
+        ...melody(`-:w -:w -:w ${pickup} -:w -:w -:w ${pickup}`, [0.55, 0.65]), drums: ".".repeat(64) + "Z.......Z.......".repeat(4),
+      },
+      seed: {
+        bars: 8, hum: [0.9, 1], ...guitar(verse, "strum", [0.8, 0.85, 0.8]),
+        ...melody(`G4:w -:w -:w ${pickup} G4:h A4:h B4:w -:w ${pickup}`, [0.6, 0.75, 0.85, 0.75, 0.6]), drums: hats.repeat(8),
+      },
+      theme: {
+        bars: 8, hum: [1, 1], ...guitar(verse, "strum", [0.85, 0.9, 0.8, 0.85]),
+        ...melody(theme, [0.6, 0.85, 0.95, 0.7, 0.75, 1, 0.8, 0.55]), drums: (hats + ghost).repeat(4),
+      },
+      orbit: {
+        bars: 8, hum: [1, 0.9], ...guitar(verse, "roll", [0.75, 0.9, 0.85, 0.7]),
+        ...melody(orbit, [0.7, 0.9, 1, 0.85, 0.95, 1, 0.8, 0.6]), drums: (ride + ride + ride + ghost).repeat(2),
+      },
+      drift: {
+        bars: 8, hum: [0.9, 0.4, 0.3, 0.6], ...guitar(verse, "swell", [0.6, 0.8, 0.7]),
+        ...melody(`-:w -:dh E5:e F#5:e G5:w -:w -:w ${pickup} G4:w ${pickup}`, [0.5, 0.6, 0.55, 0.5]),
+        drums: ".".repeat(96) + "Z.......Z.......".repeat(2),
+      },
+      return: {
+        bars: 8, hum: [0.7, 1], ...guitar(verse, "strum", [0.9, 1, 0.85, 0.9]),
+        ...melody(theme, [0.7, 0.9, 1, 0.8, 0.85, 1.05, 0.85, 0.6]), drums: (hats + ghost).repeat(4),
+      },
+      orbit2: {
+        bars: 8, hum: [1, 1], ...guitar(verse, "roll", [0.85, 1, 0.95, 0.8]),
+        ...melody(orbit, [0.8, 1, 1.05, 0.9, 1, 1.05, 0.85, 0.65]), drums: (ride + ride + ride + ghost).repeat(2),
+      },
+      outro: {
+        bars: 8, hum: [1, 0.6], ...guitar(verse, "strum", [0.85, 0.7, 0.5]),
+        ...melody(`G4:dh E4:e F#4:e A4:w B4:w -:w -:w ${pickup} G4:w ${pickup}`, [0.75, 0.65, 0.55, 0.45, 0.4]),
+        drums: hats.repeat(6) + "Z.......Z.......".repeat(2),
+      },
+      end: coda("EG", "G4"),
+    };
+    return record({ root: "E2", parts, form: "void seed theme orbit drift return orbit2 outro end" });
+  })(),
+  perigee: (() => {
+    const bpm = 92;
+    const { melody, guitar, coda, record } = space(bpm, {
+      D: ["F#3", "D4"], A: ["E3", "C#4"], Bm: ["D3", "B3"], G: ["B3", "G4"], D6: ["A3", "F#4"], Em: ["G3", "E4"],
+    });
+    const verse = "D A Bm G D A Em A";
+    const lift = "G D6 Bm Em G D6 Em A";
+    const pickup = "-:dh D4:e E4:e";
+    const theme = "F#4:h E4:q D4:q | E4:dh -:e A3:e | D4:q E4:q F#4:q A4:q | B4:h A4:h | G4:dh F#4:e E4:e | F#4:w | E4:q D4:q B3:q D4:q | E4:dh -:e A4:e";
+    const high = "D5:dh B4:q | A4:h F#4:h | F#4:dh E4:e D4:e | E4:w | D5:q B4:q D5:q E5:q | F#5:h D5:h | E5:q D5:q B4:q A4:q | A4:w";
+    const parts = {
+      intro: {
+        bars: 8, hum: [0, 0.6, 0.9], ...guitar(verse, "strum", [0.4, 0.7, 0.8]),
+        ...melody(`-:w -:w -:w ${pickup} F#4:w -:w -:w ${pickup}`, [0.5, 0.6]), drums: ".".repeat(64) + "........Z.......".repeat(4),
+      },
+      verse: {
+        bars: 8, hum: [0.9, 1], ...guitar(verse, "pedal", [0.75, 0.85, 0.8]),
+        ...melody(theme, [0.6, 0.8, 0.9, 0.75, 0.7, 0.9, 0.75, 0.6]), drums: "....Z.......Z...".repeat(8),
+      },
+      lift: {
+        bars: 8, hum: [1, 1], ...guitar(lift, "rock", [0.8, 0.95, 0.85]),
+        ...melody(high, [0.7, 0.9, 0.8, 0.85, 1, 0.95, 0.8]), drums: "O.....Z.O.....Z.".repeat(8),
+      },
+      still: {
+        bars: 8, hum: [0.9, 0.5, 0.4, 0.7], ...guitar("Bm Bm G G Em Em A A", "swell", [0.6, 0.75, 0.65]),
+        ...melody(`-:w F#5:w -:w D5:w -:w B4:w -:w ${pickup}`, [0.45, 0.6, 0.5]), drums: ".".repeat(96) + "Z.......Z.......".repeat(2),
+      },
+      verse2: {
+        bars: 8, hum: [0.8, 1], ...guitar(verse, "pedal", [0.85, 0.95, 0.9]),
+        ...melody(theme, [0.7, 0.9, 1, 0.85, 0.8, 1, 0.85, 0.7]), drums: "O...Z.......Z...".repeat(8),
+      },
+      lift2: {
+        bars: 8, hum: [1, 1], ...guitar(lift, "rock", [0.85, 1, 0.9]),
+        ...melody(high, [0.8, 1, 0.9, 0.95, 1.05, 1, 0.85]), drums: "O.....Z.O.....Z.".repeat(7) + "O.....Z.O...Z.Z.",
+      },
+      outro: {
+        bars: 8, hum: [1, 0.6], ...guitar(verse, "strum", [0.85, 0.65, 0.5]),
+        ...melody("F#4:w | E4:w | D4:w | -:w | D4:dh E4:q | F#4:w | E4:w | -:w", [0.7, 0.55, 0.4]),
+        drums: "....Z.......Z...".repeat(6) + ".".repeat(32),
+      },
+      end: coda("D", "F#4"),
+    };
+    return record({ root: "D2", echo: 1, parts, form: "intro verse lift still verse2 lift2 outro end" });
+  })(),
+  aphelion: (() => {
+    const bpm = 66;
+    const { melody, guitar, coda, record } = space(bpm, {
+      Fm: ["F#3", "C#4"], D: ["D3", "A3"], A: ["A3", "E4"], E: ["E3", "B3"], Bm: ["B3", "F#4"], Cs: ["C#4", "G#4"],
+    });
+    const near = "Fm Fm D D A A E E";
+    const far = "Bm Bm D D Fm Fm Cs Cs";
+    const bow = { attack: 0.5, decay: 14, edge: 0 };
+    const theme = "C#5:w | B4:h A4:h | A4:dh F#4:q | E4:w | E4:h C#5:h | B4:w | B4:dh G#4:q | F#4:w";
+    const distant = "F#5:w | D5:h B4:h | A4:w | F#4:h A4:h | C#5:dh B4:q | A4:w | G#4:w | -:w";
+    const parts = {
+      void: { bars: 8, hum: [0, 0.6, 1], ...guitar(near, "swell", [0.3, 0.6, 0.7]) },
+      near: {
+        bars: 8, hum: [1, 0.9], ...guitar(near, "swell", [0.65, 0.75, 0.7]),
+        ...melody(theme, [0.5, 0.7, 0.8, 0.65, 0.7, 0.8, 0.7, 0.55], bow),
+      },
+      far: {
+        bars: 8, hum: [0.9, 0.7, 1], ...guitar(far, "toll", [0.6, 0.8, 0.75]),
+        ...melody(distant, [0.6, 0.8, 0.7, 0.65, 0.85, 0.7, 0.6], bow), drums: "Z...............".repeat(8),
+      },
+      near2: {
+        bars: 8, hum: [1, 1], ...guitar(near, "toll", [0.75, 0.9, 0.8]),
+        ...melody(theme, [0.6, 0.8, 0.9, 0.75, 0.8, 0.9, 0.75, 0.6], { attack: 0.06, decay: 9 }), drums: "O.......Z.......".repeat(8),
+      },
+      drift: {
+        bars: 8, hum: [1, 0.5, 0.7], ...guitar(far, "swell", [0.7, 0.55, 0.5]),
+        ...melody("-:w | -:w | C#5:w | -:w | -:w | A4:w | -:w | G#4:w", [0.5, 0.45], bow), drums: ".".repeat(112) + "Z.......".repeat(2),
+      },
+      end: coda("Fm", "C#5", "swell", bow),
+    };
+    return record({ root: "F#2", echo: 1.5, buzz: 0.012, parts, form: "void near far near2 drift end" });
+  })(),
+  zenith: (() => {
+    const bpm = 112;
+    const chords = { A: ["E4", "A4"], B: ["F#4", "B4"], Fm: ["C#4", "F#4"], E: ["B3", "E4"], D: ["A3", "D4"], Cm: ["G#3", "C#4"] };
+    const { melody, guitar, bell, coda, record } = space(bpm, chords);
+    const verse = "A B Fm E A B D E";
+    const peak = "D E Cm Fm D E B B";
+    const chime = (progression) => progression.split(" ").map((chord) => `${transpose(chords[chord][1], 12)}:dq ${transpose(chords[chord][0], 12)}:dq -:q`).join(" ");
+    const pickup = "-:h C#5:q D#5:q";
+    const rise = "E5:dq C#5:dq B4:q | D#5:h C#5:q B4:q | C#5:dh A4:q | B4:w | E5:dq F#5:dq E5:q | D#5:dh F#5:q | F#5:q E5:q D5:q A4:q | B4:h C#5:q D#5:q";
+    const summit = "F#5:dh E5:q | E5:dq B4:dq G#4:q | C#5:h E5:h | F#5:w | F#5:dq D5:dq A4:q | E5:dh B4:q | D#5:h F#5:h | D#5:h C#5:q D#5:q";
+    const ride = "O.......Z.......";
+    const parts = {
+      intro: {
+        bars: 8, hum: [0, 0.7, 0.9], ...guitar(verse, "strum", [0.5, 0.7, 0.75]),
+        ...melody(`-:w -:w -:w -:w -:w -:w -:w ${pickup}`, [0.6, 0.6]), drums: ".".repeat(64) + "O...............".repeat(4),
+      },
+      verse: {
+        bars: 8, hum: [0.9, 1], ...guitar(verse, "rock", [0.75, 0.85, 0.8]),
+        ...melody(rise, [0.65, 0.8, 0.85, 0.7, 0.85, 0.95, 0.85, 0.7]), drums: ride.repeat(8),
+      },
+      summit: {
+        bars: 8, hum: [1, 1], ...guitar(peak, "strum", [0.8, 0.95, 0.9]), ...bell(chime(peak), [0.7, 1, 0.9]),
+        ...melody(summit, [0.8, 0.95, 0.9, 1, 0.95, 1, 0.9, 0.75]), drums: (ride + ride + ride + "O.......Z...Z...").repeat(2),
+      },
+      air: {
+        bars: 8, hum: [0.9, 0.5, 0.8], ...guitar(verse, "swell", [0.6, 0.75, 0.7]), ...bell(chime(verse), [0.5, 0.8, 0.6]),
+        ...melody(`-:w | E5:w | -:w | B4:w | -:w | F#5:w | -:w | ${pickup}`, [0.5, 0.6, 0.55]), drums: ".".repeat(96) + "O.......".repeat(4),
+      },
+      verse2: {
+        bars: 8, hum: [1, 1], ...guitar(verse, "rock", [0.85, 0.95, 0.9]),
+        ...melody(rise, [0.75, 0.9, 0.95, 0.8, 0.95, 1.05, 0.95, 0.8]), drums: ride.repeat(8),
+      },
+      summit2: {
+        bars: 8, hum: [1, 1], ...guitar(peak, "strum", [0.85, 1, 0.95]), ...bell(chime(peak), [0.8, 1, 0.9]),
+        ...melody(summit, [0.85, 1, 0.95, 1.05, 1, 1.05, 0.95, 0.8]), drums: (ride + ride + ride + "O.......Z...Z...").repeat(2),
+      },
+      outro: {
+        bars: 8, hum: [1, 0.6], ...guitar(verse, "strum", [0.8, 0.6, 0.45]), ...bell(chime(verse), [0.6, 0.4, 0.25]),
+        ...melody("E5:w | D#5:w | C#5:w | B4:w | A4:w | -:w | -:w | -:w", [0.7, 0.5, 0.35]), drums: ride.repeat(4) + ".".repeat(64),
+      },
+      end: coda("A", "C#5"),
+    };
+    return record({ root: "A2", echo: 0.5, parts, form: "intro verse summit air verse2 summit2 outro end" });
+  })(),
+  parallax: (() => {
+    const bpm = 96;
+    const { melody, guitar, coda, record } = space(bpm, {
+      Bm: ["D4", "F#4"], E: ["G#3", "B3"], D: ["F#3", "A3"], A: ["C#4", "E4"], G: ["B3", "D4"], Fm: ["A3", "C#4"],
+    });
+    const verse = "Bm Bm E E D D A A";
+    const shift = "G G A A Bm Bm Fm Fm";
+    const theme = "F#4:dq B4:dq D5:q | C#5:dq B4:dq F#4:q | E4:dq G#4:dq B4:q | C#5:dh B4:q | A4:dq F#4:dq D5:q | C#5:dq A4:dq F#4:q | E4:dq A4:dq C#5:q | B4:dq A4:dq E4:q";
+    const wide = "D5:w | B4:h G4:h | C#5:w | E5:h C#5:h | D5:w | F#5:h D5:h | C#5:w | A4:w";
+    const cross = "O.....Z.....Z...";
+    const parts = {
+      intro: { bars: 8, hum: [0, 0.6, 0.9], ...guitar(verse, "strum", [0.45, 0.7, 0.8]), drums: ".".repeat(64) + "Z.....Z.....Z...".repeat(4) },
+      verse: {
+        bars: 8, hum: [0.9, 1], ...guitar(verse, "cross", [0.7, 0.85, 0.8]),
+        ...melody(theme, [0.6, 0.75, 0.85, 0.8, 0.7, 0.85, 0.8, 0.65]), drums: cross.repeat(8),
+      },
+      shift: {
+        bars: 8, hum: [1, 0.8], ...guitar(shift, "toll", [0.75, 0.9, 0.8]),
+        ...melody(wide, [0.65, 0.8, 0.9, 0.8, 0.85, 0.95, 0.8, 0.6]), drums: "O.......Z.......".repeat(8),
+      },
+      verse2: {
+        bars: 8, hum: [0.9, 1], ...guitar(verse, "cross", [0.8, 0.95, 0.9]),
+        ...melody(theme, [0.7, 0.85, 0.95, 0.9, 0.8, 0.95, 0.9, 0.75]), drums: cross.repeat(8),
+      },
+      shift2: {
+        bars: 8, hum: [1, 0.5, 0.8], ...guitar(shift, "swell", [0.65, 0.8, 0.7]),
+        ...melody(wide, [0.55, 0.7, 0.75, 0.65, 0.7, 0.8, 0.7, 0.5], { attack: 0.35, decay: 12, edge: 0 }), drums: ".".repeat(96) + cross.repeat(2),
+      },
+      outro: {
+        bars: 8, hum: [1, 0.6], ...guitar(verse, "cross", [0.8, 0.6, 0.45]),
+        ...melody("F#4:dq B4:dq D5:q | C#5:w | E4:dq G#4:dq B4:q | B4:w | A4:dq F#4:dq D5:q | C#5:w | -:w | -:w", [0.7, 0.5, 0.35]),
+        drums: cross.repeat(6) + ".".repeat(32),
+      },
+      end: coda("Bm", "F#4"),
+    };
+    return record({ root: "B1", echo: 2, parts, form: "intro verse shift verse2 shift2 outro end" });
+  })(),
+  albedo: (() => {
+    const bpm = 84;
+    const chords = { C: ["C3", "E4"], D: ["D3", "F#4"], Em: ["E3", "G4"], Am: ["A2", "C4"], G: ["G2", "B3"] };
+    const { melody, guitar, bell, coda, record } = space(bpm, chords);
+    const verse = "C D C D Am G C D";
+    const glare = "Em D C G Am G D D";
+    const glints = (progression) => progression.split(" ").map((chord) => `-:q ${transpose(chords[chord][1], 12)}:dq ${transpose(chords[chord][0], 24)}:dq`).join(" ");
+    const theme = "G4:dh E4:q | F#4:w | G4:h B4:h | A4:w | C5:dh B4:q | D5:w | E5:dh D5:q | F#5:w";
+    const glow = "B4:w | A4:h F#4:h | G4:w | D5:h B4:h | C5:w | B4:h G4:h | A4:w | -:w";
+    const parts = {
+      intro: {
+        bars: 8, hum: [0, 0.6, 0.9], ...guitar(verse, "swell", [0.4, 0.65, 0.7]), ...bell(glints(verse), [0.3, 0.7, 0.8]),
+        drums: ".".repeat(96) + "O...............".repeat(2),
+      },
+      verse: {
+        bars: 8, hum: [0.9, 1], ...guitar(verse, "strum", [0.75, 0.85, 0.8]),
+        ...melody(theme, [0.55, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.8]), drums: ("O" + ".".repeat(31)).repeat(4),
+      },
+      glare: {
+        bars: 8, hum: [1, 1], ...guitar(glare, "pedal", [0.8, 0.9, 0.8]), ...bell(glints(glare), [0.7, 0.9, 0.7]),
+        ...melody(glow, [0.75, 0.85, 0.8, 0.9, 0.85, 0.8, 0.7]), drums: "O.......Z.......".repeat(8),
+      },
+      verse2: {
+        bars: 8, hum: [0.9, 1], ...guitar(verse, "strum", [0.85, 0.95, 0.9]), ...bell(glints(verse), [0.5, 0.7]),
+        ...melody(theme, [0.65, 0.75, 0.8, 0.85, 0.9, 0.95, 1, 0.9]), drums: ("O" + ".".repeat(15)).repeat(8),
+      },
+      glare2: {
+        bars: 8, hum: [1, 1], ...guitar(glare, "pedal", [0.85, 1, 0.85]), ...bell(glints(glare), [0.8, 1, 0.8]),
+        ...melody(glow, [0.8, 0.9, 0.85, 0.95, 0.9, 0.85, 0.75]), drums: "O.......Z.......".repeat(7) + "O.......Z...Z...",
+      },
+      outro: {
+        bars: 8, hum: [1, 0.5], ...guitar(verse, "swell", [0.75, 0.55, 0.4]), ...bell(glints(verse), [0.8, 0.5, 0.3]),
+        ...melody("G4:w | F#4:w | -:w | A4:w | -:w | D5:w | -:w | -:w", [0.6, 0.45]), drums: ("O" + ".".repeat(31)).repeat(2) + ".".repeat(64),
+      },
+      end: coda("C", "E4", "swell"),
+    };
+    return record({ root: "C2", parts, form: "intro verse glare verse2 glare2 outro end" });
+  })(),
+  umbra: (() => {
+    const bpm = 74;
+    const { melody, guitar, coda, record } = space(bpm, {
+      Cm: ["E3", "G#3"], D: ["F#3", "A3"], A: ["C#3", "E3"], B: ["D#3", "F#3"], Fm: ["A3", "C#4"],
+    });
+    const verse = "Cm Cm D Cm A B Cm Cm";
+    const deep = "A A B B Fm Fm D D";
+    const dark = { level: 0.3, attack: 0.06, decay: 5, edge: 0.07 };
+    const shadow = "G#3:dh B3:q | C#4:dh B3:q | D4:dh A3:q | G#3:w | A3:q C#4:q E4:q C#4:q | D#4:dh F#4:q | E4:h D#4:q C#4:q | C#4:w";
+    const below = "E4:w | C#4:h E4:h | F#4:w | D#4:h F#4:h | A4:dh G#4:q | F#4:w | F#4:h E4:h | D4:w";
+    const parts = {
+      void: { bars: 8, hum: [0, 0.7, 1], ...guitar(verse, "toll", [0.4, 0.65, 0.7]), drums: ".".repeat(64) + "X...............".repeat(4) },
+      shadow: {
+        bars: 8, hum: [1, 1], ...guitar(verse, "toll", [0.7, 0.8, 0.75]),
+        ...melody(shadow, [0.6, 0.75, 0.8, 0.65, 0.75, 0.85, 0.8, 0.6], dark), drums: "X...............".repeat(8),
+      },
+      below: {
+        bars: 8, hum: [1, 0.6, 0.9], ...guitar(deep, "swell", [0.6, 0.75, 0.65]),
+        ...melody(below, [0.55, 0.7, 0.75, 0.7, 0.8, 0.7, 0.6, 0.5], { attack: 0.4, decay: 12, edge: 0 }), drums: "X.......Z.......".repeat(8),
+      },
+      shadow2: {
+        bars: 8, hum: [0.9, 1], ...guitar(verse, "rock", [0.75, 0.9, 0.8]),
+        ...melody(shadow, [0.7, 0.85, 0.9, 0.75, 0.85, 0.95, 0.9, 0.7], dark), drums: "X.......Z.....Z.".repeat(8),
+      },
+      fade: {
+        bars: 8, hum: [1, 0.6], ...guitar(deep, "toll", [0.7, 0.55, 0.4]),
+        ...melody(below, [0.6, 0.5, 0.4, 0.35], dark), drums: "X...............".repeat(6) + ".".repeat(32),
+      },
+      end: coda("Cm", "G#3", "toll", dark),
+    };
+    return record({ root: "C#2", echo: 1, buzz: 0.035, parts, form: "void shadow below shadow2 fade end" });
+  })(),
+  lagrange: (() => {
+    const bpm = 104;
+    const { melody, guitar, play, breathe, coda, record } = space(bpm, {
+      G: ["B3", "G4"], F: ["A3", "F4"], C: ["C4", "G4"], Am: ["C4", "A4"], Dm: ["D4", "A4"],
+    });
+    const call = "G F C G G F Am Dm";
+    const poise = "C C G G F F G G";
+    const ask = "D5:q B4:q G4:q A4:q | C5:dh A4:q | -:w | -:w | D5:q E5:q F5:q D5:q | C5:w | -:w | -:w";
+    const reply = "-:w | -:w | E4:q G4:q C4:h | D4:dh B3:q | -:w | -:w | E4:q C4:q A3:h | D4:w";
+    const over = "E5:w | D5:h C5:h | D5:w | B4:w | C5:w | A4:h F4:h | B4:w | -:w";
+    const under = "C4:w | E4:h G4:h | B3:w | D4:w | A3:w | C4:h F4:h | D4:w | G3:w";
+    const answer = (line, contour) => ({ answer: play(breathe(line, contour), { level: 0.24, attack: 0.04, decay: 6, step: 0.3 }) });
+    const parts = {
+      intro: { bars: 8, hum: [0, 0.6, 0.9], ...guitar(call, "strum", [0.45, 0.7, 0.8]), drums: ".".repeat(64) + "O.......Z.......".repeat(4) },
+      call: {
+        bars: 8, hum: [0.9, 1], ...guitar(call, "rock", [0.75, 0.85, 0.8]),
+        ...melody(ask, [0.7, 0.85, 0.8, 0.75, 0.9, 0.85, 0.8, 0.75]), ...answer(reply, [0.7, 0.8, 0.85, 0.75, 0.8, 0.9, 0.85, 0.7]),
+        drums: "O.......Z...Z...".repeat(8),
+      },
+      poise: {
+        bars: 8, hum: [1, 1], ...guitar(poise, "pedal", [0.8, 0.9, 0.85]),
+        ...melody(over, [0.75, 0.85, 0.9, 0.8, 0.85, 0.9, 0.75]), ...answer(under, [0.65, 0.75, 0.8, 0.75, 0.8, 0.85, 0.7]),
+        drums: "O...Z...O...Z...".repeat(8),
+      },
+      call2: {
+        bars: 8, hum: [0.9, 1], ...guitar(call, "rock", [0.85, 0.95, 0.9]),
+        ...melody(ask, [0.8, 0.95, 0.9, 0.85, 1, 0.95, 0.9, 0.85]), ...answer(reply, [0.8, 0.9, 0.95, 0.85, 0.9, 1, 0.95, 0.8]),
+        drums: "O.......Z...Z...".repeat(8),
+      },
+      still: {
+        bars: 8, hum: [1, 0.5, 0.8], ...guitar(poise, "swell", [0.6, 0.75, 0.65]),
+        ...answer("E4:w | -:w | D4:w | -:w | C4:w | -:w | B3:w | -:w", [0.6, 0.7, 0.6]), drums: ".".repeat(96) + "Z.......Z.......".repeat(2),
+      },
+      poise2: {
+        bars: 8, hum: [0.9, 1], ...guitar(poise, "pedal", [0.85, 1, 0.9]),
+        ...melody(over, [0.85, 0.95, 1, 0.9, 0.95, 1, 0.85]), ...answer(under, [0.75, 0.85, 0.9, 0.85, 0.9, 0.95, 0.8]),
+        drums: "O...Z...O...Z...".repeat(7) + "O...Z...O.Z.Z...",
+      },
+      outro: {
+        bars: 8, hum: [1, 0.6], ...guitar(call, "strum", [0.8, 0.6, 0.45]),
+        ...melody(ask, [0.7, 0.55, 0.45, 0.35]), ...answer(reply, [0.65, 0.5, 0.4, 0.3]), drums: "O.......Z.......".repeat(4) + ".".repeat(64),
+      },
+      end: coda("G", "B4"),
+    };
+    return record({
+      root: "G2", echo: 1.5, parts, form: "intro call poise call2 still poise2 outro end", voices: { answer: "#TYPE sine\n#PAN -0.4" },
+    });
+  })(),
+  redshift: (() => {
+    const bpm = 88;
+    const chords = {
+      F: ["A3", "F4"], Ce: ["G3", "E4"], Dm: ["F3", "D4"], C: ["E3", "C4"], Bb: ["D3", "A#3"], Fa: ["C3", "A3"], Gm: ["A#2", "G3"], C7: ["E3", "A#3"],
+    };
+    const { melody, guitar, coda, record } = space(bpm, chords);
+    const down = space(bpm, Object.fromEntries(Object.entries(chords).map(([chord, strings]) => [chord, strings.map((note) => transpose(note, -2))])));
+    const falling = "F Ce Dm C Bb Fa Gm C7";
+    const drift = "Dm Bb F C Dm Bb Gm C7";
+    const theme = "A4:q C5:q F5:h | E5:dh C5:q | D5:dh A4:q | C5:h G4:h | D5:dh A#4:q | C5:h A4:h | G4:dh A#4:q | E4:w";
+    const away = "F5:h E5:h | D5:w | C5:h A4:h | G4:w | F5:dq E5:dq D5:q | D5:w | A#4:h A4:h | G4:w";
+    const hats = "O.......O.......";
+    const parts = {
+      intro: { bars: 8, hum: [0, 0.6, 0.9], ...guitar(falling, "strum", [0.45, 0.7, 0.8]), drums: ".".repeat(64) + "Z.......Z.......".repeat(4) },
+      theme: {
+        bars: 8, hum: [0.9, 1], ...guitar(falling, "roll", [0.75, 0.85, 0.8]),
+        ...melody(theme, [0.7, 0.9, 0.85, 0.75, 0.85, 0.8, 0.7, 0.6]), drums: hats.repeat(8),
+      },
+      drift: {
+        bars: 8, hum: [1, 0.8], ...guitar(drift, "toll", [0.75, 0.85, 0.8]),
+        ...melody(away, [0.8, 0.85, 0.75, 0.7, 0.9, 0.8, 0.7, 0.6]), drums: "....Z.......Z...".repeat(8),
+      },
+      theme2: {
+        bars: 8, hum: [0.9, 1], ...guitar(falling, "strum", [0.85, 0.95, 0.9]),
+        ...melody(theme, [0.8, 1, 0.95, 0.85, 0.95, 0.9, 0.8, 0.7]), drums: (hats + "O.......O.....Z.").repeat(4),
+      },
+      shift: {
+        bars: 8, root: "D#2", hum: [1, 1], ...down.guitar(falling, "roll", [0.85, 0.95, 0.85]),
+        ...down.melody(transpose(theme, -2), [0.8, 0.95, 0.9, 0.8, 0.9, 0.85, 0.75, 0.65]), drums: (hats + "O.......O.....Z.").repeat(4),
+      },
+      fall: {
+        bars: 8, root: "D#2", hum: [1, 0.6], ...down.guitar(drift, "swell", [0.75, 0.6, 0.45]),
+        ...down.melody(transpose(away, -2), [0.7, 0.6, 0.5, 0.4]), drums: "....Z.......Z...".repeat(4) + ".".repeat(64),
+      },
+      end: { ...down.coda("F", "G4"), root: "D#2" },
+    };
+    return record({ root: "F2", echo: 1, parts, form: "intro theme drift theme2 shift fall end" });
+  })(),
+  nadir: (() => {
+    const bpm = 60;
+    const { melody, guitar, coda, record } = space(bpm, {
+      Bbm: ["A#2", "F3"], Eb: ["D#3", "G3"], Ab: ["G#2", "D#3"], Gb: ["F#2", "C#3"], Db: ["C#3", "G#3"], Fm: ["F3", "C4"],
+    });
+    const low = "Bbm Bbm Eb Eb Bbm Bbm Ab Ab";
+    const abyss = "Gb Gb Db Db Eb Eb Fm Fm";
+    const deep = { attack: 0.05, decay: 8 };
+    const bow = { attack: 0.6, decay: 16, edge: 0 };
+    const theme = "F4:w | C#4:h D#4:h | G4:w | F4:h D#4:h | C#4:dh A#3:q | C4:w | D#4:w | C4:w";
+    const depth = "A#4:w | C#5:h A#4:h | G#4:w | F4:h G#4:h | G4:w | A#4:h G4:h | G#4:w | F4:w";
+    const parts = {
+      void: { bars: 8, hum: [0, 0.7, 1], ...guitar(low, "swell", [0.35, 0.6, 0.7]), drums: ".".repeat(96) + "Z...............".repeat(2) },
+      sink: {
+        bars: 8, hum: [1, 1], ...guitar(low, "toll", [0.7, 0.8, 0.75]),
+        ...melody(theme, [0.6, 0.75, 0.85, 0.7, 0.75, 0.8, 0.7, 0.6], deep), drums: ("Z" + ".".repeat(31)).repeat(4),
+      },
+      abyss: {
+        bars: 8, hum: [1, 0.7, 1], ...guitar(abyss, "swell", [0.65, 0.8, 0.7]),
+        ...melody(depth, [0.55, 0.7, 0.8, 0.7, 0.8, 0.85, 0.7, 0.55], bow), drums: ("O" + ".".repeat(31)).repeat(4),
+      },
+      sink2: {
+        bars: 8, hum: [1, 0.8], ...guitar(low, "toll", [0.8, 0.9, 0.7]),
+        ...melody(theme, [0.7, 0.85, 0.9, 0.8, 0.8, 0.75, 0.6, 0.5], deep), drums: ("Z.......".repeat(3) + "O.......").repeat(3) + ".".repeat(32),
+      },
+      end: coda("Bbm", "F4", "toll", deep),
+    };
+    return record({ root: "A#1", echo: 1.5, drone: 0.12, buzz: 0.03, parts, form: "void sink abyss sink2 end" });
   })(),
 };

@@ -39,6 +39,14 @@ export const catalog = [
       quietcanyon: "Quiet Canyon", rearview: "Rearview",
     },
   },
+  {
+    style: "Space Ambient",
+    icon: "ti-planet", color: "purple",
+    songs: {
+      apogee: "Apogee", perigee: "Perigee", aphelion: "Aphelion", zenith: "Zenith", parallax: "Parallax",
+      albedo: "Albedo", umbra: "Umbra", lagrange: "Lagrange", redshift: "Redshift", nadir: "Nadir",
+    },
+  },
 ];
 
 const titles = Object.assign({}, ...catalog.map((shelf) => shelf.songs));
