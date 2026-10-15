@@ -1,6 +1,9 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"html/template"
 	"log"
 	"net/url"
@@ -446,6 +449,34 @@ func (l *fileLinker) wordLinks(words []string) (links map[string]fileWordLink) {
 		links[word] = fileWordLink{URI: fileLinkTarget(l.root, ref), Part: part, End: filesystem.UTF16Len(parts[part][:ref.End-before])}
 	}
 	return links
+}
+
+// bareNames answers the bare file names of the project root, the only bare
+// words that name a file, with their links and a version that changes with
+// them, none outside every project. A client that holds the version already
+// gets no names, it keeps those it has. The version covers the links, so a
+// terminal that moved into another project with the same names gets them anew.
+func (l *fileLinker) bareNames(held string) (map[string]fileWordLink, string) {
+	links := l.bareLinks()
+	raw, _ := json.Marshal(links)
+	sum := sha256.Sum256(raw)
+	version := hex.EncodeToString(sum[:namesVersionLen/2])
+	if version == held {
+		return nil, version
+	}
+	return links, version
+}
+
+// namesVersionLen is the length of a names version.
+const namesVersionLen = 16
+
+func (l *fileLinker) bareLinks() (links map[string]fileWordLink) {
+	links = map[string]fileWordLink{}
+	if l == nil {
+		return links
+	}
+	defer recoverLinks(func() { links = map[string]fileWordLink{} })
+	return l.wordLinks(l.refs.BareFiles())
 }
 
 // fileLinkTarget is the file:// address of a mention, its line and column in

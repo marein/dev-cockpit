@@ -2,29 +2,29 @@ const L = require("./lib");
 const { assert, sleep, BASE } = L;
 
 // File links: a path of an existing file of the terminal's project, relative
-// to its root or absolute inside it, alone or with :line or :line:col, links
-// into the project's editor (GET /projects/:name/editor?file=&line=&col=, the
-// cursor lands there). The server decides what is a file
+// to its root or absolute inside it, alone or with :line, :line:col or
+// :line-line, links into the project's editor (GET /projects/:name/editor?
+// file=&line=&col=, the cursor lands there), a bare name only as a root file,
+// from names sent with their links. The server decides what is a file
 // (filesystem.FileRefs). The live terminal marks the paths in xterm's own
-// buffer (@dc/termlinks): after every write it reads the screen, asks
-// POST /shells/:id/file-links once for each word it never asked about and
-// gives the cells of a file the link a program's OSC 8 link gets, a file://
-// address with the location as #line:col, which opens over GET
-// /terminal-link. The stream itself carries no link. A path the terminal
-// wrapped (a row filled to the last column, the next starting in the first)
-// is one link, one a program wrapped (a row filled to the margin of its
-// block, the next starting at an indent where a word of it starts) links on
-// both rows when the joined text names a file and neither row's word names
-// one alone. The copy view's text
+// buffer (@dc/termlinks): after every write it reads the screen, asks POST
+// /shells/:id/file-links once for each word it never asked about and gives the
+// cells of a file the link a program's OSC 8 link gets, a file:// address with
+// the location as #line:col, which opens over GET /terminal-link. The stream
+// itself carries no link. A path the terminal wrapped (a row filled to the
+// last column, the next starting in the first) is one link, one a program
+// wrapped (a row filled to the margin of its block, the next starting at an
+// indent where a word of it starts) links on both rows when the joined text
+// names a file and neither row's word names one alone. The copy view's text
 // arrives with its links in the GET /shells/:id/copy answer, a conversation
 // with them in its markup. A program's own link stays its own. A mark goes
-// with its text: what a program left of a path after overwriting part of it
-// in place links nothing. A new word on the row the cursor stands on is
-// asked about once the cursor left it, so typing asks nothing, one on a row
-// whose text a program keeps replacing once the row stood still for 1.5s. A
-// word without a letter, a time, a version or a size, is never asked about.
-// Inside the editor's terminal panel a link opens in place, also for a project
-// named like p(1), which the server escapes otherwise than the page.
+// with its text: what a program left of a path after overwriting part of it in
+// place links nothing. A new word on the row the cursor stands on is asked
+// about once the cursor left it, so typing asks nothing, one on a row whose
+// text a program keeps replacing once the row stood still for 1.5s. A word
+// without a letter, a time, a version or a size, is never asked about. Inside
+// the editor's terminal panel a link opens in place, also for a project named
+// like p(1), which the server escapes otherwise than the page.
 // Every check prints its own lines behind a fresh mark (m<n>m) and waits for
 // them, the shell gets its commands through the input route, so a line
 // arrives in one piece. The files are not Go, so opening the editor starts no
@@ -99,27 +99,9 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
     return p.waitForFunction((s) => document.querySelector(`${s} .xterm-screen`).classList.contains("xterm-cursor-pointer"), scope, { timeout: ms, polling: 25 })
       .then(() => true, () => false);
   };
-  const cursorOf = (p) => p.evaluate(async () => {
-    const { EditorView } = await import("@codemirror/view");
-    const dom = [...document.querySelectorAll(".cm-editor")].find((el) => el.getClientRects().length && getComputedStyle(el).visibility !== "hidden");
-    const view = dom && EditorView.findFromDOM(dom);
-    if (!view) return null;
-    const head = view.state.selection.main.head;
-    const line = view.state.doc.lineAt(head);
-    return { path: document.querySelector(".editor-tab.active")?.dataset.path || "", line: line.number, col: head - line.from + 1 };
-  });
-  const waitCursor = async (p, want) => {
-    let got = null;
-    for (let i = 0; i < 60; i += 1) {
-      got = await cursorOf(p).catch(() => null);
-      if (got && got.path === want.path && (!want.line || (got.line === want.line && got.col === want.col))) return got;
-      await sleep(250);
-    }
-    throw new Error(`the editor stands at ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
-  };
   const opens = async (p, act, want) => {
     await Promise.all([p.waitForURL(/\/editor\?/, { timeout: 15000 }), act()]);
-    await waitCursor(p, want);
+    await L.waitEditorCursor(p, want);
   };
   // Nothing opened within ms: no editor page was asked for, which shows an
   // open even before it lands, and the page is still the shell's.
@@ -144,14 +126,14 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
   };
   const editorHref = (query) => `/projects/${project}/editor?${query}`;
 
-  await run("setup: a project with three files, a symlink out, one into a sibling project named like p(1), a look-alike sibling", async () => {
+  await run("setup: a project with four files, a symlink out, one into a sibling project named like p(1), a look-alike sibling", async () => {
     await L.createProject(page, project);
     root = await L.projectPath(page, project);
     shellUrl = await L.createShell(page, project);
     shellId = new URL(shellUrl).pathname.split("/").pop();
     await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });
     const { m, sh } = mark();
-    await shell(page, `mkdir -p src build '~' '../${project}-wt' '../${escaped}' && printf 'one\\ntwo\\nthree  seven\\n' > ${FILE} && printf 'hi\\n' > notes.txt && printf 'no\\n' > build/notes.txt && touch '~/home.txt' '../${project}-wt/main.py' && printf 'hi\\n' > '../${escaped}/notes.txt' && ln -s /etc/hostname out.txt && ln -s '../${escaped}/notes.txt' into.txt && clear && echo ${sh} ready`);
+    await shell(page, `mkdir -p src build '~' '../${project}-wt' '../${escaped}' && printf 'one\\ntwo\\nthree  seven\\n' > ${FILE} && printf 'hi\\n' > notes.txt && printf 'no\\n' > build/notes.txt && printf 'MIT\\n' > LICENSE && touch '~/home.txt' '../${project}-wt/main.py' && printf 'hi\\n' > '../${escaped}/notes.txt' && ln -s /etc/hostname out.txt && ln -s '../${escaped}/notes.txt' into.txt && clear && echo ${sh} ready`);
     await waitLine(page, m);
   });
 
@@ -162,7 +144,7 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
 
   await run("copy view: existing files of the project link into the editor, nothing outside it does", async () => {
     const { m, sh } = mark();
-    const lines = [`see ${LINKED} and notes.txt.`, `abs ${root}/notes.txt:1 and ./notes.txt`, "web https://example.invalid/src/app.py", ...outside];
+    const lines = [`see ${LINKED} and notes.txt.`, `abs ${root}/notes.txt:1 and ./notes.txt`, `range ${FILE}:2-3 and LICENSE`, "web https://example.invalid/src/app.py", ...outside];
     await shell(page, `clear; printf '%s %s\\n' ${lines.map((line) => `${sh} '${line}'`).join(" ")}`);
     await waitLine(page, `${m} README`);
     await page.locator("[data-terminal-copy]:visible").first().click();
@@ -174,6 +156,8 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
       { text: "notes.txt", href: editorHref("file=notes.txt"), file: true },
       { text: `${root}/notes.txt:1`, href: editorHref("file=notes.txt&line=1"), file: true },
       { text: "./notes.txt", href: editorHref("file=notes.txt"), file: true },
+      { text: `${FILE}:2-3`, href: editorHref("file=src%2Fapp.py&line=2"), file: true },
+      { text: "LICENSE", href: editorHref("file=LICENSE"), file: true },
       { text: "https://example.invalid/src/app.py", href: "https://example.invalid/src/app.py", file: false },
     ];
     assert(JSON.stringify(links) === JSON.stringify(want), `links ${JSON.stringify(links)}, want ${JSON.stringify(want)}`);
@@ -196,6 +180,25 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
     const linked = await cellOf(page, `${m} see`, LINKED);
     assert(await linkShown(page, linked), "the path shows no link");
     await opens(page, () => page.mouse.click(linked.x, linked.y), { path: FILE, line: 3, col: 7 });
+  });
+
+  await run("live terminal: a line range opens at its first line, a bare name of a root file links and opens wrapped at an indent too, no bare word is asked, other bare words and a root folder link nothing", async () => {
+    await freshShellPage(page);
+    const words = [];
+    const onRequest = (req) => { if (req.url().endsWith("/file-links")) words.push(...req.postDataJSON().words); };
+    page.on("request", onRequest);
+    const { m, sh } = mark();
+    await shell(page, `clear; printf '%s %s\\n' ${sh} 'range ${FILE}:2-3 here' ${sh} 'bare LICENSE src README'; printf '%s\\n  ⎿  Read LICE\\n     NSE now\\n' ${sh}w`);
+    await waitLine(page, `${m}w`);
+    const range = await cellOf(page, `${m} range`, `${FILE}:2-3`);
+    assert(await linkShown(page, range) && await linkShown(page, await cellOf(page, `${m} bare`, "LICENSE")), "the line range or LICENSE shows no link");
+    for (const word of ["src", "README"]) assert(!(await linkShown(page, await cellOf(page, `${m} bare`, word), "#terminal", 800)), `${word} shows a link`);
+    page.off("request", onRequest);
+    assert(!words.some((word) => !/[./:]/.test(word)), `asked the words ${JSON.stringify(words)}`);
+    await opens(page, () => page.mouse.click(range.x, range.y), { path: FILE, line: 2, col: 1 });
+    await freshShellPage(page);
+    await waitLine(page, `${m}w`);
+    await opens(page, async () => { const at = await cellOf(page, `${m}w`, "NSE", { row: 2 }); await page.mouse.click(at.x, at.y); }, { path: "LICENSE" });
   });
 
   await run("live terminal: a drag over a path selects and opens nothing, Ctrl+click opens it in a new tab", async () => {
@@ -405,6 +408,7 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
       const q = await asked;
       got.push({ needle, opened: q ? `${q.get("file")}${q.get("line") ? `:${q.get("line")}` : ""}` : "nothing", ok: q ? q.get("file") === file && q.get("line") === line : !file });
       if (q) {
+        await L.waitEditorCursor(page, { path: q.get("file") });
         await freshShellPage(page);
         await waitLine(page, `${m}e`);
       }
@@ -624,7 +628,7 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
   // would replace it.
   const opensInPlace = async (name, id) => {
     await page.goto(`${BASE}/projects/${encodeURIComponent(name)}/editor?file=${encodeURIComponent(FILE)}`, { waitUntil: "domcontentloaded" });
-    await waitCursor(page, { path: FILE });
+    await L.waitEditorCursor(page, { path: FILE });
     const scope = `[data-term-pane="${id}"]`;
     if (!(await page.isVisible(scope))) await page.keyboard.press("Control+j");
     await page.waitForSelector(`${scope} terminal-attach .xterm-screen canvas`, { state: "visible", timeout: 15000 });
@@ -636,7 +640,7 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
     const at = await cellOf(page, m, "notes.txt", { scope });
     assert(await linkShown(page, at, scope), "the panel's path shows no link");
     await page.mouse.click(at.x, at.y);
-    await waitCursor(page, { path: "notes.txt", line: 1, col: 1 });
+    await L.waitEditorCursor(page, { path: "notes.txt", line: 1, col: 1 });
     assert(await page.evaluate((s) => document.querySelector(`${s} terminal-attach`) === window.__panelTerm, scope), "the page was loaded again, the panel's terminal is another one");
     assert(page.url().includes(`/projects/${encodeURIComponent(name)}/editor`) || page.url().includes(`/projects/${name}/editor`), `the page moved to ${page.url()}`);
   };

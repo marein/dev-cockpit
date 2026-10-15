@@ -13,7 +13,7 @@ func TestFileRefs(t *testing.T) {
 	projects := t.TempDir()
 	root := filepath.Join(projects, "app")
 	sibling := filepath.Join(projects, "app-wt")
-	for _, name := range []string{"app/main.go", "app/internal/web/router.go", "app/Makefile", "app/12.5", "app/1.2.3", "app/~/home.txt", "app-wt/main.go", "other/secret.go"} {
+	for _, name := range []string{"app/main.go", "app/internal/web/router.go", "app/Makefile", "app/LICENSE", "app/internal/Dockerfile", "app/12.5", "app/1.2.3", "app/~/home.txt", "app-wt/main.go", "other/secret.go", "other/SECRET"} {
 		full := filepath.Join(projects, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
@@ -28,7 +28,7 @@ func TestFileRefs(t *testing.T) {
 	if err := os.Symlink(filepath.Join(sibling, "main.go"), filepath.Join(root, "wt.go")); err != nil {
 		t.Fatal(err)
 	}
-	for _, link := range [][2]string{{"internal", "alias"}, {"../other", "outdir"}, {"../app-wt", "wtdir"}} {
+	for _, link := range [][2]string{{"internal", "alias"}, {"../other", "outdir"}, {"../app-wt", "wtdir"}, {"internal/web/router.go", "ROUTER"}, {"../other/SECRET", "OUTSIDE"}} {
 		if err := os.Symlink(link[0], filepath.Join(root, link[1])); err != nil {
 			t.Fatal(err)
 		}
@@ -62,9 +62,20 @@ func TestFileRefs(t *testing.T) {
 		{"file url", "file://" + root + "/main.go", nil},
 		{"directory", "internal/web", nil},
 		{"missing", "nothere.go:4", nil},
-		{"bare word", "Makefile is here", nil},
+		{"a line range", "internal/web/router.go:45-68", []FileRef{{Start: 0, End: 28, Path: "internal/web/router.go", Line: 45}}},
+		{"a line range in a sentence", "see main.go:45-68.", []FileRef{{Start: 4, End: 17, Path: "main.go", Line: 45}}},
+		{"a grep line after a line range", "main.go:45-68:func main() {", []FileRef{{Start: 0, End: 13, Path: "main.go", Line: 45}}},
+		{"a line range without an end", "main.go:45-", nil},
+		{"a line range glued to text", "main.go:45-68x", nil},
+		{"a bare root file", "Makefile is here", []FileRef{{Start: 0, End: 8, Path: "Makefile"}}},
+		{"a bare root file in a sentence", "see LICENSE.", []FileRef{{Start: 4, End: 11, Path: "LICENSE"}}},
+		{"a bare root symlink to a file inside", "ROUTER", []FileRef{{Start: 0, End: 6, Path: "ROUTER"}}},
+		{"a bare root symlink out of the root", "OUTSIDE", nil},
+		{"a bare word naming no root file", "README web Dockerfile makefile", nil},
+		{"a bare root folder", "internal alias outdir", nil},
 		{"no letter", "45:58.25 12.5 ./1.2.3", nil},
 		{"bare word with line", "Makefile:9", []FileRef{{Start: 0, End: 10, Path: "Makefile", Line: 9}}},
+		{"bare root file with line", "LICENSE:3", []FileRef{{Start: 0, End: 9, Path: "LICENSE", Line: 3}}},
 		{"url", "https://example.com/main.go", nil},
 		{"quoted", `"main.go"`, []FileRef{{Start: 1, End: 8, Path: "main.go"}}},
 		{"in a tool line", "Update(main.go)", []FileRef{{Start: 7, End: 14, Path: "main.go"}}},
@@ -74,6 +85,9 @@ func TestFileRefs(t *testing.T) {
 		{"twice", "main.go main.go", []FileRef{{Start: 0, End: 7, Path: "main.go"}, {Start: 8, End: 15, Path: "main.go"}}},
 	}
 	refs := NewFileRefs(root)
+	if got, want := refs.BareFiles(), []string{"LICENSE", "Makefile", "ROUTER"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("BareFiles() = %q, want %q", got, want)
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := refs.Find(tc.text); !reflect.DeepEqual(got, tc.want) {
@@ -97,6 +111,16 @@ func TestFileRefsForgetAfterTheirTime(t *testing.T) {
 	refs.since = refs.since.Add(-fileRefsTTL - 1)
 	if got := refs.Find("new.go"); len(got) != 1 {
 		t.Fatalf("the written file did not link: %+v", got)
+	}
+	if got := refs.Find("NOTES"); got != nil {
+		t.Fatalf("a missing bare file linked: %+v", got)
+	}
+	if err := os.WriteFile(filepath.Join(root, "NOTES"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refs.since = refs.since.Add(-fileRefsTTL - 1)
+	if got := refs.Find("NOTES"); len(got) != 1 || !reflect.DeepEqual(refs.BareFiles(), []string{"NOTES"}) {
+		t.Fatalf("the written bare file did not link: %+v, %q", got, refs.BareFiles())
 	}
 }
 

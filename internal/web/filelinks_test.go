@@ -147,7 +147,7 @@ func TestFileLinksSurviveAPanic(t *testing.T) {
 // and lists in the cases below.
 func wrapLinker(t *testing.T) *fileLinker {
 	root := t.TempDir()
-	writeFiles(t, root, "src/app.py", "src/deep/app.go", "tests/e2e/probe.js", "notes.txt", "build/notes.txt", "dist/app.css", "dist/app.css.map", "src/😀.txt", "internal/web/static/js/components/terminal-copy.js")
+	writeFiles(t, root, "src/app.py", "src/deep/app.go", "tests/e2e/probe.js", "notes.txt", "build/notes.txt", "dist/app.css", "dist/app.css.map", "src/😀.txt", "internal/web/static/js/components/terminal-copy.js", "LICENSE", "docs/README")
 	return &fileLinker{refs: filesystem.NewFileRefs(root), project: "p", root: root}
 }
 
@@ -187,6 +187,7 @@ func TestWrappedRows(t *testing.T) {
 			[]string{"internal/web/static/js/compo " + copyJS, "nents/terminal-copy.js " + copyJS}},
 		{"a break after a slash", 27, "for internal/web/static/js/\ncomponents/terminal-copy.js and", []string{"internal/web/static/js/ " + copyJS, "components/terminal-copy.js " + copyJS}},
 		{"a list of names", 80, "notes.txt\nsrc/app.py\nnotes.txt", []string{"notes.txt notes.txt", "src/app.py src/app.py", "notes.txt notes.txt"}},
+		{"a line range and a bare root file", 80, "see src/app.py:45-68, LICENSE and docs README", []string{"src/app.py:45-68 src/app.py:45", "LICENSE LICENSE"}},
 		{"beyond four rows", 2, "in\nte\nrn\nal\n/web/static/js/components/terminal-copy.js", nil},
 	}
 	l := wrapLinker(t)
@@ -214,17 +215,48 @@ func TestWrappedRows(t *testing.T) {
 // the words of its rows, apart by line breaks.
 func TestWordLinks(t *testing.T) {
 	l := wrapLinker(t)
-	got := l.wordLinks([]string{"src/app.py:3:7.", "internal/web/static/js/components/te\nrminal-copy.js", "src/app.py:2\n3", "build/\nnotes.txt", "src/😀.txt", "in\nte\nrn\nal\n/web/static/js/components/terminal-copy.js"})
+	got := l.wordLinks([]string{"src/app.py:3:7.", "internal/web/static/js/components/te\nrminal-copy.js", "src/app.py:2\n3", "build/\nnotes.txt", "src/😀.txt", "in\nte\nrn\nal\n/web/static/js/components/terminal-copy.js", "src/app.py:45-68", "LICENSE", "LICENSE:3", "docs", "README"})
 	want := map[string]fileWordLink{
 		"src/app.py:3:7.": {URI: "file://" + l.root + "/src/app.py#3:7", End: 14},
 		"internal/web/static/js/components/te\nrminal-copy.js": {URI: "file://" + l.root + "/internal/web/static/js/components/terminal-copy.js", Part: 1, End: 14},
-		"src/app.py:2\n3": {URI: "file://" + l.root + "/src/app.py#2", End: 12},
-		"src/😀.txt":       {URI: "file://" + l.root + "/src/%F0%9F%98%80.txt", End: 10},
+		"src/app.py:2\n3":  {URI: "file://" + l.root + "/src/app.py#2", End: 12},
+		"src/😀.txt":        {URI: "file://" + l.root + "/src/%F0%9F%98%80.txt", End: 10},
+		"src/app.py:45-68": {URI: "file://" + l.root + "/src/app.py#45", End: 16},
+		"LICENSE":          {URI: "file://" + l.root + "/LICENSE", End: 7},
+		"LICENSE:3":        {URI: "file://" + l.root + "/LICENSE#3", End: 9},
 	}
 	if !maps.Equal(got, want) {
 		t.Fatalf("links %+v, want %+v", got, want)
 	}
 	if links := (*fileLinker)(nil).wordLinks([]string{"notes.txt"}); len(links) != 0 {
 		t.Fatalf("a terminal outside every project links %+v", links)
+	}
+}
+
+// The live terminal never asks a bare word, it holds the root's bare file names
+// with their links and gets them again only when their version changed: a
+// file came, or the terminal moved into another project with the same names.
+// Outside every project there are none.
+func TestBareNames(t *testing.T) {
+	l := wrapLinker(t)
+	want := map[string]fileWordLink{"LICENSE": {URI: "file://" + l.root + "/LICENSE", End: 7}}
+	names, version := l.bareNames("")
+	if !maps.Equal(names, want) || len(version) != namesVersionLen {
+		t.Fatalf("names %+v, version %q, want %+v", names, version, want)
+	}
+	if names, again := l.bareNames(version); names != nil || again != version {
+		t.Fatalf("an unchanged root answered %+v, version %q", names, again)
+	}
+	writeFiles(t, l.root, "NOTES")
+	names, changed := (&fileLinker{refs: filesystem.NewFileRefs(l.root), project: "p", root: l.root}).bareNames(version)
+	want["NOTES"] = fileWordLink{URI: "file://" + l.root + "/NOTES", End: 5}
+	if !maps.Equal(names, want) || changed == version {
+		t.Fatalf("a changed root answered %+v, version %q", names, changed)
+	}
+	if names, moved := wrapLinker(t).bareNames(version); names["LICENSE"].URI == want["LICENSE"].URI || moved == version {
+		t.Fatalf("another project with the same names answered %+v, version %q", names, moved)
+	}
+	if names, _ := (*fileLinker)(nil).bareNames(""); names == nil || len(names) != 0 {
+		t.Fatalf("a terminal outside every project has the names %+v", names)
 	}
 }

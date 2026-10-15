@@ -281,6 +281,32 @@ function editorReady(page) {
   return page.waitForFunction(() => typeof document.querySelector("dc-editor")?.teardown === "function", null, { timeout: 15000 });
 }
 
+// editorCursor is the path of the editor's active tab and the line and column
+// its cursor stands on, null while no editor shows.
+function editorCursor(page) {
+  return page.evaluate(async () => {
+    const { EditorView } = await import("@codemirror/view");
+    const dom = [...document.querySelectorAll(".cm-editor")].find((el) => el.getClientRects().length && getComputedStyle(el).visibility !== "hidden");
+    const view = dom && EditorView.findFromDOM(dom);
+    if (!view) return null;
+    const head = view.state.selection.main.head;
+    const line = view.state.doc.lineAt(head);
+    return { path: document.querySelector(".editor-tab.active")?.dataset.path || "", line: line.number, col: head - line.from + 1 };
+  });
+}
+
+// waitEditorCursor waits until the editor shows want.path, at want.line and
+// want.col when want names a line.
+async function waitEditorCursor(page, want) {
+  let got = null;
+  for (let i = 0; i < 60; i += 1) {
+    got = await editorCursor(page).catch(() => null);
+    if (got && got.path === want.path && (!want.line || (got.line === want.line && got.col === want.col))) return got;
+    await sleep(250);
+  }
+  throw new Error(`the editor stands at ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+}
+
 async function skewedClocks(context, bag) {
   const clocks = [];
   for (const [name, skew] of [["behind", -10 * 60 * 1000], ["ahead", 10 * 60 * 1000]]) {
@@ -463,7 +489,7 @@ async function runFeature(title, body) {
 module.exports = {
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
   login, createProject, projectPath, deleteProject, dismissUpdate, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
-  saveTagSettings, setField, removeTags, reach, editorReady, skewedClocks, markPhases, markOff, clockMarks,
+  saveTagSettings, setField, removeTags, reach, editorReady, waitEditorCursor, skewedClocks, markPhases, markOff, clockMarks,
   makeRunner, report, assert,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

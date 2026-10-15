@@ -1322,7 +1322,7 @@ function initTerminalAttach(host) {
 
   const sessionPath = streamUrl.replace(/\/stream$/, "");
   markFileLinks(term, {
-    ask: (words) => postJSON(sessionPath + "/file-links", { words }).then((res) => ensureOk(res)).then((res) => res.json()),
+    ask: (request) => postJSON(sessionPath + "/file-links", request).then((res) => ensureOk(res)).then((res) => res.json()),
     signal,
   });
   let userEndedAt = 0;

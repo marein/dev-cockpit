@@ -1,9 +1,11 @@
 package filesystem
 
 import (
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -63,13 +65,15 @@ const fileRefsMax = 4096
 
 // FileRefs answers the mentions of existing files under root, relative to it or
 // absolute inside it. A bare word without a dot, a slash or a line is far more
-// often a word than a file, a word without a letter is a time, a version or a
-// size, and a name starting with ~ is the shell's home, so none is looked up.
-// It is not safe for concurrent use.
+// often a word than a file, so it names one only as a name of root's own files
+// (BareFiles), a word without a letter is a time, a version or a size, and a
+// name starting with ~ is the shell's home, so none is looked up. It is not
+// safe for concurrent use.
 type FileRefs struct {
 	root  string
 	files map[string]refFile
 	dirs  map[string]bool // whether a folder stays under root
+	bare  map[string]bool // BareFiles, nil until read
 	since time.Time
 }
 
@@ -84,6 +88,7 @@ func NewFileRefs(root string) *FileRefs {
 
 // Find answers the mentions in a text, in order and apart.
 func (f *FileRefs) Find(text string) []FileRef {
+	f.expire()
 	var refs []FileRef
 	for i := 0; i < len(text); {
 		if n := SeparatorAt(text, i); n > 0 {
@@ -110,11 +115,11 @@ func (f *FileRefs) Mention(token string) (FileRef, bool) {
 	for len(token) > 0 && strings.IndexByte(".,:;!?", token[len(token)-1]) >= 0 {
 		token = token[:len(token)-1]
 	}
-	if !strings.ContainsAny(token, "./:") || !strings.ContainsFunc(token, unicode.IsLetter) || len(token) > maxRefLength || strings.Contains(token, "://") {
+	if !strings.ContainsFunc(token, unicode.IsLetter) || len(token) > maxRefLength || strings.Contains(token, "://") {
 		return FileRef{}, false
 	}
 	name, end, line, col := refLocation(token)
-	if (line == 0 && !strings.ContainsAny(name, "./")) || strings.HasPrefix(name, "~") {
+	if (line == 0 && !strings.ContainsAny(name, "./") && !f.bareFiles()[name]) || strings.HasPrefix(name, "~") {
 		return FileRef{}, false
 	}
 	file := f.lookup(name)
@@ -124,10 +129,10 @@ func (f *FileRefs) Mention(token string) (FileRef, bool) {
 	return FileRef{End: end, Path: file.rel, Line: line, Col: col}, true
 }
 
-// refLocation splits a token into a name and the :line and :column after it,
-// where after a line may follow the rest of a grep -n line, a colon and no
-// digit after it. It answers where the location ends, the token's end when
-// there is none.
+// refLocation splits a token into a name and the :line and :column or the
+// :line-line range after it, of which the first line counts, where after a
+// line may follow the rest of a grep -n line, a colon and no digit after it.
+// It answers where the location ends, the token's end when there is none.
 func refLocation(token string) (string, int, int, int) {
 	digits := func(at int) int {
 		end := at
@@ -152,19 +157,55 @@ func refLocation(token string) (string, int, int, int) {
 				return token[:i], col, atoiOrZero(token[i+1 : line]), atoiOrZero(token[line+1 : col])
 			}
 		}
-		if rest(line) {
-			return token[:i], line, atoiOrZero(token[i+1 : line]), 0
+		end := line
+		if end < len(token) && token[end] == '-' {
+			if last := digits(end + 1); last > end+1 {
+				end = last
+			}
+		}
+		if rest(end) {
+			return token[:i], end, atoiOrZero(token[i+1 : line]), 0
 		}
 	}
 	return token, len(token), 0, 0
 }
 
-func (f *FileRefs) lookup(name string) refFile {
+// expire forgets the answers once they are older than fileRefsTTL or too many.
+func (f *FileRefs) expire() {
 	if now := time.Now(); now.Sub(f.since) > fileRefsTTL || len(f.files) >= fileRefsMax {
 		clear(f.files)
 		clear(f.dirs)
+		f.bare = nil
 		f.since = now
 	}
+}
+
+// BareFiles answers the names without a dot of the regular files in root, in
+// order, the only bare words that name a file.
+func (f *FileRefs) BareFiles() []string {
+	return slices.Sorted(maps.Keys(f.bareFiles()))
+}
+
+// bareFiles is BareFiles as a set, read once until the answers expire. One
+// read of root answers every bare word, where a look per word would cost a
+// file system call, and a look at the clock as much, for each word of a text.
+func (f *FileRefs) bareFiles() map[string]bool {
+	if f.bare == nil {
+		f.expire()
+		f.bare = map[string]bool{}
+		entries, _ := os.ReadDir(f.root)
+		for _, entry := range entries {
+			name, kind := entry.Name(), entry.Type()
+			if !strings.Contains(name, ".") && (kind.IsRegular() || kind&os.ModeSymlink != 0 && f.isFile(name)) {
+				f.bare[name] = true
+			}
+		}
+	}
+	return f.bare
+}
+
+func (f *FileRefs) lookup(name string) refFile {
+	f.expire()
 	file, seen := f.files[name]
 	if !seen {
 		rel, ok := relName(f.root, name)

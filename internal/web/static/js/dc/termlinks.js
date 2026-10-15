@@ -44,16 +44,15 @@ const BATCH = 500;
 const CACHE_MAX = 4096;
 // A file a program writes after its name was shown links once its name is
 // asked again, and a screen of words that name nothing costs one request in
-// this time at most.
+// this time at most. The root's bare file names are asked again after it too.
 const NEGATIVE_TTL = 15000;
 
 const separates = (ch) => (ch.length === 1 ? ch <= " " || ch === "\x7f" || SEPARATORS.includes(ch) : ch === "");
 const isFrame = (text) => [...text].every((ch) => ch >= "\u2500" && ch <= "\u259f");
 const blank = (ch) => !ch.trim() || isFrame(ch);
-const askable = (text) => {
-  const name = text.replace(/[.,:;!?]+$/, "");
-  return name.length <= MAX_WORD && /[./:]/.test(name) && /\p{L}/u.test(name) && !name.includes("://") && !name.includes("\\") && !name.startsWith("~");
-};
+const nameOf = (text) => text.replace(/[.,:;!?]+$/, "");
+const lookedUp = (name) => name.length <= MAX_WORD && /\p{L}/u.test(name) && !name.includes("://") && !name.includes("\\") && !name.startsWith("~");
+const bare = (name) => !/[./:]/.test(name);
 
 // markFileLinks marks the files of the terminal's project in its own buffer,
 // which always holds the finished screen however a program drew it. After
@@ -66,8 +65,13 @@ const askable = (text) => {
 // left it. A row whose text a program keeps replacing, a clock, a counter or
 // a progress, is asked only once it stood still, while a row whose old text
 // moved on, as on a screen that scrolls, is asked at once, and so is a row
-// first seen, whose age is unknown. ask(words) answers the server's links for
-// the words.
+// first seen, whose age is unknown. A bare word, without a dot, a slash or a
+// colon, is far more often a word than a file, so it is never asked: the
+// server tells the bare file names of the project root with their links,
+// along with an answer when the screen shows bare words and the names it told
+// are older than NEGATIVE_TTL, and leaves them out while the version sent back
+// still holds. ask(request) answers the server's links for request.words, and
+// with request.names the root's bare file names and their version.
 export function markFileLinks(term, { ask, signal }) {
   const core = term._core;
   const links = core._oscLinkService;
@@ -80,9 +84,29 @@ export function markFileLinks(term, { ask, signal }) {
   let asking = false;
   let frame = 0;
   let wake = 0;
+  let rootFiles = { links: new Map(), version: "", at: -Infinity };
+  let wantNames = false;
 
+  // A bare word links as one of the root's names, over the parts of a join
+  // as the server reads one: the longest join that names a file wins.
+  const bareLink = (parts) => {
+    for (let n = parts.length; n > 0; n--) {
+      const link = rootFiles.links.get(nameOf(parts.slice(0, n).join("")));
+      if (!link) continue;
+      let part = 0;
+      let before = 0;
+      while (link.end > before + parts[part].length && part + 1 < n) before += parts[part++].length;
+      return { ...link, part, end: link.end - before };
+    }
+    return null;
+  };
   const known = (key, text, may) => {
-    if (!askable(text)) return null;
+    const name = nameOf(text);
+    if (!lookedUp(name)) return null;
+    if (bare(name)) {
+      wantNames ||= may && Date.now() - rootFiles.at >= NEGATIVE_TTL;
+      return bareLink(key.split("\n"));
+    }
     const entry = cache.get(key);
     if (entry && (entry.link || Date.now() - entry.at < NEGATIVE_TTL)) return entry.link;
     if (may && !sent.has(key)) queue.add(key);
@@ -234,6 +258,7 @@ export function markFileLinks(term, { ask, signal }) {
 
   const scan = () => {
     queue.clear();
+    wantNames = false;
     const lines = read();
     const want = new Map();
     const place = (words, link) => {
@@ -294,14 +319,17 @@ export function markFileLinks(term, { ask, signal }) {
   };
 
   const flush = async () => {
-    if (asking || !queue.size || signal.aborted) return;
+    if (asking || (!queue.size && !wantNames) || signal.aborted) return;
     asking = true;
+    const names = wantNames;
+    wantNames = false;
     const words = [...queue].slice(0, BATCH);
     for (const word of words) {
       queue.delete(word);
       sent.add(word);
     }
-    const answer = await ask(words).catch(() => ({}));
+    const answer = await ask({ words, names, version: rootFiles.version }).catch(() => ({}));
+    if (names) rootFiles = { links: answer.names ? new Map(Object.entries(answer.names)) : rootFiles.links, version: answer.version ?? rootFiles.version, at: Date.now() };
     for (const word of words) {
       sent.delete(word);
       remember(word, answer.links?.[word] || null);
