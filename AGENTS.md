@@ -184,7 +184,9 @@ templates plus ES modules.
   holds the loading bar, the lazy element loader, `data-confirm`, a
   build check that reloads after a deploy and the global `dc:navigated`
   event. The head is never swapped, so head
-  values go stale in an open tab. `data-no-pe` opts out.
+  values go stale in an open tab. `data-no-pe` opts out. A link marked
+  `data-file-link` opens through `openFileLink` (`@dc/termlinks`) on
+  every surface, `data-no-pe` included.
 - **Forms**: The POST path equals the GET path that renders the form
   (pairs in `router.go`). Create forms open in `dc-form-modal` from the
   same GET with `modal=1` and stay reachable as pages. A dialog view that
@@ -201,7 +203,8 @@ templates plus ES modules.
 - **Shared Modules**: There is one `escapeHtml` (`@dc/dom`), one context
   menu with row menus and long press (`@dc/contextmenu`), one row drag
   (`@dc/rowdrag`), one swipe (`@dc/swipe`), one token match (`@dc/filter`),
-  one tag filter over a project list (`@dc/tags`), one popup door
+  one project palette (`@dc/project-palette` over the `project_palette_*`
+  templates), one tag filter over a project list (`@dc/tags`), one popup door
   (`@dc/dialog`, SweetAlert for dialogs only) and toasts via `@dc/toast`
   (Bootstrap toasts). New surfaces reuse these, never copy them. A tag is
   shown through `tags.gohtml`, wears its color as `dc-tag-<color>` and is

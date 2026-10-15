@@ -196,6 +196,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/assistants/:id/stt", s.handleAssistantSTT)
 	auth.GET("/assistants/:id/messages/:messageId/audio", s.handleAssistantMessageAudio)
 	auth.GET("/assistants/:id/media/*path", s.handleAssistantMedia)
+	// The @ of a message box: the projects as rows, then one project's files
+	// out of the quick open index, each with the text that names it.
+	auth.GET("/mention/projects", s.handleMentionProjects)
+	auth.GET("/mention/files", s.handleMentionFiles)
 
 	// TODO(v2.0.0): the area was /assistant while there was one assistant, and
 	// every address under it answers with a 308 to its plural twin. A stored

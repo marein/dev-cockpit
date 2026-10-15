@@ -29,6 +29,7 @@ import { GIT_MARKS, GIT_MARK_CLASSES, gitKind, revdiffKind } from "@dc/editor-ma
 import { indentPref, loadEditorSettings, saveEditorSettings, setupIndentControl, setupSettingsUI } from "@dc/editor-settings";
 import { createTextarea } from "@dc/editor-textarea";
 import * as projectSort from "@dc/project-sort";
+import { paletteGroups } from "@dc/project-palette";
 import * as store from "@dc/store";
 
 const MAX_SAVED_TREE_DIRS = 200;
@@ -9401,12 +9402,9 @@ async function init(root) {
   // The project switcher is a palette like the file one: a field over a list,
   // the arrows walk it, Enter takes the marked row, a click or a tap takes any.
   // The rows are the server's fragment ([data-editor-project-list], kept out of
-  // sight and re-pulled on a projects event), cloned into groups here, so the
-  // browser never builds that markup a second time. Without a query the last
-  // used projects stand as a shortlist over the full list, the current one on
-  // top with its check, which keeps the shared sort with its worktrees folded
-  // behind their main; a query collapses both into one ranked list over name,
-  // repository and branch together.
+  // sight and re-pulled on a projects event), cloned into groups by
+  // @dc/project-palette, so the browser never builds that markup a second time.
+  // Without a query the current one heads the shortlist with its check.
   const projectSwitchEl = root.querySelector("[data-editor-project-switch]");
   const projectItemEl = root.querySelector("[data-editor-project-item]");
   const projectListEl = root.querySelector("[data-editor-project-list]");
@@ -9414,7 +9412,6 @@ async function init(root) {
   const paletteListEl = root.querySelector("[data-editor-palette-list]");
   const projectFilterEl = root.querySelector("[data-editor-project-filter]");
   const projectEmptyEl = root.querySelector("[data-editor-project-empty]");
-  const PALETTE_RECENT = 5;
   let paletteIndex = -1;
   let projectsInFlight = false;
   let projectsDirty = false;
@@ -9425,53 +9422,9 @@ async function init(root) {
   const sourceRows = () => (projectListEl ? Array.from(projectListEl.querySelectorAll("[data-project-name]")) : []);
   const paletteRows = () => (paletteListEl ? Array.from(paletteListEl.querySelectorAll("[data-project-name]")) : []);
 
-  // A project counts its repository as a second name, so a hit there ranks
-  // like one in the name and ahead of a hit in the branch or the path alone.
-  function rankProject(row, query) {
-    const name = row.dataset.projectName || "";
-    const repo = row.querySelector(".editor-palette-repo")?.textContent || "";
-    return rankTokens([name, repo], row.dataset.projectSearch || name, query);
-  }
-
-  function paletteGroup(label, rows, members) {
-    const group = document.createElement("div");
-    group.className = "editor-palette-group";
-    if (label) {
-      const head = document.createElement("div");
-      head.className = "editor-palette-group-head";
-      head.textContent = label;
-      group.appendChild(head);
-    }
-    rows.forEach((row) => {
-      const clone = row.cloneNode(true);
-      if (members && members.has(row)) clone.classList.add("editor-palette-member");
-      group.appendChild(clone);
-    });
-    return group;
-  }
-
   function renderPalette() {
     if (!paletteListEl) return;
-    const query = (projectFilterEl?.value || "").trim();
-    const all = sourceRows();
-    const groups = [];
-    if (query) {
-      const hits = all.map((row) => ({ row, rank: rankProject(row, query) })).filter((hit) => hit.rank >= 0);
-      hits.sort((a, b) => a.rank - b.rank);
-      if (hits.length) groups.push(paletteGroup("", hits.map((hit) => hit.row)));
-    } else {
-      const recent = all
-        .filter((row) => Number(row.dataset.projectUsed) > 0)
-        .sort((a, b) => Number(b.dataset.projectUsed) - Number(a.dataset.projectUsed))
-        .slice(0, PALETTE_RECENT);
-      // A worktree that stands behind its main in the full list is drawn as its
-      // member; in the shortlist and under a query every row stands on its own.
-      const byName = new Map(all.map((row) => [row.dataset.projectName, row]));
-      const members = new Set(all.filter((row) => projectSort.mainOf(row, byName)));
-      if (recent.length) groups.push(paletteGroup("Recent", recent));
-      groups.push(paletteGroup(recent.length ? "All projects" : "", all, members));
-    }
-    paletteListEl.replaceChildren(...groups);
+    paletteListEl.replaceChildren(...paletteGroups(sourceRows(), (projectFilterEl?.value || "").trim()));
     const rows = paletteRows();
     // The note stands in the list under the field, where the quick open puts
     // its own, not at the foot of the panel.

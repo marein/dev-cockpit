@@ -5,6 +5,7 @@ import { watchCtx, initCtxLayout } from "@dc/ctx";
 import { syncAnimations } from "@dc/dom";
 import { measureServerClock } from "@dc/clock";
 import { rowsOf, focusRow, focusFollowsPointer, openedByKeyboard } from "@dc/contextmenu";
+import { openFileLink } from "@dc/termlinks";
 
 // The glue around pe.js: a lazy custom element loader, the loading bar and the
 // pe:* hooks. Every page is server rendered HTML, custom elements enhance it.
@@ -98,8 +99,16 @@ document.addEventListener("click", (event) => {
   else void sheet.open(area, trigger);
 });
 
-// data-no-pe opts a link or form out of boosting into a native load.
-window.addEventListener("pe:click", (e) => e.detail.a.closest("[data-no-pe]") && e.preventDefault());
+// data-no-pe opts a link or form out of boosting into a native load. A file
+// link opens through openFileLink, in place when the page is its editor, also
+// inside data-no-pe.
+window.addEventListener("pe:click", (e) => (e.detail.a.closest("[data-no-pe]") || e.detail.a.hasAttribute("data-file-link")) && e.preventDefault());
+document.addEventListener("click", (event) => {
+  const link = event.target instanceof Element && event.target.closest("a[data-file-link]");
+  if (!link || event.defaultPrevented) return;
+  event.preventDefault();
+  openFileLink(link.href, event);
+});
 window.addEventListener("pe:submit", (e) => e.detail.form.closest("[data-no-pe]") && e.preventDefault());
 
 // The work surface is the column that scrolls, never the page, so a move

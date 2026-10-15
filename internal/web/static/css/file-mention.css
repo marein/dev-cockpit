@@ -1,0 +1,70 @@
+dc-file-mention { display: contents; }
+
+.dc-mention {
+  position: absolute;
+  z-index: 1010;
+  bottom: calc(100% + 0.375rem);
+  left: var(--dc-mention-left, 0.75rem);
+  width: var(--dc-mention-width, calc(100% - 1.5rem));
+  max-height: min(24rem, var(--dc-mention-room, 24rem));
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  overflow: hidden;
+  border-radius: var(--tblr-border-radius-lg);
+  box-shadow: var(--tblr-box-shadow-dropdown);
+  transform-origin: bottom left;
+  animation: dc-mention-in 0.14s ease-out;
+}
+.dc-mention-head { flex: 0 0 auto; min-height: 2.25rem; }
+.dc-mention-busy { height: 2px; background: transparent; }
+.dc-mention-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.25rem;
+  scroll-padding: 0.25rem;
+}
+.dc-mention-list.dc-mention-forth { animation: dc-mention-forth 0.16s ease-out; }
+.dc-mention-list.dc-mention-back { animation: dc-mention-back 0.16s ease-out; }
+.dc-mention-list .editor-palette-group + .editor-palette-group { margin-top: 0.25rem; padding-top: 0.25rem; }
+.dc-mention-list .editor-palette-row {
+  border-radius: var(--tblr-border-radius);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.dc-mention-list .editor-palette-row:hover:not(.active) { background: none; }
+.dc-mention-list .editor-palette-member { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.dc-mention-list .editor-palette-row.active {
+  background: rgba(var(--tblr-primary-rgb), 0.12);
+  box-shadow: inset 2px 0 0 var(--tblr-primary);
+}
+.dc-mention-list .editor-palette-row.active .editor-palette-line > .ti:first-child { color: var(--tblr-primary); }
+.dc-mention-list[aria-busy="true"] .editor-palette-row { opacity: 0.55; transition: opacity 0.15s 0.1s; }
+.dc-mention mark {
+  padding: 0;
+  background: none;
+  color: var(--tblr-primary);
+  font-weight: 600;
+}
+.dc-mention-foot { flex: 0 0 auto; }
+.dc-mention-foot kbd { padding: 0.05rem 0.3rem; font-size: 0.65rem; }
+@media (pointer: coarse) {
+  .dc-mention-list .editor-palette-row { min-height: 44px; }
+  .dc-mention-foot { display: none !important; }
+}
+@keyframes dc-mention-in {
+  from { opacity: 0; transform: translateY(0.375rem) scale(0.98); }
+}
+@keyframes dc-mention-forth {
+  from { opacity: 0; transform: translateX(0.75rem); }
+}
+@keyframes dc-mention-back {
+  from { opacity: 0; transform: translateX(-0.75rem); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dc-mention, .dc-mention-list.dc-mention-forth, .dc-mention-list.dc-mention-back { animation: none; }
+}

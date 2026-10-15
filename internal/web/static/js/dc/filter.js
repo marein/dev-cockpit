@@ -1,6 +1,26 @@
+function queryTokens(query) {
+  return query.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
 export function matchesTokens(haystack, query) {
   const lower = haystack.toLowerCase();
-  return query.toLowerCase().split(/\s+/).every((token) => lower.includes(token));
+  return queryTokens(query).every((token) => lower.includes(token));
+}
+
+export function hitRanges(text, query) {
+  const lower = lowerInPlace(text);
+  const ranges = queryTokens(query)
+    .map((token) => [lower.indexOf(token), token.length])
+    .filter(([at]) => at >= 0)
+    .map(([at, length]) => [at, at + length])
+    .sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const range of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+    else merged.push(range);
+  }
+  return merged;
 }
 
 const WORD_SEPARATOR = /[\s\-_./:]/;
@@ -16,17 +36,21 @@ const TIER = 2 ** 32;
 // hit only outside the name comes last. name is one name or a list of them.
 export function rankTokens(name, haystack, query) {
   if (!matchesTokens(haystack, query)) return -1;
-  const first = query.toLowerCase().split(/\s+/).find(Boolean) || "";
+  const first = queryTokens(query)[0] || "";
   return Math.min(...[].concat(name).map((each) => rankName(each, first)));
 }
 
 // The lowercased name keeps every offset of the original, which alone still
 // carries the case a camel case word start is read from.
-function rankName(name, token) {
-  const lower = Array.from(name, (ch) => {
+function lowerInPlace(text) {
+  return Array.from(text, (ch) => {
     const low = ch.toLowerCase();
     return low.length === ch.length ? low : ch;
   }).join("");
+}
+
+function rankName(name, token) {
+  const lower = lowerInPlace(name);
   let inside = -1;
   for (let at = lower.indexOf(token); at >= 0; at = lower.indexOf(token, at + 1)) {
     if (startsWord(name, at)) return at;

@@ -12,6 +12,7 @@ import (
 
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/project"
 )
 
 func writeFiles(t testing.TB, root string, names ...string) {
@@ -69,7 +70,65 @@ func TestLinkedHTML(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			budget := tc.budget
-			if got := string(l.linkedHTML(template.HTML(tc.in), &budget)); got != tc.want {
+			if got := string(linkedHTML(template.HTML(tc.in), &budget, l.linkedText)); got != tc.want {
+				t.Errorf("got  %s\nwant %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// pathServer serves a projects root holding a project shop, its worktree
+// shop-checkout beside it and a project notes, and answers the root and a
+// file outside every project, which shop/out.go points at.
+func pathServer(t *testing.T) (*Server, string, string) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, root, "shop/a.go", "shop/src/app.go", "shop-checkout/a.go", "notes/todo.md")
+	outside := filepath.Join(t.TempDir(), "secret.go")
+	writeFiles(t, filepath.Dir(outside), filepath.Base(outside))
+	if err := os.Symlink(outside, filepath.Join(root, "shop/out.go")); err != nil {
+		t.Fatal(err)
+	}
+	return &Server{projects: project.NewRepository(root, nil)}, root, outside
+}
+
+// The assistant's chat lies in no project: an absolute path of a project's
+// file links to that project's editor, whichever project it is, while a
+// relative path, a bare word and every path that names no file of a project
+// stay text, and so does what already is a link or no text at all.
+func TestPathLinks(t *testing.T) {
+	s, root, outside := pathServer(t)
+	abs := func(rel string) string { return filepath.Join(root, filepath.FromSlash(rel)) }
+	link := func(href, shown string) string { return `<a href="` + href + `" data-file-link>` + shown + `</a>` }
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"a file", "<p>see " + abs("shop/a.go") + ".</p>", "<p>see " + link("/projects/shop/editor?file=a.go", abs("shop/a.go")) + ".</p>"},
+		{"a line and a column", abs("shop/src/app.go") + ":3:7", link("/projects/shop/editor?col=7&amp;file=src%2Fapp.go&amp;line=3", abs("shop/src/app.go")+":3:7")},
+		{"a line range", abs("shop/a.go") + ":45-68", link("/projects/shop/editor?file=a.go&amp;line=45", abs("shop/a.go")+":45-68")},
+		{"the worktree beside its main", abs("shop-checkout/a.go"), link("/projects/shop-checkout/editor?file=a.go", abs("shop-checkout/a.go"))},
+		{"two projects in one text", abs("notes/todo.md") + " " + abs("shop/a.go"), link("/projects/notes/editor?file=todo.md", abs("notes/todo.md")) + " " + link("/projects/shop/editor?file=a.go", abs("shop/a.go"))},
+		{"inline code", "<p><code>" + abs("notes/todo.md") + ":2</code></p>", "<p><code>" + link("/projects/notes/editor?file=todo.md&amp;line=2", abs("notes/todo.md")+":2") + "</code></p>"},
+		{"a fenced block", "<pre><code>vim " + abs("shop/a.go") + "\n</code></pre>", "<pre><code>vim " + link("/projects/shop/editor?file=a.go", abs("shop/a.go")) + "\n</code></pre>"},
+		{"a user's words", string(plainTextHTML("look at " + abs("shop/a.go") + "\nplease")), "look at " + link("/projects/shop/editor?file=a.go", abs("shop/a.go")) + "<br>please"},
+		{"a relative path and a bare word", "src/app.go a.go", "src/app.go a.go"},
+		{"outside every project", outside, outside},
+		{"the projects root itself", root, root},
+		{"no such project", abs("gone/a.go"), abs("gone/a.go")},
+		{"no such file", abs("shop/b.go"), abs("shop/b.go")},
+		{"a folder", abs("shop/src"), abs("shop/src")},
+		{"a symlink out of the project", abs("shop/out.go"), abs("shop/out.go")},
+		{"a link it already carries", `<a href="/assistants/c1/media/assistant-files/x.txt">` + abs("shop/a.go") + `</a>`, `<a href="/assistants/c1/media/assistant-files/x.txt">` + abs("shop/a.go") + `</a>`},
+		{"an image", `<img src="/assistants/c1/media/assistant-files/x.png" alt="` + abs("shop/a.go") + `">`, `<img src="/assistants/c1/media/assistant-files/x.png" alt="` + abs("shop/a.go") + `">`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			budget := copyLinkBudget
+			if got := string(linkedHTML(template.HTML(tc.in), &budget, s.pathLinker().linkedText)); got != tc.want {
 				t.Errorf("got  %s\nwant %s", got, tc.want)
 			}
 		})

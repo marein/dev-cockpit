@@ -1,6 +1,7 @@
 package filesystem
 
 import (
+	"iter"
 	"maps"
 	"os"
 	"path"
@@ -90,23 +91,35 @@ func NewFileRefs(root string) *FileRefs {
 func (f *FileRefs) Find(text string) []FileRef {
 	f.expire()
 	var refs []FileRef
-	for i := 0; i < len(text); {
-		if n := SeparatorAt(text, i); n > 0 {
-			i += n
-			continue
-		}
-		j := i + 1
-		for j < len(text) && SeparatorAt(text, j) == 0 {
-			j++
-		}
-		if ref, ok := f.Mention(text[i:j]); ok {
-			ref.Start += i
-			ref.End += i
+	for at, token := range Tokens(text) {
+		if ref, ok := f.Mention(token); ok {
+			ref.Start += at
+			ref.End += at
 			refs = append(refs, ref)
 		}
-		i = j
 	}
 	return refs
+}
+
+// Tokens yields the tokens of a text that may mention a file, the runs between
+// separators, each with the byte it starts at.
+func Tokens(text string) iter.Seq2[int, string] {
+	return func(yield func(int, string) bool) {
+		for i := 0; i < len(text); {
+			if n := SeparatorAt(text, i); n > 0 {
+				i += n
+				continue
+			}
+			j := i + 1
+			for j < len(text) && SeparatorAt(text, j) == 0 {
+				j++
+			}
+			if !yield(i, text[i:j]) {
+				return
+			}
+			i = j
+		}
+	}
 }
 
 // Mention reads a token, a text without a separator, as a mention of a file

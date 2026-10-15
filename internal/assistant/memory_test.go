@@ -288,6 +288,18 @@ func TestTheInstructionsTellHowToHandOverAFile(t *testing.T) {
 	)
 }
 
+// The chat links a project's file only by its absolute path, never by a
+// relative one or inside a Markdown link, so the assistant has to write it
+// that way. Pinned so the rule does not drift from what the page links.
+func TestTheInstructionsNameProjectFilesByTheirAbsolutePath(t *testing.T) {
+	pinned(t,
+		"Name a file of a project always by its absolute path",
+		"with `:line` or `:line-line` behind it where a line matters",
+		"as plain text or code and never as a Markdown link",
+		"A relative path or a bare file name links nowhere",
+	)
+}
+
 // The memory lives outside the workspaces now, so the place to write it is an
 // absolute path, and the instructions spell it.
 func TestTheInstructionsNameTheMemoryDirectory(t *testing.T) {

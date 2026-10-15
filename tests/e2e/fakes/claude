@@ -236,6 +236,18 @@ emit '{"type":"system","subtype":"status","status":"working"}'
 
 answer="Fake claude answer."
 case "$prompt" in
+  ECHO_ANSWER*)
+    # The answer is the prompt after its first line, a line at a time with a
+    # pause between, so a runner writes the answer it checks and reads it
+    # while it streams.
+    answer=${prompt#*$'\n'}
+    while [ "${answer#*$'\n'}" != "$answer" ]; do
+      esc=$(printf '%s\n' "${answer%%$'\n'*}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])')
+      emit "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"$esc\"}}}"
+      sleep 0.4
+      answer=${answer#*$'\n'}
+    done
+    ;;
   *SLOW*)
     # A wake check answers under a contract that covers its whole answer, so the
     # partial line only goes out for a chat turn: prefixed to a verdict it would

@@ -167,6 +167,12 @@ func DocsTopics() []DocsTopic {
 					Desc:     `Drop files onto the assistant or paste them into the message box; the paperclip <i class="ti ti-paperclip align-text-bottom" aria-hidden="true"></i> does the same.`,
 				},
 				{
+					Title:    "Point at a file",
+					Tag:      "Mention",
+					TagClass: "bg-blue-lt",
+					Desc:     `<kbd>@</kbd> at the start of a word in the message box lists the projects, worktrees included, and a picked project its files, both narrowed as you type like the editor's palettes. The arrows move, <kbd>Enter</kbd> or <kbd>Tab</kbd> picks, <kbd>Esc</kbd> closes, and <kbd>Backspace</kbd> right after the project or the arrow <i class="ti ti-chevron-left align-text-bottom" aria-hidden="true"></i> goes back to the projects; on a phone tap a row. A file lands as its absolute path, the first row before you type is the project's folder. An absolute path of a project's file links to that file in its project's editor, in your messages and in the answers, code included, and <code>:line</code>, <code>:line:column</code> or <code>:line-line</code> after it places the cursor; <kbd>Ctrl</kbd>, <kbd>Cmd</kbd> or <kbd>Shift</kbd> opens a new tab. A relative path, a bare name and a quoted path with a blank stay text, and an answer links once it is complete.`,
+				},
+				{
 					Title:    "Talk to it",
 					Tag:      "Voice",
 					TagClass: "bg-blue-lt",

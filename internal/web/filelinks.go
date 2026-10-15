@@ -26,7 +26,8 @@ import (
 // Only the server knows which mentions name a file there: the live terminal
 // asks for the words it shows and marks them in xterm's own buffer
 // (@dc/termlinks), the copy view's text carries them beside it, a
-// conversation's bubbles carry them in their markup.
+// conversation's bubbles carry them in their markup. The assistant's chat lies
+// in no project, its bubbles link the absolute paths of every project's files.
 
 // fileLinker links the mentions of the files of one project.
 type fileLinker struct {
@@ -42,7 +43,66 @@ func (s *Server) fileLinker(cwd string) *fileLinker {
 	if !ok {
 		return nil
 	}
+	return projectLinker(p)
+}
+
+func projectLinker(p project.Project) *fileLinker {
 	return &fileLinker{refs: filesystem.NewFileRefs(p.Path), project: p.Name, root: p.Path}
+}
+
+// pathLinker links the files of every project in text written outside them,
+// as the assistant's chat is. There a relative path or a bare word names no
+// file without a guess, an absolute path names its project itself.
+type pathLinker struct {
+	projects *project.Repository
+	linkers  map[string]*fileLinker // by project name, nil for a name that is no project
+}
+
+func (s *Server) pathLinker() *pathLinker {
+	return &pathLinker{projects: s.projects, linkers: map[string]*fileLinker{}}
+}
+
+// projectOf answers the linker of the project an absolute path lies in, nil
+// outside every project. Each project is looked up once.
+func (l *pathLinker) projectOf(path string) *fileLinker {
+	name := l.projects.ProjectNameFor(path)
+	if name == "" {
+		return nil
+	}
+	linker, seen := l.linkers[name]
+	if !seen {
+		if p, err := l.projects.FindByName(name); err == nil {
+			linker = projectLinker(p)
+		}
+		l.linkers[name] = linker
+	}
+	return linker
+}
+
+// linkedText escapes text with an anchor around every absolute path of a
+// project's file.
+func (l *pathLinker) linkedText(text string) string {
+	var b strings.Builder
+	at := 0
+	for start, token := range filesystem.Tokens(text) {
+		if !filepath.IsAbs(token) {
+			continue
+		}
+		linker := l.projectOf(token)
+		if linker == nil {
+			continue
+		}
+		ref, ok := linker.refs.Mention(token)
+		if !ok {
+			continue
+		}
+		end := start + ref.End
+		b.WriteString(template.HTMLEscapeString(text[at:start]))
+		b.WriteString(fileAnchor(linker.project, ref, text[start:end]))
+		at = end
+	}
+	b.WriteString(template.HTMLEscapeString(text[at:]))
+	return b.String()
 }
 
 // linksPanicked logs the first panic of the linking only, a bug there may hit
@@ -117,18 +177,24 @@ func (l *fileLinker) newestFileLinks(text string, cols int) (links []fileLink) {
 	return links
 }
 
-// linkCopyViews links the file mentions in the bubbles' words and tool lines,
-// the newest first, which the view opens on.
+// linkCopyViews links the file mentions in the bubbles of a coder's
+// conversation.
 func (l *fileLinker) linkCopyViews(views []render.ChatMessageView) {
 	if l == nil {
 		return
 	}
+	linkChatViews(views, l.linkedText)
+}
+
+// linkChatViews links the bubbles' words and tool lines with linkText, the
+// newest first, which a chat opens on.
+func linkChatViews(views []render.ChatMessageView, linkText func(string) string) {
 	budget := copyLinkBudget
 	for i := len(views) - 1; i >= 0; i-- {
 		view := &views[i]
-		view.HTML = l.linkedHTML(view.HTML, &budget)
+		view.HTML = linkedHTML(view.HTML, &budget, linkText)
 		for j := range view.Parts {
-			view.Parts[j].HTML = l.linkedHTML(view.Parts[j].HTML, &budget)
+			view.Parts[j].HTML = linkedHTML(view.Parts[j].HTML, &budget, linkText)
 		}
 	}
 }
@@ -138,7 +204,7 @@ func (l *fileLinker) linkCopyViews(views []render.ChatMessageView) {
 // builds from it. The first text beyond the budget, counted in bytes, ends
 // the linking, it and everything after it stays unlinked.
 // A text is written escaped anew, its raw form is gone once it was read.
-func (l *fileLinker) linkedHTML(fragment template.HTML, budget *int) (linked template.HTML) {
+func linkedHTML(fragment template.HTML, budget *int, linkText func(string) string) (linked template.HTML) {
 	defer recoverLinks(func() { linked = fragment })
 	var b strings.Builder
 	z := html.NewTokenizer(strings.NewReader(string(fragment)))
@@ -157,7 +223,7 @@ func (l *fileLinker) linkedHTML(fragment template.HTML, budget *int) (linked tem
 				continue
 			}
 			*budget -= len(text)
-			b.WriteString(l.linkedText(text))
+			b.WriteString(linkText(text))
 			continue
 		case html.StartTagToken:
 			if name, _ := z.TagName(); string(name) == "a" {
@@ -178,11 +244,16 @@ func (l *fileLinker) linkedText(text string) string {
 	at := 0
 	for _, ref := range l.refs.Find(text) {
 		b.WriteString(template.HTMLEscapeString(text[at:ref.Start]))
-		b.WriteString(`<a href="` + template.HTMLEscapeString(editorFileURL(l.project, ref)) + `" data-file-link>` + template.HTMLEscapeString(text[ref.Start:ref.End]) + "</a>")
+		b.WriteString(fileAnchor(l.project, ref, text[ref.Start:ref.End]))
 		at = ref.End
 	}
 	b.WriteString(template.HTMLEscapeString(text[at:]))
 	return b.String()
+}
+
+// fileAnchor is the link of a mention that shows as shown.
+func fileAnchor(project string, ref filesystem.FileRef, shown string) string {
+	return `<a href="` + template.HTMLEscapeString(editorFileURL(project, ref)) + `" data-file-link>` + template.HTMLEscapeString(shown) + "</a>"
 }
 
 // fileSpan is the bytes of a text one mention shows, or one row's part of a

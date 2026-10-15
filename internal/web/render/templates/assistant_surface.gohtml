@@ -48,9 +48,10 @@
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <input type="hidden" name="form" value="model">
 </form>
-<form method="post" action="{{.PostURL}}" class="assistant-composer" data-assistant-form data-assistant-footer data-no-pe>
+<form method="post" action="{{.PostURL}}" class="assistant-composer position-relative" data-assistant-form data-assistant-footer data-no-pe>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <input type="hidden" name="form" value="message">
+  {{template "file_mention.gohtml"}}
   <input type="file" class="d-none" multiple data-assistant-file accept="image/*,video/*,audio/*,.pdf,.txt,.md,.json,.csv,.log,.zip">
   <div class="d-flex flex-wrap gap-2 mb-2 d-none" data-assistant-attachments aria-label="Attached files"></div>
   <div class="d-flex align-items-end gap-2">
