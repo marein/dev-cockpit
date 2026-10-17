@@ -41,6 +41,7 @@ type wakeSpec struct {
 type checkContext struct {
 	MessageID string `json:"messageId,omitempty"`
 	Model     string `json:"model,omitempty"`
+	Effort    string `json:"effort,omitempty"`
 	// JobCreatedAt identifies the job this check belongs to, the way MessageID
 	// identifies its report. A terminal can be steered again while a check
 	// runs; the store keys jobs by terminal, so without this a late answer
@@ -82,7 +83,7 @@ func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
 	if strings.TrimSpace(spec.Prompt) == "" {
 		return nil, errors.New("A check needs a prompt.")
 	}
-	return s.startOwnSession(spec.Owner, spec.Prompt, wakeSessionName, "", RunRecord{
+	return s.startOwnSession(spec.Owner, spec.Prompt, wakeSessionName, Pick{}, RunRecord{
 		Kind: RunCheck,
 		// The report this check may write carries its id from here, so a check
 		// that is concluded twice still writes exactly one message.
@@ -97,20 +98,22 @@ func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
 // reaction sees the owner's instruction file, the memory and the workspace
 // files, and nothing of the conversation; what its answer means for the thread
 // is the reactor's decision, and the id that answer is pushed under is
-// reserved here so a restart pushes it once. model is the trigger's own,
-// empty for one that follows the owner's Triggers pick, else the owner's
-// chat, see ModelFor.
-func (s *Service) startReaction(owner string, origin Note, prompt, model string) (*activeRun, error) {
+// reserved here so a restart pushes it once. own is the trigger's model and
+// effort, each empty for one that follows the owner's Triggers pick, else the
+// owner's chat, see ModelFor and EffortFor.
+func (s *Service) startReaction(owner string, origin Note, prompt string, own Pick) (*activeRun, error) {
 	if strings.TrimSpace(prompt) == "" {
 		return nil, errors.New("A reaction needs a prompt.")
 	}
-	return s.startOwnSession(owner, prompt, reactionSessionName, model, RunRecord{
+	return s.startOwnSession(owner, prompt, reactionSessionName, own, RunRecord{
 		Kind:      RunReaction,
 		MessageID: statefile.NewID(),
 		Origin:    &origin,
-		// A model the trigger names is the one ModelFor answers with, so this
-		// is where it is written down that the pick stands on the trigger.
-		TriggerModel: model != "",
+		// A model or an effort the trigger names is the one ModelFor and
+		// EffortFor answer with, so this is where it is written down that the
+		// pick stands on the trigger.
+		TriggerModel:  own.Model != "",
+		TriggerEffort: own.Effort != "",
 	})
 }
 
@@ -128,10 +131,11 @@ func (s *Service) startReaction(owner string, origin Note, prompt, model string)
 // comes back reads its answer out of the file. The session is kept out of the
 // coder lists while it exists and removed when the turn is over, so it leaves
 // no resumable ghost behind. It runs in the workspace of the assistant it
-// belongs to, so its instructions say who it acts as. want is the model the
-// caller asks for over the assistant's own, a trigger's; which model the turn
-// gets is resolved here, once, by ModelFor, and written on the record.
-func (s *Service) startOwnSession(owner, prompt string, name func(string) string, want string, rec RunRecord) (*activeRun, error) {
+// belongs to, so its instructions say who it acts as. want is the model and
+// the effort the caller asks for over the assistant's own, a trigger's; which
+// the turn gets is resolved here, once, by ModelFor and EffortFor, and
+// written on the record.
+func (s *Service) startOwnSession(owner, prompt string, name func(string) string, want Pick, rec RunRecord) (*activeRun, error) {
 	c, err := s.Get(owner)
 	if err != nil {
 		return nil, err
@@ -154,7 +158,9 @@ func (s *Service) startOwnSession(owner, prompt string, name func(string) string
 	rec.Instance = c.ID
 	rec.CoderID = c.CoderID
 	rec.SessionID = sessionID
-	rec.Model = ModelFor(rec.Kind, c.Summary, want, co.ModelDefaults())
+	rec.Model = ModelFor(rec.Kind, c.Summary, want.Model, co.ModelDefaults())
+	effort := EffortOrigin(rec.Kind, c.Summary, want, co.ModelDefaults())
+	rec.Effort, rec.EffortFrom = effort.Effort, effort.From
 	rec.StartedAt = s.now().UTC()
 	rec.Deadline = rec.StartedAt.Add(wakeTimeout)
 	a := &activeRun{rec: rec, done: make(chan struct{})}
@@ -165,6 +171,7 @@ func (s *Service) startOwnSession(owner, prompt string, name func(string) string
 		Workdir:   workdir,
 		Prompt:    prompt,
 		Model:     rec.Model,
+		Effort:    rec.Effort,
 	})
 	if err != nil {
 		s.mu.Lock()
@@ -226,7 +233,7 @@ func (s *Service) killChecks(terminal string) {
 // The id comes from the check's register entry, so concluding the same check
 // twice writes one message and not two. A report that belongs to no check (a job
 // that ran out) gets a fresh one.
-func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text, model string) string {
+func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text string, ran Pick) string {
 	s.mu.Lock()
 	c, ok := s.store.Load(job.Owner)
 	if !ok {
@@ -251,7 +258,8 @@ func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text, m
 		Role:      RoleCockpit,
 		Content:   text,
 		CreatedAt: now,
-		Model:     model,
+		Model:     ran.Model,
+		Effort:    ran.Effort,
 		State:     StateComplete,
 		// A report is a note, the first source there was: the cockpit says
 		// what a check concluded. The job's name and project travel with it,

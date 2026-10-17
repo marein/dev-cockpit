@@ -18,7 +18,6 @@ import (
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/filesystem"
-	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
@@ -476,7 +475,7 @@ func (s *Server) assistantJobViews(owner string) ([]render.AssistantJobView, int
 
 func (s *Server) streamFrame(ev assistant.StreamEvent) assistant.StreamEvent {
 	if ev.Kind == assistant.FrameStart {
-		ev.Model = modelDisplayName(ev.Model)
+		ev.Model = pickDisplayName(ev.Model, ev.Effort)
 	}
 	return ev
 }
@@ -1237,6 +1236,9 @@ func (s *Server) handleAssistantInstances(c *gin.Context) {
 			"model":         entry.Model,
 			"checkModel":    entry.CheckModel,
 			"triggerModel":  entry.TriggerModel,
+			"effort":        entry.Effort,
+			"checkEffort":   entry.CheckEffort,
+			"triggerEffort": entry.TriggerEffort,
 			"lastMessageAt": entry.LastMessageAt,
 			"preview":       entry.Preview,
 			"openJobs":      open[entry.ID],
@@ -1292,6 +1294,9 @@ func (s *Server) handleAssistantInstanceRead(c *gin.Context) {
 		"model":         instance.Model,
 		"checkModel":    instance.CheckModel,
 		"triggerModel":  instance.TriggerModel,
+		"effort":        instance.Effort,
+		"checkEffort":   instance.CheckEffort,
+		"triggerEffort": instance.TriggerEffort,
 		"lastMessageAt": instance.LastMessageAt,
 		"messageCount":  instance.MessageCount,
 		"dropped":       dropped,
@@ -1385,12 +1390,4 @@ func writeConversationEvent(w http.ResponseWriter, ev assistant.StreamEvent) err
 // conversation's own stream.
 func (s *Server) PublishConversations() {
 	s.bus.Publish(eventbus.Event{Type: "assistant", Data: map[string]string{}})
-}
-
-func modelDisplayName(model string) string {
-	name := strings.TrimSpace(model)
-	if bare, ok := strings.CutPrefix(name, ollama.Prefix); ok && bare != "" {
-		name = bare
-	}
-	return strings.TrimSuffix(name, ":cloud")
 }

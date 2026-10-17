@@ -102,6 +102,11 @@ type Summary struct {
 	Model        string `json:"model,omitempty"`
 	CheckModel   string `json:"checkModel,omitempty"`
 	TriggerModel string `json:"triggerModel,omitempty"`
+	// Effort, CheckEffort and TriggerEffort are the efforts beside those three
+	// models, empty for the CLI's own; EffortFor reads them.
+	Effort        string `json:"effort,omitempty"`
+	CheckEffort   string `json:"checkEffort,omitempty"`
+	TriggerEffort string `json:"triggerEffort,omitempty"`
 }
 
 // Instance is one complete instance with its transcript.
@@ -169,9 +174,10 @@ type Message struct {
 	CreatedAt   time.Time    `json:"createdAt"`
 	// RunID ties an assistant message to the generation that produced it, so a
 	// stale stream cannot write into a newer retry.
-	RunID string `json:"runId,omitempty"`
-	Model string `json:"model,omitempty"`
-	State State  `json:"state"`
+	RunID  string `json:"runId,omitempty"`
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+	State  State  `json:"state"`
 	// Error is a curated, user facing sentence. Provider stderr, argv and
 	// paths never reach it.
 	Error string `json:"error,omitempty"`

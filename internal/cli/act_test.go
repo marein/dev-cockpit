@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/web"
 	"github.com/spf13/cobra"
@@ -123,7 +124,7 @@ func TestNewCoderStartsWithTheTaskInOneRequest(t *testing.T) {
 
 	var out strings.Builder
 	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
-	if err := runNewCoder(&out, opts, "demo", "readme-task", "claude", "", "haiku", "Write the README.", "", ""); err != nil {
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "claude", "", assistant.Pick{Model: "haiku"}, "Write the README.", "", ""); err != nil {
 		t.Fatalf("coder-new: %v", err)
 	}
 	if len(paths) != 1 || paths[0] != "/coders/new" {
@@ -149,31 +150,6 @@ func TestNewCoderStartsWithTheTaskInOneRequest(t *testing.T) {
 	}
 }
 
-// The started line names the model only when the call passed one that made a
-// difference, and then the one the cockpit answered, so what a turn reports
-// to the user is what runs: a call without --model says nothing about models
-// even where a stored default started the session, one that named the start
-// default anyway reads as if it had passed nothing, and one whose answer
-// carries no model falls back to the name it passed.
-func TestTheStartedLineNamesAPassedModelAsAnswered(t *testing.T) {
-	for _, tc := range []struct {
-		model, prompt string
-		created       map[string]any
-		want          string
-	}{
-		{"", "", map[string]any{"model": "haiku", "modelDefault": "haiku"}, "coder cid-1 started in demo\n"},
-		{"", "task", map[string]any{"model": "haiku"}, "coder cid-1 started in demo, working on the task\n"},
-		{"haiku", "task", map[string]any{"model": "haiku", "modelDefault": ""}, "coder cid-1 started in demo on haiku, working on the task\n"},
-		{"haiku", "task", map[string]any{"model": "haiku", "modelDefault": "opus"}, "coder cid-1 started in demo on haiku, working on the task\n"},
-		{"haiku", "task", map[string]any{"model": "haiku", "modelDefault": "haiku"}, "coder cid-1 started in demo, working on the task\n"},
-		{"haiku", "", map[string]any{}, "coder cid-1 started in demo on haiku\n"},
-	} {
-		if got := startedLine("cid-1", "demo", tc.model, tc.prompt, tc.created); got != tc.want {
-			t.Fatalf("startedLine(model %q, prompt %q, %v) = %q, want %q", tc.model, tc.prompt, tc.created, got, tc.want)
-		}
-	}
-}
-
 // Starting and steering is one request: the criterion travels in the create
 // form, the server checks it before the session exists, and the answer says
 // that the job hangs on the coder. Two calls used to leave a running coder
@@ -191,7 +167,7 @@ func TestNewCoderSteersInTheSameRequest(t *testing.T) {
 
 	var out strings.Builder
 	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
-	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "", "Write the README.", "README.md exists", ""); err != nil {
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", assistant.Pick{}, "Write the README.", "README.md exists", ""); err != nil {
 		t.Fatalf("coder-new: %v", err)
 	}
 	if len(paths) != 1 || paths[0] != "/coders/new" {
@@ -222,7 +198,7 @@ func TestNewCoderWiresTheSequelInTheSameRequest(t *testing.T) {
 
 	var out strings.Builder
 	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
-	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "", "Write the README.", "README.md exists", "start a reviewer on demo"); err != nil {
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", assistant.Pick{}, "Write the README.", "README.md exists", "start a reviewer on demo"); err != nil {
 		t.Fatalf("coder-new: %v", err)
 	}
 	if len(paths) != 1 || paths[0] != "/coders/new" {
@@ -245,7 +221,7 @@ func TestNewCoderReportsASequelThatCouldNotBeWired(t *testing.T) {
 	})
 
 	var out strings.Builder
-	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "demo", "task", "", "", "", "", "README.md exists", "start a reviewer")
+	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "demo", "task", "", "", assistant.Pick{}, "", "README.md exists", "start a reviewer")
 	if err == nil || !strings.Contains(err.Error(), "already holds 50") {
 		t.Fatalf("want the server's own sentence as the error, got %v", err)
 	}
@@ -263,7 +239,7 @@ func TestNewCoderReportsAJobThatCouldNotBeAttached(t *testing.T) {
 	})
 
 	var out strings.Builder
-	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "demo", "task", "", "", "", "", "README.md exists", "")
+	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "demo", "task", "", "", assistant.Pick{}, "", "README.md exists", "")
 	if err == nil || !strings.Contains(err.Error(), "already steered") {
 		t.Fatalf("want the server's own sentence as the error, got %v", err)
 	}
@@ -277,7 +253,7 @@ func TestNewCoderReportsAJobThatCouldNotBeAttached(t *testing.T) {
 func TestNewCoderReportsTheRefusal(t *testing.T) {
 	dir := refusing(t, "Selected project does not exist: /projects/nope")
 	var out strings.Builder
-	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "nope", "task", "", "", "", "", "", "")
+	err := runNewCoder(&out, inspectOptions{stateDir: dir, projectsDir: "/projects"}, "nope", "task", "", "", assistant.Pick{}, "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("want the handler's own sentence, got %v", err)
 	}
@@ -363,7 +339,7 @@ func TestSteerAndNewCoderHandOnTheTaskCutNotice(t *testing.T) {
 
 	out.Reset()
 	opts := inspectOptions{stateDir: dir, projectsDir: "/projects"}
-	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", "", "a long briefing", "README.md exists", ""); err != nil {
+	if err := runNewCoder(&out, opts, "demo", "readme-task", "", "", assistant.Pick{}, "a long briefing", "README.md exists", ""); err != nil {
 		t.Fatalf("coder-new: %v", err)
 	}
 	if !strings.Contains(out.String(), "task was cut at 16000 runes") {

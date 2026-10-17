@@ -49,8 +49,9 @@ func (r runtime) Env() map[string]string {
 // already working on it. It goes behind endOfOptions, because the shell quoting
 // protects the shell and not claude's own flag parser: a task that starts with a
 // dash would otherwise be parsed as an option and never reach the session. A
-// model rides behind --model and only on a start: a resume carries none, so a
-// resumed session keeps the model it has, whatever /model set inside it.
+// model rides behind --model and an effort behind --effort, and only on a
+// start: a resume carries neither, so a resumed session keeps the model and
+// the level it has, whatever /model and /effort set inside it.
 func (r runtime) StartCommand(start coder.SessionStart) string {
 	args := r.flags(start.AgentID, start.AutomaticApproval) + " --session-id " + clirun.ShellQuote(start.SessionID)
 	// A session without a name gets no flag at all; an empty --name would be a
@@ -63,6 +64,9 @@ func (r runtime) StartCommand(start coder.SessionStart) string {
 	ollamaName, viaOllama := ollamaPick(model)
 	if model != "" && !viaOllama {
 		args += " --model " + clirun.ShellQuote(model)
+	}
+	if effort := strings.TrimSpace(start.Effort); effort != "" {
+		args += " --effort " + clirun.ShellQuote(effort)
 	}
 	if task := strings.TrimSpace(start.Task); task != "" {
 		args += " " + endOfOptions + " " + clirun.ShellQuote(task)

@@ -262,6 +262,11 @@ const (
 	RefusalLogin RefusalKind = "login"
 	// RefusalUnknownModel is a CLI that does not know the model it was given.
 	RefusalUnknownModel RefusalKind = "unknown-model"
+	// RefusalUnknownEffort is an effort level the model does not take.
+	RefusalUnknownEffort RefusalKind = "unknown-effort"
+	// RefusalEffortNeedsModel is an effort for a coder whose levels belong to
+	// one model, given without a model to belong to.
+	RefusalEffortNeedsModel RefusalKind = "effort-needs-model"
 )
 
 // Refusal is a CLI that refused to start the turn, named by a parser out of its
@@ -275,14 +280,20 @@ const (
 type Refusal struct {
 	Kind RefusalKind
 	// Model is the model the CLI said it does not know, empty where it named
-	// none. What the user picked stands above it, see placed.
-	Model string
+	// none. What the user picked stands above it, see placed. Effort is the
+	// level an effort refusal names, with the model it was refused for.
+	Model  string
+	Effort string
 
 	// run, picked and ownModel are the run's, filled by placed: the kind of turn,
-	// the model the cockpit passed, and whether that model was the trigger's own.
-	run      RunKind
-	picked   string
-	ownModel bool
+	// the model the cockpit passed, and whether that model was the trigger's own;
+	// pickedEffort and ownEffort are the same for the effort.
+	run          RunKind
+	picked       string
+	ownModel     bool
+	pickedEffort string
+	ownEffort    bool
+	effortFrom   ModelSource
 }
 
 // Error is the sentence the user reads, in this package's words.
@@ -297,14 +308,48 @@ func (r *Refusal) Error() string {
 		if name != "" {
 			sentence = "The coder does not know the model " + name + "."
 		}
-		where := "at the ring button of this assistant"
-		if r.run == RunReaction && r.ownModel {
-			where = "on the trigger"
+		return sentence + " Pick another " + r.where(r.ownModel) + "."
+	case RefusalUnknownEffort:
+		sentence := "The coder does not take the effort it was started with"
+		if level := firstOf(r.pickedEffort, r.Effort); level != "" {
+			sentence = "The coder does not take the effort " + level
 		}
-		return sentence + " Pick another " + where + "."
+		if model := firstOf(r.picked, r.Model); model != "" {
+			sentence += " with the model " + model
+		}
+		return sentence + ". Pick another effort " + r.effortWhere() + "."
+	case RefusalEffortNeedsModel:
+		return "The coder takes an effort only together with a model. Pick a model or clear the effort " + r.effortWhere() + "."
 	default:
 		return "The coder is not logged in on this machine. Start it once in a terminal, log in there, and send this again."
 	}
+}
+
+// where is the place the user fixes a pick: the trigger for a reaction whose
+// pick was the trigger's own, else the ring button of the assistant.
+func (r *Refusal) where(own bool) string {
+	if r.run == RunReaction && own {
+		return "on the trigger"
+	}
+	return "at the ring button of this assistant"
+}
+
+// effortWhere is where an effort was set: the trigger for its own, the coder's
+// start default under Settings, else the ring button.
+func (r *Refusal) effortWhere() string {
+	if r.effortFrom == ModelFromCoder && !(r.run == RunReaction && r.ownEffort) {
+		return "under Settings, Coder, Models"
+	}
+	return r.where(r.ownEffort)
+}
+
+func firstOf(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // Is makes every refusal of a kind match the sentinel of that kind, so
@@ -334,12 +379,33 @@ func UnknownModel(name string) *Refusal {
 	return &Refusal{Kind: RefusalUnknownModel, Model: name}
 }
 
+// UnknownEffort is the refusal of an effort level the model does not take,
+// with the level and the model the CLI or the coder named, both read under
+// the value rules every pick passes, a name or a level the rule refuses
+// dropped, the way UnknownModel reads its name.
+func UnknownEffort(effort, model string) *Refusal {
+	runes := []rune(strings.TrimSpace(effort))
+	if len(runes) > MaxEffortRunes {
+		runes = runes[:MaxEffortRunes]
+	}
+	level, err := CleanEffort(string(runes))
+	if err != nil {
+		level = ""
+	}
+	return &Refusal{Kind: RefusalUnknownEffort, Effort: level, Model: UnknownModel(model).Model}
+}
+
+// ErrEffortNeedsModel is the refusal of an effort without a model, for a
+// coder whose levels are a model's own.
+var ErrEffortNeedsModel = &Refusal{Kind: RefusalEffortNeedsModel}
+
 // placed is this refusal on its run: a copy carrying what the sentence needs to
-// say where the model was set. The parser's value is never written to, a parser
-// may hand out one shared sentinel.
+// say where the model or the effort was set. The parser's value is never
+// written to, a parser may hand out one shared sentinel.
 func (r *Refusal) placed(rec RunRecord) *Refusal {
 	placed := *r
 	placed.run, placed.picked, placed.ownModel = rec.Kind, rec.Model, rec.TriggerModel
+	placed.pickedEffort, placed.ownEffort, placed.effortFrom = rec.Effort, rec.TriggerEffort, rec.EffortFrom
 	return &placed
 }
 

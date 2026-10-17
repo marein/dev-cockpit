@@ -217,7 +217,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "How full one is",
 					Tag:      "Context",
 					TagClass: "bg-blue-lt",
-					Desc:     `A ring around the button beside the composer fills with how much of the coder's context window this assistant takes up, orange from 85 percent, red from 95. Its icon is the coder this assistant runs on. It moves once per answer and stays empty for a model whose window this cockpit does not know. Its menu picks this assistant's Chat, Checks and Triggers models. Empty Chat runs on the coder's start default, empty Checks and Triggers on the chat.`,
+					Desc:     `A ring around the button beside the composer fills with how much of the coder's context window this assistant takes up, orange from 85 percent, red from 95. Its icon is the coder this assistant runs on. It moves once per answer and stays empty for a model whose window this cockpit does not know. Its menu picks this assistant's Chat, Checks and Triggers models and the effort under each. Empty Chat runs on the coder's start default, empty Checks and Triggers on the chat. An empty effort goes with its model: beside an empty model it follows the same way, beside a model of its own it is the CLI's level.`,
 				},
 				{
 					Title:    "What it may do",
@@ -229,7 +229,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "It hands work over and steers it",
 					Tag:      "Jobs",
 					TagClass: "bg-blue-lt",
-					Desc:     `Changes in your projects are not its job: it starts a coder for the task, briefs it, and steers it from the start. It also resumes, stops and deletes coders, and creates and deletes projects. A job is one coder, one task and one criterion that decides the task is done, and you can steer any coder yourself. A steered coder that finishes, asks something or stops moving buys a check; only done and blocked reach you, at ten checks and eight hours per job. Exactly one assistant steers a coder. A check the coder refuses to start, not logged in or an unknown model, closes the job as blocked and says why; any other failed check gets one more try.`,
+					Desc:     `Changes in your projects are not its job: it starts a coder for the task, briefs it, and steers it from the start. It also resumes, stops and deletes coders, and creates and deletes projects. A job is one coder, one task and one criterion that decides the task is done, and you can steer any coder yourself. A steered coder that finishes, asks something or stops moving buys a check; only done and blocked reach you, at ten checks and eight hours per job. Exactly one assistant steers a coder. A check the coder refuses to start, not logged in, an unknown model or an effort its model does not take, closes the job as blocked and says why; any other failed check gets one more try.`,
 				},
 				{
 					Title:    "Watching: the coders and the triggers",
@@ -247,7 +247,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "It reacts to events",
 					Tag:      "Triggers",
 					TagClass: "bg-blue-lt",
-					Desc:     `A trigger hangs the assistant onto an event: a job closing done, blocked or expired, a coder ending its turn or asking, a cron schedule. Job closed covers all three job ends and Coder signals both coder signals. The reaction runs on its own, never in the conversation, and its answer is pushed into the thread marked <i class="ti ti-bolt align-text-bottom" aria-hidden="true"></i> and notified, unless its first line is NOTHING. New trigger <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> over the Triggers tab makes one, with an optional name the row and the notification then read by; Open coder, Change and Remove stand under every row, and Change moves everything but the event. A trigger may run on a model of its own, picked in its form; empty means the assistant's Triggers pick, else its chat model. A trigger stands until you remove it unless you give it an expiry, any number of minutes, hours or days, or make it a one shot, and one that names several terminals fires on any of them or waits for all of them. A schedule carries the time zone its wall clock times are read in, which stands beside its crontab fields on the row and is what the next tick is shown in; picking another one in the form is also what the next schedule then starts on. Around a daylight saving changeover a schedule follows the wall clock: a time the spring change skips falls out that day, an hour the autumn change repeats fires twice.`,
+					Desc:     `A trigger hangs the assistant onto an event: a job closing done, blocked or expired, a coder ending its turn or asking, a cron schedule. Job closed covers all three job ends and Coder signals both coder signals. The reaction runs on its own, never in the conversation, and its answer is pushed into the thread marked <i class="ti ti-bolt align-text-bottom" aria-hidden="true"></i> and notified, unless its first line is NOTHING. New trigger <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> over the Triggers tab makes one, with an optional name the row and the notification then read by; Open coder, Change and Remove stand under every row, and Change moves everything but the event. A trigger may run on a model and an effort of its own, picked in its form; empty means the assistant's Triggers pick, else its chat. A trigger stands until you remove it unless you give it an expiry, any number of minutes, hours or days, or make it a one shot, and one that names several terminals fires on any of them or waits for all of them. A schedule carries the time zone its wall clock times are read in, which stands beside its crontab fields on the row and is what the next tick is shown in; picking another one in the form is also what the next schedule then starts on. Around a daylight saving changeover a schedule follows the wall clock: a time the spring change skips falls out that day, an hour the autumn change repeats fires twice.`,
 				},
 				{
 					Title:    "Worktrees",
@@ -760,7 +760,13 @@ func DocsTopics() []DocsTopic {
 					Title:    "Default models",
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Settings &rarr; Coder &rarr; Models holds a coder's start default, what a new coder and an assistant's chat run on when nothing is picked. Settings &rarr; Assistants &rarr; Models holds the Chat, Checks and Triggers picks a new assistant is made with, empty meaning the coder's default and Same as chat.`,
+					Desc:     `Settings &rarr; Coder &rarr; Models holds a coder's start default, what a new coder and an assistant's chat run on when nothing is picked. Settings &rarr; Assistants &rarr; Models holds the Chat, Checks and Triggers picks a new assistant is made with, empty meaning the coder's default and Same as chat. Each model has an effort beside it, read together with it.`,
+				},
+				{
+					Title:    "Effort",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Every model pick has an effort beside it. Empty goes with the model: it follows the way an empty model does, and beside a model of its own it is the CLI's level; a resume never passes one. A level a model does not take is refused where it is picked, where the cockpit can tell. Claude takes low to max and caps a level at what the model supports, a model without effort runs without one. Copilot takes none to max and refuses a level the model does not take, in the terminal and as the answer's error. OpenCode's levels are the variants <code>opencode models</code> names per model and need a model. Its terminal gets the level through the agent it starts as and runs at the level it remembers for the model where it remembers one, so such a start is refused; it remembers the last level per model once the cockpit started it at one.`,
 				},
 				{
 					Title:    "Claude through Ollama",

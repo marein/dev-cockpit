@@ -6,6 +6,7 @@
   <div class="mb-3">
     <label class="form-label" for="model-start">Start</label>
     {{template "assistant_model_pick.gohtml" (dict "Pick" .Start "ID" "model-start")}}
+    {{template "assistant_effort_pick.gohtml" (dict "Pick" .StartEffort "ID" "effort-start")}}
     {{if .Note}}<div class="form-hint">{{.Note}}</div>{{end}}
     {{if .Warning}}<div class="form-hint text-warning" data-ollama-warning>{{.Warning}}</div>{{end}}
   </div>

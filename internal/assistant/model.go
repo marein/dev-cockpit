@@ -86,11 +86,18 @@ var ModelPurposes = []ModelPurpose{ModelPurposeChat, ModelPurposeCheck, ModelPur
 // trigger model, each only where it is set, and a run time reading never
 // touches them again: an assistant made before a default was set keeps what
 // it had, and a trigger carries a model only where somebody set one on it.
+// The effort of every purpose is a default of the same kind beside its
+// model, read and copied the same way, see EffortOrigin.
 type ModelDefaults struct {
 	Chat    string
 	Check   string
 	Trigger string
 	Start   string
+
+	ChatEffort    string
+	CheckEffort   string
+	TriggerEffort string
+	StartEffort   string
 }
 
 // Of answers the default of one purpose.
@@ -109,8 +116,9 @@ func (d ModelDefaults) Of(purpose ModelPurpose) string {
 }
 
 // ModelDefaultKey is the settings key of one coder's default for one purpose,
-// ModelAddedKey the key its remembered names stand under. The five keys a
-// coder has are named here and nowhere else.
+// ModelAddedKey the key its remembered names stand under and EffortDefaultKey
+// the key of the effort beside a default model. The nine keys a coder has
+// are named here and nowhere else.
 func ModelDefaultKey(coderID string, purpose ModelPurpose) string {
 	return "model-" + string(purpose) + "-default-" + coderID
 }
@@ -123,7 +131,8 @@ func ModelAddedKey(coderID string) string {
 
 // ModelDefaultsFor reads a coder's defaults out of the store. A nil store
 // answers empty everywhere, the way the handler tests build a server, and a
-// stored value CleanModel refuses reads as empty rather than reaching an argv.
+// stored value CleanModel or CleanEffort refuses reads as empty rather than
+// reaching an argv.
 func ModelDefaultsFor(store *settings.Store, coderID string) ModelDefaults {
 	if store == nil {
 		return ModelDefaults{}
@@ -135,11 +144,22 @@ func ModelDefaultsFor(store *settings.Store, coderID string) ModelDefaults {
 		}
 		return name
 	}
+	effort := func(purpose ModelPurpose) string {
+		level, err := CleanEffort(store.Get(EffortDefaultKey(coderID, purpose)))
+		if err != nil {
+			return ""
+		}
+		return level
+	}
 	return ModelDefaults{
-		Chat:    read(ModelPurposeChat),
-		Check:   read(ModelPurposeCheck),
-		Trigger: read(ModelPurposeTrigger),
-		Start:   read(ModelPurposeStart),
+		Chat:          read(ModelPurposeChat),
+		Check:         read(ModelPurposeCheck),
+		Trigger:       read(ModelPurposeTrigger),
+		Start:         read(ModelPurposeStart),
+		ChatEffort:    effort(ModelPurposeChat),
+		CheckEffort:   effort(ModelPurposeCheck),
+		TriggerEffort: effort(ModelPurposeTrigger),
+		StartEffort:   effort(ModelPurposeStart),
 	}
 }
 
@@ -200,17 +220,8 @@ type ModelReading struct {
 // read when the turn starts, so a chat moved at the ring later moves every
 // check and every reaction that follows the chat with it.
 func ModelOrigin(kind RunKind, owner Summary, trigger string, defaults ModelDefaults) ModelReading {
-	pick := owner.Model
-	switch kind {
-	case RunCheck:
-		pick = owner.CheckModel
-	case RunReaction:
-		pick = trigger
-	}
-	if pick != "" {
-		return ModelReading{Model: pick, From: ModelFromPick}
-	}
-	return DefaultModelOrigin(kind, owner, defaults)
+	model, _ := pickLevels(kind, owner, defaults, Pick{Model: trigger}, true).resolve(kind)
+	return model.model()
 }
 
 // DefaultModelOrigin is the chain below a pick, what a purpose runs on when
@@ -226,21 +237,8 @@ func ModelOrigin(kind RunKind, owner Summary, trigger string, defaults ModelDefa
 // chain, the chat default included, they are copied onto a new assistant
 // once, see Service.create.
 func DefaultModelOrigin(kind RunKind, owner Summary, defaults ModelDefaults) ModelReading {
-	switch kind {
-	case RunReaction:
-		if owner.TriggerModel != "" {
-			return ModelReading{Model: owner.TriggerModel, From: ModelFromPick}
-		}
-		fallthrough
-	case RunCheck:
-		chat := ModelOrigin(RunChat, owner, "", defaults)
-		chat.SameAsChat = true
-		return chat
-	}
-	if defaults.Start != "" {
-		return ModelReading{Model: defaults.Start, From: ModelFromCoder}
-	}
-	return ModelReading{From: ModelFromCLI}
+	model, _ := pickLevels(kind, owner, defaults, Pick{}, false).resolve(kind)
+	return model.model()
 }
 
 // ModelFor is ModelOrigin's model alone, what a turn is started with.
@@ -252,4 +250,85 @@ func ModelFor(kind RunKind, owner Summary, trigger string, defaults ModelDefault
 // entry stands for.
 func DefaultModelFor(kind RunKind, owner Summary, defaults ModelDefaults) string {
 	return DefaultModelOrigin(kind, owner, defaults).Model
+}
+
+// pickLevel is one level of the chain a turn reads its model and its effort
+// on: the trigger's own, the assistant's check or Triggers pick, its chat
+// pick, the coder's start default. chat marks the levels of the chat's own
+// chain, which a check or a reaction reads as Same as chat.
+type pickLevel struct {
+	model, effort string
+	from          ModelSource
+	chat          bool
+}
+
+type pickChain []pickLevel
+
+// pickLevels are the levels of one purpose, the narrowest first. own is the
+// trigger's pick of a reaction; withOwn false leaves the purpose's own level
+// out, which is the chain below it, what an empty entry stands for.
+func pickLevels(kind RunKind, owner Summary, defaults ModelDefaults, own Pick, withOwn bool) pickChain {
+	chain := pickChain{
+		{model: owner.Model, effort: owner.Effort, from: ModelFromPick, chat: true},
+		{model: defaults.Start, effort: defaults.StartEffort, from: ModelFromCoder, chat: true},
+	}
+	switch kind {
+	case RunCheck:
+		chain = append(pickChain{{model: owner.CheckModel, effort: owner.CheckEffort, from: ModelFromPick}}, chain...)
+	case RunReaction:
+		chain = append(pickChain{
+			{model: own.Model, effort: own.Effort, from: ModelFromPick},
+			{model: owner.TriggerModel, effort: owner.TriggerEffort, from: ModelFromPick},
+		}, chain...)
+	}
+	if !withOwn {
+		chain = chain[1:]
+	}
+	return chain
+}
+
+// chainReading is what the chain answers for one value, before it is named
+// a model or an effort.
+type chainReading struct {
+	value      string
+	from       ModelSource
+	sameAsChat bool
+}
+
+func (r chainReading) model() ModelReading {
+	return ModelReading{Model: r.value, From: r.from, SameAsChat: r.sameAsChat}
+}
+
+// resolve reads the model and the effort of one purpose together. The model
+// is the narrowest level that names one, else the CLI's. The effort is the
+// narrowest level that names one, but never one below the level the model
+// came from: a level is read as a pair, so a purpose on a model of its own
+// takes an effort only from its own level and otherwise the CLI's, and never
+// a level somebody picked for another model, which that model may not take.
+// An effort picked without a model runs on whatever model stands below it,
+// the way the model it does not name would. A check and a reaction whose
+// reading comes from the chat's own levels, or from nothing, read as Same as
+// chat.
+func (c pickChain) resolve(kind RunKind) (model, effort chainReading) {
+	same := func(level int) bool {
+		return kind != RunChat && (level == len(c) || c[level].chat)
+	}
+	stop := len(c)
+	for i, level := range c {
+		if level.model != "" {
+			stop = i
+			break
+		}
+	}
+	model = chainReading{from: ModelFromCLI, sameAsChat: same(stop)}
+	if stop < len(c) {
+		model = chainReading{value: c[stop].model, from: c[stop].from, sameAsChat: same(stop)}
+	}
+	effort = chainReading{from: ModelFromCLI, sameAsChat: same(stop)}
+	for i := 0; i < len(c) && i <= stop; i++ {
+		if c[i].effort != "" {
+			return model, chainReading{value: c[i].effort, from: c[i].from, sameAsChat: same(i)}
+		}
+	}
+	return model, effort
 }

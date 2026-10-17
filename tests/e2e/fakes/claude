@@ -13,6 +13,7 @@ tools=""
 stream=0
 partial=0
 model=""
+effort=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -48,6 +49,7 @@ HELP
     --permission-mode) shift 2 ;;
     --settings) shift 2 ;;
     --model) model="$2"; shift 2 ;;
+    --effort) effort="$2"; shift 2 ;;
     --)
       # The cockpit puts the prompt behind the end of options separator, because
       # claude reads a positional starting with a dash as an option. Everything
@@ -94,6 +96,7 @@ if [ "$print_mode" = "0" ]; then
   # A task arrives in the argv, never typed into the pane. Printing it is how a
   # test can see that it survived the start.
   [ -n "$prompt" ] && echo "task: $prompt"
+  [ -n "$effort" ] && echo "effort: $effort"
   if [ -f "$transcript" ]; then
     python3 -c '
 import json,sys
@@ -317,6 +320,7 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     ;;
   # The model the turn was started with, which is how a pick at the ring is
   # proven to reach the argv; a turn without the flag says so.
+  *EFFORT*) answer="effort: ${effort:-default}" ;;
   *MODEL*) answer="model: ${model:-default}" ;;
   *MAGIC*) answer="AIRPORT" ;;
   # A turn an event bought answers under the note's contract: NOTHING on the

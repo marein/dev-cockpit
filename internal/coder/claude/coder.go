@@ -3,6 +3,7 @@ package claude
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/marein/dev-cockpit/internal/assistant"
@@ -88,6 +89,22 @@ func New(stateDir, notifyInbox string, store *settings.Store, launcher *ollama.C
 // this list current without a list command, claude has none. A full name
 // works too and is typed, and the repository then remembers it.
 var claudeModels = []string{"fable", "opus", "sonnet", "haiku"}
+
+// claudeEfforts are the levels `claude --effort` takes, from its own help
+// (Claude Code 2.1.302). claude applies a level as far as the model goes: a
+// model without effort runs without one and a level above a model's top runs
+// at that top, by claude's own model knowledge, so no model refuses a level.
+var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+
+// Efforts implements coder.EffortKeeper.
+func (p *Coder) Efforts() []string { return slices.Clone(claudeEfforts) }
+
+// CheckEffort implements coder.EffortKeeper over the whole list: claude
+// itself fits a level to the model, so no model refuses one.
+func (p *Coder) CheckEffort(_, level string) error {
+	_, err := assistant.CleanEffortIn(level, claudeEfforts)
+	return err
+}
 
 // claudeModelsNote is the line under every select over that list.
 const claudeModelsNote = "Aliases, always the newest of each family."

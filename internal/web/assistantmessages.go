@@ -35,7 +35,7 @@ func (s *Server) assistantMessageView(instanceID string, m assistant.Message, re
 		Origin:    s.assistantNoteView(m.Origin, m.Content),
 		Author:    render.CoderLabel(coderID),
 		Model:     m.Model,
-		ModelName: modelDisplayName(m.Model),
+		ModelName: pickDisplayName(m.Model, m.Effort),
 		Text:      m.Content,
 		State:     string(m.State),
 		Error:     m.Error,

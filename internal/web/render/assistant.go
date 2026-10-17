@@ -24,18 +24,28 @@ type AssistantModelPick struct {
 	Current  string
 	MaxRunes int
 	Options  []AssistantModelOption
+	// FollowLabel and OwnLabel are an effort select's two words for its empty
+	// entry: what it stands for while the model select above it is empty too,
+	// and what it stands for beside a model of its own, the CLI's level.
+	FollowLabel string
+	OwnLabel    string
 }
 
 // AssistantModels is what the ring button's menu offers: the chat model, the
 // check model and the trigger model of this assistant, each over the list its
-// coder offers, and the line that says where that list comes from.
+// coder offers, the effort beside each over the coder's levels, and the line
+// that says where that list comes from. An effort select is an
+// AssistantModelPick without a way past its list.
 type AssistantModels struct {
-	Chat     AssistantModelPick
-	Check    AssistantModelPick
-	Trigger  AssistantModelPick
-	Note     string
-	Launcher string
-	Warning  string
+	Chat          AssistantModelPick
+	Check         AssistantModelPick
+	Trigger       AssistantModelPick
+	ChatEffort    AssistantModelPick
+	CheckEffort   AssistantModelPick
+	TriggerEffort AssistantModelPick
+	Note          string
+	Launcher      string
+	Warning       string
 }
 
 // AssistantAttachmentView is one file a message carries, ready to embed.
@@ -301,8 +311,10 @@ type AssistantTriggerView struct {
 	// Note is the last thing that happened to it, one line.
 	Note string
 	// Model is the model its reactions run on, empty for one that follows the
-	// owner's chat model, which is what most triggers do.
-	Model string
+	// owner's chat model, which is what most triggers do, and Effort the
+	// level the same way.
+	Model  string
+	Effort string
 	// EditURL opens the form that changes it, empty on one that is over: a
 	// spent trigger cannot be changed, and the row carrying nothing is what
 	// keeps the button off it.
@@ -386,8 +398,10 @@ type AssistantTriggerFormData struct {
 	// Model is the select for the model the reaction runs on, over the list
 	// the owner's coder offers with the empty entry reading Same as the
 	// assistant, and ModelNote the line under it saying where that list comes
-	// from.
+	// from. Effort is the select for its effort beside it, over the coder's
+	// levels, its empty entry reading the same way.
 	Model     AssistantModelPick
+	Effort    AssistantModelPick
 	ModelNote string
 	Mode      string
 	Once      bool

@@ -48,11 +48,13 @@ type activeRun struct {
 // and answers the process; the caller wires both into its run. Deliberately
 // never under the service lock: building the command is the runner's own work
 // and may take seconds (opencode's first turn creates its provider session
-// through a server it boots for it), see launchAndFollow.
+// through a server it boots for it), see launchAndFollow. A refusal the
+// runner names before anything starts, an effort its model does not take, is
+// placed on the run like one the CLI names.
 func (s *Service) launch(rec *RunRecord, runner Runner, req TurnRequest) (detach.Process, error) {
 	cmd, err := runner.Command(req)
 	if err != nil {
-		return detach.Process{}, err
+		return detach.Process{}, failureOf(err, *rec, "", false)
 	}
 	out, errs, lock, err := s.runs.Files(rec.ID)
 	if err != nil {
@@ -533,7 +535,7 @@ func (s *Service) Recover() []AdoptedCheck {
 			// The page gets the whole answer again: the file is read from its
 			// first byte, so a browser that reconnects sees what was there
 			// before the restart and everything after it, without a reload.
-			s.hub.publish(rec.Instance, StreamEvent{Kind: FrameStart, RunID: rec.ID, MessageID: rec.MessageID, Model: rec.Model, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli()})
+			s.hub.publish(rec.Instance, StreamEvent{Kind: FrameStart, RunID: rec.ID, MessageID: rec.MessageID, Model: rec.Model, Effort: rec.Effort, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli()})
 		}
 		if alive {
 			log.Printf("assistant: turn %s is still running as process %d, reading on", rec.ID, rec.PID)

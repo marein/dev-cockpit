@@ -70,6 +70,13 @@ type RunRecord struct {
 	// refusal of it sends the user to the trigger and not to the ring button,
 	// see Refusal.
 	TriggerModel bool `json:"triggerModel,omitempty"`
+	// Effort is the effort the turn was started with, EffortFor's answer, and
+	// TriggerEffort says it is the trigger's own, the same way.
+	Effort        string `json:"effort,omitempty"`
+	TriggerEffort bool   `json:"triggerEffort,omitempty"`
+	// EffortFrom is the level Effort came from, which is where a refusal of it
+	// sends the user: a pick, or the coder's start default under Settings.
+	EffortFrom ModelSource `json:"effortFrom,omitempty"`
 	// Terminal and Context are what a check needs to be concluded by whoever
 	// finds it: the terminal its job steers, and what the watcher saw before it
 	// started.

@@ -60,13 +60,14 @@ func New(notifyInbox string, store *settings.Store) *Coder {
 		sessions:     sessions,
 		skills:       coder.NewStandardSkillRepository(filepath.Join(config, "skills")),
 		instructions: coder.NewFileGlobalInstructions(filepath.Join(config, "AGENTS.md")),
-		runtime: runtime{
-			sessions: sessions, create: createSession,
-			notifyInbox: notifyInbox, ensurePlugin: ensureNotifyPlugin,
-			ensureConfig: ensureSessionConfig,
-		},
-		controls:   terminal.DefaultControlMapper(),
-		modelCache: newModelList(listModels),
+		controls:     terminal.DefaultControlMapper(),
+		modelCache:   newModelList(listModels),
+	}
+	c.runtime = runtime{
+		sessions: sessions, create: createSession,
+		notifyInbox: notifyInbox, ensurePlugin: ensureNotifyPlugin,
+		ensureConfig: ensureSessionConfig,
+		variants:     c.modelVariants, tuiState: filepath.Join(stateDir(), tuiStateFile), agentOf: defaultAgent,
 	}
 	c.models = coder.NewModelRepository(store, "opencode", opencodeModelsNote, c.cliModels)
 	c.assistantProbe = coder.NewCapabilityProbe(c.probeAssistant, 10*time.Second)
@@ -115,6 +116,16 @@ func dataDir() string {
 		return filepath.Join(dir, "opencode")
 	}
 	return filepath.Join(homeDir(), ".local", "share", "opencode")
+}
+
+// stateDir resolves opencode's state directory, where the terminal keeps
+// what it remembers between runs: $XDG_STATE_HOME/opencode, or
+// ~/.local/state/opencode without the variable.
+func stateDir() string {
+	if dir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); dir != "" {
+		return filepath.Join(dir, "opencode")
+	}
+	return filepath.Join(homeDir(), ".local", "state", "opencode")
 }
 
 func homeDir() string {

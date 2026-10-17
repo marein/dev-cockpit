@@ -296,7 +296,7 @@ func (c fakeCoders) Available() []CoderInfo {
 	if c.runner == nil {
 		return nil
 	}
-	return []CoderInfo{{ID: "claude", Label: "Claude", Runner: c.runner, Defaults: func() ModelDefaults { return c.defaults }}}
+	return []CoderInfo{{ID: "claude", Label: "Claude", Runner: c.runner, Defaults: func() ModelDefaults { return c.defaults }, CheckEffort: fakeCheckEffort}}
 }
 
 // mustWorkdir is the workspace of one instance, the directory a turn of its

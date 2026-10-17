@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/localapi"
 )
 
@@ -121,7 +122,7 @@ func TestModelsSetPostsOnlyWhatWasNamed(t *testing.T) {
 			return false
 		}
 	}
-	if _, err := modelsSetForm(modelsSetArgs{}, named()); err == nil || !strings.Contains(err.Error(), "--chat, --checks or --triggers") {
+	if _, err := modelsSetForm(modelsSetArgs{}, named()); err == nil || !strings.Contains(err.Error(), "--chat, --checks, --triggers, --chat-effort, --checks-effort or --triggers-effort") {
 		t.Fatalf("want a call naming nothing refused with the flags named, got %v", err)
 	}
 	form, err := modelsSetForm(modelsSetArgs{chat: "default", checks: " haiku "}, named("chat", "checks"))
@@ -186,5 +187,30 @@ func TestAssistantModelsSetPostsToTheCallersOwnPath(t *testing.T) {
 	}
 	if quiet.String() != "" {
 		t.Fatalf("a refused call must not report success, got %q", quiet.String())
+	}
+}
+
+// The started line names the model only when the call passed one that made a
+// difference, and then the one the cockpit answered, so what a turn reports
+// to the user is what runs: a call without --model says nothing about models
+// even where a stored default started the session, one that named the start
+// default anyway reads as if it had passed nothing, and one whose answer
+// carries no model falls back to the name it passed.
+func TestTheStartedLineNamesAPassedModelAsAnswered(t *testing.T) {
+	for _, tc := range []struct {
+		model, prompt string
+		created       map[string]any
+		want          string
+	}{
+		{"", "", map[string]any{"model": "haiku", "modelDefault": "haiku"}, "coder cid-1 started in demo\n"},
+		{"", "task", map[string]any{"model": "haiku"}, "coder cid-1 started in demo, working on the task\n"},
+		{"haiku", "task", map[string]any{"model": "haiku", "modelDefault": ""}, "coder cid-1 started in demo on haiku, working on the task\n"},
+		{"haiku", "task", map[string]any{"model": "haiku", "modelDefault": "opus"}, "coder cid-1 started in demo on haiku, working on the task\n"},
+		{"haiku", "task", map[string]any{"model": "haiku", "modelDefault": "haiku"}, "coder cid-1 started in demo, working on the task\n"},
+		{"haiku", "", map[string]any{}, "coder cid-1 started in demo on haiku\n"},
+	} {
+		if got := startedLine("cid-1", "demo", assistant.Pick{Model: tc.model}, tc.prompt, tc.created); got != tc.want {
+			t.Fatalf("startedLine(model %q, prompt %q, %v) = %q, want %q", tc.model, tc.prompt, tc.created, got, tc.want)
+		}
 	}
 }

@@ -18,7 +18,7 @@
   <p class="text-secondary mb-1">Start another assistant for work that has nothing to do with this one. We share what you tell us to remember, and each of us keeps its own coders.</p>
   <p class="text-secondary mb-0">All of this is customizable, just tell me when I should <em>remember something</em>.</p>
   <div class="d-inline-block border rounded text-secondary small mt-4 px-3 py-2" role="note">
-    <i class="ti ti-info-circle me-1" aria-hidden="true"></i>Which model answers is picked at the ring button beside the message box, for the chat, for the checks and for the triggers.
+    <i class="ti ti-info-circle me-1" aria-hidden="true"></i>Which model answers, and at which effort, is picked at the ring button beside the message box, for the chat, for the checks and for the triggers.
   </div>
 </div>
 {{end}}
@@ -44,7 +44,7 @@
      same reason the new forms stand here: the composer is itself a form. The
      selects reach it through the form attribute; the element posts it with
      fetch, and without JS the menu's Save button submits it. */}}
-<form method="post" action="{{.PostURL}}" id="assistant-new-model" class="d-none" data-assistant-model-form data-no-pe>
+<form method="post" action="{{.PostURL}}" id="assistant-new-model" class="d-none" data-no-pe>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <input type="hidden" name="form" value="model">
 </form>
@@ -55,7 +55,7 @@
   <input type="file" class="d-none" multiple data-assistant-file accept="image/*,video/*,audio/*,.pdf,.txt,.md,.json,.csv,.log,.zip">
   <div class="d-flex flex-wrap gap-2 mb-2 d-none" data-assistant-attachments aria-label="Attached files"></div>
   <div class="d-flex align-items-end gap-2">
-    {{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .CoderID "Models" .Models "ContextPercent" .ContextPercent "NewClass" "btn btn-icon btn-ghost-secondary flex-shrink-0" "Prefix" "assistant-new")}}
+    {{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .CoderID "Models" .Models "AssistantID" .ID "PostURL" .PostURL "ContextPercent" .ContextPercent "NewClass" "btn btn-icon btn-ghost-secondary flex-shrink-0" "Prefix" "assistant-new")}}
     <button type="button" class="btn btn-icon btn-ghost-secondary flex-shrink-0" aria-label="Attach a file" title="Attach a file, or drop it anywhere on the page" data-assistant-attach>
       <i class="ti ti-paperclip"></i>
     </button>
@@ -138,12 +138,13 @@
      coder this assistant runs on (see the ring icon template below, so the
      ring says at a glance which coder it is) and is labelled for what it now
      only does, this assistant's models: the Chat, the Checks and the
-     Triggers select over that coder's list, and the coder's own note under
-     them. It holds no New with entries and no divider, a new assistant is
+     Triggers select over that coder's list, the effort select under each over
+     the coder's levels, and the coder's own note under them. It holds no New with entries and no divider, a new assistant is
      made from the list column's own button instead. The selects post through
-     the model form beside the composer (the form attribute), the element
-     saves a change with fetch, and the Save button is the way without JS,
-     hidden once the element runs. Without Models (the list column, the empty
+     the model form beside the composer (the form attribute), the
+     dc-assistant-picks element around the dropdown saves a change with fetch
+     and applies the picks the stream announces, and the Save button is the
+     way without JS, hidden once the element runs. Without Models (the list column, the empty
      state) the button keeps its old shape and its old job, making a new
      assistant: a dropdown with several coders and the message-plus icon, a
      plain button with one. */}}
@@ -153,7 +154,7 @@
 {{$label := $base}}{{if .ContextPercent}}{{$label = printf "%s. Context %d percent" $base .ContextPercent}}{{end}}
 {{$toggleLabel := $toggleBase}}{{if .ContextPercent}}{{$toggleLabel = printf "%s. Context %d percent" $toggleBase .ContextPercent}}{{end}}
 {{if or .Models (gt (len .Coders) 1)}}
-<div class="dropdown flex-shrink-0">
+{{if .Models}}<dc-assistant-picks class="dropdown flex-shrink-0" assistant-id="{{.AssistantID}}" post-url="{{.PostURL}}">{{else}}<div class="dropdown flex-shrink-0">{{end}}
   <button type="button" class="{{.NewClass}} position-relative" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" data-assistant-new-label="{{$toggleBase}}" aria-label="{{$toggleLabel}}" title="{{$toggleLabel}}">
     {{if .Models}}{{template "assistant_context_ring_icon.gohtml" (dict "ID" .CoderID "Hidden" (ne .Models.Launcher ""))}}<span class="dc-context-ring-icon" aria-hidden="true" data-assistant-ring-launcher data-launcher="ollama"{{if eq .Models.Launcher ""}} hidden{{end}}>{{template "coder_icon.gohtml" (dict "ID" .CoderID "Launcher" "ollama")}}</span>{{else}}<i class="ti ti-message-plus"></i>{{end}}
     {{if not .NoRing}}{{template "assistant_context_ring.gohtml" .ContextPercent}}{{end}}
@@ -163,10 +164,13 @@
     <div class="px-3 pb-2 pt-2" data-assistant-models>
       <label class="form-label mb-1" for="{{.Prefix}}-model-chat">Chat</label>
       {{template "assistant_model_pick.gohtml" (dict "Pick" .Models.Chat "ID" (printf "%s-model-chat" .Prefix) "Form" (printf "%s-model" .Prefix) "Small" true "Kind" "chat")}}
+      {{template "assistant_effort_pick.gohtml" (dict "Pick" .Models.ChatEffort "ID" (printf "%s-effort-chat" .Prefix) "Form" (printf "%s-model" .Prefix) "Small" true "Kind" "chat")}}
       <label class="form-label mb-1 mt-2" for="{{.Prefix}}-model-check">Checks</label>
       {{template "assistant_model_pick.gohtml" (dict "Pick" .Models.Check "ID" (printf "%s-model-check" .Prefix) "Form" (printf "%s-model" .Prefix) "Small" true "Kind" "check")}}
+      {{template "assistant_effort_pick.gohtml" (dict "Pick" .Models.CheckEffort "ID" (printf "%s-effort-check" .Prefix) "Form" (printf "%s-model" .Prefix) "Small" true "Kind" "check")}}
       <label class="form-label mb-1 mt-2" for="{{.Prefix}}-model-trigger">Triggers</label>
       {{template "assistant_model_pick.gohtml" (dict "Pick" .Models.Trigger "ID" (printf "%s-model-trigger" .Prefix) "Form" (printf "%s-model" .Prefix) "Small" true "Kind" "trigger")}}
+      {{template "assistant_effort_pick.gohtml" (dict "Pick" .Models.TriggerEffort "ID" (printf "%s-effort-trigger" .Prefix) "Form" (printf "%s-model" .Prefix) "Small" true "Kind" "trigger")}}
       {{if .Models.Note}}<div class="form-hint mt-2" data-assistant-model-note>{{.Models.Note}}</div>{{end}}
       <div class="form-hint mt-2 text-warning" data-ollama-warning{{if not .Models.Warning}} hidden{{end}}>{{.Models.Warning}}</div>
       <button type="submit" form="{{.Prefix}}-model" class="btn btn-sm mt-2" data-assistant-model-save>Save models</button>
@@ -180,7 +184,7 @@
     {{end}}
     {{end}}
   </div>
-</div>
+{{if .Models}}</dc-assistant-picks>{{else}}</div>{{end}}
 {{else}}
 <button type="submit" form="{{.Prefix}}" class="{{.NewClass}} position-relative" data-assistant-new-label="{{$base}}" aria-label="{{$label}}" title="{{$label}}" data-assistant-new="{{.CoderID}}">
   <i class="ti ti-message-plus"></i>

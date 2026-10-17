@@ -9,8 +9,9 @@ package coder
 // pass an empty name on. Model is optional the same way: empty means the CLI
 // is started without a model flag and runs on its own default, exactly what
 // every session did before a model could be picked, so a runtime never passes
-// an empty model on either. A resume carries no model at all, see
-// SessionRuntime.ResumeCommand.
+// an empty model on either. Effort is optional the same way, empty starts
+// the CLI on its own default level. A resume carries no model and no effort
+// at all, see SessionRuntime.ResumeCommand.
 type SessionStart struct {
 	SessionID         string
 	Name              string
@@ -19,12 +20,13 @@ type SessionStart struct {
 	AutomaticApproval bool
 	Task              string
 	Model             string
+	Effort            string
 }
 
 // SessionRuntime builds coder-specific start and resume commands. A resume
-// takes no model on purpose: a resumed session keeps the model it has, and
-// what somebody set inside it with /model must never be overridden by a
-// flag the cockpit puts back on the command line.
+// takes no model and no effort on purpose: a resumed session keeps the model
+// and the level it has, and what somebody set inside it must never be
+// overridden by a flag the cockpit puts back on the command line.
 type SessionRuntime interface {
 	UsesProvidedSessionID() bool
 	StartCommand(start SessionStart) string

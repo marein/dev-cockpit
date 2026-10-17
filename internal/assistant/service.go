@@ -381,9 +381,9 @@ func (s *Service) create(coderID string) (Instance, error) {
 	// The three defaults of the Models tab are creation defaults, copied onto
 	// the new assistant's chat, check and trigger model where one is set and
 	// left empty otherwise, the coder's start default for the chat and Same
-	// as chat for the other two. Nothing on that tab is read at run time, and
-	// a trigger takes nothing at all, it carries a model only where somebody
-	// set one on it.
+	// as chat for the other two, and the effort beside each the same way.
+	// Nothing on that tab is read at run time, and a trigger takes nothing at
+	// all, it carries a model only where somebody set one on it.
 	defaults := co.ModelDefaults()
 	c := Instance{
 		Summary: Summary{
@@ -393,6 +393,9 @@ func (s *Service) create(coderID string) (Instance, error) {
 			Model:         defaults.Chat,
 			CheckModel:    defaults.Check,
 			TriggerModel:  defaults.Trigger,
+			Effort:        defaults.ChatEffort,
+			CheckEffort:   defaults.CheckEffort,
+			TriggerEffort: defaults.TriggerEffort,
 			CreatedAt:     now,
 			LastMessageAt: now,
 		},
@@ -592,12 +595,14 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 	}
 	runID := statefile.NewID()
 	model := ModelFor(RunChat, c.Summary, "", co.ModelDefaults())
+	effort := EffortOrigin(RunChat, c.Summary, Pick{}, co.ModelDefaults())
 	msg := Message{
 		ID:        statefile.NewID(),
 		Role:      RoleAssistant,
 		CreatedAt: s.now().UTC(),
 		RunID:     runID,
 		Model:     model,
+		Effort:    effort.Effort,
 		State:     StateStreaming,
 	}
 	c.Messages = append(c.Messages, msg)
@@ -612,21 +617,24 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 		Workdir:   workdir,
 		Prompt:    prompt,
 		Model:     model,
+		Effort:    effort.Effort,
 	}
 	rec := RunRecord{
-		ID:        runID,
-		Kind:      RunChat,
-		Instance:  c.ID,
-		MessageID: msg.ID,
-		CoderID:   co.ID,
-		SessionID: c.NativeSessionID,
-		Model:     req.Model,
-		StartedAt: s.now().UTC(),
+		ID:         runID,
+		Kind:       RunChat,
+		Instance:   c.ID,
+		MessageID:  msg.ID,
+		CoderID:    co.ID,
+		SessionID:  c.NativeSessionID,
+		Model:      req.Model,
+		Effort:     req.Effort,
+		EffortFrom: effort.From,
+		StartedAt:  s.now().UTC(),
 	}
 	for _, id := range announce {
 		s.hub.publish(c.ID, StreamEvent{Kind: FrameMessage, MessageID: id})
 	}
-	s.hub.publish(c.ID, StreamEvent{Kind: FrameStart, RunID: runID, MessageID: msg.ID, Model: model, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli()})
+	s.hub.publish(c.ID, StreamEvent{Kind: FrameStart, RunID: runID, MessageID: msg.ID, Model: model, Effort: effort.Effort, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli()})
 
 	a := &activeRun{rec: rec, done: make(chan struct{})}
 	s.running[runID] = a
@@ -776,70 +784,6 @@ func (s *Service) Rename(id, rawTitle string) error {
 
 	s.changed()
 	return nil
-}
-
-// ModelChoice is what a save of the ring's three model selects names: the
-// chat model, the check model and the trigger model, each with whether the
-// request carried the field at all, so a field nobody named leaves what
-// stands and an empty one clears it, the way a trigger's spec reads its
-// fields.
-type ModelChoice struct {
-	Chat, Check, Trigger          string
-	ChatSet, CheckSet, TriggerSet bool
-}
-
-// SetModels stores which models an assistant's own turns run on. Every name
-// goes through CleanModel, so what is stored is what a runner may put behind
-// its flag, and a refused name changes nothing. It answers the instance as it
-// stands afterwards, which is what the surfaces word their confirmation from
-// and what the save's answer carries as the picks with their stamp. The
-// fresh picks go out on the assistant's own stream as one models frame, so
-// every open page of it moves its ring's selects without a reload, whether
-// the pick was set on that page, on another tab or from the CLI. A save that
-// moves nothing writes, stamps and publishes nothing. One that moves a pick
-// stamps UpdatedAt, because that stamp is what orders the models frames.
-func (s *Service) SetModels(id string, choice ModelChoice) (Instance, error) {
-	chat, err := CleanModel(choice.Chat)
-	if err != nil {
-		return Instance{}, err
-	}
-	check, err := CleanModel(choice.Check)
-	if err != nil {
-		return Instance{}, err
-	}
-	trigger, err := CleanModel(choice.Trigger)
-	if err != nil {
-		return Instance{}, err
-	}
-
-	s.mu.Lock()
-	c, ok := s.store.Load(id)
-	if !ok {
-		s.mu.Unlock()
-		return Instance{}, errors.New("Assistant not found.")
-	}
-	was := [3]string{c.Model, c.CheckModel, c.TriggerModel}
-	if choice.ChatSet {
-		c.Model = chat
-	}
-	if choice.CheckSet {
-		c.CheckModel = check
-	}
-	if choice.TriggerSet {
-		c.TriggerModel = trigger
-	}
-	if [3]string{c.Model, c.CheckModel, c.TriggerModel} == was {
-		s.mu.Unlock()
-		return c, nil
-	}
-	c.UpdatedAt = s.now().UTC()
-	s.store.Save(c)
-	s.mu.Unlock()
-
-	picks := c.ModelPicks()
-	s.hub.publish(c.ID, StreamEvent{Kind: FrameModels, Models: &picks})
-	s.changed()
-	return c, nil
 }
 
 // SaveDraft stores what the composer holds without sending it and says whether

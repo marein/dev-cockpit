@@ -57,8 +57,10 @@ func newTriggerNewCommand(opts *inspectOptions) *cobra.Command {
 			"assistant default, evaluated when it fires: your Triggers pick at the ring where one " +
 			"stands, else Same as chat, your chat model as it stands then, which is what most " +
 			"triggers want and what `assistant-models-get` shows. A cheaper model for a task that mostly answers " +
-			"NOTHING is what the flag is for. The answer names the id `trigger-edit` and " +
-			"`trigger-delete` take.",
+			"NOTHING is what the flag is for. `--effort` does the same for the effort level, one " +
+			"`model-list` names; without it the reaction runs at the level of its model, the CLI's " +
+			"for a `--model` of its own, else your Triggers effort at the ring, else Same as chat. " +
+			"The answer names the id `trigger-edit` and `trigger-delete` take.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a.event = args[0]
@@ -70,9 +72,9 @@ func newTriggerNewCommand(opts *inspectOptions) *cobra.Command {
 }
 
 type triggerArgs struct {
-	event, name, spec, zone, task, until, batch, model string
-	terminals                                          []string
-	once, all                                          bool
+	event, name, spec, zone, task, until, batch, model, effort string
+	terminals                                                  []string
+	once, all                                                  bool
 }
 
 // triggerFlags are the fields of a trigger, the same set on the command that
@@ -90,17 +92,7 @@ func triggerFlags(cmd *cobra.Command, a *triggerArgs) {
 	cmd.Flags().StringVar(&a.until, "until", "", "expiry as a span from now, like 8h or 2d; never for none (default: none, it stands until removed)")
 	cmd.Flags().StringVar(&a.batch, "batch", "", "how long to collect events into one turn, like 30s (default 30s; ignored for cron)")
 	cmd.Flags().StringVar(&a.model, "model", "", "the model the reaction runs on, a name the coder takes (default: the assistant default, evaluated when it fires, your Triggers pick at the ring, else Same as chat; on an edit, default clears it back to that)")
-}
-
-// modelField is what a model flag posts: the name, or the empty field for
-// `default`, the word that clears a trigger's own model back to the
-// assistant default, the way `never` clears an expiry.
-func modelField(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if strings.EqualFold(raw, "default") {
-		return ""
-	}
-	return raw
+	cmd.Flags().StringVar(&a.effort, "effort", "", "the effort level the reaction runs at, one `model-list` names (default: the level of the model it runs on, the CLI's for a --model of its own, else the assistant default, evaluated when it fires, your Triggers effort at the ring, else Same as chat; on an edit, default clears it back to that)")
 }
 
 // eventNames are the events a trigger may name, in the order the surfaces list
@@ -147,14 +139,18 @@ func runTriggerNew(out io.Writer, opts inspectOptions, a triggerArgs) error {
 	if a.once {
 		form.Set("once", "on")
 	}
-	if model := modelField(a.model); model != "" {
-		form.Set("model", model)
+	pick := assistant.Pick{Model: modelField(a.model), Effort: modelField(a.effort)}
+	if pick.Model != "" {
+		form.Set("model", pick.Model)
+	}
+	if pick.Effort != "" {
+		form.Set("effort", pick.Effort)
 	}
 	answer, err := client.PostForm(assistantTriggersPath, form, actionTimeout)
 	if err != nil {
 		return err
 	}
-	io.WriteString(out, addedLine(modelField(a.model), answer))
+	io.WriteString(out, addedLine(pick, answer))
 	io.WriteString(out, scheduleLine(answer))
 	io.WriteString(out, ignoredLine(answer))
 	return nil
@@ -166,17 +162,14 @@ func runTriggerNew(out io.Writer, opts inspectOptions, a triggerArgs) error {
 // as modelDefault), and then as the cockpit answered it, the way coder-new's
 // started line names it, so a turn reports the model that runs and never the
 // one it asked for; without the flag, or with the flag naming the default
-// anyway, the line stays as it was.
-func addedLine(model string, answer map[string]any) string {
+// anyway, the line stays as it was. The effort follows the same rule.
+func addedLine(pick assistant.Pick, answer map[string]any) string {
 	line := fmt.Sprintf("added %s: %s", word(answer["id"]), word(answer["summary"]))
-	if model != "" {
-		on, _ := answer["model"].(string)
-		if on == "" {
-			on = model
-		}
-		if without, _ := answer["modelDefault"].(string); on != without {
-			line += " on " + on
-		}
+	if on := pickWord(pick.Model, answer, "model", "modelDefault"); on != "" {
+		line += " on " + on
+	}
+	if at := pickWord(pick.Effort, answer, "effort", "effortDefault"); at != "" {
+		line += " at " + at + " effort"
 	}
 	return line + "\n"
 }
@@ -472,10 +465,13 @@ func printTrigger(b *strings.Builder, row map[string]any, r triggerReport) {
 	}
 	fired := count(row["fired"])
 	fmt.Fprintf(b, "  state     %s, fired %d time%s\n", state, fired, plural(fired))
-	// A model of its own is the exception and stands where it is set; a
-	// trigger on the assistant's chat model says nothing, that is the rule.
+	// A model or an effort of its own is the exception and stands where it is
+	// set; a trigger on the assistant's says nothing, that is the rule.
 	if model := word(row["model"]); model != "" {
 		fmt.Fprintf(b, "  model     %s\n", model)
+	}
+	if effort := word(row["effort"]); effort != "" {
+		fmt.Fprintf(b, "  effort    %s\n", effort)
 	}
 	if whole {
 		var facts []string
@@ -570,7 +566,8 @@ func newTriggerEditCommand(opts *inspectOptions) *cobra.Command {
 			"changed is the name with `--name` (an empty one takes the name away and the row reads by " +
 			"the event again), the model with `--model` (`--model default` clears it back to " +
 			"the assistant default, evaluated when it fires: your Triggers pick at the ring, else " +
-			"Same as chat) and everything else the flags below name. Moving " +
+			"Same as chat), the effort with `--effort` the same way, and everything else the " +
+			"flags below name. Moving " +
 			"the schedule or its zone works the next tick out again and the answer names it; " +
 			"neither moves the stored zone, `timezone-set` is what does. What cannot is the event: " +
 			"another event is another trigger, so make one and remove this. A trigger " +
@@ -609,6 +606,9 @@ func runTriggerEdit(out io.Writer, opts inspectOptions, id string, a triggerArgs
 		// the way the page's select does with its first entry.
 		form.Set("model", modelField(a.model))
 	}
+	if named("effort") {
+		form.Set("effort", modelField(a.effort))
+	}
 	if named("cron") {
 		form.Set("spec", strings.TrimSpace(a.spec))
 	}
@@ -646,7 +646,7 @@ func runTriggerEdit(out io.Writer, opts inspectOptions, id string, a triggerArgs
 	// form holds the action and the id and nothing else: nothing was named, so
 	// there is nothing to change and no call to make.
 	if len(form) == 2 {
-		return fmt.Errorf("Name what to change: --name, --task, --model, --terminal, --all, --cron, --tz, --once, --until or --batch.")
+		return fmt.Errorf("Name what to change: --name, --task, --model, --effort, --terminal, --all, --cron, --tz, --once, --until or --batch.")
 	}
 	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {

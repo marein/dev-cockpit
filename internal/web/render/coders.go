@@ -10,12 +10,14 @@ import (
 // picked from (the empty entry is the CLI's own default, the list is what the
 // coder offers, Other… reveals the typed way past it, the shape the
 // assistant's selects share) and the one line under it that says where that
-// list comes from.
+// list comes from, and the effort select beside the model over the coder's
+// levels.
 type CoderChoice struct {
 	ID           string
 	Agents       []coder.AgentOption
 	DefaultAgent string
 	Model        AssistantModelPick
+	Effort       AssistantModelPick
 	ModelNote    string
 	ModelWarning string
 }

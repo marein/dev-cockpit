@@ -21,7 +21,7 @@
 
 {{define "assistant_streaming"}}<span class="btn btn-icon btn-sm btn-ghost-secondary px-2 flex-shrink-0 pe-none" role="status" aria-label="Answering" data-assistant-streaming><i class="ti ti-volume dc-icon-spinner"></i></span>{{end}}
 
-{{define "chat_model"}}{{if .Model}}<span class="text-secondary small text-truncate{{with .Class}} {{.}}{{end}}" title="{{.Name}}" data-assistant-model="{{.Model}}">{{.Name}}</span>{{end}}{{end}}
+{{define "chat_model"}}{{if .Name}}<span class="text-secondary small text-truncate{{with .Class}} {{.}}{{end}}" title="{{.Name}}" data-assistant-model="{{.Model}}">{{.Name}}</span>{{end}}{{end}}
 
 {{define "chat_message.gohtml"}}
 {{with .Message}}

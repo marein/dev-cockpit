@@ -29,6 +29,9 @@ type StartOptions struct {
 	// default. It is cleaned by the one rule every model name goes through,
 	// assistant.CleanModel, and refused with that rule's sentence.
 	Model string
+	// Effort is the level the session starts at, one of the coder's own
+	// (EffortsFor), empty for the CLI's own default.
+	Effort string
 }
 
 // Snapshot captures the present state of every session category.

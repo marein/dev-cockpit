@@ -193,26 +193,48 @@ type StartResult struct {
 	Workdir    string
 	AgentID    string
 	// Model is the model the session was started on, empty for the CLI's own
-	// default, the way AgentID says which agent it came up with.
-	Model string
+	// default, the way AgentID says which agent it came up with, and Effort
+	// the level beside it.
+	Model  string
+	Effort string
 }
 
 // Start creates a new coder session. The name is optional: without one the CLI
 // gets no name flag, and what the session is called is read back from it, its
 // first prompt as a rule. Until there is a prompt DisplayName's fallback
-// stands in. The model is optional the same way, and it is checked first,
-// before anything exists: a name no CLI takes is refused with the shared
-// rule's own sentence, never started and left to fail in the pane.
+// stands in. The model and the effort are optional the same way, and they are
+// checked first, before anything exists: a name no CLI takes and a level the
+// coder does not offer are refused with the shared rules' own sentences,
+// never started and left to fail in the pane, and so is a level the model
+// does not take by the coder's own rule, and a start its runtime refuses.
 func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions) (StartResult, error) {
 	name := strings.TrimSpace(rawName)
 	model, err := assistant.CleanModel(opts.Model)
 	if err != nil {
 		return StartResult{}, err
 	}
+	effort, err := assistant.CleanEffort(opts.Effort)
+	if err != nil {
+		return StartResult{}, err
+	}
 	// The pick stands above the stored start default, and the default above
-	// the CLI's own, which an empty model leaves the choice to.
-	if model == "" && s.modelDefaults != nil {
-		model = s.modelDefaults().Start
+	// the CLI's own, which an empty pick leaves the choice to. The start
+	// effort goes with the start model: a session started on a model of its
+	// own runs at its own effort or at the CLI's, never at a level picked for
+	// another model, see assistant.EffortOrigin.
+	defaultEffort := false
+	if s.modelDefaults != nil && model == "" {
+		defaults := s.modelDefaults()
+		model = defaults.Start
+		if effort == "" && defaults.StartEffort != "" {
+			effort, defaultEffort = defaults.StartEffort, true
+		}
+	}
+	if err := CheckEffortFor(s.coder, model, effort); err != nil {
+		if defaultEffort {
+			return StartResult{}, fmt.Errorf("%s Change the start effort under Settings, Coder, Models.", err.Error())
+		}
+		return StartResult{}, err
 	}
 	if err := LauncherFor(s.coder).CheckModel(model); err != nil {
 		return StartResult{}, err
@@ -246,6 +268,12 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 		AutomaticApproval: opts.AutomaticApproval,
 		Task:              strings.TrimSpace(opts.Task),
 		Model:             model,
+		Effort:            effort,
+	}
+	if preparer, ok := s.coder.SessionRuntime().(SessionPreparer); ok {
+		if start, err = preparer.PrepareStart(start); err != nil {
+			return StartResult{}, err
+		}
 	}
 	shellCmd := s.coder.SessionRuntime().StartCommand(start)
 	s.trustWorkdir(workdir)
@@ -266,7 +294,7 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 		identifier = s.promoteSessionKey(sessionKey, before, workdir, name)
 	}
 	s.Invalidate()
-	return StartResult{Identifier: identifier, Name: name, Workdir: workdir, AgentID: agentID, Model: model}, nil
+	return StartResult{Identifier: identifier, Name: name, Workdir: workdir, AgentID: agentID, Model: model, Effort: effort}, nil
 }
 
 // Resume brings a stored session back to life.

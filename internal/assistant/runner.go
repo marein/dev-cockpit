@@ -1,6 +1,9 @@
 package assistant
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 // TurnRequest is one prompt handed to a provider CLI.
 type TurnRequest struct {
@@ -26,6 +29,9 @@ type TurnRequest struct {
 	// every turn ran on before a model could be picked; which model a turn
 	// gets is ModelFor's answer.
 	Model string
+	// Effort is the effort level the turn runs at, behind the CLI's own flag,
+	// empty for the CLI's own default; EffortFor's answer.
+	Effort string
 }
 
 // MaxSessionNameBytes bounds the name a provider session is created with. A
@@ -117,6 +123,9 @@ type CoderInfo struct {
 	// Defaults reads the coder's stored model defaults, the purpose fallback
 	// behind an assistant's own pick, fresh on every turn. Nil means none.
 	Defaults func() ModelDefaults
+	// CheckEffort answers whether a model takes an effort level, the coder's
+	// own rule, with the sentence that says why not. Nil takes no level.
+	CheckEffort func(model, level string) error
 }
 
 // ModelDefaults answers the coder's stored defaults, empty without a reading.
@@ -125,6 +134,18 @@ func (c CoderInfo) ModelDefaults() ModelDefaults {
 		return ModelDefaults{}
 	}
 	return c.Defaults()
+}
+
+// checkEffort is CheckEffort for a level that is set; no level is never
+// refused.
+func (c CoderInfo) checkEffort(model, level string) error {
+	if level == "" {
+		return nil
+	}
+	if c.CheckEffort == nil {
+		return errors.New("This coder takes no effort level.")
+	}
+	return c.CheckEffort(model, level)
 }
 
 // Coders resolves the coders that can answer a turn of this installation. Implemented
